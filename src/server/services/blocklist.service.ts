@@ -12,6 +12,7 @@ import { createLruCache } from '~/server/utils/lru-cache';
 import { logToAxiom } from '~/server/logging/client';
 import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/benign-phrases';
 import { hashify, removeTags, removeTagsCompact } from '~/utils/string-helpers';
+import { isValidWord } from '@civitai/mod-utils/profanity/word-rules';
 import { foldConfusables } from '~/server/utils/confusable-fold';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { domainAcceptsMail } from '~/server/utils/email-domain';
@@ -405,7 +406,7 @@ export type ClientBenignLists = {
   profanityBlockedWords: string[] | null;
   /** Set with `profanityBlockedWords`; changes whenever either profanity list does. */
   profanityListVersion: string | null;
-  /** False when the lists could not be read. The caller MUST NOT let the edge cache this. */
+  /** False when any list could not be read. The caller MUST NOT let the edge cache this. */
   available: boolean;
 };
 
@@ -420,14 +421,16 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
     // which is the case that falls back to the list shipped in the bundle.
     const profanityWords = profanityRow.id == null ? null : profanityRow.data;
     const blocked = await getManagedProfanityWords();
+    const managed = blocked === 'unavailable' ? null : blocked;
     return {
       prompt,
       profanityWords,
-      profanityBlockedWords: blocked?.data ?? null,
-      profanityListVersion: blocked
-        ? `${blocked.id}:${hashify(`${profanityWords}|${blocked.data}`)}`
+      profanityBlockedWords: managed?.data ?? null,
+      profanityListVersion: managed
+        ? `${managed.id}:${hashify(`${profanityWords}|${managed.data}`)}`
         : null,
-      available: true,
+      // The benign lists are intact; this only keeps a shipped-list fallback out of the edge cache.
+      available: blocked !== 'unavailable',
     };
   } catch (error) {
     // Fails OPEN, and empty is the safe direction: nothing is stripped, so the gates flag
@@ -453,14 +456,16 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
 
 /**
  * Its own try/catch: a failure here falls back to the shipped list instead of emptying the
- * benign lists above. Unlike ProfanityBenignWord, an EMPTY row also falls back: for a deny list,
- * honouring it would filter nothing.
+ * benign lists above. Unlike ProfanityBenignWord, an EMPTY row also falls back (as does one with
+ * no entry the filter can use): for a deny list, honouring it would filter nothing.
  */
-async function getManagedProfanityWords(): Promise<{ id: number; data: string[] } | null> {
+async function getManagedProfanityWords(): Promise<
+  { id: number; data: string[] } | null | 'unavailable'
+> {
   try {
     if (!(await getFliptBoolean(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST))) return null;
     const row = await getBlocklistDTO({ type: BlocklistType.ProfanityWord });
-    if (row.id == null || row.data.length === 0) return null;
+    if (row.id == null || !row.data.some(isValidWord)) return null;
     return { id: row.id, data: row.data };
   } catch (error) {
     logToAxiom({
@@ -469,7 +474,7 @@ async function getManagedProfanityWords(): Promise<{ id: number; data: string[] 
       message: 'Serving the shipped profanity list; the managed list could not be read',
       details: { error: error instanceof Error ? error.message : String(error) },
     });
-    return null;
+    return 'unavailable';
   }
 }
 // #endregion

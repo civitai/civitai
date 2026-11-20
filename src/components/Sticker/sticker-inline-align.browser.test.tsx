@@ -5,10 +5,6 @@ import { Sticker } from '~/components/Sticker/Sticker';
 import { STICKER_SIZE } from '~/shared/utils/sticker-token';
 
 vi.mock('~/components/UserAvatar/MentionHoverCard', () => ({ MentionHoverCard: () => null }));
-vi.mock('~/hooks/useBenignPhrases', async (orig) => ({
-  ...(await orig<Record<string, unknown>>()),
-  useBenignPhrases: () => ({ profanityBlocklist: null }),
-}));
 vi.mock('~/providers/BrowserSettingsProvider', () => ({
   useBrowsingSettings: (select: (s: { blurNsfw: boolean }) => unknown) =>
     select({ blurNsfw: false }),

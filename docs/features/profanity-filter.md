@@ -61,7 +61,7 @@ Automatically integrated in:
 
 - **Where moderators edit it**: the `ProfanityWord` tab of the moderator app's Blocklists page (a `Blocklist` row, seeded by hand from `blocked-words.json`; the tab refuses edits until the row exists).
 - **Who reads it**: `getClientBenignLists` adds it to `system.getBenignPhrases` as `profanityBlockedWords` plus a `profanityListVersion` that keys the filter and RenderHtml sanitize caches. `useCheckProfanity` (search, `BlurText`) and `RenderHtml` use it in place of the shipped list.
-- **When it is not used**: flag off, no row, an empty row, a failed read, or before the query resolves (including server-rendered HTML) all mean the shipped list. Model, bounty and app checks on the server still read the shipped list.
+- **When it is not used**: flag off, no row, a row with no usable entry, a failed read (served uncached), a list the filter cannot build, or before the query resolves (including server-rendered HTML) all mean the shipped list. RenderHtml reads it through `ProfanityBlocklistProvider`, once for the app. Model, bounty and app checks on the server still read the shipped list.
 - **Propagation**: the response is edge-cached for 10 minutes and refetched every 10, so an edit reaches users in about 20.
 
 ### Whitelist Words List

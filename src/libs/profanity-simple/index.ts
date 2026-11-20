@@ -511,6 +511,23 @@ export function createProfanityFilter(
 // normally holds the pre-load (static) filter and the current one.
 const MAX_CACHED_FILTERS = 2;
 const filtersByWhitelist = new Map<string, SimpleProfanityFilter>();
+// A managed entry the pattern parser rejects must not take masking down with it.
+function buildFilterOrShipped(
+  moderatorWhitelist: string[] | null,
+  managedBlocklist: ManagedProfanityList | null
+): SimpleProfanityFilter {
+  if (!managedBlocklist) return createProfanityFilter({ moderatorWhitelist });
+  try {
+    return createProfanityFilter({
+      moderatorWhitelist,
+      moderatorBlocklist: managedBlocklist.words,
+    });
+  } catch (error) {
+    console.warn('Managed profanity list failed to build; using the shipped list', error);
+    return createProfanityFilter({ moderatorWhitelist });
+  }
+}
+
 export function getProfanityFilter(
   moderatorWhitelist: string[] | null = null,
   managedBlocklist: ManagedProfanityList | null = null
@@ -524,10 +541,7 @@ export function getProfanityFilter(
     : whitelistKey;
   let filter = filtersByWhitelist.get(key);
   if (!filter) {
-    filter = createProfanityFilter({
-      moderatorWhitelist,
-      moderatorBlocklist: managedBlocklist?.words ?? null,
-    });
+    filter = buildFilterOrShipped(moderatorWhitelist, managedBlocklist);
     if (filtersByWhitelist.size >= MAX_CACHED_FILTERS) {
       const oldest = filtersByWhitelist.keys().next().value;
       if (oldest !== undefined) filtersByWhitelist.delete(oldest);

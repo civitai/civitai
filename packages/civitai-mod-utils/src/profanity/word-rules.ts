@@ -29,12 +29,14 @@ export const MIN_DATASET_WORD_LENGTH = 3;
 
 /**
  * Whether a moderator entry would take effect in the filter and is long enough to be safe to
- * apply everywhere. Stricter than the filter on short boundary-marked entries.
+ * apply everywhere. Stricter than the filter on short boundary-marked entries, and refuses a
+ * `|` anywhere but the ends, which the filter's pattern parser throws on.
  */
 export function isUsableBlockedEntry(entry: string): boolean {
   const cleaned = cleanWord(entry);
   return (
     isValidWord(entry) &&
+    !cleaned.slice(1, -1).includes('|') &&
     cleaned.length >= MIN_DATASET_WORD_LENGTH &&
     cleaned.replace(/[^a-z]/g, '').length >= MIN_DATASET_WORD_LENGTH
   );

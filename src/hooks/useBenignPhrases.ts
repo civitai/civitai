@@ -10,27 +10,39 @@ import { trpc } from '~/utils/trpc';
  * every 10 minutes per session, so both an addition and a REMOVAL reach an open search box in
  * about 20.
  */
+const BENIGN_PHRASES_QUERY_OPTIONS = { staleTime: 10 * 60 * 1000, gcTime: Infinity };
+
+/** The managed blocked list a response carries, or `null` for the list shipped in the bundle. */
+export function toProfanityBlocklist(data: {
+  profanityBlockedWords: string[] | null;
+  profanityListVersion: string | null;
+}): ManagedProfanityList | null {
+  const { profanityBlockedWords: words, profanityListVersion: version } = data;
+  return words && version ? { version, words } : null;
+}
+
+/** Only the managed blocked list: re-renders when that changes, not when the benign lists do. */
+export function useProfanityBlocklist(): ManagedProfanityList | null {
+  const { data } = trpc.system.getBenignPhrases.useQuery(undefined, {
+    ...BENIGN_PHRASES_QUERY_OPTIONS,
+    select: toProfanityBlocklist,
+  });
+  return data ?? null;
+}
+
 export function useBenignPhrases() {
   // Finite staleTime, deliberately. The reason a moderator DELETES a benign phrase is that it
   // stripped too much — under `staleTime: Infinity` that deletion never reaches an open tab,
   // so a revocation had no propagation bound at all while an addition was capped at the
   // edge's TTL.
-  const { data, isFetched } = trpc.system.getBenignPhrases.useQuery(undefined, {
-    staleTime: 10 * 60 * 1000,
-    gcTime: Infinity,
-  });
+  const { data, isFetched } = trpc.system.getBenignPhrases.useQuery(
+    undefined,
+    BENIGN_PHRASES_QUERY_OPTIONS
+  );
 
   const promptPattern = useMemo(() => buildBenignPhraseRegex(data?.prompt ?? []), [data?.prompt]);
   const profanityWords = data?.profanityWords;
-  const profanityBlockedWords = data?.profanityBlockedWords;
-  const profanityListVersion = data?.profanityListVersion;
-  const profanityBlocklist = useMemo<ManagedProfanityList | null>(
-    () =>
-      profanityBlockedWords && profanityListVersion
-        ? { version: profanityListVersion, words: profanityBlockedWords }
-        : null,
-    [profanityBlockedWords, profanityListVersion]
-  );
+  const profanityBlocklist = useProfanityBlocklist();
 
   return useMemo(
     () => ({

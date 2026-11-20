@@ -149,7 +149,7 @@ export type BlocklistWriteResult = { count: number; cacheStale: boolean };
 /** What the transaction changed, and which row it changed — `recordModActivity` needs the row id.
  *  Absent when a submitted id matched no row of the type: the id names no row there, so it must not
  *  be reached for as a stand-in. */
-type Written = { count: number; rowId: number };
+type Written = { count: number; rowId: number; entries?: string[] };
 
 /**
  * Adds entries, returning how many the row actually GAINED — not how many were submitted. Since
@@ -209,7 +209,7 @@ export async function upsertBlocklist({
       .where('id', '=', existing.id)
       .where('type', '=', type)
       .executeTakeFirstOrThrow();
-    return { count: gained, rowId: existing.id };
+    return { count: gained, rowId: existing.id, entries: next.slice(existing.data.length) };
   });
 
   if (added === undefined) throw new BlocklistRowMismatchError();
@@ -222,7 +222,13 @@ export async function upsertBlocklist({
     entityId: added.rowId,
     activity: 'add',
   });
-  logListChange(type, { userId, activity: 'add', entries: items, countDelta: added.count });
+  logListChange(type, {
+    userId,
+    rowId: added.rowId,
+    activity: 'add',
+    entries: added.entries,
+    countDelta: added.count,
+  });
   return { count: added.count, cacheStale };
 }
 
@@ -266,7 +272,7 @@ export async function removeBlocklistItems({
       .where('id', '=', row.id)
       .where('type', '=', type)
       .executeTakeFirstOrThrow();
-    return { count, rowId: row.id };
+    return { count, rowId: row.id, entries: row.data.filter((item) => lower.includes(item)) };
   });
 
   if (!removed || removed.count === 0) return { count: 0, cacheStale: false };
@@ -278,7 +284,13 @@ export async function removeBlocklistItems({
     entityId: removed.rowId,
     activity: 'remove',
   });
-  logListChange(type, { userId, activity: 'remove', entries: lower, countDelta: -removed.count });
+  logListChange(type, {
+    userId,
+    rowId: removed.rowId,
+    activity: 'remove',
+    entries: removed.entries,
+    countDelta: -removed.count,
+  });
   return { count: removed.count, cacheStale };
 }
 

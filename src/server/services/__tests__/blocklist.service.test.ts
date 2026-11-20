@@ -545,12 +545,21 @@ describe('getClientBenignLists', () => {
       expect(result.profanityBlockedWords).toBeNull();
     });
 
-    it('falls back on a failed read without emptying the benign lists', async () => {
+    it('falls back on a failed read without emptying the benign lists, uncacheable', async () => {
       blockedReadFails = true;
       const result = await getClientBenignLists();
       expect(result.profanityBlockedWords).toBeNull();
-      expect(result.available).toBe(true);
       expect(result.profanityWords).toEqual(['spreadsheet']);
+      expect(result.available).toBe(false);
+    });
+
+    it('is cacheable when the managed list read succeeds', async () => {
+      expect((await getClientBenignLists()).available).toBe(true);
+    });
+
+    it('falls back when no entry in the row is one the filter can use', async () => {
+      blockedRow = { id: 31, data: ['z', '42'] };
+      expect((await getClientBenignLists()).profanityBlockedWords).toBeNull();
     });
 
     it('changes version when either profanity list changes', async () => {

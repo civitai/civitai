@@ -33,10 +33,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   useFeatureFlags: () => ({}),
 }));
 
-vi.mock('~/hooks/useBenignPhrases', async (orig) => ({
-  ...(await orig<Record<string, unknown>>()),
-  useBenignPhrases: () => ({ profanityBlocklist: null }),
-}));
 vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowserSettingsProvider>()),
   useBrowsingSettings: () => false,

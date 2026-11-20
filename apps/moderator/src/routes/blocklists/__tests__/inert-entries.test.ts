@@ -21,8 +21,17 @@ describe('inertEntries', () => {
 
   it('refuses Profanity Word entries the filter would drop or that are too short to apply safely', () => {
     expect(
-      inertEntries('ProfanityWord', ['zorblat', '|zorb|', 'zo', '|z|', '|zq|', 'zor8lat', 'z-q'])
-    ).toEqual(['zo', '|z|', '|zq|', 'zor8lat', 'z-q']);
+      inertEntries('ProfanityWord', [
+        'zorblat',
+        '|zorb|',
+        'zo',
+        '|z|',
+        '|zq|',
+        'zor8lat',
+        'z-q',
+        'zor|blat',
+      ])
+    ).toEqual(['zo', '|z|', '|zq|', 'zor8lat', 'z-q', 'zor|blat']);
   });
 
   it('leaves the phrase lists alone, where multi-word entries are the point', () => {

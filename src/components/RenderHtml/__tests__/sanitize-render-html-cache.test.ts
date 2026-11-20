@@ -83,6 +83,9 @@ describe('getSanitizedRenderHtml memo', () => {
       optionsKey({ ...BASE, ownHosts: ['a', 'b'] })
     );
     expect(optionsKey({ ...BASE, host: '' })).not.toBe(optionsKey({ ...BASE, host: null }));
+    expect(
+      optionsKey({ ...BASE, profanityBlocklist: { version: '1:1', words: ['zorblat'] } })
+    ).not.toBe(optionsKey({ ...BASE, profanityBlocklist: { version: '1:2', words: ['zorblat'] } }));
   });
 
   it('is bounded by entry count, evicting the oldest first', () => {

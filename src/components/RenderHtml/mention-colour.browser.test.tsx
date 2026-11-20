@@ -3,10 +3,6 @@ import { renderWithProviders } from '../../../test/component-setup';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 
 vi.mock('~/components/UserAvatar/MentionHoverCard', () => ({ MentionHoverCard: () => null }));
-vi.mock('~/hooks/useBenignPhrases', async (orig) => ({
-  ...(await orig<Record<string, unknown>>()),
-  useBenignPhrases: () => ({ profanityBlocklist: null }),
-}));
 vi.mock('~/providers/BrowserSettingsProvider', () => ({
   useBrowsingSettings: (select: (s: { blurNsfw: boolean }) => unknown) =>
     select({ blurNsfw: false }),

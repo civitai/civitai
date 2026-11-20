@@ -6,7 +6,7 @@ import { formatDiscordTimestamp, normalizeTimestampStyle } from '~/utils/timesta
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { useCurrentDomainHosts } from '~/hooks/useCurrentDomainHref';
 import { getSanitizedRenderHtml } from './sanitize-render-html';
-import { useBenignPhrases } from '~/hooks/useBenignPhrases';
+import { useManagedProfanityBlocklist } from '~/providers/ProfanityBlocklistProvider';
 import classes from './RenderHtml.module.scss';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import clsx from 'clsx';
@@ -36,7 +36,7 @@ export function RenderHtml({
   const { allowed: thirdPartyAllowed } = useThirdPartyConsent();
   const contentRef = useRef<HTMLDivElement>(null);
   const { host, ownHosts } = useCurrentDomainHosts();
-  const { profanityBlocklist } = useBenignPhrases();
+  const profanityBlocklist = useManagedProfanityBlocklist();
   const maskProfanity = withProfanityFilter && blurNsfw;
 
   html = useMemo(

@@ -446,9 +446,45 @@ describe('upsertBlocklist', () => {
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'profanity-word-list-change',
-        payload: { userId: MOD_ID, activity: 'add', entries: ['quaxle'], countDelta: 1 },
+        payload: {
+          userId: MOD_ID,
+          rowId: 12,
+          activity: 'add',
+          entries: ['quaxle'],
+          countDelta: 1,
+        },
       })
     );
+  });
+
+  it('logs only the ProfanityWord entries a remove actually dropped', async () => {
+    rows[12] = { type: 'ProfanityWord', data: ['zorblat', 'quaxle'] };
+    await removeBlocklistItems({
+      id: 12,
+      userId: MOD_ID,
+      type: 'ProfanityWord',
+      items: ['Quaxle', 'never-there'],
+    });
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          activity: 'remove',
+          entries: ['quaxle'],
+          countDelta: -1,
+        }),
+      })
+    );
+  });
+
+  it('does not log edits to other lists', async () => {
+    await removeBlocklistItems({
+      id: 1,
+      userId: MOD_ID,
+      type: 'EmailDomain',
+      items: ['spam.example'],
+    });
+    expect(logToAxiom).not.toHaveBeenCalled();
   });
 });
 
