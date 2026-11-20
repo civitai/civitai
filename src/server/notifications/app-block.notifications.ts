@@ -34,6 +34,8 @@ export type AppBlockModerationNotificationDetails = {
   version?: string | null;
   /** The moderator's rejection reason (reject only; approve carries none). */
   reason?: string | null;
+  /** Approve only: the manifest declares a page, so `/apps/run/<slug>` resolves. */
+  hasPage?: boolean;
 };
 
 /**
@@ -45,12 +47,15 @@ export type AppBlockModerationNotificationDetails = {
 const SUBMITTER_SUBMISSIONS_URL = MY_APPS_HREF;
 
 /**
- * The approved app's full-page run route. An older notification without a slug falls back to the
- * submissions view.
+ * The approved app's full-page run route. The run page 404s for an app that declares no page, so
+ * only a notification that says `hasPage: true` links there. One without a slug, an app with no
+ * page, and an older notification that predates `hasPage` all fall back to the submissions view.
  */
 export function approvedAppUrl(details: AppBlockModerationNotificationDetails): string {
   const slug = typeof details.slug === 'string' ? details.slug.trim() : '';
-  return slug ? `/apps/run/${encodeURIComponent(slug)}` : SUBMITTER_SUBMISSIONS_URL;
+  return slug && details.hasPage === true
+    ? `/apps/run/${encodeURIComponent(slug)}`
+    : SUBMITTER_SUBMISSIONS_URL;
 }
 
 /** `Your app "Name"` when a name is present, else a terse `Your app`. Users know these as apps. */
@@ -71,12 +76,14 @@ export const appBlockNotifications = createNotificationProcessor({
     category: NotificationCategory.System,
     toggleable: false,
     defaultEmail: true,
-    emailButtonLabel: 'Open your app',
     prepareMessage: (notification) => {
       const details = notification.details as AppBlockModerationNotificationDetails;
+      const url = approvedAppUrl(details);
       return {
         message: `${appLabel(details)} was approved and will be live in a few minutes.`,
-        url: approvedAppUrl(details),
+        url,
+        // Only the run page is "your app"; the submissions-view fallback keeps the default label.
+        emailButtonLabel: url === SUBMITTER_SUBMISSIONS_URL ? undefined : 'Open your app',
       };
     },
   },

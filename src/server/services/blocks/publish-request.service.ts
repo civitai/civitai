@@ -57,6 +57,7 @@ import { registryExportDiff } from '~/shared/constants/block-storage.constants';
 // the submitting developer of the moderator decision — best-effort, wrapped in a
 // try/catch at each call site so a notification failure can never fail the decision.
 import { notifyAppBlockSubmitter } from '~/server/services/blocks/app-block-notify';
+import { manifestDeclaresPage } from '~/shared/utils/app-manifest-page';
 // Pure const (no env/Prisma) — the marketplace category taxonomy + type guard.
 // approveRequest copies a validated manifest `category` onto AppBlock.category.
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
@@ -4892,6 +4893,7 @@ async function approveRequestUnderClaim(
         slug: request.slug,
         name: typeof manifest.name === 'string' ? manifest.name : null,
         version: request.version,
+        hasPage: manifestDeclaresPage(manifest),
       },
     });
   } catch (err) {

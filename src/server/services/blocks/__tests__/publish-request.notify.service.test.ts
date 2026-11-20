@@ -241,6 +241,8 @@ describe('approveRequest — submitter notification (post-commit, best-effort)',
     expect(arg.userId).toBe(SUBMITTER);
     expect(arg.key).toBe('app-block-approved:req_appr_1');
     expect(arg.details).toMatchObject({ slug: 'cool-app', name: 'Cool App', version: '1.2.0' });
+    // The manifest declares no page, so the approval must not link to the run page.
+    expect((arg.details as { hasPage?: unknown }).hasPage).toBe(false);
   });
 
   it('🔴 approve re-validates with the issue-tracker link LENIENT (a stored legacy `bugs` warns, never refuses)', async () => {

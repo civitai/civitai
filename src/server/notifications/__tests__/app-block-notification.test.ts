@@ -34,24 +34,34 @@ describe('app-block notification definitions — registration shape', () => {
 
 describe('app-block-approved — prepareMessage', () => {
   it('says the app was approved and links to its run page', () => {
-    const m = msg(approved, { slug: 'cool-app', name: 'Cool App', version: '1.2.0' });
+    const m = msg(approved, {
+      slug: 'cool-app',
+      name: 'Cool App',
+      version: '1.2.0',
+      hasPage: true,
+    });
     expect(m!.message).toBe('Your app "Cool App" was approved and will be live in a few minutes.');
     expect(m!.url).toBe('/apps/run/cool-app');
+    expect(m!.emailButtonLabel).toBe('Open your app');
   });
 
   it('encodes the slug into the run page path', () => {
-    expect(msg(approved, { slug: 'a b/c' })!.url).toBe('/apps/run/a%20b%2Fc');
+    expect(msg(approved, { slug: 'a b/c', hasPage: true })!.url).toBe('/apps/run/a%20b%2Fc');
   });
 
   it.each([
-    ['missing', {}],
-    ['empty', { slug: '' }],
-    ['whitespace', { slug: '   ' }],
-    ['not a string', { slug: 42 }],
-  ])('falls back to the submissions view when the slug is %s', (_label, details) => {
+    ['the slug is missing', { hasPage: true }],
+    ['the slug is empty', { slug: '', hasPage: true }],
+    ['the slug is whitespace', { slug: '   ', hasPage: true }],
+    ['the slug is not a string', { slug: 42, hasPage: true }],
+    ['the app declares no page', { slug: 'cool-app', hasPage: false }],
+    ['the notification predates hasPage', { slug: 'cool-app' }],
+  ])('falls back to the submissions view when %s', (_label, details) => {
     const m = msg(approved, details as unknown as AppBlockModerationNotificationDetails);
     expect(m!.url).toBe('/apps/build?view=apps');
     expect(m!.message).toBe('Your app was approved and will be live in a few minutes.');
+    // The fallback is not "your app", so the button keeps the default label.
+    expect(m!.emailButtonLabel).toBeUndefined();
   });
 
   it('treats a whitespace-only name as absent (no empty quotes)', () => {
@@ -59,9 +69,8 @@ describe('app-block-approved — prepareMessage', () => {
     expect(m!.message).toBe('Your app was approved and will be live in a few minutes.');
   });
 
-  it('labels its email button for opening the app', () => {
-    expect(approved.emailButtonLabel).toBe('Open your app');
-    expect(rejected.emailButtonLabel).toBeUndefined();
+  it('the rejected message keeps the default button label', () => {
+    expect(msg(rejected, { slug: 'cool-app', hasPage: true })!.emailButtonLabel).toBeUndefined();
   });
 });
 
@@ -72,7 +81,10 @@ describe('app review copy calls them apps', () => {
     expect(defs.map((d) => d.displayName)).toEqual(['App approved', 'App not approved']);
     for (const def of defs) {
       expect(def.displayName).not.toMatch(/block/i);
-      for (const details of [{ slug: 'cool-app', name: 'Cool App', reason: 'r' }, { slug: '' }])
+      for (const details of [
+        { slug: 'cool-app', name: 'Cool App', reason: 'r', hasPage: true },
+        { slug: '' },
+      ])
         expect(msg(def, details)!.message).not.toMatch(/block/i);
     }
   });

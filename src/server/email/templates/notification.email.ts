@@ -8,7 +8,7 @@ export type NotificationEmailData = {
   typeName: string;
   message: string;
   url?: string;
-  /** The button's label; the notification type can set its own (`emailButtonLabel`). */
+  /** The button's label; a prepared notification message can set its own (`emailButtonLabel`). */
   btnLabel?: string;
   unsubscribeUrl: string;
 };

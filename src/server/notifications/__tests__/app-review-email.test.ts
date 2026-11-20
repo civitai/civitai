@@ -131,7 +131,7 @@ describe('app-review notifications send email', () => {
   it('the approved email says the app was approved and opens its run page', async () => {
     const outcome = await sendNotificationEmails({
       type: 'app-block-approved',
-      details: { slug: 'pixel-pal', name: 'Pixel Pal', version: '1.0.0' },
+      details: { slug: 'pixel-pal', name: 'Pixel Pal', version: '1.0.0', hasPage: true },
       userIds: [1],
     });
     expect(outcome.sent).toBe(1);

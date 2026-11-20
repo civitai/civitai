@@ -138,7 +138,7 @@ describe('app-review emails', () => {
     const { notificationEmail } = await import('~/server/email/templates/notification.email');
     const prepared = getNotificationMessage({
       type,
-      details: { slug: 'pixel-pal', name: 'Pixel Pal', reason: 'Broken build' },
+      details: { slug: 'pixel-pal', name: 'Pixel Pal', reason: 'Broken build', hasPage: true },
     });
     expect(prepared?.message).toBeTruthy();
     const data = {
@@ -146,7 +146,7 @@ describe('app-review emails', () => {
       typeName: notificationProcessors[type]!.displayName,
       message: prepared!.message,
       url: prepared!.url,
-      btnLabel: notificationProcessors[type]!.emailButtonLabel,
+      btnLabel: prepared!.emailButtonLabel,
       unsubscribeUrl: `${ORIGIN}/api/notifications/email-unsubscribe?u=1&t=${type}&s=x`,
     };
     const html = notificationEmail.getHtml(data);
