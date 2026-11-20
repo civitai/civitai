@@ -39,6 +39,7 @@ describe('app-block-approved — prepareMessage', () => {
       name: 'Cool App',
       version: '1.2.0',
       hasPage: true,
+      mature: false,
     });
     expect(m!.message).toBe('Your app "Cool App" was approved and will be live in a few minutes.');
     expect(m!.url).toBe('/apps/run/cool-app');
@@ -55,6 +56,7 @@ describe('app-block-approved — prepareMessage', () => {
     ['the slug is whitespace', { slug: '   ', hasPage: true }],
     ['the slug is not a string', { slug: 42, hasPage: true }],
     ['the app declares no page', { slug: 'cool-app', hasPage: false }],
+    ['the app is mature', { slug: 'cool-app', hasPage: true, mature: true }],
     ['the notification predates hasPage', { slug: 'cool-app' }],
   ])('falls back to the submissions view when %s', (_label, details) => {
     const m = msg(approved, details as unknown as AppBlockModerationNotificationDetails);

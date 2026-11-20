@@ -34,26 +34,29 @@ export type AppBlockModerationNotificationDetails = {
   version?: string | null;
   /** The moderator's rejection reason (reject only; approve carries none). */
   reason?: string | null;
-  /** Approve only: the manifest declares a page, so `/apps/run/<slug>` resolves. */
+  /** Approve only: the manifest declares a page, so `/apps/run/<slug>` can resolve. */
   hasPage?: boolean;
+  /** Approve only: a mature (r/x) app, whose run page 404s off the red host the email links to. */
+  mature?: boolean;
 };
 
 /**
- * The rejected notification (and an approved one that has no slug) points the developer at their
- * submissions view — state C of `/apps/build`, which is the table `/apps/mine` used to be.
+ * The rejected notification (and an approved one that cannot link to its run page; see
+ * `approvedAppUrl`) points the developer at their submissions view — state C of `/apps/build`, which is the table `/apps/mine` used to be.
  * Repointed with the rest of the `/apps/build` consolidation; see the access-narrowing note on
  * `OWNER_SUBMISSIONS_URL` in `./app-listing.notifications`, which applies verbatim here.
  */
 const SUBMITTER_SUBMISSIONS_URL = MY_APPS_HREF;
 
 /**
- * The approved app's full-page run route. The run page 404s for an app that declares no page, so
- * only a notification that says `hasPage: true` links there. One without a slug, an app with no
- * page, and an older notification that predates `hasPage` all fall back to the submissions view.
+ * The approved app's full-page run route. The run page 404s for an app that declares no page, and
+ * for a mature app on the primary host the email links to, so only a notification that says
+ * `hasPage: true` and not `mature: true` links there. Anything else falls back to the submissions
+ * view: no slug, no page, a mature app, or an older notification that predates `hasPage`.
  */
 export function approvedAppUrl(details: AppBlockModerationNotificationDetails): string {
   const slug = typeof details.slug === 'string' ? details.slug.trim() : '';
-  return slug && details.hasPage === true
+  return slug && details.hasPage === true && details.mature !== true
     ? `/apps/run/${encodeURIComponent(slug)}`
     : SUBMITTER_SUBMISSIONS_URL;
 }
