@@ -918,6 +918,13 @@ describe('the query audit and the browsing level', () => {
     expect(track.action).not.toHaveBeenCalled();
   });
 
+  it('searched as typed, still refuses a flagged verdict before asking the index', async () => {
+    h.includesInappropriate.mockReturnValue('poi');
+    const { result, calls } = await run({ browsingLevel: ALL_LEVELS, spellcheck: false }, MOD);
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
   it('refuses, and records, a masked minor match for a non-moderator', async () => {
     h.includesInappropriate.mockReturnValue('poi');
     h.includesMinor.mockReturnValue(true);
