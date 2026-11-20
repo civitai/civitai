@@ -35,7 +35,8 @@ async function handler(
   const parsed = schema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: z.prettifyError(parsed.error) });
   const { nsfw, cursor, ...params } = parsed.data;
-  const parsedCursor = cursor != null ? parseComicsCursor(cursor, params.sort) : undefined;
+  // An empty cursor means the first page.
+  const parsedCursor = cursor ? parseComicsCursor(cursor, params.sort) : undefined;
   if (parsedCursor === null) return res.status(400).json({ error: 'Invalid cursor' });
 
   try {

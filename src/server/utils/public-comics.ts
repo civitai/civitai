@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import { challengeCoverWhere } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
 import { parseComicProjectMeta } from '~/server/schema/comics.schema';
 import {
@@ -65,18 +66,20 @@ function coverImage(
 }
 
 /**
- * The ids among `ids` whose image has finished scanning and is not held or in violation. A cover is
- * any image the creator picked, so unlike a page it has not passed the reader's panel check.
+ * The ids among `ids` a cover may show to anyone: scanned, and passing the shared cover rule (not held,
+ * not in violation, not minor-restricted). A cover is any image the creator picked, so unlike a page
+ * it has not passed the reader's panel check.
  */
 async function cleanImageIds(ids: (number | undefined)[]) {
   const wanted = ids.filter((id): id is number => id != null);
   if (!wanted.length) return new Set<number>();
   const rows = await dbRead.image.findMany({
     where: {
-      id: { in: wanted },
-      ingestion: ImageIngestionStatus.Scanned,
-      needsReview: null,
-      tosViolation: false,
+      AND: [
+        { id: { in: wanted } },
+        { ingestion: ImageIngestionStatus.Scanned },
+        challengeCoverWhere(),
+      ],
     },
     select: { id: true },
   });
@@ -250,7 +253,7 @@ export async function getPublicComicChapter(
   const chapter = comic?.chapters.find((ch) => ch.position === number - 1);
   if (!comic || !chapter || !fits(chapter.nsfwLevel, browsingLevel))
     return { status: 404 as const };
-  // The reader empties a locked chapter's panels by its own clock, which may run a moment ahead.
+  // Defensive: a chapter whose panels the reader emptied is locked; never answer it with no pages.
   const locked = chapter.panels.length === 0 && chapter.panelCount > 0;
   if (isInEarlyAccess(chapter, now) || locked)
     return { status: 403 as const, earlyAccessEndsAt: chapter.earlyAccessEndsAt };

@@ -7,6 +7,7 @@ vi.hoisted(() => {
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { minorContentNotRestrictedWhere } from '~/server/utils/minor-content-gate.sql';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import {
   comicsBrowsingLevel,
@@ -184,15 +185,22 @@ describe('covers', () => {
     expect((await getPublicComic(COMIC, publicBrowsingLevelsFlag, NOW))?.coverImage).toBeNull();
   });
 
-  it('asks only for scanned, unheld, non-violating images', async () => {
+  it('asks only for scanned images that pass the shared cover rule', async () => {
     serve(comic({ coverImage: cover(NsfwLevel.PG) }));
     await getPublicComic(COMIC, publicBrowsingLevelsFlag, NOW);
-    expect(dbMock.dbRead.image.findMany.mock.calls[0][0].where).toEqual({
-      id: { in: [COVER] },
-      ingestion: ImageIngestionStatus.Scanned,
-      needsReview: null,
-      tosViolation: false,
-    });
+    const { where } = dbMock.dbRead.image.findMany.mock.calls[0][0];
+    expect(where.AND.slice(0, 2)).toEqual([
+      { id: { in: [COVER] } },
+      { ingestion: ImageIngestionStatus.Scanned },
+    ]);
+    expect(where.AND[2].AND).toEqual(
+      expect.arrayContaining([
+        { needsReview: null },
+        { tosViolation: false },
+        { acceptableMinor: false },
+        minorContentNotRestrictedWhere(),
+      ])
+    );
   });
 });
 
@@ -325,6 +333,31 @@ describe('list items', () => {
       allowDownload: false,
     });
     expect(nextCursor).toBe('990000101');
+    expect(parseComicsCursor(nextCursor!, 'Newest')).toBe(990000101);
+  });
+
+  it('hands back a ranked cursor the next request accepts', async () => {
+    const rows = [990000102, 990000101, 990000100].map((id) => ({
+      ...comic({ id }),
+      chapters: [],
+      updatedAt: NOW,
+    }));
+    dbMock.dbRead.$queryRaw
+      .mockReset()
+      .mockImplementation((async (q: unknown) =>
+        Array.isArray(q)
+          ? []
+          : rows.map((r, i) => ({ id: r.id, rank_value: BigInt(9 - i) }))) as never);
+    dbMock.dbRead.comicProject.findMany.mockImplementation(async ({ select }) =>
+      select && 'meta' in select && !('chapters' in select) ? [] : rows
+    );
+    const { nextCursor } = await listPublicComics({
+      limit: 2,
+      sort: 'MostFollowed',
+      browsingLevel: publicBrowsingLevelsFlag,
+    });
+    expect(nextCursor).toBe('8:990000101');
+    expect(parseComicsCursor(nextCursor!, 'MostFollowed')).toBe('8:990000101');
   });
 });
 
