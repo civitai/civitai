@@ -208,8 +208,9 @@ export const challengeCoverWhere = (): Prisma.ImageWhereInput => ({
   AND: [
     { needsReview: null },
     { tosViolation: false },
-    imageNotFlaggedWhere(),
+    { acceptableMinor: false },
     { nsfwLevel: { notIn: COVER_EXCLUDED_LEVELS } },
+    minorContentNotRestrictedWhere(),
     {
       OR: [
         { postId: null },
@@ -397,6 +398,6 @@ export const minorMatureImageVisibleSql = (
 /** `imageNotFlaggedWhere` over an image already read. */
 export const isImageNotFlagged = (image: {
   acceptableMinor: boolean;
-  minor?: boolean | null;
+  minor: boolean | null;
   nsfwLevel: number;
 }) => !image.acceptableMinor && !isMinorMatureImage(image);
