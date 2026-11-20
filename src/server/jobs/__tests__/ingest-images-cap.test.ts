@@ -297,9 +297,9 @@ describe('ingest-images retry cap for a song waiting on its lyrics', () => {
 
   it('re-sends a song in Error under the cap', async () => {
     queue.rows = rows(1, 'Error');
-    mockDbWrite.$queryRaw.mockImplementationOnce(async () => [
-      songInError(getImageScanRetryLimit(lyricsFailureClass) - 1),
-    ]);
+    mockDbWrite.$queryRaw.mockImplementationOnce(
+      async () => [songInError(getImageScanRetryLimit(lyricsFailureClass) - 1)] as never
+    );
 
     await runJob();
 
@@ -308,9 +308,9 @@ describe('ingest-images retry cap for a song waiting on its lyrics', () => {
 
   it('never re-sends a song whose lyrics failures spent the cap, so it stays hidden in Error', async () => {
     queue.rows = rows(1, 'Error');
-    mockDbWrite.$queryRaw.mockImplementationOnce(async () => [
-      songInError(getImageScanRetryLimit(lyricsFailureClass)),
-    ]);
+    mockDbWrite.$queryRaw.mockImplementationOnce(
+      async () => [songInError(getImageScanRetryLimit(lyricsFailureClass))] as never
+    );
 
     await runJob();
 

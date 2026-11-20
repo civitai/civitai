@@ -83,7 +83,8 @@ beforeEach(() => {
   }) as never);
 });
 
-const read = () => getPostEditImages({ id: POST, user: { id: OWNER } as SessionUser });
+const read = () =>
+  getPostEditImages({ id: POST, user: { id: OWNER } as SessionUser, servableLevels: 31 });
 
 describe("the post editor's song covers", () => {
   it('carry each cover with its scan state, read in one query, and are not among the media', async () => {

@@ -68,7 +68,7 @@ vi.mock('~/components/Image/Detail/ImageDetailProvider', async (importOriginal) 
   useImageDetailContext: () => ({
     images: state.images ?? [state.image],
     items: mergeDetailItems(
-      (state.images ?? [state.image]) as { id: number; postId: number }[],
+      (state.images ?? [state.image]) as Parameters<typeof mergeDetailItems>[0],
       undefined
     ),
     navigateTo: () => undefined,

@@ -7,17 +7,19 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../../test/component-setup';
 import type * as PostEditProviderMod from '~/components/Post/EditV2/PostEditProvider';
+import { useGenerationPanelStore } from '~/store/generation-panel.store';
+import type * as TrpcModule from '~/utils/trpc';
+import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 
 const mocks = vi.hoisted(() => ({
   images: [] as unknown[],
   music: true,
-  open: vi.fn(),
-  setView: vi.fn(),
 }));
 
 vi.mock('~/components/Post/EditV2/PostEditProvider', async (orig) => ({
   ...(await orig<typeof PostEditProviderMod>()),
-  usePostEditStore: (selector: (state: unknown) => unknown) => selector({ images: mocks.images }),
+  usePostEditStore: (selector: (state: unknown) => unknown) =>
+    selector({ images: mocks.images, texts: [] }),
   usePostPreviewContext: () => ({ showPreview: false, toggleShowPreview: vi.fn() }),
 }));
 vi.mock('~/components/MediaUploadSettings/MediaUploadSettingsProvider', () => ({
@@ -27,9 +29,10 @@ vi.mock('~/providers/FeatureFlagsProvider', async (orig) => ({
   ...(await orig<object>()),
   useFeatureFlags: () => ({ music: mocks.music }),
 }));
-vi.mock('~/store/generation-graph.store', () => ({
-  generationGraphPanel: { open: mocks.open, setView: mocks.setView },
-}));
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../../../test/trpcProxyStub');
+  return { ...(await importOriginal<typeof TrpcModule>()), trpc: makeTrpcProxy() };
+});
 vi.mock('~/components/Post/EditV2/PostImageCards/AddedImage', () => ({
   AddedImage: ({ image }: { image: { type: string } }) => (
     <div>{image.type === 'audio' ? 'song card' : 'image card'}</div>
@@ -47,30 +50,32 @@ const addSongs = () => page.getByRole('button', { name: 'Add songs from the gene
 
 describe('adding more songs to a post', () => {
   beforeEach(() => {
-    mocks.open.mockReset();
-    mocks.setView.mockReset();
+    useGenerationPanelStore.setState({ opened: false, view: 'generate' });
     mocks.music = true;
   });
 
   test('a post with a song opens the generator queue', async () => {
     mocks.images = [added(1, 'image'), added(2, 'audio')];
-    renderWithProviders(<PostImageCards />);
+    renderWithProviders(
+      <SignedOutSessionProvider>
+        <PostImageCards />
+      </SignedOutSessionProvider>
+    );
     await userEvent.click(addSongs());
-    expect(mocks.open).toHaveBeenCalledTimes(1);
-    expect(mocks.setView).toHaveBeenCalledWith('queue');
+    expect(useGenerationPanelStore.getState()).toMatchObject({ opened: true, view: 'queue' });
   });
 
   test('the button has a visible 1px solid outline in both schemes', async () => {
     mocks.images = [added(2, 'audio')];
     renderWithProviders(
-      <>
+      <SignedOutSessionProvider>
         <div data-testid="light">
           <PostImageCards />
         </div>
         <div data-testid="dark" data-mantine-color-scheme="dark">
           <PostImageCards />
         </div>
-      </>
+      </SignedOutSessionProvider>
     );
     const transparent = (color: string) => color === 'transparent' || color === 'rgba(0, 0, 0, 0)';
     /** The colour behind the element: its own background, or the nearest painted ancestor's. */
@@ -95,7 +100,11 @@ describe('adding more songs to a post', () => {
 
   test('a post without songs has no button', async () => {
     mocks.images = [added(1, 'image')];
-    renderWithProviders(<PostImageCards />);
+    renderWithProviders(
+      <SignedOutSessionProvider>
+        <PostImageCards />
+      </SignedOutSessionProvider>
+    );
     await expect.element(page.getByText('image card')).toBeVisible();
     await expect.element(addSongs()).not.toBeInTheDocument();
   });
@@ -103,7 +112,11 @@ describe('adding more songs to a post', () => {
   test('without the music flag there is no button', async () => {
     mocks.music = false;
     mocks.images = [added(2, 'audio')];
-    renderWithProviders(<PostImageCards />);
+    renderWithProviders(
+      <SignedOutSessionProvider>
+        <PostImageCards />
+      </SignedOutSessionProvider>
+    );
     await expect.element(page.getByText('song card')).toBeVisible();
     await expect.element(addSongs()).not.toBeInTheDocument();
   });

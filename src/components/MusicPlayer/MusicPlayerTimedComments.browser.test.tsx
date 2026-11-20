@@ -64,7 +64,7 @@ const timed = (id: number, timestampSec: number, username: string, text: string)
     id,
     timestampSec,
     text,
-    user: { id: 100 + id, username, image: null, profilePicture: null },
+    user: { id: 100 + id, username, image: null, profilePicture: null as never },
   } satisfies PlayerTimedComment);
 
 const player = () => useMusicPlayerStore.getState();

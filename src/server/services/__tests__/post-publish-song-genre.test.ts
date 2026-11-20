@@ -88,8 +88,11 @@ beforeEach(async () => {
     where: { postId?: unknown; type?: string };
   }) =>
     where.type === 'audio' && where.postId === POST
-      ? (await pg.db.query(`SELECT metadata FROM "Image" WHERE "postId" = $1 AND type = 'audio'`, [POST]))
-          .rows
+      ? (
+          await pg.db.query(`SELECT metadata FROM "Image" WHERE "postId" = $1 AND type = 'audio'`, [
+            POST,
+          ])
+        ).rows
       : []) as never);
   dbMock.dbWrite.post.findUnique.mockImplementation(
     (async () =>

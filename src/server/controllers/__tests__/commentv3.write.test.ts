@@ -560,7 +560,7 @@ describe('commentv3 create with a time on a song', () => {
   });
 
   it('refuses a time while songs are off for the writer', async () => {
-    await expect(onSong({ timestampSec: 3 }, {})).rejects.toMatchObject({
+    await expect(onSong({ timestampSec: 3 }, { music: false })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
       message: SONGS_UNAVAILABLE_MESSAGE,
     });

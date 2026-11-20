@@ -61,7 +61,7 @@ const storedReviewed = async () => {
     sql.values
   );
   const { reviewed, feedGo, ...row } = rows[0];
-  const ts = isImageReviewed({ ...row, nsfwLevelReason: null });
+  const ts = isImageReviewed({ ...row, type: 'image', lyricsHeld: false, nsfwLevelReason: null });
   expect(ts, 'isImageReviewed agrees with imageReviewedSql').toBe(reviewed);
   expect(feedGo, "feed-go's ImageReviewedSQL agrees with imageReviewedSql").toBe(reviewed);
   return reviewed;

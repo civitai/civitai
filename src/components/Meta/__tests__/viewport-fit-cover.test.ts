@@ -103,6 +103,10 @@ const INSET_CONSUMERS = [
   // The up-next panel floats above that bar (fixed, bottom-anchored), so its offset and max height
   // add the same bottom inset the bar pays beneath it.
   'src/components/MusicPlayer/MusicUpNextPanel.tsx',
+  // The phone now-playing and Up next sheets are bottom drawers that reach the screen edge, so
+  // their last row pads the home indicator's inset.
+  'src/components/MusicPlayer/MusicNowPlayingSheet.tsx',
+  'src/components/MusicPlayer/MusicUpNextSheet.tsx',
   // The ONE node_modules viewport-edge surface paid at its call site rather
   // than at the `@layer mantine` seam: `@mantine/nprogress` renders a
   // `<Progress>`, so its static class is `mantine-Progress-root` — shared with

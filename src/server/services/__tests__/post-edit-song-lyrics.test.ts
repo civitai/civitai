@@ -48,7 +48,11 @@ describe("the post editor's songs", () => {
       { imageId: 1, lines },
     ] as never);
 
-    const images = await getPostEditImages({ id: 1, user: { id: 1 } as SessionUser });
+    const images = await getPostEditImages({
+      id: 1,
+      user: { id: 1 } as SessionUser,
+      servableLevels: 31,
+    });
 
     expect(images.map((x) => [x.id, x.lyrics])).toEqual([
       [1, lines],
@@ -68,7 +72,11 @@ describe("the post editor's songs", () => {
       { imageId: 2, lines },
     ] as never);
 
-    const images = await getPostEditImages({ id: 1, user: { id: 1 } as SessionUser });
+    const images = await getPostEditImages({
+      id: 1,
+      user: { id: 1 } as SessionUser,
+      servableLevels: 31,
+    });
 
     expect(images.map((x) => [x.id, x.lyrics])).toEqual([
       [1, null],
@@ -79,7 +87,11 @@ describe("the post editor's songs", () => {
   it('skip the lyrics read for a post without songs', async () => {
     vi.mocked(dbMock.dbRead.image.findMany).mockResolvedValue([row(3, 'image')] as never);
 
-    const images = await getPostEditImages({ id: 1, user: { id: 1 } as SessionUser });
+    const images = await getPostEditImages({
+      id: 1,
+      user: { id: 1 } as SessionUser,
+      servableLevels: 31,
+    });
 
     expect(images[0].lyrics).toBeNull();
     expect(dbMock.dbRead.trackLyrics.findMany).not.toHaveBeenCalled();

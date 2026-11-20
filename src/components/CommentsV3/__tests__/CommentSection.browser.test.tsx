@@ -120,6 +120,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ canWrite: true }),
+  useOptionalFeatureFlags: () => ({ canWrite: true }),
 }));
 vi.mock('~/components/CommentsV3/CommentComposer', () => ({
   CommentComposer: () => <div data-testid="composer" />,

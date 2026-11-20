@@ -19,7 +19,15 @@ import clsx from 'clsx';
 
 export const UNTITLED_SONG = 'Untitled song';
 
-export function SongStat({ icon, count, label }: { icon: React.ReactNode; count: number; label: string }) {
+export function SongStat({
+  icon,
+  count,
+  label,
+}: {
+  icon: React.ReactNode;
+  count: number;
+  label: string;
+}) {
   return (
     <span className="flex items-center gap-1" aria-label={`${count} ${label}`}>
       {icon}

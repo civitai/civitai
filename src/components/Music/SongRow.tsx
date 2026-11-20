@@ -14,6 +14,7 @@ import { songTextBright, songTextDimmed } from '~/components/Music/song-styles';
 import { Equalizer, SongArt, songCreatorHref } from '~/components/MusicPlayer/MusicPlayerParts';
 import { songTrack } from '~/components/MusicPlayer/PostSong';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { readSongGenre } from '~/shared/constants/song-genres';
 import { useMusicPlayerStore } from '~/store/music-player.store';
@@ -36,8 +37,12 @@ export const SongRow = memo(function SongRow({
   const plays = useFeedSongPlays(data.id);
   const isCurrent = useMusicPlayerStore((s) => s.current?.id === data.id);
   const playing = useMusicPlayerStore((s) => s.current?.id === data.id && s.playing);
+  const impressionRef = useTrackImpression([{ entityType: 'Image', entityId: data.id }]);
   return (
-    <div className="group flex h-16 items-center gap-3.5 rounded-lg px-3 py-2 hover:bg-gray-1 dark:hover:bg-dark-5">
+    <div
+      ref={impressionRef}
+      className="group flex h-16 items-center gap-3.5 rounded-lg px-3 py-2 hover:bg-gray-1 dark:hover:bg-dark-5"
+    >
       <span
         className={clsx(
           'flex w-5 shrink-0 justify-center text-base font-bold tabular-nums',

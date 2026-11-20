@@ -91,7 +91,7 @@ const read = (
 ) =>
   getSongCoversForPlayer({
     ids,
-    ctx: { user, features: { canViewNsfw } as never, req: { headers: {} } as never },
+    ctx: { user, features: { canViewNsfw }, req: { headers: {} } } as never,
   });
 
 describe('the global player reads song covers', () => {

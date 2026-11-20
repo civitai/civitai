@@ -25,7 +25,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const { withSongCoversStub } = await import(
     '../../../MusicPlayer/__tests__/song-covers-trpc-stub'
   );
-  return { ...actual, trpc: withSongCoversStub(makeTrpcProxy()) };
+  return { ...actual, trpc: withSongCoversStub(makeTrpcProxy() as typeof actual.trpc) };
 });
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowsingLevelProvider>()),
