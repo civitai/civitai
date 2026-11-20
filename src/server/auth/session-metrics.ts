@@ -147,11 +147,13 @@ export function observeSessionStateUpdate(
 const rollFailedCounter = registerCounterWithLabels({
   name: 'session_roll_failed_total',
   help:
-    'Rolling session refreshes that did not return a fresh token: declined (the hub refused) or unreachable. ' +
+    'Rolling session refreshes that did not return a fresh token: declined (the hub refused), unavailable ' +
+    '(the hub answered 503 and asked for a retry) or unreachable. ' +
     'The user keeps the current token, so nothing else shows these.',
   labelNames: ['reason'] as const,
 });
-for (const reason of ['declined', 'unreachable'] as const) rollFailedCounter.inc({ reason }, 0);
+for (const reason of ['declined', 'unavailable', 'unreachable'] as const)
+  rollFailedCounter.inc({ reason }, 0);
 
 export function observeSessionRollFailed(reason: RefreshFailure): void {
   rollFailedCounter.inc({ reason });

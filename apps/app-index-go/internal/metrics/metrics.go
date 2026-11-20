@@ -15,7 +15,8 @@ import (
 var EventTypes = []string{"upsert", "delete", "live", "progress", "end", "invalid"}
 
 // ReconnectReasons are the `reason` values of app_index_reconnects_total.
-var ReconnectReasons = []string{"unavailable", "slow_consumer", "end", "bad_request", "auth", "store", "cursor_expired"}
+// `token` is a token that could not be fetched (no subscription was opened).
+var ReconnectReasons = []string{"unavailable", "slow_consumer", "end", "bad_request", "auth", "store", "cursor_expired", "token"}
 
 // RebuildReasons are the `reason` values of app_index_rebuilds_total.
 var RebuildReasons = []string{"first_start", "cursor_expired", "layout", "empty_cursor"}
@@ -23,6 +24,9 @@ var RebuildReasons = []string{"first_start", "cursor_expired", "layout", "empty_
 // MalformedTypes are the `type` values of app_index_malformed_events_total: the type an event that
 // could not be decoded was sent as.
 var MalformedTypes = []string{"upsert", "delete", "live", "progress"}
+
+// TokenFetchOutcomes are the `outcome` values of app_index_token_fetches_total.
+var TokenFetchOutcomes = []string{"ok", "error"}
 
 // SearchOutcomes are the `outcome` values of app_index_search_requests_total.
 var SearchOutcomes = []string{"ok", "bad_request", "not_ready", "error"}
@@ -37,6 +41,8 @@ type Metrics struct {
 	Rebuilds   *prometheus.CounterVec
 	Searches   *prometheus.CounterVec
 	SearchTime prometheus.Histogram
+	// TokenFetches counts calls to the token endpoint (only with client credentials configured).
+	TokenFetches *prometheus.CounterVec
 
 	lastEvent atomic.Int64 // unix nanos of the last applied event; 0 = none yet
 	now       func() time.Time
@@ -73,6 +79,10 @@ func New(reg prometheus.Registerer) *Metrics {
 			Name: "app_index_search_requests_total",
 			Help: "GET /search requests, by outcome.",
 		}, []string{"outcome"}),
+		TokenFetches: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "app_index_token_fetches_total",
+			Help: "Calls to the token endpoint for the index's own client-credentials token, by outcome: one at start, one before each expiry, one after each invalid_token. Zero when no client is configured.",
+		}, []string{"outcome"}),
 		SearchTime: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "app_index_search_duration_seconds",
 			Help:    "GET /search latency.",
@@ -90,7 +100,7 @@ func New(reg prometheus.Registerer) *Metrics {
 		}
 		return m.now().Sub(time.Unix(0, last)).Seconds()
 	})
-	reg.MustRegister(m.Applied, m.Malformed, m.Generation, m.Ready, m.Reconnects, m.Rebuilds, m.Searches, m.SearchTime, age)
+	reg.MustRegister(m.Applied, m.Malformed, m.Generation, m.Ready, m.Reconnects, m.Rebuilds, m.Searches, m.SearchTime, m.TokenFetches, age)
 	// Seed every label value, so a count that never moved reads 0 rather than an absent series.
 	for _, v := range EventTypes {
 		m.Applied.WithLabelValues(v)
@@ -107,7 +117,19 @@ func New(reg prometheus.Registerer) *Metrics {
 	for _, v := range SearchOutcomes {
 		m.Searches.WithLabelValues(v)
 	}
+	for _, v := range TokenFetchOutcomes {
+		m.TokenFetches.WithLabelValues(v)
+	}
 	return m
+}
+
+// TokenFetched counts one call to the token endpoint (token.Source.OnFetch).
+func (m *Metrics) TokenFetched(err error) {
+	if err != nil {
+		m.TokenFetches.WithLabelValues("error").Inc()
+		return
+	}
+	m.TokenFetches.WithLabelValues("ok").Inc()
 }
 
 // EventApplied counts one applied event and stamps the last-event time.

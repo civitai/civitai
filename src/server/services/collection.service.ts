@@ -144,6 +144,10 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { assertUserChallengeAcceptingEntries } from '~/server/games/daily-challenge/challenge-entry-gate';
+import {
+  getIncompatibleEntryImageIds,
+  INCOMPATIBLE_BASE_MODEL_MESSAGE,
+} from '~/server/games/daily-challenge/challenge-resource-compat';
 import { detachPostsFromCollection } from '~/server/services/collection-post-detach';
 import { liveInviteWhere } from '~/server/services/collection-invite.utils';
 import {
@@ -3692,6 +3696,13 @@ export const validateContestCollectionEntry = async ({
           "This image doesn't use a required model for this challenge. The model has to be readable from the image's own generation metadata — a resource credited by hand doesn't count. Generate on site, or re-upload the image with its metadata intact."
         );
       }
+      // Primary: a missing checkpoint row passes this check, and the fee below is never refunded.
+      const incompatible = await getIncompatibleEntryImageIds(
+        imageIds,
+        resourceChallenge.modelVersionIds,
+        dbWrite
+      );
+      if (incompatible.size > 0) throw throwBadRequestError(INCOMPATIBLE_BASE_MODEL_MESSAGE);
     }
   }
 

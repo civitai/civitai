@@ -34,8 +34,8 @@ export function imageBlockedForConditions({
 
 /**
  * Which images attached to an entity (a bounty, a bounty entry) a viewer is served, as SQL over
- * `"Image" i`. Held, unscanned, unrated, blocked and minor-restricted images are the owner's and
- * moderators' alone; base-model restricted images are the owner's alone.
+ * `"Image" i`. Held, unscanned, unrated, blocked, acceptable-minor and minor-restricted images are
+ * the owner's and moderators' alone; base-model restricted images are the owner's alone.
  */
 export function entityImageVisibilityConditions({
   userId,
@@ -58,7 +58,10 @@ export function entityImageVisibilityConditions({
             [Prisma.sql`i."needsReview" IS NULL`, Prisma.sql`i."userId" = ${userId}`],
             ' OR '
           )})`
-        : Prisma.sql`(${Prisma.join([Prisma.sql`i."needsReview" IS NULL`], ' OR ')})`
+        : Prisma.sql`(${Prisma.join([Prisma.sql`i."needsReview" IS NULL`], ' OR ')})`,
+      userId
+        ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
+        : Prisma.sql`i."acceptableMinor" = FALSE`
     );
   }
   AND.push(...imageBlockedForConditions({ userId, isModerator }));

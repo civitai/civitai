@@ -639,6 +639,11 @@ export const serverSchema = z
     // The fraction (0-1) of index-answered store searches that also read the database grid page,
     // off the response path, to log how the two result sets compare. 0 = never.
     APP_INDEX_SEARCH_COMPARE_SAMPLE: z.coerce.number().min(0).max(1).default(0.1),
+    // The per-process breaker around the app index call: after this many consecutive index
+    // failures (timeouts included) store searches skip the index for the cooldown below, then
+    // one search probes it.
+    APP_INDEX_BREAKER_FAILURE_THRESHOLD: z.coerce.number().int().min(1).default(5),
+    APP_INDEX_BREAKER_COOLDOWN_MS: z.coerce.number().int().min(1000).default(30_000),
     // Debounce window (ms) for flushing model-metric-affected ids into the
     // model search-index update queue. The model metric processor runs every
     // minute and accumulates every model whose ModelVersionMetric.updatedAt

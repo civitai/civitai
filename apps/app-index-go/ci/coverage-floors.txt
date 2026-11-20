@@ -12,3 +12,4 @@ internal/config 97
 internal/index 76
 internal/registry 98
 internal/store 51
+internal/token 88

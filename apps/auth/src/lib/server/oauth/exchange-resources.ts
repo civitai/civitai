@@ -11,9 +11,11 @@ import { carriesNonUserScope } from './scope';
 //   apps          — clients whose user tokens may be exchanged for this resource;
 //   relays        — clients that may exchange another listed app's token (the JWT names them in `act`);
 //   introspectors — clients that may introspect the resulting JWTs;
-//   services      — service clients that may get a token for the resource as themselves (optional).
-// Validation is all or nothing: one bad entry and no resource is registered. `services` is the exception:
-// a bad one empties that resource's `services` only.
+//   services      — service clients that may get a token for the resource as themselves (optional);
+//   serviceSubjects — service clients whose own token (no user) a relay may exchange for this resource
+//                   (client-exchange.ts; optional, default none, so by default no such token is exchanged).
+// Validation is all or nothing: one bad entry and no resource is registered. `services` and
+// `serviceSubjects` are the exception: a bad one empties that resource's list only.
 
 export interface ExchangeResource {
   resource: string;
@@ -23,6 +25,11 @@ export interface ExchangeResource {
   relays: string[];
   introspectors: string[];
   services: ServiceEntry[];
+  /**
+   * Service clients whose own tokens (a client as itself, no user) may be exchanged for this resource
+   * by one of its relays (client-exchange.ts). Empty unless listed.
+   */
+  serviceSubjects: string[];
 }
 
 /** A service client's token for one resource: what it may hold, and the identity its tokens carry. */
@@ -167,6 +174,42 @@ function attachServices(resources: ExchangeResource[], rawServices: unknown[]): 
 }
 
 /**
+ * Fill in each resource's `serviceSubjects` from the raw lists. A list that is not a list of service client
+ * ids, repeats one, or names an app or relay of any resource is dropped (that resource gets none), and the
+ * reason is returned; the other resources and lists are untouched.
+ */
+function attachServiceSubjects(resources: ExchangeResource[], rawLists: unknown[]): string[] {
+  const errors: string[] = [];
+  const userClients = new Set(resources.flatMap((r) => [...r.apps, ...r.relays]));
+  for (const [i, resource] of resources.entries()) {
+    const raw = rawLists[i] ?? [];
+    const fail = (why: string) =>
+      errors.push(`${resource.resource}: serviceSubjects ignored: ${why}`);
+    if (!Array.isArray(raw)) {
+      fail('serviceSubjects must be a list');
+      continue;
+    }
+    const bad = raw.find((id) => typeof id !== 'string' || !SERVICE_CLIENT_ID.test(id));
+    if (bad !== undefined) {
+      fail('a service client id must be a lowercase random UUID');
+      continue;
+    }
+    const ids = raw as string[];
+    const user = ids.find((id) => userClients.has(id));
+    if (user !== undefined) {
+      fail(`${user} is also an app or relay`);
+      continue;
+    }
+    if (new Set(ids).size !== ids.length) {
+      fail('a client is listed twice');
+      continue;
+    }
+    resource.serviceSubjects = ids;
+  }
+  return errors;
+}
+
+/**
  * The registry parsed from `raw`, or the first reason it is invalid. `serviceErrors` lists the resources
  * whose `services` were dropped, and why.
  */
@@ -184,6 +227,7 @@ export function parseExchangeResources(
 
   const resources: ExchangeResource[] = [];
   const rawServices: unknown[] = [];
+  const rawServiceSubjects: unknown[] = [];
   const seen = new Set<string>();
   for (const entry of parsed) {
     if (!entry || typeof entry !== 'object') return { error: 'each entry must be an object' };
@@ -207,10 +251,14 @@ export function parseExchangeResources(
     }
     if (lists.apps.length === 0) return { error: `${resource}: apps must not be empty` };
 
-    resources.push({ resource, scopes, ...lists, services: [] });
+    resources.push({ resource, scopes, ...lists, services: [], serviceSubjects: [] });
     rawServices.push(e.services);
+    rawServiceSubjects.push(e.serviceSubjects);
   }
-  const serviceErrors = attachServices(resources, rawServices);
+  const serviceErrors = [
+    ...attachServices(resources, rawServices),
+    ...attachServiceSubjects(resources, rawServiceSubjects),
+  ];
   return { resources, serviceErrors };
 }
 

@@ -293,7 +293,6 @@ import {
 import type {
   DomainColor,
   ModelType,
-  ReportReason,
   ReviewReactions,
   CollectionItemStatus,
 } from '~/shared/utils/prisma/enums';
@@ -308,6 +307,7 @@ import {
   JobQueueType,
   MediaType,
   NewOrderRankType,
+  ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import {
@@ -1370,7 +1370,8 @@ export async function writeModeratorBlock(
         ingestion = 'Blocked',
         "nsfwLevel" = ${NsfwLevel.Blocked},
         "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
-        "updatedAt" = NOW()
+        "updatedAt" = NOW(),
+        "metadata" = CASE WHEN jsonb_typeof("metadata") = 'object' THEN "metadata" - 'ruleId' - 'ruleReason' ELSE "metadata" END
       WHERE id = ANY(${ids}::int[])
     `;
     // A statement of its own, after the UPDATE took the row locks: one that waited on a dismissal
@@ -1530,6 +1531,24 @@ export async function handleBlockImages({
         activity: 'review',
       });
     }
+
+    // A moderator's removal settles the images' open TOS reports, as the reports queue does. Held
+    // images and those under the review flag keep theirs for the CSAM queue; an account-wide removal
+    // moves none. Last, so a failure cannot fail a removal that has already notified the owners.
+    if (moderatorId && !!imageIds?.length)
+      await actionPendingTosReports(
+        ids.filter((id) => !held.has(id) && !underReview.has(id)),
+        moderatorId
+      ).catch((e: unknown) =>
+        logToAxiom({
+          type: 'error',
+          // Only the reads before the status UPDATE can throw: the rewards after it are allSettled and
+          // the resolved-marker write catches its own error. So every report is still Pending.
+          name: 'block-images-reports-not-settled',
+          imageIds: ids,
+          error: safeError(e),
+        })
+      );
   });
 
   if (moderatorId && userId) {
@@ -1669,6 +1688,48 @@ export const updateImageReportStatusByReason = ({
     RETURNING id, "userId"
   `;
 };
+
+/** Actions the Pending TOS reports on these images and pays their reporters, filer and co-reporters,
+ *  through `bulkSetReportStatus`: a report another path has moved since is left as it is. A report on
+ *  a banned owner's image closes unpaid, as the moderator app's report queue closes it: the ban
+ *  removed the image, not a ruling on the report. */
+export const actionPendingTosReports = async (ids: number[], actorId: number) => {
+  if (!ids.length) return;
+  // On the primary: a ban from moments ago may not have reached a replica.
+  const reports = await dbWrite.$queryRaw<{ id: number; ownerBanned: boolean }[]>`
+    SELECT r.id, bool_or(u."bannedAt" IS NOT NULL) AS "ownerBanned" FROM "Report" r
+    JOIN "ImageReport" i ON i."reportId" = r.id
+    JOIN "Image" img ON img.id = i."imageId"
+    LEFT JOIN "User" u ON u.id = img."userId"
+    WHERE i."imageId" = ANY(${ids}::int[])
+      AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
+      AND r.status = ${ReportStatus.Pending}::"ReportStatus"
+    GROUP BY r.id
+  `;
+  const unpaid = new Set(reports.filter((r) => r.ownerBanned).map((r) => r.id));
+  const moved = await bulkSetReportStatus({
+    ids: reports.map((r) => r.id),
+    status: ReportStatus.Actioned,
+    userId: actorId,
+    fromStatus: ReportStatus.Pending,
+    rewardRemovedReporters: false,
+    paysNoReporter: (reportId) => unpaid.has(reportId),
+  });
+  // The moderator app's resolved marker, so a lagging replica does not hand them back to its queue.
+  if (moved.length)
+    await redis
+      .hSetMultiWithExpire(
+        REDIS_KEYS.REPORT.RESOLVED_RECENT,
+        moved.flatMap((id) => [String(id), '1']),
+        REPORT_RESOLVED_MARKER_TTL_SECONDS
+      )
+      .catch((e: unknown) =>
+        logToAxiom({ type: 'error', name: 'report-resolved-marker', error: safeError(e) })
+      );
+};
+
+/** The moderator app's `RESOLVED_MARKER_TTL_SECONDS`. */
+const REPORT_RESOLVED_MARKER_TTL_SECONDS = 300;
 
 /** The image's reports for one reason that are not yet actioned. */
 export const getOpenImageReportIds = async (id: number, reason: ReportReason) => {
@@ -5865,6 +5926,7 @@ export const getEntityCoverImage = async ({
             AND ${coverRated}
             AND ${withinHeldGallery}
             AND ${baseModelAllowed}
+            AND ${coverNotBlocked}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
             AND (

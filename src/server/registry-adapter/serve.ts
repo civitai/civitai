@@ -259,7 +259,7 @@ export function handleRequest(
         }
       );
       slot?.claim(principal.subject);
-      opts.onRegion?.(subscriptionRegionLine('http', origin, restricted));
+      opts.onRegion?.(subscriptionRegionLine('http', origin, restricted, principal));
       runShadow(opts.policyShadow, { origin, principal, held: restricted(origin) });
       const open = openStream(res, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       stream = open;
