@@ -25,8 +25,7 @@ const SHOW_AGAIN_AFTER_MS = 12 * 60 * 60 * 1000;
 export const EXCLUDED_ROUTE =
   /^\/(generate|purchase|pricing|payment|redeem-code|claim|train|training|training-studio|avatar-generator|comics\/project|models\/train|user\/(notifications|account|membership|stripe-connect))\b|\/(create|edit|wizard)\b/;
 
-// Behind creatorServicesNext a deal in Requested asks inline (PushSoftAsk); the visit prompt stays off
-// every deal page for those viewers, as the plan picked.
+// creatorServicesNext viewers are asked inline on a Requested deal instead.
 const DEAL_FLOW_ROUTE = /^\/services\/deals\b/;
 
 export const isPushRouteExcluded = (pathname: string, servicesNext: boolean) =>

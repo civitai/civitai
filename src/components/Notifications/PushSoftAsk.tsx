@@ -19,7 +19,6 @@ export function PushSoftAsk({
   const { support, permission, active } = usePushSubscription();
   const { data: settings, isLoading } = trpc.user.getSettings.useQuery();
 
-  // Installing to the Home Screen is a settings-page errand, not something to raise mid-deal.
   if (support === 'needs-standalone' && surface === 'settings-card') {
     return (
       <Paper withBorder p="md" radius="md">
