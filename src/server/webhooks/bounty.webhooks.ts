@@ -1,4 +1,5 @@
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import { connectionImageExists } from '~/server/selectors/image.selector';
 import { publicBountyDetails } from '~/server/utils/bounty-details';
 import type { BountyDetailsSchema } from '~/server/schema/bounty.schema';
 import { getBountyDetailsSelect } from '~/server/selectors/bounty.selector';
@@ -28,6 +29,7 @@ export const bountyWebhooks = createWebhookProcessor({
         where: {
           entityType: 'bounty',
           entityId: { in: bounties.map((b) => b.id) },
+          ...connectionImageExists,
         },
         select: { image: { select: { url: true, index: true } }, entityId: true },
       });
