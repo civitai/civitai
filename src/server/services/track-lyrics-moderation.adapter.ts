@@ -27,8 +27,8 @@ async function removeHeldSongFromSearch(imageId: number) {
 }
 
 /**
- * A song's lyrics: their text-scan verdict is what a song with lyrics waits on to go public. A csam
- * detection is held for a moderator and the held song leaves search.
+ * A song's lyrics: their verdict, from the text scan or XGuard, is what a song with lyrics waits on to
+ * go public. A text-scan csam detection is held for a moderator and the held song leaves search.
  */
 export const trackLyricsModerationAdapter: ModerationAdapter = {
   resolveContent: async (ids) => {
@@ -43,6 +43,11 @@ export const trackLyricsModerationAdapter: ModerationAdapter = {
   submit: ({ entityId }) => submitTrackLyricsScan({ imageId: entityId, fromRetry: true }),
 
   applyFailure: async ({ entityId }) => {
+    await decideSong(entityId);
+  },
+
+  // XGuard's verdict, while the text scan is off or in shadow for the lyrics: a block blocks the song.
+  applyResult: async ({ entityId }) => {
     await decideSong(entityId);
   },
 

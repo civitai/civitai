@@ -26,7 +26,7 @@ import {
 } from '~/server/services/audio-scan/apply-song-scan';
 import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import type { AudioScanParse } from '~/server/services/video-audio-scan.service';
-import { NsfwLevel } from '~/server/common/enums';
+import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 
 const song = (over: Record<string, unknown> = {}) => ({
   id: 7,
@@ -172,13 +172,30 @@ describe('a song with lyrics', () => {
     );
   });
 
-  it('is Scanned at PG whatever the lyrics verdict flagged: it is recorded, never a block', async () => {
-    withLyrics({ status: 'Succeeded', blocked: true });
+  it('is Scanned at PG whatever a text-scan verdict flagged: it is recorded, never a block', async () => {
+    withLyrics({ status: 'Succeeded', blocked: false });
+    dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({
+      status: 'Succeeded',
+      blocked: false,
+      triggeredLabels: ['nsfw'],
+    } as never);
 
     await run(scanned(false));
 
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ fixed: { nsfwLevel: NsfwLevel.PG } })
+    );
+  });
+
+  it('is blocked when XGuard, the fallback while the text scan is off, blocked its lyrics', async () => {
+    withLyrics({ status: 'Succeeded', blocked: true });
+
+    await run(scanned(false));
+
+    expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fixed: { nsfwLevel: NsfwLevel.Blocked, blockedFor: BlockedReason.TOS },
+      })
     );
   });
 });

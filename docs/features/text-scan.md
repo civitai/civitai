@@ -48,11 +48,11 @@ Storyline's (title → a rating and a takedown or restriction on the storyline) 
 ImageCaption's (an author's caption on one image of a storyline chapter, keyed by `imageId` → a
 rating, and a refusal that hides the caption) is applied by `text-scan/actions/image-caption.ts`. It
 has no Clavata counterpart.
-TrackLyrics's (a song's lyrics, keyed by the song's `imageId` → `nsfw`, `csam`) has no XGuard
-fallback: only an active verdict reaches the song, which waits on it before going public
-(`audio-scan/apply-song-scan.ts`). The `nsfw` verdict is recorded and never rates or blocks the song.
-Off or in shadow, the lyrics get no verdict, and the song ends in Error, hidden, once the image scan's
-capped retry is spent.
+TrackLyrics's (a song's lyrics, keyed by the song's `imageId` → `nsfw`, `csam`) verdict is what the
+song waits on before going public (`audio-scan/apply-song-scan.ts`). The `nsfw` verdict is recorded
+and never rates or blocks the song. Off or in shadow, the lyrics fall back to XGuard like other
+entities: its verdict decides the song too, and lyrics it blocks block the song. Only the text scan
+holds lyrics for `csam`.
 ServiceOffering's (a Creator Services offering's title and description → `nsfw`) feeds the
 offering's rating, which is the highest of the seller's pick, this verdict and its cover image's
 level. The offering is shown once its content checks complete. Off or in shadow, XGuard runs, as for

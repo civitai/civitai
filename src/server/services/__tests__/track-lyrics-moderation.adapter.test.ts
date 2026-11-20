@@ -87,8 +87,16 @@ describe('the TrackLyrics moderation adapter', () => {
     expect(mocks.decide).toHaveBeenCalledWith(7);
   });
 
-  it('takes no XGuard verdict: lyrics are scanned by the text scan alone', () => {
-    expect(getModerationAdapter('TrackLyrics')!.applyResult).toBeUndefined();
+  it('decides the song on an XGuard verdict, the fallback while the text scan is off', async () => {
+    await getModerationAdapter('TrackLyrics')!.applyResult!({
+      entityId: 7,
+      workflowId: 'wf',
+      blocked: true,
+      triggeredLabels: [],
+      output: {} as never,
+    });
+
+    expect(mocks.decide).toHaveBeenCalledWith(7);
   });
 
   it('re-sends lyrics from the retry cron through the text scan', async () => {

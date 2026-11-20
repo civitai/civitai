@@ -1,8 +1,10 @@
 import { SONG_LYRICS_MAX_LENGTH } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
-import { getTextScanMode } from '~/server/services/text-scan/mode';
-import { toSubmittedWorkflow } from '~/server/services/text-scan/route';
-import { scanEntity } from '~/server/services/text-scan/submit';
+import { submitTextModeration } from '~/server/services/text-moderation.service';
+import {
+  submitTextModerationOrScan,
+  TEXT_SCAN_ENTITY_GONE,
+} from '~/server/services/text-scan/route';
 import { parseLyricLines } from '~/shared/form-graph/generation/audio/song-metadata';
 import { EntityModerationStatus, TrackLyricsSource } from '~/shared/utils/prisma/enums';
 
@@ -36,7 +38,10 @@ export async function saveGeneratedTrackLyrics({
   return true;
 }
 
-/** Sends a song's lyrics to the text scan, the only scan that gives them a verdict. */
+/**
+ * Sends a song's lyrics for their verdict: the text scan while it is active for them, XGuard
+ * otherwise, so a verdict always comes.
+ */
 export async function submitTrackLyricsScan({
   imageId,
   fromRetry,
@@ -44,26 +49,39 @@ export async function submitTrackLyricsScan({
   imageId: number;
   fromRetry?: boolean;
 }) {
-  return toSubmittedWorkflow(
-    await scanEntity({ entityType: TRACK_LYRICS_ENTITY_TYPE, entityId: imageId, fromRetry })
-  );
+  return submitTextModerationOrScan({
+    entityType: TRACK_LYRICS_ENTITY_TYPE,
+    entityId: imageId,
+    fromRetry,
+    xguard: async () => {
+      // primary: the lyrics are written just before their scan is submitted
+      const lyrics = await dbWrite.trackLyrics.findUnique({
+        where: { imageId },
+        select: { text: true },
+      });
+      if (!lyrics) return TEXT_SCAN_ENTITY_GONE;
+      return submitTextModeration({
+        entityType: TRACK_LYRICS_ENTITY_TYPE,
+        entityId: imageId,
+        content: lyrics.text,
+        rearmRetries: !fromRetry,
+      });
+    },
+  });
 }
 
-/**
- * Sends a song's lyrics, throwing when no verdict will come so the song's capped retry counts the
- * attempt. Only an active scan's verdict reaches the song; a shadow one is recorded apart.
- */
+/** Sends a song's lyrics, throwing when no verdict will come so the song's capped retry counts the attempt. */
 export async function sendTrackLyricsScan(imageId: number) {
-  const active = (await getTextScanMode(TRACK_LYRICS_ENTITY_TYPE, imageId)) === 'active';
-  const workflow = active ? await submitTrackLyricsScan({ imageId }) : null;
-  if (!workflow?.id) throw new Error('lyrics scan not sent: the text scan is off or skipped them');
+  const workflow = await submitTrackLyricsScan({ imageId });
+  if (!workflow?.id) throw new Error('lyrics scan not sent: it was skipped or failed to submit');
 }
 
 export type LyricsVerdict =
   | { state: 'none' }
   /** `failed`: the last scan ended without a verdict; neither it nor `inFlight` means never sent. */
   | { state: 'pending'; inFlight: boolean; failed: boolean }
-  | { state: 'scanned' };
+  /** `blocked`: XGuard blocked them; a text-scan verdict never blocks. */
+  | { state: 'scanned'; blocked: boolean };
 
 /** Where a song's lyrics verdict stands; `none` for a song without lyrics. */
 export async function readLyricsVerdict(imageId: number): Promise<LyricsVerdict> {
@@ -76,9 +94,10 @@ export async function readLyricsVerdict(imageId: number): Promise<LyricsVerdict>
   // primary: the verdict may have just been written by its callback
   const moderation = await dbWrite.entityModeration.findUnique({
     where: { entityType_entityId: { entityType: TRACK_LYRICS_ENTITY_TYPE, entityId: imageId } },
-    select: { status: true },
+    select: { status: true, blocked: true },
   });
-  if (moderation?.status === EntityModerationStatus.Succeeded) return { state: 'scanned' };
+  if (moderation?.status === EntityModerationStatus.Succeeded)
+    return { state: 'scanned', blocked: moderation.blocked === true };
   return {
     state: 'pending',
     inFlight: moderation?.status === EntityModerationStatus.Pending,

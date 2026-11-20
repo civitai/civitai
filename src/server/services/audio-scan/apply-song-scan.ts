@@ -115,8 +115,8 @@ const UNDECIDED: string[] = [ImageIngestionStatus.Pending, ImageIngestionStatus.
 
 /**
  * A song goes public only once its audio and, when it has lyrics, its lyrics have a verdict;
- * whichever lands last decides. A clean song waiting on its lyrics stays Pending so the ingest cron
- * re-drives it.
+ * whichever lands last decides, and lyrics XGuard blocked block the song. A clean song waiting on
+ * its lyrics stays Pending so the ingest cron re-drives it.
  */
 async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: SongDecision) {
   const image = await loadImageForScan(imageId);
@@ -146,6 +146,9 @@ async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: Son
     fixed:
       verdict.action === 'block'
         ? { nsfwLevel: NsfwLevel.Blocked, blockedFor: BlockedReason.TOS, minor: true }
+        : lyrics.state === 'scanned' && lyrics.blocked
+        ? // XGuard blocks lyrics on any label, so unlike the audio block it says nothing of minors.
+          { nsfwLevel: NsfwLevel.Blocked, blockedFor: BlockedReason.TOS }
         : { nsfwLevel: NsfwLevel.PG },
     log: SONG_SCAN_LOG,
   });

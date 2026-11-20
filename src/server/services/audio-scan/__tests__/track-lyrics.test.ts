@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ mode: vi.fn(), scan: vi.fn() }));
-vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+const mocks = vi.hoisted(() => ({ route: vi.fn(), xguard: vi.fn() }));
+// The text-scan/XGuard choice by mode is the route's own rule, tested with it.
+vi.mock('~/server/services/text-scan/route', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  getTextScanMode: mocks.mode,
+  submitTextModerationOrScan: mocks.route,
 }));
-vi.mock('~/server/services/text-scan/submit', () => ({ scanEntity: mocks.scan }));
+// The XGuard request crosses to the orchestrator.
+vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
+  createXGuardModerationRequest: mocks.xguard,
+}));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { SONG_LYRICS_MAX_LENGTH } from '~/server/common/constants';
@@ -13,41 +17,58 @@ import {
   saveGeneratedTrackLyrics,
   sendTrackLyricsScan,
 } from '~/server/services/audio-scan/track-lyrics';
+import { TEXT_SCAN_ENTITY_GONE } from '~/server/services/text-scan/route';
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.mode.mockResolvedValue('active');
-  mocks.scan.mockResolvedValue({ status: 'submitted', workflowId: 'wf-1' });
+  mocks.route.mockResolvedValue({ id: 'wf-1' });
+  mocks.xguard.mockResolvedValue({ id: 'xg-1' });
+  dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue({ text: '[Verse]\nrain' } as never);
 });
 
+/** The XGuard leg the route runs while the text scan is off or in shadow for the lyrics. */
+const xguardLeg = () => mocks.route.mock.calls[0][0].xguard();
+
 describe("sending a song's lyrics", () => {
-  it('sends them to the active text scan', async () => {
+  it('sends them as TrackLyrics, to the text scan or XGuard by its mode', async () => {
     await expect(sendTrackLyricsScan(7)).resolves.toBeUndefined();
 
-    expect(mocks.scan).toHaveBeenCalledWith(
+    expect(mocks.route).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: 'TrackLyrics', entityId: 7 })
     );
   });
 
+  it('sends their stored text to XGuard when the text scan is not active', async () => {
+    await sendTrackLyricsScan(7);
+
+    await expect(xguardLeg()).resolves.toEqual({ id: 'xg-1' });
+    expect(mocks.xguard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: 'text',
+        entityType: 'TrackLyrics',
+        entityId: 7,
+        content: '[Verse]\nrain',
+      })
+    );
+  });
+
+  it('reports lyrics deleted before the XGuard send as gone, sending nothing', async () => {
+    dbMock.dbWrite.trackLyrics.findUnique.mockResolvedValue(null);
+    await sendTrackLyricsScan(7);
+
+    await expect(xguardLeg()).resolves.toBe(TEXT_SCAN_ENTITY_GONE);
+    expect(mocks.xguard).not.toHaveBeenCalled();
+  });
+
   // A send that returned quietly would leave the song re-driven forever with no retry counted.
-  it.each(['off', 'shadow'])(
-    'throws while the text scan is %s, with no fallback scan',
-    async (mode) => {
-      mocks.mode.mockResolvedValue(mode);
+  it.each([
+    ['failed to submit', null],
+    ['was skipped', TEXT_SCAN_ENTITY_GONE],
+  ])('throws when the send %s', async (_, workflow) => {
+    mocks.route.mockResolvedValue(workflow);
 
-      await expect(sendTrackLyricsScan(7)).rejects.toThrow('lyrics scan not sent');
-      expect(mocks.scan).not.toHaveBeenCalled();
-    }
-  );
-
-  it.each(['off', 'too-short', 'missing-prompt'])(
-    'throws when the active scan skips them as %s',
-    async (reason) => {
-      mocks.scan.mockResolvedValue({ status: 'skipped', reason });
-
-      await expect(sendTrackLyricsScan(7)).rejects.toThrow('lyrics scan not sent');
-    }
-  );
+    await expect(sendTrackLyricsScan(7)).rejects.toThrow('lyrics scan not sent');
+  });
 });
 
 describe('saving generated lyrics', () => {
