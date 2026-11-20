@@ -2,7 +2,7 @@ import { ActionIcon, ColorPicker, ColorSwatch, Group, SimpleGrid, TextInput } fr
 import { useDisclosure } from '@mantine/hooks';
 import { RichTextEditor, useRichTextEditorContext } from '@mantine/tiptap';
 import { IconCheck, IconCircleOff, IconColorPicker, IconPalette } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Popover } from '~/components/MantineOverlays';
 import { CSS_COLOR } from '~/utils/html-sanitize-helpers';
 
@@ -34,10 +34,13 @@ export function TextColorControl({ colors }: { colors: readonly string[] }) {
   const [hex, setHex] = useState('');
   const [pickerColor, setPickerColor] = useState('#ffffff');
   const [invalid, setInvalid] = useState(false);
+  // Offered on the next open when the new selection has no colour, so a colour can be reused.
+  const lastApplied = useRef<string | null>(null);
   const current: string | undefined = editor?.getAttributes('textStyle').color;
 
   const apply = (color: string, keepOpen = false) => {
     editor?.chain().focus().setColor(color).run();
+    lastApplied.current = toHexColor(color);
     if (!keepOpen) close();
   };
   const applyHex = () => {
@@ -61,7 +64,7 @@ export function TextColorControl({ colors }: { colors: readonly string[] }) {
           title="Text color"
           onClick={() => {
             if (opened) return close();
-            const start = toHexColor(current);
+            const start = toHexColor(current) ?? lastApplied.current;
             setHex(start ?? '');
             if (start) setPickerColor(start);
             setInvalid(false);

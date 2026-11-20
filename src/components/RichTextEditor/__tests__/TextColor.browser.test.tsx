@@ -20,6 +20,8 @@ function Editor({ content }: { content: string }) {
   const editor = useEditor({
     extensions: [StarterKit, TextStyleKit],
     content,
+    // As the real editor (RichTextEditorComponent): the control re-reads the selection's colour.
+    shouldRerenderOnTransaction: true,
     onUpdate: ({ editor }) => (html = editor.getHTML()),
   });
   return (
@@ -89,6 +91,8 @@ describe('text colour control', () => {
     await expect
       .element(page.getByRole('slider', { name: 'Saturation and brightness' }))
       .toHaveAttribute('aria-valuetext', 'rgba(255, 0, 0, 1)');
+    // Typing only previews in the picker; nothing is applied until Enter.
+    expect(spanColor()).toBeUndefined();
   });
 
   test('reopening on saved coloured text shows its colour as hex', async () => {
@@ -115,5 +119,12 @@ describe('text colour control', () => {
         )
       )
       .toEqual(['rgb(26, 43, 60)', 'rgb(26, 43, 60)']);
+  });
+
+  test('clear removes the colour from the selection', async () => {
+    await openColorControl('<p><span style="color: rgb(26, 43, 60)">hello</span></p>');
+    await userEvent.click(page.getByRole('button', { name: 'Clear color' }));
+
+    await expect.poll(spanColor).toBeUndefined();
   });
 });
