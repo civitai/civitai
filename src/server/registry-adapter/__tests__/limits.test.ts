@@ -44,6 +44,7 @@ const verifyToken = async (token: string) => {
   return token.startsWith('user-')
     ? {
         subject: `${token}/client:a`,
+        userId: 4402,
         clientId: 'a',
         scope: 0n,
         actor: null,

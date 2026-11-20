@@ -122,7 +122,12 @@ function sendError(
  */
 function openStream(
   res: ServerResponse,
-  slowConsumerMs: number
+  slowConsumerMs: number,
+  /**
+   * The subscription carries a token. Its stream belongs to that one consumer (auth extension,
+   * relay rule 2), so no cache on the way may store or share it.
+   */
+  authorized: boolean
 ): { sink: EventSink; stop: () => void } {
   const abort = new AbortController();
   let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -147,7 +152,8 @@ function openStream(
       if (!started) {
         res.writeHead(200, {
           'content-type': 'text/event-stream',
-          'cache-control': 'no-cache',
+          'cache-control': authorized ? 'private, no-store' : 'no-cache',
+          ...(authorized ? { vary: 'Authorization' } : {}),
           ...CORS,
         });
         started = true;
@@ -261,7 +267,11 @@ export function handleRequest(
       slot?.claim(principal.subject);
       opts.onRegion?.(subscriptionRegionLine('http', origin, restricted, principal));
       runShadow(opts.policyShadow, { origin, principal, held: restricted(origin) });
-      const open = openStream(res, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
+      const open = openStream(
+        res,
+        opts.slowConsumerMs ?? SLOW_CONSUMER_MS,
+        principal.subject !== null
+      );
       stream = open;
       // The stream ends with `invalid_token` once its token does (auth extension, Relays 4).
       unwatch = watchPrincipal(
