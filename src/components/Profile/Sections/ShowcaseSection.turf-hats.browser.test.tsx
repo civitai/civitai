@@ -82,6 +82,7 @@ vi.mock('~/components/TrackView/useTrackImpression', () => ({
 vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
   ...(await importOriginal<typeof EdgeMediaModule>()),
   EdgeMedia2: ({ className }: { className?: string }) => (
+    // eslint-disable-next-line @next/next/no-img-element -- a test stand-in for EdgeMedia2
     <img src={PICTURE} className={className} style={{ width: '100%', height: '100%' }} alt="" />
   ),
 }));
