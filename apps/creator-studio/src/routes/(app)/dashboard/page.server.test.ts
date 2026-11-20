@@ -44,6 +44,8 @@ describe('/dashboard usage limits', () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(new URL(String(url)).pathname).toBe('/api/v1/me/limits');
     expect((init?.headers as Record<string, string>).cookie).toBe('civ-token=abc');
+    // Bounded: an unbounded main-app read would hold the whole dashboard load open.
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
     expect(data.usageLimits).toEqual([ROW]);
   });
 

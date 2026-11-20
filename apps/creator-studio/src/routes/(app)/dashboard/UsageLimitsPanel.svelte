@@ -13,15 +13,18 @@
 
   const BAR: Record<UsageLimitTone, string> = {
     ok: '[&>[data-slot=progress-indicator]]:bg-blue-6',
-    warn: '[&>[data-slot=progress-indicator]]:bg-orange-6',
+    warn: '[&>[data-slot=progress-indicator]]:bg-orange-500',
     full: '[&>[data-slot=progress-indicator]]:bg-red-6',
-    exempt: '[&>[data-slot=progress-indicator]]:bg-dark-3',
+    exempt: '',
   };
 
   // Set after mount so the reset times are only ever drawn in the viewer's zone, never the server's.
+  // Ticks so "+1 at 3:40 PM" turns into "available now" on a dashboard left open.
   let now = $state<number | null>(null);
   onMount(() => {
     now = Date.now();
+    const tick = setInterval(() => (now = Date.now()), 30_000);
+    return () => clearInterval(tick);
   });
 
   const areas = $derived.by(() => {
