@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  MAX_REMIX_ANSWER_CHARS,
   MAX_REMIX_BRANCHES,
   MAX_REMIX_EFFECTS,
   TIMEOUT_DEFAULT_MS,
@@ -128,7 +129,7 @@ const RemixLogEntry = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('ask'),
-    answer: z.union([z.string().max(1000), z.number().int().nonnegative()]),
+    answer: z.union([z.string().max(MAX_REMIX_ANSWER_CHARS), z.number().int().nonnegative()]),
   }),
 ]);
 const RemixLog = z.array(RemixLogEntry).max(MAX_REMIX_EFFECTS);

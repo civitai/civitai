@@ -143,6 +143,8 @@ integers up to 100,000) or `{ type: 'ask', answer }` (a string of at most 1000 c
 each branch (at most 12, each with `base` at most 16 entries): how the caller prices a choice's
 options in one call. With `autoAnswer: 'first'`, each ask past the log is answered with its first
 answer (a choice's first option, a pick's first image, the text `remix`) until the first workflow.
+A choice's first option value is the app's own: unless it is a string of at most 1000 characters or
+a finite number, the replay is the app's `invalid_result`.
 
 `200` answers `{ ts, req, elapsedMs, results }`, one result per replay in order:
 

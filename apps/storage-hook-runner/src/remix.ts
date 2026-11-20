@@ -1,4 +1,5 @@
 import {
+  MAX_REMIX_ANSWER_CHARS,
   MAX_REMIX_EFFECTS,
   MAX_REMIX_RESULT_CHARS,
   MAX_REMIX_RESULT_DEPTH,
@@ -120,6 +121,9 @@ globalThis.defineRemixApp = (app) => app;
     }
     return text;
   };
+  // A choice's option value is the app's: it crosses as an answer only if it is one.
+  const isAnswer = (v) =>
+    typeof v === 'string' ? v.length <= ${MAX_REMIX_ANSWER_CHARS} : typeof v === 'number' && isFinite(v);
   const firstAnswer = (spec) =>
     spec.kind === 'choice' ? spec.options[0].value : spec.kind === 'pick' ? 0 : 'remix';
   return (app, input) => {
@@ -128,6 +132,7 @@ globalThis.defineRemixApp = (app) => app;
     const effects = [];
     let next = 0;
     let stopped = false;
+    let badAnswer = false;
     const stop = (effect) => {
       if (effect) put(effects, effect);
       stopped = true;
@@ -146,6 +151,10 @@ globalThis.defineRemixApp = (app) => app;
         try {
           answer = firstAnswer(effect.spec);
         } catch {
+          stop(effect);
+        }
+        if (!isAnswer(answer)) {
+          badAnswer = true;
           stop(effect);
         }
         put(effects, { type: 'ask', spec: effect.spec, answer });
@@ -182,7 +191,7 @@ globalThis.defineRemixApp = (app) => app;
     }
     return () => {
       // A stop is final: an app that caught it and went on still stops there.
-      if (stopped) return toJson({ effects });
+      if (stopped) return badAnswer ? '{"badAnswer":true}' : toJson({ effects });
       if (!settled) return '{"pending":true}';
       if (failed) throw value;
       if (next < log.length) return '{"short":true}';
@@ -261,6 +270,7 @@ export function validateRemixReturn(json: string | undefined): RemixReplayResult
     pending?: unknown;
     short?: unknown;
     tooBig?: unknown;
+    badAnswer?: unknown;
   } | null;
   try {
     v = JSON.parse(json);
@@ -275,6 +285,11 @@ export function validateRemixReturn(json: string | undefined): RemixReplayResult
     return fault(
       'invalid_result',
       `result is nested past ${MAX_REMIX_RESULT_DEPTH} or longer than ${MAX_REMIX_RESULT_CHARS}`
+    );
+  if (v.badAnswer === true)
+    return fault(
+      'invalid_result',
+      `an auto-answered option's value is not a string of at most ${MAX_REMIX_ANSWER_CHARS} characters or a finite number`
     );
   const effects = v.effects;
   if (

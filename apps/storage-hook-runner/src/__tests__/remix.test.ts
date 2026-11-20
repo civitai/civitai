@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../app.ts';
 import {
+  MAX_REMIX_ANSWER_CHARS,
   MAX_REMIX_BRANCHES,
   MAX_REMIX_EFFECTS,
   MAX_REMIX_SOURCE_BYTES,
@@ -144,6 +145,36 @@ export default defineRemixApp({
     expect(plain.effects).not.toContainEqual(
       expect.objectContaining({ answer: expect.anything() })
     );
+  });
+});
+
+describe('POST /v1/remix/replay: auto-answer values', () => {
+  const choiceOf = (value: string) => `
+export default defineRemixApp({
+  async run(ctx) {
+    await ctx.ask({ kind: 'choice', prompt: 'Which?', options: [{ value: ${value}, label: 'A' }] });
+    return [];
+  },
+});`;
+
+  it.each([
+    ['an object', '{ nested: true }'],
+    ['a string over the answer cap', `'x'.repeat(${MAX_REMIX_ANSWER_CHARS + 1})`],
+    ['a non-finite number', 'Infinity'],
+    ['undefined', 'undefined'],
+  ])("refuses an option whose value is %s as the app's invalid_result", async (_what, value) => {
+    const [result] = await results(choiceOf(value), { autoAnswer: 'first' });
+    expect(result).toMatchObject({ cause: 'invalid_result' });
+  });
+
+  it('answers with an option value at the cap, or a finite number', async () => {
+    const [atCap] = await results(choiceOf(`'x'.repeat(${MAX_REMIX_ANSWER_CHARS})`), {
+      autoAnswer: 'first',
+    });
+    expect(atCap).toMatchObject({ done: { outputs: [] } });
+    expect((atCap.effects as { answer: string }[])[0].answer).toHaveLength(MAX_REMIX_ANSWER_CHARS);
+    const [num] = await results(choiceOf('2.5'), { autoAnswer: 'first' });
+    expect((num.effects as { answer: number }[])[0].answer).toBe(2.5);
   });
 });
 

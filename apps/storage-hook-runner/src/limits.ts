@@ -54,6 +54,9 @@ export const REMIX_REPLAY_TIMEOUT_MS = 50;
 /** Logs one remix call replays: the base log, then at most this many branches of it. */
 export const MAX_REMIX_BRANCHES = 12;
 
+/** An ask's answer, as a string, at most this many characters (the log's and an auto-answer's). */
+export const MAX_REMIX_ANSWER_CHARS = 1000;
+
 /** Effects one run may hold (asks included), matching the civitai host's limit. */
 export const MAX_REMIX_EFFECTS = 16;
 
