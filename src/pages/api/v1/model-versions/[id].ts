@@ -237,10 +237,9 @@ export async function getVersionShowcaseImages(modelVersionIds: number[], browsi
 const aboveSfw = (nsfwLevel: number) => (nsfwLevel & ~sfwBrowsingLevelsFlag) !== 0;
 
 /**
- * `getShowcaseImageFilter` at `browsingLevel`, but an image within the SFW levels is held to the minor
- * rule of the SFW levels, at its strictest over every SFW level a viewer could browse at: the minor
- * exclusion is for mature images, so an SFW image of a minor is served wherever SFW images are. Tag
- * and poi rules still apply at `browsingLevel`.
+ * `getShowcaseImageFilter` at `browsingLevel`, except that the minor exclusion applies to an SFW image
+ * only if it is set for some SFW level: it is for mature images. Tag and poi rules still apply at
+ * `browsingLevel`.
  */
 async function getVersionImageFilter(browsingLevel: number) {
   const [shows, addonData] = await Promise.all([

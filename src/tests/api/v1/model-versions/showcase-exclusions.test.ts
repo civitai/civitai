@@ -87,13 +87,13 @@ const PEOPLE_PG = image({ id: 5, nsfwLevel: NsfwLevel.PG, tags: [PEOPLE_TAG] });
 const UNTAGGED_R = image({ id: 6, nsfwLevel: NsfwLevel.R });
 const UNTAGGED_PG13 = image({ id: 7, nsfwLevel: NsfwLevel.PG13 });
 const CHILD_PG = image({ id: 8, nsfwLevel: NsfwLevel.PG, tags: [CHILD_TAG] });
-// No entry in the tag read, as the tag cache answers for an image with no tags.
 const MINOR_PG = image({ id: 10, nsfwLevel: NsfwLevel.PG, minor: true });
 const MINOR_PG13 = image({ id: 11, nsfwLevel: NsfwLevel.PG13, minor: true });
 const POI_PG = image({ id: 12, nsfwLevel: NsfwLevel.PG, poi: true });
 const MINOR_X = image({ id: 13, nsfwLevel: NsfwLevel.X, minor: true });
 const MINOR_PG_R = image({ id: 14, nsfwLevel: NsfwLevel.PG | NsfwLevel.R, minor: true });
 const matureLevels = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
+// No entry in the tag read, as the tag cache answers for an image with no tags.
 const NO_TAG_ROWS_PG = {
   ...image({ id: 9, nsfwLevel: NsfwLevel.PG }),
   tags: undefined as unknown as number[],
