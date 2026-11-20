@@ -147,4 +147,29 @@ describe('/api/og?type=bounty image', () => {
   it('passes over a blocked image to a servable one on the same bounty', async () => {
     expect(await cardImage(BLOCKED_THEN_CLEAN)).toEqual(['img-second-clean']);
   });
+
+  it.each([
+    ['a moderator rated R', 4],
+    ['a moderator rated X', 8],
+  ])('shows no image for a bounty flagged mature that %s', async (_, moderatorNsfwLevel) => {
+    dbMock.dbRead.bounty.findFirst.mockResolvedValue({
+      name: 'B',
+      description: '',
+      nsfw: true,
+      moderatorNsfwLevel,
+      user: { username: 'u' },
+    });
+    expect(await cardImage(CLEAN)).toEqual([]);
+  });
+
+  it('shows the image of a flagged bounty a moderator rated PG (control)', async () => {
+    dbMock.dbRead.bounty.findFirst.mockResolvedValue({
+      name: 'B',
+      description: '',
+      nsfw: true,
+      moderatorNsfwLevel: 1,
+      user: { username: 'u' },
+    });
+    expect(await cardImage(CLEAN)).toEqual(['img-clean']);
+  });
 });

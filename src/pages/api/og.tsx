@@ -5,6 +5,11 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
+import {
+  bountyNsfwFlagLevel,
+  getTextRatedBountyLevels,
+  mayBeTextRated,
+} from '~/server/services/bounty-rated-level';
 import { getImageMetricsObject } from '~/server/services/image.service';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
@@ -505,6 +510,8 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
       select: {
         name: true,
         description: true,
+        nsfw: true,
+        moderatorNsfwLevel: true,
         user: { select: { username: true } },
       },
     }),
@@ -532,6 +539,17 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
   ]);
   if (!bounty) return null;
 
+  // A flagged bounty's images are raised to its flag level, as the bounty list does (an unrated
+  // flag counts as XXX).
+  const textRated = mayBeTextRated(bounty)
+    ? await getTextRatedBountyLevels([id])
+    : new Map<number, number>();
+  const flagLevel = bountyNsfwFlagLevel(bounty, textRated.get(id));
+  const image =
+    images[0] && flagLevel != null
+      ? { ...images[0], nsfwLevel: Math.max(images[0].nsfwLevel, flagLevel) }
+      : images[0];
+
   const stats: StatItem[] = metric
     ? [
         { value: formatStat(metric.entryCount), label: 'Entries' },
@@ -547,7 +565,7 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
     title: bounty.name,
     description: cleanDescription(bounty.description ?? ''),
     creator: bounty.user?.username ?? 'Unknown',
-    ...buildEntityImage(getSafeImage(images[0])),
+    ...buildEntityImage(getSafeImage(image)),
     stats,
   };
 }
