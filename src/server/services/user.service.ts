@@ -766,7 +766,7 @@ export const getUserEngagedModelsByIds = async ({
 }) => {
   const [engagements, recommendedReviews] = await Promise.all([
     listModelEngagements(kyselyRead, { userId: id, modelIds }),
-    // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+    // Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
     import('~/server/services/resourceReview.service').then(({ getResourceReviewsByUserId }) =>
       getResourceReviewsByUserId({ userId: id, recommended: true, modelIds })
     ),
@@ -1187,7 +1187,7 @@ type DeletedVersionRow = { id: number };
 
 /** Busts the caches of the versions `deleteUser` deleted. Chunked: an account can have thousands. */
 async function dropDeletedVersionCaches(versionIds: number[]) {
-  // Imported here: a static import joins user.service to the model-version import cycle.
+  // Imported here, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
   const { bustMvCache } = await import('~/server/services/model-version.service');
   for (const ids of chunkIds(versionIds, DELETED_MODEL_CACHE_CHUNK)) {
     await preventReplicationLagBatch('modelVersion', ids);
@@ -1752,7 +1752,7 @@ async function removedModels(ids: number[]) {
 async function dropHiddenModelCaches(modelIds: number[], userId: number) {
   const versions = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT id FROM "ModelVersion" WHERE "modelId" = ANY(${modelIds}::int[])`;
-  // Imported here: a static import joins user.service to the model-version import cycle.
+  // Imported here, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
   const { bustMvCache } = await import('~/server/services/model-version.service');
   await bustMvCache(
     versions.map((v) => v.id),
