@@ -401,6 +401,29 @@ const PLACEMENTS = [
     data: { postId: 7201, days: 7, modelVersionIds: [6401], imageIds: [8201], acceptedLevel: 3, endsAt: '2026-06-21T10:00:00.000Z' },
   },
 ];
+// imageTagsCache (packed:caches:image-tags, src/server/redis/caches.ts): each image's votable tags,
+// listImageTagsForImages' rows (imageTagCompositeSelect, score desc then tagId asc), grouped by image.
+// Every other image's entry is a notFound marker (the lookup found no ImageTag row for it).
+const IMAGE_TAGS = {
+  8001: [
+    { tagId: 531, tagName: 'golden_fox', tagType: 'UserGenerated', score: 12, upVotes: 2, downVotes: 0, tagNsfwLevel: 1, automated: false, needsReview: false, concrete: true, lastUpvote: new Date('2026-06-12T09:30:00.000Z'), source: 'User' },
+    { tagId: 532, tagName: 'forest', tagType: 'Label', score: 7.5, upVotes: 0, downVotes: 1, tagNsfwLevel: 1, automated: true, needsReview: null, concrete: true, lastUpvote: null, source: 'WD14' },
+  ],
+  8003: [
+    { tagId: 533, tagName: 'sunset', tagType: 'Label', score: 0, upVotes: 0, downVotes: 0, tagNsfwLevel: 2, automated: true, needsReview: false, concrete: true, lastUpvote: null, source: 'Rekognition' },
+  ],
+  8007: [
+    { tagId: 531, tagName: 'golden_fox', tagType: 'UserGenerated', score: 3, upVotes: 1, downVotes: 0, tagNsfwLevel: 1, automated: false, needsReview: false, concrete: true, lastUpvote: new Date('2026-06-10T18:00:00.125Z'), source: 'User' },
+  ],
+};
+// TagsOnImageVote rows: what the handler merges as `vote` for a signed-in viewer. 1003's vote on 8007
+// names a tag 8007 does not carry; 1001's are another viewer's.
+const TAG_VOTES = [
+  { imageId: 8001, tagId: 531, userId: 1003, vote: 1 },
+  { imageId: 8001, tagId: 532, userId: 1003, vote: -1 },
+  { imageId: 8007, tagId: 999, userId: 1003, vote: 1 },
+  { imageId: 8007, tagId: 531, userId: 1001, vote: 1 },
+];
 // system:blocked-browsing-tags (cache cluster): getBlockedBrowsingTags' list. Synthetic names; the
 // ids are two of BLOCKED_BROWSING_TAG_IDS (src/shared/constants/browsing-settings-addons.ts).
 const BLOCKED_TAGS = [
@@ -430,6 +453,7 @@ const K = {
   versionModel: 'model:gallery-settings:version-model',
   session: 'session:data2',
   meta: 'packed:caches:image-meta',
+  imageTags: 'packed:caches:image-tags',
 };
 const notFound = (idKey, id) => ({ [idKey]: id, notFound: true, cachedAt: CACHED_AT });
 const entry = (v) => ({ ...v, cachedAt: CACHED_AT });
@@ -482,6 +506,9 @@ function worldPacked(prefix, id) {
       return VERSIONS[id] ? entry({ id, modelId: VERSIONS[id] }) : undefined;
     case K.session:
       return SESSIONS[id];
+    case K.imageTags:
+      if (!IMAGES[id]) return undefined;
+      return IMAGE_TAGS[id] ? entry({ imageId: id, tags: IMAGE_TAGS[id] }) : notFound('imageId', id);
     case K.meta:
       if (META_NOT_FOUND.has(id)) return notFound('id', id);
       return IMAGES[id] ? entry({ id, meta: metaOf(id) }) : undefined;
@@ -512,6 +539,7 @@ class Trace {
     this.toolsCandidatePosts = new Set(); // posts of every row a tools query matches without its tools clause
     this.baseModelsRead = false; // a query filtered by `baseModels`: the tables then carry each version's baseModel
     this.baseModelsCandidatePosts = new Set(); // posts of every row such a query matches without that clause
+    this.tagVotesRead = false; // the viewer's TagsOnImageVote rows were read (include 'tags', signed in)
   }
 }
 let T; // the fixture being traced
@@ -1037,6 +1065,29 @@ function getAllImagesUncaptured(input) {
       }, {})
     : undefined;
   const tagIdsVar = include.includes('tagIds') ? cacheFetch(K.tagIds, ids) : undefined;
+  // getImageTagsForImages: imageTagsCache.fetch, each tag `{...tag, imageId, id: tagId, type: tagType,
+  // nsfwLevel: tagNsfwLevel, name: tagName}`, flattened in image order.
+  let tagsVar;
+  if (include.includes('tags')) {
+    const tagsByImage = cacheFetch(K.imageTags, ids);
+    tagsVar = ids.flatMap(
+      (imageId) =>
+        tagsByImage[imageId]?.tags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
+          ...tag,
+          imageId,
+          id: tagId,
+          type: tagType,
+          nsfwLevel: tagNsfwLevel,
+          name: tagName,
+        })) ?? []
+    );
+  }
+  // dbRead.tagsOnImageVote.findMany({ where: { imageId: { in: imageIds }, userId }, select: { imageId, tagId, vote } }).
+  let userVotes;
+  if (include.includes('tags') && userId) {
+    T.tagVotesRead = true;
+    userVotes = TAG_VOTES.filter((v) => v.userId === userId && ids.includes(v.imageId)).map(({ imageId, tagId, vote }) => ({ imageId, tagId, vote }));
+  }
   const userBasicData = cacheFetch(K.basic, uids);
   let userCosmetics;
   if (includeCosmetics) {
@@ -1079,6 +1130,22 @@ function getAllImagesUncaptured(input) {
       }
   }
 
+  // The transform's vote merge and its tagsByImageId index.
+  if (tagsVar && userVotes) {
+    const voteMap = new Map(userVotes.map((v) => [`${v.imageId}:${v.tagId}`, v.vote]));
+    for (const tag of tagsVar) {
+      const vote = voteMap.get(`${tag.imageId}:${tag.id}`);
+      if (vote !== undefined) tag.vote = vote > 0 ? 1 : -1;
+    }
+  }
+  const tagsByImageId = tagsVar
+    ? tagsVar.reduce((acc, tag) => {
+        const arr = acc.get(tag.imageId);
+        if (arr) arr.push(tag);
+        else acc.set(tag.imageId, [tag]);
+        return acc;
+      }, new Map())
+    : undefined;
   const filtered = rawImages.filter((x) => {
     if (isModerator) return true;
     if ((!x.publishedAt || x.publishedAt > NOW || !!x.unpublishedAt) && x.userId !== userId) return false;
@@ -1108,7 +1175,7 @@ function getAllImagesUncaptured(input) {
       },
       stats,
       reactions: userReactions?.[i.id]?.map((r) => ({ userId, reaction: r })) ?? [],
-      tags: undefined,
+      tags: tagsByImageId?.get(i.id),
       tagIds: tagIdsVar?.[i.id]?.tags,
       cosmetic: frames?.[i.id] ?? null,
       eventDecoration: eventDecorations?.[i.id] ?? null,
@@ -2492,6 +2559,26 @@ const INFINITE = [
       'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=2': { body: { items: [8001, 8003], ...fc('1718000000000', '8003') } },
     },
   },
+  {
+    name: 'include-tags-signed-out',
+    description: '`include: [cosmetics, tags]` signed out: each image’s votable tags from imageTagsCache, as getImageTagsForImages renames them; `tags` undefined where the entry is a notFound marker; no vote read.',
+    viewer: null,
+    host: HOST.green,
+    input: { include: ['cosmetics', 'tags'], sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
+    },
+  },
+  {
+    name: 'include-tags-signed-in-votes',
+    description: '`include: [cosmetics, tags]` signed in: the viewer’s TagsOnImageVote rows merged as `vote` (1 / -1) on the tags they voted; none for a vote on a tag the image does not carry, nor for another viewer’s vote.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { include: ['cosmetics', 'tags'], sort: 'Newest', browsingLevel: 31, limit: 10 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&excludedTags=9911%2C9901&excludeMinor=1&excludePoi=1&viewerId=1003&sort=newest&limit=10': { body: { items: [8204, 8007, 8006, 8004, 8002, 8001] } },
+    },
+  },
   // Fallbacks.
   {
     name: 'fallback-base-models-not-a-list',
@@ -2502,12 +2589,12 @@ const INFINITE = [
     input: { baseModels: 'Pony', browsingLevel: 1, limit: 2 },
   },
   {
-    name: 'fallback-include-tags',
-    description: '`include: [cosmetics, tags]`: the votable tags (imageTagsCache and the viewer’s votes) are not ported.',
+    name: 'fallback-include-meta-select',
+    description: '`include: [cosmetics, tags, metaSelect]`: the tags are answered, but metaSelect (getMetaForImages) is not ported.',
     fallback: 'input-include',
     viewer: null,
     host: HOST.green,
-    input: { include: ['cosmetics', 'tags'], browsingLevel: 1, limit: 2 },
+    input: { include: ['cosmetics', 'tags', 'metaSelect'], browsingLevel: 1, limit: 2 },
   },
   {
     name: 'fallback-unknown-key',
@@ -2604,6 +2691,8 @@ function dbTables({ tags = false, meta = false } = {}) {
     userCosmetics: USER_COSMETIC_ROWS.map((r) => ({ ...r, data: r.data === null ? null : jsonbText(r.data), equippedAt: r.equippedAt !== null })),
     cosmetics: Object.values(COSMETICS).map((c) => ({ id: c.id, name: c.name, type: c.type, source: c.source, data: jsonbText(c.data), flags: c.flags, createdById: COSMETIC_CREATORS[c.id] ?? null })),
     cosmeticShopItems: SHOP_ITEMS.map((x) => ({ ...x, meta: jsonbText(x.meta) })),
+    // The TagsOnImageVote rows, only in a fixture whose request read the viewer's votes.
+    ...(T.tagVotesRead ? { tagVotes: TAG_VOTES } : {}),
   };
 }
 
