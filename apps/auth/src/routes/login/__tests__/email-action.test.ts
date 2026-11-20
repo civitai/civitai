@@ -5,6 +5,9 @@ const mocks = vi.hoisted(() => ({
   isBlockedEmailDomain: vi.fn(async (domain: string) => domain === 'blocked.test'),
   userExistsByEmail: vi.fn(async (email: string) => email === '"ada"@ok.test'),
   sendVerificationEmail: vi.fn(async () => undefined),
+  consumeRateLimit: vi.fn<() => Promise<{ ok: true } | { ok: false; retryAfter: number }>>(
+    async () => ({ ok: true })
+  ),
 }));
 
 vi.mock('$lib/server/db/db', () => ({ db: {} }));
@@ -26,9 +29,7 @@ vi.mock('$lib/server/auth/captcha', () => ({
   isCaptchaEnabled: () => false,
   verifyCaptchaToken: vi.fn(async () => true),
 }));
-vi.mock('$lib/server/auth/rate-limit', () => ({
-  consumeRateLimit: vi.fn(async () => ({ ok: true })),
-}));
+vi.mock('$lib/server/auth/rate-limit', () => ({ consumeRateLimit: mocks.consumeRateLimit }));
 vi.mock('$lib/server/auth/request', () => ({ getClientIp: () => '203.0.113.1' }));
 vi.mock('$lib/server/metrics', () => ({
   blockedEmailDomainSignupsTotal: { inc: vi.fn() },
@@ -51,6 +52,16 @@ async function submit(email: string) {
 }
 
 beforeEach(() => vi.clearAllMocks());
+
+describe('magic-link sign-in rate limit', () => {
+  it('refuses a spent limit with the seconds left, for the form to say when to retry', async () => {
+    mocks.consumeRateLimit.mockResolvedValueOnce({ ok: false, retryAfter: 90 });
+    const result = await submit('user@ok.test');
+
+    expect(result).toMatchObject({ status: 429, data: { rateLimited: true, retryAfter: 90 } });
+    expect(mocks.sendVerificationEmail).not.toHaveBeenCalled();
+  });
+});
 
 describe('magic-link sign-in accepts only plain email addresses', () => {
   it.each([

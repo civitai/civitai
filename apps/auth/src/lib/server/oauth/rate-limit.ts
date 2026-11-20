@@ -140,7 +140,13 @@ export async function tokenOverflowExhausted(ip: string | null | undefined): Pro
 
 /** The `token-client` check: a client's own per-minute /oauth/token limit, as set by staff. */
 export async function checkClientTokenRateLimit(clientId: string, limit: number): Promise<boolean> {
-  return checkRateLimit('oauth:token-client', clientId, limit, 60);
+  // The token route answers this refusal with the `token` window.
+  return checkRateLimit(
+    'oauth:token-client',
+    clientId,
+    limit,
+    OAUTH_RATE_LIMITS.token.windowSeconds
+  );
 }
 
 /** The `token-exchange` check: per authenticated client, at its staff-set limit when it has one. */

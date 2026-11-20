@@ -333,11 +333,11 @@ export const POST: RequestHandler = async ({ request }) => {
       // No CORS on a rejected origin — the browser surfaces a network error to the offending page.
       return json({ error: 'origin_not_allowed', error_description: err.message }, { status: 403 });
     }
+    void logAxiomError(err, { event: '[oauth/token] handler error' });
     setWildcardCors(respHeaders);
     if (err instanceof WorkerDeviceRateLimitedError) {
       return rateLimitedResponse(oauthRetryAfter('worker-device'), respHeaders, err.message);
     }
-    void logAxiomError(err, { event: '[oauth/token] handler error' });
     const e = err as { code?: number; statusCode?: number; name?: string; message?: string };
     const status =
       typeof e.statusCode === 'number' ? e.statusCode : typeof e.code === 'number' ? e.code : 500;
