@@ -5,6 +5,8 @@ import {
   abuseReportInput,
   caseDefinitionsInput,
   caseIntakeInput,
+  casePartyActionInput,
+  casePartyViewInput,
   feedbackTriageInput,
   imageModerateInput,
   relabelBuildBatchInput,
@@ -21,6 +23,7 @@ import { recordAbuseRun } from '../abuse-detection.service';
 import { logToAxiom } from '../axiom';
 import { getClickhouse } from '../clickhouse';
 import { caseIntake, defaultCaseIntakeDeps } from '../cases/case-intake-action';
+import { casePartyAction, casePartyView, defaultCasePartyDeps } from '../cases/case-party';
 import { enabledDefinitions, publicDefinition } from '../cases/definitions';
 import { civitaiAppUrl } from '../civitai-url';
 import { dbRead, dbWrite } from '../db';
@@ -209,6 +212,18 @@ const caseIntakeAction: ModAction<z.infer<typeof caseIntakeInput>> = {
     ),
 };
 
+/** A party's own view of their case, opened by the link token the main app forwards on every call. */
+const casePartyViewAction: ModAction<z.infer<typeof casePartyViewInput>> = {
+  schema: casePartyViewInput,
+  handler: (input) => casePartyView(input, defaultCasePartyDeps(dbWrite)),
+};
+
+/** A party's public action on their case (adding information, reporting a suit), by the same token. */
+const casePartyActionAction: ModAction<z.infer<typeof casePartyActionInput>> = {
+  schema: casePartyActionInput,
+  handler: (input) => casePartyAction(input, defaultCasePartyDeps(dbWrite)),
+};
+
 export const modActions: Record<string, ModAction> = {
   [MOD_ACTION.imageModerate]: imageModerate,
   [MOD_ACTION.abuseReport]: abuseReport,
@@ -216,4 +231,6 @@ export const modActions: Record<string, ModAction> = {
   [MOD_ACTION.feedbackTriage]: feedbackTriage,
   [MOD_ACTION.caseDefinitions]: caseDefinitions,
   [MOD_ACTION.caseIntake]: caseIntakeAction,
+  [MOD_ACTION.casePartyView]: casePartyViewAction,
+  [MOD_ACTION.casePartyAction]: casePartyActionAction,
 };
