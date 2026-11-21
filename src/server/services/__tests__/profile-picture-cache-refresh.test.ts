@@ -349,6 +349,11 @@ describe('a moderator unblock', () => {
   });
 
   it('refreshes the cached profile picture after the image is set back to Scanned', async () => {
+    // The unblock UPDATE hands back the row it restored.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('AS "keptBlocked"')
+        ? [{ id: AVATAR, keptBlocked: false }]
+        : []) as never);
     await handleUnblockImages({ ids: [AVATAR], moderatorId: MOD } as never);
 
     expect(refreshPicture).toHaveBeenCalledWith([AVATAR_OWNER]);

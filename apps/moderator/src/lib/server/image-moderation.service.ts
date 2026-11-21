@@ -64,12 +64,8 @@ const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM} OR ("need
 )))`;
 
 /**
- * The three `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
- * out here for the same reason `BLOCKED_REASON_MODERATED` is: this app does not import from the
- * main app's `src/`. Canonical definitions are `PRIOR_INGESTION_KEY` / `PRIOR_BLOCKED_FOR_KEY` /
- * `PRIOR_NEEDS_REVIEW_KEY` in
- * `src/server/utils/image-removal-mode.ts`, and the drift between the two spellings is pinned by
- * `src/server/services/__tests__/account-deletion-marker-clearing.test.ts`.
+ * The three `Image.metadata` breadcrumbs the main app's account-deletion grace block writes; canonical
+ * definitions are `GRACE_PRIOR_*` in `@civitai/shared/account-deletion-grace`.
  *
  * A block strips them: the main app's restore path un-blocks an image on the presence of the first
  * key alone, so a row marked during a grace period and then moderated would be put back by a later
@@ -190,7 +186,8 @@ const rescanIfUnrated = async (imageId: number) => {
             .select(sql<number>`1`.as('one'))
             .where('entityType', '=', 'image')
             .where('entityId', '=', imageId)
-            .where('activity', '=', 'review')
+            // A lift kept blocked for a deleted owner is a moderator review too.
+            .where('activity', 'in', ['review', LIFT_KEPT_ACTIVITY])
         )
       )
     )

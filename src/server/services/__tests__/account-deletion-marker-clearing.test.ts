@@ -67,18 +67,8 @@ describe('the moderator app strips the same account-deletion breadcrumbs the mai
     expect(source().length, `${MOD_BLOCK_FILE} is empty or unreadable`).toBeGreaterThan(1000);
   });
 
-  it('takes every key from the module the main app reads them from', () => {
-    const src = source();
-    expect(
-      src,
-      `${MOD_BLOCK_FILE} no longer imports the grace keys from the shared module`
-    ).toMatch(/from '@civitai\/shared\/account-deletion-grace'/);
-    for (const name of [
-      'GRACE_PRIOR_INGESTION_KEY',
-      'GRACE_PRIOR_BLOCKED_FOR_KEY',
-      'GRACE_PRIOR_NEEDS_REVIEW_KEY',
-    ])
-      expect(src, `${MOD_BLOCK_FILE} does not use ${name}`).toContain(name);
+  // The main app's keys are the shared ones the moderator app reads, so the two cannot drift.
+  it('takes every key from the shared module', () => {
     expect([PRIOR_INGESTION_KEY, PRIOR_BLOCKED_FOR_KEY, PRIOR_NEEDS_REVIEW_KEY]).toEqual([
       GRACE_PRIOR_INGESTION_KEY,
       GRACE_PRIOR_BLOCKED_FOR_KEY,

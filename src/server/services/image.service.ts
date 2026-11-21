@@ -1267,6 +1267,7 @@ export async function handleUnblockImages({
     (image) => image.blockedFor !== BlockedReason.CSAM && !csamIds.has(image.id)
   );
   const kept: number[] = [];
+  const restoredAll: number[] = [];
   await Limiter().process(images, async (images) => {
     const ids = images.map((x) => x.id);
     const grouped = images.reduce<Record<string, number[]>>((acc, image) => {
@@ -1316,14 +1317,12 @@ export async function handleUnblockImages({
       ),
     ]);
 
-    const keptIds = new Set(
-      written
-        .flat()
-        .filter((row): row is { id: number; keptBlocked: boolean } => !!row && 'keptBlocked' in row)
-        .filter((row) => row.keptBlocked)
-        .map((row) => row.id)
-    );
-    const restoredIds = ids.filter((id) => !keptIds.has(id));
+    // From the UPDATE's RETURNING, so a row it skipped (a CSAM block racing in) is neither.
+    const rows = written
+      .flat()
+      .filter((row): row is { id: number; keptBlocked: boolean } => !!row && 'keptBlocked' in row);
+    const keptIds = new Set(rows.filter((row) => row.keptBlocked).map((row) => row.id));
+    const restoredIds = rows.filter((row) => !row.keptBlocked).map((row) => row.id);
     const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
     await Promise.all([
       resetBlockedNsfwLevel(restoredIds),
@@ -1371,6 +1370,7 @@ export async function handleUnblockImages({
         });
     }
     kept.push(...keptIds);
+    restoredAll.push(...restoredIds);
   });
 
   // Resolve any pending appeals for images that were in appeal review
@@ -1390,8 +1390,9 @@ export async function handleUnblockImages({
 
   // Kept apart: a row kept blocked while its owner is deleted was not restored.
   const keptSet = new Set(kept);
+  const restoredSet = new Set(restoredAll);
   return {
-    restored: images.filter((img) => !keptSet.has(img.id)),
+    restored: images.filter((img) => restoredSet.has(img.id)),
     kept: images.filter((img) => keptSet.has(img.id)),
   };
 }
@@ -1711,7 +1712,9 @@ export async function rescanUnratedImages(ids: number[]) {
       AND NOT EXISTS (SELECT 1 FROM "TagsOnImageDetails" t WHERE t."imageId" = i.id)
       AND NOT EXISTS (
         SELECT 1 FROM "ModActivity" m
-        WHERE m."entityType" = 'image' AND m."entityId" = i.id AND m.activity = 'review'
+        -- A lift kept blocked for a deleted owner is a moderator review too.
+        WHERE m."entityType" = 'image' AND m."entityId" = i.id
+          AND m.activity = ANY(${['review', LIFT_KEPT_ACTIVITY]}::text[])
       )
     RETURNING i.id, i.ingestion
   `;

@@ -67,10 +67,21 @@ const mockFindMany = dbRead.image.findMany;
 // The three raw-SQL seams every assertion in this file reads. Declared at module scope because
 // they are the file's instrument rather than per-case behaviour; `vi.clearAllMocks()` in the
 // beforeEach blocks clears call history without dropping an implementation.
-dbWrite.$queryRaw.mockImplementation((strings: TemplateStringsArray, ..._values: unknown[]) => {
+// The unblock UPDATE's RETURNING: every id it claimed (its `Prisma.join` list) comes back restored.
+const unblockedRows = (values: unknown[]) =>
+  values.flatMap((v) => {
+    const sql = v as { text?: unknown; values?: unknown[] } | null;
+    return sql && typeof sql.text === 'string' && sql.values?.length && /^[$\d,\s]*$/.test(sql.text)
+      ? sql.values.map((id) => ({ id, keptBlocked: false }))
+      : [];
+  });
+
+dbWrite.$queryRaw.mockImplementation((strings: TemplateStringsArray, ...values: unknown[]) => {
   const sql = Array.isArray(strings) ? strings.join(' ? ') : String(strings);
   capturedQueryRaw.push(sql);
   capturedRawInOrder.push(sql);
+  if (/AS "keptBlocked"/.test(sql) && /UPDATE "Image" SET/.test(sql))
+    return Promise.resolve(unblockedRows(values));
   // The appeal ruling's image write (`settleResolvedAppeals`) reads postId+pHash back; seed a pHash
   // so the approved-path phash unblock (bulkRemoveBlockedImages) has something to remove.
   if (/RETURNING "postId", "pHash"/.test(sql))
@@ -173,7 +184,9 @@ vi.mock('~/server/services/image-models-reindex.service', () => ({
   queueDocumentsForBlockedImages: vi.fn(async () => undefined),
 }));
 
-const { handleUnblockImages, handleBlockImages } = await import('../image.service');
+const { handleUnblockImages, handleBlockImages, rescanUnratedImages } = await import(
+  '../image.service'
+);
 const { unblockAccountDeletionImages } = await import('../account-deletion-images');
 const { queueDocumentsForImageMinorChanges, queueDocumentsForBlockedImages } = await import(
   '~/server/services/image-models-reindex.service'
@@ -750,6 +763,39 @@ describe('handleUnblockImages while the owner is deleted', () => {
       );
       expect(back.rows).toEqual([
         { ingestion: 'Scanned', blockedFor: null, metadata: { keep: 1 } },
+      ]);
+    } finally {
+      if (capture) dbWrite.$queryRaw.mockImplementation(capture);
+      await pg.close();
+    }
+  });
+});
+
+// Policy: DESIGN GO A on the appeal task, "a deleted owner's image is never served".
+describe('rescanUnratedImages after a lift kept blocked for a deleted owner', () => {
+  it('counts the kept lift as a moderator review and does not send the image back to the scanner', async () => {
+    const pg = new PGlite();
+    await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Rescan', 'Error', 'Blocked');
+      CREATE TABLE "Image" (id int PRIMARY KEY, "nsfwLevel" int NOT NULL, "blockedFor" text,
+        ingestion "ImageIngestionStatus", "scanJobs" jsonb);
+      CREATE TABLE "TagsOnImageDetails" ("imageId" int, disabled boolean);
+      CREATE TABLE "ModActivity" ("entityType" text, "entityId" int, activity text);
+      INSERT INTO "Image" VALUES (1, 0, NULL, 'Scanned', NULL), (2, 0, NULL, 'Scanned', NULL);
+      INSERT INTO "ModActivity" VALUES ('image', 1, 'reviewOwnerDeleted');`);
+    const raw = pgliteRaw(pg);
+    const capture = dbWrite.$queryRaw.getMockImplementation();
+    dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      strings.join('').includes('RETURNING i.id, i.ingestion')
+        ? raw.queryRaw(strings, ...values)
+        : Promise.resolve([])) as never);
+    try {
+      await rescanUnratedImages([1, 2]);
+      const { rows } = await pg.query<{ id: number; ingestion: string }>(
+        `SELECT id, ingestion::text AS ingestion FROM "Image" ORDER BY id`
+      );
+      expect(rows).toEqual([
+        { id: 1, ingestion: 'Scanned' },
+        { id: 2, ingestion: 'Rescan' },
       ]);
     } finally {
       if (capture) dbWrite.$queryRaw.mockImplementation(capture);
