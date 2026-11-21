@@ -167,7 +167,7 @@ export const COVER_INDEX_NAME = 'Collection_imageId_idx';
  *
  * Once the index is valid in every environment, this gate and its branch can go.
  */
-async function coverIndexExists() {
+export async function coverIndexExists() {
   const rows = await dbWrite.$queryRaw<{ present: boolean }[]>`
     SELECT EXISTS (
       SELECT 1 FROM pg_class c

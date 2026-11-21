@@ -284,6 +284,14 @@ vi.mock('~/libs/tags', async (importOriginal) => {
   };
 });
 
+// The home-block refresh (`evictHomeBlocksForImages`) is seen at the database: its lookup binds the
+// ids as one array.
+const homeBlockLookupsFor = (calls: unknown[][], table: string) =>
+  calls
+    .map(([query]) => query as { sql?: string; values?: unknown[] })
+    .filter((query) => !!query?.sql?.includes(table))
+    .flatMap((query) => (query.values ?? []).filter(Array.isArray));
+
 vi.mock('~/server/services/image.service', () => ({
   getImagesModRules: vi.fn().mockResolvedValue([]),
   queueImageSearchIndexUpdate: vi.fn().mockResolvedValue(undefined),
@@ -619,6 +627,44 @@ describe('image-scan-result webhook - pipeline tests', () => {
     });
 
     expect(mockBustPosts).toHaveBeenCalledWith(70);
+    expect(
+      homeBlockLookupsFor(mockDbWrite.$queryRaw.mock.calls, '"CollectionItem"')
+    ).toContainEqual([13]);
+  });
+
+  it('refreshes the home blocks holding an image the scan blocks', async () => {
+    await processImageScanWorkflow({
+      workflowId: 'workflow-that-blocks',
+      status: 'succeeded',
+      imageId: 12,
+      steps: [
+        { $type: 'wdTagging', output: { tags: { 'some-tag': 0.9 }, rating: { general: 0.9 } } },
+        {
+          $type: 'mediaRating',
+          output: { nsfwLevel: 'xxx', isBlocked: true, blockedReason: 'CSAM' },
+        },
+      ] as any,
+    });
+
+    expect(
+      homeBlockLookupsFor(mockDbWrite.$queryRaw.mock.calls, '"CollectionItem"')
+    ).toContainEqual([12]);
+  });
+
+  it('leaves the home blocks alone for an image the scan passes', async () => {
+    await processImageScanWorkflow({
+      workflowId: 'workflow-that-passes',
+      status: 'succeeded',
+      imageId: 12,
+      steps: [
+        { $type: 'wdTagging', output: { tags: { 'some-tag': 0.9 }, rating: { general: 0.9 } } },
+        { $type: 'mediaRating', output: { nsfwLevel: 'pg', isBlocked: false } },
+      ] as any,
+    });
+
+    expect(
+      homeBlockLookupsFor(mockDbWrite.$queryRaw.mock.calls, '"CollectionItem"')
+    ).not.toContainEqual([12]);
   });
 
   it("refreshes the image's post showcase when a post-verdict side effect throws first", async () => {

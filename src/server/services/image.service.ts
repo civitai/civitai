@@ -1115,6 +1115,7 @@ async function invalidateDeletedImages({
     bustCachesForPosts(postIds),
     postMetrics.queueUpdate(postIds),
     enqueueCollectionRebuild({ ...collections, source: 'image-delete' }),
+    evictHomeBlocksForImages({ collectionIds: collections.collectionIds }),
     ...(thumbnailParentIds.length ? [thumbnailCache.refresh(thumbnailParentIds)] : []),
     refreshProfilePicturesForUsers(profilePictureUserIds),
     ...(kept.length ? [bustKeptImages(kept, updatePosts)] : []),

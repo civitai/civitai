@@ -64,6 +64,14 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockSysRedis = redisMock.sysRedis;
 const mockDbRead = dbMock.dbRead;
+
+// The home-block refresh (`evictHomeBlocksForImages`) is seen at the database: its lookup binds the
+// ids as one array.
+const homeBlockLookupsFor = (calls: unknown[][], table: string) =>
+  calls
+    .map(([query]) => query as { sql?: string; values?: unknown[] })
+    .filter((query) => !!query?.sql?.includes(table))
+    .flatMap((query) => (query.values ?? []).filter(Array.isArray));
 const mockDbWrite = dbMock.dbWrite;
 
 /**
@@ -1252,6 +1260,16 @@ describe('grace mode search index and caches', () => {
       ids: [3, 4, 5, 6, 7, 8, 9, 10],
       action: SearchIndexUpdateQueueAction.Delete,
     });
+  });
+
+  it('refreshes the home blocks holding the images it blocked, and only those', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10, blockedAfterRead: 2 });
+
+    await run();
+
+    expect(homeBlockLookupsFor(mockDbRead.$queryRaw.mock.calls, '"CollectionItem"')).toEqual([
+      [3, 4, 5, 6, 7, 8, 9, 10],
+    ]);
   });
 
   it('does not call the post cache bust with an empty list', async () => {

@@ -12,6 +12,7 @@ import {
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { refreshProfilePicturesForUsersLazy } from '~/server/services/refresh-profile-pictures-lazy';
@@ -217,6 +218,7 @@ async function propagateBlock(touched: TouchedImage[]) {
     invalidateManyImageExistence(ids),
   ]);
   if (postIds.length) await bustCachesForPosts(postIds);
+  await evictHomeBlocksForImages({ imageIds: ids });
 }
 
 /**
