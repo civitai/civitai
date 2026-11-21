@@ -4,9 +4,11 @@ import {
   isDestructiveAction,
   listingStatusChip,
   moderationActionChip,
+  offlineCutFailureWarning,
   reportActionLabel,
   reportRowActions,
   reportStatusChip,
+  retryableOfflineCutEventId,
   type ReportRowAction,
 } from '~/components/Apps/appListingModerationView';
 import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-moderation.schema';
@@ -130,5 +132,73 @@ describe('reportActionLabel', () => {
     ).map(reportActionLabel);
     expect(new Set(labels).size).toBe(labels.length);
     for (const l of labels) expect(l.trim().length).toBeGreaterThan(0);
+  });
+});
+
+describe('retryableOfflineCutEventId — where "Retry cut" is drawn', () => {
+  const ev = (id: string, action: string) => ({ id, action });
+
+  it('the newest cut event, when it is a failure', () => {
+    expect(
+      retryableOfflineCutEventId([
+        ev('alme_3', 'offline-cut-failed'),
+        ev('alme_2', 'delist'),
+        ev('alme_1', 'offline-cut-failed'),
+      ])
+    ).toBe('alme_3');
+  });
+
+  it('a non-cut event newer than the failure does not hide it', () => {
+    expect(
+      retryableOfflineCutEventId([
+        ev('alme_9', 'message-owner'),
+        ev('alme_8', 'offline-cut-failed'),
+      ])
+    ).toBe('alme_8');
+  });
+
+  it('none once a later cut succeeded', () => {
+    expect(
+      retryableOfflineCutEventId([ev('alme_5', 'offline-cut'), ev('alme_4', 'offline-cut-failed')])
+    ).toBeNull();
+  });
+
+  it('none without any failure', () => {
+    expect(retryableOfflineCutEventId([ev('alme_1', 'delist')])).toBeNull();
+    expect(retryableOfflineCutEventId([])).toBeNull();
+  });
+});
+
+describe('offlineCutFailureWarning — the takedown toast', () => {
+  it('warns only on an ATTEMPTED and FAILED cut', () => {
+    expect(
+      offlineCutFailureWarning({
+        appListingId: 'a',
+        status: 'removed',
+        offlineCut: { outcome: 'failed' },
+      })
+    ).toBe(
+      "The listing is down, but the app's offline access could not be cut, so its users may stay signed in. The failure is recorded in the listing's moderation history, where it can be retried."
+    );
+  });
+
+  it('silent on a successful cut, on no cut (flag off / nothing to cut), and on junk', () => {
+    expect(
+      offlineCutFailureWarning({ status: 'removed', offlineCut: { outcome: 'cut', deleted: 2 } })
+    ).toBeNull();
+    expect(offlineCutFailureWarning({ appListingId: 'a', status: 'removed' })).toBeNull();
+    expect(offlineCutFailureWarning(undefined)).toBeNull();
+    expect(offlineCutFailureWarning('failed')).toBeNull();
+  });
+
+  it('both cut actions have a mod-history label', () => {
+    expect(moderationActionChip('offline-cut')).toEqual({
+      label: 'Offline access cut',
+      color: 'gray',
+    });
+    expect(moderationActionChip('offline-cut-failed')).toEqual({
+      label: 'Offline access cut failed',
+      color: 'orange',
+    });
   });
 });

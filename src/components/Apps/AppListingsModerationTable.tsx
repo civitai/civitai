@@ -56,6 +56,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { withLiveNote } from '~/components/Apps/appListingDetailModActions';
+import { showOfflineCutFailureWarning } from '~/components/Apps/offlineCutNotice';
 
 /**
  * /apps/review — the unified MODERATOR listings management table (W13 post-approval
@@ -738,7 +739,10 @@ function ListingModActionModal({
     onError: onError('Reset failed'),
   });
   const delistMut = trpc.appListings.delistListing.useMutation({
-    onSuccess: (result) => afterSuccess(withLiveNote('Listing hidden.', result)),
+    onSuccess: (result) => {
+      showOfflineCutFailureWarning(result);
+      return afterSuccess(withLiveNote('Listing hidden.', result));
+    },
     onError: onError('Hide failed'),
   });
   const relistMut = trpc.appListings.relistListing.useMutation({

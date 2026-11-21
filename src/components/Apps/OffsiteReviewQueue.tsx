@@ -73,6 +73,7 @@ import {
   reportActionLabel,
   reportRowActions,
   reportStatusChip,
+  retryableOfflineCutEventId,
   type ReportRowAction,
 } from '~/components/Apps/appListingModerationView';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
@@ -105,9 +106,14 @@ import {
 } from '~/shared/utils/listing-rating-display';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate as formatDateHelper } from '~/utils/date-helpers';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import {
+  showErrorNotification,
+  showSuccessNotification,
+  showWarningNotification,
+} from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { withLiveNote } from '~/components/Apps/appListingDetailModActions';
+import { showOfflineCutFailureWarning } from '~/components/Apps/offlineCutNotice';
 import type { ReviewSubmitterChip } from '~/components/Apps/unifiedReviewRow';
 import {
   holdOverrideSatisfied,
@@ -1714,7 +1720,10 @@ function ReportActionModal({
   }
 
   const delistMut = trpc.appListings.delistListing.useMutation({
-    onSuccess: (result) => afterSuccess(withLiveNote('Listing delisted.', result)),
+    onSuccess: (result) => {
+      showOfflineCutFailureWarning(result);
+      return afterSuccess(withLiveNote('Listing delisted.', result));
+    },
     onError: onError('Delist failed'),
   });
   const relistMut = trpc.appListings.relistListing.useMutation({
@@ -1899,13 +1908,36 @@ function ModerationHistoryModal({
   onClose: () => void;
 }) {
   const features = useFeatureFlags();
+  const utils = trpc.useUtils();
   const query = trpc.appListings.listModerationEvents.useQuery(
     { appListingId: report?.appListingId ?? '', limit: 50 },
     { enabled: !!features?.appBlocks && !!report?.appListingId, retry: false }
   );
+  // "Retry cut" on the newest `offline-cut-failed` row. The server re-checks the flag, that the
+  // listing is still taken down and that no other listing declares offline access; either outcome
+  // is recorded as a new history row, so the list is refetched.
+  const retryCut = trpc.appListings.retryConnectOfflineCut.useMutation({
+    onSuccess: async (result) => {
+      if (result.outcome === 'cut') {
+        showSuccessNotification({
+          message: `Offline access cut (${result.deleted} refresh token${
+            result.deleted === 1 ? '' : 's'
+          } deleted).`,
+        });
+      } else {
+        showWarningNotification({
+          title: 'Offline access not cut',
+          message: 'The retry failed too. The failure is recorded in the history.',
+        });
+      }
+      await utils.appListings.listModerationEvents.invalidate();
+    },
+    onError: (e) => showErrorNotification({ title: 'Retry failed', error: new Error(e.message) }),
+  });
 
   if (!report) return null;
   const events = (query.data?.items ?? []) as ModEvent[];
+  const retryableId = retryableOfflineCutEventId(events);
 
   return (
     <Modal
@@ -1962,6 +1994,27 @@ function ModerationHistoryModal({
                   <Text size="sm" mt={4} style={{ whiteSpace: 'pre-wrap' }}>
                     {e.reason}
                   </Text>
+                )}
+                {e.action === 'offline-cut-failed' && e.detail && (
+                  <Text size="xs" c="dimmed" mt={4} style={{ whiteSpace: 'pre-wrap' }}>
+                    {e.detail}
+                  </Text>
+                )}
+                {e.id === retryableId && e.appListingId && (
+                  <Group justify="flex-end" mt={4}>
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="orange"
+                      loading={retryCut.isPending}
+                      onClick={() =>
+                        e.appListingId && retryCut.mutate({ appListingId: e.appListingId })
+                      }
+                      data-testid={`apps-mod-event-retry-cut-${e.id}`}
+                    >
+                      Retry cut
+                    </Button>
+                  </Group>
                 )}
               </Card>
             );

@@ -30,8 +30,14 @@ const {
   mockSetReviewExclude,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
+  mockRetryCut,
 } = vi.hoisted(() => ({
   mockDelist: vi.fn(async () => ({ appListingId: 'apl_1', status: 'removed' as const })),
+  mockRetryCut: vi.fn(async () => ({
+    appListingId: 'apl_1',
+    outcome: 'cut' as const,
+    deleted: 4,
+  })),
   mockRelist: vi.fn(async () => ({ appListingId: 'apl_1', status: 'approved' as const })),
   mockResetOnsite: vi.fn(async () => ({
     appListingId: 'apl_1',
@@ -67,6 +73,7 @@ vi.mock('~/server/services/blocks/offsite-moderation.service', () => ({
   dismissReport: mockDismiss,
   listModerationEvents: mockListEvents,
   resetOnsiteListingToPending: mockResetOnsite,
+  retryConnectOfflineCut: mockRetryCut,
 }));
 // The listing-preview projection is dynamically imported by getListingPreviewForReview;
 // mock just that export so the mod-gate authz can be exercised without a DB.
@@ -182,6 +189,13 @@ const MOD_ACTIONS: Array<{
     mock: mockSetReviewExclude,
     call: (c) => c.setReviewExclude({ reviewId: 7, exclude: true }),
   },
+  {
+    // "Retry cut" on an `offline-cut-failed` history row: re-runs a takedown's offline-access
+    // cut, so it shares the takedown's moderator-only boundary.
+    name: 'retryConnectOfflineCut',
+    mock: mockRetryCut,
+    call: (c) => c.retryConnectOfflineCut({ appListingId: 'apl_1' }),
+  },
 ];
 
 describe('mod actions — every one is moderator-only', () => {
@@ -229,6 +243,47 @@ describe('mod actions — reviewer id is bound to ctx (never client-supplied)', 
     expect(mockResetOnsite.mock.calls[0][0]).toMatchObject({
       reviewerUserId: mod.id,
       input: { appListingId: 'apl_1', reason: REASON },
+    });
+  });
+
+  it('retryConnectOfflineCut passes moderatorUserId = ctx.user.id and returns the service result', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    await expect(caller.retryConnectOfflineCut({ appListingId: 'apl_1' })).resolves.toEqual({
+      appListingId: 'apl_1',
+      outcome: 'cut',
+      deleted: 4,
+    });
+    expect(mockRetryCut.mock.calls[0][0]).toEqual({
+      appListingId: 'apl_1',
+      moderatorUserId: mod.id,
+    });
+  });
+
+  it('retryConnectOfflineCut maps a typed refusal (NOT_TRANSITIONABLE) to BAD_REQUEST, FORBIDDEN to FORBIDDEN', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    mockRetryCut.mockRejectedValueOnce(
+      offsiteModErr('NOT_TRANSITIONABLE', 'This listing is no longer taken down by a moderator.')
+    );
+    await expect(caller.retryConnectOfflineCut({ appListingId: 'apl_1' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    mockRetryCut.mockRejectedValueOnce(offsiteModErr('FORBIDDEN', 'not enabled'));
+    await expect(caller.retryConnectOfflineCut({ appListingId: 'apl_1' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+
+  it('delistListing returns the service result verbatim, offlineCut included', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    mockDelist.mockResolvedValueOnce({
+      appListingId: 'apl_1',
+      status: 'removed',
+      offlineCut: { outcome: 'failed' },
+    } as never);
+    await expect(caller.delistListing({ appListingId: 'apl_1', reason: REASON })).resolves.toEqual({
+      appListingId: 'apl_1',
+      status: 'removed',
+      offlineCut: { outcome: 'failed' },
     });
   });
 

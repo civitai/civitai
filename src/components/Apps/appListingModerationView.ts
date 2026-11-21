@@ -143,7 +143,42 @@ const MOD_ACTION_CHIPS: Record<string, Chip> = {
   'storage-doc-dismiss': { label: 'Stored document reports dismissed', color: 'blue' },
   'moderator-edit': { label: 'Edited by a moderator', color: 'blue' },
   'set-official': { label: 'Official mark changed', color: 'blue' },
+  // The offline-access cut after a takedown of a connect listing; mod-view only
+  // (`OWNER_HIDDEN_MODERATION_ACTIONS`). A failed one carries a "Retry cut" button.
+  'offline-cut': { label: 'Offline access cut', color: 'gray' },
+  'offline-cut-failed': { label: 'Offline access cut failed', color: 'orange' },
 };
+
+/**
+ * The `offline-cut-failed` event a moderator may retry from the history, or null.
+ *
+ * Only the NEWEST cut event (either outcome) of the listing qualifies, and only when it is a
+ * failure: once a later cut succeeded, or a later one failed, the older failure is history.
+ * `events` is the history as the server returns it, newest first. The server re-checks every
+ * precondition on retry; this only decides where the button is drawn.
+ */
+export function retryableOfflineCutEventId(
+  events: ReadonlyArray<{ id: string; action: string }>
+): string | null {
+  const latest = events.find(
+    (e) => e.action === 'offline-cut' || e.action === 'offline-cut-failed'
+  );
+  return latest?.action === 'offline-cut-failed' ? latest.id : null;
+}
+
+/**
+ * The warning to show after a takedown whose offline-access cut was attempted and failed, or null.
+ * `result` is the `delistListing` mutation result (typed `unknown` so every caller can pass its
+ * own inferred type). Absent `offlineCut` — the flag off, or nothing to cut — shows nothing.
+ */
+export function offlineCutFailureWarning(result: unknown): string | null {
+  const cut =
+    result && typeof result === 'object'
+      ? (result as { offlineCut?: { outcome?: unknown } }).offlineCut
+      : undefined;
+  if (cut?.outcome !== 'failed') return null;
+  return "The listing is down, but the app's offline access could not be cut, so its users may stay signed in. The failure is recorded in the listing's moderation history, where it can be retried.";
+}
 
 /** Chip for a moderation-event action, for the per-listing history view. */
 export function moderationActionChip(action: string): Chip {
