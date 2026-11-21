@@ -340,6 +340,22 @@ describe('backfill', () => {
     expect(await imageCount()).toBe(1);
   });
 
+  it('reverts mid-finalize without touching versions finalize has not reached, then refuses to finalize', async () => {
+    await q(
+      `INSERT INTO "ModelVersionMetric" ("modelVersionId", "imageCount") VALUES (${V}, 7), (11, 5)`
+    );
+    await image(W - HOUR_MS);
+    await startBackfill(W + 24 * HOUR_MS);
+    await stage(1, 1);
+    expect(await finalizeBatch(1)).toEqual({ versions: 1, finished: false }); // V only
+    expect(await imageCount(V)).toBe(1);
+
+    expect(await revertBatch(100)).toMatchObject({ finished: true });
+    expect(await imageCount(V)).toBe(7);
+    expect(await imageCount(11)).toBe(5); // still frozen, never visited
+    await expect(finalizeBatch(100)).rejects.toThrow('A revert has started');
+  });
+
   it('refuses to finalize once the job owns the counts', async () => {
     await image(W - HOUR_MS);
     await startBackfill(W + 24 * HOUR_MS);

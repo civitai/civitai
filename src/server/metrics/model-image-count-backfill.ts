@@ -197,6 +197,8 @@ export async function finalizeBatch(limit: number) {
       const progress = await readKeyValue<Progress>(tx, PROGRESS_KEY);
       if (!progress) throw new Error('No backfill');
       if (progress.finalized) throw new Error('Already finalized');
+      if (progress.revertCursor !== undefined)
+        throw new Error('A revert has started: finalizing now would mix old and new counts');
       if (await readKeyValue<Watermark>(tx, WATERMARK_KEY))
         throw new Error('Watermark exists: the job owns the counts');
       const gaps = coverageGaps(progress.ranges, progress.j0);
@@ -276,12 +278,16 @@ export async function revertBatch(limit: number) {
         GROUP BY 1 ORDER BY 1 LIMIT ${limit}
       `;
       if (prev.length) await tx.$executeRaw(setCountsSql(prev));
-      // Finalize visited every version with a count, so one with no rollback row was 0 before it.
+      // Finalize visits every version with a count up to its cursor (all of them once finished), so
+      // one there with no rollback row was 0 before it. Past a mid-finalize cursor, rows still
+      // hold their frozen values and are left alone.
+      const visitedUpTo = progress.finalized ? 2147483647 : progress.finalizeCursor ?? 0;
       const unvisited =
         prev.length < limit
           ? await tx.$queryRaw<VersionCount[]>`
               SELECT mvm."modelVersionId", 0 AS count FROM "ModelVersionMetric" mvm
-              WHERE mvm."imageCount" > 0 AND NOT EXISTS (
+              WHERE mvm."imageCount" > 0 AND mvm."modelVersionId" <= ${visitedUpTo}
+                AND NOT EXISTS (
                 SELECT 1 FROM "ModelMetricDaily" d
                 WHERE d."modelVersionId" = mvm."modelVersionId" AND d.type = ${PREV_TYPE}
               )

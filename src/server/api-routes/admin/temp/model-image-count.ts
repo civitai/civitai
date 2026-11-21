@@ -18,7 +18,7 @@ import { booleanString } from '~/utils/zod-helpers';
  *   start                  pins the cutoff hour and the top Image id (idempotent)
  *   stage&start=&end=      counts that Image id range into staging; dryRun=true (default) writes nothing
  *   finalize&limit=2000    swaps the next `limit` versions in; call about once a minute until finished
- *   revert&limit=2000      pauses the job and restores pre-finalize counts
+ *   revert&limit=2000      pauses the job and restores pre-finalize counts; after it, finalize refuses
  *   pause / resume         the job's brake
  *   recount&ids=1,2        sets named versions to a fresh count
  * A version merge while finalize runs can add a source's frozen count onto a target finalize

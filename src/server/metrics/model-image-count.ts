@@ -178,10 +178,15 @@ export const RECOUNT_MAX_IRN_ROWS = 200_000;
  */
 export async function recountVersions(versionIds: number[]) {
   const ids = [...new Set(versionIds)].sort((a, b) => a - b);
+  // Capped per version, so the guard never walks a big version in full just to refuse it.
   const sizes = await dbRead.$queryRaw<{ id: number; rows: number }[]>`
-    SELECT "modelVersionId" AS id, count(*)::int AS rows
-    FROM "ImageResourceNew" WHERE "modelVersionId" = ANY(${ids}::int[])
-    GROUP BY 1
+    SELECT u.id, (
+      SELECT count(*)::int FROM (
+        SELECT 1 FROM "ImageResourceNew" WHERE "modelVersionId" = u.id
+        LIMIT ${RECOUNT_MAX_IRN_ROWS + 1}
+      ) capped
+    ) AS rows
+    FROM unnest(${ids}::int[]) AS u(id)
   `;
   const tooBig = sizes.filter((s) => s.rows > RECOUNT_MAX_IRN_ROWS).map((s) => s.id);
   if (tooBig.length) throw new Error(`Too many image rows to recount: ${tooBig.join(', ')}`);
