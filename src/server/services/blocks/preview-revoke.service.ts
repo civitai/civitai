@@ -22,16 +22,8 @@ import { outboundFetch } from '~/server/utils/fetch-timeout';
  * after an unban; `issuedAt` is the first send attempt plus a 120 s clock-skew margin, and a retry
  * keeps it.
  *
- * Delivery is at least once and the call is idempotent. Each caller tries once inline; on any
- * retryable answer the revoke is queued UNSIGNED on the cache cluster and the dev-tunnel reaper
- * drains the queue every run, signing each request as it sends it, so the 300 s signature window
- * always fits. A queued revoke older than the 8 h session cap is dropped: every session host it
- * could match has expired by then.
- *
- * Which answers are retried and which dropped: `classifyPreviewRevokeStatus`. A 404 is retried
- * because it is the gateway with direct preview switched off (its rollback), so the revoke stays
- * queued until it is switched back on. Not configured (APP_ASSISTANT_SANDBOX_URL or the secret
- * unset) also queues, so a revoke is never lost to a configuration gap shorter than the session cap.
+ * A 404 is retried (`classifyPreviewRevokeStatus`) because it is the gateway with direct preview
+ * switched off (its rollback), so the revoke stays queued until it is switched back on.
  *
  * Never throws: a revoke must never fail a stop, a reap or a ban.
  */
@@ -43,7 +35,10 @@ export const PREVIEW_REVOKE_HEADERS = {
 } as const;
 /** Added to a `"*"` revoke's first send attempt: the clock difference between the two clusters, and a session opened while the ban propagates. */
 export const PREVIEW_REVOKE_ISSUED_AT_MARGIN_MS = 120_000;
-/** A queued revoke older than this is dropped (the 8 h session cap). */
+/**
+ * A queued revoke older than this is dropped (the 8 h session cap): every session host it could
+ * match has expired by then.
+ */
 export const PREVIEW_REVOKE_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 const SEND_TIMEOUT_MS = 5_000;
 /** At most this many queued revokes are sent per reaper run, so a long outage cannot stall it. */
@@ -121,7 +116,8 @@ export function classifyPreviewRevokeStatus(status: number): PreviewRevokeOutcom
 
 /**
  * What one send attempt saw: the HTTP status, `network` (no answer: refused, reset, timed out) or
- * `unconfigured` (APP_ASSISTANT_SANDBOX_URL or the secret unset; nothing was sent).
+ * `unconfigured` (APP_ASSISTANT_SANDBOX_URL or the secret unset; nothing was sent). `unconfigured`
+ * is retried, so a revoke is never lost to a configuration gap shorter than the session cap.
  */
 export type PreviewRevokeAttemptStatus = number | 'network' | 'unconfigured';
 
@@ -193,7 +189,11 @@ async function enqueue(entry: QueuedRevoke): Promise<void> {
   }
 }
 
-/** Try once now; queue for the reaper on anything retryable. Never throws. */
+/**
+ * Try once now; queue for the reaper on anything retryable. Delivery is at least once and the call
+ * is idempotent. The queued entry is unsigned: the drain signs each request as it sends it, so the
+ * 300 s signature window always fits. Never throws.
+ */
 async function deliver(revoke: PreviewRevoke, nowMs: number): Promise<PreviewRevokeOutcome> {
   const { outcome } = await sendOnce(revoke, nowMs);
   if (outcome === 'retry') await enqueue({ ...revoke, queuedAt: nowMs });

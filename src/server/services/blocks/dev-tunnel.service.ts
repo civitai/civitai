@@ -1597,8 +1597,7 @@ export async function openDirectPreviewSession(
   const refusal = await params.claimStart();
   if (refusal) return { kind: 'refused', refusal };
 
-  // Marked BEFORE anything of the session is written (see `directUsedKey`). A failure here throws
-  // with nothing written, so the id stays openable and the caller answers "unavailable".
+  // A failure here throws with nothing written, so the id stays openable.
   await cluster('directUsed.mark', () =>
     redis.set(directUsedKey(userId, previewId), '1', { EX: DIRECT_USED_MARKER_SECONDS })
   );

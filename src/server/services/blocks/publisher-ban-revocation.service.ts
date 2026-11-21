@@ -326,12 +326,8 @@ export async function revokeBlockInstancesForPublisher({
 
     return global.length + subjectScoped.length;
   } finally {
-    // 🔴 IN A `finally`, NOT AFTER THE MARKERS: App Assistant direct previews of every Sandbox
-    // the user owns are revoked at the sandbox service (`"*"`) whether or not
-    // `resolvePublisherInstanceIds` threw — its DB reads are not isolated inside it, and the
-    // revoke must not depend on them. Sent after the markers when they are written. It
-    // swallows its own errors (queueing on failure), so it cannot change what this returns or
-    // throws.
+    // In a finally: the "*" revoke must not depend on resolvePublisherInstanceIds, which can
+    // throw. It swallows its own errors.
     await revokePreviewsForBannedUser(userId);
   }
 }

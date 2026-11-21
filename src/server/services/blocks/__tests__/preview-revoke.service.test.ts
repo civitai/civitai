@@ -60,6 +60,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
+// buildPreviewRevokeRequest + PREVIEW_REVOKE_* (preview-revoke.service.ts): the sandbox's contract.
 describe('the signed revoke request (wire contract)', () => {
   it('a "*" revoke: exact body bytes, timestamp in seconds, and the independently computed signature', () => {
     const req = buildPreviewRevokeRequest(
@@ -129,6 +130,7 @@ describe('delivery: once inline, then the queue', () => {
     expect(queued()).toEqual({});
   });
 
+  // 120 s: PREVIEW_REVOKE_ISSUED_AT_MARGIN_MS (preview-revoke.service.ts), per the sandbox's contract.
   it('a ban sends "*" with issuedAt = the first attempt + 120 s', async () => {
     answer(200);
     await revokePreviewsForBannedUser(USER, NOW_MS);
@@ -139,6 +141,7 @@ describe('delivery: once inline, then the queue', () => {
 });
 
 describe('the reaper drains the queue', () => {
+  // + 120 s: PREVIEW_REVOKE_ISSUED_AT_MARGIN_MS (preview-revoke.service.ts), per the sandbox's contract.
   it('a queued "*" is signed when it is SENT and keeps its first issuedAt', async () => {
     answer(503);
     await revokePreviewsForBannedUser(USER, NOW_MS);
@@ -184,6 +187,7 @@ describe('the reaper drains the queue', () => {
     expect(queued()).toEqual({});
   });
 
+  // 3: DRAIN_MAX_CONSECUTIVE_FAILURES in preview-revoke.service.ts.
   describe('a down sandbox service stops the run after 3 consecutive failures', () => {
     const pid = (n: number) => `${'0'.repeat(31)}${n}`;
     /** Five revokes queued (each first send answered 503), then a clean fetch mock and log. */
@@ -245,6 +249,7 @@ describe('the reaper drains the queue', () => {
     });
   });
 
+  // 8 h: PREVIEW_REVOKE_MAX_AGE_MS in preview-revoke.service.ts.
   it('one older than the 8 h cap is dropped unsent, and the drop is logged', async () => {
     answer(503);
     await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);

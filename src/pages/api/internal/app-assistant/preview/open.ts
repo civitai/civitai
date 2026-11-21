@@ -35,17 +35,13 @@ import { withDistributedLock } from '~/server/utils/distributed-lock';
  * `previewId` is the Sandbox's current preview id (32 lowercase hex), as the sandbox service
  * reports it.
  *
- * Gates, re-judged on every call, as `dev-tunnel/start` judges them: the App Assistant gates
- * (`getRunnerDevTunnelUser`, which reads the user from the primary, so a ban is seen at once), the
- * author capability, the `app-blocks-dev-tunnel` kill switch and ownership of `blockId`. Then
- * exactly one of three answers:
- *   - an active direct session for the (user, app) pair holds `previewId`: reused, its idle clock
- *     restarted (one already idle-expired is ended here and answered as a used id, below);
- *   - `previewId` never had a session: a new one is written. Only this counts as a start against
- *     the hourly limit for an unsubmitted app (one counter with `dev-tunnel/start`);
- *   - `previewId` had a session that has ended: `{ mode: "direct", fresh: true }`, nothing
- *     written and no start counted. Rotate the Sandbox's preview id and call again, once; a
- *     second `fresh` is an error, not a reason to loop.
+ * Gates are re-judged on every call as `dev-tunnel/start` judges them: `getRunnerDevTunnelUser`
+ * (which reads the user from the primary, so a ban is seen at once), then
+ * `authorizeDevTunnelStart`. Reuse, write or `fresh`: see `openDirectPreviewSession`.
+ *
+ * `{ mode: "direct", fresh: true }`: the id had a session that has ended; nothing was written.
+ * Rotate the Sandbox's preview id and call again, once; a second `fresh` is an error, not a
+ * reason to loop.
  *
  *   200 `{ mode: "tunnel" }`, `{ mode: "direct", sessionId, host }`, or `{ mode: "direct", fresh: true }`
  *   400 `{ error }` the body is not that shape
