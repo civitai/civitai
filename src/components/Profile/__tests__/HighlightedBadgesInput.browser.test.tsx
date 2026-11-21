@@ -123,6 +123,14 @@ describe('HighlightedBadgesInput', () => {
     await expect.element(page.getByText("You don't have any badges yet.")).toBeVisible();
   });
 
+  test('pin numbers count tiles, not sibling ids, so the grid matches the strip', async () => {
+    await renderWithProviders(
+      <HighlightedBadgesInput badges={siblings} value={[10, 11, 12]} onChange={vi.fn()} />
+    );
+    await expect.element(page.getByRole('button', { name: 'Other' })).toHaveTextContent('2');
+    await expect.element(page.getByRole('listitem', { name: 'Pin 2: Other' })).toBeVisible();
+  });
+
   describe('reordering pins', () => {
     const pinned = [1, 2, 3];
 
@@ -140,6 +148,7 @@ describe('HighlightedBadgesInput', () => {
       await userEvent.keyboard('{ArrowDown}');
       await userEvent.keyboard(' ');
       await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith([2, 1, 3]));
+      expect(onChange).toHaveBeenCalledTimes(1);
     });
 
     test('mouse: dragging the last pin onto the first moves it to the front', async () => {
@@ -149,6 +158,7 @@ describe('HighlightedBadgesInput', () => {
       );
       await dragPin('Pin 3: Three', 'Pin 1: One');
       await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith([3, 1, 2]));
+      expect(onChange).toHaveBeenCalledTimes(1);
     });
 
     test('reordering leaves an unowned saved id in its slot', async () => {
@@ -158,6 +168,30 @@ describe('HighlightedBadgesInput', () => {
       );
       await dragPin('Pin 2: Two', 'Pin 1: One');
       await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith([2, 99, 1]));
+      expect(onChange).toHaveBeenCalledTimes(1);
+    });
+
+    test('a sibling id after the pin stays put when pins swap', async () => {
+      const onChange = vi.fn();
+      await renderWithProviders(
+        <HighlightedBadgesInput badges={siblings} value={[12, 10, 11]} onChange={onChange} />
+      );
+      await dragPin('Pin 2: Placer', 'Pin 1: Other');
+      await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith([10, 12, 11]));
+      expect(onChange).toHaveBeenCalledTimes(1);
+    });
+
+    test('a press with no movement does not reorder', async () => {
+      const onChange = vi.fn();
+      await renderWithProviders(
+        <HighlightedBadgesInput badges={badges} value={pinned} onChange={onChange} />
+      );
+      const el = page.getByRole('listitem', { name: 'Pin 1: One' }).element() as HTMLElement;
+      el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(onChange).not.toHaveBeenCalled();
     });
 
     test('no strip with fewer than two pins', async () => {
@@ -176,6 +210,16 @@ describe('HighlightedBadgesInput', () => {
   });
 
   describe('hidden badges in the highlight picker', () => {
+    test('a visible badge, and a hidden one that is already pinned, keep the plain tooltip', async () => {
+      await renderWithProviders(
+        <HighlightedBadgesInput badges={badges} value={[1]} hiddenIds={[1, 2]} onChange={vi.fn()} />
+      );
+      await page.getByRole('button', { name: 'Three' }).hover();
+      await expect.element(page.getByRole('tooltip')).toHaveTextContent(/^Three$/);
+      await page.getByRole('button', { name: 'One' }).hover();
+      await expect.element(page.getByRole('tooltip')).toHaveTextContent(/^One$/);
+    });
+
     test('an unpinned hidden badge is marked in its tooltip and stays selectable', async () => {
       const onChange = vi.fn();
       await renderWithProviders(

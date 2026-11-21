@@ -217,8 +217,7 @@ export function HighlightedBadgesInput({
             ...ids.map((id) => shownValue.indexOf(id)).filter((index) => index >= 0)
           );
           const selected = Number.isFinite(order);
-          const hidden =
-            variant === 'highlight' && !selected && ids.some((id) => hiddenIds?.includes(id));
+          const hidden = variant === 'highlight' && !selected && !!hiddenIds?.includes(ids[0]);
           const name = badge.name ?? 'Badge';
           return (
             <Tooltip
@@ -272,7 +271,7 @@ export function HighlightedBadgesInput({
                       <IconEyeOff size={12} />
                     </div>
                   ) : (
-                    <PinNumber>{order + 1}</PinNumber>
+                    <PinNumber>{pins.findIndex((pin) => pin.badge === badge) + 1}</PinNumber>
                   ))}
                 {hidden && (
                   <IconEyeOff
