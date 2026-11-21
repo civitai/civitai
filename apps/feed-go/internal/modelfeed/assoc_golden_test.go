@@ -359,7 +359,7 @@ func TestAssocGoldenHarnessCanFail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed := bytes.Replace(fx.Expect.Envelope, []byte(`"canGenerate":false`), []byte(`"canGenerate":true`), 1)
+	changed := bytes.Replace(fx.Expect.Envelope, []byte(`"canGenerate": false`), []byte(`"canGenerate": true`), 1)
 	if bytes.Equal(changed, fx.Expect.Envelope) {
 		t.Fatal("the control found no canGenerate:false to change")
 	}

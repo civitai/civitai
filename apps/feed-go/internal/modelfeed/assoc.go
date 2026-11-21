@@ -111,7 +111,7 @@ func ServeAssociated(ctx context.Context, d *AssocDeps, req AssocRequest) (*Asso
 		if err != nil {
 			return nil, err
 		}
-		if found && poi && !(viewerID > 0 && viewerID == owner) {
+		if found && poi && (viewerID <= 0 || viewerID != owner) {
 			return nil, fallback.New("model-assoc-source-hidden")
 		}
 	}

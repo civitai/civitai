@@ -242,7 +242,6 @@ const GALLERY = { 5010: { sfwHeld: false }, 5006: { sfwHeld: false } };
 // ---------------------------------------------------------------------------------------------
 // The mirror
 // ---------------------------------------------------------------------------------------------
-const fallback = (reason) => ({ fallback: reason });
 
 function pageQuery(world, input, viewer) {
   const isMod = !!viewer?.isModerator;
@@ -424,6 +423,10 @@ function holdShowcaseImages(world, images, models) {
 
 function handler(world, spec) {
   const viewer = VIEWERS[spec.viewer];
+  // What Node bound so far: a fallback after the page query carries it, so the harness can answer
+  // the same queries before it reaches the fallback.
+  let binds = null;
+  const fallback = (reason) => ({ fallback: reason, binds });
   // publicProcedure: applyDomainFeature on the raw input, then the schema.
   const raw = structuredClone(spec.input);
   levelMw.stripBlockedForNonModerator(raw, viewer?.isModerator);
@@ -455,7 +458,7 @@ function handler(world, spec) {
     period: 'AllTime',
   });
   const { items: models, rows } = getModelsRaw(world, modelInput, viewer);
-  const binds = {
+  binds = {
     pageIds: [...new Set(modelResources)],
     pageLevel: modelInput.browsingLevel,
     rows: rows.map((r) => r.id),

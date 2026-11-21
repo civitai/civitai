@@ -60,7 +60,38 @@
         "deletedAt": null
       }
     },
-    "modelRows": [],
+    "modelRows": [
+      {
+        "id": 5008,
+        "name": "Model 5008",
+        "sfwName": null,
+        "coverImageId": null,
+        "sfwCoverImageId": null,
+        "type": "Wildcards",
+        "minor": false,
+        "sfwOnly": false,
+        "poi": false,
+        "nsfw": false,
+        "nsfwLevel": 1,
+        "status": "Published",
+        "createdAt": "2026-06-01T10:00:00.000Z",
+        "lastVersionAt": "2026-06-02T10:00:00.000Z",
+        "publishedAt": "2026-06-02T10:00:00.000Z",
+        "locked": false,
+        "meta": null,
+        "mode": null,
+        "availability": "Public",
+        "userId": 1001,
+        "rank": {
+          "downloadCount": 10,
+          "thumbsUpCount": 20,
+          "thumbsDownCount": 1,
+          "commentCount": 2,
+          "collectedCount": 3,
+          "tippedAmountCount": 4
+        }
+      }
+    ],
     "modelData": {
       "5001": {
         "hashes": [
@@ -255,9 +286,38 @@
         ]
       }
     },
-    "imageRows": []
+    "imageRows": [
+      [
+        8008,
+        1001,
+        null,
+        "00000000-0000-4000-8000-000000008008",
+        1,
+        512,
+        768,
+        "h8008",
+        "image",
+        "{\"width\":512,\"height\":768}",
+        false,
+        false,
+        6008,
+        "Public",
+        true,
+        true,
+        false,
+        null
+      ]
+    ]
   },
-  "binds": null,
+  "binds": {
+    "pageIds": [
+      5008
+    ],
+    "pageLevel": 1,
+    "imageVersionIds": [
+      6008
+    ]
+  },
   "expect": {
     "fallback": "model-assoc-wildcards"
   }

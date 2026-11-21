@@ -86,7 +86,132 @@
         "deletedAt": null
       }
     },
-    "modelRows": [],
+    "modelRows": [
+      {
+        "id": 5001,
+        "name": "Model 5001",
+        "sfwName": null,
+        "coverImageId": null,
+        "sfwCoverImageId": null,
+        "type": "Checkpoint",
+        "minor": false,
+        "sfwOnly": false,
+        "poi": false,
+        "nsfw": false,
+        "nsfwLevel": 1,
+        "status": "Published",
+        "createdAt": "2026-06-01T10:00:00.000Z",
+        "lastVersionAt": "2026-06-02T10:00:00.000Z",
+        "publishedAt": "2026-06-02T10:00:00.000Z",
+        "locked": false,
+        "meta": null,
+        "mode": null,
+        "availability": "Public",
+        "userId": 1001,
+        "rank": {
+          "downloadCount": 50,
+          "thumbsUpCount": 90,
+          "thumbsDownCount": 0,
+          "commentCount": 1,
+          "collectedCount": 7,
+          "tippedAmountCount": 0
+        }
+      },
+      {
+        "id": 5002,
+        "name": "Model 5002",
+        "sfwName": null,
+        "coverImageId": null,
+        "sfwCoverImageId": null,
+        "type": "LORA",
+        "minor": false,
+        "sfwOnly": false,
+        "poi": false,
+        "nsfw": false,
+        "nsfwLevel": 5,
+        "status": "Published",
+        "createdAt": "2026-06-01T10:00:00.000Z",
+        "lastVersionAt": "2026-06-02T10:00:00.000Z",
+        "publishedAt": "2026-06-02T10:00:00.000Z",
+        "locked": false,
+        "meta": null,
+        "mode": null,
+        "availability": "Public",
+        "userId": 1002,
+        "rank": {
+          "downloadCount": 10,
+          "thumbsUpCount": 20,
+          "thumbsDownCount": 1,
+          "commentCount": 2,
+          "collectedCount": 3,
+          "tippedAmountCount": 4
+        }
+      },
+      {
+        "id": 5003,
+        "name": "Model 5003",
+        "sfwName": null,
+        "coverImageId": null,
+        "sfwCoverImageId": null,
+        "type": "TextualInversion",
+        "minor": false,
+        "sfwOnly": false,
+        "poi": false,
+        "nsfw": false,
+        "nsfwLevel": 1,
+        "status": "Published",
+        "createdAt": "2026-06-01T10:00:00.000Z",
+        "lastVersionAt": "2026-06-02T10:00:00.000Z",
+        "publishedAt": "2026-06-02T10:00:00.000Z",
+        "locked": false,
+        "meta": null,
+        "mode": null,
+        "availability": "Public",
+        "userId": 1001,
+        "rank": {
+          "downloadCount": 10,
+          "thumbsUpCount": 20,
+          "thumbsDownCount": 1,
+          "commentCount": 2,
+          "collectedCount": 3,
+          "tippedAmountCount": 4
+        }
+      },
+      {
+        "id": 5009,
+        "name": "Model 5009",
+        "sfwName": null,
+        "coverImageId": null,
+        "sfwCoverImageId": null,
+        "type": "Checkpoint",
+        "minor": false,
+        "sfwOnly": false,
+        "poi": false,
+        "nsfw": true,
+        "nsfwLevel": 28,
+        "status": "Published",
+        "createdAt": "2026-06-01T10:00:00.000Z",
+        "lastVersionAt": "2026-06-02T10:00:00.000Z",
+        "publishedAt": "2026-06-02T10:00:00.000Z",
+        "locked": false,
+        "meta": {
+          "metricVisibility": {
+            "downloads": "hide"
+          }
+        },
+        "mode": null,
+        "availability": "Public",
+        "userId": 1001,
+        "rank": {
+          "downloadCount": 10,
+          "thumbsUpCount": 20,
+          "thumbsDownCount": 1,
+          "commentCount": 2,
+          "collectedCount": 3,
+          "tippedAmountCount": 4
+        }
+      }
+    ],
     "modelData": {
       "5001": {
         "hashes": [
@@ -281,9 +406,106 @@
         ]
       }
     },
-    "imageRows": []
+    "imageRows": [
+      [
+        8020,
+        1002,
+        null,
+        "00000000-0000-4000-8000-000000008020",
+        4,
+        512,
+        768,
+        "h8020",
+        "image",
+        "{\"width\":512,\"height\":768}",
+        false,
+        false,
+        6002,
+        "Public",
+        true,
+        true,
+        false,
+        null
+      ],
+      [
+        8001,
+        1001,
+        null,
+        "00000000-0000-4000-8000-000000008001",
+        1,
+        512,
+        768,
+        "h8001",
+        "image",
+        "{\"width\":512,\"height\":768}",
+        false,
+        false,
+        6001,
+        "Public",
+        true,
+        true,
+        false,
+        null
+      ],
+      [
+        8003,
+        1001,
+        null,
+        "00000000-0000-4000-8000-000000008003",
+        1,
+        512,
+        768,
+        "h8003",
+        "image",
+        "{\"width\":512,\"height\":768}",
+        false,
+        false,
+        6003,
+        "Public",
+        true,
+        true,
+        false,
+        null
+      ],
+      [
+        8009,
+        1001,
+        null,
+        "00000000-0000-4000-8000-000000008009",
+        8,
+        512,
+        768,
+        "h8009",
+        "image",
+        "{\"width\":512,\"height\":768}",
+        false,
+        false,
+        6009,
+        "Public",
+        true,
+        true,
+        false,
+        "31"
+      ]
+    ]
   },
-  "binds": null,
+  "binds": {
+    "pageIds": [
+      5001,
+      5002,
+      5004,
+      5005,
+      5009,
+      5003
+    ],
+    "pageLevel": 31,
+    "imageVersionIds": [
+      6001,
+      6002,
+      6003,
+      6009
+    ]
+  },
   "expect": {
     "fallback": "gate-rules-ecosystem"
   }
