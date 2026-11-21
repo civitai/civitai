@@ -383,6 +383,8 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'OauthConsent.offlineGrantedAt',
       // Staff licence-fee controls, migration 20271121130000_licensing_fee_locked (manual apply).
       'ModelVersion.licensingFeeLocked',
+      // Restricted licensing roots, migration 20271121150000_licensing_root_restricted (manual apply).
+      'LicensingRoot.restricted',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

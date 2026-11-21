@@ -485,6 +485,7 @@ export const getLicensingRoots = async ({
       licensingFeeType: LicensingFeeType | null;
       licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
       isDefault: boolean;
+      restricted: boolean;
     }>
   >`
     SELECT
@@ -494,7 +495,8 @@ export const getLicensingRoots = async ({
       mv."licensingFee"::float8 AS "licensingFee",
       mv."licensingFeeType",
       mv."licensingFeeSettlementCurrency",
-      lr."isDefault"
+      lr."isDefault",
+      lr.restricted
     FROM "LicensingRoot" lr
     JOIN "ModelVersion" mv ON mv.id = lr."modelVersionId"
     JOIN "Model" m ON m.id = mv."modelId"
@@ -507,7 +509,9 @@ export const getLicensingRoots = async ({
     ORDER BY lr."isDefault" DESC, m.name, mv.index
   `;
 
-  const defaultVersionId = roots.find((r) => r.isDefault)?.id ?? null;
+  // Restricted roots stay in the list so the editor can tell a root's own version is a root; the picker
+  // offers one only to a moderator or a version already linked to it, and it is never the default.
+  const defaultVersionId = roots.find((r) => r.isDefault && !r.restricted)?.id ?? null;
   return { roots, defaultVersionId };
 };
 

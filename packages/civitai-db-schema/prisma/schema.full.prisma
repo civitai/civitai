@@ -1427,6 +1427,9 @@ model LicensingRoot {
   modelVersionId Int          @unique
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   isDefault      Boolean      @default(false)
+  // Staff set it by hand: kept out of the editor's picker, and a version may only gain it as its source
+  // through a moderator. A version that already holds it keeps it.
+  restricted     Boolean      @default(false)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 

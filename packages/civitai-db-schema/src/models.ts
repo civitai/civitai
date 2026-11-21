@@ -1227,6 +1227,7 @@ export interface LicensingRoot {
   modelVersionId: number;
   modelVersion?: ModelVersion;
   isDefault: boolean;
+  restricted: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
