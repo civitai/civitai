@@ -1182,10 +1182,13 @@ export const deleteBountyById = async ({
     const stored = await tx.bounty.findUnique({ where: { id } });
     if (!stored) return null;
     // A held owner or entrant, or an award recorded for manual resolution, keeps the bounty: hidden
-    // and detached from its owner, deleted later by `bounty-payout-retry`.
-    const keepsBounty = Prisma.sql`(${ownerHeldSql(keptBountyOwnerSql)}
+    // and detached from its owner, deleted later by `bounty-payout-retry`. A bounty with no owner
+    // has no owner hold. Unknown (NULL) keeps it, in both statements alike.
+    const keepsBounty = Prisma.sql`((
+      (${keptBountyOwnerSql} IS NOT NULL AND ${ownerHeldSql(keptBountyOwnerSql)})
       OR ${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}
-      OR ${openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable)})`;
+      OR ${openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable)}
+    ) IS NOT FALSE)`;
     const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b WHERE b.id = ${id} AND NOT ${keepsBounty}`;
     const [{ gone }] = await tx.$queryRaw<{ gone: boolean }[]>`
       WITH gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),

@@ -390,6 +390,26 @@ describe("a held author's rows under a deleted parent", () => {
     expect(await deleteSettledKeptBounties()).toBe(0);
   });
 
+  it('deletes a bounty that has no owner and nothing else keeping it', async () => {
+    await db.exec(`
+      INSERT INTO "Bounty" (id, "userId") VALUES (60, NULL);
+      INSERT INTO "BountyEntry" VALUES (61, ${OTHER}, 60);`);
+    vi.mocked(dbMock.dbRead.bounty.findUnique).mockResolvedValue({
+      userId: null,
+      expiresAt: new Date(),
+    } as never);
+    vi.mocked(dbMock.dbWrite.bounty.findUnique).mockResolvedValue({
+      id: 60,
+      userId: null,
+      payoutRecordedAt: null,
+      payoutSettledAt: null,
+    } as never);
+
+    await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
+
+    expect(await rows(`SELECT id FROM "Bounty"`)).toEqual([]);
+  });
+
   it('deletes a bounty only an unheld user entered, with the entry (control)', async () => {
     await seedEnteredBounty(OTHER);
 
