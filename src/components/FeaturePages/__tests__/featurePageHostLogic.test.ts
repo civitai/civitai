@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createFeaturePageMessageHandler } from '../featurePageHostLogic';
+import { createFeaturePageHost } from '../featurePageHostLogic';
 
 const ORIGIN = 'https://features.example.com';
 const REQUEST = 'urn:data.civitai.com:feature-pages/requests/dark-mode';
@@ -17,9 +17,13 @@ function setup(overrides: { signedIn?: boolean; vote?: () => Promise<{ votes: nu
     mine: vi.fn(async () => ({ votes: {} })),
     navigate: vi.fn(),
   };
-  const handle = createFeaturePageMessageHandler(deps);
+  const host = createFeaturePageHost(deps);
   const send = (data: unknown, from: { origin?: string; source?: unknown } = {}) =>
-    handle({ origin: from.origin ?? ORIGIN, source: (from.source ?? frame) as Window, data });
+    host.onMessage({
+      origin: from.origin ?? ORIGIN,
+      source: (from.source ?? frame) as Window,
+      data,
+    });
   const flush = () => new Promise((r) => setTimeout(r, 0));
   return { frame, deps, send, flush };
 }
@@ -39,12 +43,13 @@ describe('feature page host messages', () => {
   });
 
   it('ignores a vote from another window or another origin', async () => {
-    const { deps, send, flush } = setup();
+    const { frame, deps, send, flush } = setup();
     send(vote, { source: {} });
     send(vote, { origin: 'https://civitai.com' });
     send(vote, { origin: 'null' });
     await flush();
     expect(deps.vote).not.toHaveBeenCalled();
+    expect(frame.postMessage).not.toHaveBeenCalled();
   });
 
   it('opens login instead of voting when signed out', () => {
@@ -59,6 +64,17 @@ describe('feature page host messages', () => {
   });
 
   // A TRPCClientError carries the server's code at `.data.code`.
+  it('answers a signed-out read of own votes with sign_in, without reading', () => {
+    const { frame, deps, send } = setup({ signedIn: false });
+    send({ type: 'fp-mine', payload: { requestId: 'm1', requests: [REQUEST] } });
+    expect(deps.mine).not.toHaveBeenCalled();
+    expect(deps.openLogin).not.toHaveBeenCalled();
+    expect(frame.postMessage).toHaveBeenCalledWith(
+      { type: 'fp-mine-result', payload: { requestId: 'm1', ok: false, error: 'sign_in' } },
+      ORIGIN
+    );
+  });
+
   it.each([
     [{ data: { code: 'FORBIDDEN' } }, 'refused'],
     [new TypeError('network'), 'try_again'],

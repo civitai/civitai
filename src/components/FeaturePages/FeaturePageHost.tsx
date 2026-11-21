@@ -8,7 +8,7 @@ import type {
   FeaturePageMineInput,
 } from '~/server/schema/feature-pages.schema';
 import { trpc } from '~/utils/trpc';
-import { createFeaturePageMessageHandler, FEATURE_PAGE_SANDBOX } from './featurePageHostLogic';
+import { createFeaturePageHost, FEATURE_PAGE_SANDBOX } from './featurePageHostLogic';
 
 export function FeaturePageHost({
   src,
@@ -20,6 +20,7 @@ export function FeaturePageHost({
   feature: string;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const sendInitRef = useRef<() => void>(undefined);
   const router = useRouter();
   const currentUser = useCurrentUser();
   const theme = useComputedColorScheme('dark');
@@ -29,7 +30,7 @@ export function FeaturePageHost({
   const signedIn = !!currentUser;
 
   useEffect(() => {
-    const handler = createFeaturePageMessageHandler({
+    const host = createFeaturePageHost({
       embedOrigin: origin,
       feature,
       frameWindow: () => iframeRef.current?.contentWindow,
@@ -45,13 +46,16 @@ export function FeaturePageHost({
         else void router.push(req.href);
       },
     });
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
+    window.addEventListener('message', host.onMessage);
+    sendInitRef.current = host.sendInit;
+    host.sendInit();
+    return () => window.removeEventListener('message', host.onMessage);
   }, [origin, feature, theme, signedIn, router, utils, vote]);
 
   return (
     <iframe
       ref={iframeRef}
+      onLoad={() => sendInitRef.current?.()}
       src={src}
       title="Feature"
       sandbox={FEATURE_PAGE_SANDBOX}

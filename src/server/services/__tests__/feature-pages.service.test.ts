@@ -116,6 +116,11 @@ describe('castFeaturePageVote', () => {
       votes: 3,
     });
     expect(minted).toBe(2);
+
+    // The fresh token replaces the rejected one in the cache.
+    signerReplies.push((token) => json(token === 'token-2' ? 200 : 401, { votes: 4 }));
+    await service.castFeaturePageVote(43, { request: REQUEST, value: 1 });
+    expect(minted).toBe(2);
   });
 
   it('answers try-again, not refused, when the fresh token is rejected too', async () => {
@@ -131,24 +136,21 @@ describe('castFeaturePageVote', () => {
     expect(minted).toBe(2);
   });
 
-  it('answers try-again, not refused, when the signer is unreachable', async () => {
-    signerReplies.push(() => {
-      throw new DOMException('timed out', 'TimeoutError');
-    });
+  it.each([
+    [
+      'unreachable',
+      'INTERNAL_SERVER_ERROR',
+      () => Promise.reject(new DOMException('', 'TimeoutError')),
+    ],
+    ['500', 'INTERNAL_SERVER_ERROR', () => json(500, {})],
+    ['a reply without a tally', 'INTERNAL_SERVER_ERROR', () => json(200, { votes: 'x' })],
+    ['429', 'TOO_MANY_REQUESTS', () => json(429, { code: 'rate_limited' })],
+    ['403', 'FORBIDDEN', () => json(403, { code: 'no_grant' })],
+  ])('maps a signer answering %s to %s', async (_, code, reply) => {
+    signerReplies.push(reply as () => Response);
     await expect(
       service.castFeaturePageVote(42, { request: REQUEST, value: 1 })
-    ).rejects.toMatchObject({
-      code: 'INTERNAL_SERVER_ERROR',
-    });
-  });
-
-  it('passes a signer refusal on as FORBIDDEN', async () => {
-    signerReplies.push(() => json(403, { error: 'refused' }));
-    await expect(
-      service.castFeaturePageVote(42, { request: REQUEST, value: 1 })
-    ).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    });
+    ).rejects.toMatchObject({ code });
   });
 
   it('refuses without calling anything when the signer is not configured', async () => {
@@ -159,5 +161,19 @@ describe('castFeaturePageVote', () => {
       code: 'PRECONDITION_FAILED',
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('getMyFeaturePageVotes', () => {
+  it("reads the signed-in user's own votes for the requests asked", async () => {
+    signerReplies.push(() => json(200, { votes: { [REQUEST]: 1 } }));
+
+    await expect(service.getMyFeaturePageVotes(42, { requests: [REQUEST] })).resolves.toEqual({
+      votes: { [REQUEST]: 1 },
+    });
+
+    const [[url, init]] = signerCalls();
+    expect(url).toBe(`${SIGNER}/internal/mine`);
+    expect(JSON.parse(String(init.body))).toEqual({ uid: 42, requests: [REQUEST] });
   });
 });

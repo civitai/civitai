@@ -42,14 +42,20 @@ export function frameErrorFor(error: unknown): FeaturePageFrameError {
   }
 }
 
-/** The `message` listener for one feature-page frame. */
-export function createFeaturePageMessageHandler(deps: FeaturePageHostDeps) {
+/**
+ * The `message` listener for one feature-page frame, and `sendInit`. The frame's fp-ready can arrive
+ * before the listener is attached (the iframe is server-rendered), so the host also sends fp-init
+ * unasked, whenever the listener attaches and whenever the frame loads.
+ */
+export function createFeaturePageHost(deps: FeaturePageHostDeps) {
   const targetOrigin = resolveOutboundTargetOrigin(deps.embedOrigin, OPAQUE);
 
   const post = (type: string, payload: unknown) => {
     const frame = deps.frameWindow();
     if (frame && targetOrigin) frame.postMessage({ type, payload }, targetOrigin);
   };
+
+  const sendInit = () => post(Msg.Init, { theme: deps.theme, feature: deps.feature });
 
   const answer = <T>(type: string, requestId: string, work: () => Promise<T>) => {
     work().then(
@@ -58,7 +64,7 @@ export function createFeaturePageMessageHandler(deps: FeaturePageHostDeps) {
     );
   };
 
-  return (event: Pick<MessageEvent, 'origin' | 'source' | 'data'>) => {
+  const onMessage = (event: Pick<MessageEvent, 'origin' | 'source' | 'data'>) => {
     const frame = deps.frameWindow();
     if (!frame || event.source !== frame) return;
     if (!isInboundOriginAccepted(event.origin, deps.embedOrigin, OPAQUE)) return;
@@ -66,7 +72,7 @@ export function createFeaturePageMessageHandler(deps: FeaturePageHostDeps) {
     if (!data || typeof data !== 'object') return;
 
     if (data.type === Msg.Ready) {
-      post(Msg.Init, { theme: deps.theme, feature: deps.feature });
+      sendInit();
       return;
     }
     if (data.type === Msg.Navigate) {
@@ -103,4 +109,6 @@ export function createFeaturePageMessageHandler(deps: FeaturePageHostDeps) {
       answer(Msg.MineResult, requestId, () => deps.mine({ requests: payload.requests }));
     }
   };
+
+  return { onMessage, sendInit };
 }
