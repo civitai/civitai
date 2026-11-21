@@ -1540,6 +1540,9 @@ describe('Kohya training', () => {
       });
       const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
       expect(input.model).toBe(customModel);
+      if (['sdxl', 'pony', 'illustrious', 'noobai'].includes(family))
+        expect(input).toMatchObject({ clipSkip: 2 });
+      if (family === 'sd1') expect(input).toMatchObject({ clipSkip: 1 });
       if (family === 'flux1' || family === 'chroma' || family === 'anima') {
         expect(input).toMatchObject({ noiseOffset: 0, minSnrGamma: 0, clipSkip: 1 });
         expect(input).not.toHaveProperty('vParameterization');
