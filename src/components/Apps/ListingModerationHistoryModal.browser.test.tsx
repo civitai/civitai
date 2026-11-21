@@ -112,7 +112,6 @@ describe('ListingModerationHistoryModal — Retry cut', () => {
   test('a moderator clicking Retry cut retries the cut for the listing the history was opened for', async () => {
     const fetchSpy = stubNetwork();
     try {
-      // The history is moderator-only; render the dialog host inside a moderator session.
       renderWithProviders(<Host />);
       openListingModerationHistory(LISTING);
 
@@ -139,6 +138,11 @@ describe('ListingModerationHistoryModal — Retry cut', () => {
       );
       // Either outcome is a new history row, so the list is refetched.
       await vi.waitFor(() => expect(callsTo('appListings.listModerationEvents')).toHaveLength(2));
+      // ...and the refetch follows the retry, so it is the invalidation and not a focus or remount.
+      const order = calls.map((c) => c.procedure);
+      expect(order.lastIndexOf('appListings.listModerationEvents')).toBeGreaterThan(
+        order.indexOf('appListings.retryConnectOfflineCut')
+      );
     } finally {
       fetchSpy.mockRestore();
     }
