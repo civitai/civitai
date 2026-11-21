@@ -96,7 +96,10 @@ async function settlesWithin(ms: number, p: Promise<unknown>) {
   }
 }
 
-async function counter(c: { get(): Promise<{ values: { value: number; labels: object }[] }> }, labels: object = {}) {
+async function counter(
+  c: { get(): Promise<{ values: { value: number; labels: object }[] }> },
+  labels: object = {}
+) {
   const { values } = await c.get();
   return values.find((v) => JSON.stringify(v.labels) === JSON.stringify(labels))?.value ?? 0;
 }
@@ -121,8 +124,12 @@ afterEach(() => {
 describe('(1) disabled by default: no secondary client, primary unchanged', () => {
   test('the switch is off unless it is exactly "true" AND a URL is set', () => {
     expect(secondaryClickhouseConfig({}).enabled).toBe(false);
-    expect(secondaryClickhouseConfig({ CLICKHOUSE_SECONDARY_URL: 'http://x:8123' }).enabled).toBe(false);
-    expect(secondaryClickhouseConfig({ METRICS_SECONDARY_TEE_ENABLED: 'true' }).enabled).toBe(false);
+    expect(secondaryClickhouseConfig({ CLICKHOUSE_SECONDARY_URL: 'http://x:8123' }).enabled).toBe(
+      false
+    );
+    expect(secondaryClickhouseConfig({ METRICS_SECONDARY_TEE_ENABLED: 'true' }).enabled).toBe(
+      false
+    );
     expect(
       secondaryClickhouseConfig({
         METRICS_SECONDARY_TEE_ENABLED: '1',
@@ -143,7 +150,9 @@ describe('(1) disabled by default: no secondary client, primary unchanged', () =
 
   test('createSecondaryMetricTee builds nothing when off', () => {
     const make = vi.fn();
-    expect(createSecondaryMetricTee({ ...enabledCfg, enabled: false }, 't', make as never)).toBeNull();
+    expect(
+      createSecondaryMetricTee({ ...enabledCfg, enabled: false }, 't', make as never)
+    ).toBeNull();
     expect(make).not.toHaveBeenCalled();
   });
 
@@ -186,7 +195,11 @@ describe('(2) enabled: the secondary receives exactly the primary rows', () => {
   test('same rows, JSONEachRow, <db>.entityMetricEvents_month, insert_quorum=2', async () => {
     const primary = fakeClient(async () => undefined);
     const secondary = fakeClient(async () => undefined);
-    const t = createSecondaryMetricTee(enabledCfg, 'entityMetricEvents_month', (() => secondary.client) as never)!;
+    const t = createSecondaryMetricTee(
+      enabledCfg,
+      'entityMetricEvents_month',
+      (() => secondary.client) as never
+    )!;
     const batcher = new MetricEventBatcher(primary.client as never, 60_000, 10_000, 500_000, t);
     const sentBefore = await counter(secondaryTeeMetrics.rowsSent);
 
@@ -252,7 +265,11 @@ describe('(3) a failing or hanging secondary never touches the primary path', ()
     test(`secondary ${name}: flush settles promptly, primary insert and offset commit happen`, async () => {
       const primary = fakeClient(async () => undefined);
       const secondary = fakeClient(behaviour);
-      const t = tee(secondary.client, { insertTimeoutMs: 60_000, baseBackoffMs: 60_000, maxBackoffMs: 60_000 });
+      const t = tee(secondary.client, {
+        insertTimeoutMs: 60_000,
+        baseBackoffMs: 60_000,
+        maxBackoffMs: 60_000,
+      });
       const batcher = new MetricEventBatcher(primary.client as never, 60_000, 10_000, 500_000, t);
       const commits: Map<string, string>[] = [];
       batcher.onFlushed((s) => void commits.push(s));
@@ -279,7 +296,13 @@ describe('(3) a failing or hanging secondary never touches the primary path', ()
       },
       stop: async () => undefined,
     };
-    const batcher = new MetricEventBatcher(primary.client as never, 60_000, 10_000, 500_000, broken);
+    const batcher = new MetricEventBatcher(
+      primary.client as never,
+      60_000,
+      10_000,
+      500_000,
+      broken
+    );
     const commits: Map<string, string>[] = [];
     batcher.onFlushed((s) => void commits.push(s));
     for (const e of events(2, 7)) batcher.add(e);
@@ -302,7 +325,9 @@ describe('(3) a failing or hanging secondary never touches the primary path', ()
     const started = Date.now();
     expect(await settlesWithin(1_000, batcher.stop())).toBe('settled');
     expect(Date.now() - started).toBeLessThan(1_000);
-    expect((await counter(secondaryTeeMetrics.batchesDropped, { reason: 'shutdown' })) - droppedBefore).toBe(1);
+    expect(
+      (await counter(secondaryTeeMetrics.batchesDropped, { reason: 'shutdown' })) - droppedBefore
+    ).toBe(1);
   });
 });
 
@@ -324,8 +349,12 @@ describe('(4) overflow drops the oldest batches and counts them', () => {
     t.enqueue(rows(4, 13)); // queued: 9 > 5 -> drop seed 11 (3) -> 6 > 5 -> drop seed 12 (2) -> 4
     expect(t.pendingRows).toBe(4);
     expect((await secondaryTeeMetrics.queueRows.get()).values[0].value).toBe(4);
-    expect((await counter(secondaryTeeMetrics.batchesDropped, { reason: 'overflow' })) - batchesBefore).toBe(2);
-    expect((await counter(secondaryTeeMetrics.rowsDropped, { reason: 'overflow' })) - rowsBefore).toBe(5);
+    expect(
+      (await counter(secondaryTeeMetrics.batchesDropped, { reason: 'overflow' })) - batchesBefore
+    ).toBe(2);
+    expect(
+      (await counter(secondaryTeeMetrics.rowsDropped, { reason: 'overflow' })) - rowsBefore
+    ).toBe(5);
 
     release();
     await t.idle();

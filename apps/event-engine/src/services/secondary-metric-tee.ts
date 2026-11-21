@@ -1,37 +1,37 @@
-import { ClickHouseClient, createClient } from '@clickhouse/client'
-import { config, SecondaryClickhouseConfig } from '../config'
-import { logger } from '../utils/logger'
-import { secondaryTeeMetrics } from '@/metrics'
+import { ClickHouseClient, createClient } from '@clickhouse/client';
+import { config, SecondaryClickhouseConfig } from '../config';
+import { logger } from '../utils/logger';
+import { secondaryTeeMetrics } from '@/metrics';
 
 /** One row of the metric events table, exactly as the primary insert writes it. */
 export type MetricEventRow = {
-  entityId: number | null | undefined
-  entityType: string
-  metricType: string
-  metricValue: number
-  userId: number
-  createdAt: Date
-}
+  entityId: number | null | undefined;
+  entityType: string;
+  metricType: string;
+  metricValue: number;
+  userId: number;
+  createdAt: Date;
+};
 
 /** The only surface MetricEventBatcher needs: a synchronous, never-throwing hand-off. */
 export interface MetricRowSink {
-  enqueue(rows: MetricEventRow[]): void
-  stop(timeoutMs?: number): Promise<void>
+  enqueue(rows: MetricEventRow[]): void;
+  stop(timeoutMs?: number): Promise<void>;
 }
 
-type InsertClient = Pick<ClickHouseClient, 'insert' | 'close'>
+type InsertClient = Pick<ClickHouseClient, 'insert' | 'close'>;
 
 export type SecondaryMetricTeeOptions = {
   /** Fully-qualified target table, e.g. `metrics.entityMetricEvents_month`. */
-  table: string
-  maxQueueRows: number
-  insertTimeoutMs: number
-  shutdownTimeoutMs: number
-  baseBackoffMs?: number
-  maxBackoffMs?: number
-}
+  table: string;
+  maxQueueRows: number;
+  insertTimeoutMs: number;
+  shutdownTimeoutMs: number;
+  baseBackoffMs?: number;
+  maxBackoffMs?: number;
+};
 
-type DropReason = 'overflow' | 'shutdown'
+type DropReason = 'overflow' | 'shutdown';
 
 /**
  * Copies metric event rows to a second ClickHouse destination without ever touching the
@@ -44,45 +44,42 @@ type DropReason = 'overflow' | 'shutdown'
  * are idempotent downstream, so a retry that duplicates a slow-but-successful insert is fine.
  */
 export class SecondaryMetricTee implements MetricRowSink {
-  private queue: MetricEventRow[][] = []
-  private queuedRows = 0
-  private pumpPromise: Promise<void> | null = null
-  private consecutiveFailures = 0
-  private draining = false
-  private stopped = false
-  private cancelSleep: (() => void) | null = null
-  private readonly baseBackoffMs: number
-  private readonly maxBackoffMs: number
+  private queue: MetricEventRow[][] = [];
+  private queuedRows = 0;
+  private pumpPromise: Promise<void> | null = null;
+  private consecutiveFailures = 0;
+  private draining = false;
+  private stopped = false;
+  private cancelSleep: (() => void) | null = null;
+  private readonly baseBackoffMs: number;
+  private readonly maxBackoffMs: number;
 
-  constructor(
-    private client: InsertClient,
-    private opts: SecondaryMetricTeeOptions,
-  ) {
-    this.baseBackoffMs = opts.baseBackoffMs ?? 1_000
-    this.maxBackoffMs = opts.maxBackoffMs ?? 30_000
+  constructor(private client: InsertClient, private opts: SecondaryMetricTeeOptions) {
+    this.baseBackoffMs = opts.baseBackoffMs ?? 1_000;
+    this.maxBackoffMs = opts.maxBackoffMs ?? 30_000;
   }
 
   enqueue(rows: MetricEventRow[]): void {
     try {
-      if (this.stopped || rows.length === 0) return
-      this.queue.push(rows)
-      this.queuedRows += rows.length
-      this.enforceBound()
-      this.updateGauge()
-      if (!this.pumpPromise) this.startPump()
+      if (this.stopped || rows.length === 0) return;
+      this.queue.push(rows);
+      this.queuedRows += rows.length;
+      this.enforceBound();
+      this.updateGauge();
+      if (!this.pumpPromise) this.startPump();
     } catch (err) {
-      logger.error({ err }, 'Secondary metric tee enqueue failed; batch not sent to the secondary')
+      logger.error({ err }, 'Secondary metric tee enqueue failed; batch not sent to the secondary');
     }
   }
 
   /** Rows waiting to be sent (excludes the batch in flight). */
   get pendingRows(): number {
-    return this.queuedRows
+    return this.queuedRows;
   }
 
   /** Resolves when the send loop is idle. For tests and shutdown; never rejects. */
   async idle(): Promise<void> {
-    while (this.pumpPromise) await this.pumpPromise
+    while (this.pumpPromise) await this.pumpPromise;
   }
 
   /**
@@ -90,123 +87,123 @@ export class SecondaryMetricTee implements MetricRowSink {
    * waits longer than about timeoutMs (+ at most 1s for close()).
    */
   async stop(timeoutMs: number = this.opts.shutdownTimeoutMs): Promise<void> {
-    if (this.stopped) return
-    this.draining = true
-    this.cancelSleep?.()
-    if (!this.pumpPromise && this.queue.length > 0) this.startPump()
+    if (this.stopped) return;
+    this.draining = true;
+    this.cancelSleep?.();
+    if (!this.pumpPromise && this.queue.length > 0) this.startPump();
 
-    await raceTimeout(this.idle(), timeoutMs)
+    await raceTimeout(this.idle(), timeoutMs);
 
-    this.stopped = true
-    this.cancelSleep?.()
-    while (this.queue.length > 0) this.drop(this.shiftOldest(), 'shutdown')
-    this.updateGauge()
+    this.stopped = true;
+    this.cancelSleep?.();
+    while (this.queue.length > 0) this.drop(this.shiftOldest(), 'shutdown');
+    this.updateGauge();
 
     try {
-      await raceTimeout(this.client.close(), Math.min(timeoutMs, 1_000))
+      await raceTimeout(this.client.close(), Math.min(timeoutMs, 1_000));
     } catch (err) {
-      logger.warn({ err }, 'Secondary metric tee client close failed')
+      logger.warn({ err }, 'Secondary metric tee client close failed');
     }
   }
 
   private startPump(): void {
     this.pumpPromise = this.pump()
-      .catch(err => {
-        logger.error({ err }, 'Secondary metric tee send loop crashed')
+      .catch((err) => {
+        logger.error({ err }, 'Secondary metric tee send loop crashed');
       })
       .finally(() => {
-        this.pumpPromise = null
-      })
+        this.pumpPromise = null;
+      });
   }
 
   private async pump(): Promise<void> {
     while (!this.stopped && this.queue.length > 0) {
-      const batch = this.shiftOldest()
-      this.updateGauge()
+      const batch = this.shiftOldest();
+      this.updateGauge();
 
       try {
-        await this.insert(batch)
-        secondaryTeeMetrics.rowsSent.inc(batch.length)
-        this.consecutiveFailures = 0
+        await this.insert(batch);
+        secondaryTeeMetrics.rowsSent.inc(batch.length);
+        this.consecutiveFailures = 0;
       } catch (err) {
-        secondaryTeeMetrics.batchesFailed.inc()
-        this.consecutiveFailures++
+        secondaryTeeMetrics.batchesFailed.inc();
+        this.consecutiveFailures++;
         logger.warn(
           { err, rows: batch.length, consecutiveFailures: this.consecutiveFailures },
-          'Secondary metric insert failed; will retry',
-        )
+          'Secondary metric insert failed; will retry'
+        );
         if (this.stopped) {
-          this.drop(batch, 'shutdown')
-          return
+          this.drop(batch, 'shutdown');
+          return;
         }
         // Back at the head: it is the oldest, so it is the first to go if the queue is over.
-        this.queue.unshift(batch)
-        this.queuedRows += batch.length
-        this.enforceBound()
-        this.updateGauge()
+        this.queue.unshift(batch);
+        this.queuedRows += batch.length;
+        this.enforceBound();
+        this.updateGauge();
         // While draining at shutdown a failure ends the attempt; stop() drops the rest.
-        if (this.draining) return
-        await this.sleep(this.backoffMs())
+        if (this.draining) return;
+        await this.sleep(this.backoffMs());
       }
     }
   }
 
   private async insert(batch: MetricEventRow[]): Promise<void> {
-    const abort = new AbortController()
+    const abort = new AbortController();
     const sent = this.client.insert({
       table: this.opts.table,
       values: batch,
       format: 'JSONEachRow',
       clickhouse_settings: { insert_quorum: '2' },
       abort_signal: abort.signal,
-    })
+    });
     // If the timeout wins, the aborted insert rejects later; that rejection is expected.
-    sent.catch(() => undefined)
+    sent.catch(() => undefined);
     await raceTimeout(sent, this.opts.insertTimeoutMs, () => {
-      abort.abort()
-      throw new Error(`secondary insert timed out after ${this.opts.insertTimeoutMs}ms`)
-    })
+      abort.abort();
+      throw new Error(`secondary insert timed out after ${this.opts.insertTimeoutMs}ms`);
+    });
   }
 
   /** Drop the oldest queued batches until the queue is within its bound; the newest stays. */
   private enforceBound(): void {
     while (this.queuedRows > this.opts.maxQueueRows && this.queue.length > 1) {
-      this.drop(this.shiftOldest(), 'overflow')
+      this.drop(this.shiftOldest(), 'overflow');
     }
   }
 
   private shiftOldest(): MetricEventRow[] {
-    const batch = this.queue.shift()!
-    this.queuedRows -= batch.length
-    return batch
+    const batch = this.queue.shift()!;
+    this.queuedRows -= batch.length;
+    return batch;
   }
 
   /** Count a batch that will never be sent. The caller has already taken it off the queue. */
   private drop(batch: MetricEventRow[], reason: DropReason): void {
-    secondaryTeeMetrics.batchesDropped.inc({ reason })
-    secondaryTeeMetrics.rowsDropped.inc({ reason }, batch.length)
+    secondaryTeeMetrics.batchesDropped.inc({ reason });
+    secondaryTeeMetrics.rowsDropped.inc({ reason }, batch.length);
   }
 
   private backoffMs(): number {
-    const exp = this.baseBackoffMs * 2 ** Math.min(this.consecutiveFailures - 1, 16)
-    return Math.min(exp, this.maxBackoffMs)
+    const exp = this.baseBackoffMs * 2 ** Math.min(this.consecutiveFailures - 1, 16);
+    return Math.min(exp, this.maxBackoffMs);
   }
 
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       const done = () => {
-        clearTimeout(timer)
-        this.cancelSleep = null
-        resolve()
-      }
-      const timer = setTimeout(done, ms)
-      timer.unref?.()
-      this.cancelSleep = done
-    })
+        clearTimeout(timer);
+        this.cancelSleep = null;
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      timer.unref?.();
+      this.cancelSleep = done;
+    });
   }
 
   private updateGauge(): void {
-    secondaryTeeMetrics.queueRows.set(this.queuedRows)
+    secondaryTeeMetrics.queueRows.set(this.queuedRows);
   }
 }
 
@@ -214,23 +211,27 @@ export class SecondaryMetricTee implements MetricRowSink {
  * Resolves/rejects with `p`, or after `ms` calls onTimeout (default: resolve undefined).
  * The timer is always cleared, so it never holds the process open.
  */
-async function raceTimeout<T>(p: Promise<T>, ms: number, onTimeout?: () => never): Promise<T | undefined> {
-  let timer: NodeJS.Timeout | undefined
+async function raceTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  onTimeout?: () => never
+): Promise<T | undefined> {
+  let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<undefined>((resolve, reject) => {
     timer = setTimeout(() => {
-      if (!onTimeout) return resolve(undefined)
+      if (!onTimeout) return resolve(undefined);
       try {
-        onTimeout()
+        onTimeout();
       } catch (err) {
-        reject(err)
+        reject(err);
       }
-    }, ms)
-    timer.unref?.()
-  })
+    }, ms);
+    timer.unref?.();
+  });
   try {
-    return await Promise.race([p, timeout])
+    return await Promise.race([p, timeout]);
   } finally {
-    clearTimeout(timer)
+    clearTimeout(timer);
   }
 }
 
@@ -241,9 +242,9 @@ async function raceTimeout<T>(p: Promise<T>, ms: number, onTimeout?: () => never
 export function createSecondaryMetricTee(
   cfg: SecondaryClickhouseConfig = config.clickhouse.secondary,
   table: string = config.clickhouse.metricEventsTable,
-  makeClient: typeof createClient = createClient,
+  makeClient: typeof createClient = createClient
 ): SecondaryMetricTee | null {
-  if (!cfg.enabled) return null
+  if (!cfg.enabled) return null;
 
   const client = makeClient({
     url: cfg.url,
@@ -253,12 +254,12 @@ export function createSecondaryMetricTee(
     request_timeout: cfg.insertTimeoutMs,
     // One send at a time; a second socket covers a stuck one being torn down.
     max_open_connections: 2,
-  })
-  logger.info({ database: cfg.database, table }, 'Secondary metric tee enabled')
+  });
+  logger.info({ database: cfg.database, table }, 'Secondary metric tee enabled');
   return new SecondaryMetricTee(client, {
     table: `${cfg.database}.${table}`,
     maxQueueRows: cfg.maxQueueRows,
     insertTimeoutMs: cfg.insertTimeoutMs,
     shutdownTimeoutMs: cfg.shutdownTimeoutMs,
-  })
+  });
 }
