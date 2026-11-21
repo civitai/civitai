@@ -1,8 +1,10 @@
 # Node → Go ports
 
 Some read endpoints of the Node app (Next.js + tRPC, `src/`) are being ported to Go services
-(`apps/feed-go`, `apps/beacon-go`). [`manifest.json`](manifest.json) is the one list of them: which
-endpoint, which Go service and handler, which flags route it, and where it is in its lifecycle.
+(`apps/feed-go`, `apps/beacon-go`), and so are some decisions Node code makes inside other endpoints
+(`apps/content-policy-go`: the SFW/NSFW and region decision, a `policy` port).
+[`manifest.json`](manifest.json) is the one list of them: which endpoint or decision, which Go
+service and handler, which flags route it, and where it is in its lifecycle.
 [`manifest.schema.json`](manifest.schema.json) is its schema.
 
 ## Using it
@@ -19,13 +21,20 @@ endpoint, which Go service and handler, which flags route it, and where it is in
 
 ## Fields
 
-All hand-written: `id`, `kind` (`trpc` | `rest`), `service`, `metricEndpoint`, `status`, `routes`,
-`nodeEntry` (`{ file, symbol }`; `symbol` is `default`, a top-level name, or `router.procedure`),
-`goHandler`, `goRoots` (optional), `flags` (`shadow`, `transport`, `probe` Flipt keys, or null),
-`holdout`, `soak`, `nodeDeletion`. The schema's `description`s say what each holds.
+All hand-written: `id`, `kind` (`trpc` | `rest` | `policy`), `service`, `metricEndpoint`, `status`,
+`routes`, `nodeEntry` (`{ file, symbol }`; `symbol` is `default`, a top-level name, or
+`router.procedure`), `goHandler`, `goRoots` (optional), `flags` (`shadow`, `transport`, `probe` Flipt
+keys, or null), `shadowEnv` (policy ports only), `holdout`, `soak`, `nodeDeletion`. The schema's
+`description`s say what each holds.
+
+A `policy` port is a decision, not an endpoint: the Node entry is the function that decides it, and
+`routes` is the Go service's route its callers ask. Its shadow comparison is turned on by an
+environment variable on the calling process (`shadowEnv`), not a Flipt flag, so in `shadow` it needs
+`shadowEnv` and no `flags.shadow`; `ramp` and later still need the Flipt flags.
 
 `metricEndpoint` is the value of the Go service's endpoint label on this port's metrics
-(`feed_endpoint` on feed-go's series, `beacon_endpoint` on beacon-go's), so a port can be joined to
+(`feed_endpoint` on feed-go's series, `beacon_endpoint` on beacon-go's, `context` on
+content-policy-go's), so a port can be joined to
 its parity series. The generator checks that it is one of the values the service's
 `var Endpoints = []string{...}` names in its Go source, and that no two ports of a service share
 one, so renaming a label in Go without updating the manifest fails CI.

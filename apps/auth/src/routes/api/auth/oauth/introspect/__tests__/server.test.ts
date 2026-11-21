@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 
 // The db fake below FILTERS rather than returning a canned row: `type = 'Access'`, the not-expired
 // disjunction and the account-state predicates are enforced in SQL, so a fake that ignores `.where`
@@ -100,7 +101,8 @@ vi.mock('$lib/server/db/db', () => ({
   },
 }));
 
-vi.mock('$lib/server/oauth/rate-limit', () => ({
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
   checkOAuthRateLimit: vi.fn(async (bucket: string, id: string | null | undefined) => {
     h.rateLimitCalls.push([bucket, id]);
     return h.rateLimitAllow[bucket] ?? true;
@@ -424,7 +426,12 @@ describe('introspect — rate limiting', () => {
       client_secret: CALLER_SECRET,
     });
     expect(res.status).toBe(429);
-    expect(await res.json()).toEqual({ error: 'rate_limited' });
+    expect(res.headers.get('Retry-After')).toBe('60');
+    expect(await res.json()).toEqual({
+      error: 'rate_limited',
+      error_description: 'Too many introspection requests',
+      retry_after: 60,
+    });
     expect(h.rateLimitCalls).toEqual([
       ['introspect-anon', CLIENT_IP],
       ['introspect', CALLER],

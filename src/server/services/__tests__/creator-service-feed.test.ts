@@ -1,8 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { pgliteKysely } from '~/__tests__/pglite-kysely';
+import type * as KyselyDb from '~/server/db/kyselyDb';
 import { NsfwLevel } from '~/server/common/enums';
+import type { ServiceOfferingFeedSort } from '~/server/schema/creator-service.schema';
 import { getServiceOfferingFeedSchema } from '~/server/schema/creator-service.schema';
-import { getServiceOfferingFeed } from '~/server/services/creator-service.service';
+import {
+  assertServiceOfferingViewable,
+  getServiceOfferingById,
+  getServiceOfferingFeed,
+} from '~/server/services/creator-service.service';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -17,6 +25,27 @@ import {
   ServiceOfferingIngestionStatus,
   ServiceOfferingStatus,
 } from '~/shared/utils/prisma/enums';
+
+// The deal record is Kysely SQL; it runs against real tables.
+const pg = { db: null as unknown as PGlite };
+vi.mock('~/server/db/kyselyDb', async (importOriginal) => ({
+  ...(await importOriginal<typeof KyselyDb>()),
+  kyselyRead: pgliteKysely(() => pg.db),
+}));
+vi.setConfig({ hookTimeout: 60_000 });
+beforeAll(async () => {
+  pg.db = new PGlite();
+  await pg.db.exec(`
+    CREATE TABLE "ServiceDeal" (
+      id int PRIMARY KEY, "offeringId" int NOT NULL, "sellerId" int NOT NULL,
+      status text NOT NULL, "dueAt" timestamp(3)
+    );
+    CREATE TABLE "ServiceDealEvent" (
+      "dealId" int NOT NULL, type text NOT NULL, "createdAt" timestamp(3) NOT NULL
+    );
+  `);
+});
+afterAll(() => pg.db.close());
 
 /**
  * The cross-seller services feed against a fixture table: `findMany` applies the `where`,
@@ -36,6 +65,7 @@ type Row = {
   sellerId: number;
   ingestion: ServiceOfferingIngestionStatus;
   coverImageId: number | null;
+  happySortKey: number;
   coverImage: {
     ingestion: ImageIngestionStatus;
     needsReview: string | null;
@@ -134,6 +164,7 @@ const row = (patch: Partial<Omit<Row, 'seller'>> & { seller?: Partial<Row['selle
     sellerId: SELLER,
     ingestion: ServiceOfferingIngestionStatus.Scanned,
     coverImageId: null,
+    happySortKey: -1,
     coverImage: null,
     ...rest,
     seller: {
@@ -149,7 +180,13 @@ const row = (patch: Partial<Omit<Row, 'seller'>> & { seller?: Partial<Row['selle
 
 let table: Row[] = [];
 const feedIds = async (
-  opts: { browsingLevel?: number; servable?: number; viewerId?: number; query?: string } = {}
+  opts: {
+    browsingLevel?: number;
+    servable?: number;
+    viewerId?: number;
+    query?: string;
+    sort?: ServiceOfferingFeedSort;
+  } = {}
 ) => {
   const { items } = await getServiceOfferingFeed({
     sort: 'newest',
@@ -173,6 +210,13 @@ beforeEach(() => {
   blockedBy.mockResolvedValue(users());
   blocked.mockResolvedValue(users());
   dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+  dbMock.dbRead.serviceOffering.findFirst.mockImplementation((async (args: { where: unknown }) => {
+    const found = table.find((r) => matches(r, args.where));
+    return found ? { ...found, seller: { ...found.seller, id: found.sellerId } } : null;
+  }) as never);
+  dbMock.dbRead.user.findUnique.mockImplementation((async (args: { where: { id: number } }) => ({
+    settings: table.find((r) => r.sellerId === args.where.id)?.seller.settings ?? {},
+  })) as never);
   dbMock.dbRead.serviceOffering.findMany.mockImplementation((async (args: {
     where: unknown;
     orderBy: OrderBy;
@@ -298,6 +342,34 @@ describe('services feed', () => {
     expect(seen).toEqual(expected);
   });
 
+  it('sorts by the happy share, unscored offerings last, ties newest first, and pages without repeats', async () => {
+    const half = row({ happySortKey: 0.5 });
+    const all = row({ happySortKey: 1 });
+    const unscored = row();
+    const allToo = row({ happySortKey: 1 });
+    table = [half, all, unscored, allToo];
+    expect(await feedIds({ sort: 'happy' })).toEqual([allToo.id, all.id, half.id, unscored.id]);
+    const first = await getServiceOfferingFeed({
+      sort: 'happy',
+      limit: 2,
+      servable: allBrowsingLevelsFlag,
+      viewerId: VISITOR,
+    });
+    const second = await getServiceOfferingFeed({
+      sort: 'happy',
+      limit: 2,
+      cursor: first.nextCursor,
+      servable: allBrowsingLevelsFlag,
+      viewerId: VISITOR,
+    });
+    expect([...first.items, ...second.items].map((o) => o.id)).toEqual([
+      allToo.id,
+      all.id,
+      half.id,
+      unscored.id,
+    ]);
+  });
+
   describe('with a search query', () => {
     it('keeps only offerings whose title or description matches, ignoring case', async () => {
       const byTitle = row({ title: 'Anime LoRA training' });
@@ -416,5 +488,134 @@ describe('services feed covers restricted by their base model', () => {
       expect(covers[sfw.id]).toMatchObject({ nsfwLevel: NsfwLevel.PG });
       expect(covers[clean.id]).toMatchObject({ nsfwLevel: NsfwLevel.R });
     }
+  });
+});
+
+describe('one service page', () => {
+  const MOD = 5;
+  const open = (
+    offering: Row,
+    opts: {
+      viewerId?: number;
+      isModerator?: boolean;
+      servable?: number;
+      browsingLevel?: number;
+    } = {}
+  ) =>
+    getServiceOfferingById({
+      id: offering.id,
+      servable: allBrowsingLevelsFlag,
+      viewerId: VISITOR,
+      ...opts,
+    });
+  const notFound = { code: 'NOT_FOUND' };
+
+  beforeEach(() => pg.db.exec(`DELETE FROM "ServiceDeal"; DELETE FROM "ServiceDealEvent";`));
+
+  it('shows a listed offering to a visitor, with its open slots', async () => {
+    const offering = row({ maxOpenDeals: 3 });
+    table = [offering];
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ offeringId: offering.id, open: 1 }] as never);
+    expect(await open(offering)).toMatchObject({ id: offering.id, slotsOpen: 2 });
+  });
+
+  it('never sends an X offering to civitai.com, and does to a viewer who browses X on civitai.red', async () => {
+    const x = row({ maxNsfwLevel: NsfwLevel.X });
+    table = [x];
+    await expect(
+      open(x, { servable: sfwBrowsingLevelsFlag, browsingLevel: allBrowsingLevelsFlag })
+    ).rejects.toMatchObject(notFound);
+    await expect(
+      open(x, { servable: sfwBrowsingLevelsFlag, viewerId: SELLER })
+    ).rejects.toMatchObject(notFound);
+    await expect(
+      open(x, { servable: sfwBrowsingLevelsFlag, viewerId: MOD, isModerator: true })
+    ).rejects.toMatchObject(notFound);
+    await expect(open(x, { browsingLevel: sfwBrowsingLevelsFlag })).rejects.toMatchObject(notFound);
+    expect(await open(x, { browsingLevel: allBrowsingLevelsFlag })).toMatchObject({ id: x.id });
+  });
+
+  it("hides an unpublished shop's offering from visitors, not from its seller", async () => {
+    const offering = row({ seller: { settings: { creatorShop: { enabled: false } } } });
+    table = [offering];
+    await expect(open(offering)).rejects.toMatchObject(notFound);
+    expect(await open(offering, { viewerId: SELLER })).toMatchObject({ id: offering.id });
+  });
+
+  it.each([
+    ['hid', () => hidden],
+    ['blocked', () => blocked],
+    ['was blocked by', () => blockedBy],
+  ] as const)('hides the offering of a seller the viewer %s', async (_, cache) => {
+    const offering = row();
+    table = [offering];
+    cache().mockResolvedValue(users(SELLER));
+    await expect(open(offering)).rejects.toMatchObject(notFound);
+  });
+
+  it("answers the reviews' viewer check by the same rule as the page", async () => {
+    const draft = row({ status: ServiceOfferingStatus.Draft });
+    const x = row({ maxNsfwLevel: NsfwLevel.X });
+    const listed = row();
+    table = [draft, x, listed];
+    const viewable = (offering: Row, opts: { viewerId?: number; servable?: number } = {}) =>
+      assertServiceOfferingViewable({
+        id: offering.id,
+        servable: allBrowsingLevelsFlag,
+        browsingLevel: allBrowsingLevelsFlag,
+        viewerId: VISITOR,
+        ...opts,
+      });
+    await expect(viewable(draft)).rejects.toMatchObject(notFound);
+    await expect(viewable(draft, { viewerId: SELLER })).resolves.toBeUndefined();
+    await expect(viewable(x, { servable: sfwBrowsingLevelsFlag })).rejects.toMatchObject(notFound);
+    await expect(viewable(listed)).resolves.toBeUndefined();
+    hidden.mockResolvedValue(users(SELLER));
+    await expect(viewable(listed)).rejects.toMatchObject(notFound);
+  });
+
+  it('shows an unlisted offering to its seller and moderators only, and a removed one to moderators only', async () => {
+    const draft = row({ status: ServiceOfferingStatus.Draft });
+    const paused = row({ status: ServiceOfferingStatus.Paused });
+    const checking = row({ ingestion: ServiceOfferingIngestionStatus.Pending });
+    const removed = row({ status: ServiceOfferingStatus.Removed });
+    const banned = row({ seller: { bannedAt: new Date() } });
+    table = [draft, paused, checking, removed, banned];
+    for (const offering of [draft, paused, checking, removed, banned])
+      await expect(open(offering)).rejects.toMatchObject(notFound);
+    for (const offering of [draft, paused, checking])
+      expect(await open(offering, { viewerId: SELLER })).toMatchObject({ id: offering.id });
+    await expect(open(removed, { viewerId: SELLER })).rejects.toMatchObject(notFound);
+    for (const offering of [draft, removed, banned])
+      expect(await open(offering, { viewerId: MOD, isModerator: true })).toMatchObject({
+        id: offering.id,
+      });
+  });
+
+  it("counts the seller's completed deals, this offering's, and those first delivered by the due date", async () => {
+    const offering = row();
+    table = [offering];
+    await pg.db.exec(`
+      INSERT INTO "ServiceDeal" (id, "offeringId", "sellerId", status, "dueAt") VALUES
+        (1, ${offering.id}, ${SELLER}, 'Completed', '2026-11-10'),
+        (2, ${offering.id}, ${SELLER}, 'Completed', '2026-11-10'),
+        (3, 999, ${SELLER}, 'Completed', '2026-11-10'),
+        (4, ${offering.id}, ${SELLER}, 'Accepted', '2026-11-10'),
+        (5, ${offering.id}, 8, 'Completed', '2026-11-10');
+      INSERT INTO "ServiceDealEvent" ("dealId", type, "createdAt") VALUES
+        -- On time, then redelivered after the due date for a revision: still on time.
+        (1, 'Delivered', '2026-11-09'),
+        (1, 'Delivered', '2026-11-12'),
+        -- First delivered late.
+        (2, 'Delivered', '2026-11-11'),
+        (3, 'Delivered', '2026-11-08'),
+        (4, 'Delivered', '2026-11-08'),
+        (5, 'Delivered', '2026-11-08');
+    `);
+    expect((await open(offering)).record).toEqual({
+      completed: 3,
+      offeringCompleted: 2,
+      onTime: 2,
+    });
   });
 });

@@ -1,7 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const count = dbMock.dbWrite.newOrderSmite.count;
 
@@ -15,7 +14,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: (req: NextApiRequest, res: NextApiResponse) => unknown) => handler,
 }));
 
-const { default: handler } = await import('~/pages/api/mod/knights/reset-player');
+const { default: handler } = await import('~/server/api-routes/mod/knights/reset-player');
 
 const call = async (method: string, body: Record<string, unknown>) => {
   const res = { status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis() };
@@ -83,7 +82,7 @@ describe('/api/mod/knights/reset-player', () => {
     await expect(call('POST', { playerId: '9', limit: '3' })).rejects.toThrow('db down');
   });
 
-  it('answers reset and logs when only the side effects after the commit failed', async () => {
+  it('answers reset when only the side effects after the commit failed', async () => {
     resetPlayer.mockImplementation(async () => {
       count.mockResolvedValue(0);
       throw new Error('redis down');
@@ -91,12 +90,6 @@ describe('/api/mod/knights/reset-player', () => {
     const res = await call('POST', { playerId: '9', limit: '3' });
 
     expect(res.json).toHaveBeenCalledWith({ playerId: 9, outcome: 'reset' });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'knights-reset-side-effects-failed',
-        details: { playerId: 9 },
-      })
-    );
   });
 
   it.each([

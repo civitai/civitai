@@ -30,7 +30,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "postId" int, url text, type text DEFAULT 'image', index int,
-      "nsfwLevel" int NOT NULL DEFAULT 1, "needsReview" text
+      "nsfwLevel" int NOT NULL DEFAULT 1, "needsReview" text, "userId" int NOT NULL DEFAULT ${OWNER}
     );
     CREATE TABLE "Tag" (id int PRIMARY KEY, name text);
     CREATE TABLE "PostTag" ("postId" int, "tagId" int);
@@ -48,10 +48,16 @@ beforeEach(async () => {
   `);
 });
 
-async function calendar(user: SessionUser, servableLevels = allBrowsingLevelsFlag) {
+// `ownerSeesHeld`: a session or a full-access key, as the router passes it.
+async function calendar(
+  user: SessionUser,
+  servableLevels = allBrowsingLevelsFlag,
+  ownerSeesHeld = true
+) {
   const { posts } = await getScheduledPosts({
     user,
     servableLevels,
+    ownerSeesHeld,
     from: new Date(),
     to: new Date(Date.now() + 7 * 24 * 3600 * 1000),
   });
@@ -60,11 +66,20 @@ async function calendar(user: SessionUser, servableLevels = allBrowsingLevelsFla
 
 describe('getScheduledPosts cover', () => {
   it.each(['csam', 'minor'])(
-    "skips the owner's own image held for %s review, for the cover and the count",
+    'shows the owner their own image held for %s review, as the cover and in the count',
     async (hold) => {
       await db.exec(`
         INSERT INTO "Image" (id, "postId", url, index, "needsReview") VALUES
           (1, ${POST}, 'held', 0, '${hold}'), (2, ${POST}, 'clean', 1, NULL);
+      `);
+      expect(await calendar(owner)).toEqual({ cover: 'held', imageCount: 2 });
+      expect(await calendar(owner, allBrowsingLevelsFlag, false)).toEqual({
+        cover: 'clean',
+        imageCount: 1,
+      });
+      // Another uploader's held image in the same post stays out of the cover and the count.
+      await db.exec(`
+        UPDATE "Image" SET "userId" = 99 WHERE id = 1;
       `);
       expect(await calendar(owner)).toEqual({ cover: 'clean', imageCount: 1 });
     }

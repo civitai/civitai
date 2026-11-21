@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { applyAction, deserialize, enhance } from '$app/forms';
+  import { dev } from '$app/environment';
   import { beforeNavigate, invalidate } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import BlockReasons from './BlockReasons.svelte';
@@ -9,7 +10,9 @@
   import CheckpointRecap from './CheckpointRecap.svelte';
   import GuideDialog from './GuideDialog.svelte';
   import ImageStage from './ImageStage.svelte';
+  import SettledCard from './SettledCard.svelte';
   import LevelToast from './LevelToast.svelte';
+  import RulingToast from './RulingToast.svelte';
   import QueueClear from './QueueClear.svelte';
   import RankUpDialog from './RankUpDialog.svelte';
   import ResetNotice from './ResetNotice.svelte';
@@ -17,22 +20,14 @@
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
   import WatchMeta from '$lib/WatchMeta.svelte';
-  import { heartsLeft, landVote, noticeTone, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
+  import { heartsLeft, landVote, pendingGoldVotes, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
   import { votesSent } from '$lib/votes-sent.svelte';
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
-  import {
-    DISMISS_FAILED,
-    closeNotice,
-    dismissFailedOn,
-    noticeKey,
-    noticeShowing,
-    settleNotice,
-    syncNotice,
-    type NoticeState,
-  } from './level-notice';
+  import { dismissible } from '$lib/optimistic-dismiss.svelte';
+  import { noticeKey } from './level-notice';
   import { closeGuide, guideShowing, openGuide, settleGuide, type GuideState } from './guide-dialog';
   import {
     MAX_EXCLUDED,
@@ -47,8 +42,26 @@
   } from './optimistic';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
   import type { ActionData, PageData } from './$types';
+  import type { PlayerStatsSignal } from '$lib/server/live/announce';
+  import { connectSignals, joinTopic, onSignal } from '$lib/signals';
+  import { liveStatus } from '$lib/live-status.svelte';
+  import {
+    PLAYER_STATS_EVENT,
+    QUEUE_DROP_EVENT,
+    acceptsStats,
+    dropsForPlayer,
+    queueTopic,
+    readQueueDrops,
+  } from '$lib/live-events';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+  // The latest stats signal, taken only when it is newer than the page's data and counts every vote the page shows.
+  let live = $state.raw<PlayerStatsSignal | null>(null);
+  let shown = $derived(
+    data.mode === 'queue' && live && live.at > data.live.at
+      ? { ...data, status: live.status, daily: live.daily }
+      : data
+  );
   let submitting = $state(false);
   let answers = $state<HTMLFormElement>();
   let skipForm = $state<HTMLFormElement>();
@@ -80,7 +93,17 @@
   let imageFailed = $derived(!!view && failedItem === view.item.key);
   let reasonItem = $state<string | null>(null);
   let choosingReason = $derived(!!view && reasonItem === view.item.key);
+  // The item on screen that other players settled: it stays up under a card, locked, until the player moves on.
+  let settledItem = $state<string | null>(null);
+  let settledOnScreen = $derived(!!view && settledItem === view.item.key);
+  let settledReady = $state(false);
   let blockReason = $state<BlockReason | null>(null);
+  // The ruling toast floats over the image stage; it is only an alert, so the answers stay live under it.
+  const rulingNotice = dismissible(
+    () => (data.notices.length > 0 ? data.notices.map((notice) => notice.key).join(' ') : null),
+    { noticeFailed: true }
+  );
+  const careerReset = dismissible(() => (data.resetNotice ? 'reset' : null), { resetNoticeFailed: true });
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   const whatsNew = whatsNewView();
   // Votes posted in the background that the page's data does not hold yet; the Watch and the header count them at once.
@@ -92,19 +115,13 @@
     inFlight.count = 0;
     inFlight.landed = 0;
     inFlight.landedOn = null;
+    inFlight.goldless = 0;
   });
-  let dialogOpen = $derived(whatsNew.showing || guideOpen || data.progress?.kind === 'rank');
-  let toastTone = $derived(noticeTone(data.notices));
+  // The level card and the rank-up dialog; `showing` decides whether one is drawn, while the `noticeShown` fields keep
+  // following `levelNotice`, the server's notice, so an answer given right after "Onward" still records the card it appeared with.
+  const progress = dismissible(() => (data.progress ? noticeKey(data.progress) : null), { progressFailed: true });
+  let dialogOpen = $derived(whatsNew.showing || guideOpen || (data.progress?.kind === 'rank' && progress.showing));
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
-  // Whether the card is drawn; the `noticeShown` fields keep following `levelNotice`, the server's notice, so an answer
-  // given right after "Onward" still records the card it appeared with.
-  const notice = $state<NoticeState>({ closed: null, failed: null });
-  let sentNotice = $derived(data.progress?.kind === 'level' ? noticeKey(data.progress) : null);
-  $effect(() => {
-    const key = sentNotice;
-    untrack(() => syncNotice(notice, key));
-  });
-  let levelToastShowing = $derived(noticeShowing(sentNotice, notice));
 
   // Header-menu dialogs (feedback, restart career) don't set `dialogOpen`; the reason picker is this page's own.
   const headerDialogOpen = () =>
@@ -117,6 +134,13 @@
   // apprenticeship Space is left to the browser. Typing in a field or holding a modifier is left alone.
   function onkeydown(event: KeyboardEvent) {
     if (headerDialogOpen()) return;
+    if (settledOnScreen) {
+      if (event.key === 'Enter' || event.key === ' ' || event.key === 'Escape') {
+        event.preventDefault();
+        if (!event.repeat) continueFromSettled();
+      }
+      return;
+    }
     if (choosingReason) {
       const reason = answerForKey([...BLOCK_REASONS], event.key);
       if (reason && !event.ctrlKey && !event.metaKey && !event.altKey) pickReason(reason as BlockReason);
@@ -222,22 +246,6 @@
       } finally {
         submitting = false;
         picked = null;
-      }
-    };
-  };
-
-  // Not through `submitting`: the answers stay live while the dismissal is in flight.
-  const submitDismissProgress: SubmitFunction = () => {
-    const key = sentNotice;
-    if (key) closeNotice(notice, key);
-    return async ({ result, update }) => {
-      const stored = result.type === 'success' || result.type === 'redirect';
-      if (key) settleNotice(notice, key, stored);
-      // An unanswered post would otherwise render the error page over the round.
-      if (result.type === 'error') {
-        await applyAction({ type: 'failure', status: 500, data: { message: DISMISS_FAILED, progressFailed: true } });
-      } else {
-        await update();
       }
     };
   };
@@ -373,6 +381,7 @@
       const body: { items?: PickedItem[] } | null = response.ok ? await response.json() : null;
       for (const entry of body?.items ?? []) {
         if (mine !== epoch) return;
+        if (dropped.has(entry.item.live)) continue;
         if (buffer.enqueue(entry, (key) => tracker.has(key) || key === currentKey)) {
           download(entry, mine);
           added += 1;
@@ -446,11 +455,13 @@
 
   function post(action: URL, body: FormData, key: string, counted: boolean) {
     // Read at the press: by the time the answer lands, the page data may already hold this vote's effect.
-    const smitesBefore = data.status.smites;
+    const smitesBefore = shown.status.smites;
     const uncount = () => {
       if (counted && alive) inFlight.count = Math.max(0, inFlight.count - 1);
       counted = false;
     };
+    // Set when the server counted a stale judgment toward the Watch: it lands on the Watch but adds no gold.
+    let paysGold = true;
     return postVote(key, {
       queue: votes,
       tracker,
@@ -472,7 +483,8 @@
         }
       },
       onFailure: (outcome) => {
-        uncount();
+        if (outcome.watchCounted) paysGold = false;
+        else uncount();
         const message = refusalNote(outcome);
         if (message) stick(message);
         dropBuffered(key);
@@ -482,12 +494,15 @@
           refilling = false;
         }
       },
-      // The page's own data (status, rewards, level notices) is read again once the vote has landed; the vote stays counted
-      // against the data on screen until the refreshed data, which holds it, replaces it.
+      // The page's own data (status, rewards, level notices) is read again once the last vote in flight has landed; each vote
+      // stays counted against the data on screen until the refreshed data, which holds it, replaces it.
       onSuccess: (result) => cheer(result, smitesBefore),
       onSettled: async () => {
-        if (counted && alive) landVote(inFlight, data.daily);
+        if (counted && alive) landVote(inFlight, shown.daily, { paysGold });
         counted = false;
+        // Votes post one at a time, so a vote still unlanded settles after this one and reads the page then. Reading it now
+        // as well would only be discarded when that read starts, and while reads kept replacing each other the status froze.
+        if (inFlight.count > 0) return;
         await invalidate('app:play').catch(() => {});
       },
     });
@@ -541,15 +556,111 @@
     void post(input.action, input.formData, key, isVote);
   };
 
-  let strip = $derived(data.mode === 'queue' ? watchStrip(withVotesSent(data.daily, pendingVotes(inFlight, data.daily))) : null);
-  let watching = $derived(data.mode === 'queue' && !paused && Boolean(view) && watchInProgress(data.daily));
+  // Long enough that a click or key already on its way when the card appears cannot dismiss it.
+  const SETTLED_GUARD_MS = 600;
+  let settledTimer: ReturnType<typeof setTimeout> | undefined;
+  onDestroy(() => clearTimeout(settledTimer));
+
+  // Moves on the way Skip does: to the item fetched ahead, or by the form post when none is ready.
+  function continueFromSettled() {
+    if (!settledOnScreen || !settledReady) return;
+    settledItem = null;
+    skipForm?.requestSubmit();
+  }
+
+  // Live keys dropped lately: a refill or reload already in flight when the drop came must not bring the item back.
+  const dropped = new Set<string>();
+  const MAX_DROPPED = 200;
+
+  // Items other players settled (or moved past this player's stages) leave the buffer unseen. The one on screen is not
+  // swapped under the player's hand: it is locked under a card they dismiss, so no press lands on the next image by accident.
+  function onDrops(payload: unknown) {
+    if (data.mode !== 'queue') return;
+    const stages = data.live.stages;
+    const gone = new Set(
+      readQueueDrops(payload)
+        .filter((drop) => dropsForPlayer(drop, stages))
+        .map((drop) => drop.k)
+    );
+    if (gone.size === 0) return;
+    for (const k of gone) dropped.add(k);
+    while (dropped.size > MAX_DROPPED) dropped.delete(dropped.values().next().value!);
+    for (const key of buffer.dropLive(gone)) {
+      preloaded.delete(key);
+      downloading.delete(key);
+    }
+    syncBuffer();
+    const onScreen = view?.item;
+    if (!onScreen || !gone.has(onScreen.live) || tracker.has(onScreen.key) || settledOnScreen) return;
+    reasonItem = null;
+    settledItem = onScreen.key;
+    settledReady = false;
+    clearTimeout(settledTimer);
+    settledTimer = setTimeout(() => (settledReady = true), SETTLED_GUARD_MS);
+  }
+
+  function onStats(payload: unknown) {
+    const signal = payload as PlayerStatsSignal | null;
+    if (data.mode !== 'queue' || !signal?.status || !signal.daily) return;
+    const daily = shown.mode === 'queue' ? shown.daily : null;
+    if (!daily) return;
+    const at = Math.max(data.live.at, live?.at ?? 0);
+    const votes = daily.votes + pendingVotes(inFlight, daily);
+    if (acceptsStats(signal, { at, votes, inFlight: inFlight.count })) live = signal;
+  }
+
+  onMount(() => {
+    connectSignals();
+    const offDrops = onSignal(QUEUE_DROP_EVENT, onDrops);
+    // Dev builds only: settles the item on screen as a drop signal would, for browser tests without a signal service.
+    if (dev) {
+      (window as Window & { __knightsSettleOnScreen?: () => void }).__knightsSettleOnScreen = () => {
+        if (view) onDrops({ drops: [{ k: view.item.live, to: null }] });
+      };
+    }
+    const offStats = onSignal(PLAYER_STATS_EVENT, onStats);
+    return () => {
+      offDrops();
+      offStats();
+    };
+  });
+
+  const headerStatus = liveStatus();
+  $effect(() => {
+    headerStatus.current = shown === data ? null : shown.status;
+  });
+  onDestroy(() => (headerStatus.current = null));
+
+  // A primitive, so a page reload with the same stages does not leave and rejoin the topics.
+  let stageList = $derived(data.mode === 'queue' ? data.live.stages.join(',') : '');
+  $effect(() => {
+    const leave = stageList ? stageList.split(',').map((stage) => joinTopic(queueTopic(stage))) : [];
+    return () => leave.forEach((left) => left());
+  });
+
+  let strip = $derived(shown.mode === 'queue' ? watchStrip(withVotesSent(shown.daily, pendingVotes(inFlight, shown.daily))) : null);
+  let watching = $derived(shown.mode === 'queue' && !paused && Boolean(view) && watchInProgress(shown.daily));
 
   beforeNavigate(({ cancel, type, to }) => {
     const action = leaveAction({ inProgress: watching, type, toPath: to?.url.pathname ?? null });
     if (action === 'native') cancel();
     else if (action === 'confirm' && !confirm('Leave your Watch? Your votes so far are kept.')) cancel();
   });
-  let hearts = $derived(heartsLeft(data.status));
+  let hearts = $derived(heartsLeft(shown.status));
+  // Which body the page shows: the template branches on it, and the ruling sits directly above the stage when there is one.
+  let screen = $derived.by(() => {
+    if (shown.mode === 'apprentice') {
+      const apprentice = shown.apprentice;
+      if (apprentice.kind === 'question') return { kind: 'apprentice-question' as const, apprentice };
+      if (apprentice.kind === 'checkpoint') return { kind: 'checkpoint' as const, apprentice };
+      return { kind: 'no-practice' as const };
+    }
+    if (shown.muted) return { kind: 'muted' as const };
+    if (shown.lockoutSeconds) return { kind: 'lockout' as const, seconds: shown.lockoutSeconds };
+    if (view) return { kind: 'queue-stage' as const, view };
+    return { kind: shown.resetPending ? ('none' as const) : ('clear' as const), daily: shown.daily };
+  });
+  let rulingInStage = $derived(screen.kind === 'apprentice-question' || screen.kind === 'queue-stage');
   let formMessage = $derived(
     form?.message && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed
       ? form.message
@@ -611,22 +722,32 @@
 
 {#snippet questionTools()}
   <div class="qtools">
-    {#if !yesNo}
-      <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>
-        <Icon name="book-open" size={16} />Guide
-      </button>
-    {/if}
+    <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>
+      <Icon name="book-open" size={16} />Guide
+    </button>
     {@render soundToggle()}
   </div>
 {/snippet}
 
+{#snippet ruling(anchored: boolean)}
+  <!-- Not drawn under a dialog, so its auto-hide never runs unseen. -->
+  {#if rulingNotice.showing && !dialogOpen}
+    <RulingToast
+      notices={shown.notices}
+      message={form?.noticeFailed && rulingNotice.failed ? form.message : null}
+      submit={rulingNotice.submit}
+      {anchored}
+    />
+  {/if}
+{/snippet}
+
 {#snippet levelToast(floating: boolean)}
-  {#if levelNotice && levelToastShowing}
+  {#if levelNotice && progress.showing}
     <LevelToast
       level={levelNotice.milestoneLevel ?? levelNotice.level}
-      xpToNext={(levelNotice.milestoneLevel ?? levelNotice.level) === data.status.level ? data.status.xpForNextLevel - data.status.xpIntoLevel : null}
-      message={form?.progressFailed && dismissFailedOn(notice, sentNotice) ? form.message : null}
-      submit={submitDismissProgress}
+      xpToNext={(levelNotice.milestoneLevel ?? levelNotice.level) === shown.status.level ? shown.status.xpForNextLevel - shown.status.xpIntoLevel : null}
+      message={form?.progressFailed && progress.failed ? form.message : null}
+      submit={progress.submit}
       {floating}
       milestone={levelNotice.milestone ?? null}
       gold={levelNotice.levelGold ?? 0}
@@ -635,195 +756,171 @@
 {/snippet}
 
 <div class="play">
-  {#if data.resetNotice}
+  {#if careerReset.showing}
     <ResetNotice
-      smites={data.status.maxSmites}
-      message={form?.resetNoticeFailed ? form.message : null}
-      {submitting}
-      {submit}
+      smites={shown.status.maxSmites}
+      message={form?.resetNoticeFailed && careerReset.failed ? form.message : null}
+      submit={careerReset.submit}
     />
   {:else}
-  {#if data.mode === 'queue' && data.apprenticeMeter}
+  {#if shown.mode === 'queue' && shown.apprenticeMeter}
     <ApprenticeMeter
-      level={data.status.level}
-      levelFraction={data.status.progressPercent / 100}
-      accuracy={data.apprenticeMeter.accuracy}
-      bar={data.apprenticeMeter.bar}
-      knightLevel={data.apprenticeMeter.knightLevel}
-      answerWindow={data.apprenticeMeter.window}
+      level={shown.status.level}
+      levelFraction={shown.status.progressPercent / 100}
+      accuracy={shown.apprenticeMeter.accuracy}
+      bar={shown.apprenticeMeter.bar}
+      knightLevel={shown.apprenticeMeter.knightLevel}
+      answerWindow={shown.apprenticeMeter.window}
     />
-  {:else if strip && data.mode === 'queue'}
+  {:else if strip && shown.mode === 'queue'}
     <WatchMeta
       value={strip.value}
       max={strip.max}
+      watch={shown.daily.watch}
       done={strip.done}
-      streak={withVotesSent(data.daily, pendingVotes(inFlight, data.daily)).streak}
+      streak={withVotesSent(shown.daily, pendingVotes(inFlight, shown.daily)).streak}
       {hearts}
-      maxHearts={data.status.maxSmites}
-      heartBack={data.status.heartBack}
+      maxHearts={shown.status.maxSmites}
+      heartBack={shown.status.heartBack}
       onmore={() => (railSheetOpen = true)}
     />
-  {:else if data.mode === 'apprentice'}
+  {:else if shown.mode === 'apprentice'}
     <ApprenticeMeter
-      level={data.status.level}
-      levelFraction={data.status.progressPercent / 100}
-      accuracy={data.apprentice.progress.accuracy}
-      bar={data.apprentice.progress.bar}
-      knightLevel={data.apprentice.progress.knightLevel}
-      answerWindow={data.apprentice.progress.window}
+      level={shown.status.level}
+      levelFraction={shown.status.progressPercent / 100}
+      accuracy={shown.apprentice.progress.accuracy}
+      bar={shown.apprentice.progress.bar}
+      knightLevel={shown.apprentice.progress.knightLevel}
+      answerWindow={shown.apprentice.progress.window}
       {hearts}
-      maxHearts={data.status.maxSmites}
+      maxHearts={shown.status.maxSmites}
     />
   {/if}
 
   <div class="body">
   <div class="main">
-  {#if data.notices.length > 0}
-    <section class="toast" class:calm={toastTone === 'calm'} role="status" aria-label="The Order's ruling">
-      <Icon name={toastTone === 'calm' ? 'info' : 'triangle-alert'} size={18} />
-      <div class="toast-body">
-        {#each data.notices as notice (notice.key)}
-          <div class="check-notice" class:close={notice.consequence === 'close'}>
-            {#if notice.imageSrc}
-              <img class="check-thumb" src={notice.imageSrc} alt="What you judged" loading="lazy" />
-            {/if}
-            <p>
-              <strong>{notice.title}</strong>
-              {notice.message}
-              {#if notice.consequence === 'smite'}
-                <span class="check-answers">
-                  You judged {notice.answerLabel}{#if notice.correctLabel}; the Order judged it {notice.correctLabel}{/if}.
-                </span>
-              {/if}
-            </p>
-          </div>
-        {/each}
-        {#if form?.noticeFailed}
-          <p>{form.message}</p>
-        {/if}
-      </div>
-      <form method="POST" action="?/dismissNotices" use:enhance={submit}>
-        <button type="submit" disabled={submitting}>Understood</button>
-      </form>
-    </section>
-  {/if}
+  {#if !rulingInStage}{@render ruling(false)}{/if}
 
-  {#if data.mode === 'queue' && data.resetPending}
+  {#if shown.mode === 'queue' && shown.resetPending}
     <p class="notice flat" role="alert">Your career is being reset. Return in a moment.</p>
   {/if}
 
-  {#if data.mode === 'apprentice'}
-    {#if data.apprentice.kind === 'question'}
-      <div class="column">
-        <div class="qrow">
-          <p class="question" title={data.apprentice.prompt}>
-            <span class="eyebrow">Question</span>
-            <span class="text">{data.apprentice.prompt}</span>
-          </p>
-          {@render questionTools()}
-        </div>
-        <div class="stagewrap">
-          {#key `${data.apprentice.item.kind}:${data.apprentice.item.referenceId}`}
-            <ImageStage
-              src={data.apprentice.item.src}
-              width={data.apprentice.item.width}
-              height={data.apprentice.item.height}
-              alt="The subject of this question"
-            />
-          {/key}
-          {@render levelToast(true)}
-        </div>
-        <div class="controls" class:yesno={yesNo}>
-          <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
-            <input type="hidden" name="kind" value={data.apprentice.item.kind} />
-            <input type="hidden" name="referenceId" value={data.apprentice.item.referenceId} />
-            <input type="hidden" name="version" value={data.apprentice.item.version ?? ''} />
-            {#if levelNotice}<input type="hidden" name="noticeShown" value="1" />{/if}
-            {#each data.apprentice.options as option, index (option.value)}
-              {@render pill(option, index, false, false)}
-            {/each}
-          </form>
-          {#if !yesNo}
-            <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
-          {/if}
-          <span class="rowtool">{@render soundToggle()}</span>
-        </div>
-        {#if formMessage}
-          <p class="notice flat" role="alert">{formMessage}</p>
+  {#if screen.kind === 'apprentice-question'}
+    {@const apprentice = screen.apprentice}
+    <div class="column">
+      <div class="qrow">
+        <p class="question" title={apprentice.prompt}>
+          <span class="eyebrow">Question</span>
+          <span class="text">{apprentice.prompt}</span>
+        </p>
+        {@render questionTools()}
+      </div>
+      <div class="stagewrap">
+        {#key `${apprentice.item.kind}:${apprentice.item.referenceId}`}
+          <ImageStage
+            src={apprentice.item.src}
+            width={apprentice.item.width}
+            height={apprentice.item.height}
+            alt="The subject of this question"
+          />
+        {/key}
+        {@render levelToast(true)}
+        {@render ruling(true)}
+      </div>
+      <div class="controls" class:yesno={yesNo}>
+        <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
+          <input type="hidden" name="kind" value={apprentice.item.kind} />
+          <input type="hidden" name="referenceId" value={apprentice.item.referenceId} />
+          <input type="hidden" name="version" value={apprentice.item.version ?? ''} />
+          {#if levelNotice}<input type="hidden" name="noticeShown" value="1" />{/if}
+          {#each apprentice.options as option, index (option.value)}
+            {@render pill(option, index, false, false)}
+          {/each}
+        </form>
+        {#if !yesNo}
+          <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
         {/if}
+        <span class="rowtool">{@render soundToggle()}</span>
       </div>
-    {:else if data.apprentice.kind === 'checkpoint'}
+      {#if formMessage}
+        <p class="notice flat" role="alert">{formMessage}</p>
+      {/if}
+    </div>
+  {:else if screen.kind === 'checkpoint'}
+    {@render levelToast(false)}
+    <CheckpointRecap
+      recap={screen.apprentice}
+      noticeShown={!!levelNotice}
+      message={formMessage}
+      {submitting}
+      submit={submitCheckpoint}
+      onguide={() => openGuide(guide)}
+    />
+  {:else if screen.kind === 'no-practice'}
+    <div class="panel">
       {@render levelToast(false)}
-      <CheckpointRecap
-        recap={data.apprentice}
-        noticeShown={!!levelNotice}
-        message={formMessage}
-        {submitting}
-        submit={submitCheckpoint}
-        onguide={() => openGuide(guide)}
-      />
-    {:else}
-      <div class="panel">
-        {@render levelToast(false)}
-        <section class="lockout" role="status" aria-label="No more practice items">
-          <h2>No more practice items right now</h2>
-          <p>Check back soon. New ones are added from time to time, and your progress is kept.</p>
-        </section>
-      </div>
-    {/if}
-  {:else if data.mode === 'queue' && data.muted}
+      <section class="lockout" role="status" aria-label="No more practice items">
+        <h2>No more practice items right now</h2>
+        <p>Check back soon. New ones are added from time to time, and your progress is kept.</p>
+      </section>
+    </div>
+  {:else if screen.kind === 'muted'}
     <div class="panel">
       <section class="lockout" role="status" aria-label="Judging unavailable">
         <h2>Judging is closed to you</h2>
         <p>Your account is muted, so you can't judge right now. You can still view your record and your gold.</p>
       </section>
     </div>
-  {:else if data.mode === 'queue' && data.lockoutSeconds}
+  {:else if screen.kind === 'lockout'}
     <div class="panel">
       {@render levelToast(false)}
       <section class="lockout" role="status" aria-label="Judging paused">
         <h2>A moment of rest</h2>
         <p>You have been judging faster than the Order can trust. Rest a little; the queue will wait.</p>
-        <Countdown seconds={data.lockoutSeconds} label="Time until judging resumes" />
+        <Countdown seconds={screen.seconds} label="Time until judging resumes" />
         <p class="muted">Judging resumes by itself.</p>
       </section>
     </div>
-  {:else if view}
+  {:else if screen.kind === 'queue-stage'}
+    {@const shown = screen.view}
     <div class="column">
       <div class="qrow">
-      <p class="question" title={view.question.prompt}>
+      <p class="question" title={shown.question.prompt}>
         <span class="eyebrow">
           Question
-          {#if view.category}
+          {#if shown.category}
             <!-- Re-keyed (and glows once) only when the category changes; the text is part of the question for screen readers. -->
-            {#key view.category.heading}
-              <span class="category" class:glow={view.banner !== null}>
-                <span aria-hidden="true">·</span><span class="vh">Category: </span>{view.category.heading}
+            {#key shown.category.heading}
+              <span class="category" class:glow={shown.banner !== null}>
+                <span aria-hidden="true">·</span><span class="vh">Category: </span>{shown.category.heading}
               </span>
             {/key}
           {/if}
         </span>
-        <span class="text">{view.question.prompt}</span>
+        <span class="text">{shown.question.prompt}</span>
       </p>
       {@render questionTools()}
       </div>
       <span class="vh" role="status" aria-live="polite"
-        >{view.banner ? `New questions: ${view.banner.heading}` : ''}</span
+        >{shown.banner ? `New questions: ${shown.banner.heading}` : ''}</span
       >
       <div class="stagewrap">
-        {#key view.item.key}
-          {@const itemKey = view.item.key}
+        {#key shown.item.key}
+          {@const itemKey = shown.item.key}
           <ImageStage
-            src={view.item.src}
-            width={view.item.width}
-            height={view.item.height}
+            src={shown.item.src}
+            width={shown.item.width}
+            height={shown.item.height}
             alt="The subject of this judgment"
             failed={imageFailed}
             onfail={() => (failedItem = itemKey)}
           />
         {/key}
         {@render levelToast(true)}
-        {#if note}
+        {@render ruling(true)}
+        {#if settledOnScreen}
+          <SettledCard ready={settledReady} oncontinue={continueFromSettled} />
+        {:else if note}
           <p class="nudge" class:sticky>
             <span role="status">{note}</span>
             {#if sticky}
@@ -836,20 +933,20 @@
       </div>
       <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
         <form class="answers" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers}>
-          <input type="hidden" name="item" value={view.item.id} />
-          {#each view.question.options as option, index (option.value)}
-            {@render pill(option, index, imageFailed, asksBlockReason(view.question.key))}
+          <input type="hidden" name="item" value={shown.item.id} />
+          {#each shown.question.options as option, index (option.value)}
+            {@render pill(option, index, imageFailed || settledOnScreen, asksBlockReason(shown.question.key))}
           {/each}
         </form>
         <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
-          <input type="hidden" name="item" value={view.item.id} />
-          <button type="submit" class="quiet" disabled={submitting} aria-label="Skip" title="Skip (Space)">
+          <input type="hidden" name="item" value={shown.item.id} />
+          <button type="submit" class="quiet" disabled={submitting || settledOnScreen} aria-label="Skip" title="Skip (Space)">
             <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
           </button>
         </form>
-        {#if !yesNo}
-          <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
-        {/if}
+        <span class="rowtool">
+          <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button>
+        </span>
         <span class="rowtool">{@render soundToggle()}</span>
         {#if choosingReason}
           <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
@@ -859,47 +956,47 @@
         <p class="notice flat" role="alert">{formMessage}</p>
       {/if}
     </div>
-  {:else if !data.resetPending}
+  {:else if screen.kind === 'clear'}
     {@render levelToast(false)}
-    <QueueClear daily={data.daily} />
+    <QueueClear daily={screen.daily} />
   {/if}
   </div>
-  {#if data.mode === 'queue' && !data.apprenticeMeter}
-    <PlayRail status={data.status} daily={withVotesSent(data.daily, pendingVotes(inFlight, data.daily))} rail={data.rail} ladder={data.ladder} />
+  {#if shown.mode === 'queue' && !shown.apprenticeMeter}
+    <PlayRail status={shown.status} daily={withVotesSent(shown.daily, pendingVotes(inFlight, shown.daily), pendingGoldVotes(inFlight, shown.daily))} rail={shown.rail} ladder={shown.ladder} />
   {/if}
   </div>
   {/if}
 </div>
 
-{#if railSheetOpen && data.mode === 'queue' && !data.apprenticeMeter}
+{#if railSheetOpen && shown.mode === 'queue' && !shown.apprenticeMeter}
   <RailSheet
-    status={data.status}
-    daily={withVotesSent(data.daily, pendingVotes(inFlight, data.daily))}
-    rail={data.rail}
-    ladder={data.ladder}
+    status={shown.status}
+    daily={withVotesSent(shown.daily, pendingVotes(inFlight, shown.daily), pendingGoldVotes(inFlight, shown.daily))}
+    rail={shown.rail}
+    ladder={shown.ladder}
     onclose={() => (railSheetOpen = false)}
   />
 {/if}
 
 {#if guideOpen}
   <GuideDialog
-    guide={data.ratingGuide}
-    first={data.showGuide}
+    guide={shown.ratingGuide}
+    scrollToRules={yesNo}
+    first={shown.showGuide}
     message={form?.guideFailed ? form.message : null}
     {submitting}
     submit={submitGuide}
   />
-{:else if data.progress?.kind === 'rank'}
+{:else if shown.progress?.kind === 'rank' && progress.showing}
   <RankUpDialog
-    rank={data.progress.rank}
-    level={data.progress.level}
-    levels={data.progress.levels}
-    goldMultiplier={data.progress.goldMultiplier}
-    previous={data.progress.previous}
-    badge={data.badges.large[data.progress.rank]}
-    message={form?.progressFailed ? form.message : null}
-    {submitting}
-    {submit}
+    rank={shown.progress.rank}
+    level={shown.progress.level}
+    levels={shown.progress.levels}
+    goldMultiplier={shown.progress.goldMultiplier}
+    previous={shown.progress.previous}
+    badge={shown.badges.large[shown.progress.rank]}
+    message={form?.progressFailed && progress.failed ? form.message : null}
+    submit={progress.submit}
   />
 {/if}
 
@@ -924,70 +1021,6 @@
     min-width: 0;
     min-height: 0;
     overflow-y: auto;
-  }
-
-  /* The hidden-check warning floats over the stage, so it never moves the stage or the pills. */
-  .toast {
-    position: absolute;
-    top: 4.5rem;
-    left: 50%;
-    z-index: 5;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: min(34rem, calc(100% - 2rem));
-    padding: 12px 16px;
-    transform: translateX(-50%);
-    border: 1px solid var(--io-crimson);
-    border-radius: 12px;
-    background: #14110dee;
-    color: var(--io-crimson-text);
-    font: 400 13px/1.4 var(--io-font-ui);
-  }
-  /* Close calls only: information, not an alarm. */
-  .toast.calm {
-    border-color: var(--io-gold);
-    color: var(--io-gold);
-  }
-  .toast-body {
-    flex: 1;
-  }
-  .toast-body p {
-    margin: 0;
-    color: var(--io-parchment);
-  }
-  .toast-body strong {
-    display: block;
-    color: var(--io-crimson-text);
-  }
-  .check-notice {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .check-notice + .check-notice {
-    margin-top: 8px;
-  }
-  .check-notice.close strong {
-    color: var(--io-gold);
-  }
-  .check-thumb {
-    flex: none;
-    width: 48px;
-    height: 48px;
-    border-radius: 6px;
-    object-fit: cover;
-  }
-  .check-answers {
-    display: block;
-    color: var(--io-parchment);
-    opacity: 0.8;
-  }
-  .toast button {
-    min-height: 0;
-    padding: 6px 12px;
-    border-color: var(--io-crimson);
-    font-size: 12px;
   }
 
   /* The stage and whatever floats over it (the level-up toast). */
@@ -1328,9 +1361,6 @@
       gap: 8px;
       min-height: 10rem;
       padding: 4px 16px max(8px, env(safe-area-inset-bottom));
-    }
-    .toast {
-      top: 3.5rem;
     }
     .eyebrow {
       font-size: 12px;

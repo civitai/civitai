@@ -1,3 +1,6 @@
+import { deletePostRows } from '@civitai/db-queries/content-deletion';
+import { kyselyOver } from '~/server/db/prisma-kysely';
+import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk, uniq } from 'lodash-es';
@@ -59,15 +62,24 @@ export function reduceJobQueueToIds(jobs: { entityId: number; entityType: Entity
   return jobIds as JobQueueIds;
 }
 
-async function deleteJobQueueItems(
-  entityIds: number[],
-  entityType: EntityType,
+/**
+ * Removes the rows a run processed, each only if it is no newer than when the run read it: a row
+ * re-dated since (see `queuePostNsfwLevelUpdates`) was queued after the work it asks for.
+ */
+export async function deleteProcessedJobQueueItems(
+  rows: { entityId: number; entityType: EntityType; createdAt: Date }[],
   type: JobQueueType
 ) {
-  if (!entityIds) return;
-  await Limiter().process(entityIds, (entityIds) =>
-    dbWrite.jobQueue.deleteMany({ where: { type, entityType, entityId: { in: entityIds } } })
-  );
+  for (const batch of chunk(rows, 1000))
+    await dbWrite.$executeRaw`
+      DELETE FROM "JobQueue" q
+      USING jsonb_to_recordset(${JSON.stringify(batch)}::jsonb)
+        AS r("entityType" text, "entityId" int, "createdAt" timestamp(3))
+      WHERE q.type = ${type}::"JobQueueType"
+        AND q."entityType" = r."entityType"::"EntityType"
+        AND q."entityId" = r."entityId"
+        AND q."createdAt" <= r."createdAt"
+    `;
 }
 
 // Bounds how much of a backlog one run pulls in. The job runs every minute and
@@ -137,17 +149,20 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
       serviceOfferingIds: relatedEntities.serviceOfferingIds,
     });
 
-    const tuple: [entityIds: number[], entityType: EntityType, type: JobQueueType][] = [
-      [jobQueueIds.imageIds, EntityType.Image, JobQueueType.UpdateNsfwLevel],
-      [jobQueueIds.postIds, EntityType.Post, JobQueueType.UpdateNsfwLevel],
-      [jobQueueIds.articleIds, EntityType.Article, JobQueueType.UpdateNsfwLevel],
-      [jobQueueIds.modelIds, EntityType.Model, JobQueueType.UpdateNsfwLevel],
-      [jobQueueIds.modelVersionIds, EntityType.ModelVersion, JobQueueType.UpdateNsfwLevel],
-      [jobQueueIds.bountyIds, EntityType.Bounty, JobQueueType.UpdateNsfwLevel],
-      [jobQueueIds.bountyEntryIds, EntityType.BountyEntry, JobQueueType.UpdateNsfwLevel],
-      [jobQueueIds.model3dIds, EntityType.Model3D, JobQueueType.UpdateNsfwLevel],
-    ];
-    await Promise.all(tuple.map((args) => deleteJobQueueItems(...args)));
+    const processed = new Set<EntityType>([
+      EntityType.Image,
+      EntityType.Post,
+      EntityType.Article,
+      EntityType.Model,
+      EntityType.ModelVersion,
+      EntityType.Bounty,
+      EntityType.BountyEntry,
+      EntityType.Model3D,
+    ]);
+    await deleteProcessedJobQueueItems(
+      jobQueue.filter((row) => processed.has(row.entityType)),
+      JobQueueType.UpdateNsfwLevel
+    );
   } catch (e: any) {
     console.log(e);
     logToAxiom({ type: 'error', name: 'update-nsfw-levels', message: e.message });
@@ -233,7 +248,6 @@ const updateNsfwLevelsCollectionsJob = createJob(
 
 const batchSize = 1000;
 const handleJobQueueCleanup = createJob('job-queue-cleanup', '*/1 * * * *', async (e) => {
-  const now = new Date();
   const jobQueue = await dbRead.jobQueue.findMany({
     where: { type: JobQueueType.CleanUp },
   });
@@ -266,9 +280,9 @@ const handleJobQueueCleanup = createJob('job-queue-cleanup', '*/1 * * * *', asyn
 
   await updateNsfwLevels(relatedEntities);
 
-  await dbWrite.jobQueue.deleteMany({
-    where: { createdAt: { lt: now }, type: JobQueueType.CleanUp },
-  });
+  // Only the rows read: the read is on the replica, so a row it has not yet received would be
+  // deleted unprocessed.
+  await deleteProcessedJobQueueItems(jobQueue, JobQueueType.CleanUp);
 });
 
 const handleJobQueueCleanIfEmpty = createJob(
@@ -290,25 +304,23 @@ const handleJobQueueCleanIfEmpty = createJob(
         // version — deleting it cascades to auto-unpublishing the version (reason 'no-posts'),
         // stranding the creator. Keeping the shell lets them re-add showcase images. A storyline
         // chapter's post is kept for the same reason: deleting it leaves the chapter without content.
-        await dbWrite.$executeRaw`
-          WITH doomed AS (
-            SELECT p.id FROM "Post" p
-            WHERE p.id IN (${Prisma.join(ids)})
-              AND NOT EXISTS (SELECT 1 FROM "Image" WHERE "postId" = p.id)
-              AND NOT EXISTS (
-                SELECT 1 FROM "ModelVersion" mv
-                JOIN "Model" m ON m.id = mv."modelId"
-                WHERE mv.id = p."modelVersionId"
-                  AND p."userId" = m."userId"
-                  AND mv.status = 'Published'::"ModelStatus"
-              )
-              AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = p.id)
-              -- Text items are content: a post with them is not empty.
-              AND NOT EXISTS (SELECT 1 FROM "PostText" t WHERE t."postId" = p.id)
-              AND NOT ${accountHoldSql(Prisma.raw('p."userId"'), true)}
-          )
-          DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
-        `;
+        await deletePostRows(kyselyOver(dbWrite), {
+          ids,
+          actor: { system: 'job-queue-clean-if-empty' },
+          where: fromPrismaSql(Prisma.sql`
+            NOT EXISTS (SELECT 1 FROM "Image" WHERE "postId" = "Post".id)
+            AND NOT EXISTS (
+              SELECT 1 FROM "ModelVersion" mv
+              JOIN "Model" m ON m.id = mv."modelId"
+              WHERE mv.id = "Post"."modelVersionId"
+                AND "Post"."userId" = m."userId"
+                AND mv.status = 'Published'::"ModelStatus"
+            )
+            AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = "Post".id)
+            -- Text items are content: a post with them is not empty.
+            AND NOT EXISTS (SELECT 1 FROM "PostText" t WHERE t."postId" = "Post".id)
+            AND NOT ${accountHoldSql(Prisma.raw('"Post"."userId"'), true)}`),
+        });
       });
 
     const tasks = [cleanupPosts()].flat();

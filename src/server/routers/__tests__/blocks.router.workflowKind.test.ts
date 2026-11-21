@@ -78,7 +78,18 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
           flag,
           ...rest
         )) as typeof actual.isFlipt;
-  return { ...actual, isFlipt };
+  // The App Blocks source flags' read. Scanned rows answers off, as an unconfigured Flipt
+  // answered through isFlipt before those flags failed closed.
+  const isFliptSync = ((flag: string, ...rest: unknown[]) =>
+    flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_REFUSE_EXTERNAL_SOURCES
+      ? flags.refuseExternalApp
+      : flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS
+      ? false
+      : (actual.isFliptSync as (...a: unknown[]) => boolean | null)(
+          flag,
+          ...rest
+        )) as typeof actual.isFliptSync;
+  return { ...actual, isFlipt, isFliptSync, ensureFliptInitialized: async () => undefined };
 });
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: () => h.getOrchestratorToken(),
@@ -401,7 +412,14 @@ beforeEach(() => {
   // Every Civitai version a step names exists, on a base model apps may use.
   dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
     where: { id: { in: number[] } };
-  }) => args.where.id.in.map((id) => ({ id, baseModel: 'SDXL 1.0' }))) as never);
+  }) =>
+    args.where.id.in.map((id) => ({
+      id,
+      status: 'Published',
+      availability: 'Public',
+      model: { userId: 1 },
+      baseModel: 'SDXL 1.0',
+    }))) as never);
 });
 afterEach(() => envMock.reset());
 
@@ -971,6 +989,9 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
       }) =>
         args.where.id.in.map((id) => ({
           id,
+          status: 'Published',
+          availability: 'Public',
+          model: { userId: 1 },
           baseModel: id === 11 ? 'SDXL Turbo' : 'SDXL 1.0',
         }))) as never);
     });
@@ -996,6 +1017,36 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
         expect(realSubmits()).toHaveLength(0);
       }
     );
+
+    // The check runs as the viewer, never the app owner: version 30 is the app owner's own.
+    const privateTo = (ownerId: number) =>
+      dbMock.dbRead.modelVersion.findMany.mockImplementation((async () => [
+        {
+          id: 30,
+          status: 'Published',
+          availability: 'Private',
+          model: { userId: ownerId },
+          baseModel: 'SDXL 1.0',
+        },
+      ]) as never);
+
+    it.each(paths)(
+      "%s refuses a version the viewer may not generate with, even the app owner's",
+      async (_, run) => {
+        privateTo(APP_OWNER);
+        await expect(run(naming('urn:air:sdxl:lora:civitai:1@30'))).rejects.toThrow(
+          'model version 30 is not available for generation'
+        );
+        expect(whatifs()).toHaveLength(0);
+        expect(realSubmits()).toHaveLength(0);
+      }
+    );
+
+    it('lets the viewer generate with their own Private version', async () => {
+      privateTo(VIEWER);
+      await submit(naming('urn:air:sdxl:lora:civitai:1@30'));
+      expect(realSubmits()).toHaveLength(1);
+    });
   });
 
   it('🔴 the fee is ONE resolved value: estimate = reservation = charge, under one type', async () => {
@@ -2129,22 +2180,6 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     }
   );
 
-  const hostSourcePhases = () =>
-    loggingMock.logToAxiom.mock.calls
-      .map(([data]) => data as Record<string, unknown>)
-      .filter((data) => data.reason === 'host-orchestrator-source')
-      .map((data) => data.phase);
-
-  it.each(ARMS)(
-    '%s: counts an orchestrator blob on the estimate and on the submit',
-    async (_, make) => {
-      loggingMock.logToAxiom.mockClear();
-      await estimate(make(BLOB)).catch(() => undefined);
-      await submit(make(BLOB)).catch(() => undefined);
-      expect(hostSourcePhases()).toEqual(['estimate', 'submit']);
-    }
-  );
-
   const refusedBeforeTheOrchestrator = async (b: Record<string, unknown>) => {
     const refusal = { code: 'BAD_REQUEST', message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE };
     await expect(estimate(b)).rejects.toMatchObject(refusal);
@@ -2607,33 +2642,16 @@ describe('inline customComfy — the generation input gate', () => {
         redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
       },
     ],
-  ])('refuses an own row-less upload (%s) before any orchestrator call', async (reason, given) => {
+  ])('refuses an own row-less upload (%s) before any orchestrator call', async (_reason, given) => {
     dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
     await given();
-    loggingMock.logToAxiom.mockClear();
     const body = inline();
     (body.workflow['2'].inputs as Record<string, unknown>).text = `restyle ${OWN_KEY}`;
     await expect(submit(body)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: APP_SOURCE_UNUSABLE_MESSAGE,
     });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'app-block-source-refusal', reason })
-    );
     expect(h.submitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('counts an orchestrator blob on the estimate and on the submit', async () => {
-    const blob = 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg';
-    const body = inline({ image: blob });
-    loggingMock.logToAxiom.mockClear();
-    await estimate(body).catch(() => undefined);
-    await submit(body).catch(() => undefined);
-    const phases = loggingMock.logToAxiom.mock.calls
-      .map(([data]) => data as Record<string, unknown>)
-      .filter((data) => data.reason === 'host-orchestrator-source')
-      .map((data) => data.phase);
-    expect(phases).toEqual(['estimate', 'submit']);
   });
 
   it('refuses inline image bytes in a node input at the schema', async () => {

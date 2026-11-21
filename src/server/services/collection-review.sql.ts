@@ -17,7 +17,8 @@ import { ArticleStatus, ModelModifier, ModelStatus } from '~/shared/utils/prisma
  * page asks for every level, which the domain cap holds to PG/PG-13 on the SFW site, so `levels` is
  * that ceiling: a badge on civitai.com must not count mature items only civitai.red can show. Each branch mirrors the clauses that decide that:
  * - Model: `getModelsRaw` reads `ModelMetric`'s denormalized status/mode/nsfwLevel (Published, not
- *   Archived) and leaves out Private models; `getModelsWithImagesAndModelVersions` drops TakenDown.
+ *   Archived) and leaves out Private models; it also leaves out TakenDown for all but the owner and
+ *   moderators, which this count drops for everyone.
  * - Image: `getAllImages` with `pending` and `reviewCollectionId` keeps the collection's unrated
  *   and `acceptableMinor` images only when their uploader submitted them, with the same image and
  *   post filters as any read of the image.
@@ -130,8 +131,10 @@ export const pendingViewerImageSql = ({
 }) => {
   const own = Prisma.sql`i."userId" = ${userId}`;
   const review = reviewCollectionId ? { collectionId: reviewCollectionId, userId } : undefined;
+  // `userId` must be the id of a request that carries the owner's view: their held images show.
   const others = pendingOthersImageConditions(userId, {
     acceptableMinorAlso: review ? reviewSubmissionSql(review) : undefined,
+    ownerSeesHeld: true,
   });
   return Prisma.sql`(${Prisma.join(others, ' AND ')}
     AND ((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND ${own}) OR (p."collectionId" IS NOT NULL AND i."nsfwLevel" NOT IN (0, ${

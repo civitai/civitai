@@ -9,6 +9,7 @@ import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImag
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { serviceTermsLine } from '~/components/CreatorShop/Services/creator-service.util';
+import { ServiceHappyLine } from '~/components/CreatorShop/Services/ServiceHappyLine';
 import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
 import { ServiceOfferingMenu } from '~/components/CreatorShop/Services/ServiceOfferingMenu';
 import { ServiceRequestModal } from '~/components/CreatorShop/Services/deals/ServiceRequestModal';
@@ -30,7 +31,7 @@ type ServiceCoverImage = Pick<
 
 type ServiceCardSeller = ComponentProps<typeof UserAvatar>['user'];
 
-const COVER_ASPECT_RATIO = 4 / 3;
+export const COVER_ASPECT_RATIO = 4 / 3;
 
 const ServiceBuyerPreviewModal = dynamic(
   () => import('~/components/CreatorShop/Services/ServiceBuyerPreviewModal')
@@ -55,7 +56,7 @@ export function coverShowsLevelChip({
 }
 
 /** Cover tile for an offering with no cover image. Filled in by the same overlays as a cover. */
-function NoCover() {
+export function NoCover() {
   return (
     <div className="flex size-full flex-col items-center justify-center gap-1 bg-gray-2 text-gray-6 dark:bg-dark-6 dark:text-dark-2">
       <IconPhoto size={32} stroke={1.5} />
@@ -70,7 +71,7 @@ function NoCover() {
  * The blur caption, sized to the cover: a narrow cover has no room for the sentence, so it
  * keeps only "Rated <level>" and the Show button.
  */
-function BlurCaption({ level }: { level: number }) {
+export function BlurCaption({ level }: { level: number }) {
   return (
     <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center @container">
       <ImageGuard2.BlurToggle>
@@ -118,8 +119,20 @@ export function ServiceOfferingCard({
 }: {
   offering: Pick<
     ServiceOffering,
-    'id' | 'title' | 'description' | 'price' | 'deliveryDays' | 'revisionsIncluded' | 'maxNsfwLevel'
-  > & { coverImage?: ServiceCoverImage | null };
+    | 'id'
+    | 'title'
+    | 'description'
+    | 'price'
+    | 'deliveryDays'
+    | 'revisionsIncluded'
+    | 'maxNsfwLevel'
+    | 'licensePreset'
+    | 'licenseCustomText'
+    | 'licenseAllowResale'
+  > &
+    Partial<Pick<ServiceOffering, 'happyCount' | 'reviewCount'>> & {
+      coverImage?: ServiceCoverImage | null;
+    };
   /** The /services feed shows whose offering this is; a seller's own shop and profile do not. */
   seller?: ServiceCardSeller;
   sellerId: number;
@@ -216,6 +229,7 @@ export function ServiceOfferingCard({
         <Text size="sm" c="dimmed">
           {serviceTermsLine(offering)}
         </Text>
+        <ServiceHappyLine counts={[offering]} />
         <div className="mt-auto flex flex-col gap-2 pt-1">
           {isOwner ? (
             <>

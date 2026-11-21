@@ -1,4 +1,4 @@
-import { sql } from '@civitai/db/kysely';
+import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { BOX_OPENING_REWARD_STATUS, MOD_GRANT_SOURCE_PREFIX } from '@civitai/shared/mystery-box';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
@@ -125,13 +125,13 @@ const filteredReviews = (userId: number, f: ReviewQuery) =>
     .$if(f.tos !== undefined, (qb) => qb.where(flag('tosViolation', f.tos!)))
     .$if(f.nsfw !== undefined, (qb) => qb.where(flag('nsfw', f.nsfw!)))
     .$if(f.exclude !== undefined, (qb) => qb.where(flag('exclude', f.exclude!)))
-    .$if(!!f.q, (qb) => qb.where(reviewPlainText, 'ilike', `%${escapeLike(f.q!)}%`));
+    .$if(!!f.q, (qb) => qb.where(plainTextSql(sql`rr.details`), 'ilike', `%${escapeLike(f.q!)}%`));
 
 // `plainText` from `$lib/format`, step for step and in the same order, so a search matches the text
 // the panel shows. Change one, change both.
-const reviewPlainText = sql<string>`regexp_replace(
+const plainTextSql = (html: RawBuilder<unknown>) => sql<string>`regexp_replace(
   replace(replace(replace(replace(replace(replace(
-    regexp_replace(coalesce(rr.details, ''), '<[^>]*>', ' ', 'g'),
+    regexp_replace(coalesce(${html}, ''), '<[^>]*>', ' ', 'g'),
   '&nbsp;', ' '), '&amp;', '&'), '&lt;', '<'), '&gt;', '>'), '&quot;', '"'), '&#39;', ''''),
   '\\s+', ' ', 'g')`;
 
@@ -360,19 +360,25 @@ export async function commentParents(
 export const isCommentCursorAt = (at: string) =>
   /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?[+-]\d{2}(:\d{2})?$/.test(at);
 
-/** Every comment the user wrote, on any surface, a page at a time. Tombstones keep their `userId`, so
- *  are excluded. */
+/** The user's live comments, matching `q` against the shown text when given. Tombstones keep their
+ *  `userId`, so are excluded. */
+const userComments = (userId: number, q?: string) =>
+  dbRead
+    .selectFrom('CommentV3')
+    .where('userId', '=', userId)
+    .where('deletedAt', 'is', null)
+    .$if(!!q, (qb) => qb.where(plainTextSql(sql`content`), 'ilike', `%${escapeLike(q!)}%`));
+
+/** Every comment the user wrote, on any surface, a page at a time. */
 export async function getComments(
   userId: number,
   limit = 50,
-  before?: ModActivityCursor
+  before?: ModActivityCursor,
+  q?: string
 ): Promise<Capped<UserComment> & { next: ModActivityCursor | null }> {
-  const rows = await dbRead
-    .selectFrom('CommentV3')
+  const rows = await userComments(userId, q)
     .select(['id', 'createdAt', 'content', 'tosViolation', 'entityType', 'entityId'])
     .select(sql<string>`"createdAt"::text`.as('cursorAt'))
-    .where('userId', '=', userId)
-    .where('deletedAt', 'is', null)
     .$if(!!before, (qb) =>
       qb.where(sql<boolean>`("createdAt", "id") < (${before!.at}::timestamptz, ${before!.id})`)
     )
@@ -392,12 +398,9 @@ export async function getComments(
   };
 }
 
-export async function countComments(userId: number): Promise<number> {
-  const row = await dbRead
-    .selectFrom('CommentV3')
+export async function countComments(userId: number, q?: string): Promise<number> {
+  const row = await userComments(userId, q)
     .select((eb) => eb.fn.countAll<string>().as('n'))
-    .where('userId', '=', userId)
-    .where('deletedAt', 'is', null)
     .executeTakeFirstOrThrow();
   return Number(row.n);
 }
@@ -770,30 +773,33 @@ export async function getGrantedBoxes(userId: number, limit = 50): Promise<Cappe
   return capped(rows, limit);
 }
 
-// Badges this user does NOT already hold (Retool's AvailableCosmeticList), for the grant picker.
-export type AvailableCosmetic = { id: number; name: string };
+// Every badge, with whether this user holds it, for the grant picker.
+export type GrantBadge = { id: number; name: string; data: unknown; owned: boolean };
 
-// Every badge, not a page of them: there are ~723 and the picker is a search-in-place dropdown, so a
-// limit silently makes the rest ungrantable. Capping at 200 ordered by id ASC hid every recent event
-// badge — the exact case a moderator is asked about — behind a panel that then read "already holds
-// every badge".
-export async function getAvailableBadges(userId: number): Promise<AvailableCosmetic[]> {
+// Every badge, not a page of them: the picker is a search-in-place grid, and a limit silently makes
+// the rest ungrantable (the newest badges, the ones moderators are asked about, go first).
+export async function getGrantBadges(userId: number): Promise<GrantBadge[]> {
   return (
     dbRead
       .selectFrom('Cosmetic as c')
-      .select(['c.id', 'c.name'])
-      .where('c.type', '=', 'Badge')
-      .where((eb) =>
-        eb.not(
-          eb.exists(
+      .select((eb) => [
+        'c.id',
+        'c.name',
+        'c.data',
+        eb
+          .exists(
             eb
               .selectFrom('UserCosmetic as uc')
               .select('uc.cosmeticId')
               .whereRef('uc.cosmeticId', '=', 'c.id')
               .where('uc.userId', '=', userId)
+            // Any claim key, as the shop counts ownership: a bought copy is keyed by its transaction,
+            // and `grantCosmetic` would add a second one beside it.
           )
-        )
-      )
+          .$castTo<boolean>()
+          .as('owned'),
+      ])
+      .where('c.type', '=', 'Badge')
       // Newest first — a moderator asked to grant a badge is almost always asked about a recent one.
       .orderBy('c.id', 'desc')
       .execute()

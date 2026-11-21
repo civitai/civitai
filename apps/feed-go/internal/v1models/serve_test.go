@@ -513,3 +513,18 @@ func TestUnpackOrderedThroughDeps(t *testing.T) {
 		t.Error("a missing key is a miss")
 	}
 }
+
+func TestServeDetailSendsEmptyImages(t *testing.T) {
+	// A version whose images were all left out still sends images: [], never a missing key.
+	w := newTestWorld()
+	w.entries[KeyImagesForVersion+":6001"] = append(meta("modelVersionId", int64(6001), "images", []any{}),
+		superjson.Field{Key: "cachedAt", Val: testNow.Add(-time.Minute)})
+	ans, err := detailOf(t, w)
+	if err != nil {
+		t.Fatalf("serve: %v (%s)", err, reason(err))
+	}
+	body, _ := superjson.Plain(ans.Body)
+	if !strings.Contains(string(body), `"images":[]`) {
+		t.Errorf("body lacks \"images\":[]:\n%s", body)
+	}
+}

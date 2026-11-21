@@ -1,9 +1,10 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { Prisma } from '@prisma/client';
 import { createDetailFetcher } from '~/server/notifications/detail-fetchers/base.detail-fetcher';
 import type { SimpleUser } from '~/server/selectors/user.selector';
 import { isDefined } from '~/utils/type-guards';
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const userService = () => import('~/server/services/user.service');
 
 export const reviewDetailFetcher = createDetailFetcher({
@@ -20,7 +21,7 @@ export const reviewDetailFetcher = createDetailFetcher({
         u.id,
         u.username,
         u."deletedAt",
-        u.image,
+        ${Prisma.raw(fallbackUserImageColumn)} AS image,
         r.details
       FROM "ResourceReview" r
       JOIN "User" u ON r."userId" = u.id

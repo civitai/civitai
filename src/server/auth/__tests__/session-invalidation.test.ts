@@ -114,7 +114,7 @@ beforeEach(() => {
 });
 
 describe('updateSessionState fail-open wrapper (via refreshSession)', () => {
-  it('happy path: calls hSetMultiWithTTL once with the expected TTL and does not log fail-open', async () => {
+  it('happy path: calls hSetMultiWithTTL once with the expected TTL', async () => {
     mockHSetMultiWithTTL.mockResolvedValue(undefined);
 
     await refreshSession(42, { sendSignal: false });
@@ -125,7 +125,6 @@ describe('updateSessionState fail-open wrapper (via refreshSession)', () => {
     expect(fieldsObj).toEqual({ 'token-a': 'refresh', 'token-b': 'refresh' });
     // 91 days in ms: markers outlast the 90-day session limit
     expect(ttlMs).toBe(60 * 60 * 24 * 91 * 1000);
-    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
 
   it('swallows EVAL throws and logs sysredis-fail-open with the right context', async () => {
@@ -147,18 +146,17 @@ describe('updateSessionState fail-open wrapper (via refreshSession)', () => {
     });
   });
 
-  it('skips both the helper and the fail-open logger when the user has zero tokens', async () => {
+  it('skips the helper when the user has zero tokens', async () => {
     mockHScanNoValues.mockResolvedValue(onePage([]));
 
     await refreshSession(42, { sendSignal: false });
 
     expect(mockHSetMultiWithTTL).not.toHaveBeenCalled();
-    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
 });
 
 describe('updateSessionState READ fail-open wrapper (STEP-4)', () => {
-  it('happy path: scans field names through withSysReadDeadline and does not log fail-open', async () => {
+  it('happy path: scans field names through withSysReadDeadline', async () => {
     mockHSetMultiWithTTL.mockResolvedValue(undefined);
 
     await refreshSession(7, { sendSignal: false });
@@ -168,7 +166,6 @@ describe('updateSessionState READ fail-open wrapper (STEP-4)', () => {
     expect(mockHScanNoValues).toHaveBeenCalledTimes(1);
     // Tokens resolved → the write ran with them.
     expect(mockHSetMultiWithTTL).toHaveBeenCalledTimes(1);
-    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
 
   it('DOWN: the scan throws → fails open to an empty list, does not throw, skips the write, logs read-degraded', async () => {

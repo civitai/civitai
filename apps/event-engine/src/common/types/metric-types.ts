@@ -60,6 +60,7 @@ export type ImageMetrics = {
   Heart: number
   Laugh: number
   Like: number
+  Play: number
   ReactionCry: number
   ReactionHeart: number
   ReactionLaugh: number
@@ -144,7 +145,7 @@ export const ENTITY_METRIC_TYPES = {
   BountyEntry: ['Cry', 'Dislike', 'Heart', 'Laugh', 'Like', 'unitAmount'],
   Collection: ['contributorCount', 'followerCount', 'itemCount'],
   Comic: ['chapterReadCount', 'followerCount', 'hiddenCount', 'readerCount', 'tippedAmount', 'tippedCount'],
-  Image: ['Buzz', 'Collection', 'Comment', 'Cry', 'Dislike', 'Heart', 'Laugh', 'Like', 'ReactionCry', 'ReactionHeart', 'ReactionLaugh', 'ReactionLike', 'commentCount', 'tippedAmount', 'tippedCount'],
+  Image: ['Buzz', 'Collection', 'Comment', 'Cry', 'Dislike', 'Heart', 'Laugh', 'Like', 'Play', 'ReactionCry', 'ReactionHeart', 'ReactionLaugh', 'ReactionLike', 'commentCount', 'tippedAmount', 'tippedCount'],
   Model: ['collectedCount', 'commentCount', 'downloadCount', 'earnedAmount', 'generationCount', 'imageCount', 'ratingCount', 'thumbsDownCount', 'thumbsUpCount', 'tippedAmount', 'tippedCount'],
   ModelVersion: ['downloadCount', 'earnedAmount', 'generationCount', 'imageCount', 'ratingCount', 'thumbsDownCount', 'thumbsUpCount'],
   Post: ['Cry', 'Dislike', 'Heart', 'Laugh', 'Like', 'collectedCount', 'commentCount', 'reactionCount', 'tippedAmount', 'tippedCount'],

@@ -148,10 +148,22 @@ describe('Images search in the showcase picker', () => {
       <ShowcaseItemsInput username="fox" supportedIndexes={['images']} value={[]} />
     );
 
-    await userEvent.type(page.getByPlaceholder('Search Civitai'), 'kuro');
+    // Typed in two strokes past the 300ms debounce, as a slow CI runner does: a search fires on the prefix.
+    await userEvent.type(page.getByPlaceholder('Search Civitai'), 'kur');
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await userEvent.type(page.getByPlaceholder('Search Civitai'), 'o');
 
-    await vi.waitFor(() => expect(offeredIds()).toEqual([OWNER_IMAGE]), { timeout: 3000 });
-    expect(state.semanticQuery).toHaveBeenCalledWith(expect.objectContaining({ query: 'kuro' }));
+    // Slow typing can let the debounce fire on a prefix ("kur"), which the fake answers the same way:
+    // wait for the full word's search, not just for a matching list.
+    await vi.waitFor(
+      () => {
+        expect(state.semanticQuery).toHaveBeenCalledWith(
+          expect.objectContaining({ query: 'kuro' })
+        );
+        expect(offeredIds()).toEqual([OWNER_IMAGE]);
+      },
+      { timeout: 3000 }
+    );
     for (const [input] of state.semanticQuery.mock.calls) expect(input.usernames).toEqual(['fox']);
   });
 
@@ -179,6 +191,8 @@ describe('Images search in the showcase picker', () => {
     await vi.waitFor(() => expect(offeredIds()).toEqual([RECENT_SAFE]), { timeout: 3000 });
     // A blurred row draws its placeholder from these; without them it is an empty box.
     expect(state.renderedHits.at(-1)).toMatchObject({ hash: 'h', width: 3, height: 2 });
+    // The select returns no `user`; the row's avatar needs the caller's.
+    expect(state.renderedHits.at(-1)).toMatchObject({ user: { id: 7, username: 'fox' } });
     expect(state.rowProps.at(-1)).toMatchObject({
       pickerRow: true,
       viewerLevel: 3,
@@ -186,11 +200,30 @@ describe('Images search in the showcase picker', () => {
     });
     expect(state.semanticQuery).not.toHaveBeenCalled();
     // Whose images is the session's call: the request names no user.
-    expect(state.myImages).toHaveBeenCalledWith({
-      limit: 25,
-      mediaTypes: ['image'],
-      publishedOnly: true,
-    });
+    expect(state.myImages).toHaveBeenCalledWith(expect.objectContaining({ publishedOnly: true }));
+    expect(state.myImages.mock.calls[0][0]).not.toHaveProperty('userId');
+  });
+
+  test('on open, it lists more than one page of the caller’s media, videos included', async () => {
+    state.imageSearch = false;
+    // As the server: the caller's newest first, narrowed to the media types asked for, up to limit.
+    const own = Array.from({ length: 40 }, (_, i) => ({
+      id: 1000 + i,
+      nsfwLevel: 1,
+      url: `m${i}`,
+      type: i === 30 ? 'video' : 'image',
+    }));
+    state.myImages.mockImplementation(async (input: { limit: number; mediaTypes: string[] }) => ({
+      items: own.filter((item) => input.mediaTypes.includes(item.type)).slice(0, input.limit),
+    }));
+    renderWithProviders(
+      <ShowcaseItemsInput username="fox" supportedIndexes={['images']} value={[]} />
+    );
+
+    await userEvent.click(page.getByPlaceholder('Search Civitai'));
+
+    await vi.waitFor(() => expect(offeredIds()).toHaveLength(40), { timeout: 3000 });
+    expect(offeredIds()).toContain(1030);
   });
 
   // The profile editor renders this input signed in with no owner: a session check in place of the

@@ -5,6 +5,7 @@ import { parsePlainEmailAddress } from '@civitai/auth/plain-email';
 import { addressparser, isEmailConfigured } from '@civitai/email';
 import type { Actions, PageServerLoad } from './$types';
 import { listEnabledProviders } from '$lib/server/auth/providers';
+import { readLastMethod } from '$lib/server/auth/last-method';
 import { readReturnUrl, readSync, buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
 import { createVerificationToken } from '$lib/server/auth/email-tokens';
@@ -16,7 +17,7 @@ import {
   verifyCaptchaToken,
 } from '$lib/server/auth/captcha';
 import { normalizeEmailAddress } from '$lib/server/auth/blocklist';
-import { checkRateLimit } from '$lib/server/auth/rate-limit';
+import { consumeRateLimit } from '$lib/server/auth/rate-limit';
 import { getClientIp } from '$lib/server/auth/request';
 import { signupRefusal } from '$lib/server/auth/signup-rules';
 import { trackLoginRedirect } from '$lib/server/tracking';
@@ -25,7 +26,7 @@ import { logAxiomError } from '$lib/server/axiom';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export const load: PageServerLoad = async ({ url, locals, request }) => {
+export const load: PageServerLoad = async ({ url, locals, request, cookies }) => {
   const returnUrl = readReturnUrl(url);
   const sync = readSync(url);
   const reason = url.searchParams.get('reason');
@@ -66,6 +67,8 @@ export const load: PageServerLoad = async ({ url, locals, request }) => {
     error,
     prompt,
     addAccount,
+    // Not shown when adding an account: the point there is a different identity.
+    lastMethod: addAccount ? null : readLastMethod(cookies),
     // Public Turnstile site keys (delivered via SSR data, not PUBLIC_ env vars). The invisible widget is the
     // ~99% path; the managed key is rendered by the client ONLY as a fallback when the invisible one fails —
     // null when unprovisioned, so the fallback never appears (behavior == pre-fallback).
@@ -94,13 +97,12 @@ export const actions: Actions = {
     const plain = parsePlainEmailAddress(email, addressparser);
 
     // Resolve the real client IP from proxy headers (not the shared ingress socket peer) so the per-IP
-    // limit is genuinely per-client; null behind a misconfigured proxy → checkRateLimit skips the limit.
+    // limit is genuinely per-client; null behind a misconfigured proxy → consumeRateLimit skips the limit.
     const ip = getClientIp(request);
 
     // 1. Rate limit (per IP) — cheap gate before any captcha/DB work.
-    if (!(await checkRateLimit('email-login', ip, 5, 600))) {
-      return fail(429, { email, rateLimited: true });
-    }
+    const limit = await consumeRateLimit('email-login', ip, 5, 600);
+    if (!limit.ok) return fail(429, { email, rateLimited: true, retryAfter: limit.retryAfter });
 
     // 2. Turnstile. The invisible widget auto-injects `cf-turnstile-response`; the interactive fallback rides
     //    `managed-turnstile-response` + `captchaMode=managed`, verified against the managed secret. On a

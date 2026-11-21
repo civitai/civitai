@@ -21,8 +21,13 @@
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import BlueFirstToggle from '$lib/components/BlueFirstToggle.svelte';
   import StickySummary from '$lib/components/StickySummary.svelte';
-  import { backend, hostConfig, portalProps } from '$lib/host';
+  import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
+  import {
+    AI_TOOLKIT_OPTION_FIELDS,
+    parseAiToolkitOptions,
+  } from '@civitai/shared/training-options';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
+  import { getTrainingLicenseTerms } from '@civitai/shared/generation-license';
   import { isAbort, uploadFile } from '$lib/upload';
   import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
@@ -164,6 +169,51 @@
   // Green (membership) Buzz can't pay for NSFW training, so spending it requires an explicit attestation.
   let attestSfw = $state(false);
   const needsAttestation = $derived(buzzMode.value === 'green');
+
+  const runLicenses = $derived([
+    ...new Map(
+      selection.runs.flatMap((run) => {
+        const ecosystem = runVersion(run).ecosystem;
+        const terms = getTrainingLicenseTerms(ecosystem);
+        return terms ? [[terms.key, { ecosystem, terms }] as const] : [];
+      })
+    ).values(),
+  ]);
+  const licenseStatus = debouncedQuote(
+    () =>
+      runLicenses.length > 0 && backend().pendingLicenses
+        ? runLicenses.map((license) => license.ecosystem).join()
+        : null,
+    () =>
+      backend()
+        .pendingLicenses!()
+        .then(
+          (pending) => ({ pending }),
+          () => ({ pending: null })
+        ),
+    0
+  );
+  // Unknown (a failed check) asks nothing here: the submit's own refusal names the licence.
+  const licensesToAccept = $derived(
+    runLicenses.filter((license) => licenseStatus.value?.pending?.includes(license.ecosystem))
+  );
+  const checkingLicenses = $derived(
+    runLicenses.length > 0 && !!backend().pendingLicenses && licenseStatus.value === undefined
+  );
+  let acceptingLicense = $state(false);
+  let licenseError = $state('');
+  async function acceptLicense(ecosystem: string) {
+    acceptingLicense = true;
+    licenseError = '';
+    try {
+      await backend().acceptLicense!(ecosystem);
+      licenseStatus.retry();
+    } catch (e) {
+      licenseError = e instanceof Error ? e.message : 'Could not accept the licence.';
+    } finally {
+      acceptingLicense = false;
+    }
+  }
   $effect(() => {
     if (!needsAttestation) attestSfw = false;
   });
@@ -219,15 +269,25 @@
     const { steps } = paramsAt(i);
     return !(steps >= TARGET_STEPS.min && steps <= TARGET_STEPS.max);
   };
+  const optionsProblem = (i: number): string | null => {
+    const input = quoteInputAt(i);
+    try {
+      parseAiToolkitOptions({ ...input, engine: input.engine ?? 'ai-toolkit' }, input);
+      return null;
+    } catch {
+      return 'Check dropout rates and warmup steps. Warmup cannot exceed total steps; rank dropout must be below 1.';
+    }
+  };
+  const quoteInvalid = (i: number) => stepsInvalid(i) || optionsProblem(i) !== null;
   const quoteState = debouncedQuote(
     () =>
       JSON.stringify(
-        selection.runs.map((_, i) => (stepsInvalid(i) ? 'invalid' : quoteInputAt(i)))
+        selection.runs.map((_, i) => (quoteInvalid(i) ? 'invalid' : quoteInputAt(i)))
       ),
     () =>
       Promise.all(
         selection.runs.map((_, i) =>
-          stepsInvalid(i)
+          quoteInvalid(i)
             ? Promise.resolve(null)
             : backend()
                 .quoteRun(quoteInputAt(i))
@@ -237,11 +297,11 @@
   );
   const quotes = $derived(quoteState.value);
   const quoting = $derived(quotes === undefined);
-  const quoteFailed = (i: number) => !quoting && !stepsInvalid(i) && quotes?.[i] == null;
+  const quoteFailed = (i: number) => !quoting && !quoteInvalid(i) && quotes?.[i]?.cost == null;
 
   // `null` (unpriced/invalid) for any run blanks the whole total (shown as "—") rather than
   // summing a total that quietly misses a run; `undefined` (still quoting) does the same, briefly.
-  const runCostAt = (i: number) => quotes?.[i] ?? null;
+  const runCostAt = (i: number) => quotes?.[i]?.cost ?? null;
   const runTotal = $derived.by(() => {
     let sum = 0;
     for (let i = 0; i < selection.runs.length; i++) {
@@ -338,6 +398,10 @@
   const optionLabel = (value: string) =>
     ({ auto: 'Auto (checkpoint metadata)', true: 'On', false: 'Off' }[value] ?? value);
   const EXTRA_KIND: Record<ExtraParamField, FieldDef['kind']> = {
+    lrWarmupSteps: 'number',
+    captionDropoutRate: 'number',
+    rankDropout: 'number',
+    trainConv: 'bool',
     shuffleTokens: 'bool',
     keepTokens: 'number',
     minSnrGamma: 'number',
@@ -353,7 +417,7 @@
 
   const defaultsAt = (i: number) =>
     defaultRunParams(selection.runs[i]!, trigger, selection.loraType);
-  const capsAt = (i: number) => runExtraCapabilities(selection.runs[i]!, labelMode);
+  const capsAt = (i: number) => runExtraCapabilities(selection.runs[i]!, labelMode, paramsAt(i));
   const deviationsByRun = $derived(
     selection.runs.map((run, i) =>
       paramDeviations(run, paramsAt(i), labelMode, trigger, selection.loraType)
@@ -370,10 +434,12 @@
   };
   const unsupportedExtras = (i: number): { reason: string; labels: string[] }[] => {
     const caps = capsAt(i);
+    const aiToolkit = runEngine(selection.runs[i]!) === 'ai-toolkit';
     const groups = new Map<string, string[]>();
     for (const f of EXTRA_FIELDS) {
       const cap = caps[f.field as ExtraParamField];
       if (cap.supported) continue;
+      if (!aiToolkit && (AI_TOOLKIT_OPTION_FIELDS as readonly string[]).includes(f.field)) continue;
       const reason = cap.reason ?? 'Not available for this model.';
       groups.set(reason, [...(groups.get(reason) ?? []), PARAM_LABELS[f.field]]);
     }
@@ -503,6 +569,8 @@
       (needsAttestation && !attestSfw) ||
       !!imagesProblem ||
       uploadingImage ||
+      checkingLicenses ||
+      licensesToAccept.length > 0 ||
       holdsStart(readiness)
   );
   const readinessNote = $derived(
@@ -973,6 +1041,13 @@
       {@const devs = deviationsAt(i).filter((d) => d.field !== 'steps' && d.field !== 'epochs')}
       {@const p = paramsAt(i)}
       <div class="mt-2.5 border-t border-dark-4 pt-2.5 text-sm">
+        {#if optionsProblem(i)}
+          <p class="text-sm text-red-300" role="alert">{optionsProblem(i)}</p>
+        {/if}
+        {#each quotes?.[i]?.warnings ?? [] as warning (warning)}
+          <p class="text-sm text-buzz" role="status">Setting not applied: {warning}</p>
+        {/each}
+
         <div class="font-semibold text-dark-0">
           {multi ? `Run ${i + 1} · ` : ''}{runCard(run).name}
           {runVersionLabel(run)}
@@ -1082,6 +1157,38 @@
         </label>
       </div>
     {/if}
+
+    {#each licensesToAccept as { ecosystem, terms } (terms.key)}
+      <div
+        role="note"
+        class="mt-3 flex flex-col gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
+      >
+        <span class="font-semibold text-dark-0">{terms.title}</span>
+        <span>{terms.intro}</span>
+        <ul class="list-disc pl-5">
+          {#each terms.restrictions as line (line)}
+            <li>{line}</li>
+          {/each}
+        </ul>
+        <span>
+          Read the
+          <a href={terms.licenseUrl} target="_blank" rel="noopener noreferrer" class="underline">
+            {terms.licenseName}</a
+          >.
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={acceptingLicense}
+          onclick={() => acceptLicense(ecosystem)}
+        >
+          I agree to these terms
+        </Button>
+        {#if licenseError}
+          <span class="text-red-400">{licenseError}</span>
+        {/if}
+      </div>
+    {/each}
 
     <Button
       class="mt-4 w-full"

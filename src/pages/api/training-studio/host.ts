@@ -1,5 +1,6 @@
 import { env } from '~/env/server';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { refuseWhileImpersonating } from '~/server/auth/refuse-while-impersonating';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { allowTrainingStudio } from '~/server/utils/training-studio-access';
 
@@ -14,8 +15,9 @@ import { allowTrainingStudio } from '~/server/utils/training-studio-access';
  * The token spends Buzz orchestrator-side, so the caller must pass the Studio's gates first
  * (`allowTrainingStudio`).
  */
-export default AuthedEndpoint(async (req, res, user) => {
+export default AuthedEndpoint(async (req, res, user, session) => {
   if (!(await allowTrainingStudio(req, res, user))) return;
+  if (refuseWhileImpersonating(session, res)) return;
 
   const token = await getOrchestratorToken(user.id, { req, res });
   // In ORCHESTRATOR_MODE=dev getOrchestratorToken returns the SHARED service credential, which must

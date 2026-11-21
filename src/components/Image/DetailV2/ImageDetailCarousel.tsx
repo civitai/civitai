@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useOptionalCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
-import { retractedMediaUrl } from '~/components/RetractedMedia/retracted-media';
+import { useRetractedMedia } from '~/components/RetractedMedia/retracted-media';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import { HatTurfDetailLayer } from '~/components/HatTurf/detail/HatTurfDetailLayer';
 import { takesHats } from '~/components/HatTurf/detail/HatTurfDetailProvider';
@@ -258,7 +258,9 @@ export function ImageDetailCarousel({
     <div ref={ref} className="relative flex min-h-0 flex-1 items-stretch justify-stretch">
       <Embla
         withControls={canNavigate}
-        className="flex-1"
+        // min-w-0 here and on each slide: a text slide's words are not allowed to widen the
+        // carousel or the slide past the stage, which clips the slide on the right.
+        className="min-w-0 flex-1"
         onSlideChange={handleSlideChange}
         setEmbla={handleSetEmbla}
         startIndex={startIndexRef.current}
@@ -273,7 +275,7 @@ export function ImageDetailCarousel({
               <Embla.Slide
                 key={item.type === 'image' ? item.image.id : item.key}
                 index={i}
-                className="flex-[0_0_100%]"
+                className="min-w-0 flex-[0_0_100%]"
               >
                 {/* function child opts out of Embla's own in-view gating — adjacency
                     is the gate here, so a neighbor is painted before the drag reveals it.
@@ -334,10 +336,15 @@ function ImageContent({
   const features = useFeatureFlags();
   // Optional: the carousel also renders without a session provider.
   const session = useOptionalCivitaiSessionContext();
-  const retractedSrc =
-    features.modRetractedMedia && session?.type === 'authed'
-      ? retractedMediaUrl(image, session)
-      : null;
+  const {
+    src: retractedSrc,
+    onCdnError,
+    mediaRef,
+  } = useRetractedMedia(
+    image,
+    features.modRetractedMedia && session?.type === 'authed' ? session : null,
+    { cdnLeg: features.modRetractedMediaCdnLeg }
+  );
 
   const imageHeight = image?.height ?? 1200;
   const imageWidth = image?.width ?? 1200;
@@ -435,7 +442,10 @@ function ImageContent({
                   : undefined
               }
               controls={active && !timelineOpen}
+              onError={onCdnError}
+              mediaRef={mediaRef}
               videoProps={{
+                onError: onCdnError,
                 autoPlay: active,
                 // A slide mid-transition is still in view, which the player's own in-view check
                 // reads as a reason to play. The sticker timeline owns play and pause: dropping

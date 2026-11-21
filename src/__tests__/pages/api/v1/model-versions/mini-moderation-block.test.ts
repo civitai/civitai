@@ -4,12 +4,29 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type * as GenerationService from '~/server/services/generation/generation.service';
+import type { GateRule } from '~/shared/generation/gates';
+
+const gate = (availableTo: GateRule['availableTo']): GateRule => ({
+  id: 'gate',
+  name: '',
+  availableTo,
+  presentation: 'hidden',
+  message: null,
+  ecosystems: [],
+  workflows: [],
+  modelVersionIds: [555],
+});
 
 /** Bearer lookups are stubbed to fixed sessions. */
 
 const h = vi.hoisted(() => ({
   bearerSession: vi.fn(),
   canGenerate: { value: true },
+  // The stored gate rules, and whether they were readable.
+  rules: { value: [] as GateRule[] },
+  rulesKnown: { value: true },
+  resolveCanGenerate: vi.fn(),
   hubSession: { value: null as unknown },
 }));
 
@@ -20,10 +37,16 @@ vi.mock('~/server/auth/session-client', () => ({
   maybeRollHubCookie: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
-vi.mock('~/server/services/generation/generation.service', () => ({
-  resolveCanGenerateForVersions: vi.fn(
-    async () => new Map([[VERSION_ID, { canGenerate: h.canGenerate.value }]])
+vi.mock('~/server/services/generation/generation.service', async (importOriginal) => ({
+  getGateRuleState: vi.fn(async () =>
+    h.rulesKnown.value ? { known: true, value: h.rules.value } : { known: false }
   ),
+  getGateSubjects: vi.fn(
+    async () => new Map([[VERSION_ID, [{ id: VERSION_ID, baseModel: baseRow.baseModel }]]])
+  ),
+  // The real matcher, so the rule semantics (audience, kill switch) run in the handler path.
+  gatedVersionIds: (await importOriginal<typeof GenerationService>()).gatedVersionIds,
+  resolveCanGenerateForVersions: h.resolveCanGenerate,
   getShouldChargeForResources: vi.fn(async () => ({ 77: false })),
 }));
 vi.mock('~/server/services/model.service', () => ({ getFeaturedModels: vi.fn(async () => []) }));
@@ -197,6 +220,11 @@ beforeEach(() => {
   loggingMock.logToAxiom.mockClear();
   h.hubSession.value = null;
   h.canGenerate.value = true;
+  h.rules.value = [];
+  h.rulesKnown.value = true;
+  h.resolveCanGenerate.mockImplementation(
+    async () => new Map([[VERSION_ID, { canGenerate: h.canGenerate.value }]])
+  );
   h.bearerSession.mockReset();
   h.bearerSession.mockImplementation(async (token: string) => KEYS[token] ?? null);
   setEnv({ ORCHESTRATOR_SERVICE_TOKEN: SERVICE_TOKEN });
@@ -404,5 +432,69 @@ describe('mini/[id] moderation caller log', () => {
   it('logs nothing for a request with no credential', async () => {
     await call();
     expect(logged()).toEqual([]);
+  });
+});
+
+describe('mini/[id] generation gate rules', () => {
+  it.each([
+    ['signed out', undefined],
+    ['a moderator', 'Bearer mod-key'],
+  ])(
+    'asks %s for a permission check on a gated version, without the gate in canGenerate',
+    async (_, authorization) => {
+      h.rules.value = [gate('members')];
+      const { body } = await call(authorization, {
+        checkPermission: false,
+        earlyAccessEndsAt: new Date('2099-01-01T00:00:00Z'),
+        freeTrialLimit: 5,
+      } as unknown as Partial<Row>);
+      expect(body?.checkPermission).toBe(true);
+      expect(body?.canGenerate).toBe(true);
+      // A gate is not early access: no trial and no early-access end ride along.
+      expect(body?.earlyAccessEndsAt).toBeUndefined();
+      expect(body?.freeTrialLimit).toBeUndefined();
+      expect(h.resolveCanGenerate.mock.calls.at(-1)?.[1]).toMatchObject({ ignoreGateRules: true });
+    }
+  );
+
+  it('refuses outright under a kill switch, so no trial can stand in for permission', async () => {
+    h.rules.value = [gate('nobody')];
+    const { body } = await call('Bearer mod-key');
+    expect(body?.canGenerate).toBe(false);
+  });
+
+  it.each(['moderators', 'testers', 'members'] as const)(
+    'leaves a %s gate to the permission check rather than refusing outright',
+    async (availableTo) => {
+      h.rules.value = [gate(availableTo)];
+      const { body } = await call('Bearer mod-key');
+      expect(body?.canGenerate).toBe(true);
+      expect(body?.checkPermission).toBe(true);
+    }
+  );
+
+  it('asks for no permission check on an ungated version', async () => {
+    const { body } = await call(undefined, { checkPermission: false } as unknown as Partial<Row>);
+    expect(body?.checkPermission).toBe(false);
+  });
+
+  it('offers no free trial while the rules are unreadable', async () => {
+    h.rulesKnown.value = false;
+    const { body } = await call(undefined, {
+      checkPermission: true,
+      earlyAccessEndsAt: new Date('2099-01-01T00:00:00Z'),
+      freeTrialLimit: 5,
+    } as unknown as Partial<Row>);
+    expect(body?.checkPermission).toBe(true);
+    expect(body?.freeTrialLimit).toBeUndefined();
+  });
+
+  it('keeps an answer built while the rules were unreadable for at most a minute', async () => {
+    h.rulesKnown.value = false;
+    const before = Date.now();
+    const { headers } = await call();
+    const expires = Date.parse(headers['x-expires']);
+    expect(expires).toBeGreaterThan(before);
+    expect(expires).toBeLessThanOrEqual(Date.now() + 60_000);
   });
 });

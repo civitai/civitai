@@ -294,7 +294,7 @@ export const createPostWithImagesHandler = async ({
     await deletePost({
       id: post.id,
       isModerator: ctx.user.isModerator,
-      deletedById: ctx.user.id,
+      actor: ctx.user,
     }).catch(handleLogError);
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -729,10 +729,10 @@ export const deletePostHandler = async ({
   try {
     const result = await deletePost({
       ...input,
-      deletedById: ctx.user.id,
+      actor: ctx.user,
       viewerIsModerator: ctx.user.isModerator,
     });
-    if (result) {
+    if (result && 'id' in result) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
       await closeAppealsDeletedByOwner({
         entityType: EntityType.Image,
@@ -813,6 +813,7 @@ export const reorderPostImagesHandler = async ({
       ...input,
       user: ctx.user,
       servableLevels: requestServableLevels(ctx),
+      ownerSeesHeld: isSessionOrFullUserKey(ctx),
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -956,7 +957,9 @@ export const getPostContestCollectionDetailsHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const visible = await assertPostVisibleToViewer({ ...input, user: ctx.user }).catch((e) => {
+    const views = credentialViews(ctx);
+    const viewer = views.asOwner ? ctx.user : undefined;
+    const visible = await assertPostVisibleToViewer({ ...input, user: viewer }).catch((e) => {
       if (e instanceof TRPCError && e.code === 'NOT_FOUND') return null;
       throw e;
     });
@@ -965,7 +968,8 @@ export const getPostContestCollectionDetailsHandler = async ({
     return await getPostContestCollectionDetails({
       ...input,
       userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
+      isModerator: views.asModerator,
+      ownerView: views.asOwner,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

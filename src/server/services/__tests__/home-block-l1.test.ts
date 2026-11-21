@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 
@@ -26,9 +29,12 @@ import {
   getHomeBlockCached,
   HOME_BLOCK_L1_TTL_MS,
   homeBlockCacheBust,
+  evictRetryDelayMs,
   homeBlockCacheKey,
   resetHomeBlockL1ForTests,
 } from '~/server/services/home-block-cache.service';
+import { writeModeratorBlock } from '~/server/services/image.service';
+import { blockBannedUserImages, blockUserImagesAsCsam } from '~/server/services/user.service';
 
 type Readable = {
   get(): Promise<{ values: { labels: Record<string, unknown>; value: number }[] }>;
@@ -259,5 +265,193 @@ describe('home-block-server-cache', () => {
 
   it('keeps a copy for 10s, not the edge cache 60s (constant pin, see the STALENESS note)', () => {
     expect(HOME_BLOCK_L1_TTL_MS).toBe(10_000);
+  });
+});
+
+describe('hiding an image refreshes the home blocks holding it', () => {
+  const pg = { db: null as unknown as PGlite };
+  const OWNER = 7;
+  const COLLECTION = 40;
+  const PRIVATE_COLLECTION = 41;
+  const FEATURED_BLOCK = 900;
+  let lagged = false;
+
+  // A tagged call passes the template; `$queryRaw(Prisma.sql`…`)` passes a built query.
+  const sqlOn =
+    (pick: (r: { rows: unknown[]; affectedRows?: number }) => unknown) =>
+    async (strings: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
+      const flat = Array.isArray(strings)
+        ? Prisma.sql(strings as TemplateStringsArray, ...(values as never[]))
+        : (strings as Prisma.Sql);
+      return pick(await pg.db.query(flat.text, flat.values as unknown[]));
+    };
+  const ingestionOf = async (id: number) =>
+    (await pg.db.query<{ ingestion: string }>(`SELECT ingestion FROM "Image" WHERE id = $1`, [id]))
+      .rows[0].ingestion;
+
+  beforeAll(async () => {
+    pg.db = new PGlite();
+    await pg.db.exec(`
+      CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+      CREATE TABLE "Image" (
+        id int PRIMARY KEY,
+        "userId" int NOT NULL,
+        ingestion "ImageIngestionStatus" NOT NULL,
+        "blockedFor" text,
+        "nsfwLevel" int NOT NULL DEFAULT 0,
+        "needsReview" text,
+        "pHash" bigint,
+        metadata jsonb,
+        "updatedAt" timestamp(3)
+      );
+      CREATE TABLE "CsamQueueSetAside" ("imageId" int, outcome text);
+      CREATE TABLE "Collection" (id int PRIMARY KEY, read text NOT NULL);
+      CREATE TABLE "CollectionItem" ("collectionId" int NOT NULL, "imageId" int);
+    `);
+  }, 60_000);
+
+  beforeEach(async () => {
+    setFlag(true);
+    lagged = false;
+    const rows = sqlOn((r) => r.rows);
+    dbMock.dbWrite.$queryRaw.mockImplementation(rows as never);
+    dbMock.dbWrite.$executeRaw.mockImplementation(sqlOn((r) => r.affectedRows ?? 0) as never);
+    dbMock.dbRead.$queryRaw.mockImplementation(rows as never);
+    dbMock.dbWrite.image.updateMany.mockImplementation((async ({
+      where,
+      data,
+    }: {
+      where: { userId: number };
+      data: { ingestion: string; nsfwLevel: number; blockedFor: string };
+    }) => {
+      const { affectedRows } = await pg.db.query(
+        `UPDATE "Image" SET ingestion = $1, "nsfwLevel" = $2, "blockedFor" = $3 WHERE "userId" = $4`,
+        [data.ingestion, data.nsfwLevel, data.blockedFor, where.userId]
+      );
+      return { count: affectedRows ?? 0 };
+    }) as never);
+    dbMock.dbRead.homeBlock.findMany.mockResolvedValue([
+      { id: FEATURED_BLOCK, metadata: { featuredCollections: { collectionIds: [COLLECTION] } } },
+    ] as never);
+    // Stands in for the collection read, which keeps only Scanned images.
+    getHomeBlockData.mockImplementation(async () => {
+      builds++;
+      // A lagged replica does not have the block yet.
+      const visible = lagged ? '' : `AND i.ingestion = 'Scanned'`;
+      const { rows: items } = await pg.db.query<{ id: number }>(
+        `SELECT i.id FROM "CollectionItem" ci JOIN "Image" i ON i.id = ci."imageId"
+         WHERE ci."collectionId" = $1 ${visible} ORDER BY i.id`,
+        [COLLECTION]
+      );
+      return { collection: { id: COLLECTION, read: 'Public', items } };
+    });
+    await pg.db.exec(`
+      TRUNCATE "Image"; TRUNCATE "Collection"; TRUNCATE "CollectionItem";
+      INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel") VALUES
+        (1, ${OWNER}, 'Scanned', 1), (2, 99, 'Scanned', 1);
+      INSERT INTO "Collection" (id, read) VALUES (${COLLECTION}, 'Public'), (${PRIVATE_COLLECTION}, 'Private');
+      INSERT INTO "CollectionItem" ("collectionId", "imageId") VALUES
+        (${COLLECTION}, 1), (${COLLECTION}, 2), (${PRIVATE_COLLECTION}, 1);
+    `);
+  });
+
+  const readItems = async () => {
+    const block = await getHomeBlockCached(
+      { id: 500, type: HomeBlockType.Collection, metadata: {}, sourceId: null } as never,
+      undefined,
+      { collection: { id: COLLECTION } } as never
+    );
+    return (block as { collection: { items: { id: number }[] } }).collection.items.map((i) => i.id);
+  };
+
+  it('a moderator block: the next read no longer has the image', async () => {
+    expect(await readItems()).toEqual([1, 2]);
+    expect(await readItems()).toEqual([1, 2]);
+    expect(builds).toBe(1); // read from the entry, so the next read would be too
+
+    const atBust: string[] = [];
+    redisMock.redis.del.mockImplementation(async (key: string) => {
+      atBust.push(await ingestionOf(1));
+      return store.delete(key) ? 1 : 0;
+    });
+    await writeModeratorBlock([1]);
+
+    expect(atBust.length).toBeGreaterThan(0);
+    expect(new Set(atBust)).toEqual(new Set(['Blocked'])); // refreshed after the write, not before
+    expect(await readItems()).toEqual([2]);
+    expect(builds).toBe(2);
+  });
+
+  it("a ban's media block: the next read no longer has the owner's image", async () => {
+    expect(await readItems()).toEqual([1, 2]);
+
+    await blockBannedUserImages(OWNER);
+
+    expect(await readItems()).toEqual([2]);
+  });
+
+  // softDeleteUser's call to it: toggle-ban-search-index.test.ts.
+  it("blockUserImagesAsCsam (the soft delete's media block): the next read no longer has the owner's image", async () => {
+    expect(await readItems()).toEqual([1, 2]);
+
+    await blockUserImagesAsCsam(OWNER);
+
+    expect(await ingestionOf(1)).toBe('Blocked');
+    expect(await readItems()).toEqual([2]);
+  });
+
+  it('refreshes the FeaturedCollections block that features the collection', async () => {
+    const featuredKey = homeBlockCacheKey(HomeBlockType.FeaturedCollections, FEATURED_BLOCK);
+    store.set(featuredKey, JSON.stringify({ pickedCollections: [{ items: [{ id: 1 }] }] }));
+
+    await writeModeratorBlock([1]);
+
+    expect(store.has(featuredKey)).toBe(false);
+  });
+
+  it('leaves collections no one else may read alone: they have no shared entry', async () => {
+    await writeModeratorBlock([1]);
+
+    const busted = redisMock.redis.del.mock.calls.map(([key]) => String(key));
+    expect(busted).toContain(homeBlockCacheKey(HomeBlockType.Collection, COLLECTION));
+    expect(busted.some((key) => key.includes(`:${PRIVATE_COLLECTION}`))).toBe(false);
+  });
+
+  it('refreshes again once replicas catch up, clearing a refill read before they had', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      expect(await readItems()).toEqual([1, 2]);
+      lagged = true;
+      await writeModeratorBlock([1]);
+      expect(await readItems()).toEqual([1, 2]); // rebuilt from the lagged read
+      lagged = false;
+
+      await vi.advanceTimersByTimeAsync(evictRetryDelayMs());
+      await new Promise((resolve) => setImmediate(resolve)); // the timer's refresh is not awaited
+
+      expect(await readItems()).toEqual([2]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A floor, not the lag itself: REPLICATION_LAG_DELAY defaults to 0, and a refresh at 0 would run
+  // before the replica it is waiting on.
+  it('waits at least 5s before the second refresh', () => {
+    expect(evictRetryDelayMs()).toBeGreaterThanOrEqual(5_000);
+  });
+
+  it('a failed refresh does not fail the block', async () => {
+    redisMock.redis.del.mockRejectedValue(new Error('redis down'));
+    await expect(writeModeratorBlock([1])).resolves.toBeDefined();
+    expect(redisMock.redis.del).toHaveBeenCalled(); // the refresh ran and threw
+    expect(await ingestionOf(1)).toBe('Blocked');
+  });
+
+  it('a failed lookup of the collections does not fail the block', async () => {
+    dbMock.dbRead.$queryRaw.mockRejectedValue(new Error('replica down'));
+    await expect(writeModeratorBlock([1])).resolves.toBeDefined();
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalled();
+    expect(await ingestionOf(1)).toBe('Blocked');
   });
 });

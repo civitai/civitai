@@ -16,6 +16,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -35,8 +36,6 @@ type InfiniteInput struct {
 	Username string
 	// PostID is a post's own media (`postId`): always the Postgres path (requiresImageDbPath).
 	PostID int
-	// Tags is the tag inclusion scope (`tags`), as sent.
-	Tags []int
 	// PrioritizedUserIDs is `prioritizedUserIds`, as sent (the model page's showcase carousel sends
 	// the model owner's id alone). Non-empty with a model scope it routes the request to Postgres
 	// (requiresImageDbPath), where getAllImages keeps only those creators' images, drops the model
@@ -47,14 +46,27 @@ type InfiniteInput struct {
 	// a signed-in viewer, applies the pending visibility instead of the reviewed one. The feed path's
 	// mapper refuses it (an empty page).
 	Pending bool
+	// BaseModels is `baseModels`, as sent (order, repeats and empty names kept); matched as text,
+	// never against a list.
+	BaseModels []string
+	// Followed is `followed: true`: for a signed-in viewer, only the creators they follow
+	// (getUserFollows). Signed out it changes nothing (both Node paths read it only with a user).
+	Followed bool
+	// CollectionID is `collectionId` (a positive int4; 0 = none): always the Postgres path
+	// (requiresImageDbPath), only the collection's items, and only when the viewer may read it.
+	CollectionID int
+	// CollectionTagID is `collectionTagId` (an int4; 0 = none, as Node's truthiness check reads it),
+	// only beside a CollectionID.
+	CollectionTagID int
 }
 
 // infiniteUnsupported are the input keys this port falls back on when present: the gallery's list
 // without the inputs image.getInfinite answers here (userId, username, postId, tags,
-// prioritizedUserIds, pending).
+// prioritizedUserIds, pending, baseModels, followed, collectionId, collectionTagId).
 var infiniteUnsupported = func() []string {
 	ported := map[string]bool{
 		"userId": true, "username": true, "postId": true, "tags": true, "prioritizedUserIds": true, "pending": true,
+		"baseModels": true, "followed": true, "collectionId": true, "collectionTagId": true,
 	}
 	out := make([]string, 0, len(unsupportedKeys))
 	for _, k := range unsupportedKeys {
@@ -76,14 +88,23 @@ var infiniteUnsupported = func() []string {
 // exception to the unknown-key fallback, with a deploy-gap risk: see DESIGN.md §5.1.
 var strippedURLKeys = []string{"query", "section", "similarTo", "view"}
 
+// strippedLegacyKeys are keys outside getInfiniteImagesSchema that legacy clients still send to
+// image.getInfinite. zod strips them and nothing downstream reads them, so Node answers as if they
+// were absent. Same deploy-gap exception as strippedURLKeys (DESIGN.md §5.1);
+// TestStrippedLegacyKeysAreStrippedByZod fails when the schema gains one.
+var strippedLegacyKeys = []string{"search", "useIndex"}
+
 // infiniteAbsentKeys are the keys outside getInfiniteImagesSchema that ParseInfinite reads as absent:
-// the tRPC client's own and strippedURLKeys.
+// the tRPC client's own, strippedURLKeys and strippedLegacyKeys.
 var infiniteAbsentKeys = func() map[string]bool {
-	out := make(map[string]bool, len(trpcTransportKeys)+len(strippedURLKeys))
+	out := make(map[string]bool, len(trpcTransportKeys)+len(strippedURLKeys)+len(strippedLegacyKeys))
 	for k := range trpcTransportKeys {
 		out[k] = true
 	}
 	for _, k := range strippedURLKeys {
+		out[k] = true
+	}
+	for _, k := range strippedLegacyKeys {
 		out[k] = true
 	}
 	return out
@@ -104,11 +125,21 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 			return nil, fallback.New("infinite-hat-turf")
 		}
 	}
-	base, err := parseInput(m, infiniteUnsupported, infiniteAbsentKeys)
+	// Recently Added orders on the collection's items: answered beside a collectionId only (without
+	// one, Node's BAD_REQUEST: the input-sort fallback parseInput raises for it).
+	recentlyAdded := m["sort"] == SortRecentlyAdded && !isEmpty(m["collectionId"])
+	parsed := withoutUnreadIncludes(m)
+	if recentlyAdded {
+		parsed = without(parsed, "sort")
+	}
+	base, err := parseInput(parsed, infiniteUnsupported, infiniteAbsentKeys, true)
 	if err != nil {
 		return nil, err
 	}
 	in := &InfiniteInput{Input: *base}
+	if recentlyAdded {
+		in.Sort = SortRecentlyAdded
+	}
 	if v, ok := m["userId"]; ok && v != nil {
 		n, err := intIn(v, 0, math.MaxInt32)
 		if err != nil {
@@ -133,9 +164,6 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 			return nil, fallback.NewfSafe("input-invalid", "postId", "postId: %v", err)
 		}
 	}
-	if in.Tags, err = ints(m["tags"]); err != nil {
-		return nil, err
-	}
 	// z.array(z.number()): any length, negatives included (-1 is the system user).
 	if in.PrioritizedUserIDs, err = ints(m["prioritizedUserIds"]); err != nil {
 		return nil, err
@@ -147,7 +175,124 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 		}
 		in.Pending = b
 	}
+	if v, ok := m["baseModels"]; ok {
+		if in.BaseModels, err = baseModelNames(v); err != nil {
+			return nil, err
+		}
+	}
+	if v, ok := m["followed"]; ok && v != nil {
+		b, isBool := v.(bool) // z.boolean(), not coerced: anything else is Node's BAD_REQUEST
+		if !isBool {
+			return nil, fallback.NewfSafe("input-invalid", "followed", "followed: %v", v)
+		}
+		in.Followed = b
+	}
+	if err := in.parseCollection(m); err != nil {
+		return nil, err
+	}
 	return in, nil
+}
+
+// parseCollection reads `collectionId` and `collectionTagId` (both z.number().optional()). Not a
+// number is the schema's BAD_REQUEST (input-invalid). A collectionId that is not a positive int4
+// integer falls back (`collection-id`: 0 is no collection in Node, which then routes the request
+// elsewhere; any other such value is bound and matches no collection there). A non-zero
+// collectionTagId that is not an int4 integer falls back (`collection-tag-id`: Node inlines it into
+// the SQL text), and one without a collection is Node's BAD_REQUEST (`input-collectionTagId`).
+func (in *InfiniteInput) parseCollection(m map[string]any) error {
+	if v, ok := m["collectionId"]; ok && v != nil {
+		f, err := number(v)
+		if err != nil {
+			return fallback.NewfSafe("input-invalid", "collectionId", "collectionId: %v", v)
+		}
+		if f != math.Trunc(f) || f < 1 || f > math.MaxInt32 {
+			return fallback.Newf("collection-id", "%v", v)
+		}
+		in.CollectionID = int(f)
+	}
+	if v, ok := m["collectionTagId"]; ok && v != nil {
+		f, err := number(v)
+		if err != nil {
+			return fallback.NewfSafe("input-invalid", "collectionTagId", "collectionTagId: %v", v)
+		}
+		if f == 0 {
+			return nil // falsy: no tag filter, and no BAD_REQUEST without a collection
+		}
+		if f != math.Trunc(f) || f < math.MinInt32 || f > math.MaxInt32 {
+			return fallback.Newf("collection-tag-id", "%v", v)
+		}
+		if in.CollectionID == 0 {
+			return fallback.Newf("input-collectionTagId", "%v", v)
+		}
+		in.CollectionTagID = int(f)
+	}
+	return nil
+}
+
+// without is a copy of m without key.
+func without(m map[string]any, key string) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		if k != key {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// baseModelNames reads `baseModels` (z.string().array()): a list of strings, kept as sent (order,
+// repeats and empty strings included: getAllImages binds the whole list, the feed query drops the
+// empty ones). A present value that is not a list (a literal null included: the field is
+// `.optional()`, not `.nullish()`), or an entry that is not a string, is the schema's BAD_REQUEST
+// (input-invalid). The caller skips an absent key, which is no filter.
+func baseModelNames(v any) ([]string, error) {
+	list, ok := v.([]any)
+	if !ok {
+		return nil, fallback.NewfSafe("input-invalid", "baseModels", "baseModels: %T", v)
+	}
+	out := make([]string, 0, len(list))
+	for _, e := range list {
+		s, ok := e.(string)
+		if !ok {
+			return nil, fallback.NewfSafe("input-invalid", "baseModels", "baseModels entry: %T", e)
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+// unreadIncludes are imageInclude values getAllImagesUncaptured never reads: an `include` holding them
+// is answered as the same list without them (with no 'cosmetics' left, as the list without cosmetics
+// is). Only image.getInfinite: the posts gallery still falls back on them.
+var unreadIncludes = map[string]bool{"count": true, "report": true}
+
+// withoutUnreadIncludes is m with unreadIncludes removed from its `include` list (a copy; m itself when
+// there is none). Any other value, a non-string entry included, is left for parseInput to judge.
+func withoutUnreadIncludes(m map[string]any) map[string]any {
+	list, ok := m["include"].([]any)
+	if !ok {
+		return m
+	}
+	kept := make([]any, 0, len(list))
+	for _, e := range list {
+		if s, isStr := e.(string); !isStr || !unreadIncludes[s] {
+			kept = append(kept, e)
+		}
+	}
+	if len(kept) == len(list) {
+		return m
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	out["include"] = kept
+	return out
+}
+
+// hydration is what the include list hydrates: 'profilePictures', 'cosmetics' and 'tags'.
+func (in *InfiniteInput) hydration() includes {
+	return includes{profilePictures: in.IncludeProfilePictures, cosmetics: in.IncludeCosmetics, tags: in.IncludeTags}
 }
 
 // prioritized is getAllImages' prioritizeUser: a non-empty prioritizedUserIds.
@@ -175,11 +320,11 @@ func ownScope(viewerID int, viewerUsername string, userID int, username string) 
 	return username != "" && viewerUsername != "" && strings.EqualFold(username, viewerUsername)
 }
 
-// dbPath is requiresImageDbPath for the supported inputs: a post's media, a model without a
-// version (the feed has no model dimension), or prioritizedUserIds with a model or version scope.
-// Every other shape it lists falls back in parsing.
+// dbPath is requiresImageDbPath for the supported inputs: a post's media, a collection, a model
+// without a version (the feed has no model dimension), or prioritizedUserIds with a model or version
+// scope. Every other shape it lists falls back in parsing.
 func (in *InfiniteInput) dbPath() bool {
-	return in.PostID != 0 || (in.ModelID != 0 && in.ModelVersionID == 0) ||
+	return in.PostID != 0 || in.CollectionID != 0 || (in.ModelID != 0 && in.ModelVersionID == 0) ||
 		(in.prioritized() && (in.ModelID != 0 || in.ModelVersionID != 0))
 }
 
@@ -189,7 +334,19 @@ type InfiniteSources interface {
 	PostVersions(ctx context.Context, postIDs []int) (map[int]int, error)
 	VersionModels(ctx context.Context, versionIDs []int) (map[int]int, error)
 	UserIDByUsername(ctx context.Context, username string) (int, bool, error)
+	// UserFollows is getUserFollows: the ids the user follows (empty for none).
+	UserFollows(ctx context.Context, userID int) ([]int, error)
+	// CollectionPermission is the collection's row getUserCollectionPermissionsById decides `read`
+	// on, with the viewer's contributor permissions (viewerID 0: signed out); nil when the collection
+	// does not exist.
+	CollectionPermission(ctx context.Context, collectionID, viewerID int) (*hydrate.CollectionPermission, error)
 }
+
+// maxFollowedBinds bounds the follow list the Postgres path binds (`i."userId" IN (…)`, one Prisma
+// parameter per id in Node, against Postgres' 65535 per statement): a longer list falls back
+// (followed-db-many). It is the feed's own MAX_FOLLOWED, so a list the feed path answers is never
+// refused here.
+const maxFollowedBinds = feedsvc.MaxFollowed
 
 // BlockedTagsKey is REDIS_KEYS.SYSTEM.BLOCKED_BROWSING_TAGS, on the cache cluster.
 const BlockedTagsKey = "system:blocked-browsing-tags"
@@ -493,31 +650,18 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 
 	filters := infiniteFilters(in, d.Addons.Addons(ctx), level, viewer, viewerUsername)
 	// stripBlockedTagIds: a tag scope made only of blocked tags is an empty page.
-	tags := in.Tags
-	if len(tags) > 0 {
-		if d.Blocked == nil {
-			return nil, fallback.New("blocked-tags-unconfigured")
+	tags, allBlocked, err := stripBlockedTags(ctx, d.Blocked, in.Tags)
+	if err != nil {
+		return nil, err
+	}
+	if allBlocked {
+		// getAllImagesIndex's / getAllImagesUncaptured's own `{ nextCursor: undefined, items: [] }`;
+		// the Postgres arm's caller stamps its source on it.
+		v := superjson.Object{{Key: "nextCursor", Val: superjson.Undefined{}}, {Key: "items", Val: []any{}}}
+		if !useIndex {
+			v = append(v, superjson.Field{Key: "source", Val: "db"})
 		}
-		blocked, err := d.Blocked.IDs(ctx)
-		if err != nil {
-			return nil, err
-		}
-		kept := make([]int, 0, len(tags))
-		for _, t := range tags {
-			if !blocked[t] {
-				kept = append(kept, t)
-			}
-		}
-		if len(kept) == 0 {
-			// getAllImagesIndex's / getAllImagesUncaptured's own `{ nextCursor: undefined, items: [] }`;
-			// the Postgres arm's caller stamps its source on it.
-			v := superjson.Object{{Key: "nextCursor", Val: superjson.Undefined{}}, {Key: "items", Val: []any{}}}
-			if !useIndex {
-				v = append(v, superjson.Field{Key: "source", Val: "db"})
-			}
-			return &InfiniteAnswer{Value: v, Trivial: true}, nil
-		}
-		tags = kept
+		return &InfiniteAnswer{Value: v, Trivial: true}, nil
 	}
 	userID := in.UserID
 	if userID == 0 && in.Username != "" {
@@ -530,6 +674,21 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 			return nil, fallback.New("username-miss")
 		}
 		userID = id
+	}
+	// `followed`, signed in only: the viewer's follow list, read once and used by both the feed query
+	// (serveImagesFromFeedService's followedUserIds) and the page query (getAllImagesUncaptured's
+	// prefetchedUserFollows), each of which reads it again in Node (followedOn below).
+	followedOn := in.Followed && viewer.ID != 0
+	var follows []int
+	if followedOn {
+		if follows, err = d.Sources.UserFollows(ctx, viewer.ID); err != nil {
+			return nil, err
+		}
+		if !useIndex && len(follows) > maxFollowedBinds {
+			// Node binds the list one parameter per id (Prisma.join); a list this long is not answered
+			// here, whatever Node then does with it.
+			return nil, fallback.Safef("followed-db-many", "%d", len(follows))
+		}
 	}
 
 	q := ImagesQuery{
@@ -557,21 +716,33 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		TagIDs:         tags,
 		IndexOrder:     in.PostID != 0 && in.ModelID == 0,
 		Pending:        in.Pending,
+		Techniques:     in.Techniques,
 		Tools:          in.Tools,
+		BaseModels:     in.BaseModels,
+		CollectionID:   in.CollectionID,
+		// The tag filter only beside a collection (ParseInfinite refuses it alone).
+		CollectionTagID: in.CollectionTagID,
 	}
 	if in.prioritized() {
 		q.PrioritizedUserIDs = in.PrioritizedUserIDs
 	}
+	// An empty follow list adds no clause (`prefetchedUserFollows?.length`): the Postgres path then
+	// answers the unfiltered page, while the feed path answers it with an empty page.
+	if len(follows) > 0 {
+		q.FollowedUserIDs = follows
+	}
 	if useIndex {
-		return infiniteFromFeed(ctx, d, in, q, viewer, now)
+		return infiniteFromFeed(ctx, d, in, q, viewer, now, followedOn, follows)
 	}
 	return infiniteFromDB(ctx, d, in, q, viewer, now)
 }
 
 // infiniteFromFeed is getAllImagesIndex with the feed service available: the feed picks and orders
 // the page, Postgres supplies the rows (feedHydrateQuery), and the answer is
-// `{ items, nextCursor, source: 'feed' }`.
-func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q ImagesQuery, viewer Viewer, now time.Time) (*InfiniteAnswer, error) {
+// `{ items, nextCursor, source: 'feed' }`. followedOn is `followed` with a signed-in viewer, follows
+// their follow list.
+func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q ImagesQuery, viewer Viewer, now time.Time,
+	followedOn bool, follows []int) (*InfiniteAnswer, error) {
 	fq := feedsvc.Query{
 		BrowsingLevel:         q.BrowsingLevel,
 		ExcludedTagIDs:        q.ExcludedTagIDs,
@@ -595,7 +766,11 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		RequiringMeta:         in.RequiringMeta,
 		HasPrioritizedUserIDs: in.prioritized(),
 		Pending:               in.Pending,
+		Techniques:            in.Techniques,
 		Tools:                 in.Tools,
+		BaseModels:            in.BaseModels,
+		Followed:              followedOn,
+		FollowedUserIDs:       follows,
 	}
 	if in.CursorText != "" {
 		fq.CursorText = in.CursorText
@@ -610,6 +785,11 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		return &InfiniteAnswer{Value: superjson.Object{
 			{Key: "items", Val: items}, {Key: "nextCursor", Val: cursor}, {Key: "source", Val: "feed"},
 		}, Trivial: trivial}
+	}
+	if followedOn && len(follows) == 0 {
+		// serveFromFeed, before it maps the input: a follow list with no creators is an empty feed,
+		// whatever else the request says (its cursor included).
+		return page([]any{}, "", true), nil
 	}
 	query, refusal := feedsvc.Map(fq)
 	if refusal != nil {
@@ -635,12 +815,13 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 	if len(ans.IDs) == 0 {
 		return page([]any{}, next, true), nil
 	}
-	// feedHydrateQuery: the request's filters without its paging, period or model scope.
+	// feedHydrateQuery: the request's filters (baseModels included) without its paging, period or
+	// model scope.
 	hq := q
 	hq.IDs, hq.Limit = ans.IDs, len(ans.IDs)
 	hq.Cursor, hq.ModelID, hq.ModelVersionID, hq.Period = 0, 0, 0, "AllTime"
 	hq.ThrowOnStatementTimeout = true
-	images, _, err := fetchInfiniteRows(ctx, d, hq, viewer, now, in.IncludeProfilePictures, in.IncludeCosmetics)
+	images, _, err := fetchInfiniteRows(ctx, d, hq, viewer, now, in.hydration())
 	if err != nil {
 		if fallback.Reason(err) != "" {
 			return nil, err
@@ -691,7 +872,25 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 			return nil, fallback.New("prioritized-system-user")
 		}
 	}
-	images, next, err := fetchInfiniteRows(ctx, d, q, viewer, now, in.IncludeProfilePictures, in.IncludeCosmetics)
+	if in.CollectionID != 0 {
+		// `if (!prefetchedCollectionPermissions?.read)`: getAllImagesUncaptured's own empty page,
+		// stamped by the handler. Read after this service's own fallbacks above, so a request it
+		// hands back never reads the collection.
+		perm, err := d.Sources.CollectionPermission(ctx, in.CollectionID, viewer.ID)
+		if err != nil {
+			return nil, err
+		}
+		readable, err := collectionReadable(perm, viewer)
+		if err != nil {
+			return nil, err
+		}
+		if !readable {
+			return &InfiniteAnswer{Value: superjson.Object{
+				{Key: "nextCursor", Val: superjson.Undefined{}}, {Key: "items", Val: []any{}}, {Key: "source", Val: "db"},
+			}, Trivial: true}, nil
+		}
+	}
+	images, next, err := fetchInfiniteRows(ctx, d, q, viewer, now, in.hydration())
 	if err != nil {
 		return nil, err
 	}
@@ -707,9 +906,8 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 // fetchInfiniteRows is one getAllImages call: the query (through the page cache), the hydration
 // and the per-image transform with image.getInfinite's wire trim. next is the response's
 // `nextCursor`: the look-ahead row's cursor column (the image id, or a post's nullable index), or
-// undefined at the end. profilePictures and cosmetics are the include list's 'profilePictures' and
-// 'cosmetics'.
-func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, viewer Viewer, now time.Time, profilePictures, cosmetics bool) ([]Image, any, error) {
+// undefined at the end. inc is what the include list hydrates (includes).
+func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, viewer Viewer, now time.Time, inc includes) ([]Image, any, error) {
 	rows, err := FetchRows(ctx, d.DB, d.Cache, q.Build())
 	if err != nil {
 		return nil, nil, err
@@ -724,7 +922,13 @@ func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, view
 			next = int64(look.CursorID)
 		}
 	}
-	hy, err := hydrateRows(ctx, d.Hydrator, rows, viewer, d.Config.VisibleDecorationEvents, profilePictures, cosmetics)
+	for _, r := range rows {
+		if r.Collection != nil && !judgeScoreNull(r.Collection.Note) {
+			// parseJudgeScore would answer a judge's score for this item: not rebuilt here.
+			return nil, nil, fallback.New("collection-judge-score")
+		}
+	}
+	hy, err := hydrateRows(ctx, d.Hydrator, rows, viewer, d.Config.VisibleDecorationEvents, inc)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -734,8 +938,10 @@ func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, view
 // BuildInfiniteImages is getAllImagesUncaptured's per-image transform under stripImageForInfiniteWire
 // only (image.getInfinite does not apply the gallery's stripImageForAsPostsWire): the gallery wire
 // plus `availability`, `meta` (null: 'metaSelect' is not ported), `baseModel` (undefined:
-// includeBaseModel is not ported) and `judgeScore` (null outside a collection). The publish filter is
-// BuildImages'.
+// includeBaseModel is not ported) and `judgeScore` (null: outside a collection, and in one for every
+// item served, as fetchInfiniteRows falls back on any other score). A collection page's row also
+// carries `collectionItemStatus` and `collectionItemAddedById` (the SELECT's columns, after
+// `restricted`). The publish filter is BuildImages'.
 func BuildInfiniteImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.Time) []Image {
 	images := BuildImages(rows, hy, viewer, now)
 	byID := make(map[int]*RawImage, len(rows))
@@ -745,11 +951,20 @@ func BuildInfiniteImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.
 	for i := range images {
 		img := &images[i]
 		availability := ""
+		var item *CollectionItem
 		if r := byID[img.ID]; r != nil {
-			availability = r.Availability
+			availability, item = r.Availability, r.Collection
 		}
-		wire := make(superjson.Object, 0, len(img.Wire)+4)
-		wire = append(wire, img.Wire...)
+		wire := make(superjson.Object, 0, len(img.Wire)+6)
+		for _, f := range img.Wire {
+			wire = append(wire, f)
+			if item != nil && f.Key == "restricted" {
+				wire = append(wire,
+					superjson.Field{Key: "collectionItemStatus", Val: item.Status},
+					superjson.Field{Key: "collectionItemAddedById", Val: intOrNil(item.AddedByID)},
+				)
+			}
+		}
 		wire = append(wire,
 			superjson.Field{Key: "availability", Val: availability},
 			superjson.Field{Key: "meta", Val: nil},

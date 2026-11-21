@@ -15,7 +15,9 @@ import {
 } from '~/components/Image/Infinite/useImageFeedSearch';
 import { SearchLock, SearchSortLock } from '~/components/Search/SearchSortLock';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
+import { SearchResourceFilter } from '~/components/Image/Filters/SearchResourceFilter';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SortFilter } from '../SortFilter';
 
 // Newest orders the best matches by date; it never widens them to every new image.
@@ -25,15 +27,17 @@ const searchSortOptions = [
 ];
 
 export function ImageFeedFilters({
+  type = 'images',
   hideMediaTypes,
   hideTools,
   ...groupProps
-}: GroupProps & { hideMediaTypes?: boolean; hideTools?: boolean }) {
+}: GroupProps & { type?: 'images' | 'videos'; hideMediaTypes?: boolean; hideTools?: boolean }) {
   const currentUser = useCurrentUser();
   const searchQuery = useImageFeedSearchQuery();
   const similarTo = useImageFeedSimilarTo();
   const searching = !!searchQuery || !!similarTo;
   const searchSort = useImageFeedSearchSort();
+  const features = useFeatureFlags();
 
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
@@ -43,7 +47,7 @@ export function ImageFeedFilters({
           // audience is; that comes back once the search is cleared.
           <SearchLock reason="Clear the search to filter by who posted">
             <FollowedFilter
-              type="images"
+              type={type}
               variant="button"
               value="false"
               onChange={() => undefined}
@@ -51,7 +55,7 @@ export function ImageFeedFilters({
             />
           </SearchLock>
         ) : (
-          <FollowedFilter type="images" variant="button" />
+          <FollowedFilter type={type} variant="button" />
         ))}
       {searchQuery && searchSort.selectable ? (
         <SelectMenuV2
@@ -65,11 +69,12 @@ export function ImageFeedFilters({
         // can't keep.
         <SearchSortLock />
       ) : (
-        <SortFilter type="images" />
+        <SortFilter type={type} />
       )}
+      {searching && features.imageSearchResources && <SearchResourceFilter />}
       <MediaFiltersDropdown
         w="100%"
-        filterType="images"
+        filterType={type}
         hideMediaTypes={hideMediaTypes}
         hideTools={hideTools}
         unavailable={
@@ -83,6 +88,7 @@ export function ImageFeedFilters({
             : undefined
         }
         isFeed
+        showTags
         size="compact-sm"
       />
     </Group>

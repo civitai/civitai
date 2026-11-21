@@ -30,8 +30,11 @@ type ModActivityInsert = {
 };
 
 /** The same row, throwing when it is not written: for a caller that must not go on without it. */
-export async function insertModActivity(input: ModActivityInsert): Promise<void> {
-  const row = await dbWrite
+export async function insertModActivity(
+  input: ModActivityInsert,
+  db: Kysely<DB> = dbWrite
+): Promise<number> {
+  const row = await db
     .insertInto('ModActivity')
     .values({
       userId: input.userId,
@@ -52,6 +55,17 @@ export async function insertModActivity(input: ModActivityInsert): Promise<void>
     .returning('id')
     .executeTakeFirst();
   if (!row) throw new Error(`ModActivity ${input.activity} row was not written`);
+  return row.id;
+}
+
+/** Read from the primary, so a row just written is seen. */
+export async function modActivityRowExists(id: number): Promise<boolean> {
+  const row = await dbWrite
+    .selectFrom('ModActivity')
+    .select('id')
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return !!row;
 }
 
 /**

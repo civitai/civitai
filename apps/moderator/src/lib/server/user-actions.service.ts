@@ -14,6 +14,7 @@ import { PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
 import { purgeWarning } from '$lib/purge-result';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
+import type { PayoutReviewAction } from '$lib/payout-review';
 import type {
   MembershipCancelPreview,
   MembershipCancelResult,
@@ -22,6 +23,7 @@ import type {
   MembershipResyncPreview,
   MembershipResyncResult,
 } from '$lib/membership-extend';
+import type { CompGiftPreview, CompGiftResult, CompGiftTier } from '$lib/membership-gift-comp';
 import { civitaiAppUrl } from './civitai-url';
 import { getRequestEvent } from '$app/server';
 import type { Transaction } from 'kysely';
@@ -58,8 +60,8 @@ import type { HeldSummary } from './removal-hold';
 //   - ban / unban delegates to the main app's /api/mod/ban-user, which also purges media and models,
 //     sends notifications and busts caches. Reimplementing that here would be a second source of truth.
 //
-// Actions log to ModActivity with the REAL moderator id, except `deleteAccount` and
-// `removePlacement`, whose endpoints write their own row, and `voteOnImageTags`, which only the
+// Actions log to ModActivity with the REAL moderator id, except `deleteAccount`,
+// `removePlacement` and `compGift`, whose endpoints write their own row, and `voteOnImageTags`, which only the
 // endpoint's ClickHouse audit records. The ban endpoint records itself as
 // `userId: -1` internally, so without this log a ban would have no attribution at all.
 
@@ -265,9 +267,11 @@ export type ModEndpoint =
   | 'messages/claim'
   | 'messages/release'
   | 'creator-services/resolve-dispute'
+  | 'creator-services/review-report'
   | 'csam/training-data-report'
   | 'image/report-csam'
   | 'image/tag-vote'
+  | 'membership-gift/comp'
   | 'model/resolve-restricted-nsfw-verdict'
   | 'minor-flag/confirm'
   | 'minor-flag/dismiss'
@@ -297,6 +301,9 @@ export type ModEndpoint =
   | 'strike/create'
   | 'strike/void'
   | 'text-scan'
+  | 'text-scan/csam-hold/refer'
+  | 'text-scan/csam-hold/mark-reported'
+  | 'text-scan/csam-hold/set-report-choice'
   | 'text-scan/csam-hold/resolve'
   | 'text-scan/model-rules-hold/resolve'
   | 'training-data/resolve'
@@ -358,6 +365,25 @@ export const readModEndpoint = (
     label,
     auth: 'session',
     timeoutMs,
+  });
+
+/** The pre-payout review's decision route. It is a session `ModEndpoint` under `/api/admin/`, which
+ *  `callModEndpoint` cannot reach; it checks the row's `version` and records the session user. */
+export const decidePayoutReview = (body: {
+  id: number;
+  userId: number;
+  period: string;
+  action: PayoutReviewAction;
+  version: number;
+  note: string;
+  askRef?: string;
+}): Promise<JsonResult> =>
+  postJson({
+    path: '/api/admin/creator-program-payout-review',
+    body,
+    label: 'Payout review decision',
+    auth: 'session',
+    timeoutMs: 30_000,
   });
 
 /** `callModEndpoint` for work that outlives its request, with a cookie read earlier by `requestCookie`. */
@@ -1871,6 +1897,49 @@ function writeFailureError(
     return mayHaveCompleted;
   if (result.status !== undefined || result.requestNeverSent) return result.error;
   return mayHaveCompleted;
+}
+
+// COMP GIFT (a membership gift nobody pays for). The endpoint writes the ModActivity row in the same
+// transaction as the gift, and its daily cap counts those rows, so no `logAction` here.
+export const COMP_GIFT_OUTCOME_UNKNOWN =
+  "Outcome unknown: the gift may have been created. Check the user's gifts before trying again.";
+
+type CompGiftForm = {
+  userId: number;
+  tier: CompGiftTier;
+  months: number;
+  reason: string;
+  message?: string;
+  anonymous: boolean;
+};
+
+export async function previewCompGift(
+  input: CompGiftForm
+): Promise<{ ok: true; preview: CompGiftPreview } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'membership-gift/comp',
+    { ...input, execute: false },
+    'Preview comp gift'
+  );
+  if (!result.ok) return { ok: false, error: result.error };
+  const body = result.body as unknown as CompGiftPreview;
+  if (body.outcome !== 'would-comp') return { ok: false, error: 'Unexpected preview answer.' };
+  return { ok: true, preview: body };
+}
+
+export async function compGift(
+  input: CompGiftForm
+): Promise<{ ok: true; result: CompGiftResult } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'membership-gift/comp',
+    { ...input, execute: true },
+    'Comp gift'
+  );
+  if (!result.ok) return { ok: false, error: writeFailureError(result, COMP_GIFT_OUTCOME_UNKNOWN) };
+  const body = result.body as unknown as CompGiftResult;
+  if (body.outcome !== 'comped' || typeof body.giftId !== 'string')
+    return { ok: false, error: COMP_GIFT_OUTCOME_UNKNOWN };
+  return { ok: true, result: body };
 }
 
 // MEMBERSHIP CODE (support make-good). The endpoint records the ModActivity row inside the same

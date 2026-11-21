@@ -4,10 +4,12 @@ import type * as EmailTemplates from '~/server/email/templates';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as UrlHelpers from '~/server/utils/url-helpers';
 import { NsfwLevel } from '~/server/common/enums';
+import { reportNotifications } from '~/server/notifications/report.notifications';
 import {
   appealEntityLink,
   getAppealDetails,
   resolveEntityAppeal,
+  settleResolvedAppeals,
 } from '~/server/services/report.service';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
@@ -26,6 +28,7 @@ vi.mock('~/server/email/templates', async (importOriginal) => ({
 vi.mock('~/server/utils/url-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof UrlHelpers>()),
   getBaseUrl: (color?: string) => (color ? `https://${color}.test` : 'https://pod.test'),
+  getColorBaseUrl: (color: string) => `https://${color}.test`,
 }));
 
 beforeEach(() => vi.clearAllMocks());
@@ -220,5 +223,96 @@ describe('resolveEntityAppeal — email links go to the domain that serves the i
     await resolve();
 
     expect(sentUrls()).toEqual(['https://red.test/models/7']);
+  });
+});
+
+describe('resolveEntityAppeal — bell notification links', () => {
+  const appealRow = (entityId: number) => ({
+    id: entityId,
+    entityId,
+    entityType: EntityType.Model,
+    resolvedAt: null,
+    buzzTransactionId: null,
+    status: AppealStatus.Pending,
+    userId: 5,
+    createdAt: new Date('2026-09-01T00:00:00Z'),
+  });
+  const bellUrl = (details: MixedObject) =>
+    reportNotifications['entity-appeal-resolved'].prepareMessage({
+      type: 'entity-appeal-resolved',
+      details,
+    } as Parameters<(typeof reportNotifications)['entity-appeal-resolved']['prepareMessage']>[0])
+      ?.url;
+
+  const bellUrlsFor = async (rows: { id: number; nsfwLevel: number }[]) => {
+    dbMock.dbWrite.appeal.updateManyAndReturn.mockResolvedValue(rows.map((r) => appealRow(r.id)));
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 5, email: 'a@b.test', username: 'a' }]);
+    dbMock.dbRead.model.findMany.mockResolvedValue(rows);
+    await resolveEntityAppeal({
+      ids: rows.map((r) => r.id),
+      entityType: EntityType.Model,
+      status: AppealStatus.Approved,
+      userId: 3,
+    });
+    return mockCreateNotification.mock.calls.map(([n]) => bellUrl(n.details));
+  };
+
+  it('opens a mature item on .red', async () => {
+    expect(await bellUrlsFor([{ id: 1, nsfwLevel: NsfwLevel.X }])).toEqual([
+      'https://red.test/models/1',
+    ]);
+  });
+
+  it('keeps a PG item relative, so it opens on whichever host the bell is on', async () => {
+    expect(await bellUrlsFor([{ id: 2, nsfwLevel: NsfwLevel.PG }])).toEqual(['/models/2']);
+  });
+
+  it('opens on .red when the rating read fails, as the email does', async () => {
+    dbMock.dbWrite.appeal.updateManyAndReturn.mockResolvedValue([appealRow(3)]);
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 5, email: 'a@b.test', username: 'a' }]);
+    dbMock.dbRead.model.findMany.mockRejectedValue(new Error('read failed'));
+    await resolveEntityAppeal({
+      ids: [3],
+      entityType: EntityType.Model,
+      status: AppealStatus.Rejected,
+      userId: 3,
+    });
+    expect(mockCreateNotification.mock.calls.map(([n]) => bellUrl(n.details))).toEqual([
+      'https://red.test/models/3',
+    ]);
+  });
+
+  it('rates an approved image after its restore, which can change the rating', async () => {
+    let restored = false;
+    dbMock.dbWrite.$queryRaw.mockImplementation((async () => {
+      restored = true;
+      return [{ postId: null, pHash: null }];
+    }) as never);
+    dbMock.dbRead.image.findMany.mockImplementation((async () => [
+      { id: 6, nsfwLevel: restored ? NsfwLevel.PG : NsfwLevel.Blocked },
+    ]) as never);
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 5, email: 'a@b.test', username: 'a' }]);
+
+    await settleResolvedAppeals([{ ...appealRow(6), entityType: EntityType.Image }] as never, {
+      status: AppealStatus.Approved,
+    });
+
+    expect(mockCreateNotification.mock.calls.map(([n]) => bellUrl(n.details))).toEqual([
+      '/images/6',
+    ]);
+  });
+
+  it('opens a lock review ruling on a mature model on .red', async () => {
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 5, email: 'a@b.test', username: 'a' }]);
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 8, nsfwLevel: NsfwLevel.X }]);
+
+    await settleResolvedAppeals([appealRow(8)] as never, {
+      status: AppealStatus.Rejected,
+      lockReview: { unlocked: [] },
+    });
+
+    expect(mockCreateNotification.mock.calls.map(([n]) => bellUrl(n.details))).toEqual([
+      'https://red.test/models/8',
+    ]);
   });
 });

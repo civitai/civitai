@@ -1,11 +1,13 @@
 import type {
   AiToolkitTrainingInput,
   MingAiToolkitTrainingInput,
+  MiniMaxH3ImageAiToolkitTrainingInput,
   Qwen21AiToolkitTrainingInput,
   YuE2AiToolkitTrainingInput,
 } from '@civitai/orchestration-client';
 import type JSZip from 'jszip';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
+import { getTrainingLicenseTerms } from '~/shared/constants/generation-license.constants';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { getMimeTypeFromExt, MEDIA_TYPE } from '~/shared/constants/mime-types';
@@ -23,6 +25,7 @@ import { isDefined } from '~/utils/type-guards';
 export const studioModelFlagFeatures = {
   'training-studio-kohya': 'trainingStudioKohya',
   'training-studio-tag-find-replace': 'trainingStudioTagFindReplace',
+  'training-studio-elements-ui': 'trainingStudioElementsUi',
   'ming-training': 'mingTraining',
   'qwen21-training': 'qwen21Training',
   'yue2-training': 'yue2Training',
@@ -38,6 +41,7 @@ export const studioModelFlagFeatures = {
   'hidream-o1-training': 'hidreamO1Training',
   'anima-training': 'animaTraining',
   'minimaxh3-training': 'minimaxh3Training',
+  'minimaxh3-image-training': 'minimaxh3ImageTraining',
   'zimage-turbo-training': 'zimageturboTraining',
   'ltx25-training': 'ltx25Training',
   'ltx23-training': 'ltx23Training',
@@ -53,11 +57,10 @@ export function enabledStudioModelFlags(
 
 /** Whether a user may generate with UNPUBLISHED training results (epoch checkpoints). The single
  *  definition behind the training-results Generate affordances and the Training Studio embed's
- *  `canGenerateUnpublished` host config — a tier change here must reach all of them at once. */
-export function canGenerateWithEpochs(
-  user: { isMember?: boolean; isModerator?: boolean } | null | undefined
-): boolean {
-  return !!(user?.isMember || user?.isModerator);
+ *  `canGenerateUnpublished` host config — a change here must reach all of them at once. Ownership
+ *  and the epoch window are enforced on the server. */
+export function canGenerateWithEpochs(user: { id?: number } | null | undefined): boolean {
+  return !!user?.id;
 }
 
 /** The Training Studio embed's `isPaidMember` host config. `undefined` = no session to read, which the
@@ -89,6 +92,7 @@ export const trainingBaseModelTypesImage = [
   'qwen21',
   'mossimage',
   'flux3klein',
+  'minimaxh3image',
 ] as const;
 export const trainingBaseModelTypesVideo = [
   'hunyuan',
@@ -129,7 +133,8 @@ export const aiToolkitStepDefault = (baseType: TrainingBaseModelType): number =>
   baseType === 'ming' ||
   baseType === 'qwen21' ||
   baseType === 'yue2' ||
-  baseType === 'minimaxh3'
+  baseType === 'minimaxh3' ||
+  baseType === 'minimaxh3image'
     ? 3000
     : baseType === 'anima'
     ? 1500
@@ -503,6 +508,19 @@ export const trainingModelInfo: {
     aiToolkit: { ecosystem: 'ideogram4' },
   },
   //
+  minimaxh3image: {
+    label: 'Base',
+    pretty: 'MiniMax H3 Image',
+    type: 'minimaxh3image',
+    description: "MiniMax's open-weights H3 image generation and editing model.",
+    air: 'urn:air:minimaxh3image:repository:huggingface:Comfy-Org/MiniMax-H3-Image@892de7cb61df49753bf15145a711154803a355cb.tar',
+    baseModel: 'MiniMax H3 Image',
+    isNew: true,
+    aiToolkit: {
+      ecosystem: 'minimaxh3image' satisfies MiniMaxH3ImageAiToolkitTrainingInput['ecosystem'],
+    },
+  },
+  //
   flux2klein_4b: {
     label: '4B Base',
     pretty: 'Flux.2 Klein 4B Base',
@@ -781,6 +799,7 @@ const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
   ltx23: 'ltx23',
   ltx25: 'ltx25',
   minimaxh3: 'minimaxh3',
+  minimaxh3image: 'minimaxh3image',
   'hidream-o1': 'hidream-o1',
   anima: 'anima',
   boogu: 'boogu',
@@ -829,6 +848,13 @@ export function getAiToolkitEcosystem(
 
   console.warn(`No AI Toolkit ecosystem configured for: ${baseModel}`);
   return null;
+}
+
+/** The site ecosystem whose licence a catalog entry trains under, when it has one. */
+export function trainingLicenseEcosystem(baseModel: string | undefined): string | undefined {
+  const ecosystem =
+    trainingModelInfo[baseModel as TrainingDetailsBaseModelList]?.aiToolkit?.ecosystem;
+  return getTrainingLicenseTerms(ecosystem)?.ecosystems[0];
 }
 
 /**
@@ -906,6 +932,7 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'ltx23',
     'ltx25',
     'minimaxh3',
+    'minimaxh3image',
     'hidream-o1',
     'anima',
     'boogu',
@@ -932,6 +959,7 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
     'ltx23',
     'ltx25',
     'minimaxh3',
+    'minimaxh3image',
     'hidream-o1',
     'anima',
     'boogu',
@@ -985,6 +1013,7 @@ export const trainingRolloutFlagByType = {
   ltx23: 'ltx23Training',
   ltx25: 'ltx25Training',
   minimaxh3: 'minimaxh3Training',
+  minimaxh3image: 'minimaxh3ImageTraining',
   'hidream-o1': 'hidreamO1Training',
   anima: 'animaTraining',
   boogu: 'booguTraining',
@@ -1042,7 +1071,13 @@ export const getDefaultEngine = (
   features?: Record<string, boolean>,
   opts?: { ignoreDefaultPreference?: boolean }
 ): EngineTypes => {
-  if (baseType === 'ming' || baseType === 'qwen21' || baseType === 'yue2') return 'ai-toolkit';
+  if (
+    baseType === 'ming' ||
+    baseType === 'qwen21' ||
+    baseType === 'yue2' ||
+    baseType === 'minimaxh3image'
+  )
+    return 'ai-toolkit';
   if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
   if (baseType === 'zimage') return 'ai-toolkit'; // ZImage (Turbo/Base) requires AI Toolkit
   if (baseType === 'ernie') return 'ai-toolkit'; // Ernie requires AI Toolkit

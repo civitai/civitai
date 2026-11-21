@@ -1,3 +1,4 @@
+import { pickAiToolkitOptions } from '@civitai/shared/training-options';
 import { findTrigger, withTrigger } from '$lib/training-trigger';
 export { findTrigger, promptHasTrigger, withTrigger } from '$lib/training-trigger';
 import {
@@ -445,6 +446,10 @@ export interface RunParams {
   blocksToSwap: NumericInput;
   vParameterization: string;
   zeroTerminalSnr: string;
+  lrWarmupSteps: NumericInput;
+  captionDropoutRate: NumericInput;
+  rankDropout: NumericInput;
+  trainConv: boolean;
   steps: number;
   epochs: number;
   unetLr: NumericInput;
@@ -491,6 +496,10 @@ export const PARAM_LABELS: Record<keyof RunParams, string> = {
   blocksToSwap: 'Blocks to swap',
   vParameterization: 'V-prediction',
   zeroTerminalSnr: 'Zero terminal SNR',
+  lrWarmupSteps: 'LR warmup steps',
+  captionDropoutRate: 'Caption dropout',
+  rankDropout: 'Rank dropout',
+  trainConv: 'Train convolution layers',
   steps: 'Steps',
   epochs: 'Checkpoints',
   batchSize: 'Batch size',
@@ -527,6 +536,14 @@ export const PARAM_HELP: Record<keyof RunParams, string> = {
     'Auto detects checkpoint metadata, including compatible NoobAI checkpoints. Override only if you know how the checkpoint was trained.',
   zeroTerminalSnr:
     'Auto detects the checkpoint training schedule. Override only if required by your checkpoint.',
+  lrWarmupSteps:
+    'Gradually raise the learning rate at the start. Available with constant learning rate. Leave blank to keep the scheduler default.',
+  captionDropoutRate:
+    'Chance of training without a caption, from 0 to 1. Leave blank to keep the model default (0.05).',
+  rankDropout:
+    'Randomly skip part of the LoRA during training to help reduce overfitting. Leave blank or use 0 to keep it off.',
+  trainConv:
+    'Train additional image-detail layers. Uses more memory. Available for SD 1.5 and SDXL-family models only; off by default.',
   steps:
     'How many optimisation steps the run makes. More steps means each image is seen more often; too many and the model memorises the dataset instead of learning it. The recommended budget for this model is {recommended}.',
   epochs:
@@ -674,6 +691,10 @@ export function defaultRunParams(run: Run, trigger = '', loraType = ''): RunPara
     blocksToSwap: '18',
     vParameterization: 'auto',
     zeroTerminalSnr: 'auto',
+    lrWarmupSteps: '',
+    captionDropoutRate: '',
+    rankDropout: '',
+    trainConv: false,
     steps: defaultStepsForRun(run),
     epochs: d.epochs,
     unetLr: String(d.unetLr),
@@ -695,10 +716,21 @@ export function defaultRunParams(run: Run, trigger = '', loraType = ''): RunPara
 }
 
 /** Which of the extra AI-Toolkit fields a run can actually use, given the dataset's label mode. */
-export function runExtraCapabilities(run: Run, labelMode: LabelType) {
-  const caps = extraParamCapabilities(runCard(run), runVersion(run), labelMode);
+export function runExtraCapabilities(
+  run: Run,
+  labelMode: LabelType,
+  params = defaultRunParams(run)
+) {
+  const caps = extraParamCapabilities(runCard(run), runVersion(run), labelMode, {
+    engine: runEngine(run),
+    lrScheduler: params.lrScheduler,
+    steps: params.steps,
+  });
   if (runEngine(run) === 'kohya' && isKohyaFlow(runVersion(run).ecosystem))
-    caps.noiseOffset = { supported: false, reason: 'Flux and Chroma do not use noise offset.' };
+    caps.noiseOffset = {
+      supported: false,
+      reason: 'Flux, Chroma and Anima do not use noise offset.',
+    };
   return caps;
 }
 
@@ -758,7 +790,13 @@ export interface ParamDeviation {
 
 /** Display form of one param value — numbers as typed, booleans as On/Off. */
 export function paramDisplay(value: NumericInput | boolean): string {
-  return typeof value === 'boolean' ? (value ? 'On' : 'Off') : String(value);
+  return typeof value === 'boolean'
+    ? value
+      ? 'On'
+      : 'Off'
+    : value === ''
+    ? 'Model default'
+    : String(value);
 }
 
 /** Two param values agree when they read as the same number (so `0.00005` equals `5e-5`), else as
@@ -781,7 +819,7 @@ export function paramDeviations(
   loraType = ''
 ): ParamDeviation[] {
   const defaults = defaultRunParams(run, trigger, loraType);
-  const caps = runExtraCapabilities(run, labelMode);
+  const caps = runExtraCapabilities(run, labelMode, params);
   const out: ParamDeviation[] = [];
   for (const field of Object.keys(defaults) as (keyof RunParams)[]) {
     if (
@@ -986,15 +1024,16 @@ export function withTags(tags: string[], text: string): string[] {
 }
 
 /** What a key does in the tag-entry box: Enter adds the typed tags, Shift+Enter keeps a newline (it splits
- *  like a comma), and Backspace in an empty box removes the last tag. */
+ *  like a comma), and a fresh Backspace press in an empty box removes the last tag. Auto-repeat is ignored so
+ *  holding Backspace to clear the draft stops at the empty box instead of eating the assigned tags. */
 export function tagEntryKey(
-  e: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'isComposing' | 'keyCode'>,
+  e: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'isComposing' | 'keyCode' | 'repeat'>,
   draft: string,
   tagCount: number
 ): 'commit' | 'removeLast' | null {
   // keyCode 229: Safari reports the Enter that confirms an IME conversion with isComposing false.
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) return 'commit';
-  if (e.key === 'Backspace' && draft === '' && tagCount > 0) return 'removeLast';
+  if (e.key === 'Backspace' && !e.repeat && draft === '' && tagCount > 0) return 'removeLast';
   return null;
 }
 
@@ -1059,7 +1098,7 @@ export function runTrainingParams(
   loraType = ''
 ) {
   const version = runVersion(run);
-  const caps = runExtraCapabilities(run, labelMode);
+  const caps = runExtraCapabilities(run, labelMode, params);
   const tags = caps.shuffleTokens.supported;
   const defaults = defaultRunParams(run, trigger, loraType);
   const d = {
@@ -1108,7 +1147,25 @@ export function runTrainingParams(
           },
         }
       : {}),
+    ...pickAiToolkitOptions(
+      {
+        engine: runEngine(run),
+        ecosystem: version.ecosystem,
+        lrScheduler: params.lrScheduler,
+        steps: params.steps,
+      },
+      {
+        lrWarmupSteps: optionalNumber(params.lrWarmupSteps),
+        captionDropoutRate: optionalNumber(params.captionDropoutRate),
+        rankDropout: optionalNumber(params.rankDropout),
+        trainConv: params.trainConv,
+      }
+    ),
   };
+}
+
+function optionalNumber(value: NumericInput | undefined): number | undefined {
+  return value === undefined || value === '' ? undefined : Number(value);
 }
 
 export function buildTrainingRuns(

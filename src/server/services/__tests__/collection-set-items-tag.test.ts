@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
 
 const mockDbWrite = dbMock.dbWrite;
@@ -180,17 +179,10 @@ describe('setCollectionItemsTag', () => {
 
   it('reports a committed write even when the cache bust fails', async () => {
     mockHomeBlockCacheBust.mockRejectedValue(new Error('redis down'));
-    loggingMock.logToAxiom.mockResolvedValue(undefined);
 
     await expect(set({ type: 'collectionItem', ids: [1] })).resolves.toEqual({
       count: WRITE_COUNT,
       collectionItemIds: [1],
     });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'collection-set-items-tag-cache-bust',
-        collectionId: CONTEST,
-      })
-    );
   });
 });

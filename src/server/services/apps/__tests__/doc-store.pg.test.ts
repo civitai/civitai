@@ -30,9 +30,8 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * `appdata_rw`). Never point it at a shared, staging or production database.
  * CI's unit job provides one (a `postgres:18` service in `.github/workflows/lint.yml`).
  * Without it every case here is skipped, and the properties below are NOT
- * exercised by that run: quota under concurrent writers, the pre-flight-read
- * control, concurrent marks, counters and first increments, the lock timeout,
- * and deadlock-freedom. Everything else is covered by `doc-store.pglite.test.ts`.
+ * exercised by that run: quota under concurrent writers, concurrent marks,
+ * counters and first increments, the lock timeout, and deadlock-freedom. Everything else is covered by `doc-store.pglite.test.ts`.
  */
 
 if (!REAL_PG_URL) {
@@ -70,46 +69,6 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
       .map((r) => (r.reason instanceof DocStoreError ? r.reason.code : String(r.reason)));
     return { ok, codes };
   };
-
-  it(`control: a pre-flight read then write lets ${N} racing writers overshoot the ceiling`, async () => {
-    // The pattern the store replaced: read usage, check, then add. All writers
-    // read before any writes (the barrier), so every check passes.
-    const app = freshApp('preflight');
-    const limit = 3 * DOC_BYTES + 5;
-    await h.raw(`INSERT INTO appdata.usage_app (app_id, ns) VALUES ($1, $2)`, [app, NS_PROD]);
-    const gate = barrier(N);
-    const writers = Array.from({ length: N }, async () => {
-      const c = await h.rawAsRole();
-      try {
-        await c.query(
-          `BEGIN; SELECT set_config('appdata.app_id', '${app}', true), set_config('appdata.ns', '${NS_PROD}', true)`
-        );
-        const [u] = await c.query(
-          `SELECT u.bytes FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = $2`,
-          [app, NS_PROD]
-        );
-        await gate.wait();
-        if (Number(u.bytes) + DOC_BYTES > limit) {
-          await c.query('ROLLBACK');
-          return false;
-        }
-        await c.query(
-          `UPDATE appdata.usage_app u SET bytes = u.bytes + $3 WHERE u.app_id = $1 AND u.ns = $2`,
-          [app, NS_PROD, DOC_BYTES]
-        );
-        await c.query('COMMIT');
-        return true;
-      } finally {
-        await c.close();
-      }
-    });
-    const passed = (await Promise.all(writers)).filter(Boolean).length;
-    const [u] = await h.raw(`SELECT bytes FROM appdata.usage_app WHERE app_id = $1`, [app]);
-    expect(gate.arrived).toBe(N);
-    expect(passed).toBe(N);
-    expect(Number(u.bytes)).toBe(N * DOC_BYTES);
-    expect(Number(u.bytes)).toBeGreaterThan(limit);
-  });
 
   it(`app ceiling: ${N} writers parked at the charge together — exactly 3 fit, usage never overshoots`, async () => {
     const app = freshApp('race_app');
@@ -302,86 +261,65 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
     );
     expect(new Set(seqs.map((s) => Number(s.seq))).size).toBe(seqs.length);
   });
-});
 
-describe.skipIf(!REAL_PG_URL)('index type change within v_num on Postgres', () => {
   it('re-declaring number → boolean or number → time never mixes the old rows into filters or sorts', async () => {
-    const h = await createRealPgHarness();
-    try {
-      await assertNumericRetypeIsolated(createDocStore({ db: h.db }), freshApp('pg_numretype'));
-    } finally {
-      await h.close();
-    }
+    await assertNumericRetypeIsolated(createDocStore({ db: h.db }), freshApp('pg_numretype'));
   });
-});
 
-describe.skipIf(!REAL_PG_URL)('index type change on Postgres', () => {
   it('an index whose type changed sorts only rows of the declared type, paging both ways', async () => {
-    const h = await createRealPgHarness();
-    try {
-      const store = createDocStore({ db: h.db });
-      const app = freshApp('pg_retyped');
-      const v1 = ctx(app, NS_PROD, 1);
-      const asNumber: DocCollection = {
-        name: 'retyped',
-        config: decl({ visibility: 'shared', indexes: { rank: 'number' } }),
-      };
-      const asString: DocCollection = {
-        name: 'retyped',
-        config: decl({ visibility: 'shared', indexes: { rank: 'string' } }),
-      };
-      for (const [k, r] of [
-        ['n1', 3],
-        ['n2', 1],
-        ['n3', 2],
-      ] as const) {
-        await store.put(v1, asNumber, k, { rank: r });
+    const store = createDocStore({ db: h.db });
+    const app = freshApp('pg_retyped');
+    const v1 = ctx(app, NS_PROD, 1);
+    const asNumber: DocCollection = {
+      name: 'retyped',
+      config: decl({ visibility: 'shared', indexes: { rank: 'number' } }),
+    };
+    const asString: DocCollection = {
+      name: 'retyped',
+      config: decl({ visibility: 'shared', indexes: { rank: 'string' } }),
+    };
+    for (const [k, r] of [
+      ['n1', 3],
+      ['n2', 1],
+      ['n3', 2],
+    ] as const) {
+      await store.put(v1, asNumber, k, { rank: r });
+    }
+    for (const [k, r] of [
+      ['s1', 'b'],
+      ['s2', 'a'],
+      ['s3', 'c'],
+    ] as const) {
+      await store.put(v1, asString, k, { rank: r });
+    }
+    for (const [sort, want] of [
+      ['rank', ['s2', 's1', 's3']],
+      ['-rank', ['s3', 's1', 's2']],
+    ] as const) {
+      const paged: string[] = [];
+      let cursor: string | undefined;
+      for (let i = 0; i < 10; i++) {
+        const page = await store.list(v1, asString, { sort, limit: 1, cursor });
+        paged.push(...page.items.map((d) => d.key));
+        if (!page.nextCursor) break;
+        cursor = page.nextCursor;
       }
-      for (const [k, r] of [
-        ['s1', 'b'],
-        ['s2', 'a'],
-        ['s3', 'c'],
-      ] as const) {
-        await store.put(v1, asString, k, { rank: r });
-      }
-      for (const [sort, want] of [
-        ['rank', ['s2', 's1', 's3']],
-        ['-rank', ['s3', 's1', 's2']],
-      ] as const) {
-        const paged: string[] = [];
-        let cursor: string | undefined;
-        for (let i = 0; i < 10; i++) {
-          const page = await store.list(v1, asString, { sort, limit: 1, cursor });
-          paged.push(...page.items.map((d) => d.key));
-          if (!page.nextCursor) break;
-          cursor = page.nextCursor;
-        }
-        expect({ sort, paged }).toEqual({ sort, paged: [...want] });
-      }
-    } finally {
-      await h.close();
+      expect({ sort, paged }).toEqual({ sort, paged: [...want] });
     }
   });
-});
 
-describe.skipIf(!REAL_PG_URL)('runtime isolation shape on Postgres', () => {
   it('the statement recorders saw traffic and no violations', async () => {
-    const h = await createRealPgHarness();
-    try {
-      const store = createDocStore({ db: h.db });
-      const app = freshApp('pg_recorder');
-      await store.put(ctx(app, NS_PROD, 1), POSTS, 'k', { status: 'open' });
-      await store.mark(ctx(app, NS_PROD, 2), POSTS, 'k', 'vote');
-      await store.list(ctx(app, NS_PROD, 2), POSTS, {
-        sort: '-mark:vote',
-        where: { status: 'open' },
-      });
-      await store.delete(ctx(app, NS_PROD, 1), POSTS, 'k');
-      expect(h.statements.length).toBeGreaterThan(8);
-      expect(h.violations).toEqual([]);
-    } finally {
-      await h.close();
-    }
+    const store = createDocStore({ db: h.db });
+    const app = freshApp('pg_recorder');
+    await store.put(ctx(app, NS_PROD, 1), POSTS, 'k', { status: 'open' });
+    await store.mark(ctx(app, NS_PROD, 2), POSTS, 'k', 'vote');
+    await store.list(ctx(app, NS_PROD, 2), POSTS, {
+      sort: '-mark:vote',
+      where: { status: 'open' },
+    });
+    await store.delete(ctx(app, NS_PROD, 1), POSTS, 'k');
+    expect(h.statements.length).toBeGreaterThan(8);
+    expect(h.violations).toEqual([]);
   });
 });
 

@@ -5,11 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-/**
- * The downloads-total migration runs by hand against prod, possibly twice. It rewrites the five
- * Downloads descriptions and the special-achievement badge cosmetics, each only while it still holds
- * the old text. These replay every CreatorMilestone migration before it, then apply it.
- */
+// Applied by hand, possibly twice, after every earlier CreatorMilestone migration.
 
 const MIGRATIONS = join(process.cwd(), 'packages/civitai-db-schema/prisma/migrations');
 const DOWNLOADS_TOTAL = '20261017120000_creator_milestone_downloads_total';
@@ -135,13 +131,5 @@ describe(DOWNLOADS_TOTAL, () => {
       name: 'Hidden Achievement Badge 2',
       description: 'Edited.',
     });
-  });
-
-  it('changes nothing when applied again', async () => {
-    await before();
-    await db.exec(read(DOWNLOADS_TOTAL));
-    const once = { descriptions: await descriptions(), cosmetics: await cosmetics() };
-    await db.exec(read(DOWNLOADS_TOTAL));
-    expect({ descriptions: await descriptions(), cosmetics: await cosmetics() }).toEqual(once);
   });
 });

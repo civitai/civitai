@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const { enqueue, openCount } = vi.hoisted(() => ({
@@ -17,7 +16,9 @@ const {
   parseKnightsSourcesConfig,
   queueOwnerRatingForKnights,
   queueScanSampleForKnights,
+  readKnightsSourcesConfig,
 } = await import('~/server/services/knights/sources');
+const { knightsSampleDraw } = await import('~/server/services/knights/sampling');
 
 const configured = (value: unknown) =>
   redisMock.sysRedis.get.mockResolvedValue(value === null ? null : JSON.stringify(value));
@@ -66,7 +67,7 @@ describe('queueScanSampleForKnights', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
-  it('queues a safe-looking scan at priority 1 and an NSFW one at priority 2, servable images only', async () => {
+  it('queues a safe-looking scan at priority 1 and an NSFW one at priority 2, only on a live post and only once per image', async () => {
     configured({ enabled: true });
     await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0.99);
     await queueScanSampleForKnights({ imageId: 2, nsfw: true }, () => 0.29);
@@ -80,7 +81,7 @@ describe('queueScanSampleForKnights', () => {
         items: [{ imageId: 1, priority: 1 }],
       },
       undefined,
-      { requirePost: true }
+      { requirePublished: true, oncePerImage: true }
     );
     expect(enqueue).toHaveBeenNthCalledWith(
       2,
@@ -91,7 +92,7 @@ describe('queueScanSampleForKnights', () => {
         items: [{ imageId: 2, priority: 2 }],
       },
       undefined,
-      { requirePost: true }
+      { requirePublished: true, oncePerImage: true }
     );
   });
 
@@ -106,6 +107,18 @@ describe('queueScanSampleForKnights', () => {
     expect(enqueue.mock.calls.map(([, input]) => input.items[0].imageId)).toEqual([3, 4]);
   });
 
+  it('draws each image once from its id, so a repeated scan of the same image decides the same way', async () => {
+    configured({ enabled: true, sfwRate: 0, nsfwRate: 0.5 });
+    const ids = Array.from({ length: 40 }, (_, i) => 2000 + i);
+    for (const imageId of [...ids, ...ids])
+      await queueScanSampleForKnights({ imageId, nsfw: true });
+
+    const picked = ids.filter((id) => knightsSampleDraw(id) < 0.5);
+    expect(picked.length).toBeGreaterThan(5);
+    expect(picked.length).toBeLessThan(35);
+    expect(queuedIds()).toEqual([...picked, ...picked]);
+  });
+
   it('never throws into the scan when the enqueue or the config read fails', async () => {
     configured({ enabled: true });
     enqueue.mockRejectedValue(new Error('db down'));
@@ -117,7 +130,6 @@ describe('queueScanSampleForKnights', () => {
     await expect(
       queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0)
     ).resolves.toBeUndefined();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -148,6 +160,17 @@ describe('the switch read', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
+  it('tells a switch that is off from one that could not be read in time', async () => {
+    vi.useFakeTimers();
+    redisMock.sysRedis.get.mockReturnValueOnce(new Promise(() => undefined));
+    const unread = readKnightsSourcesConfig();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await unread).toBeNull();
+
+    configured({ enabled: false });
+    expect(await readKnightsSourcesConfig()).toMatchObject({ enabled: false });
+  });
+
   it('does not remember a timed-out read as off, so the next scan reads Redis again', async () => {
     vi.useFakeTimers();
     redisMock.sysRedis.get.mockReturnValueOnce(new Promise(() => undefined));
@@ -164,7 +187,7 @@ describe('the switch read', () => {
 });
 
 describe('queueOwnerRatingForKnights', () => {
-  it('queues an owner self-rating at priority 1 only when the switch is on', async () => {
+  it('queues an owner self-rating at priority 1, on a live post only, only when the switch is on', async () => {
     await queueOwnerRatingForKnights(7);
     expect(enqueue).not.toHaveBeenCalled();
 
@@ -179,7 +202,7 @@ describe('queueOwnerRatingForKnights', () => {
         items: [{ imageId: 7, priority: 1 }],
       },
       undefined,
-      { requirePost: true }
+      { requirePublished: true, stillImagesOnly: true }
     );
   });
 
@@ -200,12 +223,9 @@ describe('intake backpressure', () => {
 
     expect(queuedIds()).toEqual([3]);
     // Only rating items count: open yes/no questions never hold image intake back.
-    expect(openCount.mock.calls[0].slice(1)).toEqual([
-      'Open',
-      'Knight',
-      'knights.image.nsfwLevel',
-      11,
-    ]);
+    const values = openCount.mock.calls[0].slice(1);
+    expect(values.slice(0, 3)).toEqual(['Open', 'Knight', 'knights.image.nsfwLevel']);
+    expect(values.at(-1)).toBe(11);
   });
 
   it('queues scan samples again at the cap', async () => {
@@ -220,12 +240,10 @@ describe('intake backpressure', () => {
     openItems(5001);
     await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
     expect(enqueue).not.toHaveBeenCalled();
-    expect(openCount.mock.calls[0].slice(1)).toEqual([
-      'Open',
-      'Knight',
-      'knights.image.nsfwLevel',
-      5001,
-    ]);
+    // The servable filter's values sit between the item filter and the limit (the pglite test covers the filter).
+    const values = openCount.mock.calls[0].slice(1);
+    expect(values.slice(0, 3)).toEqual(['Open', 'Knight', 'knights.image.nsfwLevel']);
+    expect(values.at(-1)).toBe(5001);
 
     clearKnightsSourcesConfigCache();
     openItems(5000);
@@ -275,7 +293,7 @@ describe('intake backpressure', () => {
     expect(queuedIds()).toEqual([1, 2]);
   });
 
-  it('runs one slow count, queues while it is out, logs it once, and uses its answer when it lands', async () => {
+  it('runs one slow count, queues while it is out, and uses its answer when it lands', async () => {
     vi.useFakeTimers();
     configured({ enabled: true, maxOpen: 10 });
     let answer: (rows: unknown[]) => void = () => undefined;
@@ -292,7 +310,6 @@ describe('intake backpressure', () => {
     }
     expect(queuedIds()).toEqual([1, 2]);
     expect(openCount).toHaveBeenCalledTimes(1);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
 
     answer([{ n: '11' }]);
     await vi.advanceTimersByTimeAsync(0);

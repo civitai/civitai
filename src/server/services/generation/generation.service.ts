@@ -69,6 +69,7 @@ import {
 import { getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { getGenerationFile } from '~/server/utils/resource-air';
 import { withSpan } from '~/server/utils/otel-helpers';
+import { canAccessGenerationResource } from '~/server/utils/resource-access';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';
 
@@ -77,9 +78,12 @@ import {
   toGateRuleViews,
   canGenerateBlockedTargets,
   gateRuleSchema,
+  gatingTargets,
+  isTargetedBy,
   type CanGenerateBlockedTargets,
   type GateRule,
   type GateRuleView,
+  type GateUserCtx,
 } from '~/shared/generation/gates';
 import {
   applicableMessagesFor,
@@ -101,9 +105,7 @@ import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isDefined } from '~/utils/type-guards';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
-  baseModelByName,
   isBaseModelGenerationDisabled,
-  ecosystemById,
   SELF_HOSTED_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
 import { getVisibleSystemWildcardSetIdsByVersionId } from '~/server/services/generation/version-generation-state.service';
@@ -1248,7 +1250,6 @@ export function getResourceCanGenerate({
   hiddenGates: CanGenerateBlockedTargets;
 }): boolean {
   const isUnavailable = isGenerationDisabled(resource.flags);
-  const isOwnedByUser = !!user.id && user.id === resource.modelUserId;
   const covered =
     (resource.covered || explicitCoveredModelVersionIds.includes(resource.id)) && !isUnavailable;
 
@@ -1259,31 +1260,12 @@ export function getResourceCanGenerate({
   const hasValidStatus =
     validGenerationStatuses.includes(resource.status) ||
     (resource.status === 'Scheduled' && !!user.isModerator);
-  const isPrivate =
-    resource.availability === 'Private' || ['Draft', 'Training'].includes(resource.status);
 
-  let canGenerate = !!(
-    covered &&
-    hasValidStatus &&
-    (!isPrivate || isOwnedByUser || user.isModerator)
-  );
-
-  if (resource.usageControl === 'InternalGeneration' && !user.isModerator) {
-    canGenerate = false;
-  }
+  let canGenerate = !!(covered && hasValidStatus && canAccessGenerationResource(resource, user));
 
   if (isBaseModelGenerationDisabled(resource.baseModel)) canGenerate = false;
 
-  if (canGenerate) {
-    const baseModel = baseModelByName.get(resource.baseModel);
-    const ecosystemKey = baseModel ? ecosystemById.get(baseModel.ecosystemId)?.key : undefined;
-    if (
-      hiddenGates.versionIds.has(resource.id) ||
-      (ecosystemKey && hiddenGates.ecosystems.has(ecosystemKey))
-    ) {
-      canGenerate = false;
-    }
-  }
+  if (canGenerate && isTargetedBy(resource, hiddenGates)) canGenerate = false;
 
   return canGenerate;
 }
@@ -1331,6 +1313,11 @@ export type ResolveCanGenerateContext = {
   user: { id?: number; isModerator?: boolean };
   sfwOnly: boolean;
   wildcardsEnabled: boolean;
+  /**
+   * Leave gate rules out of `canGenerate`. For the orchestrator's read (mini), where gated versions
+   * carry `checkPermission` instead and the permission check decides per generating user.
+   */
+  ignoreGateRules?: boolean;
 };
 
 export type VersionGenerationState = {
@@ -1349,7 +1336,7 @@ export async function resolveCanGenerateForVersions(
   const needsStandardGate = versions.some((v) => v.modelType !== 'Wildcards');
   const [visibleWildcardSetIdByVersionId, hiddenGates] = await Promise.all([
     getVisibleSystemWildcardSetIdsByVersionId(wildcardVersionIds, { sfwOnly: ctx.sfwOnly }),
-    needsStandardGate
+    needsStandardGate && !ctx.ignoreGateRules
       ? getCanGenerateHiddenGates(ctx.user)
       : Promise.resolve<CanGenerateBlockedTargets>({
           ecosystems: new Set(),
@@ -1405,6 +1392,75 @@ export async function resolveCanGenerateForVersions(
   }
 
   return result;
+}
+
+export type GateSubjectVersion = {
+  id: number;
+  baseModel: string;
+  generationAlias?: GenerationAlias | null;
+};
+type GateSubject = { id: number; baseModel: string };
+
+/**
+ * What a gate rule can name for each version: the version itself, and its generation-alias target
+ * matched under the target's own base model (an alias generates with its target).
+ */
+export async function getGateSubjects(
+  versions: GateSubjectVersion[]
+): Promise<Map<number, GateSubject[]>> {
+  const aliasTarget = (v: GateSubjectVersion) => {
+    const id = v.generationAlias?.versionId;
+    return id && id !== v.id ? id : undefined;
+  };
+  const targetIds = [...new Set(versions.map(aliasTarget).filter(isDefined))];
+  const targets = targetIds.length
+    ? await dbRead.modelVersion.findMany({
+        where: { id: { in: targetIds } },
+        select: { id: true, baseModel: true },
+      })
+    : [];
+  const targetById = new Map(targets.map((t) => [t.id, t]));
+  return new Map(
+    versions.map((v) => {
+      const subjects: GateSubject[] = [{ id: v.id, baseModel: v.baseModel }];
+      const targetId = aliasTarget(v);
+      if (targetId)
+        subjects.push(targetById.get(targetId) ?? { id: targetId, baseModel: v.baseModel });
+      return [v.id, subjects];
+    })
+  );
+}
+
+/**
+ * The versions a gating rule (hidden or disabled) holds back. With an `audience`, only the rules
+ * that gate that user count; without one, every gating rule does, which is what the orchestrator
+ * must ask the permission check about. Every version counts while the rules have never been read.
+ */
+export function gatedVersionIds(
+  subjects: Map<number, GateSubject[]>,
+  ruleState: LastKnownRead<GateRule[]>,
+  audience?: GateUserCtx
+): Set<number> {
+  if (!ruleState.known) return new Set(subjects.keys());
+  const rules = audience ? applicableRulesFor(ruleState.value, audience) : ruleState.value;
+  const targets = gatingTargets(rules);
+  return new Set(
+    [...subjects].filter(([, s]) => s.some((r) => isTargetedBy(r, targets))).map(([id]) => id)
+  );
+}
+
+/** Who a user is to the gate rules; no user is a free, non-tester visitor. */
+export async function getGateAudience(user?: {
+  id?: number;
+  isModerator?: boolean;
+  tier?: string | null;
+}): Promise<GateUserCtx> {
+  if (!user?.id) return { isModerator: false, isMember: false, hasTestingAccess: false };
+  return {
+    isModerator: !!user.isModerator,
+    isMember: (user.tier ?? 'free') !== 'free',
+    hasTestingAccess: await resolveTestingAccess(user),
+  };
 }
 
 export async function getResourceData(

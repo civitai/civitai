@@ -15,8 +15,7 @@ beforeAll(async () => {
       id int PRIMARY KEY, url text NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1,
       ingestion "ImageIngestionStatus" NOT NULL, "needsReview" text,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false, metadata jsonb, "scanJobs" jsonb,
-      "modelRestricted" boolean NOT NULL DEFAULT false
-    );
+      "modelRestricted" boolean NOT NULL DEFAULT false, "blockedFor" text, "userId" int);
     CREATE TABLE "User" (
       id int PRIMARY KEY, username text, email text, image text, "profilePictureId" int,
       "deletedAt" timestamp, "bannedAt" timestamp, muted boolean DEFAULT false, meta jsonb

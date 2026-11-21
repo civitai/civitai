@@ -48,7 +48,6 @@ import { openMysteryBox } from '../mystery-box.service';
 import { ITEM_HOLDER_BUSY_MESSAGE, ITEM_HOLDER_LOCK_CLASS } from '../item-holder-lock';
 import { modelQueryError, rawQueryError } from '~/test-utils/prismaLockTimeout';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const HOLDER = 1;
 const OTHER_USER = 2;
@@ -377,7 +376,6 @@ beforeEach(() => {
   mocks.syncRoster.mockImplementation(async () => {
     world.log.push('sync:roster');
   });
-  loggingMock.logToAxiom.mockClear();
 });
 
 describe('opening a mystery box', () => {
@@ -600,28 +598,6 @@ describe('opening a mystery box', () => {
     nothingOpened();
     expect(mocks.refreshStickers).not.toHaveBeenCalled();
     expect(mocks.syncRoster).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
-  });
-
-  it('logs each draw once, and a replay not again', async () => {
-    mocks.randomInt.mockReturnValueOnce(3).mockReturnValueOnce(0);
-    await open();
-    await open();
-    expect(loggingMock.logToAxiom.mock.calls).toEqual([
-      [
-        expect.objectContaining({
-          name: 'mystery-box-open',
-          userId: HOLDER,
-          boxItemId: BOX_ITEM.toString(),
-          boxVersion: VERSION,
-          tierId: RARE,
-          contentId: 3,
-          tierRoll: 3,
-          itemRoll: 0,
-          eligibleWeight: 4,
-        }),
-      ],
-    ]);
   });
 
   it('a cache failure after commit does not fail the open', async () => {
@@ -792,8 +768,6 @@ describe('an open that already happened', () => {
     expect(world.openings.size).toBe(1);
     expect([a.replayed, b.replayed].sort()).toEqual([false, true]);
     expect({ ...a, replayed: true }).toEqual({ ...b, replayed: true });
-    // The one that waited on the lock answers from the record: one draw, one log line.
-    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
   });
 
   it("another user's opened box is not answered", async () => {

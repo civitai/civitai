@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import { TokenScope } from '@civitai/auth/token-scope';
 import type * as CivitaiAuth from '@civitai/auth';
 
@@ -45,7 +46,8 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
   maybeCreateSessionSigner: () => undefined,
 }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
   checkOAuthRateLimit: async () => true,
   tokenSecretChecksExhausted: async () => false,
 }));
@@ -122,6 +124,20 @@ describe('client_credentials grant', () => {
       // Marks the token as the client's own, which the user token exchange refuses as a subject.
       name: 'oauth-cc:game-frame',
     });
+  });
+
+  it('refuses an app block’s client for client_credentials and refresh_token, even with the grants', async () => {
+    h.client = confidentialClient({ id: 'appblk-some-app' });
+    const cc = await token(CATALOG, SECRET, { client_id: 'appblk-some-app' });
+    expect(cc.body.error).toBe('invalid_client');
+
+    const refresh = await token(null, SECRET, {
+      client_id: 'appblk-some-app',
+      grant_type: 'refresh_token',
+      refresh_token: 'civ_oauth_refresh',
+    });
+    expect(refresh.body.error).toBe('invalid_client');
+    expect(h.inserts).toHaveLength(0);
   });
 
   it('grants only UserRead when no scope is requested', async () => {

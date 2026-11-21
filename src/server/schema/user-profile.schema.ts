@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { showcaseHiddenOnMask } from '~/shared/constants/profile-showcase.constants';
 import { constants } from '~/server/common/constants';
 import { imageReferenceInputSchema } from '~/server/schema/image.schema';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
@@ -95,6 +96,13 @@ export const showcaseSectionSchema = z.object({
       }),
     })
     .optional(),
+  /** `ShowcaseHiddenOn` bits: the sites this section is not shown on. */
+  hiddenOn: z
+    .number()
+    .int()
+    .min(0)
+    .refine((bits) => (bits & ~showcaseHiddenOnMask) === 0, 'Unknown site')
+    .optional(),
 });
 
 /** The user-authored text of showcase sections: titles, button labels and links. */
@@ -118,7 +126,7 @@ export const setShowcaseSectionsSchema = z.object({
 export type AddToShowcaseSectionSchema = z.infer<typeof addToShowcaseSectionSchema>;
 export const addToShowcaseSectionSchema = z.object({
   sectionId: showcaseSectionSchema.shape.id,
-  entityType: z.literal('Image'),
+  entityType: z.enum(showcaseSectionTypes),
   entityId: z.number().int().positive(),
 });
 

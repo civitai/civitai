@@ -23,6 +23,7 @@ const sortOptions: { value: ServiceOfferingFeedSort; label: string }[] = [
   { value: 'price_asc', label: 'Price: low to high' },
   { value: 'price_desc', label: 'Price: high to low' },
 ];
+const happySortOption = { value: 'happy' as const, label: 'Most happy buyers' };
 
 export default function ServicesFeedPage() {
   const [sort, setSort] = useState<ServiceOfferingFeedSort>('newest');
@@ -54,7 +55,7 @@ export default function ServicesFeedPage() {
             </Stack>
             <Select
               aria-label="Sort services"
-              data={sortOptions}
+              data={features.creatorServicesNext ? [...sortOptions, happySortOption] : sortOptions}
               value={sort}
               onChange={(value) => value && setSort(value as ServiceOfferingFeedSort)}
               allowDeselect={false}

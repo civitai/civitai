@@ -71,8 +71,13 @@ vi.mock('~/server/services/csam.service-new', async (importOriginal) => ({
 
 const { bulkAddBlockedImages } = await import('~/server/services/image.service');
 const { logToAxiom } = await import('~/server/logging/client');
-const { CSAM_BLOCKLIST_FAILED_MESSAGE, createExternalCsamReportHandler, fileCsamReport } =
-  await import('~/server/controllers/csam.controller');
+const {
+  CSAM_BLOCKLIST_FAILED_MESSAGE,
+  CSAM_HELD_MEDIA_COPY_FAILED_MESSAGE,
+  createExternalCsamReportHandler,
+  fileCsamReport,
+} = await import('~/server/controllers/csam.controller');
+const { HeldMediaCopyError } = await import('~/server/services/image.service');
 
 const OWNER = 20;
 const OTHER_OWNER = 21;
@@ -172,7 +177,12 @@ describe('fileCsamReport', () => {
       .mocked(logToAxiom)
       .mock.calls.map(([entry]) => entry)
       .filter((entry) => entry.message === 'CSAM blocklist write failed');
-    expect(logged.payload).toEqual({ reportedById: MOD, csamReportId: 900, imageCount: 1 });
+    expect(logged.payload).toEqual({
+      reportedById: MOD,
+      csamReportId: 900,
+      imageCount: 1,
+      failedStore: 'blocklist',
+    });
     expect(JSON.stringify(logged, (_k, v) => (typeof v === 'bigint' ? `${v}n` : v))).not.toContain(
       '123'
     );
@@ -180,6 +190,54 @@ describe('fileCsamReport', () => {
     expect(bulkAddBlockedImages).toHaveBeenCalledWith(
       expect.objectContaining({ data: [{ hash: BigInt(123), reason: 'CSAM' }] })
     );
+  });
+
+  // Ruled by the moderation lead: the blocklist entry landed, so the moderator is told the copy is
+  // logged for repair, with no instruction to re-block (that would mean viewing the media).
+  it('names the copy as the failed store and says it is logged for repair when only the copy fails', async () => {
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: BigInt(123) }] as never);
+    vi.mocked(bulkAddBlockedImages).mockRejectedValueOnce(
+      new HeldMediaCopyError(new Error('INSERT INTO "BlockedImage" (hash, reason) VALUES (123, …)'))
+    );
+    vi.mocked(logToAxiom).mockClear();
+
+    await expect(file(OWNER, [IMAGE])).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+      message: CSAM_HELD_MEDIA_COPY_FAILED_MESSAGE,
+    });
+
+    const [logged] = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([entry]) => entry)
+      .filter((entry) => entry.message === 'CSAM blocklist write failed');
+    expect(logged.payload).toEqual({
+      reportedById: MOD,
+      csamReportId: 900,
+      imageCount: 1,
+      failedStore: 'held-media-copy',
+    });
+    expect(JSON.stringify(logged, (_k, v) => (typeof v === 'bigint' ? `${v}n` : v))).not.toContain(
+      '123'
+    );
+  });
+
+  it('still files and removes when a filed image has no hash, logging only its id and step', async () => {
+    dbMock.dbWrite.image.findMany.mockResolvedValue([
+      { id: IMAGE, pHash: null },
+      { id: OTHER_IMAGE, pHash: BigInt(123) },
+    ] as never);
+    vi.mocked(logToAxiom).mockClear();
+
+    await file(OWNER, [IMAGE, OTHER_IMAGE]);
+
+    expect(softDeleteUser).toHaveBeenCalled();
+    expect(
+      vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([e]) => e as { name?: string; payload?: unknown })
+        .filter((e) => e.name === 'csam-blocklist-no-hash')
+        .map((e) => e.payload)
+    ).toEqual([{ imageId: IMAGE, step: 'csam-report' }]);
   });
 
   it('leaves the blocklist write to after the removal, not to the report service', async () => {

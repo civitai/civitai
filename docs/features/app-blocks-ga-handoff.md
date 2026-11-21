@@ -114,9 +114,8 @@ migrations to hand-apply.**
 - **Other cookie-auth POST routes still bypass the CSRF check.** #2529 was deliberately
   route-scoped. Other state-changing `ModEndpoint`/`AuthedEndpoint` POST/PUT routes that bypass
   `createContext`'s same-origin check include (HTTP method verified): `mod/set-image-nsfw-level`,
-  `mod/csam-upload`, `mod/clavata-image-process`, `mod/scanner-policies/export-dataset`,
-  `mod/new-order/rate-limit-config` (PUT), `admin/manage-sanity-checks`,
-  `admin/temp/membership-buzz-backfill`. One-place fix: add
+  `mod/csam-upload`, `mod/scanner-policies/export-dataset`,
+  `mod/new-order/rate-limit-config` (PUT), `admin/manage-sanity-checks`. One-place fix: add
   `if (isProd && !isAllowedOriginRequest(req)) return 403` to `ModEndpoint`/`AuthedEndpoint` in
   `endpoint-helpers.ts` with a bearer/API-key exemption mirroring `createContext`. (GET-with-
   side-effects routes like `auth/impersonate` are a separate, non-Origin-allowlist concern.)

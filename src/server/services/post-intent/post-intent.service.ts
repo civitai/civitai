@@ -514,7 +514,7 @@ export async function publishIntent({
     : [];
 
   const detail = description ? plainTextToPostHtml(description) : null;
-  const { createImage } = await import('~/server/services/image.service');
+  const { createImage, deleteImages } = await import('~/server/services/image.service');
   const imageIds: number[] = [];
   let post: { id: number };
   try {
@@ -579,10 +579,12 @@ export async function publishIntent({
       return created;
     });
   } catch (err) {
-    if (imageIds.length)
-      await dbWrite.image
-        .deleteMany({ where: { id: { in: imageIds }, userId, postId: null } })
-        .catch(() => null);
+    // The files stay: the share is retried with the same upload keys.
+    await deleteImages(imageIds, {
+      actor: { id: userId },
+      onlyWhere: Prisma.sql`"postId" IS NULL`,
+      keepStoredFiles: true,
+    }).catch(() => null);
     throw err;
   }
 

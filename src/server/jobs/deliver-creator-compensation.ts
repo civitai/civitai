@@ -8,6 +8,7 @@ import { withRetries } from '~/server/utils/errorHandling';
 import dayjs from 'dayjs';
 import { formatDate } from '~/utils/date-helpers';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import { PLATFORM_REVENUE_SOURCES } from '@civitai/buzz';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import {
@@ -114,13 +115,32 @@ type ResourceRow = {
   modelVersionId: number;
   amount: number;
   accountType: BuzzAccountType;
-  source: 'tip' | 'compensation' | 'licenseFee';
+  source: string;
 };
 
 const BATCH_SIZE = 100;
 const COMP_START_DATE = new Date('2024-08-01');
 
 type PayoutSource = 'compensation' | 'tip' | 'licenseFee';
+const KNOWN_SOURCES = new Set<string>([
+  'compensation',
+  'tip',
+  'licenseFee',
+  ...PLATFORM_REVENUE_SOURCES,
+] satisfies string[]);
+
+/** Rows by source for the sources this job does not recognise; they are paid as compensation. */
+export function unknownSourceTotals(rows: { source: string; amount: number }[]) {
+  const totals: Record<string, { rows: number; amount: number }> = {};
+  for (const { source, amount } of rows) {
+    if (KNOWN_SOURCES.has(source)) continue;
+    const total = (totals[source] ??= { rows: 0, amount: 0 });
+    total.rows++;
+    total.amount += Number(amount);
+  }
+  return totals;
+}
+
 export type PayoutTransaction = {
   fromAccountId: number;
   toAccountId: number;
@@ -160,6 +180,8 @@ export function buildPayoutTransactions(
       const licenseTotals: Partial<Record<BuzzAccountType, number>> = {};
 
       for (const row of userRows) {
+        // Platform revenue is never paid; any other source, one-off recoveries included, pays below.
+        if (PLATFORM_REVENUE_SOURCES.has(row.source)) continue;
         const isCash = CASH_SETTLED_ALIASES.has(row.accountType);
         const amount =
           row.source === 'licenseFee' && isCash ? Math.floor(row.amount / 10) : row.amount;
@@ -253,6 +275,20 @@ export async function runPayout(lastUpdate: Date) {
   if (!rows.length) {
     log('No compensations found, skipping payout');
     return;
+  }
+
+  const unknown = unknownSourceTotals(rows);
+  if (!isEmpty(unknown)) {
+    const message = `Creator compensation for ${dateStr} pays sources it does not recognise as compensation: ${Object.keys(
+      unknown
+    ).join(', ')}`;
+    log(`⚠️ ${message}`);
+    logToAxiom({
+      type: 'warning',
+      name: 'creator-compensation-unknown-source',
+      message,
+      payload: { date: dateStr, sources: unknown },
+    });
   }
 
   const creatorsToPay: Record<number, ResourceRow[]> = {};

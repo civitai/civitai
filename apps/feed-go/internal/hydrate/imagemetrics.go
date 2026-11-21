@@ -32,24 +32,61 @@ type ClickHouse interface {
 // The image-metrics miss path is MetricService.fetch's miss half (event-engine-common/services/
 // metrics.ts, the pinned submodule) for the images getImageMetricsObject reads, with its constants:
 const (
-	metricCacheTTL        = 12 * time.Hour         // CACHE_TTL: a populated hash
-	metricMissTTL         = 5 * time.Minute        // MISS_CACHE_TTL: a `notFound` hash
-	metricRefreshAfter    = int64(60 * 60)         // REFRESH_AFTER (s)
-	metricRecentEventTTL  = int64(15 * 60)         // METRIC_RECENT_EVENT_TTL (s, utils/cache-keys.ts)
-	metricLockTTL         = 10 * time.Second       // LOCK_DURATION
-	metricLockHeartbeat   = 5 * time.Second        // LOCK_HEARTBEAT_MS
-	metricLockRetryDelay  = 200 * time.Millisecond // LOCK_RETRY_DELAY
-	metricLockMaxRetries  = 15                     // LOCK_MAX_RETRIES
-	metricFetchBatch      = 1000                   // FETCH_BATCH_SIZE
-	metricPointLookupMax  = 100                    // POINT_LOOKUP_MAX_IDS
-	metricTimedOutTTL     = metricCacheTTL         // LOOKUP_TIMED_OUT_TTL
-	metricPopulatedAt     = "_populatedAt"         // POPULATED_AT_FIELD
+	metricCacheTTL        = 12 * time.Hour   // CACHE_TTL: a populated hash
+	metricMissTTL         = 5 * time.Minute  // MISS_CACHE_TTL: a `notFound` hash
+	metricRefreshAfter    = int64(60 * 60)   // REFRESH_AFTER (s)
+	metricRecentEventTTL  = int64(15 * 60)   // METRIC_RECENT_EVENT_TTL (s, utils/cache-keys.ts)
+	metricLockTTL         = 10 * time.Second // LOCK_DURATION
+	metricLockHeartbeat   = 5 * time.Second  // LOCK_HEARTBEAT_MS
+	metricFetchBatch      = 1000             // FETCH_BATCH_SIZE
+	metricPointLookupMax  = 100              // POINT_LOOKUP_MAX_IDS
+	metricTimedOutTTL     = metricCacheTTL   // LOOKUP_TIMED_OUT_TTL
+	metricPopulatedAt     = "_populatedAt"   // POPULATED_AT_FIELD
 	metricAggTable        = "entityMetricDailyAgg_v2"
 	metricEntityTypeImage = "Image"
 	// metricPopulateBound bounds a write-back populate that outlives its request (see
 	// lookupImageMetrics); Node's own bound is the client's 300 s request_timeout.
 	metricPopulateBound = time.Minute
 )
+
+// The wait on a populate lock another process holds is feed-go's own, not Node's. Node's fetch
+// re-reads the hash every LOCK_RETRY_DELAY (200 ms), up to LOCK_MAX_RETRIES (15) times: ~3 s, all of
+// its caller's budget (nodeMetricsBudget). feed-go waits at most metricsLockWait (default
+// defaultMetricsLockWait, FEED_GO_METRICS_LOCK_WAIT_MS) and then falls back (`metrics-miss-failed`),
+// rather than hold the page for up to the whole lookup bound (metricsTimeout) on another process's
+// populate. It re-reads every metricLockPollInterval (100 ms), half Node's delay, so the default
+// bound gets five reads (100 … 500 ms) where Node's cadence would get two (200, 400 ms), a hash that
+// lands is taken within 100 ms of landing, and one wait makes fewer reads than Node's 15 (or than
+// the up to ten feed-go made at 200 ms inside its 2 s lookup bound).
+const (
+	metricLockPollInterval = 100 * time.Millisecond
+	defaultMetricsLockWait = 500 * time.Millisecond
+)
+
+// metricsLockWait is the bound of one wait on populate locks another process holds:
+// MetricsLockWait (FEED_GO_METRICS_LOCK_WAIT_MS), or defaultMetricsLockWait when that is not positive.
+func (c *MissCompute) metricsLockWait() time.Duration {
+	if c.MetricsLockWait > 0 {
+		return c.MetricsLockWait
+	}
+	return defaultMetricsLockWait
+}
+
+// sleepLockWait waits d before a lock-wait read, or returns ctx's error when it ends first. Tests
+// replace the timer (waitSleep).
+func (c *MissCompute) sleepLockWait(ctx context.Context, d time.Duration) error {
+	if c.waitSleep != nil {
+		return c.waitSleep(ctx, d)
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
 
 // metricHeartbeatTicks starts the ticker that re-arms held locks every LOCK_HEARTBEAT_MS and
 // returns its channel and its stop (tests drive the channel themselves).
@@ -136,13 +173,12 @@ func (c *MissCompute) metricsTimeout() time.Duration {
 	return min(d, metricsTimeoutMax)
 }
 
-// errMetricsWaitExhausted is a lookup whose ids another process holds the populate lock of and never
-// filled while it waited. Node's fetch answers those ids zeros only after 15 × 200 ms of sleeps, which
-// is all of its caller's 3 s budget (nodeMetricsBudget) spent after the budget started, so the caller
-// always times out first and Node answers statsUnknown. The page falls back instead of answering
-// zeros. (metricsTimeoutMax already ends the lookup before the wait can run out; this holds without
-// that bound too.)
-var errMetricsWaitExhausted = errors.New("metrics wait: the populate lock's holder did not fill the hash within Node's budget")
+// errMetricsWaitExhausted is a lookup whose ids another process holds the populate lock of and did
+// not fill within the lock-wait bound (metricsLockWait). Node's fetch answers those ids zeros only
+// after 15 × 200 ms of sleeps, which is all of its caller's 3 s budget (nodeMetricsBudget) spent after
+// the budget started, so the caller always times out first and Node answers statsUnknown. The page
+// falls back (`metrics-miss-failed`) instead of answering zeros.
+var errMetricsWaitExhausted = errors.New("metrics wait: the populate lock's holder did not fill the hash within the lock-wait bound")
 
 // fillMetrics answers the image ids whose metric hash is absent, into out, as
 // getImageMetricsObject answers them when its MetricService read resolves: every id gets an entry
@@ -183,13 +219,14 @@ func (s *Sources) fillMetrics(ctx context.Context, miss []int, out map[int]Metri
 // lookupImageMetrics is MetricService.fetch over ids that all missed: per id, the counts as fetch
 // returns them before its zero fill (a record of metricType → count; empty for an image with none).
 //
-//   - With write-back off this service writes nothing: it only reads the populate lock, so an id
-//     another process is populating is waited on, never queried again.
+//   - With the metric hashes not written back (MissMetrics not in WriteBack) this service writes
+//     nothing: it only reads the populate lock, so an id another process is populating is waited
+//     on, never queried again.
 //   - A write-back populate outlives its request: when the request's bound ends first the lookup
 //     fails (the request falls back) and the populate still fills the cache, as Node's read does.
 func (s *Sources) lookupImageMetrics(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
 	c := s.Compute
-	writeBack := c.WriteBack
+	writeBack := c.writes(MissMetrics)
 	locked, others, err := s.metricLocks(ctx, ids, writeBack)
 	if err != nil {
 		return nil, err
@@ -342,14 +379,26 @@ func (s *Sources) metricLookupSettings(ctx context.Context, ids []int) []chread.
 	return metricPointSettings
 }
 
+// metricsClickHouse is the reader one populate sends its queries to: the dedicated entity-metrics
+// ClickHouse when it is configured and `image-metrics-dedicated-clickhouse` reads on, else the
+// shared one (getImageMetricService in the Node app's image.service makes the same choice). Read once
+// per populate, so every batch of one populate goes to the same server.
+func (c *MissCompute) metricsClickHouse() ClickHouse {
+	if c.MetricsClickHouse != nil && c.MetricsClickHouseOn != nil && c.MetricsClickHouseOn() {
+		return c.MetricsClickHouse
+	}
+	return c.ClickHouse
+}
+
 // fetchImageMetrics is fetchFromClickhouse: the counts per image of ids, one query per batch of
 // 1000, the settings decided once for the whole populate (returned, for the timeout marking).
 func (s *Sources) fetchImageMetrics(ctx context.Context, ids []int) (map[int]jspack.Obj, []chread.Setting, error) {
 	settings := s.metricLookupSettings(ctx, ids)
+	ch := s.Compute.metricsClickHouse()
 	out := map[int]jspack.Obj{}
 	for start := 0; start < len(ids); start += metricFetchBatch {
 		batch := ids[start:min(start+metricFetchBatch, len(ids))]
-		rows, err := s.Compute.ClickHouse.Query(ctx, sqlImageMetrics(batch), settings)
+		rows, err := ch.Query(ctx, sqlImageMetrics(batch), settings)
 		if err != nil {
 			return nil, settings, err
 		}
@@ -405,7 +454,9 @@ func metricRow(row map[string]any) (int, string, int, error) {
 
 // writeMetricHashes is populate's write: per id, hReplaceStampedEx of its counts (a `notFound: '1'`
 // hash for an image with none, 5 min; else 12 h), stamped now, or aged to refresh soon when the
-// event engine marked a recent event on it. A failed write fails the populate, as Node's does.
+// event engine marked a recent event on it. A failed write fails the populate, as Node's does. Each
+// id's write is counted and logged with its result (recordWrite): error when its command failed,
+// written otherwise (the script replaces the hash, so there is no nx_lost).
 func (s *Sources) writeMetricHashes(ctx context.Context, ids []int, counts map[int]jspack.Obj) error {
 	now := s.Compute.now().Unix()
 	stamp, ifMarker := strconv.FormatInt(now, 10), strconv.FormatInt(now-metricRefreshAfter+metricRecentEventTTL, 10)
@@ -427,12 +478,19 @@ func (s *Sources) writeMetricHashes(ctx context.Context, ids []int, counts map[i
 		}
 		return nil
 	})
-	for _, cmd := range cmds {
-		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
-			return fmt.Errorf("metrics write: %w", err)
+	var first error
+	for i, cmd := range cmds {
+		result := WriteWritten
+		err := cmd.Err()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			result = WriteError
+			if first == nil {
+				first = fmt.Errorf("metrics write: %w", err)
+			}
 		}
+		s.Compute.recordWrite(ctx, MissMetrics, metricHashKey(ids[i]), ids[i], result, err)
 	}
-	return nil
+	return first
 }
 
 // markMetricLookupTimedOut is markLookupTimedOut: the next lookup naming these ids runs uncapped.
@@ -493,9 +551,12 @@ func (s *Sources) heartbeatMetricLocks(ctx context.Context, ids []int) func() {
 	}
 }
 
-// awaitMetricHashes is fetch's waiter loop over ids another process is populating: up to 15 reads,
-// 200 ms apart, each taking the hashes that landed. A failed read fails the lookup, as Node's throws;
-// so does an id still unfilled after the last read (errMetricsWaitExhausted). Traced
+// awaitMetricHashes is fetch's waiter loop over ids another process is populating, bounded by
+// metricsLockWait: a read every metricLockPollInterval, the last one at the bound, each taking the
+// hashes that landed. The bound starts here, after this lookup's own populate of the ids it was free
+// to query (which keeps the lookup's own bound, metricsTimeout), and the lookup's context still ends
+// it sooner. A failed read fails the lookup, as Node's throws; so does an id still unfilled after the
+// last read (errMetricsWaitExhausted). Traced
 // (MissCompute.traced), the whole wait is one `metrics lock wait` span: how many ids, how many reads
 // and the outcome (waitOutcome), failed as the store spans are when it does not end filled.
 func (s *Sources) awaitMetricHashes(ctx context.Context, ids []int, out map[int]jspack.Obj) error {
@@ -511,18 +572,20 @@ func (s *Sources) awaitMetricHashes(ctx context.Context, ids []int, out map[int]
 	return err
 }
 
-// pollMetricHashes is awaitMetricHashes' loop; polls is how many Redis reads it made.
+// pollMetricHashes is awaitMetricHashes' loop; polls is how many Redis reads it made. The delays
+// before the reads add up to the bound (the last one cut short to land on it); each read's own
+// latency comes on top.
 func (s *Sources) pollMetricHashes(ctx context.Context, ids []int, out map[int]jspack.Obj) (int, error) {
+	c := s.Compute
+	bound := c.metricsLockWait()
 	polls := 0
 	pending := slices.Clone(ids)
-	for retry := 0; len(pending) > 0 && retry < metricLockMaxRetries; retry++ {
-		t := time.NewTimer(metricLockRetryDelay)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return polls, ctx.Err()
-		case <-t.C:
+	for waited := time.Duration(0); len(pending) > 0 && waited < bound; {
+		d := min(metricLockPollInterval, bound-waited)
+		if err := c.sleepLockWait(ctx, d); err != nil {
+			return polls, err
 		}
+		waited += d
 		polls++
 		cmds := make([]*redis.MapStringStringCmd, len(pending))
 		_, _ = s.Cache.Pipelined(ctx, func(p redis.Pipeliner) error {

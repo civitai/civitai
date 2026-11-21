@@ -32,7 +32,7 @@ vi.mock('~/server/meilisearch/client', () => ({
   updateDocs: m.updateDocs,
 }));
 
-import unblockImages from '~/pages/api/mod/unblock-images';
+import unblockImages from '~/server/api-routes/mod/unblock-images';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // `~/server/db/client` and `~/server/logging/client` are the global canonical mocks (setup.ts).

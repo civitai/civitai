@@ -74,6 +74,8 @@ import {
   LEGACY_TOKEN_SCOPE_MASK,
   validateConnectScopeJustifications,
   SENSITIVE_TOKEN_SCOPES,
+  OFFLINE_ACCESS_JUSTIFICATION_KEY,
+  offlineAccessJustification,
   tokenScopeMaskToList,
 } from '~/shared/constants/token-scope.constants';
 import {
@@ -1201,6 +1203,7 @@ function materialPatchChanges(
     sourceRepoUrl: string | null;
     issueTrackerUrl: string | null;
     connectRequestedScopes: number | null;
+    connectScopeJustifications: Prisma.JsonValue | null;
   }
 ): string[] {
   const changed: string[] = [];
@@ -1256,7 +1259,26 @@ function materialPatchChanges(
   ) {
     changed.push('requestedScopes');
   }
+  // The whole justification map is material: the moderator approved these reasons and
+  // offline_access decides hub offline access.
+  if (
+    patch.scopeJustifications !== undefined &&
+    canonicalJustifications(patch.scopeJustifications) !==
+      canonicalJustifications(live.connectScopeJustifications)
+  ) {
+    changed.push('scopeJustifications');
+  }
   return changed;
+}
+
+/** A justification map as a stable string: trimmed non-blank string values, keys sorted. */
+function canonicalJustifications(raw: unknown): string {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return '[]';
+  const entries = Object.entries(raw as Record<string, unknown>)
+    .map(([k, v]) => [k, typeof v === 'string' ? v.trim() : ''] as const)
+    .filter(([, v]) => v.length > 0)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return JSON.stringify(entries);
 }
 
 /**
@@ -1683,6 +1705,7 @@ export async function updateListing(opts: {
         sourceRepoUrl: listing.sourceRepoUrl,
         issueTrackerUrl: listing.issueTrackerUrl,
         connectRequestedScopes: listing.connectRequestedScopes,
+        connectScopeJustifications: listing.connectScopeJustifications,
       });
       if (material.length > 0) {
         throw new OffsiteRequestError(
@@ -1753,6 +1776,7 @@ export async function updateListing(opts: {
         sourceRepoUrl: listing.sourceRepoUrl,
         issueTrackerUrl: listing.issueTrackerUrl,
         connectRequestedScopes: listing.connectRequestedScopes,
+        connectScopeJustifications: listing.connectScopeJustifications,
       });
       if (!material) {
         // TRIVIAL-only edit → apply to the LIVE row in place (no re-review). Any
@@ -3409,7 +3433,8 @@ async function resolveOnsiteApprovalContentRating(
 
 /**
  * Approval gate for OAuth-CONNECT listings (PR3): every SENSITIVE requested scope
- * MUST carry a non-empty per-scope justification before the listing can go live.
+ * MUST carry a non-empty per-scope justification before the listing can go live, and so
+ * must a declared `offline_access` (checked first, whatever the scope set).
  * `SENSITIVE_TOKEN_SCOPES` (money / private / cross-user writes) is the flagged set;
  * a non-sensitive requested scope need not be justified. No-op for an external-link
  * listing (`connectClientId == null`) or a connect listing requesting no sensitive
@@ -3429,14 +3454,23 @@ function assertConnectSensitiveScopesJustified(listing: {
   connectScopeJustifications: Prisma.JsonValue | null;
 }): void {
   if (listing.connectClientId == null) return; // external-link listing — no scopes.
-  const sensitiveRequested = BigInt(listing.connectRequestedScopes ?? 0) & SENSITIVE_TOKEN_SCOPES;
-  if (sensitiveRequested === 0n) return; // nothing sensitive requested.
   const justifications =
     listing.connectScopeJustifications &&
     typeof listing.connectScopeJustifications === 'object' &&
     !Array.isArray(listing.connectScopeJustifications)
       ? (listing.connectScopeJustifications as Record<string, unknown>)
       : {};
+  // Key present with no accepted reason is a declaration with no reason: refused.
+  if (Object.hasOwn(justifications, OFFLINE_ACCESS_JUSTIFICATION_KEY)) {
+    if (offlineAccessJustification(justifications) == null) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'offline access is declared but has no justification; add one before approval',
+      });
+    }
+  }
+  const sensitiveRequested = BigInt(listing.connectRequestedScopes ?? 0) & SENSITIVE_TOKEN_SCOPES;
+  if (sensitiveRequested === 0n) return; // nothing sensitive requested.
   // Each sensitive requested bit is keyed by its TokenScope enum-key (same mapping
   // the author-side justification map uses).
   const missing = tokenScopeMaskToList(sensitiveRequested)
@@ -3910,6 +3944,9 @@ export async function approveExternalRequest(opts: {
     });
     return { before: primaryListing.contentRating, after: finalRating };
   });
+  // Superseded siblings are decisions too: tear down any agent review still running for them.
+  // After commit and fire-and-forget, so the transaction is unchanged; teardown is idempotent.
+  void teardownWithdrawnSiblingAgentReviews(appListingId, request.kind, publishRequestId);
   await recordListingRatingChangeAfterCommit({
     appListingId,
     slug: listing.slug,
@@ -4387,6 +4424,30 @@ async function applyApprovedRevision(opts: {
  * listing is instead transitioned to `removed` + a `delist` audit event (a rejected
  * re-review = a MOD takedown the owner cannot self-restore); see `closeTerminalListing`.
  */
+/**
+ * Tear down the agent review of every withdrawn request on this listing other than the approved
+ * one: the siblings an approve just superseded, plus any withdrawn earlier (a no-op for those).
+ * Never rejects.
+ */
+async function teardownWithdrawnSiblingAgentReviews(
+  appListingId: string,
+  kind: string,
+  approvedId: string
+): Promise<void> {
+  try {
+    // primary: the supersede that withdrew them committed a moment ago.
+    const siblings = await dbWrite.appListingPublishRequest.findMany({
+      where: { appListingId, kind, status: 'withdrawn', NOT: { id: approvedId } },
+      select: { id: true },
+    });
+    if (siblings.length === 0) return;
+    const { teardownConnectAgentReview } = await import('./connect-agent-review.service');
+    for (const s of siblings) await teardownConnectAgentReview(s.id);
+  } catch {
+    // Best-effort, like every decision-path teardown.
+  }
+}
+
 export async function rejectExternalRequest(opts: {
   publishRequestId: string;
   reviewerUserId: number;

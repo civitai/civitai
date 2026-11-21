@@ -271,3 +271,78 @@ describe('removeCollectionItem authorization', () => {
     expect(mockDbWrite.collectionItem.updateMany).not.toHaveBeenCalled();
   });
 });
+
+// A type-NULL collection holds items of every type, so `itemId` alone does not say which table it
+// is in; the caller's `type` does. A typed collection ignores the caller's `type`.
+describe('removeCollectionItem entity type', () => {
+  function arrange(collectionType: string | null) {
+    mockDbRead.$queryRaw.mockReset();
+    mockDbRead.user.findFirst.mockResolvedValue({ id: AUTO_FEATURE_USER_ID });
+    mockDbWrite.$queryRaw.mockReset();
+    mockDbWrite.collectionItem.updateMany.mockReset();
+    mockDbWrite.collectionItem.deleteMany.mockReset();
+    mockDbRead.$queryRaw
+      .mockResolvedValueOnce([
+        {
+          id: COLLECTION_ID,
+          read: 'Public',
+          write: 'Private',
+          userId: COLLECTION_OWNER_ID,
+          type: collectionType,
+          mode: null,
+          contributorPermissions: null,
+        },
+      ])
+      .mockResolvedValueOnce([{ userId: ITEM_AUTHOR_ID }]);
+    mockDbWrite.$queryRaw.mockResolvedValue([{ id: ITEM_ROW_ID, addedById: null, note: null }]);
+  }
+
+  /** The rendered SQL of the n-th call to a `$queryRaw` mock. */
+  function sqlOf(mock: typeof mockDbRead.$queryRaw, call: number) {
+    const [strings, ...values] = mock.mock.calls[call] as [string[], ...unknown[]];
+    return strings.map((chunk, i) => chunk + (i < values.length ? render(values[i]) : '')).join('');
+  }
+
+  function removeAs(type?: string) {
+    return removeCollectionItem({
+      collectionId: COLLECTION_ID,
+      itemId: ITEM_ID,
+      type,
+      userId: COLLECTION_OWNER_ID,
+    } as never);
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('removes an item from a type-NULL collection using the type the caller names', async () => {
+    arrange(null);
+
+    await expect(removeAs('Model')).resolves.toMatchObject({ type: 'Model' });
+    expect(sqlOf(mockDbRead.$queryRaw, 1)).toContain(`FROM "Model" WHERE id = ${ITEM_ID}`);
+    expect(sqlOf(mockDbWrite.$queryRaw, 0)).toContain(
+      `"collectionId" = ${COLLECTION_ID} AND "modelId" = ${ITEM_ID}`
+    );
+    expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: [ITEM_ROW_ID] } },
+    });
+  });
+
+  it('rejects removal from a type-NULL collection when the caller names no type', async () => {
+    arrange(null);
+
+    await expect(removeAs()).rejects.toThrow(/type is required/i);
+    expect(mockDbWrite.collectionItem.deleteMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.collectionItem.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("uses a typed collection's own type over the caller's", async () => {
+    arrange('Image');
+
+    await expect(removeAs('Model')).resolves.toMatchObject({ type: 'Image' });
+    expect(sqlOf(mockDbWrite.$queryRaw, 0)).toContain(
+      `"collectionId" = ${COLLECTION_ID} AND "imageId" = ${ITEM_ID}`
+    );
+  });
+});

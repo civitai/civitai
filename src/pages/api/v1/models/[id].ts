@@ -110,7 +110,7 @@ async function buildPublicModelResponse(
         const includeDownloadUrl = model.mode !== ModelModifier.Archived;
         const includeImages = model.mode !== ModelModifier.TakenDown;
 
-        return removeEmpty({
+        const shaped = removeEmpty({
           ...version,
           files: includeDownloadUrl
             ? castedFiles
@@ -173,6 +173,9 @@ async function buildPublicModelResponse(
               })}`
             : undefined,
         });
+        // removeEmpty drops empty arrays, but the docs promise `images` is [] when every image is
+        // left out, never missing.
+        return { ...shaped, images: shaped.images ?? [] };
       })
       .filter((x) => x),
   };

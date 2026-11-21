@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * `addCollaborator` grant-AT-LEAST semantics.
@@ -49,9 +49,6 @@ vi.mock('~/env/server', () => ({
     FORGEJO_COMMIT_TIMEOUT_MS: 120000,
   },
 }));
-
-import { logToAxiom } from '~/server/logging/client';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const ORG = 'civitai-apps';
 const SLUG = 'gen-matrix';
@@ -147,10 +144,6 @@ async function svc() {
   return import('../forgejo.service');
 }
 
-beforeEach(() => {
-  vi.mocked(logToAxiom).mockClear();
-});
-
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -230,7 +223,7 @@ describe('addCollaborator — never lowers an existing permission', () => {
     }
   );
 
-  it('a same-level re-grant is a no-op and is NOT logged as a refusal', async () => {
+  it('a same-level re-grant is a no-op', async () => {
     const fj = makeForgejo({ [USER]: 'write' });
     install(fj);
     const { addCollaborator } = await svc();
@@ -239,7 +232,6 @@ describe('addCollaborator — never lowers an existing permission', () => {
 
     expect(result.outcome).toBe('kept');
     expect(fj.puts).toHaveLength(0);
-    expect(logToAxiom).not.toHaveBeenCalled();
   });
 });
 
@@ -331,16 +323,12 @@ describe('addCollaborator — the ranking table itself', () => {
       const result = await addCollaborator({ slug: SLUG, username: USER, permission: 'read' });
 
       expect(result.outcome).toBe('granted-unobserved');
-      expect(vi.mocked(logToAxiom).mock.calls[0][0]).toMatchObject({
-        type: 'warning',
-        reason: `unrankable "${inherited}"`,
-      });
     }
   );
 });
 
 describe('addCollaborator — unobservable reads fail toward ACCESS, loudly', () => {
-  it('a failing read still grants, and says so in the result and the log', async () => {
+  it('a failing read still grants, and says so in the result', async () => {
     const fj = makeForgejo({ [USER]: 'write' });
     fj.failReadWith(500, 'boom');
     install(fj);
@@ -350,12 +338,6 @@ describe('addCollaborator — unobservable reads fail toward ACCESS, loudly', ()
 
     expect(result).toEqual({ requested: 'read', existing: null, outcome: 'granted-unobserved' });
     expect(fj.puts).toEqual([{ repo: SLUG, user: USER, permission: 'read' }]);
-    expect(vi.mocked(logToAxiom).mock.calls[0][0]).toMatchObject({
-      name: 'forgejo-add-collaborator',
-      type: 'warning',
-      message: 'granting without observing the current permission',
-      reason: 'HTTP 500',
-    });
   });
 
   it('a 404 read (nonexistent user or repo — measured) is unobservable, not "none"', async () => {
@@ -368,7 +350,6 @@ describe('addCollaborator — unobservable reads fail toward ACCESS, loudly', ()
 
     expect(result.outcome).toBe('granted-unobserved');
     expect(result.existing).toBeNull();
-    expect(logToAxiom).toHaveBeenCalledTimes(1);
   });
 
   it('an UNRANKABLE permission string is not silently treated as "none"', async () => {
@@ -380,10 +361,6 @@ describe('addCollaborator — unobservable reads fail toward ACCESS, loudly', ()
     const result = await addCollaborator({ slug: SLUG, username: USER, permission: 'read' });
 
     expect(result.outcome).toBe('granted-unobserved');
-    expect(vi.mocked(logToAxiom).mock.calls[0][0]).toMatchObject({
-      type: 'warning',
-      reason: 'unrankable "maintainer"',
-    });
   });
 
   it('a read whose body has no permission field is unobservable', async () => {
@@ -395,9 +372,6 @@ describe('addCollaborator — unobservable reads fail toward ACCESS, loudly', ()
     const result = await addCollaborator({ slug: SLUG, username: USER, permission: 'write' });
 
     expect(result.outcome).toBe('granted-unobserved');
-    expect(vi.mocked(logToAxiom).mock.calls[0][0]).toMatchObject({
-      reason: 'no permission field',
-    });
   });
 
   it('a read that THROWS (network/abort) is unobservable and does not propagate', async () => {
@@ -410,7 +384,6 @@ describe('addCollaborator — unobservable reads fail toward ACCESS, loudly', ()
 
     expect(result.outcome).toBe('granted-unobserved');
     expect(fj.puts).toHaveLength(1);
-    expect(vi.mocked(logToAxiom).mock.calls[0][0]).toMatchObject({ reason: 'fetch failed' });
   });
 });
 

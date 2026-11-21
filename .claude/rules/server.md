@@ -44,7 +44,7 @@ this table, not the nearby example.
 | Env                     | `import { env } from '~/env/server'`                                                                                                                              | `process.env` (outside instrumentation, bootstrap and client-reachable modules)                  |
 | Feature flag (server)   | add the key to `FLIPT_FEATURE_FLAGS`; read it with `isFlipt` / `isFliptSync` (`flipt/client.ts`)                                                                  | a server read of a key from anywhere but `FLIPT_FEATURE_FLAGS`                                   |
 | Page-based pagination   | `getPagination` / `getPagingData` (`utils/pagination-helpers.ts`)                                                                                                 | hand-computed `skip` / `take` and totals                                                         |
-| Moderator REST route    | `defineModeratorEndpoint` (`utils/moderator-endpoint.ts`)                                                                                                         | `ModEndpoint`                                                                                    |
+| Moderator REST route    | `defineModeratorEndpoint` (`utils/moderator-endpoint.ts`); the file goes in `src/server/api-routes/mod/`, then `pnpm run generate:api-routes` (`docs/dev/api-routes.md`) | `ModEndpoint`                                                                                    |
 | Client IP               | `resolveClientIp` (`utils/client-ip.ts`)                                                                                                                          | parsing forwarding headers yourself                                                              |
 
 `feature-flags.service.ts` stays the client-exposed availability layer, and it is in the client bundle:
@@ -52,6 +52,15 @@ never import `flipt/client` there as a value (it pulls `~/env/server` into the c
 and tests do not catch). A flag there that is also read on the server takes its key from a client-safe
 constant in `~/shared/constants/`, as `knightsApp` does with `KNIGHTS_APP_FLIPT_FLAG`, and its
 `FLIPT_FEATURE_FLAGS` member carries a comment naming that constant.
+
+## Predicates, limiters, readers and rules
+
+Before writing a predicate, limiter, table reader or SQL fragment, grep `packages/civitai-*` and the other
+apps (`apps/*/src/lib/server/`) for one by shape (the columns, flags or key it reads). Found one the caller
+cannot import? Move it into a shared package and call it from both; don't copy it. A decision two callers
+make (an access check, a visibility rule) is one function in a package, not a condition in each. Say in the
+PR body what you found, or which searches found nothing. A PR that changes a rule lists every place that
+decides it (grep the predicate, the columns it reads and the old behaviour) and changes each, or says why not.
 
 ## Scheduling a job
 

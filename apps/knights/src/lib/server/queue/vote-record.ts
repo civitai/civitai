@@ -1,4 +1,4 @@
-import { sql, type Transaction } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { asksBlockReason, blockReasonProblem } from '../../block-reasons';
@@ -11,6 +11,7 @@ import { standingOf } from '../progression/rating';
 import { isRank } from '../ranks';
 import { SMITES } from '../smites/config';
 import { activeSmiteCount } from '../smites/smites.service';
+import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { canVote } from './ranks';
 import { levelForExp, voteWeight } from './resolution';
 
@@ -29,6 +30,7 @@ export type VoteRejection =
   | 'bad-answer'
   | 'bad-block-reason'
   | 'already-voted'
+  | 'own-image'
   | 'no-weight'
   | 'reset-pending';
 
@@ -100,6 +102,15 @@ export async function insertVote(
     ? 'unexpected'
     : null;
   if (reasonProblem) return rejected('bad-block-reason');
+
+  // Ratings, hidden checks and yes/no all reach the ledger here; `creditLateJudgment` carries its own check.
+  const owned = await trx
+    .selectFrom('Image')
+    .select('id')
+    .where('id', '=', subject.imageId)
+    .where('userId', '=', input.userId)
+    .executeTakeFirst();
+  if (owned) return rejected('own-image');
 
   const already = await trx
     .selectFrom('KnightsVote')
@@ -213,4 +224,101 @@ export async function creditVote(
       .where('userId', '=', input.userId)
       .execute();
   }
+}
+
+/** How recently an item must have settled for a judgment that arrives after it to count toward the Daily Watch. */
+export const LATE_JUDGMENT_WINDOW_MS = 10 * 60_000;
+
+/**
+ * Counts a rating judgment toward the Daily Watch when its item settled shortly before the judgment arrived (it waited in
+ * the player's prefetch buffer). Writes a ledger row that weighs nothing, pays no gold or XP and is already set aside, so
+ * it never decides, grades or pays, but it is the player's one judgment of that image: a resend, or an image the player
+ * already judged, is refused, and it counts in the ledger-based Watch of a career-reset day. The day's tally moves, and
+ * the judgment that completes the Watch still pays the streak bonus. Under the same locks, in the same order, as
+ * `castVote`. True when it counted.
+ */
+export async function creditLateJudgment(
+  db: Kysely<DB>,
+  { userId, itemId, answer, now }: { userId: number; itemId: number; answer: string; now: Date }
+): Promise<boolean> {
+  return db.transaction().execute(async (trx) => {
+    await lockPlayerVoting(trx, userId);
+    const item = await trx
+      .selectFrom('KnightsQueueItem as i')
+      .innerJoin('KnightsQuestion as q', 'q.key', 'i.questionKey')
+      .innerJoin('Image as img', 'img.id', 'i.imageId')
+      .select([
+        'img.userId as ownerId',
+        'i.id',
+        'i.status',
+        'i.questionKey',
+        'i.imageId',
+        'i.minRank',
+        'i.updatedAt',
+        'i.appliedAt',
+        'q.options',
+      ])
+      .where('i.id', '=', itemId)
+      .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
+      .executeTakeFirst();
+    if (!item || item.status === 'Open' || item.ownerId === userId) return false;
+    // A settled rating still waiting on its write-back can be rerouted, and a reroute regrades every vote on the item
+    // (`regradeVotes`), this row included.
+    if (item.status === 'Resolved' && item.appliedAt === null) return false;
+    if (now.getTime() - item.updatedAt.getTime() > LATE_JUDGMENT_WINDOW_MS) return false;
+    const options = (item.options as { value: string }[] | null) ?? [];
+    if (!options.some((option) => option.value === answer)) return false;
+
+    const judged = await trx
+      .selectFrom('KnightsVote')
+      .select(sql<number>`1`.as('one'))
+      .where('playerId', '=', userId)
+      .where('imageId', '=', item.imageId)
+      .where('questionKey', '=', item.questionKey)
+      .executeTakeFirst();
+    if (judged) return false;
+
+    const player = await trx
+      .selectFrom('NewOrderPlayer')
+      .select(['rankType', 'exp', 'startAt'])
+      .where('userId', '=', userId)
+      .forUpdate()
+      .executeTakeFirst();
+    // Any rank that judges the rating queue: the item may have moved up a stage before it settled.
+    if (!player || !isRank(player.rankType) || !canVote(player.rankType, 'Knight')) return false;
+
+    await trx
+      .insertInto('KnightsVote')
+      .values({
+        itemId: item.id,
+        playerId: userId,
+        createdAt: utc(now),
+        questionKey: item.questionKey,
+        imageId: item.imageId,
+        stage: item.minRank,
+        answer,
+        weight: 0,
+        gold: 0,
+        xp: 0,
+        verdict: 'inconclusive',
+        settledAt: utc(now),
+      })
+      .execute();
+    const day = await recordVoteDay(trx, {
+      playerId: userId,
+      rank: player.rankType,
+      level: levelForExp(player.exp),
+      gold: 0,
+      now,
+      startAt: player.startAt,
+    });
+    metrics.goldEarned('streak_bonus', day.bonus);
+    if (day.bonus > 0)
+      await trx
+        .updateTable('NewOrderPlayer')
+        .set({ goldEarned: sql<number>`"goldEarned" + ${day.bonus}` })
+        .where('userId', '=', userId)
+        .execute();
+    return true;
+  });
 }

@@ -66,6 +66,8 @@ import { ThirdPartyConsentProvider } from '~/components/Consent/ThirdPartyConsen
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 import { FaroProvider } from '~/components/Faro/FaroProvider';
 import { isHardLoadSignedIn } from '~/utils/faro/pageAttributes';
+import { appendSetCookie } from '~/server/utils/set-cookie';
+import { siteCookieJar } from '@civitai/auth/client';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { AppsRailProvider } from '~/components/Apps/appsRailState';
 // import { PaddleProvider } from '~/providers/PaddleProvider';
@@ -102,6 +104,7 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+import { ProfanityBlocklistProvider } from '~/providers/ProfanityBlocklistProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 import {
   ShellBootstrapProvider,
@@ -389,40 +392,44 @@ function MyApp(props: CustomAppProps) {
                           <BrowserSettingsProvider>
                             <BrowsingLevelProvider>
                               <BrowsingSettingsAddonsProvider initialData={browsingSettingsAddons}>
-                                <SignalsProviderStack>
-                                  <ActivityReportingProvider>
-                                    <ReferralsProvider
-                                      {...cookies.referrals}
-                                      pending={referralsPending}
-                                    >
-                                      <FiltersProvider>
-                                        <AdsProvider gated={adsGated}>
-                                          <HiddenPreferencesProvider>
-                                            <CivitaiLinkProvider>
-                                              <BrowserRouterProvider>
-                                                <IntersectionObserverProvider>
-                                                  <ToursProvider>
-                                                    <AuctionContextProvider>
-                                                      <BaseLayout>
-                                                        {isProd && <TrackPageView />}
-                                                        <CustomModalsProvider>
-                                                          {getLayout(<Component {...pageProps} />)}
-                                                          {/* <StripeSetupSuccessProvider /> */}
-                                                          <DialogProvider />
-                                                          <RoutedDialogProvider />
-                                                        </CustomModalsProvider>
-                                                      </BaseLayout>
-                                                    </AuctionContextProvider>
-                                                  </ToursProvider>
-                                                </IntersectionObserverProvider>
-                                              </BrowserRouterProvider>
-                                            </CivitaiLinkProvider>
-                                          </HiddenPreferencesProvider>
-                                        </AdsProvider>
-                                      </FiltersProvider>
-                                    </ReferralsProvider>
-                                  </ActivityReportingProvider>
-                                </SignalsProviderStack>
+                                <ProfanityBlocklistProvider>
+                                  <SignalsProviderStack>
+                                    <ActivityReportingProvider>
+                                      <ReferralsProvider
+                                        {...cookies.referrals}
+                                        pending={referralsPending}
+                                      >
+                                        <FiltersProvider>
+                                          <AdsProvider gated={adsGated}>
+                                            <HiddenPreferencesProvider>
+                                              <CivitaiLinkProvider>
+                                                <BrowserRouterProvider>
+                                                  <IntersectionObserverProvider>
+                                                    <ToursProvider>
+                                                      <AuctionContextProvider>
+                                                        <BaseLayout>
+                                                          {isProd && <TrackPageView />}
+                                                          <CustomModalsProvider>
+                                                            {getLayout(
+                                                              <Component {...pageProps} />
+                                                            )}
+                                                            {/* <StripeSetupSuccessProvider /> */}
+                                                            <DialogProvider />
+                                                            <RoutedDialogProvider />
+                                                          </CustomModalsProvider>
+                                                        </BaseLayout>
+                                                      </AuctionContextProvider>
+                                                    </ToursProvider>
+                                                  </IntersectionObserverProvider>
+                                                </BrowserRouterProvider>
+                                              </CivitaiLinkProvider>
+                                            </HiddenPreferencesProvider>
+                                          </AdsProvider>
+                                        </FiltersProvider>
+                                      </ReferralsProvider>
+                                    </ActivityReportingProvider>
+                                  </SignalsProviderStack>
+                                </ProfanityBlocklistProvider>
                               </BrowsingSettingsAddonsProvider>
                             </BrowsingLevelProvider>
                           </BrowserSettingsProvider>
@@ -524,9 +531,11 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   // Either session cookie family, hub `civ-token` or legacy `civitai-token` (`~/shared/utils/session-cookie`).
   // Used to seed `SessionProvider` (unknown → fetch on mount) and `loggedIn` below.
-  let hasAuthCookie = hasSessionCookie(cookies);
+  // A host-only site's shared-slot cookie is never its session (AUTH_SESSION_COOKIE_MODE_BY_SITE).
+  const siteCookies = siteCookieJar(cookies, request.headers.host) ?? cookies;
+  let hasAuthCookie = hasSessionCookie(siteCookies);
   // Kept as read: `hasAuthCookie` is cleared below when the lookup says signed out.
-  const sessionCookie = sessionCookieKind(cookies);
+  const sessionCookie = sessionCookieKind(siteCookies);
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
   const { serverDomainMap, getRequestDomainColor, getAllServerHosts } = await import(
@@ -829,21 +838,24 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     const { checkPreviewAccess } = await import('~/server/auth/preview-access');
     if (!(await checkPreviewAccess(session.user))) guardTo = '/preview-restricted';
   }
+  let guardCookies: string[] = [];
   if (!guardTo && typeof window === 'undefined') {
     const { sharedSlotNavigationSyncUrl } = await import('~/server/auth/shared-slot-sync');
-    guardTo =
-      sharedSlotNavigationSyncUrl({
-        method: request.method,
-        url: request.url,
-        headers: request.headers,
-        cookies,
-      }) ?? undefined;
+    const sync = sharedSlotNavigationSyncUrl({
+      method: request.method,
+      url: request.url,
+      headers: request.headers,
+      cookies,
+      signedIn: !!session?.user,
+    });
+    if (sync) [guardTo, guardCookies] = [sync.location, sync.setCookies];
   }
   // 🔴 Next still runs the page's `getServerSideProps` after this, and re-enters this function on
   // the SAME, already-sent response when it returns `notFound` (re-render of /404) or throws
   // (re-render of /_error). A second `writeHead` there throws ERR_HTTP_HEADERS_SENT.
   // Pinned by `app-guard-redirect-once.test.ts`.
   if (guardTo && appContext.ctx.res && !appContext.ctx.res.headersSent) {
+    for (const cookie of guardCookies) appendSetCookie(appContext.ctx.res, cookie);
     appContext.ctx.res.writeHead(302, { Location: guardTo });
     appContext.ctx.res.end();
   }

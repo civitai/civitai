@@ -34,6 +34,7 @@ const AGENT_A = 501;
 const AGENT_B = 502;
 
 const SCHEMA = `
+CREATE TABLE "JobQueue" ("entityId" INTEGER, "entityType" TEXT, "type" TEXT, data JSONB);
 CREATE TABLE "User" (
   "id" INTEGER PRIMARY KEY, "username" TEXT, "email" TEXT, "bannedAt" TIMESTAMP(3),
   "muted" BOOLEAN, "deletedAt" TIMESTAMP(3), "isModerator" BOOLEAN
@@ -61,8 +62,11 @@ CREATE TABLE "Image" (
   "width" INTEGER, "height" INTEGER, "type" TEXT NOT NULL DEFAULT 'image', "needsReview" TEXT,
   "minor" BOOLEAN NOT NULL DEFAULT FALSE, "poi" BOOLEAN NOT NULL DEFAULT FALSE,
   "userId" INTEGER NOT NULL DEFAULT 10, "postId" INTEGER,
-  "modelRestricted" BOOLEAN NOT NULL DEFAULT FALSE
+  "modelRestricted" BOOLEAN NOT NULL DEFAULT FALSE,
+  "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT, "metadata" JSONB
 );
+CREATE TABLE "ModerationRule" ("id" INTEGER PRIMARY KEY, "action" TEXT NOT NULL);
+CREATE TABLE "ModerationRuleVersion" ("id" SERIAL PRIMARY KEY, "ruleId" INTEGER NOT NULL, "action" TEXT NOT NULL);
 INSERT INTO "User" ("id", "username") VALUES
   (${HUMAN}, 'human'), (${AGENT_A}, 'agent-a'), (${AGENT_B}, 'agent-b'), (10, 'owner');
 INSERT INTO "Post" VALUES (1, 10, 'p');

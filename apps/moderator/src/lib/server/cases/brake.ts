@@ -13,14 +13,33 @@ export type BrakeState =
  * 🔴 FAILS CLOSED: if Redis can't be read, the answer is "paused". A brake that reads as off when its
  * store is down is no brake.
  */
-export async function readBrake(): Promise<BrakeState> {
-  try {
-    const raw = await getSysRedis().get(KEY);
-    if (!raw) return { paused: false };
-    const parsed = JSON.parse(raw) as Omit<Extract<BrakeState, { paused: true }>, 'paused'>;
-    return { paused: true, ...parsed };
-  } catch {
-    return { paused: true, by: 'system', at: new Date().toISOString(), reason: 'brake unreadable' };
+export async function readBrake({
+  get = (key) => getSysRedis().get(key),
+  attempts = 3,
+  retryMs = 500,
+}: {
+  get?: (key: RedisKeyTemplateSys) => Promise<string | null>;
+  attempts?: number;
+  retryMs?: number;
+} = {}): Promise<BrakeState> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const raw = await get(KEY);
+      if (!raw) return { paused: false };
+      const parsed = JSON.parse(raw) as Omit<Extract<BrakeState, { paused: true }>, 'paused'>;
+      return { paused: true, ...parsed };
+    } catch {
+      // The system client rejects commands until it has connected, so the first read after a restart
+      // fails; a receipt held then is never retried. Read again before failing closed.
+      if (attempt >= attempts)
+        return {
+          paused: true,
+          by: 'system',
+          at: new Date().toISOString(),
+          reason: 'brake unreadable',
+        };
+      await new Promise((r) => setTimeout(r, retryMs));
+    }
   }
 }
 

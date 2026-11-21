@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { sql } from 'kysely';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { kyselyRead } from '~/server/db/kyselyDb';
 import { logToAxiom } from '~/server/logging/client';
+import type { ServiceDealNotice } from '~/server/notifications/creator-service.notifications';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import { createMessage, upsertDealChat } from '~/server/services/chat.service';
@@ -30,10 +33,16 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
+import type { ServiceLicense } from '~/shared/constants/creator-service-license.constants';
+import { NO_SERVICE_LICENSE } from '~/shared/constants/creator-service-license.constants';
 import {
   SERVICE_DEAL_ACCEPT_WINDOW_MS,
   SERVICE_DEAL_AUTO_COMPLETE_MS,
+  SERVICE_DEAL_AUTO_COMPLETE_NOTICE_MS,
+  SERVICE_DEAL_REVIEW_FIRST_NOTICE_MS,
+  SERVICE_DEAL_REVIEW_LAST_NOTICE_MS,
   SERVICE_DEAL_CANCELLATION_RESPONSE_MS,
+  SERVICE_DEAL_DUE_SOON_NOTICE_MS,
   SERVICE_DEAL_DISPUTE_WINDOW_MS,
   SERVICE_DEAL_LATE_CANCEL_AFTER_MS,
   SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS,
@@ -50,6 +59,7 @@ import { Flags } from '~/shared/utils/flags';
 import {
   ServiceOfferingIngestionStatus,
   type ServiceDealEventType,
+  type ServiceLicensePreset,
   type ServiceDealStatus,
 } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
@@ -108,6 +118,8 @@ type Transition = {
   reason?: PreparedReason;
   /** The deal column that also keeps the reason's text. */
   reasonColumn?: 'cancellationReason' | 'disputeReason';
+  /** Writes that must exist exactly when the move does: run in its transaction, after the event. */
+  then?: (tx: Prisma.TransactionClient) => Promise<unknown>;
 };
 
 /** A party's reason, after `prepareReason`. */
@@ -198,6 +210,7 @@ export async function transitionDeal(t: Transition) {
 
     // A deal still confirming payment claims nothing here; reconcile claims it if the hold lands.
     if (t.refund) await claimRefund(tx, t.dealId);
+    if (t.then) await t.then(tx);
     return event.id;
   });
   const moved = eventId !== null;
@@ -294,6 +307,9 @@ type OfferingRow = {
   price: number;
   revisionsIncluded: number;
   deliveryDays: number;
+  licensePreset: ServiceLicensePreset | null;
+  licenseCustomText: string | null;
+  licenseAllowResale: boolean;
   blocked: boolean;
   sellerOk: boolean;
   showable: boolean;
@@ -316,18 +332,25 @@ export async function requestServiceDeal({
   expectedPrice,
   expectedRevisionsIncluded,
   expectedDeliveryDays,
+  expectedLicense = NO_SERVICE_LICENSE,
+  licenseAgreed = false,
   buyerId,
   requestText,
   disclosureVersion,
   buzzType,
   servableLevels,
   consentLevels,
+  reviewEnabled = false,
 }: {
   offeringId: number;
   /** The terms the buyer was shown. The deal never takes different ones. */
   expectedPrice: number;
   expectedRevisionsIncluded: number;
   expectedDeliveryDays: number;
+  /** Left out, it means no license: a request on an offering that has one gets termsChanged. */
+  expectedLicense?: ServiceLicense;
+  /** The buyer ticked the license checkbox. */
+  licenseAgreed?: boolean;
   buyerId: number;
   requestText: string;
   /** The buyer-disclosure version shown before the hold. */
@@ -337,6 +360,8 @@ export async function requestServiceDeal({
   servableLevels: number;
   /** The buyer's own browsing level (`getRequestBrowsingLevel`): their consent to mature levels. */
   consentLevels: number;
+  /** The buyer has the review flag: the deal ends in a review card instead of the dispute box. */
+  reviewEnabled?: boolean;
 }) {
   if (!isServiceDealBuzzType(buzzType))
     throw throwBadRequestError(`Services cannot be paid in ${buzzType} Buzz`);
@@ -347,7 +372,8 @@ export async function requestServiceDeal({
 
   const [offering] = await dbWrite.$queryRaw<OfferingRow[]>`
     SELECT o."id", o."sellerId", o."status"::text AS "status", o."maxOpenDeals", o."price",
-      o."revisionsIncluded", o."deliveryDays",
+      o."revisionsIncluded", o."deliveryDays", o."licensePreset"::text AS "licensePreset",
+      o."licenseCustomText", o."licenseAllowResale",
       (SELECT count(*)::int FROM "ServiceDeal" d
         WHERE d."offeringId" = o."id" AND d."status" IN (${OPEN})) AS "open",
       NOT ${notBlockedBetween(Prisma.sql`${buyerId}::int`, Prisma.sql`o."sellerId"`)} AS "blocked",
@@ -379,9 +405,14 @@ export async function requestServiceDeal({
   if (
     offering.price !== expectedPrice ||
     offering.revisionsIncluded !== expectedRevisionsIncluded ||
-    offering.deliveryDays !== expectedDeliveryDays
+    offering.deliveryDays !== expectedDeliveryDays ||
+    offering.licensePreset !== expectedLicense.licensePreset ||
+    offering.licenseCustomText !== expectedLicense.licenseCustomText ||
+    offering.licenseAllowResale !== expectedLicense.licenseAllowResale
   )
     throw termsChanged();
+  if (offering.licensePreset && !licenseAgreed)
+    throw throwBadRequestError("Agree to the seller's license terms to send this request.");
   const [waiting] = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT "id" FROM "ServiceDeal"
     WHERE "offeringId" = ${offeringId}::int AND "buyerId" = ${buyerId}::int
@@ -396,16 +427,22 @@ export async function requestServiceDeal({
     const [created] = await tx.$queryRaw<{ id: number }[]>`
       INSERT INTO "ServiceDeal" ("offeringId", "buyerId", "sellerId", "price", "buzzType",
         "feeAmount", "revisionsIncluded", "deliveryDays", "previewKind", "status", "requestText",
-        "updatedAt", "maxNsfwLevel")
+        "updatedAt", "maxNsfwLevel", "reviewEnabledAt", "licensePreset", "licenseCustomText",
+        "licenseAllowResale", "licenseAgreedAt")
       SELECT o."id", ${buyerId}::int, o."sellerId", o."price", ${buzzType}::"ServiceBuzzType",
         0, o."revisionsIncluded", o."deliveryDays", o."previewKind", 'Requested'::"ServiceDealStatus",
-        ${requestText}::text, now(), ${offeringLevel}
+        ${requestText}::text, now(), ${offeringLevel},
+        CASE WHEN ${reviewEnabled}::boolean THEN now() END, o."licensePreset", o."licenseCustomText",
+        o."licenseAllowResale", CASE WHEN o."licensePreset" IS NULL THEN NULL ELSE now() END
       FROM "ServiceOffering" o
       WHERE o."id" = ${offeringId}::int
         AND o."status" = 'Active'::"ServiceOfferingStatus"
         AND o."price" = ${expectedPrice}::int
         AND o."revisionsIncluded" = ${expectedRevisionsIncluded}::int
         AND o."deliveryDays" = ${expectedDeliveryDays}::int
+        AND o."licensePreset"::text IS NOT DISTINCT FROM ${expectedLicense.licensePreset}::text
+        AND o."licenseCustomText" IS NOT DISTINCT FROM ${expectedLicense.licenseCustomText}::text
+        AND o."licenseAllowResale" = ${expectedLicense.licenseAllowResale}::boolean
         AND o."sellerId" <> ${buyerId}::int
         -- serviceRequestAllowed: SFW always; mature only where served, to a buyer who opted in.
         AND ${offeringShowable}
@@ -962,6 +999,92 @@ export const cancelOverdueServiceDeals = ({ limit = 100 } = {}) =>
     cancelOverdueServiceDeal
   );
 
+type Reminder = {
+  notice: ServiceDealNotice;
+  to: 'buyer' | 'seller';
+  statuses: readonly ServiceDealStatus[];
+  /** When the reminder is due. */
+  at: Prisma.Sql;
+  /** What must still be ahead for the reminder to make sense, if a late run reaches it. */
+  until?: Prisma.Sql;
+  /** What else must hold for the deal, checked when the reminder is due. */
+  where?: Prisma.Sql;
+};
+
+/** A deal its buyer may still review, read against an unaliased "ServiceDeal". */
+export const dealOpenForReview = Prisma.sql`"reviewEnabledAt" IS NOT NULL AND "settledAt" IS NULL
+  AND "releaseAt" > now()
+  AND NOT EXISTS (SELECT 1 FROM "ServiceDealReview" r WHERE r."dealId" = "ServiceDeal"."id")`;
+
+// Never disputed, as a Happy review requires: a reminder must lead to the card that releases early.
+const awaitingReview = Prisma.sql`${dealOpenForReview} AND "disputeOpenedAt" IS NULL`;
+
+const reminders: Reminder[] = [
+  {
+    notice: 'autoCompleteSoon',
+    to: 'buyer',
+    statuses: ['Delivered'],
+    at: Prisma.sql`"deliveredAt" + ${ms(
+      SERVICE_DEAL_AUTO_COMPLETE_MS - SERVICE_DEAL_AUTO_COMPLETE_NOTICE_MS
+    )}`,
+    until: Prisma.sql`"deliveredAt" + ${ms(SERVICE_DEAL_AUTO_COMPLETE_MS)}`,
+  },
+  {
+    notice: 'dueSoon',
+    to: 'seller',
+    statuses: ['Accepted', 'InRevision'],
+    at: Prisma.sql`"dueAt" - ${ms(SERVICE_DEAL_DUE_SOON_NOTICE_MS)}`,
+    until: Prisma.sql`"dueAt"`,
+  },
+  {
+    notice: 'overdue',
+    to: 'seller',
+    statuses: ['Accepted', 'InRevision'],
+    // The due date, not `overdueClock`: a revision asked for after it starts a new round, not a late one.
+    at: Prisma.sql`"dueAt"`,
+  },
+  {
+    notice: 'reviewDue',
+    to: 'buyer',
+    statuses: ['Completed'],
+    at: Prisma.sql`"completedAt" + ${ms(SERVICE_DEAL_REVIEW_FIRST_NOTICE_MS)}`,
+    until: Prisma.sql`"releaseAt"`,
+    // Its buyer already ignored the auto-complete notice, so they get only the 12-hour one.
+    where: Prisma.sql`${awaitingReview} AND NOT EXISTS (
+      SELECT 1 FROM "ServiceDealEvent" e
+      WHERE e."dealId" = "ServiceDeal"."id" AND e."type" = 'Completed' AND e."comment" = 'auto')`,
+  },
+  {
+    notice: 'reviewDue',
+    to: 'buyer',
+    statuses: ['Completed'],
+    at: Prisma.sql`"releaseAt" - ${ms(SERVICE_DEAL_REVIEW_LAST_NOTICE_MS)}`,
+    until: Prisma.sql`"releaseAt"`,
+    where: awaitingReview,
+  },
+];
+
+/**
+ * Reminders whose time fell in (since, upTo]. The caller moves `since` to `upTo` after each run, so
+ * each reminder goes out once. The key carries the due time, so a moved due date is a new reminder.
+ */
+export async function remindServiceDeals({ since, upTo }: { since: Date; upTo: Date }) {
+  let sent = 0;
+  for (const { notice, to, statuses, at, until, where } of reminders) {
+    const due = await dbWrite.$queryRaw<{ id: number; at: Date }[]>`
+      SELECT "id", ${at} AS "at" FROM "ServiceDeal"
+      WHERE "status" IN (${statusList(statuses)})
+        AND ${at} > ${since}::timestamptz AND ${at} <= ${upTo}::timestamptz
+        ${until ? Prisma.sql`AND ${until} > ${upTo}::timestamptz` : Prisma.empty}
+        ${where ? Prisma.sql`AND ${where}` : Prisma.empty}`;
+    for (const deal of due) {
+      await notifyServiceDeal({ dealId: deal.id, notice, to, key: deal.at.getTime() });
+      sent++;
+    }
+  }
+  return sent;
+}
+
 const dealUserSelect = { id: true, username: true, image: true } as const;
 
 /** Open deals per offering, by the same definition `requestServiceDeal` enforces the cap with. */
@@ -975,6 +1098,34 @@ export async function countOpenDealsByOffering(offeringIds: number[]) {
       AND "status" IN (${OPEN})
     GROUP BY "offeringId"`;
   return new Map(rows.map((row) => [row.offeringId, row.open]));
+}
+
+/**
+ * A seller's Completed deals, how many of those were for one offering, and how many were first
+ * delivered by their due date (a later redelivery after a revision request does not make one late).
+ */
+export async function getServiceDealRecord({
+  sellerId,
+  offeringId,
+}: {
+  sellerId: number;
+  offeringId: number;
+}) {
+  return kyselyRead
+    .selectFrom('ServiceDeal as d')
+    .where('d.sellerId', '=', sellerId)
+    .where('d.status', '=', 'Completed')
+    .select([
+      sql<number>`count(*)::int`.as('completed'),
+      sql<number>`(count(*) FILTER (WHERE d."offeringId" = ${offeringId}))::int`.as(
+        'offeringCompleted'
+      ),
+      sql<number>`(count(*) FILTER (WHERE d."dueAt" >= (
+        SELECT min(e."createdAt") FROM "ServiceDealEvent" e
+        WHERE e."dealId" = d.id AND e."type" = 'Delivered'
+      )))::int`.as('onTime'),
+    ])
+    .executeTakeFirstOrThrow();
 }
 
 /** A held offering's text and cover stay with its seller and moderators. */
@@ -1058,6 +1209,14 @@ export async function getServiceDealView({
     revisionsUsed: deal.revisionsUsed,
     deliveryDays: deal.deliveryDays,
     previewKind: deal.previewKind,
+    license: deal.licensePreset
+      ? {
+          licensePreset: deal.licensePreset,
+          licenseCustomText: deal.licenseCustomText,
+          licenseAllowResale: deal.licenseAllowResale,
+          agreedAt: deal.licenseAgreedAt,
+        }
+      : null,
     requestText: deal.requestText,
     chatId: deal.chatId,
     requestedAt: deal.requestedAt,
@@ -1161,6 +1320,7 @@ export async function listMyServiceDeals({
       counterparty: role === 'buyer' ? deal.seller : deal.buyer,
       price: deal.price,
       buzzType: deal.buzzType,
+      held: !!deal.heldAt,
       revisionsUsed: deal.revisionsUsed,
       revisionsIncluded: deal.revisionsIncluded,
       requestedAt: deal.requestedAt,
@@ -1211,6 +1371,7 @@ export async function resolveServiceDealDispute({
   resolution: ServiceDisputeResolutionInput;
   note?: string | null;
 }): Promise<ResolveServiceDealDisputeResult> {
+  let resolvedEventId: number | undefined;
   const outcome = await dbWrite.$transaction(async (tx) => {
     await lockDeal(tx, dealId);
     const [deal] = await tx.$queryRaw<
@@ -1245,10 +1406,12 @@ export async function resolveServiceDealDispute({
         SET "status" = 'Cancelled'::"ServiceDealStatus", "closedAt" = now(),
             "closeReason" = 'dispute_refund', ${resolved}
         WHERE "id" = ${dealId}::int AND "status" = 'Disputed'::"ServiceDealStatus"`;
-    await tx.$executeRaw`
+    const [event] = await tx.$queryRaw<{ id: number }[]>`
       INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type", "comment")
       VALUES (${dealId}::int, ${moderatorId}::int, 'DisputeResolved'::"ServiceDealEventType",
-        ${note ?? resolution}::text)`;
+        ${note ?? resolution}::text)
+      RETURNING "id"`;
+    resolvedEventId = event.id;
     await tx.$executeRaw`${recordHumanRulingSql(dealId, moderatorId, resolution)}`;
     if (resolution === 'Refund') await claimRefund(tx, dealId);
     return 'resolved' as const;
@@ -1283,6 +1446,13 @@ export async function resolveServiceDealDispute({
     SELECT "status"::text AS "status", "disputeReason" AS "reason"
     FROM "ServiceDeal" WHERE "id" = ${dealId}::int`;
   if (after?.status === 'Disputed') return { status: 'held-for-review', reason: after.reason };
+  await notifyServiceDeal({
+    dealId,
+    notice: 'disputeResolved',
+    to: 'parties',
+    actorId: moderatorId,
+    key: resolvedEventId,
+  });
   return { status: 'resolved', resolution };
 }
 

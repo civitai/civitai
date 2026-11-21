@@ -39,6 +39,7 @@ func perLookup(ctx context.Context, s *Sources, req PageRequest) (*Page, error) 
 		return
 	})
 	g.Go(func() (err error) { out.Reactions, err = s.Reactions(gctx, req.ImageIDs, req.ViewerID); return })
+	g.Go(func() (err error) { out.Tags, err = s.ImageTags(gctx, req.ImageIDs, req.ViewerID, req.Tags); return })
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
@@ -84,6 +85,8 @@ func (f *pageFixture) del(key string, id int) { delete(f.strings, pageNS+key+":"
 //   - tag ids: 11 and 13 hits, 12 notFound, 14 without tags
 //   - event decorations: 11 visible, 12 a hidden event, 13 and 14 notFound
 //   - metrics: every image, 12 a notFound hash
+//   - image tags (read only with PageRequest.Tags): 11 two tags, 12 notFound, 13 one tag, 14 an
+//     empty list; the viewer 1001 voted on both of 11's tags, on a tag 13 does not carry, and on 12
 func basePageFixture(tb testing.TB) *pageFixture {
 	tb.Helper()
 	f := &pageFixture{strings: map[string][]byte{}, hashes: map[string]map[string]string{}}
@@ -121,11 +124,33 @@ func basePageFixture(tb testing.TB) *pageFixture {
 	f.put(tb, KeyImageEvents, 12, map[string]any{"id": 602, "data": map[string]any{"event": "hidden"}})
 	f.put(tb, KeyImageEvents, 13, notFound)
 	f.put(tb, KeyImageEvents, 14, notFound)
+	f.put(tb, KeyImageTags, 11, map[string]any{"imageId": 11, "tags": []any{
+		map[string]any{"tagId": 21, "tagName": "red", "tagType": "UserGenerated", "score": 7, "upVotes": 2, "downVotes": 0,
+			"tagNsfwLevel": 1, "automated": false, "needsReview": false, "concrete": true, "lastUpvote": pageLastUpvote, "source": "User"},
+		map[string]any{"tagId": 22, "tagName": "fox", "tagType": "Label", "score": 2.5, "upVotes": 0, "downVotes": 1,
+			"tagNsfwLevel": 2, "automated": true, "needsReview": nil, "concrete": true, "lastUpvote": nil, "source": "WD14"},
+	}, "cachedAt": pageNow})
+	f.put(tb, KeyImageTags, 12, map[string]any{"imageId": 12, "notFound": true, "cachedAt": pageNow})
+	f.put(tb, KeyImageTags, 13, map[string]any{"imageId": 13, "tags": []any{
+		map[string]any{"tagId": 23, "tagName": "sky", "tagType": "Label", "score": 0, "upVotes": 0, "downVotes": 0,
+			"tagNsfwLevel": 1, "automated": true, "needsReview": false, "concrete": true, "lastUpvote": nil, "source": "Rekognition"},
+	}, "cachedAt": old})
+	f.put(tb, KeyImageTags, 14, map[string]any{"imageId": 14, "tags": []any{}, "cachedAt": pageNow})
 	f.hashes["metrics:Image:11"] = map[string]string{"Like": "3"}
 	f.hashes["metrics:Image:12"] = map[string]string{"notFound": "1", "_populatedAt": "1700000000000"}
 	f.hashes["metrics:Image:13"] = map[string]string{"Heart": "2"}
 	f.hashes["metrics:Image:14"] = map[string]string{"Cry": "1", "_populatedAt": "1700000000000"}
 	return f
+}
+
+// pageLastUpvote is the `lastUpvote` Date of basePageFixture's tag 21 on image 11.
+var pageLastUpvote = time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
+
+// tagsPageRequest is pageRequest with the 'tags' include (image.getInfinite's include: ['tags']).
+func tagsPageRequest() PageRequest {
+	r := pageRequest()
+	r.Tags = true
+	return r
 }
 
 // pageRequest is the request of basePageFixture's page, as feed.Hydrate builds it (a repeated user).
@@ -162,6 +187,19 @@ func newPageReplica() *pageReplica {
 				return testkit.NewRows([]string{"imageId", "reaction"}), nil
 			}
 			return only(args, map[int][]any{11: {int64(11), "Like"}, 13: {int64(13), "Cry"}}, "imageId", "reaction"), nil
+		}},
+		{Match: `FROM "TagsOnImageVote"`, Rows: func(args []any) (*testkit.Rows, error) {
+			if viewer, _ := args[1].(int); viewer != 1001 {
+				return testkit.NewRows([]string{"imageId", "tagId", "vote"}), nil
+			}
+			rows := testkit.NewRows([]string{"imageId", "tagId", "vote"})
+			ids, _ := args[0].([]int)
+			for _, v := range [][]any{{int64(11), int64(21), int32(3)}, {int64(11), int64(22), int32(0)}, {int64(13), int64(99), int32(1)}, {int64(12), int64(21), int32(1)}} {
+				if slices.Contains(ids, int(v[0].(int64))) {
+					rows.Data = append(rows.Data, v)
+				}
+			}
+			return rows, nil
 		}},
 		{Match: `FROM "Cosmetic"`, Rows: func(args []any) (*testkit.Rows, error) {
 			ids, _ := args[0].([]int)

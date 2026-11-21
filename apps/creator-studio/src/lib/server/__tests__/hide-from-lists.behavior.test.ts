@@ -314,22 +314,24 @@ describe('Creator Studio "Who reacted" leaves out reactors the reaction totals d
 
 describe('Creator Studio "Who reacted" and "Who collected" avatars', () => {
   const AV_IMAGE = 930;
-  // [userId, the avatar's needsReview, the avatar served]
-  const USERS: [number, string | null, string | null][] = [
-    [300, 'csam', null],
-    [301, 'minor', null],
-    [302, null, 'av302.jpg'],
-    [303, 'poi', 'av303.jpg'],
+  // [userId, the avatar's needsReview, its blockedFor, the avatar served]
+  const USERS: [number, string | null, string | null, string | null][] = [
+    [300, 'csam', null, null],
+    [301, 'minor', null, null],
+    [302, null, null, 'av302.jpg'],
+    [303, 'poi', null, 'av303.jpg'],
+    // A rescan moves ingestion back to Scanned but leaves the block reason.
+    [304, null, 'moderated', null],
   ];
   const avatars = (rows: { userId: number; image: string | null }[] | undefined) =>
     rows?.map((r) => [r.userId, r.image]);
-  const expected = [...USERS].reverse().map(([id, , image]) => [id, image]);
+  const expected = [...USERS].reverse().map(([id, , , image]) => [id, image]);
 
   beforeAll(async () => {
     await holder.db.exec(`
       INSERT INTO "Image" (id, "userId") VALUES (${AV_IMAGE}, ${OWNER});
-      INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel", url, "needsReview") VALUES
-        ${USERS.map(([u, review]) => `(${u + 10000}, ${u}, 'Scanned', 1, 'av${u}.jpg', ${review ? `'${review}'` : 'NULL'})`).join(', ')};
+      INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel", url, "needsReview", "blockedFor") VALUES
+        ${USERS.map(([u, review, blockedFor]) => `(${u + 10000}, ${u}, 'Scanned', 1, 'av${u}.jpg', ${review ? `'${review}'` : 'NULL'}, ${blockedFor ? `'${blockedFor}'` : 'NULL'})`).join(', ')};
       INSERT INTO "User" (id, username, "profilePictureId") VALUES
         ${USERS.map(([u]) => `(${u}, 'u${u}', ${u + 10000})`).join(', ')};
       INSERT INTO "ImageReaction" ("imageId", "userId", reaction) VALUES
@@ -341,7 +343,7 @@ describe('Creator Studio "Who reacted" and "Who collected" avatars', () => {
     `);
   });
 
-  it('"Who reacted" hides an avatar held csam or minor and keeps the rest', async () => {
+  it('"Who reacted" hides an avatar held csam or minor or carrying a block reason, and keeps the rest', async () => {
     const page = await getReactors(holder.db as never, OWNER, 'image', AV_IMAGE, {
       reaction: 'Like',
       cursor: null,
@@ -349,8 +351,63 @@ describe('Creator Studio "Who reacted" and "Who collected" avatars', () => {
     expect(avatars(page?.reactors)).toEqual(expected);
   });
 
-  it('"Who collected" hides an avatar held csam or minor and keeps the rest', async () => {
+  it('"Who collected" hides an avatar held csam or minor or carrying a block reason, and keeps the rest', async () => {
     const page = await getCollectors(holder.db as never, OWNER, 'image', AV_IMAGE, null);
     expect(avatars(page?.collectors)).toEqual(expected);
+  });
+});
+
+describe('Creator Studio "Who collected" leaves out collectors the metrics do not count', () => {
+  const NC_IMAGE = 960;
+  const COUNTED = 110;
+  const NOT_COUNTED = 210;
+  let nextCollection = 9300;
+  const collectedBy = async (image: number, users: number[]) => {
+    const values = users.map((u) => ({ u, c: nextCollection++ }));
+    await holder.db.exec(`
+      INSERT INTO "User" (id, username) VALUES ${users.map((u) => `(${u}, 'u${u}')`).join(', ')}
+        ON CONFLICT (id) DO NOTHING;
+      INSERT INTO "Collection" VALUES
+        ${values.map(({ u, c }) => `(${c}, ${u}, 'Public', 'Public', NULL)`).join(', ')};
+      INSERT INTO "CollectionItem" ("collectionId", "imageId", status, "addedById") VALUES
+        ${values.map(({ u, c }) => `(${c}, ${image}, 'ACCEPTED', ${u})`).join(', ')};
+    `);
+  };
+  const page = (image: number) => getCollectors(holder.db as never, OWNER, 'image', image, null);
+
+  beforeAll(async () => {
+    await holder.db.exec(`INSERT INTO "Image" (id, "userId") VALUES (${NC_IMAGE}, ${OWNER});`);
+    await collectedBy(NC_IMAGE, [COUNTED, NOT_COUNTED]);
+  });
+
+  afterEach(() => {
+    notCounted.ids = [];
+  });
+
+  it('absent from the list and the total; a counted collector stays', async () => {
+    notCounted.ids = [NOT_COUNTED];
+    const p = await page(NC_IMAGE);
+    expect(p?.collectors.map((c) => c.userId)).toEqual([COUNTED]);
+    expect(p?.total).toBe(1);
+  });
+
+  it('still fills a page when the newest collectors are not counted', async () => {
+    const image = 961;
+    const newest = [6001, 6002, 6003];
+    const counted = Array.from({ length: REACTORS_PAGE_SIZE }, (_, i) => 4000 + i);
+    await holder.db.exec(`INSERT INTO "Image" (id, "userId") VALUES (${image}, ${OWNER});`);
+    await collectedBy(image, [...counted, ...newest]);
+    notCounted.ids = newest;
+    const p = await page(image);
+    expect(p?.collectors).toHaveLength(REACTORS_PAGE_SIZE);
+    expect(p?.collectors.map((c) => c.userId)).not.toContain(6001);
+    expect(p?.total).toBe(REACTORS_PAGE_SIZE);
+    expect(p?.next).toBeNull();
+  });
+
+  it('lists and counts everyone when the set is empty', async () => {
+    const p = await page(NC_IMAGE);
+    expect(p?.collectors.map((c) => c.userId)).toEqual([NOT_COUNTED, COUNTED]);
+    expect(p?.total).toBe(2);
   });
 });

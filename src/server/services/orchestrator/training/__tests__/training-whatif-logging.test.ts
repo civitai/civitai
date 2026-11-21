@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loggingMock } from '~/__tests__/mocks';
 
 const submitWorkflow = vi.fn();
 vi.mock('~/server/services/orchestrator/workflows', () => ({
@@ -14,55 +13,6 @@ vi.mock('~/utils/s3-utils', () => ({
 vi.mock('~/server/services/training.service', () => ({ getTrainingServiceStatus: vi.fn() }));
 
 import { createTrainingWhatIfWorkflow } from '~/server/services/orchestrator/training/training.orch';
-
-const logToAxiom = loggingMock.logToAxiom;
-
-const whatIf = () =>
-  createTrainingWhatIfWorkflow({
-    token: 't',
-    currencies: [],
-    userId: 55,
-    model: 'civitai:1@2',
-    priority: 'normal',
-    engine: 'kohya',
-    trainingDataImagesCount: 10,
-    samplePrompts: [],
-    params: {},
-  } as never);
-
-const lastPayload = () => logToAxiom.mock.calls.at(-1)?.[0] as Record<string, unknown>;
-
-describe('createTrainingWhatIfWorkflow logging', () => {
-  beforeEach(() => {
-    submitWorkflow.mockReset();
-    logToAxiom.mockClear();
-  });
-
-  describe('when the submit succeeds', () => {
-    const priced = (total: number | null) =>
-      submitWorkflow.mockResolvedValue({ cost: { total, fees: {} }, steps: [{}] });
-
-    it('reports a missing or negative price', async () => {
-      priced(null);
-      await whatIf();
-      expect(lastPayload().message).toBe('Orchestrator returned an unusable cost');
-
-      logToAxiom.mockClear();
-      priced(-1);
-      await whatIf();
-      expect(lastPayload().message).toBe('Orchestrator returned an unusable cost');
-    });
-
-    it('treats a zero price as spendable', async () => {
-      priced(0);
-
-      const result = await whatIf();
-
-      expect(result.cost).toBe(0);
-      expect(logToAxiom).not.toHaveBeenCalled();
-    });
-  });
-});
 
 describe('AI Toolkit training requests', () => {
   beforeEach(() => {
@@ -121,6 +71,11 @@ describe('AI Toolkit training requests', () => {
     expect(input.samples.prompts).toEqual(['Acoustic folk\n[Lyrics]\nSing together']);
     expect(input.samplesOverrides).toEqual([{ duration: 30, lyrics: 'Edited lyrics', steps: 32 }]);
     expect(input.samples).not.toHaveProperty('cfgScale');
+  });
+
+  it('treats a zero price as spendable', async () => {
+    submitWorkflow.mockResolvedValue({ cost: { total: 0, fees: {} }, steps: [{}] });
+    expect((await quote('qwen21')).cost).toBe(0);
   });
 
   it('rejects out-of-range YuE2 sample settings before submitting', async () => {

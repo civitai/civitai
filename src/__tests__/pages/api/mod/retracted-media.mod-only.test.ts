@@ -18,7 +18,6 @@ vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/retracted-media.service', () => ({
   getRetractedMedia,
-  NEEDS_CSAM_QUEUE: 'needs-csam-queue',
 }));
 vi.mock('~/server/services/feature-flags.service', () => ({
   getFeatureFlagsAsync: async () => ({ modRetractedMedia: true }),
@@ -97,6 +96,6 @@ describe('retracted-media is moderator-only', () => {
     expect(res.statusCode).toBe(404);
     // The handler's own answers rely on the real wrapper's no-store too, not only its refusals.
     expect(res.headers['cache-control']).toBe('private, no-store');
-    expect(getRetractedMedia).toHaveBeenCalledWith(7, { csamReview: false });
+    expect(getRetractedMedia).toHaveBeenCalledWith(7, { csamReview: false, cdnLeg: false });
   });
 });

@@ -82,7 +82,8 @@ beforeAll(async () => {
      CREATE TABLE "Image" (
        id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
        type text NOT NULL DEFAULT 'image', "nsfwLevel" integer NOT NULL DEFAULT 1,
-       ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "postId" integer
+       ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "postId" integer,
+       poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false
      );`
   );
   await pg.exec(migration('20261210120000_knights_v2_tables'));
@@ -155,34 +156,25 @@ describe('enqueueKnightsItems', () => {
     expect((await items()).map((i) => i.imageId)).toEqual([3]);
   });
 
-  it('refuses an image with no post, or whose post is gone, when the caller requires a post, and queues drafts and scheduled posts', async () => {
-    await pg.exec(`
-      INSERT INTO "Post" (id, "publishedAt") VALUES (10, '2026-01-01'), (20, NULL), (30, '2027-01-01');
-      UPDATE "Image" SET "postId" = 20 WHERE id = 2;
-      UPDATE "Image" SET "postId" = 30 WHERE id = 3;
-      UPDATE "Image" SET "postId" = 10 WHERE id = 4;
-      INSERT INTO "Image" (id, "postId") VALUES (5, 999);
-    `);
+  it('refuses a video when the caller asks for still images only, and queues still images', async () => {
+    await pg.exec(`UPDATE "Image" SET type = 'video' WHERE id = 1;`);
+    const input = {
+      source: 'owner-rating',
+      questionKey: Q,
+      items: [1, 2].map((imageId) => ({ imageId, priority: 1 as const })),
+    };
 
-    const outcomes = await enqueueKnightsItems(
-      db,
-      {
-        source: 'scan-sample',
-        questionKey: Q,
-        items: [1, 2, 3, 4, 5].map((imageId) => ({ imageId, priority: 1 as const })),
-      },
-      NOW,
-      { requirePost: true }
-    );
-
-    expect(outcomes).toMatchObject([
-      { imageId: 1, outcome: 'refused', reason: 'no-post' },
+    expect(await enqueueKnightsItems(db, input, NOW, { stillImagesOnly: true })).toMatchObject([
+      { imageId: 1, outcome: 'refused', reason: 'not-still-image' },
       { imageId: 2, outcome: 'enqueued' },
-      { imageId: 3, outcome: 'enqueued' },
-      { imageId: 4, outcome: 'enqueued' },
-      { imageId: 5, outcome: 'refused', reason: 'no-post' },
     ]);
-    expect((await items()).map((i) => i.imageId)).toEqual([2, 3, 4]);
+    expect((await items()).map((i) => i.imageId)).toEqual([2]);
+
+    // A caller that does not ask still queues the video.
+    expect(await enqueueKnightsItems(db, input, NOW)).toMatchObject([
+      { imageId: 1, outcome: 'enqueued' },
+      { imageId: 2, outcome: 'duplicate' },
+    ]);
   });
 
   it('still queues an unpublished image for a caller that does not ask (intake)', async () => {
@@ -343,6 +335,94 @@ describe('enqueueKnightsItems', () => {
     );
 
     expect(outcome.outcome).toBe('duplicate');
+  });
+
+  it('refuses an image with no post, a gone post, or a post that is a draft or not live yet when the caller requires a published post, and queues live ones', async () => {
+    // NOW is 2026-12-11 10:00 UTC.
+    await pg.exec(`
+      INSERT INTO "Post" (id, "publishedAt") VALUES
+        (10, '2026-12-11 09:59:00'), (20, NULL), (30, '2026-12-11 10:01:00'), (40, '2026-12-11 10:00:00');
+      UPDATE "Image" SET "postId" = 10 WHERE id = 1;
+      INSERT INTO "Image" (id) VALUES (5);
+      INSERT INTO "Image" (id, "postId") VALUES (6, 999);
+      UPDATE "Image" SET "postId" = 20 WHERE id = 2;
+      UPDATE "Image" SET "postId" = 30 WHERE id = 3;
+      UPDATE "Image" SET "postId" = 40 WHERE id = 4;
+    `);
+
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'scan-sample',
+        questionKey: Q,
+        items: [1, 2, 3, 4, 5, 6, 99].map((imageId) => ({ imageId, priority: 1 as const })),
+      },
+      NOW,
+      { requirePublished: true }
+    );
+
+    expect(outcomes).toMatchObject([
+      { imageId: 1, outcome: 'enqueued' },
+      { imageId: 2, outcome: 'refused', reason: 'unpublished' },
+      { imageId: 3, outcome: 'refused', reason: 'unpublished' },
+      { imageId: 4, outcome: 'enqueued' },
+      { imageId: 5, outcome: 'refused', reason: 'no-post' },
+      { imageId: 6, outcome: 'refused', reason: 'no-post' },
+      { imageId: 99, outcome: 'refused', reason: 'image-not-found' },
+    ]);
+    expect((await items()).map((i) => i.imageId)).toEqual([1, 4]);
+  });
+
+  it.each(['Closed', 'Resolved', 'Open'])(
+    'never queues an image a second time once it had an item in any status (%s) when the caller asks for once per image',
+    async (status) => {
+      await enqueueKnightsItems(
+        db,
+        { source: 'scan-sample', questionKey: Q, items: [{ imageId: 1, priority: 1 }] },
+        NOW
+      );
+      await pg.query(`UPDATE "KnightsQueueItem" SET "status" = $1`, [status]);
+
+      const outcomes = await enqueueKnightsItems(
+        db,
+        {
+          source: 'scan-sample',
+          questionKey: Q,
+          items: [
+            { imageId: 1, priority: 1 },
+            { imageId: 2, priority: 1 },
+          ],
+        },
+        NOW,
+        { oncePerImage: true }
+      );
+
+      expect(outcomes).toMatchObject([
+        { imageId: 1, outcome: 'duplicate' },
+        { imageId: 2, outcome: 'enqueued' },
+      ]);
+      expect((await items()).map((i) => [i.imageId, i.status])).toEqual([
+        [1, status],
+        [2, 'Open'],
+      ]);
+    }
+  );
+
+  it('does not count a hidden-check copy of an image as its rating item for once per image', async () => {
+    await pg.query(
+      `INSERT INTO "KnightsQueueItem" ("questionKey","imageId","source","minRank","votesNeeded","status","isHiddenCheck")
+       VALUES ($1, 1, 'harvest', 'Knight', 5, 'Closed', true)`,
+      [Q]
+    );
+
+    const [outcome] = await enqueueKnightsItems(
+      db,
+      { source: 'scan-sample', questionKey: Q, items: [{ imageId: 1, priority: 1 }] },
+      NOW,
+      { oncePerImage: true }
+    );
+
+    expect(outcome.outcome).toBe('enqueued');
   });
 
   it('refuses what the queue could not serve, per item, and still writes the rest', async () => {

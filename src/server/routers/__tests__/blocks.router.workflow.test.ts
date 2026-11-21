@@ -633,6 +633,7 @@ import {
   starterComfyTxt2imgRecipe,
 } from '~/server/services/blocks/recipes/starter-comfy-txt2img.recipe';
 import { resolveDevBuzzBudget } from '~/server/services/blocks/dev-scoped-mint.service';
+import { canAccessGenerationResource } from '~/server/utils/resource-access';
 import { BLOCK_STEP_NAME } from '~/server/services/blocks/workflow.service';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import {
@@ -979,7 +980,14 @@ beforeEach(() => {
   // Every Civitai version a customComfy step names exists, on a base model apps may use.
   dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
     where: { id: { in: number[] } };
-  }) => args.where.id.in.map((id) => ({ id, baseModel: 'ZImageTurbo' }))) as never);
+  }) =>
+    args.where.id.in.map((id) => ({
+      id,
+      status: 'Published',
+      availability: 'Public',
+      model: { userId: 1 },
+      baseModel: 'ZImageTurbo',
+    }))) as never);
 });
 
 describe('blocks.pollWorkflow', () => {
@@ -3671,11 +3679,6 @@ describe('blocks.submitWorkflow — daily boost autoclaim', () => {
     expect(result.snapshot.autoClaim).toBeUndefined();
     // But the workflow still went through to the real submit.
     expect(result.snapshot.workflowId).toBe('wf_real');
-    // And the failure was logged for ops.
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'block-autoclaim-boost', stage: 'apply' }),
-      'webhooks'
-    );
   });
 
   it('does NOT claim and submit still proceeds when precheck (balance lookup) throws', async () => {
@@ -3691,10 +3694,6 @@ describe('blocks.submitWorkflow — daily boost autoclaim', () => {
     expect(mockDailyBoostApply).not.toHaveBeenCalled();
     expect(result.snapshot.autoClaim).toBeUndefined();
     expect(result.snapshot.workflowId).toBe('wf_real');
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'block-autoclaim-boost', stage: 'precheck' }),
-      'webhooks'
-    );
   });
 
   it('does NOT claim when the reward multiplier zeros the award (rewardsIneligible)', async () => {
@@ -4076,52 +4075,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     });
   }
 
-  const BLOB_SOURCE = {
-    url: 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg',
-    width: 768,
-    height: 1024,
-  };
-  /** The host-source rows, each with whether it was written before the orchestrator token. */
-  const hostSourceRows = () => {
-    const tokenAt = mockGetOrchestratorToken.mock.invocationCallOrder[0] ?? Infinity;
-    return mockLogToAxiom.mock.calls
-      .map(([data], i) => ({
-        data: data as Record<string, unknown>,
-        beforeToken: mockLogToAxiom.mock.invocationCallOrder[i] < tokenAt,
-      }))
-      .filter(({ data }) => data.name === 'app-block-host-source');
-  };
-
   describe('estimateWorkflow', () => {
-    it('counts an orchestrator source image once, before the token, tagged estimate', async () => {
-      mockVerifyBlockToken.mockResolvedValue(pageClaims());
-      happyVersionLookup();
-      happyUser();
-      mockSubmitWorkflow.mockResolvedValue({
-        id: '',
-        status: 'succeeded',
-        cost: { total: 12 },
-        steps: [],
-      });
-      mockLogToAxiom.mockClear();
-      mockGetOrchestratorToken.mockClear();
-      const caller = blocksRouter.createCaller(fakeCtx() as never);
-      await caller
-        .estimateWorkflow({ blockToken: 'tok', body: validBody({ sourceImage: BLOB_SOURCE }) })
-        .catch(() => undefined);
-      expect(hostSourceRows()).toEqual([
-        {
-          data: expect.objectContaining({
-            reason: 'host-orchestrator-source',
-            count: 1,
-            stepTypes: 'textToImage',
-            phase: 'estimate',
-          }),
-          beforeToken: true,
-        },
-      ]);
-    });
-
     it('a page token skips model-binding and passes the canGenerate gate → reaches whatif', async () => {
       // ctx has NO modelId, body.modelId=7 — a MODEL token would 403 here; a
       // page token must NOT.
@@ -4138,14 +4092,90 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
       expect(result.snapshot.cost).toEqual({ total: 12, authorFee: 0 });
       // The entitlement gate ran against the picked version (99) with the REAL
-      // viewer (id 42, mod true) — NOT an elevated/hardcoded context.
+      // viewer id, without the viewer's moderator rights (the viewer here is a moderator).
       expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
       const [versions, gateCtx] = mockResolveCanGenerateForVersions.mock.calls[0];
       expect(versions[0]).toMatchObject({ id: 99 });
-      expect(gateCtx.user).toEqual({ id: 42, isModerator: true });
+      expect(gateCtx.user).toEqual({ id: 42, isModerator: false });
       expect(mockSubmitWorkflow).toHaveBeenCalledWith(
         expect.objectContaining({ query: { whatif: true } })
       );
+    });
+
+    // The page arm uses the same resource rule as the step arms (civitai/civitai#9935): a resource
+    // an app names is checked without the viewer's moderator rights. The gate below runs the real
+    // access predicate over what the router passes it, so a moderator flag reaching it shows up.
+    describe('page resources use the step-arm access rule', () => {
+      type Gate = Parameters<typeof canAccessGenerationResource>[0] & { id: number };
+      type GateUser = Parameters<typeof canAccessGenerationResource>[1];
+      function versionOwnedBy(
+        userId: number,
+        over: { availability?: string; usageControl?: string; status?: string } = {}
+      ) {
+        mockDbRead.modelVersion.findUnique.mockResolvedValue({
+          id: 99,
+          baseModel: 'SDXL 1.0',
+          modelId: 7,
+          status: over.status ?? 'Published',
+          availability: over.availability ?? 'Public',
+          usageControl: over.usageControl ?? 'Download',
+          flags: 0,
+          meta: null,
+          generationCoverage: { covered: true, coveredNext: true },
+          model: { id: 7, type: 'Checkpoint', userId },
+        });
+      }
+      function realAccessGate() {
+        mockResolveCanGenerateForVersions.mockImplementation(
+          async (versions: Gate[], gateCtx: { user: GateUser }) =>
+            new Map(
+              versions.map((v) => [
+                v.id,
+                { canGenerate: canAccessGenerationResource(v, gateCtx.user) },
+              ])
+            )
+        );
+      }
+      function estimate() {
+        mockVerifyBlockToken.mockResolvedValue(pageClaims());
+        happyUser(); // viewer 42 is a moderator
+        mockSubmitWorkflow.mockResolvedValue({
+          id: '',
+          status: 'succeeded',
+          cost: { total: 12 },
+          steps: [],
+        });
+        const caller = blocksRouter.createCaller(fakeCtx() as never);
+        return caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      }
+
+      it.each([
+        ['Private', { availability: 'Private' }],
+        ['InternalGeneration', { usageControl: 'InternalGeneration' }],
+      ])("a moderator viewer is refused another user's %s version", async (_label, over) => {
+        versionOwnedBy(7001, over);
+        realAccessGate();
+        await expect(estimate()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      });
+
+      // Already refused before this gate (the page resolver serves Published versions only);
+      // pinned so the rule holds if that resolver widens.
+      it("a moderator viewer is refused another user's Draft version", async () => {
+        versionOwnedBy(7001, { status: 'Draft' });
+        realAccessGate();
+        await expect(estimate()).rejects.toBeInstanceOf(TRPCError);
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      });
+
+      it('the owner still passes with their own Private version', async () => {
+        versionOwnedBy(42, { availability: 'Private' });
+        realAccessGate();
+        await expect(estimate()).resolves.toBeDefined();
+        expect(mockSubmitWorkflow).toHaveBeenCalledWith(
+          expect.objectContaining({ query: { whatif: true } })
+        );
+      });
     });
 
     it('derives sfwOnly:true from a SFW token maturity claim (not the request domain)', async () => {
@@ -4352,33 +4382,6 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
   });
 
   describe('submitWorkflow', () => {
-    it('counts an orchestrator source image once, before the token, tagged submit', async () => {
-      mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 100 }));
-      happyVersionLookup();
-      happyUser();
-      mockSysRedis.incrBy.mockResolvedValue(25);
-      mockSubmitWorkflow
-        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
-        .mockResolvedValueOnce({
-          id: 'wf_real',
-          status: 'unassigned',
-          cost: { total: 25 },
-          steps: [],
-        });
-      mockLogToAxiom.mockClear();
-      mockGetOrchestratorToken.mockClear();
-      const caller = blocksRouter.createCaller(fakeCtx() as never);
-      await caller
-        .submitWorkflow({ blockToken: 'tok', body: validBody({ sourceImages: [BLOB_SOURCE] }) })
-        .catch(() => undefined);
-      expect(hostSourceRows()).toEqual([
-        {
-          data: expect.objectContaining({ count: 1, stepTypes: 'textToImage', phase: 'submit' }),
-          beforeToken: true,
-        },
-      ]);
-    });
-
     it('a page token submits when generatable + within budget (no spend bound bypassed)', async () => {
       mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 100 }));
       happyVersionLookup();
@@ -6639,7 +6642,14 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       happySubmit();
       dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
         where: { id: { in: number[] } };
-      }) => args.where.id.in.map((id) => ({ id, baseModel: 'SDXL Turbo' }))) as never);
+      }) =>
+        args.where.id.in.map((id) => ({
+          id,
+          status: 'Published',
+          availability: 'Public',
+          model: { userId: 1 },
+          baseModel: 'SDXL Turbo',
+        }))) as never);
       await caller().submitWorkflow({
         blockToken: 'tok',
         body: ccBody(),
@@ -6651,13 +6661,53 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       });
     });
 
+    // The check runs as the viewer (`user:42`): version rows are Private, owned by `ownerId`.
+    it.each([
+      ['refuses', 43],
+      ['allows', 42],
+    ])('%s a pinned file on a Private version owned by user %d', async (verdict, ownerId) => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+        where: { id: { in: number[] } };
+      }) =>
+        args.where.id.in.map((id) => ({
+          id,
+          status: 'Published',
+          availability: 'Private',
+          model: { userId: ownerId },
+          baseModel: 'ZImageTurbo',
+        }))) as never);
+      const run = caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ccBody(),
+        idempotencyKey: 'cc-key',
+      });
+      if (verdict === 'refuses') {
+        await expect(run).rejects.toThrow(/is not available for generation/);
+        expect(mockReserveAppSpend).not.toHaveBeenCalled();
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      } else {
+        await run;
+        expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      }
+    });
+
     it('refuses a pinned file on a base model no app may use, before any spend', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       happyCcResources();
       happySubmit();
       dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
         where: { id: { in: number[] } };
-      }) => args.where.id.in.map((id) => ({ id, baseModel: 'Flux.2 Klein 9B' }))) as never);
+      }) =>
+        args.where.id.in.map((id) => ({
+          id,
+          status: 'Published',
+          availability: 'Public',
+          model: { userId: 1 },
+          baseModel: 'Flux.2 Klein 9B',
+        }))) as never);
       await expect(
         caller().submitWorkflow({ blockToken: 'tok', body: ccBody(), idempotencyKey: 'cc-key' })
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });

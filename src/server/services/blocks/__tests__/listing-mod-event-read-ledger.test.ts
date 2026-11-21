@@ -18,9 +18,9 @@ import { LISTING_STATUS_CHANGING_MODERATION_ACTIONS } from '~/server/services/bl
  * removed a listing the server would happily republish.
  *
  * 🔴 TWO DIFFERENT COUNTING BASES APPEAR IN THIS ARC — do not read either as the other.
- *   (a) READ SITES IN THIS LEDGER: **7** — the direct reads of the table that the scanner
+ *   (a) READ SITES IN THIS LEDGER: **8** — the direct reads of the table that the scanner
  *       below finds under `src/**` excluding tests. 4 `filtered` + 1 `full-timeline` + 1
- *       `rating-review` + 1 `moderator-edit`. This
+ *       `rating-review` + 1 `moderator-edit` + 1 `ever-live`. This
  *       is the number the assertions here are about, and it is measured, not asserted from
  *       memory: the scanner reports it on every run.
  *   (b) OPEN-CODED COPIES FOUND ACROSS THE ARC: a running tally kept by the review rounds,
@@ -89,13 +89,13 @@ function readIsFiltered(strippedLines: string[], line: number): boolean {
   return window.includes('LISTING_STATUS_CHANGING_MODERATION_ACTIONS');
 }
 
-type Kind = 'filtered' | 'full-timeline' | 'rating-review' | 'moderator-edit';
+type Kind = 'filtered' | 'full-timeline' | 'rating-review' | 'moderator-edit' | 'ever-live';
 
 /**
  * 🔴 THE LEDGER. Every non-test read of `AppListingModerationEvent` in the repo, and what
  * question it asks. Adding a reader means adding a line here and stating which it is.
  *
- * There are SEVEN entries, which is the read-site count — basis (a) in the header. The
+ * There are EIGHT entries, which is the read-site count — basis (a) in the header. The
  * "sixth copy" / "seventh copy" labels in two `why` strings are basis (b), the arc-wide
  * open-coded-copy tally; they are provenance, not a position in this list.
  *
@@ -107,6 +107,9 @@ type Kind = 'filtered' | 'full-timeline' | 'rating-review' | 'moderator-edit';
  *                   `rating-change` events only, so a status event can never answer it.
  * `moderator-edit` — asks "what did this moderator last save to this revision?"; reads
  *                   `moderator-edit` events only.
+ * `ever-live`     — asks "was this listing ever live?"; ANY event says yes, because every
+ *                   moderation action applies to a listing that was live. Must NOT restrict to
+ *                   the status set: the auth hub's copy of the rule counts every action.
  */
 const LEDGER: Record<string, { kind: Kind; why: string }> = {
   'src/server/services/blocks/app-listing-owner-unpublish.ts': {
@@ -136,6 +139,10 @@ const LEDGER: Record<string, { kind: Kind; why: string }> = {
   'src/server/services/blocks/offsite-moderation.service.ts': {
     kind: 'full-timeline',
     why: 'queryModerationEvents — the paginated per-listing audit history (owner- and mod-scoped). Reads every action ON PURPOSE.',
+  },
+  'src/server/services/blocks/connect-offline-listing.ts': {
+    kind: 'ever-live',
+    why: 'listingEverLive — one ever-live signal for the purge refusal of a connect listing (a purged ever-live listing would hand its app offline access back). Reads any action ON PURPOSE.',
   },
 };
 
@@ -232,6 +239,13 @@ describe('AppListingModerationEvent read ledger', () => {
    * `/\baction\s*:\s*\{/` probe — so the structural guard covers the hand-typed shape too
    * and stops depending on a sibling file for the property its title implies.
    */
+  it('the ever-live reader is deliberately NOT filtered to the status set', () => {
+    const file = 'src/server/services/blocks/connect-offline-listing.ts';
+    const lines = found[file] ?? [];
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.every((l) => !readIsFiltered(stripped[file], l))).toBe(true);
+  });
+
   it('the full-timeline reader is deliberately NOT filtered — stated, not assumed', () => {
     const file = 'src/server/services/blocks/offsite-moderation.service.ts';
     const lines = found[file] ?? [];

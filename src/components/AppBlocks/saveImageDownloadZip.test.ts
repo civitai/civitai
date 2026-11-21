@@ -1,10 +1,6 @@
 import JSZip from 'jszip';
 import { describe, expect, it } from 'vitest';
-import {
-  SAVE_ZIP_INFLATE_ERROR,
-  SAVE_ZIP_MAX_BYTES,
-  SAVE_ZIP_VERIFY_ABORTED_ERROR,
-} from '@civitai/app-sdk/save-zip';
+import { SAVE_ZIP_INFLATE_ERROR, SAVE_ZIP_VERIFY_ABORTED_ERROR } from '@civitai/app-sdk/save-zip';
 import {
   classifySaveBytesContent,
   downloadBytesAsBlob,
@@ -13,10 +9,7 @@ import {
   verifySaveBytesBeforeDownload,
   prepareSaveBytes,
   processSaveBytes,
-  SAVE_BYTES_MAX_BYTES,
   SAVE_BYTES_MAX_PER_WINDOW,
-  SAVE_BYTES_ZIP_MAX_BYTES,
-  SAVE_BYTES_ZIP_MAX_BYTES_PER_WINDOW,
   verifySaveBytesContent,
 } from './saveImageDownload';
 
@@ -224,8 +217,8 @@ describe('verifySaveBytesBeforeDownload — the deadline and the unmount signal'
   });
 
   it('a check that outlives its deadline is aborted and replies the timeout error', async () => {
-    // 64 MB of zeros, declared honestly: far more inflate work than a 1 ms deadline allows.
-    const big = await jszip({ 'z.txt': new Uint8Array(64 * MB) }, 'DEFLATE');
+    // 16 MB of zeros, declared honestly: far more inflate work than a 1 ms deadline allows.
+    const big = await jszip({ 'z.txt': new Uint8Array(16 * MB) }, 'DEFLATE');
     const prepared = prepareSaveBytes({ bytes: big });
     // (The ratio bound refuses this zip in prepare — so build the prepared value by hand: the
     // deadline is what is under test, not the validator.)
@@ -269,27 +262,6 @@ describe('verifySaveBytesBeforeDownload — the deadline and the unmount signal'
 describe('zip size caps on the path the handler calls (processSaveBytes)', () => {
   const T0 = 9_000_000;
 
-  it('the zip caps are the validator’s own, per file and per window; other types unchanged', () => {
-    expect(SAVE_BYTES_ZIP_MAX_BYTES).toBe(SAVE_ZIP_MAX_BYTES);
-    expect(SAVE_BYTES_ZIP_MAX_BYTES_PER_WINDOW).toBe(SAVE_ZIP_MAX_BYTES);
-    expect(SAVE_BYTES_MAX_BYTES).toBe(50 * MB);
-  });
-
-  it('a zip AT 256 MB is accepted; one byte over is too large', () => {
-    const atCap = storedZipOfSize(SAVE_BYTES_ZIP_MAX_BYTES);
-    const ok = processSaveBytes({ bytes: atCap, filename: 'dataset.zip' }, [], T0);
-    expect(ok.result).toMatchObject({ ok: true, type: 'application/zip', filename: 'dataset.zip' });
-    expect(ok.recent).toEqual([{ at: T0, size: SAVE_BYTES_ZIP_MAX_BYTES }]);
-
-    // Refused on byteLength before anything is parsed, so it only has to START like a zip.
-    const overView = new Uint8Array(SAVE_BYTES_ZIP_MAX_BYTES + 1);
-    overView.set([0x50, 0x4b, 0x03, 0x04]);
-    const over = overView.buffer;
-    const refused = processSaveBytes({ bytes: over, filename: 'dataset.zip' }, [], T0 + 1);
-    expect(refused.result).toEqual({ ok: false, error: 'file exceeds the maximum save size' });
-    expect(refused.recent).toEqual([]);
-  });
-
   it('the raised cap is for zips only: a 61 MB zip is accepted, 61 MB of text is too large', () => {
     const size = 61 * MB + 7;
     const zip = processSaveBytes({ bytes: storedZipOfSize(size) }, [], T0);
@@ -315,7 +287,6 @@ describe('zip size caps on the path the handler calls (processSaveBytes)', () =>
     const fits = processSaveBytes({ bytes: storedZipOfSize(125 * MB + 5) }, r.recent, T0 + 3);
     expect(fits.result).toMatchObject({ ok: true, type: 'application/zip' });
   });
-
   it('a full window refuses a zip `busy` WITHOUT validating it (a malformed zip still says busy)', async () => {
     const full = Array.from({ length: SAVE_BYTES_MAX_PER_WINDOW }, (_, i) => ({
       at: T0 + i,

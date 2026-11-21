@@ -61,6 +61,12 @@ export const OWNED_REPORT_TABLES = [
     ownerColumn: 'sellerId',
   },
   {
+    reportTable: 'ServiceDealReviewReport',
+    fk: 'serviceDealReviewId',
+    table: 'ServiceDealReview',
+    ownerColumn: 'buyerId',
+  },
+  {
     reportTable: 'ChallengeReport',
     fk: 'challengeId',
     table: 'Challenge',

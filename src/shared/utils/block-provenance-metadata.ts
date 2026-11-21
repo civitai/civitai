@@ -109,10 +109,14 @@ export const JUDGE_RATING_METADATA_KEY = 'judgeRating';
  * Other server-owned `Image.metadata` keys, dropped from client input the same way:
  *  - `feedbackCapture`: the report a page capture belongs to (`createImage`'s `feedbackCapture`).
  *  - `judgeRating`: see `JUDGE_RATING_METADATA_KEY`.
+ *  - `ruleId` / `ruleReason`: the moderation rule that matched the image; whether a removal counts as
+ *    a rule's or a moderator's is read from them.
  */
 export const OTHER_SERVER_OWNED_IMAGE_METADATA_KEYS = [
   FEEDBACK_CAPTURE_METADATA_KEY,
   JUDGE_RATING_METADATA_KEY,
+  'ruleId',
+  'ruleReason',
 ] as const;
 
 const isServerOwnedMetadataKey = (key: string) =>

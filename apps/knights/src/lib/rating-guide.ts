@@ -9,3 +9,7 @@ const NAMES: Record<string, string> = {
 
 /** The short name shown above a level's description in the rating guide, keyed by the level's label. */
 export const levelName = (label: string): string | null => NAMES[label] ?? null;
+
+/** The prohibited-content list in the main site's Terms of Service, for the Blocked entry. */
+export const prohibitedContentUrl = (civitaiUrl: string) =>
+  `${civitaiUrl}/content/tos#tos-prohibited-content`;

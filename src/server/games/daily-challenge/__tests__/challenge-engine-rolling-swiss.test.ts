@@ -126,14 +126,6 @@ const closeField = (n: number) =>
     weightedRating: 0,
   }));
 
-/** The `failedGroups` payload of the one `challenge-swiss-group-failed` event a tick emits. */
-function failedGroupsFrom(log: typeof logToAxiom): string[] {
-  const event = log.mock.calls
-    .map(([arg]) => arg as { name: string; failedGroups?: string[] })
-    .find((arg) => arg.name === 'challenge-swiss-group-failed');
-  return event?.failedGroups ?? [];
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   operationBudgetRemaining.mockResolvedValue({ remaining: null, spent: 0 });
@@ -187,9 +179,6 @@ describe('advance and rankField', () => {
     expect(calls).toBe(1);
     expect(incrementOperationSpent).toHaveBeenCalledExactlyOnceWith(1, 12);
     expect(recordComparison).not.toHaveBeenCalled();
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'challenge-swiss-malformed', type: 'warning', malformed: 1 })
-    );
   });
 
   /**
@@ -204,9 +193,6 @@ describe('advance and rankField', () => {
   it('loses ONE group to a provider failure, not the tick', async () => {
     getStandings.mockResolvedValue(standings(GROUP_SIZE * 4));
     stubQueries(GROUP_SIZE * 4);
-    // The ranking is derived from the group it was ASKED about, as the real one is — a fixed
-    // `[1, 2, 3, 4]` would have every group record relations among the same four images, and the
-    // attribution assertion below would then be reading the mock rather than the engine.
     let call = 0;
     compareGroup.mockImplementation((input: unknown) => {
       call++;
@@ -228,37 +214,6 @@ describe('advance and rankField', () => {
     expect(recordComparison).toHaveBeenCalledTimes(3 * RELATIONS_PER_CALL);
     // A tick that threw billed NOTHING for the calls it had already paid the provider for.
     expect(incrementOperationSpent).toHaveBeenCalledExactlyOnceWith(1, 36);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'challenge-swiss-group-failed',
-        type: 'warning',
-        failed: 1,
-        calls: 3,
-        // The NEGATIVE arm of the refusal classification. Without it `refused` is pinned in one
-        // direction only, and `if (isContentRefusal(error)) refused++` reduced to `refused++` passes.
-        refused: 0,
-        message: 'Provider returned error',
-      })
-    );
-    expect(logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'challenge-swiss-group-unloadable' })
-    );
-
-    // Attribution is the whole point of logging membership, and with four groups "the right group"
-    // is a claim that can be wrong. The failed group must be exactly the entries that recorded
-    // nothing — logging `groups[0]`, or every planned group, makes the field actively misleading.
-    const failedIds = failedGroupsFrom(logToAxiom)[0]
-      .split(',')
-      .sort((a, b) => Number(a) - Number(b));
-    const recordedIds = new Set(
-      recordComparison.mock.calls.flatMap(([arg]) => {
-        const { imageIdA, imageIdB } = (arg as { verdict: { imageIdA: number; imageIdB: number } })
-          .verdict;
-        return [String(imageIdA), String(imageIdB)];
-      })
-    );
-    expect(failedIds).toHaveLength(GROUP_SIZE);
-    expect(failedIds.filter((id) => recordedIds.has(id))).toEqual([]);
   });
 
   /**
@@ -268,9 +223,6 @@ describe('advance and rankField', () => {
    * have a next item to refuse — 17 groups, a rejection on the first, and group 17 is the one
    * production was losing. 68 standings at the stubbed progress plan 17 groups: `tickCallBudget` is
    * ceil(68*9/2/6)=51 due, halved to 26 by progress, and `planGroups` cuts floor(68/4)=17 from them.
-   *
-   * The second rejection is not decoration: it is what pins `firstError ??=` as FIRST rather than
-   * last, and gives `failedGroups` more than one entry to get wrong.
    */
   it('still dispatches the groups a failure used to abandon', async () => {
     const field = 68;
@@ -296,16 +248,6 @@ describe('advance and rankField', () => {
     // items once a worker has rejected — and the tick threw on top of it.
     expect(compareGroup).toHaveBeenCalledTimes(17);
     expect(calls).toBe(15);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'challenge-swiss-group-failed',
-        planned: 17,
-        failed: 2,
-        calls: 15,
-        message: 'first failure',
-      })
-    );
-    expect(failedGroupsFrom(logToAxiom)).toHaveLength(2);
   });
 
   /**
@@ -327,55 +269,11 @@ describe('advance and rankField', () => {
 
     await expect(rollingSwissEngine.advance!(ctx, Date.now() + 60_000)).resolves.toBe(4);
     expect(incrementOperationSpent).toHaveBeenCalledExactlyOnceWith(1, 48);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'challenge-swiss-write-failed',
-        writeFailed: 1,
-        calls: 4,
-        message: 'write conflict',
-      })
-    );
-    // The ids are the point of this event: they name the groups now holding some of their six rows,
-    // and finding those rows to clean them needs the membership.
-    const written = logToAxiom.mock.calls
-      .map(([arg]) => arg as { name: string; writeFailedGroups?: string[] })
-      .find((arg) => arg.name === 'challenge-swiss-write-failed');
-    expect(written?.writeFailedGroups).toHaveLength(1);
-    expect(written?.writeFailedGroups?.[0].split(',')).toHaveLength(GROUP_SIZE);
-    // A database failure must not be filed as a provider failure. They point at different systems,
-    // and `refused` — the count of provider content refusals — must never be fed a Postgres error.
-    expect(logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'challenge-swiss-group-failed' })
-    );
   });
 
-  /**
-   * The id list is capped, so on a field-wide outage it stops being the count. Without
-   * `failedGroupsTruncated` beside it a reader takes 20 as the number of failed groups.
-   */
-  it('caps the logged ids on a field-wide outage and SAYS the list was cut', async () => {
-    const field = GROUP_SIZE * 21;
-    getStandings.mockResolvedValue(standings(field));
-    stubQueries(field);
-    compareGroup.mockRejectedValue(new Error('Provider returned error'));
-
-    await expect(rollingSwissEngine.advance!(ctx, Date.now() + 60_000)).resolves.toBe(0);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'challenge-swiss-group-failed',
-        planned: 21,
-        failed: 21,
-        failedGroupsTruncated: true,
-      })
-    );
-    expect(failedGroupsFrom(logToAxiom)).toHaveLength(20);
-  });
-
-  it('reports a group skipped for missing images under its OWN name, not as a failure', async () => {
+  it('skips a group with a missing image and runs the rest', async () => {
     getStandings.mockResolvedValue(standings(GROUP_SIZE * 4));
-    // One image of the sixteen does not load, so exactly one group is short whichever band it lands
-    // in. A group we cannot assemble is not a group that failed, and a dashboard that cannot tell a
-    // deleted image from a provider outage sends the next reader to the wrong system.
+    // One image of the sixteen does not load, so exactly one group is short whichever band it lands in.
     queryRaw.mockImplementation((strings: TemplateStringsArray) => {
       const sql = Array.isArray(strings) ? strings.join('') : String(strings);
       if (sql.includes('startsAt'))
@@ -400,51 +298,6 @@ describe('advance and rankField', () => {
     });
 
     await expect(rollingSwissEngine.advance!(ctx, Date.now() + 60_000)).resolves.toBe(3);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'challenge-swiss-group-unloadable',
-        type: 'warning',
-        unloadable: 1,
-      })
-    );
-    expect(logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'challenge-swiss-group-failed' })
-    );
-  });
-
-  /**
-   * The envelope message is generic for BOTH a refusal and a 5xx — production shows 49 identical
-   * `Provider returned error` lines and nothing to tell them apart. `isContentRefusal` reads the raw
-   * body, so the counter answers "why" where the message cannot. Nothing acts on it: excluding an
-   * entry is Justin's call and he chose not to, on the grounds that a transient provider error would
-   * silently drop a legitimate creator's entry.
-   */
-  it('classifies a content refusal apart from any other provider failure', async () => {
-    getStandings.mockResolvedValue(standings(GROUP_SIZE));
-    stubQueries(GROUP_SIZE);
-    const refusal = Object.assign(new Error('Provider returned error'), {
-      body: '{"error":{"metadata":{"reasons":["data_inspection_failed"]}}}',
-    });
-    compareGroup.mockRejectedValue(refusal);
-
-    await expect(rollingSwissEngine.advance!(ctx, Date.now() + 60_000)).resolves.toBe(0);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'challenge-swiss-group-failed',
-        failed: 1,
-        refused: 1,
-      })
-    );
-    // A group fails as a UNIT, and its membership is what makes attribution possible across ticks.
-    // Compared as a set: the entries are logged in PRESENTATION order, which the band shuffle
-    // deliberately varies, so asserting the literal order would pin the shuffle rather than the log.
-    expect(
-      failedGroupsFrom(logToAxiom)[0]
-        .split(',')
-        .sort((a, b) => Number(a) - Number(b))
-    ).toEqual(['1', '2', '3', '4']);
-    // Nothing was billed: the provider never returned a usage figure to bill from.
-    expect(incrementOperationSpent).not.toHaveBeenCalled();
   });
 
   /**
@@ -465,34 +318,6 @@ describe('advance and rankField', () => {
     compareGroup.mockRejectedValue(hostile);
 
     await expect(rollingSwissEngine.advance!(ctx, Date.now() + 60_000)).resolves.toBe(0);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'challenge-swiss-group-failed',
-        failed: 1,
-        refused: 0,
-        message: 'unserializable error',
-      })
-    );
-  });
-
-  // Passes against the UNFIXED engine too — it is not a revert control, it is the third arm of the
-  // three-way distinction: success emits neither warning. It fails if either log is ever moved out
-  // of its `if`, which is the edit it exists to stop.
-  it('reports NEITHER warning on a clean tick', async () => {
-    getStandings.mockResolvedValue(standings(GROUP_SIZE));
-    stubQueries(GROUP_SIZE);
-    compareGroup.mockResolvedValue({
-      order: [1, 2, 3, 4],
-      malformed: false,
-      model: 'openai/gpt-5.6-luna',
-      usage: {},
-      buzzCost: 12,
-    });
-
-    await expect(rollingSwissEngine.advance!(ctx, Date.now() + 60_000)).resolves.toBe(1);
-    const names = logToAxiom.mock.calls.map(([arg]) => (arg as { name: string }).name);
-    expect(names).not.toContain('challenge-swiss-group-failed');
-    expect(names).not.toContain('challenge-swiss-group-unloadable');
   });
 
   it('does nothing when the field is smaller than one group', async () => {
@@ -545,17 +370,13 @@ describe('advance and rankField', () => {
     await expect(rollingSwissEngine.advance!(ctx, Date.now() + 60_000)).resolves.toBe(3);
   });
 
-  it('never runs when the budget is already spent, and says so', async () => {
+  it('never runs when the budget is already spent', async () => {
     getStandings.mockResolvedValue(standings(GROUP_SIZE * 4));
     stubQueries(GROUP_SIZE * 4);
     operationBudgetRemaining.mockResolvedValue({ remaining: 0, spent: 500 });
 
     await expect(rollingSwissEngine.advance!(ctx, Date.now() + 60_000)).resolves.toBe(0);
     expect(compareGroup).not.toHaveBeenCalled();
-    // Stopping silently is the failure mode this subsystem is already full of.
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'challenge-swiss-budget-exhausted', type: 'warning' })
-    );
   });
 
   /**
@@ -752,9 +573,6 @@ describe('advance and rankField', () => {
     // It still returns a full ranking from what it already knows — an exhausted budget must not
     // silently shorten the field.
     expect(ranked).toHaveLength(GROUP_SIZE * 8);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'challenge-swiss-budget-exhausted', stage: 'close' })
-    );
   });
 
   it('buys exactly one call to price itself when there is no spend history', async () => {

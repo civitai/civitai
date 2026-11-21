@@ -1,18 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { rejectCrossSlot } from '~/__tests__/cluster-slots';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import {
-  imageAuditContentHash,
-  parseReviewBatchRecord,
-  reviewBatchHash,
-} from '@civitai/shared/review-batch';
+import { imageAuditContentHash } from '@civitai/shared/media-signals';
+import { parseReviewBatchRecord, reviewBatchHash } from '@civitai/shared/review-batch';
 
 /**
  * The review batch mint: who may mint, how the tier is decided, what the batch store holds, and how
  * repeats and key revocation end batches. Postgres signals and ClickHouse labels are faked rows;
- * sysRedis is an in-memory store with NX/EX, sets and MULTI.
+ * the cache cluster is an in-memory store with NX/EX, sets and MULTI, which refuses a MULTI whose
+ * keys span hash slots (CROSSSLOT), as the cluster does.
  */
 
 const { mockIsFlipt, mockClickhouseQuery, mockGetSessionUser } = vi.hoisted(() => ({
@@ -35,11 +34,11 @@ vi.mock('~/server/services/feature-flags.service', () => ({
   }),
 }));
 
-const { mintReviewBatch } = await import('../review-batch.service');
+const { mintReviewBatch, readScannerCsamVerdicts } = await import('../review-batch.service');
 const { revokeReviewBatchesOfKeys } = await import('../review-batch.store');
 
 // ---------------------------------------------------------------------------------------------
-// In-memory sysRedis.
+// In-memory cache cluster.
 type Entry = { value: string | Set<string>; expiresAt: number | null };
 let store = new Map<string, Entry>();
 const live = (key: string) => {
@@ -85,9 +84,9 @@ const ops = {
 };
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-function installFakeSysRedis() {
+function installFakeClusterRedis() {
   store = new Map();
-  const r = redisMock.sysRedis;
+  const r = redisMock.redis;
   for (const [name, op] of Object.entries(ops))
     r[name].mockImplementation(async (...args: unknown[]) => {
       await tick();
@@ -98,6 +97,7 @@ function installFakeSysRedis() {
     const chain: Record<string, unknown> = {
       exec: async () => {
         await tick();
+        rejectCrossSlot(queued.flatMap(([, args]) => [args[0]].flat().map(String)));
         return queued.map(([name, args]) => (ops[name] as (...a: unknown[]) => unknown)(...args));
       },
     };
@@ -121,15 +121,16 @@ const VIEWER = { id: 8, isModerator: true, permissions: ['csamReports'] };
 const ctx = { actor: MOD as never, apiKeyId: 99 };
 const signalRow = (id: number, over: Partial<Record<string, unknown>> = {}) => ({
   id,
-  suspect: false,
+  restricted: false,
+  siblings: [],
   unreadable: false,
   blockedFor: null,
   ...over,
 });
 
 let pgRows: ReturnType<typeof signalRow>[] = [];
-// Per image: its scanner rows hold a CSAM/minor label (1), none (0), or it has no rows (absent).
-let scannerRows = new Map<number, 0 | 1>();
+// Per image: its scanner rows hold a CSAM label, a minor label, neither, or it has no rows (absent).
+let scannerRows = new Map<number, 'csam' | 'minor' | 'clean'>();
 
 const mint = (over: Partial<Parameters<typeof mintReviewBatch>[0]> = {}) =>
   mintReviewBatch(
@@ -144,7 +145,7 @@ const mint = (over: Partial<Parameters<typeof mintReviewBatch>[0]> = {}) =>
   );
 
 beforeEach(() => {
-  installFakeSysRedis();
+  installFakeClusterRedis();
   setEnv({
     REVIEW_SHEET_BLOCKEDFOR_PATTERNS: '# signal\n^sig$\n# known-non-minor\n^benign$',
   });
@@ -152,8 +153,8 @@ beforeEach(() => {
   mockGetSessionUser.mockImplementation(async (id: number) => (id === VIEWER.id ? VIEWER : null));
   pgRows = [signalRow(1), signalRow(2)];
   scannerRows = new Map([
-    [1, 0],
-    [2, 0],
+    [1, 'clean'],
+    [2, 'clean'],
   ]);
   dbMock.dbWrite.$queryRaw.mockImplementation(async () => pgRows);
   mockClickhouseQuery.mockImplementation(
@@ -161,7 +162,11 @@ beforeEach(() => {
       json: async () =>
         [...scannerRows]
           .filter(([id]) => query_params.hashes.includes(imageAuditContentHash(id)))
-          .map(([id, hit]) => ({ contentHash: imageAuditContentHash(id), hit })),
+          .map(([id, label]) => ({
+            contentHash: imageAuditContentHash(id),
+            hit: label === 'clean' ? 0 : 1,
+            csamHit: label === 'csam' ? 1 : 0,
+          })),
     })
   );
 });
@@ -184,14 +189,8 @@ describe('the tier', () => {
     expect((await mint({ source: ' ' })).tier).toBe('held');
   });
 
-  it("reads each image's suspect leg with the CsamReport image listing", async () => {
-    await mint();
-    const query = JSON.stringify(dbMock.dbWrite.$queryRaw.mock.calls[0]);
-    expect(query).toContain('FROM \\"CsamReport\\" lr');
-  });
-
   it('an image with a Postgres signal, an unreadable scan, or no row at all is held', async () => {
-    pgRows = [signalRow(1, { suspect: true }), signalRow(2)];
+    pgRows = [signalRow(1, { restricted: true }), signalRow(2)];
     expect((await mint()).tier).toBe('held');
     pgRows = [signalRow(1, { unreadable: true }), signalRow(2)];
     expect((await mint()).tier).toBe('held');
@@ -201,8 +200,10 @@ describe('the tier', () => {
     expect((await mint()).tier).toBe('held');
   });
 
-  it('a label only ClickHouse holds makes the batch held', async () => {
-    scannerRows.set(2, 1);
+  it('a CSAM label only ClickHouse holds makes the batch held, a minor label does not', async () => {
+    scannerRows.set(2, 'minor');
+    expect((await mint()).tier).toBe('general');
+    scannerRows.set(2, 'csam');
     expect((await mint()).tier).toBe('held');
   });
 
@@ -240,6 +241,17 @@ describe('who may mint', () => {
 });
 
 describe('the batch store', () => {
+  it('🔴 mints, repeats and revokes on the cache cluster, with no MULTI across slots', async () => {
+    const first = await mint({ idempotencyKey: 'r'.repeat(22) });
+    const second = await mint({ idempotencyKey: 'r'.repeat(22) });
+    expect(batchFor(first.batchId)).toBeNull();
+    expect(batchFor(second.batchId)?.keyId).toBe(99);
+    await revokeReviewBatchesOfKeys([99]);
+    expect(batchKeys()).toEqual([]);
+    expect(redisMock.sysRedis.multi).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
+  });
+
   it('stores the record under the id hash, never the id or a signal', async () => {
     const { batchId, link } = await mint();
     expect(link).toBe(`https://moderator.civitai.com/api/review-media/b/${batchId}`);
@@ -284,9 +296,37 @@ describe('the batch store', () => {
 });
 
 describe('the scanner leg', () => {
-  it('an image with no scanner rows yet cannot be shown clean, so the batch is held', async () => {
+  it('an image with no scanner rows stays general, as on the retracted-media routes', async () => {
     scannerRows.delete(2);
-    expect((await mint()).tier).toBe('held');
+    expect((await mint()).tier).toBe('general');
+  });
+});
+
+describe('readScannerCsamVerdicts', () => {
+  it("reads each image's CSAM verdict in one query", async () => {
+    mockClickhouseQuery.mockClear();
+    mockClickhouseQuery.mockImplementationOnce(async () => ({
+      json: async () => [
+        { contentHash: imageAuditContentHash(1), hit: 1, csamHit: 1 },
+        { contentHash: imageAuditContentHash(2), hit: 0, csamHit: 0 },
+      ],
+    }));
+    expect(await readScannerCsamVerdicts([1, 2, 3])).toEqual(
+      new Map([
+        [1, 'hit'],
+        [2, 'clear'],
+        [3, 'none'],
+      ])
+    );
+    expect(mockClickhouseQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers null when the scanner cannot be read, and sends no query for no images', async () => {
+    mockClickhouseQuery.mockClear();
+    mockClickhouseQuery.mockRejectedValueOnce(new Error('timeout'));
+    expect(await readScannerCsamVerdicts([1])).toBeNull();
+    expect(await readScannerCsamVerdicts([])).toEqual(new Map());
+    expect(mockClickhouseQuery).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -21,6 +21,8 @@ export const PREVIEW_ERRORS_FLUSH_MS = 2_000;
 const MESSAGE_MAX = 2_000;
 const STACK_MAX = 4_000;
 const SOURCES = ['error', 'unhandledrejection', 'console'] as const;
+/** The largest epoch-ms magnitude a `Date` represents. */
+const MAX_DATE_MS = 8.64e15;
 
 export interface PreviewErrorReport {
   message: string;
@@ -43,7 +45,9 @@ export function parseBlockErrorReport(raw: unknown, now = Date.now()): PreviewEr
     ...(typeof value.stack === 'string' && value.stack
       ? { stack: value.stack.slice(0, STACK_MAX) }
       : {}),
-    at: typeof value.at === 'number' && Number.isFinite(value.at) ? value.at : now,
+    // A time a `Date` can hold, or now: a finite number past ±8.64e15 ms makes
+    // `new Date(at).toISOString()` throw, and `at` is whatever the block chose to send.
+    at: typeof value.at === 'number' && Math.abs(value.at) <= MAX_DATE_MS ? value.at : now,
   };
 }
 

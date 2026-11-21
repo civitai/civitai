@@ -1,5 +1,6 @@
 import type { IncomingMessage } from 'http';
 import { getCookies } from 'cookies-next';
+import { siteCookieJar } from '@civitai/auth';
 import { resolveAuthGuard } from '~/server/auth/route-guard';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
@@ -119,7 +120,8 @@ export async function shellRefusal(
   }
 
   const cookies = getCookies({ req: req as never });
-  const names = Object.keys(cookies);
+  // A host-only site's shared-slot cookie is never its session (AUTH_SESSION_COOKIE_MODE_BY_SITE).
+  const names = Object.keys(siteCookieJar(cookies, req.headers.host) ?? {});
   if (!names.some(isSessionCookieName)) return 'no-session-cookie';
   if (cookies[route.cookie] !== '1') return 'no-route-cookie';
 

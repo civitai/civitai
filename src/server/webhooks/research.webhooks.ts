@@ -5,6 +5,7 @@ import { ratingsCounter } from '~/server/routers/research.router';
 import { calculateLevelProgression } from '~/server/utils/research-utils';
 import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';
 import { servableProfilePictureSql } from '~/server/services/profile-picture.sql';
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 
 type RaterWebhookData = {
   userId: number;
@@ -29,7 +30,7 @@ export const researchWebhooks = createWebhookProcessor({
             SELECT i.url
             FROM "Image" i
             WHERE i.id = u."profilePictureId" AND ${servableProfilePictureSql}
-          ), u.image) as image
+          ), ${Prisma.raw(fallbackUserImageColumn)}) as image
         FROM "User" u
         WHERE id IN (${Prisma.join(userIds)})
       `;

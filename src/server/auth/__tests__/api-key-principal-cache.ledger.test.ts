@@ -123,7 +123,9 @@ const LEDGER: Record<string, { count: number; why: string }> = {
   'src/server/routers/oauth-consent.router.ts': { count: 1, why: NOT_CACHED },
   'src/server/services/blocks/oauth-consent-sync.service.ts': { count: 1, why: NOT_CACHED },
   'apps/auth/src/lib/server/oauth/model.ts': { count: 1, why: NOT_CACHED },
-  'apps/auth/src/lib/server/oauth/token-helpers.ts': { count: 1, why: 'insert: OAuth rows' },
+  'apps/auth/src/lib/server/oauth/token-helpers.ts': { count: 2, why: 'insert: OAuth rows' },
+  // Refresh-family revoke (Refresh + Access) and the offline-decline Refresh delete: OAuth rows.
+  'apps/auth/src/lib/server/oauth/offline-grant.ts': { count: 3, why: NOT_CACHED },
   'apps/auth/src/routes/api/auth/oauth/revoke/+server.ts': { count: 2, why: NOT_CACHED },
   'apps/auth/src/lib/server/oauth/worker-grant.ts': { count: 2, why: WORKER_ONLY },
   'apps/auth/src/lib/server/oauth/worker-admin.ts': { count: 1, why: WORKER_ONLY },
@@ -383,6 +385,41 @@ describe('writes that evict the bearer cache', () => {
     expect(tombstoned('hash-of-personal')).toBe(false);
     expect(await getSessionFromBearerToken('orchestrator')).toBeNull();
     expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(51);
+  });
+
+  it('🔴 deleteApiKeys over many holders: each holder’s orchestrator auth expires once, never more than 10 at a time', async () => {
+    // A connect app's takedown deletes the client's refresh tokens for every user at once.
+    for (let i = 0; i < 25; i++) {
+      rows.push({
+        ...seed()[0],
+        id: 1000 + i,
+        key: `hash-of-refresh-${i}`,
+        userId: 7000 + i,
+        clientId: 'oc_takedown',
+        type: 'Refresh',
+      });
+    }
+    const { revokeCivitaiUserTokens } = await import('~/server/services/orchestrator/civitai');
+    let inFlight = 0;
+    let peak = 0;
+    vi.mocked(revokeCivitaiUserTokens).mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 1));
+      inFlight--;
+      return true;
+    });
+    await expect(deleteApiKeys({ type: 'Refresh', clientId: 'oc_takedown' })).resolves.toEqual({
+      count: 25,
+    });
+    expect(
+      vi
+        .mocked(revokeCivitaiUserTokens)
+        .mock.calls.map((c) => c[0].userId)
+        .sort()
+    ).toEqual(Array.from({ length: 25 }, (_, i) => 7000 + i));
+    expect(peak).toBe(10);
+    expect(rows.some((r) => r.clientId === 'oc_takedown')).toBe(false);
   });
 
   it('expireUserApiKeys stops every key of the user on the next request and keeps the rows', async () => {

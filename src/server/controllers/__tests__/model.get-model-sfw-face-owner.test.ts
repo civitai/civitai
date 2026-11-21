@@ -5,7 +5,8 @@ import type * as CoverageSource from '~/server/services/generation/coverage-sour
 import type * as GenerationService from '~/server/services/generation/generation.service';
 import type * as ModelService from '~/server/services/model.service';
 import type * as SystemCache from '~/server/services/system-cache';
-import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType, ModelStatus } from '~/shared/utils/prisma/enums';
 import { installUserCosmeticCacheFake } from '~/test-utils/userCosmeticCacheFake';
 
 const { getModel } = vi.hoisted(() => ({ getModel: vi.fn() }));
@@ -78,8 +79,15 @@ beforeEach(() => {
   });
 });
 
-const get = (user: object | undefined, features: object, forEditor?: boolean) =>
-  getModelHandler({ input: { id: 1, forEditor }, ctx: { user, features } } as never);
+const SCOPED_KEY = {
+  apiKeyId: 1,
+  apiKeyType: ApiKeyType.User,
+  subject: { type: 'apiKey', id: 1 },
+  tokenScope: TokenScope.ModelsRead,
+};
+
+const get = (user: object | undefined, features: object, forEditor?: boolean, credential = {}) =>
+  getModelHandler({ input: { id: 1, forEditor }, ctx: { user, features, ...credential } } as never);
 
 describe('model.getById .com face', () => {
   it.each([
@@ -102,6 +110,12 @@ describe('model.getById .com face', () => {
     expect(model.description).toBe('<p>Red description</p>');
     expect(model.sfwName).toBe('Com title');
     expect(model.sfwDescription).toBe('<p>Com description</p>');
+  });
+
+  it('the editor read gives the owner on a scoped key nothing new', async () => {
+    const model = await get(owner, COM, true, SCOPED_KEY);
+    expect(model.name).toBe('Com title');
+    expect(model.sfwName).toBeNull();
   });
 
   it('the editor read gives a non-owner nothing new', async () => {

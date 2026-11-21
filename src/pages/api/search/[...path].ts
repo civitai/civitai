@@ -1,4 +1,5 @@
 import type { NextApiRequest } from 'next';
+import { restModeratorViewer } from '~/server/auth/rest-viewer';
 import type * as z from 'zod';
 import {
   siteFacetSearchSchema,
@@ -9,6 +10,7 @@ import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import type { SiteSearchOptions, SiteSearchViewer } from '~/server/services/site-search.service';
 import { isSiteSearchPassthroughOn } from '~/server/services/site-search-passthrough';
 import {
+  collectionImageLevelFor,
   SiteSearchError,
   siteFacetSearch,
   siteIndexSearch,
@@ -78,13 +80,21 @@ export default MixedAuthEndpoint(
     }
 
     const features = getFeatureFlagsLazy({ user, req });
+    const isModerator = restModeratorViewer(req, user)?.isModerator;
+    const browsingLevelCap = requestDomainBrowsingLevelCap({
+      user,
+      features,
+      req: req as NextApiRequest,
+    });
     const viewer: SiteSearchViewer = {
       userId: user?.id,
-      isModerator: user?.isModerator,
-      browsingLevelCap: requestDomainBrowsingLevelCap({
-        user,
-        features,
-        req: req as NextApiRequest,
+      isModerator,
+      browsingLevelCap,
+      collectionImageLevel: collectionImageLevelFor({
+        browsingLevelCap,
+        signedIn: !!user,
+        isModerator,
+        viewerBrowsingLevel: getRequestBrowsingLevel({ features, user }),
       }),
       showSfwFace: !Flags.intersects(
         getRequestBrowsingLevel({ features, user }),

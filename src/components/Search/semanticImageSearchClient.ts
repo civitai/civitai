@@ -253,18 +253,31 @@ async function searchFacetValues(facetName: string, facetQuery: string) {
 type MyImagesInput = Parameters<typeof trpcVanilla.image.getMyImages.query>[0];
 type MyImagesOutput = Awaited<ReturnType<typeof trpcVanilla.image.getMyImages.query>>;
 
+export type OwnerImageUser = {
+  id: number;
+  username?: string | null;
+  image?: string | null;
+  profilePicture?: unknown;
+};
+
+/** Cap on the owner's newest images and videos the empty picker lists. */
+export const OWNER_LIST_LIMIT = 100;
+
 /**
  * The showcase picker's Images, offered with or without image search. A typed query goes to the
  * semantic search, scoped by the `user.username` facet (without the flag the server serves only the
- * caller's own name). An empty one lists the caller's recent published images, which the semantic
- * search cannot, at the viewer's browsing level.
+ * caller's own name). An empty one lists the caller's recent published images and videos, which the
+ * semantic search cannot, at the viewer's browsing level.
  */
 export function createOwnerImageSearch({
   searchImages = createSemanticImageSearch(),
   getMyImages = (input: MyImagesInput) => trpcVanilla.image.getMyImages.query(input),
+  getUser = () => undefined,
 }: {
   searchImages?: ReturnType<typeof createSemanticImageSearch>;
   getMyImages?: (input: MyImagesInput) => Promise<MyImagesOutput>;
+  /** The caller, whose images the empty list is: that query's rows carry no `user`. */
+  getUser?: () => OwnerImageUser | undefined;
 } = {}) {
   return async function searchOwnerImages(indexName: string, params: RequestParams) {
     if (params.query?.trim()) return searchImages(indexName, params);
@@ -275,10 +288,12 @@ export function createOwnerImageSearch({
     if (!hitsPerPage || params.page) return empty;
     const browsingLevel = readBrowsingLevel(params.filters);
     const { items } = await getMyImages({
-      limit: hitsPerPage,
-      mediaTypes: [MediaType.image],
+      limit: Math.max(hitsPerPage, OWNER_LIST_LIMIT),
+      // The owner's own list, not the semantic search, so videos can be offered here.
+      mediaTypes: [MediaType.image, MediaType.video],
       publishedOnly: true,
     });
+    const user = getUser();
     const hits = items
       .filter((item) => !browsingLevel || Flags.intersects(browsingLevel, item.nsfwLevel))
       .map((item) => {
@@ -288,7 +303,7 @@ export function createOwnerImageSearch({
           width?: number;
           height?: number;
         };
-        return { ...item, hash, width, height, objectID: String(item.id) };
+        return { ...item, hash, width, height, objectID: String(item.id), ...(user && { user }) };
       });
     return { ...empty, hits, nbHits: hits.length, nbPages: 1 };
   };

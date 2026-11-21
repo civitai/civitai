@@ -26,7 +26,7 @@ func TestDefaults(t *testing.T) {
 		c.JWKSRefresh != 10*time.Minute || c.JWKSMaxStaleness != 30*time.Minute || c.CacheKeyPrefix != "" {
 		t.Fatalf("defaults: %+v", c)
 	}
-	if got := strings.Join(c.CookieNames(), ","); got != "__Secure-civ-token,__Host-civ-token" {
+	if got := strings.Join(c.CookieNames(""), ","); got != "__Secure-civ-token,__Host-civ-token" {
 		t.Fatalf("cookie names %s", got)
 	}
 }
@@ -79,11 +79,11 @@ func TestOverrides(t *testing.T) {
 		c.RedisCluster || c.ModerationAccountID != 0 || c.JWKSMaxStaleness != 3*time.Second {
 		t.Fatalf("%+v", c)
 	}
-	if got := strings.Join(c.CookieNames(), ","); got != "__Host-civ-token" {
+	if got := strings.Join(c.CookieNames(""), ","); got != "__Host-civ-token" {
 		t.Fatalf("cookie names %s", got)
 	}
 	c.AuthIssuer = "http://localhost:5173"
-	if got := strings.Join(c.CookieNames(), ","); got != "civ-token" {
+	if got := strings.Join(c.CookieNames(""), ","); got != "civ-token" {
 		t.Fatalf("insecure cookie names %s", got)
 	}
 }
@@ -120,5 +120,67 @@ func TestNodeRules(t *testing.T) {
 		if got := OutwardTrafficAllowed(c.link, c.optIn); got != c.want {
 			t.Errorf("OutwardTrafficAllowed(%q, %q) = %v, want %v", c.link, c.optIn, got, c.want)
 		}
+	}
+}
+
+// AUTH_SESSION_COOKIE_MODE_BY_SITE: a site listed host reads only the host-only slot; every other site keeps the
+// global mode (shared here), and an entry with a mistyped mode leaves its site unlisted.
+func TestCookieNamesPerSite(t *testing.T) {
+	m := base()
+	m["AUTH_SESSION_COOKIE_MODE_BY_SITE"] = "civitai.red:host, civitai.example:Host"
+	c, err := Load(env(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		"civitai.red":         "__Host-civ-token",
+		"www.civitai.red:443": "__Host-civ-token",
+		"civitai.com":         "__Secure-civ-token,__Host-civ-token",
+		"civitai.example":     "__Secure-civ-token,__Host-civ-token",
+		"":                    "__Secure-civ-token,__Host-civ-token",
+	}
+	for host, want := range cases {
+		if got := strings.Join(c.CookieNames(host), ","); got != want {
+			t.Errorf("CookieNames(%q) = %s, want %s", host, got, want)
+		}
+	}
+}
+
+// The session cookie names a request to civitai.com reads, in order, for each mode the main app's
+// readSessionToken knows (packages/civitai-auth/src/cookies.ts): the mode's own slot first, the shared
+// slot only while the legacy read is on, a site listed in AUTH_SESSION_COOKIE_MODE_BY_SITE in its own
+// mode whatever the global env says, and the bare name on http. auth.Resolve reads the first present.
+func TestCookieNamesPerMode(t *testing.T) {
+	cases := []struct {
+		name, issuer, mode, legacy, bySite, want string
+	}{
+		{"defaults", "https://auth.civitai.com", "", "", "", "__Secure-civ-token,__Host-civ-token"},
+		{"shared", "https://auth.civitai.com", "shared", "", "", "__Secure-civ-token,__Host-civ-token"},
+		{"host", "https://auth.civitai.com", "host", "", "", "__Host-civ-token,__Secure-civ-token"},
+		{"host, legacy read garbage", "https://auth.civitai.com", "host", "garbage", "", "__Host-civ-token,__Secure-civ-token"},
+		{"host, legacy read false", "https://auth.civitai.com", "host", "false", "", "__Host-civ-token"},
+		{"host, legacy read off", "https://auth.civitai.com", "host", "off", "", "__Host-civ-token"},
+		{"shared, legacy read no", "https://auth.civitai.com", "shared", "no", "", "__Host-civ-token"},
+		{"mistyped mode is shared", "https://auth.civitai.com", "Host", "", "", "__Secure-civ-token,__Host-civ-token"},
+		{"site listed shared beats host and legacy off", "https://auth.civitai.com", "host", "false", "civitai.com:shared", "__Secure-civ-token,__Host-civ-token"},
+		{"site listed host beats shared", "https://auth.civitai.com", "shared", "", "civitai.com:host", "__Host-civ-token"},
+		{"another site listed", "https://auth.civitai.com", "host", "", "civitai.red:shared", "__Host-civ-token,__Secure-civ-token"},
+		{"http issuer", "http://localhost:3000", "host", "", "", "civ-token"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := base()
+			m["AUTH_JWT_ISSUER"] = c.issuer
+			m["AUTH_SESSION_COOKIE_MODE"] = c.mode
+			m["AUTH_LEGACY_READ"] = c.legacy
+			m["AUTH_SESSION_COOKIE_MODE_BY_SITE"] = c.bySite
+			cfg, err := Load(env(m))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(cfg.CookieNames("civitai.com"), ","); got != c.want {
+				t.Errorf("CookieNames(civitai.com) = %s, want %s", got, c.want)
+			}
+		})
 	}
 }

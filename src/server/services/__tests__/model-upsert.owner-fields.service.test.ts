@@ -8,6 +8,7 @@ import type * as ModelCoverService from '~/server/services/model-cover.service';
 import type * as ComFaceRecheck from '~/server/services/model-com-face-recheck.service';
 import type * as TextScanPreview from '~/server/services/text-scan/preview';
 import type { TextScanField } from '~/server/services/text-scan/types';
+import { sfwFaceStampHash } from '~/server/services/model-sfw-face-stamp';
 
 // Unit tests for upsertModel's owner-writable fields: moderation-owned meta and availability.
 // Scaffold mirrors model-locked-properties.service.test.ts.
@@ -116,14 +117,17 @@ vi.mock('~/server/services/model-cover.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelCoverService>()),
   assertCoverImagesValid: mockAssertCoverImagesValid,
 }));
-const { mockQueueComFaceRecheck, mockQueueComFaceRestore } = vi.hoisted(() => ({
-  mockQueueComFaceRecheck: vi.fn(),
-  mockQueueComFaceRestore: vi.fn(),
-}));
+const { mockQueueComFaceRecheck, mockQueueComFaceRestore, mockRescanTextAfterFaceLoss } =
+  vi.hoisted(() => ({
+    mockQueueComFaceRecheck: vi.fn(),
+    mockQueueComFaceRestore: vi.fn(),
+    mockRescanTextAfterFaceLoss: vi.fn(),
+  }));
 vi.mock('~/server/services/model-com-face-recheck.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ComFaceRecheck>()),
   queueComFaceRecheck: mockQueueComFaceRecheck,
   queueComFaceRestore: mockQueueComFaceRestore,
+  rescanTextAfterFaceLoss: mockRescanTextAfterFaceLoss,
 }));
 const { mockPreviewComFaceIntent, mockPreviewTextScanNsfw } = vi.hoisted(() => ({
   mockPreviewComFaceIntent: vi.fn(),
@@ -146,6 +150,7 @@ const {
   mockDropLiftedBy,
   mockHoldLead,
   mockHoldLeadAfterSfwOnlyLift,
+  mockNotifyHeld,
 } = vi.hoisted(() => ({
   mockHoldLeadAfterSfwOnlyLift: vi.fn(async (..._args: unknown[]) => undefined),
   mockDropLiftedBy: vi.fn(async (..._args: unknown[]) => undefined),
@@ -153,12 +158,14 @@ const {
   mockApplyHeldVerdict: vi.fn(async (): Promise<null> => null),
   mockLeavingPrivate: vi.fn(async (_db: unknown, _id: number) => false),
   mockFinishApply: vi.fn(async (_id: number) => undefined),
+  mockNotifyHeld: vi.fn(async (_notices: unknown[]) => undefined),
 }));
 vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelNsfw>()),
   applyHeldRestrictedVerdict: mockApplyHeldVerdict,
   applyHeldVerdictLeavingPrivate: mockLeavingPrivate,
   finishHeldVerdictApply: mockFinishApply,
+  notifyComFaceHeldVerdictApplied: mockNotifyHeld,
   dropLiftedBy: mockDropLiftedBy,
   holdLeadAfterFlagLift: mockHoldLead,
   holdLeadAfterSfwOnlyLift: mockHoldLeadAfterSfwOnlyLift,
@@ -210,6 +217,7 @@ const storedModel = {
   allowDifferentLicense: false,
   coverImageId: null as number | null,
   sfwName: null as string | null,
+  sfwDescription: null as string | null,
   sfwCoverImageId: null as number | null,
 };
 
@@ -518,7 +526,11 @@ describe('a moderator lifting the nsfw lock', () => {
     expect(meta.comFaceIntent?.overturnedAt).toEqual(expect.any(String));
     expect(meta.comFaceIntent).not.toHaveProperty('priorSystemNsfwLock');
     expect(meta.comFaceIntent).not.toHaveProperty('laterVerdict');
-    expect(reusableComFaceIntent(meta, listingHash, 77)).toEqual({ detected: false, reason: 'r' });
+    expect(reusableComFaceIntent(meta, listingHash, 77)).toEqual({
+      detected: false,
+      reason: 'r',
+      promptId: 77,
+    });
     expect(meta).not.toHaveProperty('comFaceIntentRelockSuppressed');
   });
 
@@ -534,7 +546,11 @@ describe('a moderator lifting the nsfw lock', () => {
     await unlock();
     const meta = updateData().meta as ModelMeta;
     expect(meta.comFaceIntent).toEqual(detection);
-    expect(reusableComFaceIntent(meta, listingHash, 77)).toEqual({ detected: true, reason: 'r' });
+    expect(reusableComFaceIntent(meta, listingHash, 77)).toEqual({
+      detected: true,
+      reason: 'r',
+      promptId: 77,
+    });
     expect(meta.comFaceIntentRelockSuppressed).toEqual({
       textHash: listingHash,
       at: expect.any(String),
@@ -1719,5 +1735,264 @@ describe('flagged model gallery level', () => {
       mockDbWrite.model.findMany.mockReset();
       await pg.close();
     }
+  });
+});
+
+describe('the .com face stamp at save', () => {
+  const storedFace = {
+    name: baseInput.name,
+    description: baseInput.description,
+    sfwName: 'Retro Style',
+    sfwCoverImageId: 5,
+  };
+  const passes = () => {
+    mockPreviewComFaceIntent.mockResolvedValue({
+      status: 'ok',
+      output: { detected: false, reason: 'stub' },
+    });
+    mockPreviewTextScanNsfw.mockResolvedValue({
+      status: 'ok',
+      level: 1,
+      reason: 'stub',
+      promptId: 31,
+    });
+  };
+  const savedStamp = () =>
+    (updateData().meta as Record<string, unknown> | undefined)?.sfwFaceCheckedAt;
+  beforeEach(() => {
+    // The intent check records its verdict on the row before the save writes.
+    mockDbWrite.$executeRaw.mockResolvedValue(1 as never);
+    mockDbRead.modelVersion.findMany.mockResolvedValue([] as never);
+  });
+
+  it('stamps the face it checked when an owner saves one that passes', async () => {
+    passes();
+    mockStored(storedFace);
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      sfwName: 'Retro Style Two',
+      sfwDescription: '<p>A retro poster style.</p>',
+    });
+    expect(savedStamp()).toEqual({
+      at: expect.any(String),
+      promptId: 31,
+      hash: sfwFaceStampHash({
+        sfwName: 'Retro Style Two',
+        sfwDescription: '<p>A retro poster style.</p>',
+        sfwCoverImageId: 5,
+        versionFields: [],
+      }),
+    });
+  });
+
+  it("covers the model's version names and trigger words, which it checks too", async () => {
+    passes();
+    mockStored(storedFace);
+    mockDbRead.modelVersion.findMany.mockResolvedValue([
+      { name: 'v1', trainedWords: ['retro'] },
+    ] as never);
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style Two' });
+    const checked = mockPreviewTextScanNsfw.mock.calls.flatMap((call) =>
+      (call[0] as { fields: TextScanField[] }).fields.map((field) => field.text)
+    );
+    expect(checked).toContain('v1');
+    expect(savedStamp()).toMatchObject({
+      hash: sfwFaceStampHash({
+        sfwName: 'Retro Style Two',
+        sfwDescription: null,
+        sfwCoverImageId: 5,
+        versionFields: [
+          { heading: 'Version name', text: 'v1' },
+          { heading: 'Trained words', text: 'retro' },
+        ],
+      }),
+    });
+  });
+
+  it('saves a face whose version text the check flags, but stamps nothing', async () => {
+    passes();
+    mockStored(storedFace);
+    mockDbRead.modelVersion.findMany.mockResolvedValue([
+      { name: 'v1 explicit', trainedWords: [] },
+    ] as never);
+    mockPreviewTextScanNsfw.mockImplementation(async ({ fields }: { fields: TextScanField[] }) =>
+      fields.some((field) => field.text?.includes('explicit'))
+        ? { status: 'ok', level: 16, reason: 'stub' }
+        : { status: 'ok', level: 1, reason: 'stub', promptId: 31 }
+    );
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style Two' });
+    expect(mockDbWrite.model.update).toHaveBeenCalledTimes(1);
+    expect(savedStamp()).toBeUndefined();
+  });
+
+  it('stamps the cover the save picks, with the stored title', async () => {
+    passes();
+    mockStored(storedFace);
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwCoverImageId: 6 });
+    expect(savedStamp()).toMatchObject({
+      hash: sfwFaceStampHash({
+        sfwName: 'Retro Style',
+        sfwDescription: null,
+        sfwCoverImageId: 6,
+        versionFields: [],
+      }),
+    });
+  });
+
+  it('saves nothing when the check refuses the face', async () => {
+    passes();
+    mockPreviewTextScanNsfw.mockResolvedValue({ status: 'ok', level: 16, reason: 'stub' });
+    mockStored(storedFace);
+    await expect(
+      upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Nude Pack' })
+    ).rejects.toThrow();
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it("writes no stamp on a moderator's save, which runs no check", async () => {
+    mockStored(storedFace);
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, sfwName: 'Retro Two' });
+    expect(savedStamp()).toBeUndefined();
+  });
+
+  it('never lets the client author the stamp', async () => {
+    mockStored(storedFace);
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      name: baseInput.name,
+      meta: {
+        sfwFaceCheckedAt: { at: 'x', promptId: 1, hash: 'forged' },
+        hideBuzz: true,
+      } as ModelUpsertInput['meta'],
+    });
+    expect(savedStamp()).toBeUndefined();
+  });
+});
+
+describe('a .com face going away', () => {
+  /** The held-verdict flip: the scan's flip statement, guarded on the held verdict. */
+  const heldFlip = () =>
+    mockDbWrite.$executeRaw.mock.calls.find(
+      ([strings, ...values]) =>
+        Array.isArray(strings) &&
+        (strings as readonly string[]).join('?').includes('SET nsfw = TRUE') &&
+        values.some((v) =>
+          String((v as { sql?: string })?.sql ?? '').includes('comFaceHeldVerdict')
+        )
+    );
+  const complete = {
+    name: baseInput.name,
+    description: baseInput.description,
+    sfwName: 'Retro Style',
+    sfwDescription: '<p>A retro poster style.</p>',
+    sfwCoverImageId: 5,
+  };
+  beforeEach(() => {
+    mockDbWrite.$executeRaw.mockResolvedValue(1 as never);
+    mockDbRead.modelVersion.findMany.mockResolvedValue([] as never);
+    mockPreviewComFaceIntent.mockResolvedValue({
+      status: 'ok',
+      output: { detected: false, reason: 'stub' },
+    });
+    mockPreviewTextScanNsfw.mockResolvedValue({ status: 'ok', level: 1, reason: 'stub' });
+  });
+
+  it.each([
+    ['turns the face off', { sfwName: '' }],
+    ['clears the .com description', { sfwDescription: '<p></p>' }],
+    ['clears the .com cover', { sfwCoverImageId: null }],
+  ])('rescans the text when an owner %s', async (_, change) => {
+    mockStored(complete);
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, ...change });
+    expect(mockRescanTextAfterFaceLoss).toHaveBeenCalledTimes(1);
+    expect(mockRescanTextAfterFaceLoss).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('rates the model in the save transaction when the scan held a verdict for that face', async () => {
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
+    const flip = heldFlip();
+    expect(flip).toBeDefined();
+    expect(flip).toContain(MODEL_ID);
+  });
+
+  /** The held verdict as the save transaction reads it before spending it. */
+  const heldRow = () => {
+    const original = mockDbWrite.$queryRaw.getMockImplementation();
+    mockDbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      Array.isArray(strings) && strings.join('?').includes("'comFaceHeldVerdict'->>'at'")
+        ? [{ name: 'Test Model', userId: OWNER_ID, at: 'x', level: 16 }]
+        : original?.(strings, ...values)) as never);
+  };
+  it('tells the owner, after the save, when the held verdict rates the model', async () => {
+    heldRow();
+    let levelRefreshedWhenSent: boolean | undefined;
+    mockNotifyHeld.mockImplementationOnce(async () => {
+      levelRefreshedWhenSent = mockFinishApply.mock.calls.length > 0;
+    });
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
+    expect(mockFinishApply).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockNotifyHeld).toHaveBeenCalledWith([
+      expect.objectContaining({
+        entityType: 'Model',
+        entityId: MODEL_ID,
+        userId: OWNER_ID,
+        level: 16,
+        workflowId: 'com-face-held-x',
+      }),
+    ]);
+    expect(mockNotifyHeld).toHaveBeenCalledTimes(1);
+    // After the level refresh: a slow notice must not keep the old level listed.
+    expect(levelRefreshedWhenSent).toBe(true);
+  });
+
+  it('still tells the owner when a post-save step throws', async () => {
+    heldRow();
+    mockFinishApply.mockRejectedValueOnce(new Error('level refresh failed'));
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' }).catch(() => undefined);
+    expect(mockFinishApply).toHaveBeenCalled();
+    expect(mockNotifyHeld).toHaveBeenCalledTimes(1);
+  });
+
+  // The rescan is fire-and-forget: a submit that fails only logs. The save must not rely on it.
+  it('rates it in the save when the same save also edits the listing text, even if the rescan never runs', async () => {
+    heldRow();
+    mockRescanTextAfterFaceLoss.mockImplementation(async () => undefined);
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '', name: 'A Different Name' });
+    expect(heldFlip()).toBeDefined();
+    expect(mockFinishApply).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockNotifyHeld).toHaveBeenCalledWith([expect.objectContaining({ entityId: MODEL_ID })]);
+    expect(mockNotifyHeld).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not try it when the face stays (control)', async () => {
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style Two' });
+    const flip = heldFlip();
+    expect(flip).toBeUndefined();
+  });
+
+  it('rescans when a moderator turns it off too', async () => {
+    mockStored(complete);
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, sfwName: '' });
+    expect(mockRescanTextAfterFaceLoss).toHaveBeenCalledTimes(1);
+    expect(mockRescanTextAfterFaceLoss).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it.each([
+    ['the face stays complete', complete, { sfwName: 'Retro Style Two' }],
+    ['there was no complete face', { ...complete, sfwDescription: null }, { sfwName: '' }],
+  ])('does not rescan when %s', async (_, stored, change) => {
+    mockStored(stored);
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, ...change });
+    expect(mockRescanTextAfterFaceLoss).not.toHaveBeenCalled();
   });
 });

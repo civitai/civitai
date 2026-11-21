@@ -97,7 +97,7 @@ func TestParseUnknownKeyFallsBack(t *testing.T) {
 	for input, want := range map[string]string{
 		`{"collectionId":5,"someNewFilter":1}`: "input-collectionId",
 		`{"someNewFilter":1,"userId":7}`:       "input-userId",
-		`{"tags":[3],"aNewKey":true}`:          "input-tags",
+		`{"hidden":true,"aNewKey":true}`:       "input-hidden",
 		`{"userId":null,"someNewFilter":1}`:    "input-unknown-key",
 	} {
 		if _, err := Parse(parseObj(t, input)); fallback.Reason(err) != want {
@@ -143,7 +143,7 @@ func TestParseInfiniteIgnoresStrippedURLKeys(t *testing.T) {
 	for input, reason := range map[string]string{
 		`{"limit":10,"view":"feed","someNewFilter":true}`: "input-unknown-key",
 		`{"limit":10,"someNewFilter":true}`:               "input-unknown-key",
-		`{"section":"images","collectionId":5}`:           "input-collectionId",
+		`{"section":"images","hubId":5}`:                  "input-hubId",
 	} {
 		if _, err := ParseInfinite(parseObj(t, input)); fallback.Reason(err) != reason {
 			t.Errorf("ParseInfinite %s: reason %q (err %v), want %q", input, fallback.Reason(err), err, reason)

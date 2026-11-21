@@ -152,6 +152,7 @@ const ADBLOCK_HOST_RES = [
   /securepubads/i,
   /cdn\.snigelweb\.co/i,
   /adengine\.snigelw/i,
+  /\bflashb\.id\b/i,
   /\bgoogletag\b/i,
   /doubleclick/i,
   /adsbygoogle/i,

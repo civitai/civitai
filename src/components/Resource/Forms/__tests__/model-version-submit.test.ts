@@ -302,9 +302,16 @@ describe('decideModelVersionSubmit: refusals and skip', () => {
     expect(decide({}, { isDirty: false })).toEqual({ kind: 'skip' });
   });
 
-  it('a template forces the submit even when clean', () => {
-    const d = submitOf(decide({}, { isDirty: false, templateId: 77 }));
+  it('a template seeds the first save of a version', () => {
+    const d = submitOf(decide({ id: undefined }, { versionId: undefined, templateId: 77 }));
     expect(d.payload.templateId).toBe(77);
+  });
+
+  it('a saved version is edited in place, not re-created from its template', () => {
+    const d = submitOf(decide({ paidAccessConfig: timedGate() }, { templateId: 77 }));
+    expect(d.payload.id).toBe(10);
+    expect(d.payload.templateId).toBeUndefined();
+    expect(decide({}, { isDirty: false, templateId: 77 })).toEqual({ kind: 'skip' });
   });
 
   it('a paid-access change forces the submit even when RHF says clean', () => {
