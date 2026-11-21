@@ -36,11 +36,11 @@ export const SERVICE_SCHEMA = `urn:schema:${REGISTRY_NAMESPACE}:service@v1`;
  * The store listing of an app: its card and detail fields and its stats, for a store read model.
  * Served only while switched on, and then only to listed relays (`listing-stream.ts`).
  */
-export const LISTING_SCHEMA = `urn:schema:${REGISTRY_NAMESPACE}:listing@v1`;
+export const STORE_LISTING_SCHEMA = `urn:schema:${REGISTRY_NAMESPACE}:store-listing@v1`;
 
 export type UrnRef =
   | { kind: 'app'; slug: string }
-  | { kind: 'listing'; slug: string }
+  | { kind: 'store-listing'; slug: string }
   | { kind: 'release'; slug: string; version: string }
   | { kind: 'collection-schema'; slug: string; collection: string; major: number }
   | { kind: 'document'; slug: string; collection: string; key: string }
@@ -71,8 +71,8 @@ export function registryUrn(ref: UrnRef): string {
     case 'app':
       return `urn:${REGISTRY_NAMESPACE}:app/${segment(ref.slug, SLUG_RE, 'slug')}`;
     // Two segments and no `@`, like an app's, under its own first segment.
-    case 'listing':
-      return `urn:${REGISTRY_NAMESPACE}:listing/${segment(ref.slug, SLUG_RE, 'slug')}`;
+    case 'store-listing':
+      return `urn:${REGISTRY_NAMESPACE}:store-listing/${segment(ref.slug, SLUG_RE, 'slug')}`;
     case 'release':
       return `urn:${REGISTRY_NAMESPACE}:app/${segment(ref.slug, SLUG_RE, 'slug')}@${segment(
         ref.version,

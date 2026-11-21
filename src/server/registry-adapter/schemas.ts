@@ -9,7 +9,7 @@
 import {
   APP_RELEASE_SCHEMA,
   APP_SCHEMA,
-  LISTING_SCHEMA,
+  STORE_LISTING_SCHEMA,
   SERVICE_SCHEMA,
 } from '~/server/registry-adapter/urn';
 
@@ -96,12 +96,12 @@ const count = { type: 'integer', minimum: 0 };
  * Detail fields this version does not carry yet (collaborators, scopes, beta message, …) arrive
  * as new optional properties.
  */
-export const LISTING_SCHEMA_DOCUMENT: Record<string, unknown> = {
+export const STORE_LISTING_SCHEMA_DOCUMENT: Record<string, unknown> = {
   $schema: DIALECT,
-  $id: LISTING_SCHEMA,
+  $id: STORE_LISTING_SCHEMA,
   title: "An app's store listing: what a store card and detail page show, with its stats",
   type: 'object',
-  required: ['app', 'slug', 'name', 'kind', 'contentRating', 'stats'],
+  required: ['app', 'slug', 'name', 'kind', 'contentRating', 'media', 'stats'],
   properties: {
     app: { type: 'string', description: 'URN of the app entity this listing presents' },
     slug: { type: 'string' },
@@ -115,14 +115,26 @@ export const LISTING_SCHEMA_DOCUMENT: Record<string, unknown> = {
     tagline: nullableString,
     category: nullableString,
     description: nullableString,
-    iconUrl: nullableString,
-    coverUrl: nullableString,
-    screenshots: {
+    iconUrl: {
+      ...nullableString,
+      description: "The app entity's icon, capped at the listing's rating; `media` has the rest",
+    },
+    media: {
       type: 'array',
+      description:
+        'Every image the store may show, each with its own rating: a subscription receives only the items its audience may read. `host: red` is a civitai.red override, shown only on a red-capable host, preferred there over the own image of its slot. Order: own icon, own cover, screenshots in order, red icon, red cover',
       items: {
         type: 'object',
-        required: ['url', 'caption'],
-        properties: { url: { type: 'string' }, caption: nullableString },
+        required: ['slot', 'host', 'url', 'nsfwLevel', 'rating'],
+        properties: {
+          slot: { enum: ['icon', 'cover', 'screenshot'] },
+          host: { enum: ['any', 'red'] },
+          url: { type: 'string' },
+          nsfwLevel: { type: 'integer' },
+          rating: { enum: ['pg', 'pg13', 'r', 'x', 'xxx'] },
+          caption: { ...nullableString, description: 'Screenshot only' },
+          coverUrl: { type: 'string', description: 'Screenshot only: its rendition as a cover' },
+        },
       },
     },
     creator: {
@@ -154,7 +166,11 @@ export const LISTING_SCHEMA_DOCUMENT: Record<string, unknown> = {
         installCount: count,
       },
     },
-    createdAt: { type: 'string', format: 'date-time' },
+    createdAt: {
+      type: 'string',
+      format: 'date-time',
+      description: "When the listing was created: the store's `newest` sort key",
+    },
     updatedAt: { type: ['string', 'null'], format: 'date-time' },
   },
 };

@@ -57,7 +57,7 @@ export type Audience = {
   key: string;
   allowed: MatureRatingsAllowed;
   /**
-   * May read the `listing@v1` stream and its schema document (`listing-stream.ts`). Set only by
+   * May read the `store-listing@v1` stream and its schema document (`listing-stream.ts`). Set only by
    * {@link withListings}, which also changes the key, so no cursor crosses the gate.
    */
   listings?: true;

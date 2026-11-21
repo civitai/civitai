@@ -1,6 +1,6 @@
 # App store listings read model: design
 
-**Status:** slice 1 of N. This PR adds the adapter side of `listing@v1`, dark
+**Status:** slice 1 of N. This PR adds the adapter side of `store-listing@v1`, dark
 (`src/server/registry-adapter/listing-stream.ts`). Nothing reads it yet. The app-index-go ingest,
 read API, shadow diff and cutover are later slices, listed under Rollout.
 
@@ -29,13 +29,15 @@ app_listings (DB) → registry adapter → registry-exp → app-index-go (read m
   link, current release and fork parent. It has no stats, no cover or screenshots, no description,
   no creator id or avatar, and no beta or official flags.
 
-## Schema: a new `listing@v1`, not a wider `app@v1`
+## Schema: a new `store-listing@v1`, not a wider `app@v1`
 
-`urn:schema:apps.civitai.com:listing@v1`. One entity per app entity, URN
-`urn:apps.civitai.com:listing/{slug}`, whose `app` names the app entity.
+`urn:schema:apps.civitai.com:store-listing@v1`. One entity per app entity, URN
+`urn:apps.civitai.com:store-listing/{slug}`, whose `app` names the app entity. The name is
+`store-listing`, not `listing`, because `urn:schema:schemas.civitai.com:listing@v1` is already
+published, and a schema name can't be changed once it is promoted.
 
 `app@v1` could take these fields as new optional properties, and stay within `@v1`. It doesn't,
-for three reasons:
+for two reasons:
 
 1. **Promotion order.** `app@v1` is already on both registries. Every field added to it is
    published to the official registry the day it ships. New schemas ship on `registry-exp` first,
@@ -44,30 +46,76 @@ for three reasons:
 2. **Churn.** Stats change every rollup run. If they were in `app@v1`, every consumer of the app
    entity would get an upsert for each app every few minutes, though nearly all of them want only
    its identity. A separate stream keeps `app@v1` quiet.
-3. **Different audiences.** `listing@v1` carries store data, including the creator's user id, the
-   one field the app entity deliberately leaves out. It is published only to the read model's
-   relay. `app@v1` stays the small public description of an app.
+
+**Who receives it.** The relay gate (`REGISTRY_ADAPTER_LISTING_RELAYS`) is a rollout gate, not an
+audience boundary. The stream is published to every subscriber of a listed relay, whichever user
+that relay exchanged a token for, so every field it carries must be public. They are: each is on the
+public store card or detail page, or in `GET /api/v1/apps`.
 
 ### Fields in slice 1
 
-| Field                                                                                              | Source (same catalog read as `app@v1`)                                                                                                        |
-| -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app`, `slug`, `name`, `kind`, `contentRating`, `tagline`, `category`, `iconUrl`                   | the same values the app entity publishes (`appContentRating`, `registryIconUrl`)                                                              |
-| `description`                                                                                      | `app_listings.description`                                                                                                                    |
-| `coverUrl`, `screenshots[{url, caption}]`                                                          | the listing's own media, each image gated at the listing's own rating (`registryListingMedia`), never the card's or the civitai.red overrides |
-| `creator{id, username, image}`                                                                     | the card's creator chip                                                                                                                       |
-| `isBeta`, `isOfficial`                                                                             | the card                                                                                                                                      |
-| `hasPage`, `liveUrl` (on-site), `externalUrl` (off-site)                                           | the card's kind data                                                                                                                          |
-| `stats{recommendedCount, notRecommendedCount, recommendPct, reviewCount, openCount, installCount}` | the card's rollup, plus `install_count`. `openCount` is null off-site, as on the card                                                         |
-| `createdAt`, `updatedAt`                                                                           | `app_listings`, for the `newest` sort and the card's "Updated" line                                                                           |
+| Field                                                                                              | Source (same catalog read as `app@v1`)                                                                                                                          |
+| -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app`, `slug`, `name`, `kind`, `contentRating`, `tagline`, `category`, `iconUrl`                   | the same values the app entity publishes (`appContentRating`, `registryIconUrl`)                                                                                |
+| `description`                                                                                      | `app_listings.description`                                                                                                                                      |
+| `media[{slot, host, url, nsfwLevel, rating, caption?, coverUrl?}]`                                 | every image the store may show, each rated on its own, including the civitai.red overrides (`host: red`). See Media below                                       |
+| `creator{id, username, image}`                                                                     | the card's creator chip                                                                                                                                         |
+| `isBeta`, `isOfficial`                                                                             | the card                                                                                                                                                        |
+| `hasPage`, `liveUrl` (on-site), `externalUrl` (off-site)                                           | the card's kind data                                                                                                                                            |
+| `stats{recommendedCount, notRecommendedCount, recommendPct, reviewCount, openCount, installCount}` | the card's rollup, plus `install_count`. `openCount` is null off-site, as on the card                                                                           |
+| `createdAt`, `updatedAt`                                                                           | `app_listings`. `createdAt` is kept because it is the `newest` sort key (`al.created_at`), which no other field gives; `updatedAt` is the card's "Updated" line |
 
 Later, as new optional properties of `@v1` (additive, per `schemas.ts`): `serialId`,
 `collaborators`, `scopes`, `connectScopes`, `issueTrackerUrl`, `actionsRunSource`, `betaMessage`,
 `forkable`, and `forkOf{slug,name}`. Each costs another read per catalog. The card and the sort keys
 don't need them; the detail page does (slice 3).
 
-Never in the stream: `connectClientId` (the card deliberately omits it), `visibility`,
-`restrictedAudience` (viewer-scoped), and any image rated above the listing's tag.
+Never in the stream: `connectClientId` (the card deliberately omits it), `visibility`, and
+`restrictedAudience` (viewer-scoped). No listing media item reaches a subscription whose audience
+may not read that item's own rating (Media, below). This applies to listing media only: the creator
+chip's `image` is the user's avatar, carried as the public card carries it.
+
+### Media
+
+Decision: carry the red overrides. The stream carries every image the store could show on any
+host to any viewer, each as its own item with its own `nsfwLevel` and `rating`. The read model then
+picks per host and viewer. In order, the items are:
+
+1. the listing's own icon;
+2. its own cover;
+3. its screenshots, in stored order;
+4. the civitai.red icon override;
+5. the civitai.red cover override.
+
+The adapter (`registryListingMedia`, `catalog-media.ts`):
+
+- Publishes an image only when it passes the store's per-image moderation check at every level
+  (`isListingImageVisible`). That means scanned, not flagged, not restricted, and not Blocked.
+- Sends each subscription only the items whose own rating its audience may read (`readableBy`).
+  The rule is the same `audienceAdmits` predicate as for listings, so the body, and its `rev`,
+  differ per audience.
+- Marks an override `host: red`, so the main host never shows it.
+- Gives a screenshot item a `coverUrl` as well: its rendition at cover width, for the cover fallback.
+
+What today's DB path does, which the read model must mirror (`projectListingMedia`,
+`listingMediaCeiling` and `redHostMediaCeiling` in
+`src/server/services/blocks/listing-media-audience.ts`):
+
+- **Ceiling.** Off a red-capable host, the ceiling is the SFW levels intersected with the levels up
+  to the listing's rating. On a red-capable host, it is that same ceiling united with the viewer's
+  browsing levels, Blocked excluded. So on a red host, an X viewer sees an X screenshot on an R
+  listing.
+- **Overrides.** The overrides are read only for a red-capable request (`listAvailableListings`,
+  `getListingDetail` and `getListingCard` call `readListingRedMediaManyForRender`, in
+  `listing-media-split.service.ts`). Each override is gated by the same ceiling, and is preferred
+  over the own image of its slot.
+- **Icon fallback.** The icon is the red icon if visible, else the own icon if visible.
+- **Cover fallback.** The cover is the red cover, else the own cover, else the first visible
+  screenshot at cover width (`gatedListingCoverUrl`).
+- **Screenshots.** The gallery is the visible screenshots, in order (`gatedListingScreenshots`).
+
+If the overrides read fails, it returns no overrides, and the store shows each listing's own media.
+The stream does the same: the override items drop out of the bodies until the next good read.
 
 ## Visibility: testers-only and private listings stay out of the stream
 
@@ -75,7 +123,7 @@ The stream is built from the public catalog read. That is `listAvailableListings
 `floor: 'public'` and the anonymous catalog scope, the same read `app@v1` uses. Listings at
 `private`, `moderators` or `testers` visibility are excluded in SQL (`listingLevelVisibilityFilter`)
 and never reach the adapter. A test pins that the listing entities are exactly the app entities
-(`listing-stream.test.ts`, "seam"). So `listing@v1` cannot carry a listing that `app@v1`, which is
+(`listing-stream.test.ts`, "seam"). So `store-listing@v1` cannot carry a listing that `app@v1`, which is
 already live, does not.
 
 **Decision: excluded, read from the database.** A viewer whose floor is not `public` (testers,
@@ -118,20 +166,12 @@ The read model ingests every rating. Its subscription uses the index's service i
 | Region hold                                                                              | the SFW domain for restricted regions             | content-policy's `regionHold`: no mature rating                                                                                                                                                                                                                                                 |
 | Store scope (`none` / `public-external` / `full`, the Flipt cohorts and the kill switch) | `resolveStoreVisibilityScope`                     | Passed in by the web tier, which already resolves it. The read model applies `none` as empty and `public-external` as off-site only. Flipt stays the one judge of the cohort                                                                                                                    |
 | Audience floor (testers, moderators)                                                     | `listingLevelVisibilityFilter`                    | Not in the read model: a floor other than `public` goes to the DB (above)                                                                                                                                                                                                                       |
-| Media above the viewer's level                                                           | per image, `listingMediaCeiling`                  | The stream's media are capped at the listing's rating. A listing a viewer may see has a rating within their levels, so its media are too. See the red-host difference below                                                                                                                     |
+| Media above the viewer's level                                                           | per image, `listingMediaCeiling`                  | Per item, from its `nsfwLevel`, with the same ceiling and the same red-override preference (Media, above)                                                                                                                                                                                       |
 | Banned or deleted owner                                                                  | `storeOwnerEligibleWhere`                         | Upstream: the listing leaves the catalog read, so the stream deletes it                                                                                                                                                                                                                         |
 
-**Red-host difference (an open product decision).** On a red-capable host the store lifts the media
-ceiling to the viewer's levels, so an X viewer can see an X screenshot on an R listing. It also uses
-the civitai.red icon and cover overrides. The stream never carries an image rated above its listing,
-or the overrides, so for those viewers the read model shows less. Options:
-
-- (a) accept the rating cap for everyone, which is simpler and arguably more correct;
-- (b) keep red-host mature viewers on the database for media, which is today's index behaviour;
-- (c) publish overrides and above-rating media in a separate stream gated to the service audience.
-
-The recommendation is (a). Until it's decided, the shadow diff counts these fields separately
-(`reason=red_media`) and they don't block cutover.
+**Red host.** Decided: the read model carries the red overrides and the above-rating media (Media,
+above), so a red-host viewer sees what the database shows them. No media difference is tolerated in
+the shadow diff.
 
 ## Sort and paging
 
@@ -164,18 +204,18 @@ alongside the DB read. They serve the DB answer and compare the two.
   - grid: the ordered list of `id`s on the page, plus `nextCursor` presence;
   - every card: `name`, `tagline`, `category`, `contentRating`, `iconUrl`, `coverUrl`, `creator`,
     `isBeta`, `isOfficial`, `kindData`, `updatedAt`, `recommend`, `reviewCount`, `openCount`;
-  - detail: the same, plus `description`, `screenshots` and `installCount`.
+  - detail: the same, plus `description`, `screenshots` and `installCount`. The media fields are
+    compared as the read model renders them for that request's host and viewer.
 - **Tolerance:**
   - order and identity fields must match exactly;
   - stats may differ for up to two adapter poll intervals after the DB value last changed. These are
     counted as `stale`, not `diff`;
-  - media differences on a red host are counted as `red_media` (above);
   - a listing that is missing on one side is a `membership` diff, never tolerated.
 - **Metrics** (web tier, beside `app_index_search_*`):
   - `app_listings_read_model_requests_total{surface, source, reason}`, with `surface` one of grid,
     detail, card, og, rest_list or rest_detail, and `source` one of db or read_model;
   - `app_listings_read_model_diffs_total{surface, kind}`, with `kind` one of order, membership,
-    field, stale or red_media;
+    field or stale;
   - `app_listings_read_model_field_diffs_total{field}`;
   - one log line per diff, with listing ids only and no viewer id.
 - **Gate to serve:** 7 days of shadow at under 0.1% `order + membership + field` diffs per surface,
@@ -188,7 +228,7 @@ This PR adds only the first. The other two names are proposals.
 | Flag                                            | Values                            | What                                                                                                    |
 | ----------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `REGISTRY_ADAPTER_LISTING_RELAYS` (adapter env) | relay client ids                  | the listing stream exists, for those relays only. Empty means off (this PR)                             |
-| `APP_INDEX_LISTINGS` (app-index-go env)         | on/off                            | ingest `listing@v1` and serve the listing API (slice 2)                                                 |
+| `APP_INDEX_LISTINGS` (app-index-go env)         | on/off                            | ingest `store-listing@v1` and serve the listing API (slice 2)                                           |
 | `app-listings-read-model` (Flipt)               | off / shadow / serve, per surface | the web tier's read path (slices 4–6), with the existing per-process breaker. Any failure serves the DB |
 
 Rollback at each step is the previous flag value. The DB read path is never removed during this
@@ -214,17 +254,24 @@ served for a week.
 
 ## Rollout
 
-1. **Slice 1 (this PR):** `listing@v1` in the adapter, dark. Unset, nothing changes, and no extra
-   query runs. Set, there is one extra catalog query per poll (`loadListingExtras`), and the stream
-   reaches only the listed relays.
-2. **Slice 2: app-index-go ingest.** A second consumer for `listing@v1` (own generation and cursor,
+1. **Slice 1 (this PR):** `store-listing@v1` in the adapter, dark. Unset, nothing changes, and no
+   extra query runs. Set, there are two extra catalog queries per poll (`loadListingExtras`: the
+   listings' media and the red overrides), run beside the existing ones. The stream reaches only the
+   listed relays. If those queries fail, only the listing stream fails: they are logged, and its
+   subscriptions end `unavailable`; every other stream is served as before.
+2. **Slice 2: app-index-go ingest.** A second consumer for `store-listing@v1` (own generation and cursor,
    own table), dark behind `APP_INDEX_LISTINGS`. No read API yet. It needs the
    service-identity rollout (README, "Rollout order": hub settings, then
-   `REGISTRY_ADAPTER_SERVICE_CLIENTS`, then the index client) and `registry-exp` routing for the new
-   schema. Then the adapter env names `registry-exp`'s relay client.
+   `REGISTRY_ADAPTER_SERVICE_CLIENTS`, then the index client), then
+   `REGISTRY_ADAPTER_LISTING_RELAYS` set to `registry-exp`'s relay client id. The gateways route by
+   namespace, so the new schema needs no routing of its own.
+   - The ingest must treat a snapshot with zero listings as suspect: hold the serving generation and
+     alert, rather than switch to it. A catalog read that legitimately empties is rare. A failed
+     listing read is already kept out of the stream: the adapter ends listing subscriptions
+     `unavailable` and never serves the failure as an empty set (`CatalogRead.listingsFailed`).
 3. **Slice 3: read API.** `GET /listings` (sort, paging, filters, stats, full cards) and
    `GET /listings/{slug}` (detail), with the viewer gates. It also adds the detail fields to
-   `listing@v1` (additive).
+   `store-listing@v1` (additive).
 4. **Slice 4: shadow** on the grid and REST list.
 5. **Slice 5: shadow on detail, card and OG,** then serve grid and REST after the gate.
 6. **Slice 6: serve detail, card and OG.**

@@ -48,7 +48,7 @@
  *                                  stream exists, and every document stream is public
  *   REGISTRY_ADAPTER_LISTING_RELAYS
  *                                  the relays (OAuth client ids, a token's `act.sub`; comma- or
- *                                  space-separated) whose subscriptions may read the `listing@v1`
+ *                                  space-separated) whose subscriptions may read the `store-listing@v1`
  *                                  stream (`listing-stream.ts`). Unset or empty, the default: the
  *                                  schema is not served, and the catalog read is unchanged
  *   REGISTRY_ADAPTER_TRUST_META    "1" to judge the region from a request's `meta` as well as its
@@ -197,7 +197,7 @@ function main() {
   const served = servedSchemas({ listings });
   const deps = liveCatalogReadDeps({ listings });
   // Every subscription polls; they share one catalog read per half poll interval.
-  const readApps = sharedRead(() => readCatalog(deps, { listings }), pollMs / 2);
+  const readApps = sharedRead(() => readCatalog(deps, { listings, onError }), pollMs / 2);
   const store = createRedisSnapshotStore();
   const polling = createPollingAdapter({
     namespace: REGISTRY_NAMESPACE,

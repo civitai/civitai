@@ -7,6 +7,7 @@ import type { CatalogReadDeps } from '~/server/registry-adapter/catalog-source';
 import { listingFromCard } from '~/server/registry-adapter/catalog-source';
 import { registryIconUrl, registryListingMedia } from '~/server/registry-adapter/catalog-media';
 import { listingMediaImageSelect } from '~/server/services/blocks/listing-media-audience';
+import { readListingRedMediaManyForRender } from '~/server/services/blocks/listing-media-split.service';
 import { listAppListingsSchema } from '~/server/schema/blocks/app-listing-read.schema';
 import { listAvailableListings } from '~/server/services/blocks/app-listing.service';
 import { readListingForkParents } from '~/server/services/blocks/app-fork.service';
@@ -94,32 +95,36 @@ export function liveCatalogReadDeps({
       return new Map(rows.map((r) => [r.id, registryIconUrl(r)]));
     },
 
-    // Only while the listing stream is on: one query for the whole catalog, media gated at each
-    // listing's own rating (`registryListingMedia`), never the civitai.red overrides.
+    // Only while the listing stream is on: one query for the whole catalog, plus the civitai.red
+    // overrides the store reads for a red-capable host (the same read, which shows each listing's
+    // own media when it fails). Each image is rated on its own (`registryListingMedia`).
     ...(listings
       ? {
           async loadListingExtras(listingIds: string[]) {
-            const rows = await dbRead.appListing.findMany({
-              where: { id: { in: listingIds } },
-              select: {
-                id: true,
-                contentRating: true,
-                description: true,
-                createdAt: true,
-                cover: { select: listingMediaImageSelect },
-                screenshots: {
-                  where: { imageId: { not: null } },
-                  orderBy: [{ order: 'asc' }, { id: 'asc' }],
-                  select: { caption: true, image: { select: listingMediaImageSelect } },
+            const [rows, red] = await Promise.all([
+              dbRead.appListing.findMany({
+                where: { id: { in: listingIds } },
+                select: {
+                  id: true,
+                  description: true,
+                  createdAt: true,
+                  icon: { select: listingMediaImageSelect },
+                  cover: { select: listingMediaImageSelect },
+                  screenshots: {
+                    where: { imageId: { not: null } },
+                    orderBy: [{ order: 'asc' }, { id: 'asc' }],
+                    select: { caption: true, image: { select: listingMediaImageSelect } },
+                  },
+                  metric: { select: { installCount: true } },
                 },
-                metric: { select: { installCount: true } },
-              },
-            });
+              }),
+              readListingRedMediaManyForRender(dbRead, listingIds),
+            ]);
             return new Map(
               rows.map((r) => [
                 r.id,
                 {
-                  ...registryListingMedia(r),
+                  media: registryListingMedia({ ...r, red: red.get(r.id) ?? null }),
                   description: r.description ?? null,
                   installCount: r.metric?.installCount ?? 0,
                   createdAt: r.createdAt.toISOString(),

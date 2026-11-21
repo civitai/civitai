@@ -1,20 +1,24 @@
 /**
- * THE LISTING STREAM: `listing@v1`, an app's store listing (card and detail fields, stats), for a
- * store read model (`apps/app-index-go/LISTINGS-READ-MODEL.md`).
+ * THE LISTING STREAM: `store-listing@v1`, an app's store listing (card and detail fields, media,
+ * stats), for a store read model (`apps/app-index-go/LISTINGS-READ-MODEL.md`).
  *
  * OFF unless `REGISTRY_ADAPTER_LISTING_RELAYS` names a relay ({@link parseListingRelays}): then
  * nothing about it exists, the schema is answered `end` and its document is not published. On,
- * the schema is served, but its entities and the listing schema's document on the schema stream
- * reach only a subscription whose token a listed relay presented (`act.sub`), so it can ship on
- * one registry before another: every other subscription reads it as empty and reads the schema
- * stream exactly as before. The gate admits; it never widens the ratings a subscription may read:
- * each listing reaches exactly the audiences its app entity does (`readableBy` in `entities.ts`).
+ * the schema is served, but its entities and its document on the schema stream reach only a
+ * subscription whose token a listed relay presented (`act.sub`); every other subscription reads it
+ * as empty and reads the schema stream exactly as before.
+ *
+ * A ROLLOUT gate, not an audience boundary: it lets the stream ship on one registry before another.
+ * Every subscriber of a listed relay gets it, whichever user the relay exchanged a token for, so
+ * every field it carries must be public. It never widens ratings: each listing reaches exactly the
+ * audiences its app entity does, and each media item only those its own rating admits
+ * (`readableBy` in `entities.ts`).
  */
 import { contextAudience, withListings } from '~/server/registry-adapter/audience';
 import { JSON_SCHEMA_DIALECT } from '~/server/registry-adapter/collection-schema';
 import { parsePrivateRelays } from '~/server/registry-adapter/private-feed';
 import type { Adapter, AdapterContext } from '~/server/registry-adapter/protocol';
-import { LISTING_SCHEMA } from '~/server/registry-adapter/urn';
+import { STORE_LISTING_SCHEMA } from '~/server/registry-adapter/urn';
 
 /**
  * `REGISTRY_ADAPTER_LISTING_RELAYS`: the OAuth client ids of the relays whose subscriptions may
@@ -23,7 +27,7 @@ import { LISTING_SCHEMA } from '~/server/registry-adapter/urn';
 export const parseListingRelays = parsePrivateRelays;
 
 /** The streams the gate changes: the listing stream and the schema stream that documents it. */
-const GATED: ReadonlySet<string> = new Set([LISTING_SCHEMA, JSON_SCHEMA_DIALECT]);
+const GATED: ReadonlySet<string> = new Set([STORE_LISTING_SCHEMA, JSON_SCHEMA_DIALECT]);
 
 /** Whether this subscription's token was presented by a listed relay. */
 export function admitsListings(

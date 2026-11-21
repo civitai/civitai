@@ -6,6 +6,7 @@
  * decisions here — the public-catalog scope first, an empty catalog when it is withheld — can be
  * tested without a database.
  */
+import type { ListingMediaItem } from '~/server/registry-adapter/catalog-media';
 import type { CatalogApp } from '~/server/registry-adapter/entities';
 import type {
   ListingCard,
@@ -47,11 +48,10 @@ export type ListingStoreCard = {
   liveUrl: string | null;
 };
 
-/** What the listing read adds per listing: media gated at its own rating, and what no card has. */
+/** What the listing read adds per listing: its media, each rated on its own, and what no card has. */
 export type ListingExtras = {
   description: string | null;
-  coverUrl: string | null;
-  screenshots: Array<{ url: string; caption: string | null }>;
+  media: ListingMediaItem[];
   installCount: number;
   createdAt: string;
 };
@@ -131,14 +131,25 @@ export type CatalogReadDeps = {
 export const MAX_CATALOG_PAGES = 200;
 
 /**
+ * One catalog read. `listingsFailed`: the listing stream is on and its read failed, so the apps
+ * carry no store fields; only the listing stream is unavailable (`buildEntities`), never read as
+ * every listing deleted.
+ */
+export type CatalogRead = CatalogApp[] & { listingsFailed?: true };
+
+/**
  * `listings`: the listing stream is on, so each app also carries its store fields, a listing's
  * card fields joined with its {@link ListingExtras}. A listing missing either carries none, and
- * publishes no listing entity.
+ * publishes no listing entity. A failed listing read is passed to `onError` and fails only the
+ * listing stream ({@link CatalogRead}); every other stream is read as without it.
  */
 export async function readCatalog(
   deps: CatalogReadDeps,
-  { listings: listingStream = false }: { listings?: boolean } = {}
-): Promise<CatalogApp[]> {
+  {
+    listings: listingStream = false,
+    onError,
+  }: { listings?: boolean; onError?: (err: unknown) => void } = {}
+): Promise<CatalogRead> {
   const scope = await deps.resolveScope();
   if (scope === 'none') return [];
 
@@ -183,30 +194,39 @@ export async function readCatalog(
 
   // One query each for the whole catalog, keyed by listing id, as the blocks and requests are.
   const listingIds = listings.map((l) => l.id);
-  const [sourceRepoUrls, forkParents, iconUrls] = listingIds.length
+  // Its own failure, caught here so it never fails the reads beside it: null is "failed".
+  const readExtras = async (): Promise<Map<string, ListingExtras> | null> => {
+    if (!listingStream || !listingIds.length) return new Map();
+    try {
+      if (!deps.loadListingExtras) {
+        throw new Error('the listing stream is on but the catalog has no listing read');
+      }
+      return await deps.loadListingExtras(listingIds);
+    } catch (err) {
+      onError?.(err);
+      return null;
+    }
+  };
+  const [sourceRepoUrls, forkParents, iconUrls, extras] = listingIds.length
     ? await Promise.all([
         deps.loadSourceRepoUrls(listingIds),
         deps.loadForkParents(listingIds),
         deps.loadIconUrls(listingIds),
+        readExtras(),
       ])
     : [
         new Map<string, string | null>(),
         new Map<string, string>(),
         new Map<string, string | null>(),
+        new Map<string, ListingExtras>(),
       ];
-  if (listingStream && !deps.loadListingExtras) {
-    throw new Error('the listing stream is on but the catalog has no listing read');
-  }
-  const extras =
-    listingStream && listingIds.length && deps.loadListingExtras
-      ? await deps.loadListingExtras(listingIds)
-      : new Map<string, ListingExtras>();
   const storeOf = (l: CatalogListing): ListingStoreFields | undefined => {
-    const more = extras.get(l.id);
+    const more = extras?.get(l.id);
     return listingStream && l.store && more ? { ...l.store, ...more } : undefined;
   };
 
-  const apps: CatalogApp[] = [];
+  const apps: CatalogRead = [];
+  if (extras === null) apps.listingsFailed = true;
   for (const l of listings) {
     const block = blockOf(l);
     const parentId = forkParents.get(l.id) ?? null;

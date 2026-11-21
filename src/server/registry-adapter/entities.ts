@@ -16,13 +16,13 @@ import type { ListingStoreFields } from '~/server/registry-adapter/catalog-sourc
 import type { ApprovedRelease } from '~/server/registry-adapter/release';
 import {
   ENTITY_SCHEMA_DOCUMENTS,
-  LISTING_SCHEMA_DOCUMENT,
+  STORE_LISTING_SCHEMA_DOCUMENT,
 } from '~/server/registry-adapter/schemas';
 import { sortedKeyJson, releaseBody, sha256Hex } from '~/server/registry-adapter/release';
 import {
   APP_RELEASE_SCHEMA,
   APP_SCHEMA,
-  LISTING_SCHEMA,
+  STORE_LISTING_SCHEMA,
   REGISTRY_NAMESPACE,
   SERVICE_SCHEMA,
   parseCollectionSchemaUrn,
@@ -46,7 +46,7 @@ export const SERVED_SCHEMAS = [
 
 /** The schemas served: {@link SERVED_SCHEMAS}, plus the listing schema while it is switched on. */
 export function servedSchemas({ listings = false }: { listings?: boolean } = {}): string[] {
-  return listings ? [...SERVED_SCHEMAS, LISTING_SCHEMA] : [...SERVED_SCHEMAS];
+  return listings ? [...SERVED_SCHEMAS, STORE_LISTING_SCHEMA] : [...SERVED_SCHEMAS];
 }
 
 export const RUNTIME_URN = registryUrn({ kind: 'runtime', name: 'iframe', major: 1 });
@@ -98,7 +98,12 @@ export const appContentRating = (app: Pick<CatalogApp, 'listing' | 'block'>): st
   return set(listing) ?? set(block);
 };
 
-export type EntitySets = Map<string, Entity[]>;
+/**
+ * Every entity of one read, by schema. `unavailable` names the schemas whose part of the read
+ * failed: a subscription to one ends `unavailable` (`cursor.ts`) rather than read its set as
+ * empty, which would send every entity it held as a delete.
+ */
+export type EntitySets = Map<string, Entity[]> & { unavailable?: ReadonlySet<string> };
 
 /**
  * The entity schemas that carry an app's content, and so its rating, and are narrowed per
@@ -110,7 +115,7 @@ export type EntitySets = Map<string, Entity[]>;
 export const RATED_SCHEMAS: ReadonlySet<string> = new Set([
   APP_SCHEMA,
   APP_RELEASE_SCHEMA,
-  LISTING_SCHEMA,
+  STORE_LISTING_SCHEMA,
   JSON_SCHEMA_DIALECT,
 ]);
 
@@ -131,7 +136,7 @@ const ratingOfBody = (body: unknown): string | null => {
  */
 function appUrnOf(schema: string, e: Entity): unknown {
   if (schema === APP_SCHEMA) return e.urn;
-  if (schema === APP_RELEASE_SCHEMA || schema === LISTING_SCHEMA) {
+  if (schema === APP_RELEASE_SCHEMA || schema === STORE_LISTING_SCHEMA) {
     return (e.body as { app?: unknown } | null)?.app;
   }
   const parsed = parseCollectionSchemaUrn(e.urn);
@@ -159,7 +164,7 @@ function appUrnOf(schema: string, e: Entity): unknown {
 export function readableBy(sets: EntitySets, schema: string, audience: Audience): Entity[] {
   const all = sets.get(schema) ?? [];
   if (!RATED_SCHEMAS.has(schema)) return all;
-  if (schema === LISTING_SCHEMA && !audience.listings) return [];
+  if (schema === STORE_LISTING_SCHEMA && !audience.listings) return [];
   // First wins, as a stream serves a duplicate URN (`cursor.ts`).
   const ratings = new Map<string, string | null>();
   for (const app of sets.get(APP_SCHEMA) ?? []) {
@@ -172,9 +177,24 @@ export function readableBy(sets: EntitySets, schema: string, audience: Audience)
   const readable = all.filter(
     (e) =>
       (schema === JSON_SCHEMA_DIALECT && ENTITY_SCHEMA_URNS.has(e.urn)) ||
-      (schema === JSON_SCHEMA_DIALECT && e.urn === LISTING_SCHEMA && audience.listings === true) ||
+      (schema === JSON_SCHEMA_DIALECT &&
+        e.urn === STORE_LISTING_SCHEMA &&
+        audience.listings === true) ||
       admitted(appUrnOf(schema, e))
   );
+  if (schema === STORE_LISTING_SCHEMA) {
+    // Each image is rated on its own: only those this audience may read are sent, so the body,
+    // and its rev, differ per audience.
+    return readable.map((e) => {
+      const body = e.body as { media?: Array<{ rating?: unknown }> } & Record<string, unknown>;
+      const media = (body.media ?? []).filter(
+        (m) => typeof m.rating === 'string' && audienceAdmits(audience, m.rating)
+      );
+      return media.length === (body.media ?? []).length
+        ? e
+        : entity(e.urn, STORE_LISTING_SCHEMA, { ...body, media });
+    });
+  }
   if (schema !== APP_SCHEMA) return readable;
   return readable.map((e) => {
     const { forkOf, ...rest } = (e.body ?? {}) as { forkOf?: unknown } & Record<string, unknown>;
@@ -278,7 +298,7 @@ function urnOrSkip(ref: UrnRef, onSkip: (reason: string) => void): string | null
  * for each app entity whose catalog row carries its store fields ({@link listingBody}).
  */
 export function buildEntities(
-  apps: readonly CatalogApp[],
+  apps: readonly CatalogApp[] & { listingsFailed?: true },
   opts: {
     baseUrl: string;
     appSearchUrl?: string;
@@ -291,13 +311,16 @@ export function buildEntities(
   const features = opts.features ?? APP_STORAGE_ENABLED_FEATURES;
   const listings = opts.listings === true;
   const sets: EntitySets = new Map(servedSchemas({ listings }).map((s) => [s, [] as Entity[]]));
+  // The listing read failed: the listing stream is unavailable, and no listing is built from it.
+  const listingsFailed = listings && apps.listingsFailed === true;
+  if (listingsFailed) sets.unavailable = new Set([STORE_LISTING_SCHEMA]);
   const add = (schema: string, e: Entity) => sets.get(schema)!.push(e);
   // A schema entity: on the schema stream, claiming the root.
   const addSchema = (urn: string, body: unknown) =>
     add(JSON_SCHEMA_DIALECT, entity(urn, JSON_SCHEMA_DIALECT, body));
   // The schemas the entities below claim, published by this source whatever the catalog holds.
   for (const doc of ENTITY_SCHEMA_DOCUMENTS) addSchema(doc.$id as string, doc);
-  if (listings) addSchema(LISTING_SCHEMA, LISTING_SCHEMA_DOCUMENT);
+  if (listings) addSchema(STORE_LISTING_SCHEMA, STORE_LISTING_SCHEMA_DOCUMENT);
   add(SERVICE_SCHEMA, runtimeEntity(opts.baseUrl));
   if (opts.appSearchUrl) add(SERVICE_SCHEMA, appSearchEntity(opts.appSearchUrl));
 
@@ -386,18 +409,18 @@ export function buildEntities(
       })
     );
 
-    if (!listings) continue;
+    if (!listings || listingsFailed) continue;
     if (!listing.store) {
       onSkip(`listing of ${slug} skipped: no store fields were read`);
       continue;
     }
-    const listingUrn = urnOrSkip({ kind: 'listing', slug }, (reason) =>
+    const listingUrn = urnOrSkip({ kind: 'store-listing', slug }, (reason) =>
       onSkip(`listing of ${slug} skipped: ${reason}`)
     );
     if (listingUrn !== null) {
       add(
-        LISTING_SCHEMA,
-        entity(listingUrn, LISTING_SCHEMA, listingBody(app, appUrn, listing.store))
+        STORE_LISTING_SCHEMA,
+        entity(listingUrn, STORE_LISTING_SCHEMA, listingBody(app, appUrn, listing.store))
       );
     }
   }
@@ -406,7 +429,8 @@ export function buildEntities(
 
 /**
  * A listing entity's body: the app entity's identity and rating, the store card and detail
- * fields, and the stats. Media are the listing's own, gated at its own rating (`catalog-media.ts`).
+ * fields, and the stats. `media` holds every image the store may show, each rated on its own
+ * (`registryListingMedia`), narrowed per audience by {@link readableBy}.
  */
 export function listingBody(
   app: Pick<CatalogApp, 'listing' | 'block'>,
@@ -424,8 +448,7 @@ export function listingBody(
     category: listing.category,
     description: store.description,
     iconUrl: listing.iconUrl,
-    coverUrl: store.coverUrl,
-    screenshots: store.screenshots.map((s) => ({ url: s.url, caption: s.caption })),
+    media: store.media.map((m) => ({ ...m })),
     creator: store.creator
       ? { id: store.creator.id, username: store.creator.username, image: store.creator.image }
       : null,

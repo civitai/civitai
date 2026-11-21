@@ -1,6 +1,7 @@
 /**
- * The `listing@v1` stream (`listing-stream.ts`, `apps/app-index-go/LISTINGS-READ-MODEL.md`): the
- * field mapping, the switch that keeps it dark, the relay gate, and the rating exclusion.
+ * The `store-listing@v1` stream (`listing-stream.ts`, `apps/app-index-go/LISTINGS-READ-MODEL.md`): the
+ * field mapping, the switch that keeps it dark, the relay gate, the rating exclusion of listings
+ * and of each media item, and the isolation of a failed listing read.
  *
  * Fixture values are pairwise distinct, so a mapping that reads the wrong field changes a literal.
  */
@@ -27,19 +28,20 @@ import type { CatalogApp } from '~/server/registry-adapter/entities';
 import { buildEntities, readableBy, servedSchemas } from '~/server/registry-adapter/entities';
 import { newValidator } from '~/server/registry-adapter/json-schema';
 import { gateListings } from '~/server/registry-adapter/listing-stream';
-import type { AdapterContext, Entity } from '~/server/registry-adapter/protocol';
-import { LISTING_SCHEMA_DOCUMENT } from '~/server/registry-adapter/schemas';
+import type { AdapterContext, Change, Entity } from '~/server/registry-adapter/protocol';
+import { STORE_LISTING_SCHEMA_DOCUMENT } from '~/server/registry-adapter/schemas';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 import type { ListingMediaImage } from '~/server/services/blocks/listing-media-audience';
 import {
   LISTING_COVER_WIDTH,
   LISTING_SCREENSHOT_WIDTH,
   listingCoverUrl,
+  listingIconUrl,
   listingMediaEdgeUrl,
 } from '~/server/services/blocks/listing-media-url';
 import { createMemorySnapshotStore } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 
-const LISTING = 'urn:schema:apps.civitai.com:listing@v1';
+const LISTING = 'urn:schema:apps.civitai.com:store-listing@v1';
 const APP = 'urn:schema:apps.civitai.com:app@v1';
 const BASE = { baseUrl: 'https://site.example' };
 
@@ -54,8 +56,24 @@ const store = (over: Partial<ListingStoreFields> = {}): ListingStoreFields => ({
   hasPage: true,
   liveUrl: 'https://orbit-b.apps.example',
   description: 'Long-form orbit description',
-  coverUrl: 'https://img.example/cover-b4.png',
-  screenshots: [{ url: 'https://img.example/shot-c5.png', caption: 'The dashboard' }],
+  media: [
+    {
+      slot: 'cover',
+      host: 'any',
+      url: 'https://img.example/cover-b4.png',
+      nsfwLevel: NsfwLevel.PG13,
+      rating: 'pg13',
+    },
+    {
+      slot: 'screenshot',
+      host: 'any',
+      url: 'https://img.example/shot-c5.png',
+      nsfwLevel: NsfwLevel.PG,
+      rating: 'pg',
+      caption: 'The dashboard',
+      coverUrl: 'https://img.example/shot-c5-as-cover.png',
+    },
+  ],
   installCount: 29,
   createdAt: '2026-08-15T01:02:03.000Z',
   ...over,
@@ -128,8 +146,7 @@ const OFFSITE = app('tide-log', 'g', {
     hasPage: false,
     liveUrl: null,
     description: null,
-    coverUrl: null,
-    screenshots: [],
+    media: [],
     installCount: 88,
     createdAt: '2026-09-30T11:12:13.000Z',
   }),
@@ -137,11 +154,11 @@ const OFFSITE = app('tide-log', 'g', {
 
 const listingSet = (sets: ReturnType<typeof buildEntities>) => sets.get(LISTING) ?? [];
 
-describe('listing@v1 field mapping', () => {
+describe('store-listing@v1 field mapping', () => {
   const sets = buildEntities([ONSITE, OFFSITE], { ...BASE, listings: true });
 
   it('an on-site listing carries its card, detail and stats fields', () => {
-    const e = listingSet(sets).find((x) => x.urn === 'urn:apps.civitai.com:listing/orbit-b');
+    const e = listingSet(sets).find((x) => x.urn === 'urn:apps.civitai.com:store-listing/orbit-b');
     expect(e?.schemas).toEqual([LISTING]);
     expect(e?.body).toEqual({
       app: 'urn:apps.civitai.com:app/orbit-b',
@@ -154,8 +171,24 @@ describe('listing@v1 field mapping', () => {
       category: 'productivity-k2',
       description: 'Long-form orbit description',
       iconUrl: 'https://img.example/icon-a3.png',
-      coverUrl: 'https://img.example/cover-b4.png',
-      screenshots: [{ url: 'https://img.example/shot-c5.png', caption: 'The dashboard' }],
+      media: [
+        {
+          slot: 'cover',
+          host: 'any',
+          url: 'https://img.example/cover-b4.png',
+          nsfwLevel: 2,
+          rating: 'pg13',
+        },
+        {
+          slot: 'screenshot',
+          host: 'any',
+          url: 'https://img.example/shot-c5.png',
+          nsfwLevel: 1,
+          rating: 'pg',
+          caption: 'The dashboard',
+          coverUrl: 'https://img.example/shot-c5-as-cover.png',
+        },
+      ],
       creator: { id: 5123, username: 'maker-q7', image: 'https://img.example/avatar-q7.png' },
       isBeta: true,
       isOfficial: false,
@@ -175,7 +208,7 @@ describe('listing@v1 field mapping', () => {
   });
 
   it('an off-site listing carries its link and no play count', () => {
-    const e = listingSet(sets).find((x) => x.urn === 'urn:apps.civitai.com:listing/tide-log');
+    const e = listingSet(sets).find((x) => x.urn === 'urn:apps.civitai.com:store-listing/tide-log');
     expect(e?.body).toEqual({
       app: 'urn:apps.civitai.com:app/tide-log',
       slug: 'tide-log',
@@ -186,8 +219,7 @@ describe('listing@v1 field mapping', () => {
       category: 'utility-m4',
       description: null,
       iconUrl: 'https://img.example/icon-tide.png',
-      coverUrl: null,
-      screenshots: [],
+      media: [],
       creator: null,
       isBeta: false,
       isOfficial: true,
@@ -207,8 +239,8 @@ describe('listing@v1 field mapping', () => {
 
   it('every listing validates against the published listing schema, which can refuse one', () => {
     const doc = sets.get(JSON_SCHEMA_DIALECT)?.find((e) => e.urn === LISTING);
-    expect(doc?.body).toBe(LISTING_SCHEMA_DOCUMENT);
-    const validate = newValidator().compile(LISTING_SCHEMA_DOCUMENT);
+    expect(doc?.body).toBe(STORE_LISTING_SCHEMA_DOCUMENT);
+    const validate = newValidator().compile(STORE_LISTING_SCHEMA_DOCUMENT);
     const bodies = listingSet(sets).map((e) => e.body as Record<string, unknown>);
     expect(bodies.map((b) => [b.slug, validate(b)])).toEqual([
       ['orbit-b', true],
@@ -243,7 +275,9 @@ describe('the switch: off by default, nothing about listings exists', () => {
       listings: true,
       onSkip: (r) => skipped.push(r),
     });
-    expect(listingSet(sets).map((e) => e.urn)).toEqual(['urn:apps.civitai.com:listing/tide-log']);
+    expect(listingSet(sets).map((e) => e.urn)).toEqual([
+      'urn:apps.civitai.com:store-listing/tide-log',
+    ]);
     expect((sets.get(APP) ?? []).map((e) => e.urn)).toContain('urn:apps.civitai.com:app/bare-app');
     expect(skipped).toEqual(['listing of bare-app skipped: no store fields were read']);
   });
@@ -329,8 +363,8 @@ describe('the relay gate (REGISTRY_ADAPTER_LISTING_RELAYS)', () => {
 
   it('🔴 a listed relay reads the listings; another relay, a direct token and anonymous read none', async () => {
     expect(await urns(LISTING, ctx('relay-exp-7'))).toEqual([
-      'urn:apps.civitai.com:listing/orbit-b',
-      'urn:apps.civitai.com:listing/tide-log',
+      'urn:apps.civitai.com:store-listing/orbit-b',
+      'urn:apps.civitai.com:store-listing/tide-log',
     ]);
     expect(await urns(LISTING, ctx('relay-main-2'))).toEqual([]);
     expect(await urns(LISTING, ctx(null))).toEqual([]);
@@ -393,8 +427,7 @@ describe('the listing read', () => {
 
   const extras: ListingExtras = {
     description: 'desc-e1',
-    coverUrl: 'https://img.example/e-cover.png',
-    screenshots: [],
+    media: [],
     installCount: 3,
     createdAt: '2026-07-01T00:00:00.000Z',
   };
@@ -441,53 +474,180 @@ describe('the listing read', () => {
     expect(apps.map((a) => a.listing.store)).toEqual([undefined, undefined]);
   });
 
-  it('on with no listing read wired refuses, rather than publish listings without media', async () => {
-    await expect(
-      readCatalog(deps({ loadListingExtras: undefined }), { listings: true })
-    ).rejects.toThrow('the listing stream is on but the catalog has no listing read');
+  it('🔴 a failed listing read fails only the listing stream, and is logged', async () => {
+    const errors: unknown[] = [];
+    const calls: string[] = [];
+    const apps = await readCatalog(
+      deps(
+        {
+          loadIconUrls: async () => {
+            calls.push('icons');
+            return new Map([['apl_card_3', 'https://img.example/icon-z9.png']]);
+          },
+          loadListingExtras: async () => {
+            throw new Error('extras read down');
+          },
+        },
+        calls
+      ),
+      { listings: true, onError: (e) => errors.push(e) }
+    );
+    expect(apps.listingsFailed).toBe(true);
+    expect(errors.map((e) => (e as Error).message)).toEqual(['extras read down']);
+    // The reads beside it completed, and every app is still there, without store fields.
+    expect(calls).toEqual(['icons']);
+    expect(apps.map((a) => [a.listing.slug, a.listing.iconUrl, a.listing.store])).toEqual([
+      ['comet-sketch', 'https://img.example/icon-z9.png', undefined],
+      ['no-extras', null, undefined],
+    ]);
   });
 });
 
-describe('registryListingMedia — no image above the listing rating', () => {
-  const img = (url: string, nsfwLevel: number): ListingMediaImage => ({
-    url,
-    nsfwLevel,
-    ingestion: 'Scanned',
-    needsReview: null,
-    poi: false,
-    minor: false,
-    tosViolation: false,
-    acceptableMinor: false,
-    blockedFor: null,
-    modelRestricted: false,
-  });
-  const shots = [
-    { caption: 'mature shot', image: img('shots/r-f6', NsfwLevel.R) },
-    { caption: 'safe shot', image: img('shots/pg-g7', NsfwLevel.PG) },
-  ];
-
-  it('🔴 a PG listing drops its R cover and R screenshot; the cover falls back to the PG one', () => {
-    expect(
-      registryListingMedia({
-        contentRating: 'pg',
-        cover: img('covers/r-h8', NsfwLevel.R),
-        screenshots: shots,
-      })
-    ).toEqual({
-      coverUrl: listingMediaEdgeUrl('shots/pg-g7', LISTING_COVER_WIDTH),
-      screenshots: [
-        { url: listingMediaEdgeUrl('shots/pg-g7', LISTING_SCREENSHOT_WIDTH), caption: 'safe shot' },
-      ],
-    });
+describe('media: every image rated on its own, narrowed per audience (red overrides carried)', () => {
+  const img = (url: string, nsfwLevel: number, over: Partial<ListingMediaImage> = {}) =>
+    ({
+      url,
+      nsfwLevel,
+      ingestion: 'Scanned',
+      needsReview: null,
+      poi: false,
+      minor: false,
+      tosViolation: false,
+      acceptableMinor: false,
+      blockedFor: null,
+      modelRestricted: false,
+      ...over,
+    } as ListingMediaImage);
+  const media = registryListingMedia({
+    icon: img('icons/own-pg13-a1', NsfwLevel.PG13),
+    cover: img('covers/own-r-b2', NsfwLevel.R),
+    screenshots: [
+      { caption: 'cap-c3', image: img('shots/pg-c3', NsfwLevel.PG) },
+      { caption: 'cap-e5', image: img('shots/x-e5', NsfwLevel.X) },
+      // Fails the store's per-image moderation check: never published, at any level.
+      { caption: 'cap-f6', image: img('shots/poi-f6', NsfwLevel.PG, { poi: true }) },
+      { caption: 'cap-g7', image: img('shots/blocked-g7', NsfwLevel.Blocked) },
+    ],
+    red: { icon: null, cover: { ...img('covers/red-r-d4', NsfwLevel.R), id: 4404 } },
   });
 
-  it('an R listing keeps its R media, in stored order', () => {
-    const out = registryListingMedia({
-      contentRating: 'r',
-      cover: img('covers/r-h8', NsfwLevel.R),
-      screenshots: shots,
-    });
-    expect(out.screenshots.map((s) => s.caption)).toEqual(['mature shot', 'safe shot']);
-    expect(out.coverUrl).toBe(listingCoverUrl({ url: 'covers/r-h8' }, null));
+  it('carries each image with its own level and rating, and marks the red override red-only', () => {
+    expect(media).toEqual([
+      {
+        slot: 'icon',
+        host: 'any',
+        url: listingIconUrl({ url: 'icons/own-pg13-a1' }),
+        nsfwLevel: 2,
+        rating: 'pg13',
+      },
+      {
+        slot: 'cover',
+        host: 'any',
+        url: listingCoverUrl({ url: 'covers/own-r-b2' }, null),
+        nsfwLevel: 4,
+        rating: 'r',
+      },
+      {
+        slot: 'screenshot',
+        host: 'any',
+        url: listingMediaEdgeUrl('shots/pg-c3', LISTING_SCREENSHOT_WIDTH),
+        nsfwLevel: 1,
+        rating: 'pg',
+        caption: 'cap-c3',
+        coverUrl: listingMediaEdgeUrl('shots/pg-c3', LISTING_COVER_WIDTH),
+      },
+      {
+        slot: 'screenshot',
+        host: 'any',
+        url: listingMediaEdgeUrl('shots/x-e5', LISTING_SCREENSHOT_WIDTH),
+        nsfwLevel: 8,
+        rating: 'x',
+        caption: 'cap-e5',
+        coverUrl: listingMediaEdgeUrl('shots/x-e5', LISTING_COVER_WIDTH),
+      },
+      {
+        slot: 'cover',
+        host: 'red',
+        url: listingCoverUrl({ url: 'covers/red-r-d4' }, null),
+        nsfwLevel: 4,
+        rating: 'r',
+      },
+    ]);
+  });
+
+  // A PG listing carrying an R cover, an X screenshot and an R civitai.red cover override.
+  const sets = buildEntities([app('pg-media-h8', 'pg', { store: store({ media }) })], {
+    ...BASE,
+    listings: true,
+  });
+  const served = (audience: Audience) =>
+    readableBy(sets, LISTING, audience).map((e) => (e.body as { media: unknown[] }).media);
+
+  it('🔴 a PG-only audience gets neither the R cover nor the red override', () => {
+    expect(served(withListings(ANONYMOUS_AUDIENCE))).toEqual([[media[0], media[2]]]);
+  });
+
+  it('🔴 an R audience gets the R cover and the red override, marked red, and no X image', () => {
+    const [items] = served(withListings(audienceOf({ r: true, x: false, xxx: false })));
+    expect(items).toEqual([media[0], media[1], media[2], media[4]]);
+    expect((items as Array<{ host: string; slot: string }>).map((m) => m.host)).toEqual([
+      'any',
+      'any',
+      'any',
+      'red',
+    ]);
+  });
+
+  it('a narrowed body is a body of its own: its rev differs from the whole one', () => {
+    const rev = (a: Audience) => readableBy(sets, LISTING, a)[0]?.rev;
+    expect(rev(withListings(ANONYMOUS_AUDIENCE))).not.toBe(rev(withListings(SERVICE_AUDIENCE)));
+    expect(rev(withListings(SERVICE_AUDIENCE))).toBe(listingSet(sets)[0].rev);
+  });
+});
+
+describe('a failed listing read fails only the listing stream', () => {
+  let failing = false;
+  const good = buildEntities([ONSITE, OFFSITE], { ...BASE, listings: true });
+  const failed = Object.assign([{ ...ONSITE, listing: { ...ONSITE.listing, store: undefined } }], {
+    listingsFailed: true as const,
+  });
+  const adapter = gateListings(
+    createPollingAdapter({
+      namespace: 'apps.civitai.com',
+      serves: servedSchemas({ listings: true }),
+      read: async () => (failing ? buildEntities(failed, { ...BASE, listings: true }) : good),
+      store: createMemorySnapshotStore(),
+      pollMs: 1,
+      sleep: async () => undefined,
+    }),
+    new Set(['relay-exp-7'])
+  );
+  const ctx = (): AdapterContext => ({
+    signal: new AbortController().signal,
+    audience: SERVICE_AUDIENCE,
+    reader: {
+      subject: 'svc:index',
+      userId: null,
+      clientId: 'index-c9',
+      scope: 0n,
+      actor: 'relay-exp-7',
+    },
+  });
+
+  it('🔴 the listing stream ends unavailable with no delete; the app stream still serves', async () => {
+    failing = false;
+    const { cursor } = await adapter.snapshot(LISTING, ctx());
+    failing = true;
+    const seen: Change[] = [];
+    let code: unknown;
+    try {
+      for await (const change of await adapter.changes(LISTING, cursor, ctx())) seen.push(change);
+    } catch (err) {
+      code = (err as { code?: unknown }).code;
+    }
+    expect([code, seen]).toEqual(['unavailable', []]);
+    const apps = [...((await adapter.snapshot(APP, ctx())).entities as Entity[])];
+    expect(apps.map((e) => e.urn)).toEqual(['urn:apps.civitai.com:app/orbit-b']);
+    await expect(adapter.snapshot(LISTING, ctx())).rejects.toMatchObject({ code: 'unavailable' });
   });
 });
