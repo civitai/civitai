@@ -2333,13 +2333,25 @@ change) and runs both on Postgres (PGlite with the hold migrations), one Trainin
 refusal reason, requiring the same rows. The predicate over the rows is pinned per rule by
 `internal/v1models/trainingdata_test.go`.
 
-**Drift.** feed-go and the Node app deploy separately, so a Node change to the rules (`ownerHeldSql`,
-the restriction legs) would otherwise leave feed-go listing by the old ones. Every model sample
-carries the SHA-256 of the Node build's statement text (`trainingDataListingSqlSha256`, header
-`x-feed-go-training-data-sql`, added by the sampler); a body with a Training Data candidate is
-answered only when it equals the hash of the embedded copy (`v1models.TrainingDataSQLHash`), and
-falls back (`v1-models-training-data-drift`) when it differs or is absent, before anything is read.
-A body with no Training Data file needs no hash.
+**Drift.** feed-go and the Node app deploy separately, so a Node change to the rules would otherwise
+leave feed-go listing by the old ones. The rules are two parts: the statement (`ownerHeldSql`, the
+restriction legs) and the JS decision over its rows (`trainingDataServableOnHost`, the
+`restricted !== false` and virus-scan tests, the listed predicate). Every model sample carries the
+Node build's rule set id, `<sha256 of the statement text>;rules=<TRAINING_DATA_LISTING_RULES_VERSION>`
+(`trainingDataListingRulesId`, header `x-feed-go-training-data-sql`, added by the sampler); a body
+with a Training Data candidate is answered only when it equals this build's
+(`v1models.TrainingDataSQLHash`: the embedded copy's hash and `TrainingDataRulesVersion`), and falls
+back (`v1-models-training-data-drift`) when it differs or is absent, before anything is read. A body
+with no Training Data file needs no id. `feed-go-training-data-listing.parity.test.ts` records, per
+version, the SHA-256 of exactly: `training-data-visibility.ts`, the body of `trainingDataListing`
+between its `feed-go-rules` markers (the owner/moderator return, the candidate filter, the read, its
+fail-closed return and the predicate), and the values of `sfwBrowsingLevelsFlag` and
+`ScanResultCode.Success`. It fails when that changes without a bump, and requires the Go constant to
+equal Node's. Outside the hash: the call sites' inputs, `isRedCapableHost(req.headers.host)` in
+`src/pages/api/v1/models/[id].ts` and in `model-search.service.ts` (`redCapable`), and feed-go's
+`redCapable`; a change there needs the same bump by hand (the test's failure message lists them).
+Known limit: a version bump that is not ported to Go passes every check; nothing compares the two
+decisions' behaviour beyond the golden fixtures.
 
 ### 16.7 Known divergences
 

@@ -1,11 +1,15 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { ScanResultCode } from '~/shared/utils/prisma/enums';
 import path from 'path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'crypto';
 import {
+  TRAINING_DATA_LISTING_RULES_VERSION,
   trainingDataListing,
+  trainingDataListingRulesId,
   trainingDataListingSql,
   trainingDataListingSqlSha256,
 } from '~/server/services/training-data-restricted.service';
@@ -18,7 +22,18 @@ import {
  * ownerHeldSql, the report legs or the content restriction fails here until the file is re-rendered),
  * and, run on Postgres (PGlite, with the restriction migrations), the same rows as Node's for one
  * Training Data file per refusal reason. The predicate over the rows is pinned in Go
- * (internal/v1models/trainingdata_test.go) and by the golden fixtures.
+ * (internal/v1models/trainingdata_test.go) and by the golden fixtures. Its version, which feed-go also
+ * requires to match, is held below to a hash of exactly: training-data-visibility.ts, the body of
+ * `trainingDataListing` between its feed-go-rules markers, and the values of sfwBrowsingLevelsFlag and
+ * ScanResultCode.Success. The call sites' inputs (isRedCapableHost in src/pages/api/v1/models/[id].ts
+ * and in model-search.service.ts) are outside the hash. A bump that is not ported to feed-go passes
+ * every check here: nothing compares the two decisions' behaviour beyond the goldens.
+ *
+ * The policy this pins is the dataset-sharing restriction as introduced with dataset sharing
+ * (civitai/civitai#8193: `trainingDataListing`, `trainingDataOwnerRestrictedSql`,
+ * `trainingDataContentRestrictedSql`, `trainingDataServableOnHost`) over the owner legal hold of
+ * civitai/civitai#7047 (`ownerHeldSql`); #8274 made the listing skip versions read without files.
+ * The CASES are one per leg of those builders, as they read today.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -237,6 +252,65 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await db?.close();
+});
+
+// What TRAINING_DATA_LISTING_RULES_VERSION versions (see the docblock for what is and is not in it). Each version is recorded with the SHA-256 of that source; a change to it fails here until
+// the version is bumped (here, in the service and in feed-go) and the new hash recorded, and feed-go
+// falls back for a Node that sends a version it does not have.
+const RULES_SOURCE_SHA256: Record<number, string> = {
+  1: '27f8827e0fcef8aa29249cc65057f1f4dac0719ce1680d79878483e430b66fad',
+};
+const SERVICE = path.resolve(__dirname, '../training-data-restricted.service.ts');
+const VISIBILITY = path.resolve(__dirname, '../../../shared/utils/training-data-visibility.ts');
+const GO_TRAINING_DATA = path.resolve(
+  __dirname,
+  '../../../../apps/feed-go/internal/v1models/trainingdata.go'
+);
+
+/** The marked decision block of trainingDataListing and the whole visibility module. */
+function rulesSource() {
+  const svc = readFileSync(SERVICE, 'utf8');
+  const count = (marker: string) => svc.split(marker).length - 1;
+  if (count('// feed-go-rules:begin') !== 1 || count('// feed-go-rules:end') !== 1)
+    throw new Error('want exactly one feed-go-rules:begin and one feed-go-rules:end marker');
+  const begin = svc.indexOf('// feed-go-rules:begin');
+  const end = svc.indexOf('// feed-go-rules:end');
+  if (end < begin) throw new Error('feed-go-rules:end precedes feed-go-rules:begin');
+  return [
+    readFileSync(VISIBILITY, 'utf8'),
+    svc.slice(begin, end),
+    `sfwBrowsingLevelsFlag=${sfwBrowsingLevelsFlag}`,
+    `ScanResultCode.Success=${ScanResultCode.Success}`,
+  ].join('\0');
+}
+
+describe("feed-go's training data decision version", () => {
+  it('is bumped whenever the decision source changes', () => {
+    const sha = createHash('sha256').update(rulesSource()).digest('hex');
+    expect(
+      RULES_SOURCE_SHA256[TRAINING_DATA_LISTING_RULES_VERSION],
+      `The Training Data decision (training-data-visibility.ts, trainingDataListing's ` +
+        `feed-go-rules body, sfwBrowsingLevelsFlag or ScanResultCode.Success) changed: bump ` +
+        `TRAINING_DATA_LISTING_RULES_VERSION and feed-go's TrainingDataRulesVersion, port the change ` +
+        `to apps/feed-go/internal/v1models/trainingdata.go, check the call sites outside this hash ` +
+        `(isRedCapableHost in src/pages/api/v1/models/[id].ts and model-search.service.ts, and ` +
+        `feed-go's redCapable), and record ${
+          TRAINING_DATA_LISTING_RULES_VERSION + 1
+        }: '${sha}' here.`
+    ).toBe(sha);
+  });
+
+  it("is feed-go's, and is what the sampler sends", () => {
+    const go = /^const TrainingDataRulesVersion = (\d+)$/m.exec(
+      readFileSync(GO_TRAINING_DATA, 'utf8')
+    );
+    expect(go?.[1], 'TrainingDataRulesVersion in trainingdata.go').toBe(
+      String(TRAINING_DATA_LISTING_RULES_VERSION)
+    );
+    expect(trainingDataListingRulesId()).toBe(
+      `${trainingDataListingSqlSha256()};rules=${TRAINING_DATA_LISTING_RULES_VERSION}`
+    );
+  });
 });
 
 describe("feed-go's training data statement", () => {

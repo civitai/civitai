@@ -27,7 +27,6 @@ import {
   type FeedGoShadowConfig,
 } from '~/server/trpc/feed-go-shadow';
 import { pickSessionCookies } from '~/server/utils/session-cookies';
-import { trainingDataListingSqlSha256 } from '~/server/services/training-data-restricted.service';
 
 const URL_ = 'http://feed-go.test:9090/internal/shadow/image.getImagesAsPostsInfinite';
 const V1_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/images';
@@ -1025,10 +1024,6 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
     });
     const s = broken.shadow.beginRest('v1-models', modelsRequest('/api/v1/models'));
     expect(s?.headers).not.toHaveProperty(FEED_GO_TRAINING_DATA_SQL_HEADER);
-  });
-
-  it("the production sampler sends this build's statement hash", () => {
-    expect(trainingDataListingSqlSha256()).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('one flag covers both model routes, and neither the images nor the gallery flag does', () => {
