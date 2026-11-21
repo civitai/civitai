@@ -1133,6 +1133,13 @@ func imageWire(img superjson.Object) superjson.Object {
 			obj = append(obj, f)
 		}
 	}
+	obj, _ = hydrate.Wire(map[string]any(func() map[string]any {
+		m := map[string]any{}
+		for _, f := range obj {
+			m[f.Key] = f.Val
+		}
+		return m
+	}())).(superjson.Object)
 	return obj
 }
 
