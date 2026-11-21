@@ -50,3 +50,4 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Semantic video search (video vectors in Qdrant, the `video` content domain) | [docs/features/semantic-video-search.md](semantic-video-search.md) |
 | Service Requests page: link sellers to Incoming requests | [docs/features/service-requests-seller-link.md](service-requests-seller-link.md) |
 | Creator Services: deal file retention (30/90 days, holds, purge record) | [docs/features/service-deal-file-retention.md](service-deal-file-retention.md) |
+
