@@ -1,4 +1,5 @@
 import { useRouter } from 'next/router';
+import { isAdFreeRoute } from '~/components/Ads/ad-free-routes';
 import Script from 'next/script';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { create } from 'zustand';
@@ -118,13 +119,6 @@ export function useAdPageNsfwLevel() {
   return useAdProviderStore((state) => state.pageNsfwLevel);
 }
 
-const blockedUrls: string[] = [
-  '/collections/6503138',
-  '/collections/7514194',
-  '/collections/7514211',
-  '/moderator',
-];
-
 export function AdsProvider({
   children,
   gated = false,
@@ -163,10 +157,7 @@ export function AdsProvider({
       !browserBlocked &&
       consentAllowed &&
       (allowAds || !isMember) &&
-      !blockedUrls.some((url) => router.asPath.includes(url)) &&
-      // The gift claim page holds a live gift code in its props, readable by any script on the page.
-      !router.pathname.startsWith('/gift/') &&
-      !router.asPath.split('?')[0].endsWith('/edit');
+      !isAdFreeRoute(router.pathname, router.asPath);
 
   function handleLoadedError() {
     useAdProviderStore.setState({ adsBlocked: true });

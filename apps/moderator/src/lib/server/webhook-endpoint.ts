@@ -142,12 +142,8 @@ export function authenticateWebhookToken(event: { url: URL; request: Request }):
   // Fails CLOSED — with NO secret configured every wrapped endpoint is unreachable rather than
   // unguarded. 503 rather than 401 so an operator reading logs sees a deployment problem, not a caller
   // with a bad token. Either class alone is a configuration (only MOD_INBOUND_TOKEN: no public
-  // intake; only MOD_CASES_TOKEN: no moderation actions); the legacy WEBHOOK_TOKEN class was dropped once
-  // the runtime signal showed no caller presenting it (see the header). The body names every accepted class, derived from the list itself
-  // so the two cannot drift.
+  // intake; only MOD_CASES_TOKEN: no moderation actions).
   if (accepted.length === 0) {
-    // Phrased for EITHER list length ("Neither A nor B" is ungrammatical with one name); derived
-    // rather than hardcoded so the body cannot drift from the accepted set.
     const names = ACCEPTED_CREDENTIALS.join(' nor ');
     const message =
       ACCEPTED_CREDENTIALS.length > 1

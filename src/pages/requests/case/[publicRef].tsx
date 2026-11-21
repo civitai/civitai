@@ -2,13 +2,14 @@ import { Container } from '@mantine/core';
 import Head from 'next/head';
 import { casePublicRef } from '@civitai/moderation';
 import { Meta } from '~/components/Meta/Meta';
-import { CASE_LINK_KEY, CaseView } from '~/components/TakedownRequests/CaseView';
+import { CaseView } from '~/components/TakedownRequests/CaseView';
+import { CASE_LINK_KEY } from '~/components/TakedownRequests/case-link-token';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps<{ publicRef: string }>({
-  resolver: async ({ ctx }) => {
+  resolver: async ({ ctx, features }) => {
     const ref = casePublicRef.safeParse(ctx.params?.publicRef);
-    if (!ref.success) return { notFound: true };
+    if (!ref.success || !features?.takedownRequests) return { notFound: true };
     // The page holds a private link: nothing it loads may learn its address.
     ctx.res.setHeader('Referrer-Policy', 'no-referrer');
     ctx.res.setHeader('Cache-Control', 'private, no-store');
@@ -28,8 +29,7 @@ export default function CasePage({ publicRef }: { publicRef: string }) {
       <Head>
         <meta name="referrer" content="no-referrer" />
         {/* Runs as the head parses, before any app or third-party script can read the address: takes
-            the link token out of the URL and history, and keeps it in this tab's sessionStorage until it has
-            been exchanged for the cookie. */}
+            the link token out of the URL and history, and leaves it in sessionStorage, which the case view empties as it reads it. */}
         <script
           // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{ __html: stripLinkToken(publicRef) }}

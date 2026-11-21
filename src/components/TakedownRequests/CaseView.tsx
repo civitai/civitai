@@ -1,12 +1,11 @@
 import { Alert, Anchor, Button, Card, List, Loader, Stack, Text, Title } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CaseView as View } from '~/server/services/takedown-requests.service';
+import { takeCaseLinkToken } from './case-link-token';
 import { cleanValues, RequestFields, type FieldValues } from './RequestFields';
 
 type Load = { view: View } | { error: string; retry?: boolean } | null;
 const NOT_VALID = 'This link has expired or is not valid. Use the latest link we emailed you.';
-/** Where the page's inline head script leaves the link token it took out of the address bar. */
-export const CASE_LINK_KEY = 'civ-case-link';
 
 /** What a failed load tells the person: only a refused link reads as expired. */
 function loadError(status: number): Exclude<Load, null | { view: View }> {
@@ -33,13 +32,15 @@ async function call(publicRef: string, init?: { body: unknown }) {
  */
 export function CaseView({ publicRef }: { publicRef: string }) {
   const [load, setLoad] = useState<Load>(null);
+  // The token from the email link, out of storage at once and held here only until a cookie holds it,
+  // so a failed first try can be retried without the link.
+  const pending = useRef<string | null>(null);
 
   const refresh = async () => {
-    // The token from the email link, kept only until a cookie holds it, so a failed first try can be
-    // retried without the link.
-    const token = sessionStorage.getItem(`${CASE_LINK_KEY}:${publicRef}`);
+    pending.current ??= takeCaseLinkToken(publicRef);
+    const token = pending.current;
     const res = token ? await call(publicRef, { body: { token } }) : await call(publicRef);
-    if (res.ok) sessionStorage.removeItem(`${CASE_LINK_KEY}:${publicRef}`);
+    if (res.ok || res.status === 401 || res.status === 404) pending.current = null;
     setLoad(res.ok ? { view: res.body as View } : loadError(res.status));
   };
 

@@ -36,7 +36,7 @@ const CONTACT_IDS = new Set(['name', 'email', 'contact', 'address', 'phone']);
 
 /**
  * Adds whole weekdays (Monday to Friday, UTC). Holidays are not counted out; a deadline that must
- * skip them is Legal's call and belongs in the clock work (segment 4).
+ * skip them is Legal's call.
  */
 export function addBusinessDays(from: Date, days: number) {
   const d = new Date(from);

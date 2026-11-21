@@ -45,13 +45,21 @@ export type CaseView = z.infer<typeof caseViewSchema>;
 
 /** The moderator app answers every action as `{ ok, result }` (modActionResponse). */
 const resultOf = <T extends z.ZodType>(schema: T, answer: unknown): z.infer<T> =>
-  z.object({ result: schema }).parse(answer).result;
+  schema.parse(z.object({ result: z.unknown() }).parse(answer).result);
 
-export async function getRequestForms(): Promise<RequestForm[]> {
-  return resultOf(
+// Definitions change only by a hand-applied version, so a minute's staleness costs nothing and keeps
+// every form page view from being a cross-app call.
+const FORMS_TTL_MS = 60_000;
+let formsCache: { at: number; forms: RequestForm[] } | undefined;
+
+export async function getRequestForms(now = Date.now()): Promise<RequestForm[]> {
+  if (formsCache && now - formsCache.at < FORMS_TTL_MS) return formsCache.forms;
+  const forms = resultOf(
     z.object({ definitions: z.array(formSchema) }),
     await casesClient.caseDefinitions()
   ).definitions;
+  formsCache = { at: now, forms };
+  return forms;
 }
 
 export type SubmitResult =

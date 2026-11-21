@@ -17,6 +17,8 @@ import { verifyTurnstile } from './turnstile';
 
 /** How long a party's link opens their case. */
 export const PARTY_LINK_DAYS = 365;
+/** Stands for the party's link token in a stored notice; the token goes only into the sent mail. */
+export const LINK_TOKEN_PLACEHOLDER = '[link-token]';
 /** Receipts one address gets in a day; past it the case is still filed, without the email. */
 export const RECEIPTS_PER_ADDRESS_PER_DAY = 5;
 /** Receipts sent in any hour, all addresses. */
@@ -141,8 +143,9 @@ export async function caseIntake(
       caseRef: filed.publicRef,
       receivedAt: noticeTime(receivedAt),
       requestType: def.title,
-      // In the fragment, so the token never reaches a server log or a Referer header.
-      continueLink: `${deps.appUrl}/requests/case/${filed.publicRef}#t=${token}`,
+      // In the fragment, so the token never reaches a server log or a Referer header. The stored
+      // snapshot keeps a placeholder: only the token's hash is ever stored.
+      continueLink: `${deps.appUrl}/requests/case/${filed.publicRef}#t=${LINK_TOKEN_PLACEHOLDER}`,
     };
     const notice = await deps.db
       .insertInto('case_notice')
@@ -159,8 +162,7 @@ export async function caseIntake(
       .returning('id')
       .executeTakeFirstOrThrow();
     // Sent after answering: the main app gives a case action 5s, and a slow relay must not turn a filed
-    // case into "couldn't submit". A receipt that does not go stays as its case_notice row; /cases does
-    // not list form-filed cases yet.
+    // case into "couldn't submit". A receipt that does not go stays as its case_notice row.
     const publicRef = filed.publicRef;
     const sendDeps = deps.sendDeps();
     deps.background(
@@ -169,6 +171,7 @@ export async function caseIntake(
         from: noticeFrom(def.key, sendDeps.from),
         // One notice, outside any batch: there is no run lock to hold.
         holdsLock: async () => true,
+        fillBody: (body) => body.split(LINK_TOKEN_PLACEHOLDER).join(token),
         replyTo: def.mailbox,
       }).then(
         (outcome) => deps.log({ name: 'case-intake-receipt', publicRef, outcome }),

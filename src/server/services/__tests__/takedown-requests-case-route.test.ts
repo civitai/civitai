@@ -3,7 +3,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { modActionResponse } from '@civitai/moderation';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 
-// The moderator app is the network boundary: fetch is the only fake.
+// The moderator app is the network boundary: fetch is the only fake. The flag is passed in.
+const flags = { takedownRequests: true };
 let handler: (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>;
 const REF = 'TD-26-ABC123';
 const view = {
@@ -23,9 +24,13 @@ beforeAll(async () => {
     MODERATOR_APP_URL: 'https://mod.example',
     MODERATOR_APP_INTERNAL_URL: '',
   });
-  ({ default: handler } = await import('~/pages/api/requests/case/[publicRef]'));
+  const { createCaseRoute } = await import('~/server/takedown-requests/case-route');
+  handler = createCaseRoute({ formsOpen: async () => flags.takedownRequests });
 });
-afterEach(() => fetchMock.mockReset());
+afterEach(() => {
+  fetchMock.mockReset();
+  flags.takedownRequests = true;
+});
 
 function call({
   method = 'POST',
@@ -74,6 +79,15 @@ function moderatorAnswers(status: number, body: unknown) {
 const TOKEN = 'x'.repeat(43);
 
 describe('/api/requests/case/[publicRef]', () => {
+  it('is closed when the takedownRequests flag is off, before the moderator app is asked', async () => {
+    flags.takedownRequests = false;
+    moderatorAnswers(200, view);
+    const out = await call({ body: { token: TOKEN } });
+    expect(out.status).toBe(503);
+    expect(out.headers['set-cookie']).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('exchanges a valid link token for a cookie scoped to this case only', async () => {
     const fetchMock = moderatorAnswers(200, view);
     const out = await call({ body: { token: TOKEN } });

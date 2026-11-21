@@ -60,6 +60,8 @@ export type SendDeps = {
   from: string;
   replyTo: string;
   hourlyCeiling: number;
+  /** Fills what the stored snapshot holds back (a link token) into the outgoing text only. */
+  fillBody?: (body: string) => string;
 };
 
 export function defaultSendDeps(): Omit<SendDeps, 'holdsLock'> {
@@ -142,7 +144,8 @@ export async function sendNotice(noticeId: number, deps: SendDeps): Promise<Send
       .execute();
     return 'unsendable';
   }
-  const { recipient_address: to, body_snapshot: body } = row;
+  const { recipient_address: to } = row;
+  const body = deps.fillBody ? deps.fillBody(row.body_snapshot) : row.body_snapshot;
 
   if (hashAddress(to) !== row.address_hash) {
     await deps.db

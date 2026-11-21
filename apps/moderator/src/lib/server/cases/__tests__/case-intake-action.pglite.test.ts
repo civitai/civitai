@@ -159,6 +159,17 @@ describe('caseIntake', () => {
       new Date('2026-11-21T00:00:00Z')
     );
     expect(row?.resourceId).toBe(Number(party.id));
+    // Only the token's hash is stored: no case row holds the link that works.
+    const stored = await pg.query<{ n: number }>(
+      `SELECT (SELECT count(*) FROM case_notice WHERE body_snapshot LIKE '%' || $1 || '%' OR subject_snapshot LIKE '%' || $1 || '%')
+        + (SELECT count(*) FROM case_event WHERE data::text LIKE '%' || $1 || '%')::int AS n`,
+      [token]
+    );
+    expect(Number(stored.rows[0].n)).toBe(0);
+    const snap = (
+      await pg.query<{ body_snapshot: string }>('SELECT body_snapshot FROM case_notice')
+    ).rows[0].body_snapshot;
+    expect(snap).toContain(`/requests/case/${out.publicRef}#t=[link-token]`);
     const rec = (await pg.query<{ due_at: string }>('SELECT due_at FROM case_record')).rows[0];
     expect(new Date(rec.due_at).toISOString()).toBe('2026-11-22T16:05:00.000Z');
   });

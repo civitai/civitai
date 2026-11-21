@@ -32,18 +32,20 @@ describe('noticeFrom', () => {
 
 describe('verifyTurnstile', () => {
   const answer = (body: unknown) => async () => new Response(JSON.stringify(body));
-  it("accepts only a token solved for the form's action", async () => {
+  const verify = (body: unknown) =>
+    verifyTurnstile('t', 'ip', { secret: 's', fetcher: answer(body), hostnames: ['civitai.com'] });
+  it("accepts only a token solved for the form's action, on the form's site", async () => {
     await expect(
-      verifyTurnstile('t', 'ip', {
-        secret: 's',
-        fetcher: answer({ success: true, action: 'takedown-intake' }),
-      })
+      verify({ success: true, action: 'takedown-intake', hostname: 'civitai.com' })
     ).resolves.toBeUndefined();
     await expect(
-      verifyTurnstile('t', 'ip', {
-        secret: 's',
-        fetcher: answer({ success: true, action: 'login' }),
-      })
+      verify({ success: true, action: 'login', hostname: 'civitai.com' })
     ).rejects.toBeInstanceOf(TurnstileRefusedError);
+    await expect(
+      verify({ success: true, action: 'takedown-intake', hostname: 'evil.example' })
+    ).rejects.toBeInstanceOf(TurnstileRefusedError);
+    await expect(verify({ success: true, action: 'takedown-intake' })).rejects.toBeInstanceOf(
+      TurnstileRefusedError
+    );
   });
 });
