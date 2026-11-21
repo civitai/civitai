@@ -12,10 +12,7 @@ import { createLruCache } from '~/server/utils/lru-cache';
 import { logToAxiom } from '~/server/logging/client';
 import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/benign-phrases';
 import { hashify, removeTags, removeTagsCompact } from '~/utils/string-helpers';
-import {
-  isUsableBlockedEntry,
-  MIN_MANAGED_PROFANITY_ENTRIES,
-} from '@civitai/mod-utils/profanity/word-rules';
+import { managedProfanityEntries } from '@civitai/mod-utils/profanity/word-rules';
 import { foldConfusables } from '~/server/utils/confusable-fold';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '~/server/flipt/client';
 import { domainAcceptsMail } from '~/server/utils/email-domain';
@@ -459,9 +456,9 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
 
 /**
  * Its own try/catch: a failure here falls back to the shipped list instead of emptying the
- * benign lists above. Unlike ProfanityBenignWord, a row below the floor falls back too, the same
- * rule and the same usable entries as the server's filter (`profanity-list.service.ts`), so the
- * browser and the server enforce the same list whenever both can read the row.
+ * benign lists above. Unlike ProfanityBenignWord, a row below the floor falls back too:
+ * `managedProfanityEntries` decides it here and in the server's filter, so the browser and the
+ * server enforce the same list whenever both can read the row.
  */
 async function getManagedProfanityWords(): Promise<
   { id: number; data: string[] } | null | 'unavailable'
@@ -469,8 +466,8 @@ async function getManagedProfanityWords(): Promise<
   try {
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST))) return null;
     const row = await getBlocklistDTO({ type: BlocklistType.ProfanityWord });
-    const usable = row.data.filter(isUsableBlockedEntry);
-    if (row.id == null || usable.length < MIN_MANAGED_PROFANITY_ENTRIES) return null;
+    const { usable, enforced } = managedProfanityEntries(row.data);
+    if (row.id == null || !enforced) return null;
     return { id: row.id, data: usable };
   } catch (error) {
     logToAxiom({

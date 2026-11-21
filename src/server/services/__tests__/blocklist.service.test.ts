@@ -2,6 +2,7 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { MIN_MANAGED_PROFANITY_ENTRIES } from '@civitai/mod-utils/profanity/word-rules';
 import { TRPCError } from '@trpc/server';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as WordRules from '@civitai/mod-utils/profanity/word-rules';
 
 // getBlocklistData -> getBlocklistDTO reads redis.get first and, when a cached
 // value is present, returns it WITHOUT touching the DB. So stubbing redis.get to
@@ -32,6 +33,20 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
         : // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (original.isFlipt as any)(flag, ...rest)
     ),
+  };
+});
+
+// The floor rule must be decided by `managedProfanityEntries` alone: this override makes it refuse a
+// full list, and the test that sets it goes red if this caller writes the rule out inline again.
+const managedRule = vi.hoisted(() => ({ refuseAll: false }));
+vi.mock('@civitai/mod-utils/profanity/word-rules', async (importOriginal) => {
+  const original = await importOriginal<typeof WordRules>();
+  return {
+    ...original,
+    managedProfanityEntries: (entries: readonly string[]) => {
+      const result = original.managedProfanityEntries(entries);
+      return managedRule.refuseAll ? { ...result, enforced: false } : result;
+    },
   };
 });
 
@@ -544,6 +559,15 @@ describe('getClientBenignLists', () => {
       expect((await getClientBenignLists()).profanityBlockedWords).toBeNull();
       blockedRow = { id: 31, data: [...atFloor, 'zq'] };
       expect((await getClientBenignLists()).profanityBlockedWords).toEqual(atFloor);
+    });
+
+    it('decides the floor through managedProfanityEntries', async () => {
+      managedRule.refuseAll = true;
+      try {
+        expect((await getClientBenignLists()).profanityBlockedWords).toBeNull();
+      } finally {
+        managedRule.refuseAll = false;
+      }
     });
 
     it('is withheld while the flag is off, so the browser keeps the shipped list', async () => {

@@ -9,6 +9,7 @@ import { createProfanityFilter } from '~/libs/profanity-simple';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { BlocklistType } from '~/server/common/enums';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as WordRules from '@civitai/mod-utils/profanity/word-rules';
 
 const h = vi.hoisted(() => ({
   flagOn: true,
@@ -18,6 +19,20 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: async () => h.flagOn,
 }));
+
+// The floor rule must be decided by `managedProfanityEntries` alone: this override makes it refuse a
+// full list, and the test that sets it goes red if this caller writes the rule out inline again.
+const managedRule = vi.hoisted(() => ({ refuseAll: false }));
+vi.mock('@civitai/mod-utils/profanity/word-rules', async (importOriginal) => {
+  const original = await importOriginal<typeof WordRules>();
+  return {
+    ...original,
+    managedProfanityEntries: (entries: readonly string[]) => {
+      const result = original.managedProfanityEntries(entries);
+      return managedRule.refuseAll ? { ...result, enforced: false } : result;
+    },
+  };
+});
 import {
   createProfanityListReader,
   getServerProfanityFilter,
@@ -97,6 +112,16 @@ describe('getServerProfanityFilter', () => {
       freshReader();
       setBlocked({ id: 1, data });
       expect(await verdicts()).toEqual({ source: 'fallback', managed: false, shipped: true });
+    }
+  });
+
+  it('decides the floor through managedProfanityEntries', async () => {
+    setBlocked({ id: 1, data: MANAGED });
+    managedRule.refuseAll = true;
+    try {
+      expect((await verdicts()).source).toBe('fallback');
+    } finally {
+      managedRule.refuseAll = false;
     }
   });
 

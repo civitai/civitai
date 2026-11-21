@@ -1,5 +1,5 @@
 import {
-  isUsableBlockedEntry,
+  managedProfanityEntries,
   MIN_MANAGED_PROFANITY_ENTRIES,
 } from '@civitai/mod-utils/profanity/word-rules';
 import { createProfanityFilter, type SimpleProfanityFilter } from '~/libs/profanity-simple';
@@ -90,10 +90,11 @@ export function createProfanityListReader({
 
       // A MISSING allow row is the shipped allow list; an EMPTY one is honoured (`moderatorWhitelist`, src/libs/profanity-simple/index.ts).
       const allowed = allowedRow.dto.id == null ? null : allowedRow.dto.data;
-      const usable =
-        blockedRow.dto.id == null ? [] : blockedRow.dto.data.filter(isUsableBlockedEntry);
+      const { usable, enforced } = managedProfanityEntries(
+        blockedRow.dto.id == null ? [] : blockedRow.dto.data
+      );
       // Unlike the allow list, an empty or tiny block list is NOT honoured: it would filter nothing.
-      if (usable.length < MIN_MANAGED_PROFANITY_ENTRIES) {
+      if (!enforced) {
         held = { blocked: null, allowed };
         metrics().fallback.set(1);
         if (blockedRow.dto.id != null) {

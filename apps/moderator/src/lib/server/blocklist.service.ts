@@ -7,7 +7,7 @@ import { recordModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
 import { getRedis } from './redis';
 import {
-  isUsableBlockedEntry,
+  managedProfanityEntries,
   MIN_MANAGED_PROFANITY_ENTRIES,
 } from '@civitai/mod-utils/profanity/word-rules';
 
@@ -282,9 +282,9 @@ export async function removeBlocklistItems({
     // Below the floor the main app ignores the row and enforces the shipped list. Removing an
     // unusable entry changes nothing the filter uses, so it is allowed even on a short list.
     if (type === 'ProfanityWord') {
-      const usableAfter = filtered.filter(isUsableBlockedEntry).length;
-      const usableBefore = row.data.filter(isUsableBlockedEntry).length;
-      if (usableAfter < usableBefore && usableAfter < MIN_MANAGED_PROFANITY_ENTRIES)
+      const before = managedProfanityEntries(row.data);
+      const after = managedProfanityEntries(filtered);
+      if (!after.enforced && after.usable.length < before.usable.length)
         throw new BlocklistBelowFloorError();
     }
 

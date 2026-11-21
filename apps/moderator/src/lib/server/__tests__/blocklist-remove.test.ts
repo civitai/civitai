@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as WordRules from '@civitai/mod-utils/profanity/word-rules';
 
 /**
  * Four properties of the blocklist writers, none of them visible from the page:
@@ -164,6 +165,20 @@ vi.mock('../redis', () => ({
   getRedis: () => ({ get: async () => null, set: setSpy, del: delSpy }),
 }));
 vi.mock('../axiom', () => ({ logToAxiom: vi.fn() }));
+
+// The floor rule must be decided by `managedProfanityEntries` alone: this override makes it refuse a
+// full list, and the test that sets it goes red if this caller writes the rule out inline again.
+const managedRule = vi.hoisted(() => ({ refuseAll: false }));
+vi.mock('@civitai/mod-utils/profanity/word-rules', async (importOriginal) => {
+  const original = await importOriginal<typeof WordRules>();
+  return {
+    ...original,
+    managedProfanityEntries: (entries: readonly string[]) => {
+      const result = original.managedProfanityEntries(entries);
+      return managedRule.refuseAll ? { ...result, enforced: false } : result;
+    },
+  };
+});
 
 const recordModActivitySpy = vi.fn();
 vi.mock('../mod-activity', () => ({
@@ -511,6 +526,19 @@ describe('upsertBlocklist', () => {
     ).rejects.toBeInstanceOf(BlocklistBelowFloorError);
     expect(updateSpy).not.toHaveBeenCalled();
     expect(rows[12].data).toEqual(data);
+  });
+
+  it('decides the floor through managedProfanityEntries', async () => {
+    const data = profanityEntries(MIN_MANAGED_PROFANITY_ENTRIES + 5);
+    rows[12] = { type: 'ProfanityWord', data };
+    managedRule.refuseAll = true;
+    try {
+      await expect(
+        removeBlocklistItems({ id: 12, userId: MOD_ID, type: 'ProfanityWord', items: [data[0]] })
+      ).rejects.toBeInstanceOf(BlocklistBelowFloorError);
+    } finally {
+      managedRule.refuseAll = false;
+    }
   });
 
   it('removes an unusable ProfanityWord entry from a list already below the floor', async () => {
