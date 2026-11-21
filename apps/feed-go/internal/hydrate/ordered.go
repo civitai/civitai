@@ -69,7 +69,7 @@ func decodeOrdered(dec *msgpack.Decoder, depth int) (any, error) {
 			}
 			obj.Set(key, v)
 		}
-		return jsKeyOrder(obj), nil
+		return obj, nil
 	case msgpcode.IsFixedArray(c) || c == msgpcode.Array16 || c == msgpcode.Array32:
 		n, err := dec.DecodeArrayLen()
 		if err != nil {
