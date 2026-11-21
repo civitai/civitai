@@ -58,7 +58,7 @@ const (
 )
 
 // Endpoints is every feed_endpoint value, in a fixed order (the seeded series are per endpoint).
-var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID}
+var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID, EndpointAssociated}
 
 // V1ImagesPath is the REST route the v1-images shadow describes.
 const V1ImagesPath = "/api/v1/images"
@@ -120,6 +120,9 @@ type Server struct {
 	// V1Models serves the REST `/api/v1/models` and `/api/v1/models/[id]` shadows (v1models.go); nil =
 	// every such sample falls back.
 	V1Models *V1ModelsDeps
+	// Associated serves the `model.getAssociatedResourcesCardData` shadow (associated.go); nil = every
+	// such sample falls back.
+	Associated *modelfeed.AssocDeps
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
 	// MaxInFlight caps the public requests this pod computes at once (ResolveMaxInFlight; 0 =
@@ -162,6 +165,8 @@ type Server struct {
 	computeModelsFn   func(context.Context, *http.Request) (*computed, error)
 	// computeV1ModelsFn replaces both REST model computes (tests only).
 	computeV1ModelsFn func(context.Context, *http.Request) (*computed, error)
+	// computeAssociatedFn replaces computeAssociated (tests only).
+	computeAssociatedFn func(context.Context, *http.Request) (*computed, error)
 }
 
 // phaseClock is the start of one shadow phase.
@@ -1017,6 +1022,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	}
 	if b, c, cl, ok := s.v1ModelsRoute(endpoint); ok {
 		build, computeFn, compareFn, classify = b, c, shadow.CompareJSON, cl
+	}
+	if b, c, cl, ok := s.associatedRoute(endpoint); ok {
+		build, computeFn, classify = b, c, cl
 	}
 	span := trace.SpanFromContext(ctx)
 	// The sample's credential is the sampler's placeholder, never a key: the compute's Resolve reads

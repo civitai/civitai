@@ -96,6 +96,28 @@ cache untouched) and on (exactly those writes). Extra keys: `config` holds the m
 `db` holds `paidAccess`, `coverImages`, `tags` (by name) and `creators` (by username). Raise
 `goldenMinModels` with the count.
 
+## model-assoc
+
+`gen-assoc.mjs` writes them (model.getAssociatedResourcesCardData, DESIGN.md §17). Like
+`gen-models.mjs` it runs the REAL Node functions for every pure step (the input schemas, the level
+middleware, the addons, the .com face, the viewer image filter, the minor content rule, metric
+privacy, `isGenerationEligible`, the gate rule schema and its helpers, `superjson`) and transcribes
+the orchestration that reads the database and the caches. Its own format: `request` (the raw input,
+the viewer, the domain cap), `config` (the coverage and promotions mirrors), `world` (the source
+model, the association rows, the approved promotion count, the page-query rows and the image-query
+rows Node's queries returned, the model-data cache entries, the users, the gallery settings, the
+privacy defaults and memberships, the hidden-preferences ids, the stored gate rules, the addons),
+`binds` (the model ids and level Node bound on the page query, the version ids of the image read) and
+`expect` (`envelope` or `fallback`). `internal/modelfeed/assoc_golden_test.go` runs each through
+`ParseAssociated` and `ServeAssociated` over fakes holding that world (the real hidden-preferences
+and gate-rule readers over in-memory Redis), requires the binds, and compares with `shadow.Compare`.
+
+```bash
+TZ=UTC node --import tsx apps/feed-go/testdata/golden/gen-assoc.mjs   # model-assoc/
+```
+
+Raise `assocGoldenMin` with the count.
+
 ## v1-models
 
 `gen-v1-models.mjs` writes each fixture's request and `world` (the model statement's rows, every cache

@@ -417,6 +417,14 @@ func run(log *slog.Logger) error {
 			VisibleDecorationEvents: cfg.DecorationEvents,
 		},
 	}
+	// The model.getAssociatedResourcesCardData shadow shares model.getAll's deps, plus the viewer's
+	// hidden-user caches, the generation gate rules (system redis) and the creator-promotions mirror.
+	associated := &modelfeed.AssocDeps{
+		Deps:       models,
+		Prefs:      &modelfeed.PackedHiddenPrefs{Redis: cache, Prefix: cfg.CacheKeyPrefix},
+		Gates:      &modelfeed.SysGateRules{Sys: sys},
+		Promotions: feed.ParsePromotionAudience(cfg.CreatorPromotion),
+	}
 	// The REST /api/v1/models shadows read the replica and the caches (read-only) the same way.
 	mc := config.LoadV1Models()
 	v1Models := &server.V1ModelsDeps{
@@ -457,6 +465,7 @@ func run(log *slog.Logger) error {
 		V1:             v1,
 		Infinite:       infinite,
 		V1Models:       v1Models,
+		Associated:     associated,
 		RequestBudget:  cfg.RequestBudget,
 		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
 		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
