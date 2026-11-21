@@ -8697,6 +8697,7 @@ export async function transferModelOwnership({
 
 const PERSONAL_LEAD_K = 6;
 const PERSONAL_LEAD_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+const PERSONAL_LEAD_CANDIDATES_LIMIT = 5000;
 const PERSONAL_LEAD_STAKE_LIMIT = 500;
 const PERSONAL_LEAD_BUDGET_MS = 150;
 const PERSONAL_LEAD_TTL_S = 60 * 60;
@@ -8808,6 +8809,7 @@ async function refreshPersonalLeadCandidates() {
   const { kyselyRead } = await loadKyselyDb();
   const data = await listRecentlyVersionedModels(kyselyRead, {
     since: new Date(Date.now() - PERSONAL_LEAD_WINDOW_MS),
+    limit: PERSONAL_LEAD_CANDIDATES_LIMIT,
   });
   await clusterCacheGuard.writeBestEffort('personal hot lead candidates set', () =>
     redis.packed.set(key, { data, cachedAt: Date.now() } satisfies CandidatesEntry, {

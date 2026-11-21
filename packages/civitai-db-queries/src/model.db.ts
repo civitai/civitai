@@ -85,11 +85,14 @@ export async function listModelStake(db: Kysely<DB>, input: { userId: number; li
  * (a paid version keeps EarlyAccess for good), and not a paid-gate re-date: a version whose
  * publishedAt moved more than a day past its first publish is the same version, not a new one. The
  * re-date clause mirrors the one in the hot_version_score() SQL function (#9928); change both together.
- * One row per model, its newest such version. Not per viewer: the personalised Hot lead filters
- * this list in memory.
+ * One row per model, its newest such version, hottest first and capped at `limit`. Not per viewer:
+ * the personalised Hot lead filters this list in memory on every compute, so the cap bounds that work.
  */
-export async function listRecentlyVersionedModels(db: Kysely<DB>, input: { since: Date }) {
-  return db
+export async function listRecentlyVersionedModels(
+  db: Kysely<DB>,
+  input: { since: Date; limit: number }
+) {
+  const newestPerModel = db
     .selectFrom('ModelMetric as mm')
     .innerJoin('ModelVersion as mv', 'mv.modelId', 'mm.modelId')
     .select([
@@ -109,6 +112,11 @@ export async function listRecentlyVersionedModels(db: Kysely<DB>, input: { since
       sql<boolean>`mv."publishedAt" < coalesce(mv."initialPublishedAt", mv."publishedAt") + interval '1 day'`
     )
     .orderBy('mm.modelId')
-    .orderBy('mv.publishedAt', 'desc')
+    .orderBy('mv.publishedAt', 'desc');
+  return db
+    .selectFrom(newestPerModel.as('c'))
+    .selectAll()
+    .orderBy('c.hotScore', sql`desc nulls last`)
+    .limit(input.limit)
     .execute();
 }

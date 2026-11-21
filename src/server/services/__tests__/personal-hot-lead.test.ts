@@ -280,12 +280,17 @@ describe('listRecentlyVersionedModels', () => {
         (103, 1, 'Draft', 'Public', '${t(0.5)}', '${t(0.5)}', 1),
         (701, 7, 'Published', 'Public', '${t(40)}', '${t(40)}', 1);
     `);
-    const rows = await listRecentlyVersionedModels(
-      pgliteKysely(() => pg),
-      { since: ago(14) }
-    );
-    expect(rows.map((r) => r.modelId)).toEqual([1, 2]);
-    expect(new Date(rows[0].versionPublishedAt!).getTime()).toBeGreaterThan(ago(2).getTime());
+    const db = pgliteKysely(() => pg);
+    const rows = await listRecentlyVersionedModels(db, { since: ago(14), limit: 10 });
+    expect(rows.map((r) => r.modelId)).toEqual([2, 1]);
+    // Model 1's pick is 101 (1 day), not the newer Draft 103 (0.5 days) nor the older 102 (3 days).
+    const model1 = rows.find((r) => r.modelId === 1)!;
+    expect(
+      Math.abs(new Date(model1.versionPublishedAt!).getTime() - ago(1).getTime())
+    ).toBeLessThan(60_000);
+
+    const capped = await listRecentlyVersionedModels(db, { since: ago(14), limit: 1 });
+    expect(capped.map((r) => r.modelId)).toEqual([2]);
   });
 });
 
