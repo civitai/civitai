@@ -34,6 +34,11 @@ import (
 // JWKSRefresh, and refetched when a token names a kid not held, at most once per JWKSRefetchEvery. A key is
 // used only when its published kid is the site's derivation from its modulus (block-token-verify.ts keyId).
 //
+// One fetch at a time, never under the lock: a Check whose kid is in the held, usable set is answered from
+// it at once, while a due refresh runs in the background. Only a Check that needs the fetch (unknown kid,
+// or no usable set) waits for it, bounded by the fetch's own timeout, and every such Check waits on the
+// same one.
+//
 // FAIL CLOSED: when no usable key set is held (never fetched, or the last good fetch is older than
 // JWKSMaxStale), Check answers ErrBlockUnverifiable and the token is not sent: the read goes to REST.
 type BlockVerifier struct {
@@ -44,10 +49,18 @@ type BlockVerifier struct {
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 
-	mu        sync.Mutex
+	mu        sync.Mutex // guards the fields below; never held across a fetch
 	keys      map[string]*rsa.PublicKey
-	fetchedAt time.Time // the last fetch that produced a key set
-	triedAt   time.Time // the last fetch attempted, good or not
+	fetchedAt time.Time  // the last fetch that produced a key set
+	triedAt   time.Time  // the last fetch attempted, good or not
+	inflight  *jwksFetch // the fetch running now, if any
+}
+
+// jwksFetch is one JWKS fetch; keys and err are set before done is closed.
+type jwksFetch struct {
+	done chan struct{}
+	keys map[string]*rsa.PublicKey
+	err  error
 }
 
 const (
@@ -210,33 +223,67 @@ func decodeSegment(seg string, out any) bool {
 	return json.Unmarshal(raw, out) == nil
 }
 
-// key is the key for kid, fetching the JWKS when it is due or kid is unknown (at most once per
-// JWKSRefetchEvery). Concurrent callers wait on one fetch.
+// key is the key for kid. A kid in the held, usable set is answered from it without waiting, starting a
+// background refresh when one is due. Otherwise (unknown kid, or no usable set) it waits for the in-flight
+// fetch, starting one if none is running and JWKSRefetchEvery allows. Concurrent callers share one fetch.
 func (v *BlockVerifier) key(ctx context.Context, kid string) (*rsa.PublicKey, error) {
 	v.mu.Lock()
-	defer v.mu.Unlock()
 	now := v.now()
-	due := v.keys == nil || now.Sub(v.fetchedAt) >= JWKSRefresh
-	_, known := v.keys[kid]
-	fetched := false
-	if (due || !known) && (v.triedAt.IsZero() || now.Sub(v.triedAt) >= JWKSRefetchEvery) {
-		v.triedAt = now
-		if keys, err := v.fetch(ctx); err == nil {
-			v.keys, v.fetchedAt, fetched = keys, now, true
+	usable := v.keys != nil && now.Sub(v.fetchedAt) < JWKSMaxStale
+	held, known := v.keys[kid]
+	if usable && known {
+		if now.Sub(v.fetchedAt) >= JWKSRefresh {
+			v.startFetchLocked(ctx, now)
 		}
+		v.mu.Unlock()
+		return held, nil
 	}
-	if v.keys == nil || now.Sub(v.fetchedAt) >= JWKSMaxStale {
+	f := v.startFetchLocked(ctx, now)
+	v.mu.Unlock()
+	// No fetch running and none allowed yet: an unknown kid may be a key rotated in since, so not a
+	// refusal; no usable set fails closed.
+	if f == nil {
 		return nil, ErrBlockUnverifiable
 	}
-	if k, ok := v.keys[kid]; ok {
+	select {
+	case <-f.done:
+	case <-ctx.Done():
+		return nil, ErrBlockUnverifiable
+	}
+	if f.err != nil {
+		return nil, ErrBlockUnverifiable
+	}
+	if k, ok := f.keys[kid]; ok {
 		return k, nil
 	}
-	// Unknown after a fetch made for it: the site holds no such key. Unknown while a fetch is not due
-	// yet: it may be a key rotated in since, so not a refusal.
-	if fetched {
-		return nil, localRefusal("unknown key")
+	// Unknown after a fetch that answered: the site holds no such key.
+	return nil, localRefusal("unknown key")
+}
+
+// startFetchLocked returns the fetch in flight, or starts one when none is and the last attempt is at
+// least JWKSRefetchEvery old; nil when neither. v.mu must be held. The fetch runs without the lock and
+// outlives the caller's cancellation (it is shared), bounded by jwksTimeout.
+func (v *BlockVerifier) startFetchLocked(ctx context.Context, now time.Time) *jwksFetch {
+	if v.inflight != nil {
+		return v.inflight
 	}
-	return nil, ErrBlockUnverifiable
+	if !v.triedAt.IsZero() && now.Sub(v.triedAt) < JWKSRefetchEvery {
+		return nil
+	}
+	v.triedAt = now
+	f := &jwksFetch{done: make(chan struct{})}
+	v.inflight = f
+	go func() {
+		f.keys, f.err = v.fetch(context.WithoutCancel(ctx))
+		v.mu.Lock()
+		if f.err == nil {
+			v.keys, v.fetchedAt = f.keys, now
+		}
+		v.inflight = nil
+		v.mu.Unlock()
+		close(f.done)
+	}()
+	return f
 }
 
 // fetch reads the JWKS: the RS256 RSA signing keys whose kid is the site's derivation from their modulus.
