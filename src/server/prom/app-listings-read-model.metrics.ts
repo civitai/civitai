@@ -14,9 +14,9 @@ import {
 // answers are compared. Every label is from a fixed set, so cardinality is bounded by
 // construction: no slug, no query, no user.
 //
-// Serving gate (LISTINGS-READ-MODEL.md, "Shadow diff"): over 7 days,
-//   (mismatches{kind=~"visibility_.*|media"}) / compared_slugs  < 0.1 %, per surface.
-// Order and field mismatches are reported beside it and do not gate.
+// Serving gate (LISTINGS-READ-MODEL.md, "Go / no-go for serving"): over 7 days,
+//   (mismatches{kind=~"visibility_.*|media|identity_field"}) / compared_slugs  < 0.1 %, per surface.
+// Order and stats-field mismatches are reported beside it and do not gate.
 //
 // Registered on `instrumentationRegistry`, which `/api/metrics` merges into the scrape.
 
@@ -45,9 +45,11 @@ export const READ_MODEL_SHADOW_OUTCOMES = [
   'error',
   // The read model answered 2xx with a body that is not a listing page.
   'bad_response',
-  // The read model answered, but the database read that checks a difference failed. Not a
-  // read-model failure: it never moves the breaker.
+  // One of the shadow's own database reads (the cursor's slug, or the by-slug check of a
+  // difference) failed, or outlived the shadow timeout. Not a read-model failure: neither moves
+  // the breaker.
   'db_error',
+  'db_timeout',
 ] as const;
 export type ReadModelShadowOutcome = (typeof READ_MODEL_SHADOW_OUTCOMES)[number];
 
@@ -58,8 +60,11 @@ export type ReadModelShadowOutcome = (typeof READ_MODEL_SHADOW_OUTCOMES)[number]
  *   - visibility_extra: on the read-model page, and the database does not show it to this viewer
  *     at all (asked by slug). The one that would show a viewer a listing it must not see;
  *   - media: on both pages, with a different gated icon or cover;
- *   - field: on both pages, with another card field different (which ones:
- *     `app_listings_read_model_field_mismatches_total`).
+ *   - identity_field: on both pages, with an identity field different (READ_MODEL_FIELD_CLASS):
+ *     what the card says the listing is. Gating, with visibility and media;
+ *   - stats_field: on both pages, with a stats field different: counters and times that trail the
+ *     database by up to an adapter poll. Reported, not gating.
+ * Which fields differed: `app_listings_read_model_field_mismatches_total`.
  * A listing on one page only that the other side also admits is not here: it is a paging or
  * ordering difference, counted in `app_listings_read_model_order_mismatches_total`.
  */
@@ -67,7 +72,8 @@ export const READ_MODEL_MISMATCH_KINDS = [
   'visibility_missing',
   'visibility_extra',
   'media',
-  'field',
+  'identity_field',
+  'stats_field',
 ] as const;
 export type ReadModelMismatchKind = (typeof READ_MODEL_MISMATCH_KINDS)[number];
 
@@ -91,7 +97,36 @@ export const READ_MODEL_COMPARED_FIELDS = [
   'kindData',
 ] as const;
 export type ReadModelComparedField = (typeof READ_MODEL_COMPARED_FIELDS)[number];
-export const READ_MODEL_MEDIA_FIELDS: readonly ReadModelComparedField[] = ['iconUrl', 'coverUrl'];
+
+/**
+ * Each compared field's class, which decides the mismatch kind it counts toward:
+ *   - media: the gated icon and cover;
+ *   - identity: what the card says the listing is, its creator and its flags; a difference is a
+ *     read-model bug, never staleness, so it gates serving with visibility and media;
+ *   - stats: the rollup counters and the updated time, which may trail the database by up to an
+ *     adapter poll; reported, not gating.
+ * A Record, so a field added to READ_MODEL_COMPARED_FIELDS does not compile until it is classed.
+ */
+export const READ_MODEL_FIELD_CLASS: Readonly<
+  Record<ReadModelComparedField, 'media' | 'identity' | 'stats'>
+> = {
+  iconUrl: 'media',
+  coverUrl: 'media',
+  name: 'identity',
+  tagline: 'identity',
+  category: 'identity',
+  contentRating: 'identity',
+  creator: 'identity',
+  isBeta: 'identity',
+  isOfficial: 'identity',
+  kindData: 'identity',
+  recommendedCount: 'stats',
+  notRecommendedCount: 'stats',
+  recommendPct: 'stats',
+  reviewCount: 'stats',
+  openCount: 'stats',
+  updatedAt: 'stats',
+};
 
 function counter(name: string, help: string, labelNames: string[]) {
   return registerInstrumentationMetric(
@@ -118,7 +153,7 @@ const comparedSlugs = counter(
 const mismatches = counter(
   'app_listings_read_model_mismatches_total',
   'Compared listings whose answers differed, by surface and kind (visibility_missing, ' +
-    'visibility_extra, media, field).',
+    'visibility_extra, media, identity_field, stats_field).',
   ['surface', 'kind']
 );
 const fieldMismatches = counter(

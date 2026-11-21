@@ -20,7 +20,9 @@
  *
  * Bounded: only a sampled fraction is shadowed (APP_LISTINGS_READ_MODEL_SHADOW_SAMPLE), at most
  * APP_LISTINGS_READ_MODEL_SHADOW_MAX_IN_FLIGHT per process at a time (the rest are dropped, never
- * queued), each read-model call within APP_LISTINGS_READ_MODEL_SHADOW_TIMEOUT_MS, and a run of
+ * queued), each read-model call and each of the shadow's own database reads waited on for at most
+ * APP_LISTINGS_READ_MODEL_SHADOW_TIMEOUT_MS (a database read is not cancelled, only no longer
+ * waited on, so the in-flight slot is freed), and a run of
  * read-model failures opens a per-process breaker (`IndexBreaker`, with the store search's knobs)
  * that stops the shadow for a cooldown. No failure reaches the response: every one is an outcome.
  *
@@ -30,7 +32,7 @@
 import * as z from 'zod';
 import { env } from '~/env/server';
 import {
-  READ_MODEL_MEDIA_FIELDS,
+  READ_MODEL_FIELD_CLASS,
   recordReadModelBreakerTransition,
   recordReadModelComparison,
   recordReadModelShadow,
@@ -57,6 +59,7 @@ import {
 import { IndexBreaker } from '~/server/services/blocks/app-index-search.service';
 import type { ListAvailableListingsOpts } from '~/server/services/blocks/app-listing.service';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 import { isAppSubListingId, isSubListingCard } from '~/shared/constants/app-sub-listing.constants';
 
@@ -231,12 +234,15 @@ export function comparePages(
     visibility_missing: missing.size,
     visibility_extra: extra.size,
     media: 0,
-    field: 0,
+    identity_field: 0,
+    stats_field: 0,
   };
   const fields: Partial<Record<ReadModelComparedField, number>> = {};
   for (const diffs of diff.fields.values()) {
-    if (diffs.some((f) => READ_MODEL_MEDIA_FIELDS.includes(f))) kinds.media++;
-    if (diffs.some((f) => !READ_MODEL_MEDIA_FIELDS.includes(f))) kinds.field++;
+    const classes = new Set(diffs.map((f) => READ_MODEL_FIELD_CLASS[f]));
+    if (classes.has('media')) kinds.media++;
+    if (classes.has('identity')) kinds.identity_field++;
+    if (classes.has('stats')) kinds.stats_field++;
     for (const f of diffs) fields[f] = (fields[f] ?? 0) + 1;
   }
   const dbOrder = db.items.map((c) => c.slug).filter((s) => !missing.has(s));
@@ -299,6 +305,13 @@ export type ListingsShadowDeps = {
   breaker: IndexBreaker;
   log: (entry: ShadowLogEntry) => void;
 };
+
+/**
+ * What a database read of the shadow's own resolves to when it outlives the shadow timeout
+ * (`withTimeoutFallback`). The shadow stops waiting and frees its in-flight slot; the query itself
+ * is not cancelled, and finishes or fails on the database's own terms.
+ */
+const TIMED_OUT = Symbol('timed out');
 
 class ReadModelUnavailable extends Error {
   constructor(readonly outcome: ReadModelShadowOutcome) {
@@ -383,18 +396,27 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       if (decoded.cursorId !== null && decoded.cursorSortKey !== null) {
         // A sub-listing id is a position the read model has no row for.
         if (isAppSubListingId(decoded.cursorId)) return 'unsupported_input';
-        let slug: string | null;
+        let slug: string | null | typeof TIMED_OUT;
         try {
-          slug = await deps.slugOfListing(decoded.cursorId);
+          slug = await withTimeoutFallback<string | null | typeof TIMED_OUT>(
+            deps.slugOfListing(decoded.cursorId),
+            cfg.timeoutMs,
+            TIMED_OUT
+          );
         } catch {
           return 'db_error';
         }
+        if (slug === TIMED_OUT) return 'db_timeout';
         // The listing the cursor sits after is gone: its slug cannot be named.
         if (!slug) return 'unsupported_input';
         cursor = readModelCursor(decoded.cursorSortKey, slug, decoded.cursorMean);
       }
     }
 
+    // The breaker is asked here, immediately before the first read-model call and after every step
+    // that can return without one: a half-open probe it admits is always reported (success or
+    // failure below), so an early return can never leave it half-open for another cooldown.
+    if (!deps.breaker.allow()) return 'breaker_open';
     let rm: ReadModelPage;
     try {
       rm = await fetchPage(cfg, readModelListParams(input, cursor), token);
@@ -403,6 +425,7 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       deps.breaker.failure(outcome);
       return outcome;
     }
+    deps.breaker.success();
 
     const diff = diffPages(served.items, rm.items);
 
@@ -410,6 +433,9 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     const missing = new Set<string>();
     const extra = new Set<string>();
     if (diff.onlyDb.length) {
+      // The read model's slug path takes no developer filter (it answers 400), so with one the
+      // listing must also be that developer's, checked on the card below: a listing of another
+      // developer is a visibility mismatch, never a paging difference.
       const params = readModelListParams(input, undefined);
       params.delete('userId');
       params.delete('sort');
@@ -423,17 +449,25 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
         deps.breaker.failure(outcome);
         return outcome;
       }
-      const admitted = new Set(found.items.map((c) => c.slug));
+      const admitted = new Set(
+        found.items
+          .filter((c) => input.userId == null || c.creator?.id === input.userId)
+          .map((c) => c.slug)
+      );
       for (const s of diff.onlyDb) if (!admitted.has(s)) missing.add(s);
     }
-    deps.breaker.success();
     if (diff.onlyReadModel.length) {
-      let cards: ListingCard[];
+      let cards: ListingCard[] | typeof TIMED_OUT;
       try {
-        cards = await deps.dbBySlugs(diff.onlyReadModel, input, opts);
+        cards = await withTimeoutFallback<ListingCard[] | typeof TIMED_OUT>(
+          deps.dbBySlugs(diff.onlyReadModel, input, opts),
+          cfg.timeoutMs,
+          TIMED_OUT
+        );
       } catch {
         return 'db_error';
       }
+      if (cards === TIMED_OUT) return 'db_timeout';
       // The slug path takes no developer filter: with one, the listing must also be that
       // developer's for the database grid to show it.
       const admitted = new Set(
@@ -484,7 +518,6 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       return record('unsupported_input');
     }
     if (inFlight >= cfg.maxInFlight) return record('saturated');
-    if (!deps.breaker.allow()) return record('breaker_open');
     const token = signAppIndexViewer(
       cfg.key,
       viewer,

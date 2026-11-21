@@ -256,29 +256,36 @@ path, asks the read model the same query and compares the two
     (the read model shows a listing the database does not; the dangerous one). Shown there: the two
     sides only page or order it differently, which is an order mismatch;
   - a slug on both pages: its gated media (`iconUrl`, `coverUrl`) is a **media** mismatch when it
-    differs, and every other card field (`name`, `tagline`, `category`, `contentRating`, `creator`,
-    the recommend counts and percentage, `reviewCount`, `isBeta`, `isOfficial`, `openCount`,
-    `updatedAt`, `kindData` less `appBlockId`) a **field** mismatch;
+    differs; an **identity field** (`name`, `tagline`, `category`, `contentRating`, `creator`,
+    `isBeta`, `isOfficial`, `kindData` less `appBlockId`) an `identity_field` mismatch; and a
+    **stats field** (`recommendedCount`, `notRecommendedCount`, `recommendPct`, `reviewCount`,
+    `openCount`, `updatedAt`) a `stats_field` mismatch. Identity fields say what the listing is, and
+    a difference there is a read-model bug; stats fields can trail the database by up to an adapter
+    poll (Stats freshness). The classes are `READ_MODEL_FIELD_CLASS`, pinned field by field by the
+    shadow's test;
   - **order**, reported apart: the slugs left once visibility mismatches are removed differ in
     order, or one side has a next page and the other does not. Ties fall to the id on the database
     and to the slug on the read model, so order mismatches are expected on `top-rated` (most of the
     store ties there) until slice 3b; they never count as visibility.
 - **Bounded:** a sampled fraction of pages (`APP_LISTINGS_READ_MODEL_SHADOW_SAMPLE`, default 0.1),
   at most `APP_LISTINGS_READ_MODEL_SHADOW_MAX_IN_FLIGHT` per process at a time (default 4; more are
-  dropped, never queued), each read-model call within `APP_LISTINGS_READ_MODEL_SHADOW_TIMEOUT_MS`
-  (default 1000), and a per-process breaker (`IndexBreaker`, with the `APP_INDEX_BREAKER_*` knobs):
-  after consecutive read-model failures the shadow stops for a cooldown. The extra database reads
+  dropped, never queued), each read-model call and each of the shadow's own database reads waited
+  on for at most `APP_LISTINGS_READ_MODEL_SHADOW_TIMEOUT_MS` (default 1000; a database read past it
+  is not cancelled, only no longer waited on), and a per-process breaker (`IndexBreaker`, with the `APP_INDEX_BREAKER_*` knobs):
+  after consecutive read-model failures the shadow stops for a cooldown. The breaker is asked only
+  immediately before the first read-model call, so a page that returns earlier never spends its
+  half-open probe. The extra database reads
   are the cursor's slug (page 2 onward) and the by-slug check, only for a page that differs.
 - **Metrics** (`src/server/prom/app-listings-read-model.metrics.ts`), each by `surface` (`grid`,
   `rest_list`):
   - `app_listings_read_model_shadow_requests_total{surface, outcome}`: `compared`, or why not:
     `unconfigured`, `unsupported_viewer`, `unsupported_input`, `breaker_open`, `saturated`,
-    `timeout`, `not_ready`, `error`, `bad_response`, `db_error`;
+    `timeout`, `not_ready`, `error`, `bad_response`, `db_error`, `db_timeout`;
   - `app_listings_read_model_compared_pages_total{surface}` and
     `app_listings_read_model_compared_slugs_total{surface}` (listings on either page: the
     denominator);
   - `app_listings_read_model_mismatches_total{surface, kind}`, `kind` one of `visibility_missing`,
-    `visibility_extra`, `media`, `field`, one per listing;
+    `visibility_extra`, `media`, `identity_field`, `stats_field`, one per listing per kind;
   - `app_listings_read_model_field_mismatches_total{surface, field}`;
   - `app_listings_read_model_order_mismatches_total{surface}`, one per page;
   - `app_listings_read_model_breaker_state` and `app_listings_read_model_breaker_transitions_total{to}`.
@@ -291,14 +298,16 @@ path, asks the read model the same query and compares the two
 Serve the grid or the REST list from the read model only when, for that surface, over 7
 consecutive days of shadow traffic:
 
-- `visibility_missing + visibility_extra + media` mismatches are under 0.1% of compared slugs:
-  `sum(increase(app_listings_read_model_mismatches_total{kind=~"visibility_.*|media"}[7d])) / sum(increase(app_listings_read_model_compared_slugs_total[7d]))`;
+- `visibility_missing + visibility_extra + media + identity_field` mismatches are under 0.1% of
+  compared slugs:
+  `sum by (surface) (increase(app_listings_read_model_mismatches_total{kind=~"visibility_missing|visibility_extra|media|identity_field"}[7d])) / sum by (surface) (increase(app_listings_read_model_compared_slugs_total[7d])) < 0.001`;
 - every `visibility_extra` that did occur is explained (the log names the slugs; a listing
   delisted within the adapter's poll is the expected one);
 - the breaker never opened, and `compared` is the large majority of the outcomes.
 
-Order and field mismatches are reported, not gating. Each field mismatch is still read before
-serving: a stats field trails the database by up to an adapter poll, anything else is a bug.
+Order and `stats_field` mismatches are reported, not gating: a stats field trails the database by
+up to an adapter poll, and ties order differently until slice 3b. A listing whose stats differ
+persistently (across more than two polls) is still read before serving.
 
 ### Turn-on order
 

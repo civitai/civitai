@@ -37,7 +37,7 @@ function dbCard(slug: string, over: Partial<ListingCard> = {}): ListingCard {
     kind: 'onsite',
     name: `Name ${slug}`,
     tagline: `Tagline ${slug}`,
-    category: 'tools',
+    category: 'utility',
     contentRating: 'pg',
     iconUrl: `https://img.invalid/${slug}/icon`,
     coverUrl: `https://img.invalid/${slug}/cover`,
@@ -139,13 +139,23 @@ function makeShadow(over: Partial<ListingsShadowDeps> = {}) {
 }
 
 /** The read model answers `list` for a page and admits `admitted` when asked by slug. */
-function readModelAnswers(list: ReadModelCard[], nextCursor?: string, admitted: string[] = []) {
+/**
+ * The read model answers `list` for a page and, asked by slug, the `admitted` listings (a slug for
+ * that listing's own card, or a card).
+ */
+function readModelAnswers(
+  list: ReadModelCard[],
+  nextCursor?: string,
+  admitted: (string | ReadModelCard)[] = []
+) {
   reply = ({ url }) => {
     const slugs = url.searchParams.get('slugs');
     if (slugs !== null) {
       const want = new Set(slugs.split(','));
       return Response.json({
-        items: admitted.filter((s) => want.has(s)).map((s) => rmCard(dbCard(s))),
+        items: admitted
+          .map((a) => (typeof a === 'string' ? rmCard(dbCard(a)) : a))
+          .filter((c) => want.has(c.slug)),
       });
     }
     return Response.json(nextCursor ? { items: list, nextCursor } : { items: list });
@@ -237,7 +247,7 @@ describe('what is asked', () => {
     readModelAnswers([rmCard(A)]);
     await makeShadow().shadow(
       'grid',
-      { kind: 'onsite', category: 'tools', sort: 'newest', limit: 3, userId: 42, query: 'x' },
+      { kind: 'onsite', category: 'utility', sort: 'newest', limit: 3, userId: 42, query: 'x' },
       OPTS,
       { items: [A] }
     );
@@ -248,7 +258,7 @@ describe('what is asked', () => {
       sort: 'newest',
       limit: '3',
       kind: 'onsite',
-      category: 'tools',
+      category: 'utility',
       userId: '42',
     });
     const [, payload] = headers['X-App-Index-Viewer'].split('.');
@@ -372,8 +382,9 @@ describe('the comparison', () => {
       'field_mismatches_total{grid/coverUrl}:1',
       'field_mismatches_total{grid/name}:1',
       'field_mismatches_total{grid/recommendPct}:1',
-      'mismatches_total{grid/field}:1',
+      'mismatches_total{grid/identity_field}:1',
       'mismatches_total{grid/media}:1',
+      'mismatches_total{grid/stats_field}:1',
       'shadow_requests_total{grid/compared}:1',
     ]);
     // Slugs and field names only, never a value.
@@ -386,6 +397,60 @@ describe('the comparison', () => {
         order: false,
       },
     ]);
+  });
+
+  // The serving gate's classes (LISTINGS-READ-MODEL.md, "Go / no-go for serving"; decided with the
+  // operator: identity fields gate with visibility and media, stats fields are report-only). One
+  // field differs per case, so the kind it lands in is that field's class alone.
+  it.each([
+    ['iconUrl', 'media', { iconUrl: 'https://img.invalid/other/icon' }],
+    ['coverUrl', 'media', { coverUrl: null }],
+    ['name', 'identity_field', { name: 'Other' }],
+    ['tagline', 'identity_field', { tagline: null }],
+    ['category', 'identity_field', { category: 'games' }],
+    ['contentRating', 'identity_field', { contentRating: 'pg13' }],
+    ['creator', 'identity_field', { creator: { id: 43, username: 'maker', image: null } }],
+    ['isBeta', 'identity_field', { isBeta: true }],
+    ['isOfficial', 'identity_field', { isOfficial: true }],
+    ['kindData', 'identity_field', { kindData: { kind: 'onsite', hasPage: false, liveUrl: null } }],
+    [
+      'recommendedCount',
+      'stats_field',
+      { recommend: { recommendedCount: 9, notRecommendedCount: 1, recommendPct: 0.75 } },
+    ],
+    [
+      'notRecommendedCount',
+      'stats_field',
+      { recommend: { recommendedCount: 3, notRecommendedCount: 9, recommendPct: 0.75 } },
+    ],
+    [
+      'recommendPct',
+      'stats_field',
+      { recommend: { recommendedCount: 3, notRecommendedCount: 1, recommendPct: 0.5 } },
+    ],
+    ['reviewCount', 'stats_field', { reviewCount: 99 }],
+    ['openCount', 'stats_field', { openCount: 99 }],
+    ['updatedAt', 'stats_field', { updatedAt: '2027-01-01T00:00:00.000Z' }],
+  ] as [string, string, Partial<ReadModelCard>][])('%s counts as %s', async (field, kind, over) => {
+    readModelAnswers([rmCard(A, over)]);
+    await makeShadow().shadow('grid', INPUT, OPTS, { items: [A] });
+    expect(await moved()).toEqual([
+      'compared_slugs_total{grid}:1',
+      `field_mismatches_total{grid/${field}}:1`,
+      `mismatches_total{grid/${kind}}:1`,
+      'shadow_requests_total{grid/compared}:1',
+    ]);
+  });
+
+  it('with the developer filter, a listing the read model admits by slug but of another developer is missing', async () => {
+    readModelAnswers([rmCard(A)], undefined, [
+      rmCard(dbCard('bravo', { creator: { id: 7, username: 'owl', image: null } })),
+    ]);
+    await makeShadow().shadow('grid', { ...INPUT, userId: 42 }, OPTS, { items: [A, B] });
+    // The slug lookup carries no developer filter (the read model refuses one there).
+    expect(calls[1].url.searchParams.get('userId')).toBeNull();
+    expect(await moved()).toContain('mismatches_total{grid/visibility_missing}:1');
+    expect(await moved()).not.toContain('order_mismatches_total{grid}:1');
   });
 
   it('values that only differ in representation are the same', async () => {
@@ -427,7 +492,7 @@ describe('failures', () => {
     const shadow = makeShadow();
     await shadow.shadow('grid', INPUT, OPTS, { items: [A] });
     await shadow.shadow('grid', INPUT, OPTS, { items: [A] });
-    expect(shadow.shadow('grid', INPUT, OPTS, { items: [A] })).toBeUndefined();
+    await shadow.shadow('grid', INPUT, OPTS, { items: [A] });
     expect(calls).toHaveLength(2);
     expect(await moved()).toEqual([
       'shadow_requests_total{grid/breaker_open}:1',
@@ -449,6 +514,41 @@ describe('failures', () => {
     await shadow.shadow('grid', INPUT, OPTS, { items: [A] });
     expect(breaker.allow()).toBe(true);
     expect(await moved()).toEqual(['shadow_requests_total{grid/db_error}:1']);
+  });
+
+  it('a database read of the shadow that stalls is db_timeout, and frees the slot', async () => {
+    config.timeoutMs = 20;
+    readModelAnswers([rmCard(A), rmCard(C)]);
+    const shadow = makeShadow({ dbBySlugs: () => new Promise<ListingCard[]>(() => undefined) });
+    await shadow.shadow('grid', INPUT, OPTS, { items: [A] });
+    expect(shadow.inFlight()).toBe(0);
+    expect(await moved()).toEqual(['shadow_requests_total{grid/db_timeout}:1']);
+  });
+
+  it('a half-open probe is never spent by a page that returns before asking the read model', async () => {
+    let t = NOW_MS;
+    const breaker = new IndexBreaker(
+      () => ({ threshold: 1, cooldownMs: 60_000 }),
+      () => t,
+      () => undefined
+    );
+    const shadow = makeShadow({ breaker });
+    reply = () => new Response('{}', { status: 500 });
+    await shadow.shadow('grid', INPUT, OPTS, { items: [A] }); // opens the breaker
+    t += 60_000; // the cooldown has passed: the next read-model call is the probe
+    // Page 2 whose cursor's listing is gone: returns before any read-model call.
+    decoded = { cursorSortKey: 'k', cursorId: 'al_gone', cursorMean: null };
+    await shadow.shadow('grid', { ...INPUT, cursor: 'db-cursor' }, OPTS, { items: [A] });
+    // The next page is still the probe, not refused for another cooldown.
+    readModelAnswers([rmCard(A)]);
+    await shadow.shadow('grid', INPUT, OPTS, { items: [A] });
+    expect(calls).toHaveLength(2);
+    expect(await moved()).toEqual([
+      'compared_slugs_total{grid}:1',
+      'shadow_requests_total{grid/compared}:1',
+      'shadow_requests_total{grid/error}:1',
+      'shadow_requests_total{grid/unsupported_input}:1',
+    ]);
   });
 
   it('at most maxInFlight reads at a time: the rest are dropped, not queued', async () => {
