@@ -18,7 +18,7 @@ import {
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { HomeBlockWithData } from '~/server/services/home-block.service';
 import { isCollectionReadShared } from '~/server/services/collection-item-access';
-import { coverIndexExists } from '~/server/services/collection-media-index';
+import { coverIndexExists } from '~/server/services/collection-cover-index';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { colorDomainNames } from '~/shared/constants/domain.constants';

@@ -1272,6 +1272,17 @@ describe('grace mode search index and caches', () => {
     ]);
   });
 
+  it('refreshes the home blocks even when the search-index queue throws', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10 });
+    mockQueueSearchIndex.mockRejectedValueOnce(new Error('down'));
+
+    await run();
+
+    expect(homeBlockLookupsFor(mockDbRead.$queryRaw.mock.calls, '"CollectionItem"')).toEqual([
+      ids(10),
+    ]);
+  });
+
   it('does not call the post cache bust with an empty list', async () => {
     seedUser({ id: 7, imageRemoval: 'grace', images: 10 });
 

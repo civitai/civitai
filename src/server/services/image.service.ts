@@ -6332,8 +6332,9 @@ export async function reportCsamImages({
         message: 'the table exists but this role may not delete from it; grant DELETE',
       });
   });
-  await refreshProfilePicturesForImages(imageIds);
+  // First: it never throws, and the picture refresh after it can.
   await evictHomeBlocksForImages({ imageIds });
+  await refreshProfilePicturesForImages(imageIds);
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: { userId: true, reports: { select: { reportId: true } } },

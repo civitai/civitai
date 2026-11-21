@@ -213,12 +213,13 @@ async function propagateBlock(touched: TouchedImage[]) {
   const ids = touched.map((x) => x.id);
   const postIds = uniq(touched.map((x) => x.postId).filter((id): id is number => id != null));
 
+  // First: it never throws, and the steps after it can.
+  await evictHomeBlocksForImages({ imageIds: ids });
   await Promise.all([
     queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
     invalidateManyImageExistence(ids),
   ]);
   if (postIds.length) await bustCachesForPosts(postIds);
-  await evictHomeBlocksForImages({ imageIds: ids });
 }
 
 /**
