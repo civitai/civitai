@@ -63,6 +63,8 @@ CREATE OR REPLACE FUNCTION public.hot_version_score(
 RETURNS int
 LANGUAGE sql
 STABLE
+-- One expression, no FROM, so the planner can inline it into the trigger's version scan like
+-- hot_score() (checked with EXPLAIN VERBOSE). The version's engagement is written out twice.
 AS $function$
     SELECT CASE
         WHEN likes + downloads / 6.4 >= 25
@@ -70,18 +72,25 @@ AS $function$
          AND published_at < coalesce(initial_published_at, published_at) + INTERVAL '1 day'
         THEN round(
             (
-                least(log(1 + e.v + 0.01 * greatest(e.m - e.v, 0)), 2.2)
+                least(
+                    log(
+                        1
+                        + (likes + downloads / 6.4
+                           + least(generations / 4.1, greatest(unique_generators - 1, 0) * 100.0))
+                        + 0.01 * greatest(
+                            (model_likes + model_downloads / 6.4
+                             + least(model_generations / 4.1, greatest(unique_generators - 1, 0) * 100.0))
+                            - (likes + downloads / 6.4
+                               + least(generations / 4.1, greatest(unique_generators - 1, 0) * 100.0)),
+                            0)
+                    ),
+                    2.2
+                )
                 + extract(epoch FROM least(published_at, NOW())) / 2592000
             ) * 10000
         )::int
         ELSE public.hot_score(likes, downloads, generations, unique_generators, published_at, 2.0)
     END
-    FROM (
-        SELECT likes + downloads / 6.4
-                 + least(generations / 4.1, greatest(unique_generators - 1, 0) * 100.0) AS v,
-               model_likes + model_downloads / 6.4
-                 + least(model_generations / 4.1, greatest(unique_generators - 1, 0) * 100.0) AS m
-    ) e
 $function$;
 
 -- 2. The whole-model score ----------------------------------------------------
