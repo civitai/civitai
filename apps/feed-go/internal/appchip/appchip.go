@@ -219,8 +219,6 @@ func viewerClass(viewer *Viewer, owner int) string {
 		return ViewerAnon
 	case viewer.IsModerator:
 		return ViewerModerator
-	case owner != 0 && viewer.ID == owner:
-		return ViewerOwner
 	}
 	return ViewerUser
 }
