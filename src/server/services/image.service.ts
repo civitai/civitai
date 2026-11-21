@@ -88,6 +88,7 @@ import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
   imageBlockedForConditions,
+  reviewedGalleryImageConditions,
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
 import {
@@ -4576,9 +4577,7 @@ export const getImagesForModelVersion = async ({
       );
     }
   } else {
-    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`);
-    imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel || allBrowsingLevelsFlag}) != 0`);
-    imageWhere.push(imageReviewedSql());
+    imageWhere.push(...reviewedGalleryImageConditions(browsingLevel || allBrowsingLevelsFlag));
   }
   imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
 
