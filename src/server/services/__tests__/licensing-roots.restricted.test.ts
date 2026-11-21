@@ -14,9 +14,9 @@ describe('getLicensingRoots — restricted roots', () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 1, isDefault: false, restricted: true }]);
     const { roots } = await getLicensingRoots({ baseModel: 'Upscaler' });
     expect(roots).toEqual([expect.objectContaining({ id: 1, restricted: true })]);
-    expect(JSON.stringify(dbMock.dbRead.$queryRaw.mock.calls[0])).not.toContain(
-      'restricted = false'
-    );
+    const sql = JSON.stringify(dbMock.dbRead.$queryRaw.mock.calls[0]);
+    expect(sql).toContain('lr.restricted');
+    expect(sql).not.toContain('restricted = false');
   });
 
   it('never makes one the default', async () => {
