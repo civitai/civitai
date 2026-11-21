@@ -392,7 +392,7 @@ describe('(5) audit round 1', () => {
     expect(commits).toEqual([new Map([['metrics:2', '77']])]);
   });
 
-  test('enqueue does O(1) work: the insert (which encodes eagerly) starts on a later event-loop turn', async () => {
+  test('enqueue never encodes rows: the insert (which encodes eagerly) starts on a later event-loop turn', async () => {
     const primary = fakeClient(async () => undefined);
     const secondary = fakeClient(async () => undefined);
     const t = tee(secondary.client);

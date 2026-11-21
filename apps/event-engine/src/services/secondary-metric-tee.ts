@@ -139,7 +139,8 @@ export class SecondaryMetricTee implements MetricRowSink {
   }
 
   private startPump(): void {
-    // Yield to the event loop first: enqueue() must stay O(1) for its caller.
+    // Yield to the event loop first: insert() encodes the rows synchronously, and that must
+    // not run on enqueue()'s caller's path.
     this.pumpPromise = new Promise<void>((resolve) => setImmediate(resolve))
       .then(() => this.pump())
       .catch((err) => {
