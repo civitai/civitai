@@ -29,11 +29,12 @@ import {
   getHomeBlockCached,
   HOME_BLOCK_L1_TTL_MS,
   homeBlockCacheBust,
+  evictHomeBlocksForImages,
   evictRetryDelayMs,
   homeBlockCacheKey,
   resetHomeBlockL1ForTests,
 } from '~/server/services/home-block-cache.service';
-import { writeModeratorBlock } from '~/server/services/image.service';
+import { reportCsamImages, writeModeratorBlock } from '~/server/services/image.service';
 import { blockBannedUserImages, blockUserImagesAsCsam } from '~/server/services/user.service';
 
 type Readable = {
@@ -273,6 +274,9 @@ describe('hiding an image refreshes the home blocks holding it', () => {
   const OWNER = 7;
   const COLLECTION = 40;
   const PRIVATE_COLLECTION = 41;
+  const COVER_COLLECTION = 42;
+  const UNLISTED_COVER_COLLECTION = 43;
+  const PRIVATE_COVER_COLLECTION = 44;
   const FEATURED_BLOCK = 900;
   let lagged = false;
 
@@ -305,7 +309,8 @@ describe('hiding an image refreshes the home blocks holding it', () => {
         "updatedAt" timestamp(3)
       );
       CREATE TABLE "CsamQueueSetAside" ("imageId" int, outcome text);
-      CREATE TABLE "Collection" (id int PRIMARY KEY, read text NOT NULL);
+      CREATE TABLE "Collection" (id int PRIMARY KEY, read text NOT NULL, "imageId" int);
+      CREATE INDEX "Collection_imageId_idx" ON "Collection" ("imageId");
       CREATE TABLE "CollectionItem" ("collectionId" int NOT NULL, "imageId" int);
     `);
   }, 60_000);
@@ -321,9 +326,16 @@ describe('hiding an image refreshes the home blocks holding it', () => {
       where,
       data,
     }: {
-      where: { userId: number };
-      data: { ingestion: string; nsfwLevel: number; blockedFor: string };
+      where: { userId: number; id?: { in: number[] } };
+      data: { ingestion: string; nsfwLevel: number; blockedFor: string; needsReview?: string };
     }) => {
+      if (data.needsReview) {
+        const flagged = await pg.db.query(
+          `UPDATE "Image" SET "needsReview" = $1 WHERE id = ANY($2::int[])`,
+          [data.needsReview, where.id?.in ?? []]
+        );
+        return { count: flagged.affectedRows ?? 0 };
+      }
       const { affectedRows } = await pg.db.query(
         `UPDATE "Image" SET ingestion = $1, "nsfwLevel" = $2, "blockedFor" = $3 WHERE "userId" = $4`,
         [data.ingestion, data.nsfwLevel, data.blockedFor, where.userId]
@@ -337,7 +349,7 @@ describe('hiding an image refreshes the home blocks holding it', () => {
     getHomeBlockData.mockImplementation(async () => {
       builds++;
       // A lagged replica does not have the block yet.
-      const visible = lagged ? '' : `AND i.ingestion = 'Scanned'`;
+      const visible = lagged ? '' : `AND i.ingestion = 'Scanned' AND i."needsReview" IS NULL`;
       const { rows: items } = await pg.db.query<{ id: number }>(
         `SELECT i.id FROM "CollectionItem" ci JOIN "Image" i ON i.id = ci."imageId"
          WHERE ci."collectionId" = $1 ${visible} ORDER BY i.id`,
@@ -349,7 +361,10 @@ describe('hiding an image refreshes the home blocks holding it', () => {
       TRUNCATE "Image"; TRUNCATE "Collection"; TRUNCATE "CollectionItem";
       INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel") VALUES
         (1, ${OWNER}, 'Scanned', 1), (2, 99, 'Scanned', 1);
-      INSERT INTO "Collection" (id, read) VALUES (${COLLECTION}, 'Public'), (${PRIVATE_COLLECTION}, 'Private');
+      INSERT INTO "Collection" (id, read, "imageId") VALUES
+        (${COLLECTION}, 'Public', NULL), (${PRIVATE_COLLECTION}, 'Private', 1),
+        (${COVER_COLLECTION}, 'Public', 1), (${UNLISTED_COVER_COLLECTION}, 'Unlisted', 1),
+        (${PRIVATE_COVER_COLLECTION}, 'Private', 1);
       INSERT INTO "CollectionItem" ("collectionId", "imageId") VALUES
         (${COLLECTION}, 1), (${COLLECTION}, 2), (${PRIVATE_COLLECTION}, 1);
     `);
@@ -415,6 +430,64 @@ describe('hiding an image refreshes the home blocks holding it', () => {
     const busted = redisMock.redis.del.mock.calls.map(([key]) => String(key));
     expect(busted).toContain(homeBlockCacheKey(HomeBlockType.Collection, COLLECTION));
     expect(busted.some((key) => key.includes(`:${PRIVATE_COLLECTION}`))).toBe(false);
+  });
+
+  const bustedKeys = () => redisMock.redis.del.mock.calls.map(([key]) => String(key));
+
+  it('refreshes a collection whose cover is the image, though the image is not one of its items', async () => {
+    await writeModeratorBlock([1]);
+
+    expect(bustedKeys()).toContain(homeBlockCacheKey(HomeBlockType.Collection, COVER_COLLECTION));
+  });
+
+  it("a ban's media block refreshes the collections whose cover is the owner's image", async () => {
+    await blockBannedUserImages(OWNER);
+
+    expect(bustedKeys()).toContain(homeBlockCacheKey(HomeBlockType.Collection, COVER_COLLECTION));
+    expect(bustedKeys()).toContain(
+      homeBlockCacheKey(HomeBlockType.Collection, UNLISTED_COVER_COLLECTION)
+    );
+    expect(bustedKeys().some((key) => key.includes(`:${PRIVATE_COVER_COLLECTION}:`))).toBe(false);
+  });
+
+  it('a CSAM report: the next read no longer has the image', async () => {
+    expect(await readItems()).toEqual([1, 2]);
+
+    await reportCsamImages({ imageIds: [1], user: { id: 9001, isModerator: true } } as never);
+
+    expect(await readItems()).toEqual([2]);
+  });
+
+  it('a CSAM report refreshes the collections holding that image, not those of another', async () => {
+    await reportCsamImages({ imageIds: [2], user: { id: 9001, isModerator: true } } as never);
+
+    expect(bustedKeys()).toContain(homeBlockCacheKey(HomeBlockType.Collection, COLLECTION));
+    expect(bustedKeys()).not.toContain(
+      homeBlockCacheKey(HomeBlockType.Collection, COVER_COLLECTION)
+    );
+  });
+
+  // The cover lookup needs that index; without it the item lookup still runs.
+  it('without the cover index, still refreshes the collections holding the image', async () => {
+    await pg.db.exec(`DROP INDEX "Collection_imageId_idx"`);
+    try {
+      await writeModeratorBlock([1]);
+    } finally {
+      await pg.db.exec(`CREATE INDEX "Collection_imageId_idx" ON "Collection" ("imageId")`);
+    }
+
+    expect(bustedKeys()).toContain(homeBlockCacheKey(HomeBlockType.Collection, COLLECTION));
+    expect(bustedKeys()).not.toContain(
+      homeBlockCacheKey(HomeBlockType.Collection, COVER_COLLECTION)
+    );
+  });
+
+  // A delete resolves its collections before the delete takes the items with it.
+  it('given collection ids, refreshes the ones anyone may read', async () => {
+    await evictHomeBlocksForImages({ collectionIds: [COLLECTION, PRIVATE_COLLECTION] });
+
+    expect(bustedKeys()).toContain(homeBlockCacheKey(HomeBlockType.Collection, COLLECTION));
+    expect(bustedKeys().some((key) => key.includes(`:${PRIVATE_COLLECTION}`))).toBe(false);
   });
 
   it('refreshes again once replicas catch up, clearing a refill read before they had', async () => {
