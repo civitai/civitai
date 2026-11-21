@@ -412,7 +412,14 @@ beforeEach(() => {
   // Every Civitai version a step names exists, on a base model apps may use.
   dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
     where: { id: { in: number[] } };
-  }) => args.where.id.in.map((id) => ({ id, baseModel: 'SDXL 1.0' }))) as never);
+  }) =>
+    args.where.id.in.map((id) => ({
+      id,
+      status: 'Published',
+      availability: 'Public',
+      model: { userId: 1 },
+      baseModel: 'SDXL 1.0',
+    }))) as never);
 });
 afterEach(() => envMock.reset());
 
@@ -982,6 +989,9 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
       }) =>
         args.where.id.in.map((id) => ({
           id,
+          status: 'Published',
+          availability: 'Public',
+          model: { userId: 1 },
           baseModel: id === 11 ? 'SDXL Turbo' : 'SDXL 1.0',
         }))) as never);
     });
@@ -1007,6 +1017,36 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
         expect(realSubmits()).toHaveLength(0);
       }
     );
+
+    // The check runs as the viewer, never the app owner: version 30 is the app owner's own.
+    const privateTo = (ownerId: number) =>
+      dbMock.dbRead.modelVersion.findMany.mockImplementation((async () => [
+        {
+          id: 30,
+          status: 'Published',
+          availability: 'Private',
+          model: { userId: ownerId },
+          baseModel: 'SDXL 1.0',
+        },
+      ]) as never);
+
+    it.each(paths)(
+      "%s refuses a version the viewer may not generate with, even the app owner's",
+      async (_, run) => {
+        privateTo(APP_OWNER);
+        await expect(run(naming('urn:air:sdxl:lora:civitai:1@30'))).rejects.toThrow(
+          'model version 30 is not available for generation'
+        );
+        expect(whatifs()).toHaveLength(0);
+        expect(realSubmits()).toHaveLength(0);
+      }
+    );
+
+    it('lets the viewer generate with their own Private version', async () => {
+      privateTo(VIEWER);
+      await submit(naming('urn:air:sdxl:lora:civitai:1@30'));
+      expect(realSubmits()).toHaveLength(1);
+    });
   });
 
   it('🔴 the fee is ONE resolved value: estimate = reservation = charge, under one type', async () => {

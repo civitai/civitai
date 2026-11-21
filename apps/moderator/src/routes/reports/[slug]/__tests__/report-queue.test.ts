@@ -46,6 +46,9 @@ vi.mock('$lib/server/service-offering-takedown.service', () => ({
   getReportServiceOfferingId: vi.fn(),
   takedownServiceOffering: vi.fn(),
 }));
+vi.mock('$lib/server/service-review-reports.service', () => ({
+  getReportedServiceReviews: vi.fn(async () => new Map()),
+}));
 vi.mock('$lib/server/access', () => ({ canAccess: vi.fn(() => true) }));
 
 const { load } = await import('../+page.server');

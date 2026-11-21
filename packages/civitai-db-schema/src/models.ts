@@ -1190,6 +1190,7 @@ export interface ModelVersion {
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
   licensingFeeMarkup: Decimal | null;
+  licensingFeeLocked: boolean;
   licensingSourceVersionId: number | null;
   licensingSource?: ModelVersion | null;
   monetization?: ModelVersionMonetization | null;
@@ -1460,6 +1461,7 @@ export interface Report {
   gameFrameGame?: GameFrameGameReport | null;
   serviceOffering?: ServiceOfferingReport | null;
   postText?: PostTextReport | null;
+  serviceDealReview?: ServiceDealReviewReport | null;
   gameFrameReceipts?: GameFrameReportReceipt[];
 }
 
@@ -7169,6 +7171,7 @@ export interface ServiceOffering {
   deals?: ServiceDeal[];
   reports?: ServiceOfferingReport[];
   reviews?: ServiceDealReview[];
+  reviewReports?: ServiceDealReviewReport[];
 }
 
 export interface ServiceOfferingReport {
@@ -7269,6 +7272,16 @@ export interface ServiceDealReview {
   createdAt: Date;
   updatedAt: Date;
   images?: ServiceDealReviewImage[];
+  reports?: ServiceDealReviewReport[];
+}
+
+export interface ServiceDealReviewReport {
+  reportId: number;
+  report?: Report;
+  serviceDealReviewId: number;
+  serviceDealReview?: ServiceDealReview;
+  serviceOfferingId: number;
+  serviceOffering?: ServiceOffering;
 }
 
 export interface ServiceDealReviewImage {

@@ -23,11 +23,12 @@ import {
   partitionStale,
   prStatus,
   tipIsIn,
+  worktreesRootOf,
 } from './worktree.mjs';
 import { execFileSync } from 'child_process';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, resolve, sep } from 'path';
 
 let failures = 0;
 function check(name, actual, expected) {
@@ -326,6 +327,48 @@ check(
   keepReasons(row({ dirty: 3, mergedPr: null, prLabel: 'PR #9 still OPEN', sessions: [{ id: 'a', port: 3001 }], daemon: daemonHeldFrom(IN_TREE, TREE) }), false).length,
   4
 );
+
+// WORKTREE_ROOT: where `wt new` puts trees. Unset must stay exactly <repos-root>/worktrees.
+{
+  const PRIMARY = resolve('C:' + sep + 'Dev', 'Repos', 'work', 'model-share');
+  const NO_FILE = join(tmpdir(), 'no-such-skill-env-file');
+  const DEFAULT = resolve(PRIMARY, '..', 'worktrees');
+  const scratch = mkdtempSync(join(tmpdir(), 'wt-root-'));
+  const envFile = join(scratch, '.env');
+  const elsewhere = join(scratch, 'wt');
+  try {
+    check('unset: the sibling worktrees dir, as before', worktreesRootOf(PRIMARY, {}, NO_FILE), DEFAULT);
+    check('process env overrides', worktreesRootOf(PRIMARY, { WORKTREE_ROOT: elsewhere }, NO_FILE), elsewhere);
+    check('empty process env means default', worktreesRootOf(PRIMARY, { WORKTREE_ROOT: '' }, NO_FILE), DEFAULT);
+    writeFileSync(envFile, `# a comment\nWORKTREE_ROOT="${elsewhere}"  # kept off C:\nOTHER=1\n`);
+    check('the skill .env sets it, quotes and trailing comment stripped', worktreesRootOf(PRIMARY, {}, envFile), elsewhere);
+    check('process env beats the file', worktreesRootOf(PRIMARY, { WORKTREE_ROOT: '' }, envFile), DEFAULT);
+    writeFileSync(envFile, `# WORKTREE_ROOT=${elsewhere}\n`);
+    check('a commented-out line is not a setting', worktreesRootOf(PRIMARY, {}, envFile), DEFAULT);
+    const spaced = join(scratch, 'my #dir');
+    check('a quoted value keeps a # inside it', worktreesRootOf(PRIMARY, { WORKTREE_ROOT: `"${spaced}"` }, NO_FILE), spaced);
+    writeFileSync(envFile, `export WORKTREE_ROOT='${spaced}'\n`);
+    check('export prefix and single quotes in the file', worktreesRootOf(PRIMARY, {}, envFile), spaced);
+    writeFileSync(envFile, `WORKTREE_ROOT=${join(scratch, 'first')}\nWORKTREE_ROOT=${elsewhere}\n`);
+    check('with two settings the last wins', worktreesRootOf(PRIMARY, {}, envFile), elsewhere);
+    let nested = null;
+    try {
+      worktreesRootOf(PRIMARY, { WORKTREE_ROOT: join(PRIMARY, 'wt') }, NO_FILE);
+    } catch (e) {
+      nested = e.message;
+    }
+    check('a root inside the primary checkout is refused', nested, `WORKTREE_ROOT must be outside the primary checkout: ${join(PRIMARY, 'wt')}`);
+    let message = null;
+    try {
+      worktreesRootOf(PRIMARY, { WORKTREE_ROOT: 'wt' }, NO_FILE);
+    } catch (e) {
+      message = e.message;
+    }
+    check('a relative path is refused', message, 'WORKTREE_ROOT must be an absolute path, got: wt');
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
 
 console.log(failures ? `\n${failures} FAILURES` : '\nall green');
 process.exit(failures ? 1 : 0);

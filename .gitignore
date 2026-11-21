@@ -200,3 +200,6 @@ __pycache__/
 # inside each worktree -- screenshots, REVIEW.md. It must never reach a commit, or
 # one task's artifacts ride a merge into main and seed every later worktree.
 .foreman/
+
+# scripts/lib/ts7.mjs install lock (left behind only by a killed install)
+tools/ts7/.install.lock

@@ -65,6 +65,7 @@ under `src/routes/assistant/`) have no source to port from: the fourth review pa
   running either: the pull needs `?sslmode=disable`, and it silently drops any comment not attached to a
   model. Hand-maintaining these types is what this replaced, so do not edit
   `src/lib/server/moderator-db/` — it is generated output.
+- **Case definitions are applied by hand.** `pnpm exec tsx apps/moderator/cases/definitions-apply.ts <definitions.json> --actor <userId> [--enable k,k] [--commit]` prints the SQL (a dry run ending in ROLLBACK without `--commit`) to apply in each environment, like `cases/schema.sql`.
 - **The test suite has a DB-backed tier, and `vitest.config.ts` feeds it the root `.env`.** See the
   Tests section of the standard for the shape. Two things specific to this app: `DATABASE_REPLICA_URL`
   is deliberately **not** surfaced, so a suite that forgets to mock `$lib/server/db` throws on import

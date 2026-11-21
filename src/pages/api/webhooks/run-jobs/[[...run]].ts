@@ -179,6 +179,7 @@ import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-recon
 import { serviceOfferingIngestionReconcile } from '~/server/jobs/service-offering-ingestion-reconcile';
 import { articleContentLinkHold } from '~/server/jobs/article-content-link-hold';
 import { metricJobs } from '~/server/jobs/update-metrics';
+import { updateModelImageCountsJob } from '~/server/jobs/update-model-image-counts';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
 import { grantCreatorMilestones } from '~/server/jobs/grant-creator-milestones';
@@ -253,6 +254,7 @@ export const jobs: Job[] = [
   autoFeatureImages,
   autoFeatureHealthCheckJob,
   ...metricJobs,
+  updateModelImageCountsJob,
   ...searchIndexJobs,
   searchIndexUserCleanupJob,
   searchIndexCleanupJob,

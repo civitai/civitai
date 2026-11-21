@@ -358,6 +358,8 @@ const featureFlags = createFeatureFlags({
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
+  // The public takedown forms (/requests) and the case links they send.
+  takedownRequests: { availability: ['mod'], fliptKey: 'takedown-requests' },
   // Every entity except Article, which keeps `articleRatingDispute`. Flipt-down falls back to off.
   ratingDispute: { availability: [], fliptKey: 'rating-dispute' },
   // The on-site appeal form (`/appeal`) and the appeal box on the banned screen.
