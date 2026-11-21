@@ -280,7 +280,7 @@ describe.each([
     { allVersions: true },
   ],
 ])('%s', (name, remove, queued) => {
-  // An owner's own delete waits for a report not yet sent (`unsentReportHoldsOwner`) before any
+  // An owner's own delete waits for a report not yet sent (`ownImageDeleteBlocked`) before any
   // DELETE runs, so the trigger below never sees it: the row stays as it was until the send.
   const deferred = (hold: string) => name.startsWith('an owner') && UNSENT_HOLDS.has(hold);
 

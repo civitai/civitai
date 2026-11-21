@@ -460,6 +460,32 @@ describe('a CSAM report not yet sent', () => {
     expect(await pending()).toEqual([]);
   });
 
+  // Each must delete at once: a NULL id would make the IN-set NULL on a miss, so the row is
+  // neither deleted nor queued, and a non-array `images` would throw for every owner's delete.
+  it.each([
+    [
+      'a sent report naming them as its secondary user',
+      `(NULL, '{"secondaryUserId": ${OWNER}}', '[]')`,
+      true,
+    ],
+    [
+      'an unsent report listing an entry with no id',
+      `(${SOMEONE_ELSE}, '{}', '[{}, null]')`,
+      false,
+    ],
+    [
+      'an unsent report whose images is not an array',
+      `(${SOMEONE_ELSE}, '{}', '{"id": ${PLAIN}}')`,
+      false,
+    ],
+  ])('deletes an image at once under %s', async (_, values, sent) => {
+    await unsent(values);
+    if (sent) await sendReports();
+
+    expect((await ownDelete([PLAIN])).map((row) => row.id)).toEqual([PLAIN]);
+    expect(await pending()).toEqual([]);
+  });
+
   it("does not keep an owner's image for a report about someone else", async () => {
     await pg.exec(`INSERT INTO "Image" (id, "userId") VALUES (${OTHER_IMAGE}, ${SOMEONE_ELSE})`);
     await unsent(`(${SOMEONE_ELSE}, '{"secondaryUserId": 9}', '[{"id": ${OTHER_IMAGE}}]')`);
