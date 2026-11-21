@@ -15,7 +15,8 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const holder = vi.hoisted(() => ({
   db: null as unknown,
-  // ClickHouse fake: answers the runs read with `days`, the rank read with `ranks`; records every query.
+  // ClickHouse fake. The runs read honours its ORDER BY direction and LIMIT 1, so reading the
+  // oldest day (or a day from anywhere else) is caught; the rank read returns `ranks`.
   ch: {
     days: [] as string[],
     ranks: [] as { modelId: number; rank: number }[],
@@ -58,17 +59,20 @@ vi.mock('$lib/server/clickhouse', () => ({
     async $query(sql: string) {
       holder.ch.queries.push(sql);
       if (holder.ch.fail) throw new Error('clickhouse down');
-      if (sql.includes('model_hot_rank_runs')) return holder.ch.days.map((day) => ({ day }));
+      if (sql.includes('model_hot_rank_runs')) {
+        const days = [...holder.ch.days].sort();
+        if (/ORDER BY day DESC/.test(sql)) days.reverse();
+        return (/LIMIT 1\b/.test(sql) ? days.slice(0, 1) : days).map((day) => ({ day }));
+      }
       return holder.ch.ranks;
     },
   }),
 }));
-vi.mock('$lib/server/logger', () => ({ getLogger: () => ({ logToAxiom: () => undefined }) }));
 vi.mock('$lib/server/cache', () => ({
   createCache: ({ fetch }: { fetch: unknown }) => ({ get: fetch }),
 }));
 
-const { getModelEngagement } = await import('../engagement');
+const { getModelEngagement, getHotRanks, hotRankAsOf } = await import('../engagement');
 
 beforeEach(() => {
   holder.ch.days = [];
@@ -111,7 +115,7 @@ beforeAll(async () => {
 
 describe('getModelEngagement', () => {
   it('lists every published model of the creator, including ones with no comments, votes or metric row', async () => {
-    const { models: rows } = await getModelEngagement({ userId: ME });
+    const rows = await getModelEngagement({ userId: ME });
     expect(rows.map((r) => r.modelId).sort()).toEqual([10, 11, 12, 13, 14]);
     expect(rows.find((r) => r.modelId === 14)).toMatchObject({
       comments: 0,
@@ -123,7 +127,7 @@ describe('getModelEngagement', () => {
   });
 
   it('sorts by downvotes, then comments, so models needing attention stay on top', async () => {
-    const { models: rows } = await getModelEngagement({ userId: ME });
+    const rows = await getModelEngagement({ userId: ME });
     expect(rows.slice(0, 3).map((r) => r.modelId)).toEqual([13, 12, 11]);
     expect(
       rows
@@ -134,26 +138,21 @@ describe('getModelEngagement', () => {
   });
 });
 
-describe('getModelEngagement Hot rank', () => {
-  it("attaches each model's rank from the latest complete snapshot day, reading only the creator's models", async () => {
-    holder.ch.days = ['2026-11-20'];
+describe('getHotRanks', () => {
+  it("reads the latest complete day's rank for the creator's published models only", async () => {
+    holder.ch.days = ['2026-11-19', '2026-11-20', '2026-11-18'];
     holder.ch.ranks = [
       { modelId: 12, rank: 594 },
       { modelId: 10, rank: 31_000 },
     ];
 
-    const { models, hotRankDay } = await getModelEngagement({ userId: ME });
+    const { day, ranks } = await getHotRanks({ userId: ME });
 
-    expect(hotRankDay).toBe('2026-11-20');
-    expect(Object.fromEntries(models.map((m) => [m.modelId, m.hotRank]))).toEqual({
-      10: 31_000,
-      11: null,
-      12: 594,
-      13: null,
-      14: null,
-    });
+    expect(day).toBe('2026-11-20');
+    expect(ranks).toEqual({ 10: 31_000, 12: 594 });
     const rankRead = holder.ch.queries.find((q) => q.includes('model_hot_rank_daily'));
     expect(rankRead).toContain("toDate('2026-11-20')");
+    // 15 is a draft and 16 is another creator's: neither may be asked for.
     expect(
       rankRead
         ?.match(/IN \(([^)]*)\)/)?.[1]
@@ -163,21 +162,29 @@ describe('getModelEngagement Hot rank', () => {
     ).toEqual([10, 11, 12, 13, 14]);
   });
 
-  it('shows no rank when no snapshot day is complete yet', async () => {
-    const { models, hotRankDay } = await getModelEngagement({ userId: ME });
-
-    expect(hotRankDay).toBeNull();
-    expect(models.every((m) => m.hotRank === null)).toBe(true);
+  it('reads no ranks when no snapshot day is complete yet', async () => {
+    expect(await getHotRanks({ userId: ME })).toEqual({ day: null, ranks: {} });
     expect(holder.ch.queries.some((q) => q.includes('model_hot_rank_daily'))).toBe(false);
   });
 
-  it('keeps the engagement list when ClickHouse is down', async () => {
+  // The cache stores whatever fetch returns: a failure must throw, or "no rank" is cached for an hour.
+  it('throws when ClickHouse fails, rather than returning no ranks', async () => {
     holder.ch.fail = true;
 
-    const { models, hotRankDay } = await getModelEngagement({ userId: ME });
+    await expect(getHotRanks({ userId: ME })).rejects.toThrow('clickhouse down');
+  });
+});
 
-    expect(hotRankDay).toBeNull();
-    expect(models.map((m) => m.modelId).sort()).toEqual([10, 11, 12, 13, 14]);
-    expect(models.every((m) => m.hotRank === null)).toBe(true);
+describe('hotRankAsOf', () => {
+  const at = (iso: string) => new Date(iso);
+
+  it("says last night for today's run, and for yesterday's until today's has had until 06:00 UTC", () => {
+    expect(hotRankAsOf('2026-11-21', at('2026-11-21T23:00Z'))).toBe('as of last night');
+    expect(hotRankAsOf('2026-11-20', at('2026-11-21T05:30Z'))).toBe('as of last night');
+  });
+
+  it('shows the date once a night was missed', () => {
+    expect(hotRankAsOf('2026-11-20', at('2026-11-21T07:00Z'))).toBe('as of 2026-11-20');
+    expect(hotRankAsOf(null, at('2026-11-21T07:00Z'))).toBeNull();
   });
 });

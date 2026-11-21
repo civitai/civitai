@@ -27,36 +27,34 @@
   const sortDir = $derived(sorting.dir);
   const pageNum = $derived(Math.max(1, Number(page.url.searchParams.get('page')) || 1));
 
-  const rows = $derived(data.engagement?.models ?? []);
+  const rows = $derived(data.engagement ?? []);
   const needAttention = $derived(rows.filter((m) => m.comments > 0 || m.downvotes > 0).length);
-  type Row = NonNullable<PageData['engagement']>['models'][number];
-  // Rank sorts best-first on "desc", like the counts; unranked models sit below every ranked one.
-  const sortValue = (m: Row, key: string): number =>
-    key === 'hotRank'
-      ? m.hotRank === null
-        ? -Number.MAX_SAFE_INTEGER
-        : -m.hotRank
-      : key === 'comments'
-        ? m.comments
-        : key === 'upvotes'
-          ? m.upvotes
-          : m.downvotes;
+  const hotRank = (modelId: number): number | null => data.hotRanks?.ranks[modelId] ?? null;
+  const sortValue = (m: NonNullable<PageData['engagement']>[number], key: string): number =>
+    key === 'comments' ? m.comments : key === 'upvotes' ? m.upvotes : m.downvotes;
   const sorted = $derived.by(() => {
     const list = [...rows];
     const dir = sortDir === 'desc' ? -1 : 1;
+    if (sortKey === 'hotRank')
+      // "desc" = best rank first, like the counts. Unranked models go last in both directions.
+      return list.sort((a, b) => {
+        const ra = hotRank(a.modelId);
+        const rb = hotRank(b.modelId);
+        if (ra === null || rb === null) return (ra === null ? 1 : 0) - (rb === null ? 1 : 0);
+        return dir * (rb - ra);
+      });
     return list.sort((a, b) => dir * (sortValue(a, sortKey) - sortValue(b, sortKey)));
   });
   const totalPages = $derived(Math.max(1, Math.ceil(sorted.length / perPage)));
   const curPage = $derived(Math.min(pageNum, totalPages));
   const pageRows = $derived(sorted.slice((curPage - 1) * perPage, curPage * perPage));
-
-  // The snapshot runs at 04:20 UTC and is dated that UTC day; older than yesterday means a night was missed.
-  const hotRankDay = $derived(data.engagement?.hotRankDay ?? null);
-  const hotRankAsOf = $derived.by(() => {
-    if (!hotRankDay) return null;
-    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-    return hotRankDay >= yesterday ? 'as of last night' : `as of ${hotRankDay}`;
-  });
+  const hotRankNote = $derived(
+    data.hotRanks === null
+      ? ' · Hot rank unavailable right now'
+      : data.hotRankAsOf
+        ? ` · Hot rank ${data.hotRankAsOf}`
+        : ''
+  );
 </script>
 
 <AnalyticsHeader />
@@ -72,9 +70,7 @@
   <div class="cs-panel p-4">
     <p class="mb-3 text-sm font-medium text-white">
       Engagement by model
-      <span class="text-xs text-dark-3"
-        >· all-time{hotRankAsOf ? ` · Hot rank ${hotRankAsOf}` : ''} · click a column to sort</span
-      >
+      <span class="text-xs text-dark-3">· all-time{hotRankNote} · click a column to sort</span>
     </p>
 
     {#snippet sortHead(key: string, label: string, hint?: string)}
@@ -154,8 +150,9 @@
             >
               {m.downvotes ? num(m.downvotes) : '—'}
             </Table.Cell>
-            <Table.Cell class="text-right tabular-nums {m.hotRank ? 'text-white' : 'text-dark-4'}">
-              {m.hotRank ? `#${num(m.hotRank)}` : '—'}
+            {@const rank = hotRank(m.modelId)}
+            <Table.Cell class="text-right tabular-nums {rank ? 'text-white' : 'text-dark-4'}">
+              {rank ? `#${num(rank)}` : '—'}
             </Table.Cell>
           </Table.Row>
         {/each}
