@@ -416,47 +416,64 @@ export type PendingDelete =
   | { ownerId: number }
   | { cleanup: true; moderatorDelete?: true; ownerId?: number };
 
+/** Every image id a CSAM report not yet sent lists, as text; a report lists `{"id": n}` or a bare id. */
+const UNSENT_LISTED_IMAGE_IDS = sql`
+  SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END
+  FROM "CsamReport" ul
+  CROSS JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(ul.images) = 'array' THEN ul.images ELSE '[]'::jsonb END
+  ) le
+  WHERE ul."reportSentAt" IS NULL`;
+
+// Each set below is uncorrelated, so Postgres builds it once per statement. No NULL may enter one: a
+// miss would then read NULL rather than false, and a NULL `blocked` row is neither deleted nor queued.
+
 /**
- * A CSAM report not yet sent names `ownerId` (as its subject or secondary user) or lists an image of
- * theirs. Uncorrelated, so Postgres builds the set once per statement; no NULL enters it, since a
- * NULL would make a miss NULL rather than false, and a NULL `blocked` row is neither deleted nor
- * queued.
+ * A CSAM report not yet sent names `ownerId`, as its subject or its secondary user. The sender reads
+ * that account and its content at send time, so all of it is held.
  */
-export const unsentReportHoldsOwner = (ownerId: number | RawBuilder<unknown>) =>
+const unsentReportNames = (ownerId: number | RawBuilder<unknown>) =>
   sql<boolean>`((${ownerId})::text IN (
     SELECT ur."userId"::text FROM "CsamReport" ur
     WHERE ur."reportSentAt" IS NULL AND ur."userId" IS NOT NULL
     UNION ALL
     SELECT us.details ->> 'secondaryUserId' FROM "CsamReport" us
     WHERE us."reportSentAt" IS NULL AND us.details ->> 'secondaryUserId' IS NOT NULL
-    UNION ALL
-    SELECT ui."userId"::text
-    FROM "CsamReport" ul
-    CROSS JOIN LATERAL jsonb_array_elements(
-      CASE WHEN jsonb_typeof(ul.images) = 'array' THEN ul.images ELSE '[]'::jsonb END
-    ) le
-    CROSS JOIN LATERAL (
-      SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
-    ) li
-    JOIN "Image" ui ON ui.id = CASE WHEN li.id ~ '^[0-9]{1,18}$' THEN li.id::bigint END
-    WHERE ul."reportSentAt" IS NULL AND ui."userId" IS NOT NULL
   ))`;
 
 /**
- * An owner's delete of their own image waits on its child-safety case, or on a CSAM report about
- * them not yet sent. Read against "Image".
+ * The image `imageId` is listed on a CSAM report not yet sent. Its owner may be named on none, so
+ * only the image itself (and a post holding it) is held, not the rest of their content.
  */
-export const ownImageDeleteBlocked = (ownerId: number | RawBuilder<unknown>) =>
-  sql<boolean>`("Image"."userId" = ${ownerId}
-    AND (${childSafetyImageCase()} OR ${unsentReportHoldsOwner(ownerId)}))`;
+const unsentReportLists = (imageId: RawBuilder<unknown>) =>
+  sql<boolean>`((${imageId})::text IN (
+    SELECT listed FROM (${UNSENT_LISTED_IMAGE_IDS}) AS u(listed) WHERE listed IS NOT NULL
+  ))`;
 
 /**
- * An owner's delete of their own post waits on a child-safety report on it, or on a CSAM report
- * about them not yet sent. Read against "Post".
+ * An owner's delete of their own image waits on its child-safety case, or on a CSAM report not yet
+ * sent that names them or lists the image. Read against "Image".
+ */
+export const ownImageDeleteBlocked = (ownerId: number | RawBuilder<unknown>) =>
+  sql<boolean>`("Image"."userId" = ${ownerId} AND (
+    ${childSafetyImageCase()}
+    OR ${unsentReportNames(ownerId)}
+    OR ${unsentReportLists(sql.ref('Image.id'))}
+  ))`;
+
+/**
+ * An owner's delete of their own post waits on a child-safety report on it, or on a CSAM report not
+ * yet sent that names them or lists an image in it. Read against "Post".
  */
 export const ownPostDeleteBlocked = (ownerId: number | RawBuilder<unknown>) =>
-  sql<boolean>`("Post"."userId" = ${ownerId}
-    AND (${childSafetyPostCase()} OR ${unsentReportHoldsOwner(ownerId)}))`;
+  sql<boolean>`("Post"."userId" = ${ownerId} AND (
+    ${childSafetyPostCase()}
+    OR ${unsentReportNames(ownerId)}
+    OR EXISTS (
+      SELECT 1 FROM "Image" pi
+      WHERE pi."postId" = "Post".id AND ${unsentReportLists(sql.ref('pi.id'))}
+    )
+  ))`;
 
 /**
  * What keeps a parent's cleanup of an image for now, read against "Image": its child-safety case, a
@@ -476,50 +493,21 @@ export const imageDeleteBlocked = (data: RawBuilder<unknown>, heldOwner: RawBuil
     ELSE ${ownImageDeleteBlocked(sql`(${data}->>'ownerId')::int`)}
   END`;
 
-/** What an owner may be told about a pending delete: it waits on a review, or it is processing. */
-export type PendingDeleteNotice = 'review' | 'processing';
-
 /**
- * Of `imageIds`, those with a pending delete that their owner may be told about. 'review' when the
- * case is one they can already see (`childSafetyVisibleCase`), else 'processing' when a report about
- * them is not yet sent, named only to `viewerId` when it owns the image: to anyone else it would say
- * that a report about the owner is unsent. Any other pending delete is not named.
+ * Of `imageIds`, those with a pending delete whose case their owner can see
+ * (`childSafetyVisibleCase`): only those owners may be told their delete waits on a review.
  */
-export async function imagesPendingDeletion(db: Kysely<DB>, imageIds: number[], viewerId?: number) {
+export async function imagesPendingDeletion(db: Kysely<DB>, imageIds: number[]) {
   const ids = [...new Set(imageIds)];
-  if (!ids.length) return new Map<number, PendingDeleteNotice>();
-  const unsent =
-    viewerId === undefined
-      ? sql<boolean>`false`
-      : sql<boolean>`("Image"."userId" = ${viewerId} AND ${unsentReportHoldsOwner(viewerId)})`;
-  const { rows } = await sql<{ id: number; review: boolean }>`
-    SELECT id, review FROM (
-      SELECT id, ${childSafetyVisibleCase()} AS review, ${unsent} AS unsent
-      FROM "Image"
-      WHERE id = ANY(${ids}::int[]) AND EXISTS (
-        SELECT 1 FROM "JobQueue" q
-        WHERE q.type = 'PendingDelete' AND q."entityType" = 'Image' AND q."entityId" = "Image".id
-      )
-    ) p
-    WHERE review OR unsent
-  `.execute(db);
-  return new Map(rows.map((row) => [row.id, row.review ? 'review' : 'processing'] as const));
-}
-
-/**
- * Whether `ownerId`'s post `postId` has a pending delete they may be told is processing (an unsent
- * report). Only its owner: to anyone else it would say that a report about the owner is unsent.
- */
-export async function postPendingForUnsentReport(db: Kysely<DB>, postId: number, ownerId: number) {
+  if (!ids.length) return new Set<number>();
   const { rows } = await sql<{ id: number }>`
-    SELECT p.id FROM "Post" p
-    WHERE p.id = ${postId} AND p."userId" = ${ownerId} AND ${unsentReportHoldsOwner(ownerId)}
-      AND EXISTS (
+    SELECT id FROM "Image"
+    WHERE id = ANY(${ids}::int[]) AND ${childSafetyVisibleCase()} AND EXISTS (
       SELECT 1 FROM "JobQueue" q
-      WHERE q.type = 'PendingDelete' AND q."entityType" = 'Post' AND q."entityId" = p.id
+      WHERE q.type = 'PendingDelete' AND q."entityType" = 'Image' AND q."entityId" = "Image".id
     )
   `.execute(db);
-  return rows.length > 0;
+  return new Set(rows.map((row) => row.id));
 }
 
 /**

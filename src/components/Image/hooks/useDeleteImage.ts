@@ -4,24 +4,29 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { DELETE_AFTER_REVIEW_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 
-const deleteAfterReviewOf = (result: unknown) =>
-  (result as { deleteAfterReview?: unknown } | null | undefined)?.deleteAfterReview;
-
-export const isDeleteAfterReview = (result: unknown) => !!deleteAfterReviewOf(result);
-
-/** Shows the server's text; a server from before it chose the text sent `true`. */
-export function notifyDeleteAfterReview(result: unknown) {
-  const text = deleteAfterReviewOf(result);
-  showSuccessNotification({
-    message: typeof text === 'string' ? text : DELETE_AFTER_REVIEW_MESSAGE,
-    autoClose: 8000,
-  });
+/**
+ * Shows what the server says about a delete of the caller's own content, and whether it said
+ * anything: the review notice, or the one text every other member delete gets (`deleteNotice`). A
+ * server from before `deleteNotice` sends only the review flag.
+ */
+export function notifyDeleteNotice(result: unknown) {
+  const { deleteAfterReview, deleteNotice } = (result ?? {}) as {
+    deleteAfterReview?: unknown;
+    deleteNotice?: unknown;
+  };
+  const message = deleteAfterReview
+    ? DELETE_AFTER_REVIEW_MESSAGE
+    : typeof deleteNotice === 'string'
+    ? deleteNotice
+    : undefined;
+  if (message) showSuccessNotification({ message, autoClose: 8000 });
+  return !!message;
 }
 
 export function useDeleteImage() {
   const deleteImageMutation = trpc.image.delete.useMutation({
     onSuccess: (result) => {
-      if (isDeleteAfterReview(result)) notifyDeleteAfterReview(result);
+      notifyDeleteNotice(result);
     },
     onError: (error: any) => showErrorNotification({ error: new Error(error.message) }),
   });

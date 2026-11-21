@@ -3,18 +3,15 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import {
-  isDeleteAfterReview,
-  notifyDeleteAfterReview,
-} from '~/components/Image/hooks/useDeleteImage';
+import { notifyDeleteNotice } from '~/components/Image/hooks/useDeleteImage';
 
 /** Confirm, then delete a whole post from a card. Stays on the page, unlike `DeletePostButton`. */
 export function useDeletePost() {
   const queryUtils = trpc.useUtils();
   const deletePostMutation = trpc.post.delete.useMutation({
     async onSuccess(result, { id }) {
-      if (isDeleteAfterReview(result)) notifyDeleteAfterReview(result);
-      else showSuccessNotification({ title: 'Post deleted', message: 'Successfully deleted post' });
+      if (!notifyDeleteNotice(result))
+        showSuccessNotification({ title: 'Post deleted', message: 'Successfully deleted post' });
       await Promise.all([
         queryUtils.post.get.invalidate({ id }),
         queryUtils.post.getInfinite.invalidate(),

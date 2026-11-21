@@ -49,7 +49,6 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
 import { kyselyOver } from '~/server/db/prisma-kysely';
-import { DELETE_AFTER_REVIEW_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 const MIGRATIONS = path.resolve(
@@ -69,12 +68,12 @@ const HOLDS = {
   'the placeholder owner': -1,
   'a hold marker': 1,
 };
-/** The holds a report not yet sent makes; an owner's own delete waits on them instead. */
-const UNSENT_HOLDS = new Set([
-  'an unsent report',
-  'the secondary user of an unsent report',
-  'an image listed in an unsent report',
-]);
+/**
+ * The holds a report not yet sent makes on the deleted image; an owner's own delete waits on them
+ * instead. Not 'an image listed in an unsent report': it lists another image of that owner, whom it
+ * does not name, so only that one waits and this one's delete runs.
+ */
+const UNSENT_HOLDS = new Set(['an unsent report', 'the secondary user of an unsent report']);
 const PLAIN = 9;
 const MODERATOR = 99;
 
@@ -489,7 +488,7 @@ describe('an owner deleting their own content in a child-safety case', () => {
     expect(answer).toMatchObject({
       id: postOf(PLAIN),
       deletedImageIds: [],
-      deleteAfterReview: DELETE_AFTER_REVIEW_MESSAGE,
+      deleteAfterReview: true,
     });
   });
 

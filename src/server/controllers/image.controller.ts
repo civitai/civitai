@@ -56,7 +56,7 @@ import {
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { getRequestBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
 import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
-import { deleteNoticeText } from '~/shared/constants/delete-after-review.constants';
+import { DELETE_PROCESSING_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { readImageAppChip } from '~/server/services/blocks/image-app-chip.service';
@@ -199,12 +199,9 @@ export const deleteImageHandler = async ({
       .map((tag) => ({ tagName: tag.tagName }));
 
     const [image] = await deleteImages([input.id], { actor: ctx.user });
-    // Only a case the owner can already see, or an unsent report, is acknowledged; any other kept
-    // delete answers like a delete.
-    const notice = image
-      ? undefined
-      : (await imagesPendingDeletion([input.id], ctx.user.id)).get(input.id);
-    if (notice) return { deleteAfterReview: deleteNoticeText([notice]) };
+    // Only a case the owner can already see is acknowledged; any other kept delete answers like a delete.
+    if (!image && (await imagesPendingDeletion([input.id])).has(input.id))
+      return { deleteAfterReview: true as const };
 
     if (image) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
@@ -224,6 +221,9 @@ export const deleteImageHandler = async ({
       ]);
     }
 
+    // A member's own delete answers the same whether it went or a hold kept it, so the answer never
+    // says that a hold applies.
+    if (!ctx.user.isModerator) return { deleteNotice: DELETE_PROCESSING_MESSAGE };
     // The id only: the deleted row also carries its moderation state, which is not the caller's to see.
     return image ? { id: image.id } : null;
   } catch (error) {
@@ -1202,8 +1202,7 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
     ]);
     // Told only to the owner, and only for a review they can already see.
     const deleteAfterReview =
-      ctx.user?.id === image.user.id &&
-      (await imagesPendingDeletion([image.id])).get(image.id) === 'review';
+      ctx.user?.id === image.user.id && (await imagesPendingDeletion([image.id])).has(image.id);
     const result = {
       ...image,
       eventDecoration: eventDecorations[image.id] ?? null,
