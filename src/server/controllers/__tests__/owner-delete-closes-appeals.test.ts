@@ -91,25 +91,18 @@ describe('deleteImageHandler', () => {
   });
 });
 
-// Only a case the owner can already see is acknowledged; any other kept delete answers like a delete.
-describe('deleteImageHandler, a delete that waits on a review', () => {
-  it('answers with the notice when the kept image waits on a review its owner can see', async () => {
+// Decided with Legal and the product owner: a member's delete answers the same whether it went or
+// any hold kept it, a review they can already see included (it lasts until the report is sent, so
+// telling it apart would say when). Do not tell a kept delete apart here.
+describe('deleteImageHandler, a delete a hold keeps', () => {
+  it.each([
+    ['a review its owner can see', new Set([55])],
+    ['a hold with no notice of its own', new Set<number>()],
+  ])('answers a delete kept by %s byte for byte like one that went', async (_, pending) => {
     deleteImagesMock.mockResolvedValue([]);
-    pendingDeletionMock.mockResolvedValue(new Set([55]));
-
-    expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) })).toEqual({
-      deleteAfterReview: true,
-    });
-    expect(closeMock).not.toHaveBeenCalled();
-  });
-
-  // Decided with Legal and the product owner: a member's delete answers the same whether it went or
-  // a hold (a review they cannot see, an unsent report) kept it, so the answer never says a hold
-  // applies. Do not tell a kept delete apart here.
-  it('answers a kept delete byte for byte like one that went', async () => {
-    deleteImagesMock.mockResolvedValue([]);
+    pendingDeletionMock.mockResolvedValue(pending);
     const kept = await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) });
-    expect(pendingDeletionMock).toHaveBeenCalledWith([55]);
+    expect(closeMock).not.toHaveBeenCalled();
 
     deleteImagesMock.mockResolvedValue([{ id: 55, userId: 7, nsfwLevel: 1 }]);
     const went = await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) });
@@ -182,12 +175,12 @@ describe('deletePostHandler', () => {
     expect(went).toEqual({ deleteNotice: DELETE_PROCESSING_MESSAGE });
   });
 
-  it('passes on the notice for a kept post, and closes and tracks nothing', async () => {
+  it('answers a post kept over a review its owner can see like any other, and closes and tracks nothing', async () => {
     deletePostMock.mockResolvedValue({ deleteAfterReview: true });
     const context = ctx(8);
 
     expect(await deletePostHandler({ input: { id: 3 }, ctx: context })).toEqual({
-      deleteAfterReview: true,
+      deleteNotice: DELETE_PROCESSING_MESSAGE,
     });
     expect(closeMock).not.toHaveBeenCalled();
     expect(context.track.post).not.toHaveBeenCalled();
