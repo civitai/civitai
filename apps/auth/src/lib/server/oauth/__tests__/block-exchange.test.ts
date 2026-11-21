@@ -974,7 +974,7 @@ describe('block token exchange — the app and the viewer', () => {
     const res = await exchange(await blockToken());
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('unauthorized_client');
-    expect(lastReason()).toBe('app block suspended');
+    expect(lastReason()).toBe("block is not the app's one approved block");
     expect(issued()).toEqual([]);
   });
 
@@ -1078,6 +1078,10 @@ describe('block token verification follows the site', () => {
     '../../../../../../../src/server/middleware/block-scope.middleware.ts',
     import.meta.url
   );
+  const DATA_READ_GRANT = new URL(
+    '../../../../../../../src/server/services/apps/data-read-grant.ts',
+    import.meta.url
+  );
   const SITE_ENUMS = new URL('../../../../../../../src/server/common/enums.ts', import.meta.url);
   const BROWSING_LEVEL_CONSTANTS = new URL(
     '../../../../../../../src/shared/constants/browsingLevel.constants.ts',
@@ -1121,6 +1125,37 @@ describe('block token verification follows the site', () => {
       'export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);'
     );
     expect(levels).toContain("    case 'red':\n      return allBrowsingLevelsFlag;");
+  });
+
+  // The hub's one-approved-block rule (block-exchange.ts) is the registry feed's own resolution of an app from
+  // a client id: the client's approved blocks, at most two read, exactly one accepted.
+  it("resolves a client's app as the site's collection-read predicate does", () => {
+    const grant = read(DATA_READ_GRANT);
+    expect(grant).toContain(
+      [
+        'async function clientIsOnlySource(clientId: string, sourceId: string): Promise<boolean> {',
+        '  const rows = await docStoreDependency(',
+        '    dbRead.appBlock.findMany({',
+        "      where: { appId: clientId, status: 'approved' },",
+        '      select: { id: true },',
+        '      take: 2,',
+        '    })',
+        '  );',
+        '  return rows.length === 1 && rows[0].id === sourceId;',
+      ].join('\n')
+    );
+    expect(grant).toContain(
+      [
+        '    dbRead.appBlock.findMany({',
+        "      where: { appId: clientId, status: 'approved' },",
+        '      select: { id: true, manifest: true },',
+        '      take: 2,',
+        '    })',
+        '  );',
+        "  if (rows.length === 0) return { ok: false, reason: 'consumer_not_found' };",
+        "  if (rows.length > 1) return { ok: false, reason: 'consumer_ambiguous' };",
+      ].join('\n')
+    );
   });
 
   it('computes the kid as the site does', () => {

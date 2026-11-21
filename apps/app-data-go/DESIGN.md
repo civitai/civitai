@@ -154,8 +154,13 @@ as a replay, so `exchange.BlockCache` sits in front of the block exchange:
 - **Refused** (`400`/`401`): remembered, apart from the issued tokens and only up to 1,000; the hub
   is not asked again for a remembered one. Any token of a block token's shape reaches the hub, so a
   flood of made-up tokens produces refusals: kept apart, they can never fill the issued tokens' room
-  or lock a real block token out, and past the cap a refusal is simply not remembered (the hub is
-  asked again and refuses again).
+  or lock a real block token out of this cache, and past the cap a refusal is simply not remembered
+  (the hub is asked again and refuses again). They are not free, though: each distinct made-up token
+  is still sent to the hub and spends this service's one per-client exchange budget there, which
+  its user exchanges share, so a flood can push other reads (hub tokens included) to REST until the
+  budget refills. That is availability only, and true of made-up hub-prefixed tokens before this
+  path too. Follow-up: check the block token's signature locally before sending it, or give the
+  block exchange its own hub budget.
 - **Failed** (the hub unreachable, a `5xx`, a `429`, a timeout): forgotten, so a later read may try
   again after the stream cooldown. The hub issued nothing, and gives back a claim it made (including
   one whose replay-store write timed out). If this service timed out after the hub did issue, the
@@ -192,9 +197,23 @@ than the site's document store serves the block token itself. The feed's predica
 mature ratings by the viewer's own settings; the document store reads the token's own block and
 holds mature ratings to the token's ceiling. So the hub refuses a block token whose block is not
 its client's one approved block, and one whose ceiling does not admit every mature rating (minted
-off a mature-capable host). Residual: both are checked when the token is exchanged, not on each
-poll, so a change within the exchanged token's life (at most 15 minutes) that makes another block
-of the same client its one approved block is not seen by the feed.
+off a mature-capable host).
+
+**What that means for apps:** a block token minted on an SFW host (its ceiling without R, X and
+XXX) is refused at the hub and its reads go to REST. Only tokens minted on the mature-capable host
+use the registry path until a follow-up carries the token's ceiling into the exchanged token (the
+next PR), so the feed can hold a stream to it.
+
+**Residual windows,** each at most until the exchanged token expires (at most 15 minutes), because
+the hub checks once, at the exchange, and neither the hub nor the feed reads the app's revocation
+state:
+
+- (a) **The approved block switches.** The token's block is suspended and another block of the same
+  client becomes its one approved block: the feed, resolving the app from the client id, serves that
+  block's data to the token's streams.
+- (b) **Uninstalled or turned off.** The viewer uninstalls the app or turns it off: the site's
+  document store refuses the block token at once (`withBlockScope`), but the exchanged token and its
+  streams live on until expiry.
 
 **To turn it on** (none of it is in this repo): the hub needs the site's block-token public keys and
 this service's client id in its block-exchange caller allowlist (an approval for the registry owner),

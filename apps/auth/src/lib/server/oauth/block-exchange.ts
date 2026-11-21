@@ -6,7 +6,6 @@ import { db } from '$lib/server/db/db';
 import { getRedis } from '$lib/server/redis';
 import { logOAuthEvent } from './audit-log';
 import { userHasRole } from './access';
-import { appBlockSuspended } from './app-block-mint-lock';
 import { authenticatedConfidentialClient, clientIdMismatch } from './client-auth';
 import { ACCESS_TOKEN_TYPE, SYSTEM_WORKLOAD_ROLE } from './constants';
 import { findExchangeResource } from './exchange-resources';
@@ -338,13 +337,13 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       return refuse('invalid_grant', 'workload account');
     }
 
-    if (await appBlockSuspended(db, block.appId)) {
-      return refuse('unauthorized_client', 'app block suspended');
-    }
     // The registry's private feed resolves the app from the client id alone (`decideCollectionRead`
     // without a block), while the site's document store reads the token's own block. So the exchanged token
     // is minted only when the token's block IS the client's one approved block: a token for another block of
-    // the client (not approved itself) must not read the approved one's data through the registry.
+    // the client (not approved itself) must not read the approved one's data through the registry. This is
+    // the site's own rule (`clientIsOnlySource` / `resolveConsumer` in data-read-grant.ts: the approved
+    // blocks of the client, at most two read), pinned by `block-exchange.test.ts`. It also refuses an app with
+    // no approved block, a suspended one included, so it replaces the mint lock's suspension check here.
     const approved = await db
       .selectFrom('app_blocks')
       .select('id')
