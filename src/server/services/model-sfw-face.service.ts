@@ -13,6 +13,7 @@ import type { ModelMeta } from '~/server/schema/model.schema';
 import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
 import {
   activeComFaceIntentPromptId,
+  activeTextScanPromptId,
   COM_FACE_INTENT_LOCK_SOURCE,
   type ComFaceIntentListing,
   comFaceIntentFields,
@@ -85,6 +86,9 @@ async function checkFields(fields: TextScanField[]): Promise<SfwFaceVerdict> {
     return { status: 'unavailable' };
   }
 }
+
+/** The id of the nsfw prompt version the face check runs on now; undefined when it cannot be read. */
+export const activeSfwFacePromptId = () => activeTextScanPromptId('nsfw');
 
 /**
  * Checks the .com face for content that would be mature on civitai.com. `versions` covers the

@@ -26,7 +26,11 @@ import {
 } from '~/server/services/text-scan/actions/hold-restricted-verdict';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { hasCompleteSfwFace, isComSafeLevel } from '~/shared/utils/model-sfw-face';
-import { checkSfwFace, getOwnVersionFields } from '~/server/services/model-sfw-face.service';
+import {
+  activeSfwFacePromptId,
+  checkSfwFace,
+  getOwnVersionFields,
+} from '~/server/services/model-sfw-face.service';
 import {
   hasSfwFaceParts,
   passedSfwFaceCheck,
@@ -169,7 +173,15 @@ async function hasCleanComFace(
     sfwCoverImageId: number | null;
     meta: unknown;
   },
-  { check, readVersions }: { check: typeof checkSfwFace; readVersions: typeof getOwnVersionFields }
+  {
+    check,
+    readVersions,
+    activePromptId,
+  }: {
+    check: typeof checkSfwFace;
+    readVersions: typeof getOwnVersionFields;
+    activePromptId: typeof activeSfwFacePromptId;
+  }
 ) {
   const { sfwName, sfwDescription, sfwCoverImageId } = model;
   if (!hasSfwFaceParts(model) || sfwName == null || sfwCoverImageId == null) return false;
@@ -181,13 +193,12 @@ async function hasCleanComFace(
   if (!cover || !isComSafeLevel(cover.nsfwLevel)) return false;
 
   try {
-    const versionFields = await readVersions({
-      modelId: model.id,
-      userId: model.userId,
-      db: dbWrite,
-    });
+    const [versionFields, promptId] = await Promise.all([
+      readVersions({ modelId: model.id, userId: model.userId, db: dbWrite }),
+      activePromptId(),
+    ]);
     const face = { sfwName, sfwDescription, sfwCoverImageId, versionFields };
-    if (sfwFaceStampMatches(model.meta, face)) return true;
+    if (sfwFaceStampMatches(model.meta, face, promptId)) return true;
     const verdicts = await check({ sfwName, sfwDescription, userId: model.userId, versionFields });
     const passed = passedSfwFaceCheck(verdicts, { requireDescription: true });
     logToAxiom({
@@ -248,7 +259,12 @@ async function dropScanRatingMarker(db: RawDb, modelId: number) {
 
 /** Stamps the origin marker on a model the scan rated mature but left as it was; an earlier
  *  marker keeps its time. Not on a locked rating, which is a moderator's. */
-async function markScanRating(db: RawDb, modelId: number, source: string) {
+async function markScanRating(
+  db: RawDb,
+  modelId: number,
+  source: string,
+  guard: Prisma.Sql = Prisma.empty
+) {
   await db.$executeRaw`
     UPDATE "Model" m
     SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
@@ -257,6 +273,7 @@ async function markScanRating(db: RawDb, modelId: number, source: string) {
     WHERE m.id = ${modelId}
       AND NOT (${asJsonbObjectSql('m.meta')} ? 'systemNsfwLock')
       AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
+      ${guard}
   `;
 }
 
@@ -325,9 +342,24 @@ const noComFaceSql = Prisma.sql`(btrim(COALESCE(m."sfwName", '')) = ''
 /**
  * Rates a model the text scan left unrated for its .com face, once the face is gone. Run in the
  * transaction that takes the face away, so the model is never listed as safe without one. Returns
- * whether it flipped; the level is not refreshed here.
+ * the owner's rating notice when it flipped, for the caller to send after commit
+ * (`notifyComFaceHeldVerdictApplied`); null when it did not. The level is not refreshed here.
  */
-export async function applyComFaceHeldVerdict(db: RawDb, modelId: number) {
+export async function applyComFaceHeldVerdict(
+  db: RawDb,
+  modelId: number
+): Promise<NotifyTextScanRatingRaisedArgs | null> {
+  // Read in the transaction that already holds the row: the verdict the flip below spends.
+  const [held] = await db.$queryRaw<
+    { name: string | null; userId: number; at: string | null; level: number | null }[]
+  >`
+    SELECT m.name, m."userId",
+      m.meta->'comFaceHeldVerdict'->>'at' AS at,
+      CASE WHEN jsonb_typeof(m.meta->'comFaceHeldVerdict'->'level') = 'number'
+        THEN (m.meta->'comFaceHeldVerdict'->>'level')::numeric::int END AS level
+    FROM "Model" m
+    WHERE m.id = ${modelId}
+  `;
   const flipped = await flipRow(
     db,
     modelId,
@@ -336,14 +368,25 @@ export async function applyComFaceHeldVerdict(db: RawDb, modelId: number) {
     Prisma.sql`AND NOT m.nsfw AND ${asJsonbObjectSql('m.meta')} ? 'comFaceHeldVerdict'
       AND ${noComFaceSql}`
   );
-  // Where the rating may not be overridden, the verdict waits as a moderator's lead instead: only a
-  // verdict the scan held, for a face that is gone.
-  if (!flipped)
+  if (!flipped) {
+    // Already mature and unrestricted: nothing to flip, but the verdict still stands as the scan's
+    // origin marker, so the owner cannot untick the rating alone (`assertScanRatingKept`), as for
+    // a scan that read an already-mature model with no face (`markScanRating`).
+    await markScanRating(
+      db,
+      modelId,
+      'text-scan',
+      Prisma.sql`AND m.nsfw AND ${asJsonbObjectSql('m.meta')} ? 'comFaceHeldVerdict'
+        AND ${noComFaceSql} AND NOT ${holdsRatingSql}`
+    );
+    // Where the rating may not be overridden, the verdict waits as a moderator's lead instead: only
+    // a verdict the scan held, for a face that is gone.
     await holdRestrictedVerdict(db, modelId, 'text-scan', {
       guard: Prisma.sql`AND ${asJsonbObjectSql(
         'm.meta'
       )} ? 'comFaceHeldVerdict' AND ${noComFaceSql}`,
     });
+  }
   await db.$executeRaw`
     UPDATE "Model" m
     SET meta = m.meta - 'comFaceHeldVerdict'
@@ -351,7 +394,37 @@ export async function applyComFaceHeldVerdict(db: RawDb, modelId: number) {
       AND ${asJsonbObjectSql('m.meta')} ? 'comFaceHeldVerdict'
       AND ${noComFaceSql}
   `;
-  return flipped > 0;
+  if (!flipped || !held) return null;
+  return {
+    entityType: 'Model',
+    entityId: modelId,
+    userId: held.userId,
+    // Held only for a read above PG-13, so R at the least.
+    level: held.level ?? NsfwLevel.R,
+    title: held.name,
+    url: `/models/${modelId}`,
+    // One notice per held verdict: a later hold and loss is a new one.
+    workflowId: `com-face-held-${held.at ?? 'unknown'}`,
+  };
+}
+
+/** Sends the notices `applyComFaceHeldVerdict` returned, after the transaction commits. Never throws:
+ *  the rating has already landed. */
+export async function notifyComFaceHeldVerdictApplied(
+  notices: (NotifyTextScanRatingRaisedArgs | null)[]
+) {
+  for (const notice of notices) {
+    if (!notice) continue;
+    await notifyTextScanRatingRaised(notice).catch((error: Error) =>
+      logToAxiom({
+        name: 'text-scan',
+        type: 'error',
+        message: 'com face held verdict notice failed',
+        modelId: notice.entityId,
+        error: error.message,
+      })
+    );
+  }
 }
 
 /** Held only while the face is still there, in one statement under the row lock. */
@@ -540,6 +613,7 @@ export async function applyModelNsfwTextScan(
   deps: {
     checkSfwFace?: typeof checkSfwFace;
     getOwnVersionFields?: typeof getOwnVersionFields;
+    activeSfwFacePromptId?: typeof activeSfwFacePromptId;
   } = {}
 ): Promise<RatingFloorResult> {
   const nothing: RatingFloorResult = { deferredRatingNotice: null };
@@ -580,6 +654,7 @@ export async function applyModelNsfwTextScan(
       hasCleanComFace(model, {
         check: deps.checkSfwFace ?? checkSfwFace,
         readVersions: deps.getOwnVersionFields ?? getOwnVersionFields,
+        activePromptId: deps.activeSfwFacePromptId ?? activeSfwFacePromptId,
       }),
   });
   logToAxiom({

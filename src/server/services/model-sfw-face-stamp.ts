@@ -68,10 +68,18 @@ export function losesSfwFace(before: FaceFields, data: FaceFields) {
   );
 }
 
-/** Whether the face text check passed for exactly this face. */
-export function sfwFaceStampMatches(meta: unknown, face: SfwFaceStampFace) {
+/**
+ * Whether the face text check passed for exactly this face, under the prompt in use now. A new or
+ * restored prompt version makes every stamp stale, as does a prompt that cannot be read.
+ */
+export function sfwFaceStampMatches(
+  meta: unknown,
+  face: SfwFaceStampFace,
+  activePromptId: number | undefined
+) {
   const stamp = (meta as ModelMeta | null)?.sfwFaceCheckedAt;
-  return !!stamp && stamp.hash === sfwFaceStampHash(face);
+  if (!stamp || stamp.hash !== sfwFaceStampHash(face)) return false;
+  return activePromptId !== undefined && stamp.promptId === activePromptId;
 }
 
 /**
