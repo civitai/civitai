@@ -57,8 +57,10 @@ class FakeTunnels implements DevTunnels {
   /** civitai's direct sessions, by block id (one per user and block), and the ids ever used. */
   readonly directSessions = new Map<
     string,
-    { previewId: string; sessionId: string; host: string; declaredScopes: string[] }
+    { previewId: string; sessionId: string; declaredScopes: string[] }
   >();
+  /** Every session civitai wrote (each counts as one start), with the scopes it was written with. */
+  readonly writes: { blockId: string; declaredScopes: string[] }[] = [];
   readonly usedIds = new Set<string>();
   /** Every `preview/open` answers `fresh`, whatever the id: a broken civitai. */
   alwaysFresh = false;
@@ -75,19 +77,18 @@ class FakeTunnels implements DevTunnels {
     if (!this.direct) return { mode: 'tunnel' };
     if (this.alwaysFresh) return { mode: 'direct', fresh: true };
     const open = this.directSessions.get(input.blockId);
-    if (open?.previewId === input.previewId)
-      return { mode: 'direct', sessionId: open.sessionId, host: open.host };
+    if (open?.previewId === input.previewId) return { mode: 'direct', sessionId: open.sessionId };
     if (this.usedIds.has(input.previewId)) return { mode: 'direct', fresh: true };
     this.usedIds.add(input.previewId);
     const n = this.opens.length;
     const written = {
       previewId: input.previewId,
       sessionId: `bki_TEST_ONLY_direct_${n}`,
-      host: directHost(n),
       declaredScopes: input.declaredScopes ?? [],
     };
     this.directSessions.set(input.blockId, written);
-    return { mode: 'direct', sessionId: written.sessionId, host: written.host };
+    this.writes.push({ blockId: input.blockId, declaredScopes: written.declaredScopes });
+    return { mode: 'direct', sessionId: written.sessionId };
   }
 
   /**
@@ -464,6 +465,50 @@ describe('keeping the preview alive', () => {
     await call(tools.tools, 'start_preview');
     await ticks(1);
     await keptToBe([CONNECTED]);
+  });
+
+  // Version skew: the runner is released apart from civitai, and a civitai from before the
+  // by-block keepalive refuses its body with a codeless 400. That must not end the keep-alive.
+  it('a civitai without the by-block keepalive does not stop it: a tunnel opened later is kept', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    const sent: Record<string, unknown>[] = [];
+    const civitai = new CivitaiDevTunnels({
+      civitaiUrl: 'https://civitai.example',
+      secret: 'test-only-runner-secret',
+      log: quiet,
+      fetch: async (_input, init) => {
+        const body = JSON.parse(String(init!.body)) as Record<string, unknown>;
+        sent.push(body);
+        return 'blockId' in body
+          ? Response.json(
+              { error: 'Expected { grant, sessionId } or { grant, host }' },
+              { status: 400 }
+            )
+          : Response.json({ host: body.host, idleExpiresAt: 1, expiresAt: 2 });
+      },
+    }).forRun(async () => 'test-only-grant');
+    const tools = await new AppAssistantTools({
+      sandboxUrl: fake.url,
+      tokens: () => async (purpose) => `test-token-${purpose}`,
+      devTunnels: () => civitai,
+      log: quiet,
+      previewKeepaliveMs: KEEPALIVE_MS,
+    }).open({
+      userId: 'u-1',
+      runId: 'run-1',
+      conversationId: 'conv-1',
+      page: { app: 'my-app' },
+      signal: new AbortController().signal,
+    });
+    opened.push(tools);
+    // No tunnel runs yet: the tick asks by block, and this civitai refuses that body.
+    await ticks(2);
+    await vi.waitFor(() => expect(sent.filter((b) => 'blockId' in b)).toHaveLength(2));
+    // A tunnel opens later in the run (the page's Restart preview): it is kept alive.
+    fake.tunnelHosts.set(sandboxOf('my-app'), RESTARTED_HOST);
+    await ticks(1);
+    await vi.waitFor(() => expect(sent.filter((b) => b.host === RESTARTED_HOST)).toHaveLength(1));
   });
 
   it('is every 5 minutes, well inside civitai’s 30-minute idle window', () => {
@@ -1129,14 +1174,17 @@ describe('direct preview (civitai serves it with no tunnel)', () => {
     });
     expect(tunnelCalls()).toEqual([]);
     expect(tunnels.started).toEqual([]);
-    // Control: civitai did hand the runner that host and session id.
-    expect(tunnels.directSessions.get('my-app')?.host).toBe(directHost(1));
-    // Neither reaches what the page, the journal or the saved conversation see.
+    // It declares scopes: the app's direct session was ended first (there was none), so this open
+    // wrote the session with them.
+    expect(tunnels.blockStops).toEqual(['my-app']);
+    expect(tunnels.writes).toEqual([{ blockId: 'my-app', declaredScopes: ['models:read'] }]);
+    // Control: civitai did hand the runner a session id; it reaches nothing the page, the journal
+    // or the saved conversation see.
+    expect(tunnels.directSessions.get('my-app')?.sessionId).toBe('bki_TEST_ONLY_direct_1');
     expect(reported.find((r) => r.name === 'start_preview')).toMatchObject({
       isError: false,
       output: { shown: true, blockId: 'my-app' },
     });
-    expect(JSON.stringify(reported)).not.toContain(directHost(1));
     expect(JSON.stringify(reported)).not.toContain('bki_TEST_ONLY_direct_1');
   });
 
@@ -1265,27 +1313,80 @@ describe('direct preview (civitai serves it with no tunnel)', () => {
     expect(tunnels.directSessions.size).toBe(0);
   });
 
-  it('a session it may not have opened is not taken to have the scopes it was asked for', async () => {
+  it('a later run whose manifest declares a new scope gets a session written with it: one start per run', async () => {
     directApp();
-    // An earlier reply opened the app's preview with no scopes.
+    const command = 'cd web && npm run dev';
+    fake.tools.set('dev_server_start', () => JSON.stringify({ running: true, command }));
+    manifestBlock('my-app', ['models:read']);
+    const first = await open();
+    await call(first.tools.tools, 'sandbox__dev_server_start', { command });
+    await first.tools.close();
+    expect(tunnels.writes).toEqual([{ blockId: 'my-app', declaredScopes: ['models:read'] }]);
+
+    // Between the replies the assistant adds a scope to the manifest. The next reply's automatic
+    // open must not get the old session back (civitai would answer it with its old scopes).
+    manifestBlock('my-app', ['models:read', 'ai:write:budgeted']);
+    const later = await open();
+    await call(later.tools.tools, 'sandbox__dev_server_start', { command });
+    expect(tunnels.writes).toEqual([
+      { blockId: 'my-app', declaredScopes: ['models:read'] },
+      { blockId: 'my-app', declaredScopes: ['models:read', 'ai:write:budgeted'] },
+    ]);
+    expect(tunnels.directSessions.get('my-app')?.declaredScopes).toEqual([
+      'models:read',
+      'ai:write:budgeted',
+    ]);
+    // The earlier session was ended (and the open after it went through a fresh preview id).
+    expect(tunnels.blockStops).toEqual(['my-app', 'my-app']);
+    expect(fake.rotations).toHaveLength(1);
+  });
+
+  it('a second start in the same run with the same scopes opens nothing again', async () => {
+    directApp();
+    const { tools } = await open();
+    const first = await call(tools.tools, 'start_preview', { declared_scopes: ['models:read'] });
+    const opens = tunnels.opens.length;
+    const again = await call(tools.tools, 'start_preview', { declared_scopes: ['models:read'] });
+    expect(again).toEqual(first);
+    expect(tunnels.opens).toHaveLength(opens);
+    expect(tunnels.writes).toHaveLength(1);
+    expect(tunnels.blockStops).toEqual(['my-app']);
+    // Other scopes in the same run: ended, and written again with them.
+    await call(tools.tools, 'start_preview', { declared_scopes: ['ai:write:budgeted'] });
+    expect(tunnels.writes.map((w) => w.declaredScopes)).toEqual([
+      ['models:read'],
+      ['ai:write:budgeted'],
+    ]);
+  });
+
+  // Invariant guard (green before this change too): with no declared scopes or auth, reuse stays.
+  it('a start that declares no scopes or auth reuses the open session: no stop, no new start', async () => {
+    directApp();
     const first = await open();
     await call(first.tools.tools, 'start_preview');
     await first.tools.close();
-
-    // This reply asks for a scope: civitai answers the open session as it is (no scopes), so the
-    // runner ends it and opens a new one, which civitai writes with the scope.
     const later = await open();
-    await call(later.tools.tools, 'start_preview', { declared_scopes: ['ai:write:budgeted'] });
-    expect(tunnels.opens.map((o) => o.declaredScopes)).toEqual([undefined, ['ai:write:budgeted']]);
-    // The first ask (`reuse`) did not get the scope; it was ended, and opened again with it.
-    await call(later.tools.tools, 'start_preview', { declared_scopes: ['ai:write:budgeted'] });
+    await call(later.tools.tools, 'start_preview');
+    expect(tunnels.blockStops).toEqual([]);
+    expect(tunnels.opens).toHaveLength(2);
+    expect(tunnels.writes).toHaveLength(1);
+  });
+
+  it('when the app changes while it opens, the session just written is closed', async () => {
+    directApp();
+    const { tools } = await open();
+    // The assistant opens another app (create_app) while civitai answers the open.
+    const realOpen = tunnels.open.bind(tunnels);
+    tunnels.open = async (input) => {
+      const answer = await realOpen(input);
+      await call(tools.tools, 'create_app', { name: 'Tip calculator' });
+      return answer;
+    };
+    const result = await call(tools.tools, 'start_preview');
+    expect(String(result.error)).toMatch(/^Your app changed while the preview was starting/);
+    expect(tunnels.writes).toHaveLength(1);
     expect(tunnels.blockStops).toEqual(['my-app']);
-    expect(tunnels.directSessions.get('my-app')?.declaredScopes).toEqual(['ai:write:budgeted']);
-    // Now known to have it: asked again, the same preview, and nothing more is asked of civitai.
-    const opens = tunnels.opens.length;
-    await call(later.tools.tools, 'start_preview', { declared_scopes: ['ai:write:budgeted'] });
-    expect(tunnels.opens).toHaveLength(opens);
-    expect(tunnels.blockStops).toEqual(['my-app']);
+    expect(tunnels.directSessions.size).toBe(0);
   });
 
   it('a keep-alive answered NOT_FOUND forgets the session, so the next start opens again', async () => {
@@ -1328,10 +1429,10 @@ describe('CivitaiDevTunnels: direct preview calls', () => {
         ? Response.json({ mode: 'direct', sessionId: 'bki_x', host: directHost(7) })
         : Response.json({ stopped: true })
     );
+    // The session host civitai names is the preview's credential: not kept, not even in memory.
     expect(await run.open({ blockId: 'my-app', previewId: ID })).toEqual({
       mode: 'direct',
       sessionId: 'bki_x',
-      host: directHost(7),
     });
     await run.keepalive({ blockId: 'my-app' });
     expect(await run.stopBlock('my-app')).toBe(true);
@@ -1350,6 +1451,25 @@ describe('CivitaiDevTunnels: direct preview calls', () => {
         body: { grant: GRANT, blockId: 'my-app', transport: 'direct' },
       },
     ]);
+  });
+
+  it('a civitai without the by-block route (a codeless 400) is answered as none, not as a refusal', async () => {
+    const { run } = client(() =>
+      Response.json({ error: 'Expected { grant, sessionId } or { grant, host }' }, { status: 400 })
+    );
+    await expect(run.keepalive({ blockId: 'my-app' })).rejects.toMatchObject({
+      status: 404,
+      code: 'no_route',
+    });
+    expect(await run.stopBlock('my-app')).toBe(false);
+    // A refusal with a code is still one.
+    const refused = client(() =>
+      Response.json({ error: 'no', code: 'FORBIDDEN' }, { status: 403 })
+    );
+    await expect(refused.run.keepalive({ blockId: 'my-app' })).rejects.toMatchObject({
+      status: 403,
+    });
+    await expect(refused.run.stopBlock('my-app')).rejects.toMatchObject({ status: 403 });
   });
 
   it('reads `tunnel` and `fresh`; an odd answer is `unavailable`', async () => {

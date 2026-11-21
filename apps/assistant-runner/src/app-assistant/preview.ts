@@ -99,7 +99,7 @@ interface OpenPreview {
    * session; a direct open may answer a session already open for the app's preview id (an earlier
    * reply's, the page's Restart preview's), which keeps the scopes it was opened with. So a direct
    * one is known only when the open wrote it: after a rotated preview id, or after this run ended
-   * the session before it.
+   * the session before it (`#openDirect` does so for every start that declares scopes or auth).
    */
   scopesKnown: boolean;
   /** What the start that opened it answered: a start of the same preview answers it again. */
@@ -562,23 +562,6 @@ export class RunnerPreview {
     const { sandbox, tunnels } = this.#deps;
     if (!sandbox.previewId || !sandbox.rotatePreviewId) return null;
     const previous = this.#open;
-    // This run's own direct preview of this block, asked for with other scopes or auth (or ones it
-    // may not have): opened again, civitai would answer it as it is. So it is ended first, and the
-    // open after that always writes a new session with these.
-    let ended = false;
-    if (
-      previous?.transport === 'direct' &&
-      previous.app === appName &&
-      previous.blockId === blockId
-    ) {
-      try {
-        await tunnels.stopBlock(blockId, signal);
-      } catch (error) {
-        throw new Error(refusalMessage(error), { cause: error });
-      }
-      this.#open = null;
-      ended = true;
-    }
 
     let previewId: string | null;
     try {
@@ -589,6 +572,26 @@ export class RunnerPreview {
       return null;
     }
     if (!previewId) return null;
+
+    // civitai answers a session already open for the app's preview id as it is, with the scopes
+    // and auth it was opened with. So a start that declares scopes or auth (an earlier reply may
+    // have opened the session with others: the manifest changed since), or that asks this run's
+    // own preview of this block for others, ends the app's direct session first: the open after
+    // that always writes a new one with these. One start, as a tunnel start is. Direct sessions
+    // only (`stopBlock`): a tunnel of the app is never touched by it.
+    const sameBlock =
+      previous?.transport === 'direct' && previous.app === appName && previous.blockId === blockId;
+    const declares = (declaredScopes?.length ?? 0) > 0 || declaredAuth !== undefined;
+    let ended = false;
+    if (sameBlock || declares) {
+      try {
+        await tunnels.stopBlock(blockId, signal);
+      } catch (error) {
+        throw new Error(refusalMessage(error), { cause: error });
+      }
+      if (sameBlock) this.#open = null;
+      ended = true;
+    }
 
     const ask = (id: string) =>
       tunnels.open(
@@ -628,10 +631,15 @@ export class RunnerPreview {
       throw new Error(refusalMessage(error), { cause: error });
     }
     if (answer.mode === 'tunnel' || 'fresh' in answer) return null;
-    if (sandbox.active?.name !== appName || this.#closed)
+    if (sandbox.active?.name !== appName || this.#closed) {
+      // As a tunnel start closes what it opened: the session is the old app's, which nothing shows.
+      await tunnels
+        .stopBlock(blockId, signal)
+        .catch((error) => this.#warn(error, 'closing a preview failed'));
       throw new Error(
         'Your app changed while the preview was starting. Start the preview again in the open app.'
       );
+    }
 
     if (previous && previous.blockId !== blockId) await this.#closeOpen(previous);
     // No host: the session host is the preview's credential (see `StartedPreview`).

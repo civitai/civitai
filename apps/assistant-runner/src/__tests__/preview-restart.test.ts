@@ -30,8 +30,6 @@ const HOST = 'dev-fedcba9876543210.civit.ai';
 const HOST_KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyRestartHostKey';
 const APP = 'my-shop';
 const MANIFEST_BLOCK = 'my-shop-block';
-/** A direct preview session's host (TEST-ONLY: not a real label or zone). */
-const DIRECT_HOST = `s${'0'.repeat(61)}.preview.example`;
 const PREVIEW_ID = 'd'.repeat(32);
 
 /** civitai's dev-tunnel endpoints, recording what they were asked. */
@@ -189,19 +187,21 @@ describe('PreviewRestarter', () => {
   describe('direct preview (civitai serves it with no tunnel)', () => {
     it('opens it through preview/open, takes no tunnel step, and answers its block with no host', async () => {
       fake.add(APP).previewId = PREVIEW_ID;
-      tunnels.openAnswers = [{ mode: 'direct', sessionId: SESSION, host: DIRECT_HOST }];
+      tunnels.openAnswers = [{ mode: 'direct', sessionId: SESSION }];
       const outcome = await restarter().restart('u-1', APP, 'test-preview-grant');
       // No host: the session host is the preview's credential; the page fetches its frame by block.
       expect(outcome).toEqual({ ok: true, blockId: MANIFEST_BLOCK });
-      expect(JSON.stringify(outcome)).not.toContain(DIRECT_HOST);
+      expect(JSON.stringify(outcome)).not.toContain(SESSION);
       expect(tunnels.opens).toEqual([
         { blockId: MANIFEST_BLOCK, previewId: PREVIEW_ID, declaredScopes: ['models:read'] },
       ]);
       expect(tunnelCalls()).toEqual([]);
       expect(tunnels.started).toEqual([]);
-      // No run is live: nothing kept alive or closed.
+      // No run is live: nothing kept alive.
       expect(tunnels.kept).toEqual([]);
-      expect(tunnels.blockStops).toEqual([]);
+      // The manifest declares scopes: the app's direct session was ended first, so the open wrote
+      // one with them (never a reused session with older ones).
+      expect(tunnels.blockStops).toEqual([MANIFEST_BLOCK]);
     });
 
     it('an id whose session ended is rotated once; a second `fresh` answers unavailable', async () => {
@@ -808,7 +808,7 @@ describe('POST apps/:app/preview', () => {
 
   it('end to end, direct preview: the browser gets the block alone, never the session host', async () => {
     fake.add(APP).previewId = PREVIEW_ID;
-    tunnels.openAnswers = [{ mode: 'direct', sessionId: SESSION, host: DIRECT_HOST }];
+    tunnels.openAnswers = [{ mode: 'direct', sessionId: SESSION }];
     const base = await serve(restarter());
     const res = await fetch(`${base}/api/assistant-runner/apps/${APP}/preview`, {
       method: 'POST',
@@ -822,7 +822,6 @@ describe('POST apps/:app/preview', () => {
     const text = await res.text();
     expect(res.status).toBe(200);
     expect(JSON.parse(text)).toEqual({ v: 1, blockId: MANIFEST_BLOCK });
-    expect(text).not.toContain(DIRECT_HOST);
     expect(text).not.toContain(SESSION);
     // Control: civitai did answer the runner with that host.
     expect(tunnels.opens).toHaveLength(1);

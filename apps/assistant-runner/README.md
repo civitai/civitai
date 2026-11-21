@@ -198,10 +198,13 @@ makes, which `WORKFLOW_VERSION` protects.
        keeps the app's direct preview alive and `stop_preview` closes it by `(user, blockId)`
        (`keepalive`/`stop { blockId, transport: "direct" }`), the block id it ran under, which can
        differ from the app's key, whichever run opened it. `transport: "direct"` makes civitai
-       leave a tunnel alone, so with the flag off nothing a tunnel does changes. An open session
-       keeps the scopes it was opened with: a later start of it in the same run asking for scopes
-       it may not have ends it and opens a new one. **Not covered:** a reply's first open of a
-       session an earlier reply opened gets that session's scopes, not ones declared since.
+       leave a tunnel alone, so with the flag off nothing a tunnel does changes, and a civitai from
+       before those by-block routes (a codeless `400`) is read as "none", never as a refusal. An
+       open session keeps the scopes it was opened with, so a start that declares scopes or auth
+       (the automatic open passes the manifest's) ends the app's direct session first and opens a
+       new one with them: one start per run, as a tunnel start is; a later start in the same run
+       with the same scopes answers the same preview. A start that declares none reuses the open
+       session.
     A later reply (or Continue after the app was paused) starts or restarts the dev server, which
     opens the preview again; civitai replaces the user's tunnel for that block. The instructions say the
     preview opens by itself, keep `start_preview` for when the user asks to reopen it, and tell
