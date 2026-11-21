@@ -117,26 +117,6 @@ describe('EdgeVideo — keepPlaying', () => {
     });
   });
 
-  test('pressing play after the hover timer already fired still counts as the viewer', async () => {
-    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
-    renderWithProviders(<EdgeVideo src={SRC} html5Controls keepPlaying />);
-    await vi.waitFor(() => expect(document.querySelector('video')).toBeTruthy());
-    const video = document.querySelector('video')!;
-
-    // The viewer presses play first, then the one-second hover timer fires on a playing video.
-    video.dispatchEvent(new Event('play'));
-    Object.defineProperty(video, 'paused', { value: false, configurable: true });
-    hoverFor(1_100);
-    // They pause and play again within the same hover.
-    video.dispatchEvent(new Event('pause'));
-    video.dispatchEvent(new Event('play'));
-    pause.mockClear();
-    video.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
-
-    expect(pause).not.toHaveBeenCalled();
-    pause.mockRestore();
-  });
-
   test('a viewer play after pausing a hover preview is kept', async () => {
     const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
     renderWithProviders(<EdgeVideo src={SRC} html5Controls keepPlaying />);

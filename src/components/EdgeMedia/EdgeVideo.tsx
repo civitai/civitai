@@ -354,11 +354,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const viewerStartedRef = useRef(false);
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
-        const video = e[0].target as HTMLVideoElement;
-        // Already playing (the viewer pressed play first): nothing was started here, so the
-        // play stays the viewer's.
-        if (video.paused) hoverStartedRef.current = true;
-        video.play();
+        hoverStartedRef.current = true;
+        (e[0].target as HTMLVideoElement).play();
       },
       1000
     );
