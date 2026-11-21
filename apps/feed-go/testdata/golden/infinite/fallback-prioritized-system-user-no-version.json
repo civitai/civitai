@@ -17,7 +17,11 @@
     "session": null
   },
   "feed": [],
-  "redis": {},
+  "redis": {
+    "model:gallery-settings:5005": {
+      "raw": "{\"hiddenTags\":[],\"hiddenUsers\":[],\"hiddenImages\":{},\"level\":31,\"pinnedPosts\":{},\"creatorHiddenUserIds\":[],\"sfwHeld\":false}"
+    }
+  },
   "sysRedis": {
     "system:browsing-setting-addons": {
       "raw": "[{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"excludedTagIds\":[9911]},{\"type\":\"some\",\"nsfwLevels\":[1,2,4,8,16],\"disablePoi\":true,\"excludedTagIds\":[9901]}]"

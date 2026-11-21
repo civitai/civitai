@@ -1065,7 +1065,8 @@ func withoutHeldFromViewer(ctx context.Context, d *InfiniteDeps, images []Image,
 	for _, img := range images {
 		h, held := holds[img.PostID]
 		owner, known := owners[h.modelID]
-		if held && !(viewer.ID != 0 && known && owner == viewer.ID) && h.level&img.NsfwLevel == 0 {
+		isOwner := viewer.ID != 0 && known && owner == viewer.ID
+		if held && !isOwner && h.level&img.NsfwLevel == 0 {
 			continue
 		}
 		out = append(out, img)

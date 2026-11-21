@@ -3625,6 +3625,8 @@ function emitInfinite() {
       if (spec.viewer) T.packed.set(`${K.session}:${spec.viewer}`, SESSIONS[spec.viewer]);
       // The board entries a fallback fixture's reason is decided on (an expired one).
       for (const [id, v] of Object.entries(spec.newCreatorBoards ?? {})) T.packed.set(`${K.newCreators}:${id}`, v);
+      // The gallery gates run before a scoped request's own fallback: its model's settings are held.
+      if (spec.input.modelId || spec.input.modelVersionId) getHeldGalleryLevel(spec.input);
       expect = { fallback: spec.fallback };
     } else {
       const { value, cacheable } = runInfinite({ ...spec, nodeFlags });
