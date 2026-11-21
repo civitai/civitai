@@ -1338,8 +1338,10 @@ export const serverSchema = z
     // sandbox service's preview gateway, with no tunnel. Direct preview stays OFF unless all three
     // are set. The registrable domain the session hosts are minted under (one label each):
     APP_ASSISTANT_PREVIEW_DOMAIN: z.string().optional(),
-    // The session-host signing key, `{"kid": <0..15>, "key": "<base64, >= 32 bytes>"}`; the
-    // gateway holds the same key. Not NEXTAUTH_SECRET, and never reused for anything else.
+    // The session-host signing keys, in the gateway's key-set form
+    // `{"current": {"kid": <0..15>, "key": "<base64, >= 32 bytes>"}, "previous"?: {...}}`; hosts are
+    // minted with `current`. A bare `{"kid", "key"}` is also accepted. The gateway holds the same
+    // keys. Not NEXTAUTH_SECRET, and never reused for anything else.
     APP_ASSISTANT_PREVIEW_KEYS: z.string().optional(),
     // The secret civitai signs preview revocations with (sent to the sandbox service when a
     // direct preview session ends or its user is banned).

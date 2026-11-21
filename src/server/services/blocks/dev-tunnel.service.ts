@@ -8,6 +8,7 @@ import {
   withSysReadDeadline,
 } from '~/server/redis/client';
 import { boundedClusterCall } from '~/server/utils/cluster-window-count';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { newBlockInstanceId } from '~/server/utils/app-block-ids';
 import {
   getDp1Target,
@@ -38,6 +39,7 @@ import {
   type DevTunnelTeardownReason,
 } from '~/server/prom/dev-tunnel.metrics';
 import { clampTunnelDeclaredScopes } from '~/server/services/blocks/dev-scoped-mint.service';
+import type { DevTunnelRefusal } from '~/server/services/blocks/dev-tunnel-access.service';
 
 /** App Dev Tunnel — bounds on the self-declared scope list stored on a session
  *  (defense-in-depth over the tRPC zod input bound; mirrors `block-tokens`'
@@ -1542,7 +1544,7 @@ export type OpenDirectPreviewParams = {
    * Counts this open as a start against the caller's limits, or refuses it. Called ONLY on the
    * branch that writes a new session: reusing a session, or answering `fresh`, is not a start.
    */
-  claimStart: () => Promise<{ code: string; error: string } | null>;
+  claimStart: () => Promise<DevTunnelRefusal | null>;
   /** The session host for these fields (the mint), e.g. `mintPreviewSessionHost`. */
   mintHost: (fields: { previewId: string; userId: number; exp: number }) => string;
 };
@@ -1551,12 +1553,13 @@ export type OpenDirectPreviewResult =
   | { kind: 'reused' | 'written'; session: DevTunnelSessionRecord }
   /** The id has had a session that has ended: nothing written. Rotate the id and ask again. */
   | { kind: 'fresh' }
-  | { kind: 'refused'; refusal: { code: string; error: string } };
+  | { kind: 'refused'; refusal: DevTunnelRefusal };
 
 /**
  * App Assistant direct preview: open (or reuse) the preview session for `previewId`, in exactly
  * one of three ways:
- *   1. an active direct session for (user, block) holds this preview id: reuse it, writing nothing;
+ *   1. an active direct session for (user, block) holds this preview id: reuse it, stamping its
+ *      activity (one already idle-expired is torn down and answered as in 3);
  *   2. no such session and the id was never used: write a new session (the same record and the
  *      same writer as a tunnel start, `transport: "direct"`, with the id's `used` marker), after
  *      `claimStart` counts it;
@@ -1575,8 +1578,18 @@ export async function openDirectPreviewSession(
     existing.session.transport === 'direct' &&
     existing.session.previewId === previewId &&
     isValidSessionHost(existing.session, sessionHostDomains())
-  )
-    return { kind: 'reused', session: existing.session };
+  ) {
+    // A reuse is activity, or the reaper could end the preview just reopened. One already past the
+    // idle window has ended: torn down here, it gets the used id's answer below (`fresh`).
+    if (isIdleExpired(existing.session, nowSec())) {
+      await teardownSession(existing.session, 'reap-idle');
+    } else {
+      const stamped = await stampSessionActivity(existing.session);
+      if (stamped !== null)
+        return { kind: 'reused', session: { ...existing.session, lastActivityAt: stamped } };
+      // Gone between the read and the stamp (a teardown, or the hard cap): it has ended.
+    }
+  }
 
   const used = await cluster('directUsed', () => redis.exists(directUsedKey(userId, previewId)));
   if (Number(used) > 0) return { kind: 'fresh' };
@@ -1798,6 +1811,9 @@ function isIdleExpired(session: DevTunnelSessionRecord, now: number): boolean {
 
 export type DirectSweepResult = { swept: number; reaped: number; skipped: number };
 
+/** Direct sessions the sweep reads and tears down at once. */
+const DIRECT_SWEEP_CONCURRENCY = 5;
+
 /**
  * App Assistant direct preview: the reaper's sweep of the direct-session set. For each member:
  *   - its record could not be read: skipped, the member kept (a Redis blip never reaps);
@@ -1816,19 +1832,18 @@ export async function sweepDirectSessions(now: number = nowSec()): Promise<Direc
     return out;
   }
   if (!Array.isArray(members)) return out;
-  for (const sessionId of members) {
-    if (typeof sessionId !== 'string') continue;
+  const sweepOne = async (sessionId: string) => {
     out.swept += 1;
     const read = await readSessionForReap(sessionId);
     if (read.status === 'error') {
       out.skipped += 1;
-      continue;
+      return;
     }
     if (read.status === 'absent') {
       try {
         await cluster('dropDirect', () => redis.sRem(directSessionsKey, sessionId));
       } catch {}
-      continue;
+      return;
     }
     const session = read.session;
     const hardExpired = session.hardExpiresAt <= now;
@@ -1838,7 +1853,15 @@ export async function sweepDirectSessions(now: number = nowSec()): Promise<Direc
       );
       out.reaped += 1;
     }
-  }
+  };
+  // A teardown can wait on its inline revoke (up to its send timeout), so several run at once.
+  // Each task swallows its own errors: `limitConcurrency` rejects on the first throw.
+  await limitConcurrency(
+    members
+      .filter((m): m is string => typeof m === 'string')
+      .map((sessionId) => () => sweepOne(sessionId).catch(() => undefined)),
+    DIRECT_SWEEP_CONCURRENCY
+  );
   if (out.reaped > 0 || out.skipped > 0)
     // eslint-disable-next-line no-console
     console.log(JSON.stringify({ event: 'app-blocks.dev-tunnel.direct-sweep', ...out }));

@@ -28,13 +28,10 @@ import { outboundFetch } from '~/server/utils/fetch-timeout';
  * always fits. A queued revoke older than the 8 h session cap is dropped: every session host it
  * could match has expired by then.
  *
- * Retryable: a network error, or any status except 2xx and the dropped ones (400, 405, 413); 401,
- * 404, 409 and 5xx are the expected retryable ones. A 404 in particular is the gateway with direct
- * preview switched off (its rollback), which answers 404 on this path; the revoke stays queued until
- * it is switched back on. Not retryable (dropped, logged): 400, 405 and 413, which mean this request
- * itself is wrong and will be refused the same way every time. Not configured
- * (APP_ASSISTANT_SANDBOX_URL or the secret unset) also queues, so a revoke is never lost to a
- * configuration gap shorter than the session cap.
+ * Which answers are retried and which dropped: `classifyPreviewRevokeStatus`. A 404 is retried
+ * because it is the gateway with direct preview switched off (its rollback), so the revoke stays
+ * queued until it is switched back on. Not configured (APP_ASSISTANT_SANDBOX_URL or the secret
+ * unset) also queues, so a revoke is never lost to a configuration gap shorter than the session cap.
  *
  * Never throws: a revoke must never fail a stop, a reap or a ban.
  */

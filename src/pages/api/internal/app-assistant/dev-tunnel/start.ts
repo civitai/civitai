@@ -7,7 +7,10 @@ import { logToAxiom, safeError } from '~/server/logging/client';
 import { devTunnelStartFields } from '~/server/schema/blocks/dev-tunnel.schema';
 import { getRunnerDevTunnelUser } from '~/server/services/app-assistant/app-assistant.service';
 import { readRunnerRequest } from '~/server/services/app-assistant/runner-request';
-import { authorizeDevTunnelStart } from '~/server/services/blocks/dev-tunnel-access.service';
+import {
+  authorizeDevTunnelStart,
+  DEV_TUNNEL_REFUSAL_STATUS,
+} from '~/server/services/blocks/dev-tunnel-access.service';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import {
   cancelDevTunnelStart,
@@ -68,9 +71,6 @@ const body = z.object({
   clientKey: z.string().min(1).max(128).optional(),
 });
 
-/** The HTTP status of each tRPC code `authorizeDevTunnelStart` refuses with. */
-const REFUSAL_STATUS = { FORBIDDEN: 403, NOT_FOUND: 404, TOO_MANY_REQUESTS: 429 } as const;
-
 type Answer = { status: number; json: Record<string, unknown> };
 const UNAVAILABLE: Answer = {
   status: 503,
@@ -115,7 +115,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       if (!gate.ok) {
         log('refused', { reason: gate.refusal.code });
         return {
-          status: REFUSAL_STATUS[gate.refusal.code],
+          status: DEV_TUNNEL_REFUSAL_STATUS[gate.refusal.code],
           json: { error: gate.refusal.error, code: gate.refusal.code },
         };
       }

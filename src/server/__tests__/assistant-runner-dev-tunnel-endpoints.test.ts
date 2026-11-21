@@ -73,7 +73,7 @@ vi.mock('~/server/prom/dev-tunnel.metrics', () => ({
 const { signRunGrant, signRunnerViewerToken } = await import(
   '~/server/services/app-assistant/assistant-runner-tokens'
 );
-const { DEV_TUNNEL_IDLE_SECONDS, reapExpiredDevTunnels } = await import(
+const { DEV_TUNNEL_IDLE_SECONDS, reapExpiredDevTunnels, sweepDirectSessions } = await import(
   '~/server/services/blocks/dev-tunnel.service'
 );
 const startRoute = (await import('~/pages/api/internal/app-assistant/dev-tunnel/start')).default;
@@ -980,6 +980,37 @@ describe('POST preview/open (App Assistant direct preview)', () => {
     expect(startsCounted(OWNER)).toBe(1);
   });
 
+  // Review: a reuse must count as activity, or the reaper can end a preview the runner just
+  // reopened.
+  it('reusing a live session stamps its activity, counting no start', async () => {
+    const first = (await open(OWNER, UNSUBMITTED_APP, PID_A)).json!;
+    const sessionId = first.sessionId as string;
+    // Inside the idle window, but old enough that a missing stamp is visible.
+    const aged = nowSec() - DEV_TUNNEL_IDLE_SECONDS + 300;
+    ageSession(sessionId, aged);
+    expect((await open(OWNER, UNSUBMITTED_APP, PID_A)).json).toEqual(first);
+    expect(sessionRecord(sessionId).lastActivityAt).toBeGreaterThanOrEqual(nowSec() - 5);
+    expect(startsCounted(OWNER)).toBe(1);
+    expect(revokesSent()).toEqual([]);
+  });
+
+  it('reusing an idle-expired session tears it down and answers fresh, counting no start', async () => {
+    const first = (await open(OWNER, UNSUBMITTED_APP, PID_A)).json!;
+    const sessionId = first.sessionId as string;
+    ageSession(sessionId, nowSec() - DEV_TUNNEL_IDLE_SECONDS - 120);
+    expect((await open(OWNER, UNSUBMITTED_APP, PID_A)).json).toEqual({
+      mode: 'direct',
+      fresh: true,
+    });
+    expect(sessionRecord(sessionId)).toBeNull();
+    expect(lua.set(DIRECT_SET) ?? []).toEqual([]);
+    expect(await getActiveDevTunnel(OWNER, UNSUBMITTED_APP)).toBeNull();
+    expect(revokesSent()).toEqual([
+      { userId: OWNER, previewId: PID_A, reason: 'teardown:reap-idle' },
+    ]);
+    expect(startsCounted(OWNER)).toBe(1);
+  });
+
   it('answers fresh for a used id without writing or counting, and writes on the rotated id', async () => {
     const first = (await open(OWNER, UNSUBMITTED_APP, PID_A)).json!;
     expect(await byBlock(stopRoute, OWNER, UNSUBMITTED_APP)).toMatchObject({
@@ -1070,6 +1101,41 @@ describe('POST preview/open (App Assistant direct preview)', () => {
     expect(lua.set(DIRECT_SET)).toEqual([unreadable]);
     // Neither was torn down, so nothing was revoked: an expired record's host expired with it.
     expect(revokesSent()).toEqual([]);
+  });
+
+  // Review: each teardown can wait on an inline revoke, so the sweep must not take them one at a
+  // time. Counted, not timed: the most revokes in flight at once.
+  it('the sweep tears sessions down five at a time, not one after another', async () => {
+    resolveMock.mockImplementation(async (blockId: string) => ({
+      blockId,
+      status: 'approved',
+      appBlockId: `apb-${blockId}`,
+      appId: `app-${blockId}`,
+    }));
+    const ids: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const previewId = (i + 1).toString(16).padStart(32, 'c');
+      const { sessionId } = (await open(OWNER, `sweep-app-${i}`, previewId)).json! as Record<
+        string,
+        string
+      >;
+      ageSession(sessionId, nowSec() - DEV_TUNNEL_IDLE_SECONDS - 120);
+      ids.push(sessionId);
+    }
+    let inFlight = 0;
+    let maxInFlight = 0;
+    fetchMock.mockImplementation(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 20));
+      inFlight -= 1;
+      return new Response('{"rotated":1}', { status: 200 });
+    });
+    expect(await sweepDirectSessions()).toEqual({ swept: 7, reaped: 7, skipped: 0 });
+    expect(maxInFlight).toBe(5);
+    expect(revokesSent()).toHaveLength(7);
+    for (const id of ids) expect(sessionRecord(id)).toBeNull();
+    expect(lua.set(DIRECT_SET) ?? []).toEqual([]);
   });
 
   // Round-1 audit: the id is marked used BEFORE any record, so an open that fails part-way still

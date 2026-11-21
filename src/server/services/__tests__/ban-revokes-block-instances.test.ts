@@ -966,6 +966,17 @@ describe('a ban revokes the publisher’s App Assistant direct previews', () => 
     expect(revokesSent()).toEqual([
       { userId: PUBLISHER_ID, previewId: '*', issuedAt: expect.any(Number), reason: 'ban' },
     ]);
+    const markerWrites = redisMock.redis.set.mock.calls
+      .map((c, i) => ({
+        key: String(c[0]),
+        order: redisMock.redis.set.mock.invocationCallOrder[i],
+      }))
+      .filter(({ key }) => key.startsWith(REDIS_KEYS.BLOCKS.REVOKED_INSTANCE_BAN));
+    expect(markerWrites).toHaveLength(ALL_INSTANCE_IDS.length);
+    const revokeOrder = fetchMock.mock.calls
+      .map((c, i) => ({ url: String(c[0]), order: fetchMock.mock.invocationCallOrder[i] }))
+      .find(({ url }) => url.endsWith('/internal/v1/previews/revoke'))!.order;
+    expect(Math.max(...markerWrites.map((w) => w.order))).toBeLessThan(revokeOrder);
   });
 
   it('an unban sends nothing, and clears a "*" still queued for that user', async () => {

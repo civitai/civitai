@@ -20,6 +20,13 @@ import type { SessionUser } from '~/types/session';
 export type DevTunnelRefusalCode = 'FORBIDDEN' | 'NOT_FOUND' | 'TOO_MANY_REQUESTS';
 export type DevTunnelRefusal = { code: DevTunnelRefusalCode; error: string };
 
+/** The HTTP status of each refusal code, for the routes that answer a refusal over HTTP. */
+export const DEV_TUNNEL_REFUSAL_STATUS: Record<DevTunnelRefusalCode, number> = {
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  TOO_MANY_REQUESTS: 429,
+};
+
 export const DEV_TUNNELS_UNAVAILABLE = 'Dev tunnels are not available';
 
 /** The `app-blocks-dev-tunnel` kill switch, for this user. Fail-closed (see the flag's docblock). */

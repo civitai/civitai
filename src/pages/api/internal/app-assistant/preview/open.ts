@@ -9,6 +9,7 @@ import { readRunnerRequest } from '~/server/services/app-assistant/runner-reques
 import {
   authorizeDevTunnelStart,
   claimDevTunnelStart,
+  DEV_TUNNEL_REFUSAL_STATUS,
 } from '~/server/services/blocks/dev-tunnel-access.service';
 import { openDirectPreviewSession } from '~/server/services/blocks/dev-tunnel.service';
 import {
@@ -38,7 +39,8 @@ import { withDistributedLock } from '~/server/utils/distributed-lock';
  * (`getRunnerDevTunnelUser`, which reads the user from the primary, so a ban is seen at once), the
  * author capability, the `app-blocks-dev-tunnel` kill switch and ownership of `blockId`. Then
  * exactly one of three answers:
- *   - an active direct session for the (user, app) pair holds `previewId`: reused, nothing written;
+ *   - an active direct session for the (user, app) pair holds `previewId`: reused, its idle clock
+ *     restarted (one already idle-expired is ended here and answered as a used id, below);
  *   - `previewId` never had a session: a new one is written. Only this counts as a start against
  *     the hourly limit for an unsubmitted app (one counter with `dev-tunnel/start`);
  *   - `previewId` had a session that has ended: `{ mode: "direct", fresh: true }`, nothing
@@ -66,12 +68,6 @@ const body = z.object({
   declaredAuth: devTunnelStartFields.declaredAuth,
 });
 
-/** The HTTP status of each tRPC code the gates refuse with. */
-const REFUSAL_STATUS: Record<string, number> = {
-  FORBIDDEN: 403,
-  NOT_FOUND: 404,
-  TOO_MANY_REQUESTS: 429,
-};
 const UNAVAILABLE = { error: 'Could not open the preview right now', code: 'unavailable' };
 
 export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
@@ -98,7 +94,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     const gate = await authorizeDevTunnelStart(subject.user, blockId, { countStart: false });
     if (!gate.ok)
       return res
-        .status(REFUSAL_STATUS[gate.refusal.code] ?? 403)
+        .status(DEV_TUNNEL_REFUSAL_STATUS[gate.refusal.code])
         .json({ error: gate.refusal.error, code: gate.refusal.code });
 
     // One open per (user, app) at a time: a second one would replace the first's session.
@@ -123,7 +119,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (opened.kind === 'fresh') return res.json({ mode: 'direct', fresh: true });
     if (opened.kind === 'refused')
       return res
-        .status(REFUSAL_STATUS[opened.refusal.code] ?? 403)
+        .status(DEV_TUNNEL_REFUSAL_STATUS[opened.refusal.code])
         .json({ error: opened.refusal.error, code: opened.refusal.code });
     if (opened.kind === 'written')
       logToAxiom({
