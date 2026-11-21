@@ -2,10 +2,9 @@ import type { ReviewTier } from '@civitai/shared/review-batch';
 import { logToAxiom } from './axiom';
 import type { ExchangeRefusal } from './held-sheet';
 
-// The phone sheets' sign-ins and sign-outs, one event each. They are the access audit for held media
-// (who opened a sheet, when, and whether it let them in), so they stay after any one test that reads
-// them. Never a token, code, verifier, state or image id: only the tier, the moderator and a short
-// tag of the batch.
+// The phone sheets' sign-ins and sign-outs, one event each: the access audit for held media (who
+// opened a sheet, when, and whether it let them in). Kept permanently, not just for one test. Never a
+// token, code, verifier, state or image id: only the tier, the moderator and a short batch tag.
 export const SHEET_START_EVENT = 'held-sheet-start';
 export const SHEET_EXCHANGE_EVENT = 'held-sheet-exchange';
 export const SHEET_SIGNOUT_EVENT = 'review-sheet-signout';

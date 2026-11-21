@@ -892,6 +892,18 @@ describe('the access audit', () => {
     ]);
   });
 
+  it('a corrupt session record still signs out, naming nobody', async () => {
+    seedBatch(GENERAL, 'general');
+    const token = (await signIn('review', GENERAL))!;
+    const key = [...store.keys()].find(
+      (k) => k.startsWith('app:review-sheet:session:') && !k.endsWith(':batches')
+    )!;
+    store.set(key, { value: '{not json', expiresAt: null });
+    expect((await signOut(token)).status).toBe(204);
+    expect(store.has(key)).toBe(false);
+    expect(pick(await audits('review-sheet-signout'), 'moderatorId', 'ended')).toEqual([]);
+  });
+
   it('never logs a batch id, code, verifier, state or token, only six characters of the batch hash', async () => {
     seedBatch(HELD, 'held');
     seedBatch(GENERAL, 'general');

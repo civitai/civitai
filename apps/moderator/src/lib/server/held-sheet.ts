@@ -293,7 +293,11 @@ export async function revokeReviewSession(token: string | undefined): Promise<nu
   const redis = getRedis();
   const raw = await redis.get(reviewKey(token));
   await redis.del([reviewKey(token), reviewBatchesKey(token)]);
-  return raw ? (JSON.parse(raw) as ReviewSessionRecord).userId : null;
+  try {
+    return raw ? (JSON.parse(raw) as ReviewSessionRecord).userId : null;
+  } catch {
+    return null; // A corrupt record is still ended; it just names nobody.
+  }
 }
 
 let sessions: ReturnType<typeof createSessionClient> | undefined;
