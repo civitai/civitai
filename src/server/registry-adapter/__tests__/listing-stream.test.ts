@@ -615,6 +615,7 @@ describe('media: every image rated on its own, narrowed per audience (red overri
 
 describe('a failed listing read fails only the listing stream', () => {
   let failing = false;
+  let stop = new AbortController();
   const good = buildEntities([ONSITE, OFFSITE], { ...BASE, listings: true });
   const failed = Object.assign([{ ...ONSITE, listing: { ...ONSITE.listing, store: undefined } }], {
     listingsFailed: true as const,
@@ -626,12 +627,14 @@ describe('a failed listing read fails only the listing stream', () => {
       read: async () => (failing ? buildEntities(failed, { ...BASE, listings: true }) : good),
       store: createMemorySnapshotStore(),
       pollMs: 1,
-      sleep: async () => undefined,
+      // One poll per changes() stream: the first sleep stops it, so a missing guard fails the
+      // assertion below rather than polling until the test times out.
+      sleep: async () => stop.abort(),
     }),
     new Set(['relay-exp-7'])
   );
-  const ctx = (): AdapterContext => ({
-    signal: new AbortController().signal,
+  const ctx = (signal = new AbortController().signal): AdapterContext => ({
+    signal,
     audience: SERVICE_AUDIENCE,
     reader: {
       subject: 'svc:index',
@@ -649,7 +652,9 @@ describe('a failed listing read fails only the listing stream', () => {
     const seen: Change[] = [];
     let code: unknown;
     try {
-      for await (const change of await adapter.changes(LISTING, cursor, ctx())) seen.push(change);
+      stop = new AbortController();
+      const changes = await adapter.changes(LISTING, cursor, ctx(stop.signal));
+      for await (const change of changes) seen.push(change);
     } catch (err) {
       code = (err as { code?: unknown }).code;
     }

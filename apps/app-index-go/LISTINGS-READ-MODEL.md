@@ -71,9 +71,10 @@ Later, as new optional properties of `@v1` (additive, per `schemas.ts`): `serial
 don't need them; the detail page does (slice 3).
 
 Never in the stream: `connectClientId` (the card deliberately omits it), `visibility`, and
-`restrictedAudience` (viewer-scoped). No listing media item reaches a subscription whose audience
-may not read that item's own rating (Media, below). This applies to listing media only: the creator
-chip's `image` is the user's avatar, carried as the public card carries it.
+`restrictedAudience` (viewer-scoped). Listing media items are filtered per subscription by each
+item's own rating under the app-rating rule (Media, below), which is coarser than the store's
+per-request ceiling. The creator chip's `image` is the user's avatar, carried as the public card
+carries it.
 
 ### Media
 
@@ -91,9 +92,15 @@ The adapter (`registryListingMedia`, `catalog-media.ts`):
 
 - Publishes an image only when it passes the store's per-image moderation check at every level
   (`isListingImageVisible`). That means scanned, not flagged, not restricted, and not Blocked.
-- Sends each subscription only the items whose own rating its audience may read (`readableBy`).
-  The rule is the same `audienceAdmits` predicate as for listings, so the body, and its `rev`,
-  differ per audience.
+- Filters each subscription's items by the item's own rating under the app-rating rule
+  (`audienceAdmits` in `readableBy`, the predicate listings use): `pg` and `pg13` items reach every
+  audience, and `r`, `x` and `xxx` items only an audience that may read that rating. The body, and
+  its `rev`, differ per audience.
+- This filter is coarser than the store. A PG-13 image on a `pg` listing reaches a PG-only
+  audience in the stream, where the store caps it at the listing's rating. That is deliberate: it
+  is what lets a red-host PG-13 viewer get it, and every stream field is public. So the read model
+  **must** apply the store's rule per request: the listing-rating ceiling (`listingMediaCeiling`)
+  and the host rule (`redHostMediaCeiling`), below.
 - Marks an override `host: red`, so the main host never shows it.
 - Gives a screenshot item a `coverUrl` as well: its rendition at cover width, for the cover fallback.
 
@@ -114,8 +121,10 @@ What today's DB path does, which the read model must mirror (`projectListingMedi
   screenshot at cover width (`gatedListingCoverUrl`).
 - **Screenshots.** The gallery is the visible screenshots, in order (`gatedListingScreenshots`).
 
-If the overrides read fails, it returns no overrides, and the store shows each listing's own media.
-The stream does the same: the override items drop out of the bodies until the next good read.
+If the overrides read fails, `readListingRedMediaManyForRender` logs a warning and returns an empty
+map, and the store shows each listing's own media. The stream does the same: the override items
+silently drop out of the bodies until the next good read. Only a failure of the listings' own media
+query ends listing subscriptions `unavailable`.
 
 ## Visibility: testers-only and private listings stay out of the stream
 
@@ -257,8 +266,10 @@ served for a week.
 1. **Slice 1 (this PR):** `store-listing@v1` in the adapter, dark. Unset, nothing changes, and no
    extra query runs. Set, there are two extra catalog queries per poll (`loadListingExtras`: the
    listings' media and the red overrides), run beside the existing ones. The stream reaches only the
-   listed relays. If those queries fail, only the listing stream fails: they are logged, and its
-   subscriptions end `unavailable`; every other stream is served as before.
+   listed relays. If the media query (`findMany`) fails, only the listing stream fails: the failure
+   is logged, its subscriptions end `unavailable`, and every other stream is served as before. If
+   the overrides read fails, it returns no overrides, so they silently drop out of the bodies until
+   the next good read (Media, above).
 2. **Slice 2: app-index-go ingest.** A second consumer for `store-listing@v1` (own generation and cursor,
    own table), dark behind `APP_INDEX_LISTINGS`. No read API yet. It needs the
    service-identity rollout (README, "Rollout order": hub settings, then

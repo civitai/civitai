@@ -39,7 +39,8 @@ export type MediaRating = 'pg' | 'pg13' | 'r' | 'x' | 'xxx';
  *     red-capable host, preferred there over the own image of its slot and falling back to it;
  *   - `nsfwLevel` / `rating` are the image's own, which the ceiling is compared with;
  *   - a screenshot also carries `coverUrl`, its rendition as the cover fallback.
- * A subscription is sent only the items whose `rating` its audience may read (`readableBy`).
+ * A subscription is sent the items whose own `rating` its audience admits under the app-rating
+ * rule (`readableBy`), coarser than the store's ceiling, which the read model applies per request.
  */
 export type ListingMediaItem = {
   slot: 'icon' | 'cover' | 'screenshot';

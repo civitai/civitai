@@ -120,7 +120,7 @@ export const STORE_LISTING_SCHEMA_DOCUMENT: Record<string, unknown> = {
     media: {
       type: 'array',
       description:
-        'Every image the store may show, each with its own rating: a subscription receives only the items its audience may read. `host: red` is a civitai.red override, shown only on a red-capable host, preferred there over the own image of its slot. Order: own icon, own cover, screenshots in order, red icon, red cover',
+        'Every image the store may show, each with its own rating: a subscription receives the items whose rating its audience admits under the app-rating rule (pg and pg13 for all). Apply the listing-rating ceiling and the host rule per request. `host: red` is a civitai.red override, shown only on a red-capable host, preferred there over the own image of its slot. Order: own icon, own cover, screenshots in order, red icon, red cover',
       items: {
         type: 'object',
         required: ['slot', 'host', 'url', 'nsfwLevel', 'rating'],
