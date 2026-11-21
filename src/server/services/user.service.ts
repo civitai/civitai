@@ -1,5 +1,4 @@
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { banNoteNamesCsamSql } from '~/server/services/ban-note-csam';
 import { PROFILE_CLEAR_FIELDS } from '~/server/schema/moderator/user';
 import { markUserDealUploadsRemovedSql } from '~/server/services/creator-service-deal-file-retention';
 import {
@@ -487,10 +486,9 @@ export { isUsernamePermitted } from '~/server/services/username-permitted';
 
 /**
  * Before a moderator clears, edits or bans away another user's profile text or links: when the user
- * is named on a CSAM report, under an account hold or banned with a note naming CSAM or
- * NCMEC, or `alwaysArchive` is set, `archive` stores the current text and links, and this throws if it
- * rejects so the change does not happen. If they change during an upload they are archived again, up
- * to three uploads, after which this refuses. Returns what the last `archive` call resolved to, or
+ * is named on a CSAM report or under an account hold, or `alwaysArchive` is set, `archive` stores
+ * the current text and links, and this throws if it rejects so the change does not happen. If they
+ * change during an upload they are archived again, up to three uploads, after which this refuses. Returns what the last `archive` call resolved to, or
  * undefined when nothing was archived.
  */
 export async function archiveProfileBeforeModeratorChange<TStored = unknown>({
@@ -508,7 +506,7 @@ export async function archiveProfileBeforeModeratorChange<TStored = unknown>({
 }): Promise<TStored | undefined> {
   // Every account hold `deleteUser` refuses on (`accountHoldSql`: holding reports, CSAM-flagged or
   // blocked images, images on a holding report, evidence holds), plus any report naming the user,
-  // held or not, plus ban notes naming CSAM or NCMEC: archiving more is the safe side here.
+  // held or not: archiving more is the safe side here.
   const heldSql = accountHoldSql(Prisma.sql`${userId}::int`, await holdMarkerViewExists());
   const idText = String(userId);
   const mustArchive =
@@ -524,12 +522,6 @@ export async function archiveProfileBeforeModeratorChange<TStored = unknown>({
               OR r.details ->> 'secondaryUserId' = ${idText}
           )
           OR ${heldSql}
-          -- The bare note, release or not: archiving more is the safe side.
-          OR EXISTS (
-            SELECT 1 FROM "User" u
-            WHERE u.id = ${userId}
-              AND ${banNoteNamesCsamSql(Prisma.sql`u.meta`)}
-          )
         ) AS named
       `
     )[0]?.named !== false;
@@ -1426,7 +1418,7 @@ export const deleteUser = async ({
   // Here rather than in each caller, so every caller of `deleteUser` is held to it. The scrub below
   // checks again in the same statement as its write.
   const { markerView } = await assertAccountNotUnderLegalHold(user.id);
-  // Archived first for a user a report, hold or ban note names; a failed archive deletes nothing.
+  // Archived first for a user a report or hold names; a failed archive deletes nothing.
   await archiveProfileBeforeModeratorChange({
     userId: user.id,
     actorId,
@@ -1556,7 +1548,7 @@ export const deleteUser = async ({
     usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
   await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
-  // A ban-note hold does not refuse the deletion, but it keeps the sleeping apps.
+  // A hold placed after the check above keeps the sleeping apps.
   await runStep('delete-sleeping-apps', async () => {
     if ((await isContentRemovalHeld(user.id)) !== false) {
       logToAxiom({

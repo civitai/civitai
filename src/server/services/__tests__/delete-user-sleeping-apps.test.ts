@@ -20,8 +20,8 @@ const h = vi.hoisted(() => ({
   storeConfigured: true,
   /** What the legal-hold check answers: `null` is "could not be read". */
   hold: false as boolean | null,
-  /** Banned with a CSAM/NCMEC note: content is held, the deletion is not refused. */
-  banNote: false,
+  /** A hold that lands after deleteUser's own check: only the later content-removal reads see it. */
+  lateHold: false,
   log: [] as string[],
   repo: undefined as unknown as ReturnType<typeof fakeRepo>,
   store: undefined as unknown as ReturnType<typeof fakeStore>,
@@ -33,9 +33,9 @@ vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
   isAccountUnderLegalHold: async () => h.hold,
   areAccountsUnderLegalHold: async (ids: number[]) =>
     new Map(ids.map((id) => [id, h.hold !== false])),
-  isContentRemovalHeld: async () => (h.hold !== false ? h.hold : h.banNote),
+  isContentRemovalHeld: async () => (h.hold !== false ? h.hold : h.lateHold),
   areContentRemovalsHeld: async (ids: number[]) =>
-    new Map(ids.map((id) => [id, h.hold !== false || h.banNote])),
+    new Map(ids.map((id) => [id, h.hold !== false || h.lateHold])),
 }));
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
   getDocStoreMaintenance: () => ({ wipeAccount: vi.fn() }),
@@ -78,7 +78,7 @@ beforeEach(() => {
   h.log = [];
   h.storeConfigured = true;
   h.hold = false;
-  h.banNote = false;
+  h.lateHold = false;
   h.repo = fakeRepo(h.log);
   h.store = fakeStore(h.log);
   dbMock.dbWrite.user.findFirst.mockResolvedValue({ id: USER_ID, meta: {} });
@@ -129,9 +129,9 @@ describe('deleteUser — sleeping apps', () => {
     ]);
   });
 
-  it('a ban-note account is still deleted, but its sleeping apps are kept, by deleteUser and the sweep', async () => {
+  it('a hold landing after the check keeps the sleeping apps, in deleteUser and the sweep', async () => {
     sleeping(USER_ID, 'tip-calculator');
-    h.banNote = true;
+    h.lateHold = true;
 
     await UserService.deleteUser({ id: USER_ID, actorId: USER_ID });
 

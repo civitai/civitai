@@ -78,7 +78,7 @@ const OTHER_FLAG_USER = 10; // another image has a review flag that is not CSAM 
 const RELEASED_USER = 11; // their hold marker was released -> deleted
 const LAPSED_LISTED_USER = 12; // a CSAM-blocked image listed on their own lapsed sent report -> deleted
 const READOPTED_USER = 13; // made the replaced image their profile picture again -> kept
-const BAN_NOTE_USER = 14; // banned with a note naming NCMEC, no account hold -> kept
+const BAN_NOTE_USER = 14; // banned with a note naming NCMEC, no account hold -> deleted
 const REPORT_SUBJECT = 9; // owns nothing; the subject of the report listing LISTED_USER's image
 
 const PLAIN = 10;
@@ -113,8 +113,8 @@ const QUEUED = [
   GONE,
   BAN_NOTE,
 ];
-const DELETED = [PLAIN, LAPSED, OTHER_FLAG, RELEASED, LAPSED_LISTED];
-const HELD = [REPORT, REVIEW, BLOCKED, LISTED, MARKED, PLACEHOLDER, SELF_FLAGGED, BAN_NOTE];
+const DELETED = [PLAIN, LAPSED, OTHER_FLAG, RELEASED, LAPSED_LISTED, BAN_NOTE];
+const HELD = [REPORT, REVIEW, BLOCKED, LISTED, MARKED, PLACEHOLDER, SELF_FLAGGED];
 
 // Not queued: the images that put their owner under a hold, or that stand beside one.
 const REVIEW_OTHER = 30;

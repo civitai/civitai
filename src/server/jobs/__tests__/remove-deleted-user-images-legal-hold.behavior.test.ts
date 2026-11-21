@@ -437,13 +437,6 @@ describe('a held account deleted for good', () => {
       `UPDATE "User" SET "bannedAt" = now() - $2::interval, meta = $3 WHERE id = $1`,
       [userId, bannedAgo, JSON.stringify({ banDetails: { detailsInternal: 'NCMEC report filed' } })]
     );
-  const release = (userId: number, ago: string) =>
-    holder.db.query(
-      `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
-       VALUES (7, 'releaseBanNoteHold', 'user', $1, now() - $2::interval)`,
-      [userId, ago]
-    );
-  beforeEach(() => holder.db.exec(`TRUNCATE "ModActivity"`));
 
   it('hides every image of a held account and keeps it, and drains everyone else', async () => {
     await holdSecondaryUser(HELD);
@@ -456,15 +449,13 @@ describe('a held account deleted for good', () => {
     expect(await imagesOf(UNHELD)).toBe(0);
   });
 
-  it('hides and keeps the images of an account banned with a CSAM/NCMEC note', async () => {
+  it('drains an account banned with a CSAM/NCMEC note and no hold, as anyone else', async () => {
     await banNote(HELD, '2 days');
 
     await run();
 
-    expect(await blockedOf(HELD)).toBe(MANY);
-    expect(await imagesOf(HELD)).toBe(MANY);
-    expect(await postsOf(HELD)).toBe(1);
-    expect(await imagesOf(UNHELD)).toBe(0);
+    expect(await imagesOf(HELD)).toBe(0);
+    expect(await postsOf(HELD)).toBe(0);
   });
 
   it('leaves the images of an account an unarchived report names unblocked, until it is archived', async () => {
@@ -493,7 +484,7 @@ describe('a held account deleted for good', () => {
           (entry) => entry.name === 'remove-deleted-user-images' && entry.candidates !== undefined
         )
         .map((entry) => entry.candidates);
-    await banNote(HELD, '2 days');
+    await holdSecondaryUser(HELD);
     vi.mocked(loggingMock.logToAxiom).mockClear();
     await run();
     expect(await blockedOf(HELD)).toBe(MANY);
@@ -504,36 +495,5 @@ describe('a held account deleted for good', () => {
     await run();
 
     expect(candidates()).toEqual([0]);
-  });
-
-  it('hides and keeps the images of a ban-note account with no ban date', async () => {
-    await holder.db.query(`UPDATE "User" SET "bannedAt" = NULL, meta = $2 WHERE id = $1`, [
-      HELD,
-      JSON.stringify({ banDetails: { detailsExternal: 'csam' } }),
-    ]);
-
-    await run();
-
-    expect(await blockedOf(HELD)).toBe(MANY);
-    expect(await imagesOf(HELD)).toBe(MANY);
-  });
-
-  it('drains an account whose ban-note hold a moderator released during this ban', async () => {
-    await banNote(HELD, '2 days');
-    await release(HELD, '1 day');
-
-    await run();
-
-    expect(await imagesOf(HELD)).toBe(0);
-  });
-
-  it('keeps an account released before its current ban', async () => {
-    await banNote(HELD, '1 day');
-    await release(HELD, '2 days');
-
-    await run();
-
-    expect(await blockedOf(HELD)).toBe(MANY);
-    expect(await imagesOf(HELD)).toBe(MANY);
   });
 });

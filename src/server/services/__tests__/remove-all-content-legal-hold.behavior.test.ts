@@ -644,51 +644,18 @@ describe('removeAllContent', () => {
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
-  describe('a ban whose note names CSAM or NCMEC', () => {
-    const banNote = (bannedAgo: string) =>
-      holder.db.query(
-        `INSERT INTO "User" (id, meta, "bannedAt") VALUES ($1, $2, now() - $3::interval)`,
-        [CLEAN, JSON.stringify({ banDetails: { detailsExternal: 'Reported to NCMEC' } }), bannedAgo]
-      );
-    const release = (ago: string) =>
-      holder.db.query(
-        `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
-         VALUES (9, 'releaseBanNoteHold', 'user', $1, now() - $2::interval)`,
-        [CLEAN, ago]
-      );
-    afterEach(() => holder.db.exec(`DELETE FROM "User"; DELETE FROM "ModActivity"`));
-
-    it('refuses the wipe, deleting nothing', async () => {
-      await banNote('1 day');
-      const refused = await removeAllContent({ id: CLEAN }).catch((e: unknown) => e);
-      expect(refused).toBeInstanceOf(LegalHoldError);
-      // Refused before it starts, not stopped partway by the deletes' own re-check.
-      expect(refused).not.toBeInstanceOf(LegalHoldStoppedError);
-      expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
-    });
-
-    it('keeps every piece of evidence when the ban note lands mid-wipe, and says so', async () => {
-      beforeEvidence = () => banNote('1 minute').then(() => undefined);
-      await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-      expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
-    });
-
-    it('wipes once a moderator released the hold during this ban', async () => {
-      await banNote('2 days');
-      await release('1 day');
+  // A ban note alone is not a hold.
+  it('wipes an account banned with a note naming CSAM or NCMEC and no hold', async () => {
+    await holder.db.query(
+      `INSERT INTO "User" (id, meta, "bannedAt") VALUES ($1, $2, now() - interval '1 day')`,
+      [CLEAN, JSON.stringify({ banDetails: { detailsExternal: 'Reported to NCMEC' } })]
+    );
+    try {
       await removeAllContent({ id: CLEAN });
       expect(await remaining(CLEAN)).toEqual(all(0));
-    });
-
-    it('refuses again after a re-ban that postdates the release', async () => {
-      await banNote('1 day');
-      await release('2 days');
-      const refused = await removeAllContent({ id: CLEAN }).catch((e: unknown) => e);
-      expect(refused).toBeInstanceOf(LegalHoldError);
-      // Refused before it starts, not stopped partway by the deletes' own re-check.
-      expect(refused).not.toBeInstanceOf(LegalHoldStoppedError);
-      expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
-    });
+    } finally {
+      await holder.db.exec(`DELETE FROM "User"`);
+    }
   });
 
   it('refuses when the hold cannot be checked', async () => {
@@ -911,23 +878,6 @@ describe('removeAllContent', () => {
     expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
     expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
     expect(docStore.wipeAccount).not.toHaveBeenCalled();
-  });
-
-  it('stops before the App Blocks stores when a CSAM/NCMEC ban note lands after the deletes', async () => {
-    vi.mocked(refundBidsForVersions).mockImplementationOnce(async () => {
-      await holder.db.query(`INSERT INTO "User" (id, meta, "bannedAt") VALUES ($1, $2, now())`, [
-        CLEAN,
-        JSON.stringify({ banDetails: { detailsInternal: 'csam' } }),
-      ]);
-      return { bidsDeleted: [], recurringBidsDeleted: [], refundFailed: [] };
-    });
-    try {
-      await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-      expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
-      expect(docStore.wipeAccount).not.toHaveBeenCalled();
-    } finally {
-      await holder.db.exec(`DELETE FROM "User"`);
-    }
   });
 
   it('stops before the App Blocks stores when the hold cannot be checked after the deletes', async () => {

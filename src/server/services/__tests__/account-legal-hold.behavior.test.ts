@@ -395,7 +395,7 @@ describe('areAccountsUnderLegalHold (one batched lookup)', () => {
   });
 });
 
-describe('content removal: an account hold or an unreleased ban-note hold', () => {
+describe('content removal: the account holds only', () => {
   const banWithNote = (id: number) =>
     holder.db.query(
       `UPDATE "User" SET "bannedAt" = now() - interval '1 day',
@@ -403,29 +403,20 @@ describe('content removal: an account hold or an unreleased ban-note hold', () =
       [id]
     );
 
-  it('holds a ban-note account no account hold covers, and not a clean one', async () => {
-    await holder.db.exec(`DELETE FROM "ModActivity"`);
+  it('does not hold an account banned with a CSAM/NCMEC note and no account hold', async () => {
     await banWithNote(BAN_NOTE);
-    expect(await isAccountUnderLegalHold(BAN_NOTE)).toBe(false);
-    expect(await isContentRemovalHeld(BAN_NOTE)).toBe(true);
-    expect(await isContentRemovalHeld(CLEAN)).toBe(false);
+    expect(await isContentRemovalHeld(BAN_NOTE)).toBe(false);
+    expect(await assertContentRemovalNotHeld(BAN_NOTE)).toEqual({ markerView: false });
     expect(await areContentRemovalsHeld([CLEAN, BAN_NOTE, PENDING_REPORT])).toEqual(
       new Map([
         [CLEAN, false],
-        [BAN_NOTE, true],
+        [BAN_NOTE, false],
         [PENDING_REPORT, true],
       ])
     );
-  });
-
-  it('refuses with a LegalHoldError when only the ban-note read fails', async () => {
-    answer = (text, rows) => {
-      if (text.includes('"banNoteHeld"')) throw new Error('connection reset');
-      return rows;
-    };
-    await expect(assertContentRemovalNotHeld(CLEAN)).rejects.toBeInstanceOf(LegalHoldError);
-    answer = null;
-    expect(await assertContentRemovalNotHeld(CLEAN)).toEqual({ markerView: false });
+    await expect(assertContentRemovalNotHeld(PENDING_REPORT)).rejects.toBeInstanceOf(
+      LegalHoldError
+    );
   });
 
   it('a failed lookup is unknown for one user and held for a batch', async () => {
@@ -574,25 +565,40 @@ describe('deleteUser under a legal hold', () => {
     });
   });
 
-  it('archives the profile of an account named only by a ban note before deleting it', async () => {
-    dbMock.dbWrite.userProfile.findUnique.mockResolvedValueOnce({ bio: 'pay me offsite' } as never);
+  it('deletes an account named only by a ban note without archiving it; a reported one is archived', async () => {
+    dbMock.dbWrite.userProfile.findUnique.mockResolvedValue({ bio: 'pay me offsite' } as never);
     dbMock.dbWrite.userLink.findMany.mockResolvedValue([] as never);
     await holder.db.query(
       `UPDATE "User" SET "bannedAt" = now(),
          meta = '{"banDetails": {"detailsExternal": "CSAM"}}' WHERE id = $1`,
       [BAN_NOTE]
     );
-    const archived = vi.fn(async () => ({}));
-    const notArchived = vi.fn(async () => ({}));
+    const banNoteArchive = vi.fn(async () => ({}));
+    const reportedArchive = vi.fn(async () => ({}));
 
-    await deleteUser({ id: BAN_NOTE, username: 'someone', actorId: BAN_NOTE, archive: archived });
-    await deleteUser({ id: CLEAN, username: 'someone', actorId: CLEAN, archive: notArchived });
+    try {
+      await deleteUser({
+        id: BAN_NOTE,
+        username: 'someone',
+        actorId: BAN_NOTE,
+        archive: banNoteArchive,
+      });
+      // The control: a report naming the account, past its hold, still archives it first.
+      await deleteUser({
+        id: SENT_OVER_A_YEAR_AGO,
+        username: 'someone',
+        actorId: SENT_OVER_A_YEAR_AGO,
+        archive: reportedArchive,
+      });
+    } finally {
+      dbMock.dbWrite.userProfile.findUnique.mockReset();
+    }
 
-    expect(archived).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: BAN_NOTE, profile: { bio: 'pay me offsite' } })
-    );
-    expect(notArchived).not.toHaveBeenCalled();
+    expect(banNoteArchive).not.toHaveBeenCalled();
     expect((await userRow(BAN_NOTE)).deletedAt).not.toBeNull();
+    expect(reportedArchive).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: SENT_OVER_A_YEAR_AGO })
+    );
   });
 
   // PGlite runs one connection, so these land the hold strictly between the check and the scrub;
