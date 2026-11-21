@@ -61,7 +61,13 @@ const { syncSearchIndexBulk } = await import('../search-index');
 const { imageDeleteHoldLegs } = await import('../delete-hold-sql');
 
 const SCHEMA = `
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "profilePictureId" INTEGER, "image" TEXT);
+CREATE TABLE "User" (
+  "id" INTEGER PRIMARY KEY, "profilePictureId" INTEGER, "image" TEXT, "meta" JSONB,
+  "bannedAt" TIMESTAMP(3)
+);
+CREATE TABLE "ModActivity" (
+  "entityType" TEXT, "entityId" INTEGER, "activity" TEXT, "createdAt" TIMESTAMP(3)
+);
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "url" TEXT,
@@ -291,6 +297,16 @@ describe('deleteImages', () => {
     it('refuses an image whose owner is named on an unsent report', async () => {
       await image(2);
       await report({ userId: OWNER });
+      await expectRefused(2, 'account');
+    });
+
+    it('refuses an image whose owner is banned with a note naming CSAM', async () => {
+      await image(2);
+      await db.query(
+        `INSERT INTO "User" (id, meta, "bannedAt") VALUES ($1, $2, now())
+         ON CONFLICT (id) DO UPDATE SET meta = EXCLUDED.meta, "bannedAt" = EXCLUDED."bannedAt"`,
+        [OWNER, JSON.stringify({ banDetails: { detailsExternal: 'NCMEC' } })]
+      );
       await expectRefused(2, 'account');
     });
 

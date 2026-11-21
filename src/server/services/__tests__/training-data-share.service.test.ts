@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const ownerHeld = vi.hoisted(() => vi.fn());
-vi.mock('~/server/services/legal-hold.service', () => ({ ownerHeld, ownerHeldSql: () => '' }));
+vi.mock('~/server/services/legal-hold.service', () => ({
+  ownerHeld,
+  ownerHeldSql: () => '',
+  ownerAccountHeldSql: () => '',
+}));
 const deleteFilesForModelVersionCache = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/model-file.service', () => ({ deleteFilesForModelVersionCache }));
 

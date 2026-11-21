@@ -38,6 +38,7 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 import { resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
 import { auditPostImageMeta } from '~/utils/metadata/audit';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite, tagLevel: 1 }));
 
@@ -92,6 +93,7 @@ beforeAll(async () => {
       status "AppealStatus" NOT NULL DEFAULT 'Pending'
     );
   `);
+  await holder.db.exec(BAN_NOTE_HOLD_TABLES_SQL);
 });
 
 beforeEach(async () => {

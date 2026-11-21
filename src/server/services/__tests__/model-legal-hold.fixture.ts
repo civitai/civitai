@@ -5,6 +5,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 /**
  * A Postgres stand-in for the model content a hold keeps: three owners, one not held, one named on
@@ -116,6 +117,7 @@ export async function createModelHoldDb() {
   await db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
   await db.exec(readFileSync(OWNERSHIP_MIGRATION, 'utf8'));
   await db.exec(heldCopiesSchemaSql());
+  await db.exec(BAN_NOTE_HOLD_TABLES_SQL);
   return db;
 }
 
@@ -130,6 +132,7 @@ export async function seedModelHoldDb(db: PGlite) {
     TRUNCATE "CsamReport", "Image", "Model", "EntityAccess", "PaidAccess", "EvidenceHold",
       "EvidenceHoldImage", "EvidenceHoldPost", "Thread", "ModelOwnership", "HeldResourceReview" CASCADE;
     SET session_replication_role = DEFAULT;
+    DELETE FROM "User";
     INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED}, 'manual', 'review');
     INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED});
     INSERT INTO "Model" SELECT o * 10, o FROM unnest(ARRAY[${OWNERS}]) o;
@@ -141,6 +144,13 @@ export async function seedModelHoldDb(db: PGlite) {
     INSERT INTO "PaidAccess" SELECT 'ModelVersion', id FROM "ModelVersion";
   `);
 }
+
+/** Bans `user` with a note naming CSAM: the ban-note hold, and no account hold. */
+export const banWithCsamNote = (db: PGlite, user: number) =>
+  db.query(`INSERT INTO "User" (id, meta, "bannedAt") VALUES ($1, $2, now() - interval '1 day')`, [
+    user,
+    JSON.stringify({ banDetails: { detailsInternal: 'csam' } }),
+  ]);
 
 /** Puts `owner` on a pending report: a hold that lands after whatever read came before. */
 export const holdOwner = (db: PGlite, owner: number) =>

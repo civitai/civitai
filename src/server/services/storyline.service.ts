@@ -39,10 +39,11 @@ import type { StorylineModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { placementMoneyInFlightSql } from '~/server/services/placement-escrow.service';
 import {
-  accountHoldSql,
+  contentRemovalHeldSql,
   holdMarkerViewExists,
   ownerHeldSql,
 } from '~/server/services/legal-hold.service';
+import { banNoteHoldSql } from '~/server/services/ban-note-csam';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { placementPriceRanges } from '~/server/services/placement.service';
@@ -1224,12 +1225,21 @@ function deleteStorylineStatement(
           WHERE c."storylineId" = ${id} AND ${ownerHeldSql(Prisma.raw('c."userId"'))}
         ) AS author_held,
         EXISTS (
-          SELECT 1 FROM pending p WHERE ${accountHoldSql(Prisma.raw('p."userId"'), markerView)}
+          SELECT 1 FROM pending p
+          WHERE ${contentRemovalHeldSql(Prisma.raw('p."userId"'), markerView)}
         ) AS pending_author_held,
         EXISTS (
           SELECT 1 FROM "StorylineChapter" c
           WHERE c."storylineId" = ${id} AND c."removedAt" IS NOT NULL
-        ) AS tombstoned
+        ) AS tombstoned,
+        (
+          ${banNoteHoldSql(owner)}
+          OR EXISTS (
+            SELECT 1 FROM "StorylineChapter" c
+            WHERE c."storylineId" = ${id} AND ${banNoteHoldSql(Prisma.raw('c."userId"'))}
+          )
+          OR EXISTS (SELECT 1 FROM pending p WHERE ${banNoteHoldSql(Prisma.raw('p."userId"'))})
+        ) AS ban_note
     ),
     keep AS MATERIALIZED (
       SELECT (
@@ -1240,7 +1250,8 @@ function deleteStorylineStatement(
           CASE WHEN owner_held THEN 'owner' END,
           CASE WHEN author_held THEN 'chapter-author' END,
           CASE WHEN pending_author_held THEN 'pending-author' END,
-          CASE WHEN tombstoned THEN 'tombstone' END
+          CASE WHEN tombstoned THEN 'tombstone' END,
+          CASE WHEN ban_note THEN 'ban-note' END
         ], NULL) AS reasons
       FROM facts
     ),
@@ -1344,7 +1355,7 @@ export async function deleteStoryline({
   userId: number;
   isModerator?: boolean;
 }) {
-  // Read outside the transaction: what `accountHoldSql` needs.
+  // Read outside the transaction: what `contentRemovalHeldSql` needs.
   const markerView = await holdMarkerViewExists();
   let spark: { actorId: number; imageId: number | null } | undefined;
   await dbWrite.$transaction(async (tx) => {

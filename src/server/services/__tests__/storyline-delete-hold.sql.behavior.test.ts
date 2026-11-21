@@ -4,6 +4,7 @@ import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 const { trackModActivity } = vi.hoisted(() => ({ trackModActivity: vi.fn() }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
@@ -119,6 +120,7 @@ beforeAll(async () => {
   `);
   // After "Image", which its foreign key needs.
   await db.pg.exec(migration('20261220120000_storyline_spark_image'));
+  await db.pg.exec(BAN_NOTE_HOLD_TABLES_SQL);
 });
 
 afterAll(async () => {
@@ -310,6 +312,19 @@ describe('deleteStoryline under a real account hold', () => {
     await deleteStoryline({ id: 1, userId: OWNER });
     expect((await heldCopy()).chapters).toHaveLength(2);
     expect((await heldCopy()).storyline).toMatchObject([{ holdReasons: ['chapter-author'] }]);
+  });
+
+  it("copies everything when only a chapter's author is banned with a CSAM note, and says so", async () => {
+    await db.pg.exec(`UPDATE "User" SET "bannedAt" = now(),
+      meta = '{"banDetails": {"detailsExternal": "NCMEC"}}' WHERE id = ${CONTRIBUTOR}`);
+    try {
+      await deleteStoryline({ id: 1, userId: OWNER });
+      expect(await heldCopy()).toEqual(fullCopy(['chapter-author', 'ban-note']));
+    } finally {
+      await db.pg.exec(
+        `UPDATE "User" SET "bannedAt" = NULL, meta = NULL WHERE id = ${CONTRIBUTOR}`
+      );
+    }
   });
 
   it("copies everything when a chapter is a moderator's tombstone", async () => {

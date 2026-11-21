@@ -58,6 +58,7 @@ import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { ModerationRuleAction } from '~/shared/utils/prisma/enums';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 const holder = vi.hoisted(() => ({
   db: null as unknown as PGlite,
@@ -118,6 +119,7 @@ beforeAll(async () => {
       "archivedAt" timestamp(3)
     );
   `);
+  await holder.db.exec(BAN_NOTE_HOLD_TABLES_SQL);
 });
 
 const runOnPglite = async (strings: TemplateStringsArray, values: unknown[]) => {

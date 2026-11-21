@@ -103,6 +103,7 @@ import {
   includesPoi,
 } from '~/utils/metadata/audit';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 const ID = 7;
 const names = holder.names;
@@ -140,6 +141,7 @@ beforeAll(async () => {
       "scanJobs" jsonb
     );
   `);
+  await holder.db.exec(BAN_NOTE_HOLD_TABLES_SQL);
 });
 
 beforeEach(async () => {

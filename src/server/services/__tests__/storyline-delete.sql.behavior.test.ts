@@ -4,6 +4,7 @@ import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 const sparkHooks = vi.hoisted(() => ({
   onStorySparked: vi.fn<(id: number) => Promise<void>>(async () => undefined),
   onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
@@ -141,6 +142,7 @@ beforeAll(async () => {
   `);
   // After "Image", which its foreign key needs.
   await db.pg.exec(migration('20261220120000_storyline_spark_image'));
+  await db.pg.exec(BAN_NOTE_HOLD_TABLES_SQL);
 });
 
 afterAll(async () => {

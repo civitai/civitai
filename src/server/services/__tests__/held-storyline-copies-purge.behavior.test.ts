@@ -8,6 +8,7 @@ import {
 } from '~/server/services/__tests__/held-copies.fixture';
 import { purgeReleasedHeldCopies } from '~/server/services/held-review.service';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 /**
  * The daily purge of storyline chapter copies, which a chapter removal keeps while its owner or
@@ -44,6 +45,7 @@ beforeAll(async () => {
   `);
   await db.exec(heldCopiesSchemaSql());
   await db.exec(heldStorylineCopiesSchemaSql());
+  await db.exec(BAN_NOTE_HOLD_TABLES_SQL);
 });
 
 afterAll(async () => {
@@ -120,6 +122,26 @@ describe('purging held storyline chapter copies', () => {
     // 11, 12 and 16: owner or author held. 13: the report was sent under a year ago. Their
     // readers' rows stay with them, though the reader's account is gone.
     expect(await left()).toEqual(everywhere([11, 12, 13, 16]));
+  });
+
+  it('keeps a copy whose author is banned with a CSAM note until that hold ends', async () => {
+    const BAN_NOTE = 7;
+    await db.exec(`
+      DELETE FROM "User" WHERE id = ${BAN_NOTE};
+      INSERT INTO "User" (id, meta, "bannedAt") VALUES
+        (${BAN_NOTE}, '{"banDetails": {"detailsInternal": "csam"}}', now() - interval '1 day');
+      INSERT INTO "HeldStorylineChapter" (id, "storylineId", "userId", depth, "createdAt",
+        "ownerId", "authorId") VALUES (17, 1, ${BAN_NOTE}, 1, now(), ${FREE}, ${BAN_NOTE});
+    `);
+    try {
+      await purgeReleasedHeldCopies();
+      expect((await left()).chapters).toContain(17);
+      await db.exec(`UPDATE "User" SET meta = '{}' WHERE id = ${BAN_NOTE}`);
+      await purgeReleasedHeldCopies();
+      expect((await left()).chapters).not.toContain(17);
+    } finally {
+      await db.exec(`DELETE FROM "User" WHERE id = ${BAN_NOTE}`);
+    }
   });
 
   it('releases the rest as their holds end', async () => {

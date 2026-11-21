@@ -21,7 +21,7 @@ vi.mock('~/server/services/blocked-image-hash', async (importOriginal) => ({
 
 const findMany = dbMock.dbRead.image.findMany;
 const { getMyImages } = await import('~/server/services/image.service');
-const { ownerHeldSql } = await import('~/server/services/legal-hold.service');
+const { ownerAccountHeldSql } = await import('~/server/services/legal-hold.service');
 
 const whereOf = () => findMany.mock.calls[0][0].where;
 
@@ -187,7 +187,9 @@ describe('getMyImages — entry drafts whose scan failed', () => {
     expect(statement.sql).toMatch(/FROM \(SELECT \?::int AS "userId"\) m$/);
     expect(statement.sql).toContain('m."userId"');
     // The full owner-hold condition, not a weaker one.
-    expect(statement.sql).toContain(ownerHeldSql(Prisma.raw('m."userId"')).sql);
+    expect(statement.sql).toContain(ownerAccountHeldSql(Prisma.raw('m."userId"')).sql);
+    // Not the ban-note leg: owners always see their own media.
+    expect(statement.sql).not.toContain('"ModActivity"');
     expect(statement.values.filter((value) => value === 42)).toEqual([42]);
     for (const [args] of findMany.mock.calls) expect(args.where.userId).toBe(42);
   });

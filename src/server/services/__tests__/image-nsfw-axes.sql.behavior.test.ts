@@ -54,6 +54,7 @@ import {
 } from '../image-nsfw-axes';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 const migration = readFileSync(
   join(
@@ -99,6 +100,7 @@ beforeAll(async () => {
     );
   `);
   await holder.db.exec(migration);
+  await holder.db.exec(BAN_NOTE_HOLD_TABLES_SQL);
 });
 
 beforeEach(async () => {

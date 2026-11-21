@@ -158,6 +158,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
 import { deleteImages } from '~/server/services/image.service';
 import { userModelCountCache } from '~/server/redis/caches';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
@@ -540,6 +541,7 @@ describe('permaDeleteModelById — legal hold', () => {
       INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED_OWNER});
       INSERT INTO "Image" (id, "userId", "needsReview") VALUES (9001, ${REVIEW_OWNER}, 'csam');
     `);
+    await db.exec(BAN_NOTE_HOLD_TABLES_SQL);
   });
   afterAll(() => db.close());
 

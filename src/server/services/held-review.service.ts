@@ -1,8 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import {
-  accountHoldReasonsSql,
-  accountHoldSql,
+  contentRemovalHeldSql,
+  contentRemovalHoldReasonsSql,
   holdMarkerViewExists,
 } from '~/server/services/legal-hold.service';
 import { ReportStatus } from '~/shared/utils/prisma/enums';
@@ -24,9 +24,9 @@ export function keepHeldReviewsCte(reviews: Prisma.Sql, markerView: boolean): Pr
     )
     SELECT r.id, r."modelId", r."modelVersionId", r."userId", r.rating, r.recommended, r.details,
       r.exclude, r.nsfw, r."tosViolation", r.metadata, r."createdAt", r."updatedAt",
-      ${accountHoldReasonsSql(author, markerView)}
+      ${contentRemovalHoldReasonsSql(author, markerView)}
     FROM "ResourceReview" r
-    WHERE r.id IN (${reviews}) AND ${accountHoldSql(author, markerView)}
+    WHERE r.id IN (${reviews}) AND ${contentRemovalHeldSql(author, markerView)}
     ON CONFLICT (id) DO NOTHING
   )`;
 }
@@ -38,7 +38,10 @@ export function keepHeldReviewsCte(reviews: Prisma.Sql, markerView: boolean): Pr
 export const heldEntryOnBountySql = (bountyId: Prisma.Sql, markerView: boolean) =>
   Prisma.sql`EXISTS (
     SELECT 1 FROM "BountyEntry" he
-    WHERE he."bountyId" = ${bountyId} AND ${accountHoldSql(Prisma.raw('he."userId"'), markerView)}
+    WHERE he."bountyId" = ${bountyId} AND ${contentRemovalHeldSql(
+    Prisma.raw('he."userId"'),
+    markerView
+  )}
   )`;
 
 /** The reviews on the models `models` selects, or on their versions: the two can disagree. */
@@ -54,19 +57,19 @@ export const reviewsOnVersionsSql = (versions: Prisma.Sql) =>
 /**
  * A storyline chapter copy is kept while either user it records is held. The reader on a branch
  * choice or create click never releases one, even once their account is gone. The placeholder owner
- * is not held here (accountHoldSql excludes it), so copies owned by it release with their other
+ * is not held here (contentRemovalHeldSql excludes it), so copies owned by it release with their other
  * holds. A copy of a deleted storyline's chapter goes only with that storyline's copy (below).
  */
 const storylineCopyReleasedSql = (markerView: boolean) =>
-  Prisma.sql`NOT ${accountHoldSql(Prisma.raw('h."ownerId"'), markerView)}
-    AND NOT ${accountHoldSql(Prisma.raw('h."authorId"'), markerView)}`;
+  Prisma.sql`NOT ${contentRemovalHeldSql(Prisma.raw('h."ownerId"'), markerView)}
+    AND NOT ${contentRemovalHeldSql(Prisma.raw('h."authorId"'), markerView)}`;
 
 /**
  * A deleted storyline's copy (`deleteStoryline`) is released once it is a year old, its owner, every
  * chapter author and draft author is unheld, read now, and no report on it is open.
  */
 const heldStorylineReleasedSql = (markerView: boolean) => {
-  const held = (id: string) => accountHoldSql(Prisma.raw(id), markerView);
+  const held = (id: string) => contentRemovalHeldSql(Prisma.raw(id), markerView);
   return Prisma.sql`hs."deletedAt" < now() - interval '1 year'
     AND NOT ${held('hs."userId"')}
     AND NOT EXISTS (
@@ -90,7 +93,7 @@ const heldStorylineReleasedSql = (markerView: boolean) => {
 /** Drops the copies whose users are no longer held. Returns how many went. */
 export async function purgeReleasedHeldCopies() {
   const markerView = await holdMarkerViewExists();
-  const released = accountHoldSql(Prisma.raw('h."userId"'), markerView);
+  const released = contentRemovalHeldSql(Prisma.raw('h."userId"'), markerView);
   const reviews = await dbWrite.$executeRaw`
     DELETE FROM "HeldResourceReview" h WHERE NOT ${released}`;
   // One statement, so a hold placed meanwhile cannot leave a chapter's copy without its edges, or a

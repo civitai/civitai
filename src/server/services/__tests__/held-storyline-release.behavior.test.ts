@@ -7,6 +7,7 @@ import {
   heldStorylineCopiesSchemaSql,
 } from '~/server/services/__tests__/held-copies.fixture';
 import { purgeReleasedHeldCopies } from '~/server/services/held-review.service';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 /**
  * The daily purge of a deleted storyline's copy (`deleteStoryline`): kept for a year after the
@@ -43,6 +44,7 @@ beforeAll(async () => {
   `);
   await db.exec(heldCopiesSchemaSql());
   await db.exec(heldStorylineCopiesSchemaSql());
+  await db.exec(BAN_NOTE_HOLD_TABLES_SQL);
 });
 
 afterAll(async () => {
@@ -112,6 +114,23 @@ describe('purgeReleasedHeldCopies on a deleted storyline', () => {
       await purgeReleasedHeldCopies();
       expect(await left()).toEqual(none);
     });
+
+  it('keeps it all while a chapter author is banned with a CSAM note, and releases it after', async () => {
+    await db.exec(`
+      DELETE FROM "User" WHERE id = ${AUTHOR};
+      INSERT INTO "User" (id, meta, "bannedAt") VALUES
+        (${AUTHOR}, '{"banDetails": {"detailsInternal": "csam"}}', now() - interval '1 day');
+    `);
+    try {
+      await purgeReleasedHeldCopies();
+      expect(await left()).toEqual(all);
+      await db.exec(`UPDATE "User" SET meta = '{}' WHERE id = ${AUTHOR}`);
+      await purgeReleasedHeldCopies();
+      expect(await left()).toEqual(none);
+    } finally {
+      await db.exec(`DELETE FROM "User" WHERE id = ${AUTHOR}`);
+    }
+  });
 
   it('releases it while a commenter is held', async () => {
     await hold(COMMENTER);

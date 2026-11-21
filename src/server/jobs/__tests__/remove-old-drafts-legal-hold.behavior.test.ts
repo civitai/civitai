@@ -23,6 +23,7 @@ import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 const HOLD_MIGRATION = path.resolve(
   __dirname,
@@ -41,6 +42,7 @@ const REVIEW_OWNER = 4; // an image awaiting CSAM review: the account hold's ima
 const FREE_OWNER = 2;
 const GIVEN_BY_MARKED_OWNER = 5; // unheld; owns a model MARKED_OWNER had before
 const GIVEN_BY_FREE_OWNER = 6; // unheld; owns a model FREE_OWNER had before
+const BAN_NOTE_OWNER = 7; // no account hold; banned with a note naming CSAM
 const MODELS = [
   { id: 10, userId: MARKED_OWNER, versionId: 100 },
   { id: 30, userId: REPORTED_OWNER, versionId: 300 },
@@ -49,10 +51,11 @@ const MODELS = [
   { id: 20, userId: FREE_OWNER, versionId: 200 },
   { id: 60, userId: GIVEN_BY_MARKED_OWNER, versionId: 600 },
   { id: 70, userId: GIVEN_BY_FREE_OWNER, versionId: 700 },
+  { id: 80, userId: BAN_NOTE_OWNER, versionId: 800 },
 ];
 const FREE_MODELS = [20, 70];
 const FREE_VERSIONS = [200, 700];
-const KEPT_MODELS = [10, 30, 40, 50, 60];
+const KEPT_MODELS = [10, 30, 40, 50, 60, 80];
 
 let db: PGlite;
 
@@ -116,6 +119,9 @@ beforeAll(async () => {
     INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED_OWNER});
     INSERT INTO "Image" (id, "userId", "needsReview") VALUES (9001, ${REVIEW_OWNER}, 'csam');
   `);
+  await db.exec(BAN_NOTE_HOLD_TABLES_SQL);
+  await db.exec(`INSERT INTO "User" (id, meta, "bannedAt") VALUES
+    (${BAN_NOTE_OWNER}, '{"banDetails": {"detailsInternal": "csam"}}', now() - interval '1 day')`);
 });
 afterAll(() => db.close());
 
@@ -210,6 +216,7 @@ describe("remove-old-drafts and a held author's review of a free owner's model",
         (${REVIEWED_MODEL}0, ${REVIEWED_MODEL}, now() - interval '200 days', now() - interval '200 days');
       INSERT INTO "ResourceReview" ("userId", "modelId", "modelVersionId", details) VALUES
         (${MARKED_OWNER}, ${REVIEWED_MODEL}, ${REVIEWED_MODEL}0, 'held'),
+        (${BAN_NOTE_OWNER}, ${REVIEWED_MODEL}, ${REVIEWED_MODEL}0, 'ban note'),
         (${FREE_OWNER}, ${REVIEWED_MODEL}, ${REVIEWED_MODEL}0, 'free');
     `);
     dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: REVIEWED_MODEL, userId: FREE_OWNER }]);
@@ -224,7 +231,7 @@ describe("remove-old-drafts and a held author's review of a free owner's model",
     );
     expect(reviews.rows).toEqual([]);
     const copies = await db.query(
-      `SELECT "userId", "modelId", details, "holdReasons" FROM "HeldResourceReview"`
+      `SELECT "userId", "modelId", details, "holdReasons" FROM "HeldResourceReview" ORDER BY "userId"`
     );
     expect(copies.rows).toEqual([
       {
@@ -232,6 +239,12 @@ describe("remove-old-drafts and a held author's review of a free owner's model",
         modelId: REVIEWED_MODEL,
         details: 'held',
         holdReasons: ['hold-marker'],
+      },
+      {
+        userId: BAN_NOTE_OWNER,
+        modelId: REVIEWED_MODEL,
+        details: 'ban note',
+        holdReasons: ['ban-note'],
       },
     ]);
   });

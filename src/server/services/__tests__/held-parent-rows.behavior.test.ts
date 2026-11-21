@@ -49,6 +49,7 @@ import { deleteArticleById } from '~/server/services/article.service';
 import { toggleReview } from '~/server/services/user.service';
 import { toggleReactionHandler } from '~/server/controllers/reaction.controller';
 import { createReportHandler } from '~/server/controllers/report.controller';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 const unpaidAwardMigration = readFileSync(
   path.join(
@@ -77,6 +78,7 @@ const OWNER = 1;
 const HELD = 2; // named on a pending report
 const OTHER = 3;
 const MARKED = 4; // held only by a hold marker
+const BAN_NOTE = 5; // held only by a ban note naming CSAM
 const MODERATOR = 9;
 
 let db: PGlite;
@@ -177,6 +179,7 @@ beforeAll(async () => {
     "createdAt" timestamp(3) NOT NULL DEFAULT now()
   )`);
   await db.exec(postTextMigration);
+  await db.exec(BAN_NOTE_HOLD_TABLES_SQL);
 });
 afterAll(() => db.close());
 
@@ -188,6 +191,9 @@ beforeEach(async () => {
       "HeldResourceReview", "BountyBenefactor", "ModActivity", "BountyUnpaidAward", "JobQueue";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
+    DELETE FROM "User" WHERE id = ${BAN_NOTE};
+    INSERT INTO "User" (id, meta, "bannedAt") VALUES
+      (${BAN_NOTE}, '{"banDetails": {"detailsInternal": "csam"}}', now() - interval '1 day');
   `);
   const viaStandIn = (async (first: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) =>
     (await run(asSql(first, values))).rows) as never;
@@ -263,6 +269,7 @@ describe("a held author's rows under a deleted parent", () => {
   it.each([
     ['named on a report', HELD],
     ['held by the marker', MARKED],
+    ['banned with a CSAM note', BAN_NOTE],
   ])(
     'keeps, hidden and out of search, a deleted bounty an author %s entered, with the entry',
     async (_, entrant) => {
@@ -338,6 +345,23 @@ describe("a held author's rows under a deleted parent", () => {
       expect(await rows(`SELECT id FROM "Bounty"`)).toEqual([]);
     }
   );
+
+  it("keeps a ban-noted author's copies and kept bounty until the ban-note hold ends", async () => {
+    await seedEnteredBounty(BAN_NOTE);
+    await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
+    await db.exec(`
+      INSERT INTO "HeldResourceReview" (id, "modelId", "modelVersionId", "userId", rating,
+        recommended, exclude, nsfw, "tosViolation", "createdAt", "updatedAt")
+        VALUES (${BAN_NOTE}, 1, 1, ${BAN_NOTE}, 5, true, false, false, false, now(), now());
+    `);
+
+    expect(await deleteSettledKeptBounties()).toBe(0);
+    expect(await purgeReleasedHeldCopies()).toMatchObject({ reviews: 0 });
+
+    await db.exec(`UPDATE "User" SET meta = '{}' WHERE id = ${BAN_NOTE}`);
+    expect(await deleteSettledKeptBounties()).toBe(1);
+    expect(await purgeReleasedHeldCopies()).toMatchObject({ reviews: 1 });
+  });
 
   it('deletes a bounty only an unheld user entered, with the entry (control)', async () => {
     await seedEnteredBounty(OTHER);

@@ -59,11 +59,27 @@ const accountHold = (id: string) =>
     `EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${id})`,
   ].join(' OR ')})`;
 
+// The main app's `banNoteHoldSql`: banned with a note naming CSAM or NCMEC that no moderator has
+// released during the current ban.
+const banNoteHold = (
+  id: string
+) => `EXISTS (SELECT 1 FROM "User" bnu WHERE bnu.id = ${id} AND (concat_ws(' ',
+  bnu.meta -> 'banDetails' ->> 'detailsInternal',
+  bnu.meta -> 'banDetails' ->> 'detailsExternal') ~* '(csam|ncmec)'
+    AND NOT EXISTS (
+      SELECT 1 FROM "ModActivity" bnr
+      WHERE bnr.activity = 'releaseBanNoteHold'
+        AND bnr."entityType" = 'user'
+        AND bnr."entityId" = bnu.id
+        AND bnr."createdAt" >= bnu."bannedAt"
+    )))`;
+
 /**
  * Whether the owner `id` (an int SQL expression) is held: the main app's `ownerHeldSql`, which the
  * blocked-image purge puts on its delete. Kept identical by `moderator-delete-hold-parity.test.ts`.
  */
-export const ownerHeldSqlText = (id: string) => `(${userUnderLegalHold(id)} OR ${accountHold(id)})`;
+export const ownerHeldSqlText = (id: string) =>
+  `((${userUnderLegalHold(id)} OR ${accountHold(id)}) OR ${banNoteHold(id)})`;
 
 /**
  * Each reason the image row `image` (an unaliased table name or alias) may not be deleted. The owner

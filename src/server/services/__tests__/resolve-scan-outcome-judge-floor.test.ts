@@ -51,6 +51,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { legacyJudgeRatingSeedSql } from '~/server/common/judge-rating';
 import { auditPostImageMeta } from '~/utils/metadata/audit';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 /**
  * A collection judge's rating (`metadata.judgeRating`) is a floor under the scan's level. The
@@ -113,6 +114,7 @@ beforeAll(async () => {
       PRIMARY KEY ("entityType", "entityId", type)
     );
   `);
+  await db.exec(BAN_NOTE_HOLD_TABLES_SQL);
 });
 afterAll(() => db.close());
 

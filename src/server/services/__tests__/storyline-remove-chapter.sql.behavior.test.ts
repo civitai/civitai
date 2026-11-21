@@ -4,6 +4,7 @@ import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 const { trackModActivity, bustFetchThroughCache } = vi.hoisted(() => ({
   trackModActivity: vi.fn(),
@@ -134,6 +135,7 @@ beforeAll(async () => {
       FOREIGN KEY ("entityId", "entityType") REFERENCES "CommentTopic" ("entityId", "entityType")
         ON DELETE CASCADE);
   `);
+  await db.pg.exec(BAN_NOTE_HOLD_TABLES_SQL);
 });
 
 afterAll(async () => {

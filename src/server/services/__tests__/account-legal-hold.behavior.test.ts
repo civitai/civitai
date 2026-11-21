@@ -28,13 +28,17 @@ import {
   areAccountsUnderLegalHold,
   areContentRemovalsHeld,
   assertContentRemovalNotHeld,
+  contentRemovalHoldReasonsSql,
   getAccountLegalHoldLegs,
   guardedAccountScrubSql,
   isAccountUnderLegalHold,
   isContentRemovalHeld,
   isLegalHoldAbort,
   LegalHoldError,
+  ownerAccountHeldSql,
+  ownerHeldSql,
 } from '~/server/services/legal-hold.service';
+import { trainingDataOwnerRestrictedSql } from '~/server/services/training-data-restricted.service';
 import { modelsSearchIndex } from '~/server/search-index';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { deleteUser } from '~/server/services/user.service';
@@ -416,6 +420,25 @@ describe('content removal: an account hold or an unreleased ban-note hold', () =
         [PENDING_REPORT, true],
       ])
     );
+  });
+
+  it("keeps a ban-note owner's content, and records why, but does not hide it", async () => {
+    await holder.db.exec(`DELETE FROM "ModActivity"`);
+    await banWithNote(BAN_NOTE);
+    await createMarkerView();
+    const value = async (sql: Prisma.Sql) => {
+      const statement = Prisma.sql`SELECT ${sql} AS v`;
+      return (await holder.db.query<{ v: unknown }>(statement.text, statement.values)).rows[0].v;
+    };
+    const id = (n: number) => Prisma.sql`${n}::int`;
+
+    // Every delete: the default owner hold.
+    expect(await value(ownerHeldSql(id(BAN_NOTE)))).toBe(true);
+    expect(await value(ownerHeldSql(id(CLEAN)))).toBe(false);
+    expect(await value(contentRemovalHoldReasonsSql(id(BAN_NOTE), true))).toEqual(['ban-note']);
+    // What is shown: a ban without media removal leaves content up, and owners see their own.
+    expect(await value(ownerAccountHeldSql(id(BAN_NOTE)))).toBe(false);
+    expect(await value(trainingDataOwnerRestrictedSql(id(BAN_NOTE)))).toBe(false);
   });
 
   it('refuses with a LegalHoldError when only the ban-note read fails', async () => {

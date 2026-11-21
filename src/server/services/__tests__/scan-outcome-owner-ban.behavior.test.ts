@@ -52,6 +52,7 @@ import { getImagesModRules } from '~/server/services/image.service';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { ModerationRuleAction } from '~/shared/utils/prisma/enums';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 const holder = vi.hoisted(() => ({
   db: null as unknown as PGlite,
@@ -65,6 +66,7 @@ const BANNED = 7;
 const ACTIVE = 8;
 const HELD = 12;
 const REPORTED = 13;
+const BAN_NOTE = 14; // a CSAM ban note with no ban date, and no account hold
 const CAPTURE = FEEDBACK_CAPTURE_OWNER_ID;
 
 beforeAll(async () => {
@@ -99,6 +101,7 @@ beforeAll(async () => {
       "archivedAt" timestamp(3)
     );
   `);
+  await holder.db.exec(BAN_NOTE_HOLD_TABLES_SQL);
 });
 
 const runOnPglite = async (strings: TemplateStringsArray, values: unknown[]) => {
@@ -144,6 +147,7 @@ beforeEach(async () => {
     INSERT INTO "User" (id, "bannedAt")
       VALUES (${BANNED}, now()), (${ACTIVE}, NULL), (${HELD}, NULL), (${REPORTED}, NULL),
         (${CAPTURE}, NULL);
+    INSERT INTO "User" (id, meta) VALUES (${BAN_NOTE}, '{"banDetails": {"detailsInternal": "csam"}}');
     INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${HELD});
     INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED});
   `);
@@ -271,6 +275,7 @@ describe("a clean scan landing on a held owner's or a kept blocked image", () =>
   it.each([
     ['its owner is under a hold marker', HELD],
     ['a holding report names its owner', REPORTED],
+    ['its owner has a CSAM ban note and no ban date', BAN_NOTE],
   ] as const)('keeps the image blocked when %s', async (_, owner) => {
     await insertImage(20, owner, 'Blocked', 'moderated');
 

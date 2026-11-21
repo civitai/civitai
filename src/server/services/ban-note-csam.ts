@@ -18,7 +18,7 @@ export const banNoteHeldUserSql = (u: string) => {
   return Prisma.sql`(${banNoteNamesCsamSql(Prisma.sql`${row}.meta`)}
     AND NOT EXISTS (
       SELECT 1 FROM "ModActivity" bnr
-      WHERE bnr.activity = ${BAN_NOTE_HOLD_RELEASE_ACTIVITY}
+      WHERE bnr.activity = ${Prisma.raw(`'${BAN_NOTE_HOLD_RELEASE_ACTIVITY}'`)}
         AND bnr."entityType" = 'user'
         AND bnr."entityId" = ${row}.id
         AND bnr."createdAt" >= ${row}."bannedAt"

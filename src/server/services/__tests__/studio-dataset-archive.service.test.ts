@@ -45,7 +45,11 @@ vi.mock('~/server/services/orchestrator/client', () => ({
 const getWorkflow = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/orchestrator/workflows', () => ({ getWorkflow }));
 const ownerHeld = vi.hoisted(() => vi.fn());
-vi.mock('~/server/services/legal-hold.service', () => ({ ownerHeld, ownerHeldSql: () => '' }));
+vi.mock('~/server/services/legal-hold.service', () => ({
+  ownerHeld,
+  ownerHeldSql: () => '',
+  ownerAccountHeldSql: () => '',
+}));
 const submitTrainingDataScanSafe = vi.hoisted(() => vi.fn(async () => true));
 vi.mock('~/server/services/training-data-scan.service', () => ({ submitTrainingDataScanSafe }));
 vi.mock('~/server/services/model-file.service', async (importOriginal) => ({

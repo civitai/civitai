@@ -1,7 +1,7 @@
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { Prisma } from '@prisma/client';
 import { logToAxiom } from '~/server/logging/client';
-import { ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
+import { ownerAccountHeldSql, ownerHeld } from '~/server/services/legal-hold.service';
 import { ModelFileVisibility, ScanResultCode } from '~/shared/utils/prisma/enums';
 import {
   trainingDataServableOnHost,
@@ -20,9 +20,12 @@ export function normalizeTrainingDataShare(share: Partial<TrainingDataShare>): T
   return { ownRights, shareDataset: ownRights && share.shareDataset === true };
 }
 
-/** Whether `owner` (an int SQL expression) may not share a training dataset. */
+/**
+ * Whether `owner` (an int SQL expression) may not share a training dataset. A visibility decision, so
+ * the account holds only (`ownerAccountHeldSql`), not the ban-note leg.
+ */
 export function trainingDataOwnerRestrictedSql(owner: Prisma.Sql): Prisma.Sql {
-  return Prisma.sql`(${ownerHeldSql(owner)} OR EXISTS (
+  return Prisma.sql`(${ownerAccountHeldSql(owner)} OR EXISTS (
     SELECT 1 FROM "CsamReport" tr
     WHERE tr."userId" = ${owner} OR tr.details ->> 'secondaryUserId' = (${owner})::text
   ))`;

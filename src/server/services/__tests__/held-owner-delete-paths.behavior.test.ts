@@ -49,6 +49,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
 import { kyselyOver } from '~/server/db/prisma-kysely';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 const MIGRATIONS = path.resolve(
@@ -142,6 +143,7 @@ beforeAll(async () => {
   await holder.db.exec(migration('20261019220000_evidence_hold'));
   await holder.db.exec(migration('20261204120000_evidence_hold_image_prior_state'));
   await holder.db.exec(migration('20261227150000_evidence_hold_owner_held'));
+  await holder.db.exec(BAN_NOTE_HOLD_TABLES_SQL);
 });
 
 const reset = () =>
@@ -744,6 +746,20 @@ describe('an owner deleting their own content in a child-safety case', () => {
       expect((await pending()).find((row) => row.entityId === 4001)?.data).toEqual({
         cleanup: true,
       });
+    });
+
+    it('waits while its owner is banned with a note naming CSAM, and no other hold', async () => {
+      const BAN_NOTE = 11;
+      await holder.db.exec(`
+        INSERT INTO "User" (id, meta, "bannedAt") VALUES
+          (${BAN_NOTE}, '{"banDetails": {"detailsInternal": "csam"}}', now() - interval '1 day')
+        ON CONFLICT DO NOTHING;
+        INSERT INTO "Image" (id, "userId", url) VALUES (4002, ${BAN_NOTE}, 'key-ban-note-orphan');
+      `);
+      await queueImageDeletes(kyselyOver(dbMock.dbWrite as never), [4002], { ownerId: BAN_NOTE });
+      await runJob();
+
+      expect(await imageRow(4002)).toBeDefined();
     });
 
     it("is replaced by the owner's own delete, which then waits only on the case", async () => {

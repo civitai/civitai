@@ -42,6 +42,7 @@ import {
 } from '~/server/services/legal-hold.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
@@ -70,6 +71,7 @@ const RESTORED_TO_HELD = 23; // named on a pending report; given back a placehol
 const PLACEHOLDER_AGAIN = 24; // unheld; restored once, back to the placeholder, then moved off it
 const LEGACY_PLACEHOLDER_RESTORED = 25; // unheld; restored a model the backfill found with the placeholder
 const TRANSFERRED_FROM_IMAGE_HELD = 21; // unheld; given the model of IMAGE_REVIEW_HELD
+const BAN_NOTE_HELD = 26; // no report or marker; banned with a note naming CSAM
 const OWNERS = [
   UNHELD,
   PENDING_REPORT,
@@ -93,6 +95,7 @@ const OWNERS = [
   RESTORED_TO_HELD,
   PLACEHOLDER_AGAIN,
   LEGACY_PLACEHOLDER_RESTORED,
+  BAN_NOTE_HELD,
 ];
 const ELIGIBLE = [
   UNHELD,
@@ -192,6 +195,7 @@ beforeAll(async () => {
       (${MARKER_HELD}, 'manual', 'review', NULL, NULL, NULL),
       (${MARKER_RELEASED}, 'manual', 'review', now(), 1, 'done');
   `);
+  await holder.db.exec(BAN_NOTE_HOLD_TABLES_SQL);
 });
 
 let dropHeldColumn = false;
@@ -214,7 +218,9 @@ beforeEach(async () => {
   }) as never);
 
   await holder.db.exec(`
-    TRUNCATE "Model", "ModelVersion", "ModelFile", "CsamReport";
+    TRUNCATE "Model", "ModelVersion", "ModelFile", "CsamReport", "User";
+    INSERT INTO "User" (id, meta, "bannedAt") VALUES
+      (${BAN_NOTE_HELD}, '{"banDetails": {"detailsExternal": "CSAM"}}', now() - interval '1 day');
     INSERT INTO "Model" (id, "userId") SELECT u * 10, u FROM unnest(ARRAY[${OWNERS}]) u;
     INSERT INTO "ModelVersion" (id, "modelId", "uploadType", "trainingStatus")
       SELECT u * 100, u * 10, 'Trained', 'InReview' FROM unnest(ARRAY[${OWNERS}]) u;

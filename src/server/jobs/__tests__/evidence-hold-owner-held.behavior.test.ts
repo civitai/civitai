@@ -4,6 +4,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ownerHeldSql } from '~/server/services/legal-hold.service';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '~/server/services/__tests__/ban-note-hold-tables.fixture';
 
 /**
  * The delete triggers keep an owner's content while any hold on the account stands, not only a hold
@@ -160,6 +161,7 @@ beforeAll(async () => {
   await db.exec(migration('20261204120000_evidence_hold_image_prior_state'));
   await db.exec(migration('20261227150000_evidence_hold_owner_held'));
   await db.exec(FIXTURE);
+  await db.exec(BAN_NOTE_HOLD_TABLES_SQL);
 });
 
 beforeEach(async () => {

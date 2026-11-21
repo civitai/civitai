@@ -6,7 +6,7 @@ import { credentialLogFields, type RequestCredential } from '~/server/auth/reque
 import { Prisma } from '@prisma/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
-import { ownerHeld } from '~/server/services/legal-hold.service';
+import { ownerAccountHeldSql, ownerHeld } from '~/server/services/legal-hold.service';
 import {
   BlocklistStoreError,
   blocklistCall,
@@ -7790,7 +7790,12 @@ async function getFailedEntryDrafts({
   servableLevels: number;
 }) {
   try {
-    const held = await ownerHeld(dbWrite, Prisma.sql`FROM (SELECT ${userId}::int AS "userId") m`);
+    // What the owner sees, so the account holds only (`ownerAccountHeldSql`).
+    const held = await ownerHeld(
+      dbWrite,
+      Prisma.sql`FROM (SELECT ${userId}::int AS "userId") m`,
+      ownerAccountHeldSql(Prisma.raw('m."userId"'))
+    );
     if (held) return [];
     const rows = await dbRead.image.findMany({
       select: { ...myImagesSelect, pHash: true },

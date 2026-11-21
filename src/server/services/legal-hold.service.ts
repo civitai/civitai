@@ -172,6 +172,13 @@ export function accountHoldReasonsSql(id: Prisma.Sql, markerView: boolean): Pris
   return Prisma.sql`array_remove(ARRAY[${Prisma.join(cases)}], NULL)`;
 }
 
+/** `accountHoldReasonsSql`, plus `'ban-note'` when that leg of `contentRemovalHeldSql` holds `id`. */
+export function contentRemovalHoldReasonsSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
+  return Prisma.sql`array_remove(${accountHoldReasonsSql(id, markerView)} || ARRAY[
+    CASE WHEN ${banNoteHoldSql(id)} THEN 'ban-note'::text END
+  ], NULL)`;
+}
+
 /**
  * Every hold on the account `id` (an int SQL expression) as one condition, for a statement that must
  * not touch a held account's rows even when a hold lands after the check. `markerView` is what
@@ -188,10 +195,20 @@ export const OWNER_CONTENT_KEPT =
 
 /**
  * Whether content owned by `owner` (an int SQL expression) must be kept: the hold the purge jobs read,
- * which includes the placeholder owner, or any account hold. Put it in the DELETE itself, so a hold
- * placed after an earlier check still stops it. Names the marker view, so it needs its migration.
+ * which includes the placeholder owner, any account hold, or an unreleased CSAM/NCMEC ban note. Put
+ * it in the DELETE itself, so a hold placed after an earlier check still stops it. Names the marker
+ * view, so it needs its migration. The default for any delete; see `ownerAccountHeldSql`.
  */
 export function ownerHeldSql(owner: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`(${ownerAccountHeldSql(owner)} OR ${banNoteHoldSql(owner)})`;
+}
+
+/**
+ * `ownerHeldSql` without the ban-note leg, for deciding what is SHOWN, never what is deleted. The
+ * ban-note hold preserves content; it is not a reason to hide it: a ban without media removal leaves
+ * content up, and owners always see their own media.
+ */
+export function ownerAccountHeldSql(owner: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`(${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})`;
 }
 
@@ -335,7 +352,7 @@ const placeholderRowHoldsSql = Prisma.sql`(ho."userId" = ${Prisma.raw(
 )))`;
 
 /**
- * Whether a model's data is held: its owner is the placeholder or under an account hold, or so is any
+ * Whether a model's data is held: its owner is the placeholder or under a content-removal hold, or so is any
  * owner it had before. A placeholder that an account deletion put there stops holding once the model
  * is restored to an owner; one recorded by the backfill always holds. `modelId` is an int SQL
  * expression. Names "ModelOwnership": without the table the statement fails, and so deletes nothing.
@@ -345,11 +362,17 @@ export function modelDataHeldSql(modelId: Prisma.Sql, markerView: boolean): Pris
   return Prisma.sql`(EXISTS (
     SELECT 1 FROM "Model" hm
     WHERE hm.id = ${modelId}
-      AND (hm."userId" = ${placeholder} OR ${accountHoldSql(Prisma.raw('hm."userId"'), markerView)})
+      AND (
+        hm."userId" = ${placeholder}
+        OR ${contentRemovalHeldSql(Prisma.raw('hm."userId"'), markerView)}
+      )
   ) OR EXISTS (
     SELECT 1 FROM "ModelOwnership" ho
     WHERE ho."modelId" = ${modelId}
-      AND (${placeholderRowHoldsSql} OR ${accountHoldSql(Prisma.raw('ho."userId"'), markerView)})
+      AND (
+        ${placeholderRowHoldsSql}
+        OR ${contentRemovalHeldSql(Prisma.raw('ho."userId"'), markerView)}
+      )
   ))`;
 }
 
@@ -377,7 +400,7 @@ export function heldModelIdsSql(modelIds: Prisma.Sql, markerView: boolean): Pris
       SELECT ho."modelId", ho."userId" FROM "ModelOwnership" ho WHERE ho."modelId" IN (${modelIds})
     ), held_owners AS MATERIALIZED (
       SELECT a."userId" FROM (SELECT DISTINCT "userId" FROM owners) a
-      WHERE ${accountHoldSql(Prisma.raw('a."userId"'), markerView)}
+      WHERE ${contentRemovalHeldSql(Prisma.raw('a."userId"'), markerView)}
     )
     SELECT ow."modelId" FROM owners ow WHERE ow."userId" IN (SELECT "userId" FROM held_owners)
     UNION

@@ -10,6 +10,7 @@ import {
   commentsLeft,
   dropMarkerView,
   failDeletesFrom,
+  banWithCsamNote,
   FORMER_CLEAN,
   holdOwner,
   ownedBefore,
@@ -194,6 +195,24 @@ describe('deleteVersionById', () => {
     await expect(deleteVersionById({ id, isModerator: false })).rejects.toThrow(OWNER_CONTENT_KEPT);
 
     expect(await versionIds(db)).toContain(id);
+    expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
+  });
+
+  it('keeps a version whose owner, or an earlier owner, is banned with a CSAM note', async () => {
+    const current = stubVersion(CLEAN);
+    await banWithCsamNote(db, CLEAN);
+    await expect(deleteVersionById({ id: current, isModerator: false })).rejects.toThrow(
+      OWNER_CONTENT_KEPT
+    );
+    expect(await versionIds(db)).toContain(current);
+
+    await db.exec(`DELETE FROM "User"`);
+    await ownedBefore(db, CLEAN, FORMER_CLEAN);
+    await banWithCsamNote(db, FORMER_CLEAN);
+    await expect(deleteVersionById({ id: current, isModerator: false })).rejects.toThrow(
+      OWNER_CONTENT_KEPT
+    );
+    expect(await versionIds(db)).toContain(current);
     expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
   });
 
