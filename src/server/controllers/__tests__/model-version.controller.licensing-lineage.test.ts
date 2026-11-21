@@ -483,6 +483,28 @@ describe('upsertModelVersionHandler — a staff-locked licence fee', () => {
     expect(await save({})).toMatchObject({ licensingFee: 0.25 });
   });
 
+  // Creator Studio writes a fee without its type or currency, so a locked row can hold nulls there; the
+  // handler fills in the defaults before the compare, which must not read as a change.
+  it('saves an owner re-sending a fee whose stored type and currency are null', async () => {
+    const written = (await call({
+      ...creating('Checkpoint'),
+      id: VERSION_ID,
+      licensingSourceVersionId: null,
+      storedFee: {
+        licensingFee: 0.25,
+        licensingFeeType: null,
+        licensingFeeSettlementCurrency: null,
+        licensingFeeLocked: true,
+      },
+      extraInput: {
+        licensingFee: 0.25,
+        licensingFeeType: null,
+        licensingFeeSettlementCurrency: null,
+      },
+    })) as { licensingFee?: number };
+    expect(written.licensingFee).toBe(0.25);
+  });
+
   it('lets a moderator change it', async () => {
     expect(await save({ licensingFee: 0.5 }, { isModerator: true })).toMatchObject({
       licensingFee: 0.5,

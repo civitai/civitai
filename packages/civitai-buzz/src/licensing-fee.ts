@@ -83,10 +83,13 @@ export function lockedLicensingFeeRefusal({
 }): string | null {
   if (!locked || isModerator) return null;
   const cents = (fee: number | null) => Math.round((fee ?? 0) * 100);
+  // A null column reads as its default, which the handler fills in before this compare.
+  const type = (t: string | null) => t ?? 'PerImageBuzz';
+  const currency = (c: string | null) => c ?? 'Buzz';
   const changed =
     (next.fee !== undefined && cents(next.fee) !== cents(stored.fee)) ||
-    (next.type !== undefined && next.type !== stored.type) ||
-    (next.currency !== undefined && next.currency !== stored.currency);
+    (next.type !== undefined && type(next.type) !== type(stored.type)) ||
+    (next.currency !== undefined && currency(next.currency) !== currency(stored.currency));
   return changed ? 'This license fee is set by Civitai; contact support to change it.' : null;
 }
 
