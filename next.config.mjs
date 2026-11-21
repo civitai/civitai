@@ -125,20 +125,9 @@ export default defineNextConfig(
     },
     reactStrictMode: true,
     typescript: { ignoreBuildErrors: skipBuildTypecheck },
-    // Source maps: SERVER on, BROWSER off. Pinned by src/__tests__/next-config-source-maps.test.ts.
-    //
-    // Under Turbopack the two are separate switches. Next 16.4.5's native config
-    // (crates/next-core/src/next_config.rs) resolves them as:
-    //   client maps = experimental.turbopackSourceMaps ?? productionBrowserSourceMaps   (build)
-    //   server maps = experimental.turbopackSourceMaps ?? experimental.serverSourceMaps ?? true
-    // So `turbopackSourceMaps` must stay UNSET: setting it overrides both at once.
-    //
-    // Browser maps stay off because they are the larger share of release-build memory.
-    // Server maps (`.next/server/**/*.js.map`) are what de-minify a server CPU profile:
-    // the Dockerfile stages them into the separate `maps` image, and
-    // scripts/resolve-cpuprofile.mjs fetches that image by commit sha. They are not traced
-    // into `.next/standalone`, so the runtime image does not ship them, and a running server
-    // never reads them.
+    // Off to cut release-build memory, together with `experimental.serverSourceMaps` below:
+    // which of the two Turbopack reads for server maps is decided in the native binary, so
+    // both are off.
     productionBrowserSourceMaps: false,
     // Next.js i18n docs: https://nextjs.org/docs/advanced-features/i18n-routing
     i18n: {
@@ -272,8 +261,7 @@ export default defineNextConfig(
     experimental: {
       // scrollRestoration: true,
       cpus: 8,
-      // Server source maps on; see `productionBrowserSourceMaps` above.
-      serverSourceMaps: true,
+      serverSourceMaps: false,
       // instrumentationHook removed in Next 15 — instrumentation.ts is enabled by default now
       largePageDataBytes: 512 * 100000,
       // Nested async chunking for the SERVER build. Next's own defaults table

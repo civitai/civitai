@@ -360,7 +360,6 @@
     "sharp": "^0.35.5",
     "slugify": "^1.6.5",
     "socket.io-client": "^4.5.4",
-    "source-map": "^0.7.4",
     "sqids": "^0.3.0",
     "standardwebhooks": "^1.1.1",
     "stripe": "^11.6.0",
