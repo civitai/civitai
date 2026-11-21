@@ -315,7 +315,9 @@ describe('listModelStake', () => {
         (4, 9, true, false, true, now());
       INSERT INTO "ModelEngagement" VALUES
         (9, 5, 'Mute', now() - interval '30 days'),
+        (9, 3, 'Mute', now() - interval '20 days'),
         (9, 6, 'Favorite', now()),
+        (9, 4, 'Favorite', now() - interval '2 days'),
         (9, 2, 'Notify', now() - interval '5 days'),
         (9, 1, 'Notify', now() - interval '1 day');
     `);
@@ -329,8 +331,8 @@ describe('listModelStake', () => {
     const { engagements } = await listModelStake(db, { userId: 9, limit: 1 });
     const ofType = (type: string) =>
       engagements.filter((e) => e.type === type).map((e) => e.modelId);
-    expect(ofType('Favorite')).toEqual([6]);
+    expect(ofType('Favorite')).toHaveLength(1); // capped, but unordered, so either one
     expect(ofType('Notify')).toEqual([1]); // the older Notify is stored first, so only ORDER BY keeps 1
-    expect(ofType('Mute')).toEqual([5]);
+    expect(ofType('Mute').sort()).toEqual([3, 5]);
   });
 });
