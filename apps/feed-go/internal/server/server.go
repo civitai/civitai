@@ -540,7 +540,6 @@ func (c *computed) encode(ctx context.Context) error {
 	return nil
 }
 
-// Results of feed_go_devalue_write_total.
 const (
 	DevalueWriteDevalue   = "devalue"
 	DevalueWriteFallback  = "superjson_fallback"

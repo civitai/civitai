@@ -49,6 +49,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/jskeys"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -679,71 +680,17 @@ func (e *encoder) raw(m json.RawMessage) (int, error) {
 	return e.flatten(v)
 }
 
-// isArrayIndex reports whether k is a canonical array index ("0", "17", never "01" or "-1", below
-// 2^32-1): the keys a JS object lists first, ascending (OrdinaryOwnPropertyKeys).
-func isArrayIndex(k string) (uint64, bool) {
-	if k == "" || len(k) > 10 || (len(k) > 1 && k[0] == '0') {
-		return 0, false
-	}
-	for i := 0; i < len(k); i++ {
-		if k[i] < '0' || k[i] > '9' {
-			return 0, false
-		}
-	}
-	n, err := strconv.ParseUint(k, 10, 64)
-	if err != nil || n >= math.MaxUint32 {
-		return 0, false
-	}
-	return n, true
-}
-
-// forEachInJSOrder calls fn for each field of o in JS property order (Object.keys).
+// forEachInJSOrder calls fn for each field of o in JS property order (jskeys.Order).
 func forEachInJSOrder(o superjson.Object, fn func(superjson.Field) error) error {
-	indexed := 0
-	for _, f := range o {
-		if _, ok := isArrayIndex(f.Key); ok {
-			indexed++
-		}
-	}
-	if indexed == 0 {
-		for _, f := range o {
-			if err := fn(f); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	idx := make([]superjson.Field, 0, indexed)
-	for _, f := range o {
-		if _, ok := isArrayIndex(f.Key); ok {
-			idx = append(idx, f)
-		}
-	}
-	// Insertion sort, stable: index keys are few.
-	for a := 1; a < len(idx); a++ {
-		for b := a; b > 0; b-- {
-			x, _ := isArrayIndex(idx[b-1].Key)
-			y, _ := isArrayIndex(idx[b].Key)
-			if x <= y {
-				break
-			}
-			idx[b-1], idx[b] = idx[b], idx[b-1]
-		}
-	}
-	for _, f := range idx {
+	for _, f := range jskeys.Order(o, fieldKey) {
 		if err := fn(f); err != nil {
 			return err
 		}
 	}
-	for _, f := range o {
-		if _, ok := isArrayIndex(f.Key); !ok {
-			if err := fn(f); err != nil {
-				return err
-			}
-		}
-	}
 	return nil
 }
+
+func fieldKey(f superjson.Field) string { return f.Key }
 
 func validBigInt(s string) bool {
 	if s != "" && s[0] == '-' {

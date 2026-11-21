@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -290,5 +291,38 @@ func TestPointers(t *testing.T) {
 	want := `[[1,1,2,3,3,5,5],["Date","2024-01-02T03:04:05.006Z"],["Date","2024-01-02T03:04:05.006Z"],{"a":4},1,null]`
 	if got != want {
 		t.Fatalf("got %s\nwant %s", got, want)
+	}
+}
+
+// Many integer-like keys, inserted in descending order around a named one: the object entry lists
+// them ascending, then the name (JS own-key order).
+func TestManyIndexKeysInJSOrder(t *testing.T) {
+	const n = 2000
+	obj := make(superjson.Object, 0, n+1)
+	for i := n - 1; i >= 0; i-- {
+		obj = append(obj, superjson.Field{Key: strconv.Itoa(i), Val: true})
+		if i == n/2 {
+			obj = append(obj, superjson.Field{Key: "z", Val: true})
+		}
+	}
+	text, err := Stringify(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := ParseJSON([]byte(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, _ := root.([]any)[0].(superjson.Object)
+	if len(entry) != n+1 {
+		t.Fatalf("%d keys, want %d", len(entry), n+1)
+	}
+	for i := 0; i < n; i++ {
+		if entry[i].Key != strconv.Itoa(i) {
+			t.Fatalf("position %d = %q, want %q", i, entry[i].Key, strconv.Itoa(i))
+		}
+	}
+	if entry[n].Key != "z" {
+		t.Fatalf("last key %q, want z", entry[n].Key)
 	}
 }
