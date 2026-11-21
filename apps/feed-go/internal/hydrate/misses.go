@@ -487,7 +487,7 @@ func (s *Sources) fill(ctx context.Context, spec lookupSpec, ids []int, got map[
 			val, ttl = append(append(make(jspack.Obj, 0, len(rec)+1), rec...), jspack.KV{K: "cachedAt", V: now}), spec.ttl
 		}
 		b := jspack.Pack(val)
-		e, st := decodeBytes(b, 0, now, orderedCaches[spec.key])
+		e, st := decodeBytes(b, 0, now, false)
 		if st != stateEntry {
 			return fmt.Errorf("%s: a computed entry for %d does not decode", spec.cache, id)
 		}
