@@ -7,6 +7,7 @@ import type {
 } from '@civitai/moderation';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
+import { createTtlMemo } from '~/server/utils/ttl-memoize';
 
 // Filed in the moderator app, which owns the case engine. This client holds only the scoped intake
 // credential (MOD_CASES_TOKEN).
@@ -29,7 +30,12 @@ const fieldSchema = z.object({
 });
 export type RequestField = z.infer<typeof fieldSchema>;
 
-const formSchema = z.object({ key: z.string(), title: z.string(), fields: z.array(fieldSchema) });
+const formSchema = z.object({
+  key: z.string(),
+  title: z.string(),
+  mailbox: z.string().email(),
+  fields: z.array(fieldSchema),
+});
 export type RequestForm = z.infer<typeof formSchema>;
 
 const caseViewSchema = z.object({
@@ -48,19 +54,13 @@ const resultOf = <T extends z.ZodType>(schema: T, answer: unknown): z.infer<T> =
   schema.parse(z.object({ result: z.unknown() }).parse(answer).result);
 
 // Definitions change only by a hand-applied version, so a minute's staleness costs nothing and keeps
-// every form page view from being a cross-app call.
-const FORMS_TTL_MS = 60_000;
-let formsCache: { at: number; forms: RequestForm[] } | undefined;
-
-export async function getRequestForms(now = Date.now()): Promise<RequestForm[]> {
-  if (formsCache && now - formsCache.at < FORMS_TTL_MS) return formsCache.forms;
-  const forms = resultOf(
-    z.object({ definitions: z.array(formSchema) }),
-    await casesClient.caseDefinitions()
-  ).definitions;
-  formsCache = { at: now, forms };
-  return forms;
-}
+// every form page view from being a cross-app call (single-flight, failures not cached).
+export const getRequestForms = createTtlMemo(
+  async (): Promise<RequestForm[]> =>
+    resultOf(z.object({ definitions: z.array(formSchema) }), await casesClient.caseDefinitions())
+      .definitions,
+  60_000
+);
 
 export type SubmitResult =
   | { ok: true; publicRef: string }

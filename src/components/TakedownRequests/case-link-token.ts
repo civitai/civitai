@@ -28,3 +28,16 @@ export function stripLinkTokenScript(publicRef: string | null) {
     : '';
   return `(function(){var m=/[#&]t=([^&]+)/.exec(location.hash);if(!m)return;${keep}history.replaceState(null,'',location.pathname)})();`;
 }
+
+/**
+ * The case page's props. Never a 404: a bad reference or the forms switched off still render the page,
+ * so its head script takes the token out of the address before anything else loads.
+ */
+export function casePageProps(
+  rawRef: unknown,
+  formsOpen: boolean,
+  parseRef: (v: unknown) => { success: true; data: string } | { success: false }
+) {
+  const ref = parseRef(rawRef);
+  return { publicRef: ref.success ? ref.data : null, open: formsOpen };
+}

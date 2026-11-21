@@ -22,10 +22,6 @@ const formHostnames = () =>
     .filter(Boolean);
 
 /**
- * Its own siteverify call rather than main's `verifyCaptchaToken`: that one lives in the Next app,
- * with its own env and logging, and this app cannot import it. A shared package for both is the place
- * to merge them.
- *
  * Verifies a Turnstile token, once: a token passes siteverify a single time, which is why the main app
  * forwards it here instead of checking it itself. Fails closed: no secret, no answer, or an answer that
  * is not a success all refuse the request.

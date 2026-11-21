@@ -33,13 +33,14 @@ export async function enabledDefinition(key: string, opts: { db?: CasesDb } = {}
 }
 
 /**
- * What the public form page needs, and nothing more: no states, transitions, notice texts or
- * mailbox, which are moderator-side.
+ * What the public form page needs, and nothing more: no states, transitions or notice texts, which are
+ * moderator-side. The mailbox is the form's public contact address, the one its mail replies to.
  */
 export function publicDefinition(def: ProcessDefinition) {
   return {
     key: def.key,
     title: def.title,
+    mailbox: def.mailbox,
     fields: def.fields.map(({ id, label, kind, required, help, options }) => ({
       id,
       label,

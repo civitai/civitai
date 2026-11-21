@@ -19,8 +19,8 @@ import { env } from '$env/dynamic/private';
 // There is NO USER behind the token. `locals.user` is deliberately never populated here, so anything
 // reached this way cannot attribute a write — which is what keeps `human_judgement` human-only.
 //
-// ONE CREDENTIAL IS ACCEPTED INBOUND: MOD_INBOUND_TOKEN. It is inbound-only — this app never presents
-// it outbound — which is what lets a service that only calls IN hold something narrower than the
+// TWO CREDENTIALS ARE ACCEPTED INBOUND: MOD_INBOUND_TOKEN (general) and MOD_CASES_TOKEN (case actions
+// only, below). MOD_INBOUND_TOKEN is inbound-only — this app never presents it outbound — which is what lets a service that only calls IN hold something narrower than the
 // shared token it used to need.
 //
 // 🔴 WEBHOOK_TOKEN IS NO LONGER ACCEPTED INBOUND, AND IS STILL REQUIRED. Those are two different
@@ -45,7 +45,7 @@ import { env } from '$env/dynamic/private';
 // the main app's own delegated moderation actions, which are human-driven and can be quiet for hours.
 //
 // A second, scoped class: MOD_CASES_TOKEN, accepted only for CASE_ACTIONS (see /api/mod/[action]).
-// The no-early-exit guard in `__tests__/webhook-endpoint-timing.test.ts` applies now that two classes exist.
+// The no-early-exit guard in `__tests__/webhook-endpoint-timing.test.ts` covers this loop.
 //
 // Operational rationale for the split lives in the private infra repo, not here.
 

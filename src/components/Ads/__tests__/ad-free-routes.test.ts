@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isAdFreeRoute } from '../ad-free-routes';
 
+// The takedown request pages hold contact details and private case links (civitai#9927).
 describe('isAdFreeRoute', () => {
   it('keeps the ad stack off every takedown request page and the private case page', () => {
     expect(isAdFreeRoute('/requests', '/requests')).toBe(true);

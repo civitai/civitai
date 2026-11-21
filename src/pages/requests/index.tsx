@@ -1,6 +1,7 @@
 import { Anchor, Container, Loader, Stack, Text, Title } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
+import { REQUESTS_MAILBOX } from '~/components/TakedownRequests/requests-mailbox';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
@@ -30,7 +31,7 @@ export default function RequestsPage() {
           ) : (
             <Text>
               These forms are unavailable right now. Email{' '}
-              <Anchor href="mailto:support@civitai.com">support@civitai.com</Anchor>.
+              <Anchor href={`mailto:${REQUESTS_MAILBOX}`}>{REQUESTS_MAILBOX}</Anchor>.
             </Text>
           )}
         </Stack>

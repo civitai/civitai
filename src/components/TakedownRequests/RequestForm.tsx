@@ -8,7 +8,6 @@ import {
 import { env } from '~/env/client';
 import type { RequestForm as Form } from '~/server/services/takedown-requests.service';
 import { trpc } from '~/utils/trpc';
-import { fallbackMailbox } from './fallback-mailbox';
 import { cleanValues, RequestFields, type FieldValues } from './RequestFields';
 
 export function RequestForm({ form }: { form: Form }) {
@@ -25,7 +24,7 @@ export function RequestForm({ form }: { form: Form }) {
     },
   });
   const result = submit.data;
-  const mailbox = fallbackMailbox(form.key);
+  const { mailbox } = form;
 
   if (result?.ok)
     return (

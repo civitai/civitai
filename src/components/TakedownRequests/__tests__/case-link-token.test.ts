@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { CASE_LINK_KEY, stripLinkTokenScript, takeCaseLinkToken } from '../case-link-token';
+import { casePublicRef } from '@civitai/moderation';
+import {
+  CASE_LINK_KEY,
+  casePageProps,
+  stripLinkTokenScript,
+  takeCaseLinkToken,
+} from '../case-link-token';
 
 function memoryStorage(): Storage {
   const m = new Map<string, string>();
@@ -62,5 +68,18 @@ describe('stripLinkTokenScript', () => {
 
   it('leaves an address without a token alone', () => {
     expect(run('TD-26-ABC123', '').replaced).toEqual([]);
+  });
+});
+
+describe('casePageProps', () => {
+  const props = (ref: unknown, open: boolean) =>
+    casePageProps(ref, open, (v) => casePublicRef.safeParse(v));
+
+  it('renders the page, not a 404, when the forms are switched off', () => {
+    expect(props('TD-26-ABC123', false)).toEqual({ publicRef: 'TD-26-ABC123', open: false });
+  });
+
+  it('renders the page, not a 404, for a malformed reference, with no reference to store under', () => {
+    expect(props('not a ref', true)).toEqual({ publicRef: null, open: true });
   });
 });

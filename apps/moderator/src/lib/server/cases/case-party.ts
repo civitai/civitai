@@ -190,7 +190,6 @@ export async function casePartyAction(input: CasePartyActionInput, deps: CasePar
   });
 }
 
-/** The mailbox stays a full path for anything the page no longer takes. */
 const closedStepMessage = (def: ProcessDefinition) =>
   `This step is closed. To send us more about this case, email ${def.mailbox} with your case number.`;
 

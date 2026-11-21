@@ -348,7 +348,6 @@ export const feedbackTriageResponse = z.object({
   ]),
 });
 
-// ── Takedown intake ──────────────────────────────────────────────────────────────────────────────────
 // Called by the main app's public /requests pages, signed out as well as in. Nothing here carries an
 // acting moderator: the submitter is a member of the public, so the spoke verifies Turnstile itself and
 // rate-limits by the forwarded ip. Field values are checked against the definition in the spoke, never here.

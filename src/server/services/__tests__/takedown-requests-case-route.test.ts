@@ -4,7 +4,7 @@ import { modActionResponse } from '@civitai/moderation';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 
 // The moderator app is the network boundary: fetch is the only fake. The flag is passed in.
-const flags = { takedownRequests: true };
+const flags = { takedownRequests: true, overLimit: false };
 let handler: (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>;
 const REF = 'TD-26-ABC123';
 const view = {
@@ -25,11 +25,17 @@ beforeAll(async () => {
     MODERATOR_APP_INTERNAL_URL: '',
   });
   const { createCaseRoute } = await import('~/server/takedown-requests/case-route');
-  handler = createCaseRoute({ formsOpen: async () => flags.takedownRequests });
+  handler = createCaseRoute({
+    formsOpen: async () => flags.takedownRequests,
+    claimAttempt: async () => {
+      if (flags.overLimit) throw new Error('rate limited');
+    },
+  });
 });
 afterEach(() => {
   fetchMock.mockReset();
   flags.takedownRequests = true;
+  flags.overLimit = false;
 });
 
 function call({
@@ -79,6 +85,15 @@ function moderatorAnswers(status: number, body: unknown) {
 const TOKEN = 'x'.repeat(43);
 
 describe('/api/requests/case/[publicRef]', () => {
+  it('answers 429 over the limit, before the moderator app is asked or a cookie is set', async () => {
+    flags.overLimit = true;
+    moderatorAnswers(200, view);
+    const out = await call({ body: { token: TOKEN } });
+    expect(out.status).toBe(429);
+    expect(out.headers['set-cookie']).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('is closed when the takedownRequests flag is off, before the moderator app is asked', async () => {
     flags.takedownRequests = false;
     moderatorAnswers(200, view);

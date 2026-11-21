@@ -62,12 +62,12 @@ describe('enabledDefinitions', () => {
 });
 
 describe('publicDefinition', () => {
-  it('carries no moderator-side parts', () => {
+  it('carries only the public parts: the fields and the form\'s own contact mailbox', () => {
     const view = publicDefinition(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       minimal('dmca-notice') as any
     );
-    expect(Object.keys(view).sort()).toEqual(['fields', 'key', 'title']);
-    expect(JSON.stringify(view)).not.toContain('dmca@civitai.com');
+    expect(Object.keys(view).sort()).toEqual(['fields', 'key', 'mailbox', 'title']);
+    expect(view.mailbox).toBe('dmca@civitai.com');
   });
 });

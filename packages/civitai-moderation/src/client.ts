@@ -119,7 +119,7 @@ export function createModeratorClient(config: ModeratorClientConfig = {}) {
       call(MOD_ACTION.caseDefinitions, caseDefinitionsInput.parse({}), {
         timeoutMs: CASE_TIMEOUT_MS,
       }),
-    /** File one public takedown request. Not retried: a retry could file the case twice. */
+    /** File one public takedown request. Idempotent on `submissionId`. */
     caseIntake: (input: CaseIntakeInput): Promise<unknown> =>
       call(MOD_ACTION.caseIntake, caseIntakeInput.parse(input), { timeoutMs: CASE_TIMEOUT_MS }),
     /** A party's own view of its case, through its link token. */

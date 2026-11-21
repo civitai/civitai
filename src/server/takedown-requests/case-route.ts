@@ -24,9 +24,21 @@ const readCookie = (req: NextApiRequest) => {
 type CaseRouteDeps = {
   /** Whether the takedownRequests flag is on for this viewer. */
   formsOpen: (req: NextApiRequest, res: NextApiResponse) => Promise<boolean>;
+  /** Spends one attempt of this route's per-ip limit; rejects when it is used up. */
+  claimAttempt?: (req: NextApiRequest) => Promise<void>;
 };
 
-export const createCaseRoute = ({ formsOpen }: CaseRouteDeps) =>
+async function claimCaseAttempt(req: NextApiRequest) {
+  const claim = await claimRateLimitAttempt({
+    rules: [{ limit: 120, period: 60 * 60 }],
+    keyName: 'takedownRequest:case',
+    user: undefined,
+    req,
+  });
+  await claim();
+}
+
+export const createCaseRoute = ({ formsOpen, claimAttempt = claimCaseAttempt }: CaseRouteDeps) =>
   async function handler(req: NextApiRequest, res: NextApiResponse) {
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Cache-Control', 'no-store');
@@ -42,13 +54,7 @@ export const createCaseRoute = ({ formsOpen }: CaseRouteDeps) =>
       return res.status(415).json({ message: 'Expected JSON' });
 
     try {
-      const claim = await claimRateLimitAttempt({
-        rules: [{ limit: 120, period: 60 * 60 }],
-        keyName: 'takedownRequest:case',
-        user: undefined,
-        req,
-      });
-      await claim();
+      await claimAttempt(req);
     } catch {
       return res.status(429).json({ message: 'Too many requests. Try again later.' });
     }

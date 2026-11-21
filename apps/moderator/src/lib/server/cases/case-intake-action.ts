@@ -31,7 +31,6 @@ export type CaseIntakeResult = {
 
 export type CaseIntakeDeps = {
   db: CasesDb;
-  /** The main database, where the party's link token lives. */
   mainDb: Kysely<DB>;
   definition: (key: string) => Promise<{ versionId: number; definition: ProcessDefinition } | null>;
   verifyTurnstile: (token: string, ip: string) => Promise<{ hostname: string } | void>;
@@ -46,9 +45,7 @@ export type CaseIntakeDeps = {
     receipt?: string;
     outcome?: string;
   }) => void;
-  /** Tells moderation at once, by email, about a minor-flagged case. */
   alert: (subject: string, text: string) => Promise<unknown>;
-  /** Runs the receipt send after the answer has gone. */
   background: (work: Promise<unknown>) => void;
   now?: () => Date;
 };
