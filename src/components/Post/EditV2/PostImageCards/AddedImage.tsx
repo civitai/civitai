@@ -108,10 +108,7 @@ import {
   pickAddableResources,
 } from '~/utils/manual-image-resources';
 import { showErrorNotification } from '~/utils/notifications';
-import {
-  isDeleteAfterReview,
-  notifyDeleteAfterReview,
-} from '~/components/Image/hooks/useDeleteImage';
+import { notifyDeleteNotice } from '~/components/Image/hooks/useDeleteImage';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { ImageReactionCount } from '~/components/Post/EditV2/PostImageCards/ImageReactionCount';
 import { queryClient, trpc } from '~/utils/trpc';
@@ -281,7 +278,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const deleteImageMutation = trpc.image.delete.useMutation({
     onSuccess: (result, { id }) => {
       removeFromEditor(id);
-      if (isDeleteAfterReview(result)) notifyDeleteAfterReview();
+      notifyDeleteNotice(result);
     },
     onError: (error) => showErrorNotification({ error: new Error(error.message) }),
   });

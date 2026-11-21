@@ -45,7 +45,11 @@ import {
   blockedQueueExpiredAmongSql,
   purgeHoldGuard,
 } from '~/server/jobs/image-ingestion';
-import { legalHoldUserIdsSql, userNamedOnHoldingReportSql } from '~/server/utils/legal-hold';
+import {
+  legalHoldUserIdsSql,
+  reportNamedUserIdsSql,
+  userNamedOnHoldingReportSql,
+} from '~/server/utils/legal-hold';
 import {
   accountHoldSql,
   assertOwnersNotUnderLegalHold,
@@ -317,6 +321,13 @@ const remaining = async () =>
 const sorted = (ids: number[]) => [...ids].sort((a, b) => a - b);
 
 describe('legalHoldUserIdsSql', () => {
+  // The shared builder keeps only the filter's text: a bound value would be dropped, not sent.
+  it('refuses a report filter that binds a value', () => {
+    expect(() => reportNamedUserIdsSql((r) => Prisma.sql`${Prisma.raw(r)}.id = ${1}`)).toThrow(
+      'A report filter must bind no values'
+    );
+  });
+
   it('names the subject and secondary user of every report still inside the hold', async () => {
     // The query the job runs, as it runs it.
     const { rows } = await holder.db.query<{ userId: string }>(
