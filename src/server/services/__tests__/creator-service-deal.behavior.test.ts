@@ -4170,6 +4170,25 @@ describe('review publishing and counters', () => {
         expect(await q(`SELECT 1 FROM "CsamReport"`)).toEqual([]);
       });
 
+      it("refreshes the home blocks showing the review's images", async () => {
+        const { reviewId, reportId } = await reported('CSAM');
+        const [{ id: imageId }] = await q<{ id: number }>(
+          `INSERT INTO "Image" (url) VALUES ('a') RETURNING id`
+        );
+        await q(`INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId") VALUES ($1, $2)`, [
+          reviewId,
+          imageId,
+        ]);
+        dbMock.dbRead.$queryRaw.mockClear();
+        await hold(reviewId, reportId);
+        // The refresh's collection lookup, seen at the database: the image ids bound as one array.
+        const lookedUp = dbMock.dbRead.$queryRaw.mock.calls
+          .map(([query]) => query as unknown as { sql?: string; values?: unknown[] })
+          .filter((query) => !!query?.sql?.includes('"CollectionItem"'))
+          .flatMap((query) => (query.values ?? []).filter(Array.isArray));
+        expect(lookedUp).toContainEqual([imageId]);
+      });
+
       it('opens no hold from a report with another reason, or one on another review', async () => {
         const spam = await reported('Spam');
         expect(await hold(spam.reviewId, spam.reportId)).toBe('refused');

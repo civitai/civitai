@@ -10,6 +10,7 @@ import {
 } from '~/server/services/creator-service-deal-review-publish';
 import { setServiceDealReviewHidden } from '~/server/services/creator-service-deal-review.service';
 import { flagImagesForCsamReview } from '~/server/services/csam-image-review';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { lockCsamHold, pendingCsamHoldFields } from '~/server/services/text-scan/actions/csam-hold';
 import {
   loadServiceDealReviewSubjects,
@@ -62,6 +63,7 @@ export async function holdReportedServiceDealReview({
     ? (await loadServiceDealReviewSubjects(type, [reviewId])).get(reviewId)
     : null;
   if (type && !subject) return 'pickText';
+  let flagged: number[] = [];
   const result = await dbWrite.$transaction(async (tx) => {
     const [review] = await tx.$queryRaw<{ dealId: number; hasText: boolean }[]>`
       SELECT "dealId", ("comment" IS NOT NULL OR "sellerReply" IS NOT NULL) AS "hasText"
@@ -99,17 +101,16 @@ export async function holdReportedServiceDealReview({
     // Its images go to the CSAM review queue, whose flag holds their owner's delete until it decides.
     const images = await tx.$queryRaw<{ imageId: number }[]>`
       SELECT "imageId" FROM "ServiceDealReviewImage" WHERE "reviewId" = ${reviewId}::int`;
-    if (images.length)
-      await flagImagesForCsamReview(
-        tx,
-        images.map((i) => i.imageId)
-      );
+    flagged = images.map((i) => i.imageId);
+    if (flagged.length) await flagImagesForCsamReview(tx, flagged);
     const hidden = await tx.$executeRaw`
       UPDATE "ServiceDealReview" SET "hiddenAt" = now(), "hiddenById" = ${moderatorId}::int
       WHERE "id" = ${reviewId}::int AND "hiddenAt" IS NULL`;
     await syncDealReviewPublication(tx, review.dealId);
     return { holdId: hold.holdId, changed: hold.changed || hidden > 0 };
   });
+  // After the commit, and first: it never throws.
+  if (flagged.length) await evictHomeBlocksForImages({ imageIds: flagged });
   if (result && typeof result === 'object' && result.holdId !== null && result.changed)
     await trackModActivity(moderatorId, {
       entityType: 'serviceDealReview',
