@@ -33,7 +33,7 @@ var Outcomes = []string{"ok", "refused", "bad_request", "unauthenticated", "busy
 // `refused` and `remembered` carry a refusal code in `error` (exchange.RefusalCodes); the rest `none`.
 var BlockOutcomes = []string{
 	exchange.BlockIssued, exchange.BlockReused, exchange.BlockRefused, exchange.BlockRemembered,
-	exchange.BlockFailed, exchange.BlockSpent, exchange.BlockFull,
+	exchange.BlockFailed, exchange.BlockSpent, exchange.BlockFull, exchange.BlockUnverifiable,
 }
 
 // Metrics holds the series.
@@ -77,7 +77,7 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 		}, []string{"source"}),
 		BlockExchanges: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "app_data_block_exchanges_total",
-			Help: "App Block token exchanges at the hub, by outcome (issued, reused, refused, remembered, failed, spent, full) and the hub's refusal code.",
+			Help: "App Block token exchanges at the hub, by outcome (issued, reused, refused, remembered, failed, spent, full, unverifiable) and the refusal code (local: refused here, never sent).",
 		}, []string{"outcome", "error"}),
 	}
 	gauge := func(name, help string, pick func(s, l, r, b int) int) prometheus.Collector {
@@ -125,7 +125,10 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 func (m *Metrics) ObserveBlockExchange(log *slog.Logger) func(outcome, code string) {
 	return func(outcome, code string) {
 		m.BlockExchanges.WithLabelValues(outcome, code).Inc()
-		if log == nil || outcome == exchange.BlockIssued || outcome == exchange.BlockReused {
+		// A token refused here or not checkable here is counted, not logged: a flood of made-up tokens (or a
+		// JWKS outage) must not become a flood of log lines.
+		if log == nil || outcome == exchange.BlockIssued || outcome == exchange.BlockReused ||
+			outcome == exchange.BlockUnverifiable || code == exchange.LocalRefusalCode {
 			return
 		}
 		log.Info("block token not exchanged; the read goes to REST", "outcome", outcome, "error", code)

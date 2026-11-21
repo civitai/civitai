@@ -471,6 +471,18 @@ describe('block token exchange — the caller', () => {
     expect(refusals()).toHaveLength(3);
   });
 
+  // WIRING-LEVEL, like the tests above: the limiter is a fake. The block exchange spends the caller's one
+  // exchange budget, the user exchange's: a staff-set limit is the caller's whole limit, never doubled.
+  it("charges the caller's one exchange budget, the user exchange's (wiring-level)", async () => {
+    expect((await exchange(await blockToken())).status).toBe(200);
+    expect(h.rate.get('oauth:token-exchange:relay-app-data')).toBe(1);
+    expect([...h.rate.keys()].filter((k) => k.includes('block-exchange'))).toEqual([]);
+    h.rate.set('oauth:token-exchange:relay-app-data', 600);
+    const limited = await exchange(await blockToken());
+    expect(limited.status).toBe(429);
+    expect(issued()).toHaveLength(1);
+  });
+
   it('refuses a disabled caller', async () => {
     h.tables.OauthClient.find((c) => c.id === RELAY)!.accessMode = 'disabled';
     const res = await exchange(await blockToken());
@@ -534,6 +546,10 @@ describe('block token exchange — what it issues', () => {
     expect(Object.keys(payload).sort()).toEqual([
       'act',
       'aud',
+      'civitai_app_block_id',
+      'civitai_block_instance_id',
+      'civitai_max_browsing_level',
+      'civitai_token_kind',
       'client_id',
       'exp',
       'iat',
@@ -551,6 +567,11 @@ describe('block token exchange — what it issues', () => {
       act: { sub: 'relay-app-data' },
       iat: NOW,
       exp: NOW + 900,
+      // The block token's binding, which the registry's private feed holds every poll to.
+      civitai_token_kind: 'block-exchange',
+      civitai_app_block_id: 'apb_01notes',
+      civitai_block_instance_id: 'inst-1',
+      civitai_max_browsing_level: 31,
     });
 
     // The hub's record of it, as every exchanged token has, under its own kind.
@@ -1014,15 +1035,35 @@ describe('block token exchange — the app and the viewer', () => {
     expect((await exchange(await blockToken())).status).toBe(200);
   });
 
-  // The site's document store holds a block token's reads to the token's own ceiling (an SFW host's token
-  // reads no mature-rated app's data); the registry's private feed holds them to the viewer's own settings.
-  // So a token whose ceiling does not admit every rating is not exchanged.
-  it('refuses a token minted with an SFW ceiling, or with none', async () => {
+  // The ceiling is per resource. A resource that declares `narrowsBlockClaims` is sent a token of any ceiling
+  // (it holds the token's streams to it); any other only one whose ceiling admits every mature rating.
+  it('a resource declaring narrowsBlockClaims: issues an SFW-host token (PG | PG13) and carries its ceiling', async () => {
+    process.env.OAUTH_EXCHANGE_RESOURCES = registry({ narrowsBlockClaims: true });
+    const res = await exchange(
+      await blockToken({ maxBrowsingLevel: 3, blockInstanceId: 'inst-sfw-5e21' })
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const { payload } = await verifyLikeTheAdapter(String(res.body.access_token));
+    expect(payload).toMatchObject({
+      civitai_token_kind: 'block-exchange',
+      civitai_app_block_id: 'apb_01notes',
+      civitai_block_instance_id: 'inst-sfw-5e21',
+      civitai_max_browsing_level: 3,
+    });
+    // Without XXX, with no level at all, and with every level: each issues, carrying its own ceiling.
+    for (const level of [15, 0, 31]) {
+      const r = await exchange(await blockToken({ maxBrowsingLevel: level }));
+      expect(r.status, String(level)).toBe(200);
+      const { payload: p } = await verifyLikeTheAdapter(String(r.body.access_token));
+      expect(p.civitai_max_browsing_level, String(level)).toBe(level);
+    }
+  });
+
+  it('🔴 a resource NOT declaring it (the default): refuses a ceiling short of every rating, issues one with all', async () => {
     for (const [maxBrowsingLevel, label] of [
       [3, 'PG | PG13'],
       [15, 'without XXX'],
-      [undefined, 'absent'],
-      ['31', 'not a number'],
+      [0, 'no level'],
     ] as const) {
       const res = await exchange(await blockToken({ maxBrowsingLevel }));
       expect(res.status, label).toBe(400);
@@ -1030,8 +1071,48 @@ describe('block token exchange — the app and the viewer', () => {
       expect(lastReason(), label).toBe('block token ceiling is not every rating');
     }
     expect(issued()).toEqual([]);
-    // The mature bits are what count: Blocked (32) on top of every rating still issues.
-    expect((await exchange(await blockToken({ maxBrowsingLevel: 63 }))).status).toBe(200);
+    // Every rating issues, still carrying the claims; Blocked (32) on top does not matter.
+    for (const level of [31, 63]) {
+      const res = await exchange(await blockToken({ maxBrowsingLevel: level }));
+      expect(res.status, String(level)).toBe(200);
+      const { payload } = await verifyLikeTheAdapter(String(res.body.access_token));
+      expect(payload.civitai_max_browsing_level).toBe(level);
+    }
+    // Declared false is the same as undeclared.
+    process.env.OAUTH_EXCHANGE_RESOURCES = registry({ narrowsBlockClaims: false });
+    expect((await exchange(await blockToken({ maxBrowsingLevel: 3 }))).status).toBe(400);
+    expect(lastReason()).toBe('block token ceiling is not every rating');
+  });
+
+  it('a malformed narrowsBlockClaims registers no resource: the exchange refuses as an unknown target', async () => {
+    process.env.OAUTH_EXCHANGE_RESOURCES = registry({ narrowsBlockClaims: 'true' });
+    const res = await exchange(await blockToken());
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_target');
+    expect(lastReason()).toBe('resource not registered');
+  });
+
+  it('refuses a token with no usable ceiling (absent, or not a non-negative integer): nothing to carry', async () => {
+    for (const [maxBrowsingLevel, label] of [
+      [undefined, 'absent'],
+      ['31', 'not a number'],
+      [-4, 'negative'],
+      [2.5, 'not an integer'],
+    ] as const) {
+      const res = await exchange(await blockToken({ maxBrowsingLevel }));
+      expect(res.status, label).toBe(400);
+      expect(res.body.error, label).toBe('invalid_grant');
+      expect(lastReason(), label).toBe('block token has no ceiling');
+    }
+    expect(issued()).toEqual([]);
+  });
+
+  it('refuses a token with an empty install id', async () => {
+    const res = await exchange(await blockToken({ blockInstanceId: '' }));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
+    expect(lastReason()).toBe('block token has no install');
+    expect(issued()).toEqual([]);
   });
 });
 
@@ -1091,6 +1172,7 @@ describe('block token verification follows the site', () => {
     '../../../../../../../src/server/services/apps/data-read-grant.ts',
     import.meta.url
   );
+
   const SITE_ENUMS = new URL('../../../../../../../src/server/common/enums.ts', import.meta.url);
   const BROWSING_LEVEL_CONSTANTS = new URL(
     '../../../../../../../src/shared/constants/browsingLevel.constants.ts',

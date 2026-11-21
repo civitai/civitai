@@ -33,11 +33,22 @@ import { raceTimeout } from './timeout';
 // exp = min(block exp, now + 15 min), no refresh), so the adapter's private feed accepts it. Dark unless the
 // caller is in OAUTH_BLOCK_EXCHANGE_CALLERS (empty by default). The required `apps:storage` scope is
 // consent-exempt, so it is not the viewer's consent: access is decided by the allowlisted relay, the app's
-// listing and `allowedScopes`, and the private feed's per-poll `decideCollectionRead`. Two checks keep that
-// feed from reading more than the site's document store would with the block token itself: the token's block
-// must be its client's one approved block, and its maturity ceiling must admit every rating. No revocation state is
-// read (no hub signal covers every block app); a revoked or uninstalled app's token lives out its exp, at most
-// 15 minutes. Refusals are `oauth-audit` events, except the two rate-limit 429s, which are not audited.
+// listing and `allowedScopes`, and the private feed's per-poll `decideCollectionRead`.
+//
+// The minted token carries the block token's binding (`@civitai/auth` `AccessTokenJwtClaims.block`), as four
+// claims written together: `civitai_token_kind: 'block-exchange'`, `civitai_app_block_id`,
+// `civitai_block_instance_id` and `civitai_max_browsing_level`. With them the registry adapter's private feed
+// (`src/server/registry-adapter/private-feed.ts`) reads no more than the site's document store would with the
+// block token itself, on every poll: mature ratings within the token's ceiling, only while the token's block
+// is its client's one approved block, and nothing once the install is revoked. The hub still refuses a token
+// whose block is not the one approved block when it is exchanged (defence in depth; the feed is
+// authoritative per poll). The ceiling is per resource: a resource that declares `narrowsBlockClaims`
+// (exchange-resources.ts) is sent a token of any ceiling; any other resource only one whose ceiling admits
+// every mature rating, so a resource that ignores the claims (an adapter older than them, or any other
+// AppDataRead resource) can never read more than the token would. The explicit `civitai_token_kind` marker
+// is kept although the other three claims alone would identify the token: a reader then never infers what
+// a token is from which optional claims happen to be present. Refusals are `oauth-audit` events, except the
+// two rate-limit 429s, which are not audited.
 
 type ExchangeError =
   | 'invalid_request'
@@ -77,7 +88,8 @@ const NO_STORE = { 'Cache-Control': 'no-store', Pragma: 'no-cache' };
 
 /**
  * R, X and XXX: the site's mature browsing-level bits (`NsfwLevel` in `src/server/common/enums.ts`, pinned by
- * `block-exchange.test.ts`).
+ * `block-exchange.test.ts`). A resource that does not declare `narrowsBlockClaims` is sent only a token whose
+ * ceiling holds all three.
  */
 export const MATURE_BROWSING_LEVELS = 4 | 8 | 16;
 
@@ -282,7 +294,9 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     const caller = await authenticatedConfidentialClient(request, body);
     if (!caller) return refuseUnauthenticated('invalid_client', 'client authentication failed');
     ctx.caller = caller.id;
-    // Unaudited 429 (see above), before any refusal a caller could repeat.
+    // Unaudited 429 (see above), before any refusal a caller could repeat. The caller's one exchange budget,
+    // shared with its user exchanges (so a staff-set limit is the caller's whole limit); a relay checks a block
+    // token's signature itself before sending it (app-data-go), so made-up tokens do not reach it.
     if (!(await checkTokenExchangeRateLimit(caller.id, caller.tokenRateLimit))) {
       return rateLimitedResponse(
         oauthRetryAfter('token-exchange'),
@@ -337,13 +351,13 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       return refuse('invalid_grant', 'workload account');
     }
 
-    // The registry's private feed resolves the app from the client id alone (`decideCollectionRead`
-    // without a block), while the site's document store reads the token's own block. So the exchanged token
-    // is minted only when the token's block IS the client's one approved block: a token for another block of
-    // the client (not approved itself) must not read the approved one's data through the registry. This is
-    // the site's own rule (`clientIsOnlySource` / `resolveConsumer` in data-read-grant.ts: the approved
-    // blocks of the client, at most two read), pinned by `block-exchange.test.ts`. It also refuses an app with
-    // no approved block, a suspended one included, so it replaces the mint lock's suspension check here.
+    // The site's document store reads the token's own block. The registry's private feed holds every poll of
+    // the minted token to its `civitai_app_block_id` being the client's one approved block (`DataReader.appBlockId`
+    // in data-read-grant.ts), so that check is authoritative; this one refuses the same token here first
+    // (defence in depth). It is the site's own rule (`clientIsOnlySource` / `resolveConsumer` in
+    // data-read-grant.ts: the approved blocks of the client, at most two read), pinned by
+    // `block-exchange.test.ts`. It also refuses an app with no approved block, a suspended one included, so
+    // it replaces the mint lock's suspension check here.
     const approved = await db
       .selectFrom('app_blocks')
       .select('id')
@@ -355,15 +369,25 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       return refuse('unauthorized_client', "block is not the app's one approved block");
     }
     // The site reads a block token's data within the token's own maturity ceiling (set from the host it was
-    // minted on); the registry's private feed reads within the viewer's own settings, as a mature-capable
-    // surface. So only a token whose ceiling admits every mature rating is exchanged: the registry can then
-    // never admit a rating the token's own reads would not.
+    // minted on). The ceiling is carried into the minted token (`civitai_max_browsing_level`). A token with
+    // no usable ceiling (absent, or not a non-negative integer: `verifyBlockTokenForExchange`) has nothing
+    // to carry, so it is refused rather than given one.
+    if (block.maxBrowsingLevel === null) {
+      return refuse('invalid_grant', 'block token has no ceiling');
+    }
+    const ceiling = block.maxBrowsingLevel;
+    // Only a resource that declares it narrows by the claims is sent a ceiling short of every mature rating.
+    // Any other resource reads by the viewer's own settings, as a mature-capable surface, so it is sent a
+    // token only when the ceiling admits every rating: it can then never admit one the token's own reads
+    // would not. Undeclared is this strict rule.
     if (
-      block.maxBrowsingLevel === null ||
-      (block.maxBrowsingLevel & MATURE_BROWSING_LEVELS) !== MATURE_BROWSING_LEVELS
+      !resource.narrowsBlockClaims &&
+      (ceiling & MATURE_BROWSING_LEVELS) !== MATURE_BROWSING_LEVELS
     ) {
       return refuse('invalid_grant', 'block token ceiling is not every rating');
     }
+    // The feed checks the install's revocation markers by it, and refuses a token without one.
+    if (!block.blockInstanceId) return refuse('invalid_grant', 'block token has no install');
 
     const issuer = env.AUTH_JWT_ISSUER;
     const tokenSigner = getSigner();
@@ -404,6 +428,11 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
         iat,
         exp,
         act: { sub: caller.id },
+        block: {
+          appBlockId: block.appBlockId,
+          blockInstanceId: block.blockInstanceId,
+          maxBrowsingLevel: ceiling,
+        },
       },
       {
         kind: 'block-exchange',

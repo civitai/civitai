@@ -13,6 +13,8 @@
 //                                                       per-source grant covering the import
 //
 // Both: the source is approved, and its content rating is within the reader's mature ceiling.
+// A reader bound to one block (`DataReader.appBlockId`, a block-exchange token's) reads only while
+// that block is the client's one approved block: the source itself (own), or the consumer (grant).
 import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
 import { declaredStorage } from '~/server/services/apps/doc-store-declared';
@@ -36,6 +38,14 @@ export type DataReader = {
   clientId: string;
   /** Whether the reader may see an app rated `rating` (its mature ceiling). */
   matureAllowed: (rating: string | null) => boolean;
+  /**
+   * The block the reader's token is bound to (a block-exchange token's `civitai_app_block_id`,
+   * read by the registry's private feed). Set, the read is refused (`token_block_not_approved`)
+   * unless that block is the one approved block of `clientId` the predicate resolves: the source
+   * for an own read, the consumer for an import. Unset, nothing changes. Ignored with `via`, whose
+   * consumer is a verified block token's own.
+   */
+  appBlockId?: string;
 };
 
 export type CollectionReadTarget = {
@@ -64,6 +74,7 @@ export type CollectionReadRefusal =
   | 'consumer_not_found'
   | 'consumer_ambiguous'
   | 'client_owns_multiple_blocks'
+  | 'token_block_not_approved'
   | 'import_self'
   | 'import_not_declared'
   | 'source_rating'
@@ -154,10 +165,17 @@ async function decide(
     const found = await resolveConsumer(reader.clientId);
     if (!found.ok) return found;
     consumer = found.consumer;
+    // The reader's token is another block of the client than its one approved block.
+    if (reader.appBlockId !== undefined && reader.appBlockId !== consumer.appBlockId) {
+      return refuse('token_block_not_approved');
+    }
   } else if (!(await clientIsOnlySource(reader.clientId, source.id))) {
     // A client id names the client, not one block: a client that owns several approved blocks
     // could otherwise read any of them as its own, a non-exportable collection included.
     return refuse('client_owns_multiple_blocks');
+  } else if (reader.appBlockId !== undefined && reader.appBlockId !== source.id) {
+    // The source is the client's one approved block, and the reader's token is another block.
+    return refuse('token_block_not_approved');
   }
   const declaredImport = consumer?.imports.get(sourceBlockId);
   if (consumer && !declaredImport?.collections.has(collection)) {

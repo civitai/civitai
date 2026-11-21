@@ -94,6 +94,7 @@ import {
 } from '~/server/registry-adapter/private-feed';
 import {
   liveDecideCollectionRead,
+  liveInstanceRevoked,
   livePrivateDocSource,
   liveRunGateReadable,
 } from '~/server/registry-adapter/private-feed.live';
@@ -240,6 +241,7 @@ function main() {
           resolve: resolvePrivateFromCatalog(readApps),
           decide: liveDecideCollectionRead,
           runGateReadable: liveRunGateReadable,
+          instanceRevoked: liveInstanceRevoked,
           store: createRedisSnapshotStore(
             undefined,
             STATES_KEPT_PER_STREAM,

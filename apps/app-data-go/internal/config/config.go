@@ -31,6 +31,10 @@ type Config struct {
 	// with the relay client and read through a stream like a hub token; off, it reads REST only and is
 	// never sent to the hub. Needs the registry path.
 	BlockExchange bool
+	// BlockJWKSURL is the site's block-token JWKS (APP_DATA_BLOCK_JWKS_URL, the site's
+	// `/api/v1/block-tokens/jwks`): every block token is verified against it here before it is sent to
+	// the hub (exchange.BlockVerifier). Required with BlockExchange, refused without it.
+	BlockJWKSURL string
 
 	// MaxStreams caps the streams open at once in this process (APP_DATA_MAX_STREAMS, default 100).
 	MaxStreams int
@@ -116,6 +120,15 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 		c.BlockExchange = true
 	default:
 		return nil, errors.New("APP_DATA_BLOCK_EXCHANGE must be true, 1, false or 0")
+	}
+	c.BlockJWKSURL = getenv("APP_DATA_BLOCK_JWKS_URL")
+	switch {
+	case c.BlockExchange && c.BlockJWKSURL == "":
+		return nil, errors.New("APP_DATA_BLOCK_EXCHANGE needs APP_DATA_BLOCK_JWKS_URL: block tokens are verified here before they are sent to the hub")
+	case !c.BlockExchange && c.BlockJWKSURL != "":
+		return nil, errors.New("APP_DATA_BLOCK_JWKS_URL is set without APP_DATA_BLOCK_EXCHANGE; set both or neither")
+	case c.BlockJWKSURL != "" && !secureURL(c.BlockJWKSURL):
+		return nil, errors.New("APP_DATA_BLOCK_JWKS_URL must be an https URL (http only to a cluster-local *.svc host)")
 	}
 
 	num := func(name string, def, lo, hi int) int {
