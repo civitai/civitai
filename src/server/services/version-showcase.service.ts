@@ -1,29 +1,26 @@
-import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { Prisma } from '@prisma/client';
 import { CacheTTL, CAROUSEL_LIMIT } from '~/server/common/constants';
-import { NotificationCategory } from '~/server/common/enums';
-import { imageReviewedSql } from '~/server/common/image-visibility';
+import { imageBlockedForConditions, imageReviewedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLagBatch, preventReplicationLagBatch } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { notBlockedBetween } from '~/server/notifications/base.notifications';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
-import { imageBlockedForConditions } from '~/server/services/image-visibility.service';
+import { getImageTagRows } from '~/server/redis/image-tag-rows';
+import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { bustPublicModelResponseCache } from '~/server/services/public-model-response-cache';
 import { createCachedObject } from '~/server/utils/cache-helpers';
-import {
-  throwAuthorizationError,
-  throwBadRequestError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
 import { imageOnSiteSql } from '~/server/utils/image-onsite';
 import {
+  allBrowsingLevelsFlag,
+  heldGalleryLevel,
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
   coverColumnForSite,
-  VERSION_SHOWCASE_LIMIT,
   type VersionShowcaseSite,
 } from '~/shared/constants/version-showcase.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -42,7 +39,7 @@ export type VersionShowcaseCommunityImage = ImagesForModelVersions & {
   authorUsername: string | null;
 };
 
-type CachedVersionShowcase = {
+export type CachedVersionShowcase = {
   modelVersionId: number;
   rows: VersionShowcaseRow[];
   /** Community rows that pass every filter today, as image rows ready to serve. */
@@ -70,7 +67,7 @@ export function showcaseImageConditions(): Prisma.Sql[] {
  * opted out and isn't hidden from the creator's galleries, neither of them blocks the other, and a
  * .com row holds only an image rated PG or PG-13.
  */
-function communityImageConditions(): Prisma.Sql[] {
+export function communityImageConditions(): Prisma.Sql[] {
   return [
     Prisma.sql`p.availability = 'Public'`,
     Prisma.sql`u."bannedAt" IS NULL AND u."deletedAt" IS NULL`,
@@ -114,9 +111,7 @@ const buildVersionShowcaseCache = () =>
       ];
       if (!withCommunity.length) return records;
 
-      const community = await db.$queryRaw<
-        (VersionShowcaseCommunityImage & { galleryHiddenUserIds: number[] | null })[]
-      >`
+      const community = await db.$queryRaw<(VersionShowcaseCommunityImage & ModelGalleryRow)[]>`
       SELECT
         i.id, i."userId", i.name, i.url, i."nsfwLevel", i.width, i.height, i.hash, i.type,
         i.metadata, i.minor, i.poi,
@@ -129,7 +124,8 @@ const buildVersionShowcaseCache = () =>
           AND i.meta->>'prompt' IS NOT NULL
         ) AS "hasPositivePrompt",
         ${imageOnSiteSql()} AS "onSite",
-        i."meta"->'extra'->'remixOfId' AS "remixOfId"
+        i."meta"->'extra'->'remixOfId' AS "remixOfId",
+        m."gallerySettings", m.minor AS "modelMinor", m."sfwOnly" AS "modelSfwOnly"
       FROM "ModelVersionShowcaseItem" s
       JOIN "ModelVersion" mv ON mv.id = s."modelVersionId"
       JOIN "Model" m ON m.id = mv."modelId"
@@ -144,39 +140,63 @@ const buildVersionShowcaseCache = () =>
     `;
       if (!community.length) return records;
 
-      const { getGallerySettingsByModelId } = await import('~/server/services/model.service');
-      const versionModels = await db.modelVersion.findMany({
-        where: { id: { in: withCommunity } },
-        select: { id: true, modelId: true },
-      });
-      const modelOf = new Map(versionModels.map((v) => [v.id, v.modelId]));
-      const settings = new Map(
-        await Promise.all(
-          [...new Set(modelOf.values())].map(
-            async (modelId) =>
-              [modelId, await getGallerySettingsByModelId({ id: modelId })] as const
-          )
-        )
-      );
+      // Their tag ids, kept with them: the card feed and the public API drop an image with no tags
+      // when the viewer excludes any.
+      const tagRows = await getImageTagRows(db, [...new Set(community.map((image) => image.id))]);
+      const tagsOf = new Map<number, number[]>();
+      for (const row of tagRows)
+        tagsOf.set(row.imageId, [...(tagsOf.get(row.imageId) ?? []), row.tagId]);
 
-      for (const image of community) {
-        const gallery = settings.get(modelOf.get(image.modelVersionId) ?? -1);
-        if (passesGalleryRules(gallery, image)) records[image.modelVersionId].community.push(image);
+      for (const { gallerySettings, modelMinor, modelSfwOnly, ...image } of community) {
+        const rules = galleryRulesOf({ gallerySettings, modelMinor, modelSfwOnly });
+        if (passesGalleryRules(rules, image))
+          records[image.modelVersionId].community.push({
+            ...image,
+            tags: tagsOf.get(image.id) ?? [],
+          });
       }
       return records;
     },
   });
 
-type GallerySettings = {
+export type GallerySettings = {
   hiddenUsers?: { id: number }[];
   hiddenImages?: Record<string | number, number[]>;
   sfwHeld?: boolean;
   level?: number;
 } | null;
 
+export type ModelGalleryRow = {
+  gallerySettings: Pick<ModelGallerySettingsSchema, 'users' | 'hiddenImages' | 'level'> | null;
+  modelMinor: boolean;
+  modelSfwOnly: boolean;
+};
+
+/**
+ * The model's gallery rules as `getGallerySettingsByModelId` derives them, from the model row: read
+ * here rather than through model.service, whose import cycle this module stays out of.
+ */
+export function galleryRulesOf({
+  gallerySettings,
+  modelMinor,
+  modelSfwOnly,
+}: ModelGalleryRow): GallerySettings {
+  const sfwHeld = modelMinor || modelSfwOnly;
+  if (!gallerySettings && !sfwHeld) return null;
+  const stored = gallerySettings ?? {};
+  return {
+    hiddenUsers: (stored.users ?? []).map((id) => ({ id })),
+    hiddenImages: stored.hiddenImages ?? {},
+    sfwHeld,
+    level: sfwHeld
+      ? heldGalleryLevel(stored.level, { minor: modelMinor, sfwOnly: modelSfwOnly })
+      : stored.level ?? allBrowsingLevelsFlag,
+  };
+}
+
 /** The model's own gallery rules: hidden users and images, and the held level of a minor or
  *  SFW-only model. */
-function passesGalleryRules(
+export function passesGalleryRules(
   gallery: GallerySettings | undefined,
   image: { id: number; userId: number; nsfwLevel: number; modelVersionId: number }
 ) {
@@ -199,11 +219,6 @@ export async function getVersionShowcases(modelVersionIds: number[]) {
   if (!modelVersionIds.length || !showcasesServed())
     return {} as Record<number, CachedVersionShowcase>;
   return getVersionShowcaseCache().fetch(modelVersionIds);
-}
-
-function assertShowcasesServed() {
-  if (!showcasesServed())
-    throw throwBadRequestError('Model showcases are paused. Try again later.');
 }
 
 /**
@@ -309,16 +324,18 @@ export async function getVersionShowcaseImageIds({
 export async function getCarouselShowcaseIds({
   modelVersionId,
   site,
+  ownerImageIds,
 }: {
   modelVersionId: number;
   site: VersionShowcaseSite;
+  /** The creator's cached images for the version (image.service's version cache). */
+  ownerImageIds: () => Promise<number[]>;
 }) {
   try {
     const entry = (await getVersionShowcases([modelVersionId]))[modelVersionId];
     if (!curatedSiteFor(entry, site)) return null;
-    const { imagesForModelVersionsCache } = await import('~/server/services/image.service');
     const [owner, version] = await Promise.all([
-      imagesForModelVersionsCache.fetch([modelVersionId]),
+      ownerImageIds(),
       dbRead.modelVersion.findUnique({
         where: { id: modelVersionId },
         select: { model: { select: { coverImageId: true, sfwCoverImageId: true } } },
@@ -327,7 +344,7 @@ export async function getCarouselShowcaseIds({
     return getVersionShowcaseImageIds({
       modelVersionId,
       site,
-      ownerImageIds: owner[modelVersionId]?.images.map((image) => image.id) ?? [],
+      ownerImageIds: owner,
       coverImageId: version?.model[coverColumnForSite(site)] ?? null,
     });
   } catch (error) {
@@ -354,7 +371,7 @@ export async function withCuratedShowcases<E extends { images: ImagesForModelVer
       showcases[id] ? communityFor(showcases[id], site).map((image) => image.id) : []
     );
     const live = await liveCommunityLevels(communityIds);
-    const tagged = await withTagIds(
+    const served = new Map<number, ImagesForModelVersions>(
       versionIds.flatMap((id) =>
         showcases[id]
           ? communityFor(showcases[id], site).flatMap((image) => {
@@ -363,7 +380,7 @@ export async function withCuratedShowcases<E extends { images: ImagesForModelVer
               if (site === 'com' && !isComSafeLevel(nsfwLevel)) return [];
               // Served in the creator's image shape: the showcase's own fields stay internal.
               const { site: _site, authorUsername: _authorUsername, ...row } = image;
-              return [{ ...row, nsfwLevel }];
+              return [[image.id, { ...row, nsfwLevel }] as const];
             })
           : []
       )
@@ -381,8 +398,8 @@ export async function withCuratedShowcases<E extends { images: ImagesForModelVer
       if (!ids) continue;
       const byId = new Map<number, ImagesForModelVersions>(owner.map((image) => [image.id, image]));
       for (const image of communityFor(entry, site)) {
-        const served = tagged.get(image.id);
-        if (served) byId.set(image.id, served);
+        const image_ = served.get(image.id);
+        if (image_) byId.set(image.id, image_);
       }
       result[versionId] = {
         ...byVersion[versionId],
@@ -400,7 +417,7 @@ export type ShowcaseCommunityCovers = Map<
   string,
   { image: VersionShowcaseCommunityImage; sites: Set<VersionShowcaseSite> }
 >;
-const coverKey = (modelId: number, imageId: number) => `${modelId}:${imageId}`;
+export const coverKey = (modelId: number, imageId: number) => `${modelId}:${imageId}`;
 
 /**
  * Community images of a model that may serve as its cover: each (model, image) with a live showcase
@@ -469,7 +486,7 @@ async function findShowcaseCommunityCovers(
     }
   }
   // Validation read the showcases fresh from the primary; readers drawing the cover check each
-  // image's live state and rating, and need its tags.
+  // image's live state and rating.
   if (!primary) {
     const live = await liveCommunityLevels([...found.values()].map((entry) => entry.image.id));
     for (const [key, entry] of found) {
@@ -478,8 +495,6 @@ async function findShowcaseCommunityCovers(
       if (nsfwLevel === undefined || !entry.sites.size) found.delete(key);
       else entry.image = { ...entry.image, nsfwLevel };
     }
-    const tagged = await withTagIds([...found.values()].map((entry) => entry.image));
-    for (const entry of found.values()) entry.image = tagged.get(entry.image.id) ?? entry.image;
   }
   return found;
 }
@@ -502,27 +517,7 @@ async function liveCommunityLevels(imageIds: number[]) {
   return levels;
 }
 
-/**
- * Community images with their tag ids, as the creator's cached images carry them: the card feed and
- * the public API drop an image with no tags when the viewer excludes any. Copies; the cache is
- * never mutated.
- */
-async function withTagIds<I extends ImagesForModelVersions>(images: I[]) {
-  const tagged = new Map<number, I>(images.map((image) => [image.id, image]));
-  if (!images.length) return tagged;
-  try {
-    const { tagIdsForImagesCache } = await import('~/server/redis/caches');
-    const tags = await tagIdsForImagesCache.fetch(images.map((image) => image.id));
-    for (const image of images)
-      tagged.set(image.id, { ...image, tags: tags[image.id]?.tags ?? [] });
-  } catch (error) {
-    // Untagged, a tag filter drops them: the default list or cover shows instead.
-    logShowcaseError('version-showcase-tags-read-failed', error);
-  }
-  return tagged;
-}
-
-function logShowcaseError(name: string, error: unknown, fields?: Record<string, unknown>) {
+export function logShowcaseError(name: string, error: unknown, fields?: Record<string, unknown>) {
   logToAxiom(
     { type: 'error', name, ...fields, message: (error as Error)?.message ?? String(error) },
     'civitai-prod'
@@ -552,145 +547,17 @@ export async function getShowcaseVersionsForPosts(postIds: number[]) {
 }
 
 /**
- * Clears any model cover that is a community image no longer allowed there for a lasting reason:
- * removed, deleted, moved off the version, or its author banned, opted out, blocked or hidden from
- * the creator's galleries. An image only held by its own moderation state (waiting on review, a
- * rescan) keeps the cover: every reader checks that live, so the cover comes back when it clears.
- * The creator's own covers are left alone.
+ * After showcase rows change. A cover that stops qualifying is skipped by every reader at once, and
+ * its column is cleared by the curation module (after a write, and by its sweep job).
  */
-export async function dropInvalidCommunityCovers(modelIds: number[]) {
-  const ids = [...new Set(modelIds)];
-  // Paused, no showcase reads as valid: the covers are kept, and readers skip them meanwhile.
-  if (!ids.length || !showcasesServed()) return;
-  const models = await dbWrite.$queryRaw<
-    {
-      id: number;
-      userId: number;
-      coverImageId: number | null;
-      sfwCoverImageId: number | null;
-      coverUserId: number | null;
-      sfwCoverUserId: number | null;
-    }[]
-  >`
-    SELECT m.id, m."userId", m."coverImageId", m."sfwCoverImageId",
-      ci."userId" AS "coverUserId", si."userId" AS "sfwCoverUserId"
-    FROM "Model" m
-    LEFT JOIN "Image" ci ON ci.id = m."coverImageId"
-    LEFT JOIN "Image" si ON si.id = m."sfwCoverImageId"
-    WHERE m.id IN (${Prisma.join(ids)})
-  `;
-  const candidates = models.flatMap((model) =>
-    (
-      [
-        ['red', model.coverImageId, model.coverUserId],
-        ['com', model.sfwCoverImageId, model.sfwCoverUserId],
-      ] as const
-    )
-      .filter(([, imageId, imageUserId]) => imageId && imageUserId && imageUserId !== model.userId)
-      .map(([site, imageId]) => ({ modelId: model.id, site, imageId: imageId as number }))
-  );
-  if (!candidates.length) return;
-  // Refreshes the versions holding the covers, which need not be the ones the caller refreshed.
-  const valid = await getShowcaseCommunityCovers(candidates, { primary: true });
-  const failing = candidates.filter((cover) => !isShowcaseCoverImage(valid, cover));
-  const held = await heldOnlyByImageState(failing);
-  const { saveModelCovers } = await import('~/server/services/model-cover.service');
-  for (const { modelId, site, imageId } of failing) {
-    if (held.has(`${modelId}:${imageId}:${site}`)) continue;
-    await saveModelCovers({
-      modelId,
-      covers: { [coverColumnForSite(site)]: null },
-      actorUserId: -1,
-      systemReason: 'version-showcase-image-no-longer-eligible',
-    });
-  }
-}
-
-/**
- * The covers among these that fail only on a state the image passes through (waiting on a scan or
- * a review), as `model:image:site` keys. A blocked or ToS-removed image, a private post, and every
- * condition on its author stay lasting.
- */
-async function heldOnlyByImageState(covers: { modelId: number; imageId: number; site: string }[]) {
-  const held = new Set<string>();
-  if (!covers.length) return held;
-  // primary: judges a cover clear against the current state, like the validation beside it.
-  const rows = await dbWrite.$queryRaw<
-    {
-      modelId: number;
-      modelVersionId: number;
-      imageId: number;
-      site: string;
-      userId: number;
-      nsfwLevel: number;
-    }[]
-  >`
-    SELECT DISTINCT mv."modelId", s."modelVersionId", s."imageId", s.site, i."userId", i."nsfwLevel"
-    FROM "ModelVersionShowcaseItem" s
-    JOIN "ModelVersion" mv ON mv.id = s."modelVersionId"
-    JOIN "Model" m ON m.id = mv."modelId"
-    JOIN "Image" i ON i.id = s."imageId"
-    JOIN "Post" p ON p.id = i."postId"
-    JOIN "User" u ON u.id = i."userId"
-    WHERE s."imageId" IN (${Prisma.join(covers.map((cover) => cover.imageId))})
-      AND mv."modelId" IN (${Prisma.join(covers.map((cover) => cover.modelId))})
-      AND s.source = 'Community'
-      AND NOT s."removed"
-      AND ${madeWithOrPostedTo()}
-      AND p."publishedAt" IS NOT NULL
-      AND i."tosViolation" = FALSE
-      AND ${Prisma.join(imageBlockedForConditions({}), ' AND ')}
-      AND i."acceptableMinor" = FALSE
-      AND i.ingestion NOT IN ('Blocked', 'NotFound')
-      AND ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT i."modelRestricted")
-      AND ${Prisma.join(communityImageConditions(), ' AND ')}
-  `;
-  if (!rows.length) return held;
-  // The model's own gallery rules are lasting too. An image not rated yet (level 0) is judged on
-  // them without the held level, which it can't be checked against until it is rated.
-  const { getGallerySettingsByModelId } = await import('~/server/services/model.service');
-  const modelIds = [...new Set(rows.map((row) => row.modelId))];
-  const settings = new Map(
-    await Promise.all(
-      modelIds.map(async (id) => [id, await getGallerySettingsByModelId({ id })] as const)
-    )
-  );
-  for (const row of rows) {
-    const gallery = settings.get(row.modelId);
-    const rules = row.nsfwLevel ? gallery : gallery && { ...gallery, sfwHeld: false };
-    if (passesGalleryRules(rules, { ...row, id: row.imageId }))
-      held.add(`${row.modelId}:${row.imageId}:${row.site}`);
-  }
-  return held;
-}
-
 async function afterShowcaseChange(modelVersionIds: number[], modelIds: number[]) {
   await refreshVersionShowcases(modelVersionIds);
-  const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
   await bustPublicModelResponseCache([...new Set(modelIds)]);
-  await dropInvalidCommunityCovers(modelIds);
 }
 
 /**
- * After a save or removal. A refresh that can't rebuild an entry marks it stale instead, so a read
- * rebuilds it; the rest is best effort, as the write already committed.
- */
-async function afterShowcaseWrite(modelVersionId: number, modelId: number) {
-  await refreshVersionShowcases([modelVersionId]);
-  try {
-    const { bustPublicModelResponseCache } = await import(
-      '~/server/services/model-version.service'
-    );
-    await bustPublicModelResponseCache([modelId]);
-    await dropInvalidCommunityCovers([modelId]);
-  } catch (error) {
-    logShowcaseError('version-showcase-cover-drop-failed', error, { modelId });
-  }
-}
-
-/**
- * After images are deleted: refreshes every showcase that featured them and clears a cover that was
- * one of them. Showcase rows have no foreign key, so they are found by image id once the image row
+ * After images are deleted: refreshes every showcase that featured them (a cover that was one of
+ * them is skipped by readers at once, and cleared by the curation sweep). Showcase rows have no foreign key, so they are found by image id once the image row
  * is gone, which the post-based bust can't do.
  */
 export async function bustVersionShowcasesForImages(imageIds: number[]) {
@@ -706,38 +573,14 @@ export async function bustVersionShowcasesForImages(imageIds: number[]) {
     if (!affected.length) return;
     await refreshVersionShowcases(affected.map((row) => row.modelVersionId));
     const modelIds = [...new Set(affected.map((row) => row.modelId))];
-    const { bustPublicModelResponseCache } = await import(
-      '~/server/services/model-version.service'
-    );
     await bustPublicModelResponseCache(modelIds);
-    const covers = await dbWrite.$queryRaw<
-      { id: number; coverImageId: number | null; sfwCoverImageId: number | null }[]
-    >`
-      SELECT id, "coverImageId", "sfwCoverImageId" FROM "Model"
-      WHERE id IN (${Prisma.join(modelIds)})
-        AND ("coverImageId" IN (${Prisma.join(ids)}) OR "sfwCoverImageId" IN (${Prisma.join(ids)}))
-    `;
-    const deleted = new Set(ids);
-    const { saveModelCovers } = await import('~/server/services/model-cover.service');
-    for (const model of covers)
-      await saveModelCovers({
-        modelId: model.id,
-        covers: {
-          ...(model.coverImageId && deleted.has(model.coverImageId) ? { coverImageId: null } : {}),
-          ...(model.sfwCoverImageId && deleted.has(model.sfwCoverImageId)
-            ? { sfwCoverImageId: null }
-            : {}),
-        },
-        actorUserId: -1,
-        systemReason: 'version-showcase-image-deleted',
-      });
   } catch (error) {
     // Best effort: the delete already committed.
     logShowcaseError('version-showcase-bust-failed', error);
   }
 }
 
-/** Refreshes every showcase holding these posts' images, and drops covers that no longer qualify. */
+/** Refreshes every showcase holding these posts' images. */
 export async function bustVersionShowcasesForPosts(postIds: number[]) {
   try {
     const affected = await getShowcaseVersionsForPosts(postIds);
@@ -801,418 +644,16 @@ export async function bustVersionShowcasesForModels(modelIds: number[]) {
   }
 }
 
-export type VersionShowcaseItemInput = {
-  imageId: number;
-  position?: number | null;
-  excluded?: boolean;
-};
-
-async function getVersionForWrite(modelVersionId: number) {
-  // primary: the ownership check guarding a showcase write.
-  const version = await dbWrite.modelVersion.findUnique({
-    where: { id: modelVersionId },
-    select: {
-      id: true,
-      status: true,
-      model: { select: { id: true, name: true, userId: true, nsfw: true, status: true } },
-    },
-  });
-  if (!version) throw throwNotFoundError('Model version not found');
-  return version;
-}
-
-function assertCanCurate(model: { userId: number }, userId: number, isModerator: boolean) {
-  if (model.userId !== userId && !isModerator)
-    throw throwAuthorizationError('Only the model’s creator can edit its showcase.');
-}
-
-/** The ids among `imageIds` that are the creator's own published images on this version. */
-async function getOwnerImageIds(modelVersionId: number, imageIds: number[]) {
-  if (!imageIds.length) return new Set<number>();
-  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
-    SELECT i.id
-    FROM "Image" i
-    JOIN "Post" p ON p.id = i."postId"
-    JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-    JOIN "Model" m ON m.id = mv."modelId"
-    WHERE i.id IN (${Prisma.join(imageIds)})
-      AND p."modelVersionId" = ${modelVersionId}
-      AND p."userId" = m."userId"
-      AND p."publishedAt" IS NOT NULL
-  `;
-  return new Set(rows.map((row) => row.id));
-}
-
-/**
- * The ids among `imageIds` someone else may have featured on this version and site: made with the
- * version or posted to its gallery, and passing every showcase filter today.
- */
-async function getEligibleCommunityImages(
-  modelVersionId: number,
-  site: VersionShowcaseSite,
-  imageIds: number[]
-) {
-  if (!imageIds.length) return [];
-  return dbWrite.$queryRaw<{ id: number; userId: number; nsfwLevel: number }[]>`
-    SELECT i.id, i."userId", i."nsfwLevel"
-    FROM "Image" i
-    JOIN "Post" p ON p.id = i."postId"
-    JOIN "ModelVersion" mv ON mv.id = ${modelVersionId}
-    JOIN "Model" m ON m.id = mv."modelId"
-    JOIN "User" u ON u.id = i."userId"
-    CROSS JOIN (SELECT ${site}::text AS site) s
-    WHERE i.id IN (${Prisma.join(imageIds)})
-      AND i."userId" <> m."userId"
-      AND ${madeWithOrPostedTo()}
-      AND ${Prisma.join([...showcaseImageConditions(), ...communityImageConditions()], ' AND ')}
-  `;
-}
-
 /** A community image belongs to version `mv`: made with it, or posted to its gallery. */
-const madeWithOrPostedTo = () => Prisma.sql`(
+export const madeWithOrPostedTo = () => Prisma.sql`(
   p."modelVersionId" = mv.id
   OR EXISTS (
     SELECT 1 FROM "ImageResourceNew" ir WHERE ir."imageId" = i.id AND ir."modelVersionId" = mv.id
   )
 )`;
 
-/**
- * Replaces one version's showcase on one site: the order and hides of the creator's images, and
- * the community images featured. Images their authors removed stay removed. Slot 1 is the model's
- * cover and is set with `setVersionShowcaseCover`, not here.
- */
-export async function setVersionShowcase({
-  modelVersionId,
-  site,
-  items,
-  userId,
-  isModerator,
-}: {
-  modelVersionId: number;
-  site: VersionShowcaseSite;
-  items: VersionShowcaseItemInput[];
-  userId: number;
-  isModerator: boolean;
-}) {
-  assertShowcasesServed();
-  const version = await getVersionForWrite(modelVersionId);
-  assertCanCurate(version.model, userId, isModerator);
-
-  const unique = [...new Map(items.map((item) => [item.imageId, item])).values()];
-  const ids = unique.map((item) => item.imageId);
-  const [ownerIds, tombstones, existing] = await Promise.all([
-    getOwnerImageIds(modelVersionId, ids),
-    // An author's removal holds on both sites, whichever site the image was featured on.
-    // primary: the tombstone check guarding this write.
-    dbWrite.modelVersionShowcaseItem.findMany({
-      where: { modelVersionId, removed: true },
-      select: { imageId: true },
-    }),
-    // primary: who is newly featured, to notify only them after the write.
-    dbWrite.modelVersionShowcaseItem.findMany({
-      where: { modelVersionId, removed: false, source: 'Community' },
-      select: { imageId: true },
-    }),
-  ]);
-  const removed = new Set(tombstones.map((row) => row.imageId));
-  const communityItems = unique.filter((item) => !ownerIds.has(item.imageId));
-  const blockedByAuthor = communityItems.find((item) => removed.has(item.imageId));
-  if (blockedByAuthor)
-    throw throwBadRequestError(
-      'One of these images was removed from your showcase by its author or a moderator.'
-    );
-  if (communityItems.length > VERSION_SHOWCASE_LIMIT)
-    throw throwBadRequestError(
-      `A showcase can feature at most ${VERSION_SHOWCASE_LIMIT} community images per site.`
-    );
-  if (communityItems.some((item) => item.excluded))
-    throw throwBadRequestError(
-      'Only your own images can be hidden; remove a community image instead.'
-    );
-
-  const eligible = await getEligibleCommunityImages(
-    modelVersionId,
-    site,
-    communityItems.map((item) => item.imageId)
-  );
-  const { getGallerySettingsByModelId } = await import('~/server/services/model.service');
-  const gallery = await getGallerySettingsByModelId({ id: version.model.id });
-  const allowed = new Set(
-    eligible
-      .filter((image) => passesGalleryRules(gallery, { ...image, modelVersionId }))
-      .map((image) => image.id)
-  );
-  const refused = communityItems.find((item) => !allowed.has(item.imageId));
-  if (refused)
-    throw throwBadRequestError(
-      site === 'com'
-        ? 'One of these images can’t be featured on civitai.com: it must be rated PG or PG-13, made with this version or posted to its gallery, and its author must allow it.'
-        : 'One of these images can’t be featured: it must be made with this version or posted to its gallery, and its author must allow it.'
-    );
-
-  await dbWrite.$transaction([
-    dbWrite.modelVersionShowcaseItem.deleteMany({
-      where: { modelVersionId, site, removed: false },
-    }),
-    // Skips a row an author's or a moderator's removal wrote after the check above.
-    dbWrite.modelVersionShowcaseItem.createMany({
-      skipDuplicates: true,
-      data: unique.map((item) => ({
-        modelVersionId,
-        site,
-        imageId: item.imageId,
-        source: ownerIds.has(item.imageId) ? 'Owner' : 'Community',
-        position: item.position ?? null,
-        excluded: ownerIds.has(item.imageId) ? !!item.excluded : false,
-        addedById: userId,
-      })),
-    }),
-  ]);
-
-  // Before the refresh: a failure after it would leave the rows saved, and a retry notifies no one.
-  const before = new Set(existing.map((row) => row.imageId));
-  const added = eligible.filter((image) => allowed.has(image.id) && !before.has(image.id));
-  await notifyFeaturedAuthors({ version, actorUserId: userId, images: added });
-
-  // A community cover no longer featured anywhere stops being the cover.
-  await afterShowcaseWrite(modelVersionId, version.model.id);
-  return { modelVersionId, site };
-}
-
-/**
- * Sets a site's cover (slot 1 of the showcase): one of the creator's images on the model, or a
- * community image featured in the latest published version's showcase for that site. Null resets
- * it to the default. Runs the cover gate every cover write runs.
- */
-export async function setVersionShowcaseCover({
-  modelId,
-  site,
-  imageId,
-  userId,
-  isModerator,
-}: {
-  modelId: number;
-  site: VersionShowcaseSite;
-  imageId: number | null;
-  userId: number;
-  isModerator: boolean;
-}) {
-  assertShowcasesServed();
-  // primary: the ownership check guarding a cover write.
-  const model = await dbWrite.model.findUnique({
-    where: { id: modelId },
-    select: {
-      userId: true,
-      modelVersions: {
-        where: { status: 'Published' },
-        orderBy: { index: 'asc' },
-        take: 1,
-        select: { id: true },
-      },
-    },
-  });
-  if (!model) throw throwNotFoundError('Model not found');
-  assertCanCurate(model, userId, isModerator);
-  const latest = model.modelVersions[0]?.id;
-  if (imageId && latest) {
-    const isOwner = (await getOwnerImageIds(latest, [imageId])).has(imageId);
-    if (!isOwner) {
-      // primary: the featured-row check guarding a cover write.
-      const row = await dbWrite.modelVersionShowcaseItem.findUnique({
-        where: { modelVersionId_site_imageId: { modelVersionId: latest, site, imageId } },
-        select: { source: true, removed: true },
-      });
-      if (!row || row.source !== 'Community' || row.removed)
-        throw throwBadRequestError(
-          'Feature this image in the latest version’s showcase before making it the cover.'
-        );
-    }
-  }
-  const { saveModelCovers } = await import('~/server/services/model-cover.service');
-  await saveModelCovers({
-    modelId,
-    covers: { [coverColumnForSite(site)]: imageId },
-    actorUserId: userId,
-    isModerator,
-  });
-  if (latest) await refreshVersionShowcases([latest]);
-}
-
-/**
- * An image's author takes it out of a version's showcase, on both sites. The row stays as a
- * tombstone so the creator can't feature it again, and a cover it was stops being one. Works with
- * the feature flag off, so it is always available to the author.
- */
-export async function removeMyImageFromVersionShowcase({
-  modelVersionId,
-  imageId,
-  userId,
-}: {
-  modelVersionId: number;
-  imageId: number;
-  userId: number;
-}) {
-  // primary: the authorship check guarding a removal.
-  const image = await dbWrite.image.findUnique({
-    where: { id: imageId },
-    select: { userId: true },
-  });
-  if (!image || image.userId !== userId)
-    throw throwAuthorizationError('You can only remove your own images.');
-  const count = await tombstoneOnEverySite(modelVersionId, imageId);
-  if (!count) throw throwNotFoundError('This image isn’t featured in that showcase.');
-  const version = await getVersionForWrite(modelVersionId);
-  await afterShowcaseWrite(modelVersionId, version.model.id);
-}
-
-/**
- * A moderator takes an image out of a version's showcase, on both sites. Like an author's removal it
- * leaves a tombstone, so the creator can't feature it again. Works with the flag off.
- */
-export async function moderatorRemoveFromVersionShowcase({
-  modelVersionId,
-  imageId,
-  moderatorId,
-}: {
-  modelVersionId: number;
-  imageId: number;
-  moderatorId: number;
-}) {
-  await tombstoneOnEverySite(modelVersionId, imageId);
-  const { trackModActivity } = await import('~/server/services/moderator.service');
-  await trackModActivity(moderatorId, {
-    entityType: 'image',
-    entityId: imageId,
-    activity: `versionShowcaseRemove:${modelVersionId}`,
-  });
-  const version = await getVersionForWrite(modelVersionId);
-  await afterShowcaseWrite(modelVersionId, version.model.id);
-}
-
-/**
- * Marks a featured image removed on both sites, writing the row for a site it wasn't featured on.
- * A creator's save inserts without overwriting, so a removal that lands mid-save still holds.
- * Returns the rows written; 0 when the image isn't featured in the version.
- */
-function tombstoneOnEverySite(modelVersionId: number, imageId: number) {
-  return dbWrite.$executeRaw`
-    INSERT INTO "ModelVersionShowcaseItem"
-      ("modelVersionId", site, "imageId", source, position, excluded, removed, "addedById")
-    SELECT s."modelVersionId", sites.site, s."imageId", 'Community', NULL, FALSE, TRUE, s."addedById"
-    FROM (
-      SELECT "modelVersionId", "imageId", "addedById" FROM "ModelVersionShowcaseItem"
-      WHERE "modelVersionId" = ${modelVersionId} AND "imageId" = ${imageId} AND source = 'Community'
-      LIMIT 1
-    ) s
-    CROSS JOIN (VALUES ('com'), ('red')) AS sites(site)
-    ON CONFLICT ("modelVersionId", site, "imageId") DO UPDATE SET removed = TRUE, position = NULL
-    WHERE "ModelVersionShowcaseItem".source = 'Community'
-  `;
-}
-
 export const versionShowcaseFeaturedKey = (modelVersionId: number, imageId: number) =>
   `model-version-showcase-featured:${modelVersionId}:${imageId}`;
-
-/** Tells each newly featured author, once per version and image, never on a self-add. */
-async function notifyFeaturedAuthors({
-  version,
-  actorUserId,
-  images,
-}: {
-  version: Awaited<ReturnType<typeof getVersionForWrite>>;
-  actorUserId: number;
-  images: { id: number; userId: number }[];
-}) {
-  if (!images.length) return;
-  const [{ createNotification }, owner] = await Promise.all([
-    import('~/server/services/notification.service'),
-    dbRead.user.findUnique({ where: { id: version.model.userId }, select: { username: true } }),
-  ]);
-  for (const image of images) {
-    if (image.userId === actorUserId || image.userId === version.model.userId) continue;
-    await createNotification({
-      userId: image.userId,
-      type: 'model-version-showcase-featured',
-      category: NotificationCategory.Update,
-      key: versionShowcaseFeaturedKey(version.id, image.id),
-      details: {
-        modelId: version.model.id,
-        modelName: version.model.name,
-        modelVersionId: version.id,
-        imageId: image.id,
-        username: owner?.username,
-      },
-    }).catch(() => null);
-  }
-}
-
-/** What the showcase editor needs for one version: both sites' rows and the images to arrange. */
-export async function getVersionShowcaseEditor({
-  modelVersionId,
-  userId,
-  isModerator,
-  safeOnly,
-}: {
-  modelVersionId: number;
-  userId: number;
-  isModerator: boolean;
-  /** A viewer who can't view mature content (civitai.com) gets only PG and PG-13 images. */
-  safeOnly: boolean;
-}) {
-  assertShowcasesServed();
-  const version = await getVersionForWrite(modelVersionId);
-  assertCanCurate(version.model, userId, isModerator);
-  const [{ imagesForModelVersionsCache }, model, tombstones] = await Promise.all([
-    import('~/server/services/image.service'),
-    // primary: the editor reloads right after a save and must show it.
-    dbWrite.model.findUnique({
-      where: { id: version.model.id },
-      select: {
-        nsfw: true,
-        sfwName: true,
-        coverImageId: true,
-        sfwCoverImageId: true,
-        modelVersions: {
-          where: { status: 'Published' },
-          orderBy: { index: 'asc' },
-          take: 1,
-          select: { id: true },
-        },
-      },
-    }),
-    // primary: the editor reloads right after a save and must show it.
-    dbWrite.modelVersionShowcaseItem.findMany({
-      where: { modelVersionId, removed: true },
-      select: { imageId: true, site: true },
-    }),
-  ]);
-  await refreshVersionShowcases([modelVersionId]);
-  const [owner, showcase] = await Promise.all([
-    imagesForModelVersionsCache.fetch([modelVersionId]),
-    getVersionShowcases([modelVersionId]),
-  ]);
-  // primary: the editor reloads right after a save and must show it.
-  const comCover = await dbWrite.image.findUnique({
-    where: { id: model?.sfwCoverImageId ?? -1 },
-    select: { userId: true },
-  });
-  const comCoverIsOwn = !!comCover && comCover.userId === version.model.userId;
-  const shown = <I extends { nsfwLevel: number }>(images: I[]) =>
-    safeOnly ? images.filter((image) => isComSafeLevel(image.nsfwLevel)) : images;
-  return {
-    modelId: version.model.id,
-    modelVersionId,
-    isLatestPublished: model?.modelVersions[0]?.id === modelVersionId,
-    // A mature model is listed on civitai.com through its civitai.com title and its own cover there.
-    listedOnComByOwnCover: !!model?.nsfw && model.sfwName != null && comCoverIsOwn,
-    covers: { com: model?.sfwCoverImageId ?? null, red: model?.coverImageId ?? null },
-    ownerImages: shown(owner[modelVersionId]?.images ?? []),
-    rows: showcase[modelVersionId]?.rows ?? [],
-    community: shown(showcase[modelVersionId]?.community ?? []),
-    removedByAuthors: tombstones,
-    limit: VERSION_SHOWCASE_LIMIT,
-  };
-}
 
 /**
  * The live showcase rows featuring an image, for the remove action: the author's own image, or any

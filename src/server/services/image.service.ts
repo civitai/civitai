@@ -2566,7 +2566,14 @@ const getAllImagesUncaptured = async (
       : undefined,
     needsCollectionSeed ? getCollectionRandomSeed() : undefined,
     prioritizedUserIds?.length && modelVersionId
-      ? getCarouselShowcaseIds({ modelVersionId, site: showcaseSiteForDomain(domain) })
+      ? getCarouselShowcaseIds({
+          modelVersionId,
+          site: showcaseSiteForDomain(domain),
+          ownerImageIds: async () =>
+            (
+              await imagesForModelVersionsCache.fetch([modelVersionId])
+            )[modelVersionId]?.images.map((image) => image.id) ?? [],
+        })
       : null,
   ]);
 

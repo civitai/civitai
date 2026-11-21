@@ -38,6 +38,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 }));
 
 const showcase = await import('../version-showcase.service');
+const curation = await import('../version-showcase-curation.service');
 const { resetFeatureFlagsStateVersionCacheForTests } = await import('../feature-flags.service');
 const cover = await import('../model-cover.service');
 const { pickCoverImageId } = await import('~/shared/utils/model-sfw-face');
@@ -388,7 +389,7 @@ describe('setVersionShowcase: what the write path refuses', () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
   });
   const set = (userId: number, isModerator = false) =>
-    showcase.setVersionShowcase({
+    curation.setVersionShowcase({
       modelVersionId: VERSION,
       site: 'red',
       items: [{ imageId: 77 }],
@@ -410,7 +411,7 @@ describe('setVersionShowcase: what the write path refuses', () => {
         ? [{ imageId: 77 }]
         : []) as never);
     await expect(
-      showcase.setVersionShowcase({
+      curation.setVersionShowcase({
         modelVersionId: VERSION,
         site: 'com',
         items: [{ imageId: 77 }],
@@ -453,7 +454,7 @@ describe('setVersionShowcase: a valid save', () => {
   });
 
   it('stores the list in order, the creator’s image as Owner and the others as Community', async () => {
-    await showcase.setVersionShowcase({
+    await curation.setVersionShowcase({
       modelVersionId: VERSION,
       site: 'red',
       items: [{ imageId: 77 }, { imageId: 1, excluded: true }, { imageId: 78 }],
@@ -478,7 +479,7 @@ describe('setVersionShowcase: a valid save', () => {
   });
 
   it('notifies only the newly featured author, keyed once per version and image', async () => {
-    await showcase.setVersionShowcase({
+    await curation.setVersionShowcase({
       modelVersionId: VERSION,
       site: 'red',
       items: [{ imageId: 77 }, { imageId: 78 }],
@@ -507,7 +508,7 @@ describe('setVersionShowcase: a valid save', () => {
       return answer(query as never);
     }) as never);
     await expect(
-      showcase.setVersionShowcase({
+      curation.setVersionShowcase({
         modelVersionId: VERSION,
         site: 'red',
         items: [{ imageId: 77 }],
@@ -562,7 +563,7 @@ const publishedVersion = () =>
 describe('moderatorRemoveFromVersionShowcase', () => {
   it('leaves a tombstone instead of deleting, so the creator can’t feature it again', async () => {
     publishedVersion();
-    await showcase.moderatorRemoveFromVersionShowcase({
+    await curation.moderatorRemoveFromVersionShowcase({
       modelVersionId: VERSION,
       imageId: 77,
       moderatorId: 3,
@@ -573,7 +574,7 @@ describe('moderatorRemoveFromVersionShowcase', () => {
 
   it('records which moderator removed it, from which version', async () => {
     publishedVersion();
-    await showcase.moderatorRemoveFromVersionShowcase({
+    await curation.moderatorRemoveFromVersionShowcase({
       modelVersionId: VERSION,
       imageId: 77,
       moderatorId: 3,
@@ -589,7 +590,7 @@ describe('removeMyImageFromVersionShowcase', () => {
   it('refuses to remove an image that isn’t the caller’s', async () => {
     dbMock.dbWrite.image.findUnique.mockResolvedValue({ userId: 8 } as never);
     await expect(
-      showcase.removeMyImageFromVersionShowcase({ modelVersionId: VERSION, imageId: 77, userId: 9 })
+      curation.removeMyImageFromVersionShowcase({ modelVersionId: VERSION, imageId: 77, userId: 9 })
     ).rejects.toThrow(/your own images/);
     expect(tombstoneWrites()).toHaveLength(0);
   });
@@ -598,7 +599,7 @@ describe('removeMyImageFromVersionShowcase', () => {
     dbMock.dbWrite.image.findUnique.mockResolvedValue({ userId: 9 } as never);
     dbMock.dbWrite.$executeRaw.mockResolvedValue(2 as never);
     publishedVersion();
-    await showcase.removeMyImageFromVersionShowcase({
+    await curation.removeMyImageFromVersionShowcase({
       modelVersionId: VERSION,
       imageId: 77,
       userId: 9,
@@ -611,7 +612,7 @@ describe('removeMyImageFromVersionShowcase', () => {
     dbMock.dbWrite.image.findUnique.mockResolvedValue({ userId: 9 } as never);
     dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
     await expect(
-      showcase.removeMyImageFromVersionShowcase({ modelVersionId: VERSION, imageId: 77, userId: 9 })
+      curation.removeMyImageFromVersionShowcase({ modelVersionId: VERSION, imageId: 77, userId: 9 })
     ).rejects.toThrow(/isn’t featured/);
   });
 });
@@ -645,7 +646,7 @@ describe('getVersionShowcaseEditor: what the editor is sent', () => {
     };
   });
   const editor = (safeOnly: boolean) =>
-    showcase.getVersionShowcaseEditor({
+    curation.getVersionShowcaseEditor({
       modelVersionId: VERSION,
       userId: 5,
       isModerator: false,
@@ -691,7 +692,7 @@ describe('setVersionShowcaseCover: what it refuses', () => {
     } as never);
   });
   const setCover = (userId = 5) =>
-    showcase.setVersionShowcaseCover({
+    curation.setVersionShowcaseCover({
       modelId: 1,
       site: 'com',
       imageId: 77,
@@ -744,7 +745,7 @@ describe('while showcases are paused', () => {
   it('refuses curating, so a save cannot overwrite a curation the editor cannot see', async () => {
     const paused = /Model showcases are paused/;
     await expect(
-      showcase.setVersionShowcase({
+      curation.setVersionShowcase({
         modelVersionId: VERSION,
         site: 'red',
         items: [{ imageId: 77 }],
@@ -753,7 +754,7 @@ describe('while showcases are paused', () => {
       })
     ).rejects.toThrow(paused);
     await expect(
-      showcase.getVersionShowcaseEditor({
+      curation.getVersionShowcaseEditor({
         modelVersionId: VERSION,
         userId: 5,
         isModerator: false,
@@ -764,7 +765,7 @@ describe('while showcases are paused', () => {
   });
 
   it('still lets a moderator remove an image', async () => {
-    await showcase.moderatorRemoveFromVersionShowcase({
+    await curation.moderatorRemoveFromVersionShowcase({
       modelVersionId: VERSION,
       imageId: 77,
       moderatorId: 3,

@@ -172,6 +172,7 @@ import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
 import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
 import { appDocRaterJob } from '~/server/jobs/app-doc-rater';
+import { versionShowcaseCoverSweepJob } from '~/server/jobs/version-showcase-cover-sweep';
 import { textScanRetention } from '~/server/jobs/text-scan-retention';
 import { textScanChatWindowsJob, textScanNewUsersJob } from '~/server/jobs/text-scan-sweeps';
 import { articleCategoryRetryJob } from '~/server/jobs/article-category-retry';
@@ -368,6 +369,7 @@ export const jobs: Job[] = [
   mysteryBoxOverPoolRefundsJob,
   retryFailedTextModeration,
   appDocRaterJob,
+  versionShowcaseCoverSweepJob,
   textScanRetention,
   textScanChatWindowsJob,
   textScanNewUsersJob,

@@ -5,14 +5,14 @@ import {
   setVersionShowcaseSchema,
   versionShowcaseImageSchema,
 } from '~/server/schema/version-showcase.schema';
+import { getMyImageShowcaseFeatures } from '~/server/services/version-showcase.service';
 import {
-  getMyImageShowcaseFeatures,
   getVersionShowcaseEditor,
   moderatorRemoveFromVersionShowcase,
   removeMyImageFromVersionShowcase,
   setVersionShowcase,
   setVersionShowcaseCover,
-} from '~/server/services/version-showcase.service';
+} from '~/server/services/version-showcase-curation.service';
 import {
   guardedProcedure,
   isFlagProtected,

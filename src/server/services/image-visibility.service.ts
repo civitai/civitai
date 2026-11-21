@@ -1,4 +1,7 @@
 import { Prisma } from '@prisma/client';
+import { imageBlockedForConditions } from '~/server/common/image-visibility';
+
+export { imageBlockedForConditions };
 import { NsfwLevel } from '~/server/common/enums';
 import {
   hasBlockMarkerSql,
@@ -52,25 +55,6 @@ export const countableImageSql = () =>
     ],
     ' AND '
   )})`;
-
-/**
- * An image with any `blockedFor` reason is visible only to its owner and moderators, as SQL over
- * `"Image" i`. Empty for a moderator.
- */
-export function imageBlockedForConditions({
-  userId,
-  isModerator,
-}: {
-  userId?: number;
-  isModerator?: boolean;
-}): Prisma.Sql[] {
-  if (isModerator) return [];
-  return [
-    userId
-      ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
-      : Prisma.sql`(i."blockedFor" IS NULL)`,
-  ];
-}
 
 /**
  * Which images attached to an entity (a bounty, a bounty entry) a viewer is served, as SQL over

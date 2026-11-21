@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { moderatorRemoveFromVersionShowcase } from '~/server/services/version-showcase.service';
+import { moderatorRemoveFromVersionShowcase } from '~/server/services/version-showcase-curation.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 
 export default defineModeratorEndpoint('versionShowcase.remove', {

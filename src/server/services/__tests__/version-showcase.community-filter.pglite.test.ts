@@ -27,14 +27,6 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ),
 }));
 
-const imageTags = vi.hoisted(() => new Map<number, number[]>());
-vi.mock('~/server/redis/caches', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  tagIdsForImagesCache: {
-    fetch: async (ids: number[]) =>
-      Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: imageTags.get(id) ?? [] }])),
-  },
-}));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   preventReplicationLagBatch: vi.fn(async () => undefined),
@@ -44,13 +36,13 @@ const {
   getVersionShowcases,
   bustVersionShowcasesForUser,
   getShowcaseCommunityCovers,
-  dropInvalidCommunityCovers,
   repointVersionShowcases,
   withCuratedShowcases,
-  removeMyImageFromVersionShowcase,
   bustVersionShowcasesForImages,
   getMyImageShowcaseFeatures,
 } = await import('../version-showcase.service');
+const { dropInvalidCommunityCovers, removeMyImageFromVersionShowcase, sweepCommunityCovers } =
+  await import('../version-showcase-curation.service');
 const { getImagesForModelVersion } = await import('../image.service');
 const { publicModelResponseKey } = await import('../model-version.service');
 const { resetFeatureFlagsStateVersionCacheForTests } = await import('../feature-flags.service');
@@ -75,7 +67,13 @@ beforeAll(async () => {
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int NOT NULL, "coverImageId" int, "sfwCoverImageId" int,
       nsfw boolean NOT NULL DEFAULT false, name text NOT NULL DEFAULT 'M',
-      description text, "sfwName" text, "sfwDescription" text, meta jsonb
+      description text, "sfwName" text, "sfwDescription" text, meta jsonb,
+      "gallerySettings" jsonb, minor boolean NOT NULL DEFAULT false,
+      "sfwOnly" boolean NOT NULL DEFAULT false
+    );
+    CREATE TABLE "TagsOnImageDetails" (
+      "imageId" int NOT NULL, "tagId" int NOT NULL, source text NOT NULL DEFAULT 'WD14',
+      disabled boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
     CREATE TABLE "ImageResourceNew" ("imageId" int NOT NULL, "modelVersionId" int NOT NULL);
@@ -170,12 +168,25 @@ const redCover = async () =>
     )
   ).rows[0].coverImageId;
 
-/** The model's gallery settings, as the gallery settings cache holds them. */
-const setGallery = (settings: Record<string, unknown>) =>
-  redisMock.redis.set(
-    `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${MODEL}` as never,
-    JSON.stringify({ sfwHeld: false, ...settings }) as never
-  );
+/** The model's gallery settings and hold, as stored on its row. */
+const setGallery = (
+  settings: { users?: number[]; hiddenImages?: Record<number, number[]>; level?: number },
+  hold: { sfwOnly?: boolean } = {}
+) =>
+  db.query(`UPDATE "Model" SET "gallerySettings" = $1, "sfwOnly" = $2 WHERE id = $3`, [
+    JSON.stringify(settings),
+    !!hold.sfwOnly,
+    MODEL,
+  ]);
+
+/** Tag rows on an image, as the tagger stores them. */
+const tagImage = async (imageId: number, tagIds: number[]) => {
+  for (const tagId of tagIds)
+    await db.query(`INSERT INTO "TagsOnImageDetails" ("imageId", "tagId") VALUES ($1, $2)`, [
+      imageId,
+      tagId,
+    ]);
+};
 
 /** The redis deletes of the model's cached public API response. */
 const publicResponseBusts = () =>
@@ -191,10 +202,11 @@ beforeEach(async () => {
   resetFeatureFlagsStateVersionCacheForTests();
   await db.exec(`
     DELETE FROM "ModelVersionShowcaseItem"; DELETE FROM "Image"; DELETE FROM "Post";
-    DELETE FROM "ImageResourceNew";
+    DELETE FROM "ImageResourceNew"; DELETE FROM "TagsOnImageDetails";
     DELETE FROM "UserEngagement"; DELETE FROM "CreatorGalleryHiddenUser";
     DELETE FROM "User" WHERE id <> ${CREATOR};
-    UPDATE "Model" SET "coverImageId" = NULL, "sfwCoverImageId" = NULL, nsfw = false;
+    UPDATE "Model" SET "coverImageId" = NULL, "sfwCoverImageId" = NULL, nsfw = false,
+      "gallerySettings" = NULL, minor = false, "sfwOnly" = false;
   `);
 });
 
@@ -296,12 +308,10 @@ describe('version showcase community filter', () => {
     const hiddenImage = await featured();
     const hiddenUser = await featured();
     await featured({ nsfwLevel: R });
-    await setGallery({
-      hiddenImages: { [VERSION]: [hiddenImage] },
-      hiddenUsers: [{ id: hiddenUser }],
-      sfwHeld: true,
-      level: PG,
-    });
+    await setGallery(
+      { hiddenImages: { [VERSION]: [hiddenImage] }, users: [hiddenUser], level: PG },
+      { sfwOnly: true }
+    );
     expect(await served()).toEqual([clean]);
   });
 
@@ -327,13 +337,16 @@ describe('version showcase community filter', () => {
 });
 
 describe('when a featured image stops qualifying', () => {
-  it("a ban clears the model's community cover", async () => {
+  it("a ban takes the model's community cover off at once, and the sweep clears its column", async () => {
     const banned = await featured();
     await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [banned, MODEL]);
     await db.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [banned]);
 
     await bustVersionShowcasesForUser(banned);
+    expect((await getShowcaseCommunityCovers([{ modelId: MODEL, imageId: banned }])).size).toBe(0);
+    expect(await redCover()).toBe(banned);
 
+    await sweepCommunityCovers();
     expect(await redCover()).toBeNull();
   });
 
@@ -362,7 +375,7 @@ describe('when a featured image stops qualifying', () => {
   it("clears a cover whose author the creator hid from the model's gallery", async () => {
     const hidden = await featured();
     await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [hidden, MODEL]);
-    await setGallery({ hiddenUsers: [{ id: hidden }] });
+    await setGallery({ users: [hidden] });
 
     await dropInvalidCommunityCovers([MODEL]);
 
@@ -403,7 +416,7 @@ describe('when a featured image stops qualifying', () => {
   it('the public API serves a community image with its tags, so a tag filter judges it fairly', async () => {
     const id = await featured();
     await db.query(`UPDATE "ModelVersionShowcaseItem" SET position = 0 WHERE "imageId" = $1`, [id]);
-    imageTags.set(id, [7, 8]);
+    await tagImage(id, [7, 8]);
     const images = (
       await withCuratedShowcases({ [VERSION]: { images: [] as ImagesForModelVersions[] } }, 'red')
     )[VERSION].images;
@@ -428,7 +441,7 @@ describe('when a featured image stops qualifying', () => {
 
   it('reads a community cover with its tags, for the card filters', async () => {
     const id = await featured();
-    imageTags.set(id, [5]);
+    await tagImage(id, [5]);
     const covers = await getShowcaseCommunityCovers([{ modelId: MODEL, imageId: id }]);
     expect([...covers.values()][0].image.tags).toEqual([5]);
   });
@@ -463,8 +476,9 @@ describe('when a featured image stops qualifying', () => {
     await db.query(`DELETE FROM "Image" WHERE id = $1`, [id]);
 
     await bustVersionShowcasesForImages([id]);
-
     expect(publicResponseBusts().length).toBeGreaterThan(0);
+
+    await sweepCommunityCovers();
     expect(await redCover()).toBeNull();
   });
 

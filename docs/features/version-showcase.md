@@ -70,10 +70,16 @@ moderator's removal is recorded in `ModActivity` (`versionShowcaseRemove:<versio
 
 ## Caches
 
-The version showcase cache (`getVersionShowcaseCache`, 1 hour) holds each version's rows and the community images that pass the
-filters. Saves, removals, post changes, an author raising a rating, bans, blocks, opt-outs and
-gallery rule changes refresh it, drop the cached public model response, and clear a community cover
-that no longer qualifies for a lasting reason. An image only waiting on a scan or a review keeps its
-cover column; readers skip it until it clears. A version merge moves its rows to the target version
+The version showcase cache (`getVersionShowcaseCache`, 1 hour) holds each version's rows and the
+community images that pass the filters, with their tag ids. Saves, removals, post changes, an author
+raising a rating, bans, blocks, opt-outs and gallery rule changes refresh it and drop the cached
+public model response; every reader skips a cover that stopped qualifying at once. The cover column
+is cleared, for a lasting reason only, after a save or removal and by the
+`version-showcase-cover-sweep` job (every 15 minutes) after anything else. An image only waiting on a
+scan or a review keeps its cover column; readers skip it until it clears.
+
+The writes live in `version-showcase-curation.service.ts`, apart from the reads and busts in
+`version-showcase.service.ts`: image.service's import cycle imports the second, and must not reach
+the services the writes need. A version merge moves its rows to the target version
 and refreshes it. A cover whose image was deleted stops being served at once. Every read for display
 and every refresh fails open to the creator's images; validating a cover write fails closed.
