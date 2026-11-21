@@ -16,26 +16,12 @@ import (
 
 // The response headers Node sends with a 200 on `GET /api/v1/models` and `GET /api/v1/models/[id]`
 // (DESIGN.md §16.8). They decide how Cloudflare and browsers cache the public API, so a served answer
-// carries exactly these, and the shadow compares them with Node's (shadow.RESTComparedHeaders).
-//
-// Where Node sets each, in the order it runs:
-//
-//   - next.config.mjs headers() (router-server, before the route): configheaders.json.
-//   - the proxy's apiCacheMiddleware: Cache-Control PRIVATE_CACHE_CONTROL (and X-Handled-By, the pod
-//     name, not reproduced): always overwritten below.
-//   - MixedAuthEndpoint (the list) / PublicEndpoint (`[id]`), src/server/utils/endpoint-helpers.ts:
-//     Vary on whether the request presented a credential (requestCarriesCallerCredentials), then
-//     addCorsHeaders without allowCredentials (Access-Control-Allow-Origin `*`, -Allow-Headers,
-//     -Allow-Methods), then Cache-Control: the public edge policy for a request with no credential
-//     and no verified crawler, else PRIVATE_CACHE_CONTROL.
-//   - the handlers: the list sets `private, no-store` when `nsfw` is set (src/pages/api/v1/models/
-//     index.ts); `[id]` sets it on every request that parsed (src/pages/api/v1/models/[id].ts).
-//   - Next's res.json (api-resolver sendData): Content-Type, and ETag over the body string.
+// must carry exactly Node's, and the shadow compares them (shadow.RESTComparedHeaders). The goldens
+// pin the result against the real Node route (testdata/golden/v1-models-headers, configheaders.json).
 //
 // Not reproduced, so the request falls back instead (internal/server/v1models_serve.go): the list's
-// X-Expires (an `etag` query key, read against the database), `[id]`'s block-scope CORS headers (an
-// Origin on its block-app allow-list, which lives in the database), and Next's 304 to a conditional
-// request.
+// X-Expires (an `etag` query), `[id]`'s block-scope CORS headers (an Origin), and Next's 304 to a
+// conditional request.
 const (
 	corsAllowOrigin  = "*"
 	corsAllowHeaders = "Authorization, Content-Type, *"

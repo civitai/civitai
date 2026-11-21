@@ -162,9 +162,7 @@ type Server struct {
 	// V1Models serves the REST `/api/v1/models` and `/api/v1/models/[id]` shadows (v1models.go), and
 	// their public routes with ServeV1Models; nil = every such sample or request falls back.
 	V1Models *V1ModelsDeps
-	// ServeV1Models is FEED_GO_SERVE_V1_MODELS (default off): compute `GET /api/v1/models` and
-	// `/api/v1/models/{id}` on the public routes (v1models_serve.go). Off, every request there is the
-	// `v1-models-off` fallback (proxied to V1Fallback) before anything is computed or a serve slot taken.
+	// ServeV1Models is FEED_GO_SERVE_V1_MODELS (default off); off, every request is the v1-models-off fallback.
 	ServeV1Models bool
 	// V1Fallback serves what the public `/api/v1/models` routes do not (a reverse proxy to the Node app
 	// that answers `/api/v1`, FEED_GO_V1_FALLBACK_URL: a different upstream from Fallback). The routes
