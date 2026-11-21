@@ -228,6 +228,18 @@ on:
           - packages
           - geometry
           - component
+      # dc sends this run's civitai-dc jobs to civitai-dc even while the CIVITAI_DC_OFF kill
+      # switch is on: one run to check the runners without turning them back on for everyone.
+      # Only a dispatch can set it, and only someone with write access can dispatch.
+      runner:
+        description: >-
+          auto = civitai-dc unless the CIVITAI_DC_OFF kill switch is on (default).
+          dc = civitai-dc for this run even with the kill switch on.
+        type: choice
+        default: auto
+        options:
+          - auto
+          - dc
       # Set by full-ci.yml. See the `passed` job.
       skip_passed:
         description: >-
@@ -334,7 +346,7 @@ jobs:
 
   eslint:
     name: ESLint + Prettier (changed files)
-    runs-on: ${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository == 'civitai/civitai' && (vars.CIVITAI_DC_OFF != 'true' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'dc')) && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
     # PULL REQUESTS ONLY, and not as a matter of taste. Every step in this job
     # is defined against `FETCH_HEAD...HEAD` where FETCH_HEAD is
     # `origin/$BASE_REF`, and `github.base_ref` is EMPTY on a push event — so on
@@ -541,7 +553,7 @@ jobs:
 
   typecheck:
     name: Typecheck (main pushes / fork PRs / non-main base)
-    runs-on: ${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository == 'civitai/civitai' && (vars.CIVITAI_DC_OFF != 'true' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'dc')) && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
     # 🔴 NARROWED, not retired (talos-infra #855, stage 1). The in-cluster Tekton
     # `pr-check` pipeline runs `tsc --noEmit` on every PR and posts the result as
     # the `tekton / typecheck` commit status. Running this job as well typechecks
@@ -638,7 +650,7 @@ jobs:
 
   typecheck-tests:
     name: Typecheck test files (ratchet)
-    runs-on: ${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository == 'civitai/civitai' && (vars.CIVITAI_DC_OFF != 'true' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'dc')) && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
     # The root tsconfig excludes every test file, so `pnpm run typecheck` (here and
     # in Tekton) never sees them. This job is their only typecheck: it fails when a
     # change adds a test file with type errors, or raises a baselined file's count
@@ -678,7 +690,7 @@ jobs:
 
   unit:
     name: Unit tests
-    runs-on: ${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository == 'civitai/civitai' && (vars.CIVITAI_DC_OFF != 'true' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'dc')) && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
     # ~8,000 tests that until now only ran on whoever remembered to run them.
     # Node env, no browser — component tests (`*.browser.test.tsx`) are not here
     # on purpose: they need Chromium, which this job does not install. That is
@@ -1053,7 +1065,7 @@ jobs:
 
   packages:
     name: Package unit tests
-    runs-on: ${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository == 'civitai/civitai' && (vars.CIVITAI_DC_OFF != 'true' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'dc')) && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
     # Skips draft PRs unless they carry the `full-ci` label (see the header). The app typecheck that rode here moved to apps.yml with
     # the app suites, so this job is the package suites plus the install-time asserts below.
     needs: passed

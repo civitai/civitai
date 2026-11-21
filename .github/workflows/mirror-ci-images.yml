@@ -1,0 +1,58 @@
+name: Mirror CI images
+
+# Copies the Docker Hub images the civitai-dc unit services use to ghcr.io/civitai, so those
+# runners can pull from ghcr instead of anonymously from Docker Hub, which rate-limits them (429).
+# The copy keeps the upstream digest, so a digest pinned from ghcr can be checked against Docker
+# Hub, and a refresh reaches a workflow that pins one only when someone bumps the pin.
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: mirror-ci-images
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Mirror ${{ matrix.source }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - source: docker.io/library/postgres:18
+            target: ghcr.io/civitai/ci-postgres:18
+          - source: docker.io/library/redis:7
+            target: ghcr.io/civitai/ci-redis:7
+    steps:
+      - name: Copy by digest
+        env:
+          SOURCE: ${{ matrix.source }}
+          TARGET: ${{ matrix.target }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          command -v skopeo >/dev/null || { sudo apt-get update -q && sudo apt-get install -yq skopeo; }
+          # Resolve the tag to the digest of its multi-arch index once, then copy that digest,
+          # so the run copies exactly what it logs even if the tag moves mid-run.
+          digest="sha256:$(skopeo inspect --raw "docker://$SOURCE" | sha256sum | cut -d' ' -f1)"
+          echo "source: $SOURCE@$digest"
+          echo "$GH_TOKEN" | skopeo login ghcr.io -u "$ACTOR" --password-stdin
+          skopeo copy --all --preserve-digests --retry-times 3 \
+            "docker://${SOURCE%:*}@$digest" "docker://$TARGET"
+          copied="sha256:$(skopeo inspect --raw "docker://$TARGET" | sha256sum | cut -d' ' -f1)"
+          echo "target: $TARGET@$copied"
+          if [ "$copied" != "$digest" ]; then
+            echo "::error::$TARGET is $copied, expected $digest"
+            exit 1
+          fi
+          echo "### $TARGET" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$SOURCE@$digest\` copied with its digest unchanged." >> "$GITHUB_STEP_SUMMARY"
