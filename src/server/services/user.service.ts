@@ -39,6 +39,7 @@ import {
   assertAccountNotUnderLegalHold,
   guardedAccountScrubSql,
   holdMarkerViewExists,
+  isContentRemovalHeld,
   isLegalHoldAbort,
   LegalHoldError,
   assertContentRemovalNotHeld,
@@ -1555,8 +1556,20 @@ export const deleteUser = async ({
     usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
   await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
-  // A ban never reaches here, so a banned user's sleeping apps are kept.
-  await runStep('delete-sleeping-apps', () => deleteSleepingAppsOfDeletedAccount(user.id));
+  // A ban-note hold does not refuse the deletion, but it keeps the sleeping apps.
+  await runStep('delete-sleeping-apps', async () => {
+    if ((await isContentRemovalHeld(user.id)) !== false) {
+      logToAxiom({
+        name: 'delete-sleeping-apps',
+        type: 'info',
+        source: 'deleteUser',
+        userId: user.id,
+        message: 'Sleeping apps kept: content removal held',
+      });
+      return;
+    }
+    await deleteSleepingAppsOfDeletedAccount(user.id);
+  });
   await runStep('refresh-profile-picture', () => refreshProfilePicturesForUsers([user.id]));
   await runStep('close-pending-restrictions', () =>
     closeGenerationRestrictionsOfDeletedAccount(user.id)

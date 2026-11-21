@@ -21,6 +21,7 @@ const runJob = () => job.run({} as Parameters<typeof job.run>[0]).result;
 const OWNER = 7;
 const HELD = 8; // named on a pending report
 const MARKED = 9; // held by a hold marker
+const BAN_NOTE = 10; // banned with a note naming CSAM
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -54,6 +55,12 @@ beforeAll(async () => {
     );
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb, "bannedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (
+      "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3)
+    );
+    INSERT INTO "User" VALUES
+      (${BAN_NOTE}, '{"banDetails": {"detailsInternal": "csam"}}', now() - interval '1 day');
     CREATE TABLE "StorylineChapter" (
       "id" integer PRIMARY KEY,
       "postId" integer UNIQUE REFERENCES "Post"(id) ON DELETE SET NULL
@@ -139,14 +146,17 @@ describe('job-queue-clean-if-empty', () => {
     expect(await remainingPostIds()).toEqual([1]);
   });
 
-  it.each([HELD, MARKED])("leaves a held owner's empty post (owner %i)", async (owner) => {
-    await holder.db.exec(`INSERT INTO "Post" (id, "userId") VALUES (1, ${owner})`);
-    queuePosts(1);
+  it.each([HELD, MARKED, BAN_NOTE])(
+    "leaves a held owner's empty post (owner %i)",
+    async (owner) => {
+      await holder.db.exec(`INSERT INTO "Post" (id, "userId") VALUES (1, ${owner})`);
+      queuePosts(1);
 
-    await runJob();
+      await runJob();
 
-    expect(await remainingPostIds()).toEqual([1]);
-  });
+      expect(await remainingPostIds()).toEqual([1]);
+    }
+  );
 
   it.each([HELD, MARKED, OWNER])(
     "takes a comment on the deleted post's thread (author %i)",

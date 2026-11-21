@@ -26,9 +26,11 @@ vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
 
 import {
   areAccountsUnderLegalHold,
+  areContentRemovalsHeld,
   getAccountLegalHoldLegs,
   guardedAccountScrubSql,
   isAccountUnderLegalHold,
+  isContentRemovalHeld,
   isLegalHoldAbort,
   LegalHoldError,
 } from '~/server/services/legal-hold.service';
@@ -65,7 +67,8 @@ const EXPIRED_MARKER = 20;
 const EXTENDED_MARKER = 21;
 const RELEASED_WITH_REPORT = 22; // a released marker, and a pending report naming them
 const OTHER_OWNERS_MODEL = 102;
-const ALL_USERS = Array.from({ length: 22 }, (_, i) => i + 1);
+const BAN_NOTE = 23; // banned with a note naming NCMEC; no account hold
+const ALL_USERS = Array.from({ length: 23 }, (_, i) => i + 1);
 
 let failQueries = false;
 let unreadable = false;
@@ -104,7 +107,8 @@ beforeAll(async () => {
       image text,
       "profilePictureId" int,
       "subscriptionId" text,
-      meta jsonb
+      meta jsonb,
+      "bannedAt" timestamp(3)
     );
     CREATE TABLE "UserReport" ("userId" int, "reportId" int);
     -- What deleteUser's deal-file statement reads; no deals, so it marks nothing.
@@ -115,7 +119,7 @@ beforeAll(async () => {
     CREATE TABLE "Report" (id int PRIMARY KEY, status text);
     CREATE TABLE "ServiceOfferingReport" ("serviceOfferingId" int, "reportId" int);
     CREATE TABLE "Appeal" ("userId" int, status text);
-    CREATE TABLE "ModActivity" ("entityType" text, "entityId" int, activity text);
+    CREATE TABLE "ModActivity" ("entityType" text, "entityId" int, activity text, "createdAt" timestamp(3));
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     INSERT INTO "Model" VALUES (${CLEAN_MODEL}, ${CLEAN}), (${OTHER_OWNERS_MODEL}, ${RECENTLY_SENT});
     CREATE TYPE "ModelStatus" AS ENUM
@@ -387,6 +391,36 @@ describe('areAccountsUnderLegalHold (one batched lookup)', () => {
   it('an unreadable answer (no boolean) holds the user', async () => {
     unreadable = true;
     expect(await areAccountsUnderLegalHold([CLEAN])).toEqual(new Map([[CLEAN, true]]));
+  });
+});
+
+describe('content removal: an account hold or an unreleased ban-note hold', () => {
+  const banWithNote = (id: number) =>
+    holder.db.query(
+      `UPDATE "User" SET "bannedAt" = now() - interval '1 day',
+         meta = '{"banDetails": {"detailsInternal": "NCMEC report filed"}}' WHERE id = $1`,
+      [id]
+    );
+
+  it('holds a ban-note account no account hold covers, and not a clean one', async () => {
+    await holder.db.exec(`DELETE FROM "ModActivity"`);
+    await banWithNote(BAN_NOTE);
+    expect(await isAccountUnderLegalHold(BAN_NOTE)).toBe(false);
+    expect(await isContentRemovalHeld(BAN_NOTE)).toBe(true);
+    expect(await isContentRemovalHeld(CLEAN)).toBe(false);
+    expect(await areContentRemovalsHeld([CLEAN, BAN_NOTE, PENDING_REPORT])).toEqual(
+      new Map([
+        [CLEAN, false],
+        [BAN_NOTE, true],
+        [PENDING_REPORT, true],
+      ])
+    );
+  });
+
+  it('a failed lookup is unknown for one user and held for a batch', async () => {
+    failQueries = true;
+    expect(await isContentRemovalHeld(CLEAN)).toBeNull();
+    expect(await areContentRemovalsHeld([CLEAN])).toEqual(new Map([[CLEAN, true]]));
   });
 });
 

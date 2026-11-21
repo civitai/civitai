@@ -88,16 +88,14 @@ type Fixture = {
   meta?: Record<string, string>;
   /** `User.meta` as the primary holds it, when the two have not converged yet. */
   primaryMeta?: Record<string, string>;
-  /** `CsamReport` rows the worklist's replica can see for this account. */
-  csamReports?: CsamReport[];
-  /** `CsamReport` rows the primary holds, when a report lands after the worklist read. */
-  primaryCsamReports?: CsamReport[];
-  /** Named as the secondary user on a report that holds. */
-  heldAsSecondary?: boolean;
-  /** Banned with a CSAM/NCMEC note and not released. */
-  banNoteHeld?: boolean;
-  /** Named on a CSAM report not yet archived. */
-  openReport?: boolean;
+  /** Under a hold on the primary, as the statement-level guards see it. */
+  heldOnPrimary?: boolean;
+  /** Held as the worklist (a replica read) sees it: its mode is 'grace' whatever the account chose. */
+  worklistHeld?: boolean;
+  /** Left out of the worklist: an unarchived report names the account. */
+  worklistSkipped?: boolean;
+  /** What the primary hold read answers; absent is 'follow' the account's choice. */
+  primaryAction?: 'skip' | 'block';
   /** Comes under a hold in the window between the job's image read and its delete. */
   holdAfterRead?: boolean;
   /** One of the account's images carries the moderator-only review flag, as the replica sees it. */
@@ -126,8 +124,6 @@ type Fixture = {
   /** Re-deleted as `grace` on the primary once this many in-batch checks have cleared. */
   graceAfterBatches?: number;
 };
-
-type CsamReport = { reportSentAt: Date | null; archivedAt: Date | null };
 
 let holdReadFails = false;
 let fixtures: Record<number, Fixture> = {};
@@ -184,9 +180,10 @@ function metaHolds(condition: string, meta: Record<string, string> | undefined) 
 }
 
 /**
- * Evaluates the worklist's mode expression instead of pattern-matching one accepted spelling of
- * it, so a `CASE` that normalizes the wrong way reads as the wrong mode rather than as no
- * normalization at all.
+ * Evaluates the worklist's mode expression from its last branch, the account's own choice, instead
+ * of pattern-matching one accepted spelling of it, so a `CASE` that normalizes the wrong way reads
+ * as the wrong mode. Which holds pick 'grace' is proven against Postgres in the legal-hold behavior
+ * suite; here `worklistHeld` stands in for them.
  */
 function modeExpression(sql: string, values: unknown[]) {
   const fragment = values.find(
@@ -196,48 +193,16 @@ function modeExpression(sql: string, values: unknown[]) {
       (v as { sql: string }).sql.includes('imageRemoval')
   ) as { sql: string } | undefined;
   const text = fragment ? `${fragment.sql} AS mode` : sql;
-  const held =
-    /CASE\s+WHEN [\s\S]+? THEN 'grace'\s+WHEN ([\s\S]+?)\s+THEN '(\w+)'\s+ELSE '(\w+)'\s+END AS mode/.exec(
-      text
-    );
-  const plain = /CASE\s+WHEN ([\s\S]+?)\s+THEN '(\w+)' ELSE '(\w+)'\s+END AS mode/.exec(text);
-  const branches = held ?? plain;
+  const branches = /WHEN ((?:(?!WHEN )[\s\S])+?)\s+THEN '(\w+)'\s+ELSE '(\w+)'\s+END AS mode/.exec(
+    text
+  );
   if (!branches) throw new Error(`unrecognized mode expression: ${text}`);
 
   const [, condition, whenTrue, whenFalse] = branches;
   return (fixture: Fixture) =>
-    held && heldOnReplica(fixture)
-      ? 'grace'
-      : metaHolds(condition, fixture.meta)
-      ? whenTrue
-      : whenFalse;
+    fixture.worklistHeld ? 'grace' : metaHolds(condition, fixture.meta) ? whenTrue : whenFalse;
 }
 
-/** Any hold the worklist (a replica read) sees on the account. */
-const heldOnReplica = (fixture: Fixture) =>
-  !!fixture.heldAsSecondary ||
-  !!fixture.banNoteHeld ||
-  !!fixture.csamFlagged ||
-  (fixture.csamReports ?? []).some(reportHolds);
-
-/** Whether the worklist leaves the account out: the `NOT <open report>` fragment it embeds. */
-const skippedByWorklist = (values: unknown[], fixture: Fixture) =>
-  values.some(
-    (v) =>
-      typeof (v as { sql?: unknown })?.sql === 'string' &&
-      /"archivedAt" IS NULL[\s\S]*secondaryUserId/.test((v as { sql: string }).sql)
-  ) && openReportOf(fixture.csamReports, fixture.openReport);
-
-/** A report not yet archived names the account. */
-const openReportOf = (reports: CsamReport[] | undefined, open?: boolean) =>
-  !!open || (reports ?? []).some((r) => r.archivedAt == null);
-
-const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
-/** A report holds while unsent, unarchived, or sent within the last year. */
-const reportHolds = (report: CsamReport) =>
-  report.reportSentAt == null ||
-  report.archivedAt == null ||
-  report.reportSentAt.getTime() > Date.now() - YEAR_MS;
 const isLegalHold = (value: unknown) =>
   typeof (value as { sql?: unknown })?.sql === 'string' &&
   (value as { sql: string }).sql.includes(legalHoldUserIdsSql.sql);
@@ -245,18 +210,12 @@ const isLegalHold = (value: unknown) =>
 /**
  * Answers the shared legal hold off the statement that carries it, as the `NOT <hold>` fragment the
  * job embeds. Which users the fragment covers is run against Postgres in the hold-guard behavior
- * test; here a report or secondary naming that holds stands in for it. A statement carrying no hold
+ * test; here `heldOnPrimary` stands in for it. A statement carrying no hold
  * is answered as unguarded, so dropping it from the job shows up as the fixture handing back rows.
  */
-function blockedByLegalHold(
-  sql: string,
-  values: unknown[],
-  reports: CsamReport[] | undefined,
-  heldAsSecondary = false
-) {
+function blockedByLegalHold(sql: string, values: unknown[], held = false) {
   const at = values.findIndex(isLegalHold);
   if (at < 0) return false;
-  const held = heldAsSecondary || (reports ?? []).some(reportHolds);
   return /NOT\s*$/.test(sql.split('?')[at]) ? held : !held;
 }
 
@@ -264,14 +223,9 @@ function blockedByLegalHold(
 function keptByOnlyWhere(onlyWhere: { sql: string } | undefined, fixture: Fixture) {
   if (!onlyWhere || !isLegalHold(onlyWhere)) return false;
   const held =
-    !!fixture.heldAsSecondary ||
-    (reportsOnPrimary(fixture) ?? []).some(reportHolds) ||
-    blockedByReviewFlag('', [onlyWhere], flaggedOnPrimary(fixture));
+    !!fixture.heldOnPrimary || blockedByReviewFlag('', [onlyWhere], flaggedOnPrimary(fixture));
   return /^\s*NOT\b/.test(onlyWhere.sql) ? held : !held;
 }
-
-/** What the primary sees, which is what every gate on a write is answered from. */
-const reportsOnPrimary = (fixture: Fixture) => fixture.primaryCsamReports ?? fixture.csamReports;
 
 /** The per-account review-flag hold, as the account hold carried in a statement spells it. */
 const REVIEW_FLAG_HOLD =
@@ -385,8 +339,7 @@ function applyImageUpdate(sql: string, values: unknown[]) {
   const userId = values[joined + 1] as number;
   const fixture = fixtures[userId];
   if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored) return [];
-  if (blockedByLegalHold(sql, values, reportsOnPrimary(fixture), fixture.heldAsSecondary))
-    return [];
+  if (blockedByLegalHold(sql, values, fixture.heldOnPrimary)) return [];
 
   const row = parseSetClause(sql, values);
   // Only the WHERE clause selects rows; the SET clause names the same columns.
@@ -471,7 +424,7 @@ function seed(next: Record<number, Fixture>) {
     return Promise.resolve(
       order
         .filter((id) => bound === undefined || inRange(fixtures[id].deletedAt))
-        .filter((id) => !skippedByWorklist(values, fixtures[id]))
+        .filter((id) => !fixtures[id].worklistSkipped)
         .filter((id) => {
           const fixture = fixtures[id];
           const immediate = modeOf(fixture) === 'immediate';
@@ -509,15 +462,10 @@ function seed(next: Record<number, Fixture>) {
       if (sql.includes('AS skip')) {
         if (holdReadFails) return Promise.reject(new Error('primary unreachable'));
         const hold = values[0] as { values: unknown[] };
-        const account = fixtures[hold.values[0] as number];
-        const reported = (reportsOnPrimary(account) ?? []).some(reportHolds);
-        const accountHeld =
-          reported ||
-          !!account.heldAsSecondary ||
-          !!account.banNoteHeld ||
-          blockedByReviewFlag(sql, values, flaggedOnPrimary(account));
-        const skip = openReportOf(reportsOnPrimary(account), account.openReport);
-        return Promise.resolve([{ skip, accountHeld }]);
+        const { primaryAction } = fixtures[hold.values[0] as number];
+        return Promise.resolve([
+          { skip: primaryAction === 'skip', accountHeld: primaryAction === 'block' },
+        ]);
       }
       if (sql.includes('"hasImages"')) {
         const state = { stillDeleted: !fixture.restored, hasImages: fixture.images.length > 0 };
@@ -543,8 +491,7 @@ function seed(next: Record<number, Fixture>) {
         imageLimits.push(limit);
         if (gated && (fixture.restored || !passesPrimaryChoice(sql, fixture)))
           return Promise.resolve([]);
-        if (blockedByLegalHold(sql, values, reportsOnPrimary(fixture), fixture.heldAsSecondary))
-          return Promise.resolve([]);
+        if (blockedByLegalHold(sql, values, fixture.heldOnPrimary)) return Promise.resolve([]);
         if (blockedByReviewFlag(sql, values, flaggedOnPrimary(fixture))) return Promise.resolve([]);
         const images = pendingImages(sql, values, fixture);
         const page = images.slice(0, limit).map((id) => ({
@@ -553,7 +500,7 @@ function seed(next: Record<number, Fixture>) {
         }));
         pagedImageIds.push(...page.map((row) => row.id));
         for (const id of fixture.blockAfterRead ?? []) (fixture.ingestion ??= {})[id] = 'Blocked';
-        if (fixture.holdAfterRead) fixture.heldAsSecondary = true;
+        if (fixture.holdAfterRead) fixture.heldOnPrimary = true;
         return Promise.resolve(page);
       }
       if (sql.includes('FROM "Post"'))
@@ -572,8 +519,7 @@ function seed(next: Record<number, Fixture>) {
         const fixture = fixtures[userId];
         if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored)
           return Promise.resolve(0);
-        if (blockedByLegalHold(sql, values, reportsOnPrimary(fixture), fixture.heldAsSecondary))
-          return Promise.resolve(0);
+        if (blockedByLegalHold(sql, values, fixture.heldOnPrimary)) return Promise.resolve(0);
         const excluded = sql.includes('IS DISTINCT FROM') ? (values[1] as string) : null;
         const eligible = fixture.images.filter(
           (id) => ingestionOf(fixture, id) === 'Blocked' && blockedForOf(fixture, id) !== excluded
@@ -1559,12 +1505,13 @@ describe('removal choice re-read on the destructive path', () => {
   });
 });
 
-describe('an image carrying the moderator-only review flag', () => {
-  it('blocks the account in both worklists rather than deleting it', async () => {
+describe('holds: skip, block or follow', () => {
+  it('blocks a held account in both worklists rather than deleting it', async () => {
     cursorStore[FRESH_KEY] = NEWER;
+    const held = { worklistHeld: true, primaryAction: 'block' } as const;
     seed({
-      7: { deletedAt: RECENT, images: ids(10), posts: [900], csamFlagged: true },
-      8: { deletedAt: ANCIENT, images: ids(10, 100), posts: [901], csamFlagged: true },
+      7: { deletedAt: RECENT, images: ids(10), posts: [900], ...held },
+      8: { deletedAt: ANCIENT, images: ids(10, 100), posts: [901], ...held },
     });
 
     const result = await run();
@@ -1576,38 +1523,26 @@ describe('an image carrying the moderator-only review flag', () => {
     expect(result.blockedImages).toBe(20);
   });
 
-  it('stops the image delete for a flag set after the worklist read', async () => {
-    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], primaryCsamFlagged: true } });
+  it('blocks instead of deleting when the primary finds a hold the worklist did not', async () => {
+    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], primaryAction: 'block' } });
 
     const result = await run();
 
     expect(mockDeleteImages).not.toHaveBeenCalled();
-    // Held on the primary: hidden and kept instead of deleted.
     expect(result.blockedImages).toBe(10);
     expect(result.deletedImages).toBe(0);
-  });
-
-  it('stops the post delete for a flag set after the worklist read', async () => {
-    seed({ 7: { deletedAt: NEWER, images: [], posts: [900], primaryCsamFlagged: true } });
-
-    const result = await run();
-
     expect(deletedPostIds).toEqual([]);
-    expect(mockDeleteImages).not.toHaveBeenCalled();
   });
 
-  it('does not hold an account whose images carry no flag', async () => {
-    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], csamFlagged: false } });
+  it('follows the account choice when the primary finds no hold', async () => {
+    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900] } });
 
     const result = await run();
 
     expect(result.deletedImages).toBe(10);
     expect(deletedPostIds).toEqual([900]);
+    expect(result.deletedUsers).toBe(1);
   });
-});
-
-describe('legal holds', () => {
-  const UNFINISHED: CsamReport[] = [{ reportSentAt: null, archivedAt: null }];
 
   it('deletes and blocks nothing when the hold cannot be read on the primary', async () => {
     holdReadFails = true;
@@ -1624,71 +1559,20 @@ describe('legal holds', () => {
     }
   });
 
-  it('keeps an account with an unfinished report out of both worklists', async () => {
+  it('runs nothing for an account the worklist leaves out', async () => {
     cursorStore[FRESH_KEY] = NEWER;
+    const skipped = { worklistSkipped: true, primaryAction: 'skip' } as const;
     seed({
-      7: { deletedAt: RECENT, images: ids(10), posts: [900], csamReports: UNFINISHED },
-      8: { deletedAt: ANCIENT, images: ids(10, 100), posts: [901], csamReports: UNFINISHED },
+      7: { deletedAt: RECENT, images: ids(10), posts: [900], ...skipped },
+      8: { deletedAt: ANCIENT, images: ids(10, 100), posts: [901], ...skipped },
     });
 
     const result = await run();
 
-    // archive-csam-reports rebuilds the NCMEC evidence from the live CDN five minutes after this
-    // job, and skips silently for anything already gone — so the account has to be out of range
-    // of both passes, not just the one that happens to be draining today.
     expect(mockDeleteImages).not.toHaveBeenCalled();
     expect(deletedPostIds).toEqual([]);
     expect(result.deletedImages).toBe(0);
     expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ candidates: 0 }));
-  });
-
-  it('treats a report as unfinished until it is both sent and archived', async () => {
-    seed({
-      7: {
-        deletedAt: NEWER,
-        images: ids(10),
-        csamReports: [{ reportSentAt: NOW, archivedAt: null }],
-      },
-      8: {
-        deletedAt: OLDER,
-        images: ids(10, 100),
-        csamReports: [{ reportSentAt: null, archivedAt: NOW }],
-      },
-    });
-
-    const result = await run();
-
-    // Sent-but-unarchived is the window this job lands in the middle of, and either timestamp
-    // read on its own reads one of these two as a report that is already done with the images.
-    expect(mockDeleteImages).not.toHaveBeenCalled();
-    expect(result.deletedImages).toBe(0);
-  });
-
-  it('keeps an account whose report was sent and archived within the last year', async () => {
-    seed({
-      7: {
-        deletedAt: NEWER,
-        images: ids(10),
-        posts: [900],
-        csamReports: [{ reportSentAt: NOW, archivedAt: NOW }],
-      },
-    });
-
-    const result = await run();
-
-    expect(mockDeleteImages).not.toHaveBeenCalled();
-    expect(deletedPostIds).toEqual([]);
-    expect(result.deletedImages).toBe(0);
-  });
-
-  it('keeps an account named as the secondary user on a report that holds', async () => {
-    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], heldAsSecondary: true } });
-
-    const result = await run();
-
-    expect(mockDeleteImages).not.toHaveBeenCalled();
-    expect(deletedPostIds).toEqual([]);
-    expect(result.deletedImages).toBe(0);
   });
 
   it('stops the delete itself for a hold placed after the image read', async () => {
@@ -1701,78 +1585,24 @@ describe('legal holds', () => {
     expect(deletedPostIds).toEqual([]);
   });
 
-  it('processes an account whose report is past its year', async () => {
-    const yearAgo = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000);
-    seed({
-      7: {
-        deletedAt: NEWER,
-        images: ids(10),
-        posts: [900],
-        csamReports: [{ reportSentAt: yearAgo, archivedAt: yearAgo }],
-      },
-    });
+  it.each([
+    ['an immediate account', {}, ids(10)],
+    ['an immediate account with only posts left', {}, []],
+    ['a grace account', { imageRemoval: 'grace' }, ids(10)],
+  ])(
+    'skips %s the primary skips: nothing deleted, blocked or removed',
+    async (_label, meta, images) => {
+      seed({ 7: { deletedAt: NEWER, meta, images, posts: [900], primaryAction: 'skip' } });
 
-    const result = await run();
+      const result = await run();
 
-    // Holding the account past the hold retains the images forever against a deletion request.
-    expect(result.deletedImages).toBe(10);
-    expect(deletedPostIds).toEqual([900]);
-    expect(result.deletedUsers).toBe(1);
-  });
-
-  it('processes an account with no report at all', async () => {
-    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], csamReports: [] } });
-
-    const result = await run();
-
-    expect(result.deletedImages).toBe(10);
-    expect(deletedPostIds).toEqual([900]);
-    expect(result.deletedUsers).toBe(1);
-  });
-
-  it('stops the image delete for a report filed after the worklist read', async () => {
-    seed({
-      7: { deletedAt: NEWER, images: ids(10), posts: [900], primaryCsamReports: UNFINISHED },
-    });
-
-    const result = await run();
-
-    // The worklist is read off a replica, so its exclusion cannot see a report filed inside the
-    // run; carrying the same check onto the statement is what closes that window.
-    expect(mockDeleteImages).not.toHaveBeenCalled();
-    // An unarchived report on the primary: skipped this run, neither deleted nor blocked.
-    expect(result.blockedImages).toBe(0);
-    expect(result.deletedImages).toBe(0);
-  });
-
-  it('stops the post delete for a report filed after the worklist read', async () => {
-    seed({
-      7: { deletedAt: NEWER, images: [], posts: [900], primaryCsamReports: UNFINISHED },
-    });
-
-    const result = await run();
-
-    expect(deletedPostIds).toEqual([]);
-    expect(mockDeleteImages).not.toHaveBeenCalled();
-    expect(result.deletedUsers).toBe(0);
-  });
-
-  it('leaves a grace user whose report is filed after the worklist read untouched', async () => {
-    seed({
-      7: {
-        deletedAt: NEWER,
-        meta: { imageRemoval: 'grace' },
-        images: ids(10),
-        primaryCsamReports: UNFINISHED,
-      },
-    });
-
-    const result = await run();
-
-    // An unarchived report skips the account whatever it chose: the NCMEC archive falls back to the
-    // edge copy for a passthrough url or a missing original, and a block makes the image server
-    // refuse that copy.
-    expect(result.blockedImages).toBe(0);
-    expect(mockDeleteImages).not.toHaveBeenCalled();
-  });
+      // An unarchived report skips the account whatever it chose: the NCMEC archive falls back to
+      // the edge copy for a passthrough url or a missing original, and a block makes the image
+      // server refuse that copy.
+      expect(mockDeleteImages).not.toHaveBeenCalled();
+      expect(deletedPostIds).toEqual([]);
+      expect(result.blockedImages).toBe(0);
+      expect(result.deletedUsers).toBe(0);
+    }
+  );
 });

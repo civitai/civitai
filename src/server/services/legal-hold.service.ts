@@ -562,6 +562,50 @@ export async function isAccountUnderLegalHold(userId: number): Promise<boolean |
   return hold ? hold.legs.length > 0 : null;
 }
 
+/**
+ * `contentRemovalHeldSql` for one user, on the primary: `null` when it cannot be read, which
+ * callers treat as held. For a job or step that keeps a held user's content and carries on.
+ */
+export async function isContentRemovalHeld(userId: number): Promise<boolean | null> {
+  const account = await isAccountUnderLegalHold(userId);
+  if (account !== false) return account;
+  const banNote = await readBanNoteHolds([userId]);
+  return banNote ? banNote.get(userId) === true : null;
+}
+
+/**
+ * `contentRemovalHeldSql` for many users, in two batched reads. Never throws: a user a read fails
+ * for or leaves out answers `true`.
+ */
+export async function areContentRemovalsHeld(userIds: number[]): Promise<Map<number, boolean>> {
+  const answer = await areAccountsUnderLegalHold(userIds);
+  const clear = userIds.filter((id) => answer.get(id) === false);
+  if (clear.length === 0) return answer;
+  const banNote = await readBanNoteHolds(clear);
+  for (const id of clear) answer.set(id, banNote?.get(id) !== false);
+  return answer;
+}
+
+/** The ban-note leg for each of `userIds`; `true` for a non-boolean answer, `null` on a failed read. */
+async function readBanNoteHolds(userIds: number[]): Promise<Map<number, boolean> | null> {
+  try {
+    const rows = await dbWrite.$queryRaw<{ userId: number; banNoteHeld: unknown }[]>`
+      SELECT u."userId", ${banNoteHoldSql(Prisma.raw('u."userId"'))} AS "banNoteHeld"
+      FROM unnest(${userIds}::int[]) AS u("userId")
+    `;
+    const answers = new Map(rows.map((r) => [Number(r.userId), r.banNoteHeld]));
+    return new Map(userIds.map((id) => [id, answers.get(id) !== false]));
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'account-legal-hold-check-failed',
+      message: (e as Error).message,
+      details: { userIds },
+    });
+    return null;
+  }
+}
+
 async function holdOrNull(userId: number): Promise<AccountLegalHold | null> {
   try {
     return await getAccountLegalHold(userId);
