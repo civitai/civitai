@@ -12,8 +12,11 @@ function readInternals(matcher: RegExpMatcher): MatcherInternals | null {
   const m = matcher as unknown as Partial<MatcherInternals>;
   if (!Array.isArray(m.blacklistedTerms) || typeof m.applyTransformers !== 'function') return null;
   if (m.blacklistMatcherTransformers == null) return null;
+  // A backreference would point at another term's group once the sources are joined.
   const sameFlags = (term: { regExp?: unknown }) =>
-    term?.regExp instanceof RegExp && term.regExp.flags === 'gs';
+    term?.regExp instanceof RegExp &&
+    term.regExp.flags === 'gs' &&
+    !/\\[1-9]|\\k</.test(term.regExp.source);
   if (!m.blacklistedTerms.every(sameFlags)) return null;
   return m as MatcherInternals;
 }

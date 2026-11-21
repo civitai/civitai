@@ -130,6 +130,9 @@ it('falls back to the per-term pass when the matcher internals are not the expec
   const otherFlags = Object.create(matcher);
   otherFlags.blacklistedTerms = [{ regExp: /x/gi }];
   expect(createAnyTermPrefilter(otherFlags)).toBeNull();
+  const backreference = Object.create(matcher);
+  backreference.blacklistedTerms = [{ regExp: /(x)\1/gs }];
+  expect(createAnyTermPrefilter(backreference)).toBeNull();
   const notArray = Object.create(matcher);
   notArray.blacklistedTerms = {};
   expect(createAnyTermPrefilter(notArray)).toBeNull();
