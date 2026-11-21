@@ -8853,7 +8853,7 @@ const personalLeadSources = {
   getCandidates: getPersonalLeadCandidates,
   listStake: async (userId: number) =>
     listModelStake((await loadKyselyDb()).kyselyRead, { userId, limit: PERSONAL_LEAD_STAKE_LIMIT }),
-  getFollows: getUserFollows,
+  getFollows: (userId: number) => getUserFollows(userId),
   getHidden: (userId: number) => getAllHiddenForUser({ userId }),
 };
 
