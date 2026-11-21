@@ -1,5 +1,13 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -234,5 +242,69 @@ describe('typecheck wrapper compiler selection', () => {
 
     expect(res.status).toBe(2);
     expect(res.stdout).not.toContain(OK_MARKER);
+  });
+});
+
+// Through the real resolver, not the seam: a TypeScript 7 that cannot be installed must stop the
+// run, never fall back to 5.9 and report a clean typecheck that checked nothing.
+describe('typecheck wrapper when TypeScript 7 cannot be installed', () => {
+  it('exits 2 with the install command and never runs 5.9', () => {
+    const repo = path.join(dir, 'no-ts7-repo');
+    const scripts = path.resolve(__dirname, '..');
+    mkdirSync(path.join(repo, 'scripts', 'lib'), { recursive: true });
+    for (const f of ['typecheck.mjs', 'typecheck-queue.mjs', 'typecheck-apps-gate.mjs']) {
+      cpSync(path.join(scripts, f), path.join(repo, 'scripts', f));
+    }
+    cpSync(path.join(scripts, 'lib', 'ts7.mjs'), path.join(repo, 'scripts', 'lib', 'ts7.mjs'));
+    mkdirSync(path.join(repo, 'tools', 'ts7'), { recursive: true });
+    writeFileSync(path.join(repo, 'tools', 'ts7', 'package.json'), '{"name":"ts7-fixture"}');
+    // A 5.9 that leaves a marker if anything runs it.
+    const ran5 = path.join(repo, 'ran-5.9');
+    mkdirSync(path.join(repo, 'node_modules', 'typescript', 'lib'), { recursive: true });
+    writeFileSync(
+      path.join(repo, 'node_modules', 'typescript', 'lib', 'tsc.js'),
+      `require('fs').writeFileSync(${JSON.stringify(ran5)}, '');\n`
+    );
+    // A `next typegen` that only writes the validator, so the run gets as far as the compiler.
+    mkdirSync(path.join(repo, 'node_modules', 'next', 'dist', 'bin'), { recursive: true });
+    writeFileSync(
+      path.join(repo, 'node_modules', 'next', 'dist', 'bin', 'next'),
+      "const fs = require('fs');\nfs.mkdirSync('.next/types', { recursive: true });\n" +
+        "fs.writeFileSync('.next/types/validator.ts', '');\n"
+    );
+    for (const pkg of ['next', 'typescript']) {
+      writeFileSync(
+        path.join(repo, 'node_modules', pkg, 'package.json'),
+        JSON.stringify({ name: pkg, version: '0.0.0-stub' })
+      );
+    }
+    // A pnpm whose install fails.
+    const bin = path.join(repo, 'bin');
+    mkdirSync(bin);
+    writeFileSync(path.join(bin, 'pnpm'), '#!/usr/bin/env node\nprocess.exit(1);\n');
+    chmodSync(path.join(bin, 'pnpm'), 0o755);
+    writeFileSync(path.join(bin, 'pnpm.cmd'), '@node "%~dp0pnpm" %*\r\n');
+
+    const res = spawnSync(process.execPath, ['scripts/typecheck.mjs'], {
+      cwd: repo,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+        TYPECHECK_TSC_PATH: '',
+        TYPECHECK_COMPILER: '',
+        CIVITAI_TEST_QUEUE: '',
+        CI: '',
+        GITHUB_ACTIONS: '',
+      },
+    });
+
+    expect(res.status).toBe(2);
+    expect(res.stdout).toContain('Nothing was checked');
+    expect(res.stderr).toContain('pnpm -C tools/ts7 install');
+    expect(res.stdout).not.toContain(OK_MARKER);
+    expect(existsSync(ran5)).toBe(false);
+    // The lock is released even though the install failed, so the next run can retry.
+    expect(existsSync(path.join(repo, 'tools', 'ts7', '.install.lock'))).toBe(false);
   });
 });
