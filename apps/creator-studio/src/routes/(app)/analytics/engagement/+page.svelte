@@ -48,6 +48,9 @@
   const totalPages = $derived(Math.max(1, Math.ceil(sorted.length / perPage)));
   const curPage = $derived(Math.min(pageNum, totalPages));
   const pageRows = $derived(sorted.slice((curPage - 1) * perPage, curPage * perPage));
+  // No snapshot day complete yet (the job is new or off): no column, rather than a column of "—" that
+  // reads as "none of your models rank". A failed read still shows it, marked unavailable.
+  const showHotRank = $derived(data.hotRanks === null || data.hotRanks.day !== null);
   const hotRankNote = $derived(
     data.hotRanks === null
       ? ' · Hot rank unavailable right now'
@@ -113,11 +116,13 @@
           {@render sortHead('comments', 'Comments')}
           {@render sortHead('upvotes', 'Upvotes')}
           {@render sortHead('downvotes', 'Downvotes')}
-          {@render sortHead(
-            'hotRank',
-            'Hot rank',
-            'Position in the Hot feed, among every model it can show, before browsing-level filters. Updated nightly.'
-          )}
+          {#if showHotRank}
+            {@render sortHead(
+              'hotRank',
+              'Hot rank',
+              'Position in the Hot feed, among every model it can show, before browsing-level filters. Updated nightly.'
+            )}
+          {/if}
         </Table.Row>
       </Table.Header>
       <Table.Body>
@@ -150,10 +155,12 @@
             >
               {m.downvotes ? num(m.downvotes) : '—'}
             </Table.Cell>
-            {@const rank = hotRank(m.modelId)}
-            <Table.Cell class="text-right tabular-nums {rank ? 'text-white' : 'text-dark-4'}">
-              {rank ? `#${num(rank)}` : '—'}
-            </Table.Cell>
+            {#if showHotRank}
+              {@const rank = hotRank(m.modelId)}
+              <Table.Cell class="text-right tabular-nums {rank ? 'text-white' : 'text-dark-4'}">
+                {rank ? `#${num(rank)}` : '—'}
+              </Table.Cell>
+            {/if}
           </Table.Row>
         {/each}
       </Table.Body>
