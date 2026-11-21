@@ -45,6 +45,8 @@ var minorRuleSites = map[string]minorRuleSite{
 		"GET /api/v1/models' showcase read of the same cache: the appendFn's filter"},
 	"internal/hydrate/minormature.go": {0, 0, 1,
 		"the rule itself (MinorMatureImageHiddenSQL calls MinorMatureImageVisibleSQL)"},
+	"internal/hydrate/packed.go": {0, 1, 0,
+		"orderedCaches names the key to decode its entries ordered; it reads nothing (the read is models.go's)"},
 	"internal/hydrate/misses.go": {0, 1, 0,
 		"the showcase cache's miss spec: the lookup it runs is versionimages.go's"},
 	"internal/feed/pager.go": {1, 0, 0,

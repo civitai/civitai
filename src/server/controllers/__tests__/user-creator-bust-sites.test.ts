@@ -116,7 +116,9 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
   usersSearchIndex: { queueUpdate: vi.fn(async () => undefined) },
 }));
 
-const { getUserCreator } = await import('~/server/services/user.service');
+const { getUserCreator, removeUserLinkAsModerator } = await import(
+  '~/server/services/user.service'
+);
 const { updateUserProfileHandler, addEntityToShowcaseHandler } = await import(
   '~/server/controllers/user-profile.controller'
 );
@@ -181,6 +183,30 @@ async function cardsAfter(write: () => Promise<unknown>) {
 }
 
 describe('creator-card bust in the profile and user write handlers', () => {
+  describe("a moderator's link removal", () => {
+    const remove = () =>
+      removeUserLinkAsModerator({
+        userId: OWNER,
+        linkId: 990300009,
+        actorId: MODERATOR,
+        archive: async () => undefined,
+      });
+    beforeEach(() => {
+      dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(null as never);
+      dbMock.dbWrite.userLink.findMany.mockResolvedValue([] as never);
+    });
+
+    it('busts the owner’s card when a link was removed', async () => {
+      dbMock.dbWrite.userLink.deleteMany.mockResolvedValue({ count: 1 } as never);
+      expect(await cardsAfter(remove)).toEqual({ owner: 'owner-after', moderator: 'mod-before' });
+    });
+
+    it('leaves the card alone when nothing was removed', async () => {
+      dbMock.dbWrite.userLink.deleteMany.mockResolvedValue({ count: 0 } as never);
+      expect(await cardsAfter(remove)).toEqual({ owner: 'owner-before', moderator: 'mod-before' });
+    });
+  });
+
   it('control: with no write, both cached cards are served', async () => {
     expect(await cardsAfter(async () => undefined)).toEqual({
       owner: 'owner-before',
@@ -263,6 +289,14 @@ describe('creator-card bust in the profile and user write handlers', () => {
         await expect(edit({ id: MODERATOR, isModerator: true })).rejects.toThrow();
         expect(mocks.updateUserProfile).not.toHaveBeenCalled();
         expect(modActivityRows()).toEqual([]);
+      });
+
+      it('archives before an edit of only the profile section settings', async () => {
+        await updateUserProfileHandler({
+          input: { userId: OWNER, profileSectionsSettings: [] },
+          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+        } as never);
+        expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
       });
 
       it('archives before an edit of only the showcase', async () => {

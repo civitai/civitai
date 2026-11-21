@@ -84,7 +84,7 @@ func newAssocEnv(rows ...testRow) *assocEnv {
 				Data: map[int]hydrate.ModelData{}, Frames: map[int]superjson.Object{}, Decorations: map[int]superjson.Object{},
 				PrivacyDefaults: map[int]hydrate.PrivacyDefaults{},
 			},
-			images: map[int][]map[string]any{}, members: map[int]bool{}, users: map[string]int{},
+			images: map[int][]superjson.Object{}, members: map[int]bool{}, users: map[string]int{},
 		},
 		gallery: &fakeGallery{settings: map[int]*feed.GallerySettings{}},
 		prefs:   &fakePrefs{},
@@ -220,9 +220,9 @@ func twoModelEnv() *assocEnv {
 	s := e.sources
 	s.page.Basic[1001] = hydrate.BasicUser{ID: 1001, Username: "artist_one"}
 	s.page.Data[5001] = hydrate.ModelData{Hashes: []any{"ABCDEF"}, TagIDs: []int{7},
-		Versions: []map[string]any{version(6001, "SDXL 1.0", map[string]any{"flags": int64(32)})}}
+		Versions: []superjson.Object{version(6001, "SDXL 1.0", map[string]any{"flags": int64(32)})}}
 	s.page.Data[5002] = hydrate.ModelData{Hashes: []any{}, TagIDs: []int{},
-		Versions: []map[string]any{version(6003, "Pony", map[string]any{"covered": false, "coveredNext": false})}}
+		Versions: []superjson.Object{version(6003, "Pony", map[string]any{"covered": false, "coveredNext": false})}}
 	e.images = [][]any{assocImageRow(8001, 1001, 1, 6001, map[string]any{"name": "img", "hash": "h1"}), assocImageRow(8003, 1002, 1, 6003, nil)}
 	return e
 }
@@ -665,7 +665,7 @@ func TestAssocCanGenerate(t *testing.T) {
 	if !gen(e, nil) {
 		t.Fatal("covered SDXL checkpoint: want true")
 	}
-	e.sources.page.Data[5001].Versions[0]["coveredNext"] = false
+	e.sources.page.Data[5001].Versions[0].Set("coveredNext", false)
 	if gen(e, nil) {
 		t.Fatal("not covered under the next column: want false")
 	}
@@ -674,7 +674,7 @@ func TestAssocCanGenerate(t *testing.T) {
 		t.Fatal("flag off reads the live column: want true")
 	}
 	e = twoModelEnv()
-	e.sources.page.Data[5001].Versions[0]["availability"] = "Private"
+	e.sources.page.Data[5001].Versions[0].Set("availability", "Private")
 	if gen(e, &Viewer{ID: 1003}) {
 		t.Fatal("private version, a stranger: want false")
 	}
@@ -699,8 +699,8 @@ func TestAssocCanGenerate(t *testing.T) {
 	}
 	// The rules are read only when a shown card could generate.
 	e = twoModelEnv()
-	e.sources.page.Data[5001].Versions[0]["covered"] = false
-	e.sources.page.Data[5001].Versions[0]["coveredNext"] = false
+	e.sources.page.Data[5001].Versions[0].Set("covered", false)
+	e.sources.page.Data[5001].Versions[0].Set("coveredNext", false)
 	gen(e, nil)
 	if e.gates.calls != 0 {
 		t.Fatalf("gate rules read %d times with no card that could generate", e.gates.calls)
@@ -716,8 +716,8 @@ func TestAssocExplicitCoverage(t *testing.T) {
 		want bool
 	}{{6001, false}, {1088507, true}, {2152373, true}} {
 		it := &feedItem{row: &modelRow{ID: 5001, UserID: 1001, Type: "Checkpoint"}, versionID: c.id,
-			version: map[string]any{"id": int64(c.id), "baseModel": locked, "status": "Published", "availability": "Public",
-				"flags": int64(0), "covered": true, "coveredNext": false}}
+			version: sortedRecord(map[string]any{"id": int64(c.id), "baseModel": locked, "status": "Published", "availability": "Public",
+				"flags": int64(0), "covered": true, "coveredNext": false})}
 		if !generationTypes[locked]["Checkpoint"] {
 			t.Skipf("%s does not generate checkpoints in basemodels.json", locked)
 		}
@@ -734,8 +734,8 @@ func TestAssocExplicitCoverage(t *testing.T) {
 // supported, covered SDXL checkpoint then does not generate.
 func TestAssocGenerationDisabledOverride(t *testing.T) {
 	it := &feedItem{row: &modelRow{ID: 5001, UserID: 1001, Type: "Checkpoint"}, versionID: 6001,
-		version: map[string]any{"id": int64(6001), "baseModel": "SDXL 1.0", "status": "Published", "availability": "Public",
-			"flags": int64(0), "covered": true, "coveredNext": true}}
+		version: sortedRecord(map[string]any{"id": int64(6001), "baseModel": "SDXL 1.0", "status": "Published", "availability": "Public",
+			"flags": int64(0), "covered": true, "coveredNext": true})}
 	if !generationTypes["SDXL 1.0"]["Checkpoint"] || generationOff["SDXL 1.0"] {
 		t.Fatal("SDXL 1.0 must be a supported, not disabled, checkpoint base in basemodels.json")
 	}
