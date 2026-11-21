@@ -321,14 +321,17 @@ describe('media references (#9982)', () => {
     });
   });
 
-  it.each(['12345', blobKey])("reads a training item's caption %s as text", (caption) => {
-    expect(
-      findStepPositionProblem(
-        { trainingData: { type: 'blobs', items: [{ air: ownJob, caption }] } },
-        VIEWER
-      )
-    ).toBeNull();
-  });
+  it.each(['12345', blobKey, 'scene: 00:01, style:anime'])(
+    "reads a training item's caption %s as text",
+    (caption) => {
+      expect(
+        findStepPositionProblem(
+          { trainingData: { type: 'blobs', items: [{ air: ownJob, caption }] } },
+          VIEWER
+        )
+      ).toBeNull();
+    }
+  );
 
   it.each([
     ['a training blob key', 'a'.repeat(32) + '.zip'],
@@ -361,6 +364,15 @@ describe('media references (#9982)', () => {
       form: 'media-reference',
       key: 'image',
     });
+  });
+
+  it('refuses a colon in a non-caption field of a media object', () => {
+    expect(
+      findStepPositionProblem(
+        { keyframes: [{ image: 'https://image.civitai.com/x/y.png', label: 'start: 00:01' }] },
+        VIEWER
+      )
+    ).toMatchObject({ form: 'media-reference', key: 'label' });
   });
 
   it("passes a real URL and the viewer's own job file", () => {
