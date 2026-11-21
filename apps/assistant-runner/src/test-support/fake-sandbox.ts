@@ -22,6 +22,8 @@ export interface FakeSandboxRecord {
   createdAt: string;
   lastActivityAt: string | null;
   expiresAt: string | null;
+  /** Its preview id, as the service's view reports it; unset as a service from before them. */
+  previewId?: string | null;
 }
 
 /** What a fake tool does with a call. */
@@ -98,6 +100,8 @@ export class FakeSandboxService {
   readonly newTools = new Set<string>();
   /** Its `edit_file` lists `edits` in its input schema, as a newer sandbox image's does. */
   editsSchema = false;
+  /** Each preview id `POST /v1/sandboxes/<name>/preview-id` gave, by sandbox name, in order. */
+  readonly rotations: { sandbox: string; previewId: string }[] = [];
   #server: HttpServer | undefined;
   #base = '';
   #looks = new Map<string, number>();
@@ -116,10 +120,10 @@ export class FakeSandboxService {
       this.tunnelHosts.set(String(sandbox), String(args.host));
       return JSON.stringify({ running: true, host: args.host, localPort: 5173 });
     });
-    this.tools.set('tunnel_disconnect', (_args, _signal, sandbox) => {
-      this.tunnelHosts.delete(String(sandbox));
-      return JSON.stringify({ stopped: true });
-    });
+    // `stopped`: whether a tunnel was running, as sandbox-mcp says.
+    this.tools.set('tunnel_disconnect', (_args, _signal, sandbox) =>
+      JSON.stringify({ running: false, stopped: this.tunnelHosts.delete(String(sandbox)) })
+    );
     this.tools.set('tunnel_status', (_args, _signal, sandbox) => {
       const host = this.tunnelHosts.get(String(sandbox));
       return JSON.stringify(host ? { running: true, host } : { running: false, host: null });
@@ -225,15 +229,20 @@ export class FakeSandboxService {
         return json(409, { error: `sandbox limit (${this.keepLimit}) reached; delete one first` });
       return json(201, this.#view(this.add(app, 'starting')));
     }
-    const item = /^\/v1\/sandboxes\/([a-z0-9-]+)(\/suspend)?$/.exec(url.pathname);
+    const item = /^\/v1\/sandboxes\/([a-z0-9-]+)(\/suspend|\/preview-id)?$/.exec(url.pathname);
     if (item) {
       const record = this.sandboxes.find((s) => s.name === item[1]);
       if (!record) return json(404, { error: 'not found' });
+      if (item[2] === '/preview-id' && method === 'POST') {
+        record.previewId = newPreviewId(this.rotations.length + 1);
+        this.rotations.push({ sandbox: record.name, previewId: record.previewId });
+        return json(200, { previewId: record.previewId, setAt: new Date().toISOString() });
+      }
       if (method === 'DELETE' && !item[2]) {
         this.sandboxes.splice(this.sandboxes.indexOf(record), 1);
         return json(200, { deleted: record.name });
       }
-      if (item[2]) record.state = 'suspended';
+      if (item[2] === '/suspend') record.state = 'suspended';
       else if (record.state === 'starting') {
         const looks = (this.#looks.get(record.name) ?? 0) + 1;
         this.#looks.set(record.name, looks);
@@ -312,6 +321,11 @@ export class FakeSandboxService {
     );
     return server;
   }
+}
+
+/** A distinct, valid preview id (32 lowercase hex) for the `n`th rotation. */
+function newPreviewId(n: number): string {
+  return `e${n.toString(16)}`.padEnd(32, '0');
 }
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
