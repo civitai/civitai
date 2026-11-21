@@ -4,10 +4,9 @@ import type { RequestHandler } from './$types';
 import { WebhookEndpoint } from '$lib/server/webhook-endpoint';
 import { modActions } from '$lib/server/mod-actions/registry';
 
-// Ingress the main app POSTs to, delegating a mutation the spoke owns. The token is verified in
-// hooks.server.ts ($lib/server/webhook-endpoint). Two credentials reach here, each for its own actions
-// only: the general one for the moderation actions (the caller already gated on `moderatorProcedure`, so
-// the body's `userId` is trusted), and the scoped intake one for CASE_ACTIONS, which have no acting user.
+// Ingress the main app POSTs to for mutations the spoke owns. CASE_ACTIONS take the scoped credential
+// and have no acting user; every other action takes the general credential and is called from the main
+// app's moderator procedures.
 export const POST: RequestHandler = WebhookEndpoint(
   async ({ params, request, locals }) => {
     const client = locals.tokenClient;

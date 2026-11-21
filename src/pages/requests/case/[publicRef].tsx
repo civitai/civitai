@@ -28,7 +28,8 @@ export default function CasePage({ publicRef }: { publicRef: string }) {
       <Head>
         <meta name="referrer" content="no-referrer" />
         {/* Runs as the head parses, before any app or third-party script can read the address: takes
-            the link token out of the URL and history, and leaves it for this page only. */}
+            the link token out of the URL and history, and keeps it in this tab's sessionStorage until it has
+            been exchanged for the cookie. */}
         <script
           // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{ __html: stripLinkToken(publicRef) }}

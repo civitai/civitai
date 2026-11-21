@@ -18,7 +18,7 @@ export function hashAddress(address: string) {
 
 export const DEFAULT_NOTICE_FROM = 'Civitai DMCA <notices@civitai.com>';
 export const DEFAULT_NOTICE_REPLY_TO = 'dmca@civitai.com';
-/** The sender for the forms that are not DMCA (Legal, 2026-11-20). */
+/** The sender for the forms that are not DMCA. */
 export const PLAIN_NOTICE_FROM = 'Civitai <notices@civitai.com>';
 const DMCA_PROCESSES = new Set(['dmca-notice', 'dmca-counter-notice']);
 /** Who a process's notices come from: the DMCA sender only for the two DMCA forms. */

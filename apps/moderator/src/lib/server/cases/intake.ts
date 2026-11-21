@@ -25,7 +25,7 @@ export const SUBMITTER_ROLE: Record<string, CasePartyRole> = { 'dmca-counter-not
 export const submitterRole = (key: string): CasePartyRole => SUBMITTER_ROLE[key] ?? 'claimant';
 
 /**
- * The submitter says the person shown is or was a minor (Legal, 2026-11-20). Raised in code whatever
+ * The submitter says the person shown is or was a minor. Raised in code whatever
  * the definition does with it: the case is flagged and moderation alerted at submit.
  */
 export const MINOR_FIELD = 'minor';

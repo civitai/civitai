@@ -58,8 +58,9 @@ const notOpen = () =>
  * Files a public takedown request and emails its receipt with the party's private link. The order is
  * cheapest refusal first: the rate limit, the form being open, the values, and only then the Turnstile
  * token, which is spent by checking it. Once the case is filed, the answer is always its reference: a
- * receipt that could not go is recorded on the case for a moderator, never turned into an error that
- * would make the submitter file again.
+ * receipt that was capped, or failed before or while being queued, is recorded as `receipt-unsent`; one
+ * the send refuses (brake, ceiling, lockdown, relay) stays as its case_notice row with a log line.
+ * Neither becomes an error that would make the submitter file again.
  */
 export async function caseIntake(
   input: CaseIntakeInput,
@@ -97,7 +98,7 @@ export async function caseIntake(
       deps
         .alert(
           `Minor flagged on takedown case ${filed.publicRef}`,
-          `A ${def.title} request filed as ${filed.publicRef} says the person shown is or was under 18. Open it on /cases.`
+          `A ${def.title} request filed as ${filed.publicRef} says the person shown is or was under 18.`
         )
         .catch((e) =>
           recordEvent(deps.db, filed.caseId, 'minor-alert-unsent', (e as Error)?.name || 'Error')
@@ -124,8 +125,7 @@ export async function caseIntake(
       .where('notice_id', '=', 'receipt')
       .where('created_at', '>', sql<Date>`now() - interval '1 hour'`)
       .executeTakeFirstOrThrow();
-    // Both caps skip only the email, below the send ceiling, so a flood of forms can't pause every
-    // other case notice.
+    // Both caps skip only the email, so a flood of forms can't pause every other case notice.
     if (recent >= RECEIPTS_PER_ADDRESS_PER_DAY || lastHour >= RECEIPTS_PER_HOUR) {
       await recordUnsent(deps.db, filed.caseId, 'capped');
       return done('capped');
@@ -159,7 +159,8 @@ export async function caseIntake(
       .returning('id')
       .executeTakeFirstOrThrow();
     // Sent after answering: the main app gives a case action 5s, and a slow relay must not turn a filed
-    // case into "couldn't submit". The row is already pending, so an unsent receipt shows on /cases.
+    // case into "couldn't submit". A receipt that does not go stays as its case_notice row; /cases does
+    // not list form-filed cases yet.
     const publicRef = filed.publicRef;
     const sendDeps = deps.sendDeps();
     deps.background(

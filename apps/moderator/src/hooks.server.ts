@@ -183,9 +183,8 @@ export const handle: Handle = async ({ event, resolve }) => {
     if (token.kind === 'refused') return token.response;
     if (token.kind === 'authenticated') {
       logCredentialAttribution(event, token.credential);
-      // The scoped intake credential gets its own value so that the existing wrappers, which compare
-      // `!== 'webhook'` (service) or truthiness (session), refuse it with no change of their own; only
-      // /api/mod/[action] accepts `cases`, and only for a case action.
+      // 'cases' is a distinct value so the existing wrappers don't admit it; only /api/mod/[action]
+      // does, and only for case actions.
       event.locals.tokenClient = token.credential === 'MOD_CASES_TOKEN' ? 'cases' : 'webhook';
       event.locals.grants = {};
       return resolve(event);

@@ -136,7 +136,7 @@ are now orphaned and remove them** (no live callers found) — a cleanup, not an
 ```
 packages/civitai-moderation/                 # SHARED contract + client (dep of both apps)
   src/schema.ts        # action input zod schemas + MOD_ACTION names (the wire contract)
-  src/client.ts        # createModeratorClient({endpoint, token}) → typed methods (imageModerate, …); no retry
+  src/client.ts        # createModeratorClient({endpoint, token}) → typed methods (imageModerate, caseIntake, …); no retry; case calls time out at 5s
 apps/moderator/src/lib/server/mod-actions/
   registry.ts          # action -> { schema (from @civitai/moderation), handler }
 apps/moderator/src/routes/api/mod/[action]/+server.ts   # cross-app entry (main app -> spoke)
@@ -149,8 +149,9 @@ src/server/services/moderator-app.service.ts # main app's configured `moderatorA
   client method here, then a handler in the spoke registry.
 - **Handlers** own the complete operation against the spoke's wired infra (call the same services the
   moderator pages use). **Registry** is the spoke-side catalog.
-- **`/api/mod/[action]`** — POST, shared-`WEBHOOK_TOKEN` auth (mirror of `syncSearchIndex`, reverse
-  direction), `Object.hasOwn` action lookup, validate body against its `schema`, run the handler, return
+- **`/api/mod/[action]`** — POST. Two inbound credentials (`MOD_INBOUND_TOKEN` → moderation actions;
+  `MOD_CASES_TOKEN` → `CASE_ACTIONS` only, the public takedown intake), each refused on the other's
+  actions with 403; `Object.hasOwn` action lookup, validate body against its `schema`, run the handler, return
   JSON. `userId` is asserted by the trusted caller. `/api/mod/*` bypasses the session guard in
   `hooks.server.ts` (self-authenticates via token).
 - **Main app** calls via the `moderatorApp` client singleton (`moderatorApp.imageModerate(…)`); the thin

@@ -44,12 +44,8 @@ import { env } from '$env/dynamic/private';
 // count. The removal waited for a window in which every inbound caller had actually called, including
 // the main app's own delegated moderation actions, which are human-driven and can be quiet for hours.
 //
-// A SECOND, SCOPED CLASS: MOD_CASES_TOKEN. The main app's public takedown pages call the case actions
-// with it, and with nothing else. hooks.server.ts marks such a request `tokenClient: 'cases'`, which
-// every service wrapper (`!== 'webhook'`) and every session wrapper (truthy) already refuses, and
-// /api/mod/[action] accepts it only for an action in CASE_ACTIONS. The general credential is refused on
-// those actions in turn. The no-early-exit guard in `__tests__/webhook-endpoint-timing.test.ts` is
-// armed again now that two classes exist.
+// A second, scoped class: MOD_CASES_TOKEN, accepted only for CASE_ACTIONS (see /api/mod/[action]).
+// The no-early-exit guard in `__tests__/webhook-endpoint-timing.test.ts` applies now that two classes exist.
 //
 // Operational rationale for the split lives in the private infra repo, not here.
 
@@ -72,8 +68,8 @@ function presentedToken(event: { url: URL; request: Request }): Buffer {
 }
 
 /**
- * The credential VARIABLE NAMES this app accepts inbound, in PREFERENCE-DESCENDING order — most
- * preferred first, most legacy last.
+ * The credential VARIABLE NAMES this app accepts inbound, in the order the match loop resolves a shared
+ * value: the general credential first, the scoped one last.
  *
  * The ordering decides which name a request carries when a deployment sets two variables to the SAME
  * value: the match loop below is last-match-wins. MOD_CASES_TOKEN is last, so a shared value resolves to
@@ -145,14 +141,13 @@ export function authenticateWebhookToken(event: { url: URL; request: Request }):
   const accepted = acceptedTokens();
   // Fails CLOSED — with NO secret configured every wrapped endpoint is unreachable rather than
   // unguarded. 503 rather than 401 so an operator reading logs sees a deployment problem, not a caller
-  // with a bad token. MOD_INBOUND_TOKEN is now the ONLY accepted inbound class, so it is also the only
-  // complete configuration; the legacy class was dropped once the runtime signal showed no caller
-  // presenting it (see the header). The body names every accepted class, derived from the list itself
+  // with a bad token. Either class alone is a configuration (only MOD_INBOUND_TOKEN: no public
+  // intake; only MOD_CASES_TOKEN: no moderation actions); the legacy WEBHOOK_TOKEN class was dropped once
+  // the runtime signal showed no caller presenting it (see the header). The body names every accepted class, derived from the list itself
   // so the two cannot drift.
   if (accepted.length === 0) {
-    // Phrased for EITHER list length: "Neither A nor B" is ungrammatical with one name, and this list
-    // is one name today. Keeping it derived rather than hardcoded is what stops the body drifting from
-    // the accepted set when a second class is added back.
+    // Phrased for EITHER list length ("Neither A nor B" is ungrammatical with one name); derived
+    // rather than hardcoded so the body cannot drift from the accepted set.
     const names = ACCEPTED_CREDENTIALS.join(' nor ');
     const message =
       ACCEPTED_CREDENTIALS.length > 1
@@ -174,11 +169,9 @@ export function authenticateWebhookToken(event: { url: URL; request: Request }):
   // assignment the boolean flag used to be, in the same branch, with no `break` and no `else`. Do not
   // add either.
   //
-  // No `else` also means LAST MATCH WINS, and ACCEPTED_CREDENTIALS is preference-DESCENDING — so a
-  // deployment holding the same value in both variables attributes to the LAST, i.e. the most legacy,
-  // class. Deliberate: one shared value is indistinguishable on the wire, and attributing it to the
-  // legacy credential can only OVERSTATE legacy use. A migration proof that errs toward "still in
-  // use" is safe; one that errs toward zero is the failure this signal exists to prevent.
+  // No `else` also means LAST MATCH WINS: a deployment holding the same value in both variables
+  // attributes to the LAST class, MOD_CASES_TOKEN. One shared value is indistinguishable on the wire,
+  // and resolving it to the narrower scope fails closed (the general endpoints then refuse it).
   let matched: AcceptedCredential | null = null;
   for (const candidate of accepted)
     if (provided.length === candidate.secret.length && timingSafeEqual(provided, candidate.secret))

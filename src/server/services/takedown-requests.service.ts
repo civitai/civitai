@@ -8,8 +8,8 @@ import type {
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 
-// The public takedown forms are filed in the moderator app, which owns the case engine. This client holds
-// only the scoped intake credential, which the moderator app accepts for these four actions and no other.
+// Filed in the moderator app, which owns the case engine. This client holds only the scoped intake
+// credential (MOD_CASES_TOKEN).
 const casesClient = createModeratorClient({
   endpoint: env.MODERATOR_APP_INTERNAL_URL || env.MODERATOR_APP_URL,
   token: env.MOD_CASES_TOKEN,

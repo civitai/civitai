@@ -351,8 +351,7 @@ const featureFlags = createFeatureFlags({
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
-  // The public takedown forms (/requests). Moderators only until the flag opens them, so they can be
-  // tried on prod first; a party's own case link works either way.
+  // The public takedown forms (/requests). A party's own case link works regardless of this flag.
   takedownRequests: { availability: ['mod'], fliptKey: 'takedown-requests' },
   // Every entity except Article, which keeps `articleRatingDispute`. Flipt-down falls back to off.
   ratingDispute: { availability: [], fliptKey: 'rating-dispute' },
