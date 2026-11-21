@@ -332,7 +332,7 @@ async function collectionsHolding(target: EvictTarget) {
   });
   if ('userId' in target)
     return readCollectionIds([
-      Prisma.sql`SELECT ci."collectionId" FROM "CollectionItem" ci
+      Prisma.sql`SELECT DISTINCT ci."collectionId" FROM "CollectionItem" ci
         JOIN "Image" i ON i.id = ci."imageId"
         JOIN "Collection" c ON c.id = ci."collectionId"
         WHERE i."userId" = ${target.userId} AND c.read IN ('Public', 'Unlisted')`,
