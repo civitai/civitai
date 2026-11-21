@@ -119,10 +119,12 @@ describe('a quoted reply', () => {
       { content: WORD, referenceMessage: null },
     ]);
     expect(message.maskedContent).toBeNull();
-    expect(message.referenceMessage).toMatchObject({ id: 9, content: WORD });
-    expect(
-      (message.referenceMessage as { maskedContent: string | null }).maskedContent
-    ).not.toBeNull();
+    // A masked copy is a string; a clean one is null.
+    expect(message.referenceMessage).toMatchObject({
+      id: 9,
+      content: WORD,
+      maskedContent: expect.any(String),
+    });
     expect(plain.maskedContent).not.toBeNull();
     expect(plain.referenceMessage).toBeNull();
   });
