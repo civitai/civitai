@@ -57,7 +57,7 @@ async function ownerOrchestrator(userId: number): Promise<OwnerOrchestrator | nu
   return {
     read: (workflowId) => answer(() => getWorkflow({ client, path: { workflowId } })),
     quote: (body) => answer(() => submitWorkflow({ client, body, query: { whatif: true } })),
-    submit: (body) => answer(() => submitWorkflow({ client, body, query: { wait: 0 } })),
+    submit: (body) => answer(() => submitWorkflow({ client, body })),
     blobNsfwLevel: async (air) => {
       const { response } = await headBlob({ client, path: { blobId: blobKeyFromAir(air) } });
       if (!response?.ok) return null;
@@ -183,7 +183,7 @@ export default defineModeratorEndpoint('training.retrainSource', {
       result = await runRetrainSource(input, deps);
     } catch (e) {
       if (e instanceof RetrainUnavailableError)
-        throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: e.message });
+        throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: e.message, cause: e });
       throw e;
     }
     return {
