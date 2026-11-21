@@ -3,6 +3,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { FormState } from '$lib/form-state.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { dateTime } from '$lib/format';
@@ -151,8 +152,12 @@
       <Label for="cg-message">Message to them (optional)</Label>
       <Input id="cg-message" name="message" bind:value={message} maxlength={500} class="mt-1" />
     </div>
-    <label class="flex items-center gap-2 text-sm text-dark-2">
-      <input type="checkbox" name="anonymous" bind:checked={anonymous} />
+    <label data-touch-target class="flex items-center gap-2 text-sm text-dark-2">
+      <Checkbox
+        name="anonymous"
+        value="on"
+        bind:checked={() => anonymous, (v) => (anonymous = v)}
+      />
       Hide my name
     </label>
     <Button
