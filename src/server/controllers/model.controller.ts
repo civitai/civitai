@@ -753,9 +753,9 @@ export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
     const queryOptions = await modelFeedQueryOptions(ctx);
 
     // Hot with a base-model filter leads with the official checkpoints for that base, and a viewer in
-    // the personal-hot-lead flag gets their own lead ahead of those. Both are dropped from the main
-    // stream on every page, so the cursor never re-emits them, and fetched on the first page through
-    // the same query, so every other filter still applies to them.
+    // the personal-hot-lead flag gets their own lead ahead of those. Both are excluded from the main
+    // stream on every page so the cursor never re-emits them (the lead only while its cached entry
+    // lives), and fetched on the first page through the same query so every other filter still applies.
     const [officialIds, leadIds] = await Promise.all([
       input.sort === ModelSort.Hot && input.baseModels?.length && !input.query
         ? getOfficialModelIds().then((models) =>

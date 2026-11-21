@@ -8890,7 +8890,8 @@ export async function computePersonalLead(
 }
 
 /**
- * The viewer's lead ids for page 1 of Hot, cached per viewer and browsing level for an hour. Only page
+ * The viewer's lead ids for page 1 of Hot, cached per viewer and browsing level for an hour (a timeout's
+ * empty entry for a minute). Only page
  * 1 computes; later pages read the same entry to exclude what page 1 showed, and a miss there excludes
  * nothing. A Redis failure, a missing candidate list or a compute error gives no lead (plain Hot).
  * Past the budget the page gets no lead and an empty entry is cached, so a
