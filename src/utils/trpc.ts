@@ -463,7 +463,9 @@ function terminatingLink({
   });
   return splitLink({
     condition: shouldUseGoTransport,
-    // A shadowed request is in neither `feed_transport` arm: it is two requests, one per route.
+    // A shadowed request is in neither `feed_transport` arm: it is two requests, one per route. Its
+    // absence skews the shadow cohort's Go arm (most compares are spent early on a page, so their
+    // later, deeper pages are left), so read the Go arm with `exp_client_shadow_compare` filtered out.
     true: splitLink({
       condition: shouldShadowCompare,
       true: shadowCompareLink({ url, headers }),

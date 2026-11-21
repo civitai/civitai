@@ -40,14 +40,157 @@ export const SHADOW_DIFF_BUDGET: ShadowDiffBudget = {
 };
 
 /**
- * Keys that look like field names are reported as themselves; anything else (a map keyed by a
- * username, tag or a superjson meta path) is reported as `*`, so a key cannot carry a user value
- * into the beacon.
+ * The only keys `diff_path` spells out; every other key is reported as `*`, so a key a user chose (a
+ * generation-meta key, a map keyed by username or tag) never reaches the beacon, whatever its shape.
+ *
+ * Source: the tRPC/superjson envelope keys, plus every object key in the Node answers recorded in
+ * feed-go's golden fixtures for the three shadowed procedures (`apps/feed-go/testdata/golden/`
+ * `as-posts`, `infinite` and `model-getall`, generated from transcriptions of the Node code). Their
+ * TypeScript output types are inferred from the database selects across many files, so there is no
+ * single declaration to copy. A field missing here is reported as `*`, the safe direction. Add a
+ * procedure to the shadow allowlist, add its field names here.
  */
-const REPORTABLE_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,39}$/;
+export const REPORTABLE_KEYS: ReadonlySet<string> = new Set([
+  // tRPC and superjson envelope
+  'result',
+  'data',
+  'json',
+  'meta',
+  'values',
+  'referentialEqualities',
+  'v',
+  // image.getImagesAsPostsInfinite, image.getInfinite, model.getAll
+  'at',
+  'automated',
+  'availability',
+  'baseModel',
+  'baseModels',
+  'baseModelType',
+  'blockedFor',
+  'buzz',
+  'canGenerate',
+  'collectedCount',
+  'collectedCountAllTime',
+  'collectionItemAddedById',
+  'collectionItemStatus',
+  'color',
+  'commentCount',
+  'commentCountAllTime',
+  'concrete',
+  'cosmetic',
+  'cosmeticId',
+  'cosmetics',
+  'covered',
+  'coveredNext',
+  'coverImageId',
+  'createdAt',
+  'crop',
+  'cryCountAllTime',
+  'deletedAt',
+  'description',
+  'details',
+  'dislikeCountAllTime',
+  'downloadCount',
+  'downloads',
+  'downVotes',
+  'duration',
+  'earlyAccessDeadline',
+  'earlyAccessTimeFrame',
+  'equippedToId',
+  'equippedToType',
+  'event',
+  'eventDecoration',
+  'flags',
+  'generations',
+  'hasActivePaidAccess',
+  'hash',
+  'hashes',
+  'hasMeta',
+  'hasPositivePrompt',
+  'hasSfwFace',
+  'heartCountAllTime',
+  'height',
+  'hiddenMetrics',
+  'id',
+  'image',
+  'imageCount',
+  'imageId',
+  'images',
+  'index',
+  'ingestion',
+  'items',
+  'judgeScore',
+  'lastUpvote',
+  'lastVersionAt',
+  'laughCountAllTime',
+  'likeCountAllTime',
+  'locked',
+  'metadata',
+  'minor',
+  'mode',
+  'model3dId',
+  'modelVersionId',
+  'modelVersionIds',
+  'modelVersionIdsManual',
+  'name',
+  'needsReview',
+  'nextCursor',
+  'nsfw',
+  'nsfwLevel',
+  'offset',
+  'on',
+  'onSite',
+  'pinned',
+  'poi',
+  'postId',
+  'profilePicture',
+  'publishedAt',
+  'rank',
+  'rating',
+  'reaction',
+  'reactions',
+  'recommended',
+  'remixOfId',
+  'restricted',
+  'review',
+  'score',
+  'sfwCoverImageId',
+  'sfwOnly',
+  'sortAt',
+  'source',
+  'sparkle',
+  'sponsored',
+  'stats',
+  'statsUnknown',
+  'status',
+  'tagIds',
+  'tags',
+  'thumbnailId',
+  'thumbnailUrl',
+  'thumbsDownCount',
+  'thumbsUpCount',
+  'tippedAmountCount',
+  'tippedAmountCountAllTime',
+  'trainedWords',
+  'trainingStatus',
+  'type',
+  'upVotes',
+  'url',
+  'user',
+  'userData',
+  'userId',
+  'username',
+  'vaeId',
+  'version',
+  'viewCountAllTime',
+  'vote',
+  'width',
+]);
+
+const hasOwn = (obj: object, key: string) => Object.prototype.hasOwnProperty.call(obj, key);
 
 function keySegment(key: string): string {
-  return REPORTABLE_KEY.test(key) ? `.${key}` : '.*';
+  return REPORTABLE_KEYS.has(key) ? `.${key}` : '.*';
 }
 
 type JsonType = 'null' | 'array' | 'object' | 'string' | 'number' | 'boolean';
@@ -57,8 +200,6 @@ function jsonType(value: unknown): JsonType {
   if (Array.isArray(value)) return 'array';
   return typeof value as JsonType;
 }
-
-const hasOwn = (obj: object, key: string) => Object.prototype.hasOwnProperty.call(obj, key);
 
 class BudgetSpent {
   constructor(readonly path: string) {}

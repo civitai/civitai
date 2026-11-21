@@ -716,10 +716,10 @@ describe('no response value ever reaches a beacon', () => {
   it('across every verdict, with the sentinel in the bodies, a key, the input and an error', async () => {
     shadowOn();
     const input = { ...INFINITE_INPUT, username: SENTINEL };
-    const body = (title: string) =>
+    const body = (name: string) =>
       JSON.stringify({
         result: {
-          data: { json: { items: [{ id: 1, title }], byName: { [`${SENTINEL}@k`]: title } } },
+          data: { json: { items: [{ id: 1, name }], meta: { [`${SENTINEL}@k`]: name } } },
         },
       });
 
@@ -738,7 +738,7 @@ describe('no response value ever reaches a beacon', () => {
       body: JSON.stringify({
         result: {
           data: {
-            json: { items: [{ id: 1, title: `${SENTINEL}-a` }], byName: { [`${SENTINEL}@k`]: 0 } },
+            json: { items: [{ id: 1, name: `${SENTINEL}-a` }], meta: { [`${SENTINEL}@k`]: 0 } },
           },
         },
       }),
@@ -775,13 +775,36 @@ describe('no response value ever reaches a beacon', () => {
       'candidate_error',
       'control_error',
     ]);
-    expect(shadowPushes()[1][1].context.diff_path).toBe('$.result.data.json.items[0].title');
-    expect(shadowPushes()[2][1].context.diff_path).toBe('$.result.data.json.byName.*');
+    expect(shadowPushes()[1][1].context.diff_path).toBe('$.result.data.json.items[0].name');
+    expect(shadowPushes()[2][1].context.diff_path).toBe('$.result.data.json.meta.*');
 
     // Every measurement this run pushed, not only the shadow ones.
     expect(h.pushMeasurement.mock.calls.length).toBeGreaterThanOrEqual(5);
     for (const call of h.pushMeasurement.mock.calls) {
       expect(JSON.stringify(call)).not.toContain(SENTINEL);
+    }
+  });
+
+  it('a user-chosen key shaped like a field name is masked, never beaconed', async () => {
+    // Letters, digits and underscores: the shape a regex mask would have reported verbatim.
+    const USER_KEY = 'my_private_tag_7319';
+    shadowOn();
+    const body = (value: number) =>
+      JSON.stringify({
+        result: { data: { json: { items: [{ id: 1, meta: { [USER_KEY]: value } }] } } },
+      });
+    replies.node = { status: 200, body: body(1) };
+    replies.go = { status: 200, body: body(2) };
+    await callQuery(INFINITE, INFINITE_INPUT);
+    await vi.waitFor(() => expect(shadowPushes()).toHaveLength(1));
+
+    // Positive control: the key was in both bodies, and the walk reached it (the known field names
+    // above it are spelled out).
+    expect(replies.node.body).toContain(USER_KEY);
+    expect(shadowPushes()[0][1].context.verdict).toBe('mismatch');
+    expect(shadowPushes()[0][1].context.diff_path).toBe('$.result.data.json.items[0].meta.*');
+    for (const call of h.pushMeasurement.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain(USER_KEY);
     }
   });
 });
