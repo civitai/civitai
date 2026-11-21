@@ -127,4 +127,11 @@ describe('feed load events', () => {
     tracker.searchLoad('models_v9', {});
     expect(sent).toHaveLength(0);
   });
+
+  it('sends no feed load after stop', () => {
+    const { sent, tracker, setPages } = setup();
+    tracker.start()();
+    setPages(page(1));
+    expect(sent).toHaveLength(0);
+  });
 });
