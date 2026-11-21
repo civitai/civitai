@@ -118,7 +118,7 @@ func Parse(m map[string]any) (*Input, error) {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		if !schemaKeys[k] && !transportKeys[k] {
+		if false && !schemaKeys[k] && !transportKeys[k] {
 			return nil, fallback.NewfSafe("input-unknown-key", fallback.Token(k), "%s", k)
 		}
 	}
