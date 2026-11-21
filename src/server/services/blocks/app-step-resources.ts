@@ -2,6 +2,14 @@ import { Air } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
 import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
+import {
+  FREE_TEXT_KEYS,
+  isMediaKey,
+  isRepeatForClause,
+} from '~/server/services/blocks/app-step-positions';
+import { MEDIA_INPUT_NAMES as COMFY_MEDIA_INPUT_NAMES } from '~/server/services/blocks/inline-comfy.service';
+import { WORKFLOW_ARGUMENTS_REF } from '~/server/services/blocks/workflow-graph';
+import { BLOB_KEY_RE } from '~/server/services/blocks/media-input-reference';
 import { isWeightFile } from '~/server/services/huggingface.service';
 import { capsGenerationOutput } from '~/server/services/orchestrator/form-graph/output-restrictions';
 import { canAccessGenerationResource } from '~/server/utils/resource-access';
@@ -34,6 +42,323 @@ function namesWeightsFile(url: string): boolean {
   } catch {
     return true;
   }
+}
+
+// Hosts and paths the orchestrator reads as a file in storage, whatever the extension.
+const STORAGE_HOST_SUFFIXES = [
+  'r2.cloudflarestorage.com',
+  'digitaloceanspaces.com',
+  'backblazeb2.com',
+];
+const STORAGE_HOSTS: ReadonlySet<string> = new Set(['image.civitai.com']);
+const STORAGE_HOST_FIRST_LABELS: ReadonlySet<string> = new Set(['blobs-b2', 'image-b2']);
+// On any host, with or without a version segment.
+const STORAGE_PATH_RE = /\/(consumer|providers)\/blobs\//i;
+// A field key, as the position rule reads one: anything else is a map key the app chose.
+const FIELD_KEY_RE = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
+const STORED_FILE_DEPTH_MAX = 64;
+// Controls and spaces at either end, which a URL parser drops.
+const EDGE_CONTROLS_RE = /^[\u0000-\u0020]+|[\u0000-\u0020]+$/g;
+// Characters a URL parser drops anywhere: tab and newlines, and bidi and format controls.
+const DROPPED_RE = /[\t\n\r\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
+
+/** The string as a URL parser reads it. */
+function asParsed(value: string): string {
+  return value.replace(DROPPED_RE, '').trim().replace(EDGE_CONTROLS_RE, '');
+}
+
+function followPath(segments: string[], from: unknown, brackets: boolean): unknown[] {
+  let current: unknown[] = [from];
+  for (const segment of segments) {
+    const next: unknown[] = [];
+    for (const value of current) {
+      if (Array.isArray(value)) {
+        if (!brackets) continue;
+        if (segment === '*') next.push(...value);
+        else if (/^\d+$/.test(segment) && Number(segment) < value.length)
+          next.push(value[Number(segment)]);
+        continue;
+      }
+      if (!value || typeof value !== 'object') continue;
+      for (const [k, v] of Object.entries(value))
+        if (k.toLowerCase() === segment.toLowerCase()) next.push(v);
+    }
+    current = next;
+  }
+  return current;
+}
+
+/**
+ * Every value a `$arguments` path reaches, read both as the orchestrator splits it (on dots, every
+ * segment a name) and with `[n]`, `.n` and `[*]` indexing arrays. Names match ignoring case and
+ * every match is followed. A segment that matches nothing places nothing. Null for a path that is
+ * not a string.
+ */
+function argumentValues(path: unknown, workflowArguments: unknown): unknown[] | null {
+  if (typeof path !== 'string') return null;
+  const values = [
+    ...followPath(path.split('.'), workflowArguments, false),
+    ...followPath(path.split(/[.[\]]+/).filter(Boolean), workflowArguments, true),
+  ];
+  return values.filter((v) => v !== undefined);
+}
+
+/** Every string in `value`, map keys included. */
+function stringLeaves(value: unknown): string[] {
+  const out: string[] = [];
+  const stack: unknown[] = [value];
+  while (stack.length) {
+    const node = stack.pop();
+    if (typeof node === 'string') out.push(node);
+    else if (Array.isArray(node)) stack.push(...node);
+    else if (node && typeof node === 'object')
+      for (const [k, v] of Object.entries(node)) stack.push(k, v);
+  }
+  return out;
+}
+
+/** The items a repeat iterates: the arrays its clause reaches, or null when it reaches none. */
+function loopItemsOf(values: unknown[] | null): unknown[] | null {
+  const arrays = values?.filter(Array.isArray) ?? [];
+  return arrays.length ? arrays.flat() : null;
+}
+
+/** `format` with every placeholder group written as `value`, as a composite format would. */
+function formatWith(format: string, value: string): string {
+  return format
+    .replace(/\{[^{}]*\}/g, value)
+    .split('{{')
+    .join('{')
+    .split('}}')
+    .join('}');
+}
+
+function namesStoredFile(url: string): boolean {
+  let parsed: URL;
+  try {
+    // A base only for the scheme-relative form: `https:host/x` must not read as a relative path.
+    parsed = url.startsWith('//') ? new URL(`https:${url}`) : new URL(url);
+  } catch {
+    // A parser more lenient than this one may still read the path.
+    return STORAGE_PATH_RE.test(url.replace(/\\/g, '/').replace(/\/{2,}/g, '/'));
+  }
+  const host = parsed.hostname.toLowerCase().replace(/\.+$/, '');
+  if (STORAGE_HOSTS.has(host) || STORAGE_HOST_FIRST_LABELS.has(host.split('.')[0])) return true;
+  if (STORAGE_HOST_SUFFIXES.some((s) => host === s || host.endsWith(`.${s}`))) return true;
+  let path = parsed.pathname;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const decoded = decodeURIComponent(path);
+      if (decoded === path) break;
+      path = decoded;
+    } catch {
+      return true;
+    }
+  }
+  return STORAGE_PATH_RE.test(path.replace(/\\/g, '/').replace(/\/{2,}/g, '/'));
+}
+
+/** A ComfyUI node: its id is the app's choice and names no field. */
+function isComfyNode(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const node = value as Record<string, unknown>;
+  return typeof node.class_type === 'string' && !!node.inputs && typeof node.inputs === 'object';
+}
+
+function isComfyMediaInput(key: string): boolean {
+  const name = key.toLowerCase();
+  return name !== 'model_file' && COMFY_MEDIA_INPUT_NAMES.has(name);
+}
+
+type Where = {
+  key: string | undefined;
+  depth: number;
+  /** Under a ComfyUI node's `inputs`: its media names count, and free text is not exempt. */
+  comfy?: boolean;
+  /** Every leaf lands at `key`, whatever the names inside. */
+  flat?: boolean;
+  /** The value is a workflow's `steps` array or a repeat's `template`: each entry is a step. */
+  stepList?: boolean;
+  step?: boolean;
+  /** The value is the input's `workflow`: a ComfyUI graph keyed by node id. */
+  graph?: boolean;
+};
+
+/**
+ * Refuses a stored file URL, or a blob key at a `*BlobKey` field, anywhere but a media input. Free
+ * text is exempt outside a ComfyUI graph. A workflow's `arguments` have no position of their own: a
+ * `$arguments` reference, and a repeat's loop variable, is judged where it lands. Runs whatever the
+ * step position flag says.
+ */
+function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
+  const workflowArguments =
+    workflow && input && typeof input === 'object' && !Array.isArray(input)
+      ? (input as Record<string, unknown>).arguments
+      : undefined;
+  // The items a repeat places through its loop variable, by name (lower-cased); null when this
+  // check cannot read its clause, so a reference to it places every argument.
+  const loopItems = new Map<string, unknown[] | null>();
+
+  const visit = (value: unknown, where: Where): void => {
+    const { key, depth, comfy = false, flat = false } = where;
+    if (key !== undefined) {
+      if (isMediaKey(key) || (comfy && isComfyMediaInput(key))) return;
+      if (!comfy && FREE_TEXT_KEYS.has(key.toLowerCase())) return;
+    }
+    if (depth > STORED_FILE_DEPTH_MAX) refuse('step input is nested too deeply');
+    const at = (child: unknown, extra: Partial<Where> = {}) =>
+      visit(child, { key, depth: depth + 1, comfy, flat, ...extra });
+    if (typeof value === 'string') {
+      const trimmed = asParsed(value);
+      if ((URL_RE.test(trimmed) || trimmed.startsWith('//')) && namesStoredFile(trimmed))
+        refuse(
+          'a stored file URL is accepted only at a media input; model weights must be a Civitai model version'
+        );
+      if (key?.toLowerCase().endsWith('blobkey') && BLOB_KEY_RE.test(trimmed))
+        refuse('a blob key is accepted only at a media input');
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) at(item, { step: !!where.stepList });
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    const record = value as Record<string, unknown>;
+    const entries = Object.entries(record);
+    if (flat) {
+      for (const [childKey, child] of entries) {
+        at(childKey);
+        at(child);
+      }
+      return;
+    }
+    const refKey = entries.find(([k]) => k.toLowerCase() === '$ref')?.[0];
+    if (refKey !== undefined) {
+      // The orchestrator passes a reference's `default` on, and an object not spelled exactly as a
+      // reference as plain data, so every value here lands at this key.
+      for (const [, v] of entries) at(v);
+      const target = record[refKey];
+      if (typeof target !== 'string') return;
+      const field = (name: string) => entries.find(([k]) => k.toLowerCase() === name)?.[1];
+      const path = field('path');
+      const name = target.toLowerCase();
+      const format = field('format');
+      // Every leaf lands here, and any of them may be written into the format.
+      const placeFlat = (from: unknown) => {
+        at(from, { flat: true });
+        if (typeof format === 'string')
+          for (const leaf of stringLeaves(from)) at(formatWith(format, leaf));
+      };
+      let placed: unknown[] | null;
+      if (name === WORKFLOW_ARGUMENTS_REF.toLowerCase())
+        placed = argumentValues(path, workflowArguments);
+      else if (loopItems.has(name)) {
+        const items = loopItems.get(name);
+        if (!items) return placeFlat(workflowArguments);
+        placed =
+          path === undefined || path === ''
+            ? items
+            : typeof path === 'string'
+            ? items.flatMap((item) => argumentValues(path, item) ?? [])
+            : null;
+        if (!placed) return placeFlat(items);
+      } else return; // Another step's output is not known yet; the position rule judges it.
+      if (!placed) return placeFlat(workflowArguments);
+      for (const one of placed) {
+        at(one);
+        // The argument may be written into the format, so the two are judged together.
+        if (typeof format === 'string')
+          for (const leaf of stringLeaves(one)) at(formatWith(format, leaf));
+      }
+      return;
+    }
+    if (where.graph) {
+      for (const [nodeId, node] of entries) {
+        if (!isComfyNode(node)) {
+          at(node);
+          continue;
+        }
+        at(nodeId, { key: undefined });
+        for (const [field, v] of Object.entries(node))
+          if (field === 'inputs') visit(v, { key: undefined, depth: depth + 2, comfy: true });
+          else visit(v, { key: field, depth: depth + 2, comfy: true });
+      }
+      return;
+    }
+    // A repeat step on a workflow arm: its `for` clause names the items its template places.
+    const isRepeat =
+      workflowArguments !== undefined &&
+      !!where.step &&
+      typeof record.$type === 'string' &&
+      record.$type.toLowerCase() === 'repeat';
+    const repeatInput =
+      isRepeat && record.input && typeof record.input === 'object' ? record.input : null;
+    const clause = repeatInput ? (repeatInput as Record<string, unknown>).for : undefined;
+    const loop =
+      isRepeatForClause(clause) &&
+      typeof (clause as Record<string, unknown>).as === 'string' &&
+      (clause as Record<string, unknown>).$ref === WORKFLOW_ARGUMENTS_REF
+        ? {
+            name: ((clause as Record<string, unknown>).as as string).toLowerCase(),
+            items: loopItemsOf(
+              argumentValues((clause as Record<string, unknown>).path, workflowArguments)
+            ),
+          }
+        : null;
+    for (const [childKey, child] of entries) {
+      if (depth === 0 && workflowArguments !== undefined && childKey === 'arguments') continue;
+      const isField = FIELD_KEY_RE.test(childKey);
+      // A map key the app chose can name a file too (LoRAs are keyed by AIR).
+      if (!isField) at(childKey);
+      const childWhere: Partial<Where> = { key: isField ? childKey : key };
+      if (depth === 0 && childKey === 'workflow') childWhere.graph = true;
+      if (workflowArguments !== undefined && depth === 0 && childKey === 'steps')
+        childWhere.stepList = true;
+      if (loop && childKey === 'input') {
+        visitRepeatInput(child as Record<string, unknown>, loop, depth + 1, comfy);
+        continue;
+      }
+      at(child, childWhere);
+    }
+  };
+
+  const visitRepeatInput = (
+    repeatInput: Record<string, unknown>,
+    loop: { name: string; items: unknown[] | null },
+    depth: number,
+    comfy: boolean
+  ) => {
+    const clause = repeatInput.for as Record<string, unknown>;
+    // The clause's own strings are judged; its items are judged where the template places them.
+    visit(clause.path, { key: 'for', depth: depth + 1, comfy });
+    visit(clause.as, { key: 'for', depth: depth + 1, comfy });
+    const hadOuter = loopItems.has(loop.name);
+    const shadowed = loopItems.get(loop.name);
+    // A reused name may bind either loop, so it places both loops' items.
+    loopItems.set(
+      loop.name,
+      !loop.items || (hadOuter && !shadowed) ? null : [...(shadowed ?? []), ...loop.items]
+    );
+    try {
+      for (const [childKey, child] of Object.entries(repeatInput)) {
+        if (childKey === 'for') continue;
+        const isField = FIELD_KEY_RE.test(childKey);
+        if (!isField) visit(childKey, { key: 'input', depth: depth + 1, comfy });
+        visit(child, {
+          key: isField ? childKey : 'input',
+          depth: depth + 1,
+          comfy,
+          stepList: childKey === 'template',
+          step: childKey === 'template',
+        });
+      }
+    } finally {
+      if (hadOuter) loopItems.set(loop.name, shadowed ?? null);
+      else loopItems.delete(loop.name);
+    }
+  };
+
+  visit(input, { key: undefined, depth: 0 });
 }
 
 function versionIdOf(air: string, parsed: { version?: string }): number {
@@ -105,8 +430,11 @@ function collectAppStepVersionIds(input: unknown): number[] {
  */
 export async function checkAppStepResources(
   input: unknown,
-  viewerId: number
+  viewerId: number,
+  /** `input` is a whole workflow body, whose `arguments` its steps' references read. */
+  opts: { workflow?: boolean } = {}
 ): Promise<{ capOutput: boolean }> {
+  assertStoredFilesAtMediaInputs(input, !!opts.workflow);
   const versionIds = collectAppStepVersionIds(input);
   const versions = versionIds.length
     ? await dbRead.modelVersion.findMany({

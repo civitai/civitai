@@ -23,7 +23,7 @@ const MEDIA_KEYS: ReadonlySet<string> = new Set([...STEP_MEDIA_INPUT_KEYS, 'trai
 
 // Chat messages and tool schemas: text, as the generation input gate reads a chat step's, but
 // held here at any step. A URL there is text; a reference or another user's file is not.
-const FREE_TEXT_KEYS: ReadonlySet<string> = new Set(['messages', 'tools']);
+export const FREE_TEXT_KEYS: ReadonlySet<string> = new Set(['messages', 'tools']);
 // A training item's caption: text, not media.
 const MEDIA_TEXT_KEYS: ReadonlySet<string> = new Set(['caption']);
 
@@ -42,7 +42,7 @@ export type StepPositionProblem = {
   host?: string;
 };
 
-function isMediaKey(key: string | undefined): boolean {
+export function isMediaKey(key: string | undefined): boolean {
   return key !== undefined && MEDIA_KEYS.has(key.toLowerCase());
 }
 
@@ -133,7 +133,7 @@ function areMergeSources(fields: unknown, earlierSteps: ReadonlySet<string>): bo
 }
 
 /** `{ $ref, path, as }`, exactly: the orchestrator's RepeatForClause. */
-function isRepeatForClause(value: unknown): boolean {
+export function isRepeatForClause(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const keys = Object.keys(value).sort();
   return keys.length === 3 && keys[0] === '$ref' && keys[1] === 'as' && keys[2] === 'path';
