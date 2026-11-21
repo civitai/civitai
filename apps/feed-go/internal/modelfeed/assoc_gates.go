@@ -47,10 +47,10 @@ type SysGateRules struct {
 }
 
 // GateRules is gateRuleStore.read: the migration marker and every entry, each parsed on its own and
-// dropped when gateRuleSchema refuses it (parseEntries). Before the marker is set Node migrates the
-// legacy list (a write): `gate-rules-unmigrated`. A failed read, or an entry that is not JSON (Node's
-// read throws, and getGateRuleState then answers the last rules this process read, which this
-// service cannot know): `gate-rules-unreadable`.
+// dropped when gateRuleSchema refuses it (parseEntries); an entry that is not JSON is dropped too
+// (fromJson answers null, which the schema refuses). Before the marker is set Node migrates the legacy
+// list (a write): `gate-rules-unmigrated`. A failed read is `gate-rules-unreadable`: getGateRuleState
+// then answers the last rules that process read, which this service cannot know.
 func (s *SysGateRules) GateRules(ctx context.Context) ([]GateRule, error) {
 	if s == nil || s.Sys == nil {
 		return nil, fallback.New("gate-rules-unconfigured")

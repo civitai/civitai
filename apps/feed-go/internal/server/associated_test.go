@@ -152,6 +152,9 @@ func TestComputeAssociatedAnswerAndCachePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("owner: %v", err)
 	}
+	if c.viewerClass != "owner" {
+		t.Fatalf("owner: viewer class %q", c.viewerClass)
+	}
 	if string(c.payload) != `{"json":[]}` || !c.trivial || c.ttl != nil {
 		t.Fatalf("owner answer %s trivial=%v ttl=%v", c.payload, c.trivial, c.ttl)
 	}
@@ -176,4 +179,43 @@ func TestComputeAssociatedAnswerAndCachePolicy(t *testing.T) {
 		t.Fatalf("signed out ttl %v, want the public TTL", c.ttl)
 	}
 	c.release()
+}
+
+// Each compared model-associated sample is also counted under its viewer class; the classes start at
+// 0, and an endpoint whose answer reports no class is not counted there.
+func TestAssociatedViewerClassCounted(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	s := newPhaseServer(reg, 2, nil)
+	for _, v := range []string{"anon", "user", "owner", "moderator"} {
+		if n, found := metricValue(t, reg, "feed_go_shadow_compare_viewer_total", map[string]string{"feed_endpoint": EndpointAssociated, "viewer": v, "result": "match"}); !found || n != 0 {
+			t.Fatalf("viewer %s: %v found=%v, want a 0 series", v, n, found)
+		}
+	}
+	class := "owner"
+	s.computeAssociatedFn = func(context.Context, *http.Request) (*computed, error) {
+		return &computed{payload: []byte(`{"json":[{"id":5001}]}`), viewerClass: class}, nil
+	}
+	s.computeModelsFn = func(context.Context, *http.Request) (*computed, error) {
+		return &computed{payload: []byte(modelsEnvelope)}, nil
+	}
+	internal := InternalMux(s, okHandler(), false)
+	postAssociated(t, internal, `{"json":[{"id":5001}]}`)
+	waitFor(t, "the owner match", func() bool {
+		n, _ := metricValue(t, reg, "feed_go_shadow_compare_viewer_total", map[string]string{"feed_endpoint": EndpointAssociated, "viewer": "owner", "result": "match"})
+		return n == 1 && len(s.ShadowQueue) == 0
+	})
+	class = "anon"
+	postAssociated(t, internal, `{"json":[{"id":5002}]}`)
+	waitFor(t, "the anon membership", func() bool {
+		n, _ := metricValue(t, reg, "feed_go_shadow_compare_viewer_total", map[string]string{"feed_endpoint": EndpointAssociated, "viewer": "anon", "result": "membership"})
+		return n == 1 && len(s.ShadowQueue) == 0
+	})
+	postModels(t, s, `{"json":{}}`, modelsEnvelope)
+	waitFor(t, "the model.getAll match", func() bool {
+		n, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointModelGetAll, "result": "match"})
+		return n == 1 && len(s.ShadowQueue) == 0
+	})
+	if _, found := metricValue(t, reg, "feed_go_shadow_compare_viewer_total", map[string]string{"feed_endpoint": EndpointModelGetAll, "viewer": "", "result": "match"}); found {
+		t.Fatal("a model.getAll sample (no viewer class) was counted under a viewer class")
+	}
 }

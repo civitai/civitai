@@ -56,10 +56,6 @@ func associationTargets(ctx context.Context, db Querier, fromID int, typ string)
 	return out, rows.Err()
 }
 
-// assocPromotionWindow is MAX_RUN_MS (src/shared/utils/promotion.ts): the longest run, the window
-// liveApprovedPromotions reads.
-const assocPromotionWindow = 7 * 24 * time.Hour
-
 // approvedModelPromotions counts liveApprovedPromotions({ surface: 'modelPromotion', modelId }): the
 // approved model-card runs on the source model resolved within the longest run. `since` is bound as a
 // UTC wall-clock literal, as Prisma compares its timestamp(3) columns.

@@ -224,6 +224,9 @@ type computed struct {
 	// served_empty and result match_empty, so the per-served-call CPU and the match rate cover only
 	// answers that did the work.
 	trivial bool
+	// viewerClass is the sample's viewer class when the endpoint reports one (model-associated:
+	// modelfeed.ViewerClasses); "" = not reported. The comparison result is also counted under it.
+	viewerClass string
 	// cached: the answer is a cached response body read as Node read it (v1models.Answer.Cached), no
 	// build. Recorded as outcome served_cached and result match_cached, apart for the same reason.
 	cached bool
@@ -1115,6 +1118,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		span.SetAttributes(attrShadowResult.String(result))
 	}
 	s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
+	if c.viewerClass != "" {
+		s.Metrics.ShadowViewer.WithLabelValues(endpoint, c.viewerClass, result).Inc()
+	}
 	diffs := make([]shadow.Diff, 0, len(report.Diffs)+len(respDiffs))
 	diffs = append(diffs, report.Diffs...)
 	diffs = append(diffs, respDiffs...)

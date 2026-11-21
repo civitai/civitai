@@ -721,16 +721,36 @@ func TestAssocExplicitCoverage(t *testing.T) {
 		if !generationTypes[locked]["Checkpoint"] {
 			t.Skipf("%s does not generate checkpoints in basemodels.json", locked)
 		}
-		got, err := assocBaseCanGenerate(it, nil, true)
-		if err != nil || got != c.want {
-			t.Errorf("version %d: %v %v, want %v", c.id, got, err, c.want)
+		if got := assocBaseCanGenerate(it, nil, true); got != c.want {
+			t.Errorf("version %d: %v, want %v", c.id, got, c.want)
 		}
 	}
-	// Unreachable through Serve (getModelsRaw lists Published versions only): refused, not guessed.
-	it := &feedItem{row: &modelRow{ID: 1, Type: "Checkpoint"}, versionID: 6001,
-		version: map[string]any{"baseModel": "SDXL 1.0", "status": "Draft", "covered": true, "coveredNext": true, "flags": int64(0)}}
-	_, err := assocBaseCanGenerate(it, nil, true)
-	wantReason(t, err, "model-assoc-version-status")
+}
+
+// isBaseModelGenerationDisabled is `.some` over the base model's generation overrides, while
+// isGenerationEligible reads the first override only: with two overrides on one base model, the first
+// enabled and a later one disabled, the base model is generation-supported (its first override) and
+// still generation-disabled. basemodels.json holds no such model today, so the table entry is set
+// here: a supported, covered SDXL checkpoint then does not generate.
+func TestAssocGenerationDisabledOverride(t *testing.T) {
+	it := &feedItem{row: &modelRow{ID: 5001, UserID: 1001, Type: "Checkpoint"}, versionID: 6001,
+		version: map[string]any{"id": int64(6001), "baseModel": "SDXL 1.0", "status": "Published", "availability": "Public",
+			"flags": int64(0), "covered": true, "coveredNext": true}}
+	if !generationTypes["SDXL 1.0"]["Checkpoint"] || generationOff["SDXL 1.0"] {
+		t.Fatal("SDXL 1.0 must be a supported, not disabled, checkpoint base in basemodels.json")
+	}
+	if !assocBaseCanGenerate(it, nil, true) {
+		t.Fatal("control: a covered SDXL checkpoint generates")
+	}
+	generationOff["SDXL 1.0"] = true
+	defer delete(generationOff, "SDXL 1.0")
+	if assocBaseCanGenerate(it, nil, true) {
+		t.Fatal("a later disabled generation override: want false")
+	}
+	// The table is read from basemodels.json: a base model disabled there (SD 3) is listed.
+	if !generationOff["SD 3"] {
+		t.Fatal("basemodels.json: SD 3 is not listed as generation-disabled")
+	}
 }
 
 // Errors from the stores are returned, never served around.
@@ -744,4 +764,41 @@ func TestAssocStoreErrors(t *testing.T) {
 	e.gates.err = fallback.New("gate-rules-unreadable")
 	_, err := assocServe(t, e, AssocRequest{Input: assocIn(9001, lvl(1))})
 	wantReason(t, err, "gate-rules-unreadable")
+}
+
+// The viewer class every answer reports (a fixed label set): signed out, a moderator, the source
+// model's owner, any other signed-in viewer; on the empty answer too.
+func TestAssocViewerClass(t *testing.T) {
+	if got := ViewerClasses; len(got) != 4 || got[0] != "anon" || got[1] != "user" || got[2] != "owner" || got[3] != "moderator" {
+		t.Fatalf("ViewerClasses = %v", got)
+	}
+	for _, c := range []struct {
+		viewer  *Viewer
+		targets [][]any
+		want    string
+	}{
+		{nil, nil, "anon"},
+		{nil, [][]any{{5001, nil}}, "anon"},
+		{&Viewer{ID: 1003}, [][]any{{5001, nil}}, "user"},
+		{&Viewer{ID: 1001}, [][]any{{5001, nil}}, "owner"},
+		{&Viewer{ID: 1001}, nil, "owner"},
+		{&Viewer{ID: 1001, IsModerator: true}, [][]any{{5001, nil}}, "moderator"},
+	} {
+		e := twoModelEnv()
+		e.source = []any{false, 1001}
+		e.targets = c.targets
+		ans, err := assocServe(t, e, AssocRequest{Input: assocIn(9001, lvl(1)), Viewer: c.viewer})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ans.ViewerClass != c.want {
+			t.Errorf("viewer %+v targets %v: class %q, want %q", c.viewer, c.targets, ans.ViewerClass, c.want)
+		}
+	}
+	// No source row: the owner class is not guessed.
+	e := twoModelEnv()
+	ans, err := assocServe(t, e, AssocRequest{Input: assocIn(9001, lvl(1)), Viewer: &Viewer{ID: 1001}})
+	if err != nil || ans.ViewerClass != "user" {
+		t.Fatalf("no source row: %v %q, want user", err, ans.ViewerClass)
+	}
 }

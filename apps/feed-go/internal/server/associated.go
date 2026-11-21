@@ -67,7 +67,7 @@ func (s *Server) computeAssociated(ctx context.Context, r *http.Request) (*compu
 	if err != nil {
 		return nil, err
 	}
-	out := &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}
+	out := &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial, viewerClass: ans.ViewerClass}
 	if signedOut {
 		out.ttl = &trpc.SignedOutTTL
 	}

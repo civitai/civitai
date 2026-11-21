@@ -59,6 +59,35 @@ type AssocAnswer struct {
 	Value []any
 	// Trivial: no model row was loaded.
 	Trivial bool
+	// ViewerClass is the sample's viewer class (one of ViewerClasses).
+	ViewerClass string
+}
+
+// The viewer classes an answer reports, a fixed set (a metric label): signed out, a moderator, the
+// source model's owner, any other signed-in viewer. The shadow sampler skips batched calls, which a
+// signed-in browser makes when tRPC batching is on for it, so the serve gate reads samples per class
+// (DESIGN.md §17.3).
+const (
+	ViewerAnon      = "anon"
+	ViewerUser      = "user"
+	ViewerOwner     = "owner"
+	ViewerModerator = "moderator"
+)
+
+// ViewerClasses is every viewer class, in a fixed order.
+var ViewerClasses = []string{ViewerAnon, ViewerUser, ViewerOwner, ViewerModerator}
+
+// viewerClass is the class of viewer for a source owned by sourceOwner (0 = unknown or no row).
+func viewerClass(viewer *Viewer, sourceOwner int) string {
+	switch {
+	case viewer == nil || viewer.ID == 0:
+		return ViewerAnon
+	case viewer.IsModerator:
+		return ViewerModerator
+	case viewer.ID == sourceOwner:
+		return ViewerOwner
+	}
+	return ViewerUser
 }
 
 // assocLevel is the model input's browsingLevel: stripBlockedForNonModerator and the domain clamp of
@@ -106,6 +135,7 @@ func ServeAssociated(ctx context.Context, d *AssocDeps, req AssocRequest) (*Asso
 	}
 	// modelVisibleToViewer: a POI source model is its owner's and moderators' (canViewPoiModel); any
 	// other viewer is answered NOT_FOUND, which the sampler never mirrors.
+	sourceOwner := 0
 	if in.FromID != 0 && !isMod {
 		poi, owner, found, err := sourceModel(ctx, d.DB, in.FromID)
 		if err != nil {
@@ -114,7 +144,11 @@ func ServeAssociated(ctx context.Context, d *AssocDeps, req AssocRequest) (*Asso
 		if found && poi && (viewerID <= 0 || viewerID != owner) {
 			return nil, fallback.New("model-assoc-source-hidden")
 		}
+		if found {
+			sourceOwner = owner
+		}
 	}
+	class := viewerClass(viewer, sourceOwner)
 	level := assocLevel(in, isMod, req.Cap)
 	targets, err := associationTargets(ctx, d.DB, in.FromID, in.Type)
 	if err != nil {
@@ -133,7 +167,7 @@ func ServeAssociated(ctx context.Context, d *AssocDeps, req AssocRequest) (*Asso
 			if d.Now != nil {
 				now = d.Now()
 			}
-			n, err := approvedModelPromotions(ctx, d.DB, in.FromID, now.Add(-assocPromotionWindow))
+			n, err := approvedModelPromotions(ctx, d.DB, in.FromID, now.Add(-feed.MaxPromotionRun))
 			if err != nil {
 				return nil, err
 			}
@@ -143,7 +177,7 @@ func ServeAssociated(ctx context.Context, d *AssocDeps, req AssocRequest) (*Asso
 		}
 	}
 	if len(targets) == 0 {
-		return &AssocAnswer{Value: []any{}, Trivial: true}, nil
+		return &AssocAnswer{Value: []any{}, Trivial: true, ViewerClass: class}, nil
 	}
 	// `toModelId ? model : article`: a falsy model id is an article card (getArticles), not ported.
 	order := make([]int, 0, len(targets))
@@ -204,7 +238,7 @@ func ServeAssociated(ctx context.Context, d *AssocDeps, req AssocRequest) (*Asso
 			out = append(out, c.wire())
 		}
 	}
-	return &AssocAnswer{Value: out, Trivial: !loaded}, nil
+	return &AssocAnswer{Value: out, Trivial: !loaded, ViewerClass: class}, nil
 }
 
 // assocCard is one completed model card (getAssociatedResourcesCardDataHandler's completeModels).
@@ -351,10 +385,7 @@ func resolveCanGenerate(ctx context.Context, d *AssocDeps, cards []*assocCard, v
 		if c.it.row.Type == "Wildcards" {
 			return fallback.New("model-assoc-wildcards")
 		}
-		ok, err := assocBaseCanGenerate(c.it, viewer, d.Config.CoverageNext)
-		if err != nil {
-			return err
-		}
+		ok := assocBaseCanGenerate(c.it, viewer, d.Config.CoverageNext)
 		c.canGenerate = ok
 		if ok {
 			candidates[c.it.versionID] = true
@@ -385,10 +416,8 @@ func resolveCanGenerate(ctx context.Context, d *AssocDeps, cards []*assocCard, v
 // assocBaseCanGenerate is getResourceCanGenerate (without its gate rules) && isGenerationEligible for
 // a card's version, over coveragePair(version, next): `covered` is the next column with the flag on,
 // `coveredLive` always the live one. The version is Published (getModelsRaw keeps no other), so the
-// status test passes; usageControl and the generation alias are not passed by the handler. Its
-// isBaseModelGenerationDisabled test is implied by isGenerationEligible (a disabled base model or a
-// disabled generation override is not supported).
-func assocBaseCanGenerate(it *feedItem, viewer *Viewer, next bool) (bool, error) {
+// status test always passes; usageControl and the generation alias are not passed by the handler.
+func assocBaseCanGenerate(it *feedItem, viewer *Viewer, next bool) bool {
 	v := it.version
 	coveredLive, _ := v["covered"].(bool)
 	covered := coveredLive
@@ -399,24 +428,21 @@ func assocBaseCanGenerate(it *feedItem, viewer *Viewer, next bool) (bool, error)
 	rawFlags, _ := hydrate.Int(v["flags"])
 	flags := toPublicAPIVersionFlags(rawFlags)
 	if !isGenerationEligible(covered, coveredLive, bm, it.row.Type, flags) {
-		return false, nil
+		return false
 	}
 	if !covered && !explicitCoveredVersionIDs[it.versionID] {
 		// A model-locked checkpoint eligible on its live column alone.
-		return false, nil
+		return false
 	}
-	status, _ := v["status"].(string)
+	// isBaseModelGenerationDisabled: a disabled base model, or any disabled generation override on it
+	// (`.some`), which isGenerationEligible's first-override read does not always see.
+	if generationOff[bm] {
+		return false
+	}
 	availability, _ := v["availability"].(string)
 	isMod := viewer != nil && viewer.IsModerator
 	owned := viewer != nil && viewer.ID != 0 && viewer.ID == it.row.UserID
-	if status != "Published" {
-		// Unreachable: getModelsRaw lists Published versions only.
-		return false, fallback.New("model-assoc-version-status")
-	}
-	if availability == "Private" && !owned && !isMod {
-		return false, nil
-	}
-	return true, nil
+	return availability != "Private" || owned || isMod
 }
 
 // wire is the card as the handler returns it: `{ resourceType: 'model', ...model, sponsored }` where

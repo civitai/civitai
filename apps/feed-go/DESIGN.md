@@ -2338,12 +2338,25 @@ No public route and no Go-first probe: a probe needs a case in the server's gold
 
 The Node sampler (`src/server/trpc/feed-go-shadow.ts`) mirrors the procedure under its own flag,
 `feed-go-shadow-model-associated` (default off), with the shared URL, sample rate and in-flight cap
-and its own per-second bucket. A signed-in browser batches the procedure when `trpcBatching` is on
-for it, and a batched call is never sampled, so those samples are anonymous and non-batching
-sessions only. The comparison is §7's over an array: `shadow.ClassifyArray` keys the cards by `id`;
-categories are `*.<field>`. An answer that loaded no model row is `served_empty` / `match_empty`.
+and its own per-second bucket. The comparison is §7's over an array: `shadow.ClassifyArray` keys the
+cards by `id`; categories are `*.<field>`. An answer that loaded no model row is `served_empty` /
+`match_empty`.
+
+**Signed-in coverage.** A signed-in browser batches the procedure when `trpcBatching` is on for it,
+and the sampler never samples a batched call, so the shadow sees anonymous sessions and signed-in
+sessions with batching off only. Each compared sample is therefore also counted by its viewer class,
+`feed_go_shadow_compare_viewer_total{feed_endpoint="model-associated",viewer,result}`, with `viewer`
+one of `anon`, `user`, `owner` (the source model's owner) and `moderator` (`modelfeed.ViewerClasses`,
+a fixed set, each seeded at 0 for `match`). The serve gate requires a minimum number of compared
+samples in every class, not only an overall match rate.
+
+🔴 **Serving this procedure is blocked** until one of these holds: signed-in calls are sampled (a
+per-call capture inside a batch, or a signed-in cohort with batching off), or the serving transport
+takes unbatched calls only, so every call Go would serve is a shape the shadow measured.
 
 ```promql
+sum by (viewer) (increase(feed_go_shadow_compare_viewer_total{feed_endpoint="model-associated"}[7d]))
+
 sum(rate(feed_go_shadow_compare_total{feed_endpoint="model-associated",result="match"}[1h]))
   / sum(rate(feed_go_shadow_compare_total{feed_endpoint="model-associated",result=~"match|fields|order|membership"}[1h]))
 
@@ -2356,9 +2369,9 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-assoc
 `internal/modelfeed/assoc_golden_test.go`. Divergences:
 
 - those of §15.7 that apply (timing, cache staleness, the replica-only reads);
-- `isBaseModelGenerationDisabled` is read through `isGenerationEligible` (a disabled base model or
-  generation override is not supported): a base model with two generation overrides of which a later
-  one is disabled would generate here and not in Node;
+- `isBaseModelGenerationDisabled` is its own list in `basemodels.json` (`generationDisabled`, from the
+  Node function), read with `.some` semantics: a base model with a later disabled generation override
+  does not generate, as in Node;
 - the two explicitly covered version ids are constants transcribed from
   `src/shared/constants/generation.constants.ts`;
 - the gate rules are read live on every call; Node answers its last good read when the read fails,
