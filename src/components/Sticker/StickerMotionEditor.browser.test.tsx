@@ -178,6 +178,36 @@ describe('the sticker timeline', () => {
     other.remove();
   });
 
+  test('a key follows a drag along the bar, not just its first move', async () => {
+    await page.getByText('Movement').click();
+    const bar = page.getByRole('slider', { name: 'Video time' }).element() as HTMLElement;
+    const rect = bar.getBoundingClientRect();
+    const y = rect.top + rect.height / 2;
+    const at = (fraction: number) => rect.left + rect.width * fraction;
+    const send = (type: string, target: Element, x: number) =>
+      target.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          pointerId: 1,
+          isPrimary: true,
+          clientX: x,
+          clientY: y,
+        })
+      );
+    // Each move goes to the diamond on screen now, as pointer capture would deliver it.
+    const diamond = () => bar.querySelector('[data-key-index="0"]')!;
+
+    send('pointerdown', diamond(), at(0));
+    for (const fraction of [0.1, 0.2, 0.3, 0.4]) {
+      send('pointermove', diamond(), at(fraction));
+      // Lets React render the retimed key before the next move, as a real drag does.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    send('pointerup', diamond(), at(0.4));
+
+    await expect.poll(() => selected().motion?.keys.map((key) => key.t)).toEqual([4000]);
+  });
+
   test('a key’s ease and opacity change from the inspector', async () => {
     await page.getByText('Movement').click();
     await userEvent.keyboard('{Shift>}{ArrowRight}{/Shift}');

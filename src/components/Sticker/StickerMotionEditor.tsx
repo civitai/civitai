@@ -528,7 +528,8 @@ function ScrubBar({
       )}
       {keys.map((key, index) => (
         <span
-          key={key.t}
+          // By position, not time: a drag retimes the key, and a new element would drop the drag.
+          key={index}
           role="button"
           aria-label={`Key ${index + 1} at ${formatTime(key.t)}`}
           data-key-index={index}
