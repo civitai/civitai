@@ -61,6 +61,11 @@ func run(log *slog.Logger) error {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	m := metrics.New(reg)
+	if cfg.ListingsInvalid != "" {
+		// Read as off; the app index starts as usual.
+		log.Error("APP_INDEX_LISTINGS is neither on nor off; the listings read model is OFF", "value", cfg.ListingsInvalid)
+		metrics.ListingsMisconfigured(reg)
+	}
 
 	// No response-header or idle timeout: a stream may be quiet for any length of time. Dead
 	// connections are found by TCP keepalive and HTTP/2 pings (registry.NewHTTPClient).

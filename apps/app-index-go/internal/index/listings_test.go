@@ -145,6 +145,40 @@ func runListingScenarios(t *testing.T, newStore func(t *testing.T) store.Listing
 	t.Run("EmptySnapshotIsHeld", func(t *testing.T) { testEmptySnapshotIsHeld(t, newStore(t)) })
 	t.Run("EmptyFirstSnapshotNeverServes", func(t *testing.T) { testEmptyFirstSnapshotNeverServes(t, newStore(t)) })
 	t.Run("UnavailableDeletesNothing", func(t *testing.T) { testUnavailableDeletesNothing(t, newStore(t)) })
+	t.Run("DropsKeepTheListing", func(t *testing.T) { testDropsKeepTheListing(t, newStore(t)) })
+}
+
+// A media item with an unknown slot and a stats counter that is not a count are left out, logged
+// and counted; the listing itself is kept (not applied as a delete).
+func testDropsKeepTheListing(t *testing.T, st store.Listings) {
+	h := startListings(t, st)
+	c := h.reg.next(t)
+	e := listingEntity("alpha", "Alpha")
+	body := e["body"].(map[string]any)
+	media := body["media"].([]map[string]any)
+	media[1]["slot"] = "banner"
+	delete(body["stats"].(map[string]any), "installCount")
+	c.send(t, "upsert", map[string]any{"entity": e, "cursor": ""})
+	c.listing(t, "beta", "Beta")
+	c.live(t, "L1")
+	h.servingCursorIs(t, "L1")
+	gen := h.state(t).Serving.ID
+	l, ok, err := st.Get(context.Background(), gen, "urn:apps.civitai.com:store-listing/alpha")
+	if err != nil || !ok {
+		t.Fatalf("alpha was not kept: ok %v err %v", ok, err)
+	}
+	if len(l.Media) != 2 || l.Media[0].Slot != "icon" || l.Media[1].Slot != "cover" || l.Media[1].Position != 2 {
+		t.Fatalf("kept media %+v, want the icon and the red cover", l.Media)
+	}
+	if l.Stats.InstallCount != nil || l.Stats.OpenCount == nil || *l.Stats.OpenCount != 3 {
+		t.Fatalf("stats %+v, want installCount null and openCount 3", l.Stats)
+	}
+	if got := testutil.ToFloat64(h.m.Applied.WithLabelValues("invalid")); got != 0 {
+		t.Fatalf("invalid = %v, want 0", got)
+	}
+	if a, b := testutil.ToFloat64(h.m.Dropped.WithLabelValues("media_item")), testutil.ToFloat64(h.m.Dropped.WithLabelValues("stat")); a != 1 || b != 1 {
+		t.Fatalf("dropped media_item %v stat %v, want 1 and 1", a, b)
+	}
 }
 
 func TestListingScenariosMemory(t *testing.T) {
@@ -350,8 +384,8 @@ func TestListingsConsumerOnlyWhenOn(t *testing.T) {
 			}
 			continue
 		}
-		if c == nil || opened != 1 || series != 8 {
-			t.Fatalf("on: consumer %v, store opened %d times, %d listing series; want one, 1, 8", c, opened, series)
+		if c == nil || opened != 1 || series != 9 {
+			t.Fatalf("on: consumer %v, store opened %d times, %d listing series; want one, 1, 9", c, opened, series)
 		}
 		if c.Schema != "urn:schema:apps.civitai.com:store-listing@v1" || c.Layout != 1 || c.Count == nil || c.Decode == nil {
 			t.Fatalf("on: schema %q layout %d count %v decode %v", c.Schema, c.Layout, c.Count != nil, c.Decode != nil)

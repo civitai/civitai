@@ -116,7 +116,8 @@ series is registered and nothing subscribes to the schema. There is no read API 
 `/readyz` and the `app_index_*` series are the app index's alone. The design and its later slices:
 `LISTINGS-READ-MODEL.md`.
 
-- **Media** are stored exactly as the stream sends them, one row per item in stream order, each
+- **Media** are stored as the stream sends them (less an item with an unknown slot, below), one row
+  per item in stream order, each
   with its own `nsfwLevel`, `rating` and `host` (`red` for a civitai.red override). No ceiling is
   applied at ingest. The stream's per-audience filter is coarser than the store's, so the read API
   must apply the listing-rating ceiling and the host rule per request (`store.ListingMedia`).
@@ -128,16 +129,23 @@ series is registered and nothing subscribes to the schema. There is no read API 
   by one on a resumed stream are applied as they come.
 - **`unavailable`** (the adapter's answer when its listing read failed) deletes nothing: the
   subscription is opened again from the stored cursor, like any other `unavailable`.
-- A body missing a field the read model relies on, or a media item with an unknown slot, host or
-  rating, is treated as deleted (`app_index_listings_events_applied_total{type="invalid"}`): an item
-  whose rating is unknown could not be gated.
+- A body missing an identity field (`app`, `slug`, `name`, `kind`, `contentRating`), or a media item
+  whose host or rating is unknown or whose `nsfwLevel` is not exactly its rating's level (pg 1, pg13
+  2, r 4, x 8, xxx 16), is treated as deleted (`app_index_listings_events_applied_total{type="invalid"}`):
+  such an item could not be gated.
+- What can be left out without misgating is dropped and the listing kept, each drop logged and
+  counted (`app_index_listings_dropped_total{what}`): a media item with an unknown slot
+  (`media_item`), and a stats counter that is missing, negative or not an integer (`stat`), stored
+  as null.
 
 What has to be in place before it is switched on: the service identity (above, "Rollout order"),
 and the listing relay gate on the registry adapter (`REGISTRY_ADAPTER_LISTING_RELAYS`) naming the
 relay this service subscribes through. Without them the subscription is either refused or answered
 with an empty snapshot (which is held, as above), and retried with backoff; the app index is
 unaffected. A second consumer lock needs `APP_INDEX_DB_MAX_CONNS` of at
-least 3.
+least 3. A value of `APP_INDEX_LISTINGS` that is neither on nor off is read as off: the process
+starts, logs an error and exposes `app_index_listings_misconfigured` (1), rather than refusing to
+start and taking `/search` down with it.
 
 ## Configuration
 

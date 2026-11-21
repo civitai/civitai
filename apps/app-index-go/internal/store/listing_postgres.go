@@ -14,7 +14,11 @@ import (
 // startup and never migrated by hand: a change to what a row holds is a ListingsLayoutVersion bump
 // in the consumer, which rebuilds beside. Created only when APP_INDEX_LISTINGS is on.
 //
-// app_index_listing_media holds every item exactly as the stream sent it, each with its own
+// The stats columns are nullable: a counter the body does not carry as a count is stored null and
+// the listing kept (store.ListingStats).
+//
+// app_index_listing_media holds every item as the stream sent it (less one with an unknown slot,
+// dropped), each with its own
 // nsfw_level, rating and host. Nothing here applies a ceiling: the read API must (ListingMedia).
 const listingsSQL = `
 CREATE TABLE IF NOT EXISTS app_index_listing_cursors (
@@ -44,11 +48,11 @@ CREATE TABLE IF NOT EXISTS app_index_listings (
   creator_id bigint,
   created_at timestamptz,
   updated_at timestamptz,
-  recommended_count bigint NOT NULL,
-  not_recommended_count bigint NOT NULL,
-  review_count bigint NOT NULL,
+  recommended_count bigint,
+  not_recommended_count bigint,
+  review_count bigint,
   open_count bigint,
-  install_count bigint NOT NULL,
+  install_count bigint,
   PRIMARY KEY (generation, urn)
 );
 CREATE TABLE IF NOT EXISTS app_index_listing_media (
@@ -65,6 +69,11 @@ CREATE TABLE IF NOT EXISTS app_index_listing_media (
   PRIMARY KEY (generation, urn, position),
   FOREIGN KEY (generation, urn) REFERENCES app_index_listings (generation, urn) ON DELETE CASCADE
 );
+ALTER TABLE app_index_listings
+  ALTER COLUMN recommended_count DROP NOT NULL,
+  ALTER COLUMN not_recommended_count DROP NOT NULL,
+  ALTER COLUMN review_count DROP NOT NULL,
+  ALTER COLUMN install_count DROP NOT NULL;
 `
 
 // listingTables are the listings read model's tables; its consumer lock is its own, so it never

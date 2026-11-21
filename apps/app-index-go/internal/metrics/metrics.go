@@ -35,6 +35,10 @@ var SearchOutcomes = []string{"ok", "bad_request", "not_ready", "error"}
 // app stream's, and `empty_snapshot`, a snapshot that ended with no listing, held and taken again.
 var ListingReconnectReasons = append(append([]string{}, ReconnectReasons...), "empty_snapshot")
 
+// DroppedWhat are the `what` values of app_index_listings_dropped_total: a media item with an
+// unknown slot, and a stats counter that is not a count (stored null).
+var DroppedWhat = []string{"media_item", "stat"}
+
 // Stream is the series of one followed stream: the app index's are `app_index_*`, the listings
 // read model's `app_index_listings_*`.
 type Stream struct {
@@ -48,6 +52,9 @@ type Stream struct {
 	// generation was kept and the snapshot taken again later. Nil for the app stream, which has no
 	// such hold.
 	EmptySnapshots prometheus.Counter
+	// Dropped counts the parts of upserted bodies left out rather than rejecting the entity, by
+	// what (DroppedWhat). Nil for the app stream.
+	Dropped *prometheus.CounterVec
 
 	lastEvent atomic.Int64 // unix nanos of the last applied event; 0 = none yet
 	now       func() time.Time
@@ -147,6 +154,18 @@ func New(reg prometheus.Registerer) *Metrics {
 	return m
 }
 
+// ListingsMisconfigured registers app_index_listings_misconfigured at 1: APP_INDEX_LISTINGS held a
+// value that is neither on nor off, and was read as off. Registered only then, so the series exists
+// only while the setting is wrong.
+func ListingsMisconfigured(reg prometheus.Registerer) {
+	g := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "app_index_listings_misconfigured",
+		Help: "1: APP_INDEX_LISTINGS is neither on nor off, so the listings read model is off. Absent otherwise.",
+	})
+	g.Set(1)
+	reg.MustRegister(g)
+}
+
 // NewListings registers the listings read model's stream series on reg (app_index_listings_*).
 // Called only when APP_INDEX_LISTINGS is on, so the series do not exist while it is off.
 func NewListings(reg prometheus.Registerer) *Stream {
@@ -155,7 +174,14 @@ func NewListings(reg prometheus.Registerer) *Stream {
 		Name: "app_index_listings_empty_snapshots_total",
 		Help: "Listing snapshots that ended with no listing and were held: the serving generation was kept and the snapshot is taken again after the longest backoff.",
 	})
-	reg.MustRegister(append(cs, s.EmptySnapshots)...)
+	s.Dropped = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "app_index_listings_dropped_total",
+		Help: "Parts of listing bodies left out while the listing was kept, by what: media_item (an unknown slot), stat (a counter that is not a count, stored null).",
+	}, []string{"what"})
+	for _, v := range DroppedWhat {
+		s.Dropped.WithLabelValues(v)
+	}
+	reg.MustRegister(append(cs, s.EmptySnapshots, s.Dropped)...)
 	return s
 }
 

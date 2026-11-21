@@ -41,7 +41,7 @@ func listingJSON(slug, name string) json.RawMessage {
 }
 
 func mustListing(slug, name string) Listing {
-	l, err := ListingFromEntity(listingURN(slug), "rev-"+slug, listingJSON(slug, name))
+	l, _, err := ListingFromEntity(listingURN(slug), "rev-"+slug, listingJSON(slug, name))
 	if err != nil {
 		panic(err)
 	}
@@ -90,7 +90,7 @@ func checkListing(t *testing.T, got Listing, slug, name string) {
 	created := time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
 	want := Listing{URN: listingURN(slug), Rev: "rev-" + slug, App: "urn:apps.civitai.com:app/" + slug, Slug: slug,
 		Name: name, Kind: "onsite", Category: "generation", ContentRating: "r", CreatorID: i64(42), CreatedAt: &created,
-		Stats: ListingStats{RecommendedCount: 7, NotRecommendedCount: 3, ReviewCount: 5, OpenCount: i64(120), InstallCount: 0},
+		Stats: ListingStats{RecommendedCount: i64(7), NotRecommendedCount: i64(3), ReviewCount: i64(5), OpenCount: i64(120), InstallCount: i64(0)},
 		Media: wantMedia}
 	body := got.Body
 	got.Body = nil
@@ -147,6 +147,25 @@ func runListingsContract(t *testing.T, newStore func(t *testing.T) listingsTestS
 		}
 		if c := mustState(t, s).Building.Cursor; c != "c2" {
 			t.Fatalf("cursor %q, want c2", c)
+		}
+	})
+
+	t.Run("NullStatsKeptAsNull", func(t *testing.T) {
+		s := newStore(t)
+		g, err := s.NewBuilding(t.Context(), listingSchemaURN, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := strings.Replace(string(listingJSON("beta", "Beta")), `, "installCount": 0}`, `}`, 1)
+		l, drops, err := ListingFromEntity(listingURN("beta"), "rev-beta", json.RawMessage(body))
+		if err != nil || len(drops) != 1 {
+			t.Fatalf("decode: %v %+v", err, drops)
+		}
+		mustApply(t, s, g.ID, listingUpsert(l, ""))
+		got, ok := mustGet(t, s, g.ID, listingURN("beta"))
+		want := ListingStats{RecommendedCount: i64(7), NotRecommendedCount: i64(3), ReviewCount: i64(5), OpenCount: i64(120)}
+		if !ok || !reflect.DeepEqual(got.Stats, want) {
+			t.Fatalf("stored stats %+v (ok %v), want installCount null and the rest kept", got.Stats, ok)
 		}
 	})
 
@@ -219,23 +238,23 @@ func (m *ListingsMemory) setFailBeforeCommit(f func(op string) error) {
 }
 
 func TestListingFromEntity(t *testing.T) {
-	l, err := ListingFromEntity(listingURN("alpha"), "r1", listingJSON("alpha", "Alpha"))
-	if err != nil {
-		t.Fatal(err)
+	l, drops, err := ListingFromEntity(listingURN("alpha"), "r1", listingJSON("alpha", "Alpha"))
+	if err != nil || drops != nil {
+		t.Fatalf("valid body: err %v drops %+v", err, drops)
 	}
 	checkListing(t, Listing{URN: l.URN, Rev: "rev-alpha", Body: l.Body, App: l.App, Slug: l.Slug, Name: l.Name, Kind: l.Kind,
 		Category: l.Category, ContentRating: l.ContentRating, CreatorID: l.CreatorID, CreatedAt: l.CreatedAt,
 		UpdatedAt: l.UpdatedAt, Stats: l.Stats, Media: l.Media}, "alpha", "Alpha")
 
 	// Off-site: openCount null, no creator, no media, no dates.
-	off, err := ListingFromEntity(listingURN("o"), "r", json.RawMessage(`{"app":"urn:apps.civitai.com:app/o","slug":"o","name":"O",
+	off, drops, err := ListingFromEntity(listingURN("o"), "r", json.RawMessage(`{"app":"urn:apps.civitai.com:app/o","slug":"o","name":"O",
 		"kind":"offsite","contentRating":null,"media":[],"creator":null,"stats":{"recommendedCount":0,"notRecommendedCount":0,
 		"recommendPct":null,"reviewCount":0,"openCount":null,"installCount":9}}`))
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || drops != nil {
+		t.Fatalf("off-site body: err %v drops %+v (a null openCount is not a drop)", err, drops)
 	}
 	if off.Stats.OpenCount != nil || off.CreatorID != nil || off.CreatedAt != nil || off.ContentRating != "" ||
-		off.Stats.InstallCount != 9 || off.Media == nil || len(off.Media) != 0 {
+		*off.Stats.InstallCount != 9 || off.Media == nil || len(off.Media) != 0 {
 		t.Fatalf("off-site listing %+v", off)
 	}
 
@@ -243,11 +262,13 @@ func TestListingFromEntity(t *testing.T) {
 	for _, c := range []struct{ name, from, to, reason string }{
 		{"unknown rating", `"rating": "xxx"`, `"rating": "nc17"`, "media[4]: rating missing or unknown"},
 		{"unknown host", `"host": "red", "url": "https://img.invalid/red-cover"`, `"host": "blue", "url": "https://img.invalid/red-cover"`, "media[5]: host missing or unknown"},
-		{"unknown slot", `"slot": "cover", "host": "any"`, `"slot": "banner", "host": "any"`, "media[1]: slot missing or unknown"},
+		// An item's nsfwLevel must be exactly its rating's bit (pg 1, pg13 2, r 4, x 8, xxx 16).
+		{"pg at 16", `"nsfwLevel": 1, "rating": "pg"`, `"nsfwLevel": 16, "rating": "pg"`, "media[0]: nsfwLevel 16 is not rating pg's level"},
+		{"pg13 at 3 (two bits)", `"nsfwLevel": 2, "rating": "pg13"`, `"nsfwLevel": 3, "rating": "pg13"`, "media[1]: nsfwLevel 3 is not rating pg13's level"},
+		{"r at 0", `"nsfwLevel": 4, "rating": "r"`, `"nsfwLevel": 0, "rating": "r"`, "media[2]: nsfwLevel 0 is not rating r's level"},
+		{"x at 32 (Blocked)", `"nsfwLevel": 8, "rating": "x"`, `"nsfwLevel": 32, "rating": "x"`, "media[3]: nsfwLevel 32 is not rating x's level"},
 		{"no nsfwLevel", `"nsfwLevel": 2, `, ``, "media[1]: nsfwLevel missing"},
 		{"no media", `"media": [`, `"mediaX": [`, "media missing"},
-		{"no stats", `"stats": {`, `"statsX": {`, "stats missing"},
-		{"negative count", `"reviewCount": 5`, `"reviewCount": -1`, "stats.reviewCount missing or negative"},
 		{"no app", `"app": "urn`, `"appX": "urn`, "app missing"},
 		{"bad kind", `"kind": "onsite"`, `"kind": "teleport"`, "kind missing or unknown"},
 		{"bad date", `"createdAt": "2026-03-04T05:06:07.123456Z"`, `"createdAt": "yesterday"`, "createdAt: not an RFC 3339 date-time"},
@@ -258,7 +279,6 @@ func TestListingFromEntity(t *testing.T) {
 		{"bad contentRating", `"contentRating": "r"`, `"contentRating": 3`, "contentRating: not a string or null"},
 		{"bad category", `"category": "generation"`, `"category": []`, "category: not a string or null"},
 		{"bad creator", `"creator": {"id": 42, "username": "maker", "image": null}`, `"creator": "maker"`, "creator: not an object or null"},
-		{"bad openCount", `"openCount": 120`, `"openCount": -1`, "stats.openCount: not a count or null"},
 		{"media not an object", `"media": [`, `"media": [7, `, "media[0]: not an object"},
 		{"no url", `"url": "https://img.invalid/cover", `, ``, "media[1]: url missing"},
 		{"bad caption", `"caption": "first"`, `"caption": 1`, "media[2]: caption: not a string or null"},
@@ -268,12 +288,66 @@ func TestListingFromEntity(t *testing.T) {
 		if body == valid {
 			t.Fatalf("%s: the fixture did not change", c.name)
 		}
-		_, err := ListingFromEntity("u", "r", json.RawMessage(body))
+		_, _, err := ListingFromEntity("u", "r", json.RawMessage(body))
 		if err == nil || err.Error() != c.reason {
 			t.Errorf("%s: err %v, want %q", c.name, err, c.reason)
 		}
 	}
 	if _, err := DecodeListing("u", "r", json.RawMessage(`[]`)); err == nil || !strings.HasPrefix(err.Error(), "body is not an object") {
 		t.Errorf("an array body: err %v", err)
+	}
+}
+
+// What the read model can leave out without misgating is dropped, and the listing kept: a media
+// item whose slot it does not know, and a stats counter that is not a count (stored null).
+// Identity and gating defects still reject the body (TestListingFromEntity).
+func TestListingDropsKeepTheListing(t *testing.T) {
+	valid := string(listingJSON("alpha", "Alpha"))
+	for _, c := range []struct {
+		name, from, to string
+		drops          []Drop
+		check          func(Listing) bool
+	}{
+		{"unknown slot", `"slot": "cover", "host": "any"`, `"slot": "banner", "host": "any"`,
+			[]Drop{{"media_item", "media[1]: slot missing or unknown"}},
+			func(l Listing) bool {
+				return len(l.Media) == 5 && l.Media[0] == wantMedia[0] && l.Media[1] == wantMedia[2] && l.Media[4] == wantMedia[5]
+			}},
+		{"no slot", `"slot": "icon", "host": "red", `, `"host": "red", `,
+			[]Drop{{"media_item", "media[4]: slot missing or unknown"}},
+			func(l Listing) bool { return len(l.Media) == 5 && l.Media[4] == wantMedia[5] }},
+		{"installCount missing", `, "installCount": 0}`, `}`,
+			[]Drop{{"stat", "stats.installCount missing or not a count"}},
+			func(l Listing) bool {
+				return l.Stats.InstallCount == nil && *l.Stats.ReviewCount == 5 && len(l.Media) == 6
+			}},
+		{"negative and ill-typed counters", `"recommendedCount": 7, "notRecommendedCount": 3`,
+			`"recommendedCount": "7", "notRecommendedCount": -3`,
+			[]Drop{{"stat", "stats.recommendedCount missing or not a count"}, {"stat", "stats.notRecommendedCount missing or not a count"}},
+			func(l Listing) bool {
+				return l.Stats.RecommendedCount == nil && l.Stats.NotRecommendedCount == nil && *l.Stats.OpenCount == 120
+			}},
+		{"openCount negative", `"openCount": 120`, `"openCount": -1`,
+			[]Drop{{"stat", "stats.openCount missing or not a count"}},
+			func(l Listing) bool { return l.Stats.OpenCount == nil && *l.Stats.InstallCount == 0 }},
+		{"no stats", `"stats": {`, `"statsX": {`,
+			[]Drop{{"stat", "stats missing or not an object"}},
+			func(l Listing) bool { return l.Stats == (ListingStats{}) && l.Slug == "alpha" }},
+	} {
+		body := strings.Replace(valid, c.from, c.to, 1)
+		if body == valid {
+			t.Fatalf("%s: the fixture did not change", c.name)
+		}
+		l, drops, err := ListingFromEntity(listingURN("alpha"), "r", json.RawMessage(body))
+		if err != nil {
+			t.Errorf("%s: the listing was rejected: %v", c.name, err)
+			continue
+		}
+		if !reflect.DeepEqual(drops, c.drops) {
+			t.Errorf("%s: drops %+v, want %+v", c.name, drops, c.drops)
+		}
+		if !c.check(l) {
+			t.Errorf("%s: kept listing %+v", c.name, l)
+		}
 	}
 }

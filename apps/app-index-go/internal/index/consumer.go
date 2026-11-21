@@ -370,6 +370,13 @@ func (c *Consumer) follow(ctx context.Context, gen *store.Generation) (live bool
 				typ = "invalid"
 			}
 			ch.Cursor = ev.Cursor
+			for _, d := range ch.Dropped {
+				c.Log.Warn("part of a body left out; entity kept", "schema", c.Schema, "urn", ev.Entity.URN,
+					"what", d.What, "reason", d.Reason)
+				if c.Metrics.Dropped != nil {
+					c.Metrics.Dropped.WithLabelValues(d.What).Inc()
+				}
+			}
 			if err := c.Store.Apply(ctx, gen.ID, ch); err != nil {
 				return live, storeError{err}
 			}

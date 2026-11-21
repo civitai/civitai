@@ -77,6 +77,9 @@ type Change struct {
 	Listing Listing // ChangeUpsert, listings read model
 	URN     string  // ChangeDelete
 	Cursor  string
+	// Dropped is what decoding an upsert left out of the row (a Listing's Drops); the consumer logs
+	// and counts it. Never stored.
+	Dropped []Drop
 }
 
 // ErrNoGeneration is returned for a generation that does not exist (any more).

@@ -43,6 +43,10 @@ type Config struct {
 	// subscription, no tables, no series. It holds a second consumer lock, so it needs
 	// APP_INDEX_DB_MAX_CONNS of at least 3.
 	Listings bool
+	// ListingsInvalid is a value of APP_INDEX_LISTINGS that is neither on nor off. It is read as
+	// off, never as a reason to refuse to start: a typo in a dark feature's switch must not take
+	// down the search the process already serves. The process logs it as an error at start.
+	ListingsInvalid string
 }
 
 // Client is the index's OAuth client for the client credentials grant.
@@ -110,13 +114,14 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch strings.ToLower(strings.TrimSpace(getenv("APP_INDEX_LISTINGS"))) {
+	switch raw := getenv("APP_INDEX_LISTINGS"); strings.ToLower(strings.TrimSpace(raw)) {
 	case "", "off", "false", "0":
 	case "on", "true", "1":
 		c.Listings = true
 	default:
-		return nil, errors.New("APP_INDEX_LISTINGS must be on or off")
+		c.ListingsInvalid = raw
 	}
+	// Only when listings are actually on: off (or an invalid value, read as off) runs one consumer.
 	if c.Listings && conns < 3 {
 		// Each consumer holds one connection for its lock; searches and writes need another.
 		return nil, errors.New("APP_INDEX_DB_MAX_CONNS must be at least 3 with APP_INDEX_LISTINGS on")

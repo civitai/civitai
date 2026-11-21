@@ -289,6 +289,8 @@ served for a week.
      the ingest resumes from its cursor after `unavailable`, deleting nothing.
    - Media are stored unfiltered, each item with its own rating and host. The read API (slice 3)
      must apply `listingMediaCeiling` and `redHostMediaCeiling` per request (Media, above).
+   - The media are held twice, in the listing's jsonb body and in `app_index_listing_media`. Which
+     copy the read API serves from, and whether the other is dropped, is decided in slice 3.
    - Also in slice 2: a test of the live `loadListingExtras` query (`catalog-source.live.test.ts`),
      and the NsfwLevel-to-rating ladder in one place.
 3. **Slice 3: read API.** `GET /listings` (sort, paging, filters, stats, full cards) and
