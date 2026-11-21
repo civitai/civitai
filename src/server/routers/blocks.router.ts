@@ -12475,7 +12475,8 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
 /**
  * Build the orchestrator step this registry entry will actually submit, and
  * re-assert on the BUILT value the two properties the registry could only check
- * at load time.
+ * at load time, then hold it to the step position rule every app-built step
+ * gets (`assertStepPositionsAllowed`).
  *
  * 🔴 SHARED BY THE QUOTE AND THE SUBMIT ON PURPOSE. Both the estimate's
  * `whatif:true` quote and the real submit go through here, so neither can be
@@ -12599,7 +12600,6 @@ async function buildStepOrchestratorStep(
     });
   }
 
-  // The position rule every app-built step is held to, on the input this request built.
   await assertStepPositionsAllowed(auth.claims, auth.userId, [
     { $type: built.$type, input: built.input },
   ]);
