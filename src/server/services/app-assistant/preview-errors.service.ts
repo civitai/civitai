@@ -76,8 +76,32 @@ export function redactSecrets(text: string): string {
 const clip = (text: string, max: number) =>
   text.length <= max ? text : `${text.slice(0, max)}… (cut)`;
 
-/** A report as stored: redacted, capped, its time clamped into the window ending now. */
-export function sanitizePreviewError(report: PreviewErrorReport, now: number): ErrorActivity {
+/** What a direct preview's session host is replaced with in what is kept. */
+const PREVIEW_HOST_PLACEHOLDER = '[preview]';
+
+/**
+ * `text` with `host` (any case) replaced by the placeholder. The host's first label alone is the
+ * credential, so a host cut short after it (a capped stack) is caught too: the label and whatever
+ * of the domain follows it go.
+ */
+function hideHost(text: string, host: string | null): string {
+  const label = host?.split('.')[0];
+  if (!label) return text;
+  const escape = (part: string) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`${escape(label)}(?:\\.[a-z0-9-]+)*`, 'gi');
+  return text.replace(pattern, PREVIEW_HOST_PLACEHOLDER);
+}
+
+/**
+ * A report as stored: redacted, capped, its time clamped into the window ending now. `hiddenHost`:
+ * a direct preview's session host, a bearer credential the app's own URLs and stack traces name; it
+ * is replaced before anything is kept.
+ */
+export function sanitizePreviewError(
+  report: PreviewErrorReport,
+  now: number,
+  hiddenHost: string | null = null
+): ErrorActivity {
   const source: PreviewErrorSource = (PREVIEW_ERROR_SOURCES as readonly string[]).includes(
     report.source ?? ''
   )
@@ -93,8 +117,10 @@ export function sanitizePreviewError(report: PreviewErrorReport, now: number): E
     at: new Date(at).toISOString(),
     source,
     fatal: report.fatal === true,
-    message: clip(redactSecrets(report.message), PREVIEW_ERROR_MESSAGE_MAX),
-    stack: report.stack ? clip(redactSecrets(report.stack), PREVIEW_ERROR_STACK_MAX) : null,
+    message: clip(redactSecrets(hideHost(report.message, hiddenHost)), PREVIEW_ERROR_MESSAGE_MAX),
+    stack: report.stack
+      ? clip(redactSecrets(hideHost(report.stack, hiddenHost)), PREVIEW_ERROR_STACK_MAX)
+      : null,
   };
 }
 
@@ -130,10 +156,11 @@ export async function storePreviewErrors({
 }): Promise<{ status: 'stored'; stored: number } | { status: 'not-found' }> {
   const tunnel = await getActiveDevTunnel(userId, blockId);
   if (!tunnel) return { status: 'not-found' };
+  const hiddenHost = tunnel.transport === 'direct' ? tunnel.host : null;
   const entries = foldRepeats(
     reports
       .slice(0, PREVIEW_ERRORS_BATCH_MAX)
-      .map((report) => sanitizePreviewError(report, now))
+      .map((report) => sanitizePreviewError(report, now, hiddenHost))
       // Oldest pushed first, so the newest ends up at the head of the list.
       .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
   );

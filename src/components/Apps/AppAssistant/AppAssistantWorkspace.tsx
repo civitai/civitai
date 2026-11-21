@@ -1027,7 +1027,9 @@ export function AppAssistantWorkspace({
       if (frame && blockId)
         return showPreview({
           blockId,
-          host: 'host' in frame ? frame.host ?? '' : '',
+          // A direct preview's session host is a bearer credential: framed, never kept here (the
+          // assistant's instructions read this session).
+          host: 'host' in frame && frame.transport !== 'direct' ? frame.host ?? '' : '',
           sessionId: null,
           view: ++runnerViews.current,
         });

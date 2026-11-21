@@ -273,13 +273,10 @@ export function AppAssistantPreview({
         ) : (
           <DevTunnelBlockHost
             onFallbackChange={(reason) => setFailed(!!reason)}
-            // A fresh entry URL is a fresh mount, so the host re-runs its handshake. A direct
-            // preview's URL is the same for its whole session, so each fetch of it is a fresh mount.
-            key={
-              frame.data.transport === 'direct'
-                ? `${frame.data.iframeSrc}\n${frame.dataUpdatedAt}`
-                : frame.data.iframeSrc
-            }
+            // Each fetch of the frame is a fresh mount, so the host re-runs its handshake. Keyed on
+            // the fetch, not only the URL: a direct preview's URL is the same for its whole session,
+            // and a tunnel's entry URL repeats for fetches within the same second.
+            key={`${frame.data.iframeSrc}\n${frame.dataUpdatedAt}`}
             {...frame.data}
             fit="fill"
             // The app reloaded itself (Vite live reload): the Reload button's own path. Not
