@@ -55,6 +55,7 @@ const WALK_DEPTH_MAX = 64;
 const TEXT_KEY = /prompt|lyric|text|message|style|caption|instruction/i;
 const NEGATIVE_KEY = /negative/i;
 const URL_OR_AIR = /^\s*(https?:\/\/\S+|urn:air:\S+)\s*$/i;
+// A reference is readable as non-prompt only under a media key; elsewhere it may bind text.
 const MEDIA_KEYS = STEP_MEDIA_INPUT_KEYS;
 export type PromptRefSource = 'argument' | 'step';
 

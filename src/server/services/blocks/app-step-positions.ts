@@ -6,9 +6,11 @@ import { WORKFLOW_ARGUMENTS_REF } from '~/server/services/blocks/workflow-graph'
 import { isWorkflowOwnedBy } from '~/server/services/orchestrator/assert-workflow-owner';
 
 // What an app-built step may put where. Only media positions (the shared media input keys, and
-// everything under them) take a reference to another step's output, a URL, or an orchestrator
-// file; every other key takes literal values, so a key the list has not met yet is held to the
-// stricter rule. `trainingData` is added here only: its items are orchestrator blobs, but it also
+// everything under them) take a reference to another step's output or a URL; every other key takes
+// literal values, so a key the list has not met yet is held to the stricter rule. An orchestrator
+// file is an owner check, not a position one: the viewer's own job file is accepted at any key,
+// and off media keys another user's file, a blob or a file whose owner cannot be read is refused.
+// `trainingData` is added here only: its items are orchestrator blobs, but it also
 // carries captions, which the prompt audit must keep reading as text.
 const MEDIA_KEYS: ReadonlySet<string> = new Set([...STEP_MEDIA_INPUT_KEYS, 'trainingdata']);
 
@@ -148,8 +150,9 @@ function orchestratorFileProblemFor(
 
 /**
  * The first value in `input` that sits outside a media position and is a reference, a URL, or an
- * orchestrator file the viewer does not own. Map keys count as values (LoRAs are keyed by AIR), and
- * a reference with no key above it (the whole input) is outside every media position.
+ * orchestrator file the viewer does not own. Map keys count as values (LoRAs are keyed by AIR)
+ * outside free text, and a reference with no key above it (the whole input) is outside every media
+ * position.
  */
 export function findStepPositionProblem(
   input: unknown,
@@ -292,8 +295,8 @@ export async function getStepPositionsMode(): Promise<StepPositionsMode> {
 }
 
 /**
- * The refusal for the first step whose input breaks the position rule, or null. That finding is
- * logged with the app, step type and key, never the value, unless the mode is off.
+ * The refusal for the first step whose input breaks the position rule; null when none does, or the
+ * mode is log or off. Log mode records that finding (app, step type and key, never the value).
  */
 export async function stepPositionsRefusal(opts: {
   appBlockId: string;
@@ -330,7 +333,7 @@ export async function stepPositionsRefusal(opts: {
       mode,
     });
     if (mode === 'log') return null;
-    return `step '${step.$type}' cannot take this value at '${problem.key}'; only media inputs take references, URLs or orchestrator files`;
+    return `step '${step.$type}' cannot take this value at '${problem.key}'; only media inputs take references or URLs, and an orchestrator file must be the viewer's own`;
   }
   return null;
 }

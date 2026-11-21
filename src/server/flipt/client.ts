@@ -504,7 +504,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // Variant: `log` | `enforce`; any other answer is off. Read by pass-through-prompt-audit.ts.
   APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT = 'app-block-pass-through-prompt-audit',
   // Variant: `off` | `log`; any other answer, a missing flag included, enforces. Read by
-  // app-step-positions.ts. Create it with an `enforce` default: a missing key logs on every eval.
+  // app-step-positions.ts.
   APP_BLOCK_STEP_POSITIONS = 'app-block-step-positions',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
   // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
