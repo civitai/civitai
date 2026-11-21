@@ -14,6 +14,7 @@ import {
   maskProfanityInChat,
   maskProfanityInHtml,
   withMaskedChatContent,
+  withMaskedChatPreviews,
   withMaskedDetails,
 } from '~/server/services/profanity-mask.service';
 
@@ -41,7 +42,7 @@ describe('maskProfanityInHtml', () => {
     expect(empty).toBeNull();
   });
 
-  // Justin (J6): long text is masked as it is today, never left raw or blurred for its length.
+  // Long text is masked as it is today, never left raw or blurred for its length (#9952).
   // To whoever adds a length cap: that was considered and declined.
   it('masks text of any length, with no cap', async () => {
     const long = `<p>${'word '.repeat(60_000)}${WORD}</p>`;
@@ -81,6 +82,32 @@ describe('the item helpers', () => {
     expect(messages.map((m) => [m.id, m.maskedContent === null])).toEqual([
       [3, true],
       [4, false],
+    ]);
+  });
+});
+
+describe('withMaskedChatPreviews', () => {
+  it('gives each chat back its own messages, masked, in order', async () => {
+    const chats = await withMaskedChatPreviews([
+      { id: 1, messages: [{ content: CLEAN }] },
+      { id: 2, messages: [] },
+      { id: 3, messages: [{ content: WORD }, { content: 'second clean line' }] },
+    ]);
+    expect(
+      chats.map((chat) => [
+        chat.id,
+        chat.messages.map((m) => [m.content, m.maskedContent === null]),
+      ])
+    ).toEqual([
+      [1, [[CLEAN, true]]],
+      [2, []],
+      [
+        3,
+        [
+          [WORD, false],
+          ['second clean line', true],
+        ],
+      ],
     ]);
   });
 });

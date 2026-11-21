@@ -9,6 +9,9 @@ import {
   PostgresQueryCompiler,
 } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { blockedWords } from '@civitai/mod-utils/profanity/lists';
+import { cleanWord, isUsableBlockedEntry } from '@civitai/mod-utils/profanity/word-rules';
+import { createProfanityFilter } from '~/libs/profanity-simple';
 import { ThreadSort } from '~/server/common/enums';
 import { FIXTURE, migration } from '~/server/services/__tests__/comment-v3-fixture';
 import {
@@ -238,6 +241,36 @@ describe('getCommentSection', () => {
     expect(item(page, 500).myReactions).toEqual([]);
     expect(page.children[500].ids).toEqual([501]);
     expect(item(page, 100)).toMatchObject({ deleted: false, user: { id: 2 } });
+  });
+
+  it('pairs each masked copy with its own comment, and gives a deleted one none', async () => {
+    // A shipped entry read at runtime, never written down: this repository is public. The flag is
+    // off here, so the shipped list applies.
+    const word = blockedWords
+      .map(cleanWord)
+      .find(
+        (w) => isUsableBlockedEntry(w) && !w.includes('|') && createProfanityFilter().clean(w) !== w
+      )!;
+    await pg.query(`INSERT INTO "Article" VALUES (77)`);
+    await pg.query(`INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 77)`);
+    await pg.query(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt", "deletedAt") VALUES
+        (7700, 'article', 77, NULL, 4, 'a clean first comment', now() - interval '3 minutes', NULL),
+        (7701, 'article', 77, NULL, 4, $1, now() - interval '2 minutes', now()),
+        (7710, 'article', 77, 7701, 2, 'a reply that keeps the deleted one', now() - interval '90 seconds', NULL),
+        (7702, 'article', 77, NULL, 4, $2, now() - interval '1 minute', NULL)`,
+      [`<p>${word}</p>`, `<p>then ${word}</p>`]
+    );
+    const page = await getCommentSection(db, { entityType: 'article', entityId: 77 }, reader, {
+      sort: ThreadSort.Oldest,
+      replyDepth: 10,
+      budget: 100,
+      repliesPerRoot: 10,
+      repliesPerParent: 5,
+    });
+    expect(item(page, 7700).maskedContent).toBeNull();
+    expect(item(page, 7701)).toMatchObject({ deleted: true, content: '', maskedContent: null });
+    expect(item(page, 7702).maskedContent).toMatch(/^<p>then \*+<\/p>$/);
   });
 
   it('never opens through a deleted comment what a ToS removal or an excluded author hid', async () => {

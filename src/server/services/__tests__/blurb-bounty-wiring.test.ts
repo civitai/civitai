@@ -333,7 +333,8 @@ describe('applyBountyContentChange — the auto-NSFW gate', () => {
       description: EXPANDED_HTML,
       alreadyNsfw: false,
       lockedProperties: [],
-      profanity: expect.objectContaining({ filter: expect.anything() }),
+      // Flag off in this file: the shipped list.
+      profanity: expect.objectContaining({ source: 'shipped', filter: expect.anything() }),
     });
   });
 

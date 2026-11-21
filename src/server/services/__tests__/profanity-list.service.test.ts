@@ -6,7 +6,7 @@ import {
 } from '@civitai/mod-utils/profanity/word-rules';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProfanityFilter } from '~/libs/profanity-simple';
-import { logToAxiom } from '~/server/logging/client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { BlocklistType } from '~/server/common/enums';
 import type * as FliptClient from '~/server/flipt/client';
 
@@ -14,7 +14,6 @@ const h = vi.hoisted(() => ({
   flagOn: true,
   rows: new Map<string, { id?: number; data: string[] } | Error>(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: async () => h.flagOn,
@@ -68,7 +67,7 @@ async function verdicts() {
 }
 
 beforeEach(() => {
-  vi.mocked(logToAxiom).mockClear();
+  loggingMock.logToAxiom.mockClear();
   h.flagOn = true;
   h.rows.clear();
   freshReader();
@@ -141,7 +140,9 @@ describe('getServerProfanityFilter', () => {
     await verdicts();
     await verdicts();
     expect(
-      vi.mocked(logToAxiom).mock.calls.filter(([e]) => e.name === 'profanity-blocklist-below-floor')
+      loggingMock.logToAxiom.mock.calls.filter(
+        ([e]: [{ name: string }]) => e.name === 'profanity-blocklist-below-floor'
+      )
     ).toHaveLength(1);
   });
 
@@ -165,6 +166,27 @@ describe('getServerProfanityFilter', () => {
     expect((await getServerProfanityFilter()).filter).toBe(first);
     setBlocked({ id: 1, data: [...MANAGED, 'zqvoxextra'] });
     expect((await getServerProfanityFilter()).filter).not.toBe(first);
+  });
+});
+
+describe('shared reads', () => {
+  it('serves one list read to every check within a few seconds', async () => {
+    const read = vi.fn(async () => ({ blocked: null, allowed: null, source: 'shipped' as const }));
+    setProfanityListReaderForTests({ read }, 5_000);
+    await Promise.all([getServerProfanityFilter(), getServerProfanityFilter()]);
+    await getServerProfanityFilter();
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not keep a failed read', async () => {
+    const read = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('down'))
+      .mockResolvedValue({ blocked: null, allowed: null, source: 'shipped' });
+    setProfanityListReaderForTests({ read }, 5_000);
+    await expect(getServerProfanityFilter()).rejects.toThrow('down');
+    await getServerProfanityFilter();
+    expect(read).toHaveBeenCalledTimes(2);
   });
 });
 

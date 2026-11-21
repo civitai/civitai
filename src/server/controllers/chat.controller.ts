@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import {
   maskProfanityInChat,
   withMaskedChatContent,
+  withMaskedChatPreviews,
 } from '~/server/services/profanity-mask.service';
 import { getModerationAccountId } from '~/server/auth/moderation-account';
 import { getMessageAuthors } from '~/server/services/message-as-civitai.service';
@@ -218,13 +219,10 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: ProtectedContext })
     });
     const scoped = await scopeChatPreviews(listed, userId);
     // The preview is the latest message; it carries a masked copy like any other message.
-    return Promise.all(
-      scoped.map(async (chat) => ({
-        ...chat,
-        messages: await withMaskedChatContent(chat.messages),
-        chatMembers: chat.chatMembers.map(scopeMemberPrivacy(userId)),
-      }))
-    );
+    return (await withMaskedChatPreviews(scoped)).map((chat) => ({
+      ...chat,
+      chatMembers: chat.chatMembers.map(scopeMemberPrivacy(userId)),
+    }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

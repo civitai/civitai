@@ -5,8 +5,8 @@ import { stripStickerTokens } from '~/shared/utils/sticker-token';
 /**
  * The masked copy of user text that a viewer with profanity masking on is shown in its place:
  * a string when masking changed it, `null` when it is clean. Computed for every text whatever the
- * viewer's settings, so a settings toggle needs no refetch, and at any length (Justin, J6: long
- * text is masked as it is today, never blurred).
+ * viewer's settings, so a settings toggle needs no refetch, and at any length: long text is masked
+ * as it is today, never blurred (#9952).
  */
 export type MaskedText = string | null;
 
@@ -58,4 +58,17 @@ export async function withMaskedChatContent<T extends { content: string }>(
 ): Promise<(T & { maskedContent?: MaskedText })[]> {
   const masked = await maskProfanityInChat(messages.map((message) => message.content));
   return messages.map((message, i) => ({ ...message, maskedContent: masked[i] }));
+}
+
+/** Chats with their messages masked, in one masking call for all of them. */
+export async function withMaskedChatPreviews<C extends { messages: { content: string }[] }>(
+  chats: C[]
+): Promise<(C & { messages: (C['messages'][number] & { maskedContent?: MaskedText })[] })[]> {
+  const masked = await withMaskedChatContent(chats.flatMap((chat) => chat.messages));
+  let offset = 0;
+  return chats.map((chat) => {
+    const messages = masked.slice(offset, offset + chat.messages.length);
+    offset += chat.messages.length;
+    return { ...chat, messages };
+  });
 }

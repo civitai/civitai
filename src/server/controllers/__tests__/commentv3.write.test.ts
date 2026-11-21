@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { setProfanityListReaderForTests } from '~/server/services/profanity-list.service';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as Surfaces from '~/server/services/commentv3/surfaces';
 import type * as WriteService from '~/server/services/commentv3/write.service';
@@ -184,6 +185,20 @@ const runsOn = async (
   await runner.query('SELECT 1');
   return tx.$queryRawUnsafe.mock.calls.length === 1;
 };
+
+describe('the masked copy on a saved comment', () => {
+  afterEach(() => setProfanityListReaderForTests());
+
+  // The comment is already saved: a masking failure must not turn the write into an error.
+  it('is left absent, and the create and the edit still answer, when masking fails', async () => {
+    setProfanityListReaderForTests({ read: () => Promise.reject(new Error('list down')) });
+    const saved = await create(STRANGER, {});
+    expect(saved.id).toBe(300);
+    expect(saved.maskedContent).toBeUndefined();
+    const edited = await update(AUTHOR, 101);
+    expect(edited).toMatchObject({ id: 101, maskedContent: undefined });
+  });
+});
 
 describe('commentv3 create', () => {
   it('answers the saved comment with its author as the cache has them', async () => {
