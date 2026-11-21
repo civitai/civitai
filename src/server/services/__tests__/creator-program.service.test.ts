@@ -1136,6 +1136,17 @@ describe('getCompensationPool', () => {
     expect(pool.size.forecasted).toBe(1000000);
   });
 
+  it('floors the forecast at current on the cached (no-month) path too', async () => {
+    mockClickhouse.$query
+      .mockResolvedValueOnce([{ balance: 50000 }]) // pool value
+      .mockResolvedValueOnce([{ balance: 500000 }]); // last month banked
+    mockGetUserBuzzAccount.mockResolvedValueOnce([{ balance: 1000000 }]); // current
+
+    const pool = await getCompensationPool({});
+
+    expect(pool.size.forecasted).toBe(1000000);
+  });
+
   it('uses cache for current month queries', async () => {
     mockGetUserBuzzAccount.mockResolvedValue([{ balance: 0 }]);
     mockClickhouse.$query.mockResolvedValue([{ balance: 0 }]);
