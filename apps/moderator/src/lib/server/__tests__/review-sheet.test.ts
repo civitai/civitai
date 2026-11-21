@@ -898,7 +898,16 @@ describe('the access audit', () => {
     redis.del.mockRejectedValueOnce(new Error('down'));
     expect((await signOut(again)).status).toBe(503);
     expect(
-      pick(await audits('review-sheet-signout'), 'type', 'tier', 'moderatorId', 'ended')
+      pick(
+        (await audits('review-sheet-signout')).map((row) => ({
+          ...row,
+          ended: (row.payload as { ended?: boolean })?.ended,
+        })),
+        'type',
+        'tier',
+        'moderatorId',
+        'ended'
+      )
     ).toEqual([
       { type: 'info', tier: 'general', moderatorId: 42, ended: true },
       { type: 'error', tier: 'general', moderatorId: undefined, ended: false },
@@ -914,7 +923,16 @@ describe('the access audit', () => {
     store.set(key, { value: '{not json', expiresAt: null });
     expect((await signOut(token)).status).toBe(204);
     expect(store.has(key)).toBe(false);
-    expect(pick(await audits('review-sheet-signout'), 'moderatorId', 'ended')).toEqual([]);
+    expect(
+      pick(
+        (await audits('review-sheet-signout')).map((row) => ({
+          ...row,
+          ended: (row.payload as { ended?: boolean })?.ended,
+        })),
+        'moderatorId',
+        'ended'
+      )
+    ).toEqual([]);
   });
 
   it('never logs a batch id, code, verifier, state or token, only six characters of the batch hash', async () => {
