@@ -209,7 +209,7 @@ export const FULL_SUITE_REASON =
 // A full-program `tsc` run directly, instead of through `pnpm run typecheck`. Two reasons, and the
 // second would hold even if the first went away:
 //   1. It skips the typecheck lane of the dev-server queue, so several agents doing it at once is
-//      N ~8 GB compiler runs pegging the box — the condition the lane exists to prevent.
+//      N full-program compiler runs pegging the box — the condition the lane exists to prevent.
 //   2. It is the WRONG CHECK. The root `tsc` is TypeScript 5.9, while the repo's typecheck is
 //      TypeScript 7 (scripts/typecheck.mjs); and 5.9 at node's default heap can abort part-way
 //      with ZERO diagnostics and a log that reads as clean.
