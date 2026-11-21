@@ -10,7 +10,9 @@ const { resolveDev, activeTunnel, unsubmittedSpend, sign, published } = vi.hoist
   sign: vi.fn(() => 'signed.entry+token'),
 }));
 
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'apps.example' } }));
+vi.mock('~/env/server', () => ({
+  env: { APPS_DOMAIN: 'apps.example', APP_ASSISTANT_PREVIEW_DOMAIN: 'preview.example' },
+}));
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: { resolveDevPageBlockForAuthor: resolveDev },
 }));
@@ -145,5 +147,35 @@ describe('resolveDevTunnelFrame', () => {
     });
     expect(published).not.toHaveBeenCalled();
     expect(sign).not.toHaveBeenCalled();
+  });
+
+  describe('an App Assistant direct preview session', () => {
+    // A canonical session label (the shared test vector's first valid label).
+    const LABEL = 'sckpynuebrbgh2zm2f7vkbrk22akqcaqdaqcwv7vmqcbzawxned4cvl4enkzes';
+    const DIRECT = `${LABEL}.preview.example`;
+
+    it('frames https://<session host>/ with no entry token and no DNS wait, marked direct', async () => {
+      activeTunnel.mockResolvedValue({ host: DIRECT, transport: 'direct', grantedScopes: [] });
+      expect(await resolveDevTunnelFrame(USER, 'my-app')).toMatchObject({
+        host: DIRECT,
+        iframeSrc: `https://${DIRECT}/`,
+        dnsPending: false,
+        transport: 'direct',
+      });
+      expect(sign).not.toHaveBeenCalled();
+      expect(published).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a dev host on a direct record', HOST, 'direct'],
+      ['a session host on a tunnel record', DIRECT, undefined],
+      ['a session host under another domain', `${LABEL}.elsewhere.example`, 'direct'],
+    ])('never frames %s', async (_name, host, transport) => {
+      activeTunnel.mockResolvedValue({ host, transport, grantedScopes: [] });
+      const frame = await resolveDevTunnelFrame(USER, 'my-app');
+      expect(frame).toMatchObject({ host: null, iframeSrc: null });
+      expect(frame).not.toHaveProperty('transport');
+      expect(sign).not.toHaveBeenCalled();
+    });
   });
 });
