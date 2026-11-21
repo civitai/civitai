@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { blockedWords } from '@civitai/mod-utils/profanity/lists';
+import { cleanWord, isUsableBlockedEntry } from '@civitai/mod-utils/profanity/word-rules';
+import { getProfanityFilter } from '~/libs/profanity-simple';
 import { setProfanityListReaderForTests } from '~/server/services/profanity-list.service';
+import { auditTrainingTriggerWord } from '~/utils/metadata/training-trigger-word';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 import { trainingRouter } from '../training.router';
@@ -69,5 +73,27 @@ describe('training.auditTriggerWord', () => {
     const result = await audit(typed, true);
     expect(result.severity).toBe('soft');
     expect(result.offendingWords).toEqual([typed]);
+  });
+});
+
+describe("training.auditTriggerWord, the trainer's only check", () => {
+  // The browser checked with the shipped list before; with the flag off the server's answer must
+  // be the same one. Entries are named by position only: CI logs are public.
+  it('flag off: answers what the browser answered with the shipped list', async () => {
+    setProfanityListReaderForTests({
+      read: async () => ({ blocked: null, allowed: null, source: 'shipped' }),
+    });
+    const words = blockedWords
+      .filter(isUsableBlockedEntry)
+      .slice(0, 8)
+      .map((word) => `my${cleanWord(word).replace(/\|/g, '')}style`);
+    const before = words.map((word) => auditTrainingTriggerWord(word, getProfanityFilter()));
+    expect(before.filter((result) => result.severity !== 'clean').length).toBeGreaterThan(0);
+    const differing: string[] = [];
+    for (const [index, word] of words.entries()) {
+      const { severity } = await audit(word, true);
+      if (severity !== before[index].severity) differing.push(`shipped entry #${index}`);
+    }
+    expect(differing).toEqual([]);
   });
 });

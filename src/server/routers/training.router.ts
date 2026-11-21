@@ -108,7 +108,13 @@ export const trainingRouter = router({
   auditTriggerWord: protectedProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(z.object({ triggerWord: z.string().max(200) }))
-    .use(rateLimit({ limit: 120, period: 60 }))
+    // Each answer tests a word against the list, so a person typing needs few and a script gets few.
+    .use(
+      rateLimit([
+        { limit: 10, period: 60 },
+        { limit: 100, period: 24 * 60 * 60 },
+      ])
+    )
     .query(async ({ input, ctx }) => {
       const profanity = ctx.features.isGreen
         ? (await getServerProfanityFilter()).filter

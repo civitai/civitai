@@ -6,7 +6,6 @@ import { formatDiscordTimestamp, normalizeTimestampStyle } from '~/utils/timesta
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { useCurrentDomainHosts } from '~/hooks/useCurrentDomainHref';
 import { getSanitizedRenderHtml } from './sanitize-render-html';
-import { useManagedProfanityBlocklist } from '~/providers/ProfanityBlocklistProvider';
 import classes from './RenderHtml.module.scss';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import clsx from 'clsx';
@@ -27,6 +26,7 @@ export function RenderHtml({
   withMentions = false,
   allowCustomStyles = true,
   withProfanityFilter = false,
+  maskedHtml,
   allowStickers = false,
   className,
   ...props
@@ -36,14 +36,15 @@ export function RenderHtml({
   const { allowed: thirdPartyAllowed } = useThirdPartyConsent();
   const contentRef = useRef<HTMLDivElement>(null);
   const { host, ownHosts } = useCurrentDomainHosts();
-  const profanityBlocklist = useManagedProfanityBlocklist();
   const maskProfanity = withProfanityFilter && blurNsfw;
+  // The server's masked copy when it sent one; otherwise the browser masks with the shipped list.
+  const serverMasked = maskProfanity && maskedHtml !== undefined;
+  const source = serverMasked ? maskedHtml ?? html : html;
 
   html = useMemo(
     () =>
-      getSanitizedRenderHtml(html, {
-        maskProfanity,
-        profanityBlocklist: maskProfanity ? profanityBlocklist : null,
+      getSanitizedRenderHtml(source, {
+        maskProfanity: maskProfanity && !serverMasked,
         allowStickers,
         allowCustomStyles,
         colorScheme,
@@ -53,9 +54,9 @@ export function RenderHtml({
         ownHosts,
       }),
     [
-      html,
+      source,
       maskProfanity,
-      profanityBlocklist,
+      serverMasked,
       allowCustomStyles,
       colorScheme,
       withMentions,
@@ -161,6 +162,11 @@ type Props = Omit<TypographyStylesProviderProps, 'children'> & {
   withMentions?: boolean;
   allowCustomStyles?: boolean;
   withProfanityFilter?: boolean;
+  /**
+   * The server's masked copy of `html` (`maskedContent`, `maskedDetails`): a string when masking
+   * changed it, `null` when clean, `undefined` when not computed, which leaves masking to the browser.
+   */
+  maskedHtml?: string | null;
   /**
    * Opt in to drawing sticker cosmetics. Defaults off so a surface that stores
    * unsanitized HTML can't render a paid sticker for free, and so any rich-text

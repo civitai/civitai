@@ -23,7 +23,13 @@ import {
 import { applyApiRequestPolicy } from '~/server/middleware/api-request-policy';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { checkSiteSearchRateLimit } from '~/server/utils/site-search-rate-limit';
-import { isProfaneSearch, siteSearchQueries } from '~/server/services/profanity-list.service';
+import { siteSearchQueries } from '~/server/services/profanity-list.service';
+import {
+  profaneSearchVerdict,
+  SEARCH_REFUSAL_WINDOW_SECONDS,
+  searchRefusalBucket,
+} from '~/server/utils/search-refusal-budget';
+import { SEARCH_REFUSED_CODE } from '~/shared/constants/search-refusal.constants';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 
@@ -82,10 +88,24 @@ export default MixedAuthEndpoint(
 
     const features = getFeatureFlagsLazy({ user, req });
     // civitai.com refuses a profane search. Verdict only: the response never names the words.
-    if (features.isGreen && (await isProfaneSearch(siteSearchQueries(req.body))))
+    const verdict = features.isGreen
+      ? await profaneSearchVerdict(
+          siteSearchQueries(req.body),
+          searchRefusalBucket(req as NextApiRequest, user?.id)
+        )
+      : null;
+    if (verdict === 'limited') {
+      res.setHeader('Retry-After', String(SEARCH_REFUSAL_WINDOW_SECONDS));
+      return res.status(429).json({
+        message: 'Too many searches. Try again in a moment.',
+        code: 'too_many_requests',
+        type: 'invalid_request',
+      });
+    }
+    if (verdict === 'refused')
       return res.status(422).json({
         message: 'This search is not allowed.',
-        code: 'search_refused',
+        code: SEARCH_REFUSED_CODE,
         type: 'invalid_request',
       });
     const isModerator = restModeratorViewer(req, user)?.isModerator;

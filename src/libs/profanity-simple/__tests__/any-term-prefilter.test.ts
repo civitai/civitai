@@ -107,8 +107,6 @@ describe.each([
     });
 
     expect(differ, 'inputs (by position) masked differently').toEqual([]);
-    // Both sides of the corpus are exercised: texts the prefilter let skip the pass, and texts
-    // the pass masks.
     expect(skipped).toBeGreaterThan(100);
     expect(profane).toBeGreaterThan(1000);
   });

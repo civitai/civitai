@@ -148,15 +148,22 @@ export type ServerProfanityFilter = {
   countHit(surface: ProfanityHitSurface): void;
 };
 
-// One slot, keyed on the lists' CONTENT: every read parses fresh arrays, so an identity key would
-// rebuild (several ms) on every call. Not `getProfanityFilter`'s shared two-entry map, which SSR
+// One slot, keyed on the lists' CONTENT, since a read can parse fresh arrays; the same arrays skip
+// building the key. Not `getProfanityFilter`'s shared two-entry map, which SSR
 // masking also fills and would evict this between calls.
-let slot: { key: string; filter: SimpleProfanityFilter; buildFailed: boolean } | null = null;
+let slot: {
+  key: string;
+  blocked: string[] | null;
+  allowed: string[] | null;
+  filter: SimpleProfanityFilter;
+  buildFailed: boolean;
+} | null = null;
 
 function filterFor({ blocked, allowed }: ProfanityLists) {
+  if (slot && slot.blocked === blocked && slot.allowed === allowed) return slot;
   const part = (list: string[] | null) => (list === null ? 'shipped' : `list:${list.join('\n')}`);
   const key = `${part(allowed)}|${part(blocked)}`;
-  if (slot?.key === key) return slot;
+  if (slot?.key === key) return (slot = { ...slot, blocked, allowed });
   let filter: SimpleProfanityFilter;
   let buildFailed = false;
   try {
@@ -173,13 +180,13 @@ function filterFor({ blocked, allowed }: ProfanityLists) {
     filter = createProfanityFilter({ moderatorWhitelist: allowed });
     buildFailed = true;
   }
-  slot = { key, filter, buildFailed };
+  slot = { key, blocked, allowed, filter, buildFailed };
   return slot;
 }
 
 /**
- * The one profanity filter every server check uses: one list, and the moderators' allow list
- * everywhere. Flag off: the shipped block and allow lists.
+ * The filter for the server's managed-list checks (masking, search, the trainer, app data), with
+ * the moderators' allow list. Flag off: the shipped block and allow lists.
  */
 export async function getServerProfanityFilter(): Promise<ServerProfanityFilter> {
   const lists = await readShared();

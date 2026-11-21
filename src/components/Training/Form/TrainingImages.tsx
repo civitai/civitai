@@ -66,8 +66,7 @@ import type {
   SelectedImage,
 } from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
-import { auditTrainingTriggerWord, labelAsTrained } from '~/utils/metadata/training-trigger-word';
-import { getProfanityFilter } from '~/libs/profanity-simple';
+import { labelAsTrained } from '~/utils/metadata/training-trigger-word';
 import {
   blankTagStr,
   labelDescriptions,
@@ -297,8 +296,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const isVideo = thisMediaType === 'video';
   const isAudio = thisMediaType === 'audio';
   const thisDefaultTrainingState = getDefaultTrainingStateFor(thisMediaType);
-  const domainColor = useDomainColor();
-  const isGreen = domainColor === 'green';
 
   const {
     updateImage,
@@ -351,6 +348,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const theme = useMantineTheme();
   const queryUtils = trpc.useUtils();
+  // The server's verdict, so the browser holds no copy of the list. Soft: the submit check on the
+  // server is unchanged, so a failed call shows no warning rather than blocking.
+  const auditTriggerWord = (word: string) =>
+    word.trim()
+      ? queryUtils.training.auditTriggerWord.fetch({ triggerWord: word }).catch(() => null)
+      : Promise.resolve(null);
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
   const { connected } = useSignalContext();
   const features = useFeatureFlags();
@@ -1294,15 +1297,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      const audit = auditTrainingTriggerWord(
-        triggerWord,
-        isGreen ? getProfanityFilter() : undefined
-      );
-      if (triggerWordInvalid !== (audit.severity !== 'clean')) {
-        setTriggerWordInvalid(model.id, thisMediaType, audit.severity !== 'clean');
+      const audit = await auditTriggerWord(triggerWord);
+      const severity = audit?.severity ?? 'clean';
+      if (triggerWordInvalid !== (severity !== 'clean')) {
+        setTriggerWordInvalid(model.id, thisMediaType, severity !== 'clean');
       }
 
-      if (audit.severity === 'hard') {
+      if (audit && severity === 'hard') {
         showNotification({
           icon: <IconX size={18} />,
           autoClose: false,
@@ -1334,7 +1335,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         await handleNextAfterCheck();
       };
 
-      if (audit.severity === 'soft') {
+      if (audit && severity === 'soft') {
         return openConfirmModal({
           title: (
             <Group gap="xs">
@@ -1650,12 +1651,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     onChange={(event) =>
                       setTriggerWord(model.id, thisMediaType, event.currentTarget.value)
                     }
-                    onBlur={() => {
-                      const audit = auditTrainingTriggerWord(
-                        triggerWord,
-                        isGreen ? getProfanityFilter() : undefined
-                      );
-                      if (audit.severity !== 'clean') {
+                    onBlur={async () => {
+                      const audit = await auditTriggerWord(triggerWord);
+                      if (audit && audit.severity !== 'clean') {
                         if (!triggerWordInvalid) {
                           setTriggerWordInvalid(model.id, thisMediaType, true);
                           const soft = audit.severity === 'soft';

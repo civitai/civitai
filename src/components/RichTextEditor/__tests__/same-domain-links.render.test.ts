@@ -47,7 +47,6 @@ const { RenderRichText } = await import('~/components/RichTextEditor/RenderRichT
 const { RenderHtml } = await import('~/components/RenderHtml/RenderHtml');
 const { CustomMarkdown } = await import('~/components/Markdown/CustomMarkdown');
 const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
-const { ProfanityBlocklistCtx } = await import('~/providers/ProfanityBlocklistProvider');
 
 const render = (el: ReturnType<typeof createElement>) =>
   renderToStaticMarkup(createElement(MantineProvider, null, el));
@@ -169,25 +168,28 @@ describe('announcement action buttons', () => {
   });
 });
 
-// Lives here for the stubs above: RenderHtml reads the managed list from the app-level context.
+// Lives here for the stubs above.
 describe('RenderHtml comment masking, server render', () => {
-  const comment = () =>
-    createElement(RenderHtml, { html: '<p>a zorblat here</p>', withProfanityFilter: true });
+  const comment = (maskedHtml?: string | null) =>
+    createElement(RenderHtml, {
+      html: '<p>a zorblat here</p>',
+      maskedHtml,
+      withProfanityFilter: true,
+    });
 
-  it('masks with the managed list the app provides, and with the shipped list without it', () => {
+  it("shows the server's masked copy when it sent one, and the text as written when it says clean", () => {
     viewing.blurNsfw = true;
     try {
-      const managed = render(
-        createElement(
-          ProfanityBlocklistCtx.Provider,
-          { value: { version: '31:1', words: ['zorblat'] } },
-          comment()
-        )
-      );
-      expect(managed).not.toContain('zorblat');
-      expect(render(comment())).toContain('zorblat');
+      const masked = render(comment('<p>a ******* here</p>'));
+      expect(masked).toContain('a ******* here');
+      expect(masked).not.toContain('zorblat');
+      expect(render(comment(null))).toContain('a zorblat here');
     } finally {
       viewing.blurNsfw = false;
     }
+  });
+
+  it('shows the text as written to a viewer with masking off, whatever the server sent', () => {
+    expect(render(comment('<p>a ******* here</p>'))).toContain('a zorblat here');
   });
 });

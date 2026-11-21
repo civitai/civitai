@@ -2,6 +2,7 @@ import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import { TRPCError } from '@trpc/server';
 import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { rateLimit } from '~/server/middleware.trpc';
+import { refuseProfaneSearch } from '~/server/utils/search-refusal-budget';
 import {
   type SemanticImageSearchInput,
   semanticImageSearchSchema,
@@ -89,6 +90,7 @@ export const semanticImageSearchRouter = router({
       ])
     )
     .input(semanticImageSearchSchema)
+    .use(refuseProfaneSearch)
     .use(imageSearchOrOwnImages)
     .use(ownImagesRateLimit)
     .query(async ({ input, ctx }) => {
@@ -156,6 +158,7 @@ export const semanticImageSearchRouter = router({
       ])
     )
     .input(semanticImageSearchSchema)
+    .use(refuseProfaneSearch)
     .query(async ({ input, ctx }) => {
       const started = Date.now();
       if (input.modelVersionIds?.length && !guardFlagEnabled(ctx, 'imageSearchResources'))

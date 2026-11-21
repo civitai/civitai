@@ -1,6 +1,7 @@
 import { modelFeedQueryOptions } from '~/server/controllers/model.controller';
 import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { rateLimit } from '~/server/middleware.trpc';
+import { refuseProfaneSearch } from '~/server/utils/search-refusal-budget';
 import { semanticModelSearchSchema } from '~/server/schema/semantic-model-search.schema';
 import { searchSemanticModels } from '~/server/services/semantic-model-search.service';
 import { isFlagProtected, publicProcedure, router } from '~/server/trpc';
@@ -17,6 +18,7 @@ export const semanticModelSearchRouter = router({
       ])
     )
     .input(semanticModelSearchSchema)
+    .use(refuseProfaneSearch)
     .query(async ({ input, ctx }) => {
       const started = Date.now();
       const result = await searchSemanticModels({

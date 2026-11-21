@@ -378,3 +378,32 @@ describe('createResilientSearchClient — searchForFacetValues', () => {
     expect(client.searchForFacetValues).toBeUndefined();
   });
 });
+
+describe('createResilientSearchClient — a search the server refused for profanity', () => {
+  // As `site-search-client` builds it from a 422 `search_refused`, and as the adapter rethrows it.
+  const refused = Object.assign(new Error('search_refused'), {
+    name: 'MeiliSearchApiError',
+    code: 'search_refused',
+    httpStatus: 422,
+  });
+
+  it.each([
+    ['as thrown', refused],
+    ['rethrown by the adapter', new Error(String(refused))],
+  ])('%s: reports it through onRefused, not as an outage or a query bug', async (_, error) => {
+    const onError = vi.fn();
+    const onRefused = vi.fn();
+    const base = makeClient({ search: vi.fn().mockRejectedValue(error) });
+
+    const result = await createResilientSearchClient(base, { onError, onRefused }).search!(
+      twoRequests
+    );
+
+    expect(result.results).toHaveLength(2);
+    expect({ refused: onRefused.mock.calls.length, outage: onError.mock.calls.length }).toEqual({
+      refused: 1,
+      outage: 0,
+    });
+    expect(pushError).not.toHaveBeenCalled();
+  });
+});

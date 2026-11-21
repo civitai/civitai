@@ -4,7 +4,12 @@ import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import type * as RegionBlocking from '~/server/utils/region-blocking';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setProfanityListReaderForTests } from '~/server/services/profanity-list.service';
+import {
+  SEARCH_REFUSAL_MAX,
+  SEARCH_REFUSAL_WINDOW_SECONDS,
+} from '~/server/utils/search-refusal-budget';
 import { NsfwLevel } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
@@ -548,5 +553,23 @@ describe('profanity refusal', () => {
   it('runs no profanity check off civitai.com', async () => {
     const result = await post(['multi-search'], multi);
     expect(result.status).toBe(200);
+  });
+
+  // Otherwise refusals test words against the list: a spent budget refuses clean searches too.
+  it('answers every search 429 once the viewer has spent its refusals, without searching', async () => {
+    mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: true, isGreen: true });
+    const spent = vi
+      .spyOn(redisMock.redis, 'get')
+      .mockResolvedValue(String(SEARCH_REFUSAL_MAX) as never);
+    try {
+      const result = await post(['multi-search'], {
+        queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'ordinary words' }],
+      });
+      expect(result.status).toBe(429);
+      expect(result.retryAfter).toBe(String(SEARCH_REFUSAL_WINDOW_SECONDS));
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      spent.mockRestore();
+    }
   });
 });

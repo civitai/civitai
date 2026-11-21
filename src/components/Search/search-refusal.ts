@@ -1,7 +1,39 @@
 import { includesInappropriate, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
+import { SEARCH_REFUSED_CODE } from '~/shared/constants/search-refusal.constants';
 
 export type SearchRefusal = 'illegal' | 'profanity' | 'poi' | 'blocked-words';
+
+/**
+ * Whether the browser runs its own profanity check on a search. Not where every request on the
+ * path reaches the server's check (`profanity-managed-list` on): the semantic search procedures
+ * always, /api/search only with the search proxy on, since without it the browser can query
+ * Meilisearch directly.
+ */
+export function browserChecksProfanity({
+  serverProfanity,
+  via,
+  proxyEnabled,
+}: {
+  serverProfanity: boolean;
+  via: 'semantic' | 'siteSearch';
+  proxyEnabled: boolean;
+}): boolean {
+  return !(serverProfanity && (via === 'semantic' || proxyEnabled));
+}
+
+/**
+ * A search the server refused for profanity: a semantic search's tRPC error, or an /api/search
+ * answer as the site client and the Meilisearch adapter rethrow it. Carries no matched word.
+ */
+export function isSearchRefusedError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const { code, message, data } = error as { code?: unknown; message?: unknown; data?: unknown };
+  if (code === SEARCH_REFUSED_CODE) return true;
+  if ((data as { code?: unknown } | undefined)?.code === 'UNPROCESSABLE_CONTENT')
+    return message === SEARCH_REFUSED_CODE;
+  return typeof message === 'string' && message.includes(SEARCH_REFUSED_CODE);
+}
 
 /**
  * Why a search text is refused before anything searches it, or undefined when it may run. Profanity

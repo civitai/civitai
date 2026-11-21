@@ -1,5 +1,6 @@
 import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { rateLimit } from '~/server/middleware.trpc';
+import { refuseProfaneSearch } from '~/server/utils/search-refusal-budget';
 import { semanticBountySearchSchema } from '~/server/schema/semantic-bounty-search.schema';
 import { searchSemanticBounties } from '~/server/services/semantic-bounty-search.service';
 import { isFlagProtected, publicProcedure, router } from '~/server/trpc';
@@ -17,6 +18,7 @@ export const semanticBountySearchRouter = router({
       ])
     )
     .input(semanticBountySearchSchema)
+    .use(refuseProfaneSearch)
     .query(async ({ input, ctx }) => {
       const started = Date.now();
       const result = await searchSemanticBounties({ input, ctx, track: ctx.track });

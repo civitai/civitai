@@ -1370,6 +1370,7 @@ function DisplayMessages({
                             <div className={classes.replyQuoteText}>
                               <ChatMessageContent
                                 content={c.referenceMessage.content}
+                                masked={c.referenceMessage.maskedContent}
                                 blur={blur}
                                 stickerSize={STICKER_SIZE.preview}
                                 fallback={<em>Could not load message.</em>}
@@ -1391,7 +1392,11 @@ function DisplayMessages({
                               isStickerOnlyContent(c.content) || isJumboEmojiText(c.content),
                           })}
                         >
-                          <ChatMessageContent content={c.content} blur={blur} />
+                          <ChatMessageContent
+                            content={c.content}
+                            masked={c.maskedContent}
+                            blur={blur}
+                          />
                           {!!c.editedAt && <span className={classes.editedTag}>edited</span>}
                         </div>
                       </Tooltip>
@@ -1481,14 +1486,22 @@ function ChatMessageContent({
   blur,
   stickerSize,
   fallback,
+  masked,
 }: {
   content: string;
   blur: boolean;
   stickerSize?: number;
   fallback?: React.ReactNode;
+  /** The server's masked copy (`maskedContent`); `undefined` leaves masking to the browser. */
+  masked?: string | null;
 }) {
+  const serverMasked = blur && masked !== undefined;
   const scannable = stripStickerTokens(content);
-  const cleaned = useCleanText(scannable, { enabled: blur, replacementStyle: 'asterisk' });
+  const browserCleaned = useCleanText(scannable, {
+    enabled: blur && !serverMasked,
+    replacementStyle: 'asterisk',
+  });
+  const cleaned = serverMasked ? masked ?? scannable : browserCleaned;
   const { ownHosts } = useCurrentDomainHosts();
 
   if (!content.length) return <>{fallback ?? null}</>;

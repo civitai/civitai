@@ -77,13 +77,23 @@ export async function withMaskedDetails<T extends { details?: string | null }>(
   }));
 }
 
+type WithMaskedContent<M> = M extends { content: string } ? M & { maskedContent?: MaskedText } : M;
+
+/** A chat message with its masked copy, and its quoted reply's when it has one. */
+export type MaskedChatMessage<T extends { content: string; referenceMessage?: unknown }> = Omit<
+  T,
+  'referenceMessage'
+> & { maskedContent?: MaskedText } & ('referenceMessage' extends keyof T
+    ? { referenceMessage: WithMaskedContent<T['referenceMessage']> }
+    : unknown);
+
 /** Chat messages, each with `maskedContent` beside its `content`. Optional in the type as above. */
 export async function withMaskedChatContent<
   T extends { content: string; referenceMessage?: { content: string } | null }
->(messages: T[]): Promise<(T & { maskedContent?: MaskedText })[]> {
-  if (!messages.length) return messages;
+>(messages: T[]): Promise<MaskedChatMessage<T>[]> {
+  if (!messages.length) return messages as MaskedChatMessage<T>[];
   const profanity = await maskingFilter();
-  if (!profanity) return messages;
+  if (!profanity) return messages as MaskedChatMessage<T>[];
   // A quoted reply is shown too, so it carries its own copy.
   return messages.map((message) => ({
     ...message,
@@ -96,20 +106,21 @@ export async function withMaskedChatContent<
           },
         }
       : {}),
-  }));
+  })) as MaskedChatMessage<T>[];
 }
 
 /** Chats with their messages masked, in one masking call for all of them. */
 export async function withMaskedChatPreviews<C extends { messages: { content: string }[] }>(
   chats: C[]
-): Promise<
-  (Omit<C, 'messages'> & { messages: (C['messages'][number] & { maskedContent?: MaskedText })[] })[]
-> {
-  const masked = await withMaskedChatContent(chats.flatMap((chat) => chat.messages));
+): Promise<(Omit<C, 'messages'> & { messages: MaskedChatMessage<C['messages'][number]>[] })[]> {
+  type Message = C['messages'][number];
+  const masked = await withMaskedChatContent<Message>(chats.flatMap((chat) => chat.messages));
   let offset = 0;
   return chats.map((chat) => {
     const messages = masked.slice(offset, offset + chat.messages.length);
     offset += chat.messages.length;
-    return { ...chat, messages };
+    return { ...chat, messages } as Omit<C, 'messages'> & {
+      messages: MaskedChatMessage<Message>[];
+    };
   });
 }
