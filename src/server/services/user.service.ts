@@ -80,6 +80,7 @@ import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-de
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { contestBannedAtSql, contestBannedSql } from '~/server/services/contest-ban';
 import {
   onModelReviewsChanged,
@@ -1799,6 +1800,26 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   };
 };
 
+/** `softDeleteUser`'s media block: every image of the user, as CSAM. */
+export async function blockUserImagesAsCsam(userId: number) {
+  await dbWrite.image.updateMany({
+    where: { userId },
+    data: {
+      ingestion: 'Blocked',
+      nsfwLevel: NsfwLevel.Blocked,
+      blockedFor: BlockedReason.CSAM,
+    },
+  });
+  // A CSAM block outranks an account-deletion grace block. If this account had already
+  // self-deleted with the grace option, every image carries the restore breadcrumbs; left on, a
+  // later restore would un-block CSAM-blocked content.
+  //
+  // Account-wide: the UPDATE above carries no `ingestion` predicate, so it blocked EVERY image this
+  // user owns, and the clear's scope is the block's.
+  await clearAccountDeletionImageMarkers({ userId });
+  await evictHomeBlocksForImages({ userId });
+}
+
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
 export async function softDeleteUser({ id, userId }: { id: number; userId: number }) {
   const user = await dbWrite.user.findFirst({
@@ -1821,21 +1842,7 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
     mediaBlockedByCaller: true,
   });
 
-  await dbWrite.image.updateMany({
-    where: { userId: id },
-    data: {
-      ingestion: 'Blocked',
-      nsfwLevel: NsfwLevel.Blocked,
-      blockedFor: BlockedReason.CSAM,
-    },
-  });
-  // A CSAM block outranks an account-deletion grace block. If this account had already
-  // self-deleted with the grace option, every image carries the restore breadcrumbs; left on, a
-  // later restore would un-block CSAM-blocked content.
-  //
-  // Account-wide: the UPDATE above carries no `ingestion` predicate, so it blocked EVERY image this
-  // user owns, and the clear's scope is the block's.
-  await clearAccountDeletionImageMarkers({ userId: id });
+  await blockUserImagesAsCsam(id);
   await refreshProfilePicturesForUsers([id]);
   await refreshOwnModelShowcases(id);
 
@@ -3154,6 +3161,7 @@ export async function blockBannedUserImages(userId: number) {
       AND (ingestion <> 'Blocked'::"ImageIngestionStatus"
         OR ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL)
   `;
+  await evictHomeBlocksForImages({ userId });
   await refreshOwnModelShowcases(userId);
 }
 

@@ -1,5 +1,6 @@
 import { deletePostRows } from '@civitai/db-queries/content-deletion';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
+import { PLATFORM_REVENUE_SOURCES_SQL } from '@civitai/buzz';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
@@ -210,6 +211,7 @@ import {
   reassertModelPoiRestrictions,
 } from '~/server/services/text-scan/actions/model-poi-minor';
 import type { holdModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
+import type { NotifyTextScanRatingRaisedArgs } from '~/server/services/text-scan/notify';
 import { hasOpenTextScanFlag } from '~/server/services/text-scan/flag-snapshot';
 import { loadModelRulesUnpublishDetail } from '~/server/services/text-scan/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
@@ -364,6 +366,7 @@ import {
   sfwFaceStamp,
 } from '~/server/services/model-sfw-face-stamp';
 import {
+  faceLossNotice as heldVerdictNotice,
   queueComFaceRecheck,
   queueComFaceRestore,
   rescanTextAfterFaceLoss,
@@ -4557,6 +4560,7 @@ export const upsertModel = async (
     let lockedBeforeUpdate: string[] | undefined;
 
     let heldVerdictApplied = false;
+    let faceLossNotice: NotifyTextScanRatingRaisedArgs | null = null;
     const result = await dbWrite.$transaction(
       async (tx) => {
         // Merged over the row as it is now: a wipe, a moderator or a scan may have written its meta
@@ -4848,31 +4852,38 @@ export const upsertModel = async (
           data.availability !== Availability.Private
         )
           heldVerdictApplied = await heldVerdict.applyHeldVerdictLeavingPrivate(tx, updated.id);
-        if (
-          losesSfwFace(beforeUpdate, data) &&
-          (await heldVerdict.applyComFaceHeldVerdict(tx, updated.id))
-        )
-          heldVerdictApplied = true;
+        // Applied even when this save also edits the listing text, so a failed rescan never leaves
+        // the model unrated: the rescan of the new text releases the marker if it is not mature.
+        if (losesSfwFace(beforeUpdate, data)) {
+          faceLossNotice = await heldVerdict.applyComFaceHeldVerdict(tx, updated.id);
+          if (faceLossNotice) heldVerdictApplied = true;
+        }
 
         return updated;
       },
       { maxWait: 10000, timeout: 30000 }
     );
-    // First after commit, so a later post-save step that throws cannot drop it. Re-checked even when
-    // the gate ran: it read the description before blurb expansion, not the text stored.
-    const listingChanged =
-      (data.name !== undefined && data.name !== beforeUpdate.name) ||
-      (data.description !== undefined && data.description !== beforeUpdate.description);
-    const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
-    if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
-      await queueComFaceRecheck(id);
-    if (!isModerator && listingChanged) await queueComFaceRestore(id);
-    if (losesSfwFace(beforeUpdate, data)) await rescanTextAfterFaceLoss(id);
-    if (heldVerdictApplied) {
-      const { finishHeldVerdictApply } = await import(
-        '~/server/services/text-scan/actions/model-nsfw'
-      );
-      await finishHeldVerdictApply(id);
+    // The owner's notice goes in the finally: after the level refresh, so a slow notice cannot keep
+    // the old level listed, and even when a step before it throws.
+    try {
+      // First of the post-save steps, so a later one that throws cannot drop it. Re-checked even when
+      // the gate ran: it read the description before blurb expansion, not the text stored.
+      const listingChanged =
+        (data.name !== undefined && data.name !== beforeUpdate.name) ||
+        (data.description !== undefined && data.description !== beforeUpdate.description);
+      const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
+      if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
+        await queueComFaceRecheck(id);
+      if (!isModerator && listingChanged) await queueComFaceRestore(id);
+      if (losesSfwFace(beforeUpdate, data)) await rescanTextAfterFaceLoss(id);
+      if (heldVerdictApplied) {
+        const { finishHeldVerdictApply } = await import(
+          '~/server/services/text-scan/actions/model-nsfw'
+        );
+        await finishHeldVerdictApply(id);
+      }
+    } finally {
+      if (faceLossNotice) await heldVerdictNotice.send([faceLossNotice]);
     }
     await preventReplicationLag('model', id);
     await userModelCountCache.refresh(userId);
@@ -7344,7 +7355,7 @@ export async function migrateResourceToCollection({
   const faceMoves = remainingVersions.some((v) => v.id === coverVersionId);
   const noFace = { sfwName: null, sfwDescription: null, sfwCoverImageId: null };
 
-  const { collection, modelIds, faceless } = await dbWrite.$transaction(
+  const { collection, modelIds, faceless, faceLossNotices } = await dbWrite.$transaction(
     async (tx) => {
       // Create the collection
       const collection = await tx.collection.create({
@@ -7437,37 +7448,44 @@ export async function migrateResourceToCollection({
         '~/server/services/text-scan/actions/model-nsfw'
       );
       const faceless = hasSfwFaceParts(model) ? modelIds.filter((id) => id !== faceModelId) : [];
-      for (const id of faceless) await applyComFaceHeldVerdict(tx, id);
+      const faceLossNotices = [];
+      for (const id of faceless) faceLossNotices.push(await applyComFaceHeldVerdict(tx, id));
 
-      return { collection, modelIds, faceless };
+      return { collection, modelIds, faceless, faceLossNotices };
     },
     { timeout: 60000, maxWait: 10000 }
   );
+  // The owners' notices go in the finally: after the level refresh and the cache busts, so a slow
+  // notice cannot keep the old level listed, and even when one of them throws.
+  try {
+    // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
+    // each was given its version's stored level. Versions first: the model level reads them.
+    await updateModelVersionNsfwLevels(filteredVersions.map((v) => v.id));
+    await updateModelNsfwLevels(modelIds);
 
-  // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
-  // each was given its version's stored level. Versions first: the model level reads them.
-  await updateModelVersionNsfwLevels(filteredVersions.map((v) => v.id));
-  await updateModelNsfwLevels(modelIds);
+    // Set the showcase collection for the original model
+    await setModelShowcaseCollection({
+      collectionId: collection.id,
+      id: modelId,
+      userId: model.userId,
+      isModerator,
+      modelAlreadyInCollection: true,
+    });
 
-  // Set the showcase collection for the original model
-  await setModelShowcaseCollection({
-    collectionId: collection.id,
-    id: modelId,
-    userId: model.userId,
-    isModerator,
-    modelAlreadyInCollection: true,
-  });
-
-  // Bust caches
-  await Promise.all([
-    dataForModelsCache.refresh(modelIds),
-    bustMvCache(
-      filteredVersions.map((v) => v.id),
-      modelIds
-    ),
-    // The versions now belong to new models.
-    bustTwice(() => versionModelCache().bust(filteredVersions.map((v) => v.id))),
-  ]);
+    // Bust caches
+    await Promise.all([
+      dataForModelsCache.refresh(modelIds),
+      bustMvCache(
+        filteredVersions.map((v) => v.id),
+        modelIds
+      ),
+      // The versions now belong to new models.
+      bustTwice(() => versionModelCache().bust(filteredVersions.map((v) => v.id))),
+    ]);
+  } finally {
+    const notices = faceLossNotices.filter((notice) => notice !== null);
+    if (notices.length) await heldVerdictNotice.send(notices);
+  }
 
   modelMetrics
     .queueUpdate(modelIds)
@@ -8372,6 +8390,7 @@ export async function getTopWeeklyEarners(fresh = false) {
         cast(SUM(amount) as int) as earned
         FROM orchestration.resourceCompensations
         WHERE date >= toStartOfDay(${auctionReset}::Date)
+          AND source NOT IN (${PLATFORM_REVENUE_SOURCES_SQL})
         GROUP BY modelVersionId
         ORDER BY earned DESC
         LIMIT 100;

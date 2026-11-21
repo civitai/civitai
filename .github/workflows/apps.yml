@@ -140,7 +140,7 @@ jobs:
   # `apps` job's comment describes: a slow test step can no longer cancel the typecheck.
   apps-typecheck:
     name: App typecheck
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
     # Measured 2026-11-18: step 169-286 s, install ~40 s.
     timeout-minutes: 20
@@ -173,7 +173,7 @@ jobs:
     # 2026-10-29), so no merge gate keys on it. It was `App unit tests + typecheck` until the
     # typecheck moved to `apps-typecheck`.
     name: App unit tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
     # The `apps/*` suites had never once run in CI before this job existed (369 tests across
     # five apps then): the root config registered `packages/*/vitest.config.*` as projects and

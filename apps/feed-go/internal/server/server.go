@@ -718,6 +718,16 @@ func (s *Server) bearerOrigin(fn func(context.Context, *http.Request) (*computed
 	}
 }
 
+// ServedByHeader is on every answer a public tRPC route writes or proxies, naming who produced it:
+// ServedByGo when this service computed (or refused) it, ServedByNode when it was handed to the Node
+// app. A client comparing this route with the Node route reads it, so a fallback answer (Node's own
+// bytes) is never counted as Go matching Node.
+const (
+	ServedByHeader = "X-Feed-Go-Served"
+	ServedByGo     = "go"
+	ServedByNode   = "node"
+)
+
 // serve is a public route: off (non-nil) is the fallback answered before anything else; then the API
 // request policy, the origin check, and fn inside a serve slot. An answer is written here; any
 // fallback is proxied to the Node app. The serve slots (MaxInFlight) are shared by every public route.
@@ -758,6 +768,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		if c.trivial {
 			served = "served_empty"
 		}
+		w.Header().Set(ServedByHeader, ServedByGo)
 		trpc.WriteResult(w, c.payload, c.ttl)
 		c.release() // WriteResult has sent payload and keeps no reference
 		setOutcome(span, served)
@@ -783,9 +794,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		return
 	}
 	if s.Fallback == nil {
+		w.Header().Set(ServedByHeader, ServedByGo)
 		trpc.WriteError(w, procedure, &trpc.Error{Code: "INTERNAL_SERVER_ERROR", HTTPStatus: 503, Message: "unavailable"})
 		return
 	}
+	// Set before the proxy copies the Node app's headers in, so it is on the proxy's own 502 too.
+	w.Header().Set(ServedByHeader, ServedByNode)
 	// The original request (and its context): the budget bounded only this service's own compute.
 	s.proxy(w, r, endpoint)
 }

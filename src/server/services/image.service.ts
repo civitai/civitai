@@ -105,6 +105,7 @@ import {
 } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import {
   getDbWithoutLag,
   getDbWithoutLagBatch,
@@ -1382,7 +1383,7 @@ export async function writeModeratorBlock(
       removedForCsam: new Set(),
       pHashes: new Map(),
     };
-  return dbWrite.$transaction(async (tx) => {
+  const written = await dbWrite.$transaction(async (tx) => {
     // Locks the rows and reads what they were before this block.
     const prior = await tx.$queryRaw<{ id: number; removed: boolean }[]>`
       SELECT id, ingestion = 'Blocked' AS removed FROM "Image" WHERE id = ANY(${ids}::int[]) FOR UPDATE
@@ -1442,6 +1443,8 @@ export async function writeModeratorBlock(
       pHashes: new Map(rows.map((r) => [r.id, r.pHash])),
     };
   });
+  await evictHomeBlocksForImages({ imageIds: ids });
+  return written;
 }
 
 /** Logged when an owner notice goes out for an image under the moderator-only review flag. */
