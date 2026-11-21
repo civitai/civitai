@@ -156,6 +156,10 @@ func TestCarriesCallerCredentials(t *testing.T) {
 		{"a token query value", h(), "limit=1&token=k", true},
 		{"an empty token query value", h(), "token=", false},
 		{"a later non-empty token value", h(), "token=&token=k", true},
+		// Go's url.ParseQuery drops these pairs; URLSearchParams (Node) keeps them, non-empty.
+		{"a token with an invalid escape", h(), "token=abc%zz", true},
+		{"a token holding a semicolon", h(), "token=a;b", true},
+		{"a later non-empty token value after an empty one", h(), "token=&token=x", true},
 	} {
 		if got := CarriesCallerCredentials(c.h, c.query); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)

@@ -4,7 +4,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"net/http"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/apipolicy"
+	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 )
 
 // The response headers Node sends with a 200 on `GET /api/v1/models` and `GET /api/v1/models/[id]`
@@ -39,7 +39,13 @@ const (
 // sessionCookieNames is SESSION_COOKIE_NAMES (endpoint-helpers.ts): every name a session cookie can
 // have, the legacy next-auth one included (hostSessionCookieName(true), sessionCookieName(true|false),
 // legacySessionCookieName(true|false) in packages/civitai-auth/src/cookies.ts).
-var sessionCookieNames = []string{"__Host-civ-token", "__Secure-civ-token", "civ-token", "__Secure-civitai-token", "civitai-token"}
+var sessionCookieNames = []string{
+	"__Host-" + auth.SessionCookieBase, "__Secure-" + auth.SessionCookieBase, auth.SessionCookieBase,
+	"__Secure-" + legacySessionCookieBase, legacySessionCookieBase,
+}
+
+// legacySessionCookieBase is LEGACY_SESSION_COOKIE_BASE (packages/civitai-auth/src/constants.ts).
+const legacySessionCookieBase = "civitai-token"
 
 //go:embed configheaders.json
 var configHeadersJSON []byte
@@ -112,8 +118,8 @@ func HeaderMap(hs []Header) map[string]string {
 
 // CarriesCallerCredentials is requestCarriesCallerCredentials (endpoint-helpers.ts), the header-only
 // read both wrappers branch on: an Authorization header, a cookie under a session cookie name (any
-// value, an empty one included: the raw-header arm checks the name only), or a non-empty `token`
-// query value. Several Cookie lines are read as Node joins them.
+// value, an empty one included: the raw-header arm checks the name only), or any non-empty `token`
+// query value (auth.AnyQueryToken). Several Cookie lines are read as Node joins them.
 func CarriesCallerCredentials(h http.Header, rawQuery string) bool {
 	for _, v := range h.Values("Authorization") {
 		if v != "" {
@@ -123,13 +129,7 @@ func CarriesCallerCredentials(h http.Header, rawQuery string) bool {
 	if HasSessionCookie(h) {
 		return true
 	}
-	q, _ := url.ParseQuery(rawQuery)
-	for _, v := range q["token"] {
-		if v != "" {
-			return true
-		}
-	}
-	return false
+	return auth.AnyQueryToken(rawQuery)
 }
 
 // HasSessionCookie reports whether a Cookie header names a session cookie (sessionCookieNames),

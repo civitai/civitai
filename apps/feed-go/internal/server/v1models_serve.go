@@ -87,7 +87,6 @@ func writeV1Models(w http.ResponseWriter, c *computed) {
 	h.Set("Content-Length", strconv.Itoa(len(c.payload)))
 	h.Set(ServedByHeader, ServedByGo)
 	w.WriteHeader(http.StatusOK)
-	// The JSON answer this service computed, with a JSON Content-Type, as the Node app writes it.
 	_, _ = w.Write(c.payload) //nolint:gosec // G705: a computed JSON body under application/json, not reflected input
 }
 
@@ -131,7 +130,7 @@ func (s *Server) v1ModelsCompute(endpoint string, serving bool) func(context.Con
 			VerifiedCrawler: verifiedCrawler(r),
 		}
 		if !detail {
-			// Parsed again (the port parsed it already, so it parses): the `nsfw` the handler reads.
+			// nsfw, for the headers; the port already parsed this query.
 			list, err := v1models.ParseList(r.URL.RawQuery)
 			if err != nil {
 				c.release()
@@ -154,13 +153,14 @@ func (s *Server) v1ModelsCompute(endpoint string, serving bool) func(context.Con
 }
 
 // v1ModelsPreflight falls back, in the shadow and serving alike, on a request that is not a GET
-// (`method`) or carries any API credential, a `?token=` or an Authorization header of any value
+// (`method`) or carries any API credential: an Authorization header of any value, or any non-empty
+// `token` query value, read as loosely as the endpoint wrappers read it (auth.AnyQueryToken)
 // (`bearer-token`: the block-scope middleware and the scoped-key views are not ported).
 func v1ModelsPreflight(r *http.Request) error {
 	if r.Method != http.MethodGet {
 		return fallback.New("method")
 	}
-	if auth.HasAPICredential(r) || len(r.Header.Values("Authorization")) > 0 {
+	if len(r.Header.Values("Authorization")) > 0 || auth.AnyQueryToken(r.URL.RawQuery) {
 		return fallback.New("bearer-token")
 	}
 	return nil

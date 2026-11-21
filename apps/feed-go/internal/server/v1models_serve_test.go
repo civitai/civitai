@@ -232,6 +232,12 @@ func TestServeV1ModelsFallsBackBeforeComputing(t *testing.T) {
 		{"[id] API key", http.MethodGet, "/api/v1/models/42", map[string]string{"Authorization": "Bearer k"}, "bearer-token"},
 		{"list ?token=", http.MethodGet, "/api/v1/models?limit=2&token=k", nil, "bearer-token"},
 		{"[id] ?token=", http.MethodGet, "/api/v1/models/42?token=k", nil, "bearer-token"},
+		// Node's wrappers read any non-empty `token` (URLSearchParams); Go's url.ParseQuery drops the
+		// first two pairs, and the first value of the third is empty.
+		{"list ?token= with an invalid escape", http.MethodGet, "/api/v1/models?limit=2&token=abc%zz", nil, "bearer-token"},
+		{"list ?token= holding a semicolon", http.MethodGet, "/api/v1/models?limit=2&token=a;b", nil, "bearer-token"},
+		{"list ?token= empty, then a value", http.MethodGet, "/api/v1/models?limit=2&token=&token=x", nil, "bearer-token"},
+		{"[id] ?token= with an invalid escape", http.MethodGet, "/api/v1/models/42?token=abc%zz", nil, "bearer-token"},
 		{"list session cookie", http.MethodGet, "/api/v1/models?limit=2", map[string]string{"Cookie": "a=1; __Secure-civ-token=t"}, "v1-models-session-cookie"},
 		{"list legacy session cookie", http.MethodGet, "/api/v1/models?limit=2", map[string]string{"Cookie": "civitai-token=t"}, "v1-models-session-cookie"},
 		{"list etag value", http.MethodGet, "/api/v1/models?limit=2&etag=abc", nil, "v1-models-etag"},
