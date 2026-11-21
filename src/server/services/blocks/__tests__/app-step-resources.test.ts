@@ -805,4 +805,31 @@ describe('stored files and blob keys off media inputs', () => {
       })
     ).resolves.toEqual({ capOutput: false });
   });
+  it('charges a format for every placeholder it fills', async () => {
+    await expect(
+      checkWorkflow({
+        steps: [
+          {
+            $type: 'textToImage',
+            input: { model: { $ref: '$arguments', path: 'x', format: '{}'.repeat(10_000) } },
+          },
+        ],
+        arguments: { x: 'a'.repeat(200) },
+      })
+    ).rejects.toThrow('too large to check');
+  });
+
+  it('fills a format with one placeholder within the budget', async () => {
+    await expect(
+      checkWorkflow({
+        steps: [
+          {
+            $type: 'textToImage',
+            input: { prompt: { $ref: '$arguments', path: 'x', format: 'a {0}' } },
+          },
+        ],
+        arguments: { x: 'a'.repeat(200) },
+      })
+    ).resolves.toEqual({ capOutput: false });
+  });
 });

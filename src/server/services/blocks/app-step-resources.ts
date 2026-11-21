@@ -59,7 +59,8 @@ const STORAGE_PATH_RE = /\/(consumer|providers)\/blobs\//i;
 const STORED_FILE_DEPTH_MAX = 64;
 // Controls and spaces at either end, which a URL parser drops.
 const EDGE_CONTROLS_RE = /^[\u0000-\u0020]+|[\u0000-\u0020]+$/g;
-// Characters a URL parser drops anywhere: tab and newlines, and bidi and format controls.
+// Dropped before the URL test: tab and newlines (which WHATWG URL drops anywhere), and bidi and
+// format controls (which other parsers, such as .NET's, may drop).
 const DROPPED_RE = /[\t\n\r\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
 
 /** The string as a URL parser reads it. */
@@ -91,10 +92,12 @@ function loopItemsOf(values: unknown[] | null): unknown[] | null {
   return arrays.length ? arrays.flat() : null;
 }
 
+const PLACEHOLDER_RE = /\{[^{}]*\}/g;
+
 /** `format` with every placeholder group written as `value`, as a composite format would. */
 function formatWith(format: string, value: string): string {
   return format
-    .replace(/\{[^{}]*\}/g, value)
+    .replace(PLACEHOLDER_RE, () => value)
     .split('{{')
     .join('{')
     .split('}}')
@@ -172,9 +175,9 @@ function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
       : undefined;
   // The items a repeat places through its loop variable, by name (lower-cased); null when its
   // clause reaches no array, or a reused name may bind either loop, so a reference to it places
-  // every argument. A repeat whose clause cannot be read registers nothing, and a reference to its
-  // loop name is skipped below as another step's output: safe only because resolveBlockWorkflowGraph
-  // refuses a malformed repeat clause first (readRepeatInput, workflow-graph.ts).
+  // every argument. A repeat whose clause is not over `$arguments` registers nothing; a reference to
+  // its loop name is skipped below as another step's output. A malformed clause never reaches
+  // here: resolveBlockWorkflowGraph refuses it first (readRepeatInput, workflow-graph.ts).
   const loopItems = new Map<string, unknown[] | null>();
   let formatFill = 0;
 
@@ -226,8 +229,10 @@ function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
       // The orchestrator may write any value that lands here, a default or nothing into the format.
       const fillFormat = (from: unknown) => {
         if (typeof format !== 'string') return;
+        const groups = format.match(PLACEHOLDER_RE)?.length ?? 0;
         for (const leaf of ['', ...scalarLeaves(from)]) {
-          formatFill += format.length + leaf.length;
+          // What formatWith builds, charged before it is built.
+          formatFill += format.length + leaf.length * groups;
           if (formatFill > FORMAT_FILL_BUDGET) refuse('step input is too large to check');
           at(formatWith(format, leaf));
         }
@@ -404,8 +409,9 @@ function collectAppStepVersionIds(input: unknown): number[] {
 
 /**
  * Refuses an app-built step input that names a resource other than a Civitai model version, a
- * version the viewer may not generate with, or a version on a base model no app may use, and
- * returns whether its output is held to PG-13.
+ * version the viewer may not generate with, or a version on a base model no app may use, or that
+ * holds a stored file URL or blob key outside a media input; returns whether its output is held to
+ * PG-13.
  *
  * Only the generation check's access rule applies here, without its moderator exemption, and not
  * its coverage or base-model rules: training steps name base checkpoints that are not covered for
