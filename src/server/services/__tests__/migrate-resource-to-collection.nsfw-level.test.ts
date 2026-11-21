@@ -253,14 +253,17 @@ describe('migrateResourceToCollection and a .com face the text scan relied on', 
     });
     /** The held verdict as the split's transaction reads it before spending it. */
     function readsHeld() {
-      const levelRollups = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation();
+      const levelRollups = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation() as
+        | ((...args: unknown[]) => unknown)
+        | undefined;
       vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
-        sql: Prisma.Sql | TemplateStringsArray,
+        sql: unknown,
         ...values: unknown[]
       ) =>
-        Array.isArray(sql) && sql.join('?').includes("'comFaceHeldVerdict'->>'at'")
+        Array.isArray(sql) &&
+        (sql as readonly string[]).join('?').includes("'comFaceHeldVerdict'->>'at'")
           ? [{ name: 'Split', userId: OWNER, at: 'h', level: 16 }]
-          : levelRollups?.(sql as never, ...values)) as never);
+          : levelRollups?.(sql, ...values)) as never);
     }
 
     it('sends them once, after the level refresh and the cache busts', async () => {
