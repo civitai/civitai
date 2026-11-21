@@ -1024,6 +1024,27 @@ describe('ModelVersionUpsertForm — licensing lineage pre-selection', () => {
     expect(page.getByRole('textbox', { name: 'Fine-tuned from' }).elements()).toHaveLength(0);
   });
 
+  test('a version already linked to a restricted root is still shown its link', async () => {
+    licensingRoots.respond = () => ({
+      roots: [
+        { id: 777, modelId: 9, versionName: 'Restricted', isDefault: false, restricted: true },
+      ],
+      defaultVersionId: null,
+    });
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        version={{ ...(version as object), licensingSourceVersionId: 777 } as typeof version}
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+    await expect
+      .element(page.getByRole('textbox', { name: 'Fine-tuned from' }))
+      .toBeInTheDocument();
+  });
+
   test('a moderator is offered a restricted root (control)', async () => {
     currentUser.value = { id: 1, tier: 'free', isModerator: true, meta: {} };
     licensingRoots.respond = () => ({
