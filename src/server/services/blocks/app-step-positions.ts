@@ -1,65 +1,18 @@
 import { Air } from '@civitai/orchestration-client';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
+import { STEP_MEDIA_INPUT_KEYS } from '~/server/services/blocks/step-media-keys';
 import { isWorkflowOwnedBy } from '~/server/services/orchestrator/assert-workflow-owner';
 
-// What an app-built step may put where. Only media positions (the keys below, and everything under
-// them) take a reference to another step's output, a URL, or an orchestrator file; every other key
-// takes literal values, so a key this list has not met yet is held to the stricter rule.
-//
-// The keys are the media input fields of the orchestrator's step inputs, as
-// @civitai/orchestration-client's generated types name them, plus a training step's `trainingData`
-// (its items are orchestrator blobs). Matched case-insensitively.
-const MEDIA_KEYS: ReadonlySet<string> = new Set(
-  [
-    'image',
-    'images',
-    'imageUrl',
-    'imageUrls',
-    'sourceImage',
-    'sourceImages',
-    'sourceImageUrl',
-    'startImage',
-    'endImage',
-    'endSourceImage',
-    'firstFrame',
-    'lastFrame',
-    'firstFrameImage',
-    'lastFrameImage',
-    'middleImages',
-    'middleFrameImage',
-    'referenceImage',
-    'referenceImages',
-    'frontalImage',
-    'markupImage',
-    'textureImageUrl',
-    'mask',
-    'personMask',
-    'subjectUrl',
-    'subjectMaskUrl',
-    'garmentUrl',
-    'video',
-    'videos',
-    'videoUrl',
-    'sourceVideo',
-    'referenceVideos',
-    'referenceVideoUrls',
-    'additionalVideos',
-    'audioUrl',
-    'refAudioUrl',
-    'sourceAudio',
-    'targetAudio',
-    'referenceAudios',
-    'mediaUrl',
-    'mediaUrls',
-    'mesh',
-    'sourceUrl',
-    'trainingData',
-  ].map((key) => key.toLowerCase())
-);
+// What an app-built step may put where. Only media positions (the shared media input keys, and
+// everything under them) take a reference to another step's output, a URL, or an orchestrator
+// file; every other key takes literal values, so a key the list has not met yet is held to the
+// stricter rule. `trainingData` is added here only: its items are orchestrator blobs, but it also
+// carries captions, which the prompt audit must keep reading as text.
+const MEDIA_KEYS: ReadonlySet<string> = new Set([...STEP_MEDIA_INPUT_KEYS, 'trainingdata']);
 
-// Chat text and tool schemas: free text by the generation input gate's own rule
-// (`PASS_THROUGH_FREE_TEXT_PATHS` in blocks.router), so a URL there is text. A reference still is not.
+// Chat messages and tool schemas: text, as the generation input gate reads a chat step's, but
+// held here at any step. A URL there is text; a reference or another user's file is not.
 const FREE_TEXT_KEYS: ReadonlySet<string> = new Set(['messages', 'tools']);
 
 const REF_KEY = '$ref';
@@ -120,8 +73,36 @@ function argumentValue(
 }
 
 const MAX_DEPTH = 64;
-// Quotes, brackets and trailing punctuation around a token in free text.
-const TOKEN_PUNCTUATION_RE = /^["'`(<[{]+|["'`)>\]},.;:!?]+$/g;
+// An orchestrator AIR is short; a longer token naming one is refused unread.
+const TOKEN_LENGTH_MAX = 512;
+const TOKEN_PUNCTUATION = new Set([
+  '"',
+  "'",
+  '`',
+  '(',
+  ')',
+  '<',
+  '>',
+  '[',
+  ']',
+  '{',
+  '}',
+  ',',
+  '.',
+  ';',
+  ':',
+  '!',
+  '?',
+]);
+
+/** The token without quotes, brackets and punctuation around it. Linear: no regex. */
+function stripTokenPunctuation(token: string): string {
+  let start = 0;
+  let end = token.length;
+  while (start < end && TOKEN_PUNCTUATION.has(token[start])) start++;
+  while (end > start && TOKEN_PUNCTUATION.has(token[end - 1])) end--;
+  return token.slice(start, end);
+}
 
 function isRepeatStepType(stepType: string): boolean {
   return stepType.toLowerCase() === 'repeat';
@@ -150,6 +131,22 @@ function isRepeatForClause(value: unknown): boolean {
   return keys.length === 3 && keys[0] === '$ref' && keys[1] === 'as' && keys[2] === 'path';
 }
 
+/** An orchestrator file the viewer does not own. A job file is `orchestrator:<jobId>@<file>`; a
+ *  blob names no owner at all. */
+function orchestratorFileProblemFor(
+  value: string,
+  key: string,
+  viewerId: number
+): StepPositionProblem | null {
+  if (!ORCHESTRATOR_SOURCE_RE.test(value)) return null;
+  const parsed = Air.parseSafe(value);
+  const owned =
+    parsed?.source.toLowerCase() === 'orchestrator' &&
+    parsed.id.toLowerCase() !== 'blob' &&
+    isWorkflowOwnedBy(parsed.id, viewerId);
+  return owned ? null : { form: 'orchestrator-file', key };
+}
+
 /**
  * The first value in `input` that sits outside a media position and is a reference, a URL, or an
  * orchestrator file the viewer does not own. Map keys count as values (LoRAs are keyed by AIR), and
@@ -163,26 +160,20 @@ export function findStepPositionProblem(
   /** The names of the steps that run before this one in the same workflow. */
   earlierSteps: ReadonlySet<string> = new Set()
 ): StepPositionProblem | null {
-  const orchestratorFileProblem = (value: string, key: string): StepPositionProblem | null => {
-    if (!ORCHESTRATOR_SOURCE_RE.test(value)) return null;
-    const parsed = Air.parseSafe(value);
-    // A job file is `orchestrator:<jobId>@<file>`; a blob names no owner at all.
-    const owned =
-      parsed?.source.toLowerCase() === 'orchestrator' &&
-      parsed.id.toLowerCase() !== 'blob' &&
-      isWorkflowOwnedBy(parsed.id, viewerId);
-    return owned ? null : { form: 'orchestrator-file', key };
-  };
+  const orchestratorFileProblem = (value: string, key: string) =>
+    orchestratorFileProblemFor(value, key, viewerId);
   const checkString = (raw: string, key: string): StepPositionProblem | null => {
     const value = raw.trim();
     if (URL_VALUE_RE.test(value)) return { form: 'url', key, host: hostOf(value) };
     return orchestratorFileProblem(value, key);
   };
-  // Free text carries no file references either: each whitespace-separated token is held to the
-  // orchestrator-file rule.
+  // Free text carries no file references either: each whitespace-separated token that names the
+  // orchestrator source is held to the orchestrator-file rule.
   const checkText = (raw: string, key: string): StepPositionProblem | null => {
     for (const token of raw.split(/\s+/)) {
-      const problem = orchestratorFileProblem(token.replace(TOKEN_PUNCTUATION_RE, ''), key);
+      if (!token.toLowerCase().includes('orchestrator:')) continue;
+      if (token.length > TOKEN_LENGTH_MAX) return { form: 'orchestrator-file', key };
+      const problem = orchestratorFileProblem(stripTokenPunctuation(token), key);
       if (problem) return problem;
     }
     return null;
@@ -267,15 +258,13 @@ export function findStepPositionProblem(
   });
 }
 
-/**
- * The inline ComfyUI graph's version of the rule: it is one step with no `arguments`, so nothing
- * there is a reference to place, and its loaders take Civitai resources only. URLs are the graph
- * checks' business (`inline-comfy.service`).
- */
-export function findInlineGraphProblem(input: unknown): StepPositionProblem | null {
+/** The inline ComfyUI graph: one step with no `arguments`, so any reference is refused. */
+export function findInlineGraphProblem(
+  input: unknown,
+  viewerId: number
+): StepPositionProblem | null {
   const visit = (value: unknown, key: string): StepPositionProblem | null => {
-    if (typeof value === 'string')
-      return ORCHESTRATOR_SOURCE_RE.test(value.trim()) ? { form: 'orchestrator-file', key } : null;
+    if (typeof value === 'string') return orchestratorFileProblemFor(value.trim(), key, viewerId);
     if (Array.isArray(value)) {
       for (const item of value) {
         const problem = visit(item, key);
@@ -318,7 +307,7 @@ export async function stepPositionsRefusal(opts: {
   const earlierSteps = new Set<string>();
   for (const step of opts.steps) {
     const problem = opts.inlineGraph
-      ? findInlineGraphProblem(step.input)
+      ? findInlineGraphProblem(step.input, opts.viewerId)
       : findStepPositionProblem(
           step.input,
           opts.viewerId,
@@ -336,7 +325,8 @@ export async function stepPositionsRefusal(opts: {
       appBlockId: opts.appBlockId,
       stepType: step.$type,
       key: problem.key,
-      form: problem.form,
+      // Under payload: the main dataset is at its field limit (no-new-axiom-field.test.ts).
+      payload: { form: problem.form },
       host: problem.host,
       mode,
     });

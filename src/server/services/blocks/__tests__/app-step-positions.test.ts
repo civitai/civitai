@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptModule from '~/server/flipt/client';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { STEP_MEDIA_INPUT_KEYS } from '~/server/services/blocks/step-media-keys';
 import {
   findInlineGraphProblem,
   findStepPositionProblem,
@@ -263,6 +264,58 @@ describe('findStepPositionProblem', () => {
   });
 });
 
+describe('media keys', () => {
+  it("are the prompt audit's list, plus trainingData", () => {
+    for (const key of ['blob', 'frames', 'keyframes', 'url', 'sampleInputImages']) {
+      expect(STEP_MEDIA_INPUT_KEYS.has(key.toLowerCase())).toBe(true);
+      expect(findStepPositionProblem({ [key]: ref() }, VIEWER)).toBeNull();
+    }
+    expect(STEP_MEDIA_INPUT_KEYS.has('trainingdata')).toBe(false);
+  });
+
+  it('let a keyframed video app chain earlier outputs', async () => {
+    await expect(
+      stepPositionsRefusal({
+        appBlockId: 'apb_1',
+        viewerId: VIEWER,
+        steps: [
+          { $type: 'imageGen', name: 'gen', input: { prompt: 'a cat' } },
+          {
+            $type: 'videoGen',
+            name: 'vid',
+            input: {
+              prompt: 'the cat walks',
+              keyframes: [{ image: { $ref: 'gen', path: 'output.images[0].url' }, frame: 0 }],
+              frames: { $ref: 'gen', path: 'output.images' },
+            },
+          },
+        ],
+      })
+    ).resolves.toBeNull();
+  });
+});
+
+describe('free text', () => {
+  // A long run of punctuation before a letter is the worst case for a backtracking trim.
+  it.each([
+    ['dots then a letter', `orchestrator:${'.'.repeat(20_000)}x`],
+    ['one long token', `orchestrator:${'a'.repeat(100_000)}`],
+  ])('scans %s in linear time and refuses it unread', (_n, token) => {
+    const started = performance.now();
+    const problem = findStepPositionProblem({ messages: [{ content: token }] }, VIEWER);
+    expect(performance.now() - started).toBeLessThan(50);
+    expect(problem).toMatchObject({ form: 'orchestrator-file' });
+  });
+
+  it('skips tokens that do not name the orchestrator', () => {
+    const started = performance.now();
+    expect(
+      findStepPositionProblem({ messages: [{ content: `${'.'.repeat(80_000)}x` }] }, VIEWER)
+    ).toBeNull();
+    expect(performance.now() - started).toBeLessThan(50);
+  });
+});
+
 describe('merge steps', () => {
   const field = (over: Record<string, unknown> = {}) => ({
     $ref: 'gen',
@@ -315,26 +368,38 @@ describe('findInlineGraphProblem', () => {
   });
 
   it('refuses a reference in any node input, and a fake link that carries one', () => {
-    expect(findInlineGraphProblem(graph({ seed: ref() }))).toEqual({
+    expect(findInlineGraphProblem(graph({ seed: ref() }), VIEWER)).toEqual({
       form: 'reference',
       key: 'seed',
     });
-    expect(findInlineGraphProblem(graph({ model: [ref()] }))).toMatchObject({ form: 'reference' });
+    expect(findInlineGraphProblem(graph({ model: [ref()] }), VIEWER)).toMatchObject({
+      form: 'reference',
+    });
   });
 
   it('refuses an orchestrator file, with or without the urn prefix', () => {
-    expect(findInlineGraphProblem(graph({ model: 'orchestrator:blob@abc' }))).toMatchObject({
-      form: 'orchestrator-file',
-      key: 'model',
-    });
+    expect(findInlineGraphProblem(graph({ model: 'orchestrator:blob@abc' }), VIEWER)).toMatchObject(
+      {
+        form: 'orchestrator-file',
+        key: 'model',
+      }
+    );
   });
 
   it('lets a real link, a literal and a media URL through', () => {
     expect(
       findInlineGraphProblem(
-        graph({ model: ['1', 0], seed: 4, image: 'https://image.civitai.com/x.jpeg' })
+        graph({ model: ['1', 0], seed: 4, image: 'https://image.civitai.com/x.jpeg' }),
+        VIEWER
       )
     ).toBeNull();
+  });
+
+  it('holds an orchestrator file to the owner, as the other arms do', () => {
+    expect(findInlineGraphProblem(graph({ lora: otherJob }), VIEWER)).toMatchObject({
+      form: 'orchestrator-file',
+    });
+    expect(findInlineGraphProblem(graph({ lora: ownJob }), VIEWER)).toBeNull();
   });
 });
 
@@ -356,7 +421,7 @@ describe('stepPositionsRefusal', () => {
         appBlockId: 'apb_1',
         stepType: 'imageGen',
         key: 'model',
-        form: 'reference',
+        payload: { form: 'reference' },
         mode: 'enforce',
       })
     );
