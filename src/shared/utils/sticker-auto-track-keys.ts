@@ -21,11 +21,43 @@ export function autoTrackPollDelay(elapsedMs: number): number | null {
 const TOLERANCE = { x: 0.002, y: 0.002, s: 0.005, r: 0.5 };
 
 /**
- * A tracker run as keys on the video's clock. Tick 0 is `startMs`. Every tick any channel
- * changes on becomes a key, joined linearly as v1 is; a key whose next one shows or hides the
- * sticker jumps, so a hide is a cut and never counts as fading.
+ * A move within one tick that reads as a scene cut rather than motion: distance as a fraction of
+ * the frame per 250 ms, or a scale ratio.
  */
-export function autoTrackRunKeys(track: StickerTrackV1, startMs: number): StickerTrackKey[] {
+const CUT = { distancePer250Ms: 0.12, scaleRatio: 1.4 };
+
+/** A sticker shown for less than this between hides is a tracker flash, not a sighting. */
+const MIN_SHOWN_MS = 400;
+
+/** The show channel with flashes hidden: a shown span shorter than `MIN_SHOWN_MS` that ends in a hide. */
+function withoutFlashes(track: StickerTrackV1): StickerTrackV1 {
+  if (!track.show) return track;
+  const changes = (pairs: [number, number][]) =>
+    pairs.filter(([, value], i) => i === 0 || value !== pairs[i - 1][1]);
+  // Repeats merged first, so a span is measured from where it starts.
+  const show = changes(track.show).map(([tick, value], i, pairs): [number, number] => {
+    const next = pairs[i + 1];
+    const flash = value === 1 && next?.[1] === 0 && (next[0] - tick) * track.ms < MIN_SHOWN_MS;
+    return [tick, flash ? 0 : value];
+  });
+  return { ...track, show: changes(show) };
+}
+
+/** Whether the sticker leaps from `from` to `to`, one tick apart, as it does across a cut. */
+function cutBetween(from: StickerTrackKey, to: StickerTrackKey, tickMs: number) {
+  const distance = Math.hypot(to.x - from.x, to.y - from.y);
+  const ratio = Math.max(to.s, from.s) / Math.max(Math.min(to.s, from.s), Number.EPSILON);
+  return distance > CUT.distancePer250Ms * Math.max(1, tickMs / 250) || ratio > CUT.scaleRatio;
+}
+
+/**
+ * A tracker run as keys on the video's clock. Tick 0 is `startMs`. Every tick any channel
+ * changes on becomes a key, joined linearly as v1 is. A key jumps instead when its next one
+ * shows or hides the sticker, so a hide is a cut and never counts as fading, and when the next
+ * tick leaps across the frame or jumps in size, so a scene cut snaps rather than gliding.
+ */
+export function autoTrackRunKeys(run: StickerTrackV1, startMs: number): StickerTrackKey[] {
+  const track = withoutFlashes(run);
   const ticks = new Set<number>();
   for (const pairs of [track.x, track.y, track.s, track.r, track.show ?? []])
     for (const [tick] of pairs) ticks.add(tick);
@@ -33,6 +65,7 @@ export function autoTrackRunKeys(track: StickerTrackV1, startMs: number): Sticke
   for (const [tick] of track.show ?? []) if (tick > 0) ticks.add(tick - 1);
 
   const keys: StickerTrackKey[] = [];
+  const keyTicks: number[] = [];
   for (const tick of [...ticks].sort((a, b) => a - b)) {
     const t = startMs + Math.round(tick * track.ms);
     if (t > STICKER_TRACK_MAX_DURATION_MS) break;
@@ -40,9 +73,16 @@ export function autoTrackRunKeys(track: StickerTrackV1, startMs: number): Sticke
     // The same bounds a placed sticker is held to.
     const { x, y, scale, rotation } = normalizeStickerPlacement(pose);
     keys.push({ t, x, y, s: scale, r: rotation, o: pose.show ? 1 : 0, ease: 'linear' });
+    keyTicks.push(tick);
   }
-  for (let i = 0; i < keys.length - 1; i++)
-    if ((keys[i].o === 0) !== (keys[i + 1].o === 0)) keys[i].ease = 'jump';
+  for (let i = 0; i < keys.length - 1; i++) {
+    const seam = (keys[i].o === 0) !== (keys[i + 1].o === 0);
+    const leap =
+      keyTicks[i + 1] - keyTicks[i] === 1 &&
+      keys[i].o === 1 &&
+      cutBetween(keys[i], keys[i + 1], track.ms);
+    if (seam || leap) keys[i].ease = 'jump';
+  }
   return keys;
 }
 

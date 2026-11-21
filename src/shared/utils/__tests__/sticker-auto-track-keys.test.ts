@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { StickerTrackV1 } from '~/shared/utils/sticker-track';
-import { STICKER_TRACK_MAX_KEYS, stickerTrackRefusal } from '~/shared/utils/sticker-track';
+import {
+  STICKER_TRACK_MAX_KEYS,
+  sampleStickerTrack,
+  stickerTrackRefusal,
+} from '~/shared/utils/sticker-track';
 import {
   autoTrackPollDelay,
   autoTrackRunKeys,
@@ -75,6 +79,114 @@ describe('autoTrackRunKeys', () => {
   });
 });
 
+describe('autoTrackRunKeys at scene cuts', () => {
+  // Shaped on a tester's clip: 250 ms ticks, fast motion moves up to ~0.08 a tick, the cut 0.15.
+  const leap = (dy: number): StickerTrackV1 => ({
+    v: 1,
+    ms: 250,
+    x: [
+      [0, 0.5],
+      [1, 0.55],
+      [2, 0.6],
+      [3, 0.62],
+    ],
+    y: [
+      [0, 0.3],
+      [1, 0.3],
+      [2, 0.3 - dy],
+      [3, 0.3 - dy],
+    ],
+    s: [[0, 0.2]],
+    r: [[0, 0]],
+  });
+
+  it('snaps across a cut instead of gliding through it', () => {
+    const keys = autoTrackRunKeys(leap(0.15), 0);
+    expect(keys.map((k) => k.ease)).toEqual(['linear', 'jump', 'linear', 'linear']);
+    // Partway through the cut's tick it still sits where it was, not on its way to the new spot.
+    expect(sampleStickerTrack(stickerKeysTrack(keys), 400).y).toBeCloseTo(0.3);
+  });
+
+  it('glides through fast motion that is not a cut', () => {
+    const keys = autoTrackRunKeys(leap(0.06), 0);
+    expect(keys.every((k) => k.ease === 'linear')).toBe(true);
+  });
+
+  it('snaps when the subject jumps in size, as a cut to a close-up does', () => {
+    const track: StickerTrackV1 = {
+      ...run(4),
+      s: [
+        [0, 0.2],
+        [1, 0.2],
+        [2, 0.35],
+      ],
+    };
+    expect(autoTrackRunKeys(track, 0)[1].ease).toBe('jump');
+  });
+
+  it('scales the cut distance with longer ticks', () => {
+    // At 500 ms a tick, 0.15 of the frame is fast motion; 0.3 is still a cut.
+    const at500 = (dy: number) => ({ ...leap(dy), ms: 500 });
+    expect(autoTrackRunKeys(at500(0.15), 0).every((k) => k.ease === 'linear')).toBe(true);
+    expect(autoTrackRunKeys(at500(0.3), 0)[1].ease).toBe('jump');
+  });
+
+  it('glides across a leap spread over several ticks', () => {
+    // Keyed two ticks apart: the tracker reports a slide, not a cut.
+    const track: StickerTrackV1 = {
+      ...leap(0),
+      x: [
+        [0, 0.5],
+        [2, 0.7],
+      ],
+      y: [[0, 0.3]],
+    };
+    expect(autoTrackRunKeys(track, 0).every((k) => k.ease === 'linear')).toBe(true);
+  });
+
+  it('hides a one-tick flash between hides', () => {
+    const track: StickerTrackV1 = {
+      ...run(12),
+      show: [
+        [0, 1],
+        [4, 0],
+        [7, 1],
+        [8, 0],
+        [10, 1],
+      ],
+    };
+    const keys = autoTrackRunKeys(track, 0);
+    expect(keys.filter((k) => k.t >= 1000 && k.t < 2500).every((k) => k.o === 0)).toBe(true);
+    expect(keys.find((k) => k.t === 2500)?.o).toBe(1);
+  });
+
+  it('measures a sighting from its start when the tracker repeats a shown entry', () => {
+    const track: StickerTrackV1 = {
+      ...run(6),
+      show: [
+        [0, 1],
+        [2, 1],
+        [3, 0],
+      ],
+    };
+    expect(autoTrackRunKeys(track, 0).find((k) => k.t === 500)?.o).toBe(1);
+  });
+
+  it('keeps a sighting long enough to see', () => {
+    const track: StickerTrackV1 = {
+      ...run(12),
+      show: [
+        [0, 1],
+        [4, 0],
+        [6, 1],
+        [8, 0],
+        [10, 1],
+      ],
+    };
+    expect(autoTrackRunKeys(track, 0).find((k) => k.t === 1500)?.o).toBe(1);
+  });
+});
+
 describe('fitAutoTrackKeys', () => {
   it('drops keys a straight line already draws', () => {
     const keys = autoTrackRunKeys(run(240), 0);
@@ -118,14 +230,15 @@ describe('fitAutoTrackKeys', () => {
   it('keeps the first and last key when only the cuts fit, and never exceeds the room', () => {
     const cuts = {
       ...run(1),
-      show: Array.from({ length: 240 }, (_, i) => [i, i % 2 ? 0 : 1]),
+      // Shown and hidden 500 ms at a time, so none is a flash.
+      show: Array.from({ length: 240 }, (_, i) => [i * 2, i % 2 ? 0 : 1]),
     } as StickerTrackV1;
     const keys = autoTrackRunKeys(
       {
         ...cuts,
         x: [
           [0, 0.1],
-          [239, 0.5],
+          [479, 0.5],
         ],
       },
       0
@@ -156,14 +269,15 @@ describe('mergeAutoTrackKeys', () => {
 
   it('leaves room for the keys on both sides of the run', () => {
     const before = Array.from({ length: 200 }, (_, i) => key(i * 10));
-    const after = Array.from({ length: 200 }, (_, i) => key(70_000 + i * 10));
+    const after = Array.from({ length: 200 }, (_, i) => key(130_000 + i * 10));
     const cuts = {
       ...run(1),
       x: [
         [0, 0.1],
-        [239, 0.5],
+        [479, 0.5],
       ],
-      show: Array.from({ length: 240 }, (_, i) => [i, i % 2 ? 0 : 1]),
+      // Shown and hidden 500 ms at a time, so none is a flash.
+      show: Array.from({ length: 240 }, (_, i) => [i * 2, i % 2 ? 0 : 1]),
     } as StickerTrackV1;
     const merged = mergeAutoTrackKeys([...before, ...after], cuts, 2000)!;
     expect(merged.keys).toHaveLength(STICKER_TRACK_MAX_KEYS);
