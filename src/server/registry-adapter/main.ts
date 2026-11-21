@@ -46,6 +46,11 @@
  *                                  tokens may read authorized PRIVATE document streams
  *                                  (`private-feed.ts`). Unset or empty, the default: no private
  *                                  stream exists, and every document stream is public
+ *   REGISTRY_ADAPTER_LISTING_RELAYS
+ *                                  the relays (OAuth client ids, a token's `act.sub`; comma- or
+ *                                  space-separated) whose subscriptions may read the `store-listing@v1`
+ *                                  stream (`listing-stream.ts`). Unset or empty, the default: the
+ *                                  schema is not served, and the catalog read is unchanged
  *   REGISTRY_ADAPTER_TRUST_META    "1" to judge the region from a request's `meta` as well as its
  *                                  headers; set only once the gateway sets those keys itself
  *                                  (`request-origin.ts`)
@@ -96,10 +101,11 @@ import { STATES_KEPT_PER_STREAM } from '~/server/registry-adapter/cursor';
 import { isSharedDocLevelsOn } from '~/server/services/apps/doc-levels';
 import {
   APP_SEARCH_URN,
-  SERVED_SCHEMAS,
   buildEntitiesPerRead,
   parseAppSearchUrl,
+  servedSchemas,
 } from '~/server/registry-adapter/entities';
+import { gateListings, parseListingRelays } from '~/server/registry-adapter/listing-stream';
 import type { ResourceConfig } from '~/server/registry-adapter/auth';
 import {
   createCivitaiTokenVerifier,
@@ -181,16 +187,25 @@ function main() {
   const { shadow: policyShadow, enforce: policyEnforce } = startPolicy(process.env);
   const auth = { verifyToken, resource, limiter, onRegion, policyShadow, policyEnforce };
 
-  const deps = liveCatalogReadDeps();
+  const listingRelays = parseListingRelays(process.env.REGISTRY_ADAPTER_LISTING_RELAYS);
+  const listings = listingRelays.size > 0;
+  console.log(
+    listings
+      ? `registry-adapter: listing stream ON for relays: ${[...listingRelays].join(', ')}`
+      : 'registry-adapter: listing stream off (REGISTRY_ADAPTER_LISTING_RELAYS unset)'
+  );
+  const served = servedSchemas({ listings });
+  const deps = liveCatalogReadDeps({ listings });
   // Every subscription polls; they share one catalog read per half poll interval.
-  const readApps = sharedRead(() => readCatalog(deps), pollMs / 2);
+  const readApps = sharedRead(() => readCatalog(deps, { listings, onError }), pollMs / 2);
   const store = createRedisSnapshotStore();
-  const entities = createPollingAdapter({
+  const polling = createPollingAdapter({
     namespace: REGISTRY_NAMESPACE,
-    serves: SERVED_SCHEMAS,
+    serves: served,
     read: buildEntitiesPerRead(readApps, {
       baseUrl,
       appSearchUrl,
+      listings,
       onSkip: (reason) => console.warn('registry-adapter:', reason),
     }),
     store,
@@ -198,6 +213,7 @@ function main() {
     sleep: abortableSleep,
     onError,
   });
+  const entities = listings ? gateListings(polling, listingRelays) : polling;
   const docs = createDocFeed({
     source: liveSharedDocSource(),
     // Export only what content levels gate: an app whose levels flag is off publishes nothing.
@@ -242,9 +258,7 @@ function main() {
     keepAliveTimeoutMs: keepAliveTimeoutFromEnv(process.env),
   });
   server.listen(port, () =>
-    console.log(
-      `registry-adapter: ${REGISTRY_NAMESPACE} serving ${SERVED_SCHEMAS.join(', ')} on :${port}`
-    )
+    console.log(`registry-adapter: ${REGISTRY_NAMESPACE} serving ${served.join(', ')} on :${port}`)
   );
   const grpcServer = createGrpcServer(adapter, { onError, ...auth });
   listenGrpc(grpcServer, grpcPort).then(

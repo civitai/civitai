@@ -5,8 +5,9 @@
 import { dbRead } from '~/server/db/client';
 import type { CatalogReadDeps } from '~/server/registry-adapter/catalog-source';
 import { listingFromCard } from '~/server/registry-adapter/catalog-source';
-import { registryIconUrl } from '~/server/registry-adapter/catalog-media';
+import { registryIconUrl, registryListingMedia } from '~/server/registry-adapter/catalog-media';
 import { listingMediaImageSelect } from '~/server/services/blocks/listing-media-audience';
+import { readListingRedMediaManyForRender } from '~/server/services/blocks/listing-media-split.service';
 import { listAppListingsSchema } from '~/server/schema/blocks/app-listing-read.schema';
 import { listAvailableListings } from '~/server/services/blocks/app-listing.service';
 import { readListingForkParents } from '~/server/services/blocks/app-fork.service';
@@ -16,7 +17,10 @@ import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 
 const PAGE_SIZE = 50;
 
-export function liveCatalogReadDeps(): CatalogReadDeps {
+/** `listings`: the listing stream is on, so the cards keep their store fields and extras are read. */
+export function liveCatalogReadDeps({
+  listings = false,
+}: { listings?: boolean } = {}): CatalogReadDeps {
   return {
     // The adapter has no principal of its own: it takes the public catalog's SCOPE as an
     // anonymous caller would, so the kill switch and visibility levels apply. Its RATING rule is
@@ -41,7 +45,7 @@ export function liveCatalogReadDeps(): CatalogReadDeps {
         redCapable: true,
         viewerBrowsingLevel: allBrowsingLevelsFlag,
       });
-      return { nextCursor, items: items.map(listingFromCard) };
+      return { nextCursor, items: items.map((card) => listingFromCard(card, { store: listings })) };
     },
 
     loadBlocks: (ids) =>
@@ -90,5 +94,43 @@ export function liveCatalogReadDeps(): CatalogReadDeps {
       });
       return new Map(rows.map((r) => [r.id, registryIconUrl(r)]));
     },
+
+    // Only while the listing stream is on: one query for the whole catalog, plus the civitai.red overrides.
+    ...(listings
+      ? {
+          async loadListingExtras(listingIds: string[]) {
+            const [rows, red] = await Promise.all([
+              dbRead.appListing.findMany({
+                where: { id: { in: listingIds } },
+                select: {
+                  id: true,
+                  description: true,
+                  createdAt: true,
+                  icon: { select: listingMediaImageSelect },
+                  cover: { select: listingMediaImageSelect },
+                  screenshots: {
+                    where: { imageId: { not: null } },
+                    orderBy: [{ order: 'asc' }, { id: 'asc' }],
+                    select: { caption: true, image: { select: listingMediaImageSelect } },
+                  },
+                  metric: { select: { installCount: true } },
+                },
+              }),
+              readListingRedMediaManyForRender(dbRead, listingIds),
+            ]);
+            return new Map(
+              rows.map((r) => [
+                r.id,
+                {
+                  media: registryListingMedia({ ...r, red: red.get(r.id) ?? null }),
+                  description: r.description ?? null,
+                  installCount: r.metric?.installCount ?? 0,
+                  createdAt: r.createdAt.toISOString(),
+                },
+              ])
+            );
+          },
+        }
+      : {}),
   };
 }
