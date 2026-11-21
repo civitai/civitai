@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
 import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
 import {
+  FIELD_KEY_RE,
   FREE_TEXT_KEYS,
   isMediaKey,
   isRepeatForClause,
@@ -54,8 +55,6 @@ const STORAGE_HOSTS: ReadonlySet<string> = new Set(['image.civitai.com']);
 const STORAGE_HOST_FIRST_LABELS: ReadonlySet<string> = new Set(['blobs-b2', 'image-b2']);
 // On any host, with or without a version segment.
 const STORAGE_PATH_RE = /\/(consumer|providers)\/blobs\//i;
-// A field key, as the position rule reads one: anything else is a map key the app chose.
-const FIELD_KEY_RE = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
 const STORED_FILE_DEPTH_MAX = 64;
 // Controls and spaces at either end, which a URL parser drops.
 const EDGE_CONTROLS_RE = /^[\u0000-\u0020]+|[\u0000-\u0020]+$/g;
@@ -178,7 +177,7 @@ function isComfyMediaInput(key: string): boolean {
 type Where = {
   key: string | undefined;
   depth: number;
-  /** Under a ComfyUI node's `inputs`: its media names count, and free text is not exempt. */
+  /** Inside a ComfyUI node: its media input names count, and free text is not exempt. */
   comfy?: boolean;
   /** Every leaf lands at `key`, whatever the names inside. */
   flat?: boolean;
@@ -192,8 +191,8 @@ type Where = {
 /**
  * Refuses a stored file URL, or a blob key at a `*BlobKey` field, anywhere but a media input. Free
  * text is exempt outside a ComfyUI graph. A workflow's `arguments` have no position of their own: a
- * `$arguments` reference, and a repeat's loop variable, is judged where it lands. Runs whatever the
- * step position flag says.
+ * `$arguments` reference, and a repeat's loop variable, is judged where it lands. Not gated by the
+ * step position flag.
  */
 function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
   const workflowArguments =

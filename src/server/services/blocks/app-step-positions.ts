@@ -32,7 +32,7 @@ const REF_KEY = '$ref';
 const URL_VALUE_RE = /^([a-z][a-z0-9+.-]*:\/\/|https?:)/i;
 // A key that names a field. Anything else is a map key the app chose (LoRAs are keyed by AIR):
 // it is reported as the field that holds the map, so a log never carries it.
-const FIELD_KEY_RE = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
+export const FIELD_KEY_RE = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
 
 export type StepPositionProblem = {
   form: 'reference' | 'url' | 'orchestrator-file' | 'media-reference';
