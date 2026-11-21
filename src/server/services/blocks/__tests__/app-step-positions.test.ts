@@ -81,7 +81,9 @@ describe('findStepPositionProblem', () => {
       strength: 0.4,
       lora: blob,
       weights: 'https://bucket.abc.r2.cloudflarestorage.com/models/123/file',
-      nested: { list: ['a cat'] },
+      nested: { text: 'a cat' },
+      Dup: 'a cat',
+      dup: blob,
     };
 
     it('checks the value an argument places, where it lands', () => {
@@ -89,7 +91,7 @@ describe('findStepPositionProblem', () => {
         findStepPositionProblem({ strength: ref({ path: 'strength' }) }, VIEWER, args)
       ).toBeNull();
       expect(
-        findStepPositionProblem({ prompt: ref({ path: 'nested.list[0]' }) }, VIEWER, args)
+        findStepPositionProblem({ prompt: ref({ path: 'nested.text' }) }, VIEWER, args)
       ).toBeNull();
       expect(findStepPositionProblem({ model: ref({ path: 'lora' }) }, VIEWER, args)).toMatchObject(
         {
@@ -111,6 +113,8 @@ describe('findStepPositionProblem', () => {
       ['to a path that does not resolve', { model: ref({ path: 'missing' }) }],
       ['to an inherited property', { model: ref({ path: 'constructor' }) }],
       ['to another step', { model: { $ref: 'gen', path: 'output.text' } }],
+      ['to a key two arguments share but for case', { model: ref({ path: 'dup' }) }],
+      ['to a path with an index', { model: ref({ path: 'nested[0]' }) }],
     ])('refuses one %s', (_label, input) => {
       expect(findStepPositionProblem(input, VIEWER, args)).toMatchObject({ form: 'reference' });
     });
@@ -139,6 +143,15 @@ describe('findStepPositionProblem', () => {
       expect(
         findStepPositionProblem({ loras: { 'https://x.example/f': 1 } }, VIEWER)
       ).toMatchObject({ form: 'url', key: 'loras' });
+    });
+
+    it('refuses one with a space in it', () => {
+      expect(
+        findStepPositionProblem(
+          { model: 'https://bucket.abc.r2.cloudflarestorage.com/m 1' },
+          VIEWER
+        )
+      ).toMatchObject({ form: 'url', key: 'model' });
     });
 
     it('lets one through at a media key', () => {
@@ -172,6 +185,28 @@ describe('findStepPositionProblem', () => {
       });
       expect(findStepPositionProblem({ model: blob }, VIEWER)).toMatchObject({
         form: 'orchestrator-file',
+      });
+    });
+
+    it('refuses one the AIR grammar cannot read', () => {
+      expect(
+        findStepPositionProblem({ model: 'urn:air:sdxl:lora:orchestrator:blob@a b' }, VIEWER)
+      ).toMatchObject({ form: 'orchestrator-file' });
+    });
+
+    it('reports a LoRA map entry as the map, never its key', () => {
+      expect(
+        findStepPositionProblem({ loras: { 'urn:air:sdxl:lora:civitai:1@2': ref() } }, VIEWER)
+      ).toEqual({
+        form: 'reference',
+        key: 'loras',
+      });
+    });
+
+    it('holds continueFrom to the rule: it carries weights', () => {
+      expect(findStepPositionProblem({ continueFrom: blob }, VIEWER)).toMatchObject({
+        form: 'orchestrator-file',
+        key: 'continueFrom',
       });
     });
 

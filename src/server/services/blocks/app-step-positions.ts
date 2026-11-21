@@ -54,7 +54,6 @@ const MEDIA_KEYS: ReadonlySet<string> = new Set(
     'mediaUrls',
     'mesh',
     'sourceUrl',
-    'continueFrom',
     'trainingData',
   ].map((key) => key.toLowerCase())
 );
@@ -64,8 +63,13 @@ const MEDIA_KEYS: ReadonlySet<string> = new Set(
 const FREE_TEXT_KEYS: ReadonlySet<string> = new Set(['messages', 'tools']);
 
 const REF_KEY = '$ref';
-// Whitespace-free: a sentence that contains a link is text, not a URL value.
-const URL_VALUE_RE = /^([a-z][a-z0-9+.-]*:\/\/|https?:)\S*$/i;
+// A value that starts as a URL is one: the orchestrator reads a URL with spaces in it too.
+const URL_VALUE_RE = /^([a-z][a-z0-9+.-]*:\/\/|https?:)/i;
+// An orchestrator AIR the AIR grammar cannot read is still one to the orchestrator.
+const ORCHESTRATOR_SOURCE_RE = /(^|:)orchestrator:/i;
+// A key that names a field. Anything else is a map key the app chose (LoRAs are keyed by AIR):
+// it is reported as the field that holds the map, so a log never carries it.
+const FIELD_KEY_RE = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
 
 export type StepPositionProblem = {
   form: 'reference' | 'url' | 'orchestrator-file';
@@ -88,7 +92,6 @@ function hostOf(url: string): string | undefined {
 }
 
 const ARGUMENTS_REF = '$arguments';
-const PATH_SEGMENT_RE = /[^.[\]]+|\[(\d+)\]/g;
 
 /**
  * The value a `{ $ref: '$arguments', path }` reference places, read from `workflowArguments`. Not
@@ -104,11 +107,14 @@ function argumentValue(
   if (reference.$ref !== ARGUMENTS_REF || typeof reference.path !== 'string')
     return { found: false };
   let current: unknown = workflowArguments;
-  for (const match of reference.path.matchAll(PATH_SEGMENT_RE)) {
-    const segment = match[1] ?? match[0];
-    if (current === null || typeof current !== 'object') return { found: false };
-    if (!Object.prototype.hasOwnProperty.call(current, segment)) return { found: false };
-    current = (current as Record<string, unknown>)[segment];
+  // The orchestrator splits a path on dots; a segment with no matching key (an index) is not found.
+  for (const segment of reference.path.split('.')) {
+    if (current === null || typeof current !== 'object' || Array.isArray(current))
+      return { found: false };
+    // The orchestrator matches names ignoring case, so exactly one key may match.
+    const matches = Object.keys(current).filter((k) => k.toLowerCase() === segment.toLowerCase());
+    if (matches.length !== 1) return { found: false };
+    current = (current as Record<string, unknown>)[matches[0]];
   }
   return current === undefined ? { found: false } : { found: true, value: current };
 }
@@ -126,10 +132,13 @@ export function findStepPositionProblem(
   const checkString = (raw: string, key: string): StepPositionProblem | null => {
     const value = raw.trim();
     if (URL_VALUE_RE.test(value)) return { form: 'url', key, host: hostOf(value) };
+    if (!ORCHESTRATOR_SOURCE_RE.test(value)) return null;
     const parsed = Air.parseSafe(value);
-    if (parsed?.source.toLowerCase() !== 'orchestrator') return null;
     // A job file is `orchestrator:<jobId>@<file>`; a blob names no owner at all.
-    const owned = parsed.id.toLowerCase() !== 'blob' && isWorkflowOwnedBy(parsed.id, viewerId);
+    const owned =
+      parsed?.source.toLowerCase() === 'orchestrator' &&
+      parsed.id.toLowerCase() !== 'blob' &&
+      isWorkflowOwnedBy(parsed.id, viewerId);
     return owned ? null : { form: 'orchestrator-file', key };
   };
 
@@ -169,7 +178,7 @@ export function findStepPositionProblem(
         const problem = checkString(childKey, at);
         if (problem) return problem;
       }
-      const problem = visit(child, childKey, text);
+      const problem = visit(child, FIELD_KEY_RE.test(childKey) ? childKey : key, text);
       if (problem) return problem;
     }
     return null;
