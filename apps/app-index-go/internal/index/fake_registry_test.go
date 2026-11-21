@@ -30,6 +30,16 @@ const testSchema = "urn:schema:apps.civitai.com:app@v1"
 type fakeRegistry struct {
 	srv   *httptest.Server
 	conns chan *fakeConn
+	// schemas counts every subscribe request by its schema, refused ones included.
+	mu      sync.Mutex
+	schemas map[string]int
+}
+
+// subscribed is how many subscribe requests named schema.
+func (r *fakeRegistry) subscribed(schema string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.schemas[schema]
 }
 
 // fakeConn's writes run on its handler goroutine (ops), never on the test's: a ResponseWriter
@@ -57,9 +67,18 @@ func (c *fakeConn) do(op func(w http.ResponseWriter)) {
 
 func newFakeRegistry(t *testing.T) *fakeRegistry {
 	t.Helper()
-	r := &fakeRegistry{conns: make(chan *fakeConn)}
+	return newFakeRegistryFor(t, testSchema)
+}
+
+// newFakeRegistryFor serves subscriptions to schema only; any other is refused with bad_request.
+func newFakeRegistryFor(t *testing.T, schema string) *fakeRegistry {
+	t.Helper()
+	r := &fakeRegistry{conns: make(chan *fakeConn), schemas: map[string]int{}}
 	r.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Path != "/subscribe" || req.URL.Query().Get("schema") != testSchema {
+		r.mu.Lock()
+		r.schemas[req.URL.Query().Get("schema")]++
+		r.mu.Unlock()
+		if req.URL.Path != "/subscribe" || req.URL.Query().Get("schema") != schema {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(w, `{"error":"bad_request","message":"unexpected request"}`)
 			return
@@ -231,7 +250,7 @@ func (h *harness) start(t *testing.T, layout int) {
 		Schema:  testSchema,
 		Layout:  layout,
 		Log:     slog.New(slog.DiscardHandler),
-		Metrics: h.m,
+		Metrics: h.m.Stream,
 		Backoff: h.backoff,
 		Tokens:  h.tokens,
 		Sleep: func(ctx context.Context, d time.Duration) error {
