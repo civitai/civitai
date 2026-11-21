@@ -67,7 +67,6 @@ async function checkEphemeralDevTunnelRateLimit(userId: number): Promise<boolean
   }
 }
 
-/** The hourly limit's refusal. */
 const TOO_MANY_STARTS: DevTunnelRefusal = {
   code: 'TOO_MANY_REQUESTS',
   error: 'Too many dev tunnel starts for unsubmitted apps; please retry shortly',

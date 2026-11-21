@@ -1336,7 +1336,8 @@ export const serverSchema = z
     APP_ASSISTANT_SANDBOX_URL: z.url().optional(),
     // App Assistant direct preview (flag `app-assistant-direct-preview`): previews served by the
     // sandbox service's preview gateway, with no tunnel. Direct preview stays OFF unless all three
-    // are set. The registrable domain the session hosts are minted under (one label each):
+    // are set.
+    // Registrable domain the session hosts are minted under, one label each.
     APP_ASSISTANT_PREVIEW_DOMAIN: z.string().optional(),
     // The session-host signing keys, in the gateway's key-set form
     // `{"current": {"kid": <0..15>, "key": "<base64, >= 32 bytes>"}, "previous"?: {...}}`; hosts are

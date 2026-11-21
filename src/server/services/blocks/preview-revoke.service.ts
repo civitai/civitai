@@ -124,11 +124,9 @@ export type PreviewRevokeAttemptStatus = number | 'network' | 'unconfigured';
 type Attempt = { outcome: PreviewRevokeOutcome; status: PreviewRevokeAttemptStatus };
 
 /**
- * One signed send. A refused (dropped) answer and a retried failure are logged with the status
- * they got, never with the request's signature or the secret. Two retried answers stay quiet, as
- * they are expected rather than faults: a 404 (the gateway's rollback answer, which can last as
- * long as the rollback) and `unconfigured` (the feature not set up on this deployment). The
- * reaper's drain summary still reports both as its last status.
+ * One signed send. Logs never carry the request's signature or the secret. A 404 (the gateway's
+ * rollback answer, which can last as long as the rollback) and `unconfigured` are retried without
+ * logging: expected, not faults. The reaper's drain summary still reports both.
  */
 async function sendOnce(revoke: PreviewRevoke, nowMs: number): Promise<Attempt> {
   const base = env.APP_ASSISTANT_SANDBOX_URL;
