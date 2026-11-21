@@ -30,9 +30,18 @@ async function apply(dir: string, file = 'migration.sql') {
   for (const line of sql.split('\n')) {
     if (/^CALL /.test(line)) {
       await db.pg.exec(chunk.join('\n'));
-      // Batches of 2, so the few candidates here still span more than one batch.
+      // Batches of 2, so the few candidates here still span more than one batch. PGlite has no
+      // replicas, so the lag watch, which refuses to run blind, is waived here.
       await db.pg.exec(
-        line.replace('rescore_hot_version_head_start()', 'rescore_hot_version_head_start(2)')
+        line
+          .replace(
+            'rescore_hot_version_head_start()',
+            'rescore_hot_version_head_start(2, require_lag_watch => false)'
+          )
+          .replace(
+            'rescore_hot_version_head_start_rollback()',
+            'rescore_hot_version_head_start_rollback(require_lag_watch => false)'
+          )
       );
       chunk = [];
     } else chunk.push(line);
@@ -122,6 +131,10 @@ const OLD = daysAgo(540);
 const RECENT = daysAgo(3);
 const BATCH_EDGES = [250_000, 500_000];
 let preexisting: number;
+// Qualifies on downloads alone, 45 days old: pins the rescore's candidate scan to the full bar and
+// the full 60-day window, which every other backfill fixture (3 days, likes) would not notice.
+let preexistingByDownloads: number;
+const DAY_45 = daysAgo(45);
 
 beforeAll(async () => {
   db.pg = new PGlite();
@@ -156,6 +169,10 @@ beforeAll(async () => {
     `INSERT INTO "ModelBaseModelMetric" ("modelId", "baseModel", "thumbsUpCount") VALUES ($1, 'SDXL 1.0', 0)`,
     [preexisting]
   );
+  preexistingByDownloads = await model(OLD, 3_000, [
+    { at: OLD, likes: 3_000 },
+    { at: DAY_45, likes: 0, downloads: 192 },
+  ]);
   // The backfill walks ids in fixed batches (its default size): one row opening each later
   // batch, the last at the max id, each with a mirrored slice and a measured one.
   for (const id of BATCH_EDGES) {
@@ -262,6 +279,10 @@ describe('Hot credits a model for a newer version, on that version alone', () =>
 
     expect(await score(preexisting)).toBeGreaterThan(modelTerm(12_000, OLD));
     expect(await score(preexisting)).toBe(await score(twin));
+    const ev = 192 / 6.4;
+    expect(
+      Math.abs((await score(preexistingByDownloads)) - term(ev + 0.01 * (3_000 - ev), DAY_45))
+    ).toBeLessThanOrEqual(1);
     expect(mirror.rows[0].hotScore).toBe(await score(preexisting));
 
     for (const id of BATCH_EDGES) {
@@ -439,5 +460,28 @@ describe('the head-start rollback', () => {
     );
     expect(Math.abs((await score(id)) - term(30, at))).toBeLessThanOrEqual(1);
     for (const row of slices.rows) expect(row.hotScore).toBe(await score(id));
+  });
+});
+
+describe('the rescore lag watch', () => {
+  // Extracted from the migration so the guard is tested as written, on a database with no replicas.
+  const helper = readFileSync(
+    path.join(MIGRATIONS, '20271121120000_model_hot_score_version_head_start', 'migration.sql'),
+    'utf8'
+  ).match(
+    /CREATE OR REPLACE FUNCTION public\.hot_rescore_wait_for_replicas[\s\S]*?\$function\$;/
+  )?.[0];
+
+  it('refuses to rescore when it cannot see replica lag, unless told to', async () => {
+    const pg = new PGlite();
+    await pg.exec(helper ?? 'SELECT missing_helper()');
+
+    await expect(
+      pg.query(`SELECT public.hot_rescore_wait_for_replicas(1, '1 minute', true)`)
+    ).rejects.toThrow('no replica lag visible');
+    await expect(
+      pg.query(`SELECT public.hot_rescore_wait_for_replicas(1, '1 minute', false)`)
+    ).resolves.toBeDefined();
+    await pg.close();
   });
 });

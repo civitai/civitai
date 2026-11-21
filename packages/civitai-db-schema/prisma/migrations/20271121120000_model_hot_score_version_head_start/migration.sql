@@ -161,13 +161,52 @@ $function$;
 -- its stored score. Each UPDATE assigns "uniqueGeneratorCount" to itself; being in the SET list
 -- is what makes UPDATE OF fire and recompute the score.
 --
--- Batches are small (the per-minute metrics job writes these rows too), each COMMITs, and before
--- each batch the procedure waits while any streaming replica visible to this role is more than
--- max_lag_bytes behind. No visible replica = no wait; it says so once, so watch lag yourself.
+-- Batches are small (the per-minute metrics job writes these rows too), lock their rows in id order
+-- before writing, each COMMITs, and each waits on replica lag first. The predicate skips rows already
+-- raised, so if the run stops (lag, a deadlock with the metrics job), re-running this file resumes.
+
+-- Waits while any streaming replica is more than max_lag_bytes behind. Refuses to run unwatched:
+-- with no replica visible to this role (the replay columns need pg_monitor or superuser) it raises
+-- unless require_watch is false. Raises after max_wait, so a stuck sender stops the run instead of
+-- parking it; batches already committed stay, and re-running the file resumes.
+CREATE OR REPLACE FUNCTION public.hot_rescore_wait_for_replicas(
+    max_lag_bytes BIGINT,
+    max_wait INTERVAL,
+    require_watch BOOLEAN
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $function$
+DECLARE
+    visible INT;
+    replica_lag NUMERIC;
+    started TIMESTAMPTZ := clock_timestamp();
+BEGIN
+    LOOP
+        SELECT count(replay_lsn), max(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn))
+          INTO visible, replica_lag
+          FROM pg_stat_replication;
+        IF visible = 0 THEN
+            IF require_watch THEN
+                RAISE EXCEPTION 'no replica lag visible to this role: run as a role with pg_monitor, or pass require_lag_watch => false and watch lag yourself';
+            END IF;
+            RETURN;
+        END IF;
+        EXIT WHEN replica_lag <= max_lag_bytes;
+        IF clock_timestamp() - started > max_wait THEN
+            RAISE EXCEPTION 'a replica is still % bytes behind after %: stopping. Committed batches stay; re-run to resume', replica_lag, max_wait;
+        END IF;
+        RAISE NOTICE 'replica % bytes behind, waiting', replica_lag;
+        PERFORM pg_sleep(5);
+    END LOOP;
+END
+$function$;
 
 CREATE OR REPLACE PROCEDURE public.rescore_hot_version_head_start(
     batch_size INT DEFAULT 2000,
-    max_lag_bytes BIGINT DEFAULT 268435456
+    max_lag_bytes BIGINT DEFAULT 268435456,
+    require_lag_watch BOOLEAN DEFAULT true,
+    max_wait INTERVAL DEFAULT '15 minutes'
 )
 LANGUAGE plpgsql
 AS $procedure$
@@ -176,8 +215,6 @@ DECLARE
     batch INT[];
     i INT;
     touched INT;
-    replica_lag NUMERIC;
-    watch_lag BOOLEAN;
 BEGIN
     ids := ARRAY(
         SELECT DISTINCT mv."modelId"
@@ -190,22 +227,16 @@ BEGIN
          ORDER BY 1);
     RAISE NOTICE 'head start candidates: % models', coalesce(array_length(ids, 1), 0);
 
-    SELECT count(replay_lsn) > 0 INTO watch_lag FROM pg_stat_replication;
-    IF NOT watch_lag THEN
-        RAISE NOTICE 'no replica lag visible to this role: lag watch is OFF, watch it yourself';
-    END IF;
+    -- Before any write: an unwatched run is refused here, with nothing changed.
+    PERFORM public.hot_rescore_wait_for_replicas(max_lag_bytes, max_wait, require_lag_watch);
 
     i := 1;
     WHILE i <= coalesce(array_length(ids, 1), 0) LOOP
         batch := ids[i:i + batch_size - 1];
-        LOOP
-            EXIT WHEN NOT watch_lag;
-            SELECT max(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)) INTO replica_lag
-              FROM pg_stat_replication;
-            EXIT WHEN coalesce(replica_lag, 0) <= max_lag_bytes;
-            RAISE NOTICE 'replica % bytes behind, waiting', replica_lag;
-            PERFORM pg_sleep(5);
-        END LOOP;
+        PERFORM public.hot_rescore_wait_for_replicas(max_lag_bytes, max_wait, require_lag_watch);
+        PERFORM 1 FROM "ModelMetric" WHERE "modelId" = ANY (batch) ORDER BY "modelId" FOR UPDATE;
+        PERFORM 1 FROM "ModelBaseModelMetric" WHERE "modelId" = ANY (batch)
+          ORDER BY "modelId", "baseModel" FOR UPDATE;
 
         UPDATE "ModelMetric" mm
            SET "uniqueGeneratorCount" = mm."uniqueGeneratorCount"
@@ -265,7 +296,8 @@ $procedure$;
 
 CALL public.rescore_hot_version_head_start();
 
-DROP PROCEDURE public.rescore_hot_version_head_start(INT, BIGINT);
+DROP PROCEDURE public.rescore_hot_version_head_start(INT, BIGINT, BOOLEAN, INTERVAL);
+DROP FUNCTION public.hot_rescore_wait_for_replicas(BIGINT, INTERVAL, BOOLEAN);
 
 -- Verification: the read-back and the daily check are in the PR body, with their expected
 -- values. Do NOT verify by recomputing and comparing exactly: a future-dated publishedAt is

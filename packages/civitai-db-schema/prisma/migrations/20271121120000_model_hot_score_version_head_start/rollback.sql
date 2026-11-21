@@ -81,11 +81,52 @@ $function$;
 DROP FUNCTION public.hot_version_score(
     numeric, numeric, numeric, int, timestamp, timestamp, numeric, numeric, numeric);
 
+-- Waits while any streaming replica is more than max_lag_bytes behind. Refuses to run unwatched:
+-- with no replica visible to this role (the replay columns need pg_monitor or superuser) it raises
+-- unless require_watch is false. Raises after max_wait, so a stuck sender stops the run instead of
+-- parking it; batches already committed stay, and re-running the file resumes.
+CREATE OR REPLACE FUNCTION public.hot_rescore_wait_for_replicas(
+    max_lag_bytes BIGINT,
+    max_wait INTERVAL,
+    require_watch BOOLEAN
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $function$
+DECLARE
+    visible INT;
+    replica_lag NUMERIC;
+    started TIMESTAMPTZ := clock_timestamp();
+BEGIN
+    LOOP
+        SELECT count(replay_lsn), max(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn))
+          INTO visible, replica_lag
+          FROM pg_stat_replication;
+        IF visible = 0 THEN
+            IF require_watch THEN
+                RAISE EXCEPTION 'no replica lag visible to this role: run as a role with pg_monitor, or pass require_lag_watch => false and watch lag yourself';
+            END IF;
+            RETURN;
+        END IF;
+        EXIT WHEN replica_lag <= max_lag_bytes;
+        IF clock_timestamp() - started > max_wait THEN
+            RAISE EXCEPTION 'a replica is still % bytes behind after %: stopping. Committed batches stay; re-run to resume', replica_lag, max_wait;
+        END IF;
+        RAISE NOTICE 'replica % bytes behind, waiting', replica_lag;
+        PERFORM pg_sleep(5);
+    END LOOP;
+END
+$function$;
+
 -- Unconditional: a head start only ever raised a score, so the predicate migration.sql used
--- would match none of the rows to lower.
+-- would match none of the rows to lower. Any status: a version unpublished since may have raised a
+-- row that has not been rewritten. Re-running is safe.
 CREATE OR REPLACE PROCEDURE public.rescore_hot_version_head_start_rollback(
     since TIMESTAMP DEFAULT TIMESTAMP '2026-09-22',
-    batch_size INT DEFAULT 2000
+    batch_size INT DEFAULT 2000,
+    max_lag_bytes BIGINT DEFAULT 268435456,
+    require_lag_watch BOOLEAN DEFAULT true,
+    max_wait INTERVAL DEFAULT '15 minutes'
 )
 LANGUAGE plpgsql
 AS $procedure$
@@ -98,14 +139,18 @@ BEGIN
     ids := ARRAY(
         SELECT DISTINCT mv."modelId"
           FROM "ModelVersion" mv
-         WHERE mv.status = 'Published'
-           AND mv."publishedAt" >= since
+         WHERE mv."publishedAt" >= since
          ORDER BY 1);
     RAISE NOTICE 'rollback candidates: % models', coalesce(array_length(ids, 1), 0);
+    PERFORM public.hot_rescore_wait_for_replicas(max_lag_bytes, max_wait, require_lag_watch);
 
     i := 1;
     WHILE i <= coalesce(array_length(ids, 1), 0) LOOP
         batch := ids[i:i + batch_size - 1];
+        PERFORM public.hot_rescore_wait_for_replicas(max_lag_bytes, max_wait, require_lag_watch);
+        PERFORM 1 FROM "ModelMetric" WHERE "modelId" = ANY (batch) ORDER BY "modelId" FOR UPDATE;
+        PERFORM 1 FROM "ModelBaseModelMetric" WHERE "modelId" = ANY (batch)
+          ORDER BY "modelId", "baseModel" FOR UPDATE;
 
         UPDATE "ModelMetric" mm
            SET "uniqueGeneratorCount" = mm."uniqueGeneratorCount"
@@ -124,7 +169,6 @@ BEGIN
            AND bm."uniqueGeneratorCount" IS NULL;
 
         COMMIT;
-        PERFORM pg_sleep(0.2);
         i := i + batch_size;
     END LOOP;
 END
@@ -132,4 +176,5 @@ $procedure$;
 
 CALL public.rescore_hot_version_head_start_rollback();
 
-DROP PROCEDURE public.rescore_hot_version_head_start_rollback(TIMESTAMP, INT);
+DROP PROCEDURE public.rescore_hot_version_head_start_rollback(TIMESTAMP, INT, BIGINT, BOOLEAN, INTERVAL);
+DROP FUNCTION public.hot_rescore_wait_for_replicas(BIGINT, INTERVAL, BOOLEAN);
