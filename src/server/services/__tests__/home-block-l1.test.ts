@@ -390,7 +390,8 @@ describe('hiding an image refreshes the home blocks holding it', () => {
     expect(await readItems()).toEqual([2]);
   });
 
-  it("a soft delete's media block: the next read no longer has the owner's image", async () => {
+  // softDeleteUser's call to it: toggle-ban-search-index.test.ts.
+  it("blockUserImagesAsCsam (the soft delete's media block): the next read no longer has the owner's image", async () => {
     expect(await readItems()).toEqual([1, 2]);
 
     await blockUserImagesAsCsam(OWNER);
@@ -434,6 +435,8 @@ describe('hiding an image refreshes the home blocks holding it', () => {
     }
   });
 
+  // A floor, not the lag itself: REPLICATION_LAG_DELAY defaults to 0, and a refresh at 0 would run
+  // before the replica it is waiting on.
   it('waits at least 5s before the second refresh', () => {
     expect(evictRetryDelayMs()).toBeGreaterThanOrEqual(5_000);
   });

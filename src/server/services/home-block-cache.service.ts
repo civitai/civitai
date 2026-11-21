@@ -311,8 +311,8 @@ const logEvictFailure = (error: unknown) =>
     error,
   });
 
-// Only a collection anyone may read has a shared entry (see `isCollectionReadShared`), so the
-// others are left out: they are most of the rows, and there is nothing of theirs to refresh.
+// Only a collection anyone may read has a shared entry (see `isCollectionReadShared`); the others
+// have nothing to refresh.
 async function collectionsHolding(target: { imageIds: number[] } | { userId: number }) {
   const batches =
     'userId' in target
