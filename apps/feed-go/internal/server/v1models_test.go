@@ -201,12 +201,12 @@ func TestV1ModelsHost(t *testing.T) {
 	if got := r.Header.Get(v1models.TrainingDataSQLHeader); got != "abc" {
 		t.Errorf("hash header %q", got)
 	}
-	origin := httptest.NewRequest(http.MethodGet, "/api/v1/models", nil)
+	origin := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/models", nil)
 	origin.Host = "site.example"
 	if h, err := v1ModelsHost(origin); err != nil || h != "site.example" {
 		t.Errorf("origin form: %q %v", h, err)
 	}
-	abs := httptest.NewRequest(http.MethodGet, "http://other.example/api/v1/models", nil)
+	abs := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://other.example/api/v1/models", nil)
 	if _, err := v1ModelsHost(abs); fallback.Reason(err) != "v1-models-host" {
 		t.Errorf("absolute form: %v", err)
 	}
