@@ -144,7 +144,7 @@ export const CSAM_REPORT_LISTINGS_SQL = `SELECT listed.id, listed."createdAt" FR
 /** A predicate on the CsamReport row aliased `alias`, as SQL text with no parameters. */
 export type CsamReportFilter = (alias: string) => string;
 
-/** Every image id listed on a CsamReport passing `filter` (any report without one), as text. */
+/** Every image id listed on a CsamReport passing `filter` (on any report if none is given), as text. */
 export const csamReportListedImageIdsSql = (filter?: CsamReportFilter) => `SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
     FROM "CsamReport" lr
