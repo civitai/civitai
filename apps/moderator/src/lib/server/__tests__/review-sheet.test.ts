@@ -737,3 +737,156 @@ describe('the batch item routes', () => {
     );
   });
 });
+
+describe('the access audit', () => {
+  const audits = async (name: string) => {
+    const { logToAxiom } = await import('$lib/server/axiom');
+    return vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([data]) => data as Record<string, unknown>)
+      .filter((data) => data.name === name);
+  };
+  const tag = (batchId: string) => reviewBatchHash(batchId).slice(0, 6);
+  const codeFor = async (family: Family, batch: string | null) =>
+    new URL((await startPost(family, batch)).headers.get('location')!).searchParams.get('code')!;
+  const signOut = (token: string | undefined) =>
+    signout.POST({
+      cookies: { get: (n: string) => (n === COOKIE.review ? token : undefined) },
+    } as never);
+
+  // These names are what the held-media access audit and the device checks query in Axiom. Renaming
+  // one silently empties those queries: change the query first, then this test.
+  it('keeps the event names the access audit queries', async () => {
+    const audit = await import('$lib/server/sheet-audit');
+    expect([
+      audit.SHEET_START_EVENT,
+      audit.SHEET_EXCHANGE_EVENT,
+      audit.SHEET_SIGNOUT_EVENT,
+    ]).toEqual(['held-sheet-start', 'held-sheet-exchange', 'review-sheet-signout']);
+  });
+
+  it('logs one start and one exchange per sign-in, with the tier, the moderator and the batch tag', async () => {
+    seedBatch(HELD, 'held');
+    seedBatch(GENERAL, 'general');
+    expect(await signIn('held', HELD)).toBeTruthy();
+    expect(await signIn('review', GENERAL)).toBeTruthy();
+    expect(
+      (await audits('held-sheet-start')).map(({ tier, batch, outcome, moderatorId }) => ({
+        tier,
+        batch,
+        outcome,
+        moderatorId,
+      }))
+    ).toEqual([
+      { tier: 'held', batch: tag(HELD), outcome: 'issued', moderatorId: 42 },
+      { tier: 'general', batch: tag(GENERAL), outcome: 'issued', moderatorId: 42 },
+    ]);
+    expect(
+      (await audits('held-sheet-exchange')).map(({ tier, batch, outcome, moderatorId }) => ({
+        tier,
+        batch,
+        outcome,
+        moderatorId,
+      }))
+    ).toEqual([
+      { tier: 'held', batch: tag(HELD), outcome: 'ok', moderatorId: 42 },
+      { tier: 'general', batch: tag(GENERAL), outcome: 'ok', moderatorId: 42 },
+    ]);
+  });
+
+  it('logs a refused start with its status', async () => {
+    seedBatch(OTHER_VIEWER, 'held', { viewer: 99 });
+    expect((await startPost('held', OTHER_VIEWER)).status).toBe(404);
+    expect(await audits('held-sheet-start')).toEqual([
+      expect.objectContaining({ tier: 'held', moderatorId: 42, outcome: 'refused', status: 404 }),
+    ]);
+  });
+
+  it('logs why an exchange was refused', async () => {
+    seedBatch(HELD, 'held');
+    seedBatch(GENERAL, 'general');
+    const used = await codeFor('held', HELD);
+    expect((await exchange('held', used)).status).toBe(204);
+    expect((await exchange('held', used)).status).toBe(400);
+    expect((await exchange('held', await codeFor('review', GENERAL))).status).toBe(400);
+    const url = new URL(`${ORIGIN}/api/held-media/auth/exchange`);
+    const post = (body: string, type = 'application/json') =>
+      heldExchange.POST({
+        url,
+        request: new Request(url, { method: 'POST', headers: { 'content-type': type }, body }),
+        locals: {},
+      } as never);
+    const code = await codeFor('held', HELD);
+    expect((await post(JSON.stringify({ code, code_verifier: 'w'.repeat(43) }))).status).toBe(400);
+    expect((await post('x', 'text/plain')).status).toBe(400);
+    expect((await post(JSON.stringify({ code: 'short', code_verifier: VERIFIER }))).status).toBe(
+      400
+    );
+
+    expect(
+      (await audits('held-sheet-exchange')).map(({ outcome, reason, moderatorId }) => ({
+        outcome,
+        reason,
+        moderatorId,
+      }))
+    ).toEqual([
+      { outcome: 'ok', reason: undefined, moderatorId: 42 },
+      { outcome: 'refused', reason: 'unknown-code', moderatorId: undefined },
+      { outcome: 'refused', reason: 'wrong-tier', moderatorId: 42 },
+      { outcome: 'refused', reason: 'verifier-mismatch', moderatorId: 42 },
+      { outcome: 'refused', reason: 'not-json', moderatorId: undefined },
+      { outcome: 'refused', reason: 'malformed', moderatorId: undefined },
+    ]);
+  });
+
+  it('logs a sign out that ended a session, one that ended none, and one that failed', async () => {
+    seedBatch(GENERAL, 'general');
+    const token = (await signIn('review', GENERAL))!;
+    expect((await signOut(token)).status).toBe(204);
+    expect((await signOut(token)).status).toBe(204);
+    const again = (await signIn('review', GENERAL))!;
+    redis.del.mockRejectedValueOnce(new Error('down'));
+    expect((await signOut(again)).status).toBe(503);
+    expect(
+      (await audits('review-sheet-signout')).map(({ type, moderatorId, ended }) => ({
+        type,
+        moderatorId,
+        ended,
+      }))
+    ).toEqual([
+      { type: 'info', moderatorId: 42, ended: true },
+      { type: 'info', moderatorId: undefined, ended: false },
+      { type: 'error', moderatorId: undefined, ended: false },
+    ]);
+  });
+
+  it('never logs a batch id, code, verifier, state or token, only six characters of the batch hash', async () => {
+    seedBatch(HELD, 'held');
+    seedBatch(GENERAL, 'general');
+    const code = await codeFor('held', HELD);
+    const held = await exchange('held', code);
+    const token = (await signIn('review', GENERAL))!;
+    await signOut(token);
+    const { inspect } = await import('node:util');
+    const logged = [
+      ...(await audits('held-sheet-start')),
+      ...(await audits('held-sheet-exchange')),
+      ...(await audits('review-sheet-signout')),
+    ];
+    expect(logged).toHaveLength(5);
+    const text = logged.map((e) => inspect(e, { depth: 8 })).join('\n');
+    const heldToken = /__Secure-held_sheet=([^;]+)/.exec(held.headers.get('set-cookie')!)![1];
+    for (const secret of [
+      HELD,
+      GENERAL,
+      reviewBatchHash(HELD),
+      code,
+      heldToken,
+      token,
+      VERIFIER,
+      STATE,
+      CHALLENGE,
+    ])
+      expect(text).not.toContain(secret);
+  });
+});
