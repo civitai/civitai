@@ -9,6 +9,13 @@ import {
   submitPresetImageGen,
   whatIfPresetImageGen,
 } from '~/server/services/orchestrator/preset-image-gen.service';
+import {
+  classifyPromptServer,
+  type PromptClassification,
+  type PromptRefusalCause,
+} from '~/server/services/orchestrator/promptAuditing';
+import { env } from '~/env/server';
+import { isOverLengthRefusal, type PromptTriggerCategory } from '~/utils/metadata/audit';
 import { signProvenance, verifyProvenance } from '~/server/services/orchestrator/remix-provenance';
 import {
   getWorkflow,
@@ -38,6 +45,11 @@ import {
 } from '~/server/services/remix-app.service';
 import {
   getRegisteredRemixApp,
+  holdUserRemixApp,
+  isRunnableBy,
+  noteRunnerQuarantine,
+  REMIX_APP_HELD,
+  REMIX_APP_UNAVAILABLE,
   type RegisteredRemixApp,
 } from '~/server/services/remix-app-registry.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
@@ -53,6 +65,7 @@ import { remixOptionEffects } from '~/shared/remix-apps/mock-host';
 import { isDefined } from '~/utils/type-guards';
 import {
   remixAnswerRefusal,
+  remixLogSize,
   RemixReplayError,
   type RemixLogEntry,
   type RemixReplayer,
@@ -65,6 +78,7 @@ import {
   REMIX_SEGMENT_TAG_PREFIX,
   remixRunTags,
 } from '~/shared/remix-apps/tags';
+import { RemixQuarantinedError } from '~/server/services/remix-app-runner';
 import { orchestratorRefundableStatuses } from '~/shared/constants/generation.constants';
 import { isMature } from '~/shared/constants/orchestrator.constants';
 import type { RemixSourceImage } from '~/shared/utils/remix-tier';
@@ -298,6 +312,115 @@ async function cachedOptionPrices(
   return prices;
 }
 
+export { REMIX_APP_HELD };
+export const REMIX_APP_UNCHECKED = 'This app cannot be checked right now. Try again in a moment.';
+export const REMIX_APP_UNJUDGED = 'This app cannot be checked with these answers. Try other ones.';
+
+type AuthorPart = Awaited<ReturnType<NonNullable<RegisteredRemixApp['authorPrompt']>>>;
+
+/**
+ * The author-part check: a user app's own part of its prompt, judged alone and recorded against nobody.
+ * A block sends the app back to review and refuses the run before the viewer's audit, which would
+ * count the author's words against the viewer.
+ */
+async function assertAuthorPartPasses(slug: string, part: AuthorPart) {
+  // The masked run went elsewhere, so the viewer's audit would judge words of the author's unseen.
+  // Refused, never held: the viewer's own answers can steer the app there.
+  if (!part) {
+    logToAxiom({
+      name: 'remix-app-run',
+      type: 'warning',
+      message: "Refused a user remix app's run: its author's part could not be built",
+      payload: { slug },
+    });
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_APP_UNJUDGED });
+  }
+  // Off green on every domain: a hold takes the app out everywhere, and green's own list strikes nobody.
+  const verdict = await classifyPromptServer({ prompt: part.prompt, isGreen: false }).catch(() => {
+    throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNCHECKED });
+  });
+  if (verdict.outcome === 'pass') {
+    // Unjudged, it could still block in the viewer's audit a moment later.
+    if (verdict.externalError)
+      throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNCHECKED });
+    return;
+  }
+  await holdUserRemixApp(slug, { action: 'held-author-prompt' }).catch((error: unknown) =>
+    logToAxiom({
+      name: 'remix-app-run',
+      type: 'error',
+      message: "Could not send a user remix app back to review on its author's prompt",
+      payload: { slug, error: error instanceof Error ? error.message : String(error) },
+    })
+  );
+  throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD });
+}
+
+/** The refusal `auditPromptServer` throws on a block it counts: never a soft one. */
+const isCountedRefusal = (error: unknown) => {
+  if (!(error instanceof TRPCError) || error.code !== 'BAD_REQUEST') return false;
+  const cause = error.cause as Partial<PromptRefusalCause> | undefined;
+  return Array.isArray(cause?.blockedFor) && !cause?.softBlock;
+};
+
+const MINOR_TRIGGERS: PromptTriggerCategory[] = ['minor_age', 'inappropriate_minor'];
+
+/** A first strike, and why: a minor-adjacent or listed category, or a classifier that could not say. */
+function firstStrikeOf({ triggers, externalError }: PromptClassification) {
+  if (externalError) return 'error';
+  const listed = env.REMIX_FIRST_STRIKE_CATEGORIES;
+  const strikes =
+    !listed ||
+    triggers.some(
+      ({ category, message }) =>
+        MINOR_TRIGGERS.includes(category) || (category === 'external' && listed.includes(message))
+    );
+  return strikes ? 'listed' : 'none';
+}
+
+/**
+ * The combination count: the viewer's own audit refused a run of a user app whose author part passed. It counts against
+ * the app only as a combination: words of the viewer's that block alone are theirs. One block per
+ * distinct viewer; a first strike takes the app out of menus at once. Never masks the refusal.
+ */
+async function recordCombinationBlock(
+  slug: string,
+  prompt: string,
+  { answers }: NonNullable<AuthorPart>,
+  viewerId: number
+) {
+  const judge = (text: string) =>
+    classifyPromptServer({ prompt: text, isGreen: false }).then(
+      (verdict) => verdict,
+      () => null
+    );
+  // The viewer's words alone, joined as an app may join them.
+  const joins = [...new Set(['\n', '', ' '].map((glue) => answers.join(glue)))];
+  const alone = answers.length ? await Promise.all(joins.map(judge)) : [];
+  if (alone.some((verdict) => verdict && verdict.outcome !== 'pass')) return;
+  const whole = await judge(prompt);
+  // Judged again it passes: nothing here says the app had a part in the refusal. A soft block or
+  // an over-length refusal counts against nobody, so not against the app either.
+  if (whole?.outcome === 'pass' && !whole.externalError) return;
+  if (whole?.outcome === 'soft' || (whole && isOverLengthRefusal(whole.triggers))) return;
+  const strike =
+    !whole || alone.some((verdict) => !verdict || verdict.externalError)
+      ? 'error'
+      : firstStrikeOf(whole);
+  await holdUserRemixApp(slug, {
+    action: strike === 'error' ? 'held-classifier-error' : 'held-combination-blocks',
+    viewerId,
+    firstStrike: strike !== 'none',
+  }).catch((error: unknown) =>
+    logToAxiom({
+      name: 'remix-app-run',
+      type: 'error',
+      message: 'Could not record a refused run of a user remix app',
+      payload: { slug, error: error instanceof Error ? error.message : String(error) },
+    })
+  );
+}
+
 const isSameAnswers = (a: RemixAnswer[], b: RemixAnswer[]) =>
   a.length === b.length && a.every((answer, i) => answer === b[i]);
 
@@ -315,7 +438,7 @@ function recordTail(workflowId: string, tail: RemixAnswer[], caller: RemixAppCal
  */
 async function advance({
   runId,
-  entry: { app, replay: replayer, shape },
+  entry: { app, replay: replayer, shape, author, authorPrompt },
   image,
   segments,
   answers: given,
@@ -324,7 +447,7 @@ async function advance({
   priceOptions = true,
 }: {
   runId: string;
-  entry: Pick<RegisteredRemixApp, 'app' | 'replay' | 'shape'>;
+  entry: Pick<RegisteredRemixApp, 'app' | 'replay' | 'shape' | 'author' | 'authorPrompt'>;
   image: RemixSourceImage;
   segments: Segment[];
   answers: RemixAnswer[];
@@ -349,7 +472,15 @@ async function advance({
     for (const { url, nsfwLevel } of images) levels.set(url, nsfwLevel);
     log.push({
       type: 'workflow',
-      result: { workflowId, images: images.map(({ nsfwLevel: _, ...image }) => image) },
+      // A size can follow one the app declared, so it is bounded as the runner's log requires.
+      result: {
+        workflowId,
+        images: images.map(({ url, width, height }) => ({
+          url,
+          width: remixLogSize(width),
+          height: remixLogSize(height),
+        })),
+      },
     });
   }
   const last = segments[segments.length - 1];
@@ -360,9 +491,15 @@ async function advance({
 
   const source = runtimeSourceOf(image);
   const currencies = getAllowedAccountTypes(caller.features, ['blue']);
+  const quarantined = async (error: unknown) => {
+    if (!(error instanceof RemixQuarantinedError)) return error;
+    return (await noteRunnerQuarantine({ slug: app.slug, author }, caller.user.id, error))
+      ? new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD })
+      : new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE });
+  };
   const replay = () =>
-    replayer(source, log).catch((error) => {
-      throw error instanceof RemixReplayError ? damaged(error.message) : error;
+    replayer(source, log).catch(async (error) => {
+      throw error instanceof RemixReplayError ? damaged(error.message) : await quarantined(error);
     });
   const pending = [...answers];
   let outcome = await replay();
@@ -410,7 +547,19 @@ async function advance({
       shown && gateOf(shown.url, levels, caller) === 'shown' ? { ...choice, image: shown } : choice;
     if (!priceOptions) return { status: 'ask', runId, ask };
     const prices = await cachedOptionPrices([runId, segments.length, outcome.index], () =>
-      optionPrices({ app, replay: replayer, image, source, log, spec, caller, currencies })
+      optionPrices({
+        app,
+        replay: (...args) =>
+          replayer(...args).catch(async (error) => {
+            throw error instanceof RemixReplayError ? error : await quarantined(error);
+          }),
+        image,
+        source,
+        log,
+        spec,
+        caller,
+        currencies,
+      })
     );
     return { status: 'ask', runId, ask, prices };
   }
@@ -433,6 +582,18 @@ async function advance({
   if (quote == null) return { status: 'priced', runId, ...priced };
   assertWithinQuote(priced.cost, quote);
 
+  const { request } = outcome.effect;
+  // An author's own run is audited as any other, with the author as the viewer: their words count
+  // against them, and their refusals never move their own app's count.
+  const othersApp = !!author && author.userId !== caller.user.id && request.kind === 'image';
+  const part =
+    othersApp && authorPrompt
+      ? await authorPrompt(source, log).catch(async (error) => {
+          throw await quarantined(error);
+        })
+      : null;
+  if (othersApp) await assertAuthorPartPasses(app.slug, part);
+
   const tags = remixRunTags({ slug: app.slug, runId, segment: index, runtime: true });
   const remixRun: RemixRunMetadata = { app: app.slug, version: app.version, shape, answers };
   // A segment after the first reads the previous segment's output, which carries no source; the
@@ -445,6 +606,11 @@ async function advance({
     externalId: segmentExternalId(caller.user.id, runId, index),
     sourceProvenance: mint ? [mint] : undefined,
     remixRun,
+  }).catch(async (error: unknown) => {
+    // Green's own list strikes nobody, and holds no app back from the other domains.
+    if (part && request.kind === 'image' && !caller.features.isGreen && isCountedRefusal(error))
+      await recordCombinationBlock(app.slug, request.prompt, part, caller.user.id);
+    throw error;
   });
   bustQueriedWorkflowsCache(caller.user.id).catch(() => null);
   return { status: 'running', runId, workflowId: result.id as string };
@@ -506,10 +672,10 @@ async function loadRun(runId: string, caller: RemixAppCaller) {
       throw error instanceof TRPCError && error.code === 'NOT_FOUND' ? changed() : error;
     }
   );
-  // A rejected or pulled user app runs again only for its author or a mod: everyone else's runs
-  // stop here, finished ones too.
+  // A user app out of menus runs again only for a mod, or for its author while it waits on review:
+  // every other run stops here, finished ones too.
   const { author } = entry;
-  if (author && !entry.enabled && author.userId !== caller.user.id && !caller.user.isModerator)
+  if (author && !caller.user.isModerator && !isRunnableBy(entry, caller))
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
       message: 'This app is no longer available',

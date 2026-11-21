@@ -11,7 +11,7 @@ import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { compileRemixApp } from '~/shared/remix-apps/compile';
-import type { RemixApp } from '~/shared/remix-apps/define';
+import type { RemixApp, RemixAppSource, RemixWorkflowRequest } from '~/shared/remix-apps/define';
 import { replayRemixApp, type RemixReplayer } from '~/shared/remix-apps/replay';
 import {
   REMIX_BLOCK_ID_PREFIX,
@@ -32,6 +32,8 @@ import {
   remixAppSlugSchema,
   REMIX_USER_APPS_PER_AUTHOR,
   REMIX_REVIEW_LOG_MAX,
+  REMIX_COMBINATION_BLOCKS_MAX,
+  REMIX_SYSTEM_ACTOR,
   type REMIX_REVIEW_STATES,
   type RemixRejectReason,
   type RemixReviewLogEntry,
@@ -40,6 +42,19 @@ import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
 import type { Prisma } from '@prisma/client';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { CODE_REMIX_APPS } from '~/shared/remix-apps/system-apps';
+import {
+  type RemixQuarantinedError,
+  userRemixAuthorPrompt,
+  userRemixBranchReplayer,
+  userRemixFirstRequest,
+  userRemixReplayer,
+} from '~/server/services/remix-app-runner';
+import { validateRemixApp } from '~/shared/remix-apps/validate';
+import {
+  auditRemixAppSource,
+  REMIX_SOURCE_UNREADABLE,
+} from '~/server/services/remix-app-audit.service';
+import { remixSourceLiterals } from '~/server/services/remix-app-literals';
 
 /** The OAuth client every remix row hangs off: no secret, no redirect, no scopes. */
 export const REMIX_APPS_CLIENT_ID = 'civitai-remix-apps';
@@ -70,11 +85,16 @@ export type RegisteredRemixApp = {
   app: RemixApp;
   /** What `start` and `advance` replay. */
   replay: RemixReplayer;
+  /** A user app's first workflow, in one runner call. */
+  firstRequest?: (source: RemixAppSource) => Promise<RemixWorkflowRequest | null>;
+  /** A user app's own part of the prompt its next workflow sends, its text answers masked. */
+  authorPrompt?: ReturnType<typeof userRemixAuthorPrompt>;
   /** A hash of what it runs: a run started on another shape is not replayed. */
   shape: string;
 };
 
-export const REMIX_APP_UNAVAILABLE = 'This app is unavailable right now';
+export { REMIX_APP_UNAVAILABLE } from '~/server/services/remix-app-runner';
+import { REMIX_APP_UNAVAILABLE } from '~/server/services/remix-app-runner';
 
 // shortcut: until the sandbox runner ships, a user app refuses every replay.
 const unavailable = async (): Promise<never> => {
@@ -85,6 +105,14 @@ const unavailable = async (): Promise<never> => {
  * The apps `caller` may see: user apps only behind their flag, and until approved only to their
  * author and moderators, since nobody has reviewed their listing text yet.
  */
+/** Runnable by `caller`: enabled, or their own app while it waits on review (submitted or held). */
+export const isRunnableBy = (
+  entry: Pick<RegisteredRemixApp, 'enabled' | 'author' | 'review'>,
+  caller: { user?: { id: number } }
+) =>
+  entry.enabled ||
+  (!!entry.author && entry.author.userId === caller.user?.id && entry.review === 'submitted');
+
 export function visibleRemixApps<T extends Pick<RegisteredRemixApp, 'author' | 'review'>>(
   apps: T[],
   caller: {
@@ -147,12 +175,29 @@ function register(
   } else {
     app = compileRemixApp({ slug, name, description, version }, spec);
   }
+  const loadSource = () => loadUserRemixSource(slug, (spec as { source: string }).source);
   const replay: RemixReplayer =
-    'source' in spec ? unavailable : (source, log) => replayRemixApp(app, source, log);
+    'source' in spec
+      ? userRemixReplayer(slug, remixBlockId(slug), loadSource)
+      : (source, log) => replayRemixApp(app, source, log);
+  const firstRequest =
+    'source' in spec ? userRemixFirstRequest(slug, remixBlockId(slug), loadSource) : undefined;
+  const authorPrompt =
+    'source' in spec ? userRemixAuthorPrompt(slug, remixBlockId(slug), loadSource) : undefined;
   const shape = createHash('sha256').update(runShape(spec)).digest('hex').slice(0, 16);
   const { version: _, ...rest } = listing;
-  return { ...rest, icon: spec.icon, app, replay, shape };
+  return {
+    ...rest,
+    icon: spec.icon,
+    app,
+    replay,
+    shape,
+    ...(firstRequest ? { firstRequest } : {}),
+    ...(authorPrompt ? { authorPrompt } : {}),
+  };
 }
+
+export const REMIX_APP_HELD = 'This app is back in review. Try another one.';
 
 /** A stored row as a registered app, or `null` (logged) when it no longer validates. */
 export function registerRow(
@@ -235,6 +280,47 @@ export async function readRemixAppRows(): Promise<RemixAppRow[]> {
   });
 }
 
+const SOURCE_REF = 'sha256:';
+const sha256Of = (text: string) => createHash('sha256').update(text).digest('hex');
+
+/**
+ * The rows the registry caches. A user app's source stays out of the cached value, named by its
+ * hash: every reader parses that value, and a run reads the one source it needs.
+ */
+async function readRegistryRows(): Promise<RemixAppRow[]> {
+  return (await readRemixAppRows()).map((row) => {
+    const manifest = row.manifest as { remix?: { source?: unknown } } | null;
+    const remix = manifest?.remix;
+    if (!manifest || !remix || typeof remix.source !== 'string') return row;
+    return {
+      ...row,
+      manifest: { ...manifest, remix: { ...remix, source: SOURCE_REF + sha256Of(remix.source) } },
+    };
+  });
+}
+
+const userSources = new Map<string, string>();
+const USER_SOURCES_MAX = 64;
+
+/** The source the registry named for a user app, read when a run needs it. */
+export async function loadUserRemixSource(slug: string, named: string): Promise<string> {
+  const sha256 = named.startsWith(SOURCE_REF) ? named.slice(SOURCE_REF.length) : sha256Of(named);
+  const cached = userSources.get(sha256);
+  if (cached !== undefined) return cached;
+  // primary: an approval a moment ago bumped the registry; a replica may still hold the old row.
+  const row = await dbWrite.appBlock.findUnique({
+    where: { blockId: remixBlockId(slug) },
+    select: { manifest: true },
+  });
+  const source = (row?.manifest as { remix?: { source?: unknown } } | null)?.remix?.source;
+  // Changed since the registry read it: the run waits for the registry to catch up.
+  if (typeof source !== 'string' || sha256Of(source) !== sha256)
+    throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE });
+  if (userSources.size >= USER_SOURCES_MAX) userSources.delete(userSources.keys().next().value!);
+  userSources.set(sha256, source);
+  return source;
+}
+
 /**
  * Every remix app, in menu order, disabled ones included: a disabled app's in-flight runs still
  * advance and post. Until any row exists, the seed.
@@ -243,10 +329,10 @@ export async function getRemixAppRegistry(): Promise<RegisteredRemixApp[]> {
   const generation = await registryGeneration();
   const rows =
     generation === null
-      ? await readRemixAppRows()
+      ? await readRegistryRows()
       : await fetchThroughCache(
           `${REDIS_KEYS.CACHES.REMIX_APP_REGISTRY}:${generation}`,
-          readRemixAppRows,
+          readRegistryRows,
           { ttl: REGISTRY_TTL }
         );
   if (!rows.length) return seedRegistry();
@@ -308,7 +394,9 @@ export async function bumpRemixAppRegistry() {
 
 /** The apps the menu lists and the quote prices. */
 export async function getEnabledRemixApps(caller: Parameters<typeof visibleRemixApps>[1]) {
-  return visibleRemixApps(await getRemixAppRegistry(), caller).filter((entry) => entry.enabled);
+  return visibleRemixApps(await getRemixAppRegistry(), caller).filter((entry) =>
+    isRunnableBy(entry, caller)
+  );
 }
 
 /**
@@ -323,7 +411,7 @@ export async function getRegisteredRemixApp(
   const entry = visibleRemixApps(await getRemixAppRegistry(), caller).find(
     (app) => app.slug === slug
   );
-  if (!entry || (!entry.enabled && !allowDisabled))
+  if (!entry || (!allowDisabled && !isRunnableBy(entry, caller)))
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
   return entry;
 }
@@ -464,7 +552,9 @@ export const remixReviewHash = (manifest: {
  * Creates or replaces the author's app `u<authorId>-<name>`. Every submit, an edit of an approved
  * app included, takes it out of menus until a mod approves the new source.
  */
-export async function submitUserRemixApp(input: RemixAppSubmitInput & { authorId: number }) {
+export async function submitUserRemixApp(
+  input: RemixAppSubmitInput & { authorId: number; isGreen: boolean }
+) {
   // One author's saves run one at a time, so the per-author cap holds against concurrent creates.
   const result = await withDistributedLock(
     { key: `remix-user-apps:${input.authorId}`, ttl: 30 },
@@ -480,12 +570,13 @@ export async function submitUserRemixApp(input: RemixAppSubmitInput & { authorId
 
 async function submitUserRemixAppLocked({
   authorId,
+  isGreen,
   name,
   title,
   description,
   icon,
   source,
-}: RemixAppSubmitInput & { authorId: number }) {
+}: RemixAppSubmitInput & { authorId: number; isGreen: boolean }) {
   await assertRemixAppsClient();
   const slug = userRemixSlugPrefix(authorId) + name;
   const slugError = remixAppSlugSchema.safeParse(slug).success
@@ -519,6 +610,10 @@ async function submitUserRemixAppLocked({
       code: 'CONFLICT',
       message: 'This app needs a moderator before it can be edited',
     });
+  // A save that changes the code is audited first.
+  const before =
+    previous?.success && 'source' in previous.data.remix ? previous.data.remix.source : undefined;
+  if (source !== before) await auditRemixAppSource({ source, authorId, blockId, isGreen });
   const spec: RemixUserSpec = { icon, engine: { safe: DEFAULT_ENGINE.safe }, source };
   const runVersion = nextRunVersion(existing, previous, spec);
   const listing = {
@@ -638,6 +733,9 @@ export async function reviewUserRemixApp({
   const { row, parsed, manifest: stored, remix } = await readUserRemixApp(slug);
   if (remixReviewHash({ ...stored, remix }) !== sha256 || stored.review !== seenReview)
     throw userAppChanged();
+  // No literal set, no check of what it shows: unreadable code is never approved.
+  if (decision === 'approved' && !remixSourceLiterals(remix.source))
+    throw new TRPCError({ code: 'BAD_REQUEST', message: REMIX_SOURCE_UNREADABLE });
   const withMature = decision === 'approved' && mature;
   if (withMature && (await authorHasMinorThemedApp(stored.author?.userId ?? 0)))
     throw new TRPCError({
@@ -654,9 +752,11 @@ export async function reviewUserRemixApp({
   const minorThemed =
     stored.minorThemed ??
     (reason === 'minor-themed' ? { by: moderatorId, at: new Date().toISOString() } : undefined);
+  // A mod who approves has read the source the refused runs ran: the count starts again.
+  const { combinationBlocks: _blocks, runnerQuarantines: _quarantines, ...unblocked } = stored;
   const manifest = withReviewLog(
     {
-      ...stored,
+      ...(decision === 'approved' ? unblocked : stored),
       version: `${runVersion}.0.0`,
       remix: spec,
       review: decision,
@@ -774,6 +874,168 @@ async function holdMatureApp(first: RemixAppRow, moderatorId: number) {
         select: remixAppRowSelect,
       });
     }
+  }
+}
+
+/**
+ * The run-time audit sending an approved user app back to review, out of menus: its author's own
+ * part of a prompt blocked, or viewers' audits refused runs of it, counted once per
+ * distinct viewer and pulled on the {@link REMIX_COMBINATION_BLOCKS_MAX}th, or at once on a
+ * `firstStrike`. Re-read and retried when another write lands first. `true` when this pulled it.
+ */
+export async function holdUserRemixApp(
+  slug: string,
+  hold:
+    | { action: 'held-author-prompt' }
+    | {
+        /** `held-classifier-error`: a first strike only because the classifier could not answer. */
+        action: 'held-combination-blocks' | 'held-classifier-error';
+        viewerId: number;
+        firstStrike: boolean;
+      }
+): Promise<boolean> {
+  for (let attempt = 1; ; attempt++) {
+    const { row, manifest, remix } = await readUserRemixApp(slug);
+    // Runs of an app not approved are its author's or a mod's tests; a mod reviews it anyway.
+    if (manifest.review !== 'approved') return false;
+    const before = manifest.combinationBlocks ?? [];
+    let blocks = before;
+    if ('viewerId' in hold) {
+      const viewer = createHash('sha256').update(`${slug}:${hold.viewerId}`).digest('hex');
+      if (!blocks.includes(viewer.slice(0, 16))) blocks = [...blocks, viewer.slice(0, 16)];
+    }
+    const pull =
+      !('viewerId' in hold) || hold.firstStrike || blocks.length >= REMIX_COMBINATION_BLOCKS_MAX;
+    if (!pull && blocks === before) return false;
+    const counted = { ...manifest, combinationBlocks: blocks.slice(-REMIX_COMBINATION_BLOCKS_MAX) };
+    try {
+      if (!pull) await writeUserRemixApp(row, { manifest: counted });
+      else
+        await writeUserRemixApp(row, {
+          manifest: withReviewLog(
+            { ...counted, review: 'submitted' },
+            {
+              by: REMIX_SYSTEM_ACTOR,
+              action: hold.action,
+              sha256: remixReviewHash({ ...manifest, remix }),
+            }
+          ),
+          status: REMIX_STATUS.disabled,
+        });
+    } catch (error) {
+      if (attempt === SWEEP_ATTEMPTS || !(error instanceof TRPCError && error.code === 'CONFLICT'))
+        throw error;
+      continue;
+    }
+    if (pull)
+      logToAxiom({
+        name: 'remix-app-registry',
+        type: 'info',
+        message: 'The run-time audit sent a user remix app back to review',
+        payload: { slug, action: hold.action, blocks: blocks.length },
+      });
+    return pull;
+  }
+}
+
+/** A mod's dry run of a user app down every path, in the sandbox, on the source stored now. */
+export async function validateUserRemixApp(slug: string) {
+  const { manifest, remix } = await readUserRemixApp(slug);
+  const { graph, paths, issues } = await validateRemixApp({
+    branches: userRemixBranchReplayer(slug, remixBlockId(slug), async () => remix.source),
+  });
+  return { sha256: remixReviewHash({ ...manifest, remix }), graph, paths, issues };
+}
+
+const QUARANTINE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The runner refused a viewer's call of a user app as quarantined; `true` when that held the app.
+ * Only a call that tripped the quarantine counts: every viewer refused while it is cached would
+ * otherwise count as another. The author's calls never count.
+ */
+export async function noteRunnerQuarantine(
+  { slug, author }: Pick<RegisteredRemixApp, 'slug' | 'author'>,
+  viewerId: number,
+  { sha256, tripped }: RemixQuarantinedError
+) {
+  if (!tripped || !author || author.userId === viewerId) return false;
+  return recordRunnerQuarantine(slug, { viewerId, sha256 }).catch((error: unknown) => {
+    logToAxiom({
+      name: 'remix-app-run',
+      type: 'error',
+      message: 'Could not record a quarantined run of a user remix app',
+      payload: { slug, error: error instanceof Error ? error.message : String(error) },
+    });
+    return false;
+  });
+}
+
+const QUARANTINE_OBSERVED = 'held-runner-quarantine-observed';
+
+/**
+ * A trip of an approved user app's source by a viewer. Each viewer counts once per source and day;
+ * the {@link REMIX_COMBINATION_BLOCKS_MAX}th distinct one sends the app back to review, since a
+ * fault of the shared pool will not keep landing on one source for different viewers. `true`
+ * when this pulled it.
+ */
+async function recordRunnerQuarantine(
+  slug: string,
+  { viewerId, sha256 }: { viewerId: number; sha256: string }
+): Promise<boolean> {
+  for (let attempt = 1; ; attempt++) {
+    const { row, manifest, remix } = await readUserRemixApp(slug);
+    if (manifest.review !== 'approved') return false;
+    const since = Date.now() - QUARANTINE_WINDOW_MS;
+    const seen =
+      manifest.runnerQuarantines?.sha256 === sha256
+        ? manifest.runnerQuarantines.viewers.filter(({ at }) => Date.parse(at) >= since)
+        : [];
+    const key = createHash('sha256').update(`${slug}:${viewerId}`).digest('hex').slice(0, 16);
+    if (seen.some((viewer) => viewer.key === key)) return false;
+    const viewers = [...seen, { key, at: new Date().toISOString() }];
+    const pull = viewers.length >= REMIX_COMBINATION_BLOCKS_MAX;
+    const counted = {
+      ...manifest,
+      runnerQuarantines: { sha256, viewers: viewers.slice(-REMIX_COMBINATION_BLOCKS_MAX) },
+    };
+    const entry = {
+      by: REMIX_SYSTEM_ACTOR,
+      sha256: remixReviewHash({ ...manifest, remix }),
+      note: `viewer ${viewers.length} of ${REMIX_COMBINATION_BLOCKS_MAX}`,
+    };
+    // At most two observed rows at a time: a run of trips cannot flush mod decisions from the log.
+    const observed = (manifest.reviewLog ?? []).filter(
+      ({ action }) => action === QUARANTINE_OBSERVED
+    );
+    const dropped = new Set(
+      observed.slice(0, Math.max(0, observed.length - (REMIX_COMBINATION_BLOCKS_MAX - 2)))
+    );
+    counted.reviewLog = manifest.reviewLog?.filter((row) => !dropped.has(row));
+    try {
+      await writeUserRemixApp(
+        row,
+        pull
+          ? {
+              manifest: withReviewLog(
+                { ...counted, review: 'submitted' },
+                { ...entry, action: 'held-runner-quarantine' }
+              ),
+              status: REMIX_STATUS.disabled,
+            }
+          : {
+              manifest: withReviewLog(counted, {
+                ...entry,
+                action: QUARANTINE_OBSERVED,
+              }),
+            }
+      );
+    } catch (error) {
+      if (attempt === SWEEP_ATTEMPTS || !(error instanceof TRPCError && error.code === 'CONFLICT'))
+        throw error;
+      continue;
+    }
+    return pull;
   }
 }
 

@@ -1,11 +1,11 @@
 import { TRPCError } from '@trpc/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ImageVisibility from '~/server/services/image-visibility.service';
 import type * as InputUrls from '~/server/services/generation-input-urls';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import type * as OrchestrationNew from '~/server/services/orchestrator/orchestration-new.service';
 import type * as RemixProvenance from '~/server/services/orchestrator/remix-provenance';
-import type { RemixImage } from '~/shared/remix-apps/define';
+import type { RemixApp, RemixImage } from '~/shared/remix-apps/define';
 import type * as Registry from '~/server/services/remix-app-registry.service';
 
 /**
@@ -117,6 +117,7 @@ vi.mock('~/server/services/orchestrator/remix-provenance', async (importOriginal
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: vi.fn(async () => undefined),
+  classifyPromptServer: vi.fn(async () => ({ outcome: 'pass', triggers: [] })),
 }));
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   createXGuardModerationRequest: vi.fn(async () => undefined),
@@ -373,6 +374,10 @@ vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) =
 });
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { fakeRemixRunner } from '~/__tests__/mocks/remix-runner.fake';
+import { bumpRemixAppRegistry } from '~/server/services/remix-app-registry.service';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import { createHash, createHmac } from 'crypto';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { OnboardingSteps } from '~/server/common/enums';
 import { verifyProvenance } from '~/server/services/orchestrator/remix-provenance';
@@ -380,11 +385,23 @@ import {
   advanceRemixRun,
   MAX_RUN_SEGMENTS,
   postRemixResult,
+  REMIX_APP_HELD,
+  REMIX_APP_UNCHECKED,
+  REMIX_APP_UNJUDGED,
   startRemixRun,
 } from '~/server/services/remix-app-run.service';
-import type { RemixAppCaller } from '~/server/services/remix-app.service';
+import { REMIX_APP_UNAVAILABLE } from '~/server/services/remix-app-registry.service';
+import { REMIX_SYSTEM_ACTOR } from '~/shared/remix-apps/row.schema';
+import {
+  listRemixApps,
+  quoteRemixApps,
+  type RemixAppCaller,
+} from '~/server/services/remix-app.service';
 import { RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
-import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import {
+  auditPromptServer,
+  classifyPromptServer,
+} from '~/server/services/orchestrator/promptAuditing';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 
@@ -1621,6 +1638,843 @@ describe('a user app', () => {
 
   beforeEach(() => addImage(SOURCE_ID));
 
+  describe('on the runner', () => {
+    const SECRET = 'r'.repeat(32);
+    const MATURE_SOURCE = SOURCE_ID + 1;
+    const matureEngine = {
+      ecosystem: REMIX_ENGINES.edit.mature.ecosystemKey,
+      versionId: REMIX_ENGINES.edit.mature.modelVersionId,
+    };
+    const matureRow = () => {
+      const row = userRow();
+      (row.manifest.remix as { engine: object }).engine = {
+        ...row.manifest.remix.engine,
+        mature: matureEngine,
+      };
+      return row;
+    };
+    const markedSibling = {
+      ...userRow('remix_disabled'),
+      id: 'ab_rx_u5_other______________',
+      blockId: 'remix-u5-other',
+      manifest: { ...userRow().manifest, review: 'rejected', minorThemed: { by: 88, at: 'x' } },
+    };
+    beforeEach(() => {
+      const source = userRow().manifest.remix.source;
+      const runner = fakeRemixRunner({
+        secret: SECRET,
+        apps: {
+          [createHash('sha256').update(source).digest('hex')]: {
+            async run(ctx) {
+              const out = await ctx.workflow({
+                kind: 'image',
+                prompt: 'a portrait',
+                images: [ctx.source],
+                aspectRatio: 'source',
+                quantity: 1,
+              });
+              return out.images;
+            },
+          },
+        },
+      });
+      setEnv({ REMIX_RUNNER_URL: 'http://runner', REMIX_RUNNER_SECRET: SECRET });
+      vi.stubGlobal('fetch', runner.fetchImpl);
+      dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(matureRow() as never);
+      addImage(MATURE_SOURCE, { nsfwLevel: 8 });
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      setEnv({ REMIX_RUNNER_URL: '', REMIX_RUNNER_SECRET: '' });
+    });
+    let nonce = 0;
+    const startOn = (imageId: number) =>
+      startRemixRun({
+        slug: 'u5-mine',
+        imageId,
+        nonce: `nonce-on-${imageId}-${nonce++}`,
+        quote: 30,
+        caller: flagOn(),
+      });
+
+    it("refuses a marked author's app on a mature source, through the real runner path", async () => {
+      // POSITIVE CONTROL: unmarked, the same app runs on the same mature source.
+      serve(matureRow());
+      await expect(startOn(MATURE_SOURCE)).resolves.toMatchObject({ status: 'running' });
+      expect(submits()).toHaveLength(1);
+
+      serve(matureRow(), markedSibling);
+      // As the minor-themed reject does when it writes the mark.
+      await bumpRemixAppRegistry();
+      await expect(startOn(MATURE_SOURCE)).rejects.toThrow('Mine does not run on mature images.');
+      expect(submits()).toHaveLength(1);
+    });
+
+    it('replays a finished step whose size the runner would refuse, with that size left out', async () => {
+      serve(userRow());
+      addImage(SOURCE_ID);
+      const { runId } = await startOn(SOURCE_ID);
+      const workflow = h.workflows[h.workflows.length - 1];
+      finish(workflow.id, [blob('huge')]);
+      const [image] = (workflow.steps as { output: { images: Record<string, unknown>[] } }[])[0]
+        .output.images;
+      Object.assign(image, { width: 2.5, height: 200_000 });
+      await expect(advanceRemixRun({ runId, caller: flagOn() })).resolves.toMatchObject({
+        status: 'done',
+      });
+    });
+
+    describe('the run-time audit', () => {
+      const ask = "await ctx.ask({ kind: 'text', prompt: 'Who is it?', maxLength: 40 })";
+      const ASKING_SOURCE = `export default defineRemixApp({ async run(ctx) { const who = ${ask}; const out = await ctx.workflow({ kind: 'image', prompt: 'a portrait of ' + who, images: [ctx.source], aspectRatio: 'source', quantity: 1 }); return out.images; } });`;
+      // Two text answers, joined with nothing between them.
+      const TWO_SOURCE = ASKING_SOURCE.replace(
+        "prompt: 'a portrait of ' + who",
+        "prompt: 'a portrait of ' + who + (await ctx.ask({ kind: 'text', prompt: 'And?', maxLength: 40 }))"
+      );
+      // Goes another way when its text answer is masked: no author part to judge.
+      const DIVERGING_SOURCE = ASKING_SOURCE.replace(
+        'const out',
+        "if (who === '___') return []; const out"
+      );
+      const AUTHOR_PART = 'a portrait of ___';
+      const pass = {
+        outcome: 'pass',
+        source: null,
+        triggers: [],
+        blockedFor: [],
+        categories: [],
+        externalError: null,
+      };
+      const blocked = (category: string, message = category) => ({
+        outcome: 'hard',
+        source: category === 'external' ? 'external' : 'regex',
+        triggers: [{ category, message, matchedWord: message }],
+        blockedFor: [message],
+        categories: [],
+        externalError: null,
+      });
+      /** The classifier on the author's part and on the viewer's words alone; `whole` on both together. */
+      const classify = (
+        whole: object | null,
+        { alone = pass as object, author = pass as object } = {}
+      ) =>
+        vi.mocked(classifyPromptServer).mockImplementation((async ({
+          prompt,
+        }: {
+          prompt: string;
+        }) => {
+          if (prompt === AUTHOR_PART) return author;
+          if (!prompt.startsWith('a portrait of')) return alone;
+          if (!whole) throw new Error('classifier down');
+          return whole;
+        }) as never);
+      let stored: ReturnType<typeof userRow>;
+      const rowOf = (source = ASKING_SOURCE) => {
+        const row = userRow();
+        row.manifest.remix.source = source;
+        return row;
+      };
+      const written = () =>
+        dbMock.dbWrite.appBlock.updateMany.mock.calls.map(
+          ([args]) =>
+            (args as { data: { status?: string; manifest: Record<string, unknown> } }).data
+        );
+      const blocks = () => (stored.manifest as { combinationBlocks?: string[] }).combinationBlocks;
+      const runAs = (viewerId: number, { who = 'Ada', green = false } = {}) => {
+        const viewer = flagOn({ id: viewerId });
+        return startRemixRun({
+          slug: 'u5-mine',
+          imageId: SOURCE_ID,
+          nonce: `nonce-audit-${viewerId}-${nonce++}`,
+          answers: [who],
+          quote: 30,
+          caller: green ? { ...viewer, features: { ...viewer.features, isGreen: true } } : viewer,
+        });
+      };
+      const refusal = () =>
+        new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Your prompt was flagged: x',
+          cause: { blockedFor: ['x'] },
+        });
+      const appOf = (diverges: boolean): Pick<RemixApp, 'run'> => ({
+        async run(ctx) {
+          const who = await ctx.ask({ kind: 'text', prompt: 'Who is it?', maxLength: 40 });
+          if (diverges && who === '___') return [];
+          const out = await ctx.workflow({
+            kind: 'image',
+            prompt: 'a portrait of ' + who,
+            images: [ctx.source],
+            aspectRatio: 'source',
+            quantity: 1,
+          });
+          return out.images;
+        },
+      });
+
+      beforeEach(async () => {
+        const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+        const runner = fakeRemixRunner({
+          secret: SECRET,
+          apps: {
+            [sha(ASKING_SOURCE)]: appOf(false),
+            [sha(DIVERGING_SOURCE)]: appOf(true),
+            [sha(TWO_SOURCE)]: {
+              async run(ctx) {
+                const who = await ctx.ask({ kind: 'text', prompt: 'Who is it?', maxLength: 40 });
+                const and = await ctx.ask({ kind: 'text', prompt: 'And?', maxLength: 40 });
+                const out = await ctx.workflow({
+                  kind: 'image',
+                  prompt: 'a portrait of ' + who + and,
+                  images: [ctx.source],
+                  aspectRatio: 'source',
+                  quantity: 1,
+                });
+                return out.images;
+              },
+            },
+          },
+        });
+        vi.stubGlobal('fetch', runner.fetchImpl);
+        stored = rowOf();
+        dbMock.dbWrite.appBlock.findMany.mockImplementation(async () => [stored] as never);
+        dbMock.dbWrite.appBlock.findUnique.mockImplementation(async () => stored as never);
+        dbMock.dbWrite.appBlock.updateMany.mockImplementation((async ({
+          data,
+        }: {
+          data: object;
+        }) => {
+          stored = { ...stored, ...data } as typeof stored;
+          return { count: 1 };
+        }) as never);
+        await bumpRemixAppRegistry();
+        vi.mocked(classifyPromptServer).mockResolvedValue(pass as never);
+        vi.mocked(auditPromptServer).mockImplementation(async () => undefined);
+        setEnv({ REMIX_FIRST_STRIKE_CATEGORIES: ['synthetic-minor'] });
+      });
+      afterEach(() => {
+        setEnv({ REMIX_FIRST_STRIKE_CATEGORIES: undefined });
+        // clearAllMocks keeps implementations: these would refuse every later test's runs.
+        vi.mocked(auditPromptServer).mockImplementation(async () => undefined);
+        vi.mocked(classifyPromptServer).mockResolvedValue(pass as never);
+        dbMock.dbWrite.appBlock.updateMany.mockReset();
+        dbMock.dbWrite.appBlock.findMany.mockReset();
+      });
+
+      it("B: judges the author's part alone, and the viewer's audit stays the generator's own on the whole prompt", async () => {
+        await expect(runAs(USER_ID)).resolves.toMatchObject({ status: 'running' });
+        expect(vi.mocked(classifyPromptServer)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(classifyPromptServer)).toHaveBeenCalledWith({
+          prompt: AUTHOR_PART,
+          isGreen: false,
+        });
+        // The viewer's audit: once, on the prompt with their words, as the viewer.
+        expect(vi.mocked(auditPromptServer)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(auditPromptServer)).toHaveBeenCalledWith(
+          expect.objectContaining({ prompt: 'a portrait of Ada', userId: USER_ID, isGreen: false })
+        );
+        expect(written()).toHaveLength(0);
+      });
+
+      it("B: judges the author's part off green on green too, where the viewer's audit keeps green's list", async () => {
+        await expect(runAs(USER_ID, { green: true })).resolves.toMatchObject({ status: 'running' });
+        expect(vi.mocked(classifyPromptServer)).toHaveBeenCalledWith({
+          prompt: AUTHOR_PART,
+          isGreen: false,
+        });
+        expect(vi.mocked(auditPromptServer)).toHaveBeenCalledWith(
+          expect.objectContaining({ isGreen: true })
+        );
+      });
+
+      it("B: an author's part that cannot be built refuses the run before the viewer's audit, and holds nothing", async () => {
+        // The viewer's answer can steer an app there, so one viewer must not pull it.
+        stored = rowOf(DIVERGING_SOURCE);
+        await bumpRemixAppRegistry();
+        await expect(runAs(USER_ID)).rejects.toMatchObject({
+          code: 'PRECONDITION_FAILED',
+          message: REMIX_APP_UNJUDGED,
+        });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(submits()).toHaveLength(0);
+        expect(written()).toHaveLength(0);
+      });
+
+      it("B: an author's part that blocks sends the app back to review and refuses the run before the viewer's audit", async () => {
+        classify(pass, { author: blocked('nsfw_blocklist') });
+        await expect(runAs(USER_ID)).rejects.toMatchObject({
+          code: 'PRECONDITION_FAILED',
+          message: REMIX_APP_HELD,
+        });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(submits()).toHaveLength(0);
+        const [held] = written();
+        expect(held.status).toBe('remix_disabled');
+        expect(held.manifest.review).toBe('submitted');
+        expect(held.manifest.reviewLog).toEqual([
+          expect.objectContaining({ by: REMIX_SYSTEM_ACTOR, action: 'held-author-prompt' }),
+        ]);
+      });
+
+      it('B: a pass the classifier could not vouch for refuses the run, and holds nothing', async () => {
+        classify(pass, { author: { ...pass, externalError: { message: 'down' } } });
+        await expect(runAs(USER_ID)).rejects.toMatchObject({
+          code: 'SERVICE_UNAVAILABLE',
+          message: REMIX_APP_UNCHECKED,
+        });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(written()).toHaveLength(0);
+      });
+
+      it('B: a hold that fails to save still refuses the run', async () => {
+        classify(pass, { author: blocked('nsfw_blocklist') });
+        dbMock.dbWrite.appBlock.updateMany.mockRejectedValue(new Error('db down'));
+        await expect(runAs(USER_ID)).rejects.toMatchObject({ message: REMIX_APP_HELD });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+      });
+
+      it('C: a combination refusal counts once per distinct viewer, and the third takes the app out of menus', async () => {
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        classify(blocked('external', 'synthetic-other'));
+        // The viewer sees their own refusal, unchanged.
+        await expect(runAs(101)).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
+        await expect(runAs(101)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        await expect(runAs(102)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(stored.status).toBe('remix');
+        expect(stored.manifest).toMatchObject({ review: 'approved' });
+        expect(blocks()).toHaveLength(2);
+        // No viewer id on the author's row.
+        expect(JSON.stringify(stored.manifest)).not.toMatch(/\b10[12]\b/);
+
+        await expect(runAs(103)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(stored.status).toBe('remix_disabled');
+        expect(stored.manifest).toMatchObject({
+          review: 'submitted',
+          reviewLog: [
+            expect.objectContaining({ action: 'held-combination-blocks', by: REMIX_SYSTEM_ACTOR }),
+          ],
+        });
+      });
+
+      it.each([
+        [
+          "the viewer's words block on their own",
+          () => classify(blocked('nsfw_blocklist'), { alone: blocked('nsfw_blocklist') }),
+          false,
+        ],
+        ['the refusal is on green', () => classify(blocked('minor_age')), true],
+      ])('C: nothing counts when %s', async (_, setUp, green) => {
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        setUp();
+        await expect(runAs(101, { green })).rejects.toMatchObject({
+          message: 'Your prompt was flagged: x',
+        });
+        expect(written()).toHaveLength(0);
+      });
+
+      it('C: a refusal the prompt, judged again, does not repeat never counts', async () => {
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        classify(pass);
+        await expect(runAs(101)).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
+        expect(written()).toHaveLength(0);
+      });
+
+      it("C: two answers that block once the app joins them are the viewer's own", async () => {
+        stored = rowOf(TWO_SOURCE);
+        await bumpRemixAppRegistry();
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        vi.mocked(classifyPromptServer).mockImplementation((async ({
+          prompt,
+        }: {
+          prompt: string;
+        }) =>
+          prompt === 'AdaLovelace' || prompt.startsWith('a portrait of Ada')
+            ? blocked('minor_age')
+            : pass) as never);
+        await expect(
+          startRemixRun({
+            slug: 'u5-mine',
+            imageId: SOURCE_ID,
+            nonce: `nonce-two-${nonce++}`,
+            answers: ['Ada', 'Lovelace'],
+            quote: 30,
+            caller: flagOn({ id: 101 }),
+          })
+        ).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
+        expect(written()).toHaveLength(0);
+      });
+
+      it.each([
+        [
+          'a soft block the viewer could click through',
+          () => classify(blocked('nsfw_blocklist')),
+          true,
+        ],
+        [
+          'a prompt judged again as a soft block',
+          () => classify({ ...blocked('nsfw_blocklist'), outcome: 'soft' }),
+          false,
+        ],
+        ['an over-length refusal', () => classify(blocked('over_length')), false],
+      ])('C: %s counts against nobody, the app included', async (_, setUp, soft) => {
+        vi.mocked(auditPromptServer).mockRejectedValue(
+          new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Your prompt was flagged: x',
+            cause: { blockedFor: ['x'], ...(soft ? { softBlock: true } : {}) },
+          })
+        );
+        setUp();
+        await expect(runAs(101)).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
+        expect(written()).toHaveLength(0);
+      });
+
+      it('B: a classifier that throws refuses the run as unavailable, and holds nothing', async () => {
+        vi.mocked(classifyPromptServer).mockRejectedValue(new Error('redis down'));
+        await expect(runAs(USER_ID)).rejects.toMatchObject({
+          code: 'SERVICE_UNAVAILABLE',
+          message: REMIX_APP_UNCHECKED,
+        });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(written()).toHaveLength(0);
+      });
+
+      it('C: a bad request that is not a prompt refusal never counts', async () => {
+        vi.mocked(auditPromptServer).mockRejectedValue(
+          new TRPCError({ code: 'BAD_REQUEST', message: 'Something else' })
+        );
+        classify(blocked('minor_age'));
+        await expect(runAs(101)).rejects.toMatchObject({ message: 'Something else' });
+        expect(written()).toHaveLength(0);
+      });
+
+      it.each([
+        [
+          'an operator-listed category',
+          blocked('external', 'synthetic-minor'),
+          ['synthetic-minor'],
+          'held-combination-blocks',
+        ],
+        ['a minor-age regex block', blocked('minor_age'), [], 'held-combination-blocks'],
+        [
+          'an inappropriate-minor regex block',
+          blocked('inappropriate_minor'),
+          [],
+          'held-combination-blocks',
+        ],
+        [
+          'any block while the operator list is unset',
+          blocked('external', 'synthetic-other'),
+          undefined,
+          'held-combination-blocks',
+        ],
+        [
+          'a refusal the classifier cannot judge again',
+          null,
+          ['synthetic-minor'],
+          'held-classifier-error',
+        ],
+        [
+          'a verdict the classifier could not finish',
+          { ...blocked('external', 'synthetic-other'), externalError: { message: 'down' } },
+          ['synthetic-minor'],
+          'held-classifier-error',
+        ],
+      ])('C: %s takes the app out on the first refusal', async (_, verdict, listed, action) => {
+        setEnv({ REMIX_FIRST_STRIKE_CATEGORIES: listed as string[] | undefined });
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        classify(verdict);
+        await expect(runAs(101)).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
+        expect(stored.status).toBe('remix_disabled');
+        expect(stored.manifest).toMatchObject({
+          review: 'submitted',
+          reviewLog: [expect.objectContaining({ action })],
+        });
+      });
+
+      it.each([
+        ['an unlisted external category', blocked('external', 'synthetic-other')],
+        ['an unlisted regex category', blocked('nsfw_blocklist')],
+      ])('C: %s needs three viewers while the list is set', async (_, verdict) => {
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        classify(verdict);
+        await expect(runAs(101)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(stored.status).toBe('remix');
+        expect(blocks()).toHaveLength(1);
+      });
+
+      it("C: a count that fails to save leaves the viewer's refusal as it was", async () => {
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        classify(blocked('minor_age'));
+        dbMock.dbWrite.appBlock.updateMany.mockRejectedValue(new Error('db down'));
+        await expect(runAs(101)).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message: 'Your prompt was flagged: x',
+        });
+      });
+
+      it("an author's run of their own held app skips B: their audit runs as them, and nothing is pulled", async () => {
+        stored = { ...rowOf(), status: 'remix_disabled' };
+        stored.manifest.review = 'submitted';
+        vi.mocked(classifyPromptServer).mockResolvedValue(blocked('nsfw_blocklist') as never);
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject({
+          message: 'Your prompt was flagged: x',
+        });
+        expect(vi.mocked(auditPromptServer)).toHaveBeenCalledWith(
+          expect.objectContaining({ prompt: 'a portrait of Ada', userId: OTHER_AUTHOR })
+        );
+        expect(vi.mocked(classifyPromptServer)).not.toHaveBeenCalled();
+        expect(written()).toHaveLength(0);
+      });
+
+      it("C: an author's refused runs of their own app never move its count", async () => {
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        classify(blocked('external', 'synthetic-other'));
+        for (let i = 0; i < 3; i++)
+          await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(written()).toHaveLength(0);
+        expect(stored.status).toBe('remix');
+        // POSITIVE CONTROL: another viewer's refusal does count.
+        await expect(runAs(101)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(blocks()).toHaveLength(1);
+      });
+
+      it('an author runs their own app in review, listed to them alone; never once it is rejected', async () => {
+        stored = { ...rowOf(), status: 'remix_disabled' };
+        stored.manifest.review = 'submitted';
+        await bumpRemixAppRegistry();
+        const listed = async (id: number) =>
+          (await listRemixApps(flagOn({ id }))).find((app) => app.slug === 'u5-mine');
+        expect(await listed(OTHER_AUTHOR)).toMatchObject({ enabled: false, inReview: true });
+        expect(await runAs(OTHER_AUTHOR)).toMatchObject({ status: 'running' });
+        expect(submits()).toHaveLength(1);
+        // Another viewer neither sees it nor starts it.
+        expect(await listed(101)).toBeUndefined();
+        await expect(runAs(101)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+        // Neither once rejected, nor once a mod disables it after approval.
+        for (const review of ['rejected', 'approved']) {
+          stored = { ...stored, manifest: { ...stored.manifest, review } };
+          await bumpRemixAppRegistry();
+          expect(await listed(OTHER_AUTHOR)).toMatchObject({ inReview: false });
+          await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+        }
+        expect(submits()).toHaveLength(1);
+      });
+
+      describe('the runner quarantine', () => {
+        const quarantine = (tripped: boolean) =>
+          vi.stubGlobal(
+            'fetch',
+            fakeRemixRunner({ secret: SECRET, apps: {}, quarantined: { tripped } }).fetchImpl
+          );
+        const counted = () =>
+          (stored.manifest as { runnerQuarantines?: { viewers: unknown[] } }).runnerQuarantines
+            ?.viewers ?? [];
+        const reviewLog = () =>
+          (stored.manifest as unknown as { reviewLog?: { action: string; note?: string }[] })
+            .reviewLog ?? [];
+        const unavailable = { code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE };
+        const held = { code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD };
+
+        it('a trip refuses the run as unavailable; three distinct viewers tripping one source hold the app', async () => {
+          const decision = { action: 'approved', by: 88, at: '2026-11-01T00:00:00.000Z' };
+          stored.manifest = { ...stored.manifest, reviewLog: [decision] } as typeof stored.manifest;
+          quarantine(true);
+          // One viewer, many times: counted once, never a hold.
+          for (let i = 0; i < 4; i++) await expect(runAs(101)).rejects.toMatchObject(unavailable);
+          expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+          expect(stored.status).toBe('remix');
+          expect(written()).toHaveLength(1);
+          // The note carries the count, never anything that names the viewer.
+          const [, observed] = reviewLog();
+          expect(observed).toMatchObject({ action: 'held-runner-quarantine-observed' });
+          expect(observed.note).toContain('1 of 3');
+          expect(observed.note).not.toMatch(/[0-9a-f]{16}|101/);
+          // The author's own runs never count.
+          await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(unavailable);
+          expect(written()).toHaveLength(1);
+          // A new source starts the count again.
+          stored = {
+            ...stored,
+            manifest: {
+              ...stored.manifest,
+              remix: { ...stored.manifest.remix, source: TWO_SOURCE },
+            },
+          };
+          await bumpRemixAppRegistry();
+          await expect(runAs(102)).rejects.toMatchObject(unavailable);
+          expect(counted()).toHaveLength(1);
+          await expect(runAs(103)).rejects.toMatchObject(unavailable);
+          expect(stored.status).toBe('remix');
+          const observedRows = () =>
+            reviewLog().filter(({ action }) => action === 'held-runner-quarantine-observed');
+          expect(observedRows().length).toBeLessThanOrEqual(2);
+          // The third distinct viewer on this source holds it.
+          await expect(runAs(104)).rejects.toMatchObject(held);
+          expect(stored.status).toBe('remix_disabled');
+          expect(stored.manifest).toMatchObject({ review: 'submitted' });
+          expect(reviewLog().at(-1)).toMatchObject({
+            action: 'held-runner-quarantine',
+            by: REMIX_SYSTEM_ACTOR,
+          });
+          // Three observed rows were written and one is kept; the mod's decision outlives them all.
+          expect(observedRows()).toHaveLength(1);
+          expect(reviewLog()[0]).toEqual(decision);
+        });
+
+        // The runner answers every call 423 for ten minutes after one trips it: counting those would
+        // let two passers-by complete a hold one runaway call earned.
+        it('a cached refusal counts for nobody: one trip and two cached refusals hold nothing, three trips do', async () => {
+          quarantine(true);
+          await expect(runAs(101)).rejects.toMatchObject(unavailable);
+          quarantine(false);
+          for (const viewer of [102, 103])
+            await expect(runAs(viewer)).rejects.toMatchObject(unavailable);
+          expect(counted()).toHaveLength(1);
+          expect(stored.status).toBe('remix');
+          quarantine(true);
+          await expect(runAs(102)).rejects.toMatchObject(unavailable);
+          await expect(runAs(103)).rejects.toMatchObject(held);
+          expect(stored.status).toBe('remix_disabled');
+        });
+
+        it.each([
+          [
+            'an unsigned 423 claiming a trip',
+            'wrong-secret'.padEnd(32, 'x'),
+            { code: 'quarantined', tripped: true },
+          ],
+          ['a signed 423 of another kind', SECRET, { code: 'overloaded', tripped: true }],
+          ['a trip from a runner that never says tripped', SECRET, { code: 'quarantined' }],
+        ])('%s is not counted: unavailable, nothing recorded', async (_, signer, error) => {
+          vi.stubGlobal('fetch', (async (_url: string, init: RequestInit) => {
+            const request = JSON.parse(String(init.body)) as { ts: number };
+            const response = JSON.stringify({
+              ts: request.ts,
+              req: createHash('sha256').update(String(init.body)).digest('hex'),
+              error: { ...error, message: 'x' },
+            });
+            return new Response(response, {
+              status: 423,
+              headers: {
+                'x-storage-hook-sig': createHmac('sha256', signer).update(response).digest('hex'),
+              },
+            });
+          }) as unknown as typeof fetch);
+          for (const viewer of [101, 102, 103])
+            await expect(runAs(viewer)).rejects.toMatchObject(unavailable);
+          expect(written()).toHaveLength(0);
+          // POSITIVE CONTROL: a signed trip on the same row is counted.
+          quarantine(true);
+          await expect(runAs(101)).rejects.toMatchObject(unavailable);
+          expect(written()).toHaveLength(1);
+        });
+
+        it('counts each trip for a day: one 23 h old still counts, one 25 h old no longer does', async () => {
+          vi.useFakeTimers({ toFake: ['Date'] });
+          try {
+            quarantine(true);
+            vi.setSystemTime(new Date('2026-11-20T00:00:00Z'));
+            await expect(runAs(101)).rejects.toMatchObject(unavailable);
+            vi.setSystemTime(new Date('2026-11-20T23:00:00Z'));
+            await expect(runAs(102)).rejects.toMatchObject(unavailable);
+            // 101's trip is 25 h old: 102 and 103 make two, not three.
+            vi.setSystemTime(new Date('2026-11-21T01:00:00Z'));
+            await expect(runAs(103)).rejects.toMatchObject(unavailable);
+            expect(stored.status).toBe('remix');
+            // 102's trip, 2 h old, still counts with 103's.
+            await expect(runAs(104)).rejects.toMatchObject(held);
+          } finally {
+            vi.useRealTimers();
+          }
+        });
+
+        it('an approval starts the count again', async () => {
+          quarantine(true);
+          for (const viewer of [101, 102]) await expect(runAs(viewer)).rejects.toThrow();
+          await expect(runAs(103)).rejects.toMatchObject(held);
+          expect(counted()).toHaveLength(3);
+          const { reviewUserRemixApp, remixReviewHash } = await import(
+            '~/server/services/remix-app-registry.service'
+          );
+          await reviewUserRemixApp({
+            slug: 'u5-mine',
+            sha256: remixReviewHash(stored.manifest as never),
+            seenReview: 'submitted',
+            decision: 'approved',
+            moderatorId: 88,
+          });
+          expect(stored.manifest).not.toHaveProperty('runnerQuarantines');
+        });
+
+        it("a trip on the author's part of the prompt counts as the run's does", async () => {
+          const real = globalThis.fetch;
+          const trip = fakeRemixRunner({
+            secret: SECRET,
+            apps: {},
+            quarantined: { tripped: true },
+          });
+          // The author part replays with the viewer's text answers masked.
+          vi.stubGlobal('fetch', (async (url: string, init: RequestInit) =>
+            (String(init.body).includes('"answer":"___"') ? trip.fetchImpl : real)(
+              url,
+              init
+            )) as unknown as typeof fetch);
+          await expect(runAs(101)).rejects.toMatchObject(unavailable);
+          expect(submits()).toHaveLength(0);
+          expect(counted()).toHaveLength(1);
+        });
+
+        it('pricing a user app counts a trip as a run does, and names the hold', async () => {
+          quarantine(true);
+          const quoteAs = (id: number) =>
+            quoteRemixApps({ imageId: SOURCE_ID, slug: 'u5-mine', caller: flagOn({ id }) });
+          expect(await quoteAs(101)).toEqual({
+            prices: [{ slug: 'u5-mine', refusal: 'Price unavailable' }],
+          });
+          await quoteAs(OTHER_AUTHOR);
+          expect(counted()).toHaveLength(1);
+          await quoteAs(102);
+          expect(await quoteAs(103)).toEqual({
+            prices: [{ slug: 'u5-mine', refusal: REMIX_APP_HELD }],
+          });
+          expect(stored.status).toBe('remix_disabled');
+        });
+
+        it("a quarantine while pricing a choice's options refuses as unavailable, not a server error", async () => {
+          const CHOICE_SOURCE =
+            "export default defineRemixApp({ async run(ctx) { await ctx.ask({ kind: 'choice', prompt: 'Which?', options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }] }); return []; } });";
+          const sha = createHash('sha256').update(CHOICE_SOURCE).digest('hex');
+          const asks = fakeRemixRunner({
+            secret: SECRET,
+            apps: {
+              [sha]: {
+                async run(ctx) {
+                  const options = [
+                    { value: 'a', label: 'A' },
+                    { value: 'b', label: 'B' },
+                  ];
+                  await ctx.ask({ kind: 'choice', prompt: 'Which?', options });
+                  return [];
+                },
+              },
+            },
+          });
+          const tripped = fakeRemixRunner({
+            secret: SECRET,
+            apps: {},
+            quarantined: { tripped: true },
+          });
+          let calls = 0;
+          vi.stubGlobal('fetch', (async (url: string, init: RequestInit) =>
+            (calls++ === 0 ? asks : tripped).fetchImpl(url, init)) as unknown as typeof fetch);
+          stored = rowOf(CHOICE_SOURCE);
+          await bumpRemixAppRegistry();
+          await expect(
+            startRemixRun({
+              slug: 'u5-mine',
+              imageId: SOURCE_ID,
+              nonce: `nonce-choice-${nonce++}`,
+              quote: 30,
+              caller: flagOn({ id: 101 }),
+            })
+          ).rejects.toMatchObject(unavailable);
+          expect(asks.calls).toHaveLength(1);
+          expect(counted()).toHaveLength(1);
+        });
+      });
+
+      it("calls the remix runner's own URL and secret, never the permission-check runner's", async () => {
+        setEnv({
+          REMIX_RUNNER_URL: '',
+          REMIX_RUNNER_SECRET: '',
+          STORAGE_HOOK_RUNNER_URL: 'http://runner',
+          STORAGE_HOOK_RUNNER_SECRET: SECRET,
+        });
+        await expect(runAs(101)).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+        expect(submits()).toHaveLength(0);
+        setEnv({
+          REMIX_RUNNER_URL: 'http://runner',
+          REMIX_RUNNER_SECRET: SECRET,
+          STORAGE_HOOK_RUNNER_URL: '',
+          STORAGE_HOOK_RUNNER_SECRET: '',
+        });
+        // POSITIVE CONTROL: on its own config the same run goes through.
+        await expect(runAs(101)).resolves.toMatchObject({ status: 'running' });
+      });
+
+      it('a mod dry run plays the stored source and names the hash it reviewed', async () => {
+        const { validateUserRemixApp, remixReviewHash } = await import(
+          '~/server/services/remix-app-registry.service'
+        );
+        const result = await validateUserRemixApp('u5-mine');
+        expect(result.sha256).toBe(remixReviewHash(stored.manifest as never));
+        expect(result.issues).toEqual([]);
+        expect(result.graph).toMatchObject({
+          type: 'ask',
+          spec: { prompt: 'Who is it?' },
+          branches: [
+            {
+              next: {
+                type: 'workflow',
+                request: { prompt: expect.stringMatching(/^a portrait of /) },
+              },
+            },
+          ],
+        });
+      });
+
+      it("a mod dry run sends the runner only sizes its log accepts, whatever the app's upscales make", async () => {
+        const BIG_SOURCE =
+          "export default defineRemixApp({ async run(ctx) { const a = await ctx.workflow({ kind: 'upscale', image: { url: ctx.source.url, width: 60000, height: 60000 }, scale: 2 }); const b = await ctx.workflow({ kind: 'upscale', image: a.images[0], scale: 2 }); return b.images; } });";
+        const big: Pick<RemixApp, 'run'> = {
+          async run(ctx) {
+            const a = await ctx.workflow({
+              kind: 'upscale',
+              image: { url: ctx.source.url, width: 60000, height: 60000 },
+              scale: 2,
+            });
+            const b = await ctx.workflow({ kind: 'upscale', image: a.images[0], scale: 2 });
+            return b.images;
+          },
+        };
+        const sha = createHash('sha256').update(BIG_SOURCE).digest('hex');
+        vi.stubGlobal('fetch', fakeRemixRunner({ secret: SECRET, apps: { [sha]: big } }).fetchImpl);
+        stored = rowOf(BIG_SOURCE);
+        await bumpRemixAppRegistry();
+        const { validateUserRemixApp } = await import(
+          '~/server/services/remix-app-registry.service'
+        );
+        const { issues, paths } = await validateUserRemixApp('u5-mine');
+        expect(issues).toEqual([]);
+        expect(paths).toBe(1);
+      });
+
+      it('C: an approval starts the count again', async () => {
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        classify(blocked('external', 'synthetic-other'));
+        for (const viewer of [101, 102, 103])
+          await expect(runAs(viewer)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(stored.manifest).toMatchObject({ review: 'submitted' });
+        expect(blocks()).toHaveLength(3);
+        const { reviewUserRemixApp, remixReviewHash } = await import(
+          '~/server/services/remix-app-registry.service'
+        );
+        await reviewUserRemixApp({
+          slug: 'u5-mine',
+          sha256: remixReviewHash(stored.manifest as never),
+          seenReview: 'submitted',
+          decision: 'approved',
+          moderatorId: 88,
+        });
+        expect(stored.manifest).not.toHaveProperty('combinationBlocks');
+      });
+    });
+  });
+
   it('is absent from start with its flag off, and refuses to run in-process with it on', async () => {
     serve(userRow());
     await expect(startMine(caller())).rejects.toMatchObject({ code: 'NOT_FOUND' });
@@ -1642,24 +2496,49 @@ describe('a user app', () => {
     });
   });
 
-  it('stops its runs at the next step once it is disabled, except for its author or a mod', async () => {
+  it('stops its runs at the next step once it is disabled, except for a mod, or its author while it waits on review', async () => {
     const runId = await runOfMine(flagOn());
     serve(userRow('remix_disabled', OTHER_AUTHOR));
     await expect(advanceRemixRun({ runId, caller: flagOn() })).rejects.toMatchObject({
       code: 'PRECONDITION_FAILED',
       message: 'This app is no longer available',
     });
-    // A mod's run, and the author's own, get past the gate to the replay (which no runner serves yet).
+    // A mod's run, and the author's own of an app in review, get past the gate to the replay (which no runner serves yet).
     await expect(
       advanceRemixRun({ runId, caller: flagOn({ isModerator: true }) })
     ).rejects.toMatchObject({
       code: 'SERVICE_UNAVAILABLE',
     });
     const own = await runOfMine(flagOn(), USER_ID);
-    serve(userRow('remix_disabled', USER_ID));
+    const inReview = userRow('remix_disabled', USER_ID);
+    inReview.manifest.review = 'submitted';
+    serve(inReview);
+    await bumpRemixAppRegistry();
     await expect(advanceRemixRun({ runId: own, caller: flagOn() })).rejects.toMatchObject({
       code: 'SERVICE_UNAVAILABLE',
     });
+    // A mod's disable of an approved app stops its author's runs too.
+    serve(userRow('remix_disabled', USER_ID));
+    await bumpRemixAppRegistry();
+    await expect(advanceRemixRun({ runId: own, caller: flagOn() })).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+    });
+  });
+
+  it("stops its author's own runs once it is rejected, but not a mod's", async () => {
+    const own = await runOfMine(flagOn(), USER_ID);
+    const rejected = userRow('remix_disabled', USER_ID);
+    rejected.manifest.review = 'rejected';
+    serve(rejected);
+    await bumpRemixAppRegistry();
+    await expect(advanceRemixRun({ runId: own, caller: flagOn() })).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: 'This app is no longer available',
+    });
+    // POSITIVE CONTROL: a mod's run gets past the gate to the replay (which no runner serves).
+    await expect(
+      advanceRemixRun({ runId: own, caller: flagOn({ isModerator: true }) })
+    ).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
   });
 
   it('never replays a run recorded on another shape of the app, or on none', async () => {

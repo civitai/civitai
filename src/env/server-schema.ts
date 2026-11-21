@@ -822,6 +822,10 @@ export const serverSchema = z
     // 🔴 The value stays in the environment deliberately rather than defaulting here: the
     // mapping is content-safety policy and this repo is public (CLAUDE.md → Security).
     EXTERNAL_MODERATION_CATEGORIES: commaDelimitedStringObject().optional(),
+    // The mapped categories above whose block of a user remix app's run takes the app out of
+    // menus at once, not on the third viewer. Unset: every block does (fails closed). Policy, so
+    // kept in the environment like the map.
+    REMIX_FIRST_STRIKE_CATEGORIES: commaDelimitedStringArray().optional(),
     // Only consulted when EXTERNAL_MODERATION_CATEGORIES is unset; in category mode
     // membership decides and the score is never read.
     EXTERNAL_MODERATION_THRESHOLD: z.coerce.number().optional().default(0.5),
@@ -1358,6 +1362,17 @@ export const serverSchema = z
       .string()
       .refine((value) => value.trim() === '' || value.trim().length >= 32, {
         message: 'STORAGE_HOOK_RUNNER_SECRET must be at least 32 characters',
+      })
+      .optional(),
+    // Remix user apps: the same runner image started in remix mode, a pool of its own so author
+    // code never shares the permission-check workers, with a secret of its own. Base URL (the
+    // client posts to `<url>/v1/remix/replay`) and HMAC secret, as above. Unset or blank, every
+    // user remix app is unavailable.
+    REMIX_RUNNER_URL: z.union([z.url(), z.literal('')]).optional(),
+    REMIX_RUNNER_SECRET: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'REMIX_RUNNER_SECRET must be at least 32 characters',
       })
       .optional(),
     // How long a run grant lasts: the runner's wall clock per run (2 h) plus a margin.

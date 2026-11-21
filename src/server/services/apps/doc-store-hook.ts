@@ -237,35 +237,33 @@ function readResult(result: unknown): HookVerdict {
 }
 
 /**
- * One signed `POST /v1/check`. Never throws: every failure is `unavailable`. A response counts
+ * One signed POST to the runner. Never throws: every failure is `unavailable`. A response counts
  * only when its signature verifies over the exact body bytes, its `req` is the sha256 of the
- * exact request body sent, and its `ts` is within the skew window; a non-2xx answer is a runner
- * fault whatever it says (a 500 includes the backstop terminating a hook that outran its
- * interrupt), so it is `unavailable` without being read.
+ * exact request body sent, and its `ts` is within the skew window. Any other status is a runner
+ * fault whatever it says, `unavailable` without being read, unless the caller names it in
+ * `alsoStatuses`: never do that for `/v1/check`, where it would turn a fault into a verdict.
  */
-export async function callHookRunner(
+export async function postToHookRunner(
   config: HookRunnerConfig | null,
-  call: HookRunnerCall,
-  opts: { nowSec?: () => number; fetchImpl?: typeof fetch } = {}
-): Promise<HookVerdict> {
+  path: '/v1/check' | '/v1/remix/replay',
+  payload: Record<string, unknown>,
+  clientTimeoutMs: number,
+  opts: {
+    nowSec?: () => number;
+    fetchImpl?: typeof fetch;
+    /** Other statuses whose signed body the caller reads (a refusal it acts on). */
+    alsoStatuses?: readonly number[];
+  } = {}
+): Promise<{ kind: 'ok'; body: Record<string, unknown> } | { kind: 'unavailable'; why: string }> {
   if (!config) return { kind: 'unavailable', why: 'runner not configured' };
   const nowSec = opts.nowSec ?? (() => Math.floor(Date.now() / 1000));
-  const body = JSON.stringify({
-    ts: nowSec(),
-    appId: call.appId,
-    collection: call.collection,
-    op: call.op,
-    sha256: call.sha256,
-    source: call.source,
-    timeoutMs: clampHookTimeoutMs(call.timeoutMs),
-    input: call.input,
-  });
+  const body = JSON.stringify({ ts: nowSec(), ...payload });
   const reqDigest = sha256Hex(Buffer.from(body, 'utf8'));
   let status: number;
   let raw: Buffer;
   let sig: string | null;
   try {
-    const res = await (opts.fetchImpl ?? fetch)(`${config.url}/v1/check`, {
+    const res = await (opts.fetchImpl ?? fetch)(`${config.url}${path}`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -275,7 +273,7 @@ export async function callHookRunner(
       // The repo's outbound deadline (`fetch-timeout.ts`). With its off-switch thrown the call has
       // no deadline of ours: a black-holed runner then waits for the HTTP client's own header
       // timeout, and that error is still `unavailable` below. Slower, never open.
-      signal: fetchTimeoutSignal(hookClientTimeoutMs(call.timeoutMs)),
+      signal: fetchTimeoutSignal(clientTimeoutMs),
     });
     status = res.status;
     sig = res.headers.get(HOOK_RUNNER_SIG_HEADER);
@@ -284,7 +282,8 @@ export async function callHookRunner(
     const name = err instanceof Error ? err.name : typeof err;
     return { kind: 'unavailable', why: name === 'TimeoutError' ? 'timeout' : `transport ${name}` };
   }
-  if (status !== 200) return { kind: 'unavailable', why: `status ${status}` };
+  if (status !== 200 && !opts.alsoStatuses?.includes(status))
+    return { kind: 'unavailable', why: `status ${status}` };
   if (!signatureMatches(config.secret, raw, sig)) {
     return { kind: 'unavailable', why: 'bad response signature' };
   }
@@ -304,7 +303,31 @@ export async function callHookRunner(
   ) {
     return { kind: 'unavailable', why: 'stale response' };
   }
-  return readResult(parsed.result);
+  return { kind: 'ok', body: parsed };
+}
+
+/** One signed `POST /v1/check`. Never throws: every failure is `unavailable`. */
+export async function callHookRunner(
+  config: HookRunnerConfig | null,
+  call: HookRunnerCall,
+  opts: { nowSec?: () => number; fetchImpl?: typeof fetch } = {}
+): Promise<HookVerdict> {
+  const answer = await postToHookRunner(
+    config,
+    '/v1/check',
+    {
+      appId: call.appId,
+      collection: call.collection,
+      op: call.op,
+      sha256: call.sha256,
+      source: call.source,
+      timeoutMs: clampHookTimeoutMs(call.timeoutMs),
+      input: call.input,
+    },
+    hookClientTimeoutMs(call.timeoutMs),
+    opts
+  );
+  return answer.kind === 'ok' ? readResult(answer.body.result) : answer;
 }
 
 // ---------------------------------------------------------------------------
