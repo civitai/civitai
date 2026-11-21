@@ -4,11 +4,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   __resetProfileRouteLabelsForTests,
   apiProfileRoute,
-  ROUTE_BUDGET,
   type PprofTime,
   startWallProfilingWithAsyncContext,
   withProfileRoute,
 } from '~/server/pyroscope-labels';
+import { ROUTE_BUDGET } from '~/server/route-label-budget';
 
 // `withProfileRoute` + its arming against a FAKE `@datadog/pprof` `time`. The fake's
 // runWithContext is a real AsyncLocalStorage, the same mechanism pprof uses in async-context
@@ -203,13 +203,9 @@ describe('withProfileRoute when armed', () => {
     expect(first).toBe(second);
   });
 
-  it('budgets each kind separately', () => {
-    expect(ROUTE_BUDGET).toEqual({ trpc: 1000, api: 400 });
-  });
-
   it('exhausting the api budget leaves tRPC labels intact', () => {
     const time = arm();
-    for (let i = 0; i < 400; i++) withProfileRoute(`api:GET /api/v1/r${i}`, () => 1);
+    for (let i = 0; i < ROUTE_BUDGET.api; i++) withProfileRoute(`api:GET /api/v1/r${i}`, () => 1);
     expect(withProfileRoute('api:GET /api/v1/r0', () => labelsOf(time))).toEqual({
       route: 'api:GET /api/v1/r0',
     });
@@ -223,7 +219,7 @@ describe('withProfileRoute when armed', () => {
 
   it('past the tRPC budget new procedures share trpc:<overflow>, api routes unaffected', () => {
     const time = arm();
-    for (let i = 0; i < 1000; i++) withProfileRoute(`trpc:r.${i}`, () => 1);
+    for (let i = 0; i < ROUTE_BUDGET.trpc; i++) withProfileRoute(`trpc:r.${i}`, () => 1);
     expect(withProfileRoute('trpc:r.0', () => labelsOf(time))).toEqual({ route: 'trpc:r.0' });
     expect(withProfileRoute('trpc:new.one', () => labelsOf(time))).toEqual({
       route: 'trpc:<overflow>',

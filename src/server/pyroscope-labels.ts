@@ -16,15 +16,15 @@
 //
 // 🔴 State lives on globalThis: Turbopack inlines a server module into many runtime modules, so
 // the copy `registerPyroscope` arms is not the copy the request wrappers call. A `Symbol.for`
-// key resolves to one slot for every copy. Imports nothing, so any server module can reach it.
+// key resolves to one slot for every copy. Imports only a constants module, so any server
+// module can reach it.
+
+import { ROUTE_BUDGET, type RouteKind } from '~/server/route-label-budget';
 
 /** The Pyroscope arm flag, read once at module load. The one definition; pyroscope.ts re-exports it. */
 export const pyroscopeArmed = process.env.PYROSCOPE_ENABLED === 'true';
 
 export const PROFILE_ROUTE_LABEL = 'route';
-/** Distinct label values per kind per process, sized like http-errors.ts's ROUTE_BUDGET. */
-export const ROUTE_BUDGET = { trpc: 1000, api: 400 } as const;
-type RouteKind = keyof typeof ROUTE_BUDGET;
 export const overflowRoute = (kind: RouteKind) => `${kind}:<overflow>`;
 const kindOf = (route: string): RouteKind => (route.startsWith('api:') ? 'api' : 'trpc');
 
