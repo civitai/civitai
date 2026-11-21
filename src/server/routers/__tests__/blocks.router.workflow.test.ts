@@ -6584,6 +6584,39 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       });
     });
 
+    // The check runs as the viewer (`user:42`): version rows are Private, owned by `ownerId`.
+    it.each([
+      ['refuses', 43],
+      ['allows', 42],
+    ])('%s a pinned file on a Private version owned by user %d', async (verdict, ownerId) => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+        where: { id: { in: number[] } };
+      }) =>
+        args.where.id.in.map((id) => ({
+          id,
+          status: 'Published',
+          availability: 'Private',
+          model: { userId: ownerId },
+          baseModel: 'ZImageTurbo',
+        }))) as never);
+      const run = caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ccBody(),
+        idempotencyKey: 'cc-key',
+      });
+      if (verdict === 'refuses') {
+        await expect(run).rejects.toThrow(/is not available for generation/);
+        expect(mockReserveAppSpend).not.toHaveBeenCalled();
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      } else {
+        await run;
+        expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      }
+    });
+
     it('refuses a pinned file on a base model no app may use, before any spend', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       happyCcResources();

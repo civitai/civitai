@@ -495,6 +495,38 @@ describe('the resources a pass-through step names', () => {
     await expect(run()).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
+
+  // The check runs as the viewer: version 30 is Private, owned by `ownerId`.
+  const privateTo = (ownerId: number) =>
+    dbMock.dbRead.modelVersion.findMany.mockImplementation((async () => [
+      {
+        id: 30,
+        status: 'Published',
+        availability: 'Private',
+        model: { userId: ownerId },
+        baseModel: 'SDXL 1.0',
+      },
+    ]) as never);
+  const PRIVATE = { ...NAMED, model: 'urn:air:sdxl:checkpoint:civitai:1@30' };
+
+  it.each([
+    ['estimate', () => estimate(body({ input: PRIVATE }))],
+    ['submit', () => submit(body({ input: PRIVATE }))],
+    ['confirmed submit', () => submit(body({ input: PRIVATE, quoteId: SEEDED }))],
+  ])("%s refuses another user's Private version", async (_, run) => {
+    privateTo(VIEWER + 1);
+    await expect(run()).rejects.toThrow('model version 30 is not available for generation');
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an unconfirmed', unconfirmed],
+    ['a confirmed', confirmed],
+  ])("lets %s submit use the viewer's own Private version", async (_, run) => {
+    privateTo(VIEWER);
+    await run(PRIVATE);
+    expect(realSubmits()).toHaveLength(1);
+  });
 });
 
 describe('ESTIMATE — grants a confirmable quote only for a fixed price above the budget', () => {

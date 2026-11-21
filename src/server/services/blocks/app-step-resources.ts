@@ -125,9 +125,8 @@ export async function checkAppStepResources(
   const missing = versionIds.find((id) => !found.has(id));
   if (missing !== undefined) refuse(`model version ${missing} is not available for generation`);
 
-  // 🔴 No moderator exemption: the app's code names these resources, not the viewer, so a
-  // moderator's rights must not reach a third-party or pending app. Refused in the same words as a
-  // missing version.
+  // 🔴 No isModerator: the app's code names these resources, not the viewer, so a moderator's
+  // rights must not reach a third-party or pending app.
   const denied = versions.find(
     (v) => !canAccessGenerationResource({ ...v, modelUserId: v.model.userId }, { id: viewerId })
   );
