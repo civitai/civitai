@@ -31,6 +31,10 @@ export const TOKEN_EXCHANGE_GRANT = 'urn:ietf:params:oauth:grant-type:token-exch
 export const DEVICE_CODE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
 export const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
 export const DEVICE_ID_TOKEN_TYPE = 'urn:civitai:token-type:device-id';
+/** An App Block token (the site's RS256 block JWT) as `subject_token`, for the block token exchange. */
+export const BLOCK_TOKEN_TYPE = 'urn:civitai:token-type:block-token';
+/** The most a token minted by the block token exchange lives; never past the block token it came from. */
+export const BLOCK_EXCHANGE_TOKEN_MAX_TTL = 15 * 60; // 15 minutes
 export const JWT_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:jwt';
 /** The only grant a service client holds: it gets resource tokens from the token route, nothing else. */
 export const SERVICE_GRANT = 'urn:civitai:grant:service';

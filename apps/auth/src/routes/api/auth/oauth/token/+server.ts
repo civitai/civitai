@@ -18,6 +18,7 @@ import { OriginNotAllowedError } from '$lib/server/oauth/errors';
 import {
   ACCESS_TOKEN_TTL,
   ACCESS_TOKEN_TYPE,
+  BLOCK_TOKEN_TYPE,
   DEVICE_CODE_GRANT,
   TOKEN_EXCHANGE_GRANT,
   WORKER_TOKEN_TTL,
@@ -31,6 +32,7 @@ import { hasScope, parseScopeRequest, stringToScope } from '$lib/server/oauth/sc
 import { deviceTokenGrant } from '$lib/server/oauth/device-token';
 import { handleUserTokenExchange } from '$lib/server/oauth/user-exchange';
 import { handleClientTokenExchange } from '$lib/server/oauth/client-exchange';
+import { handleBlockTokenExchange } from '$lib/server/oauth/block-exchange';
 import { handleServiceToken, serviceTokenClient } from '$lib/server/oauth/service-token';
 import {
   parseBody,
@@ -48,7 +50,8 @@ import {
 
 // POST /api/auth/oauth/token — authorization_code + refresh_token (+ client_credentials) grants, the
 // worker token-exchange grant (lib/server/oauth/worker-grant.ts), the user token exchange
-// (lib/server/oauth/user-exchange.ts) and service tokens (lib/server/oauth/service-token.ts).
+// (lib/server/oauth/user-exchange.ts), the block token exchange (lib/server/oauth/block-exchange.ts) and
+// service tokens (lib/server/oauth/service-token.ts).
 // Ported from src/pages/api/auth/oauth/token.ts.
 //
 // OIDC id_token signer: undefined unless the hub ES256 keys are set (they always are when sessions
@@ -125,6 +128,12 @@ export const POST: RequestHandler = async ({ request }) => {
       return handleClientTokenExchange({ request, body, resources, clientIp, formEncoded });
     }
     return handleUserTokenExchange({ request, body, resources, clientIp, formEncoded });
+  }
+  // An App Block token exchanged for an opaque AppDataRead registry token (block-exchange.ts). Dark unless
+  // OAUTH_BLOCK_EXCHANGE_CALLERS lists the caller; never the worker grant.
+  if (body.grant_type === TOKEN_EXCHANGE_GRANT && body.subject_token_type === BLOCK_TOKEN_TYPE) {
+    const resources = await formResources();
+    return handleBlockTokenExchange({ request, body, resources, clientIp, formEncoded });
   }
 
   // client_credentials with a `resource` from an authenticated service client is a service token under its
