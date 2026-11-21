@@ -194,16 +194,16 @@ describe('the sticker timeline', () => {
           clientY: y,
         })
       );
-    // Each move goes to the diamond on screen now, as pointer capture would deliver it.
-    const diamond = () => bar.querySelector('[data-key-index="0"]')!;
+    // Pointer capture sends every move to the element that was grabbed.
+    const grabbed = bar.querySelector('[data-key-index="0"]')!;
 
-    send('pointerdown', diamond(), at(0));
+    send('pointerdown', grabbed, at(0));
     for (const fraction of [0.1, 0.2, 0.3, 0.4]) {
-      send('pointermove', diamond(), at(fraction));
+      send('pointermove', grabbed, at(fraction));
       // Lets React render the retimed key before the next move, as a real drag does.
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    send('pointerup', diamond(), at(0.4));
+    send('pointerup', grabbed, at(0.4));
 
     await expect.poll(() => selected().motion?.keys.map((key) => key.t)).toEqual([4000]);
   });
