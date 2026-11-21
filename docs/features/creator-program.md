@@ -138,7 +138,7 @@ getBanked(userId)        → { ...getBankedBalance, bankable: BankableAmount | n
 | Gold    | No fixed limit | 1.5x                    |
 
 - Minimum cap: 100,000 for all tiers
-- Silver/Gold caps scale with peak monthly earnings over a 12-month rolling window. Peak earnings count license fees, paid/early access, tips one user paid another (`USER_TIP_SQL`: not from account 0, not to self) and generation tips (`GENERATION_TIP_SQL`) (`PEAK_EARNING_PREDICATE_SQL`). Tips a creator pays out are netted from their bankable amount, not from the peak; Buzz a user paid the creator still counts toward a month only beyond what the creator sent that user in the window, tips included. Until `BANKABLE_CUTOVER` they also count generation compensation (`PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL`); from it, compensation is excluded for every month in the window. Pool forecasts and `earnedCache` in `buzz.service.ts` still count compensation
+- Silver/Gold caps scale with peak monthly earnings over a 12-month rolling window. Peak earnings count license fees, paid/early access, tips one user paid another (`USER_TIP_SQL`: not from account 0, not to self) and generation tips (`GENERATION_TIP_SQL`) (`PEAK_EARNING_PREDICATE_SQL`). Tips a creator pays out are netted from their bankable amount, not from the peak; Buzz a user paid the creator still counts toward a month only beyond what the creator sent that user in the window, tips included. Until `BANKABLE_CUTOVER` they also count generation compensation (`PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL`); from it, compensation is excluded for every month in the window. `earnedCache` in `buzz.service.ts` still counts compensation
 - The highest tier across all active subscriptions is used
 
 **Relevant code:** `createUserCapCache()` in the service queries `CustomerSubscription` joined with `Product.metadata.tier`.
@@ -262,7 +262,7 @@ Used for:
 - Peak earnings calculation (license fees, early access, tips)
 - Bankable amount (cutover balance, bankable earnings, banked and extracted since the cutover)
 - Pool value calculation (purchases, redeemable codes)
-- Pool forecast (projected earnings)
+- Pool forecast (last month's net banked pool, floored at what is banked this month)
 - Pool participants (bank/extract transactions)
 
 ### PostgreSQL
@@ -375,6 +375,5 @@ Shared utility tests: `src/shared/utils/__tests__/creator-program.utils.test.ts`
 | ------------------------------- | ------------------------------------------------ |
 | `CREATOR_POOL_TAXES`            | Tax percentage to deduct from gross revenue      |
 | `CREATOR_POOL_PORTION`          | Percentage of post-tax revenue allocated to pool |
-| `CREATOR_POOL_FORECAST_PORTION` | Percentage for forecasted pool size              |
 | `TIPALTI_API_URL`               | Tipalti API base URL                             |
 | `TIPALTI_*`                     | Various Tipalti auth credentials                 |
