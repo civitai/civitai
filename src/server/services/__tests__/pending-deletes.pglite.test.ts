@@ -48,7 +48,8 @@ afterAll(() => pg.close());
 
 beforeEach(async () => {
   await pg.exec(`TRUNCATE "JobQueue", "Image", "Post", "Report", "ImageReport", "PostReport",
-    "CsamReport", "CsamQueueSetAside", "ImageConnection"`);
+    "CsamReport", "CsamQueueSetAside", "ImageConnection", "ServiceDealReviewImage",
+    "ServiceDealReviewReport"`);
   await pg.exec(`INSERT INTO "Image" (id, "userId") VALUES (${PLAIN}, ${OWNER})`);
 });
 
@@ -128,6 +129,19 @@ describe('childSafetyImageCase', () => {
         await pg.exec(`INSERT INTO "PostReport" VALUES (50, 1)`);
       },
     ],
+    // A child-safety report on a service review holds the delete of the images attached to it.
+    [
+      'attached to a service review reported as a minor',
+      async () => {
+        await addImage();
+        await report(
+          1,
+          `reason = 'TOSViolation', details = '{"violation": "Photorealistic depiction of a minor"}'`
+        );
+        await pg.exec(`INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId") VALUES (9, ${IMAGE});
+          INSERT INTO "ServiceDealReviewReport" ("reportId", "serviceDealReviewId") VALUES (1, 9)`);
+      },
+    ],
   ])('holds an image %s', async (_, setup) => {
     await setup();
 
@@ -186,6 +200,16 @@ describe('childSafetyImageCase', () => {
         await pg.exec(`INSERT INTO "PostReport" VALUES (50, 1)`);
       },
     ],
+    [
+      'attached to a service review whose CSAM report was ruled on, or reported only as spam',
+      async () => {
+        await addImage();
+        await report(1, `reason = 'CSAM', status = 'Actioned'`);
+        await report(2, `reason = 'Spam'`);
+        await pg.exec(`INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId") VALUES (9, ${IMAGE});
+          INSERT INTO "ServiceDealReviewReport" ("reportId", "serviceDealReviewId") VALUES (1, 9), (2, 9)`);
+      },
+    ],
   ])('releases an image %s', async (_, setup) => {
     await setup();
     // Sent but unverified: still blocked.
@@ -241,6 +265,25 @@ describe("deleteImageRows' pending option", () => {
     const deleted = await ownDelete([PLAIN, IMAGE]);
 
     expect(deleted.map((row) => row.id)).toEqual([PLAIN]);
+    expect(await pending()).toEqual([
+      { entityId: IMAGE, entityType: 'Image', data: { ownerId: OWNER } },
+    ]);
+  });
+
+  // What a moderator's CSAM hold on a service review leaves: its images flagged for CSAM review, and
+  // the report ruled on. The flag, not the report, holds the buyer's delete.
+  it('defers the delete of a review image a CSAM hold flagged, after the report is ruled on', async () => {
+    const UNFLAGGED = 3;
+    await addImage({ needsReview: 'csam' });
+    await addImage({ id: UNFLAGGED });
+    await report(1, `reason = 'CSAM', status = 'Actioned'`);
+    await pg.exec(`INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId")
+        VALUES (9, ${IMAGE}), (9, ${UNFLAGGED});
+      INSERT INTO "ServiceDealReviewReport" ("reportId", "serviceDealReviewId") VALUES (1, 9)`);
+
+    const deleted = await ownDelete([IMAGE, UNFLAGGED]);
+
+    expect(deleted.map((row) => row.id)).toEqual([UNFLAGGED]);
     expect(await pending()).toEqual([
       { entityId: IMAGE, entityType: 'Image', data: { ownerId: OWNER } },
     ]);

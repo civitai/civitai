@@ -76,7 +76,7 @@
       <span class="text-xs text-dark-3">· all-time{hotRankNote} · click a column to sort</span>
     </p>
 
-    {#snippet sortHead(key: string, label: string, hint?: string)}
+    {#snippet sortHead(key: string, label: string, hint: string | undefined = undefined)}
       {@const active = sortKey === key}
       <Table.Head class="text-right {active ? 'bg-dark-5/40' : ''}">
         <button
