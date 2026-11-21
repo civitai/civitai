@@ -335,16 +335,29 @@ check(
   const DEFAULT = resolve(PRIMARY, '..', 'worktrees');
   const scratch = mkdtempSync(join(tmpdir(), 'wt-root-'));
   const envFile = join(scratch, '.env');
-  const elsewhere = resolve('D:' + sep, 'wt');
+  const elsewhere = join(scratch, 'wt');
   try {
     check('unset: the sibling worktrees dir, as before', worktreesRootOf(PRIMARY, {}, NO_FILE), DEFAULT);
-    check('process env overrides', worktreesRootOf(PRIMARY, { WORKTREE_ROOT: 'D:/wt' }, NO_FILE), elsewhere);
+    check('process env overrides', worktreesRootOf(PRIMARY, { WORKTREE_ROOT: elsewhere }, NO_FILE), elsewhere);
     check('empty process env means default', worktreesRootOf(PRIMARY, { WORKTREE_ROOT: '' }, NO_FILE), DEFAULT);
-    writeFileSync(envFile, '# a comment\nWORKTREE_ROOT="D:/wt"  # kept off C:\nOTHER=1\n');
+    writeFileSync(envFile, `# a comment\nWORKTREE_ROOT="${elsewhere}"  # kept off C:\nOTHER=1\n`);
     check('the skill .env sets it, quotes and trailing comment stripped', worktreesRootOf(PRIMARY, {}, envFile), elsewhere);
     check('process env beats the file', worktreesRootOf(PRIMARY, { WORKTREE_ROOT: '' }, envFile), DEFAULT);
-    writeFileSync(envFile, '# WORKTREE_ROOT=D:/wt\n');
+    writeFileSync(envFile, `# WORKTREE_ROOT=${elsewhere}\n`);
     check('a commented-out line is not a setting', worktreesRootOf(PRIMARY, {}, envFile), DEFAULT);
+    const spaced = join(scratch, 'my #dir');
+    check('a quoted value keeps a # inside it', worktreesRootOf(PRIMARY, { WORKTREE_ROOT: `"${spaced}"` }, NO_FILE), spaced);
+    writeFileSync(envFile, `export WORKTREE_ROOT='${spaced}'\n`);
+    check('export prefix and single quotes in the file', worktreesRootOf(PRIMARY, {}, envFile), spaced);
+    writeFileSync(envFile, `WORKTREE_ROOT=${join(scratch, 'first')}\nWORKTREE_ROOT=${elsewhere}\n`);
+    check('with two settings the last wins', worktreesRootOf(PRIMARY, {}, envFile), elsewhere);
+    let nested = null;
+    try {
+      worktreesRootOf(PRIMARY, { WORKTREE_ROOT: join(PRIMARY, 'wt') }, NO_FILE);
+    } catch (e) {
+      nested = e.message;
+    }
+    check('a root inside the primary checkout is refused', nested, `WORKTREE_ROOT must be outside the primary checkout: ${join(PRIMARY, 'wt')}`);
     let message = null;
     try {
       worktreesRootOf(PRIMARY, { WORKTREE_ROOT: 'wt' }, NO_FILE);

@@ -315,6 +315,7 @@ try {
   check('WORKTREE_ROOT: the old-root tree is still listed', listed.includes(tree.replace(/\\/g, '/')), true);
   const relative = run(primary, 'rel', 'feat/rel', undefined, 'not/absolute');
   check('WORKTREE_ROOT: a relative path refuses', relative.code, 1);
+  check('WORKTREE_ROOT: and says why', relative.out.includes('WORKTREE_ROOT must be an absolute path'), true);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
