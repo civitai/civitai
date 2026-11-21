@@ -62,12 +62,6 @@ const archivedBeforeClear = async () => {
   return archive.mock.calls.length === 1 && archive.mock.invocationCallOrder[0] < cleared;
 };
 
-const banNote = (detailsInternal: string) =>
-  pg.query(`INSERT INTO "User" (id, meta) VALUES ($1, $2)`, [
-    USER,
-    JSON.stringify({ banDetails: { detailsInternal } }),
-  ]);
-
 describe('archiveProfileBeforeModeratorChange report match', () => {
   it('archives the subject of a report', async () => {
     await pg.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [USER]);
@@ -130,27 +124,19 @@ describe('archiveProfileBeforeModeratorChange report match', () => {
     expect(await archivedBeforeClear()).toBe(true);
   });
 
-  it('archives a user whose only mark is an internal ban note naming NCMEC, in any case', async () => {
-    await banNote('Sent to Ncmec by the review team');
-    expect(await archived()).toBe(true);
-  });
-
-  it('archives before a moderator clear of a user whose only mark is a ban note naming CSAM', async () => {
-    await banNote('csam upload, see report');
-    expect(await archivedBeforeClear()).toBe(true);
-  });
-
-  it('archives a user whose only mark is an external ban note naming CSAM', async () => {
+  // A ban note alone is not a hold or a CSAM signal: only a report or a hold archives.
+  it.each([
+    ['an internal ban note naming NCMEC', { detailsInternal: 'Sent to Ncmec by the review team' }],
+    ['an internal ban note naming CSAM', { detailsInternal: 'csam upload, see report' }],
+    ['an external ban note naming CSAM', { detailsInternal: 'tos', detailsExternal: 'CSAM' }],
+    ['a ban note naming neither', { detailsInternal: 'spam links in bio' }],
+  ])('archives nothing for a user whose only mark is %s', async (_, banDetails) => {
     await pg.query(`INSERT INTO "User" (id, meta) VALUES ($1, $2)`, [
       USER,
-      JSON.stringify({ banDetails: { detailsInternal: 'tos', detailsExternal: 'CSAM' } }),
+      JSON.stringify({ banDetails }),
     ]);
-    expect(await archived()).toBe(true);
-  });
-
-  it('archives nothing for a user whose ban note names neither', async () => {
-    await banNote('spam links in bio');
     expect(await archived()).toBe(false);
+    expect(await archivedBeforeClear()).toBe(false);
   });
 
   it('archives nothing for a user only other reports name', async () => {

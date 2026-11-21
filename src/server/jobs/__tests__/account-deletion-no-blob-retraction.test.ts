@@ -166,8 +166,6 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   // remove-blocked-images: users under a legal hold. None in this fixture.
   if (sql.includes('FROM "CsamReport"')) return [];
 
-  // remove-blocked-images: queued images a ban-note hold keeps. None in this fixture.
-  if (sql.includes('FROM "JobQueue" j') && sql.includes('"ModActivity" bnr')) return [];
   // remove-deleted-user-images: the per-account hold re-read. No hold in this fixture.
   if (sql.includes('AS skip')) return [{ skip: false, accountHeld: false }];
 

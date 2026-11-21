@@ -112,7 +112,7 @@ async function isStillMarkedForDeletion(userId: number) {
   return row.stillDeleted;
 }
 
-/** Every hold on the account, an unreleased CSAM/NCMEC ban note, or the placeholder owner. */
+/** Every hold on the account, or the placeholder owner. */
 const accountHeldSql = (id: Prisma.Sql, markerView: boolean) =>
   Prisma.sql`(${id} = ${PLACEHOLDER_OWNER_ID} OR ${contentRemovalHeldSql(id, markerView)})`;
 

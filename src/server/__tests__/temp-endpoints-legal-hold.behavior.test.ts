@@ -66,7 +66,7 @@ import '~/__tests__/mocks/logging.mock';
 const OWNER = 1;
 const HELD = 2; // named on a pending report
 const MARKED = 3; // held by a hold marker
-const BAN_NOTE = 6; // banned with a note naming CSAM, no account hold
+const BAN_NOTE = 6; // banned with a note naming CSAM, no account hold: not held
 
 let db: PGlite;
 const run = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) => {
@@ -179,15 +179,19 @@ describe('reset-training-model', () => {
     expect(mockLeavingPrivate.mock.calls[0]).toEqual([tx, 5]);
   });
 
-  it.each([HELD, MARKED, BAN_NOTE])(
-    "leaves a held owner's post and image (owner %i)",
-    async (owner) => {
-      await seed(owner);
-      await call();
-      expect(await left('Post')).toEqual([10]);
-      expect(await left('Image')).toEqual([20]);
-    }
-  );
+  it('deletes the post and image of an owner banned with a CSAM note and no hold', async () => {
+    await seed(BAN_NOTE);
+    await call();
+    expect(await left('Post')).toEqual([]);
+    expect(await left('Image')).toEqual([]);
+  });
+
+  it.each([HELD, MARKED])("leaves a held owner's post and image (owner %i)", async (owner) => {
+    await seed(owner);
+    await call();
+    expect(await left('Post')).toEqual([10]);
+    expect(await left('Image')).toEqual([20]);
+  });
 });
 
 describe('migrate-article-images rollback', () => {
@@ -211,7 +215,14 @@ describe('migrate-article-images rollback', () => {
     expect(await tags()).toBe(0);
   });
 
-  it.each([HELD, MARKED, BAN_NOTE])(
+  it('deletes the article-only image of an owner banned with a CSAM note and no hold', async () => {
+    await seed(BAN_NOTE);
+    await call();
+    expect(await left('Image')).toEqual([]);
+    expect(await tags()).toBe(0);
+  });
+
+  it.each([HELD, MARKED])(
     "leaves a held owner's article-only image, and its tags (owner %i)",
     async (owner) => {
       await seed(owner);

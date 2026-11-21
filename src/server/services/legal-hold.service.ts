@@ -2,7 +2,6 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { banNoteHoldSql } from '~/server/services/ban-note-csam';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import {
@@ -471,49 +470,19 @@ export async function getAccountLegalHoldLegs(userId: number): Promise<AccountHo
 }
 
 /**
- * Whether content owned by `id` (an int SQL expression) must not be removed: any account hold, or a
- * ban whose note names CSAM or NCMEC that no moderator has released. For every path that deletes a
- * user's media or content. Account deletion itself is not refused on the ban-note leg, so it is kept
- * out of `accountHoldSql`.
+ * Whether content owned by `id` (an int SQL expression) must not be removed: any account hold. For
+ * every path that deletes a user's media or content. A ban note alone is not a hold.
  */
 export function contentRemovalHeldSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
-  return Prisma.sql`(${accountHoldSql(id, markerView)} OR ${banNoteHoldSql(id)})`;
+  return accountHoldSql(id, markerView);
 }
 
-/**
- * `assertAccountNotUnderLegalHold`, plus the ban-note leg of `contentRemovalHeldSql`: throws
- * `LegalHoldError` when either holds, and `LegalHoldUnconfirmedError` (also a `LegalHoldError`) when
- * either cannot be read. For an immediate removal of a user's content.
- */
-export async function assertContentRemovalNotHeld(
+/** `assertAccountNotUnderLegalHold`, for an immediate removal of a user's content. */
+export function assertContentRemovalNotHeld(
   userId: number,
   refused = 'Content removal refused'
 ): Promise<Pick<AccountLegalHold, 'markerView'>> {
-  const hold = await assertAccountNotUnderLegalHold(userId, refused);
-  let row: { banNoteHeld: boolean | null } | undefined;
-  try {
-    // primary: a ban placed a moment ago must stop this removal.
-    [row] = await dbWrite.$queryRaw<{ banNoteHeld: boolean | null }[]>`
-      SELECT ${banNoteHoldSql(Prisma.sql`${userId}::int`)} AS "banNoteHeld"
-    `;
-  } catch (e) {
-    logToAxiom({
-      type: 'error',
-      name: 'account-legal-hold-check-failed',
-      message: (e as Error).message,
-      details: { userId },
-    });
-    throw new LegalHoldUnconfirmedError();
-  }
-  if (row?.banNoteHeld === false) return hold;
-  logToAxiom({
-    type: 'info',
-    name: 'account-legal-hold',
-    message: refused,
-    userId,
-    payload: { legs: ['ban-note'] },
-  });
-  throw new LegalHoldError();
+  return assertAccountNotUnderLegalHold(userId, refused);
 }
 
 /**
@@ -578,44 +547,16 @@ export async function isAccountUnderLegalHold(userId: number): Promise<boolean |
  * `contentRemovalHeldSql` for one user, on the primary: `null` when it cannot be read, which
  * callers treat as held. For a job or step that keeps a held user's content and carries on.
  */
-export async function isContentRemovalHeld(userId: number): Promise<boolean | null> {
-  const account = await isAccountUnderLegalHold(userId);
-  if (account !== false) return account;
-  const banNote = await readBanNoteHolds([userId]);
-  return banNote ? banNote.get(userId) === true : null;
+export function isContentRemovalHeld(userId: number): Promise<boolean | null> {
+  return isAccountUnderLegalHold(userId);
 }
 
 /**
- * `contentRemovalHeldSql` for many users, in two batched reads. Never throws: a user a read fails
+ * `contentRemovalHeldSql` for many users, in one batched read. Never throws: a user the read fails
  * for or leaves out answers `true`.
  */
-export async function areContentRemovalsHeld(userIds: number[]): Promise<Map<number, boolean>> {
-  const answer = await areAccountsUnderLegalHold(userIds);
-  const clear = userIds.filter((id) => answer.get(id) === false);
-  if (clear.length === 0) return answer;
-  const banNote = await readBanNoteHolds(clear);
-  for (const id of clear) answer.set(id, banNote?.get(id) !== false);
-  return answer;
-}
-
-/** The ban-note leg for each of `userIds`; `true` for a non-boolean answer, `null` on a failed read. */
-async function readBanNoteHolds(userIds: number[]): Promise<Map<number, boolean> | null> {
-  try {
-    const rows = await dbWrite.$queryRaw<{ userId: number; banNoteHeld: unknown }[]>`
-      SELECT u."userId", ${banNoteHoldSql(Prisma.raw('u."userId"'))} AS "banNoteHeld"
-      FROM unnest(${userIds}::int[]) AS u("userId")
-    `;
-    const answers = new Map(rows.map((r) => [Number(r.userId), r.banNoteHeld]));
-    return new Map(userIds.map((id) => [id, answers.get(id) !== false]));
-  } catch (e) {
-    logToAxiom({
-      type: 'error',
-      name: 'account-legal-hold-check-failed',
-      message: (e as Error).message,
-      details: { userIds },
-    });
-    return null;
-  }
+export function areContentRemovalsHeld(userIds: number[]): Promise<Map<number, boolean>> {
+  return areAccountsUnderLegalHold(userIds);
 }
 
 async function holdOrNull(userId: number): Promise<AccountLegalHold | null> {
