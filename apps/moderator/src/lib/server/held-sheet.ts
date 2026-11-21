@@ -296,7 +296,7 @@ export async function revokeReviewSession(token: string | undefined): Promise<nu
   try {
     return raw ? (JSON.parse(raw) as ReviewSessionRecord).userId : null;
   } catch {
-    return null; // A corrupt record is still ended; it just names nobody.
+    return null;
   }
 }
 

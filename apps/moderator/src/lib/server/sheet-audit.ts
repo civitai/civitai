@@ -3,8 +3,8 @@ import { logToAxiom } from './axiom';
 import type { ExchangeRefusal } from './held-sheet';
 
 // The phone sheets' sign-ins and sign-outs, one event each: the access audit for held media (who
-// opened a sheet, when, and whether it let them in). Kept permanently, not just for one test. Never a
-// token, code, verifier, state or image id: only the tier, the moderator and a short batch tag.
+// opened a sheet, when, and whether it let them in). Never a token, code, verifier, state or image
+// id: only the tier, the moderator and a short batch tag.
 export const SHEET_START_EVENT = 'held-sheet-start';
 export const SHEET_EXCHANGE_EVENT = 'held-sheet-exchange';
 export const SHEET_SIGNOUT_EVENT = 'review-sheet-signout';

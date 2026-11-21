@@ -765,7 +765,7 @@ describe('the access audit', () => {
       cookies: { get: (n: string) => (n === COOKIE.review ? token : undefined) },
     } as never);
 
-  // These names are what the held-media access audit and the device checks query in Axiom. Renaming
+  // These names are what the held-media access audit queries in Axiom. Renaming
   // one silently empties those queries: change the queries first, then this test.
   it('keeps the event names the access audit queries', async () => {
     const audit = await import('$lib/server/sheet-audit');
@@ -802,6 +802,17 @@ describe('the access audit', () => {
     seedBatch(HELD, 'held');
     expect((await startPost('held', OTHER_VIEWER)).status).toBe(404);
     expect((await startPost('held', HELD, { ...MOD, roles: [] })).status).toBe(403);
+    const url = new URL(`${ORIGIN}/api/held-media/auth/start`);
+    const malformed = new Request(url, {
+      method: 'POST',
+      headers: { cookie: WEB_COOKIE, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ code_challenge_method: 'plain' }),
+    });
+    expect(
+      (await heldStart.POST({ url, locals: { user: MOD }, request: malformed } as never)).status
+    ).toBe(400);
+    verifyToken.mockResolvedValueOnce({ ...CLAIMS, impersonatedBy: 7 });
+    expect((await startPost('held', HELD)).status).toBe(403);
     redis.set.mockRejectedValueOnce(new Error('down'));
     expect((await startPost('held', HELD)).status).toBe(503);
     expect(
@@ -809,6 +820,8 @@ describe('the access audit', () => {
     ).toEqual([
       { tier: 'held', batch: tag(OTHER_VIEWER), outcome: 'refused', status: 404, moderatorId: 42 },
       { tier: 'held', batch: undefined, outcome: 'refused', status: 403, moderatorId: 42 },
+      { tier: 'held', batch: undefined, outcome: 'refused', status: 400, moderatorId: 42 },
+      { tier: 'held', batch: tag(HELD), outcome: 'refused', status: 403, moderatorId: 42 },
       { tier: 'held', batch: tag(HELD), outcome: 'error', status: 503, moderatorId: 42 },
     ]);
   });
