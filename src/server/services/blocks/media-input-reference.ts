@@ -7,8 +7,8 @@ import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted
 
 // An orchestrator AIR the AIR grammar cannot read is still one to the orchestrator.
 const ORCHESTRATOR_SOURCE_RE = /(^|:)orchestrator:/i;
-// A URL only with `://` (or a data URI): `https:civitai:1` is an AIR to the AIR grammar.
-const URL_VALUE_RE = /^([a-z][a-z0-9+.-]*:\/\/|data:)/i;
+// A URL only as http(s):// (or a data URI); any other scheme is held to the AIR rule.
+const URL_VALUE_RE = /^(https?:\/\/|data:)/i;
 // An orchestrator blob key, with or without a file extension, and a training blob key.
 const BLOB_KEY_RE = /^([0-9a-z]{26}(\.[0-9a-z]{1,10})?|[0-9a-f]{32}(\.[0-9a-z]{1,10})?)$/i;
 // The orchestrator reads a blob from this path on any host.

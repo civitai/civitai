@@ -375,8 +375,18 @@ describe('media references (#9982)', () => {
     ).toMatchObject({ form: 'media-reference', key: 'label' });
   });
 
+  it.each(['orchestrator://x@y.safetensors', 'civitai://12345', 'ftp://example.com/a.png'])(
+    'refuses %s, a scheme other than http(s)',
+    (value) => {
+      expect(findStepPositionProblem({ image: value }, VIEWER)).toMatchObject({
+        form: 'media-reference',
+        key: 'image',
+      });
+    }
+  );
+
   it("passes a real URL and the viewer's own job file", () => {
-    for (const value of ['https://image.civitai.com/x/y.png', ownJob])
+    for (const value of ['https://image.civitai.com/x/y.png', 'http://example.com/a.png', ownJob])
       expect(findStepPositionProblem({ image: value }, VIEWER)).toBeNull();
   });
 
