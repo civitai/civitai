@@ -62,8 +62,10 @@ type Deps struct {
 	Gallery GallerySettingsReader
 	// Addons returns the browsing-settings addons (feed.AddonSource.Addons).
 	Addons func(context.Context) []browsing.Addon
-	Config Config
-	Now    func() time.Time
+	// Blocked is the blocked browsing tag list (the list's `tag` filter); nil: a `tag` falls back.
+	Blocked *feed.BlockedTags
+	Config  Config
+	Now     func() time.Time
 }
 
 func (d *Deps) now() time.Time {
