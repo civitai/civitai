@@ -472,9 +472,11 @@ export async function assertUserEarlyAccessLimits({
 export const getLicensingRoots = async ({
   baseModel,
   modelType,
+  includeRestricted = false,
 }: {
   baseModel: string;
   modelType?: ModelType;
+  includeRestricted?: boolean;
 }) => {
   const roots = await dbRead.$queryRaw<
     Array<{
@@ -504,6 +506,7 @@ export const getLicensingRoots = async ({
       AND m.availability = ${Availability.Public}::"Availability"
       AND m."deletedAt" IS NULL
       ${modelType ? Prisma.sql`AND lr."modelType" = ${modelType}::"ModelType"` : Prisma.empty}
+      ${includeRestricted ? Prisma.empty : Prisma.sql`AND lr.restricted = false`}
     ORDER BY lr."isDefault" DESC, m.name, mv.index
   `;
 
