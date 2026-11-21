@@ -25,6 +25,7 @@ export const ReportEntity = {
   Storyline: 'storyline',
   ServiceOffering: 'serviceOffering',
   PostText: 'postText',
+  ServiceDealReview: 'serviceDealReview',
 } as const;
 export type ReportEntity = (typeof ReportEntity)[keyof typeof ReportEntity];
 
@@ -112,6 +113,7 @@ export const reportEntityLabels: Record<ReportEntity, string> = {
   storyline: 'Storyline',
   serviceOffering: 'Service',
   postText: 'Text',
+  serviceDealReview: 'Service review',
 };
 
 // URL segment for each entity's report page. Part of shareable URLs and of the nav paths that grants match
@@ -139,13 +141,17 @@ export const reportEntitySlugs: Record<ReportEntity, string> = {
   storyline: 'storyline',
   serviceOffering: 'service',
   postText: 'text',
+  serviceDealReview: 'service-review',
 };
 
 /**
  * Report types worked in another type's queue rather than one of their own: a storyline text's
- * report sits in the post queue, beside the post's own reports.
+ * report sits in the post queue, beside the post's own reports, and a buyer review's in its offering's.
  */
-export const REPORT_QUEUE_OF: Partial<Record<ReportEntity, ReportEntity>> = { postText: 'post' };
+export const REPORT_QUEUE_OF: Partial<Record<ReportEntity, ReportEntity>> = {
+  postText: 'post',
+  serviceDealReview: 'serviceOffering',
+};
 
 /** The queue a report of this type is worked in. */
 export const reportQueueOf = (entity: ReportEntity): ReportEntity =>
