@@ -1,3 +1,4 @@
+// eslint-disable-next-line import/no-extraneous-dependencies
 import { describe, expect, it } from 'vitest';
 import { forecastPoolSize, poolNetBankedSql } from './creator-program';
 

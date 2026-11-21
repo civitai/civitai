@@ -1,6 +1,7 @@
 import { getClickhouse } from '$lib/server/clickhouse';
 import { getBuzz } from '$lib/server/buzz';
 import { createCache } from '$lib/server/cache';
+import { bankMonthAccount } from '$lib/server/banked';
 import { forecastPoolSize, getForecastedValue, poolNetBankedSql } from '@civitai/buzz';
 import { env } from '$env/dynamic/private';
 
@@ -22,19 +23,14 @@ const POOL_VALUE_FALLBACK = 35000;
 // fallback). We only surface a dollar estimate when it's real — a wrong money figure is worse than none.
 export type CompensationPool = { value: number; forecasted: number; valueReal: boolean };
 
-// getMonthAccount in the main app: the bank account id for a month is its UTC YYYYMM.
-function monthAccount(date: Date): number {
-  return date.getUTCFullYear() * 100 + date.getUTCMonth() + 1;
-}
-
 async function fetchPool(): Promise<CompensationPool> {
   const taxes = env.CREATOR_POOL_TAXES ? Number(env.CREATOR_POOL_TAXES) : null;
   const portion = env.CREATOR_POOL_PORTION ? Number(env.CREATOR_POOL_PORTION) : null;
   const ch = getClickhouse();
 
   const now = new Date();
-  const thisMonth = monthAccount(now);
-  const lastMonth = monthAccount(
+  const thisMonth = bankMonthAccount(now);
+  const lastMonth = bankMonthAccount(
     new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
   );
 
