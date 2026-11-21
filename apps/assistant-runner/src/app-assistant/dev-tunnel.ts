@@ -90,15 +90,18 @@ export interface DevTunnels {
   /**
    * Stamps the idle clock (never the 8 h cap) of one of the run's user's previews, whoever opened
    * it (this run, the page's Restart preview, an earlier reply): the tunnel at `host`, the host the
-   * app's sandbox is connected to, or the preview of the app `blockId` (a direct preview, which no
-   * sandbox-side tunnel names). civitai answers 404 `NOT_FOUND` when the user has none there.
+   * app's sandbox is connected to, or the direct preview of the app `blockId` (which no sandbox-side
+   * tunnel names). By block it is sent with `transport: "direct"`, so civitai keeps only a direct
+   * session and never a tunnel the sandbox has let go. civitai answers 404 `NOT_FOUND` when the
+   * user has none there.
    */
   keepalive(target: { host: string } | { blockId: string }, signal?: AbortSignal): Promise<void>;
   /** Idempotent: a tunnel already gone is no error. */
   stop(sessionId: string, signal?: AbortSignal): Promise<void>;
   /**
-   * Ends the run's user's preview of the app `blockId`, whichever run opened it (a direct preview
-   * is closed this way). Whether one was open to end.
+   * Ends the run's user's direct preview of the app `blockId`, whichever run opened it. Sent with
+   * `transport: "direct"`: a tunnel of that app is left alone, as if there were none. Whether one
+   * was open to end.
    */
   stopBlock(blockId: string, signal?: AbortSignal): Promise<boolean>;
 }
@@ -175,7 +178,9 @@ export class CivitaiDevTunnels {
       keepalive: async (target, signal) => {
         await post(
           'keepalive',
-          'host' in target ? { host: target.host } : { blockId: target.blockId },
+          'host' in target
+            ? { host: target.host }
+            : { blockId: target.blockId, transport: 'direct' },
           signal
         );
       },
@@ -183,7 +188,9 @@ export class CivitaiDevTunnels {
         await post('stop', { sessionId }, signal);
       },
       stopBlock: async (blockId, signal) => {
-        const answer = (await post('stop', { blockId }, signal)) as { stopped?: unknown } | null;
+        const answer = (await post('stop', { blockId, transport: 'direct' }, signal)) as {
+          stopped?: unknown;
+        } | null;
         return answer?.stopped === true;
       },
     };

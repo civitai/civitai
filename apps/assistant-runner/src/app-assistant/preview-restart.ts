@@ -45,9 +45,12 @@ export type RestartErrorCode =
   | 'failed'
   | 'unavailable';
 
-/** What a restart answers the page: the block and host shown, never the tunnel's id. */
+/**
+ * What a restart answers the page: the block and host shown, never the tunnel's id. A direct
+ * preview's has no host (`StartedPreview`): the page gets its frame from civitai by block id.
+ */
 export type RestartOutcome =
-  | { ok: true; blockId: string; host: string }
+  | { ok: true; blockId: string; host?: string }
   | { ok: false; error: RestartErrorCode; message: string };
 
 /** What the HTTP layer asks for (`POST apps/:app/preview`): one restart, for a verified viewer. */
@@ -134,7 +137,7 @@ export interface PreviewRestarterOptions {
  * runs none) is started first, as the assistant is told to start it (`RunnerPreview.startDevServer`).
  * Where civitai serves the user's previews directly (its `preview/open`), the same start takes no
  * tunnel step: it reuses the app's open session, or opens a new one under a fresh preview id when
- * the old id's session ended (a resumed app), and answers its host the same way.
+ * the old id's session ended (a resumed app), and answers its block id with no host.
  *
  * Two clicks for one app share one restart (one tunnel); each user has `RESTART_LIMIT` restarts in
  * `RESTART_WINDOW_MS` here, on top of civitai's own hourly cap on unsubmitted apps.
@@ -242,7 +245,7 @@ export class PreviewRestarter implements PreviewRestarts {
           throw reopenError;
         }
       }
-      return { ok: true, blockId: shown.blockId, host: shown.host };
+      return { ok: true, blockId: shown.blockId, ...(shown.host ? { host: shown.host } : {}) };
     } catch (error) {
       return this.#refusal(error);
     } finally {

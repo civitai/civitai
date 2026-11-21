@@ -192,14 +192,16 @@ makes, which `WORKFLOW_VERSION` protects.
        resumed app, a stopped preview); then the runner rotates the id
        (`POST /v1/sandboxes/<name>/preview-id`) and asks once more, and a second `fresh` is an
        error, never a loop. A `503` (another open of the same app in progress) is asked again, up
-       to 4 times a second apart. The run keeps its direct preview alive and `stop_preview` closes
-       it by `(user, blockId)` (`keepalive`/`stop { blockId }`), the block id it ran under, which
-       can differ from the app's key; a later reply's `stop_preview` with no tunnel running in the
-       sandbox ends it that way too. An open session keeps the scopes it was opened with: a later
-       start of it in the same run asking for scopes it may not have ends it and opens a new one.
-       **Not covered:** a reply that did not open the direct preview itself does not keep it alive
-       (nothing tells it from a tunnel the sandbox let go), and a reply's first open of a session
-       an earlier reply opened gets that session's scopes, not ones declared since.
+       to 4 times a second apart. Its result is `{ shown, blockId, next_step }` with no `host`: the
+       session host is the preview's credential, so it never reaches the assistant, the journal or
+       the saved conversation, and the page fetches the frame from civitai by block id. Every run
+       keeps the app's direct preview alive and `stop_preview` closes it by `(user, blockId)`
+       (`keepalive`/`stop { blockId, transport: "direct" }`), the block id it ran under, which can
+       differ from the app's key, whichever run opened it. `transport: "direct"` makes civitai
+       leave a tunnel alone, so with the flag off nothing a tunnel does changes. An open session
+       keeps the scopes it was opened with: a later start of it in the same run asking for scopes
+       it may not have ends it and opens a new one. **Not covered:** a reply's first open of a
+       session an earlier reply opened gets that session's scopes, not ones declared since.
     A later reply (or Continue after the app was paused) starts or restarts the dev server, which
     opens the preview again; civitai replaces the user's tunnel for that block. The instructions say the
     preview opens by itself, keep `start_preview` for when the user asks to reopen it, and tell

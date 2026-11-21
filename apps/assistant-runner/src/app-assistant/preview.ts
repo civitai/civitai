@@ -89,7 +89,8 @@ interface OpenPreview {
   /** The sandbox it serves: another app opened by `create_app` is another preview. */
   app: string;
   blockId: string;
-  host: string;
+  /** A tunnel's host; `null` for a direct preview, whose session host the runner never keeps. */
+  host: string | null;
   /** What it was opened with: a start asking for other scopes or auth opens it again. */
   declaredScopes: string[];
   declaredAuth: 'block-token' | 'oauth' | undefined;
@@ -105,11 +106,16 @@ interface OpenPreview {
   result: StartedPreview;
 }
 
-/** What a start answers (and the page reads `blockId` and `host` of): never the tunnel's id. */
+/**
+ * What a start answers (and the page reads `blockId` and `host` of): never the tunnel's id. A
+ * direct preview's answer has no `host`: its session host is itself the credential that loads the
+ * preview, so it never reaches the assistant, the journal or the saved conversation; the page gets
+ * the frame from civitai by `blockId`.
+ */
 export interface StartedPreview {
   shown: true;
   blockId: string;
-  host: string;
+  host?: string;
   next_step: string;
 }
 
@@ -127,12 +133,12 @@ export type AutoPreview = { shown: StartedPreview } | { error: string };
  * Direct preview (civitai's `app-assistant-direct-preview` flag): each start first asks civitai's
  * `preview/open` with the app's sandbox's preview id. When civitai answers with a session, the
  * sandbox service serves the preview itself and no tunnel step is taken; that preview is kept
- * alive and closed by its block id. Otherwise (`tunnel`, the flag off) it is the dev tunnel, as
- * before.
+ * alive and closed by its block id, and its answer carries no host. Otherwise (`tunnel`, the flag
+ * off) it is the dev tunnel, as before.
  *
  * While the run lives (`keepWhileRunning`) the open app's preview is kept from idling out
- * (`PREVIEW_KEEPALIVE_MS`): this run's, and a tunnel an earlier one or the page's Restart
- * preview opened, as long as the app's sandbox is connected to it. `close()`, as the run
+ * (`PREVIEW_KEEPALIVE_MS`), whoever opened it: this run, an earlier one, or the page's Restart
+ * preview (a tunnel as long as the app's sandbox is connected to it). `close()`, as the run
  * ends, stops that and leaves the tunnel to civitai's normal idle expiry, so the user can keep
  * looking at it for a while after the reply ends.
  */
@@ -157,13 +163,12 @@ export class RunnerPreview {
   }
 
   /**
-   * For a run: from now until `close()`, keeps the open app's preview from idling out. Each tick
-   * has civitai keep this run's direct preview of the open app by its block id, else asks the open
-   * app's sandbox which host its tunnel is connected to (`tunnel_status`) and has civitai keep the
-   * run's user's tunnel at that host, whoever opened it: never another app's (it is not that app's
-   * sandbox), never another user's (civitai checks the owner), and never one the sandbox has let go
-   * (paused, disconnected), which civitai then lets idle out (`#keepTarget`). Paused by
-   * `stop_preview` (the user asked for it to go) until the next start.
+   * For a run: from now until `close()`, keeps the open app's preview from idling out, whoever
+   * opened it (`#keepTarget`): a tunnel by the host the app's sandbox is connected to
+   * (`tunnel_status`), a direct preview by its block id. Never another app's (it is not that app's
+   * sandbox), never another user's (civitai checks the owner), and never a tunnel the sandbox has
+   * let go (paused, disconnected), which civitai then lets idle out. Paused by `stop_preview` (the
+   * user asked for it to go) until the next start.
    */
   keepWhileRunning(): void {
     if (this.#closed) return;
@@ -629,13 +634,14 @@ export class RunnerPreview {
       );
 
     if (previous && previous.blockId !== blockId) await this.#closeOpen(previous);
-    const result = shownResult(blockId, answer.host);
+    // No host: the session host is the preview's credential (see `StartedPreview`).
+    const result = shownResult(blockId);
     this.#open = {
       transport: 'direct',
       sessionId: answer.sessionId,
       app: appName,
       blockId,
-      host: answer.host,
+      host: null,
       declaredScopes: declaredScopes ?? [],
       declaredAuth,
       scopesKnown: rotated || ended,
@@ -751,11 +757,10 @@ export class RunnerPreview {
   /**
    * What a tick keeps alive, while the open app's sandbox runs (else `null`): this run's direct
    * preview of that app, by its block id (which can differ from the app's key); else the host the
-   * sandbox has a tunnel running to (`tunnel_status`), or `null` when none runs or the answer does
-   * not say.
-   *
-   * A direct preview this run did not open (an earlier reply's, the page's Restart preview's) is
-   * not kept: nothing here tells it from a tunnel the sandbox has let go, which must idle out.
+   * sandbox has a tunnel running to (`tunnel_status`); else the app's direct preview by
+   * `previewBlockId()`, whichever run opened it (an earlier reply's, the page's Restart preview's).
+   * That last is asked for direct sessions only (`DevTunnels.keepalive`), so a tunnel the sandbox
+   * has let go is never kept: civitai answers it as none, and it idles out as before.
    */
   async #keepTarget(): Promise<{ host: string } | { blockId: string } | null> {
     const app = this.#deps.sandbox.active;
@@ -763,7 +768,10 @@ export class RunnerPreview {
     const open = this.#open;
     if (open?.transport === 'direct' && open.app === app.name) return { blockId: open.blockId };
     const host = await this.#connectedHost(app.name);
-    return host ? { host } : null;
+    if (host) return { host };
+    const blockId = await this.previewBlockId();
+    // Another app opened meanwhile: its preview is looked at the next tick.
+    return blockId && this.#deps.sandbox.active?.name === app.name ? { blockId } : null;
   }
 
   /** The host app `appName`'s sandbox has a tunnel running to (`tunnel_status`), else `null`. */
@@ -894,12 +902,12 @@ export function manifestOf(text: string): Record<string, unknown> | null {
   }
 }
 
-/** What a start answers once the preview of `blockId` is open at `host`. */
-function shownResult(blockId: string, host: string): StartedPreview {
+/** What a start answers once the preview of `blockId` is open (a tunnel's at `host`). */
+function shownResult(blockId: string, host?: string): StartedPreview {
   return {
     shown: true,
     blockId,
-    host,
+    ...(host ? { host } : {}),
     next_step: 'The user sees the preview now. To see what they see, call sandbox__preview_check.',
   };
 }

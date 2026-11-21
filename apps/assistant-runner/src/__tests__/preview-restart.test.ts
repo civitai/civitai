@@ -187,11 +187,13 @@ describe('PreviewRestarter', () => {
   });
 
   describe('direct preview (civitai serves it with no tunnel)', () => {
-    it('opens it through preview/open, takes no tunnel step, and answers the session’s host', async () => {
+    it('opens it through preview/open, takes no tunnel step, and answers its block with no host', async () => {
       fake.add(APP).previewId = PREVIEW_ID;
       tunnels.openAnswers = [{ mode: 'direct', sessionId: SESSION, host: DIRECT_HOST }];
       const outcome = await restarter().restart('u-1', APP, 'test-preview-grant');
-      expect(outcome).toEqual({ ok: true, blockId: MANIFEST_BLOCK, host: DIRECT_HOST });
+      // No host: the session host is the preview's credential; the page fetches its frame by block.
+      expect(outcome).toEqual({ ok: true, blockId: MANIFEST_BLOCK });
+      expect(JSON.stringify(outcome)).not.toContain(DIRECT_HOST);
       expect(tunnels.opens).toEqual([
         { blockId: MANIFEST_BLOCK, previewId: PREVIEW_ID, declaredScopes: ['models:read'] },
       ]);
@@ -802,6 +804,28 @@ describe('POST apps/:app/preview', () => {
     expect(JSON.parse(text)).toEqual({ v: 1, blockId: MANIFEST_BLOCK, host: HOST });
     // Control: civitai did hand the runner that id.
     expect(tunnels.started).toHaveLength(1);
+  });
+
+  it('end to end, direct preview: the browser gets the block alone, never the session host', async () => {
+    fake.add(APP).previewId = PREVIEW_ID;
+    tunnels.openAnswers = [{ mode: 'direct', sessionId: SESSION, host: DIRECT_HOST }];
+    const base = await serve(restarter());
+    const res = await fetch(`${base}/api/assistant-runner/apps/${APP}/preview`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${await signViewer(keys, 'u1')}`,
+        'x-run-grant': await previewGrant('u1', APP),
+      },
+      body: JSON.stringify({ v: 1 }),
+    });
+    const text = await res.text();
+    expect(res.status).toBe(200);
+    expect(JSON.parse(text)).toEqual({ v: 1, blockId: MANIFEST_BLOCK });
+    expect(text).not.toContain(DIRECT_HOST);
+    expect(text).not.toContain(SESSION);
+    // Control: civitai did answer the runner with that host.
+    expect(tunnels.opens).toHaveLength(1);
   });
 
   it('end to end: civitai’s 429 reaches the browser as a 429 with words for the user', async () => {

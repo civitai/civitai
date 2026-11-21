@@ -90,7 +90,19 @@ class FakeTunnels implements DevTunnels {
     return { mode: 'direct', sessionId: written.sessionId, host: written.host };
   }
 
+  /**
+   * civitai's tunnel records by block id (the flag-off path): a by-block keepalive or stop is for
+   * direct sessions only, so it never keeps or ends one of these.
+   */
+  readonly tunnelBlocks = new Set<string>();
+  /** By-block keepalives civitai answered 404 (no direct session for the block), by block id. */
+  readonly blockMisses: string[] = [];
+
   async keepalive(target: { host: string } | { blockId: string }) {
+    if ('blockId' in target && !this.directSessions.has(target.blockId)) {
+      this.blockMisses.push(target.blockId);
+      throw new DevTunnelError('No such dev tunnel', 404, 'NOT_FOUND');
+    }
     this.kept.push(target);
     if (this.keepaliveError) throw this.keepaliveError;
   }
@@ -1109,14 +1121,22 @@ describe('direct preview (civitai serves it with no tunnel)', () => {
     expect(tunnels.opens).toEqual([
       { blockId: 'my-app', previewId: ID, declaredScopes: ['models:read'] },
     ]);
+    // No host: the session host is the preview's credential.
     expect(result).toEqual({
       shown: true,
       blockId: 'my-app',
-      host: directHost(1),
       next_step: expect.stringContaining('sandbox__preview_check'),
     });
     expect(tunnelCalls()).toEqual([]);
     expect(tunnels.started).toEqual([]);
+    // Control: civitai did hand the runner that host and session id.
+    expect(tunnels.directSessions.get('my-app')?.host).toBe(directHost(1));
+    // Neither reaches what the page, the journal or the saved conversation see.
+    expect(reported.find((r) => r.name === 'start_preview')).toMatchObject({
+      isError: false,
+      output: { shown: true, blockId: 'my-app' },
+    });
+    expect(JSON.stringify(reported)).not.toContain(directHost(1));
     expect(JSON.stringify(reported)).not.toContain('bki_TEST_ONLY_direct_1');
   });
 
@@ -1141,7 +1161,8 @@ describe('direct preview (civitai serves it with no tunnel)', () => {
     const rotated = fake.rotations[0]!.previewId;
     expect(rotated).not.toBe(OLD_ID);
     expect(tunnels.opens.map((o) => o.previewId)).toEqual([OLD_ID, rotated]);
-    expect(result).toMatchObject({ shown: true, host: directHost(2) });
+    expect(result).toEqual({ shown: true, blockId: 'my-app', next_step: expect.any(String) });
+    expect(tunnels.directSessions.get('my-app')?.previewId).toBe(rotated);
     expect(tunnelCalls()).toEqual([]);
   });
 
@@ -1203,6 +1224,33 @@ describe('direct preview (civitai serves it with no tunnel)', () => {
     // Stopped: nothing is kept alive any more.
     await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 3);
     expect(tunnels.kept).toHaveLength(2);
+  });
+
+  it('a later run keeps the app’s direct preview alive, by the block id it runs under', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    directApp();
+    manifestBlock('my-app-block');
+    const first = await open();
+    await call(first.tools.tools, 'start_preview', { block_id: 'my-app-block' });
+    await first.tools.close();
+    // A later reply: it opens nothing, and no tunnel runs in the sandbox.
+    await open();
+    await keptMore(2);
+    expect(tunnels.kept).toEqual([{ blockId: 'my-app-block' }, { blockId: 'my-app-block' }]);
+    expect(tunnels.opens).toHaveLength(1);
+  });
+
+  // Invariant guard at the fake's level (civitai's own filter is what makes it true, pinned by
+  // the request bodies in "CivitaiDevTunnels: direct preview calls"): flag off, a later run's
+  // stop_preview with no tunnel running leaves civitai's tunnel record alone, and answers as before.
+  it('flag off: a later run’s stop_preview with no tunnel running leaves the tunnel record alone', async () => {
+    fake.add('my-app');
+    tunnels.tunnelBlocks.add('my-app');
+    const { tools } = await open();
+    expect(await call(tools.tools, 'stop_preview')).toEqual({ stopped: true });
+    expect(tunnelCalls()).toEqual(['tunnel_disconnect']);
+    expect(tunnels.stopped).toEqual([]);
+    expect(tunnels.tunnelBlocks.has('my-app')).toBe(true);
   });
 
   it('a later run stops it under the block id its manifest names, not the app’s key', async () => {
@@ -1292,13 +1340,14 @@ describe('CivitaiDevTunnels: direct preview calls', () => {
         url: `https://civitai.example/${PREVIEW_OPEN_PATH}`,
         body: { grant: GRANT, blockId: 'my-app', previewId: ID },
       },
+      // By block, always for a direct session only: civitai never keeps or ends a tunnel this way.
       {
         url: `https://civitai.example/${DEV_TUNNEL_PATH}/keepalive`,
-        body: { grant: GRANT, blockId: 'my-app' },
+        body: { grant: GRANT, blockId: 'my-app', transport: 'direct' },
       },
       {
         url: `https://civitai.example/${DEV_TUNNEL_PATH}/stop`,
-        body: { grant: GRANT, blockId: 'my-app' },
+        body: { grant: GRANT, blockId: 'my-app', transport: 'direct' },
       },
     ]);
   });
