@@ -49,6 +49,10 @@ import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 //   - token-exchange: per-client (600/min, or the client's staff-set `tokenRateLimit`) — the user token
 //                exchange, charged after client auth. One relay exchanges for many users from one IP, so the
 //                per-IP `token` limit never applies to it.
+//   - block-exchange: per-client (600/min, or the client's staff-set `tokenRateLimit`) — the block token
+//                exchange (block-exchange.ts), charged after client auth. A bucket of its own, apart from
+//                `token-exchange`: any token of a block token's shape a relay is handed reaches this exchange,
+//                so a flood of made-up ones spends this budget and never the relay's user exchanges'.
 //   - token-exchange-ip: per-IP (120/min) — FAILED client-secret checks on the user token exchange. A request
 //                whose secret checks out is never charged or refused by it. With no resolvable IP the
 //                failures share one bucket, never one keyed on the claimed client id.
@@ -76,6 +80,7 @@ const OAUTH_RATE_LIMITS = {
   'introspect-worker': { limit: 1200, windowSeconds: 60 },
   'token-exchange': { limit: 600, windowSeconds: 60 },
   'token-exchange-ip': { limit: 120, windowSeconds: 60 },
+  'block-exchange': { limit: 600, windowSeconds: 60 },
   'introspect-jwt': { limit: 1200, windowSeconds: 60 },
   'token-service': { limit: 60, windowSeconds: 60 },
 } as const;
@@ -178,6 +183,23 @@ export async function checkTokenExchangeRateLimit(
   const cfg = OAUTH_RATE_LIMITS['token-exchange'];
   return checkRateLimit(
     'oauth:token-exchange',
+    clientId,
+    clientLimit ?? cfg.limit,
+    cfg.windowSeconds
+  );
+}
+
+/**
+ * The `block-exchange` check: per authenticated client, at its staff-set limit when it has one, in a
+ * bucket apart from the user exchange's (`token-exchange`).
+ */
+export async function checkBlockExchangeRateLimit(
+  clientId: string,
+  clientLimit: number | null
+): Promise<boolean> {
+  const cfg = OAUTH_RATE_LIMITS['block-exchange'];
+  return checkRateLimit(
+    'oauth:block-exchange',
     clientId,
     clientLimit ?? cfg.limit,
     cfg.windowSeconds

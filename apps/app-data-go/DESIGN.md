@@ -128,8 +128,11 @@ An app running as an App Block holds a block token (the site-signed RS256 JWT), 
 token. The hub's block exchange (`apps/auth/src/lib/server/oauth/block-exchange.ts`, S4) turns one
 into the same kind of token the user exchange issues: an ES256 `at+jwt` with `sub` the viewer,
 `client_id` the block's app, `act.sub` this service, scope `AppDataRead`, and
-`exp = min(block token exp, now + 15 min)`. The adapter's private feed accepts it exactly as it does
-a user-exchange token.
+`exp = min(block token exp, now + 15 min)`. It also carries the block token's binding, four claims
+written together: `civitai_token_kind: "block-exchange"` (the marker), `civitai_app_block_id`,
+`civitai_block_instance_id` and `civitai_max_browsing_level` (the block token's ceiling). The adapter's
+private feed accepts it as it does a user-exchange token, and holds every poll of its streams to that
+binding ("No wider than REST" below).
 
 **The flag.** `APP_DATA_BLOCK_EXCHANGE` (`true`/`1` on; unset, `false` or `0` off; default off;
 anything else fails the start, as does turning it on without the registry path). **Off, nothing
@@ -156,11 +159,14 @@ as a replay, so `exchange.BlockCache` sits in front of the block exchange:
   flood of made-up tokens produces refusals: kept apart, they can never fill the issued tokens' room
   or lock a real block token out of this cache, and past the cap a refusal is simply not remembered
   (the hub is asked again and refuses again). They are not free, though: each distinct made-up token
-  is still sent to the hub and spends this service's one per-client exchange budget there, which
-  its user exchanges share, so a flood can push other reads (hub tokens included) to REST until the
-  budget refills. That is availability only, and true of made-up hub-prefixed tokens before this
-  path too. Follow-up: check the block token's signature locally before sending it, or give the
-  block exchange its own hub budget.
+  is still sent to the hub and spends this service's block-exchange budget there. That budget is
+  its own (`block-exchange` in the hub's `rate-limit.ts`, per client, 600 a minute or the client's
+  staff-set limit), apart from the user exchange's, so a flood of made-up block tokens can push
+  other block tokens' reads to REST until it refills, but never a hub token's. That is availability
+  only. A local pre-check here (decoding the header and `exp` before sending) was the alternative,
+  and was not built: without the site's key this service can only check claims whoever made the
+  token chose, so a deliberate flood passes it; it would only save the hub a call for an accidental
+  one.
 - **Failed** (the hub unreachable, a `5xx`, a `429`, a timeout): forgotten, so a later read may try
   again after the stream cooldown. The hub issued nothing, and gives back a claim it made (including
   one whose replay-store write timed out). If this service timed out after the hub did issue, the
@@ -176,11 +182,11 @@ before its token expires, as for a hub token, and a cached token is not handed t
 that margin (`spent`): the block token's one exchange is used up, so its next read goes to REST,
 where the site answers with the block token itself.
 
-**No revocation re-check.** A live stream re-checks a hub token every 2 minutes by exchanging it
-again. For a block token that would be a replay, so the re-check gets the cached token back and the
-stream keeps serving. This matches the hub, which reads no revocation state for a block exchange: a
-block token's stream lives at most until its exchanged token expires, at most 15 minutes. The
-adapter's own re-check of the user (ban, delete) still applies.
+**No revocation re-check here.** A live stream re-checks a hub token every 2 minutes by exchanging
+it again. For a block token that would be a replay, so the re-check gets the cached token back and the
+stream keeps serving. Revocation is the adapter's: its private feed re-checks the block token's
+install, block and ceiling on every poll ("No wider than REST" below), and its own re-check of the
+user (ban, delete) still applies. Nothing else outlives the exchanged token, at most 15 minutes.
 
 **Fallback.** Every refusal or failure reads REST exactly as a hub token's does (`exchange_refused`,
 `failed`, `cooling_down`). A spent block token and a full cache have their own fallback and close
@@ -191,35 +197,56 @@ down for 30 s. Each block exchange is counted in
 `none`), and every outcome but `issued` and `reused` is logged with that code. Neither carries a
 token, user or app.
 
-**No wider than REST.** The hub mints only what the registry's private feed would serve no wider
-than the site's document store serves the block token itself. The feed's predicate
-(`decideCollectionRead` without a block) resolves the app from the token's client id and judges
-mature ratings by the viewer's own settings; the document store reads the token's own block and
-holds mature ratings to the token's ceiling. So the hub refuses a block token whose block is not
-its client's one approved block, and one whose ceiling does not admit every mature rating (minted
-off a mature-capable host).
+**No wider than REST.** The site's document store reads a block token's own block, holds mature
+ratings to the token's ceiling, and refuses at once a token whose install was uninstalled, turned
+off or whose publisher was banned (`withBlockScope`). The adapter's private feed holds a
+block-exchange token's streams to the same three things on every poll
+(`src/server/registry-adapter/private-feed.ts`), from the token's binding claims:
 
-**What that means for apps:** a block token minted on an SFW host (its ceiling without R, X and
-XXX) is refused at the hub and its reads go to REST. Only tokens minted on the mature-capable host
-use the registry path until a follow-up carries the token's ceiling into the exchanged token (the
-next PR), so the feed can hold a stream to it.
+- **Ceiling.** A source app is read only when the viewer's own settings admit its rating AND the
+  store's ceiling rule (`ratingAllowedForCeiling`, the function the store's import read uses) admits
+  it for `civitai_max_browsing_level`: a mature rating (`r`, `x`, `xxx`) only under a ceiling with a
+  mature bit. An SFW host's token streams no mature-rated app's records, its own app's or an import's.
+- **Block.** The collection-read predicate (`decideCollectionRead`) is given
+  `civitai_app_block_id`, and refuses unless that block is still its client's one approved block,
+  by its own resolution (the source for an own read, the consumer for an import).
+- **Install.** The install's revocation markers (`BlockRevocation.isRevoked`, the store's check) are
+  read for `civitai_block_instance_id`; a revoked install is refused. Like the store's, a marker that
+  cannot be read is not a revocation.
 
-**Residual windows,** each at most until the exchanged token expires (at most 15 minutes), because
-the hub checks once, at the exchange, and neither the hub nor the feed reads the app's revocation
-state:
+A refusal is a stream that holds nothing: the next poll (default 60 s) sends a `Delete` for every
+record it held, and the cache drops them. The hub still refuses, when it exchanges, a block token
+whose block is not its client's one approved block (defence in depth; the feed is authoritative per
+poll), and one with no usable ceiling. A token carrying some of the binding claims but not all four,
+well-formed, is refused by the adapter (`invalid_token`); one carrying none is a user-exchange token
+and is not narrowed (the viewer's own settings, as before).
 
-- (a) **The approved block switches.** The token's block is suspended and another block of the same
-  client becomes its one approved block: the feed, resolving the app from the client id, serves that
-  block's data to the token's streams.
-- (b) **Uninstalled or turned off.** The viewer uninstalls the app or turns it off: the site's
-  document store refuses the block token at once (`withBlockScope`), but the exchanged token and its
-  streams live on until expiry.
+**Who can use the registry path now:** any signed-in viewer's block token with `apps:storage`, from
+any host, whose app passes the hub's other checks. A token minted on an SFW host is exchanged and
+streams only SFW-rated apps' records; one minted on the mature-capable host streams what the viewer's
+own settings admit.
+
+**Residual windows,** each bounded by the adapter's poll interval (default 60 s) rather than the
+exchanged token's life:
+
+- (a) **The approved block switches**, (b) **uninstalled or turned off**: cut on the next poll. REST
+  refuses at once; the registry path may serve up to one poll longer.
+- (c) **A Redis outage** reads no install marker, so a revoked install keeps streaming until its token
+  expires (at most 15 minutes), exactly as REST serves it then (both fail open).
+- (d) **A token minted before this binding shipped** carries no binding claims and reads as a
+  user-exchange token until it expires (at most 15 minutes). The hub minted such a token only for a
+  ceiling that admits every rating and the client's one approved block.
 
 **To turn it on** (none of it is in this repo): the hub needs the site's block-token public keys and
 this service's client id in its block-exchange caller allowlist (an approval for the registry owner),
 this service's client must already be a relay of the adapter's exchange resource, and the block's app
 must be listed for that resource and allowed `AppDataRead`; then set `APP_DATA_BLOCK_EXCHANGE=true`
 here.
+
+**Deploy order.** The hub now exchanges tokens of any ceiling and relies on the adapter to narrow
+them. An adapter older than the binding claims accepts the new tokens but ignores the claims, so it
+would stream an SFW host's token by the viewer's own settings. Deploy the adapter before the hub
+(or keep the hub's caller allowlist empty until both are deployed).
 
 ## Token lifetime: a stream is reopened at its token's expiry
 
@@ -318,7 +345,8 @@ is exactly one adapter subscription. An authorized stream is never shared (Relay
   hub.
 - **Load on the adapter:** each private stream re-runs the predicate and re-reads one user's
   collection on every adapter poll (S2: about 5 queries per poll, default 60 s). 100 streams is about
-  8 queries/s.
+  8 queries/s. A block token's stream adds its install's revocation read (two or three cache GETs)
+  per poll.
 
 ## No relay stall
 
@@ -340,7 +368,9 @@ the cache drops them:
 - a grant revoked;
 - the import scope withdrawn;
 - the app unapproved;
-- the user no longer allowed to run apps.
+- the user no longer allowed to run apps;
+- for a block token's stream: its block no longer its client's one approved block, or its install
+  uninstalled, turned off or its publisher banned ("No wider than REST" above).
 
 The tests are `TestADeleteRemovesTheRecordFromTheCache` and
 `TestARevokedGrantLeavesTheCacheAndTheSiteAnswersTheRefusal`. An upsert without a body is a delete
