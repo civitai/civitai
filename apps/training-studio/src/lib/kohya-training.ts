@@ -55,6 +55,7 @@ export function buildKohyaInput(
   const flow = isKohyaFlow(family);
   const flux = isKohyaFlux(family);
   const settings = run.kohya;
+  const clipSkip = flow ? 1 : settings?.clipSkip ?? (family === 'sd1' ? 1 : 2);
   const prodigy = optimizerType === 'Prodigy';
   const textEncoderLR =
     family === 'chroma' ? 0 : run.textEncoderLr > 0 && prodigy ? 1 : run.textEncoderLr;
@@ -68,7 +69,7 @@ export function buildKohyaInput(
     unetLr: prodigy ? 1 : run.unetLr,
     textEncoderLr: textEncoderLR,
     numRepeats: settings?.numRepeats ?? 1,
-    clipSkip: family === 'sd1' ? settings?.clipSkip ?? 1 : 1,
+    clipSkip,
     lrSchedulerNumCycles: settings?.lrSchedulerNumCycles ?? 3,
     seed: settings?.seed ?? 42,
     keepTokens: run.keepTokens ?? 0,
@@ -114,7 +115,7 @@ export function buildKohyaInput(
     enableBucket: settings?.enableBucket ?? true,
     shuffleCaption: run.shuffleTokens ?? false,
     keepTokens: run.keepTokens ?? 0,
-    clipSkip: family === 'sd1' ? settings?.clipSkip ?? 1 : 1,
+    clipSkip,
     flipAugmentation: run.flipAugmentation ?? false,
     unetLR: prodigy ? 1 : run.unetLr,
     textEncoderLR,
