@@ -865,8 +865,7 @@ export const upsertModelVersionHandler = async ({
         ? 'model-not-found'
         : destinationModel.type !== source.modelType
         ? 'model-type-mismatch'
-        : // A restricted root's fee is paid only for versions its agreement covers; staff link those.
-        source.restricted &&
+        : source.restricted &&
           !ctx.user.isModerator &&
           input.licensingSourceVersionId !== storedVersion?.licensingSourceVersionId
         ? 'restricted-root'

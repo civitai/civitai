@@ -553,7 +553,12 @@ export function ModelVersionUpsertForm({
   const notDerivative = Flags.hasFlag(version?.flags ?? 0, ModelVersionFlag.NotDerivative);
   // Exclude only the version being edited (a root can't point at itself). The
   // default root is a normal, pre-selected option — there is no null "Default".
-  const licensingRoots = (licensingRootsData?.roots ?? []).filter((r) => r.id !== version?.id);
+  // A restricted root is offered only to a moderator, or to a version already linked to it.
+  const licensingRoots = (licensingRootsData?.roots ?? []).filter(
+    (r) =>
+      r.id !== version?.id &&
+      (!r.restricted || !!currentUser?.isModerator || r.id === version?.licensingSourceVersionId)
+  );
   const showLicensingPicker =
     licensingRoots.length > 0 && !currentIsLicensingRoot && !notDerivative;
 
