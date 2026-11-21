@@ -1137,9 +1137,6 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	if b, c, cl, ok := s.associatedRoute(endpoint); ok {
 		build, computeFn, classify = b, c, cl
 	}
-	if b, c, cl, ok := s.publishedAppRoute(endpoint); ok {
-		build, computeFn, classify = b, c, cl
-	}
 	span := trace.SpanFromContext(ctx)
 	// The sample's credential is the sampler's placeholder, never a key: the compute's Resolve reads
 	// the marker off this context (auth.WithRedactedCredentials).
