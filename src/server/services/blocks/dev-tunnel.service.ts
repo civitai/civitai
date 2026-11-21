@@ -1467,7 +1467,7 @@ export async function keepAliveDevTunnelAtHost(
 async function readOwnSessionForUserBlock(
   userId: number,
   blockId: string
-): Promise<{ status: 'ok'; session: DevTunnelSessionRecord } | { status: 'absent' | 'error' }> {
+): Promise<ReaperRead> {
   let sessionId: unknown;
   try {
     sessionId = await cluster('pointer', () => redis.get(userBlockKey(userId, blockId)));
