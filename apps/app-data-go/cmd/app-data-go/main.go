@@ -91,7 +91,9 @@ func run(log *slog.Logger) error {
 		// block cache is nil while APP_DATA_BLOCK_EXCHANGE is off: block tokens then read REST only.
 		router := &exchange.Router{User: ex.Exchange}
 		if cfg.BlockExchange {
-			router.Blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Margin: expiryMargin,
+			// Each block token is verified against the site's JWKS before it is sent to the hub.
+			verifier := &exchange.BlockVerifier{JWKSURL: cfg.BlockJWKSURL, HTTP: &http.Client{Timeout: exchangeTimeout}}
+			router.Blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Verify: verifier.Check, Margin: expiryMargin,
 				Observe: m.ObserveBlockExchange(log.With("component", "block-exchange"))}
 		}
 		srv.Exchangeable = router.Accepts

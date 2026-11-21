@@ -67,6 +67,9 @@ var ErrRefused = errors.New("exchange: the hub refused the exchange")
 type RefusedError struct {
 	Status int
 	Code   string
+	// Reason is set only on a block token refused here, before the hub (blockverify.go): which check
+	// refused it, in the hub's words. Never a token or a claim value.
+	Reason string
 }
 
 func (e *RefusedError) Error() string {
@@ -77,10 +80,12 @@ func (e *RefusedError) Error() string {
 func (e *RefusedError) Unwrap() error { return ErrRefused }
 
 // RefusalCodes are the OAuth error codes the hub refuses an exchange with (apps/auth
-// block-exchange.ts and user-exchange.ts, the 400 and 401 answers). RefusalCode maps any other to
-// `other`, so a metric label never holds what the hub happened to send.
+// block-exchange.ts and user-exchange.ts, the 400 and 401 answers), and `local`: a block token refused
+// here, never sent (BlockVerifier). RefusalCode maps any other to `other`, so a metric label never holds
+// what the hub happened to send.
 var RefusalCodes = []string{
-	"invalid_request", "invalid_client", "invalid_target", "unauthorized_client", "invalid_grant", "invalid_scope", "other",
+	"invalid_request", "invalid_client", "invalid_target", "unauthorized_client", "invalid_grant", "invalid_scope",
+	LocalRefusalCode, "other",
 }
 
 // RefusalCode is err's refusal code, one of RefusalCodes; `none` when err is not a refusal.

@@ -145,6 +145,9 @@ func TestTheBlockExchangeFlag(t *testing.T) {
 	for v, want := range map[string]bool{"": false, "false": false, "0": false, "true": true, "1": true} {
 		kv := relayEnv()
 		kv["APP_DATA_BLOCK_EXCHANGE"] = v
+		if want {
+			kv["APP_DATA_BLOCK_JWKS_URL"] = "https://site.invalid/api/v1/block-tokens/jwks"
+		}
 		c, err := load(kv)
 		if err != nil || c.BlockExchange != want {
 			t.Errorf("%q: %+v, %v; want BlockExchange %v", v, c, err, want)
@@ -153,5 +156,41 @@ func TestTheBlockExchangeFlag(t *testing.T) {
 	c, err := load(map[string]string{"APP_DATA_REST_URL": "https://site.invalid", "APP_DATA_BLOCK_EXCHANGE": "true"})
 	if err == nil || !strings.Contains(err.Error(), "APP_DATA_BLOCK_EXCHANGE needs the registry path") {
 		t.Fatalf("got %+v, %v; want the registry path required", c, err)
+	}
+}
+
+// The block exchange needs the site's JWKS (block tokens are verified here before the hub is asked),
+// and the JWKS setting means nothing without the exchange.
+func TestTheBlockJWKSURL(t *testing.T) {
+	on := func(jwks string) (*Config, error) {
+		kv := relayEnv()
+		kv["APP_DATA_BLOCK_EXCHANGE"] = "true"
+		kv["APP_DATA_BLOCK_JWKS_URL"] = jwks
+		return load(kv)
+	}
+	if c, err := on("https://site.invalid/api/v1/block-tokens/jwks"); err != nil || c.BlockJWKSURL != "https://site.invalid/api/v1/block-tokens/jwks" {
+		t.Fatalf("%+v, %v", c, err)
+	}
+	for jwks, want := range map[string]string{
+		"":                              "needs APP_DATA_BLOCK_JWKS_URL",
+		"http://site.invalid/jwks":      "APP_DATA_BLOCK_JWKS_URL must be an https URL",
+		"https://site.invalid/jwks?x=1": "APP_DATA_BLOCK_JWKS_URL must be an https URL",
+		"http://site.example.svc/jwks":  "",
+	} {
+		c, err := on(jwks)
+		if want == "" {
+			if err != nil {
+				t.Errorf("%q: %v", jwks, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %+v, %v; want %q", jwks, c, err, want)
+		}
+	}
+	kv := relayEnv()
+	kv["APP_DATA_BLOCK_JWKS_URL"] = "https://site.invalid/api/v1/block-tokens/jwks"
+	if c, err := load(kv); err == nil || !strings.Contains(err.Error(), "set both or neither") {
+		t.Fatalf("got %+v, %v; want the JWKS refused without the exchange", c, err)
 	}
 }

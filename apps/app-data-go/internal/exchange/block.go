@@ -131,6 +131,9 @@ const (
 	BlockFailed     = "failed"     // the hub could not be asked or did not answer (no token issued)
 	BlockSpent      = "spent"      // ErrSpent
 	BlockFull       = "full"       // ErrBlockCacheFull
+	// BlockUnverifiable: the token could not be checked here (ErrBlockUnverifiable: the site's JWKS
+	// could not be fetched); not sent to the hub, not remembered.
+	BlockUnverifiable = "unverifiable"
 )
 
 // BlockCache makes at most one successful exchange per App Block token: the hub refuses a second
@@ -146,6 +149,10 @@ const (
 type BlockCache struct {
 	// Hub is the exchange (Exchanger.ExchangeBlock).
 	Hub func(ctx context.Context, subject string) (Token, error)
+	// Verify checks a block token before Hub is called (BlockVerifier.Check): a token it refuses (an
+	// ErrRefused, code `local`) is remembered like a hub refusal, and one it cannot check
+	// (ErrBlockUnverifiable) is forgotten; neither is sent to the hub. Nil sends every token.
+	Verify func(ctx context.Context, subject string) error
 	// Margin: a token issued earlier is handed out only while it has more than this left (the
 	// stream's expiry margin, so a stream is never opened with a token about to be closed for it).
 	Margin time.Duration
@@ -212,7 +219,14 @@ func (c *BlockCache) Exchange(ctx context.Context, subject string) (Token, error
 
 // first makes the exchange and records its outcome.
 func (c *BlockCache) first(ctx context.Context, k [sha256.Size]byte, e *blockEntry, subject string, start time.Time) (Token, error) {
-	tok, err := c.Hub(ctx, subject)
+	var tok Token
+	var err error
+	if c.Verify != nil {
+		err = c.Verify(ctx, subject)
+	}
+	if err == nil {
+		tok, err = c.Hub(ctx, subject)
+	}
 	c.mu.Lock()
 	switch {
 	case err == nil:
@@ -240,6 +254,8 @@ func (c *BlockCache) first(ctx context.Context, k [sha256.Size]byte, e *blockEnt
 		c.observe(BlockIssued, nil)
 	case errors.Is(err, ErrRefused):
 		c.observe(BlockRefused, err)
+	case errors.Is(err, ErrBlockUnverifiable):
+		c.observe(BlockUnverifiable, nil)
 	default:
 		c.observe(BlockFailed, nil)
 	}

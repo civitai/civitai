@@ -17,7 +17,8 @@ service exchanges from the user's own, as the adapter's relay (the origin judges
 can answer in time, the read comes from the site's document-store REST list, made with the user's
 token. With `APP_DATA_REGISTRY_URL` unset every read is the REST read and no token is exchanged. An
 App Block token is exchanged at the hub's block exchange, once per block token, only with
-`APP_DATA_BLOCK_EXCHANGE` on (default off: it reads REST); DESIGN.md, "Block tokens".
+`APP_DATA_BLOCK_EXCHANGE` on (default off: it reads REST), after its signature and claims are checked
+here against the site's block-token JWKS (`APP_DATA_BLOCK_JWKS_URL`); DESIGN.md, "Block tokens".
 
 ## Layout
 
