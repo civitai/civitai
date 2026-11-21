@@ -326,7 +326,7 @@ func sliceRef[T any](kind refKind, s []T) (ref, bool) {
 	if cap(s) == 0 {
 		return ref{}, false
 	}
-	return ref{kind: kind, p: unsafe.Pointer(unsafe.SliceData(s)), n: len(s)}, true
+	return ref{kind: kind, p: unsafe.Pointer(unsafe.SliceData(s)), n: len(s)}, true //nolint:gosec // G103: the address is only a map key (object identity), never dereferenced
 }
 
 func (e *encoder) flatten(v any) (int, error) {
@@ -395,7 +395,7 @@ func (e *encoder) flatten(v any) (int, error) {
 		if t == nil {
 			return e.primitive(&e.null, "null"), nil
 		}
-		i, ok := e.seen(ref{kind: refDate, p: unsafe.Pointer(t)})
+		i, ok := e.seen(ref{kind: refDate, p: unsafe.Pointer(t)}) //nolint:gosec // G103: the address is only a map key (Date identity), never dereferenced
 		if ok {
 			return i, nil
 		}

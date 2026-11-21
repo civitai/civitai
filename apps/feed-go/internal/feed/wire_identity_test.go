@@ -3,7 +3,6 @@ package feed
 import (
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/devalue"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
@@ -38,7 +37,7 @@ func TestWireSharesTheInstancesNodeShares(t *testing.T) {
 	if len(imgs) != 3 {
 		t.Fatalf("%d images", len(imgs))
 	}
-	var dates []*time.Time
+	dates := make([]*time.Time, 0, len(imgs))
 	for i, img := range imgs {
 		sortAt, ok := wireField(t, img.Wire, "sortAt").(*time.Time)
 		if !ok || !sortAt.Equal(at) {
@@ -66,7 +65,7 @@ func TestWireSharesTheInstancesNodeShares(t *testing.T) {
 	}
 	postUser, _ := wireField(t, p.wire, "user").(superjson.Object)
 	imgUser, _ := wireField(t, imgs[0].Wire, "user").(superjson.Object)
-	if unsafe.SliceData(postUser) != unsafe.SliceData(imgUser) || len(postUser) != len(imgUser) {
+	if len(postUser) == 0 || len(postUser) != len(imgUser) || &postUser[0] != &imgUser[0] {
 		t.Fatal("the post's user is not its first image's user object")
 	}
 	// So the devalue body writes the first image's sortAt once for the post and the image: one Date per

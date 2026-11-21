@@ -444,6 +444,8 @@ jobs:
       FUZZ_TARGETS: >-
         internal/auth:FuzzTokenFromCookieHeader:170000
         internal/auth:FuzzVerify:95000
+        internal/devalue:FuzzRoundTrip:40000
+        internal/devalue:FuzzString:300000
         internal/feed:FuzzParse:180000
         internal/feed:FuzzParseInfinite:140000
         internal/hydrate:FuzzMetaEntry:150000

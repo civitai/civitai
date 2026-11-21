@@ -52,9 +52,9 @@ func (g *gen) leaf() any {
 		g.shared = append(g.shared, t)
 		return t
 	case 10:
-		return int32(g.r.IntN(100))
+		return g.r.Int32N(100)
 	case 11:
-		return uint32(g.r.IntN(100))
+		return g.r.Uint32N(100)
 	default:
 		return float32(0.5)
 	}
@@ -132,7 +132,7 @@ func identity(v any) (ref, bool) {
 	case Set:
 		return sliceRef(refSet, t)
 	case *time.Time:
-		return ref{kind: refDate, p: unsafe.Pointer(t)}, true
+		return ref{kind: refDate, p: unsafe.Pointer(t)}, true //nolint:gosec // G103: identity only, never dereferenced
 	}
 	return ref{}, false
 }
@@ -328,7 +328,7 @@ func FuzzRoundTrip(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, seed uint64) {
-		g := &gen{r: rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))}
+		g := &gen{r: rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))} //nolint:gosec // G404: a reproducible test generator, not a secret
 		checkRoundTrip(t, g.value(5))
 	})
 }

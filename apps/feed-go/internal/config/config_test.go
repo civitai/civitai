@@ -235,7 +235,11 @@ func TestLoadWriteDevalue(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
 	}
-	for in, want := range map[string]bool{"": false, "false": false, "1": false, "TRUE": false, " true": false, "on": false, "true": true} {
+	for _, c := range []struct {
+		in   string
+		want bool
+	}{{"", false}, {"false", false}, {"1", false}, {"TRUE", false}, {"true ", false}, {"on", false}, {"true", true}} {
+		in, want := c.in, c.want
 		t.Setenv("TRPC_WRITE_DEVALUE", in)
 		c, err := Load()
 		if err != nil {

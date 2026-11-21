@@ -33,16 +33,29 @@ var goldenDevalueDir = filepath.Join(goldenDir, "devalue")
 // and then requires the same bytes, and requires the places that needed it to be exactly this list
 // (a fix that removes one, or a change that adds one, fails until the list says so).
 var goldenDevalueKeyOrder = map[string][]string{
-	"as-posts":     {},
-	"infinite":     {},
-	"model-getall": {},
+	"as-posts": {
+		"items.N.images.N.cosmetic.data",                // the frame's cosmetic record
+		"items.N.images.N.eventDecoration.data",         // the event decoration's cosmetic record
+		"items.N.images.N.user.profilePicture.metadata", // the profile-pictures cache record
+		"items.N.user.profilePicture.metadata",          // the same record, on the post's user
+	},
+	"infinite": {
+		"items.N.cosmetic.data",
+		"items.N.user.profilePicture.metadata",
+	},
+	"model-getall": {
+		"items.N.images.N",                     // the showcase image cache record (modelfeed imageWire)
+		"items.N.images.N.metadata",            // and its metadata
+		"items.N.user.profilePicture.metadata", // the profile-pictures cache record
+		"items.N.version",                      // the version cache record (modelfeed versionWire)
+	},
 }
 
 type goldenDevalueCompute func(ctx context.Context, t *testing.T, fx *goldenFixture) (*computed, error)
 
 func goldenDevalueAsPosts(ctx context.Context, t *testing.T, fx *goldenFixture) (*computed, error) {
 	env := goldenSetupMode(t, fx, false)
-	r, err := SyntheticRequest(context.Background(), ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
+	r, err := SyntheticRequest(ctx, ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +64,7 @@ func goldenDevalueAsPosts(ctx context.Context, t *testing.T, fx *goldenFixture) 
 
 func goldenDevalueInfinite(ctx context.Context, t *testing.T, fx *goldenFixture) (*computed, error) {
 	env := goldenSetupMode(t, fx, false)
-	r, err := SyntheticInfiniteRequest(context.Background(), ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
+	r, err := SyntheticInfiniteRequest(ctx, ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +73,7 @@ func goldenDevalueInfinite(ctx context.Context, t *testing.T, fx *goldenFixture)
 
 func goldenDevalueModels(ctx context.Context, t *testing.T, fx *goldenFixture) (*computed, error) {
 	env := goldenSetupModelsMode(t, fx, false)
-	r, err := SyntheticModelGetAllRequest(context.Background(), ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
+	r, err := SyntheticModelGetAllRequest(ctx, ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,6 +111,7 @@ func goldenDevalueRun(t *testing.T, dir string, minFixtures, minBodies int, comp
 		unclaimed[strings.TrimSuffix(filepath.Base(b), ".txt")] = true
 	}
 	observed := map[string]bool{}
+	served, exact := 0, 0
 	for _, path := range goldenFiles(t, dir, minFixtures) {
 		fx := goldenLoad(t, path)
 		if fx.Expect.Fallback != "" {
@@ -135,6 +149,10 @@ func goldenDevalueRun(t *testing.T, dir string, minFixtures, minBodies int, comp
 				}
 			}
 			body := `{"result":{"data":` + string(payload) + `}}`
+			served++
+			if body == string(node) {
+				exact++
+			}
 			paths, err := goldenDevalueCompare(body, string(node))
 			if err != nil {
 				t.Fatal(err)
@@ -150,6 +168,7 @@ func goldenDevalueRun(t *testing.T, dir string, minFixtures, minBodies int, comp
 	for name := range unclaimed {
 		t.Errorf("%s: a Node devalue body without a served fixture", name)
 	}
+	t.Logf("%s: %d of %d served fixtures byte-identical to Node's devalue body; the others differ only in goldenDevalueKeyOrder", dir, exact, served)
 	if t.Failed() {
 		return
 	}

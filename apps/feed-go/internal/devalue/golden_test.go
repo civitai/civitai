@@ -145,11 +145,12 @@ func TestNodeGoldenSpecial(t *testing.T) {
 // TestNodeGoldenSpecialLedger: the Go table and Node's file name the same cases, so a case added on
 // either side without the other fails here rather than going untested.
 func TestNodeGoldenSpecialLedger(t *testing.T) {
-	var file, table []string
-	for _, c := range loadSpecial(t) {
+	cases, values := loadSpecial(t), specialValues()
+	file, table := make([]string, 0, len(cases)), make([]string, 0, len(values))
+	for _, c := range cases {
 		file = append(file, c.Name)
 	}
-	for k := range specialValues() {
+	for k := range values {
 		table = append(table, k)
 	}
 	sort.Strings(file)

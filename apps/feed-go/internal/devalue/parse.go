@@ -92,11 +92,13 @@ func parseJSONValue(dec *json.Decoder, depth int) (any, error) {
 // jsNumber is Number(text) for a JSON number: the nearest float64, ±Infinity past the range.
 func jsNumber(s string) (float64, error) {
 	f, err := strconv.ParseFloat(s, 64)
-	var ne *strconv.NumError
-	if err != nil && !(errors.As(err, &ne) && errors.Is(ne.Err, strconv.ErrRange)) {
-		return 0, err
+	if err == nil {
+		return f, nil
 	}
-	return f, nil
+	if ne := (*strconv.NumError)(nil); errors.As(err, &ne) && errors.Is(ne.Err, strconv.ErrRange) {
+		return f, nil // ParseFloat's ±Inf (or 0) is JSON.parse's value
+	}
+	return 0, err
 }
 
 // Parse is devalue's `parse`: the value a devalue text stands for. Each entry is one value, so an

@@ -42,7 +42,7 @@ func TestCanDecodeDevalueResponse(t *testing.T) {
 	h := func(kv ...string) http.Header {
 		out := http.Header{}
 		for i := 0; i < len(kv); i += 2 {
-			out.Add(kv[i], kv[i+1])
+			out.Add(kv[i], kv[i+1]) //nolint:gosec // G602: every call passes key, value pairs
 		}
 		return out
 	}

@@ -955,8 +955,19 @@ func BuildInfiniteImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.
 		if r := byID[img.ID]; r != nil {
 			availability, item = r.Availability, r.Collection
 		}
+		// In the Node object's key order: `availability` is the SELECT's column before `minor`, `meta`
+		// follows `restricted` (and a collection row's two columns), `baseModel` is set after
+		// `modelVersionIdsManual`, and `judgeScore` is last.
 		wire := make(superjson.Object, 0, len(img.Wire)+6)
 		for _, f := range img.Wire {
+			switch f.Key {
+			case "minor":
+				wire = append(wire, superjson.Field{Key: "availability", Val: availability})
+			case "modelVersionIds":
+				wire = append(wire, superjson.Field{Key: "meta", Val: nil})
+			case "user":
+				wire = append(wire, superjson.Field{Key: "baseModel", Val: superjson.Undefined{}})
+			}
 			wire = append(wire, f)
 			if item != nil && f.Key == "restricted" {
 				wire = append(wire,
@@ -965,13 +976,7 @@ func BuildInfiniteImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.
 				)
 			}
 		}
-		wire = append(wire,
-			superjson.Field{Key: "availability", Val: availability},
-			superjson.Field{Key: "meta", Val: nil},
-			superjson.Field{Key: "baseModel", Val: superjson.Undefined{}},
-			superjson.Field{Key: "judgeScore", Val: nil},
-		)
-		img.Wire = wire
+		img.Wire = append(wire, superjson.Field{Key: "judgeScore", Val: nil})
 	}
 	return images
 }
