@@ -357,6 +357,104 @@ describe('AppAssistantPreview — a shown direct preview', () => {
     expect(restart.onRestart).toHaveBeenCalledTimes(1);
   });
 
+  // A direct preview's session host is a bearer credential: if the session handed to the pane names
+  // one (the runner's start_preview output, say), the pane tells the page to drop it.
+  test('🔴 reports a direct frame whose session still names a host, once', async () => {
+    m.fetchFrame.mockImplementation(async () => DIRECT);
+    const onDirectFrame = vi.fn();
+    const session = { ...RUNNER_SESSION, host: SESSION_HOST };
+    await renderWithProviders(
+      <AppAssistantPreview
+        canPreview
+        session={session}
+        restart={offer()}
+        onDirectFrame={onDirectFrame}
+      />
+    );
+    await expect.element(page.getByTestId('frame')).toBeInTheDocument();
+    await vi.waitFor(() => expect(onDirectFrame).toHaveBeenCalledWith(session));
+    await settle();
+    expect(onDirectFrame).toHaveBeenCalledTimes(1);
+  });
+
+  test('NEGATIVE CONTROL: a tunnel frame is never reported', async () => {
+    m.fetchFrame.mockImplementation(async () => FRAME);
+    const onDirectFrame = vi.fn();
+    await renderWithProviders(
+      <AppAssistantPreview
+        canPreview
+        session={RUNNER_SESSION}
+        restart={offer()}
+        onDirectFrame={onDirectFrame}
+      />
+    );
+    await expect.element(page.getByTestId('frame')).toBeInTheDocument();
+    await settle();
+    expect(onDirectFrame).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The assistant restarts the dev server while it builds. A check that lands in that window reads
+   * "down"; the dev server coming back up (`devServerUp`) must end it, as there is no tunnel to lose.
+   */
+  describe('a “down” read while the dev server restarts', () => {
+    const shown = (
+      status: {
+        tunnelStatus?: () => Promise<SandboxTunnelStatus | null>;
+        devServerStatus?: () => Promise<{ running: boolean } | null>;
+      },
+      devServerUp: number,
+      restart: ReturnType<typeof offer>
+    ) => (
+      <AppAssistantPreview
+        canPreview
+        session={RUNNER_SESSION}
+        restart={restart}
+        liveCheckMs={LIVE_CHECK_MS}
+        devServerUp={devServerUp}
+        {...status}
+      />
+    );
+
+    test('🔴 a direct preview shows again, with no click, once the dev server is back up', async () => {
+      m.fetchFrame.mockImplementation(async () => DIRECT);
+      let answer = { running: true };
+      const status = { devServerStatus: vi.fn(async () => answer) };
+      const restart = offer();
+      const screen = await renderWithProviders(shown(status, 0, restart));
+      await expect.element(page.getByTestId('frame')).toBeInTheDocument();
+      await vi.waitFor(() => expect(status.devServerStatus).toHaveBeenCalledTimes(1));
+      answer = { running: false };
+      await tabComesBack();
+      await expect.element(page.getByText('The live preview isn’t running.')).toBeInTheDocument();
+
+      answer = { running: true };
+      await screen.rerender(shown(status, 1, restart));
+      await expect.element(page.getByTestId('frame')).toBeInTheDocument();
+      await settle();
+      expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(0);
+      expect(restart.onRestart).not.toHaveBeenCalled();
+    });
+
+    test('NEGATIVE CONTROL: a tunnel’s “down” still stands when the dev server comes back up', async () => {
+      m.fetchFrame.mockImplementation(async () => FRAME);
+      let answer: SandboxTunnelStatus = { running: true, host: HOST };
+      const status = { tunnelStatus: vi.fn(async () => answer) };
+      const restart = offer();
+      const screen = await renderWithProviders(shown(status, 0, restart));
+      await expect.element(page.getByTestId('frame')).toBeInTheDocument();
+      await vi.waitFor(() => expect(status.tunnelStatus).toHaveBeenCalledTimes(1));
+      answer = { running: false, host: null };
+      await tabComesBack();
+      await expect.element(page.getByText('The live preview isn’t running.')).toBeInTheDocument();
+
+      await screen.rerender(shown(status, 1, restart));
+      await settle();
+      expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(1);
+      expect(page.getByTestId('frame').elements()).toHaveLength(0);
+    });
+  });
+
   test('stays shown when the sandbox would not say: no answer is not “down”', async () => {
     const devServerStatus = vi.fn(async () => null);
     await renderDirect(devServerStatus);
