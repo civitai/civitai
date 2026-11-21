@@ -97,9 +97,6 @@ func (s *Server) preparePublishedApp(ctx context.Context, r *http.Request) (appc
 	if err != nil {
 		return appchip.Request{}, false, err
 	}
-	if r.Header.Get(verifiedBotHeader) != "" {
-		return appchip.Request{}, false, fallback.New("verified-bot")
-	}
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
 		return appchip.Request{}, false, err
