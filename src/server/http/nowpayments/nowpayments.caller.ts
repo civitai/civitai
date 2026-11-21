@@ -2,7 +2,7 @@ import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
 import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
-import { lazyInstance } from '~/server/http/lazy-instance';
+import { lazyProxy } from '~/shared/utils/lazy';
 import { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -297,4 +297,4 @@ class NOWPaymentsCaller extends HttpCaller {
   }
 }
 
-export default lazyInstance(() => NOWPaymentsCaller.getInstance());
+export default lazyProxy(() => NOWPaymentsCaller.getInstance());

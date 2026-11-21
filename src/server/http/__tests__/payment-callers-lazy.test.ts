@@ -1,7 +1,6 @@
 import { createHmac } from 'crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// The env object the callers read. Each test fills it, then imports the caller fresh.
 const { env } = vi.hoisted(() => ({ env: {} as Record<string, string | undefined> }));
 vi.mock('~/env/server', () => ({ env }));
 
@@ -55,13 +54,12 @@ describe.each(callers)('$name caller is built on first use', ({ load, method, mi
   });
 });
 
-it('a lazily built caller keeps its own `this` when a method is called', async () => {
+it('a method called on the lazy caller reaches the instance through `this`', async () => {
   Object.assign(env, FULL_ENV);
   const nowPayments = (await import('~/server/http/nowpayments/nowpayments.caller')).default;
   const body = { payment_id: 1, payment_status: 'finished' };
   const signed = createHmac('sha512', FULL_ENV.NOW_PAYMENTS_IPN_KEY)
     .update(JSON.stringify(body))
     .digest('hex');
-  const { validateWebhookEvent } = nowPayments;
-  expect(validateWebhookEvent(signed, body)).toEqual({ isValid: true });
+  expect(nowPayments.validateWebhookEvent(signed, body)).toEqual({ isValid: true });
 });
