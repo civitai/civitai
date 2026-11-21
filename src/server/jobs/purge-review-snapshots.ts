@@ -146,13 +146,9 @@ export async function purgeExpiredReviewSnapshots(
   const rows = await dbRead.appBlockPublishRequest.findMany({
     where: {
       status: { in: [...PURGEABLE_TERMINAL_STATUSES] },
-      // gte cursor+1ms: don't re-walk what previous runs already handled. The
-      // cursor is stored in whole MILLISECONDS (epoch ms) while the column is
-      // `timestamptz(6)` (microseconds), so the saved value truncates the last
-      // row's timestamp: a `gt cursor` matches that same row again, so while it
-      // is the newest due row every run re-scans it and the cursor stays put.
-      // Starting at the next whole millisecond skips everything in the
-      // cursor's millisecond.
+      // gte cursor+1ms, not gt: the cursor is saved in whole ms but updatedAt is
+      // timestamptz(6), so `gt` re-matches the last row while it is the newest
+      // due row, and every run re-scans it without advancing the cursor.
       // lt cutoff: THE RETENTION GATE — not yet 30 days terminal, not eligible.
       updatedAt: { gte: new Date(cursor.getTime() + 1), lt: cutoff },
     },

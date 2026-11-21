@@ -60,8 +60,7 @@ type PurgeWhere = { status: { in: string[] }; updatedAt: UpdatedAtFilter };
  * Applies the sweep's `updatedAt` filter the way Postgres would, at MICROSECOND
  * resolution (the column is `timestamptz(6)`). Prisma binds a JS `Date`, which
  * only carries milliseconds, so each bound is `ms * 1000` microseconds. Honours
- * whichever of `gt`/`gte` the sweep sends, so it reports what that query
- * actually matches rather than assuming one operator.
+ * whichever of `gt`/`gte` the sweep sends.
  */
 const matchesUpdatedAt = (rowMicros: number, f: UpdatedAtFilter) =>
   (f.gt === undefined || rowMicros > f.gt.getTime() * 1000) &&
@@ -446,18 +445,16 @@ describe('purgeExpiredReviewSnapshots — batching, resumability, resilience', (
           (r) =>
             args.where.status.in.includes(r.status) && matchesUpdatedAt(r.micros, args.where.updatedAt)
         )
-        // What Prisma hands back: a JS Date, truncated to the millisecond.
+        // Prisma hands back a ms-truncated Date.
         .map((r) => ({ ...r, updatedAt: new Date(Math.floor(r.micros / 1000)) }))
     );
 
-    // Run 1: fresh cursor, the row is due and gets reclaimed.
     const first = await purgeExpiredReviewSnapshots({ now: NOW });
     expect(first.scanned).toBe(1);
     expect(mockSetCursor).toHaveBeenCalledTimes(1);
     const savedMs = (mockSetCursor.mock.calls[0] as unknown as [Date])[0].getTime();
     expect(savedMs).toBe(Date.parse('2026-06-01T00:00:05.356Z'));
 
-    // Run 2: resume from the persisted epoch-ms value, as getJobDate would.
     mockGetJobDate.mockResolvedValue([new Date(savedMs), mockSetCursor]);
     mockDelete.mockClear();
     const second = await purgeExpiredReviewSnapshots({ now: NOW });
