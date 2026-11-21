@@ -1,11 +1,14 @@
 # App store listings read model: design
 
-**Status:** slices 1 to 3 of 8 done, all dark. Slice 1 is the adapter side of `store-listing@v1`
+**Status:** slices 1 to 4 of 8 done, all dark. Slice 1 is the adapter side of `store-listing@v1`
 (`src/server/registry-adapter/listing-stream.ts`). Slice 2 is the app-index-go ingest behind
 `APP_INDEX_LISTINGS` (`internal/index/listings.go`, `internal/store/listing*.go`; README,
 "Listings read model"). Slice 3 is the read API, `GET /listings` and `GET /listings/{slug}`
-(`internal/listingread`, `internal/api/listings.go`; README, "Listing API"). Nothing on the site
-calls it yet: the shadow diff and the cutover are later slices, listed under Rollout.
+(`internal/listingread`, `internal/api/listings.go`; README, "Listing API"). Slice 4 is the site's
+shadow of the store grid and the public REST list behind the `app-listings-read-model` Flipt flag
+(`src/server/services/blocks/app-listings-read-model-shadow.service.ts`; Shadow diff, below). The
+site still serves every listing read from the database; serving from the read model is slice 5,
+after the gate below.
 
 The goal: the user-facing app store reads its listings from a read model built from the registry,
 instead of from Prisma reads in `app-listing.service.ts`. The surfaces covered are the store grid
@@ -227,41 +230,107 @@ These match `listAvailableListings`.
 
 ## Shadow diff
 
-This follows the `app-index-search` pattern. Behind a new Flipt flag, `app-listings-read-model`
-(mode `shadow`), the tRPC grid, detail and card reads, and the REST handlers, call the read model
-alongside the DB read. They serve the DB answer and compare the two.
+Slice 4 shadows the store grid (`appListings.listAvailable`, every page) and the public REST list
+(`GET /api/v1/apps`). Detail, card and OG are slice 5. With the `app-listings-read-model` Flipt
+flag on, the site serves the database answer exactly as before, and afterwards, off the response
+path, asks the read model the same query and compares the two
+(`app-listings-read-model-shadow.service.ts`).
 
-- **Compared, per surface:**
-  - grid: the ordered list of `id`s on the page (slugs until the stream carries the id, Rollout
-    slice 3b), plus `nextCursor` presence;
-  - every card: `name`, `tagline`, `category`, `contentRating`, `iconUrl`, `coverUrl`, `creator`,
-    `isBeta`, `isOfficial`, `kindData`, `updatedAt`, `recommend`, `reviewCount`, `openCount`;
-  - detail: the same, plus `description`, `screenshots` and `installCount`. The media fields are
-    compared as the read model renders them for that request's host and viewer.
-- **Tolerance:**
-  - order and identity fields must match exactly;
-  - stats may differ for up to two adapter poll intervals after the DB value last changed. These are
-    counted as `stale`, not `diff`;
-  - a listing that is missing on one side is a `membership` diff, never tolerated.
-- **Metrics** (web tier, beside `app_index_search_*`):
-  - `app_listings_read_model_requests_total{surface, source, reason}`, with `surface` one of grid,
-    detail, card, og, rest_list or rest_detail, and `source` one of db or read_model;
-  - `app_listings_read_model_diffs_total{surface, kind}`, with `kind` one of order, membership,
-    field or stale;
-  - `app_listings_read_model_field_diffs_total{field}`;
-  - one log line per diff, with listing ids only and no viewer id.
-- **Gate to serve:** 7 days of shadow at under 0.1% `order + membership + field` diffs per surface,
-  and the breaker never open. This matches the private-data plan.
+- **The viewer.** The token is signed from the options object the database read was given
+  (`app-index-viewer-token.ts`): `host` from `redCapable`, `level` from `viewerBrowsingLevel`
+  (absent is 0), `scope` narrowed by `narrowStoreScope`, the same defaults the database read applies.
+  A floor other than `public`, or a level that is not an integer from 0 to 63, is not shadowed.
+  `viewer_test.go`'s literal vector pins the signer on both sides.
+- **Not shadowed:** a page with sub-listing cards on it, a page the app index's search answered,
+  and page 2 onward when the listing the database cursor sits after no longer exists (its slug, the
+  read model's tie-break, cannot be named).
+- **Paging.** A database cursor `(sort_key, id, mean)` is sent as the read model's cursor
+  `(sort_key, slug of id, mean)`: one primary-key read of the slug, so both sides rank page 2 onward
+  with the same pinned mean. A cursor-format literal is pinned on both sides (`rank_test.go`
+  `TestCursorVector`, the shadow's test).
+- **Compared by slug** (the stream carries no listing id until slice 3b):
+  - a slug on one page only is asked of the other side by slug, with the same kind and category
+    (`?slugs=` on the read model; `listStoreListingsBySlugs` on the database, plus the developer
+    filter). Not shown to this viewer at all there: a **visibility** mismatch,
+    `visibility_missing` (the read model hides a listing the database shows) or `visibility_extra`
+    (the read model shows a listing the database does not; the dangerous one). Shown there: the two
+    sides only page or order it differently, which is an order mismatch;
+  - a slug on both pages: its gated media (`iconUrl`, `coverUrl`) is a **media** mismatch when it
+    differs; an **identity field** (`name`, `tagline`, `category`, `contentRating`, `creator`,
+    `isBeta`, `isOfficial`, `kindData` less `appBlockId`) an `identity_field` mismatch; and a
+    **stats field** (`recommendedCount`, `notRecommendedCount`, `recommendPct`, `reviewCount`,
+    `openCount`, `updatedAt`) a `stats_field` mismatch. Identity fields say what the listing is, and
+    a difference there is a read-model bug; stats fields can trail the database by up to an adapter
+    poll (Stats freshness). The classes are `READ_MODEL_FIELD_CLASS`, pinned field by field by the
+    shadow's test;
+  - **order**, reported apart: the slugs left once visibility mismatches are removed differ in
+    order, or one side has a next page and the other does not. Ties fall to the id on the database
+    and to the slug on the read model, so order mismatches are expected on `top-rated` (most of the
+    store ties there) until slice 3b; they never count as visibility.
+- **Bounded:** a sampled fraction of pages (`APP_LISTINGS_READ_MODEL_SHADOW_SAMPLE`, default 0.1),
+  at most `APP_LISTINGS_READ_MODEL_SHADOW_MAX_IN_FLIGHT` per process at a time (default 4; more are
+  dropped, never queued), each read-model call and each of the shadow's own database reads waited
+  on for at most `APP_LISTINGS_READ_MODEL_SHADOW_TIMEOUT_MS` (default 1000; a database read past it
+  is not cancelled, only no longer waited on), and a per-process breaker (`IndexBreaker`, with the `APP_INDEX_BREAKER_*` knobs):
+  after consecutive read-model failures the shadow stops for a cooldown. The breaker is asked only
+  immediately before the first read-model call, so a page that returns earlier never spends its
+  half-open probe. The extra database reads
+  are the cursor's slug (page 2 onward) and the by-slug check, only for a page that differs.
+- **Metrics** (`src/server/prom/app-listings-read-model.metrics.ts`), each by `surface` (`grid`,
+  `rest_list`):
+  - `app_listings_read_model_shadow_requests_total{surface, outcome}`: `compared`, or why not:
+    `unconfigured`, `unsupported_viewer`, `unsupported_input`, `breaker_open`, `saturated`,
+    `timeout`, `not_ready`, `error`, `bad_response`, `db_error`, `db_timeout`;
+  - `app_listings_read_model_compared_pages_total{surface}` and
+    `app_listings_read_model_compared_slugs_total{surface}` (listings on either page: the
+    denominator);
+  - `app_listings_read_model_mismatches_total{surface, kind}`, `kind` one of `visibility_missing`,
+    `visibility_extra`, `media`, `identity_field`, `stats_field`, one per listing per kind;
+  - `app_listings_read_model_field_mismatches_total{surface, field}`;
+  - `app_listings_read_model_order_mismatches_total{surface}`, one per page;
+  - `app_listings_read_model_breaker_state` and `app_listings_read_model_breaker_transitions_total{to}`.
+- **Logs:** one line per page that differs, at most 30 a minute per process: the surface, the
+  slugs of each visibility mismatch, the field names that differ per slug, and whether the order
+  differs. Never a card's values, a query, or anything about the viewer.
+
+### Go / no-go for serving (slice 5)
+
+Serve the grid or the REST list from the read model only when, for that surface, over 7
+consecutive days of shadow traffic:
+
+- `visibility_missing + visibility_extra + media + identity_field` mismatches are under 0.1% of
+  compared slugs:
+  `sum by (surface) (increase(app_listings_read_model_mismatches_total{kind=~"visibility_missing|visibility_extra|media|identity_field"}[7d])) / sum by (surface) (increase(app_listings_read_model_compared_slugs_total[7d])) < 0.001`;
+- every `visibility_extra` that did occur is explained (the log names the slugs; a listing
+  delisted within the adapter's poll is the expected one);
+- the breaker never opened, and `compared` is the large majority of the outcomes.
+
+Order and `stats_field` mismatches are reported, not gating: a stats field trails the database by
+up to an adapter poll, and ties order differently until slice 3b. A listing whose stats differ
+persistently (across more than two polls) is still read before serving.
+
+### Turn-on order
+
+Each step is reversible by undoing it; nothing before the flag changes what any user sees.
+
+1. The adapter publishes `listingContentRating` (slice 3), so the read model holds every listing
+   at layout 2.
+2. `APP_INDEX_LISTINGS=on` on app-index-go, after the service identity and the listing relay gate
+   it needs (Rollout, slice 2), and its first listings generation is serving.
+3. The viewer key on both sides: the same secret of at least 32 bytes as `APP_INDEX_VIEWER_KEY` on
+   app-index-go and on the site. `APP_INDEX_URL` is already set on the site for search.
+4. The `app-listings-read-model` flag on, for shadow. The flag is created in the Flipt state
+   repository (not in this repo); this code reads it as a global boolean, off when it is absent.
 
 ## Cutover flags
 
-Slice 1 added the first and slice 2 the second. The third name is a proposal.
+Slice 1 added the first, slice 2 the second and slice 4 the third.
 
-| Flag                                            | Values                            | What                                                                                                    |
-| ----------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `REGISTRY_ADAPTER_LISTING_RELAYS` (adapter env) | relay client ids                  | the listing stream exists, for those relays only. Empty means off (this PR)                             |
-| `APP_INDEX_LISTINGS` (app-index-go env)         | on/off                            | ingest `store-listing@v1` (slice 2), and serve the listing API (slice 3). Unset means off               |
-| `app-listings-read-model` (Flipt)               | off / shadow / serve, per surface | the web tier's read path (slices 4–6), with the existing per-process breaker. Any failure serves the DB |
+| Flag                                            | Values           | What                                                                                                    |
+| ----------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------- |
+| `REGISTRY_ADAPTER_LISTING_RELAYS` (adapter env) | relay client ids | the listing stream exists, for those relays only. Empty means off (this PR)                             |
+| `APP_INDEX_LISTINGS` (app-index-go env)         | on/off           | ingest `store-listing@v1` (slice 2), and serve the listing API (slice 3). Unset means off               |
+| `app-listings-read-model` (Flipt)               | boolean          | slice 4: on = shadow the grid and REST list (Shadow diff). Serving (slices 5–6) will add its own switch |
 
 Rollback at each step is the previous flag value. The DB read path is never removed during this
 work.
@@ -338,9 +407,12 @@ served for a week.
      database's tie-break), then the detail fields (`serialId`, `collaborators`, `scopes`,
      `connectScopes`, the links, `betaMessage`, the fork fields). Until then the read API answers
      without them, and the shadow diff compares by slug.
-4. **Slice 4: shadow** on the grid and REST list: the web tier signs the viewer token, calls
-   `GET /listings` beside its database read behind `app-listings-read-model`, serves the database
+4. **Slice 4 (done): shadow** on the grid and REST list: the web tier signs the viewer token, calls
+   `GET /listings` after its database read behind `app-listings-read-model`, serves the database
    answer, and compares (Shadow diff, above).
+   - Also in slice 4: `GET /listings` ranks from a per-process memo of the serving generation's
+     keys, read once per (generation, cursor) and shared by concurrent requests, instead of a scan
+     of every listing per request (README, "Listing API").
 5. **Slice 5: shadow on detail, card and OG,** then serve grid and REST after the gate.
 6. **Slice 6: serve detail, card and OG.**
 7. **Slice 7: launch and install** via `app-release@v1`.

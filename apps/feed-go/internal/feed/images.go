@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
@@ -94,6 +95,10 @@ var statementTimeout = 20 * time.Second
 // empty page (never cached) unless the query asks to throw, as Node answers a statement timeout (getAllImages: "feeds can accept an
 // empty page after a timeout"), so a slow replica is not handed on to the Node app to run again. Only
 // this query's own deadline does that: a cancelled or expired caller context is still an error.
+//
+// A personalized page (Built.PersonalizedViewerID) is the `statement-timeout` fallback instead: an
+// empty page there reads as "you have none", so it is logged, counted and handed to the Node app,
+// which errors on the same timeout (getAllImages' throwOnStatementTimeout).
 func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]RawImage, error) {
 	useCache := cache != nil && cache.Enabled && cache.Redis != nil && b.CacheTTL > 0
 	var key string
@@ -108,22 +113,22 @@ func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]R
 	}
 	qctx, cancel := context.WithTimeout(ctx, statementTimeout)
 	defer cancel()
-	timedOut := func() bool {
-		return !b.ThrowOnStatementTimeout && ctx.Err() == nil && errors.Is(qctx.Err(), context.DeadlineExceeded)
+	onError := func(err error) ([]RawImage, error) {
+		if b.ThrowOnStatementTimeout || ctx.Err() != nil || !errors.Is(qctx.Err(), context.DeadlineExceeded) {
+			return nil, err
+		}
+		if b.PersonalizedViewerID != 0 {
+			return nil, fallback.Safef("statement-timeout", "viewer %d", b.PersonalizedViewerID)
+		}
+		return []RawImage{}, nil
 	}
 	rows, err := db.Query(qctx, b.SQL, b.Args...)
 	if err != nil {
-		if timedOut() {
-			return []RawImage{}, nil
-		}
-		return nil, err
+		return onError(err)
 	}
 	out, err := scanRows(rows, b.Collection)
 	if err != nil {
-		if timedOut() {
-			return []RawImage{}, nil
-		}
-		return nil, err
+		return onError(err)
 	}
 	if useCache && !cache.ReadOnly {
 		if raw, err := json.Marshal(out); err == nil {

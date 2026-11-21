@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
@@ -35,21 +36,29 @@ const trainingDataType = "Training Data"
 //go:embed training_data_listing.sql
 var trainingDataListingSQL string
 
-// TrainingDataSQLHash is the SHA-256 (hex) of trainingDataListingSQL: the rule set this build lists
-// Training Data files by. Node sends the hash of its own statement with every model sample
-// (trainingDataListingSqlSha256, header TrainingDataSQLHeader); a body with a Training Data candidate
-// is answered only when the two are equal, so a Node deploy that changes the rules (or a sample that
-// does not say) makes feed-go fall back rather than list by rules the Node it shadows no longer has.
+// TrainingDataRulesVersion is the version of the decision over the rows this build ports
+// (trainingDataRowRefused, trainingDataServableOnHost, the listed predicate): Node's
+// TRAINING_DATA_LISTING_RULES_VERSION (training-data-restricted.service.ts), which
+// feed-go-training-data-listing.parity.test.ts holds to the Node source it versions and to this
+// constant. Bump both when Node's decision changes, and port the change here in the same PR.
+const TrainingDataRulesVersion = 1
+
+// TrainingDataSQLHash is the rule set this build lists Training Data files by, as Node names its own
+// (trainingDataListingRulesId, header TrainingDataSQLHeader): the SHA-256 (hex) of
+// trainingDataListingSQL and the decision's version, `<sha256>;rules=<n>`. A body with a Training
+// Data candidate is answered only when the sample's value equals it, so a Node deploy that changes
+// the statement or the decision (or a sample that does not say) makes feed-go fall back rather than
+// list by rules the Node it shadows no longer has.
 var TrainingDataSQLHash = func() string {
 	sum := sha256.Sum256([]byte(trainingDataListingSQL))
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:]) + ";rules=" + strconv.Itoa(TrainingDataRulesVersion)
 }()
 
-// TrainingDataSQLHeader carries Node's statement hash on a model sample (feed-go-shadow.ts).
+// TrainingDataSQLHeader carries Node's rule set id on a model sample (feed-go-shadow.ts).
 const TrainingDataSQLHeader = "x-feed-go-training-data-sql"
 
 // listingRequest is what the listing reads from the request: its Host header (isRedCapableHost) and
-// the Node statement hash the sample carried ("" = none).
+// the Node rule-set id the sample carried ("" = none).
 type listingRequest struct {
 	host, sqlHash string
 }
@@ -104,7 +113,7 @@ func (d *Deps) trainingDataListing(ctx context.Context, versions []superjson.Obj
 		return nil, nil
 	}
 	if req.sqlHash != TrainingDataSQLHash {
-		// Not the rules the Node this answers for applies (or it did not say): fail closed.
+		// Not the rules the Node this answers for applies (or it did not say): fall back.
 		return nil, fallback.New("v1-models-training-data-drift")
 	}
 	rows, err := queryRows(ctx, d.DB, trainingDataListingSQL, candidates)

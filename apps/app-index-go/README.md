@@ -155,8 +155,9 @@ start and taking `/search` down with it.
 ### Listing API
 
 `GET /listings` and `GET /listings/{slug}` answer the store grid and the detail page from the read
-model, for the web tier only. Nothing on the site calls them yet: the shadow diff that will is the
-next slice (`LISTINGS-READ-MODEL.md`, "Shadow diff"). Each is a port of the store's database read
+model, for the web tier only. The site calls `GET /listings` only in shadow, behind the
+`app-listings-read-model` flag, and serves its own database answer (`LISTINGS-READ-MODEL.md`,
+"Shadow diff"). Each is a port of the store's database read
 (`listAvailableListings`, `getListingDetail`), and `internal/listingread` names the site function each
 rule mirrors.
 
@@ -228,6 +229,13 @@ exactly like a missing one.
   cards are projected from, since the consumer keeps writing the serving generation between the two
   reads. A listing re-rated or re-kinded in between is left out, so a page can be short by it; it is
   never shown to a viewer it no longer admits.
+- **Keys are memoised.** A page is ranked from every listing's columns (`Keys`). The process holds
+  the last answer for the serving generation and its cursor, and reads it again only when either
+  moves (every change the consumer commits moves the cursor in the same transaction); concurrent
+  requests that miss share one read, which runs within `APP_INDEX_SEARCH_TIMEOUT_MS` and is not
+  cancelled by the request that started it. A page then costs one read of its own rows. The sort
+  stays in Go rather than SQL so `internal/listingread` remains the one port of the store's sort
+  keys, paging and gates (`internal/api/listings_keys_memo.go`).
 - `app_index_listings_requests_total{route, outcome}` counts them.
 
 The media rule is pinned on both sides by one fixture, `internal/listingread/testdata/media-parity.json`:

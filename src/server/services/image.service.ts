@@ -2570,6 +2570,9 @@ const getAllImagesUncaptured = async (
     if (!prefetchedTargetUser) throw throwNotFoundError('User not found');
     targetUserId = prefetchedTargetUser.id;
   }
+  // A page only this viewer sees: an empty page after a timeout reads to them as "you have none", so
+  // the timeout is an error instead. Mirrored by feed-go's Built.PersonalizedViewerID.
+  const personalizedPage = !!userId && (!!reactions?.length || targetUserId === userId);
 
   // Hacked this to use the model version image cache instead
   const prioritizeUser = !!prioritizedUserIds?.length;
@@ -3213,7 +3216,7 @@ const getAllImagesUncaptured = async (
         },
       });
       noteEmptyIdsPage(input, 'statement-timeout', { dbTarget });
-      if (input.throwOnStatementTimeout) throw e;
+      if (input.throwOnStatementTimeout || personalizedPage) throw e;
       return { items: [], nextCursor: undefined };
     }
     throw e;

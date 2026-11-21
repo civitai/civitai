@@ -20,8 +20,9 @@ import (
 //
 // The media live in the body only, every item as the stream sent it, each with its own nsfwLevel,
 // rating and host; a read decodes them from it (decodeStored). Nothing here applies a ceiling: the
-// read API does, per request (listingread.ProjectMedia). app_index_listing_media, a second copy of
-// the items that nothing reads, is dropped.
+// read API does, per request (listingread.ProjectMedia). The DROP below removes
+// app_index_listing_media, a per-item copy of the media that an earlier layout wrote and nothing
+// read, from a database that still has it.
 const listingsSQL = `
 CREATE TABLE IF NOT EXISTS app_index_listing_cursors (
   generation bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

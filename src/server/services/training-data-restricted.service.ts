@@ -78,15 +78,33 @@ export function trainingDataListingSql(candidates: number[]): Prisma.Sql {
     WHERE mf."modelVersionId" = ANY(${candidates}::int[]) AND mf.type = 'Training Data'`;
 }
 
+/**
+ * The version of `trainingDataListing`'s JS decision (its whole body, between the feed-go-rules
+ * markers, src/shared/utils/training-data-visibility.ts, and the values of sfwBrowsingLevelsFlag and
+ * ScanResultCode.Success it reads). feed-go mirrors it (TrainingDataRulesVersion in
+ * apps/feed-go/internal/v1models/trainingdata.go) and lists Training Data files only for a Node
+ * sending the same version. feed-go-training-data-listing.parity.test.ts hashes that source and fails
+ * until this is bumped (in both places) whenever it changes.
+ */
+export const TRAINING_DATA_LISTING_RULES_VERSION = 1;
+
 let listingSqlSha256: string | undefined;
 /**
- * The SHA-256 (hex) of `trainingDataListingSql`'s text, the rule set this build applies. The feed-go
- * shadow sends it with every model sample; feed-go answers a body with Training Data files only when
- * it equals the hash of its own copy, so it never lists by rules other than this build's.
+ * The SHA-256 (hex) of `trainingDataListingSql`'s text: the statement half of the rule set
+ * `trainingDataListingRulesId` names (the decision half is TRAINING_DATA_LISTING_RULES_VERSION).
  */
 export function trainingDataListingSqlSha256(): string {
   listingSqlSha256 ??= createHash('sha256').update(trainingDataListingSql([]).text).digest('hex');
   return listingSqlSha256;
+}
+
+/**
+ * The rule set this build lists Training Data files by, as the feed-go shadow sends it with every
+ * model sample: the statement's hash and the decision's version, `<sha256>;rules=<n>`. feed-go answers
+ * a body with Training Data files only when both equal its own, and falls back otherwise.
+ */
+export function trainingDataListingRulesId(): string {
+  return `${trainingDataListingSqlSha256()};rules=${TRAINING_DATA_LISTING_RULES_VERSION}`;
 }
 
 /**
@@ -101,6 +119,7 @@ export async function trainingDataListing(
   versions: { id: number; files?: ListedFile[] | null }[],
   { redCapable, viewerManages = false }: { redCapable: boolean; viewerManages?: boolean }
 ): Promise<(file: ListedFile) => boolean> {
+  // feed-go-rules:begin (TRAINING_DATA_LISTING_RULES_VERSION: bump it when this body changes)
   if (viewerManages) return () => true;
   const candidates = versions
     // `files` is absent when the read did not select them (model-version getById without
@@ -136,6 +155,7 @@ export async function trainingDataListing(
       .map((r) => r.id)
   );
   return (file) => !(file.type === 'Training Data' && refused.has(file.id));
+  // feed-go-rules:end
 }
 
 type ViewedFile = { id: number; type: string; visibility: string; metadata?: unknown };
