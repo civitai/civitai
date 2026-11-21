@@ -11,7 +11,10 @@ import {
   stickerAutoTrackRunsKey,
   submitCountedAutoTrack,
   startAutoTrack,
+  despikeStickerTrack,
+  buildStickerAutoTrackWorkflow,
 } from '~/server/utils/sticker-auto-track';
+import type { StickerTrackV1 } from '~/shared/utils/sticker-track';
 
 const PLACER = 52;
 const OTHER = 63;
@@ -393,5 +396,70 @@ describe('pollAutoTrack', () => {
       status: 200,
     }));
     expect(result).toMatchObject({ status: 'succeeded', startMs: START });
+  });
+});
+
+/** Twenty ticks at scale 0.1; `at` sets other scales by tick. */
+const sized = (at: Record<number, number> = {}): StickerTrackV1 => ({
+  v: 1,
+  ms: 250,
+  x: [
+    [0, 0.2],
+    [19, 0.6],
+  ],
+  y: [[0, 0.5]],
+  s: Array.from({ length: 20 }, (_, i) => [i, at[i] ?? 0.1] as [number, number]),
+  r: [[0, 0]],
+});
+const scaleAt = (track: StickerTrackV1, tick: number) =>
+  track.s.reduce((value, [t, s]) => (t <= tick ? s : value), track.s[0][1]);
+
+describe('despikeStickerTrack', () => {
+  it('redraws up to three ticks where the sticker swells to three times its size', () => {
+    const out = despikeStickerTrack(sized({ 6: 0.3, 7: 0.31, 8: 0.29 }));
+    for (const tick of [6, 7, 8]) expect(scaleAt(out, tick)).toBeCloseTo(0.1);
+  });
+
+  it('keeps a real size step, as at a cut to a close-up', () => {
+    const step = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i + 10, 0.2]));
+    const out = despikeStickerTrack(sized(step));
+    expect(scaleAt(out, 9)).toBeCloseTo(0.1);
+    expect(scaleAt(out, 10)).toBeCloseTo(0.2);
+  });
+
+  it('returns a track with no spike as it came', () => {
+    const track = sized();
+    expect(despikeStickerTrack(track)).toBe(track);
+  });
+
+  it('runs on every tracker result the app reads', () => {
+    const out = parseStickerAutoTrack(sized({ 6: 0.3 }), 1);
+    expect(scaleAt(out!, 6)).toBeCloseTo(0.1);
+  });
+});
+
+describe('buildStickerAutoTrackWorkflow', () => {
+  const pose = { x: 0.5, y: 0.25, scale: 0.2, rotation: 0 };
+  const graph = (frame?: { width: number; height: number }) =>
+    (
+      buildStickerAutoTrackWorkflow({ videoAir: 'air', pose, startMs: 0, maxMs: 1000, frame }) as {
+        input: { workflow: Record<string, { inputs: Record<string, unknown> }> };
+      }
+    ).input.workflow;
+
+  it('also segments whatever is under the sticker, in pixels of the loaded frame', () => {
+    // A 1920x1080 video loads at 1024x576.
+    const workflow = graph({ width: 1920, height: 1080 });
+    expect(JSON.parse(workflow['12'].inputs.positive_coords as string)).toEqual([
+      { x: 512, y: 144 },
+    ]);
+    expect(workflow['6'].inputs.masks).toEqual(['16', 0]);
+    expect(workflow['7'].inputs.max_objects).toBe(64);
+  });
+
+  it('picks from heads only when the video size is unknown', () => {
+    const workflow = graph();
+    expect(workflow['12']).toBeUndefined();
+    expect(workflow['6'].inputs.masks).toEqual(['5', 0]);
   });
 });

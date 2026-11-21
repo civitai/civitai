@@ -72,7 +72,99 @@ export function readStickerAutoTrackWorkflow(
 export function parseStickerAutoTrack(body: unknown, maxScale: number): StickerTrackV1 | null {
   const parsed = stickerTrackSchema.safeParse(body);
   if (!parsed.success || parsed.data.v !== 1) return null;
-  return clampStickerTrackScale(parsed.data, maxScale);
+  return clampStickerTrackScale(despikeStickerTrack(parsed.data), maxScale);
+}
+
+/** A channel's value at every tick from 0 to `n - 1`, joined linearly as the player joins it. */
+function expandChannel(pairs: [number, number][], n: number) {
+  const out = new Array<number>(n);
+  let i = 0;
+  for (let k = 0; k < n; k++) {
+    while (i + 1 < pairs.length && pairs[i + 1][0] <= k) i++;
+    const [t0, v0] = pairs[i];
+    const next = pairs[i + 1];
+    out[k] = k < t0 ? pairs[0][1] : next ? v0 + ((next[1] - v0) * (k - t0)) / (next[0] - t0) : v0;
+  }
+  return out;
+}
+
+/**
+ * The track with size spikes smoothed out. A head mask that briefly takes in the shoulders makes
+ * the sticker jump to several times its size for a tick or two. Inside each shown run, such ticks
+ * are redrawn from the good ticks either side, in every channel. A real size step at a cut or a
+ * fast zoom stays, and so does a spike on a run's first or last tick, which has no line to sit off.
+ */
+export function despikeStickerTrack(track: StickerTrackV1, ratio = 1.3): StickerTrackV1 {
+  const channels = ['x', 'y', 's', 'r'] as const;
+  const n = Math.max(...channels.map((c) => track[c][track[c].length - 1][0])) + 1;
+  const values = Object.fromEntries(channels.map((c) => [c, expandChannel(track[c], n)])) as Record<
+    (typeof channels)[number],
+    number[]
+  >;
+  const shown = new Array<boolean>(n).fill(true);
+  if (track.show) {
+    let i = 0;
+    for (let k = 0; k < n; k++) {
+      while (i + 1 < track.show.length && track.show[i + 1][0] <= k) i++;
+      shown[k] = track.show[i][1] === 1;
+    }
+  }
+  const limit = Math.log(ratio);
+  let changed = false;
+  for (let start = 0; start < n; ) {
+    if (!shown[start]) {
+      start++;
+      continue;
+    }
+    let end = start;
+    while (end < n && shown[end]) end++;
+    const logs = values.s.slice(start, end).map(Math.log);
+    const spike = new Array<boolean>(end - start).fill(false);
+    // Up to three ticks above both neighbours, or below both, by more than `ratio`. A step at a cut
+    // or a ramp in a zoom stays: no tick of it clears both sides.
+    for (let a = 0; a < logs.length; a++)
+      for (let b = a + 2; b <= a + 4 && b < logs.length; b++) {
+        const inner = logs.slice(a + 1, b);
+        const high = Math.max(logs[a], logs[b]) + limit;
+        const low = Math.min(logs[a], logs[b]) - limit;
+        if (inner.every((v) => v > high) || inner.every((v) => v < low))
+          for (let i = a + 1; i < b; i++) spike[i] = true;
+      }
+    const good: number[] = [];
+    for (let i = start; i < end; i++) if (!spike[i - start]) good.push(i);
+    if (good.length && good.length < end - start) {
+      changed = true;
+      for (const c of channels) {
+        const from = good.map((g) => values[c][g]);
+        for (let i = start; i < end; i++) {
+          if (good.includes(i)) continue;
+          const after = good.findIndex((g) => g > i);
+          values[c][i] =
+            after <= 0
+              ? from[after === 0 ? 0 : from.length - 1]
+              : from[after - 1] +
+                ((from[after] - from[after - 1]) * (i - good[after - 1])) /
+                  (good[after] - good[after - 1]);
+        }
+      }
+    }
+    start = end;
+  }
+  if (!changed) return track;
+  // Back to pairs, keeping only the ticks where a value changes.
+  const pairs = (a: number[], digits: number) =>
+    a.flatMap((x, i) =>
+      i === 0 || i === n - 1 || x !== a[i - 1] || x !== a[i + 1]
+        ? [[i, +x.toFixed(digits)] as [number, number]]
+        : []
+    );
+  return {
+    ...track,
+    x: pairs(values.x, 4),
+    y: pairs(values.y, 4),
+    s: pairs(values.s, 4),
+    r: pairs(values.r, 1),
+  };
 }
 
 export type StickerAutoTrackPose = { x: number; y: number; scale: number; rotation: number };
@@ -86,14 +178,48 @@ export function buildStickerAutoTrackWorkflow({
   pose,
   startMs,
   maxMs,
+  frame,
 }: {
   videoAir: string;
   pose: StickerAutoTrackPose;
   startMs: number;
   maxMs: number;
+  /** The video's own size. Without it a sticker on something other than a head cannot track. */
+  frame?: { width: number; height: number };
 }) {
   // A JSON string inside the graph, not a nested object: the node parses it.
   const placement = JSON.stringify(pose);
+  // The point under the sticker, in pixels of the frame StickerLoadVideo returns (max_side 1024).
+  const fit = frame ? Math.min(1, 1024 / Math.max(frame.width, frame.height)) : 0;
+  const underSticker = frame
+    ? JSON.stringify([
+        {
+          x: Math.round(pose.x * Math.round(frame.width * fit)),
+          y: Math.round(pose.y * Math.round(frame.height * fit)),
+        },
+      ])
+    : null;
+  // Whatever is under the sticker, segmented after the heads, so a head holding the point still
+  // wins the pick and a lantern or a car tracks instead of failing for want of a head.
+  const fallback = underSticker
+    ? {
+        '12': {
+          class_type: 'SAM3_Detect',
+          inputs: {
+            model: ['2', 0],
+            image: ['4', 0],
+            positive_coords: underSticker,
+            threshold: 0.4,
+            refine_iterations: 2,
+            individual_masks: true,
+          },
+        },
+        '13': { class_type: 'MaskToImage', inputs: { mask: ['5', 0] } },
+        '14': { class_type: 'MaskToImage', inputs: { mask: ['12', 0] } },
+        '15': { class_type: 'ImageBatch', inputs: { image1: ['13', 0], image2: ['14', 0] } },
+        '16': { class_type: 'ImageToMask', inputs: { image: ['15', 0], channel: 'red' } },
+      }
+    : {};
   return {
     $type: 'customComfy',
     input: {
@@ -123,7 +249,10 @@ export function buildStickerAutoTrackWorkflow({
             individual_masks: true,
           },
         },
-        '6': { class_type: 'StickerAnchorPick', inputs: { masks: ['5', 0], placement } },
+        '6': {
+          class_type: 'StickerAnchorPick',
+          inputs: { masks: underSticker ? ['16', 0] : ['5', 0], placement },
+        },
         '7': {
           class_type: 'SAM3_VideoTrack',
           inputs: {
@@ -132,7 +261,9 @@ export function buildStickerAutoTrackWorkflow({
             initial_mask: ['6', 0],
             conditioning: ['3', 0],
             detection_threshold: 0.5,
-            max_objects: 16,
+            // 16 slots fill with every head seen across a few cuts, and then nothing is left to
+            // find the subject again.
+            max_objects: 64,
             detect_interval: 2,
           },
         },
@@ -161,6 +292,7 @@ export function buildStickerAutoTrackWorkflow({
           inputs: { text: ['9', 0], filename_prefix: 'sticker_track', format: 'json' },
         },
         '11': { class_type: 'CLIPTextEncode', inputs: { text: 'eye:4', clip: ['2', 1] } },
+        ...fallback,
       },
     },
   } as unknown as WorkflowStepTemplate;
@@ -238,7 +370,12 @@ const DAY_SECONDS = 24 * 60 * 60;
 export async function startAutoTrack(
   deps: {
     checkSpace: () => Promise<unknown>;
-    loadVideo: () => Promise<{ url: string; durationSeconds?: number } | null>;
+    loadVideo: () => Promise<{
+      url: string;
+      durationSeconds?: number;
+      width?: number | null;
+      height?: number | null;
+    } | null>;
     resolveLimit: () => Promise<{ limit: number; applies: boolean }>;
     limitMessage: (limit: number) => string | undefined;
     store: RunCounter;
@@ -300,6 +437,8 @@ export async function startAutoTrack(
           pose,
           startMs,
           maxMs,
+          frame:
+            video.width && video.height ? { width: video.width, height: video.height } : undefined,
         }),
       }),
   });
