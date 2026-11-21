@@ -546,7 +546,7 @@ describe('the rescore lag watch', () => {
     }
   );
 
-  const HEAD_START = '20271121120000_model_hot_score_version_head_start';
+  const HEAD_START = HEAD_START_DIR;
   const functionExists = async (pg: PGlite, name: string) =>
     (await pg.query(`SELECT 1 FROM pg_proc WHERE proname = $1`, [name])).rows.length > 0;
 
@@ -578,7 +578,7 @@ describe('the rescore lag watch', () => {
 
   // Run as written, with no replicas and no opt-out: each file must stop before it changes anything.
   // PGlite runs each chunk as one implicit transaction, so the explicit BEGIN that protects a psql
-  // run without ON_ERROR_STOP is not exercised here.
+  // run without ON_ERROR_STOP is exercised by the statement-by-statement test below, not here.
   it('refuses to apply the migration, changing nothing, when it cannot see replica lag', async () => {
     const pg = await freshDb('20271117190000_model_hot_score_version_credit');
 

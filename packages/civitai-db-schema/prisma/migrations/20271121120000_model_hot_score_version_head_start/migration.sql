@@ -63,8 +63,8 @@ CREATE OR REPLACE FUNCTION public.hot_version_score(
 RETURNS int
 LANGUAGE sql
 STABLE
--- One expression, no FROM, so the planner can inline it into the trigger's version scan like
--- hot_score() (checked with EXPLAIN VERBOSE). The version's engagement is written out twice.
+-- One expression on purpose: a FROM clause stops the planner inlining it into the trigger's
+-- version scan. The version's engagement is written out twice for that reason.
 AS $function$
     SELECT CASE
         WHEN likes + downloads / 6.4 >= 25
