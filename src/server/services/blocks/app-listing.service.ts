@@ -39,11 +39,13 @@ import type {
   GetAppListingDetailInput,
   ListAllListingsForModerationInput,
   ListAppListingsInput,
+  ListingActionsRunSource,
   ListingCard,
   ListingCardKindData,
   ListingCreatorChip,
   ListingDetail,
   ListingDetailKindData,
+  ListingForkOf,
   ListingKind,
   ListingSort,
 } from '~/server/schema/blocks/app-listing-read.schema';
@@ -596,7 +598,7 @@ export function detailKindData(row: DetailKindDataSource): ListingDetailKindData
       // a TRUTHINESS test. So an EMPTY-STRING client id projected as `null`
       // before, and `?? null` would newly project it as `''`. `|| null` keeps
       // the wire value byte-identical for every input.
-      connectClientId: row.connectClientId || null,
+      connectClientId: publicConnectClientId(row),
     };
   }
   return {
@@ -966,6 +968,18 @@ export function projectListingDetail(
  */
 export function publicBetaMessage(beta: Pick<ListingBetaRead, 'isBeta' | 'betaMessage'>) {
   return beta.isBeta ? beta.betaMessage : null;
+}
+
+/**
+ * The off-site detail's `kindData.connectClientId`: the public OAuth client id, or null for an
+ * on-site listing and an off-site one with none (an empty id reads as none; see `detailKindData`).
+ * Shared with the registry adapter's listing stream.
+ */
+export function publicConnectClientId(row: {
+  kind: string;
+  connectClientId?: string | null;
+}): string | null {
+  return row.kind === 'offsite' ? row.connectClientId || null : null;
 }
 
 /**
@@ -1979,14 +1993,35 @@ export async function getListingDetail(
     },
     isOfficial
   );
-  // The opt-in is only meaningful for an app whose source is hosted here; an off-site listing
-  // never offers a Fork action whatever its column says.
-  return {
-    ...detail,
+  return withDetailReads(detail, {
     issueTrackerUrl: issueTracker.value,
     actionsRunSource,
-    forkable: publicForkable(row.kind, forkProvenance.forkable),
+    forkable: forkProvenance.forkable,
     forkOf,
+  });
+}
+
+/**
+ * The public detail: {@link projectListingDetail}'s projection with the reads it leaves to its
+ * caller (no-type columns, raw SQL only) applied, as `getListingDetail` serves it. The submitting
+ * run is an on-site fact, and the fork opt-in only means something for an app whose source is hosted
+ * here, so an off-site listing carries neither whatever its columns say.
+ */
+export function withDetailReads(
+  detail: ListingDetail,
+  reads: {
+    issueTrackerUrl: string | null;
+    actionsRunSource: ListingActionsRunSource | null;
+    forkable: boolean;
+    forkOf: ListingForkOf | null;
+  }
+): ListingDetail {
+  return {
+    ...detail,
+    issueTrackerUrl: reads.issueTrackerUrl,
+    actionsRunSource: detail.kind === 'onsite' ? reads.actionsRunSource : null,
+    forkable: publicForkable(detail.kind, reads.forkable),
+    forkOf: reads.forkOf,
   };
 }
 

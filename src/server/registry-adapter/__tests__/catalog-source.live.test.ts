@@ -267,6 +267,8 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
       },
       betaMessage: 'beta-note-a1',
       forkable: true,
+      // On-site: no connect client is published.
+      connectClientId: null,
       fork: { isFork: true, forkOfListingId: 'lst-parent-p9' },
     });
     // Positive control for the default: a metric row's count is carried.
@@ -284,6 +286,7 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
       actionsRunSource: null,
       betaMessage: null,
       forkable: false,
+      connectClientId: 'client-f6',
       fork: { isFork: false, forkOfListingId: null },
     });
     // The run read asks only for the on-site listing's block.

@@ -48,10 +48,10 @@ import { isAppSubListingId, isSubListingCard } from '~/shared/constants/app-sub-
 /** At most this many mismatch log lines per minute per process; the counters count every one. */
 export const LOG_LINES_PER_MINUTE = 30;
 
-// `internal/listingread` Card. `id` and `kindData.appBlockId` are optional: a read model of an
-// earlier layout answers without them, and is then compared by slug.
+// `internal/listingread` Card. `id`, and an on-site card's `kindData.appBlockId`, are required: a
+// card without them is not one this shadow can compare (`bad_response`).
 const readModelCardSchema = z.object({
-  id: z.string().min(1).optional(),
+  id: z.string().min(1),
   slug: z.string().min(1),
   kind: z.string(),
   name: z.string(),
@@ -73,13 +73,15 @@ const readModelCardSchema = z.object({
   isOfficial: z.boolean(),
   openCount: z.number().nullable(),
   updatedAt: z.string().optional(),
-  kindData: z.object({
-    kind: z.string(),
-    appBlockId: z.string().nullable().optional(),
-    hasPage: z.boolean().optional(),
-    liveUrl: z.string().nullable().optional(),
-    externalUrl: z.string().nullable().optional(),
-  }),
+  kindData: z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('onsite'),
+      appBlockId: z.string().nullable(),
+      hasPage: z.boolean().optional(),
+      liveUrl: z.string().nullable().optional(),
+    }),
+    z.object({ kind: z.literal('offsite'), externalUrl: z.string().nullable().optional() }),
+  ]),
 });
 export type ReadModelCard = z.infer<typeof readModelCardSchema>;
 const readModelPageSchema = z.object({
@@ -160,48 +162,53 @@ export function cardFieldDiffs(db: ListingCard, rm: ReadModelCard): ReadModelCom
   const rk = rm.kindData;
   check(
     'kindData',
-    kd.kind === rk.kind &&
-      (kd.kind === 'onsite'
-        ? kd.hasPage === rk.hasPage &&
+    kd.kind === 'onsite'
+      ? rk.kind === 'onsite' &&
+          kd.hasPage === rk.hasPage &&
           sameNullable(kd.liveUrl, rk.liveUrl) &&
-          // Compared only when the read model carries it (an earlier layout does not).
-          (rk.appBlockId === undefined || sameNullable(kd.appBlockId, rk.appBlockId))
-        : sameNullable(kd.externalUrl, rk.externalUrl))
+          sameNullable(kd.appBlockId, rk.appBlockId)
+      : rk.kind === 'offsite' && sameNullable(kd.externalUrl, rk.externalUrl)
   );
   return out;
 }
 
 /**
  * The two pages laid side by side, before any listing on one page only is checked. A listing is
- * matched by its id when the read-model card has one, else by slug; the lists name each listing by
- * its slug, which the by-slug check and the log use.
+ * matched by its id; the lists name each listing by its slug, which the by-slug check and the log
+ * use. A database card and a read-model card left unmatched that share a slug are one slug naming
+ * two ids: an `id` field mismatch of that slug (an identity field), never a visibility or order one.
  */
 export type PageDiff = {
   onlyDb: string[];
   onlyReadModel: string[];
   /** For each listing on both pages, by slug, the fields that differ (only those with one). */
   fields: Map<string, ReadModelComparedField[]>;
+  /** Slugs that name a different listing id on each side. */
+  idMismatch: Set<string>;
   slugs: number;
 };
 
 export function diffPages(db: readonly ListingCard[], rm: readonly ReadModelCard[]): PageDiff {
-  const rmById = new Map(rm.flatMap((c) => (c.id ? [[c.id, c] as const] : [])));
-  const rmBySlug = new Map(rm.filter((c) => !c.id).map((c) => [c.slug, c] as const));
-  const matched = new Set<ReadModelCard>();
+  const rmById = new Map(rm.map((c) => [c.id, c] as const));
+  const dbIds = new Set(db.map((c) => c.id));
   const fields = new Map<string, ReadModelComparedField[]>();
-  const onlyDb: string[] = [];
+  const unmatchedDb: ListingCard[] = [];
   for (const card of db) {
-    const other = rmById.get(card.id) ?? rmBySlug.get(card.slug);
+    const other = rmById.get(card.id);
     if (!other) {
-      onlyDb.push(card.slug);
+      unmatchedDb.push(card);
       continue;
     }
-    matched.add(other);
     const diffs = cardFieldDiffs(card, other);
     if (diffs.length) fields.set(card.slug, diffs);
   }
-  const onlyReadModel = rm.filter((c) => !matched.has(c)).map((c) => c.slug);
-  return { onlyDb, onlyReadModel, fields, slugs: db.length + onlyReadModel.length };
+  const unmatchedRm = rm.filter((c) => !dbIds.has(c.id));
+  const rmSlugs = new Set(unmatchedRm.map((c) => c.slug));
+  const idMismatch = new Set(unmatchedDb.filter((c) => rmSlugs.has(c.slug)).map((c) => c.slug));
+  for (const slug of idMismatch) fields.set(slug, ['id']);
+  const onlyDb = unmatchedDb.map((c) => c.slug).filter((s) => !idMismatch.has(s));
+  const onlyReadModel = unmatchedRm.map((c) => c.slug).filter((s) => !idMismatch.has(s));
+  return { onlyDb, onlyReadModel, fields, idMismatch, slugs: db.length + onlyReadModel.length };
 }
 
 /**
@@ -231,12 +238,10 @@ export function comparePages(
     if (classes.has('stats')) kinds.stats_field++;
     for (const f of diffs) fields[f] = (fields[f] ?? 0) + 1;
   }
-  // By id when the read model carries ids, as the pages were matched; else by slug.
-  const byId = rm.items.some((c) => c.id !== undefined);
-  const dbOrder = db.items.filter((c) => !missing.has(c.slug)).map((c) => (byId ? c.id : c.slug));
-  const rmOrder = rm.items
-    .filter((c) => !extra.has(c.slug))
-    .map((c) => (byId ? c.id ?? c.slug : c.slug));
+  // By id, as the pages were matched; a slug naming two ids is already an identity mismatch.
+  const kept = (slug: string) => !diff.idMismatch.has(slug);
+  const dbOrder = db.items.filter((c) => !missing.has(c.slug) && kept(c.slug)).map((c) => c.id);
+  const rmOrder = rm.items.filter((c) => !extra.has(c.slug) && kept(c.slug)).map((c) => c.id);
   const order =
     dbOrder.length !== rmOrder.length ||
     dbOrder.some((s, i) => s !== rmOrder[i]) ||

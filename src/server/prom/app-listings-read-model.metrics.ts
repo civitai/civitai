@@ -67,8 +67,12 @@ export const READ_MODEL_MISMATCH_KINDS = [
 ] as const;
 export type ReadModelMismatchKind = (typeof READ_MODEL_MISMATCH_KINDS)[number];
 
-/** The card fields compared for a listing on both pages. `iconUrl` and `coverUrl` are media. */
+/**
+ * The card fields compared for a listing on both pages. `iconUrl` and `coverUrl` are media; `id` is
+ * a slug that names a different listing on each side.
+ */
 export const READ_MODEL_COMPARED_FIELDS = [
+  'id',
   'name',
   'tagline',
   'category',
@@ -102,6 +106,8 @@ export const READ_MODEL_FIELD_CLASS: Readonly<
 > = {
   iconUrl: 'media',
   coverUrl: 'media',
+  // One slug naming a different listing id on each side.
+  id: 'identity',
   name: 'identity',
   tagline: 'identity',
   category: 'identity',

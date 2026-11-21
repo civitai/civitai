@@ -63,12 +63,12 @@ function rmCard(card: ListingCard, over: Partial<ReadModelCard> = {}): ReadModel
   const kindData =
     card.kindData.kind === 'onsite'
       ? {
-          kind: 'onsite',
+          kind: 'onsite' as const,
           appBlockId: card.kindData.appBlockId,
           hasPage: card.kindData.hasPage,
           liveUrl: card.kindData.liveUrl,
         }
-      : { kind: 'offsite', externalUrl: card.kindData.externalUrl };
+      : { kind: 'offsite' as const, externalUrl: card.kindData.externalUrl };
   return {
     id: card.id,
     slug: card.slug,
@@ -89,13 +89,6 @@ function rmCard(card: ListingCard, over: Partial<ReadModelCard> = {}): ReadModel
     kindData,
     ...over,
   };
-}
-
-/** The read model's card of an earlier layout: no id, no appBlockId. */
-function legacyRmCard(card: ListingCard, over: Partial<ReadModelCard> = {}): ReadModelCard {
-  const { id: _id, kindData, ...rest } = rmCard(card, over);
-  const { appBlockId: _appBlockId, ...legacyKindData } = kindData;
-  return { ...rest, kindData: legacyKindData };
 }
 
 const INPUT: ListAppListingsInput = { kind: 'all', sort: 'top-rated', limit: 3 };
@@ -428,7 +421,11 @@ describe('the comparison', () => {
     ['creator', 'identity_field', { creator: { id: 43, username: 'maker', image: null } }],
     ['isBeta', 'identity_field', { isBeta: true }],
     ['isOfficial', 'identity_field', { isOfficial: true }],
-    ['kindData', 'identity_field', { kindData: { kind: 'onsite', hasPage: false, liveUrl: null } }],
+    [
+      'kindData',
+      'identity_field',
+      { kindData: { kind: 'onsite', appBlockId: 'ab_alpha', hasPage: false, liveUrl: null } },
+    ],
     [
       'kindData',
       'identity_field',
@@ -481,34 +478,50 @@ describe('the comparison', () => {
     expect(await moved()).not.toContain('order_mismatches_total{grid}:1');
   });
 
-  it('matched by id: a listing renamed to a new slug is the same listing, a reused slug is not', async () => {
-    // The read model's alpha has the database's id under another slug; its bravo-slug card is
-    // another listing. Asked by slug, each side shows the other's listing (a paging difference).
-    const renamed = rmCard(A, { slug: 'alpha-renamed' });
-    const impostor = rmCard(B, { id: 'al_other' });
-    readModelAnswers([renamed, impostor], undefined, ['bravo']);
-    dbBySlugs.set('bravo', B);
-    await makeShadow().shadow('grid', INPUT, OPTS, { items: [A, B] });
-    expect(await moved()).toEqual([
-      'compared_slugs_total{grid}:3',
-      'order_mismatches_total{grid}:1',
-      'shadow_requests_total{grid/compared}:1',
-    ]);
-    expect(dbBySlugsCalls).toEqual([['bravo']]);
-    expect(logs).toEqual([
-      { surface: 'grid', visibilityMissing: [], visibilityExtra: [], fields: {}, order: true },
-    ]);
-  });
-
-  it('a read model of an earlier layout (no ids) is compared by slug', async () => {
-    readModelAnswers([legacyRmCard(A), legacyRmCard(B, { name: 'Renamed' })]);
+  it('matched by id: a listing renamed to a new slug is the same listing', async () => {
+    readModelAnswers([rmCard(A, { slug: 'alpha-renamed' }), rmCard(B)]);
     await makeShadow().shadow('grid', INPUT, OPTS, { items: [A, B] });
     expect(await moved()).toEqual([
       'compared_slugs_total{grid}:2',
-      'field_mismatches_total{grid/name}:1',
+      'shadow_requests_total{grid/compared}:1',
+    ]);
+    expect(logs).toEqual([]);
+  });
+
+  it('🔴 one slug naming another listing id on the read model is an id identity mismatch, never visibility or order', async () => {
+    // The database's bravo is al_bravo; the read model's bravo is al_bravo_other.
+    readModelAnswers([rmCard(A), rmCard(B, { id: 'al_bravo_other' })]);
+    await makeShadow().shadow('grid', INPUT, OPTS, { items: [A, B] });
+    expect(await moved()).toEqual([
+      'compared_slugs_total{grid}:2',
+      'field_mismatches_total{grid/id}:1',
       'mismatches_total{grid/identity_field}:1',
       'shadow_requests_total{grid/compared}:1',
     ]);
+    // Neither side was asked about it by slug: it is not a listing on one page only.
+    expect(dbBySlugsCalls).toEqual([]);
+    expect(calls).toHaveLength(1);
+    expect(logs).toEqual([
+      {
+        surface: 'grid',
+        visibilityMissing: [],
+        visibilityExtra: [],
+        fields: { bravo: ['id'] },
+        order: false,
+      },
+    ]);
+  });
+
+  it.each([
+    ['a card without an id', { id: undefined }],
+    [
+      'an on-site card without kindData.appBlockId',
+      { kindData: { kind: 'onsite', hasPage: true, liveUrl: 'https://alpha.apps.invalid' } },
+    ],
+  ] as [string, Record<string, unknown>][])('%s is a bad_response', async (_name, over) => {
+    reply = () => Response.json({ items: [{ ...rmCard(A), ...over }] });
+    await makeShadow().shadow('grid', INPUT, OPTS, { items: [A] });
+    expect(await moved()).toEqual(['shadow_requests_total{grid/bad_response}:1']);
   });
 
   it('values that only differ in representation are the same', async () => {

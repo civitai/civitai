@@ -911,7 +911,7 @@
     }
   },
   "details": {
-    "$comment": "The public detail fields, for the listings named. `rows` is each listing's database state as getListingDetail reads it (`fork.parent` names the listing its fork pointer holds, by slug). `stream` is the detail part of the store-listing@v1 body the adapter publishes from it to the read model (the service audience). `expected` is the detail an anonymous viewer is served: the same on both sides, `forkOf` per viewer (the parent named only when that viewer is shown the parent, by the store's gate; `name` is the parent's name, which in this fixture is its slug). The site side runs `rows` through projectListingDetail, resolveForkAttribution and the adapter (listingExtrasFromRow, listingBody); the read model runs `stream` through its ingest and ProjectDetail.",
+    "$comment": "The public detail fields, for the listings named. `rows` is each listing's database state as getListingDetail reads it (`fork.parent` names the listing its fork pointer holds, by slug). `stream` is the detail part of the store-listing@v1 body the adapter publishes from it to the read model (the service audience). `expected` is the detail an anonymous viewer is served: the same on both sides, `connectClientId` (off-site only) is the detail's `kindData.connectClientId`, and `forkOf` is per viewer (the parent named only when that viewer is shown the parent, by the store's gate; `name` is the parent's name, which in this fixture is its slug). The site side runs `rows` through projectListingDetail, resolveForkAttribution and the adapter (listingExtrasFromRow, listingBody); the read model runs `stream` through its ingest and ProjectDetail.",
     "rows": {
       "pg-mixed": {
         "appBlockId": "ab_pgmixed_1",
@@ -1071,7 +1071,8 @@
         "connectScopes": ["UserRead", "ModelsRead"],
         "betaMessage": null,
         "forkable": false,
-        "forkOf": null
+        "forkOf": null,
+        "connectClientId": "g-listing-client"
       },
       "null-rating": {
         "serialId": 533,
@@ -1094,7 +1095,8 @@
         "connectScopes": [],
         "betaMessage": null,
         "forkable": false,
-        "forkOf": null
+        "forkOf": null,
+        "connectClientId": null
       },
       "pg13-plain": {
         "serialId": 644,
@@ -1196,7 +1198,8 @@
           "X red": null,
           "XXX red": null,
           "anonymous SFW, public-external": null
-        }
+        },
+        "connectClientId": "g-listing-client"
       },
       "null-rating": {
         "serialId": 533,
@@ -1228,7 +1231,8 @@
           "X red": null,
           "XXX red": null,
           "anonymous SFW, public-external": null
-        }
+        },
+        "connectClientId": null
       },
       "pg13-plain": {
         "serialId": 644,

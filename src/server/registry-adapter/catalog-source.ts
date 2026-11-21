@@ -72,6 +72,8 @@ export type ListingExtras = {
   actionsRunSource: ListingActionsRunSource | null;
   betaMessage: string | null;
   forkable: boolean;
+  /** Off-site only: the public OAuth client id the detail's `kindData` carries (null otherwise). */
+  connectClientId: string | null;
   /** The listing's fork facts (`readListingForkProvenance`); {@link readCatalog} names the parent. */
   fork: { isFork: boolean; forkOfListingId: string | null };
 };

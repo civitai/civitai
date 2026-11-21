@@ -53,6 +53,7 @@ type Listing struct {
 // reason to drop the listing; a field of the wrong type fails the body.
 type ListingDetail struct {
 	AppBlockID       *string            `json:"appBlockId"`
+	ConnectClientID  *string            `json:"connectClientId"`
 	SerialID         *int64             `json:"serialId"`
 	Collaborators    []ListingChip      `json:"collaborators"`
 	SourceRepoURL    *string            `json:"sourceRepoUrl"`

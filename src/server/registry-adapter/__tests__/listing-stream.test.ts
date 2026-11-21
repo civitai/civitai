@@ -90,6 +90,7 @@ const store = (over: Partial<ListingStoreFields> = {}): ListingStoreFields => ({
   connectScopes: [],
   betaMessage: 'Orbit is still settling',
   forkable: true,
+  connectClientId: null,
   forkOf: null,
   ...over,
 });
@@ -175,6 +176,7 @@ const OFFSITE = app('tide-log', 'g', {
     connectScopes: ['UserRead', 'BuzzRead'],
     betaMessage: null,
     forkable: false,
+    connectClientId: 'tide-client-41',
     forkOf: null,
   }),
 });
@@ -284,6 +286,7 @@ describe('store-listing@v1 field mapping', () => {
       isBeta: false,
       isOfficial: true,
       externalUrl: 'https://tide-dest.example',
+      connectClientId: 'tide-client-41',
       stats: {
         recommendedCount: 2,
         notRecommendedCount: 5,
@@ -523,6 +526,7 @@ describe('the listing read', () => {
     actionsRunSource: null,
     betaMessage: null,
     forkable: false,
+    connectClientId: null,
     fork: { isFork: false, forkOfListingId: null },
   };
   const deps = (over: Partial<CatalogReadDeps>, calls: string[] = []): CatalogReadDeps => ({

@@ -19,6 +19,7 @@ import {
   listingHydrateSelect,
   loadDisplayedCollaboratorChipsMany,
   publicBetaMessage,
+  publicConnectClientId,
   publicForkable,
 } from '~/server/services/blocks/app-listing.service';
 import { readLiveActionsRunSourcesForBlocks } from '~/server/services/blocks/actions-run-source.service';
@@ -86,6 +87,7 @@ export function listingExtrasFromRow(
     actionsRunSource: r.kind === 'onsite' ? reads.run : null,
     betaMessage: publicBetaMessage(reads.beta ?? { isBeta: false, betaMessage: null }),
     forkable: publicForkable(r.kind, reads.fork.forkable),
+    connectClientId: publicConnectClientId(r),
     fork: { isFork: reads.fork.isFork, forkOfListingId: reads.fork.forkOfListingId },
   };
 }
@@ -174,8 +176,7 @@ export function liveCatalogReadDeps({
     // mirrors. Only those pieces: the whole select reads columns the stream never carries (the
     // manifest), and its metric piece reads four counters where one is needed. The detail fields
     // go through the detail's own rules (`listingDetailScopes`, `listingDetailConnectScopes`,
-    // `publicBetaMessage`) and the batched forms of its reads; the connect client is read only for
-    // the `connectScopes` gate, never published.
+    // `publicBetaMessage`, `publicConnectClientId`) and the batched forms of its reads.
     ...(listings
       ? {
           async loadListingExtras(listingIds: string[]) {

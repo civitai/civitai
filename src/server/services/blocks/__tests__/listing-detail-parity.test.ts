@@ -12,7 +12,7 @@ import {
 } from '~/server/services/blocks/app-listing-store-gate';
 import {
   projectListingDetail,
-  publicForkable,
+  withDetailReads,
   type HydratedListing,
 } from '~/server/services/blocks/app-listing.service';
 import { narrowStoreScope, scopeAdmitsListingKind } from '~/shared/utils/store-visibility-scope';
@@ -22,9 +22,10 @@ import { narrowStoreScope, scopeAdmitsListingKind } from '~/shared/utils/store-v
  * `parity_test.go`, `TestDetailParity`). Each `rows` entry is a listing's database state as
  * `getListingDetail` reads it, run through
  *
- *   - the store's own detail projection (`projectListingDetail`, `publicForkable`, and
- *     `resolveForkAttribution` with the store's gate as the parent lookup), which must give
- *     `expected` for every viewer: the detail an anonymous viewer is served;
+ *   - the store's own detail path as `getListingDetail` composes it (`projectListingDetail`, then
+ *     `withDetailReads` with `resolveForkAttribution`'s answer, the store's gate as the parent
+ *     lookup), which must give `expected` for every viewer: the detail an anonymous viewer is
+ *     served;
  *   - the adapter (`listingExtrasFromRow`, `streamForkOf`, `listingBody`), which must publish
  *     exactly `stream`: what the read model is fed, and projects into the same `expected`.
  */
@@ -138,22 +139,13 @@ describe('listing detail parity (media-parity.json details): the site side', () 
       const r = FIXTURE.details.rows[slug];
       const want = FIXTURE.details.expected[slug];
       const row = hydrated(slug, r);
-      const detail = projectListingDetail(
+      const projected = projectListingDetail(
         row,
         r.collaborators,
         r.sourceRepoUrl,
         { available: true, ...r.beta },
         r.connectRequestedScopes
       );
-      // `getListingDetail`'s overrides of the projection.
-      const served = {
-        ...detail,
-        issueTrackerUrl: r.issueTrackerUrl,
-        actionsRunSource: row.kind === 'onsite' && row.appBlockId ? r.actionsRunSource : null,
-        forkable: publicForkable(row.kind, r.forkable),
-      };
-      expect(served.id).toBe(want.id);
-      for (const f of DETAIL_FIELDS) expect([f, served[f]]).toEqual([f, want[f]]);
       for (const v of FIXTURE.viewers) {
         const forkOf = await resolveForkAttribution(
           {
@@ -166,7 +158,20 @@ describe('listing detail parity (media-parity.json details): the site side', () 
             return storeShows(v, parent.slug) ? { slug: parent.slug, name: parent.slug } : null;
           }
         );
-        expect([v.name, forkOf]).toEqual([v.name, want.forkOf[v.name]]);
+        // `getListingDetail` reads the run only for an on-site listing with a block.
+        const served = withDetailReads(projected, {
+          issueTrackerUrl: r.issueTrackerUrl,
+          actionsRunSource: row.appBlockId ? r.actionsRunSource : null,
+          forkable: r.forkable,
+          forkOf,
+        });
+        expect(served.id).toBe(want.id);
+        for (const f of DETAIL_FIELDS) expect([f, served[f]]).toEqual([f, want[f]]);
+        expect([v.name, served.forkOf]).toEqual([v.name, want.forkOf[v.name]]);
+        // Off-site, the detail's kindData carries the connect client; on-site it has none.
+        const kd = served.kindData;
+        if (kd.kind === 'offsite') expect(kd.connectClientId).toBe(want.connectClientId);
+        else expect('connectClientId' in want).toBe(false);
       }
     }
   );

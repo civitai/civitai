@@ -25,7 +25,8 @@ func TestProjectDetail(t *testing.T) {
 	if shots := got["screenshots"].([]any); len(shots) != 1 {
 		t.Fatalf("gallery %v", shots)
 	}
-	if kd := got["kindData"].(map[string]any); kd["kind"] != "offsite" || len(kd) != 2 {
+	// The detail's off-site kindData carries the connect client (none here), which the card's does not.
+	if kd := got["kindData"].(map[string]any); kd["kind"] != "offsite" || len(kd) != 3 || kd["connectClientId"] != nil {
 		t.Fatalf("kindData %v", kd)
 	}
 	// A fork whose parent the stream names but the generation does not hold (nil), or holds under

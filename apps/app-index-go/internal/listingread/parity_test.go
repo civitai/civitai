@@ -259,9 +259,23 @@ func TestDetailParity(t *testing.T) {
 			if err := json.Unmarshal(raw, &got); err != nil {
 				t.Fatal(err)
 			}
+			var kindData map[string]json.RawMessage
+			if err := json.Unmarshal(got["kindData"], &kindData); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := want["connectClientId"]; !ok && l.Kind == "offsite" {
+				t.Fatalf("%s: an off-site detail expectation without connectClientId", slug)
+			}
 			for k, w := range want {
-				if k == "forkOf" {
+				switch k {
+				case "forkOf":
 					w = forkOf[fv.Name]
+				case "connectClientId":
+					// The detail's off-site kindData field, not a top-level one.
+					if !jsonEqual(t, kindData[k], w) {
+						t.Errorf("%s, viewer %q, kindData.connectClientId: got %s, want %s", slug, fv.Name, kindData[k], w)
+					}
+					continue
 				}
 				if !jsonEqual(t, got[k], w) {
 					t.Errorf("%s, viewer %q, %s: got %s, want %s", slug, fv.Name, k, got[k], w)

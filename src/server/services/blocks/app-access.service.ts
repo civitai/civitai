@@ -1633,21 +1633,14 @@ export async function getAppListingAuthoringContext(opts: {
  * pinned separately in `app-collaborator.public-projection.test.ts`.
  */
 export async function listDisplayedCollaboratorUserIds(appListingId: string): Promise<number[]> {
-  const rows = await safeCollaboratorQuery(
-    () =>
-      dbRead.appCollaborator.findMany({
-        where: { appListingId, status: ACCEPTED, displayed: true },
-        select: { userId: true },
-        orderBy: { createdAt: 'asc' },
-      }),
-    [] as { userId: number }[]
-  );
-  return rows.map((r: { userId: number }) => r.userId);
+  // The batched read for one listing: the store page and the listing stream share its predicate.
+  return (await listDisplayedCollaboratorUserIdsMany([appListingId])).get(appListingId) ?? [];
 }
 
 /**
- * {@link listDisplayedCollaboratorUserIds} for many listings in one query: listing id → its
- * displayed collaborators' user ids, in seat order. A listing with none is absent.
+ * {@link listDisplayedCollaboratorUserIds} for many listings in one query, by the same two
+ * predicates: listing id → its displayed collaborators' user ids, in seat order (`createdAt asc`). A
+ * listing with none is absent.
  */
 export async function listDisplayedCollaboratorUserIdsMany(
   appListingIds: readonly string[]

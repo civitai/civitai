@@ -90,6 +90,7 @@ that judgement to the read model.
 | `scopes`, `connectScopes`          | `listingDetailScopes` (on-site, approved scopes) and `listingDetailConnectScopes` (off-site, only with a connect client)                                                          |
 | `betaMessage`                      | `publicBetaMessage`: the note only while `isBeta`                                                                                                                                 |
 | `forkable`                         | `publicForkable`: the opt-in, on-site only                                                                                                                                        |
+| `connectClientId` (off-site)       | `publicConnectClientId`: the public OAuth client id the detail's off-site `kindData` carries, null without one. Never on the card                                                 |
 | `forkOf{slug}`                     | null unless a fork; `slug` names the parent only when it is in the same catalog and the subscription may read it (as the app entity's `forkOf`), else null. See Fork parent below |
 
 Each detail field is one more batched read per catalog poll (byline, beta, support link, fork facts,
@@ -103,9 +104,9 @@ page, and reads a hidden, removed or deleted parent the same, `{visible: false}`
 in its own generation and applies the same viewer gate (`Admits`). A parent outside the public
 catalog is never named in the stream, so it can only read `{visible: false}`.
 
-Never in the stream: `connectClientId` (the card deliberately omits it; the detail's off-site
-`kindData` carries it, and the read model's detail does not, a known difference for slice 5's detail
-shadow), `visibility`, and `restrictedAudience` (viewer-scoped). Listing media items are filtered per subscription by each
+Never in the stream: `visibility` and `restrictedAudience` (viewer-scoped). `connectClientId` is
+carried, off-site only, because the public detail shows it (`kindData`); the card still omits it,
+and so does the read model's card. Listing media items are filtered per subscription by each
 item's own rating under the app-rating rule (Media, below), which is coarser than the store's
 per-request ceiling. The creator chip's `image` is the user's avatar, carried as the public card
 carries it.
@@ -274,18 +275,20 @@ path, asks the read model the same query and compares the two
   same three fields, so both sides rank page 2 onward from the same position with the same pinned
   mean, and no database read is needed for it. A cursor-format literal is pinned on both sides
   (`rank_test.go` `TestCursorVector`, the shadow's test).
-- **Compared by listing id,** or by slug for a read-model card with no id (a read model of an
-  earlier layout). Each listing is named by its slug in the checks and the log:
+- **Compared by listing id.** A read-model card without its `id`, or an on-site one without
+  `kindData.appBlockId`, makes the answer `bad_response`. Each listing is named by its slug in the
+  checks and the log:
   - a listing on one page only is asked of the other side by slug, with the same kind and category
     (`?slugs=` on the read model; `listStoreListingsBySlugs` on the database, plus the developer
     filter). Not shown to this viewer at all there: a **visibility** mismatch,
     `visibility_missing` (the read model hides a listing the database shows) or `visibility_extra`
     (the read model shows a listing the database does not; the dangerous one). Shown there: the two
-    sides only page or order it differently, which is an order mismatch;
+    sides only page or order it differently, which is an order mismatch. A database card and a
+    read-model card left unmatched that share a slug are one slug naming two listings: the `id`
+    identity field, counted as `identity_field`, never as visibility or order;
   - a listing on both pages: its gated media (`iconUrl`, `coverUrl`) is a **media** mismatch when it
     differs; an **identity field** (`name`, `tagline`, `category`, `contentRating`, `creator`,
-    `isBeta`, `isOfficial`, `kindData`, its `appBlockId` when the read model carries one) an
-    `identity_field` mismatch; and a
+    `isBeta`, `isOfficial`, `kindData` with its `appBlockId`) an `identity_field` mismatch; and a
     **stats field** (`recommendedCount`, `notRecommendedCount`, `recommendPct`, `reviewCount`,
     `openCount`, `updatedAt`) a `stats_field` mismatch. Identity fields say what the listing is, and
     a difference there is a read-model bug; stats fields can trail the database by up to an adapter

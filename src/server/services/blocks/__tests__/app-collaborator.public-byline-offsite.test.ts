@@ -169,15 +169,27 @@ beforeEach(() => {
   mockDb.appListing.findFirst.mockResolvedValue(offsiteRow());
   // Honour `appListingId`, `status` AND `displayed` — a fake that ignored any of the
   // three would make the corresponding assertion below vacuous.
+  // The public read is batched (`appListingId: { in: [...] }`) and keys its answer by listing.
   mockDb.appCollaborator.findMany.mockImplementation(async (args: unknown) => {
-    const w = (args as { where: { appListingId?: string; status?: string; displayed?: boolean } })
-      .where;
+    const w = (
+      args as {
+        where: {
+          appListingId?: string | { in: string[] };
+          status?: string;
+          displayed?: boolean;
+        };
+      }
+    ).where;
+    const listing = w.appListingId;
     return SEATS.filter(
       (s) =>
-        (w.appListingId === undefined || s.appListingId === w.appListingId) &&
+        (listing === undefined ||
+          (typeof listing === 'string'
+            ? s.appListingId === listing
+            : listing.in.includes(s.appListingId))) &&
         (w.status === undefined || s.status === w.status) &&
         (w.displayed === undefined || s.displayed === w.displayed)
-    ).map((s) => ({ userId: s.userId }));
+    ).map((s) => ({ appListingId: s.appListingId, userId: s.userId }));
   });
   // 🔴 Honours `bannedAt` / `deletedAt` as well as the id set. A fake that ignored them
   // would make every assertion about those filters vacuous — and this fake DID ignore

@@ -168,32 +168,20 @@ export function publicActionsRunSource(
  * publish request whose platform commit is the block's current one (the link
  * `resolveLiveSourceCommit` uses), filtered to public repositories by {@link publicActionsRunSource}.
  * Null when the serving version has none, when the repository is not public, and on ANY error.
+ * {@link readLiveActionsRunSourcesForBlocks} for that one block, so the store page and the registry
+ * adapter's listing stream read it by one query.
  */
 export async function readLiveActionsRunSourceForListing(
   db: ActionsRunReadClient,
   appBlockId: string
 ): Promise<ListingActionsRunSource | null> {
-  try {
-    const rows = (await db.$queryRaw`SELECT ${SELECT_COLUMNS}
-        FROM "app_block_publish_requests" pr
-        JOIN "app_blocks" ab ON ab."id" = pr."app_block_id"
-        WHERE ab."id" = ${appBlockId}
-          AND ab."current_version_sha" IS NOT NULL
-          AND pr."status" = 'approved'
-          AND pr."forgejo_commit_sha" = ab."current_version_sha"
-        ORDER BY pr."reviewed_at" DESC NULLS LAST
-        LIMIT 1`) as ActionsRunRow[] | null | undefined;
-    return publicActionsRunSource(rowToSource(Array.isArray(rows) ? rows[0] : undefined));
-  } catch (err) {
-    if (!isMissingColumnError(err)) noteDegradedRead(ACTIONS_RUN_SOURCE_DEGRADED_EVENT, err);
-    return null;
-  }
+  return (await readLiveActionsRunSourcesForBlocks(db, [appBlockId])).get(appBlockId) ?? null;
 }
 
 /**
- * {@link readLiveActionsRunSourceForListing} for many blocks in one query: block id → the run facts
- * of the version it is serving, by the same join, order and public-repository filter. A block with
- * none is absent; ANY error yields an empty map, as the single read yields null.
+ * The serving version's run facts for many blocks in one query: block id → the facts
+ * {@link readLiveActionsRunSourceForListing} describes. A block with none is absent; ANY error
+ * yields an empty map (logged unless it is the expected missing column).
  */
 export async function readLiveActionsRunSourcesForBlocks(
   db: ActionsRunReadClient,

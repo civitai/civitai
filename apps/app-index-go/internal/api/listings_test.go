@@ -42,7 +42,7 @@ const paintBody = `{"app":"urn:apps.civitai.com:app/paint","id":"apl_paint_9","s
 
 const linksBody = `{"app":"urn:apps.civitai.com:app/links","id":"apl_links_2","slug":"links","name":"Links","kind":"offsite","contentRating":null,"listingContentRating":null,
 "tagline":null,"category":"tools","description":null,"iconUrl":null,"media":[],"creator":null,"isBeta":false,"isOfficial":true,
-"externalUrl":"https://example.invalid/app",
+"externalUrl":"https://example.invalid/app","connectClientId":"links-client-7",
 "stats":{"recommendedCount":0,"notRecommendedCount":0,"recommendPct":null,"reviewCount":0,"openCount":null,"installCount":9},
 "createdAt":"2026-03-01T00:00:00.000Z","updatedAt":null}`
 
@@ -263,6 +263,10 @@ func TestListingCardsAndDetail(t *testing.T) {
 	var links map[string]json.RawMessage
 	if err := json.Unmarshal(b, &links); err != nil {
 		t.Fatal(err)
+	}
+	// Its connect client is on the detail's kindData; the grid card above has none.
+	if string(links["kindData"]) != `{"kind":"offsite","externalUrl":"https://example.invalid/app","connectClientId":"links-client-7"}` {
+		t.Errorf("links detail kindData %s", links["kindData"])
 	}
 	for k, want := range map[string]string{"serialId": "null", "collaborators": "[]", "scopes": "[]", "connectScopes": "[]",
 		"forkable": "false", "forkOf": "null", "betaMessage": "null", "actionsRunSource": "null"} {

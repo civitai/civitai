@@ -476,7 +476,7 @@ export function listingBody(
           hasPage: store.hasPage,
           ...(store.liveUrl ? { liveUrl: store.liveUrl } : {}),
         }
-      : { externalUrl: listing.externalUrl }),
+      : { externalUrl: listing.externalUrl, connectClientId: store.connectClientId }),
     stats: {
       recommendedCount: store.recommend.recommendedCount,
       notRecommendedCount: store.recommend.notRecommendedCount,

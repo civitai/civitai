@@ -136,11 +136,17 @@ type OnsiteKindData struct {
 	LiveURL    *string `json:"liveUrl,omitempty"`
 }
 
-// OffsiteKindData is ListingCardKindData's off-site arm. The detail's `connectClientId` is never
-// in the stream (LISTINGS-READ-MODEL.md, "Never in the stream").
+// OffsiteKindData is ListingCardKindData's off-site arm: the card carries no `connectClientId`.
 type OffsiteKindData struct {
 	Kind        string  `json:"kind"`
 	ExternalURL *string `json:"externalUrl"`
+}
+
+// OffsiteDetailKindData is ListingDetailKindData's off-site arm: the card's, with the public OAuth
+// client id of the app's account connection (null when it has none).
+type OffsiteDetailKindData struct {
+	OffsiteKindData
+	ConnectClientID *string `json:"connectClientId"`
 }
 
 // Card is ListingCard. `restrictedAudience` is always null: the stream holds only public listings,
@@ -166,9 +172,8 @@ type Card struct {
 	KindData           any       `json:"kindData"`
 }
 
-// Detail is ListingDetail: the card's fields, the description, the install count, the gallery and
-// the public detail fields (store.ListingDetail). Not here: the off-site `kindData.connectClientId`,
-// which the stream does not carry (LISTINGS-READ-MODEL.md, "Never in the stream").
+// Detail is ListingDetail: the card's fields (off-site kindData with its `connectClientId`), the
+// description, the install count, the gallery and the public detail fields (store.ListingDetail).
 type Detail struct {
 	Card
 	Description      *string                 `json:"description"`
@@ -263,6 +268,9 @@ func ProjectDetail(l store.Listing, v Viewer, parent *store.Listing) (Detail, er
 		SourceRepoURL: d.SourceRepoURL, IssueTrackerURL: d.IssueTrackerURL, ActionsRunSource: d.ActionsRunSource,
 		Scopes: orEmpty(d.Scopes), ConnectScopes: orEmpty(d.ConnectScopes), BetaMessage: d.BetaMessage,
 		Forkable: d.Forkable}
+	if kd, ok := out.KindData.(OffsiteKindData); ok {
+		out.KindData = OffsiteDetailKindData{OffsiteKindData: kd, ConnectClientID: d.ConnectClientID}
+	}
 	if d.ForkOf != nil {
 		out.ForkOf = &ForkOf{}
 		if parent != nil && ForkParentSlug(l) == parent.Slug && Admits(*parent, v) {

@@ -159,6 +159,11 @@ export const STORE_LISTING_SCHEMA_DOCUMENT: Record<string, unknown> = {
     hasPage: { type: 'boolean', description: 'On-site only: the app declares a launch page' },
     liveUrl: { type: 'string', description: "On-site only: the app's standalone origin" },
     externalUrl: { ...nullableString, description: 'Off-site only' },
+    connectClientId: {
+      ...nullableString,
+      description:
+        "Off-site only: the public OAuth client id of the app's account connection, as the store's detail page carries it; null when it has none",
+    },
     stats: {
       type: 'object',
       description: 'Rollups refreshed by a periodic job, so they move at its cadence',

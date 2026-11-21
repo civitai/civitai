@@ -214,6 +214,7 @@ describe('listing media parity (media-parity.json): the site side', () => {
         actionsRunSource: null,
         betaMessage: null,
         forkable: false,
+        connectClientId: null,
         forkOf: null,
       };
       const body = listingBody(app, `urn:apps.civitai.com:app/${l.slug}`, store);

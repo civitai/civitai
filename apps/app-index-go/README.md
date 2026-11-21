@@ -224,8 +224,8 @@ exactly like a missing one.
   `actionsRunSource`, `scopes`, `connectScopes`, `betaMessage`, `forkable`, `forkOf`). `forkOf` is
   resolved per viewer, as `resolveForkAttribution` does: the parent is read from the same generation
   by the slug the stream names, and named only when this viewer may see it; a parent hidden from the
-  viewer, outside the stream or gone reads `{visible: false}`. The off-site
-  `kindData.connectClientId` is not in the stream, so not in the detail.
+  viewer, outside the stream or gone reads `{visible: false}`. An off-site detail's `kindData`
+  carries `connectClientId` as the stream sends it; the card's never does.
 - Every response is `no-store` and carries no CORS header. A store failure is 500, never an empty
   page. A read that races a generation switch is 503: each store read checks, after reading, that its
   generation still exists. A serving generation of an older row layout is 503 too, until the rebuild
