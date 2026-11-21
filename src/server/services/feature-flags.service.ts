@@ -1095,9 +1095,8 @@ const featureFlags = createFeatureFlags({
     fliptKey: 'storyline-text',
     fliptKeyRequired: true,
   },
-  // Feature pages (/features/<slug>, the featurePages router). Dark until Flipt enables it for a
-  // segment; keep the Flipt flag's `enabled` false until public launch, so removing the tester
-  // rollout turns the page off rather than on for everyone.
+  // Keep the Flipt flag's `enabled` false until public launch, so removing the tester rollout
+  // turns the page off rather than on for everyone.
   featurePages: { availability: [], fliptKey: 'feature-pages', fliptKeyRequired: true },
   // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
   // with the phone header change it needs (support pill and Civitai Link move into the account

@@ -4,7 +4,13 @@ import { createFeaturePageHost } from '../featurePageHostLogic';
 const ORIGIN = 'https://features.example.com';
 const REQUEST = 'urn:data.civitai.com:feature-pages/requests/dark-mode';
 
-function setup(overrides: { signedIn?: boolean; vote?: () => Promise<{ votes: number }> } = {}) {
+function setup(
+  overrides: {
+    signedIn?: boolean;
+    vote?: () => Promise<{ votes: number }>;
+    mine?: () => Promise<{ votes: Record<string, 0 | 1> }>;
+  } = {}
+) {
   const frame = { postMessage: vi.fn() };
   const deps = {
     embedOrigin: ORIGIN,
@@ -14,7 +20,7 @@ function setup(overrides: { signedIn?: boolean; vote?: () => Promise<{ votes: nu
     signedIn: overrides.signedIn ?? true,
     openLogin: vi.fn(),
     vote: vi.fn(overrides.vote ?? (async () => ({ votes: 5 }))),
-    mine: vi.fn(async () => ({ votes: { [REQUEST]: 1 as const } })),
+    mine: vi.fn(overrides.mine ?? (async () => ({ votes: { [REQUEST]: 1 as const } }))),
     navigate: vi.fn(),
   };
   const host = createFeaturePageHost(deps);
@@ -88,6 +94,7 @@ describe('feature page host messages', () => {
   // A TRPCClientError carries the server's code at `.data.code`.
   it.each([
     [{ data: { code: 'FORBIDDEN' } }, 'refused'],
+    [{ data: { code: 'UNAUTHORIZED' } }, 'sign_in'],
     [new TypeError('network'), 'try_again'],
   ])('reports a failed vote (%o) as %s', async (error, expected) => {
     const { frame, send, flush } = setup({ vote: () => Promise.reject(error) });
@@ -95,6 +102,18 @@ describe('feature page host messages', () => {
     await flush();
     expect(frame.postMessage).toHaveBeenCalledWith(
       { type: 'fp-vote-result', payload: { requestId: 'r1', ok: false, error: expected } },
+      ORIGIN
+    );
+  });
+
+  it('reports a failed read of own votes on the mine result', async () => {
+    const { frame, send, flush } = setup({
+      mine: () => Promise.reject({ data: { code: 'FORBIDDEN' } }),
+    });
+    send({ type: 'fp-mine', payload: { requestId: 'm1', requests: [REQUEST] } });
+    await flush();
+    expect(frame.postMessage).toHaveBeenCalledWith(
+      { type: 'fp-mine-result', payload: { requestId: 'm1', ok: false, error: 'refused' } },
       ORIGIN
     );
   });

@@ -60,7 +60,7 @@ export function FeaturePageFrame({
   deps: FrameDeps;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const sendInitRef = useRef<() => void>(undefined);
+  const sendInitRef = useRef<(() => void) | undefined>(undefined);
 
   useEffect(() => {
     const host = createFeaturePageHost({
