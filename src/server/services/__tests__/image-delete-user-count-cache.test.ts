@@ -155,9 +155,12 @@ describe('deleteImages — one image', () => {
     );
   });
 
-  // Already gone: no kept record, so it leaves search and nothing else runs for it.
-  it('drops a row the delete did not remove from search, and stops there', async () => {
-    mockDbWrite.$queryRaw.mockResolvedValue([]);
+  // Already gone: no kept record and no row, so it leaves search and nothing else runs for it.
+  it('drops a row that was already gone from search, and stops there', async () => {
+    mockDbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      Array.from(strings).join('?').includes('DELETE FROM "Image"')
+        ? [{ id: IMAGE_ID, outcome: 'gone' }]
+        : []) as never);
 
     await expect(deleteImages([IMAGE_ID], { actor: { system: 'test' } })).resolves.toEqual([]);
 

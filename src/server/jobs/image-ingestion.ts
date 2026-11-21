@@ -1163,6 +1163,9 @@ export const removeBlockedImages = createJob(
         onlyWhere,
         retractionGate,
         moderatorDelete: true,
+        // A row its child-safety case keeps stays in the BlockedImageDelete queue: only this run sends
+        // its retraction.
+        queueKept: false,
       });
       deleted.push(...rows.map((x) => x.id));
       // After the storage deletes. The CDN sync purged these urls' CDN entries at takedown time,
@@ -1178,8 +1181,9 @@ export const removeBlockedImages = createJob(
         // - an image gone without this delete returning it (its owner deleted it in between): it is
         //   deleted, so its retraction is still owed, and the reservation sends it once due.
         // Everything else settles: retracted, nothing to retract (another row still uses the url),
-        // queued (that write already released this reservation), or kept by a hold (a held image
-        // must get no retraction).
+        // queued (that write already released this reservation), or kept by a hold or its
+        // child-safety case (a held image must get no retraction; its BlockedImageDelete row stays for a
+        // later run).
         const returned = new Set(rows.map((x) => x.id));
         const notReturned = ids.filter((id) => !returned.has(id));
         const stillThere = notReturned.length
@@ -1218,6 +1222,7 @@ export const removeBlockedImages = createJob(
         actor: { system: 'image-ingestion' },
         onlyWhere,
         moderatorDelete: true,
+        queueKept: false,
       });
       deleted.push(...rows.map((x) => x.id));
     }

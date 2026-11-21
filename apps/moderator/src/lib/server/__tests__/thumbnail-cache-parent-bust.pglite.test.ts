@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -101,7 +102,7 @@ CREATE TABLE "Appeal" ("id" SERIAL, "entityType" TEXT, "entityId" INTEGER, "stat
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
 CREATE TYPE "JobQueueType" AS ENUM (
-  'BlockedImageDelete', 'ImageScan', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync', 'ImageDelete'
+  'PendingDelete', 'BlockedImageDelete', 'ImageScan', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync', 'ImageDelete'
 );
 CREATE TABLE "JobQueue" ("type" "JobQueueType", "entityType" "EntityType", "entityId" INTEGER,
   "data" JSONB, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
@@ -136,6 +137,7 @@ beforeEach(async () => {
   syncSearchIndexBulk.mockClear();
   db = await freshPglite();
   await db.exec(SCHEMA);
+  await db.exec(imageUseTablesSql);
   await db.query(
     `INSERT INTO "Image" ("id", "type", "metadata", "nsfwLevel") VALUES
       ($1, 'video', jsonb_build_object('thumbnailId', $2::int), 1),

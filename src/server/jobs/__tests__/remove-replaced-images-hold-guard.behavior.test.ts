@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
@@ -158,7 +159,7 @@ const SCHEMA = `
     );
     -- The DELETE queues each deleted image's stored file here, in the same statement.
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
-    CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
+    CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
     CREATE TABLE "JobQueue" (
       "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
       data jsonb, "createdAt" timestamp(3) NOT NULL DEFAULT now(),
@@ -177,6 +178,7 @@ beforeAll(async () => {
   setEnv({ DATABASE_IS_PROD: true });
   holder.db = new PGlite();
   await holder.db.exec(SCHEMA);
+  await holder.db.exec(imageUseTablesSql);
   await holder.db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
   // Off, so the guard is what keeps a held image rather than the marker's delete trigger, and so
   // the report fixtures write no markers of their own.
