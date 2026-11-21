@@ -52,7 +52,6 @@ function claimOwnerTransfer(e: ModEvent): { from: number | null; to: number | nu
   return { from, to };
 }
 
-
 /**
  * MOD per-listing moderation history (newest-first audit trail), with "Retry cut" on the newest
  * `offline-cut-failed` row. ONE component for every moderator surface: the reports queue, the
