@@ -112,6 +112,17 @@ async function isStillMarkedForDeletion(userId: number) {
   return row.stillDeleted;
 }
 
+/**
+ * Not already queued as a delete its child-safety case keeps: `pending-deletes` carries that one
+ * out, so the drain skips it and does not count it as one the account still has. A cleanup alone
+ * does not count, since it goes only while the image is unused.
+ */
+const notPendingSql = (entityType: 'Image' | 'Post', id: Prisma.Sql) => Prisma.sql`NOT EXISTS (
+  SELECT 1 FROM "JobQueue" q
+  WHERE q.type = 'PendingDelete' AND q."entityType" = ${entityType}::"EntityType" AND q."entityId" = ${id}
+    AND q.data ?| array['ownerId', 'deletedBy']
+)`;
+
 /** Every hold on the account, or the placeholder owner. */
 const accountHeldSql = (id: Prisma.Sql, markerView: boolean) =>
   Prisma.sql`(${id} = ${PLACEHOLDER_OWNER_ID} OR ${contentRemovalHeldSql(id, markerView)})`;
@@ -187,6 +198,7 @@ async function drainUser(
         AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
       WHERE i."userId" = ${userId}
         AND NOT ${held}
+        AND ${notPendingSql('Image', Prisma.raw('i.id'))}
       LIMIT ${budget}
     `;
 
@@ -213,13 +225,17 @@ async function drainUser(
     const [state] = await dbWrite.$queryRaw<{ stillDeleted: boolean; hasImages: boolean }[]>`
       SELECT
         EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NOT NULL) AS "stillDeleted",
-        EXISTS (SELECT 1 FROM "Image" i WHERE i."userId" = ${userId}) AS "hasImages"
+        EXISTS (
+          SELECT 1 FROM "Image" i
+          WHERE i."userId" = ${userId} AND ${notPendingSql('Image', Prisma.raw('i.id'))}
+        ) AS "hasImages"
     `;
     if (!state.stillDeleted || state.hasImages)
       return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: false };
 
     const posts = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT id FROM "Post" WHERE "userId" = ${userId}
+      SELECT id FROM "Post" p
+      WHERE p."userId" = ${userId} AND ${notPendingSql('Post', Prisma.raw('p.id'))}
     `;
     let deletedPosts = 0;
     for (const batch of chunk(
@@ -228,7 +244,7 @@ async function drainUser(
     )) {
       if (isCanceled())
         return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: true };
-      const deleted = await deletePostRows(kyselyOver(dbWrite), {
+      const { deleted } = await deletePostRows(kyselyOver(dbWrite), {
         ids: batch,
         actor: { system: 'remove-deleted-user-images' },
         where: fromPrismaSql(Prisma.sql`

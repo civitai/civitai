@@ -488,7 +488,9 @@ function expectImagesDeleted(ids: number[]) {
     ([strings]) => Array.isArray(strings) && strings.join('?').includes('DELETE FROM "Image"')
   );
   expect(call).toBeDefined();
-  const [strings, listed, owner] = call as unknown as [string[], number[], number];
+  const [strings, listed, ...rest] = call as unknown as [string[], number[], ...unknown[]];
+  // The first number after the ids: the child-safety case's parameters are text.
+  const owner = rest.find((value) => typeof value === 'number');
   expect(strings.join('?')).toContain('"postId" IS NULL');
   expect([listed, owner]).toEqual([ids, 7]);
 }
