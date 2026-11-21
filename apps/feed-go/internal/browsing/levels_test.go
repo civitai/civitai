@@ -140,4 +140,8 @@ func TestBoardColorOf(t *testing.T) {
 	if got := h2.BoardColorOf("blue-alias.example.test", nil); got != "blue" {
 		t.Fatalf("no primaries: alias reads %q, want blue", got)
 	}
+	// Host matching is ColorOf's (port stripped, case-insensitive), so both walks agree on a host.
+	if !h.hasHost("red", "Red.Example.Test:8443") || h.hasHost("red", "green.example.test") {
+		t.Fatal("hasHost must match as ColorOf does")
+	}
 }
