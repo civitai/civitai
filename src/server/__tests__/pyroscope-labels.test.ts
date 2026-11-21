@@ -3,8 +3,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   __resetProfileRouteLabelsForTests,
-  MAX_DISTINCT_ROUTES,
-  OVERFLOW_ROUTE,
+  apiProfileRoute,
+  ROUTE_BUDGET,
   type PprofTime,
   startWallProfilingWithAsyncContext,
   withProfileRoute,
@@ -193,8 +193,9 @@ describe('withProfileRoute when armed', () => {
     expect(route).toHaveBeenCalledTimes(1);
   });
 
-  // Cost guard: one context object per route, not one allocation per request.
-  it('reuses one context object per route', () => {
+  // Only the label object is shared across requests; pprof's runWithContext still allocates a
+  // native holder and an async-storage frame per call.
+  it('reuses one label object per route', () => {
     const time = arm();
     withProfileRoute('trpc:x.y', () => 1);
     withProfileRoute('trpc:x.y', () => 1);
@@ -202,16 +203,48 @@ describe('withProfileRoute when armed', () => {
     expect(first).toBe(second);
   });
 
-  it('caps distinct routes: past the cap every new route shares <overflow>', () => {
+  it('budgets each kind separately', () => {
+    expect(ROUTE_BUDGET).toEqual({ trpc: 1000, api: 400 });
+  });
+
+  it('exhausting the api budget leaves tRPC labels intact', () => {
     const time = arm();
-    for (let i = 0; i < MAX_DISTINCT_ROUTES; i++) withProfileRoute(`trpc:r.${i}`, () => 1);
+    for (let i = 0; i < 400; i++) withProfileRoute(`api:GET /api/v1/r${i}`, () => 1);
+    expect(withProfileRoute('api:GET /api/v1/r0', () => labelsOf(time))).toEqual({
+      route: 'api:GET /api/v1/r0',
+    });
+    expect(withProfileRoute('api:GET /api/v1/new', () => labelsOf(time))).toEqual({
+      route: 'api:<overflow>',
+    });
+    expect(withProfileRoute('trpc:image.getInfinite', () => labelsOf(time))).toEqual({
+      route: 'trpc:image.getInfinite',
+    });
+  });
+
+  it('past the tRPC budget new procedures share trpc:<overflow>, api routes unaffected', () => {
+    const time = arm();
+    for (let i = 0; i < 1000; i++) withProfileRoute(`trpc:r.${i}`, () => 1);
     expect(withProfileRoute('trpc:r.0', () => labelsOf(time))).toEqual({ route: 'trpc:r.0' });
     expect(withProfileRoute('trpc:new.one', () => labelsOf(time))).toEqual({
-      route: OVERFLOW_ROUTE,
+      route: 'trpc:<overflow>',
     });
     expect(withProfileRoute('trpc:new.two', () => labelsOf(time))).toEqual({
-      route: OVERFLOW_ROUTE,
+      route: 'trpc:<overflow>',
     });
+    expect(withProfileRoute('api:GET /api/v1/x', () => labelsOf(time))).toEqual({
+      route: 'api:GET /api/v1/x',
+    });
+  });
+});
+
+describe('apiProfileRoute', () => {
+  it.each(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'])('keeps %s', (m) => {
+    expect(apiProfileRoute(`${m} /api/v1/images`)).toBe(`api:${m} /api/v1/images`);
+  });
+
+  it('maps an unknown method to one bucket', () => {
+    expect(apiProfileRoute('PROPFIND /api/v1/images')).toBe('api:OTHER /api/v1/images');
+    expect(apiProfileRoute('XYZZY /api/v1/images')).toBe('api:OTHER /api/v1/images');
   });
 });
 

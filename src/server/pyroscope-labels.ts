@@ -11,7 +11,8 @@
 // into sample labels.
 //
 // Samples outside a labelled scope (Next's routing, GC between continuations) carry no `route`.
-// At most MAX_DISTINCT_ROUTES values per process; the rest share `<overflow>`.
+// Each kind (`trpc:`, `api:`) has its own per-process budget (ROUTE_BUDGET); past it, new routes
+// share `<kind>:<overflow>`, so an API route sweep cannot push tRPC procedures into overflow.
 //
 // 🔴 State lives on globalThis: Turbopack inlines a server module into many runtime modules, so
 // the copy `registerPyroscope` arms is not the copy the request wrappers call. A `Symbol.for`
@@ -21,12 +22,34 @@
 export const pyroscopeArmed = process.env.PYROSCOPE_ENABLED === 'true';
 
 export const PROFILE_ROUTE_LABEL = 'route';
-export const MAX_DISTINCT_ROUTES = 1500;
-export const OVERFLOW_ROUTE = '<overflow>';
+/** Distinct label values per kind per process, sized like http-errors.ts's ROUTE_BUDGET. */
+export const ROUTE_BUDGET = { trpc: 1000, api: 400 } as const;
+type RouteKind = keyof typeof ROUTE_BUDGET;
+export const overflowRoute = (kind: RouteKind) => `${kind}:<overflow>`;
+const kindOf = (route: string): RouteKind => (route.startsWith('api:') ? 'api' : 'trpc');
+
+const STANDARD_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
+/** Method bucket for anything outside STANDARD_METHODS, so a method sweep is one value per route. */
+export const OTHER_METHOD = 'OTHER';
+
+/**
+ * The `api:` label for a `reconstructApiRoute` string (`<METHOD> /api/...`): a non-standard
+ * method is bucketed into OTHER_METHOD.
+ */
+export function apiProfileRoute(reconstructed: string): string {
+  const space = reconstructed.indexOf(' ');
+  const method = space === -1 ? reconstructed : reconstructed.slice(0, space);
+  const rest = space === -1 ? '' : reconstructed.slice(space);
+  return `api:${STANDARD_METHODS.has(method) ? method : OTHER_METHOD}${rest}`;
+}
 
 type SampleContext = { labels: Record<string, string> };
 type ContextRunner = <R>(context: SampleContext, fn: () => R) => R;
-type LabelState = { run: ContextRunner; contexts: Map<string, SampleContext> };
+type LabelState = {
+  run: ContextRunner;
+  contexts: Map<string, SampleContext>;
+  counts: Record<RouteKind, number>;
+};
 
 const STATE_KEY = Symbol.for('civitai.pyroscope.profileRouteLabels');
 
@@ -53,20 +76,27 @@ export function withProfileRoute<R>(route: string | (() => string), fn: () => R)
 function contextFor(state: LabelState, route: string): SampleContext {
   const cached = state.contexts.get(route);
   if (cached) return cached;
-  if (state.contexts.size >= MAX_DISTINCT_ROUTES) {
-    let overflow = state.contexts.get(OVERFLOW_ROUTE);
-    if (!overflow) {
-      // One slot past the cap, so the overflow context is itself cached.
-      overflow = { labels: { [PROFILE_ROUTE_LABEL]: OVERFLOW_ROUTE } };
-      state.contexts.set(OVERFLOW_ROUTE, overflow);
+  const kind = kindOf(route);
+  if (state.counts[kind] >= ROUTE_BUDGET[kind]) {
+    const overflow = overflowRoute(kind);
+    let context = state.contexts.get(overflow);
+    if (!context) {
+      // Cached outside the budget count, so each kind's overflow context is built once.
+      context = newContext(overflow);
+      state.contexts.set(overflow, context);
     }
-    return overflow;
+    return context;
   }
-  // Frozen and reused: the profiler holds a reference per sample, so one object per route.
-  const context = Object.freeze({ labels: Object.freeze({ [PROFILE_ROUTE_LABEL]: route }) });
+  const context = newContext(route);
   state.contexts.set(route, context);
+  state.counts[kind]++;
   return context;
 }
+
+// One frozen label object per route, reused across requests. pprof's runWithContext still
+// allocates a native context holder and an async-storage frame per call; only this object is shared.
+const newContext = (route: string): SampleContext =>
+  Object.freeze({ labels: Object.freeze({ [PROFILE_ROUTE_LABEL]: route }) });
 
 /**
  * Start the SDK's wall profiler with @datadog/pprof's async-context mode on, and arm
@@ -124,6 +154,7 @@ export function startWallProfilingWithAsyncContext(
   (globalThis as GlobalWithState)[STATE_KEY] = {
     run: (context, fn) => time.runWithContext(context, fn),
     contexts: new Map(),
+    counts: { trpc: 0, api: 0 },
   };
   return true;
 }
