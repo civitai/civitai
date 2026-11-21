@@ -456,7 +456,7 @@ const HAS_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 const FILE_LIKE_RE = /[./\\[\]]/;
 // The worker stages inputs under extensionless names built from blob keys, which the
 // source gate does not resolve. A media input takes only an AIR or a URL.
-const MEDIA_INPUT_NAMES: ReadonlySet<string> = new Set([
+export const MEDIA_INPUT_NAMES: ReadonlySet<string> = new Set([
   'image',
   'audio',
   'video',
