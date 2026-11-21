@@ -4,6 +4,7 @@ import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import type * as RegionBlocking from '~/server/utils/region-blocking';
+import { constants } from '~/server/common/constants';
 import { buildSearchRules } from '~/server/meilisearch/search-token';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
@@ -173,10 +174,77 @@ describe('GET /api/search/token where the site caps nothing', () => {
       };
       const { body } = await requestToken({}, {}, context);
       expect(decodeRules(body.token)).toEqual(
-        buildSearchRules({ ...moderator, isModerator: asModerator, browsingLevelCap: null })
+        buildSearchRules({
+          id: asModerator ? moderator.id : undefined,
+          isModerator: asModerator,
+          browsingLevelCap: null,
+        })
       );
     }
   );
+
+  // The caller's own poi and Private models are in the token only where tRPC would show them the owner view.
+  it.each([
+    ['a session', undefined, true],
+    [
+      'a full-access key',
+      {
+        tokenScope: TokenScope.Full,
+        apiKeyId: 1,
+        apiKeyType: ApiKeyType.User,
+        subject: { type: 'apiKey', id: 1 },
+      },
+      true,
+    ],
+    [
+      'a scoped key',
+      {
+        tokenScope: TokenScope.ModelsRead,
+        apiKeyId: 1,
+        apiKeyType: ApiKeyType.User,
+        subject: { type: 'apiKey', id: 1 },
+      },
+      false,
+    ],
+    [
+      'an app token',
+      {
+        tokenScope: TokenScope.Full,
+        apiKeyId: 2,
+        apiKeyType: ApiKeyType.Access,
+        subject: { type: 'oauth', id: 'client-abc' },
+      },
+      false,
+    ],
+  ])(
+    'a signed-in viewer on %s gets their own models in the token only with the owner view',
+    async (_, context, own) => {
+      mockGetServerAuthSession.mockResolvedValue({ user: signedIn });
+      const { body } = await requestToken({}, {}, context);
+      expect(decodeRules(body.token)).toEqual(
+        buildSearchRules({
+          id: own ? signedIn.id : undefined,
+          isModerator: false,
+          browsingLevelCap: null,
+        })
+      );
+    }
+  );
+
+  it('gives the system account moderator rules on its own scoped key', async () => {
+    const system = { id: constants.system.user.id, isModerator: true };
+    mockGetServerAuthSession.mockResolvedValue({ user: system });
+    const context = {
+      tokenScope: TokenScope.ModelsRead,
+      apiKeyId: 3,
+      apiKeyType: ApiKeyType.User,
+      subject: { type: 'apiKey', id: 3 },
+    };
+    const { body } = await requestToken({}, {}, context);
+    expect(decodeRules(body.token)).toEqual(
+      buildSearchRules({ ...system, browsingLevelCap: null })
+    );
+  });
 
   it('answers { token: null } while no signing key is configured', async () => {
     mockGetServerAuthSession.mockResolvedValue({ user: signedIn });

@@ -9,25 +9,35 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * Verifies the behavior-preserving contract:
  *  - same-origin guard (origin/referer host must equal request host),
  *  - tolerant body parse (object from Next's json parser OR raw string),
- *  - trackBatchSchema validation (400 on empty / oversized / malformed batch),
+ *  - per-event parsing (400 on an empty / oversized batch or one with no valid event; a malformed
+ *    event among good ones is dropped and the rest are dispatched),
  *  - each event is dispatched via the SAME Tracker.search()/Tracker.action() the
  *    tRPC resolvers used, with the EXACT per-event payload and in array order (so
  *    the ClickHouse inserts are byte-identical and only the transport changed),
  *  - dev short-circuits to 200 with no insert.
  */
 
-const { mockSearch, mockAction, mockImpressions, devStore } = vi.hoisted(() => ({
-  mockSearch: vi.fn(),
-  mockAction: vi.fn(),
-  mockImpressions: vi.fn(),
-  devStore: { isDev: false },
-}));
+const { mockSearch, mockAction, mockImpressions, mockGetSession, mockInsert, devStore } =
+  vi.hoisted(() => ({
+    mockSearch: vi.fn(),
+    mockAction: vi.fn(),
+    mockImpressions: vi.fn(),
+    mockGetSession: vi.fn(),
+    mockInsert: vi.fn(async () => undefined),
+    devStore: { isDev: false, sessionResolved: true, sessionCookie: false },
+  }));
 
 // PublicEndpoint wraps the handler with CORS/metrics we don't exercise here —
 // pass it through so the route's own logic (origin guard, parse, dispatch) is what's
 // under test.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   PublicEndpoint: (handler: any) => handler,
+}));
+
+vi.mock('@civitai/auth', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  readSessionToken: () =>
+    devStore.sessionCookie ? { value: 'token', name: 'civ-token', slot: 'shared' } : null,
 }));
 
 vi.mock('~/env/other', () => ({
@@ -46,7 +56,19 @@ vi.mock('~/server/clickhouse/client', () => ({
     search = mockSearch;
     action = mockAction;
     impressions = mockImpressions;
+    getSession = mockGetSession;
+    get isSessionResolved() {
+      return devStore.sessionResolved;
+    }
   },
+  clickhouse: { insert: mockInsert },
+}));
+
+// The beacon writes feed events straight to ClickHouse at the Flipt-set rate; record everything.
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ensureFliptInitialized: async () => undefined,
+  getFliptVariantDetailSync: () => ({ match: true, variantKey: '1', segmentKeys: [] }),
 }));
 
 function makeRes() {
@@ -113,6 +135,8 @@ describe('POST /api/track/batch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     devStore.isDev = false;
+    devStore.sessionResolved = true;
+    devStore.sessionCookie = false;
   });
 
   it('dispatches every event via the matching Tracker method, in order, with the exact payload', async () => {
@@ -289,6 +313,131 @@ describe('POST /api/track/batch', () => {
 
     expect(mockAction).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it('drops a malformed event and still dispatches the good events around it', async () => {
+    const handler = await importHandler();
+    const req = makeReq({
+      origin: 'https://civitai.com',
+      body: [searchEvent, { kind: 'from-a-newer-client', data: {} }, actionEvent],
+    });
+    const res = makeRes();
+
+    await handler(req as any, res);
+
+    expect(mockSearch).toHaveBeenCalledWith(searchEvent.data);
+    expect(mockAction).toHaveBeenCalledWith(actionEvent.data);
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('records a feed event with the viewer from the session, never from the payload', async () => {
+    mockGetSession.mockResolvedValue({ user: { id: 5, tier: 'gold' } });
+    const handler = await importHandler();
+    const feedEvent = {
+      kind: 'feed',
+      data: {
+        event: 'load',
+        sessionKey: 's1',
+        feed: 'models',
+        page: '/models',
+        sort: 'Hot',
+        pageIndex: 0,
+        filters: { hidePaid: 'true' },
+        userId: 999,
+        memberType: 'bronze',
+      },
+    };
+    const req = makeReq({ origin: 'https://civitai.com', body: [feedEvent] });
+    const res = makeRes();
+
+    await handler(req as any, res);
+    const { feedEventsRecorder } = await import('~/server/services/feed-events.service');
+    await vi.waitFor(async () => {
+      await feedEventsRecorder().flush();
+      expect(mockInsert).toHaveBeenCalledTimes(1);
+    });
+
+    const [{ table, values }] = mockInsert.mock.calls[0] as unknown as [
+      { table: string; values: Record<string, unknown>[] }
+    ];
+    expect(table).toBe('feedEvents');
+    expect(values).toHaveLength(1);
+    expect(values[0]).toMatchObject({
+      userId: 5,
+      memberType: 'gold',
+      event: 'load',
+      feed: 'models',
+      filters: { hidePaid: 'true' },
+    });
+  });
+
+  it('drops a feed event when the session lookup failed, rather than recording it signed out', async () => {
+    mockGetSession.mockResolvedValue(null);
+    devStore.sessionResolved = false;
+    const handler = await importHandler();
+    const req = makeReq({
+      origin: 'https://civitai.com',
+      body: [
+        {
+          kind: 'feed',
+          data: { event: 'load', sessionKey: 's1', feed: 'models', page: '/models' },
+        },
+      ],
+    });
+
+    await handler(req as any, makeRes());
+    await vi.waitFor(() => expect(mockGetSession).toHaveBeenCalled());
+    const { feedEventsRecorder } = await import('~/server/services/feed-events.service');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await feedEventsRecorder().flush();
+
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('drops a feed event that carries a session cookie but resolved no session (hub unreachable)', async () => {
+    mockGetSession.mockResolvedValue(null);
+    devStore.sessionCookie = true;
+    const handler = await importHandler();
+    const req = makeReq({
+      origin: 'https://civitai.com',
+      body: [
+        {
+          kind: 'feed',
+          data: { event: 'load', sessionKey: 's1', feed: 'models', page: '/models' },
+        },
+      ],
+    });
+
+    await handler(req as any, makeRes());
+    await vi.waitFor(() => expect(mockGetSession).toHaveBeenCalled());
+    const { feedEventsRecorder } = await import('~/server/services/feed-events.service');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await feedEventsRecorder().flush();
+
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('records a signed-out viewer (no session cookie) as userId 0', async () => {
+    mockGetSession.mockResolvedValue(null);
+    const handler = await importHandler();
+    const req = makeReq({
+      origin: 'https://civitai.com',
+      body: [
+        {
+          kind: 'feed',
+          data: { event: 'load', sessionKey: 's1', feed: 'models', page: '/models' },
+        },
+      ],
+    });
+
+    await handler(req as any, makeRes());
+    const { feedEventsRecorder } = await import('~/server/services/feed-events.service');
+    await vi.waitFor(async () => {
+      await feedEventsRecorder().flush();
+      expect(mockInsert).toHaveBeenCalledTimes(1);
+    });
+    const [{ values }] = mockInsert.mock.calls[0] as unknown as [{ values: { userId: number }[] }];
+    expect(values[0].userId).toBe(0);
   });
 
   it('short-circuits to 200 in dev without dispatching', async () => {

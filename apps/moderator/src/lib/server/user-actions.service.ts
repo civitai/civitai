@@ -308,6 +308,7 @@ export type ModEndpoint =
   | 'text-scan/csam-hold/resolve'
   | 'text-scan/model-rules-hold/resolve'
   | 'training-data/resolve'
+  | 'user/clear-profile'
   | 'user/creator-score-grant'
   | 'user/creator-score-grant-revoke'
   | 'user/delete'
@@ -318,6 +319,7 @@ export type ModEndpoint =
   | 'user/membership-resync'
   | 'user/message-as-civitai'
   | 'user/personal-data-export-release'
+  | 'user/remove-link'
   | 'user/remove-reactions'
   | 'user/toggle-moderator'
   | 'user/unmute'
@@ -2295,6 +2297,12 @@ export async function removeReactions(input: {
 // Only the three free-text fields are writable. Retool's GUI write pointed at the whole `User` row,
 // which put username and email one mis-click from being overwritten.
 
+// The archive the endpoints take first can be slow, so a lost response may follow a change that landed.
+const CLEAR_PROFILE_MAY_HAVE_COMPLETED =
+  'Could not confirm the clear. Reload the profile to see whether it went through.';
+const REMOVE_LINK_MAY_HAVE_COMPLETED =
+  'Could not confirm the removal. Reload the links to see whether it went through.';
+
 export async function clearProfileText(input: {
   userId: number;
   fields: ProfileField[];
@@ -2303,16 +2311,18 @@ export async function clearProfileText(input: {
   const fields = input.fields.filter((f) => PROFILE_FIELD_KEYS.includes(f));
   if (!fields.length) return { ok: false, error: 'Nothing selected to clear.' };
 
-  const result = await dbWrite
-    .updateTable('UserProfile')
-    .set(Object.fromEntries(fields.map((f) => [f, null])))
-    .where('userId', '=', input.userId)
-    .executeTakeFirst();
-
-  if (Number(result.numUpdatedRows ?? 0) === 0)
+  // Through the main app, which archives the profile first where a CSAM report or hold names the
+  // user, and records the clear itself: a `logAction` here would be a second ModActivity row.
+  const result = await callModEndpoint(
+    'user/clear-profile',
+    { userId: input.userId, fields },
+    'Profile clear',
+    60_000
+  );
+  if (!result.ok)
+    return { ok: false, error: writeFailureError(result, CLEAR_PROFILE_MAY_HAVE_COMPLETED) };
+  if (result.body.updated === false)
     return { ok: false, error: 'This account has no profile row to edit.' };
-
-  await logAction(`clearProfile:${fields.join('+')}`, input.userId, input.moderatorId);
   return { ok: true };
 }
 
@@ -2326,18 +2336,18 @@ export async function removeSocial(input: {
   userId: number;
   moderatorId: number;
 }): Promise<ActionResult> {
-  // Scoped by userId as well as id: filtering on id alone would let a stale or forged value delete
-  // another account's link and log it against this one.
-  const result = await dbWrite
-    .deleteFrom('UserLink')
-    .where('id', '=', input.id)
-    .where('userId', '=', input.userId)
-    .executeTakeFirst();
-
-  if (Number(result.numDeletedRows ?? 0) === 0)
+  // Through the main app, as `clearProfileText` is: it archives first, deletes only a link of this
+  // user, and records the removal.
+  const result = await callModEndpoint(
+    'user/remove-link',
+    { userId: input.userId, linkId: input.id },
+    'Link removal',
+    60_000
+  );
+  if (!result.ok)
+    return { ok: false, error: writeFailureError(result, REMOVE_LINK_MAY_HAVE_COMPLETED) };
+  if (result.body.removed === false)
     return { ok: false, error: 'That link does not belong to this user.' };
-
-  await logAction('removeSocial', input.userId, input.moderatorId);
   return { ok: true };
 }
 
