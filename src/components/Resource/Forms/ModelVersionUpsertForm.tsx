@@ -551,9 +551,13 @@ export function ModelVersionUpsertForm({
   // fine-tunes, so the form doesn't require/auto-select a parent for them. They
   // can still set their own licensing fee via the fee field above.
   const notDerivative = Flags.hasFlag(version?.flags ?? 0, ModelVersionFlag.NotDerivative);
-  // Exclude only the version being edited (a root can't point at itself). The
-  // default root is a normal, pre-selected option — there is no null "Default".
-  const licensingRoots = (licensingRootsData?.roots ?? []).filter((r) => r.id !== version?.id);
+  // A root can't point at itself. Restricted roots are offered only to moderators, or to a version
+  // already linked to one. There is no null "Default" option.
+  const licensingRoots = (licensingRootsData?.roots ?? []).filter(
+    (r) =>
+      r.id !== version?.id &&
+      (!r.restricted || !!currentUser?.isModerator || r.id === version?.licensingSourceVersionId)
+  );
   const showLicensingPicker =
     licensingRoots.length > 0 && !currentIsLicensingRoot && !notDerivative;
 
