@@ -2,7 +2,12 @@ import { stickerTrackSchema } from '~/server/schema/placement.schema';
 import type { WorkflowStepTemplate } from '@civitai/orchestration-client';
 import type { redis } from '~/server/redis/client';
 import { REDIS_KEYS } from '~/server/redis/client';
-import type { StickerTrackV1 } from '~/shared/utils/sticker-track';
+import {
+  type StickerTrackV1,
+  encodeStickerTrack,
+  sampleStickerTrack,
+  wrapDegrees,
+} from '~/shared/utils/sticker-track';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { throwRateLimited } from '~/server/utils/rate-limit-error';
 
@@ -75,19 +80,6 @@ export function parseStickerAutoTrack(body: unknown, maxScale: number): StickerT
   return clampStickerTrackScale(despikeStickerTrack(parsed.data), maxScale);
 }
 
-/** A channel's value at every tick from 0 to `n - 1`, joined linearly as the player joins it. */
-function expandChannel(pairs: [number, number][], n: number) {
-  const out = new Array<number>(n);
-  let i = 0;
-  for (let k = 0; k < n; k++) {
-    while (i + 1 < pairs.length && pairs[i + 1][0] <= k) i++;
-    const [t0, v0] = pairs[i];
-    const next = pairs[i + 1];
-    out[k] = k < t0 ? pairs[0][1] : next ? v0 + ((next[1] - v0) * (k - t0)) / (next[0] - t0) : v0;
-  }
-  return out;
-}
-
 /**
  * The track with size spikes smoothed out. A head mask that briefly takes in the shoulders makes
  * the sticker jump to several times its size for a tick or two. Inside each shown run, such ticks
@@ -95,30 +87,19 @@ function expandChannel(pairs: [number, number][], n: number) {
  * fast zoom stays, and so does a spike on a run's first or last tick, which has no line to sit off.
  */
 export function despikeStickerTrack(track: StickerTrackV1, ratio = 1.3): StickerTrackV1 {
-  const channels = ['x', 'y', 's', 'r'] as const;
-  const n = Math.max(...channels.map((c) => track[c][track[c].length - 1][0])) + 1;
-  const values = Object.fromEntries(channels.map((c) => [c, expandChannel(track[c], n)])) as Record<
-    (typeof channels)[number],
-    number[]
-  >;
-  const shown = new Array<boolean>(n).fill(true);
-  if (track.show) {
-    let i = 0;
-    for (let k = 0; k < n; k++) {
-      while (i + 1 < track.show.length && track.show[i + 1][0] <= k) i++;
-      shown[k] = track.show[i][1] === 1;
-    }
-  }
+  const channels = [track.x, track.y, track.s, track.r, ...(track.show ? [track.show] : [])];
+  const n = Math.max(...channels.map((c) => c[c.length - 1][0])) + 1;
+  const poses = Array.from({ length: n }, (_, k) => sampleStickerTrack(track, k * track.ms));
   const limit = Math.log(ratio);
   let changed = false;
   for (let start = 0; start < n; ) {
-    if (!shown[start]) {
+    if (!poses[start].show) {
       start++;
       continue;
     }
     let end = start;
-    while (end < n && shown[end]) end++;
-    const logs = values.s.slice(start, end).map(Math.log);
+    while (end < n && poses[end].show) end++;
+    const logs = poses.slice(start, end).map((p) => Math.log(p.scale));
     const spike = new Array<boolean>(end - start).fill(false);
     // Up to three ticks above both neighbours, or below both, by more than `ratio`. A step at a cut
     // or a ramp in a zoom stays: no tick of it clears both sides.
@@ -130,41 +111,28 @@ export function despikeStickerTrack(track: StickerTrackV1, ratio = 1.3): Sticker
         if (inner.every((v) => v > high) || inner.every((v) => v < low))
           for (let i = a + 1; i < b; i++) spike[i] = true;
       }
-    const good: number[] = [];
-    for (let i = start; i < end; i++) if (!spike[i - start]) good.push(i);
-    if (good.length && good.length < end - start) {
+    // A spike never touches a run's ends (b < logs.length, a >= 0), so both sides have a good tick.
+    for (let i = start; i < end; i++) {
+      if (!spike[i - start]) continue;
       changed = true;
-      for (const c of channels) {
-        const from = good.map((g) => values[c][g]);
-        for (let i = start; i < end; i++) {
-          if (good.includes(i)) continue;
-          const after = good.findIndex((g) => g > i);
-          values[c][i] =
-            after <= 0
-              ? from[after === 0 ? 0 : from.length - 1]
-              : from[after - 1] +
-                ((from[after] - from[after - 1]) * (i - good[after - 1])) /
-                  (good[after] - good[after - 1]);
-        }
-      }
+      let before = i - 1;
+      while (spike[before - start]) before--;
+      let after = i + 1;
+      while (spike[after - start]) after++;
+      const from = poses[before];
+      const to = poses[after];
+      const f = (i - before) / (after - before);
+      poses[i] = {
+        ...poses[i],
+        x: from.x + (to.x - from.x) * f,
+        y: from.y + (to.y - from.y) * f,
+        scale: from.scale + (to.scale - from.scale) * f,
+        rotation: wrapDegrees(from.rotation + wrapDegrees(to.rotation - from.rotation) * f),
+      };
     }
     start = end;
   }
-  if (!changed) return track;
-  // Back to pairs, keeping only the ticks where a value changes.
-  const pairs = (a: number[], digits: number) =>
-    a.flatMap((x, i) =>
-      i === 0 || i === n - 1 || x !== a[i - 1] || x !== a[i + 1]
-        ? [[i, +x.toFixed(digits)] as [number, number]]
-        : []
-    );
-  return {
-    ...track,
-    x: pairs(values.x, 4),
-    y: pairs(values.y, 4),
-    s: pairs(values.s, 4),
-    r: pairs(values.r, 1),
-  };
+  return changed ? encodeStickerTrack(poses, track.ms) : track;
 }
 
 export type StickerAutoTrackPose = { x: number; y: number; scale: number; rotation: number };
@@ -199,8 +167,7 @@ export function buildStickerAutoTrackWorkflow({
         },
       ])
     : null;
-  // Whatever is under the sticker, segmented after the heads, so a head holding the point still
-  // wins the pick and a lantern or a car tracks instead of failing for want of a head.
+  // Heads come first in the batch, so a head holding the point wins the pick.
   const fallback = underSticker
     ? {
         '12': {

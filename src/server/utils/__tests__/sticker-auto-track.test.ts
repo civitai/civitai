@@ -14,7 +14,7 @@ import {
   despikeStickerTrack,
   buildStickerAutoTrackWorkflow,
 } from '~/server/utils/sticker-auto-track';
-import type { StickerTrackV1 } from '~/shared/utils/sticker-track';
+import { type StickerTrackV1, sampleStickerTrack } from '~/shared/utils/sticker-track';
 
 const PLACER = 52;
 const OTHER = 63;
@@ -338,6 +338,27 @@ describe('startAutoTrack', () => {
     );
   });
 
+  it('points the tracker at the spot under the sticker when the video size is known', async () => {
+    const submitted = async (size: { width?: number; height?: number }) => {
+      const { submit, deps: d } = deps({
+        loadVideo: async () => ({
+          url: 'https://image.example/v.mp4',
+          durationSeconds: 30,
+          ...size,
+        }),
+      });
+      await startAutoTrack(d, input());
+      const [job] = submit.mock.calls[0] as unknown as [
+        { step: { input: { workflow: Record<string, { inputs: Record<string, unknown> }> } } }
+      ];
+      return job.step.input.workflow;
+    };
+    // A 1920x1080 video loads at 1024x576; the sticker sits at its middle.
+    const sized = await submitted({ width: 1920, height: 1080 });
+    expect(JSON.parse(sized['12'].inputs.positive_coords as string)).toEqual([{ x: 512, y: 288 }]);
+    expect((await submitted({}))['12']).toBeUndefined();
+  });
+
   it('refuses the 4th run of the day as rate limited, with the cap in the message', async () => {
     const { submit, deps: d } = deps();
     for (let i = 0; i < 3; i++) await startAutoTrack(d, input());
@@ -425,6 +446,50 @@ describe('despikeStickerTrack', () => {
     const out = despikeStickerTrack(sized(step));
     expect(scaleAt(out, 9)).toBeCloseTo(0.1);
     expect(scaleAt(out, 10)).toBeCloseTo(0.2);
+  });
+
+  it('redraws position and rotation across the spike, turning the short way round', () => {
+    const track: StickerTrackV1 = {
+      ...sized({ 6: 0.3, 7: 0.31 }),
+      // x moves steadily; y jumps with the bad mask; rotation crosses 180 degrees.
+      y: [
+        [0, 0.5],
+        [5, 0.5],
+        [6, 0.8],
+        [7, 0.8],
+        [8, 0.5],
+      ],
+      r: [
+        [0, 170],
+        [5, 170],
+        [6, 0],
+        [7, 0],
+        [8, -170],
+      ],
+    };
+    const out = despikeStickerTrack(track);
+    const at = (tick: number) => sampleStickerTrack(out, tick * out.ms);
+    expect(at(6).x).toBeCloseTo(0.2 + (0.4 * 6) / 19, 3);
+    expect(at(6).y).toBeCloseTo(0.5);
+    expect(at(7).y).toBeCloseTo(0.5);
+    // 170 to -170 is 20 degrees through 180, so ticks 6 and 7 sit near 180, not near 0.
+    expect(Math.abs(at(6).rotation)).toBeGreaterThan(170);
+    expect(Math.abs(at(7).rotation)).toBeGreaterThan(170);
+  });
+
+  it('does not bridge a spike across a hidden stretch', () => {
+    // Hidden at ticks 5-6: ticks 7-8 swell but start their run, so nothing sits either side.
+    const track: StickerTrackV1 = {
+      ...sized({ 7: 0.3, 8: 0.3 }),
+      show: [
+        [0, 1],
+        [5, 0],
+        [7, 1],
+      ],
+    };
+    const out = despikeStickerTrack(track);
+    expect(out).toBe(track);
+    expect(scaleAt(out, 7)).toBeCloseTo(0.3);
   });
 
   it('returns a track with no spike as it came', () => {
