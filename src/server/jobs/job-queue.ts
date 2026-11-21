@@ -281,7 +281,7 @@ const handleJobQueueCleanup = createJob('job-queue-cleanup', '*/1 * * * *', asyn
   await updateNsfwLevels(relatedEntities);
 
   // Only the rows read: the read is on the replica, so a row it has not yet received would be
-  // deleted unprocessed, leaving that image's connections and collection items behind.
+  // deleted unprocessed.
   await deleteProcessedJobQueueItems(jobQueue, JobQueueType.CleanUp);
 });
 
