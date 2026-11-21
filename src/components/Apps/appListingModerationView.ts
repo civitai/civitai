@@ -9,6 +9,7 @@
  * the component maps onto <Badge color=…>. This keeps the module pure + trivially
  * unit-testable.
  */
+import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 
 /** The mod actions a report row can offer (a subset renders per row). */
 export type ReportRowAction = 'delist' | 'relist' | 'claim' | 'purge' | 'resolve' | 'dismiss';
@@ -166,18 +167,63 @@ export function retryableOfflineCutEventId(
   return latest?.action === 'offline-cut-failed' ? latest.id : null;
 }
 
+/** The listing a moderation-history entry point opens. `slug` is display only. */
+export type ModerationHistoryTarget = { appListingId: string; slug: string };
+
+/**
+ * The moderation history a viewer may open for a listing, or null when the entry point must not
+ * be drawn. MOD-ONLY: the history read is `moderatorProcedure`, so offering it to anyone else is
+ * a button that can only fail. Every surface (the reports queue, the /apps/review table, the
+ * store detail menu) draws its "History" entry from this one predicate.
+ *
+ * NOT behind the offline-grant flag: the history (delists, reports, messages...) is useful to a
+ * moderator on its own. What the flag gates is what the history CONTAINS — cut rows and their
+ * "Retry cut" button only exist while it is on.
+ */
+export function moderationHistoryTarget(
+  viewer: { isModerator?: boolean | null } | null | undefined,
+  listing: { appListingId?: string | null; slug?: string | null }
+): ModerationHistoryTarget | null {
+  if (!isAppReviewer(viewer)) return null;
+  if (!listing.appListingId) return null;
+  return { appListingId: listing.appListingId, slug: listing.slug ?? '' };
+}
+
+/** What the takedown warning toast says, and whose history its button opens. */
+export type OfflineCutFailureNotice = {
+  title: string;
+  message: string;
+  historyFor: ModerationHistoryTarget;
+};
+
 /**
  * The warning to show after a takedown whose offline-access cut was attempted and failed, or null.
  * `result` is the `delistListing` mutation result (typed `unknown` so every caller can pass its
- * own inferred type). Absent `offlineCut` — the flag off, or nothing to cut — shows nothing.
+ * own inferred type); `listing` is the listing that call took down. Absent `offlineCut` (the flag
+ * off, or nothing to cut) shows nothing.
+ *
+ * `historyFor` is the RESULT's `appListingId` when it carries one — the id the server says it
+ * took down — and the caller's listing otherwise, so the toast's button can only open the history
+ * of the listing whose cut failed.
  */
-export function offlineCutFailureWarning(result: unknown): string | null {
-  const cut =
-    result && typeof result === 'object'
-      ? (result as { offlineCut?: { outcome?: unknown } }).offlineCut
-      : undefined;
-  if (cut?.outcome !== 'failed') return null;
-  return "The listing is down, but the app's offline access could not be cut, so its users may stay signed in. The failure is recorded in the listing's moderation history, where it can be retried.";
+export function offlineCutFailureNotice(
+  result: unknown,
+  listing: ModerationHistoryTarget
+): OfflineCutFailureNotice | null {
+  if (!result || typeof result !== 'object') return null;
+  const r = result as { offlineCut?: { outcome?: unknown }; appListingId?: unknown };
+  if (r.offlineCut?.outcome !== 'failed') return null;
+  const appListingId =
+    typeof r.appListingId === 'string' && r.appListingId ? r.appListingId : listing.appListingId;
+  return {
+    title: 'Offline access not cut',
+    message:
+      "The listing is down, but the app's offline access could not be cut, so its users may stay signed in. Open its moderation history to retry.",
+    historyFor: {
+      appListingId,
+      slug: appListingId === listing.appListingId ? listing.slug : '',
+    },
+  };
 }
 
 /** Chip for a moderation-event action, for the per-listing history view. */

@@ -94,8 +94,11 @@ export function ListingTakedownModal({
     showErrorNotification({ title: 'Action failed', error: new Error(e.message) });
 
   const delist = trpc.appListings.delistListing.useMutation({
-    onSuccess: (result) => {
-      showOfflineCutFailureWarning(result);
+    onSuccess: (result, vars) => {
+      showOfflineCutFailureWarning(result, {
+        appListingId: vars.appListingId,
+        slug: listing?.slug ?? '',
+      });
       return onSuccess(result);
     },
     onError,

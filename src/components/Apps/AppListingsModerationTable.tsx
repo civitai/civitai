@@ -13,7 +13,7 @@ import {
   Text,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconAlertTriangle, IconBox, IconThumbUp } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBox, IconHistory, IconThumbUp } from '@tabler/icons-react';
 import { keepPreviousData } from '@tanstack/react-query';
 import { Fragment, useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
@@ -21,7 +21,12 @@ import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
 import { ModListingVisibilityModal } from '~/components/Apps/ModListingVisibilityModal';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
 import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
-import { listingStatusChip } from '~/components/Apps/appListingModerationView';
+import {
+  listingStatusChip,
+  moderationHistoryTarget,
+} from '~/components/Apps/appListingModerationView';
+import { openListingModerationHistory } from '~/components/Apps/ListingModerationHistoryModal';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppsTableColgroup, APPS_MOD_LISTINGS_COLUMNS } from '~/components/Apps/appsWideLayout';
 import { LISTING_KIND_LABELS } from '~/components/Apps/listingKindLabels';
 import {
@@ -151,6 +156,7 @@ export function AppListingsModerationTable({
   openOffsiteReview: (row: OffsitePendingRow, onActioned?: () => void | Promise<void>) => void;
 }) {
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
@@ -355,6 +361,10 @@ export function AppListingsModerationTable({
             // unit tier can reach — inline here, nothing could test them (see the 🔴 note on
             // `listingModActionsForRow`).
             const actions = listingModActionsForRow(row);
+            const historyTarget = moderationHistoryTarget(currentUser, {
+              appListingId: row.id,
+              slug: row.slug,
+            });
             return (
               <Fragment key={row.id}>
                 <Table.Tr data-testid={`apps-mod-listing-row-${row.slug}`}>
@@ -497,6 +507,17 @@ export function AppListingsModerationTable({
                             {listingModActionLabel(action)}
                           </Button>
                         ))}
+                        {historyTarget && (
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            leftSection={<IconHistory size={12} />}
+                            onClick={() => openListingModerationHistory(historyTarget)}
+                            data-testid={`apps-mod-history-${row.slug}`}
+                          >
+                            History
+                          </Button>
+                        )}
                       </Group>
                     )}
                   </Table.Td>
@@ -739,8 +760,11 @@ function ListingModActionModal({
     onError: onError('Reset failed'),
   });
   const delistMut = trpc.appListings.delistListing.useMutation({
-    onSuccess: (result) => {
-      showOfflineCutFailureWarning(result);
+    onSuccess: (result, vars) => {
+      showOfflineCutFailureWarning(result, {
+        appListingId: vars.appListingId,
+        slug: pending?.row.id === vars.appListingId ? pending.row.slug : '',
+      });
       return afterSuccess(withLiveNote('Listing hidden.', result));
     },
     onError: onError('Hide failed'),
