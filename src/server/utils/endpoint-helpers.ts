@@ -294,12 +294,8 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
 // `withAxiom`). Records a `civitai_app_http_errors_total` sample for any 5xx
 // response — however it's produced — by attaching one `finish` listener. Steady-
 // state cost is one listener registration + an int compare; the route
-// normalization runs only on 5xx. See src/server/prom/http-errors.ts.
-//
-// On a Pyroscope-armed pool it also runs the handler under the profiler's `route` label —
-// `api:<reconstructApiRoute(req)>`, the same bounded string the 5xx counter uses — so CPU
-// samples across the handler's `await`s are attributed to the route (~/server/pyroscope-labels).
-// Dark, that branch is a single boolean test.
+// normalization runs only on 5xx (and per request on a Pyroscope-armed pool, for the
+// profile `route` label). See src/server/prom/http-errors.ts.
 function withApiMetrics(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void | NextApiResponse>
 ) {

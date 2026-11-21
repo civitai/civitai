@@ -314,10 +314,7 @@ const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
   // async_hooks context-propagation cost — so it is OFF by default. When it is not
   // armed (the disarmed default), the procedure-timing path is a single `.then()`
   // on the existing promise. Independent of TRPC_PROCEDURE_METRICS.
-  //
-  // When Pyroscope is armed, the same span is also run under the profiler's `route` label, so
-  // CPU samples taken in this procedure's middleware + resolver — across every `await` — are
-  // attributed to it (inside a batch, each procedure gets its own). See ~/server/pyroscope-labels.
+  // Re-label per procedure: the request-level label in [trpc].ts is trpc:batch for batched calls.
   if (longTaskLabelsArmed || pyroscopeArmed) {
     const run = () => runRecordProcedureDuration(path, type, userId, caller, next);
     const profiled = pyroscopeArmed ? () => withProfileRoute(`trpc:${path}`, run) : run;

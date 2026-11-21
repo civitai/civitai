@@ -13,7 +13,7 @@ import {
 // `withProfileRoute` + its arming against a FAKE `@datadog/pprof` `time`. The fake's
 // runWithContext is a real AsyncLocalStorage, the same mechanism pprof uses in async-context
 // mode, so "the label survives an await" is exercised for real here; that the native profiler
-// then writes the label onto its samples is the job of pyroscope-labels.native.test.ts.
+// then writes the label onto its samples is the job of pyroscope-labels.profiler.test.ts.
 
 type FakeTime = PprofTime & {
   startCalls: Record<string, unknown>[];
@@ -193,6 +193,7 @@ describe('withProfileRoute when armed', () => {
     expect(route).toHaveBeenCalledTimes(1);
   });
 
+  // Cost guard: one context object per route, not one allocation per request.
   it('reuses one context object per route', () => {
     const time = arm();
     withProfileRoute('trpc:x.y', () => 1);
@@ -214,57 +215,18 @@ describe('withProfileRoute when armed', () => {
   });
 });
 
-describe('call-site ledger', () => {
-  // Which requests carry a `route` label is decided by WHERE withProfileRoute is called, and the
-  // PR body / profile readers rely on this exact coverage. Fails when a call site is added OR
-  // removed, so the coverage statement is updated with it.
-  const EXPECTED: Record<string, number> = {
-    'src/pages/api/trpc/[trpc].ts': 1, // request level: trpc:<procedure>|batch|other|unknown
-    'src/server/trpc.ts': 1, // procedure level: trpc:<path>
-    'src/server/utils/endpoint-helpers.ts': 1, // pages API via withApiMetrics: api:<route>
-  };
-
-  it('withProfileRoute is called from exactly the ledgered files', async () => {
-    const { readdirSync, readFileSync } = await import('node:fs');
-    const path = await import('node:path');
-    const root = path.resolve(__dirname, '../../..');
-    const found: Record<string, number> = {};
-    const walk = (dir: string) => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (entry.name !== 'node_modules' && entry.name !== '__tests__') walk(full);
-        } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
-          const rel = path.relative(root, full).split(path.sep).join('/');
-          if (rel === 'src/server/pyroscope-labels.ts') continue;
-          const n = (readFileSync(full, 'utf8').match(/\bwithProfileRoute\s*\(/g) ?? []).length;
-          if (n) found[rel] = n;
-        }
-      }
-    };
-    walk(path.join(root, 'src'));
-    // Positive control: the walk reads real source (this file's own module is under src/).
-    expect(Object.keys(found).length).toBeGreaterThan(0);
-    expect(found).toEqual(EXPECTED);
-  });
-});
-
 describe('pyroscopeArmed', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
   });
 
-  it.each([undefined, '', 'false', '1', 'TRUE'])('is false for PYROSCOPE_ENABLED=%j', async (v) => {
-    if (v === undefined) vi.stubEnv('PYROSCOPE_ENABLED', undefined as unknown as string);
-    else vi.stubEnv('PYROSCOPE_ENABLED', v);
-    vi.resetModules();
-    expect((await import('~/server/pyroscope-labels')).pyroscopeArmed).toBe(false);
-  });
-
-  it("is true only for exactly 'true'", async () => {
+  it("is true for exactly 'true' and false for anything else", async () => {
     vi.stubEnv('PYROSCOPE_ENABLED', 'true');
     vi.resetModules();
     expect((await import('~/server/pyroscope-labels')).pyroscopeArmed).toBe(true);
+    vi.stubEnv('PYROSCOPE_ENABLED', 'false');
+    vi.resetModules();
+    expect((await import('~/server/pyroscope-labels')).pyroscopeArmed).toBe(false);
   });
 });

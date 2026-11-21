@@ -357,12 +357,8 @@ export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
   // must run here, ahead of the handler: the handler's own cache fills would hide the misses.
   const shadow = beginFeedGoShadow(req);
   probeFeedGoShadow(shadow);
-  //
-  // Pyroscope (armed pools only): the whole tRPC request — context creation, batch parsing,
-  // the procedures, response serialization — runs under the profiler's `route` label, which
-  // `fastSuperjsonPathLabel` bounds to a registered procedure path or `batch`/`other`/`unknown`.
-  // Each procedure then re-labels its own span with its path (`recordProcedureDuration` in
-  // ~/server/trpc), so in a batch only the shared work stays on `trpc:batch`.
+  // Pyroscope route label for the whole request; procedures re-label their own span (trpc.ts),
+  // so only shared batch work stays on trpc:batch.
   const serializeCtx = serializeCtxFromRequest(req);
   const serve = () =>
     runWithResponseWriteFormat(req.headers, () =>

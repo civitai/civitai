@@ -1,52 +1,21 @@
-// Request-scoped Pyroscope profile labels: tag the CPU/wall samples taken while a request runs
-// with the route that request serves (`route="trpc:image.getInfinite"`, `route="api:GET /api/v1/images"`),
-// so a profile can be ranked per route instead of per process.
+// Request-scoped Pyroscope profile labels: samples taken while a request runs carry the route it
+// serves (`route="trpc:image.getInfinite"`), so a profile ranks per route instead of per process.
+// Dark unless PYROSCOPE_ENABLED='true': only `registerPyroscope` arms them.
 //
-// DARK unless PYROSCOPE_ENABLED='true'. Only `registerPyroscope` (src/server/pyroscope.ts) arms
-// the labels, and it returns before doing so when the flag is unset — so dark, `withProfileRoute`
-// is one property read and a direct call of the thunk, and the call sites skip even that (they
-// branch on `pyroscopeArmed`).
+// Why not the SDK's `wrapWithLabels`: it sets a process-global label, runs `fn` synchronously and
+// restores it, so everything after the first `await` is unlabelled (and a bare `setLabels`
+// misattributes interleaved requests). @datadog/pprof's async-context mode (`useCPED`) keys the
+// sample context on an AsyncLocalStorage and `time.runWithContext` scopes it across `await`. The
+// SDK neither enables nor exposes that mode, so `startWallProfilingWithAsyncContext` injects
+// `useCPED: true` into the SDK's one `time.start` call; the SDK already turns `context.labels`
+// into sample labels.
 //
-// ─────────────────────────────────────────────────────────────────────────────
-// WHY NOT THE SDK'S OWN LABEL API
-// @pyroscope/nodejs 0.6.2's `wrapWithLabels(labels, fn)` sets a process-global label, runs `fn`
-// SYNCHRONOUSLY, then restores the previous label. Everything after the first `await` in `fn`
-// runs once `fn` has returned, so it is labelled with whatever is global at that moment — the
-// label covers only the synchronous prefix of a request. `setLabels` without a restore is worse:
-// concurrent requests interleave on one thread, so a global label misattributes their samples.
+// Samples outside a labelled scope (Next's routing, GC between continuations) carry no `route`.
+// At most MAX_DISTINCT_ROUTES values per process; the rest share `<overflow>`.
 //
-// What follows the request across `await` is the profiler's own async-context mode:
-// @datadog/pprof (5.14.4, the SDK's pinned dependency) can key the sample context on an
-// AsyncLocalStorage (`useCPED`, needs Node >= 22.7 — the runtime is Node 24, where
-// AsyncLocalStorage is backed by AsyncContextFrame) and exposes `time.runWithContext(ctx, fn)`.
-// The SDK neither enables that mode nor exposes it, so `startWallProfilingWithAsyncContext`
-// below starts the SDK's wall profiler with `useCPED: true` injected into the one
-// `time.start` call it makes, and `withProfileRoute` uses `time.runWithContext`. The SDK
-// turns each sample's context `{ labels }` into pprof sample labels, so no SDK code changes.
-//
-// LIMITS (also in the PR body):
-// - Samples OUTSIDE a labelled scope carry no `route` label: Next's routing, request parsing
-//   before the wrapper, GC that V8 runs between continuations, and any work a request schedules
-//   that outlives it (setImmediate/setTimeout created inside it DO inherit the label).
-// - tRPC: the request-level label is the procedure path for a single call, `trpc:batch` for a
-//   batched call (that covers context creation, batch parsing and response serialization);
-//   each procedure's middleware chain + resolver is then labelled with its own path.
-// - Pages-API routes are labelled only where they go through `withApiMetrics` (the endpoint
-//   helper wrappers); bare `export default` handlers carry no label.
-// - Cardinality: at most MAX_DISTINCT_ROUTES distinct values per process; the rest share
-//   `<overflow>`. Inputs are already normalised (procedure registry / reconstructApiRoute).
-// - If the SDK resolves a different @datadog/pprof copy than this app (a version bump that
-//   breaks the pin in package.json), the arm detects it and leaves labels off; profiling
-//   itself still runs, with pod/pool/version tags only.
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// 🔴 PROCESS-WIDE STATE LIVES ON globalThis. Turbopack inlines a server module into many runtime
-// modules, so module-scope state is per copy: the copy that `registerPyroscope` arms (via
-// instrumentation.node.ts) is not the copy trpc.ts or endpoint-helpers.ts call. The runner and
-// the route cache are therefore stored under a `Symbol.for` key that every copy resolves to the
-// same slot.
-//
-// Server-only. Imports nothing, so it is safe to reach from any server module.
+// 🔴 State lives on globalThis: Turbopack inlines a server module into many runtime modules, so
+// the copy `registerPyroscope` arms is not the copy the request wrappers call. A `Symbol.for`
+// key resolves to one slot for every copy. Imports nothing, so any server module can reach it.
 
 /** The Pyroscope arm flag, read once at module load. The one definition; pyroscope.ts re-exports it. */
 export const pyroscopeArmed = process.env.PYROSCOPE_ENABLED === 'true';
