@@ -186,7 +186,7 @@ func (w *testWorld) deps(t *testing.T) *Deps {
 		}},
 		{Match: `SELECT id FROM "Tag" WHERE name = $1`, Rows: func(args []any) (*testkit.Rows, error) {
 			if id, ok := w.tagIDs[args[0].(string)]; ok {
-				return rows([]string{"id"}, []any{int32(id)}), nil
+				return rows([]string{"id"}, []any{int64(id)}), nil
 			}
 			return rows([]string{"id"}), nil
 		}},
