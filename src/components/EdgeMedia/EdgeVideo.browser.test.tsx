@@ -61,7 +61,6 @@ describe('EdgeVideo — keepPlaying', () => {
   test('a video the viewer started keeps playing when the pointer leaves', async () => {
     const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
     const video = await startByUser({ keepPlaying: true });
-    Object.defineProperty(video, 'paused', { value: false, configurable: true });
     pause.mockClear();
 
     video.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
@@ -78,6 +77,80 @@ describe('EdgeVideo — keepPlaying', () => {
     video.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
 
     expect(pause).toHaveBeenCalled();
+    pause.mockRestore();
+  });
+
+  describe('scrolling away', () => {
+    const observers: Array<(entries: Array<{ isIntersecting: boolean }>) => void> = [];
+    beforeEach(() => {
+      observers.length = 0;
+      vi.stubGlobal(
+        'IntersectionObserver',
+        class {
+          constructor(cb: (entries: Array<{ isIntersecting: boolean }>) => void) {
+            observers.push(cb);
+          }
+          observe = () => undefined;
+          unobserve = () => undefined;
+          disconnect = () => undefined;
+        }
+      );
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    const scrollTo = (isIntersecting: boolean) =>
+      observers.forEach((cb) => cb([{ isIntersecting }]));
+
+    test('a playing keepPlaying video pauses when it leaves the screen', async () => {
+      const pause = vi
+        .spyOn(HTMLMediaElement.prototype, 'pause')
+        .mockImplementation(() => undefined);
+      const video = await startByUser({ keepPlaying: true });
+      Object.defineProperty(video, 'paused', { value: false, configurable: true });
+      pause.mockClear();
+
+      scrollTo(true);
+      expect(pause).not.toHaveBeenCalled();
+      scrollTo(false);
+      expect(pause).toHaveBeenCalledTimes(1);
+      pause.mockRestore();
+    });
+  });
+
+  test('pressing play after the hover timer already fired still counts as the viewer', async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(<EdgeVideo src={SRC} html5Controls keepPlaying />);
+    await vi.waitFor(() => expect(document.querySelector('video')).toBeTruthy());
+    const video = document.querySelector('video')!;
+
+    // The viewer presses play first, then the one-second hover timer fires on a playing video.
+    video.dispatchEvent(new Event('play'));
+    Object.defineProperty(video, 'paused', { value: false, configurable: true });
+    hoverFor(1_100);
+    // They pause and play again within the same hover.
+    video.dispatchEvent(new Event('pause'));
+    video.dispatchEvent(new Event('play'));
+    pause.mockClear();
+    video.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+
+    expect(pause).not.toHaveBeenCalled();
+    pause.mockRestore();
+  });
+
+  test('a viewer play after pausing a hover preview is kept', async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(<EdgeVideo src={SRC} html5Controls keepPlaying />);
+    await vi.waitFor(() => expect(document.querySelector('video')).toBeTruthy());
+    const video = document.querySelector('video')!;
+
+    hoverFor(1_100);
+    video.dispatchEvent(new Event('play'));
+    video.dispatchEvent(new Event('pause'));
+    video.dispatchEvent(new Event('play'));
+    pause.mockClear();
+    video.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+
+    expect(pause).not.toHaveBeenCalled();
     pause.mockRestore();
   });
 

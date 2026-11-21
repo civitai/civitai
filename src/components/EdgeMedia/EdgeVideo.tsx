@@ -354,9 +354,11 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const viewerStartedRef = useRef(false);
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
-        const [event] = e;
-        hoverStartedRef.current = true;
-        (event.target as HTMLVideoElement).play();
+        const video = e[0].target as HTMLVideoElement;
+        // Already playing (the viewer pressed play first): nothing was started here, so the
+        // play stays the viewer's.
+        if (video.paused) hoverStartedRef.current = true;
+        video.play();
       },
       1000
     );
@@ -460,6 +462,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           onPause={() => {
             setIsPlaying(false);
             viewerStartedRef.current = false;
+            hoverStartedRef.current = false;
           }}
           onVolumeChange={(e) => {
             // Native controls own the element's volume/mute here (custom slider/toggle update state
