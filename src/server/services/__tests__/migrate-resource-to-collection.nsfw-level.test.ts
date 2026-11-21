@@ -3,7 +3,8 @@ import type { Prisma } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
-import { faceLossRescan } from '~/server/services/model-com-face-recheck.service';
+import { dataForModelsCache } from '~/server/redis/caches';
+import { faceLossNotice, faceLossRescan } from '~/server/services/model-com-face-recheck.service';
 import { migrateResourceToCollection } from '~/server/services/model.service';
 
 /**
@@ -242,5 +243,57 @@ describe('migrateResourceToCollection and a .com face the text scan relied on', 
     await migrateResourceToCollection({ id: SOURCE, collectionName: 'c' } as never);
     expect(heldApplied()).toEqual([]);
     expect(forced()).toEqual([]);
+  });
+
+  describe("the owners' rating notices", () => {
+    const realSend = faceLossNotice.send;
+    const send = vi.fn();
+    afterEach(() => {
+      faceLossNotice.send = realSend;
+    });
+    /** The held verdict as the split's transaction reads it before spending it. */
+    function readsHeld() {
+      const levelRollups = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation() as
+        | ((...args: unknown[]) => unknown)
+        | undefined;
+      vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
+        sql: unknown,
+        ...values: unknown[]
+      ) =>
+        Array.isArray(sql) &&
+        (sql as readonly string[]).join('?').includes("'comFaceHeldVerdict'->>'at'")
+          ? [{ name: 'Split', userId: OWNER, at: 'h', level: 16 }]
+          : levelRollups?.(sql, ...values)) as never);
+    }
+
+    it('sends them once, after the level refresh and the cache busts', async () => {
+      await seed({ sfwCoverOnVersion: 11, meta: held });
+      readsHeld();
+      // The held-verdict flip writes its row (the raw writes are not under test here).
+      vi.mocked(dbMock.dbWrite.$executeRaw).mockResolvedValue(1 as never);
+      const refresh = vi.spyOn(dataForModelsCache, 'refresh');
+      let atSend: { levels: unknown; busted: boolean } | undefined;
+      send.mockReset().mockImplementation(async () => {
+        atSend = { levels: (await levels()).models, busted: refresh.mock.calls.length > 0 };
+      });
+      faceLossNotice.send = send as never;
+
+      await migrateResourceToCollection({ id: SOURCE, collectionName: 'c' } as never);
+
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send.mock.calls[0][0]).toHaveLength(2);
+      expect(atSend?.busted).toBe(true);
+      // The levels the notices follow are the ones the split's refresh left.
+      expect(atSend?.levels).toEqual((await levels()).models);
+      refresh.mockRestore();
+    });
+
+    it('sends none when no model was rated (control)', async () => {
+      await seed();
+      send.mockReset();
+      faceLossNotice.send = send as never;
+      await migrateResourceToCollection({ id: SOURCE, collectionName: 'c' } as never);
+      expect(send).not.toHaveBeenCalled();
+    });
   });
 });

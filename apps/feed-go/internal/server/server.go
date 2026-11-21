@@ -25,6 +25,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
+	"github.com/civitai/civitai/apps/feed-go/internal/devalue"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
@@ -58,7 +59,7 @@ const (
 )
 
 // Endpoints is every feed_endpoint value, in a fixed order (the seeded series are per endpoint).
-var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID}
+var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID, EndpointAssociated}
 
 // V1ImagesPath is the REST route the v1-images shadow describes.
 const V1ImagesPath = "/api/v1/images"
@@ -74,12 +75,45 @@ const shadowSampleTimeout = 30 * time.Second
 // verifiedBotHeader is VERIFIED_BOT_HEADER: a verified crawler is "authorized" where NSFW is viewable.
 const verifiedBotHeader = "x-civitai-verified-bot"
 
+// sampledKey marks a request rebuilt from a Node sample (a shadow comparison or a Go-first probe):
+// its headers are the ones the app's route saw after applyApiRequestPolicy.
+type sampledKey struct{}
+
+func withSampled(ctx context.Context) context.Context {
+	return context.WithValue(ctx, sampledKey{}, true)
+}
+
+func isSampled(ctx context.Context) bool {
+	v, _ := ctx.Value(sampledKey{}).(bool)
+	return v
+}
+
+// verifiedCrawler is requestVerifiedCrawler (src/server/utils/browsing-level.ts) as the app reads it
+// after applyApiRequestPolicy has decided the header:
+//
+//   - on a Node sample, the app has already decided it, so its value is read as the app parses it
+//     (parseVerifiedBotHeader: `googlebot` or `bingbot`, anything else is no crawler);
+//   - on a public request, a crawler's user agent never gets here: apiRequestPolicy (serve) hands it
+//     back first (`crawler-user-agent`: only the app holds the address ranges that verify it). For
+//     any other user agent the app's policy removes whatever header came in, so it is no crawler
+//     whatever it carries.
+func verifiedCrawler(r *http.Request) bool {
+	if isSampled(r.Context()) {
+		v := r.Header.Get(verifiedBotHeader)
+		return v == "googlebot" || v == "bingbot"
+	}
+	return false
+}
+
 // Server wires a request to the port.
 type Server struct {
-	Resolver    *auth.Resolver
-	Deps        *feed.Deps
-	Hosts       browsing.HostColors
-	RegionRules []browsing.RegionRule
+	Resolver *auth.Resolver
+	Deps     *feed.Deps
+	Hosts    browsing.HostColors
+	// HostPrimaries is each color's SERVER_DOMAIN_<COLOR> (config.HostPrimaries): the board color of
+	// image.getInfinite's `newCreators` reads it.
+	HostPrimaries map[string]string
+	RegionRules   []browsing.RegionRule
 	// RegionBlockRules is REGION_BLOCK_CONFIG (config.RegionBlockRules): a public request from a region
 	// on it is handed to Fallback, where applyApiRequestPolicy answers the 451.
 	RegionBlockRules []browsing.RegionRule
@@ -117,9 +151,18 @@ type Server struct {
 	// route. Off, every request there is the `model-getall-off` fallback (proxied to the Node app)
 	// before anything is computed or a serve slot taken.
 	ServeModelGetAll bool
+	// WriteDevalue is TRPC_WRITE_DEVALUE, the main app's own switch (default off: every answer is
+	// superjson). On, an answer this service computes on a public route is written as devalue, byte for
+	// byte as the app writes it, exactly when the app would: a web bundle that can read it
+	// (trpc.CanDecodeDevalueResponse) and an answer that is not edge-cacheable (trpc.DevalueWrite).
+	// Proxied answers are the app's own bytes, and the shadow comparison always computes superjson.
+	WriteDevalue bool
 	// V1Models serves the REST `/api/v1/models` and `/api/v1/models/[id]` shadows (v1models.go); nil =
 	// every such sample falls back.
 	V1Models *V1ModelsDeps
+	// Associated serves the `model.getAssociatedResourcesCardData` shadow (associated.go); nil = every
+	// such sample falls back.
+	Associated *modelfeed.AssocDeps
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
 	// MaxInFlight caps the public requests this pod computes at once (ResolveMaxInFlight; 0 =
@@ -162,6 +205,8 @@ type Server struct {
 	computeModelsFn   func(context.Context, *http.Request) (*computed, error)
 	// computeV1ModelsFn replaces both REST model computes (tests only).
 	computeV1ModelsFn func(context.Context, *http.Request) (*computed, error)
+	// computeAssociatedFn replaces computeAssociated (tests only).
+	computeAssociatedFn func(context.Context, *http.Request) (*computed, error)
 }
 
 // phaseClock is the start of one shadow phase.
@@ -212,13 +257,25 @@ func (s *Server) aloneInFlight() bool {
 // computeWithin releases an answer it discards.
 type computed struct {
 	payload []byte
-	// buf owns payload when it is pooled (nil when payload is an ordinary slice, as in tests).
-	buf *superjson.Buffer
-	ttl *trpc.CacheTTL
+	// buf owns payload when it is a pooled superjson payload, dbuf when it is a pooled devalue one (both
+	// nil when payload is an ordinary slice, as in tests).
+	buf  *superjson.Buffer
+	dbuf *devalue.Buffer
+	// value is the answer payload encodes (nil for the REST answers and in tests that set payload).
+	value any
+	// devalue: payload is devalue (a JSON string literal), not the superjson envelope (encode).
+	devalue bool
+	// devalueRefused is why devalue refused a value encode would have written as devalue (payload is
+	// then superjson); nil otherwise.
+	devalueRefused error
+	ttl            *trpc.CacheTTL
 	// trivial: answered without loading any image (feed.V1Answer.Trivial). Recorded as outcome
 	// served_empty and result match_empty, so the per-served-call CPU and the match rate cover only
 	// answers that did the work.
 	trivial bool
+	// viewerClass is the sample's viewer class when the endpoint reports one (model-associated:
+	// modelfeed.ViewerClasses); "" = not reported. The comparison result is also counted under it.
+	viewerClass string
 	// cached: the answer is a cached response body read as Node read it (v1models.Answer.Cached), no
 	// build. Recorded as outcome served_cached and result match_cached, apart for the same reason.
 	cached bool
@@ -234,14 +291,13 @@ func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error
 	if err != nil {
 		return nil, err
 	}
-	buf, err := superjson.SerializeBuffer(res.Value())
-	if err != nil {
-		return nil, err
-	}
-	out := &computed{payload: buf.Bytes(), buf: buf}
+	out := &computed{value: res.Value()}
 	if signedOut {
 		// createContext: cacheable only without a session user (a banned user still has one).
 		out.ttl = &trpc.SignedOutTTL
+	}
+	if err := out.encode(ctx); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -287,7 +343,7 @@ func (s *Server) prepare(ctx context.Context, r *http.Request) (feed.Request, bo
 // carries createContext's public TTL. Shadowed, and served on the public route only with
 // ServeInfinite.
 func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*computed, error) {
-	req, signedOut, err := s.prepareInfinite(ctx, r)
+	req, cacheable, err := s.prepareInfinite(ctx, r)
 	if err != nil {
 		return nil, err
 	}
@@ -295,21 +351,22 @@ func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*compute
 	if err != nil {
 		return nil, err
 	}
-	buf, err := superjson.SerializeBuffer(ans.Value)
-	if err != nil {
-		return nil, err
-	}
-	out := &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}
-	if signedOut {
-		// createContext: cacheable without a session user, as for the gallery procedure. Nothing in
-		// this procedure's chain lowers it, so Node answers a signed-out unbatched call public.
+	out := &computed{value: ans.Value, trivial: ans.Trivial}
+	if cacheable {
+		// createContext: cacheable without a session user and without a verified crawler. Nothing in
+		// this procedure's chain lowers it, so Node answers such an unbatched call public.
 		out.ttl = &trpc.SignedOutTTL
+	}
+	if err := out.encode(ctx); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
 
-// prepareInfinite is computeInfinite up to the handler call, and whether there is no session user at
-// all; the Go-first probe runs the same steps.
+// prepareInfinite is computeInfinite up to the handler call, and whether createContext makes the
+// answer edge-cacheable (no session user at all, and no verified crawler); the Go-first probe runs
+// the same steps. A verified crawler (verifiedCrawler) counts as signed in for the domain cap where
+// NSFW is viewable (requestDomainBrowsingLevelCap) and is never cached; it is no viewer.
 func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.InfiniteRequest, bool, error) {
 	if s.Infinite == nil {
 		return feed.InfiniteRequest{}, false, fallback.New("infinite-unconfigured")
@@ -325,9 +382,7 @@ func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.Inf
 	if err != nil {
 		return feed.InfiniteRequest{}, false, err
 	}
-	if r.Header.Get(verifiedBotHeader) != "" {
-		return feed.InfiniteRequest{}, false, fallback.New("verified-bot")
-	}
+	crawler := verifiedCrawler(r)
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
 		return feed.InfiniteRequest{}, false, err
@@ -336,12 +391,17 @@ func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.Inf
 	isModerator := authorized && user.IsModerator
 	color := s.Hosts.ColorOf(r.Host)
 	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
-	req := feed.InfiniteRequest{Input: in, Cap: browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))}
+	canViewNsfw := browsing.CanViewNsfw(color, restricted, isModerator)
+	req := feed.InfiniteRequest{
+		Input:      in,
+		Cap:        browsing.DomainCap(authorized || (crawler && canViewNsfw), canViewNsfw),
+		BoardColor: s.Hosts.BoardColorOf(r.Host, s.HostPrimaries),
+	}
 	if authorized {
 		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
 		req.ViewerUsername = user.Username
 	}
-	return req, user == nil, nil
+	return req, user == nil && !crawler, nil
 }
 
 // computeModelGetAll answers a `model.getAll` request (getModelsInfiniteHandler), or returns a
@@ -357,14 +417,13 @@ func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*comp
 	if err != nil {
 		return nil, err
 	}
-	buf, err := superjson.SerializeBuffer(ans.Value)
-	if err != nil {
-		return nil, err
-	}
-	out := &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}
+	out := &computed{value: ans.Value, trivial: ans.Trivial}
 	if signedOut {
 		// createContext: cacheable without a session user (a banned user still has one).
 		out.ttl = &trpc.SignedOutTTL
+	}
+	if err := out.encode(ctx); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -454,7 +513,52 @@ func (c *computed) release() {
 		return
 	}
 	c.buf.Release()
-	c.buf, c.payload = nil, nil
+	c.dbuf.Release()
+	c.buf, c.dbuf, c.payload = nil, nil, nil
+}
+
+// encode writes c.value into payload in the format the app writes this answer in: devalue when the
+// request is marked for it (Server.WriteDevalue and a capable client, see serve) and the answer is not
+// edge-cacheable (c.ttl), else superjson. Set c.ttl first. The shadow and probe paths never mark their
+// requests, so their answers are superjson, the format the Node sampler sends. A value devalue
+// refuses (a json column that is not JSON) is written as superjson for that answer, as the app's
+// writer falls back (writeSerializeWithFallback).
+func (c *computed) encode(ctx context.Context) error {
+	if trpc.DevalueWrite(ctx, c.ttl) {
+		b, err := devalue.PayloadBuffer(c.value)
+		if err == nil {
+			c.payload, c.dbuf, c.devalue = b.Bytes(), b, true
+			return nil
+		}
+		c.devalueRefused = err
+	}
+	buf, err := superjson.SerializeBuffer(c.value)
+	if err != nil {
+		return err
+	}
+	c.payload, c.buf = buf.Bytes(), buf
+	return nil
+}
+
+const (
+	DevalueWriteDevalue   = "devalue"
+	DevalueWriteFallback  = "superjson_fallback"
+	DevalueWriteSuperjson = "superjson"
+)
+
+// noteWriteFormat counts a written answer by format, and logs a devalue fallback: the answer is
+// correct (superjson, which every client reads), but a value devalue refuses is a payload shape to
+// fix, as the app reports it through devalueFallbackObserver.
+func (s *Server) noteWriteFormat(ctx context.Context, endpoint string, c *computed) {
+	result := DevalueWriteSuperjson
+	switch {
+	case c.devalue:
+		result = DevalueWriteDevalue
+	case c.devalueRefused != nil:
+		result = DevalueWriteFallback
+		s.Log.Log(ctx, slog.LevelWarn, "devalue refused the answer; wrote superjson", traceAttrs(ctx, []any{"endpoint", endpoint, "err", c.devalueRefused.Error()})...)
+	}
+	s.Metrics.DevalueWrites.WithLabelValues(endpoint, result).Inc()
 }
 
 // apiRequestPolicy is the part of applyApiRequestPolicy (src/server/middleware/api-request-policy.ts)
@@ -740,6 +844,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 	if s.Tracer != nil {
 		r = r.WithContext(ctx)
 	}
+	if s.WriteDevalue && trpc.CanDecodeDevalueResponse(r.Header) {
+		// runWithResponseWriteFormat: the answer may be devalue (encode decides, after the cache policy).
+		r = r.WithContext(trpc.WithDevalueWrite(r.Context()))
+	}
 	var (
 		c   *computed
 		err error
@@ -770,6 +878,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		}
 		w.Header().Set(ServedByHeader, ServedByGo)
 		trpc.WriteResult(w, c.payload, c.ttl)
+		s.noteWriteFormat(ctx, endpoint, c)
 		c.release() // WriteResult has sent payload and keeps no reference
 		setOutcome(span, served)
 		s.Metrics.Requests.WithLabelValues(endpoint, "serve", served).Inc()
@@ -949,10 +1058,11 @@ func SyntheticModelGetAllRequest(ctx context.Context, req ShadowRequest) (*http.
 }
 
 // The synthetic requests carry the sampler's credential placeholder, never a key: their context is
-// marked so an API credential stays the `bearer-token` fallback (auth.WithRedactedCredentials).
+// marked so an API credential stays the `bearer-token` fallback (auth.WithRedactedCredentials). It is
+// also marked as a sample (withSampled): its verified-crawler header is the app's own decision.
 func syntheticTRPCRequest(ctx context.Context, req ShadowRequest, procedure string) (*http.Request, error) {
 	u := &url.URL{Path: "/api/trpc/" + procedure, RawQuery: url.Values{"input": {req.Input}}.Encode()}
-	r, err := http.NewRequestWithContext(auth.WithRedactedCredentials(ctx), http.MethodGet, u.String(), nil)
+	r, err := http.NewRequestWithContext(withSampled(auth.WithRedactedCredentials(ctx)), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1017,6 +1127,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	}
 	if b, c, cl, ok := s.v1ModelsRoute(endpoint); ok {
 		build, computeFn, compareFn, classify = b, c, shadow.CompareJSON, cl
+	}
+	if b, c, cl, ok := s.associatedRoute(endpoint); ok {
+		build, computeFn, classify = b, c, cl
 	}
 	span := trace.SpanFromContext(ctx)
 	// The sample's credential is the sampler's placeholder, never a key: the compute's Resolve reads
@@ -1107,6 +1220,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		span.SetAttributes(attrShadowResult.String(result))
 	}
 	s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
+	if c.viewerClass != "" {
+		s.Metrics.ShadowViewer.WithLabelValues(endpoint, c.viewerClass, result).Inc()
+	}
 	diffs := make([]shadow.Diff, 0, len(report.Diffs)+len(respDiffs))
 	diffs = append(diffs, report.Diffs...)
 	diffs = append(diffs, respDiffs...)

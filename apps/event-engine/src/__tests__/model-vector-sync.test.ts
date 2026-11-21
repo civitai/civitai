@@ -664,7 +664,8 @@ describe('version-delete lookup against the real query and client', () => {
         CREATE TABLE "TagsOnModels" ("modelId" int, "tagId" int);
         CREATE TABLE "Model" (id int PRIMARY KEY, name text, type text, "checkpointType" text,
           "nsfwLevel" int, "publishedAt" timestamp, "userId" int, description text, status text,
-          "deletedAt" timestamp, "tosViolation" boolean, minor boolean, availability text);
+          "deletedAt" timestamp, "tosViolation" boolean, minor boolean, availability text,
+          mode text);
         CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, name text,
           description text, "baseModel" text, "trainedWords" text[], status text,
           availability text, index int);
@@ -696,7 +697,8 @@ describe('version-delete lookup against the real query and client', () => {
         CREATE TABLE "TagsOnModels" ("modelId" int, "tagId" int);
         CREATE TABLE "Model" (id int PRIMARY KEY, name text, type text, "checkpointType" text,
           "nsfwLevel" int, "publishedAt" timestamp, "userId" int, description text, status text,
-          "deletedAt" timestamp, "tosViolation" boolean, minor boolean, availability text);
+          "deletedAt" timestamp, "tosViolation" boolean, minor boolean, availability text,
+          mode text);
         CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, name text,
           description text, "baseModel" text, "trainedWords" text[], status text,
           availability text, index int);
@@ -736,6 +738,47 @@ describe('version-delete lookup against the real query and client', () => {
       const run = await backfillModels({ from: 0, to: 10, page: 2 }, backfillDeps);
       expect(run.complete).toBe(true);
       expect([...fresh.points.keys()]).toEqual([1]);
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+
+  // The site's search-index rule: a taken-down model leaves the index, an archived one stays.
+  test('a TakenDown model gets no point, and a model taken down loses its point', async () => {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const pg = new PGlite();
+    await pg.exec(`
+        CREATE TABLE "User" (id int PRIMARY KEY, username text);
+        CREATE TABLE "Tag" (id int PRIMARY KEY, name text);
+        CREATE TABLE "TagsOnModels" ("modelId" int, "tagId" int);
+        CREATE TABLE "Model" (id int PRIMARY KEY, name text, type text, "checkpointType" text,
+          "nsfwLevel" int, "publishedAt" timestamp, "userId" int, description text, status text,
+          "deletedAt" timestamp, "tosViolation" boolean, minor boolean, availability text,
+          mode text);
+        CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, name text,
+          description text, "baseModel" text, "trainedWords" text[], status text,
+          availability text, index int);
+        INSERT INTO "User" VALUES (7, 'someone');
+        INSERT INTO "Model" VALUES
+          (1, 'Normal', 'LORA', NULL, 1, '2026-01-01', 7, NULL, 'Published', NULL, false, false, 'Public', NULL),
+          (2, 'Archived', 'LORA', NULL, 1, '2026-01-01', 7, NULL, 'Published', NULL, false, false, 'Public', 'Archived'),
+          (3, 'Taken down', 'LORA', NULL, 1, '2026-01-01', 7, NULL, 'Published', NULL, false, false, 'Public', 'TakenDown'),
+          (4, 'Soon taken down', 'LORA', NULL, 1, '2026-01-01', 7, NULL, 'Published', NULL, false, false, 'Public', NULL);
+        INSERT INTO "ModelVersion" VALUES
+          (11, 1, 'a', NULL, 'SDXL 1.0', '{}', 'Published', 'Public', 0),
+          (21, 2, 'a', NULL, 'SDXL 1.0', '{}', 'Published', 'Public', 0),
+          (31, 3, 'a', NULL, 'SDXL 1.0', '{}', 'Published', 'Public', 0),
+          (41, 4, 'a', NULL, 'SDXL 1.0', '{}', 'Published', 'Public', 0);
+      `);
+    try {
+      const { store, embedder } = setup();
+      const deps = { pg, store, embedder } as unknown as ModelSyncDeps & { store: FakeStore };
+      await syncModelIds([1, 2, 3, 4], deps);
+      expect([...store.points.keys()].sort()).toEqual([1, 2, 4]);
+
+      await pg.exec(`UPDATE "Model" SET mode = 'TakenDown' WHERE id = 4`);
+      expect(await syncModelIds([4], deps)).toMatchObject({ deleted: 1 });
+      expect([...store.points.keys()].sort()).toEqual([1, 2]);
     } finally {
       await pg.close();
     }

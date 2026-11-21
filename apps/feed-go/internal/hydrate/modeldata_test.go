@@ -137,13 +137,13 @@ func TestModelPageComputesModelDataMiss(t *testing.T) {
 				t.Fatalf("5001: %+v", md)
 			}
 			v := md.Versions[0]
-			if id, _ := Int(v["id"]); id != 6001 || v["baseModel"] != "Pony" || v["status"] != "Published" {
+			if id, _ := Int(ObjectField(v, "id")); id != 6001 || ObjectField(v, "baseModel") != "Pony" || ObjectField(v, "status") != "Published" {
 				t.Fatalf("first version %v", v)
 			}
-			if at, _ := v["publishedAt"].(time.Time); !at.Equal(modelDataPublished) {
-				t.Fatalf("publishedAt %v, want %v", v["publishedAt"], modelDataPublished)
+			if at, _ := ObjectField(v, "publishedAt").(time.Time); !at.Equal(modelDataPublished) {
+				t.Fatalf("publishedAt %v, want %v", ObjectField(v, "publishedAt"), modelDataPublished)
 			}
-			if v2 := md.Versions[1]; v2["trainingStatus"] != "Approved" || v2["publishedAt"] != nil || v2["description"] != nil {
+			if v2 := md.Versions[1]; ObjectField(v2, "trainingStatus") != "Approved" || ObjectField(v2, "publishedAt") != nil || ObjectField(v2, "description") != nil {
 				t.Fatalf("second version %v", v2)
 			}
 			if o := obs.get(); o["model-data/computed"] != 2 {

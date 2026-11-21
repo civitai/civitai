@@ -30,6 +30,12 @@ export function workflowOwnerId(workflowId: string | undefined | null): number |
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
+/** Whether a request-supplied id names `userId` as its owner. An unreadable owner is a no. */
+export function isWorkflowOwnedBy(workflowId: string | undefined | null, userId: number): boolean {
+  const ownerId = workflowOwnerId(workflowId);
+  return ownerId !== null && ownerId === userId;
+}
+
 /** How long to wait for the teardown of a mis-attributed workflow before giving up on it. Sized well
  *  under the module's 20s read backstops: this runs on the submit path with the user waiting, and the
  *  throw below does not depend on the delete succeeding. */

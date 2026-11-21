@@ -13,9 +13,9 @@ import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { deleteImages } from '~/server/services/image.service';
 import {
-  accountHoldSql,
   captureImageKeptSql,
-  assertAccountNotUnderLegalHold,
+  assertContentRemovalNotHeld,
+  contentRemovalHeldSql,
   isLegalHoldAbort,
   LEGAL_HOLD_STOPPED,
   LegalHoldError,
@@ -36,9 +36,9 @@ export default ModEndpoint(
       const { userId, batchSize } = schema.parse(req.query);
       if (isFeedbackCaptureOwner(userId))
         return res.status(400).json({ error: FEEDBACK_CAPTURE_OWNER_REFUSAL });
-      const { markerView } = await assertAccountNotUnderLegalHold(userId);
+      const { markerView } = await assertContentRemovalNotHeld(userId, 'Image purge refused');
       // Repeated in each delete, so a hold that lands mid-run stops the rest.
-      const held = accountHoldSql(Prisma.sql`${userId}::int`, markerView);
+      const held = contentRemovalHeldSql(Prisma.sql`${userId}::int`, markerView);
       const unlessHeld = Prisma.sql`NOT ${held}`;
 
       const images = await dbRead.image.findMany({

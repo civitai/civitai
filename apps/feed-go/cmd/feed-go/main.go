@@ -400,6 +400,8 @@ func run(log *slog.Logger) error {
 		Deps:    deps,
 		Sources: sources,
 		Blocked: blocked,
+		// `newCreators`: the "new & upcoming" boards' cached entries, read-only.
+		NewCreators: &feed.NewCreatorBoards{Cache: cache, Prefix: cfg.CacheKeyPrefix},
 	}
 	// The model.getAll shadow shares the replica, the cache readers, the gallery settings and the
 	// addons; its own flags are mirrored by FEED_GO_* variables (DESIGN.md §15.3).
@@ -416,6 +418,14 @@ func run(log *slog.Logger) error {
 			LoadingOpenToAll:        cfg.LoadingOpenToAll,
 			VisibleDecorationEvents: cfg.DecorationEvents,
 		},
+	}
+	// The model.getAssociatedResourcesCardData shadow shares model.getAll's deps, plus the viewer's
+	// hidden-user caches, the generation gate rules (system redis) and the creator-promotions mirror.
+	associated := &modelfeed.AssocDeps{
+		Deps:       models,
+		Prefs:      &modelfeed.PackedHiddenPrefs{Redis: cache, Prefix: cfg.CacheKeyPrefix},
+		Gates:      &modelfeed.SysGateRules{Sys: sys},
+		Promotions: feed.ParsePromotionAudience(cfg.CreatorPromotion),
 	}
 	// The REST /api/v1/models shadows read the replica and the caches (read-only) the same way.
 	mc := config.LoadV1Models()
@@ -444,7 +454,9 @@ func run(log *slog.Logger) error {
 		Models:           models,
 		ServeModelGetAll: cfg.ServeModelGetAll,
 		ServeInfinite:    cfg.ServeInfinite,
+		WriteDevalue:     cfg.WriteDevalue,
 		Hosts:            cfg.Hosts,
+		HostPrimaries:    cfg.HostPrimaries,
 		RegionRules:      cfg.RegionRules,
 		// REGION_BLOCK_CONFIG, else the app's default list (apipolicy.json).
 		RegionBlockRules: cfg.RegionBlockRules,
@@ -457,6 +469,7 @@ func run(log *slog.Logger) error {
 		V1:             v1,
 		Infinite:       infinite,
 		V1Models:       v1Models,
+		Associated:     associated,
 		RequestBudget:  cfg.RequestBudget,
 		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
 		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
@@ -480,6 +493,7 @@ func run(log *slog.Logger) error {
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll)
 	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
+	log.Info("public tRPC answers' write format", "TRPC_WRITE_DEVALUE", cfg.WriteDevalue)
 	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
 	// OpenMetrics on request only with tracing on: the exemplars ride in that format alone.
 	internal := server.InternalMux(srv, server.MetricsHandler(reg, tp != nil), cfg.Pprof)

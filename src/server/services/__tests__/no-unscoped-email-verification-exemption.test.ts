@@ -87,6 +87,8 @@ const MUST_NOT_BE_GUARDED: Record<string, string[]> = {
  * to say whether that was intended. Update the value in the same commit that moves it, or don't move it.
  */
 const DERIVED_BASES: Record<string, string> = {
+  // `takedown-request.router.ts`: the public takedown forms; a claimant needs no account.
+  takedownFormsProcedure: 'publicProcedure',
   appStorageProcedure: 'publicProcedure',
   // `app-storage.router.ts`: reading and deleting the caller's OWN app data, never creating content.
   appStorageUserProcedure: 'protectedProcedure',

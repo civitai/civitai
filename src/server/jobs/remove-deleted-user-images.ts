@@ -12,7 +12,8 @@ import {
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
-import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
+import { contentRemovalHeldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { refreshProfilePicturesForUsersLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import {
@@ -20,7 +21,12 @@ import {
   PRIOR_INGESTION_KEY,
   PRIOR_NEEDS_REVIEW_KEY,
 } from '~/server/utils/image-removal-mode';
-import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
+import type { ReportFilter } from '~/server/utils/legal-hold';
+import {
+  PLACEHOLDER_OWNER_ID,
+  reportListedImageOwnerIdsSql,
+  reportNamedUserIdsSql,
+} from '~/server/utils/legal-hold';
 import { createJob, getJobDate } from './job';
 import { postHoldsHeldTextSql } from '~/server/services/post-text-hold';
 
@@ -106,9 +112,59 @@ async function isStillMarkedForDeletion(userId: number) {
   return row.stillDeleted;
 }
 
-/** Every hold on the account, plus the placeholder owner. */
+/** Every hold on the account, or the placeholder owner. */
 const accountHeldSql = (id: Prisma.Sql, markerView: boolean) =>
-  Prisma.sql`(${id} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(id, markerView)})`;
+  Prisma.sql`(${id} = ${PLACEHOLDER_OWNER_ID} OR ${contentRemovalHeldSql(id, markerView)})`;
+
+const unarchived: ReportFilter = (r) => Prisma.raw(`${r}."archivedAt" IS NULL`);
+
+/**
+ * An account a CSAM report not yet archived names, as subject or secondary user, or lists images of.
+ * Uncorrelated, so Postgres builds the set once per statement rather than once per candidate.
+ */
+const openReportSql = (id: Prisma.Sql) => Prisma.sql`(
+  (${id})::text IN (${reportNamedUserIdsSql(unarchived)})
+  OR (${id}) IN (${reportListedImageOwnerIdsSql(unarchived)})
+)`;
+
+/** Left out of the worklist: the placeholder owner, and an account an unarchived report names. */
+const skippedSql = (id: Prisma.Sql) =>
+  Prisma.sql`(${id} = ${PLACEHOLDER_OWNER_ID} OR ${openReportSql(id)})`;
+
+/**
+ * The worklist's mode: a held account's images are blocked (hidden and kept) whatever the account
+ * chose, so it is picked up only while one of them is still unblocked.
+ */
+const worklistModeSql = (markerView: boolean) => Prisma.sql`CASE
+  WHEN ${accountHeldSql(Prisma.raw('u.id'), markerView)} THEN 'grace'
+  WHEN u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate' THEN 'immediate'
+  ELSE 'grace'
+END`;
+
+/**
+ * What this run does with the account, re-read on the primary: `skip` it while an unarchived report
+ * names it, `block` it while any other hold does, else follow its choice. A failed read skips.
+ */
+async function primaryHoldAction(userId: number, markerView: boolean) {
+  const id = Prisma.sql`${userId}::int`;
+  try {
+    // primary: a report or hold placed after the worklist read must still decide this run.
+    const [row] = await dbWrite.$queryRaw<{ skip: boolean | null; accountHeld: boolean | null }[]>`
+      SELECT ${skippedSql(id)} AS skip, ${accountHeldSql(id, markerView)} AS "accountHeld"
+    `;
+    if (row?.skip !== false) return 'skip' as const;
+    return row.accountHeld !== false ? ('block' as const) : ('follow' as const);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'remove-deleted-user-images',
+      message: 'hold read failed',
+      userId,
+      error: safeError(error),
+    });
+    return 'skip' as const;
+  }
+}
 
 async function drainUser(
   userId: number,
@@ -212,6 +268,8 @@ async function propagateBlock(touched: TouchedImage[]) {
   const ids = touched.map((x) => x.id);
   const postIds = uniq(touched.map((x) => x.postId).filter((id): id is number => id != null));
 
+  // First: it never throws, and the steps after it can.
+  await evictHomeBlocksForImages({ imageIds: ids });
   await Promise.all([
     queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
     invalidateManyImageExistence(ids),
@@ -385,10 +443,15 @@ async function drainPage(
       break;
     }
 
+    const action = await primaryHoldAction(user.id, markerView);
+    if (action === 'skip') {
+      stalled = true;
+      continue;
+    }
     // Dispatched on 'immediate' rather than on 'grace' so that anything the worklist failed to
     // resolve — a mode it did not select, a value it did not normalize — blocks instead of deletes.
     const result =
-      user.mode === 'immediate'
+      user.mode === 'immediate' && action === 'follow'
         ? await drainUser(user.id, remaining, isCanceled, markerView)
         : await blockUserImages(user.id, remaining, isCanceled);
     remaining -= result.budgetUsed;
@@ -465,22 +528,16 @@ export const removeDeletedUserImages = createJob(
     // CleanIfEmpty — while an immediate user still matches on any image, or an account left
     // holding only blocked ones would drop out of the worklist with nothing else to sweep it.
 
-    // An account under any legal hold (`accountHoldSql`) is left out entirely. While its report is
-    // unfinished this also matters to archive-csam-reports, which runs five minutes after this job
-    // and rebuilds the NCMEC evidence by re-fetching each image from the CDN, silently skipping —
-    // and then stamping the report archived — for anything gone.
+    // Skipped, not blocked, while an unarchived CSAM report names the account: archive-csam-reports
+    // can fall back to the edge copy of an image, and a block makes the image server refuse it.
+    // Any other held account is blocked (`worklistModeSql`), never deleted.
     const fresh = await dbRead.$queryRaw<Candidate[]>`
       SELECT u.id, u."deletedAt", m.mode
       FROM "User" u
-      CROSS JOIN LATERAL (
-        SELECT CASE
-          WHEN u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate'
-          THEN 'immediate' ELSE 'grace'
-        END AS mode
-      ) m
+      CROSS JOIN LATERAL (SELECT ${worklistModeSql(markerView)} AS mode) m
       WHERE u."deletedAt" IS NOT NULL
         AND u."deletedAt" >= ${freshMark}
-        AND NOT ${accountHeldSql(Prisma.raw('u.id'), markerView)}
+        AND NOT ${skippedSql(Prisma.raw('u.id'))}
         AND (
           EXISTS (
             SELECT 1 FROM "Image" i
@@ -513,16 +570,11 @@ export const removeDeletedUserImages = createJob(
       const backlog = await dbRead.$queryRaw<Candidate[]>`
         SELECT u.id, u."deletedAt", m.mode
         FROM "User" u
-        CROSS JOIN LATERAL (
-          SELECT CASE
-            WHEN u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate'
-            THEN 'immediate' ELSE 'grace'
-          END AS mode
-        ) m
+        CROSS JOIN LATERAL (SELECT ${worklistModeSql(markerView)} AS mode) m
         WHERE u."deletedAt" IS NOT NULL
           AND u."deletedAt" <= ${backlogCursor}
           AND u."deletedAt" < ${freshMark}
-          AND NOT ${accountHeldSql(Prisma.raw('u.id'), markerView)}
+          AND NOT ${skippedSql(Prisma.raw('u.id'))}
           AND (
             EXISTS (
               SELECT 1 FROM "Image" i

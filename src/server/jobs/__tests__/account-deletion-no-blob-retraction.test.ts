@@ -166,6 +166,9 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   // remove-blocked-images: users under a legal hold. None in this fixture.
   if (sql.includes('FROM "CsamReport"')) return [];
 
+  // remove-deleted-user-images: the per-account hold re-read. No hold in this fixture.
+  if (sql.includes('AS skip')) return [{ skip: false, accountHeld: false }];
+
   // remove-blocked-images: its two queue reads, each passed as one `Prisma.sql` value.
   if (sql.includes('FROM "JobQueue" j')) {
     const bound = Array.isArray(strings)
@@ -262,11 +265,13 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   // remove-deleted-user-images: the two worklists. Fresh is ascending and bounded below by the
   // high-water mark; backlog is descending and bounded above by its cursor and by that mark.
   if (sql.includes('CROSS JOIN LATERAL')) {
+    // The bounds are the statement's dates; the mode and hold arrive as nested fragments.
+    const dates = values.filter((v): v is Date => v instanceof Date);
     if (sql.includes('ORDER BY u."deletedAt" DESC')) {
-      const [cursor, freshMark] = values as [Date, Date];
+      const [cursor, freshMark] = dates;
       return candidates((d) => d <= cursor && d < freshMark, 'desc');
     }
-    const freshMark = values[0] as Date;
+    const freshMark = dates[0];
     return candidates((d) => d >= freshMark, 'asc');
   }
 

@@ -47,3 +47,23 @@ export function isUsableBlockedEntry(entry: string): boolean {
         : MIN_UNBOUNDED_LETTERS)
   );
 }
+
+/**
+ * The fewest usable entries a managed profanity block list may hold. Below it the server enforces
+ * the shipped list instead, and the moderator app refuses a removal that would cross it, so a wiped
+ * or mangled row cannot shrink what the filter enforces below this count.
+ */
+export const MIN_MANAGED_PROFANITY_ENTRIES = 192;
+
+/**
+ * The usable entries of a managed profanity block list, and whether there are enough of them for
+ * the list to be enforced. The server filter, the browser's copy and the moderator app's removal
+ * guard all decide through this, so a change to the rule reaches every one of them.
+ */
+export function managedProfanityEntries(entries: readonly string[]): {
+  usable: string[];
+  enforced: boolean;
+} {
+  const usable = entries.filter(isUsableBlockedEntry);
+  return { usable, enforced: usable.length >= MIN_MANAGED_PROFANITY_ENTRIES };
+}

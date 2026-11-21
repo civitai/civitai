@@ -147,7 +147,7 @@ const round = (value: number, places: number) => {
 };
 
 /** Wraps degrees into [-180, 180). */
-const wrapDegrees = (degrees: number) => ((((degrees + 180) % 360) + 360) % 360) - 180;
+export const wrapDegrees = (degrees: number) => ((((degrees + 180) % 360) + 360) % 360) - 180;
 
 function collapse(values: number[], step: boolean): StickerTrackPair[] {
   const pairs: StickerTrackPair[] = [];

@@ -16,6 +16,7 @@ export type ModeratorGrantId =
   | 'user.removeReactions'
   | 'user.membership.code'
   | 'user.membership.gift'
+  | 'user.membership.gift.comp'
   | 'user.membership.extend'
   | 'user.membership.cancel'
   | 'user.creatorScore.grant'

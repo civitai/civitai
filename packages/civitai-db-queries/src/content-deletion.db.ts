@@ -350,10 +350,17 @@ export const childSafetyVisibleCase = (image = 'Image') => {
     AND COALESCE(${needsReview}, '') <> ALL(${sql.val([...OWNER_HIDDEN_REVIEWS])}::text[]))`;
 };
 
+/** An image attached to a service review under an open child-safety report. */
+const serviceReviewReported = (imageId: RawBuilder<unknown>) => sql<boolean>`EXISTS (
+  SELECT 1 FROM "ServiceDealReviewImage" cs_ri
+  JOIN "ServiceDealReviewReport" cs_rr ON cs_rr."serviceDealReviewId" = cs_ri."reviewId"
+  WHERE cs_ri."imageId" = ${imageId} AND ${openChildSafetyReport(sql.ref('cs_rr.reportId'))}
+)`;
+
 /**
  * An image in an open child-safety case, read against `image`: under CSAM review, blocked for CSAM,
- * or under an open child-safety report on itself or its post. Its owner's delete waits for the case
- * to close.
+ * or under an open child-safety report on itself, its post or the service review it is attached to.
+ * Its owner's delete waits for the case to close.
  */
 export const childSafetyImageCase = (image = 'Image') => {
   const col = (name: string) => sql.ref(`${image}.${name}`);
@@ -365,6 +372,7 @@ export const childSafetyImageCase = (image = 'Image') => {
       WHERE cs_ir."imageId" = ${col('id')} AND ${openChildSafetyReport(sql.ref('cs_ir.reportId'))}
     )
     OR CASE WHEN ${col('postId')} IS NOT NULL THEN ${postReported(col('postId'))} ELSE false END
+    OR ${serviceReviewReported(col('id'))}
   )`;
 };
 

@@ -4641,6 +4641,8 @@ export type ModelVersion = {
   licensingFeeType: Generated<LicensingFeeType | null>;
   licensingFeeSettlementCurrency: Generated<LicensingFeeSettlementCurrency | null>;
   licensingFeeMarkup: string | null;
+  licensingFeeLocked: Generated<boolean>;
+  licensingFeePaidByInvoice: Generated<boolean>;
   licensingSourceVersionId: number | null;
 };
 export type ModelVersionEngagement = {
@@ -6005,6 +6007,11 @@ export type ServiceDealReviewImage = {
    * The final it was copied from; one copy per final per review.
    */
   sourceFileId: number | null;
+};
+export type ServiceDealReviewReport = {
+  reportId: number;
+  serviceDealReviewId: number;
+  serviceOfferingId: number;
 };
 export type ServiceDealTransaction = {
   id: Generated<number>;
@@ -7431,6 +7438,7 @@ export type DB = {
   ServiceDealFilePurge: ServiceDealFilePurge;
   ServiceDealReview: ServiceDealReview;
   ServiceDealReviewImage: ServiceDealReviewImage;
+  ServiceDealReviewReport: ServiceDealReviewReport;
   ServiceDealTransaction: ServiceDealTransaction;
   ServiceDisputeReview: ServiceDisputeReview;
   ServiceOffering: ServiceOffering;

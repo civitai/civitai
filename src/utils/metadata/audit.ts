@@ -21,7 +21,6 @@ import {
   templates,
 } from '@civitai/mod-utils/prompt-audit/lists/ages';
 import { blockedNSFWRegexLazy, blockedRegexLazy } from '~/utils/metadata/audit-base';
-import { createProfanityFilter } from '~/libs/profanity-simple';
 import { AuditTimer, type AuditTimerOptions } from '~/utils/metadata/audit-slow-log';
 
 const nsfwWords = [...new Set([...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWordsPaddle])];
@@ -141,6 +140,15 @@ export interface PromptTrigger extends Omit<PromptTriggerMatch, 'category'> {
 const SOFT_BLOCK_CATEGORIES = new Set<PromptTriggerCategory>(['nsfw_blocklist', 'profanity']);
 
 /**
+ * The profanity check, passed in rather than imported: this module runs in the browser, and the
+ * filter carries the block list. Server callers pass `getServerProfanityFilter()`'s filter;
+ * undefined skips the check.
+ */
+export type ProfanityMatcher = {
+  analyze(text: string): { isProfane: boolean; matches: string[]; matchedWords: string[] };
+};
+
+/**
  * `nsfw_blocklist` is NOT one severity — the same flat list holds `rape` and
  * `daughter`. Severity is per matched WORD and defaults to hard, so adding a term
  * to the main blocklist can never accidentally make it overridable.
@@ -228,10 +236,10 @@ export type AuditPromptOptions = AuditTimerOptions & {
 export const auditPromptEnriched = (
   prompt: string,
   negativePrompt?: string,
-  checkProfanity?: boolean,
+  profanity?: ProfanityMatcher,
   options?: AuditPromptOptions
 ): EnrichedAuditResult => {
-  const result = auditFirstBlock(prompt, negativePrompt, checkProfanity, options);
+  const result = auditFirstBlock(prompt, negativePrompt, profanity, options);
   // Evidence is collected only for a block, not on the passing path.
   const [first] = result.triggers;
   if (
@@ -249,7 +257,7 @@ export const auditPromptEnriched = (
 const auditFirstBlock = (
   prompt: string,
   negativePrompt?: string,
-  checkProfanity?: boolean,
+  profanity?: ProfanityMatcher,
   options?: AuditPromptOptions
 ): EnrichedAuditResult => {
   if (isBlankAuditInput(prompt, negativePrompt))
@@ -415,14 +423,13 @@ const auditFirstBlock = (
   }
 
   // 5. Profanity check (green domain only)
-  if (checkProfanity) {
+  if (profanity) {
     const profanityResults = timer.time('profanity', () => {
-      const profanityFilter = createProfanityFilter();
       // Strip Danbooru rating/score/source tags first, for the same reason
       // `includesMinorAge` does: they are metadata, not language. `rating_explicit` is
       // how a booru labels an image, and obscenity matches inside it — so the tag alone
       // refused prompts whose images the SFW domain publishes.
-      return profanityFilter.analyze(prompt.replace(falsePositiveTagPattern, ' '));
+      return profanity.analyze(prompt.replace(falsePositiveTagPattern, ' '));
     });
     if (profanityResults.isProfane) {
       timer.finish(prompt, negativePrompt);
@@ -532,15 +539,10 @@ function collectTriggerMatches(
 export const auditPrompt = (
   prompt: string,
   negativePrompt?: string,
-  checkProfanity?: boolean,
+  profanity?: ProfanityMatcher,
   options?: AuditTimerOptions
 ): { blockedFor: string[]; success: boolean } => {
-  const { blockedFor, success } = auditPromptEnriched(
-    prompt,
-    negativePrompt,
-    checkProfanity,
-    options
-  );
+  const { blockedFor, success } = auditPromptEnriched(prompt, negativePrompt, profanity, options);
   return { blockedFor, success };
 };
 
@@ -1357,7 +1359,7 @@ export function debugAuditPrompt(prompt: string, negativePrompt?: string): Debug
   }
 
   // Determine if this would block
-  const auditResult = auditPromptEnriched(prompt, negativePrompt, false);
+  const auditResult = auditPromptEnriched(prompt, negativePrompt);
 
   return {
     normalizedPrompt,

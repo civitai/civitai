@@ -191,10 +191,24 @@ type Image struct {
 	Index       int
 	NsfwLevel   int
 	SortAt      time.Time
-	PublishedAt any // time.Time (= sortAt) or Undefined
+	PublishedAt any // the wire's sortAt Date (*time.Time, see SortAtWire) or Undefined
 	ModelVerID  any
 	User        superjson.Object
 	Stats       superjson.Object
+	// sortAt is the image's one `sortAt` Date as the wire holds it: getAllImagesUncaptured writes
+	// `publishedAt: i.publishedAt ? i.sortAt : undefined`, and the gallery handler copies both onto the
+	// post, so the Node answer holds ONE Date at up to four places. A shared pointer is that one Date to
+	// the devalue writer (written once, referenced after); the superjson writer reads through it.
+	sortAt *time.Time
+}
+
+// SortAtWire is the image's sortAt as it goes on the wire: the Date buildImage shared between the
+// image's sortAt and publishedAt, or SortAt itself for an Image built without it.
+func (img Image) SortAtWire() any {
+	if img.sortAt != nil {
+		return img.sortAt
+	}
+	return img.SortAt
 }
 
 // Page is one getAllImages result.
@@ -356,9 +370,12 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 	if r.Model3DID != nil && hy.VisibleModel3D[*r.Model3DID] {
 		model3d = int64(*r.Model3DID)
 	}
+	// One Date for sortAt and publishedAt (`publishedAt: i.publishedAt ? i.sortAt : undefined`).
+	sortAt := new(time.Time)
+	*sortAt = r.SortAt
 	var publishedAt any = superjson.Undefined{}
 	if r.PublishedAt != nil {
-		publishedAt = r.SortAt
+		publishedAt = sortAt
 	}
 
 	basic, hasBasic := hy.Basic[r.UserID]
@@ -417,7 +434,7 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 		{Key: "onSite", Val: boolOrNil(r.OnSite)},
 		{Key: "remixOfId", Val: rawOrNil(r.RemixOfID)},
 		{Key: "createdAt", Val: r.CreatedAt},
-		{Key: "sortAt", Val: r.SortAt},
+		{Key: "sortAt", Val: sortAt},
 		{Key: "type", Val: r.Type},
 		{Key: "metadata", Val: rawOrNil(r.Metadata)},
 		{Key: "ingestion", Val: r.Ingestion},
@@ -453,6 +470,7 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 	return Image{
 		Wire: wire, ID: r.ID, PostID: r.PostID, Index: idx, NsfwLevel: nsfw, SortAt: r.SortAt,
 		PublishedAt: publishedAt, ModelVerID: intOrNil(r.ModelVersionID), User: user, Stats: stats,
+		sortAt: sortAt,
 	}
 }
 

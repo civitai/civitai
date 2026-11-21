@@ -229,6 +229,28 @@ func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
 	}
 }
 
+// TRPC_WRITE_DEVALUE is read as the main app reads it (`=== 'true'`): only the exact string turns it
+// on, and unset is off.
+func TestLoadWriteDevalue(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for _, c := range []struct {
+		in   string
+		want bool
+	}{{"", false}, {"false", false}, {"1", false}, {"TRUE", false}, {"true ", false}, {"on", false}, {"true", true}} {
+		in, want := c.in, c.want
+		t.Setenv("TRPC_WRITE_DEVALUE", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.WriteDevalue != want {
+			t.Errorf("TRPC_WRITE_DEVALUE=%q -> %v, want %v", in, c.WriteDevalue, want)
+		}
+	}
+}
+
 // FEED_GO_BEARER_AUTH is off by default; its two secrets are read only when it is on.
 func TestLoadBearerAuth(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {

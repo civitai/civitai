@@ -4,7 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { purgeViewerDocuments } from '~/server/services/apps/doc-store-purge';
 import type { DocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
-import { isAccountUnderLegalHold } from '~/server/services/legal-hold.service';
+import { isContentRemovalHeld } from '~/server/services/legal-hold.service';
 import { createLogThrottle } from '~/server/utils/log-throttle';
 import type { JobContext } from './job';
 import { createJob } from './job';
@@ -145,7 +145,7 @@ async function stillRequested(userId: number, cutoff: Date): Promise<boolean> {
 /** Why an account must not be wiped right now, or null when it may be. */
 async function blocker(userId: number, cutoff: Date): Promise<'held' | 'withdrawn' | null> {
   // `null` (the hold could not be read) blocks like a hold.
-  if ((await isAccountUnderLegalHold(userId)) !== false) return 'held';
+  if ((await isContentRemovalHeld(userId)) !== false) return 'held';
   if (!(await stillRequested(userId, cutoff))) return 'withdrawn';
   return null;
 }

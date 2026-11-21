@@ -550,6 +550,23 @@ describe('acceptMembershipGift', () => {
     expect(data).not.toHaveProperty('monthsRemaining');
   });
 
+  it('claims the gift before moving the tier, so a comp revoked meanwhile stops it untouched', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...queued, tier: 'gold' });
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub({ tier: 'bronze' }));
+    mockStripe.subscriptions.retrieve.mockResolvedValue(stripeSub());
+    mockDbWrite.membershipGift.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(acceptMembershipGift({ giftId: 'gift_1', userId: 2 })).rejects.toThrow(
+      /not available to accept/i
+    );
+    expect(mockDbWrite.membershipGift.updateMany).toHaveBeenCalledWith({
+      where: { id: 'gift_1', status: 'Fulfilled' },
+      data: { acceptedAt: expect.any(Date) },
+    });
+    expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.membershipGift.update).not.toHaveBeenCalled();
+  });
+
   it('refuses a gift that was applied in full when it was paid', async () => {
     mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...queued, monthsRemaining: 0 });
     mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub({ tier: 'gold' }));

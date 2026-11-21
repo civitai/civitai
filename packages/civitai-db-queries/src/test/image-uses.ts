@@ -39,4 +39,7 @@ export const imageUseTablesSql = [
     `CREATE TABLE IF NOT EXISTS "${table}" ()`,
     `ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS "${column}" int`,
   ]),
+  `ALTER TABLE "ServiceDealReviewImage" ADD COLUMN IF NOT EXISTS "reviewId" int`,
+  `CREATE TABLE IF NOT EXISTS "ServiceDealReviewReport" ("reportId" int NOT NULL)`,
+  `ALTER TABLE "ServiceDealReviewReport" ADD COLUMN IF NOT EXISTS "serviceDealReviewId" int`,
 ].join(';\n');

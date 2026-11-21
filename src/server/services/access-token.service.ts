@@ -1,10 +1,15 @@
 import type { Prisma } from '@prisma/client';
-import { createHash, randomBytes } from 'crypto';
+import {
+  hashAccessToken,
+  isUsableAccessToken,
+  newAccessToken,
+  type AccessTokenResourceType,
+} from '@civitai/db-queries/access-token';
 import { dbWrite } from '~/server/db/client';
 
 type Db = Prisma.TransactionClient | typeof dbWrite;
 
-export type AccessTokenResourceType = 'Article';
+export { hashAccessToken, isUsableAccessToken, type AccessTokenResourceType };
 
 export type AccessTokenRow = {
   id: number;
@@ -25,22 +30,6 @@ const accessTokenSelect = {
   expiresAt: true,
   revokedAt: true,
 } as const;
-
-export const hashAccessToken = (token: string) => createHash('sha256').update(token).digest('hex');
-
-/** Revoked, expired or for another kind of resource: the row grants nothing. */
-export function isUsableAccessToken(
-  row: Pick<AccessTokenRow, 'resourceType' | 'expiresAt' | 'revokedAt'> | null | undefined,
-  resourceType: AccessTokenResourceType,
-  now = new Date()
-): boolean {
-  return (
-    !!row &&
-    row.resourceType === resourceType &&
-    row.revokedAt === null &&
-    row.expiresAt.getTime() > now.getTime()
-  );
-}
 
 /** The where-clause form of `isUsableAccessToken`: rows that still grant access. */
 const activeWhere = (now = new Date()) => ({ revokedAt: null, expiresAt: { gt: now } });
@@ -79,7 +68,7 @@ export async function createAccessToken({
   /** Re-checked under the lock, which the resource's own state changes also take. */
   allowed?: (tx: Prisma.TransactionClient) => Promise<boolean>;
 }) {
-  const token = randomBytes(32).toString('base64url');
+  const token = newAccessToken();
   const row = await dbWrite.$transaction(async (tx) => {
     await lockAccessTokens(tx, resourceId);
     if (allowed && !(await allowed(tx))) throw new AccessTokenNotAllowedError();

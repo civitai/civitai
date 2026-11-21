@@ -27,6 +27,9 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
  *   own compare path (`feed_endpoint="infinite"`);
  * - `model.getAll` (tRPC; flag `feed-go-shadow-model-getall`): the same capture, posted to its own
  *   compare path (`feed_endpoint="model-getall"`);
+ * - `model.getAssociatedResourcesCardData` (tRPC; flag `feed-go-shadow-model-associated`): the same
+ *   capture, posted to its own compare path (`feed_endpoint="model-associated"`). A signed-in browser
+ *   batches it when `trpcBatching` is on for that user, and a batched call is never sampled;
  * - the REST routes, `GET /api/v1/images` (flag `feed-go-shadow-v1-images`) and
  *   `GET /api/v1/models` + `GET /api/v1/models/[id]` (one flag, `feed-go-shadow-v1-models`): the raw
  *   query string, the path and the JSON body the handler passed to `res.json`, captured by the
@@ -78,6 +81,9 @@ export const FEED_GO_SHADOW_V1_MODELS_ID_PATH = `${FEED_GO_SHADOW_V1_MODELS_PATH
 /** The third tRPC procedure mirrored under its own flag, and feed-go's compare path for it. */
 export const FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE = 'model.getAll';
 export const FEED_GO_SHADOW_MODEL_GET_ALL_PATH = `/internal/shadow/${FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE}`;
+/** The fourth tRPC procedure mirrored under its own flag, and feed-go's compare path for it. */
+export const FEED_GO_SHADOW_MODEL_ASSOCIATED_PROCEDURE = 'model.getAssociatedResourcesCardData';
+export const FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH = `/internal/shadow/${FEED_GO_SHADOW_MODEL_ASSOCIATED_PROCEDURE}`;
 /** feed-go's Go-first probe path for the procedure. */
 export const FEED_GO_PROBE_PATH = `/internal/probe/${FEED_GO_SHADOW_PROCEDURE}`;
 /** feed-go's Go-first probe path for `image.getInfinite`. */
@@ -157,6 +163,8 @@ export type FeedGoShadowConfig = {
   infiniteUrl: string | undefined;
   /** Full compare endpoint URL for `model.getAll`, or undefined (disabled). */
   modelGetAllUrl: string | undefined;
+  /** Full compare endpoint URL for `model.getAssociatedResourcesCardData`, or undefined (disabled). */
+  modelAssociatedUrl: string | undefined;
   rate: number;
   timeoutMs: number;
   maxInFlight: number;
@@ -185,6 +193,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
   let v1ModelsIdUrl: string | undefined;
   let infiniteUrl: string | undefined;
   let modelGetAllUrl: string | undefined;
+  let modelAssociatedUrl: string | undefined;
   let probeUrl: string | undefined;
   let probeInfiniteUrl: string | undefined;
   let probeModelGetAllUrl: string | undefined;
@@ -199,6 +208,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
         v1ModelsIdUrl = new URL(FEED_GO_SHADOW_V1_MODELS_ID_PATH, parsed).toString();
         infiniteUrl = new URL(FEED_GO_SHADOW_INFINITE_PATH, parsed).toString();
         modelGetAllUrl = new URL(FEED_GO_SHADOW_MODEL_GET_ALL_PATH, parsed).toString();
+        modelAssociatedUrl = new URL(FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH, parsed).toString();
         probeUrl = new URL(FEED_GO_PROBE_PATH, parsed).toString();
         probeInfiniteUrl = new URL(FEED_GO_PROBE_INFINITE_PATH, parsed).toString();
         probeModelGetAllUrl = new URL(FEED_GO_PROBE_MODEL_GET_ALL_PATH, parsed).toString();
@@ -210,6 +220,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
       v1ModelsIdUrl = undefined;
       infiniteUrl = undefined;
       modelGetAllUrl = undefined;
+      modelAssociatedUrl = undefined;
       probeUrl = undefined;
       probeInfiniteUrl = undefined;
       probeModelGetAllUrl = undefined;
@@ -222,6 +233,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
     v1ModelsIdUrl,
     infiniteUrl,
     modelGetAllUrl,
+    modelAssociatedUrl,
     probeUrl,
     probeInfiniteUrl,
     probeModelGetAllUrl,
@@ -320,6 +332,11 @@ export type FeedGoShadowDeps = {
   enabledInfinite?: () => boolean;
   /** The `feed-go-shadow-model-getall` flag (absent: `model.getAll` is never sampled). */
   enabledModelGetAll?: () => boolean;
+  /**
+   * The `feed-go-shadow-model-associated` flag (absent: `model.getAssociatedResourcesCardData` is
+   * never sampled).
+   */
+  enabledModelAssociated?: () => boolean;
   random?: () => number;
   fetch?: typeof fetch;
   record?: (outcome: FeedGoShadowOutcome, endpoint: FeedGoShadowEndpoint) => void;
@@ -344,6 +361,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   const enabledV1Models = deps.enabledV1Models ?? (() => false);
   const enabledInfinite = deps.enabledInfinite ?? (() => false);
   const enabledModelGetAll = deps.enabledModelGetAll ?? (() => false);
+  const enabledModelAssociated = deps.enabledModelAssociated ?? (() => false);
   const random = deps.random ?? Math.random;
   const doFetch = deps.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   const record = deps.record ?? recordFeedGoShadowOutcome;
@@ -392,6 +410,11 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       url: config.modelGetAllUrl,
       enabled: enabledModelGetAll,
     },
+    [FEED_GO_SHADOW_MODEL_ASSOCIATED_PROCEDURE]: {
+      endpoint: 'model-associated',
+      url: config.modelAssociatedUrl,
+      enabled: enabledModelAssociated,
+    },
   };
 
   /** The compare URL a sample of this endpoint is posted to. */
@@ -399,6 +422,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     if (isRestEndpoint(endpoint)) return restRoutes[endpoint].url;
     if (endpoint === 'infinite') return config.infiniteUrl;
     if (endpoint === 'model-getall') return config.modelGetAllUrl;
+    if (endpoint === 'model-associated') return config.modelAssociatedUrl;
     return config.url;
   }
 
@@ -596,7 +620,8 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     if (inFlight === 0) return;
     try {
       const sample = storage.getStore();
-      // The tRPC samples (as-posts, infinite, model-getall); a REST sample captures its own body.
+      // The tRPC samples (as-posts, infinite, model-getall, model-associated); a REST sample
+      // captures its own body.
       if (!sample || isRestEndpoint(sample.endpoint) || sample.captured || sample.done) return;
       sample.captured = wroteDevalue ? { data } : { envelope: written };
     } catch {
@@ -740,6 +765,9 @@ function getInstance(): FeedGoShadow {
     ),
     enabledModelGetAll: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_MODEL_GET_ALL)
+    ),
+    enabledModelAssociated: createCachedFlagGate(
+      readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_MODEL_ASSOCIATED)
     ),
     enabledProbe: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_GOFIRST_PROBE)

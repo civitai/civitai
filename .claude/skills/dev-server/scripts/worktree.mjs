@@ -11,12 +11,13 @@
  */
 
 import { execFileSync } from 'child_process';
-import { readdirSync, lstatSync, rmdirSync, rmSync, unlinkSync, existsSync, writeFileSync } from 'fs';
+import { readdirSync, lstatSync, readFileSync, rmdirSync, rmSync, unlinkSync, existsSync, writeFileSync } from 'fs';
 import { isInside, samePath } from './paths.mjs';
 import { cacheDirsOf, dirSize } from './dev-cache-sweep.mjs';
 import { syncSkillEnv } from './skill-env.mjs';
 import { syncAppEnv } from './app-env.mjs';
-import { resolve, sep } from 'path';
+import { resolve, sep, isAbsolute, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 function git(args, cwd) {
   return execFileSync('git', args, {
@@ -582,8 +583,40 @@ function fail(msg) {
 
 const SUBMODULE = 'event-engine-common';
 
-export function worktreesRootOf(primary) {
-  return resolve(primary, '..', 'worktrees');
+const SKILL_ENV_FILE = resolve(dirname(fileURLToPath(import.meta.url)), '..', '.env');
+
+function unquote(raw) {
+  const v = raw.trim();
+  const quoted = v.match(/^(["'])(.*?)\1/);
+  return quoted ? quoted[2] : v.replace(/\s+#.*$/, '').trim();
+}
+
+function worktreeRootSetting(env, envFile) {
+  if (env.WORKTREE_ROOT !== undefined) return unquote(env.WORKTREE_ROOT);
+  let text;
+  try {
+    text = readFileSync(envFile, 'utf8');
+  } catch {
+    return '';
+  }
+  const line = text.split(/\r?\n/).reverse().find((l) => /^\s*(?:export\s+)?WORKTREE_ROOT\s*=/.test(l));
+  return line ? unquote(line.slice(line.indexOf('=') + 1)) : '';
+}
+
+const isAbsoluteRoot = (p) => (process.platform === 'win32' ? /^(?:[A-Za-z]:[\\/]|[\\/]{2})/.test(p) : isAbsolute(p));
+
+// Where `wt new` puts trees. Only creation reads this: stale, rm and the daemon find trees through
+// `git worktree list`, so trees under an earlier root keep working after it changes. The primary's
+// skill .env is the source, so `wt new` from a worktree sees the same setting.
+export function worktreesRootOf(primary, env = process.env, envFile) {
+  const file =
+    envFile ?? [resolve(primary, '.claude', 'skills', 'dev-server', '.env'), SKILL_ENV_FILE].find((f) => existsSync(f)) ?? SKILL_ENV_FILE;
+  const configured = worktreeRootSetting(env, file);
+  if (!configured) return resolve(primary, '..', 'worktrees');
+  if (!isAbsoluteRoot(configured)) throw new Error(`WORKTREE_ROOT must be an absolute path, got: ${configured}`);
+  const root = resolve(configured);
+  if (isInside(root, primary)) throw new Error(`WORKTREE_ROOT must be outside the primary checkout: ${root}`);
+  return root;
 }
 
 // The recipe CLAUDE.md used to spell out by hand. Each git flag is load-bearing:
@@ -604,7 +637,12 @@ export async function cmdCreate(primaryArg, name, branch, opts = {}) {
   if (!base.startsWith('origin/')) fail(`--base must be a remote ref (origin/<branch>), got: ${base}`);
 
   const primary = primaryOf(listWorktrees(primaryArg), primaryArg);
-  const target = opts.path ? resolve(opts.path) : resolve(worktreesRootOf(primary), name);
+  let target;
+  try {
+    target = opts.path ? resolve(opts.path) : resolve(worktreesRootOf(primary), name);
+  } catch (e) {
+    fail(e.message);
+  }
   if (existsSync(target)) fail(`already exists: ${target}`);
   if (gitQuiet(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], primary) !== null) {
     fail(`branch already exists: ${branch}\nPick a new name; to work on an existing branch, check it out deliberately.`);
