@@ -825,7 +825,7 @@ export const upsertModelVersionHandler = async ({
         // `'not-a-root'`, which silently clears a legitimate source with no error to the creator.
         dbWrite.licensingRoot.findUnique({
           where: { modelVersionId: input.licensingSourceVersionId },
-          select: { baseModel: true, modelType: true },
+          select: { baseModel: true, modelType: true, restricted: true },
         }),
         // 🔴 The model this save LANDS the version on, which is `input.modelId` — always, on a create
         // and on an update alike. `modelId` is not destructured in `upsertModelVersion`, so it rides
@@ -865,6 +865,11 @@ export const upsertModelVersionHandler = async ({
         ? 'model-not-found'
         : destinationModel.type !== source.modelType
         ? 'model-type-mismatch'
+        : // A restricted root's fee is paid only for versions its agreement covers; staff link those.
+        source.restricted &&
+          !ctx.user.isModerator &&
+          input.licensingSourceVersionId !== storedVersion?.licensingSourceVersionId
+        ? 'restricted-root'
         : null;
       if (rejectedReason) {
         // A coercion leaves no trace in the row it corrected, so emit the deciding branch. This is

@@ -4184,6 +4184,7 @@ export type LicensingRoot = {
   modelType: ModelType;
   modelVersionId: number;
   isDefault: Generated<boolean>;
+  restricted: Generated<boolean>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
