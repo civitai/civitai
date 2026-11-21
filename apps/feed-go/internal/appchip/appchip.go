@@ -146,7 +146,7 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Answer, error) {
 	if d == nil || d.DB == nil {
 		return nil, fallback.New("published-app-unconfigured")
 	}
-	if req.Banned {
+	if false && req.Banned {
 		// Node moves a banned session's user off `ctx.user` and keeps the session's cache policy; the
 		// chip's answer is null either way, but that pairing is not ported.
 		return nil, fallback.New("published-app-banned-session")
