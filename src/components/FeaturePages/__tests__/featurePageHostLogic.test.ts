@@ -14,7 +14,7 @@ function setup(overrides: { signedIn?: boolean; vote?: () => Promise<{ votes: nu
     signedIn: overrides.signedIn ?? true,
     openLogin: vi.fn(),
     vote: vi.fn(overrides.vote ?? (async () => ({ votes: 5 }))),
-    mine: vi.fn(async () => ({ votes: {} })),
+    mine: vi.fn(async () => ({ votes: { [REQUEST]: 1 as const } })),
     navigate: vi.fn(),
   };
   const host = createFeaturePageHost(deps);
@@ -63,7 +63,17 @@ describe('feature page host messages', () => {
     );
   });
 
-  // A TRPCClientError carries the server's code at `.data.code`.
+  it("reads the viewer's own votes and answers with them", async () => {
+    const { frame, deps, send, flush } = setup();
+    send({ type: 'fp-mine', payload: { requestId: 'm1', requests: [REQUEST] } });
+    await flush();
+    expect(deps.mine).toHaveBeenCalledWith({ requests: [REQUEST] });
+    expect(frame.postMessage).toHaveBeenCalledWith(
+      { type: 'fp-mine-result', payload: { requestId: 'm1', ok: true, votes: { [REQUEST]: 1 } } },
+      ORIGIN
+    );
+  });
+
   it('answers a signed-out read of own votes with sign_in, without reading', () => {
     const { frame, deps, send } = setup({ signedIn: false });
     send({ type: 'fp-mine', payload: { requestId: 'm1', requests: [REQUEST] } });
@@ -75,6 +85,7 @@ describe('feature page host messages', () => {
     );
   });
 
+  // A TRPCClientError carries the server's code at `.data.code`.
   it.each([
     [{ data: { code: 'FORBIDDEN' } }, 'refused'],
     [new TypeError('network'), 'try_again'],

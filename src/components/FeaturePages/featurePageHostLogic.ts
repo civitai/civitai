@@ -9,8 +9,8 @@ import {
 import type { FeaturePageFrameError } from '~/shared/constants/feature-pages.constants';
 import { FeaturePageFrameMessage as Msg } from '~/shared/constants/feature-pages.constants';
 
-// The frame is served from a non-civitai registrable domain, so it may keep its real origin, and
-// every message is pinned to that origin both ways.
+// allow-same-origin is safe only because the frame is on a non-civitai registrable domain
+// (resolveFeaturePageEmbed).
 export const FEATURE_PAGE_SANDBOX = [...MINIMAL_SANDBOX, 'allow-same-origin'].join(' ');
 const OPAQUE = effectiveSandboxIsOpaque(FEATURE_PAGE_SANDBOX);
 
@@ -42,11 +42,8 @@ export function frameErrorFor(error: unknown): FeaturePageFrameError {
   }
 }
 
-/**
- * The `message` listener for one feature-page frame, and `sendInit`. The frame's fp-ready can arrive
- * before the listener is attached (the iframe is server-rendered), so the host also sends fp-init
- * unasked, whenever the listener attaches and whenever the frame loads.
- */
+// fp-ready can arrive before the listener attaches (the iframe is server-rendered), so the host
+// also sends fp-init unasked.
 export function createFeaturePageHost(deps: FeaturePageHostDeps) {
   const targetOrigin = resolveOutboundTargetOrigin(deps.embedOrigin, OPAQUE);
 

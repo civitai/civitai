@@ -1,6 +1,6 @@
 import { useComputedColorScheme } from '@mantine/core';
 import { useRouter } from 'next/router';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { openLoginHere } from '~/components/Login/requireLogin';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type {
@@ -8,7 +8,10 @@ import type {
   FeaturePageMineInput,
 } from '~/server/schema/feature-pages.schema';
 import { trpc } from '~/utils/trpc';
+import type { FeaturePageHostDeps } from './featurePageHostLogic';
 import { createFeaturePageHost, FEATURE_PAGE_SANDBOX } from './featurePageHostLogic';
+
+type FrameDeps = Omit<FeaturePageHostDeps, 'embedOrigin' | 'frameWindow'>;
 
 export function FeaturePageHost({
   src,
@@ -19,21 +22,16 @@ export function FeaturePageHost({
   origin: string;
   feature: string;
 }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const sendInitRef = useRef<() => void>(undefined);
   const router = useRouter();
   const currentUser = useCurrentUser();
   const theme = useComputedColorScheme('dark');
   const utils = trpc.useUtils();
   const { mutateAsync: vote } = trpc.featurePages.vote.useMutation();
-
   const signedIn = !!currentUser;
 
-  useEffect(() => {
-    const host = createFeaturePageHost({
-      embedOrigin: origin,
+  const deps = useMemo<FrameDeps>(
+    () => ({
       feature,
-      frameWindow: () => iframeRef.current?.contentWindow,
       theme,
       signedIn,
       openLogin: () => openLoginHere('perform-action'),
@@ -45,12 +43,36 @@ export function FeaturePageHost({
         if (req.target === 'new_tab') window.open(req.href, '_blank', 'noopener');
         else void router.push(req.href);
       },
+    }),
+    [feature, theme, signedIn, router, utils, vote]
+  );
+
+  return <FeaturePageFrame src={src} origin={origin} deps={deps} />;
+}
+
+export function FeaturePageFrame({
+  src,
+  origin,
+  deps,
+}: {
+  src: string;
+  origin: string;
+  deps: FrameDeps;
+}) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const sendInitRef = useRef<() => void>(undefined);
+
+  useEffect(() => {
+    const host = createFeaturePageHost({
+      ...deps,
+      embedOrigin: origin,
+      frameWindow: () => iframeRef.current?.contentWindow,
     });
     window.addEventListener('message', host.onMessage);
     sendInitRef.current = host.sendInit;
     host.sendInit();
     return () => window.removeEventListener('message', host.onMessage);
-  }, [origin, feature, theme, signedIn, router, utils, vote]);
+  }, [origin, deps]);
 
   return (
     <iframe
