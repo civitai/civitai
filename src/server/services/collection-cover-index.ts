@@ -4,25 +4,15 @@ import { dbWrite } from '~/server/db/client';
 export const COVER_INDEX_NAME = 'Collection_imageId_idx';
 
 /**
- * Is the cover leg's index present AND USABLE?
+ * Is the cover leg's index present AND usable?
  *
- * 🔴 `pg_class` alone is NOT sufficient, and getting this wrong fails OPEN. A
- * `CREATE INDEX CONCURRENTLY` row appears in `pg_class` from the START of the build
- * and stays there permanently if the build fails — so a name-only check returns true
- * throughout a multi-minute build of a 2.8 GB heap, and forever after a failure. That
- * is precisely the window this gate exists to cover: the deploy-then-migrate ordering
- * would switch the cover leg on while the index is still being built, and every image
- * delete would pay the sequential scan concurrently with the build, on the primary,
- * up to five at a time (`deleteImages` runs `Limiter({ batchSize: 100 })`, whose
- * default concurrency is 5). `indisvalid AND indisready` is what makes the gate mean
- * "usable by the planner" rather than "someone started building this once".
+ * `pg_class` alone is not enough: a `CREATE INDEX CONCURRENTLY` row exists from the start of the
+ * build and stays after a failed one, so a name-only check would switch the cover leg on early.
+ * `indisvalid AND indisready` means usable by the planner. Schema-qualified because `relname` is not
+ * unique across schemas.
  *
- * Schema-qualified because `relname` is not unique across schemas and this database
- * has a second one (`fk_remediation_backup`).
- *
- * A catalog lookup, not a cached flag: two index scans, cost 5.01 — far less than the
- * queries it guards — and re-reading it means the leg starts working the
- * moment the index becomes valid, with no deploy or restart.
+ * A catalog lookup, not a cached flag, so the leg starts working as soon as the index becomes valid,
+ * with no deploy or restart.
  *
  * Once the index is valid in every environment, this gate and its branch can go.
  */

@@ -67,8 +67,10 @@ describe('home-block-evict', () => {
     expect(lookedUp()).toEqual([]);
   });
 
-  it('refuses a body without image ids', async () => {
+  it('refuses a body without image ids, and looks nothing up', async () => {
+    dbMock.dbRead.$queryRaw.mockClear();
     const res = await call({ imageIds: [] });
     expect(res.statusCode).toBe(400);
+    expect(lookedUp()).toEqual([]);
   });
 });
