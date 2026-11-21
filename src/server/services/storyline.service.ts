@@ -39,8 +39,9 @@ import type { StorylineModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { placementMoneyInFlightSql } from '~/server/services/placement-escrow.service';
 import {
-  contentRemovalHeldSql,
+  accountHoldSql,
   holdMarkerViewExists,
+  ownerAccountHeldSql,
   ownerHeldSql,
 } from '~/server/services/legal-hold.service';
 import { banNoteHoldSql } from '~/server/services/ban-note-csam';
@@ -1219,14 +1220,14 @@ function deleteStorylineStatement(
     facts AS MATERIALIZED (
       SELECT
         EXISTS (SELECT 1 FROM open_reports) AS reported,
-        ${ownerHeldSql(owner)} AS owner_held,
+        ${ownerAccountHeldSql(owner)} AS owner_held,
         EXISTS (
           SELECT 1 FROM "StorylineChapter" c
-          WHERE c."storylineId" = ${id} AND ${ownerHeldSql(Prisma.raw('c."userId"'))}
+          WHERE c."storylineId" = ${id} AND ${ownerAccountHeldSql(Prisma.raw('c."userId"'))}
         ) AS author_held,
         EXISTS (
           SELECT 1 FROM pending p
-          WHERE ${contentRemovalHeldSql(Prisma.raw('p."userId"'), markerView)}
+          WHERE ${accountHoldSql(Prisma.raw('p."userId"'), markerView)}
         ) AS pending_author_held,
         EXISTS (
           SELECT 1 FROM "StorylineChapter" c
@@ -1243,7 +1244,7 @@ function deleteStorylineStatement(
     ),
     keep AS MATERIALIZED (
       SELECT (
-          reported OR owner_held OR author_held OR pending_author_held OR tombstoned
+          reported OR owner_held OR author_held OR pending_author_held OR tombstoned OR ban_note
         ) IS NOT FALSE AS keep,
         array_remove(ARRAY[
           CASE WHEN reported THEN 'open-report' END,
@@ -1355,7 +1356,7 @@ export async function deleteStoryline({
   userId: number;
   isModerator?: boolean;
 }) {
-  // Read outside the transaction: what `contentRemovalHeldSql` needs.
+  // Read outside the transaction: what `accountHoldSql` needs.
   const markerView = await holdMarkerViewExists();
   let spark: { actorId: number; imageId: number | null } | undefined;
   await dbWrite.$transaction(async (tx) => {

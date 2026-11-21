@@ -439,6 +439,9 @@ describe('content removal: an account hold or an unreleased ban-note hold', () =
     // What is shown: a ban without media removal leaves content up, and owners see their own.
     expect(await value(ownerAccountHeldSql(id(BAN_NOTE)))).toBe(false);
     expect(await value(trainingDataOwnerRestrictedSql(id(BAN_NOTE)))).toBe(false);
+    // The control: an account hold still restricts.
+    expect(await value(ownerAccountHeldSql(id(PENDING_REPORT)))).toBe(true);
+    expect(await value(trainingDataOwnerRestrictedSql(id(PENDING_REPORT)))).toBe(true);
   });
 
   it('refuses with a LegalHoldError when only the ban-note read fails', async () => {

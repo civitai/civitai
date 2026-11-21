@@ -12,6 +12,7 @@ import {
   failDeletesFrom,
   fileIds,
   fileOf,
+  banWithCsamNote,
   FORMER_CLEAN,
   ownedBefore,
   routeToDb,
@@ -113,6 +114,17 @@ describe('deleteFile', () => {
   it('keeps the file of a model a held account owned before, and deletes no bytes', async () => {
     stubFile();
     await ownedBefore(db, CLEAN, REPORTED);
+
+    await expect(remove(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
+
+    expect(await fileIds(db)).toContain(fileOf(versionOf(CLEAN)));
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+  });
+
+  it('keeps the file of a model an account banned with a CSAM note owned before', async () => {
+    stubFile();
+    await ownedBefore(db, CLEAN, FORMER_CLEAN);
+    await banWithCsamNote(db, FORMER_CLEAN);
 
     await expect(remove(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
 
@@ -231,6 +243,16 @@ describe('a new upload replacing a file', () => {
     expect(await fileIds(db)).toContain(fileOf(versionOf(CLEAN)));
     expect(dbMock.dbWrite.modelFile.create).not.toHaveBeenCalled();
     expect(mockDeleteObject).not.toHaveBeenCalled();
+  });
+
+  it('keeps the file of an owner banned with a CSAM note, and creates no replacement', async () => {
+    stubFile(CLEAN);
+    await banWithCsamNote(db, CLEAN);
+
+    await expect(replace(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
+
+    expect(await fileIds(db)).toContain(fileOf(versionOf(CLEAN)));
+    expect(dbMock.dbWrite.modelFile.create).not.toHaveBeenCalled();
   });
 
   it('replaces the file of a model only unheld accounts owned (control)', async () => {

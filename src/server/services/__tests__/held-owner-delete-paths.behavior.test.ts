@@ -751,15 +751,24 @@ describe('an owner deleting their own content in a child-safety case', () => {
     it('waits while its owner is banned with a note naming CSAM, and no other hold', async () => {
       const BAN_NOTE = 11;
       await holder.db.exec(`
+        DELETE FROM "User" WHERE id = ${BAN_NOTE};
         INSERT INTO "User" (id, meta, "bannedAt") VALUES
-          (${BAN_NOTE}, '{"banDetails": {"detailsInternal": "csam"}}', now() - interval '1 day')
-        ON CONFLICT DO NOTHING;
-        INSERT INTO "Image" (id, "userId", url) VALUES (4002, ${BAN_NOTE}, 'key-ban-note-orphan');
+          (${BAN_NOTE}, '{"banDetails": {"detailsInternal": "csam"}}', now() - interval '1 day');
+        INSERT INTO "Image" (id, "userId", url) VALUES
+          (4002, ${BAN_NOTE}, 'key-ban-note-orphan'), (4003, ${PLAIN}, 'key-plain-orphan');
       `);
-      await queueImageDeletes(kyselyOver(dbMock.dbWrite as never), [4002], { ownerId: BAN_NOTE });
-      await runJob();
+      try {
+        const db = kyselyOver(dbMock.dbWrite as never);
+        await queueImageDeletes(db, [4002], { ownerId: BAN_NOTE });
+        await queueImageDeletes(db, [4003], { ownerId: PLAIN });
+        await runJob();
 
-      expect(await imageRow(4002)).toBeDefined();
+        expect(await imageRow(4002)).toBeDefined();
+        // The control: the same delete of an unheld owner's image goes through.
+        expect(await imageRow(4003)).toBeUndefined();
+      } finally {
+        await holder.db.exec(`DELETE FROM "User" WHERE id = ${BAN_NOTE}`);
+      }
     });
 
     it("is replaced by the owner's own delete, which then waits only on the case", async () => {

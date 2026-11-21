@@ -264,6 +264,7 @@ describe('delete-old-training-data under a legal hold', () => {
     await deleteOldTrainingData.run({}).result;
 
     expect(deletedUrls()).toEqual(ELIGIBLE.map(trainingFileUrl).sort());
+    expect(deletedUrls()).not.toContain(trainingFileUrl(BAN_NOTE_HELD));
     expect(skipReasons()).toEqual(
       Object.fromEntries(HELD.map((owner) => [owner * 1000, 'legal-hold']))
     );
@@ -301,6 +302,7 @@ describe('purge-replaced-files under a legal hold', () => {
     await purgeReplacedFilesJob.run({}).result;
 
     expect(deletedUrls()).toEqual(ELIGIBLE.map(replacedFileUrl).sort());
+    expect(deletedUrls()).not.toContain(replacedFileUrl(BAN_NOTE_HELD));
     expect(skipReasons()).toEqual(
       Object.fromEntries(HELD.map((owner) => [owner * 1000 + 1, 'legal-hold']))
     );

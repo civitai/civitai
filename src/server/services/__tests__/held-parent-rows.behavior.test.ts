@@ -363,6 +363,33 @@ describe("a held author's rows under a deleted parent", () => {
     expect(await purgeReleasedHeldCopies()).toMatchObject({ reviews: 1 });
   });
 
+  it.each([
+    ['named on a report', HELD],
+    ['banned with a CSAM note', BAN_NOTE],
+  ])('keeps, hidden, a deleted bounty whose owner is %s, deleted again too', async (_, owner) => {
+    await db.exec(`
+      INSERT INTO "Bounty" (id, "userId") VALUES (60, ${owner});
+      INSERT INTO "BountyEntry" VALUES (61, ${OTHER}, 60);`);
+    vi.mocked(dbMock.dbRead.bounty.findUnique).mockResolvedValue({
+      userId: owner,
+      expiresAt: new Date(),
+    } as never);
+    vi.mocked(dbMock.dbWrite.bounty.findUnique).mockResolvedValue({
+      id: 60,
+      userId: owner,
+      payoutRecordedAt: null,
+      payoutSettledAt: null,
+    } as never);
+
+    await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
+    await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
+
+    expect(await keptBounty()).toEqual([
+      expect.objectContaining({ id: 60, userId: null, availability: 'Private', owner }),
+    ]);
+    expect(await deleteSettledKeptBounties()).toBe(0);
+  });
+
   it('deletes a bounty only an unheld user entered, with the entry (control)', async () => {
     await seedEnteredBounty(OTHER);
 

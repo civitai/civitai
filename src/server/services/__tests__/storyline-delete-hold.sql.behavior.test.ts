@@ -319,7 +319,7 @@ describe('deleteStoryline under a real account hold', () => {
       meta = '{"banDetails": {"detailsExternal": "NCMEC"}}' WHERE id = ${CONTRIBUTOR}`);
     try {
       await deleteStoryline({ id: 1, userId: OWNER });
-      expect(await heldCopy()).toEqual(fullCopy(['chapter-author', 'ban-note']));
+      expect(await heldCopy()).toEqual(fullCopy(['ban-note']));
     } finally {
       await db.pg.exec(
         `UPDATE "User" SET "bannedAt" = NULL, meta = NULL WHERE id = ${CONTRIBUTOR}`
