@@ -347,8 +347,10 @@ export function rateLimited<T>(
 
 /**
  * A shadow with its own in-flight count. `shadow` decides synchronously whether to shadow this
- * page, and returns the background read's promise when it does (undefined when it does not); it
- * never throws and its promise never rejects, so a caller only `void`s it.
+ * page, and returns the background read's promise when it does (undefined when it does not),
+ * which settles once the page's outcome is recorded; the page keeps its in-flight slot until every
+ * database read it started has settled, which can be later. It never throws and its promise never
+ * rejects, so a caller only `void`s it.
  */
 export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
   let inFlight = 0;
@@ -387,8 +389,17 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     token: string,
     input: ListAppListingsInput,
     opts: ListAvailableListingsOpts,
-    served: { items: ListingCard[]; nextCursor?: string }
+    served: { items: ListingCard[]; nextCursor?: string },
+    pending: Promise<unknown>[]
   ): Promise<ReadModelShadowOutcome> {
+    // One of the shadow's own database reads, waited on for at most the shadow timeout. The read
+    // itself is not cancelled by the timeout, so it is kept in `pending` and the page's in-flight
+    // slot is held until it settles: with a slow replica, the in-flight cap still bounds how much
+    // database work the shadow has outstanding.
+    const dbRead = <T>(read: Promise<T>): Promise<T | typeof TIMED_OUT> => {
+      pending.push(read.catch(() => undefined));
+      return withTimeoutFallback<T | typeof TIMED_OUT>(read, cfg.timeoutMs, TIMED_OUT);
+    };
     // The database cursor, moved to the same position in the read model's terms.
     let cursor: string | undefined;
     if (input.cursor) {
@@ -398,15 +409,16 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
         if (isAppSubListingId(decoded.cursorId)) return 'unsupported_input';
         let slug: string | null | typeof TIMED_OUT;
         try {
-          slug = await withTimeoutFallback<string | null | typeof TIMED_OUT>(
-            deps.slugOfListing(decoded.cursorId),
-            cfg.timeoutMs,
-            TIMED_OUT
-          );
+          slug = await dbRead(deps.slugOfListing(decoded.cursorId));
         } catch {
           return 'db_error';
         }
-        if (slug === TIMED_OUT) return 'db_timeout';
+        if (slug === TIMED_OUT) {
+          // A slow database backs the shadow off as a slow read model does. No probe is out here
+          // (the breaker is asked below), so this only counts toward opening it.
+          deps.breaker.failure('db_timeout');
+          return 'db_timeout';
+        }
         // The listing the cursor sits after is gone: its slug cannot be named.
         if (!slug) return 'unsupported_input';
         cursor = readModelCursor(decoded.cursorSortKey, slug, decoded.cursorMean);
@@ -414,8 +426,9 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     }
 
     // The breaker is asked here, immediately before the first read-model call and after every step
-    // that can return without one: a half-open probe it admits is always reported (success or
-    // failure below), so an early return can never leave it half-open for another cooldown.
+    // that can return without one. From here on every return reports exactly once: failure for a
+    // read-model failure or a database timeout, success otherwise, so a half-open probe it admits is
+    // always answered and consecutive failures are never reset by the same page.
     if (!deps.breaker.allow()) return 'breaker_open';
     let rm: ReadModelPage;
     try {
@@ -425,7 +438,6 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       deps.breaker.failure(outcome);
       return outcome;
     }
-    deps.breaker.success();
 
     const diff = diffPages(served.items, rm.items);
 
@@ -459,15 +471,16 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     if (diff.onlyReadModel.length) {
       let cards: ListingCard[] | typeof TIMED_OUT;
       try {
-        cards = await withTimeoutFallback<ListingCard[] | typeof TIMED_OUT>(
-          deps.dbBySlugs(diff.onlyReadModel, input, opts),
-          cfg.timeoutMs,
-          TIMED_OUT
-        );
+        cards = await dbRead(deps.dbBySlugs(diff.onlyReadModel, input, opts));
       } catch {
+        // The read model answered; a database failure is not its failure.
+        deps.breaker.success();
         return 'db_error';
       }
-      if (cards === TIMED_OUT) return 'db_timeout';
+      if (cards === TIMED_OUT) {
+        deps.breaker.failure('db_timeout');
+        return 'db_timeout';
+      }
       // The slug path takes no developer filter: with one, the listing must also be that
       // developer's for the database grid to show it.
       const admitted = new Set(
@@ -478,6 +491,7 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       for (const s of diff.onlyReadModel) if (!admitted.has(s)) extra.add(s);
     }
 
+    deps.breaker.success();
     const comparison = comparePages(served, rm, diff, missing, extra);
     recordReadModelComparison(surface, comparison);
     if (missing.size || extra.size || diff.fields.size || comparison.order) {
@@ -518,6 +532,9 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       return record('unsupported_input');
     }
     if (inFlight >= cfg.maxInFlight) return record('saturated');
+    // Checked without taking the half-open probe (that is taken just before the first read-model
+    // call): while the breaker is open, a page does no database work either.
+    if (deps.breaker.refusing()) return record('breaker_open');
     const token = signAppIndexViewer(
       cfg.key,
       viewer,
@@ -525,15 +542,21 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     );
     inFlight++;
     const page = { items: served.items as ListingCard[], nextCursor: served.nextCursor };
-    return run(surface, cfg, token, input, opts, page)
+    const pending: Promise<unknown>[] = [];
+    const done = run(surface, cfg, token, input, opts, page, pending)
       .catch((): ReadModelShadowOutcome => 'error')
       .then((outcome) => {
         recordReadModelShadow(surface, outcome);
       })
-      .catch(() => undefined)
+      .catch(() => undefined);
+    // The slot is freed once the page is done AND every database read it started has settled,
+    // including one it stopped waiting for at the timeout.
+    void done
+      .then(() => Promise.allSettled(pending))
       .finally(() => {
         inFlight--;
       });
+    return done;
   }
 
   return {

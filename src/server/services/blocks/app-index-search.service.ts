@@ -131,6 +131,15 @@ export class IndexBreaker {
     }
   ) {}
 
+  /**
+   * Whether `allow()` would refuse right now, without changing state or taking the probe: open and
+   * still inside its cooldown. For a caller that has work to do before its first index call and
+   * should skip that work while the breaker is open.
+   */
+  refusing(): boolean {
+    return this.state === 'open' && this.now() - this.since < this.config().cooldownMs;
+  }
+
   /** Whether this search may call the index. Admits the half-open probe. */
   allow(): boolean {
     if (this.state === 'closed') return true;

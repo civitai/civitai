@@ -36,6 +36,13 @@ const maxKeysLoad = 10 * time.Second
 // caller's values but not its cancellation, bounded by timeout: a client that gives up does not
 // fail the others waiting on the same load, and each waiter still leaves at its own deadline.
 //
+// Loads for two keys can finish out of order: a load for an older (generation, cursor) that
+// returns after the load for a newer one must not replace it, or every request at the newer key
+// would miss and load again. So the memo tracks the latest key a request asked for (a later
+// generation always wins, since generation ids only grow; within one generation, the cursor is
+// opaque, so the most recent request's key), and a finished load is stored only if its key is
+// still that one. A load that is not stored still answers the requests that waited on it.
+//
 // The slice returned is shared by every request at that key: callers read it and never write it
 // (listingread's Rank, BySlugs and Filter build new slices).
 type keysMemo struct {
@@ -44,6 +51,12 @@ type keysMemo struct {
 	val  []store.Listing
 	have bool
 	sf   singleflight.Group
+
+	// latest is the key of the newest generation, and within it the most recent request, that asked
+	// for keys; latestGen is its generation. Only a load for latest is stored.
+	latest    string
+	latestGen int64
+	seen      bool
 }
 
 func memoKey(g store.Generation) string {
@@ -54,6 +67,9 @@ func memoKey(g store.Generation) string {
 func (m *keysMemo) keys(ctx context.Context, src store.Listings, g store.Generation, timeout time.Duration) ([]store.Listing, error) {
 	k := memoKey(g)
 	m.mu.Lock()
+	if !m.seen || g.ID >= m.latestGen {
+		m.latest, m.latestGen, m.seen = k, g.ID, true
+	}
 	if m.have && m.at == k {
 		keys := m.val
 		m.mu.Unlock()
@@ -71,7 +87,10 @@ func (m *keysMemo) keys(ctx context.Context, src store.Listings, g store.Generat
 			return nil, err
 		}
 		m.mu.Lock()
-		m.at, m.val, m.have = k, keys, true
+		// A newer key has been asked for since: leave its stored keys (or its load) alone.
+		if m.latest == k {
+			m.at, m.val, m.have = k, keys, true
+		}
 		m.mu.Unlock()
 		return keys, nil
 	})

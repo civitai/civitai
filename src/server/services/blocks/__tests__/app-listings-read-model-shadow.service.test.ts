@@ -516,13 +516,61 @@ describe('failures', () => {
     expect(await moved()).toEqual(['shadow_requests_total{grid/db_error}:1']);
   });
 
-  it('a database read of the shadow that stalls is db_timeout, and frees the slot', async () => {
+  it('a stalled database read is db_timeout, and holds its slot until the read settles', async () => {
+    config.timeoutMs = 20;
+    config.maxInFlight = 4;
+    readModelAnswers([rmCard(A), rmCard(C)]);
+    // A breaker that does not open here, so only the in-flight cap is under test.
+    const breaker = new IndexBreaker(
+      () => ({ threshold: 100, cooldownMs: 60_000 }),
+      () => NOW_MS,
+      () => undefined
+    );
+    const settle: Array<() => void> = [];
+    const shadow = makeShadow({
+      breaker,
+      dbBySlugs: () => new Promise<ListingCard[]>((resolve) => settle.push(() => resolve([]))),
+    });
+    for (let i = 0; i < 4; i++) await shadow.shadow('grid', INPUT, OPTS, { items: [A] });
+    // Each of the four timed out, but its database read is still running: its slot is held.
+    expect(shadow.inFlight()).toBe(4);
+    expect(shadow.shadow('grid', INPUT, OPTS, { items: [A] })).toBeUndefined();
+    expect(calls).toHaveLength(4);
+    expect(await moved()).toEqual([
+      'shadow_requests_total{grid/db_timeout}:4',
+      'shadow_requests_total{grid/saturated}:1',
+    ]);
+    // Once the reads settle, the slots are free.
+    for (const s of settle) s();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(shadow.inFlight()).toBe(0);
+  });
+
+  it('database timeouts open the breaker: no more read-model or database work', async () => {
     config.timeoutMs = 20;
     readModelAnswers([rmCard(A), rmCard(C)]);
-    const shadow = makeShadow({ dbBySlugs: () => new Promise<ListingCard[]>(() => undefined) });
+    const breaker = new IndexBreaker(
+      () => ({ threshold: 2, cooldownMs: 60_000 }),
+      () => NOW_MS,
+      () => undefined
+    );
+    let dbReads = 0;
+    const shadow = makeShadow({
+      breaker,
+      dbBySlugs: () => {
+        dbReads++;
+        return new Promise<ListingCard[]>(() => undefined);
+      },
+    });
     await shadow.shadow('grid', INPUT, OPTS, { items: [A] });
-    expect(shadow.inFlight()).toBe(0);
-    expect(await moved()).toEqual(['shadow_requests_total{grid/db_timeout}:1']);
+    await shadow.shadow('grid', INPUT, OPTS, { items: [A] });
+    expect(shadow.shadow('grid', INPUT, OPTS, { items: [A] })).toBeUndefined();
+    expect(calls).toHaveLength(2);
+    expect(dbReads).toBe(2);
+    expect(await moved()).toEqual([
+      'shadow_requests_total{grid/breaker_open}:1',
+      'shadow_requests_total{grid/db_timeout}:2',
+    ]);
   });
 
   it('a half-open probe is never spent by a page that returns before asking the read model', async () => {
@@ -564,6 +612,7 @@ describe('failures', () => {
     expect(shadow.inFlight()).toBe(1);
     release();
     await first;
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(shadow.inFlight()).toBe(0);
     expect(calls).toHaveLength(1);
     expect(await moved()).toEqual([
