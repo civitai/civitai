@@ -134,7 +134,9 @@ export async function recordOfflineCutEvent(opts: {
  * Not when ANOTHER approved listing on the same client still declares offline access: the auth hub
  * grants per client, so that app keeps it, and cutting would only force its users to sign in again.
  *
- * Only a moderator DELIST deletes refresh tokens. Other ways a listing stops declaring only stop
+ * Two paths delete refresh tokens: a moderator DELIST (this function) and a moderator's retry of a
+ * failed cut (`retryConnectOfflineCut` in offsite-moderation.service.ts), which runs only while the
+ * listing is still taken down by that delist. Other ways a listing stops declaring only stop
  * chains sliding (the hub's `apps/auth/src/lib/server/oauth/listing-offline.ts`); issued tokens live until their expiry (<=30 days).
  *
  * Every Refresh key of the client goes, device-flow ones included: the hub does not gate the
