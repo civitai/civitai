@@ -103,7 +103,7 @@ describe('autoTrackRunKeys at scene cuts', () => {
   it('snaps across a cut instead of gliding through it', () => {
     const keys = autoTrackRunKeys(leap(0.15), 0);
     expect(keys.map((k) => k.ease)).toEqual(['linear', 'jump', 'linear', 'linear']);
-    // Midway through the cut's tick it still sits where it was, not halfway to the new spot.
+    // Partway through the cut's tick it still sits where it was, not on its way to the new spot.
     expect(sampleStickerTrack(stickerKeysTrack(keys), 400).y).toBeCloseTo(0.3);
   });
 

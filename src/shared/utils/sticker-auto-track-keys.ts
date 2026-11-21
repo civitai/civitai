@@ -54,7 +54,7 @@ function cutBetween(from: StickerTrackKey, to: StickerTrackKey, tickMs: number) 
  * A tracker run as keys on the video's clock. Tick 0 is `startMs`. Every tick any channel
  * changes on becomes a key, joined linearly as v1 is. A key jumps instead when its next one
  * shows or hides the sticker, so a hide is a cut and never counts as fading, and when the next
- * tick leaps across the frame, so a scene cut snaps rather than gliding.
+ * tick leaps across the frame or jumps in size, so a scene cut snaps rather than gliding.
  */
 export function autoTrackRunKeys(run: StickerTrackV1, startMs: number): StickerTrackKey[] {
   const track = withoutFlashes(run);
