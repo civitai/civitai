@@ -78,6 +78,8 @@ import {
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
   minorMatureImageVisibleSql,
   reviewKeptWhenLiftedSql,
+  ownerDeletedSql,
+  unblockedMetadataSql,
 } from '~/server/common/image-visibility';
 import {
   PRIOR_BLOCKED_FOR_KEY,
@@ -1266,15 +1268,16 @@ export async function handleUnblockImages({
     }, {});
 
     const imageTagsForReview = await getImagTagsForReviewByImageIds(ids);
-    await Promise.all([
+    const [, ...written] = await Promise.all([
       // Drops its blocks' deferred effects unfired.
       dbWrite.$executeRaw`DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${ids}::int[])`,
       ...Object.entries(grouped).map(
-        ([needsReview, groupedIds]) => dbWrite.$queryRaw`
+        // While the owner is deleted the row stays blocked, recorded as Scanned for an account restore.
+        ([needsReview, groupedIds]) => dbWrite.$queryRaw<{ id: number; keptBlocked: boolean }[]>`
           UPDATE "Image" SET
-            "needsReview" = ${reviewKeptWhenLiftedSql},
-            "blockedFor" = NULL,
-            "metadata" = "metadata" - 'ruleId' - 'ruleReason' - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text, -- an unblocked row is not the account deletion's to put back
+            "needsReview" = CASE WHEN ${ownerDeletedSql} THEN NULL ELSE ${reviewKeptWhenLiftedSql} END,
+            "blockedFor" = CASE WHEN ${ownerDeletedSql} THEN ${BlockedReason.Moderated} END,
+            "metadata" = ${unblockedMetadataSql}, -- an unblocked row is not the account deletion's to put back
             ${needsReview === 'poi' ? Prisma.sql`"poi" = false,` : Prisma.sql``}
             ${
               needsReview === 'minor'
@@ -1288,9 +1291,10 @@ export async function handleUnblockImages({
                 ? Prisma.sql`"scannedAt" = NOW(),`
                 : Prisma.sql``
             }
-            "ingestion" = 'Scanned'
+            "ingestion" = (CASE WHEN ${ownerDeletedSql} THEN 'Blocked' ELSE 'Scanned' END)::"ImageIngestionStatus"
           WHERE id IN (${Prisma.join(groupedIds)})
-            AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM};
+            AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
+          RETURNING id, ingestion = 'Blocked' AS "keptBlocked";
         `
       ),
       upsertTagsOnImageNew(
@@ -1303,11 +1307,28 @@ export async function handleUnblockImages({
       ),
     ]);
 
+    const keptIds = new Set(
+      written
+        .flat()
+        .filter((row): row is { id: number; keptBlocked: boolean } => !!row && 'keptBlocked' in row)
+        .filter((row) => row.keptBlocked)
+        .map((row) => row.id)
+    );
+    const restoredIds = ids.filter((id) => !keptIds.has(id));
     const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
     await Promise.all([
-      resetBlockedNsfwLevel(ids),
-      dropBlockedImageDeleteQueue(ids),
-      queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
+      resetBlockedNsfwLevel(restoredIds),
+      dropBlockedImageDeleteQueue(restoredIds),
+      restartBlockedImageDeleteClock([...keptIds]),
+      queueImageSearchIndexUpdate({
+        ids: restoredIds,
+        action: SearchIndexUpdateQueueAction.Update,
+      }),
+      keptIds.size &&
+        queueImageSearchIndexUpdate({
+          ids: [...keptIds],
+          action: SearchIndexUpdateQueueAction.Delete,
+        }),
       // The unblock SQL above can rewrite "minor", which no trigger watches.
       queueDocumentsForImageMinorChanges({ minorImageIds: ids }),
       deleteImagTagsForReviewByImageIds(ids),
@@ -1706,12 +1727,12 @@ export async function dropBlockedImageDeleteQueue(ids: number[]) {
  */
 export async function restartBlockedImageDeleteClock(ids: number[]) {
   if (!ids.length) return;
-  await dropBlockedImageDeleteQueue(ids);
+  // One statement, so a failure cannot leave the image with no queue row and never purged.
   await dbWrite.$executeRaw`
     INSERT INTO "JobQueue" ("entityId", "entityType", type)
     SELECT id, ${EntityType.Image}::"EntityType", ${JobQueueType.BlockedImageDelete}::"JobQueueType"
     FROM unnest(${ids}::int[]) AS id
-    ON CONFLICT DO NOTHING
+    ON CONFLICT ("entityType", "entityId", type) DO UPDATE SET "createdAt" = now()
   `;
 }
 

@@ -1,3 +1,4 @@
+import { sql } from '@civitai/db/kysely';
 import { dbWrite } from './db';
 
 /**
@@ -19,10 +20,12 @@ export async function dropBlockedImageDeleteQueue(imageId: number) {
  * approval kept blocked while its owner is deleted must not inherit the original block's time.
  */
 export async function restartBlockedImageDeleteClock(imageId: number) {
-  await dropBlockedImageDeleteQueue(imageId);
+  // One statement, so a failure cannot leave the image with no queue row and never purged.
   await dbWrite
     .insertInto('JobQueue')
     .values({ type: 'BlockedImageDelete', entityType: 'Image', entityId: imageId })
-    .onConflict((oc) => oc.doNothing())
+    .onConflict((oc) =>
+      oc.columns(['entityType', 'entityId', 'type']).doUpdateSet({ createdAt: sql`now()` })
+    )
     .execute();
 }

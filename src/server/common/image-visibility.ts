@@ -424,11 +424,21 @@ export const ownerDeletedSql = Prisma.sql`EXISTS (SELECT 1 FROM "User" u WHERE u
  * deleted (when the row stays blocked), with breadcrumbs recording it as Scanned, so an account
  * restore brings it back and a purge removes it.
  */
-export const liftedMetadataSql = Prisma.sql`(CASE WHEN ${ownerDeletedSql}
-  THEN COALESCE(${withoutGraceMarkersSql()}, '{}'::jsonb) || jsonb_build_object(
+export const liftedMetadataSql = liftedUnderGraceSql(withoutGraceMarkersSql());
+
+/** `metadata` for an unblock: the rule keys and grace breadcrumbs off, lifted as `liftedMetadataSql`. */
+export const unblockedMetadataSql = liftedUnderGraceSql(
+  Prisma.sql`"metadata" - 'ruleId' - 'ruleReason' - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text`
+);
+
+/** `liftedMetadataSql` over a caller's own breadcrumb-free `metadata` expression. */
+export function liftedUnderGraceSql(stripped: Prisma.Sql) {
+  return Prisma.sql`(CASE WHEN ${ownerDeletedSql}
+  THEN COALESCE(${stripped}, '{}'::jsonb) || jsonb_build_object(
     ${PRIOR_INGESTION_KEY}::text, 'Scanned', ${PRIOR_BLOCKED_FOR_KEY}::text, NULL::text,
     ${PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLiftedSql})
-  ELSE ${withoutGraceMarkersSql()} END)`;
+  ELSE ${stripped} END)`;
+}
 
 export const ingestionAfterScanErrorSql = () => Prisma.sql`(CASE
   WHEN "ingestion" = 'NotFound'::"ImageIngestionStatus" OR ${graceBlockedSql} THEN "ingestion"

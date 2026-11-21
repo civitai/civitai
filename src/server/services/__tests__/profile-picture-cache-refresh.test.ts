@@ -353,7 +353,7 @@ describe('a moderator unblock', () => {
 
     expect(refreshPicture).toHaveBeenCalledWith([AVATAR_OWNER]);
     const unblock = dbMock.dbWrite.$queryRaw.mock.calls.findIndex(([strings]) =>
-      (strings as TemplateStringsArray).join('?').includes(`"ingestion" = 'Scanned'`)
+      (strings as TemplateStringsArray).join('?').includes('AS "keptBlocked"')
     );
     expect(unblock).toBeGreaterThanOrEqual(0);
     expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[unblock]).toBeLessThan(

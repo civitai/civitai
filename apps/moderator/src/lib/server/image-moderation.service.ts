@@ -116,7 +116,9 @@ const withoutGraceMarkers = (metadata: RawBuilder<unknown>) =>
     ELSE ${metadata} END)`;
 
 /** `metadata` for a row lifted while its owner is deleted: the main app's `liftedMetadataSql`, deleted-owner branch. */
-const liftedUnderGraceMetadata = sql`(COALESCE(${withoutGraceMarkers(sql`"metadata"`)}, '{}'::jsonb)
+const liftedUnderGraceMetadata = (
+  stripped: RawBuilder<unknown>
+) => sql`(COALESCE(${stripped}, '{}'::jsonb)
   || jsonb_build_object(${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text, 'Scanned', ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text, NULL::text,
     ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLifted}))`;
 
@@ -274,14 +276,17 @@ export async function acceptImage({
       : sql`"metadata" - 'ruleId' - 'ruleReason'`
   );
 
-  // Refused in the statement itself, not off the replica read above.
+  // Refused in the statement itself, not off the replica read above. While the owner is deleted the
+  // row stays blocked, recorded as Scanned for an account restore.
   const updated = await dbWrite
     .updateTable('Image')
     .set({
-      needsReview: reviewKeptWhenLifted,
-      blockedFor: null,
-      ingestion: 'Scanned',
-      metadata: metadataExpr,
+      needsReview: sql`CASE WHEN ${OWNER_DELETED} THEN NULL ELSE ${reviewKeptWhenLifted} END`,
+      blockedFor: sql`CASE WHEN ${OWNER_DELETED} THEN ${BLOCKED_REASON_MODERATED} END`,
+      ingestion: sql`(CASE WHEN ${OWNER_DELETED} THEN 'Blocked' ELSE 'Scanned' END)::"ImageIngestionStatus"`,
+      metadata: sql`CASE WHEN ${OWNER_DELETED} THEN ${liftedUnderGraceMetadata(
+        metadataExpr
+      )} ELSE ${metadataExpr} END`,
       ...(nr === 'poi' ? { poi: false } : {}),
       ...(nr === 'minor'
         ? {
@@ -306,6 +311,7 @@ export async function acceptImage({
     // snapshot, so `wasMinor` is the value this update replaced, from the primary, not the replica.
     .returning([
       'id',
+      sql<boolean>`ingestion = 'Blocked'`.as('keptBlocked'),
       sql<boolean | null>`${nr === 'minor' ? sql`"minor"` : sql`NULL`}`.as('minor'),
       sql<boolean | null>`${
         nr === 'minor'
@@ -341,8 +347,11 @@ export async function acceptImage({
     }
     throw new RemovedImageNotRestorableError(imageId);
   }
-  await dropBlockedImageDeleteQueue(imageId);
-  await resetBlockedNsfwLevel(imageId);
+  const restored = !updated.keptBlocked;
+  if (restored) {
+    await dropBlockedImageDeleteQueue(imageId);
+    await resetBlockedNsfwLevel(imageId);
+  } else await restartBlockedImageDeleteClock(imageId);
 
   const reviewTags = await reader
     .selectFrom('ImageTagForReview')
@@ -360,20 +369,21 @@ export async function acceptImage({
       }))
     );
     await dbWrite.deleteFrom('ImageTagForReview').where('imageId', '=', imageId).execute();
-  } else {
+  } else if (restored) {
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
   }
+  if (!restored) syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
   // A minor-queue accept rewrites "minor", which no trigger watches.
   if (nr === 'minor') {
     await queueArticlesForCoverImages([imageId]);
     await queueDocumentsForImageMinorChanges({ minorImageIds: [imageId] });
   }
-  await rescanIfUnrated(imageId);
+  if (restored) await rescanIfUnrated(imageId);
 
   // Only a moderator removal is logged as one, so only its undoing is a restore. A scanner block
   // (`AiNotVerified` in the POI queue) has no removal event to pair with.
-  if (img.ingestion === 'Blocked' && img.blockedFor === BLOCKED_REASON_MODERATED)
+  if (restored && img.ingestion === 'Blocked' && img.blockedFor === BLOCKED_REASON_MODERATED)
     await trackImageRestore({ imageId, actorUserId: userId, db: reader });
 
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
@@ -986,9 +996,9 @@ export async function resolveImageAppeal({
         needsReview: sql`CASE WHEN ${OWNER_DELETED} THEN NULL ELSE ${reviewKeptWhenLifted} END`,
         blockedFor: sql`CASE WHEN ${OWNER_DELETED} THEN ${BLOCKED_REASON_MODERATED} END`,
         ingestion: sql`(CASE WHEN ${OWNER_DELETED} THEN 'Blocked' ELSE 'Scanned' END)::"ImageIngestionStatus"`,
-        metadata: sql`CASE WHEN ${OWNER_DELETED} THEN ${liftedUnderGraceMetadata} ELSE ${withoutGraceMarkers(
-          sql`"metadata"`
-        )} END`,
+        metadata: sql`CASE WHEN ${OWNER_DELETED} THEN ${liftedUnderGraceMetadata(
+          withoutGraceMarkers(sql`"metadata"`)
+        )} ELSE ${withoutGraceMarkers(sql`"metadata"`)} END`,
       })
       .where('id', '=', imageId)
       .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)

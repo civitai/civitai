@@ -302,6 +302,41 @@ describe('approving an appeal while the image owner is deleted', () => {
     expect(vi.mocked(syncSearchIndex).mock.calls.at(-1)?.[0]).toMatchObject({ action: 'delete' });
   });
 
+  it('an accept also keeps it Blocked, restarts its purge clock and closes the appeal', async () => {
+    await seed('2026-11-20 00:00:00');
+
+    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+
+    expect(await row()).toEqual({
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+      needsReview: null,
+      metadata: {
+        keep: 1,
+        accountDeletionPriorIngestion: 'Scanned',
+        accountDeletionPriorBlockedFor: null,
+        accountDeletionPriorNeedsReview: 'minor',
+      },
+    });
+    expect(await imageRow()).toMatchObject({ nsfwLevel: 32, nsfwLevelLocked: true });
+    const queued = await db.query<{ fresh: boolean }>(
+      `SELECT "createdAt" > now() - interval '1 hour' AS fresh FROM "JobQueue" WHERE "entityId" = $1`,
+      [IMAGE_ID]
+    );
+    expect(queued.rows).toEqual([{ fresh: true }]);
+    const { rows } = await db.query<{ status: string }>(`SELECT "status" FROM "Appeal"`);
+    expect(rows).toEqual([{ status: 'Approved' }]);
+    expect(vi.mocked(syncSearchIndex).mock.calls.at(-1)?.[0]).toMatchObject({ action: 'delete' });
+  });
+
+  it('an accept restores it when the owner is not deleted', async () => {
+    await seed(null);
+
+    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+
+    expect(await row()).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+  });
+
   it('restores it when the owner is not deleted', async () => {
     await seed(null);
 

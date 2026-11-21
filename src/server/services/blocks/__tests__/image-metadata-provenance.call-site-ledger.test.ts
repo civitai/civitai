@@ -550,8 +550,9 @@ type UpdateDecision =
   /** Raw SET to exactly `withoutGraceMarkersSql()`: the stored value minus two fixed server keys. */
   | 'raw-grace-marker-strip'
   /**
-   * Raw SET to exactly `liftedMetadataSql`: `withoutGraceMarkersSql()`, or, while the owner is
-   * deleted, that plus the grace breadcrumbs under fixed keys with server-computed values.
+   * Raw SET to exactly `liftedMetadataSql` or `unblockedMetadataSql`: the stored value minus fixed
+   * keys, or, while the owner is deleted, that plus the grace breadcrumbs under fixed keys with
+   * server-computed values.
    */
   | 'raw-grace-marker-lift'
   /**
@@ -623,7 +624,7 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     sites: 1,
   },
   'src/server/services/image.service.ts#handleUnblockImages': {
-    decision: 'raw-server-keys',
+    decision: 'raw-grace-marker-lift',
     sites: 1,
   },
   // A moderator's block drops a moderation rule's keys: the removal is the moderator's now.
@@ -711,8 +712,8 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
     }
     case 'raw-grace-marker-lift': {
       const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
-      if (expr !== '${liftedMetadataSql}')
-        return 'metadata is no longer the lifted value from liftedMetadataSql';
+      if (expr !== '${liftedMetadataSql}' && expr !== '${unblockedMetadataSql}')
+        return 'metadata is no longer a lifted value from image-visibility';
       return null;
     }
     case 'raw-server-keys': {
