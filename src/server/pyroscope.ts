@@ -34,8 +34,8 @@ import {
   startWallProfilingWithAsyncContext,
 } from '~/server/pyroscope-labels';
 
-// The gate is read ONCE at module load, in ~/server/pyroscope-labels (the import-free module
-// request code can reach without touching this one).
+// The gate is read ONCE at module load, in ~/server/pyroscope-labels: request code imports it
+// instead of this module, which pulls in the native profiler.
 export { pyroscopeArmed };
 
 /**
