@@ -93,8 +93,6 @@ const count = { type: 'integer', minimum: 0 };
 /**
  * The listing schema. Not one of {@link ENTITY_SCHEMA_DOCUMENTS}: it is published only while the
  * listing stream is switched on, and only to the audiences that may read it (`listing-stream.ts`).
- * Detail fields this version does not carry yet (collaborators, scopes, beta message, …) arrive
- * as new optional properties.
  */
 export const STORE_LISTING_SCHEMA_DOCUMENT: Record<string, unknown> = {
   $schema: DIALECT,

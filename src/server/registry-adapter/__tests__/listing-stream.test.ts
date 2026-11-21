@@ -372,6 +372,14 @@ describe('the relay gate (REGISTRY_ADAPTER_LISTING_RELAYS)', () => {
     expect(await urns(LISTING, anonymous)).toEqual([]);
   });
 
+  it('🔴 the schema stream through the gate lists the store-listing schema for a listed relay only', async () => {
+    expect(await urns(JSON_SCHEMA_DIALECT, ctx('relay-exp-7'))).toContain(LISTING);
+    expect(await urns(JSON_SCHEMA_DIALECT, ctx('relay-main-2'))).not.toContain(LISTING);
+    expect(await urns(JSON_SCHEMA_DIALECT, ctx(null))).not.toContain(LISTING);
+    // Positive control: both still read the fixed entity schemas.
+    expect(await urns(JSON_SCHEMA_DIALECT, ctx('relay-main-2'))).toContain(APP);
+  });
+
   it('🔴 a cursor issued through the gate is cursor_expired outside it', async () => {
     const { cursor } = await adapter.snapshot(LISTING, ctx('relay-exp-7'));
     await expect(adapter.changes(LISTING, cursor, ctx('relay-main-2'))).rejects.toMatchObject({

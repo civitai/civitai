@@ -1,22 +1,11 @@
 /**
- * THE LISTING STREAM: `store-listing@v1`, an app's store listing (card and detail fields, media,
- * stats), for a store read model (`apps/app-index-go/LISTINGS-READ-MODEL.md`).
- *
- * OFF unless `REGISTRY_ADAPTER_LISTING_RELAYS` names a relay ({@link parseListingRelays}): then
- * nothing about it exists, the schema is answered `end` and its document is not published. On,
- * the schema is served, but its entities and its document on the schema stream reach only a
- * subscription whose token a listed relay presented (`act.sub`); every other subscription reads it
- * as empty and reads the schema stream exactly as before.
- *
- * A ROLLOUT gate, not an audience boundary: it lets the stream ship on one registry before another.
- * Every subscriber of a listed relay gets it, whichever user the relay exchanged a token for, so
- * every field it carries must be public. It never widens ratings: each listing reaches exactly the
- * audiences its app entity does, and each media item only those its own rating admits
- * (`readableBy` in `entities.ts`).
+ * `store-listing@v1`, an app's store listing for a store read model. Off unless
+ * `REGISTRY_ADAPTER_LISTING_RELAYS` names a relay; on, it reaches only subscriptions a listed relay
+ * presented (a rollout gate: every field is public), never beyond its app entity's ratings.
  */
 import { contextAudience, withListings } from '~/server/registry-adapter/audience';
 import { JSON_SCHEMA_DIALECT } from '~/server/registry-adapter/collection-schema';
-import { parsePrivateRelays } from '~/server/registry-adapter/private-feed';
+import { isListedRelay, parsePrivateRelays } from '~/server/registry-adapter/private-feed';
 import type { Adapter, AdapterContext } from '~/server/registry-adapter/protocol';
 import { STORE_LISTING_SCHEMA } from '~/server/registry-adapter/urn';
 
@@ -34,7 +23,7 @@ export function admitsListings(
   relays: ReadonlySet<string>,
   reader: AdapterContext['reader']
 ): boolean {
-  return !!reader?.actor && relays.has(reader.actor);
+  return isListedRelay(relays, reader);
 }
 
 /**

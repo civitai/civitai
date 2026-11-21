@@ -95,9 +95,7 @@ export function liveCatalogReadDeps({
       return new Map(rows.map((r) => [r.id, registryIconUrl(r)]));
     },
 
-    // Only while the listing stream is on: one query for the whole catalog, plus the civitai.red
-    // overrides the store reads for a red-capable host (the same read, which shows each listing's
-    // own media when it fails). Each image is rated on its own (`registryListingMedia`).
+    // Only while the listing stream is on: one query for the whole catalog, plus the civitai.red overrides.
     ...(listings
       ? {
           async loadListingExtras(listingIds: string[]) {

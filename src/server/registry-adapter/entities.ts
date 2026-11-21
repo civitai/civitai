@@ -183,8 +183,7 @@ export function readableBy(sets: EntitySets, schema: string, audience: Audience)
       admitted(appUrnOf(schema, e))
   );
   if (schema === STORE_LISTING_SCHEMA) {
-    // Each image is rated on its own: only those this audience may read are sent, so the body,
-    // and its rev, differ per audience.
+    // The body, and so its rev, differ per audience.
     return readable.map((e) => {
       const body = e.body as { media?: Array<{ rating?: unknown }> } & Record<string, unknown>;
       const media = (body.media ?? []).filter(
@@ -427,11 +426,7 @@ export function buildEntities(
   return sets;
 }
 
-/**
- * A listing entity's body: the app entity's identity and rating, the store card and detail
- * fields, and the stats. `media` holds every image the store may show, each rated on its own
- * (`registryListingMedia`), narrowed per audience by {@link readableBy}.
- */
+/** A store-listing entity's body, as `STORE_LISTING_SCHEMA_DOCUMENT` (`schemas.ts`) describes it. */
 export function listingBody(
   app: Pick<CatalogApp, 'listing' | 'block'>,
   appUrn: string,
