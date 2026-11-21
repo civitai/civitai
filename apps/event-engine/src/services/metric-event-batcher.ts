@@ -49,9 +49,7 @@ export class MetricEventBatcher {
     // ClickHouse blip but low enough to fail before OOM. ~50× the normal
     // flush size.
     private maxQueueSize: number = 500_000,
-    // Optional copy of every inserted batch to a second destination. Fire-and-forget: it is
-    // handed rows only after the primary insert succeeded and is never awaited, so it cannot
-    // delay or fail this batcher's flush or its offset commits.
+    // Optional copy of every inserted batch to a second destination: must never block or fail the flush.
     private secondary: MetricRowSink | null = null,
   ) {}
 

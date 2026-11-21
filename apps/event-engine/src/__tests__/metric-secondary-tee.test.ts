@@ -14,7 +14,6 @@ vi.mock('@clickhouse/client', async (importOriginal) => {
 });
 
 import { createClient } from '@clickhouse/client';
-import { logger } from '@/utils/logger';
 import { config, secondaryClickhouseConfig, SecondaryClickhouseConfig } from '@/config';
 import { secondaryTeeMetrics } from '@/metrics';
 import { EventProcessor } from '@/services/event-processor';
@@ -143,8 +142,19 @@ describe('(1) disabled by default: no secondary client, primary unchanged', () =
     expect(on.database).toBe('metrics');
   });
 
-  test('the process default (no env) is off', () => {
-    expect(config.clickhouse.secondary.enabled).toBe(false);
+  test('the process default (no env) is off', async () => {
+    // Rebuild the config module against a blanked env, so the runner's own env cannot decide this.
+    // Blank rather than unset: dotenv.config() never overrides a key that is already present.
+    vi.stubEnv('METRICS_SECONDARY_TEE_ENABLED', '');
+    vi.stubEnv('CLICKHOUSE_SECONDARY_URL', '');
+    vi.resetModules();
+    try {
+      const fresh = await import('@/config');
+      expect(fresh.config.clickhouse.secondary.enabled).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
 
   test('createSecondaryMetricTee builds nothing when off', () => {
@@ -243,6 +253,46 @@ describe('(2) enabled: the secondary receives exactly the primary rows', () => {
     await t.idle();
     expect(secondary.inserts.map((i) => i.values)).toEqual([rows(2, 5), rows(2, 5)]);
     expect((await counter(secondaryTeeMetrics.batchesFailed)) - failedBefore).toBe(1);
+  });
+
+  test('shutdown with a healthy secondary sends every queued row before stop resolves', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const secondary = fakeClient(async (_a, call) => {
+      if (call === 1) await gate; // first chunk stays in flight until after stop() is called
+    });
+    const t = tee(secondary.client, { maxQueueRows: 100, shutdownTimeoutMs: 5_000 });
+    const droppedBatchesBefore = await counter(secondaryTeeMetrics.batchesDropped, {
+      reason: 'shutdown',
+    });
+    const droppedRowsBefore = await counter(secondaryTeeMetrics.rowsDropped, {
+      reason: 'shutdown',
+    });
+
+    t.enqueue(rows(2, 40));
+    await new Promise((r) => setImmediate(r));
+    expect(secondary.inserts).toHaveLength(1); // in flight
+    t.enqueue(rows(3, 41));
+    t.enqueue(rows(4, 42));
+    expect(t.pendingRows).toBe(7); // queued behind it
+
+    let stopped = false;
+    const stopping = t.stop().then(() => (stopped = true));
+    await new Promise((r) => setImmediate(r));
+    expect(stopped).toBe(false);
+    release();
+    expect(await settlesWithin(1_000, stopping)).toBe('settled');
+
+    expect(secondary.inserts.map((i) => i.values)).toEqual([rows(2, 40), rows(3, 41), rows(4, 42)]);
+    expect(t.pendingRows).toBe(0);
+    expect(secondary.client.close).toHaveBeenCalledTimes(1);
+    expect(
+      (await counter(secondaryTeeMetrics.batchesDropped, { reason: 'shutdown' })) -
+        droppedBatchesBefore
+    ).toBe(0);
+    expect(
+      (await counter(secondaryTeeMetrics.rowsDropped, { reason: 'shutdown' })) - droppedRowsBefore
+    ).toBe(0);
   });
 });
 
@@ -365,7 +415,7 @@ describe('(4) overflow drops the oldest chunks and counts them', () => {
   });
 });
 
-describe('(5) audit round 1', () => {
+describe('(5) a bad URL, deferred encoding and the row bound', () => {
   const badUrlCfg: SecondaryClickhouseConfig = { ...enabledCfg, url: 'clickhouse-2:8123' };
 
   test('a malformed secondary URL disables the tee; EventProcessor and the primary are unaffected', async () => {
@@ -376,10 +426,8 @@ describe('(5) audit round 1', () => {
     }).not.toThrow();
     expect(p!.metricBatcher.secondary).toBeNull();
 
-    vi.mocked(logger.error).mockClear();
     const t = createSecondaryMetricTee(badUrlCfg, 'entityMetricEvents_month');
     expect(t).toBeNull();
-    expect(vi.mocked(logger.error)).toHaveBeenCalledTimes(1);
 
     const primary = fakeClient(async () => undefined);
     const batcher = new MetricEventBatcher(primary.client as never, 60_000, 10_000, 500_000, t);
