@@ -60,8 +60,8 @@ import type { HeldSummary } from './removal-hold';
 //   - ban / unban delegates to the main app's /api/mod/ban-user, which also purges media and models,
 //     sends notifications and busts caches. Reimplementing that here would be a second source of truth.
 //
-// Actions log to ModActivity with the REAL moderator id, except `deleteAccount` and
-// `removePlacement`, whose endpoints write their own row, and `voteOnImageTags`, which only the
+// Actions log to ModActivity with the REAL moderator id, except `deleteAccount`,
+// `removePlacement` and `compGift`, whose endpoints write their own row, and `voteOnImageTags`, which only the
 // endpoint's ClickHouse audit records. The ban endpoint records itself as
 // `userId: -1` internally, so without this log a ban would have no attribution at all.
 

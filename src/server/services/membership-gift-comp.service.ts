@@ -56,8 +56,7 @@ export type CompGiftResult =
 
 /**
  * A membership gift from a moderator that nobody pays for. The row goes through the same
- * fulfilment as a paid gift, so the recipient is notified and accepts it as usual; Stripe only
- * ever sees 100%-off coupons or a free subscription once they accept.
+ * fulfilment as a paid gift, so the recipient is notified and accepts it as usual.
  *
  * The gift row and its ModActivity row share one transaction: the daily cap counts ModActivity,
  * so the two cannot disagree.

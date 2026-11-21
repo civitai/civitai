@@ -31,9 +31,11 @@ Like every new permission, nobody holds it until a role is granted it on the mod
 
 ## What Stripe sees
 
-Nothing at comp time. Once the recipient accepts, each gifted month is a 100%-off coupon on their
-own monthly subscription, or, with no membership, a free subscription at the gift tier. These bill
-$0. A comp has no payment intent, so Stripe refund and chargeback webhooks never match it.
+Nothing at comp time. Once the recipient accepts, the months arm exactly as a paid gift's do: a
+month coupon on their own subscription (free months, or the gift's cash value off the bill when
+they hold a higher tier or are not billed monthly), or, with no membership, a free subscription at
+the gift tier. A comp has no payment intent, so Stripe refund and chargeback webhooks never match
+it.
 
 ## Audit
 

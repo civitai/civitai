@@ -9,22 +9,26 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const db = dbMock.dbWrite;
 
-const { trackModActivity, fulfillMembershipGift, getRecipientGiftability, revokeMembershipGift } =
-  vi.hoisted(() => ({
-    trackModActivity: vi.fn(async () => undefined),
-    fulfillMembershipGift: vi.fn(),
-    getRecipientGiftability: vi.fn(),
-    revokeMembershipGift: vi.fn(async () => true),
-  }));
+const {
+  trackModActivity,
+  fulfillMembershipGift,
+  getRecipientGiftability,
+  revokeMembershipGift,
+  throwOnBlockedUserContent,
+} = vi.hoisted(() => ({
+  throwOnBlockedUserContent: vi.fn(async (_text: string, _opts: unknown) => undefined),
+  trackModActivity: vi.fn(async () => undefined),
+  fulfillMembershipGift: vi.fn(),
+  getRecipientGiftability: vi.fn(),
+  revokeMembershipGift: vi.fn(async () => true),
+}));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 vi.mock('~/server/services/membership-gift.service', () => ({
   fulfillMembershipGift,
   getRecipientGiftability,
   revokeMembershipGift,
 }));
-vi.mock('~/server/services/blocklist.service', () => ({
-  throwOnBlockedUserContent: vi.fn(async () => undefined),
-}));
+vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedUserContent }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 
 import {
@@ -108,6 +112,38 @@ describe('compMembershipGift', () => {
       months: 3,
       fulfilled: true,
     });
+  });
+
+  it('refuses a message the blocklist rejects, before anything is written', async () => {
+    throwOnBlockedUserContent.mockRejectedValueOnce(new Error('blocked content'));
+    await expect(compMembershipGift(valid({ message: 'bad words' }))).rejects.toThrow(
+      'blocked content'
+    );
+    expect(db.membershipGift.create).not.toHaveBeenCalled();
+  });
+
+  it('screens the message it sends and stores the same text', async () => {
+    await compMembershipGift(valid({ message: '  Thanks for everything  ' }));
+    expect(throwOnBlockedUserContent).toHaveBeenCalledWith('Thanks for everything', {
+      surface: 'membership-gift',
+    });
+    expect(db.membershipGift.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ message: 'Thanks for everything' }),
+      })
+    );
+  });
+
+  it("counts only this moderator's comps from the last 24 hours toward the cap", async () => {
+    await compMembershipGift(valid());
+    const where = db.modActivity.count.mock.calls[0][0].where;
+    expect(where).toEqual({
+      userId: MODERATOR,
+      activity: { startsWith: 'compMembershipGift:' },
+      createdAt: { gt: expect.any(Date) },
+    });
+    const ageMs = Date.now() - where.createdAt.gt.getTime();
+    expect(Math.abs(ageMs - 24 * 60 * 60 * 1000)).toBeLessThan(60_000);
   });
 
   it('a dry run reports and writes nothing', async () => {
@@ -208,6 +244,7 @@ describe('revokeCompMembershipGift', () => {
       revokeCompMembershipGift({ giftId: 'gift_9', moderatorId: MODERATOR })
     ).resolves.toMatchObject({ outcome: 'would-revoke' });
     expect(revokeMembershipGift).not.toHaveBeenCalled();
+    expect(trackModActivity).not.toHaveBeenCalled();
   });
 
   it.each([
