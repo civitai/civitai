@@ -1,57 +1,154 @@
 import { sql } from '@civitai/db/kysely';
 import { env } from '$env/dynamic/private';
-import { RETRACTED_SERVED_ACTIVITY } from '@civitai/shared/retracted-media';
+import {
+  RETRACTED_MEDIA_READ_TIMEOUT_MS,
+  RETRACTED_SERVED_ACTIVITY,
+} from '@civitai/shared/retracted-media';
+import { heldImageSql } from '@civitai/shared/held-media';
+import { blockedForSignal, type ScannerVerdict } from '@civitai/shared/media-signals';
 import {
   createScannerVerdictCache,
+  retractedAccessColumnsSql,
   retractedImageWhereSql,
-  retractedSuspectSql,
-  retractedTier,
-  type RetractedTier,
+  retractedViewable,
+  type UrlSibling,
 } from '@civitai/shared/retracted-media-tier';
 import { blockedForPatterns } from './blocked-for-patterns';
 import { dbWrite } from './db';
 import { insertModActivity } from './mod-activity';
-import { readScannerVerdict } from './review-batch';
+import { readScannerCsamVerdict, readScannerCsamVerdicts } from './review-batch';
 
-/** No scanner verdict for the image: the route tells the moderator it needs CSAM-queue access. */
-export const NEEDS_CSAM_QUEUE = 'needs-csam-queue';
-
-export const scannerVerdicts = createScannerVerdictCache(readScannerVerdict);
+export const scannerVerdicts = createScannerVerdictCache(readScannerCsamVerdict);
 
 export type RetractedMedia = {
   url: string;
   type: string;
   mimeType: string | null;
-  tier: RetractedTier;
 };
 
+/** Held media is `heldImageSql`'s, served here only with `orHeld` to a moderator with the CSAM grant. */
+export type ModeratorMedia = RetractedMedia & { kind: 'retracted' | 'held' };
+
+type ScannerRow = { id: number; ingestion: string };
+
 /**
- * The image's storage key and type while this moderator may see it on `/api/retracted-media`;
- * `null` otherwise, so an image they may not see is answered exactly as a missing one. A `suspect`
- * image needs `csamReview`. The same rules as the main app's `/api/mod/retracted-media`, read on the
- * primary for the same reason: a flag or hold the replica has not seen would serve as `plain`.
+ * Which of these images `/api/retracted-media` serves at all (`eligible`) and, with each one's
+ * storage key, which it serves to this moderator (`viewable`). A moderator without `csamReview` is
+ * refused what `retractedViewable` refuses; `readVerdicts` reads the scanner for the rows Postgres has
+ * not already refused. The same rules as the main app's `getRetractedMedia`, which has no held leg,
+ * read on the primary for the same reason: a flag or hold the replica has not seen would otherwise
+ * be missed. A read that fails throws.
+ */
+export async function readRetractedMedia(
+  imageIds: number[],
+  {
+    csamReview,
+    orHeld = false,
+    readVerdicts,
+  }: {
+    csamReview: boolean;
+    orHeld?: boolean;
+    readVerdicts: (rows: ScannerRow[]) => Promise<Map<number, ScannerVerdict | null> | null>;
+  }
+): Promise<{ eligible: Set<number>; viewable: Map<number, ModeratorMedia> }> {
+  const eligible = new Set<number>();
+  const viewable = new Map<number, ModeratorMedia>();
+  if (!imageIds.length) return { eligible, viewable };
+  const access = retractedAccessColumnsSql('i', { csamReview });
+  const retracted = retractedImageWhereSql('i', { cdnLeg: retractedMediaCdnLeg() });
+  // Held rows are read for every viewer, so a caller can draw them as restricted, and served only to
+  // one with the grant.
+  const held = orHeld ? `COALESCE(${heldImageSql('i')}, false)` : 'false';
+  const rows = await dbWrite.transaction().execute(async (trx) => {
+    await sql.raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`).execute(trx);
+    return trx
+      .selectFrom((eb) =>
+        // OFFSET 0 keeps the id lookup a subquery, so the rest is read for these rows only.
+        eb.selectFrom('Image').selectAll().where('id', 'in', imageIds).offset(0).as('i')
+      )
+      .select(['i.id', 'i.url', 'i.type', 'i.mimeType', 'i.blockedFor', 'i.ingestion'])
+      .select(sql<boolean>`${sql.raw(retracted)}`.as('retracted'))
+      .select(sql<boolean>`${sql.raw(access.restricted)}`.as('restricted'))
+      .select(sql<UrlSibling[]>`${sql.raw(access.siblings)}`.as('siblings'))
+      .where(sql<boolean>`(${sql.raw(retracted)} OR ${sql.raw(held)})`)
+      .execute();
+  });
+  const media = (row: (typeof rows)[number]): ModeratorMedia => ({
+    url: row.url,
+    type: row.type,
+    mimeType: row.mimeType,
+    kind: row.retracted ? 'retracted' : 'held',
+  });
+  for (const row of rows) eligible.add(row.id);
+  if (csamReview) {
+    for (const row of rows) viewable.set(row.id, media(row));
+    return { eligible, viewable };
+  }
+  const patterns = blockedForPatterns();
+  const candidates = rows.filter(
+    (row) => row.retracted && !row.restricted && !blockedForSignal(row.blockedFor, patterns)
+  );
+  if (!candidates.length) return { eligible, viewable };
+  // The candidates' url siblings in one scanner read, not one read per row.
+  const siblingIds = [...new Set(candidates.flatMap((row) => row.siblings.map((s) => s.id)))];
+  const [verdicts, siblingVerdicts] = await Promise.all([
+    readVerdicts(candidates),
+    readScannerCsamVerdicts(siblingIds),
+  ]);
+  for (const row of candidates) {
+    const ok = await retractedViewable(row, {
+      patterns,
+      readVerdict: async () => verdicts?.get(row.id) ?? null,
+      readVerdicts: async () => siblingVerdicts,
+    });
+    if (ok) viewable.set(row.id, media(row));
+  }
+  return { eligible, viewable };
+}
+
+/** Each row's verdict, one read per row: a scanned image can be rescanned, so it is read fresh; a
+ *  blocked one from the cache. For the single-image readers. */
+const verdictOf = async (rows: ScannerRow[]) =>
+  new Map(
+    await Promise.all(
+      rows.map(
+        async (row) =>
+          [
+            row.id,
+            row.ingestion === 'Scanned'
+              ? await readScannerCsamVerdict(row.id)
+              : await scannerVerdicts.read(row.id),
+          ] as const
+      )
+    )
+  );
+
+/**
+ * The image's storage key and type while this moderator may see it on `/api/retracted-media`, held
+ * media excluded; `null` otherwise, so an image they may not see is answered exactly as a missing
+ * one.
  */
 export async function getRetractedMedia(
   imageId: number,
   { csamReview }: { csamReview: boolean }
-): Promise<RetractedMedia | typeof NEEDS_CSAM_QUEUE | null> {
-  const row = await dbWrite
-    .selectFrom('Image as i')
-    .select(['i.url', 'i.type', 'i.mimeType', 'i.blockedFor'])
-    .select(sql<boolean>`${sql.raw(retractedSuspectSql('i'))}`.as('suspect'))
-    .where('i.id', '=', imageId)
-    .where(sql<boolean>`${sql.raw(retractedImageWhereSql('i'))}`)
-    .executeTakeFirst();
-  if (!row) return null;
-  const tier = retractedTier(row, blockedForPatterns());
-  if (!csamReview) {
-    if (tier === 'suspect') return null;
-    // Refused when the scanner marks it, has no verdict for it, or cannot be read.
-    const verdict = await scannerVerdicts.read(imageId);
-    if (verdict === 'none') return NEEDS_CSAM_QUEUE;
-    if (verdict !== 'clear') return null;
-  }
-  return { url: row.url, type: row.type, mimeType: row.mimeType, tier };
+): Promise<RetractedMedia | null> {
+  const { viewable } = await readRetractedMedia([imageId], { csamReview, readVerdicts: verdictOf });
+  const media = viewable.get(imageId);
+  return media ? { url: media.url, type: media.type, mimeType: media.mimeType } : null;
+}
+
+/** What `/api/retracted-media` serves this moderator: `getRetractedMedia`, or held media to one with
+ *  the CSAM grant. */
+export async function getModeratorMedia(
+  imageId: number,
+  { csamReview }: { csamReview: boolean }
+): Promise<ModeratorMedia | null> {
+  const { viewable } = await readRetractedMedia([imageId], {
+    csamReview,
+    orHeld: true,
+    readVerdicts: verdictOf,
+  });
+  return viewable.get(imageId) ?? null;
 }
 
 /** Every response carrying bytes, ranges included. Throws when the row is not written, so the bytes
@@ -67,3 +164,6 @@ export function recordRetractedView(moderatorId: number, imageId: number) {
 
 /** `/api/retracted-media` answers 404 unless this is exactly 'true'. */
 export const retractedMediaEnabled = () => env.RETRACTED_MEDIA_ENABLED === 'true';
+
+/** Whether a scanned image whose url the image CDN refuses is eligible too. */
+export const retractedMediaCdnLeg = () => env.RETRACTED_MEDIA_CDN_LEG === 'true';

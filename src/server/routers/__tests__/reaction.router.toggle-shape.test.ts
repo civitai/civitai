@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type * as MiddlewareTrpc from '~/server/middleware.trpc';
 import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
+import type * as PrismaSqlKysely from '~/server/db/prisma-sql-kysely';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 dbMock.dbRead.imageReaction.count.mockImplementation(async () => 1);
 // The viewer holds a birthday2026 team hat: only a joiner is handed their team's points.
@@ -56,6 +57,14 @@ vi.mock('~/server/services/notification.service', () => ({
 }));
 vi.mock('~/server/services/metric-excluded-users.service', () => ({
   getMetricExcludedUserIds: vi.fn(async () => []),
+}));
+// The image visibility check admits every image here; its rule is pinned in
+// image-thread-visibility.behavior.test.ts.
+vi.mock('~/server/db/prisma-sql-kysely', async (importOriginal) => ({
+  ...(await importOriginal<typeof PrismaSqlKysely>()),
+  queryPrismaSql: vi.fn(async () => [
+    { id: 1, userId: 1, nsfwLevel: 1, postId: 1, visibleSignedOut: null },
+  ]),
 }));
 
 const { reactionRouter } = await import('../reaction.router');

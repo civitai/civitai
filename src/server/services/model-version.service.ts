@@ -40,6 +40,10 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  filterViewableModelVersions,
+  modelVersionVisibilitySelect,
+} from '~/server/services/model-version-visibility.service';
 import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
   getDbWithoutLag,
@@ -252,9 +256,11 @@ export const getVersionById = async <TSelect extends Prisma.ModelVersionSelect>(
 export const getVersionsByIds = async ({
   ids,
   browsingLevel,
+  viewer,
 }: {
   ids: number[];
   browsingLevel?: number;
+  viewer: Parameters<typeof filterViewableModelVersions>[1];
 }) => {
   if (ids.length === 0) return [];
   const showSfwFace = showsSfwFace(browsingLevel);
@@ -262,11 +268,12 @@ export const getVersionsByIds = async ({
   const results = await dbRead.modelVersion.findMany({
     where: { id: { in: ids } },
     select: {
-      id: true,
+      ...modelVersionVisibilitySelect,
       name: true,
       baseModel: true,
       model: {
         select: {
+          ...modelVersionVisibilitySelect.model.select,
           id: true,
           name: true,
           sfwName: true,
@@ -277,7 +284,7 @@ export const getVersionsByIds = async ({
     },
   });
 
-  return results.map((v) => ({
+  return (await filterViewableModelVersions(results, viewer)).map((v) => ({
     id: v.id,
     name: v.name,
     baseModel: v.baseModel,
@@ -1110,6 +1117,7 @@ export const upsertModelVersion = async ({
         usageControl: true,
         flags: true,
         licensingFee: true,
+        licensingFeeType: true,
         // Read for the audit diff, not for the write. `watchedEntityFields` compares before/after by
         // key, so a watched field missing from this select silently produces no row rather than an
         // error — the audit would look wired up and record nothing.
@@ -1396,7 +1404,11 @@ export const upsertModelVersion = async ({
     const feeBefore =
       existingVersion.licensingFee != null ? Number(existingVersion.licensingFee) : null;
     const feeAfter = feeProvided ? data.licensingFee ?? null : feeBefore;
-    if (feeBefore !== feeAfter)
+    // The type changes what the number means (Buzz per image or a percent), so it busts too.
+    const typeChanged =
+      data.licensingFeeType !== undefined &&
+      data.licensingFeeType !== existingVersion.licensingFeeType;
+    if (feeBefore !== feeAfter || typeChanged)
       await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
 
     if (version.description !== existingVersion.description)

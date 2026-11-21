@@ -18,6 +18,12 @@ export function hashAddress(address: string) {
 
 export const DEFAULT_NOTICE_FROM = 'Civitai DMCA <notices@civitai.com>';
 export const DEFAULT_NOTICE_REPLY_TO = 'dmca@civitai.com';
+/** The sender for the forms that are not DMCA. */
+export const PLAIN_NOTICE_FROM = 'Civitai <notices@civitai.com>';
+const DMCA_PROCESSES = new Set(['dmca-notice', 'dmca-counter-notice']);
+/** Who a process's notices come from: the DMCA sender only for the two DMCA forms. */
+export const noticeFrom = (processKey: string, dmcaFrom: string) =>
+  DMCA_PROCESSES.has(processKey) ? dmcaFrom : PLAIN_NOTICE_FROM;
 // Above the size of the backlog batch, so the batch can't trip it by itself.
 export const DEFAULT_HOURLY_CEILING = 400;
 
@@ -54,6 +60,8 @@ export type SendDeps = {
   from: string;
   replyTo: string;
   hourlyCeiling: number;
+  /** Fills what the stored snapshot holds back (a link token) into the outgoing text only. */
+  fillBody?: (body: string) => string;
 };
 
 export function defaultSendDeps(): Omit<SendDeps, 'holdsLock'> {
@@ -136,7 +144,8 @@ export async function sendNotice(noticeId: number, deps: SendDeps): Promise<Send
       .execute();
     return 'unsendable';
   }
-  const { recipient_address: to, body_snapshot: body } = row;
+  const { recipient_address: to } = row;
+  const body = deps.fillBody ? deps.fillBody(row.body_snapshot) : row.body_snapshot;
 
   if (hashAddress(to) !== row.address_hash) {
     await deps.db

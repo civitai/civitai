@@ -1,9 +1,5 @@
-import {
-  clearHeldUserImages,
-  dropStaleHeldImageMarkers,
-  restoreClearedUserImages,
-} from '@civitai/db-queries/profile-picture-clear';
-import { bustEventEngineProfilePictures, REDIS_KEYS } from '@civitai/redis';
+import { clearHeldUserImages, pictureUserIds } from '@civitai/db-queries/profile-picture-clear';
+import { REDIS_KEYS } from '@civitai/redis';
 import { logAxiomError } from './axiom';
 import { bustCachedObject } from './cache';
 import type { Kysely } from 'kysely';
@@ -12,24 +8,18 @@ import { dbWrite } from './db';
 import { getRedis } from './redis';
 import { syncSearchIndexBulk } from './search-index';
 
-/** The users whose profile picture is one of `imageIds`. Read before a delete: the relation is set null. */
+/** `pictureUserIds` on `db`. Read before a delete: the relation is set null. */
 export async function profilePictureUserIds(
   imageIds: number[],
   db: Kysely<DB> = dbWrite
 ): Promise<number[]> {
-  if (!imageIds.length) return [];
-  const rows = await db
-    .selectFrom('User')
-    .select('id')
-    .where('profilePictureId', 'in', imageIds)
-    .execute();
-  return rows.map((x) => x.id);
+  return pictureUserIds(db, imageIds);
 }
 
-// The main app and the event engine each cache a user's profile picture for a day, and avatars are
-// shown or hidden on its rating. A held or blocked picture also clears the legacy `User.image` naming
-// it, and a picture servable again puts it back, both by the statements the main app runs; the users
-// whose `User.image` either touched get their basic-user entry, session and search document refreshed.
+// The main app caches a user's profile picture for a day, and avatars are shown or hidden on its
+// rating. A held or blocked picture also clears the legacy `User.image` naming
+// it, by the statement the main app runs; the users whose picture is held or blocked get their
+// basic-user entry, session and search document refreshed.
 // Never throws: it follows a committed moderation write.
 export async function bustProfilePictures(
   target: { imageIds: number[] } | { userIds: number[] }
@@ -42,10 +32,7 @@ export async function bustProfilePictures(
         void logAxiomError(error, { event: `profile-picture-${name}`, userIds: userIds.join(',') });
         return [] as number[];
       });
-    const heldUserIds = await step('clear', () => clearHeldUserImages(dbWrite, userIds));
-    const restoredUserIds = await step('restore', () => restoreClearedUserImages(dbWrite, userIds));
-    await step('drop-stale-markers', () => dropStaleHeldImageMarkers(dbWrite, userIds));
-    const changedUserIds = [...new Set([...heldUserIds, ...restoredUserIds])];
+    const changedUserIds = await step('clear', () => clearHeldUserImages(dbWrite, userIds));
     await Promise.all([
       bustCachedObject(REDIS_KEYS.CACHES.BASIC_USERS, changedUserIds).catch((error) =>
         logAxiomError(error, { event: 'profile-picture-cache-bust', cache: 'basic-users' })
@@ -67,9 +54,6 @@ export async function bustProfilePictures(
       ),
       bustCachedObject(REDIS_KEYS.CACHES.PROFILE_PICTURES, userIds).catch((error) =>
         logAxiomError(error, { event: 'profile-picture-cache-bust' })
-      ),
-      bustEventEngineProfilePictures(getRedis(), userIds).catch((error) =>
-        logAxiomError(error, { event: 'profile-picture-cache-bust', cache: 'event-engine' })
       ),
     ]);
   } catch (error) {

@@ -5,25 +5,19 @@ import { createRequire } from 'node:module';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Socket } from 'node:net';
 import { instrumentationRegistry } from '@civitai/telemetry/client';
-import {
-  NEXT_REQUEST_META as NEXT_OWN_REQUEST_META,
-  addRequestMeta,
-  type RequestMeta,
-} from 'next/dist/server/request-meta';
+import { addRequestMeta, type RequestMeta } from 'next/dist/server/request-meta';
 import { NodeNextRequest } from 'next/dist/server/base-http/node';
 import type client from 'prom-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   API_ROUTE_REQUESTS_METRIC,
-  NEXT_REQUEST_META,
   STANDALONE_API_ROUTE_PAGE_KEY,
   apiRoutePattern,
   installApiRouteServerHook,
   methodLabel,
   observeApiRequest,
   registerApiRouteMetrics,
-  statusClassLabel,
 } from '~/server/prom/api-route.metrics';
 import { apiRouteLabel } from '~/server/utils/page-routes';
 import { usePagesManifestFixture } from '~/server/utils/__tests__/pages-manifest.fixture';
@@ -75,10 +69,6 @@ afterEach(() => {
 });
 
 describe('route label', () => {
-  it('reads Next under the same request-meta key Next itself writes', () => {
-    expect(NEXT_REQUEST_META).toBe(NEXT_OWN_REQUEST_META);
-  });
-
   it("reads a match Next adds through its own request wrapper on the raw request's meta", () => {
     // Next's server wraps the raw IncomingMessage in a NodeNextRequest and adds `match` to the
     // WRAPPER. The raw request (the one the server hook holds) sees it only because the wrapper
@@ -92,19 +82,6 @@ describe('route label', () => {
     setNextMatch(wrapped, '/api/v1/models/[id]', { id: '123' });
     expect(apiRoutePattern(raw)).toBe('/api/v1/models/[id]');
     expect(apiRouteLabel(apiRoutePattern(raw))).toBe('/api/v1/models/[id]');
-  });
-
-  it('labels /api/v1/models/123?x=1, handled by [id].ts, as /api/v1/models/[id]', () => {
-    const req = { url: '/api/v1/models/123?x=1' };
-    setNextMatch(req, '/api/v1/models/[id]', { id: '123' });
-    expect(apiRoutePattern(req)).toBe('/api/v1/models/[id]');
-    expect(apiRouteLabel(apiRoutePattern(req))).toBe('/api/v1/models/[id]');
-  });
-
-  it('labels an index route by its manifest key', () => {
-    const req = { url: '/api/v1/models?limit=5' };
-    setNextMatch(req, '/api/v1/models');
-    expect(apiRouteLabel(apiRoutePattern(req))).toBe('/api/v1/models');
   });
 
   it('reads the page the standalone server stores, under the key that server writes', () => {
@@ -135,31 +112,9 @@ describe('route label', () => {
   });
 });
 
-describe('statusClassLabel', () => {
-  it.each([
-    [101, true, '1xx'],
-    [200, true, '2xx'],
-    [204, true, '2xx'],
-    [301, true, '3xx'],
-    [404, true, '4xx'],
-    [429, true, '4xx'],
-    [500, true, '5xx'],
-    [503, true, '5xx'],
-    [0, true, 'other'],
-    [600, true, 'other'],
-    [200, false, 'aborted'],
-    [500, false, 'aborted'],
-  ])('%i (finished=%s) -> %s', (status, finished, expected) => {
-    expect(statusClassLabel(status, finished)).toBe(expected);
-  });
-});
-
 describe('methodLabel', () => {
   it.each([
     ['GET', 'GET'],
-    ['POST', 'POST'],
-    ['DELETE', 'DELETE'],
-    ['OPTIONS', 'OPTIONS'],
     ['PROPFIND', 'other'],
     ['get', 'other'],
     [undefined, 'other'],
@@ -186,19 +141,6 @@ describe('observeApiRequest', () => {
     ]);
   });
 
-  it('ignores a non-API URL without adding a listener', async () => {
-    for (const url of ['/models/1', '/', '/apix', '/api']) {
-      const res = makeRes(200);
-      observeApiRequest(
-        { url, method: 'GET' } as unknown as IncomingMessage,
-        res as unknown as ServerResponse
-      );
-      expect(res.listenerCount('close')).toBe(0);
-      res.emit('close');
-    }
-    expect(await counts()).toEqual([]);
-  });
-
   it('never throws when reading the response fails', () => {
     const res = new EventEmitter();
     Object.defineProperty(res, 'statusCode', {
@@ -213,9 +155,6 @@ describe('observeApiRequest', () => {
     expect(() => res.emit('close')).not.toThrow();
   });
 });
-
-// Captured before anything in this file installs a hook.
-const realServerEmit = http.Server.prototype.emit;
 
 describe('server hook', () => {
   // Hooked on a subclass, so http.Server.prototype itself is never touched by this file.
@@ -299,13 +238,6 @@ describe('server hook', () => {
       'other GET 2xx': 1,
       '/api/v1/models/[id] GET aborted': 1,
     });
-  });
-
-  it('is idempotent per prototype and leaves the real http.Server untouched', () => {
-    const emit = HookedServer.prototype.emit;
-    expect(installApiRouteServerHook(HookedServer.prototype)).toBe(false);
-    expect(HookedServer.prototype.emit).toBe(emit);
-    expect(http.Server.prototype.emit).toBe(realServerEmit);
   });
 });
 

@@ -1,6 +1,7 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, loadEnv } from 'vite';
+import { kitElementResetExemption } from './kit-element-reset-exemption';
 
 export default defineConfig(({ mode }) => {
   // SvelteKit/Vite load .env into $env/dynamic/private, NOT into process.env — but the @civitai/*
@@ -11,6 +12,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [tailwindcss(), sveltekit()],
+    css: { postcss: { plugins: [kitElementResetExemption()] } },
 
     // Editors write-then-rename `foo.tmp.*` files; HMR picking up the transient file crashes the
     // dev server.

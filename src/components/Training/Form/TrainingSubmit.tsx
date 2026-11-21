@@ -35,6 +35,7 @@ import { capitalize, isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { useGenerationLicenseFor } from '~/components/form-graph/generation/useGenerationLicense';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -100,6 +101,7 @@ import {
   isValidRapid,
   rapidEta,
   type TrainingBaseModelType,
+  trainingLicenseEcosystem,
   trainingModelInfo,
 } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
@@ -134,6 +136,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const { addRun, removeRun, updateRun } = trainingStore;
   const { runs, imageList, initialImageList } = useTrainingImageStore(
     (state) => state[model.id] ?? { ...getDefaultTrainingStateFor(thisMediaType) }
+  );
+  const license = useGenerationLicenseFor(
+    runs.map((run) => trainingLicenseEcosystem(run.base)).find(isDefined)
   );
 
   const [selectedRunIndex, setSelectedRunIndex] = useState<number>(0);
@@ -1636,6 +1641,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Notification>
       ) : null}
 
+      {license.blocked && license.terms && (
+        <Text size="sm" c="dimmed" ta="right" mt="lg">
+          Accept the {license.terms.title} under the base model to submit.
+        </Text>
+      )}
       <Group mt="lg" justify="flex-end">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
@@ -1654,7 +1664,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               dryRunResult.isLoading ||
               clientInsufficientBuzz ||
               hasIssue ||
-              yellowOnGreen
+              yellowOnGreen ||
+              license.blocked
             }
             color={buzzColor}
             onClick={handleSubmit}

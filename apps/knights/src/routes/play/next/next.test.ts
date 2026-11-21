@@ -12,7 +12,10 @@ const queueDeps = vi.hoisted(() => ({
   now: () => new Date('2026-12-15T12:00:00Z'),
 }));
 const skipList = vi.hoisted(() => ({ add: vi.fn(), list: vi.fn() }));
-vi.mock('$lib/server/db', () => ({ db: {} }));
+// Distinct objects, so a read that takes the primary instead of the replica (or the reverse) fails `toBe`.
+const PRIMARY = vi.hoisted(() => ({ client: 'primary' }));
+const REPLICA = vi.hoisted(() => ({ client: 'replica' }));
+vi.mock('$lib/server/db', () => ({ db: PRIMARY, dbRead: REPLICA }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => `cdn/${key}` }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps }));
@@ -20,7 +23,10 @@ vi.mock('$lib/server/vote-limits/runtime', () => ({ lockoutFor }));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
 vi.mock('$lib/server/skip-runtime', () => ({ skipStore: skipList }));
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 0.5 }) }));
-vi.mock('$lib/server/hidden/hidden.service', () => ({ pickHiddenCheck }));
+vi.mock('$lib/server/hidden/hidden.service', () => ({
+  pickHiddenCheck,
+  hiddenItemId: (id: number) => -id,
+}));
 vi.mock('$lib/server/queue/queue.service', () => ({ getFeed }));
 vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo }));
 vi.mock('$lib/server/yesno/cadence', () => ({
@@ -111,12 +117,23 @@ describe('GET /play/next', () => {
     skipList.list.mockResolvedValue([{ kind: 'queue', id: 1 }]);
     await ask([token('queue', 9), token('hidden', 5), token('yesno', 3)]);
 
-    expect(getFeed).toHaveBeenCalledWith({}, 7, { limit: 1, exclude: [1, 9] });
+    expect(getFeed).toHaveBeenCalledWith(REPLICA, 7, { limit: 1, exclude: [1, 9] });
     const hidden = pickHiddenCheck.mock.calls[0][1];
     expect(hidden.exclude).toEqual([5]);
     expect(pickYesNo.mock.calls[0][1].exclude).toEqual([3]);
     expect(typeof hidden.slot).toBe('number');
     expect(pickYesNo.mock.calls[0][1].slot).toBe(hidden.slot);
+  });
+
+  it('reads the feed from the replica and the player’s own served history and picks from the primary', async () => {
+    burstDue.mockReturnValue(true);
+    await ask([token('queue', 9)]);
+
+    expect(getFeed).toHaveBeenCalledTimes(1);
+    expect(getFeed.mock.calls[0][0]).toBe(REPLICA);
+    expect(servedHistory.mock.calls[0][0]).toBe(PRIMARY);
+    expect(pickYesNo.mock.calls[0][0]).toBe(PRIMARY);
+    expect(pickHiddenCheck.mock.calls[0][0]).toBe(PRIMARY);
   });
 
   it('tells the yes/no picker only the yes/no questions named as ahead, so the stretch counts them', async () => {
@@ -161,7 +178,7 @@ describe('GET /play/next', () => {
   it("ignores tokens that are not this player's, and caps how many it reads", async () => {
     const stranger = sealItem('secret', 8, { kind: 'queue', id: 77 });
     await ask([stranger, 'garbage']);
-    expect(getFeed).toHaveBeenCalledWith({}, 7, { limit: 1, exclude: [] });
+    expect(getFeed).toHaveBeenCalledWith(REPLICA, 7, { limit: 1, exclude: [] });
   });
 
   it('serves a hidden check or a yes/no item as the next one when the roll picks it', async () => {

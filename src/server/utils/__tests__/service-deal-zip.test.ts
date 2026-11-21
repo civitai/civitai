@@ -1,4 +1,4 @@
-import { Readable } from 'stream';
+import { PassThrough, Readable } from 'stream';
 import { describe, expect, it, vi } from 'vitest';
 import {
   bufferZipSource,
@@ -425,6 +425,19 @@ describe('reading from the bucket', () => {
     for await (const chunk of source.readRange(5, 5)) empty.push(chunk);
     expect(empty).toEqual([]);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets go of the bucket body when the reader stops early', async () => {
+    const body = new PassThrough();
+    body.write(Buffer.alloc(1024));
+    const send = vi.fn(async () => ({ Body: body }));
+    const source = s3ZipSource({ send } as never, 'bucket', 'key', 1 << 20);
+    for await (const chunk of source.readRange(0, 1 << 20)) {
+      void chunk;
+      break;
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(body.destroyed).toBe(true);
   });
 
   it('fails the stream when the bucket does', async () => {

@@ -16,10 +16,11 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   addBlockedImage: svc.addBlockedImage,
   queueImageSearchIndexUpdate: svc.queueImageSearchIndexUpdate,
-  writeModeratorBlock: vi.fn(async () => ({
+  writeModeratorBlock: vi.fn(async (ids: number[]) => ({
     held: new Set(),
     underReview: new Set(),
     removedForCsam: new Set(),
+    pHashes: new Map(ids.map((id) => [id, BigInt(123)])),
   })),
   updateImageReportStatusByReason: vi.fn(async () => []),
   invalidateManyImageExistence: vi.fn(async () => undefined),
@@ -84,6 +85,31 @@ beforeEach(() => {
 const remove = () =>
   setTosViolationHandler({ input: { id: 50, violationType: 'other' } as never, ctx });
 
+describe('setTosViolationHandler and the documents showing the image', () => {
+  it('looks up every document showing the removed image, after the blocklist write', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+    svc.addBlockedImage.mockResolvedValue(undefined);
+
+    await remove();
+
+    const lookups = dbMock.dbWrite.$queryRaw.mock.calls
+      .map(([strings, ...values]) => ({ text: (strings as string[]).join('?'), values }))
+      .filter((q) => /"Post"|"ImageConnection"|"Article"/.test(q.text));
+    const kinds = new Set(
+      lookups.map((q) => q.text.match(/"Post"|"ImageConnection"|"Article"/)?.[0])
+    );
+    expect(kinds).toEqual(new Set(['"Post"', '"ImageConnection"', '"Article"']));
+    expect(lookups.every((q) => q.values.every((v) => JSON.stringify(v) === '[50]'))).toBe(true);
+    const firstLookup =
+      dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[
+        dbMock.dbWrite.$queryRaw.mock.calls.findIndex(([s]) =>
+          /"Post"|"ImageConnection"|"Article"/.test((s as string[]).join('?'))
+        )
+      ];
+    expect(svc.addBlockedImage.mock.invocationCallOrder[0]).toBeLessThan(firstLookup);
+  });
+});
+
 describe('setTosViolationHandler blocklist write', () => {
   it('writes the hash (control)', async () => {
     svc.addBlockedImage.mockResolvedValue(undefined);
@@ -98,8 +124,15 @@ describe('setTosViolationHandler blocklist write', () => {
   it('has already hidden the image when the blocklist write throws', async () => {
     svc.addBlockedImage.mockRejectedValue(new Error('no ClickHouse client'));
 
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+
     await expect(remove()).rejects.toThrow();
 
+    // The documents showing it are still looked up.
+    const looked = dbMock.dbWrite.$queryRaw.mock.calls.some(([strings]) =>
+      (strings as string[]).join('?').includes('"Post"')
+    );
+    expect(looked).toBe(true);
     expect(svc.queueImageSearchIndexUpdate).toHaveBeenCalledWith({
       ids: [50],
       action: expect.anything(),

@@ -1,7 +1,8 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { requireAccess } from '$lib/server/access';
+import { canAccess, requireAccess } from '$lib/server/access';
+import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
 import { int4Id, parseForm } from '$lib/server/query';
 import { parseInquisitorFilter } from '$lib/knights/inquisitor-filters';
 import {
@@ -21,7 +22,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   requireAccess(locals.user, url.pathname);
   const filter = parseInquisitorFilter(url.searchParams.get('filter'));
   const [items, counts] = await Promise.all([
-    getInquisitorQueue(filter),
+    getInquisitorQueue(filter, { csamReview: canAccess(locals.user, HELD_MEDIA_PAGE) }),
     countInquisitorQueueByFilter(),
   ]);
   return {

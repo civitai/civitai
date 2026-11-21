@@ -1,0 +1,286 @@
+name: content-policy-go
+
+# apps/content-policy-go is a Go module (the SFW/NSFW and region decision service: POST /v1/decide;
+# see apps/content-policy-go/DESIGN.md). It is not a pnpm workspace member, so none of the Node suites
+# see it. This workflow is its only Go gate, with content-policy-go.yml's gates: gofmt, vet, the unit tests
+# under -race with a test-count floor and coverage floors, the integration test and a build of the
+# binary (job `test`); golangci-lint (`lint`); govulncheck (`vuln`); go.mod tidiness and module
+# checksums (`mod`); and a short run of every fuzz target for a fixed number of executions (`fuzz`).
+# The gate scripts live in apps/content-policy-go/ci.
+#
+# The unit run includes the golden test (internal/policy TestGolden): every vector in
+# testdata/golden/vectors.json, which testdata/golden/gen.ts writes from the REAL Node code. That the
+# committed vectors are still what the Node code answers is checked on every PR by
+# scripts/__tests__/content-policy-go-vectors.schema-drift.test.ts (lint.yml, "Manifest schema drift
+# tests"), so a Node change that moves an answer fails there, and its regenerated vectors run here.
+#
+# The integration tier (`-tags integration`) runs the user settings query against a real Postgres 16
+# started in this job; the plain unit run never compiles that file.
+#
+# A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
+# dispatches this workflow when the label is added to a draft PR (on a ready PR, the PR's own run
+# here is not draft-gated, so nothing is dispatched).
+# A push to `main` has its own `push` paths filter below, and no draft gate.
+on:
+  pull_request:
+    branches: [main, release]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'apps/content-policy-go/**'
+      - '.github/workflows/content-policy-go.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/content-policy-go/**'
+      - '.github/workflows/content-policy-go.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: content-policy-go-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: content-policy-go vet + test + build
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 20
+    services:
+      postgres:
+        # postgres:16 (16.16), pinned by its multi-arch index digest (the image feed-go.yml uses).
+        image: postgres:16@sha256:63e83b5a3dc36a917dccb76fe1bd2ac51f1ec9c1deb47ff20d4f04233bf6eae9
+        env:
+          POSTGRES_USER: contentpolicy
+          POSTGRES_PASSWORD: contentpolicy-integ
+          POSTGRES_DB: contentpolicy_integ
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U contentpolicy -d contentpolicy_integ"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    defaults:
+      run:
+        working-directory: apps/content-policy-go
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/content-policy-go/go.mod
+          cache-dependency-path: apps/content-policy-go/go.sum
+
+      - name: gofmt
+        run: |
+          set -euo pipefail
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::Not gofmt-formatted (run gofmt -w apps/content-policy-go):"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: |
+          go vet ./...
+          go vet -tags integration ./...
+
+      # `-json` so the step below can count the tests that actually ran: a package that silently
+      # compiled to zero tests would otherwise still exit 0. The cover profile feeds the floors below.
+      - name: go test
+        run: |
+          status=0
+          go test -race -count=1 -covermode=atomic -coverprofile=cover.out -json ./... > test.json || status=$?
+          jq -j 'select(.Action=="output") | .Output' test.json
+          exit $status
+
+      - name: Assert the tests ran
+        if: always()
+        run: |
+          set -euo pipefail
+          passed=$(jq -r 'select(.Action=="pass" and .Test!=null) | .Test' test.json | wc -l)
+          failed=$(jq -r 'select(.Action=="fail" and .Test!=null) | .Test' test.json | wc -l)
+          pkgs=$(jq -r 'select(.Action=="pass" and .Test==null) | .Package' test.json | sort -u | wc -l)
+          echo "passed tests: $passed, failed tests: $failed, passing packages: $pkgs"
+          # Positive control: a count below these floors means tests stopped being discovered, not that
+          # they passed. Raise the floors when tests or packages are added.
+          [ "$failed" -eq 0 ]
+          [ "$pkgs" -ge 7 ]
+          [ "$passed" -ge 60 ]
+
+      # Statement coverage of the unit run (each package's own tests), per package and in total,
+      # against the ratchet floors in ci/coverage-floors.txt. A second instrument prints its own total
+      # (`go tool cover -func`) so the script's arithmetic can be cross-checked in the log.
+      - name: Coverage floors
+        run: |
+          set -euo pipefail
+          python3 ci/coverage_gate.py cover.out ci/coverage-floors.txt test.json
+          go tool cover -func=cover.out | tail -n 1
+
+      # -run 'Integration' keeps the unit tests (already run above) out of this step. CI is set on
+      # the runner, so a missing CONTENT_POLICY_TEST_PG_URL fails the test instead of skipping it.
+      - name: go test (integration)
+        env:
+          CONTENT_POLICY_TEST_PG_URL: postgres://contentpolicy:contentpolicy-integ@127.0.0.1:5432/contentpolicy_integ?sslmode=disable
+        run: |
+          status=0
+          go test -race -count=1 -tags integration -run 'Integration' -json ./... > integ.json || status=$?
+          jq -j 'select(.Action=="output") | .Output' integ.json
+          passed=$(jq -r 'select(.Action=="pass" and .Test!=null and (.Test|startswith("TestIntegration"))) | .Test' integ.json | wc -l)
+          skipped=$(jq -r 'select(.Action=="skip" and .Test!=null) | .Test' integ.json | wc -l)
+          echo "integration tests passed: $passed, skipped: $skipped"
+          [ "$status" -eq 0 ]
+          [ "$skipped" -eq 0 ]
+          [ "$passed" -ge 1 ]
+
+      - name: go build
+        run: CGO_ENABLED=0 go build -trimpath -o /tmp/content-policy-go ./cmd/content-policy-go
+
+  lint:
+    name: content-policy-go golangci-lint
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/content-policy-go/go.mod
+          cache-dependency-path: apps/content-policy-go/go.sum
+
+      # Configuration: apps/content-policy-go/.golangci.yml (v2 format, feed-go's linter set). Any finding
+      # fails the step.
+      - name: golangci-lint
+        # golangci/golangci-lint-action v9.3.0
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
+        with:
+          version: v2.15.0
+          working-directory: apps/content-policy-go
+
+  vuln:
+    name: content-policy-go govulncheck
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/content-policy-go
+    steps:
+      - uses: actions/checkout@v7
+
+      # The newest 1.26 patch, not go.mod's minimum: the standard library govulncheck checks is the
+      # toolchain's, and the image is built on the golang:1.26 line (apps/content-policy-go/Dockerfile).
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          check-latest: true
+          cache-dependency-path: apps/content-policy-go/go.sum
+
+      # Exits non-zero when a vulnerability is REACHABLE from this module's code (symbol-level).
+      - name: govulncheck
+        run: |
+          go version
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  mod:
+    name: content-policy-go go.mod tidy + verify
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/content-policy-go
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/content-policy-go/go.mod
+          cache-dependency-path: apps/content-policy-go/go.sum
+
+      - name: go mod tidy
+        run: |
+          if ! go mod tidy -diff; then
+            echo "::error::go.mod/go.sum are not tidy (run go mod tidy in apps/content-policy-go)"
+            exit 1
+          fi
+      - name: go mod verify
+        run: go mod verify
+
+  # Each fuzz target for a fixed number of executions (beacon-go.yml explains why a count, not a
+  # time). A crasher is written to the package's testdata/fuzz/<Target>/ and uploaded; commit it as
+  # a regression seed with the fix.
+  fuzz:
+    name: content-policy-go fuzz
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/content-policy-go
+    env:
+      FUZZ_MINIMIZE: 100x
+      # <package dir>:<target>:<executions>. The first step fails when this list and the Fuzz
+      # functions in the module differ in either direction.
+      FUZZ_TARGETS: >-
+        internal/api:FuzzDecodeRequest:200000
+        internal/policy:FuzzDecide:200000
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/content-policy-go/go.mod
+          cache-dependency-path: apps/content-policy-go/go.sum
+
+      - name: The fuzz targets are the listed set
+        run: |
+          set -euo pipefail
+          go test -list '^Fuzz' -json ./... \
+            | jq -r 'select(.Action=="output" and (.Output|startswith("Fuzz"))) | (.Package|sub(".*/apps/content-policy-go/";"")) + ":" + (.Output|rtrimstr("\n"))' \
+            | sort > "$RUNNER_TEMP/fuzz-found.txt"
+          printf '%s\n' $FUZZ_TARGETS | cut -d: -f1,2 | sort > "$RUNNER_TEMP/fuzz-listed.txt"
+          echo "found $(wc -l < "$RUNNER_TEMP/fuzz-found.txt") fuzz targets, $(wc -l < "$RUNNER_TEMP/fuzz-listed.txt") listed"
+          if ! diff -u "$RUNNER_TEMP/fuzz-listed.txt" "$RUNNER_TEMP/fuzz-found.txt"; then
+            echo "::error::FUZZ_TARGETS in content-policy-go.yml and the module's Fuzz functions differ (- listed, + found)"
+            exit 1
+          fi
+          [ -s "$RUNNER_TEMP/fuzz-found.txt" ]
+
+      - name: Fuzz
+        run: |
+          set -o pipefail # the go test status must survive the tee
+          status=0
+          for t in $FUZZ_TARGETS; do
+            IFS=: read -r pkg name count <<< "$t"
+            echo "::group::$pkg:$name ($count executions)"
+            corpus="$pkg/testdata/fuzz/$name"
+            before=$(find "$corpus" -type f 2>/dev/null | sort || true)
+            if ! go test -run '^$' -fuzz "^${name}\$" -fuzztime "${count}x" -fuzzminimizetime "$FUZZ_MINIMIZE" "./$pkg" 2>&1 | tee "$RUNNER_TEMP/fuzz-$name.log"; then
+              status=1
+            fi
+            echo "::endgroup::"
+            after=$(find "$corpus" -type f 2>/dev/null | sort || true)
+            new=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | sed '/^$/d')
+            if [ -n "$new" ]; then
+              echo "::error::$pkg:$name found a crasher, uploaded as content-policy-go-fuzz-crashers: $new"
+              status=1
+            elif ! grep -q "^ok " "$RUNNER_TEMP/fuzz-$name.log"; then
+              echo "::error::$pkg:$name failed without writing a crasher (see its log above)"
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: Upload crashers
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: content-policy-go-fuzz-crashers
+          path: apps/content-policy-go/internal/*/testdata/fuzz/
+          if-no-files-found: ignore

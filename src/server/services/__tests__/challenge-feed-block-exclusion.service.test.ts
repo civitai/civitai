@@ -6,7 +6,7 @@ const mockDbRead = dbMock.dbRead;
 
 // getInfiniteChallenges: user challenges whose creator is in the viewer's block/hide set must be
 // dropped from the feed (parity with getChallengeDetail's creator-block gate, covered in
-// challenge-detail-visibility.service.test.ts). The predicate is only pushed onto the query when
+// challenge-detail-visibility.test.ts). The predicate is only pushed onto the query when
 // the viewer's excluded-id set is non-empty, so we assert both that the predicate appears when it
 // should and that it's absent (not just empty) when it shouldn't.
 const { mockHiddenUsersGetCached, mockBlockedByUsersGetCached, mockBlockedUsersGetCached } =

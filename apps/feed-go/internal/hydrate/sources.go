@@ -42,6 +42,7 @@ const (
 	KeyImageEvents     = "packed:caches:cosmetics2:event:v2:Image"
 	KeyThumbnails      = "packed:caches:thumbnails"
 	KeyTagIDs          = "packed:caches:tag-ids-for-images"
+	KeyImageTags       = "packed:caches:image-tags"
 )
 
 // TTLs (CacheTTL in src/server/common/constants.ts) for the caches that serve stale entries.

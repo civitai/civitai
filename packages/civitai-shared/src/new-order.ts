@@ -21,6 +21,30 @@ export const KNIGHTS_STAGE_RANKS = ['Knight', 'Templar', 'Paladin'] as const;
 
 export const KNIGHTS_STAGE_TTL_HOURS = 72;
 
+/**
+ * How long an item nobody votes on stays at one stage: its first window plus one extension, after which Knights'
+ * tick closes it as `expired` (`escalateExpired`). An item on a post that publishes later than this can never be served.
+ */
+export const KNIGHTS_STAGE_MAX_HOURS = 2 * KNIGHTS_STAGE_TTL_HOURS;
+
+const HOUR_MS = 3_600_000;
+
+/**
+ * The latest an item that nobody votes on can still be open at the stage it entered at `enteredAt`, with its current window
+ * ending at `expiresAt`. Knights' tick extends a lapsed window by `KNIGHTS_STAGE_TTL_HOURS` only while the lapse comes before
+ * `enteredAt + KNIGHTS_STAGE_MAX_HOURS`, then closes the item (`escalateExpired`). An item enqueued with the default window
+ * ends at exactly `enteredAt + KNIGHTS_STAGE_MAX_HOURS`; a custom shorter first window can be extended twice, so it gets one
+ * more window as its bound. Knights' `closeUnservableItems` applies the same rule in SQL; change them together.
+ */
+export function knightsLatestStageEnd(enteredAt: Date, expiresAt: Date): Date {
+  const entered = enteredAt.getTime();
+  const expires = expiresAt.getTime();
+  if (expires >= entered + KNIGHTS_STAGE_MAX_HOURS * HOUR_MS) return expiresAt;
+  if (expires >= entered + KNIGHTS_STAGE_TTL_HOURS * HOUR_MS)
+    return new Date(expires + KNIGHTS_STAGE_TTL_HOURS * HOUR_MS);
+  return new Date(entered + (KNIGHTS_STAGE_MAX_HOURS + KNIGHTS_STAGE_TTL_HOURS) * HOUR_MS);
+}
+
 /** Why a Knight blocks an image: the original game's `NewOrderDamnedReason` names and labels, in its order. */
 export const KNIGHTS_BLOCK_REASONS = [
   { value: 'InappropriateMinors', label: 'Inappropriate Minors' },
@@ -123,6 +147,7 @@ export const KNIGHTS_GAME_SETTINGS = {
     env: 'KNIGHTS_CONVERSION_DISABLED',
     label: 'Gold to Buzz conversion',
   },
+  signalsDisabled: { kind: 'toggle', env: 'KNIGHTS_SIGNALS_DISABLED', label: 'Live updates' },
   harvest: { kind: 'toggle', env: 'KNIGHTS_HARVEST', label: 'Harvest' },
   harvestHiddenCheckShare: {
     kind: 'number',

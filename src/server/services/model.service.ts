@@ -1,3 +1,7 @@
+import { deletePostRows } from '@civitai/db-queries/content-deletion';
+import { modelNotWithheldSql } from '~/server/utils/model-withheld';
+import { PLATFORM_REVENUE_SOURCES_SQL } from '@civitai/buzz';
+import { kyselyOver } from '~/server/db/prisma-kysely';
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
@@ -52,6 +56,8 @@ import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { scanRatingKeptMessage } from '~/server/services/scan-rating-kept-message';
+import { PUBLIC_MODEL_STATUSES } from '~/server/services/text-scan/public-content';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import {
   readPostModelVersionIdsViaKysely,
@@ -168,11 +174,12 @@ import {
   getEventDecorationsForEntity,
 } from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
-import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
+import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
 import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
   queueImageSearchIndexUpdate,
+  deleteImages,
 } from '~/server/services/image.service';
 import {
   assertBaseModelAttestations,
@@ -204,6 +211,7 @@ import {
   reassertModelPoiRestrictions,
 } from '~/server/services/text-scan/actions/model-poi-minor';
 import type { holdModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
+import type { NotifyTextScanRatingRaisedArgs } from '~/server/services/text-scan/notify';
 import { hasOpenTextScanFlag } from '~/server/services/text-scan/flag-snapshot';
 import { loadModelRulesUnpublishDetail } from '~/server/services/text-scan/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
@@ -353,8 +361,15 @@ import {
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import {
+  hasSfwFaceParts,
+  losesSfwFace,
+  sfwFaceStamp,
+} from '~/server/services/model-sfw-face-stamp';
+import {
+  faceLossNotice as heldVerdictNotice,
   queueComFaceRecheck,
   queueComFaceRestore,
+  rescanTextAfterFaceLoss,
 } from '~/server/services/model-com-face-recheck.service';
 import {
   isGenerationDisabled,
@@ -543,6 +558,7 @@ export const getModelsRaw = async ({
   eventDecorationViewer,
   faceBrowsingLevel,
   coverage,
+  includeWithheld,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
     take?: number;
@@ -591,6 +607,11 @@ export const getModelsRaw = async ({
    * audience-blind answer.
    */
   coverage?: CoverageAudience;
+  /**
+   * Keep taken-down models listed (the v1 API's documented behaviour). A sibling of `input` so
+   * it can never arrive from parsed query params.
+   */
+  includeWithheld?: boolean;
 }) => {
   // Ahead of every early empty return below, including the Meilisearch no-hits one: the point of
   // throwing rather than falling back is that the misuse is legible, and an empty page hides it.
@@ -792,6 +813,17 @@ export const getModelsRaw = async ({
       Prisma.sql`(${pSql}."mode" IS NULL OR ${pSql}."mode" != ${ModelModifier.Archived}::"ModelModifier")`
     );
   }
+  if (!includeWithheld) {
+    AND.push(
+      modelNotWithheldSql({
+        mode: Prisma.sql`${pSql}."mode"`,
+        ownerId: Prisma.raw('mm."userId"'),
+        signedIn: !!userId,
+        viewerId: userId,
+        isModerator,
+      })
+    );
+  }
 
   if (disablePoi) {
     AND.push(Prisma.sql`(${pSql}."poi" = false OR mm."userId" = ${userId})`);
@@ -860,12 +892,14 @@ export const getModelsRaw = async ({
     )`);
   }
 
+  let listedUserId: number | undefined;
   if (username || user) {
     const userFindArgs = { where: { username: (username || user) ?? '' }, select: { id: true } };
     const targetUser =
       (await dbRead.user.findUnique(userFindArgs)) ?? (await dbWrite.user.findUnique(userFindArgs));
 
     if (!targetUser) throw throwNotFoundError('User not found');
+    listedUserId = targetUser.id;
 
     AND.push(Prisma.sql`mm."userId" = ${targetUser.id}`);
   }
@@ -1085,7 +1119,9 @@ export const getModelsRaw = async ({
     );
   }
   if (availability) {
-    if (availability === Availability.Private && !(username || isModerator)) {
+    // Private models are listed only to their owner and moderators.
+    const ownListing = !!sessionUser && listedUserId === sessionUser.id;
+    if (availability === Availability.Private && !(ownListing || isModerator)) {
       throw throwAuthorizationError();
     }
 
@@ -1629,6 +1665,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   const lowerQuery = query?.toLowerCase();
   let isPrivate = false;
+
+  // A Private model is listed to moderators only: these lists are cached per moderator flag, not per
+  // user, so an owner exemption here would reach other viewers.
+  if (!sessionUser?.isModerator) AND.push({ availability: { not: Availability.Private } });
 
   // If the user is not a moderator, only show published models
   if (!sessionUser?.isModerator || !status?.length) {
@@ -2289,13 +2329,21 @@ export const updateModelById = async ({
   // through here, and the cached body's images/files/downloadUrl depend on
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
-  // A taken-down model's search document carries no images, so a change of mode rewrites it.
   if (written && 'mode' in written) {
-    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-    // Collection covers drawn from its images change only when it enters or leaves TakenDown.
-    // Not awaited: the lookup reads every image on the model.
     const writtenMode =
       written.mode && typeof written.mode === 'object' ? written.mode.set : written.mode;
+    // Update would not remove a taken-down model's document: the indexer only writes eligible models.
+    await modelsSearchIndex.queueUpdate([
+      {
+        id,
+        action:
+          writtenMode === ModelModifier.TakenDown
+            ? SearchIndexUpdateQueueAction.Delete
+            : SearchIndexUpdateQueueAction.Update,
+      },
+    ]);
+    // Collection covers drawn from its images change only when it enters or leaves TakenDown.
+    // Not awaited: the lookup reads every image on the model.
     if (
       writtenMode === ModelModifier.TakenDown ||
       priorMode === ModelModifier.TakenDown ||
@@ -2579,198 +2627,147 @@ const holdUnconfirmed = (e: unknown): never => {
   throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });
 };
 
+const PERMA_DELETE_ACTOR = { system: 'perma-delete-model' } as const;
+
 export const permaDeleteModelById = async ({
   id,
 }: GetByIdInput & {
   userId: number;
 }) => {
-  // Populated inside the tx so the snapshot is consistent with the cascade.
-  let modelFileUrls: string[] = [];
-  // Version ids captured inside the tx (before the cascade removes them) so the
-  // post-commit storage-resolver deregister can reach every reaped version.
-  let versionIds: number[] = [];
-
-  // Resolved BEFORE the tx, not inside it and not after: `CollectionItem` cascades
-  // from `Model`, `Post` AND `Image` — all three of which this transaction destroys —
-  // so post-commit there is nothing left to read, and a
-  // failed statement inside a Postgres tx aborts the whole tx — this bookkeeping read
-  // must never be able to take the delete down with it. The resolver is non-throwing,
-  // so a failure costs the reindex, not the deletion.
+  // Read before anything goes: `CollectionItem` cascades from `Model`, `Post` AND `Image`, so
+  // afterwards there is nothing left to read. The resolver is non-throwing, so a failure costs the
+  // reindex, not the deletion.
   const collectionsToRebuild = await getCollectionIdsForModelCascade({ modelId: id });
 
-  const deletionResult = await dbWrite.$transaction(
-    async (tx) => {
-      // Snapshot ModelFile URLs inside the tx — read before the cascade nukes the rows.
-      modelFileUrls = (
-        await tx.modelFile.findMany({
-          where: { modelVersion: { modelId: id } },
-          select: { url: true },
-        })
-      ).map((f) => f.url);
+  // A hold is refused up front, so nothing goes; the model's DELETE checks again.
+  const [held] = await dbWrite.$queryRaw<{ held: boolean }[]>`
+    SELECT ${modelDataHeldSql(Prisma.sql`${id}::int`, true)} AS held
+  `.catch(holdUnconfirmed);
+  if (held?.held !== false)
+    throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
 
-      const model = await tx.model.findUnique({
-        where: { id },
-        select: {
-          id: true,
-          userId: true,
-          nsfwLevel: true,
-          modelVersions: { select: { id: true } },
-        },
-      });
-      if (!model) return { deletedModel: null, imagesToDelete: [] };
+  // primary: these reads pick what the deletes below remove.
+  const model = await dbWrite.model.findUnique({
+    where: { id },
+    select: { id: true, userId: true, nsfwLevel: true, modelVersions: { select: { id: true } } },
+  });
+  if (!model) throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
+  // The ModelFile urls and version ids, read before the cascade removes them, for the storage
+  // cleanup and the storage-resolver deregister after the delete.
+  const versionIds = model.modelVersions.map((version) => version.id);
+  // primary: read just before the cascade removes the rows.
+  const modelFiles = await dbWrite.modelFile.findMany({
+    where: { modelVersion: { modelId: id } },
+    select: { url: true },
+  });
+  const modelFileUrls = modelFiles.map((f) => f.url);
+  // primary: picks the posts the delete below removes.
+  const posts = await dbWrite.post.findMany({
+    where: { userId: model.userId, modelVersionId: { in: versionIds } },
+    select: { id: true },
+  });
+  const postIds = posts.map((post) => post.id);
+  const imageIds = postIds.length
+    ? (
+        await dbWrite.$queryRaw<{ id: number }[]>`
+          SELECT id FROM "Image" WHERE "postId" = ANY(${postIds}::int[])`
+      ).map((image) => image.id)
+    : [];
 
-      versionIds = model.modelVersions.map(({ id }) => id);
+  // Images, then posts, then the model: no transaction, so a step that fails leaves the ones after
+  // it, which a retry deletes.
+  await deleteImages(imageIds, { actor: PERMA_DELETE_ACTOR, updatePosts: false });
+  await deletePostRows(kyselyOver(dbWrite), { ids: postIds, actor: PERMA_DELETE_ACTOR });
+  const [deletedModel] = await dbWrite.$queryRaw<
+    { id: number; userId: number; nsfwLevel: number }[]
+  >`
+    WITH ${keepHeldReviewsCte(reviewsOnModelsSql(Prisma.sql`SELECT ${id}::int`), true)}
+    DELETE FROM "Model" m
+    WHERE m.id = ${id}
+      AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
+    RETURNING m.id, m."userId", m."nsfwLevel"
+  `.catch(holdUnconfirmed);
+  if (!deletedModel) {
+    // Gone already, by a concurrent delete, is not a hold.
+    // primary: tells a delete that just missed from a hold.
+    const stillThere = await dbWrite.model.findUnique({ where: { id }, select: { id: true } });
+    if (!stillThere) throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
+    throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
+  }
 
-      // Get posts to find associated images
-      const posts = await tx.post.findMany({
-        where: {
-          userId: model.userId,
-          modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
-        },
-        select: { id: true },
-      });
-      const postIds = posts.map((post) => post.id);
-
-      // Get images to delete and queue search index updates
-      let imagesToDelete: { id: number }[] = [];
-      if (postIds.length > 0) {
-        imagesToDelete = await tx.image.findMany({
-          where: { postId: { in: postIds } },
-          select: { id: true },
-        });
-
-        const doomedImages = Prisma.sql`SELECT i.id FROM "Image" i WHERE i."postId" = ANY(${postIds}::int[])`;
-        await tx.$executeRaw`DELETE FROM "Image" WHERE id IN (${doomedImages})`;
-      }
-
-      const doomedPosts = Prisma.sql`SELECT p.id FROM "Post" p
-        WHERE p."userId" = ${model.userId} AND p."modelVersionId" = ANY(${versionIds}::int[])`;
-      await tx.$executeRaw`DELETE FROM "Post" WHERE id IN (${doomedPosts})`;
-
-      // Checked in the DELETE itself, so a hold placed during this transaction still stops it, and
-      // the rollback restores the posts and images.
-      const [deletedModel] = await tx.$queryRaw<
-        { id: number; userId: number; nsfwLevel: number }[]
-      >`
-        WITH ${keepHeldReviewsCte(reviewsOnModelsSql(Prisma.sql`SELECT ${id}::int`), true)}
-        DELETE FROM "Model" m
-        WHERE m.id = ${id}
-          AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
-        RETURNING m.id, m."userId", m."nsfwLevel"
-      `.catch(holdUnconfirmed);
-      if (!deletedModel) {
-        // Gone already, by a concurrent delete, is not a hold. Thrown either way: nothing this
-        // transaction deleted passed a hold check, so it must not commit.
-        const stillThere = await tx.model.findUnique({ where: { id }, select: { id: true } });
-        if (!stillThere)
-          throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
-        throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
-      }
-      return { deletedModel, imagesToDelete };
-    },
-    { maxWait: 10000, timeout: 30000 }
-  );
-
-  const { deletedModel, imagesToDelete } = deletionResult;
-
-  if (deletedModel) {
-    // Each post-commit step is independently best-effort. The DB tx already
-    // committed, so a downstream failure in bid cleanup or search-index
-    // queueing must NOT shortcut the S3 cleanup — otherwise we leak orphan
-    // objects in B2/R2 every time one of these auxiliary services hiccups.
+  // Each step after the deletes is independently best-effort. The rows are
+  // gone, so a downstream failure in bid cleanup or search-index
+  // queueing must NOT shortcut the S3 cleanup — otherwise we leak orphan
+  // objects in B2/R2 every time one of these auxiliary services hiccups.
+  try {
+    await deleteBidsForModel({ modelId: deletedModel.id });
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-perma-delete-bids',
+      message: `Failed to delete bids for model ${id}`,
+      error,
+    });
+  }
+  try {
+    await modelsSearchIndex.queueUpdate([
+      { id: deletedModel.id, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-perma-delete-search-index',
+      message: `Failed to queue search index update for model ${id}`,
+      error,
+    });
+  }
+  // Rebuild the collections that held this model, its posts or its gallery images,
+  // using the snapshot read before the deletes — the membership rows cascaded away with
+  // them, so this is the only remaining record of which documents went stale.
+  // `enqueueCollectionRebuild` never throws by contract; wrapped so a broken contract
+  // cannot skip the S3 and storage-resolver cleanup below.
+  try {
+    await enqueueCollectionRebuild({
+      ...collectionsToRebuild,
+      source: 'model-perma-delete',
+    });
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-perma-delete-collection-search-index',
+      message: `Failed to queue collection search index update for model ${id}`,
+      // `logToAxiom` stringifies its payload, and a bare Error serialises to `{}`.
+      error: safeError(error),
+    });
+  }
+  // Clean up S3 objects for all deleted ModelFiles (admin-triggered, latency-tolerant → await).
+  if (modelFileUrls.length > 0) {
     try {
-      await deleteBidsForModel({ modelId: deletedModel.id });
+      await deleteModelFileObjects(modelFileUrls);
     } catch (error) {
       logToAxiom({
         type: 'error',
-        name: 'model-perma-delete-bids',
-        message: `Failed to delete bids for model ${id}`,
+        name: 'model-perma-delete-s3-objects',
+        message: `Failed to delete S3 objects for model ${id}`,
         error,
       });
     }
+  }
+  // After the deletes: deregister storage-resolver file_locations for every version
+  // this model owned. For a tiered file the real backend object is keyed by
+  // file_locations.path (not the stale ModelFile.url the S3 cleanup used), and
+  // the surviving row keeps that object whitelisted against the dereference-
+  // quarantine sweep — a permanent leak. Best-effort + never throws.
+  if (versionIds.length > 0) {
     try {
-      await modelsSearchIndex.queueUpdate([
-        { id: deletedModel.id, action: SearchIndexUpdateQueueAction.Delete },
-      ]);
+      await deregisterFileLocationsBatch(versionIds);
     } catch (error) {
       logToAxiom({
         type: 'error',
-        name: 'model-perma-delete-search-index',
-        message: `Failed to queue search index update for model ${id}`,
+        name: 'model-perma-delete-deregister-file-locations',
+        message: `Failed to deregister file locations for model ${id}`,
         error,
       });
-    }
-    if (imagesToDelete.length > 0) {
-      try {
-        await queueImageSearchIndexUpdate({
-          ids: imagesToDelete.map((img) => img.id),
-          action: SearchIndexUpdateQueueAction.Delete,
-        });
-      } catch (error) {
-        logToAxiom({
-          type: 'error',
-          name: 'model-perma-delete-image-search-index',
-          message: `Failed to queue image search index update for model ${id}`,
-          error,
-        });
-      }
-    }
-    // Rebuild the collections that held this model, its posts or its gallery images,
-    // using the pre-tx snapshot — the membership rows cascaded away with the delete,
-    // so this is the only remaining record of which documents went stale.
-    // `enqueueCollectionRebuild` is non-throwing by contract, but wrapped anyway so
-    // this step matches its siblings above rather than resting the S3 and
-    // storage-resolver cleanup below on another module keeping that promise.
-    //
-    // ⚠️ This catch is therefore UNREACHABLE through the real callee, and no test
-    // pins it: removing the try/catch entirely leaves the suite green, measured. It is
-    // defence-in-depth against the contract being broken later, not covered behaviour.
-    // Exercising it would mean mocking collection-media-index in a suite that
-    // deliberately runs the real one so its payload assertions mean something.
-    try {
-      await enqueueCollectionRebuild({
-        ...collectionsToRebuild,
-        source: 'model-perma-delete',
-      });
-    } catch (error) {
-      logToAxiom({
-        type: 'error',
-        name: 'model-perma-delete-collection-search-index',
-        message: `Failed to queue collection search index update for model ${id}`,
-        // `logToAxiom` JSON.stringifies its payload and a bare Error serialises to
-        // `{}`. The siblings above predate that finding; this one does not.
-        error: safeError(error),
-      });
-    }
-    // Clean up S3 objects for all deleted ModelFiles (admin-triggered, latency-tolerant → await).
-    if (modelFileUrls.length > 0) {
-      try {
-        await deleteModelFileObjects(modelFileUrls);
-      } catch (error) {
-        logToAxiom({
-          type: 'error',
-          name: 'model-perma-delete-s3-objects',
-          message: `Failed to delete S3 objects for model ${id}`,
-          error,
-        });
-      }
-    }
-    // Post-commit: deregister storage-resolver file_locations for every version
-    // this model owned. For a tiered file the real backend object is keyed by
-    // file_locations.path (not the stale ModelFile.url the S3 cleanup used), and
-    // the surviving row keeps that object whitelisted against the dereference-
-    // quarantine sweep — a permanent leak. Best-effort + never throws.
-    if (versionIds.length > 0) {
-      try {
-        await deregisterFileLocationsBatch(versionIds);
-      } catch (error) {
-        logToAxiom({
-          type: 'error',
-          name: 'model-perma-delete-deregister-file-locations',
-          message: `Failed to deregister file locations for model ${id}`,
-          error,
-        });
-      }
     }
   }
 
@@ -2856,6 +2853,12 @@ export async function applyModelFlagSideEffects({
 
   let modelVersionIds: number[] | undefined;
 
+  // A sfwOnly-only change leaves image rows alone: they carry no sfwOnly. A minor model re-syncs
+  // its images on every flag write, so an image added since the last one is flagged too.
+  const syncImageFlags = after.minor !== before.minor || poiChanged || after.minor;
+  // An image's own minor flag (set by a scan or a moderator) is written only by a change to the
+  // model's minor flag or by a minor model: a poi-only change on a non-minor model leaves it.
+  const syncMinor = after.minor !== before.minor || after.minor;
   if (minorChanged || poiChanged) {
     modelVersionIds = (
       await dbWrite.modelVersion.findMany({ where: { modelId: id }, select: { id: true } })
@@ -2866,14 +2869,18 @@ export async function applyModelFlagSideEffects({
       // binding one parameter per image id blows past Postgres' 65535 parameter limit.
       // The value guard keeps a re-toggle from rewriting every row (and re-queueing every
       // id into the search index) when the flags already match.
-      const updatedImages = await dbWrite.$queryRaw<{ id: number }[]>`
+      const updatedImages = !syncImageFlags
+        ? []
+        : await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "Image" i
-          SET minor = ${after.minor},
+          SET minor = CASE WHEN ${syncMinor} THEN ${after.minor} ELSE i.minor END,
               poi = ${after.poi}
         FROM "Post" p
         WHERE i."postId" = p.id
           AND p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
-          AND (i.minor IS DISTINCT FROM ${after.minor} OR i.poi IS DISTINCT FROM ${after.poi})
+          AND (${
+            syncMinor ? Prisma.sql`i.minor IS DISTINCT FROM ${after.minor} OR` : Prisma.empty
+          } i.poi IS DISTINCT FROM ${after.poi})
         RETURNING i.id
       `;
 
@@ -2888,7 +2895,7 @@ export async function applyModelFlagSideEffects({
       // The documents showing these images apply the minor rule. Not awaited: a gallery can be
       // large, and it never throws.
       if (after.minor !== before.minor && updatedImages.length !== 0)
-        void queueModelsForImageChildTagChanges({
+        void queueDocumentsForImageMinorChanges({
           minorImageIds: updatedImages.map(({ id }) => id),
         });
     }
@@ -4089,9 +4096,6 @@ function locksWithScanRating(row: { meta: unknown; lockedProperties: string[] | 
   return source && SCAN_RATING_SOURCES.includes(source) ? uniq([...locks, 'nsfw']) : locks;
 }
 
-export const SCAN_RATING_KEPT_MESSAGE =
-  "This model was rated mature from its civitai.red title and description, so it stays marked mature, and a civitai.com version is what lists it on civitai.com. To change that, edit the title and description and save them first; once they're checked and pass, you can change the rating.";
-
 /**
  * Holds the text scan's mature rating, which carries no lock, against an owner's save that unticks
  * mature (face or not) or removes the face that listed a model already not mature. A text edit is no
@@ -4102,8 +4106,10 @@ async function assertScanRatingKept({
   modelId,
   before,
   data,
+  db,
 }: {
   modelId: number;
+  db?: Prisma.TransactionClient;
   before: {
     nsfw: boolean;
     name: string;
@@ -4150,8 +4156,16 @@ async function assertScanRatingKept({
   if (after('nsfw')) return;
   // A row already not mature (an older one): only removing the face that listed it.
   if (!before.nsfw && (faceAfter || !hasFace(before))) return;
-  if (await moderatorRuledNsfwSince(modelId, ratedAt)) return;
-  throw throwBadRequestError(SCAN_RATING_KEPT_MESSAGE);
+  if (await moderatorRuledNsfwSince(modelId, ratedAt, { db })) return;
+  // The versions the scan reads, for the explanation: published ones only.
+  const versions = await (db ?? dbWrite).modelVersion.findMany({
+    where: { modelId, status: { in: PUBLIC_MODEL_STATUSES } },
+    select: { name: true, description: true, trainedWords: true },
+    orderBy: { index: 'asc' },
+  });
+  throw throwBadRequestError(
+    scanRatingKeptMessage({ name: before.name, description: before.description, versions })
+  );
 }
 
 export const upsertModel = async (
@@ -4240,7 +4254,8 @@ export const upsertModel = async (
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
   normalizeMergePermissions(data, beforeUpdate?.allowDerivatives);
   normalizeSfwFaceInput(data);
-  if (beforeUpdate && id && !isModerator)
+  // Only the owner is told about the scan's rating; anyone else gets the not-found below.
+  if (beforeUpdate && id && !isModerator && beforeUpdate.userId === userId)
     await assertScanRatingKept({ modelId: id, before: beforeUpdate, data });
   // `?? null`: on a create there is no stored row, and a null from the form is not a change.
   const sfwFaceChanged =
@@ -4255,16 +4270,34 @@ export const upsertModel = async (
   // Checked as it will be stored: a save carrying only one .com field, or only a cover (the step
   // that lists a mature model on .com), still has its whole face checked.
   const storedSfwName = data.sfwName !== undefined ? data.sfwName : beforeUpdate?.sfwName;
-  if (!isModerator && storedSfwName && (sfwFaceChanged || coverChanged))
-    await assertSfwFaceSafe({
+  if (!isModerator && storedSfwName && (sfwFaceChanged || coverChanged)) {
+    const storedSfwDescription =
+      data.sfwDescription !== undefined ? data.sfwDescription : beforeUpdate?.sfwDescription;
+    const { stamp } = await assertSfwFaceSafe({
       sfwName: storedSfwName,
-      sfwDescription:
-        data.sfwDescription !== undefined ? data.sfwDescription : beforeUpdate?.sfwDescription,
+      sfwDescription: storedSfwDescription,
       name: data.name ?? beforeUpdate?.name ?? '',
       description: data.description !== undefined ? data.description : beforeUpdate?.description,
       modelId: id,
       userId,
     });
+    if (stamp)
+      meta = {
+        ...(meta ?? {}),
+        sfwFaceCheckedAt: sfwFaceStamp(
+          {
+            sfwName: storedSfwName,
+            sfwDescription: storedSfwDescription ?? null,
+            sfwCoverImageId:
+              (data.sfwCoverImageId !== undefined
+                ? data.sfwCoverImageId
+                : beforeUpdate?.sfwCoverImageId) ?? null,
+            versionFields: stamp.versionFields,
+          },
+          stamp.promptId
+        ),
+      };
+  }
   if (coverChanged) {
     if (!beforeUpdate || !id)
       throw throwBadRequestError('Covers can be picked once the model has published images.');
@@ -4527,6 +4560,7 @@ export const upsertModel = async (
     let lockedBeforeUpdate: string[] | undefined;
 
     let heldVerdictApplied = false;
+    let faceLossNotice: NotifyTextScanRatingRaisedArgs | null = null;
     const result = await dbWrite.$transaction(
       async (tx) => {
         // Merged over the row as it is now: a wipe, a moderator or a scan may have written its meta
@@ -4545,7 +4579,7 @@ export const upsertModel = async (
           enforceLockedProperties({ data, storedLockedProperties: locked.lockedProperties });
           // The scan's rating has no lock to enforce here: a rating that landed since the read
           // above is held by its guard, judged again on this row.
-          await assertScanRatingKept({ modelId: id, before: locked, data });
+          await assertScanRatingKept({ modelId: id, before: locked, data, db: tx });
           const profanityRefusal = profanityDetected
             ? profanityRatingRefusal(locked, locked.lockedProperties, data)
             : null;
@@ -4818,25 +4852,38 @@ export const upsertModel = async (
           data.availability !== Availability.Private
         )
           heldVerdictApplied = await heldVerdict.applyHeldVerdictLeavingPrivate(tx, updated.id);
+        // Applied even when this save also edits the listing text, so a failed rescan never leaves
+        // the model unrated: the rescan of the new text releases the marker if it is not mature.
+        if (losesSfwFace(beforeUpdate, data)) {
+          faceLossNotice = await heldVerdict.applyComFaceHeldVerdict(tx, updated.id);
+          if (faceLossNotice) heldVerdictApplied = true;
+        }
 
         return updated;
       },
       { maxWait: 10000, timeout: 30000 }
     );
-    // First after commit, so a later post-save step that throws cannot drop it. Re-checked even when
-    // the gate ran: it read the description before blurb expansion, not the text stored.
-    const listingChanged =
-      (data.name !== undefined && data.name !== beforeUpdate.name) ||
-      (data.description !== undefined && data.description !== beforeUpdate.description);
-    const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
-    if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
-      await queueComFaceRecheck(id);
-    if (!isModerator && listingChanged) await queueComFaceRestore(id);
-    if (heldVerdictApplied) {
-      const { finishHeldVerdictApply } = await import(
-        '~/server/services/text-scan/actions/model-nsfw'
-      );
-      await finishHeldVerdictApply(id);
+    // The owner's notice goes in the finally: after the level refresh, so a slow notice cannot keep
+    // the old level listed, and even when a step before it throws.
+    try {
+      // First of the post-save steps, so a later one that throws cannot drop it. Re-checked even when
+      // the gate ran: it read the description before blurb expansion, not the text stored.
+      const listingChanged =
+        (data.name !== undefined && data.name !== beforeUpdate.name) ||
+        (data.description !== undefined && data.description !== beforeUpdate.description);
+      const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
+      if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
+        await queueComFaceRecheck(id);
+      if (!isModerator && listingChanged) await queueComFaceRestore(id);
+      if (losesSfwFace(beforeUpdate, data)) await rescanTextAfterFaceLoss(id);
+      if (heldVerdictApplied) {
+        const { finishHeldVerdictApply } = await import(
+          '~/server/services/text-scan/actions/model-nsfw'
+        );
+        await finishHeldVerdictApply(id);
+      }
+    } finally {
+      if (faceLossNotice) await heldVerdictNotice.send([faceLossNotice]);
     }
     await preventReplicationLag('model', id);
     await userModelCountCache.refresh(userId);
@@ -6913,6 +6960,7 @@ export async function getModelsWithVersions({
     ignoreBrowsingAddons,
     ownerUserId,
     publicVersionsOnly,
+    includeWithheld: true,
   });
 
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
@@ -7307,7 +7355,7 @@ export async function migrateResourceToCollection({
   const faceMoves = remainingVersions.some((v) => v.id === coverVersionId);
   const noFace = { sfwName: null, sfwDescription: null, sfwCoverImageId: null };
 
-  const { collection, modelIds } = await dbWrite.$transaction(
+  const { collection, modelIds, faceless, faceLossNotices } = await dbWrite.$transaction(
     async (tx) => {
       // Create the collection
       const collection = await tx.collection.create({
@@ -7326,6 +7374,7 @@ export async function migrateResourceToCollection({
 
       // create a model for each remaining version
       const modelIds = [];
+      let faceModelId: number | undefined = faceMoves ? undefined : model.id;
       for (const version of remainingVersions) {
         const newModel = await tx.model.create({
           data: {
@@ -7352,6 +7401,7 @@ export async function migrateResourceToCollection({
         );
 
         modelIds.push(newModel.id);
+        if (version.id === coverVersionId) faceModelId = newModel.id;
 
         const versionReviewIds = resourceReviews
           .filter((r) => r.modelVersionId === version.id)
@@ -7393,35 +7443,49 @@ export async function migrateResourceToCollection({
         },
       });
 
-      return { collection, modelIds };
+      // A model left without the face is rated here if the text scan let it stand on that face.
+      const { applyComFaceHeldVerdict } = await import(
+        '~/server/services/text-scan/actions/model-nsfw'
+      );
+      const faceless = hasSfwFaceParts(model) ? modelIds.filter((id) => id !== faceModelId) : [];
+      const faceLossNotices = [];
+      for (const id of faceless) faceLossNotices.push(await applyComFaceHeldVerdict(tx, id));
+
+      return { collection, modelIds, faceless, faceLossNotices };
     },
     { timeout: 60000, maxWait: 10000 }
   );
+  // The owners' notices go in the finally: after the level refresh and the cache busts, so a slow
+  // notice cannot keep the old level listed, and even when one of them throws.
+  try {
+    // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
+    // each was given its version's stored level. Versions first: the model level reads them.
+    await updateModelVersionNsfwLevels(filteredVersions.map((v) => v.id));
+    await updateModelNsfwLevels(modelIds);
 
-  // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
-  // each was given its version's stored level. Versions first: the model level reads them.
-  await updateModelVersionNsfwLevels(filteredVersions.map((v) => v.id));
-  await updateModelNsfwLevels(modelIds);
+    // Set the showcase collection for the original model
+    await setModelShowcaseCollection({
+      collectionId: collection.id,
+      id: modelId,
+      userId: model.userId,
+      isModerator,
+      modelAlreadyInCollection: true,
+    });
 
-  // Set the showcase collection for the original model
-  await setModelShowcaseCollection({
-    collectionId: collection.id,
-    id: modelId,
-    userId: model.userId,
-    isModerator,
-    modelAlreadyInCollection: true,
-  });
-
-  // Bust caches
-  await Promise.all([
-    dataForModelsCache.refresh(modelIds),
-    bustMvCache(
-      filteredVersions.map((v) => v.id),
-      modelIds
-    ),
-    // The versions now belong to new models.
-    bustTwice(() => versionModelCache().bust(filteredVersions.map((v) => v.id))),
-  ]);
+    // Bust caches
+    await Promise.all([
+      dataForModelsCache.refresh(modelIds),
+      bustMvCache(
+        filteredVersions.map((v) => v.id),
+        modelIds
+      ),
+      // The versions now belong to new models.
+      bustTwice(() => versionModelCache().bust(filteredVersions.map((v) => v.id))),
+    ]);
+  } finally {
+    const notices = faceLossNotices.filter((notice) => notice !== null);
+    if (notices.length) await heldVerdictNotice.send(notices);
+  }
 
   modelMetrics
     .queueUpdate(modelIds)
@@ -7437,6 +7501,8 @@ export async function migrateResourceToCollection({
     modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
   modelIds.forEach((id) => scanModelAndRules(id, { rules: !isModerator }));
+  // Past the unchanged-text skip: a face this split took away was what let the text stand.
+  await Promise.all(faceless.map((id) => rescanTextAfterFaceLoss(id)));
 
   return { ok: true };
 }
@@ -7782,6 +7848,8 @@ export const privateModelFromTraining = async ({
   // Set when the flow is refused before it wrote anything (a take-down first, or a gate on the locked
   // row), so there is nothing to roll back.
   let takenDown = false;
+  // The flags as the locked row had them, for the side effects of the sfwOnly this flow forces on.
+  let flagsBefore: Parameters<typeof applyModelFlagSideEffects>[0]['before'] | undefined;
 
   try {
     // One transaction: the model row stays locked until its versions are written, so a model
@@ -7805,6 +7873,13 @@ export const privateModelFromTraining = async ({
           takenDown = true;
           throw error;
         }
+        flagsBefore = {
+          poi: locked.poi,
+          minor: locked.minor,
+          sfwOnly: locked.sfwOnly,
+          nsfw: locked.nsfw,
+          gallerySettings: locked.gallerySettings,
+        };
         const storedMeta = locked.meta;
         const moderatorChangesNsfwLock = user.isModerator && rulesOnNsfw(locked, data);
         const intentMeta = user.isModerator
@@ -7937,6 +8012,17 @@ export const privateModelFromTraining = async ({
     );
     // The model is now SFW-only, which holds the gallery level it serves.
     await bustModelGallerySettings([id]);
+    // Logged, not thrown: the model is already Private, and a throw here would send it down the revert below.
+    if (flagsBefore)
+      await applyModelFlagSideEffects({ before: flagsBefore, after: result }).catch((error) =>
+        logToAxiom({
+          name: 'private-model-from-training',
+          type: 'error',
+          message: 'flag side effects failed',
+          modelId: id,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
     await applyHeldVerdictAfterOwnerSave(model, result, { isModerator: user.isModerator });
 
     return withoutModeratorOnlyMeta(result);
@@ -8304,6 +8390,7 @@ export async function getTopWeeklyEarners(fresh = false) {
         cast(SUM(amount) as int) as earned
         FROM orchestration.resourceCompensations
         WHERE date >= toStartOfDay(${auctionReset}::Date)
+          AND source NOT IN (${PLATFORM_REVENUE_SOURCES_SQL})
         GROUP BY modelVersionId
         ORDER BY earned DESC
         LIMIT 100;

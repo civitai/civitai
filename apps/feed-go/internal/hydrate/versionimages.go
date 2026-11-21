@@ -22,8 +22,9 @@ const ImageOnSiteSQL = `(i.meta->>'civitaiResources' IS NOT NULL
 
 // sqlVersionImages is imagesForModelVersionsCache's lookupFn query: getImagesForModelVersion
 // (src/server/services/image.service.ts) with `{modelVersionIds, imagesPerVersion: 20, db}` and no
-// other option, so no user (imageBlockedForConditions drops every blocked image), no browsing level
-// (the reviewed, non-pending, rated branch), no include (no meta column, no tags). Its enum and json
+// other option, so no user (imageBlockedForConditions drops every blocked image, and
+// minorMatureImageVisibleSql every image the minor content rule restricts), no browsing level (the
+// reviewed, non-pending, rated branch), no include (no meta column, no tags). Its enum and json
 // columns are selected as text (Prisma hands the Node code the enum's name and JSON.parse of the
 // json). The target ids are one int[] parameter where Node binds ARRAY[$1, …]; LIMIT is the bound 20.
 var sqlVersionImages = `WITH targets AS (
@@ -43,6 +44,7 @@ var sqlVersionImages = `WITH targets AS (
       AND i."needsReview" IS NULL AND i."acceptableMinor" = FALSE
       AND i."nsfwLevel" != 0
       AND ` + ImageReviewedSQL("i") + `
+      AND ` + MinorMatureImageHiddenSQL("i") + `
       AND (
         (i."nsfwLevel" & ` + strconv.Itoa(browsing.NSFWLevels) + `) = 0
         OR NOT i."modelRestricted"
@@ -103,19 +105,19 @@ func (s *Sources) lagKey(typ string, id int) string {
 // versionImagesDB is the database the version-images lookup reads: Node's lookupFn reads
 // getDbWithoutLagBatch('modelVersion', ids) (lagAwareDB).
 func (s *Sources) versionImagesDB(ctx context.Context, ids []int) (Querier, error) {
-	return s.lagAwareDB(ctx, "modelVersion", ids)
+	return s.lagAwareDB(ctx, MissVersionImages, "modelVersion", ids)
 }
 
 // lagAwareDB is getDbWithoutLagBatch(typ, ids) (src/server/db/db-lag-helpers.ts): the primary when any
 // of the ids carries the lag flag a recent write set (markFresh, a non-empty value for
 // REPLICATION_LAG_DELAY seconds; a flag read that fails reads as unflagged, the guard failing open),
-// else the replica. With WriteBack on this service writes what it reads, so it decides the same way
-// over the same flags (with REPLICATION_LAG_DELAY 0 Node never writes a flag, so none is found
-// either). With it off nothing it reads is cached and it reads the replica, as entityDB does: an id
-// flagged moments ago then gets the replica's answer for this one request. A Go-first probe
+// else the replica. With cache written back this service writes what it reads, so it decides the
+// same way over the same flags (with REPLICATION_LAG_DELAY 0 Node never writes a flag, so none is
+// found either). Otherwise nothing it reads is cached and it reads the replica, as entityDB does: an
+// id flagged moments ago then gets the replica's answer for this one request. A Go-first probe
 // (WithPresence) reads the replica too: it writes nothing, and never reads the primary.
-func (s *Sources) lagAwareDB(ctx context.Context, typ string, ids []int) (Querier, error) {
-	if !s.Compute.WriteBack || presenceOf(ctx) != nil {
+func (s *Sources) lagAwareDB(ctx context.Context, cache, typ string, ids []int) (Querier, error) {
+	if !s.Compute.writes(cache) || presenceOf(ctx) != nil {
 		return s.Replica, nil
 	}
 	if s.Compute.Primary == nil {

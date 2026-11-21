@@ -61,6 +61,7 @@ import {
   coercePurchasedBuzzType,
   TransactionType,
 } from '~/shared/constants/buzz.constants';
+import { PLATFORM_REVENUE_SOURCES_SQL } from '@civitai/buzz';
 import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { paymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
@@ -1637,10 +1638,10 @@ type Row = {
 // lower-cased variants elsewhere, so both are listed.
 const CASH_ACCOUNT_TYPES_SQL = "'CashSettled', 'cashSettled', 'CashPending', 'cashPending'";
 
-// Compensation is everything that is neither a license fee nor a tip, so one-off sources such as
-// `compensation_recovered_20260507` stay in it. Tips are generator-chosen, so they get their own tab.
+// Compensation is everything that is neither a license fee, a tip nor platform revenue, so one-off sources
+// such as `compensation_recovered_20260507` stay in it. Tips are generator-chosen, so they get their own tab.
 const COMPENSATION_SOURCE_SQL: Record<CompensationSource, string> = {
-  compensation: "NOT IN ('licenseFee', 'tip')",
+  compensation: `NOT IN ('licenseFee', 'tip', ${PLATFORM_REVENUE_SOURCES_SQL})`,
   licenseFee: "= 'licenseFee'",
   tip: "= 'tip'",
 };

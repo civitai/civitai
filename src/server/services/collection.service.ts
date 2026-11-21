@@ -34,7 +34,12 @@ import { logToAxiom } from '~/server/logging/client';
 import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { isRestrictedImage, RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
-import { getDbWithoutLag, kyselyMatching, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import {
+  collectionItemLagId,
+  getDbWithoutLag,
+  kyselyMatching,
+  preventReplicationLag,
+} from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordChallengeEntrySubmitted } from '~/server/prom/challenge.metrics';
 import {
@@ -139,6 +144,10 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { assertUserChallengeAcceptingEntries } from '~/server/games/daily-challenge/challenge-entry-gate';
+import {
+  getIncompatibleEntryImageIds,
+  INCOMPATIBLE_BASE_MODEL_MESSAGE,
+} from '~/server/games/daily-challenge/challenge-resource-compat';
 import { detachPostsFromCollection } from '~/server/services/collection-post-detach';
 import { liveInviteWhere } from '~/server/services/collection-invite.utils';
 import {
@@ -158,10 +167,10 @@ import {
   isCollaboratorRow,
 } from '~/server/services/collection-permission.utils';
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const modelService = () => import('~/server/services/model.service');
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const articleService = () => import('~/server/services/article.service');
 
 export type CollectionContributorPermissionFlags = {
@@ -1137,7 +1146,15 @@ export const saveItemInCollections = async ({
   upsertCollectionItems = upsertCollectionItems.filter((c) => canWrite(c.collectionId));
   const writableCollections = collections.filter((c) => canWrite(c.id));
 
-  const existingItems = await dbRead.collectionItem.findMany({
+  // An entry this item just gained, lost or had its tag changed reads from the primary, so a stale
+  // replica row cannot unlock a tag the entry no longer holds.
+  const lagDbs = await Promise.all(
+    touchedCollectionIds.map((id) =>
+      getDbWithoutLag('collectionItem', collectionItemLagId(id, itemKey, input[itemKey]))
+    )
+  );
+  const existingItemsDb = lagDbs.includes(dbWrite) ? dbWrite : dbRead;
+  const existingItems = await existingItemsDb.collectionItem.findMany({
     where: { collectionId: { in: touchedCollectionIds }, [itemKey]: input[itemKey] },
     select: { id: true, collectionId: true, tagId: true, addedById: true, note: true },
   });
@@ -1242,6 +1259,16 @@ export const saveItemInCollections = async ({
           throw throwBadRequestError('Provided tag is not part of this collection');
         }
 
+        // A system tag (filterableOnly) is set by the platform, never chosen. The pickers offer an
+        // entry its current system tag back, so one is let through only for an entry in this
+        // collection already holding a system tag, which the write below keeps (`keepsTag`).
+        const storedTagId = existingItemsByCollection.get(collectionId)?.tagId;
+        const holdsSystemTag =
+          storedTagId != null && !inputTags.some((t) => t.tag.id === storedTagId);
+        if (tagId && !inputTags.some((t) => t.tag.id === tagId) && !holdsSystemTag) {
+          throw throwBadRequestError('Provided tag is not part of this collection');
+        }
+
         // Use batched permissions instead of individual query
         const permission = permissionsMap.get(collectionId);
         if (!permission) {
@@ -1321,6 +1348,16 @@ export const saveItemInCollections = async ({
         "status" "CollectionItemStatus",
         "${Prisma.raw(itemKey)}" INTEGER,
         "tagId" INTEGER
+      )
+      -- Only no tag or one of the collection's category tags is written from here. Any other tag (a
+      -- system tag, on the collection as filterableOnly or not on it at all) only reaches this as an
+      -- entry's stored tag sent back, which the update below keeps anyway, so dropping the row writes
+      -- the same; on a stale read it stops that tag landing on a new or since-cleared entry.
+      WHERE v."tagId" IS NULL OR EXISTS (
+        SELECT 1 FROM "TagsOnCollection" tc
+        WHERE tc."collectionId" = v."collectionId"
+          AND tc."tagId" = v."tagId"
+          AND NOT tc."filterableOnly"
       )
       ON CONFLICT ("collectionId", "${Prisma.raw(itemKey)}")
         WHERE "${Prisma.raw(itemKey)}" IS NOT NULL
@@ -1405,6 +1442,19 @@ export const saveItemInCollections = async ({
   }
 
   await dbWrite.$transaction(transactions);
+  // The save has landed; a flag that cannot be written only leaves the next read on the replica.
+  await Promise.all(
+    touchedCollectionIds.map((id) =>
+      preventReplicationLag(
+        'collectionItem',
+        collectionItemLagId(id, itemKey, input[itemKey])
+      ).catch((error) =>
+        logSysRedisFailOpen('write-degraded', 'collection.saveItemInCollections', error, {
+          collectionId: id,
+        })
+      )
+    )
+  );
   if (itemKey === 'imageId') await bustContestCollectionItemsCache([input.imageId]);
 
   if (followCollectionIds.length > 0) {
@@ -1500,8 +1550,11 @@ function withStoredModeratorMetadata(
 
 export const upsertCollection = async ({
   input,
+  coverViewer,
 }: {
   input: UpsertCollectionInput & { userId: number; isModerator?: boolean; isMember?: boolean };
+  /** Who the editor's read showed the cover to, as for getCollectionById; the editor by default. */
+  coverViewer?: { id?: number; isModerator?: boolean };
 }) => {
   const {
     userId,
@@ -1590,7 +1643,7 @@ export const upsertCollection = async ({
               imageId: currentCollection.image.id,
             },
           ],
-          { id: userId, isModerator },
+          coverViewer ?? { id: userId, isModerator },
           dbWrite
         )
       ).has(currentCollection.id);
@@ -3643,6 +3696,13 @@ export const validateContestCollectionEntry = async ({
           "This image doesn't use a required model for this challenge. The model has to be readable from the image's own generation metadata — a resource credited by hand doesn't count. Generate on site, or re-upload the image with its metadata intact."
         );
       }
+      // Primary: a missing checkpoint row passes this check, and the fee below is never refunded.
+      const incompatible = await getIncompatibleEntryImageIds(
+        imageIds,
+        resourceChallenge.modelVersionIds,
+        dbWrite
+      );
+      if (incompatible.size > 0) throw throwBadRequestError(INCOMPATIBLE_BASE_MODEL_MESSAGE);
     }
   }
 
@@ -3905,6 +3965,12 @@ export const bulkSaveItems = async ({
       }));
   }
 
+  // A system tag (filterableOnly) is never written to a new entry; items already in the collection
+  // are skipped above, so a re-save carrying their current system tag still passes.
+  if (data.length > 0 && tagId && !inputTags.some((t) => t.tag.id === tagId)) {
+    throw throwBadRequestError('The tag provided is not allowed in this collection');
+  }
+
   const { count } = await dbWrite.collectionItem.createMany({ data });
   const savedImageIds = data.map((d) => d.imageId).filter(isDefined);
   await bustContestCollectionItemsCache(savedImageIds);
@@ -3988,7 +4054,7 @@ export const bulkSaveItems = async ({
 
   // Check for challenge entry prize eligibility (Contest mode collections only)
   if (collection.mode === CollectionMode.Contest && count > 0) {
-    // Import dynamically to avoid circular dependencies
+    // Dynamic import, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
     const { checkAndAwardEntryPrize } = await import(
       '~/server/games/daily-challenge/challenge-prize'
     );
@@ -4153,6 +4219,7 @@ export const removeCollectionItem = async ({
   userId,
   collectionId,
   itemId,
+  type,
   isModerator,
 }: RemoveCollectionItemInput & { userId: number; isModerator?: boolean }) => {
   const permissions = await getUserCollectionPermissionsById({
@@ -4161,21 +4228,24 @@ export const removeCollectionItem = async ({
     isModerator,
   });
 
-  if (!permissions.collectionType) {
-    throw throwNotFoundError('Unable to determine collection type');
+  // A typed collection's own type wins. A type-NULL collection holds items of every type (see
+  // `saveItemInCollections`), so a bare `itemId` is ambiguous there and the caller must name it.
+  const collectionType = permissions.collectionType ?? type;
+  if (!collectionType) {
+    throw throwBadRequestError('Item type is required to remove an item from this collection');
   }
 
   let isOwner = false;
   const tableKey =
-    permissions.collectionType === CollectionType.Model
+    collectionType === CollectionType.Model
       ? 'Model'
-      : permissions.collectionType === CollectionType.Article
+      : collectionType === CollectionType.Article
       ? 'Article'
-      : permissions.collectionType === CollectionType.Image
+      : collectionType === CollectionType.Image
       ? 'Image'
-      : permissions.collectionType === CollectionType.Post
+      : collectionType === CollectionType.Post
       ? 'Post'
-      : permissions.collectionType === CollectionType.Model3D
+      : collectionType === CollectionType.Model3D
       ? 'Model3D'
       : null;
 
@@ -4249,46 +4319,28 @@ export const removeCollectionItem = async ({
   return {
     collectionId,
     itemId,
-    type: permissions.collectionType,
+    type: collectionType,
   };
 };
 
+// Whether the caller's own collection holds their own work. The table comes from the item's id
+// field, not `Collection.type`, which is NULL on folders.
 export async function checkUserOwnsCollectionAndItem({
-  itemId,
+  item,
   collectionId,
   userId,
 }: {
-  itemId: number;
+  item: Parameters<typeof getCollectionItemOwnerId>[0];
   collectionId: number;
   userId: number;
 }) {
   const collection = await dbRead.collection.findFirst({
     where: { id: collectionId, userId },
-    select: { type: true, userId: true },
+    select: { id: true },
   });
   if (!collection) return false;
 
-  const tableKey =
-    collection.type === CollectionType.Model
-      ? 'Model'
-      : collection.type === CollectionType.Article
-      ? 'Article'
-      : collection.type === CollectionType.Image
-      ? 'Image'
-      : collection.type === CollectionType.Post
-      ? 'Post'
-      : collection.type === CollectionType.Model3D
-      ? 'Model3D'
-      : null;
-
-  if (!tableKey) throw throwNotFoundError('Unable to determine collection type');
-
-  const [item] = await dbRead.$queryRaw<{ userId: number }[]>`
-    SELECT "userId" FROM "${Prisma.raw(tableKey)}" WHERE id = ${itemId}
-  `;
-  if (!item) return false;
-
-  return item.userId === collection.userId;
+  return (await getCollectionItemOwnerId(item)) === userId;
 }
 
 export const setItemScore = async ({

@@ -25,7 +25,11 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
 import { instrumentApiResponse, reconstructApiRoute } from '~/server/prom/http-errors';
-import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/errorHandling';
+import {
+  isClientAbortError,
+  isDriverAuthoredMessage,
+  toDbUnavailableError,
+} from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { isConfiguredSecret } from '~/server/utils/configured-secret';
@@ -675,7 +679,8 @@ export function AuthedEndpoint(
   handler: (
     req: AxiomAPIRequest,
     res: NextApiResponse,
-    user: SessionUser
+    user: SessionUser,
+    session: Session
   ) => Promise<void | NextApiResponse>,
   allowedMethods: string[] = ['GET'],
   { allowBanned = false, scope }: EndpointAuthOptions = {}
@@ -701,7 +706,7 @@ export function AuthedEndpoint(
         );
     if (session === false) return;
     if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });
-    await handler(req, res, session.user);
+    await handler(req, res, session.user, session);
   });
 }
 
@@ -844,6 +849,13 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     if (!res.headersSent) noStore(res).status(499).end();
     return;
   }
+  // An unreachable database answers the same retryable 503 (generic message, re-map logged) as the
+  // tRPC path's `mapDbUnavailable`, whether or not the handler wrapped the driver error.
+  const dbUnavailable = toDbUnavailableError(
+    e instanceof TRPCError ? e : new TRPCError({ code: 'INTERNAL_SERVER_ERROR', cause: e }),
+    restRouteFor(res)
+  );
+  if (dbUnavailable) e = dbUnavailable;
   if (e instanceof TRPCError) {
     const apiError = e as TRPCError;
     const status = getHTTPStatusCodeFromError(apiError);

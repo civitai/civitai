@@ -269,3 +269,30 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
     expect(isSensitiveTokenScope(TokenScope.ModelsRead | TokenScope.ModelsWrite)).toBe(true);
   });
 });
+
+describe('validateConnectScopeJustifications — the offline_access declaration', () => {
+  it('accepts offline_access with a reason whatever the mask (it is a grant, not a scope bit)', () => {
+    expect(validateConnectScopeJustifications(0n, { offline_access: 'syncs nightly' })).toEqual([]);
+    expect(
+      validateConnectScopeJustifications(TokenScope.ModelsRead, { offline_access: 'syncs nightly' })
+    ).toEqual([]);
+  });
+
+  it('refuses a blank declaration, like any blank justification', () => {
+    expect(validateConnectScopeJustifications(0n, { offline_access: '  ' })).toEqual([
+      'scopeJustifications["offline_access"] must be a non-empty string',
+    ]);
+  });
+
+  it('bounds its length like any justification', () => {
+    expect(validateConnectScopeJustifications(0n, { offline_access: 'x'.repeat(501) })).toEqual([
+      'scopeJustifications["offline_access"] must be ≤500 chars',
+    ]);
+  });
+
+  it('a near-miss key is still an unknown scope (only the exact reserved key is special)', () => {
+    expect(validateConnectScopeJustifications(0n, { 'offline_access ': 'x' })).toEqual([
+      'scopeJustifications references "offline_access " which is not a valid scope',
+    ]);
+  });
+});

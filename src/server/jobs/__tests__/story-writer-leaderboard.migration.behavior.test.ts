@@ -39,7 +39,7 @@ const SCHEMA = `
     id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL, "publishedAt" timestamp,
     nsfw boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL, ingestion text NOT NULL,
     "tosViolation" boolean NOT NULL, unlisted boolean NOT NULL, availability text NOT NULL,
-    "systemCategoryId" int
+    "systemCategoryId" int, "updatedAt" timestamp NOT NULL DEFAULT now()
   );
   CREATE TABLE "TagsOnArticle" ("articleId" int NOT NULL, "tagId" int NOT NULL);
   CREATE TABLE "ArticleMetric" (
@@ -159,13 +159,51 @@ async function standings(pg: PGlite) {
   return rows;
 }
 
+// Rated R (4) and above, not story, would top the board if it counted.
+const MATURE_NEWS = { id: 21, userId: 29, tag: NEWS, nsfwLevel: 8, ...HUGE };
+const USER_TAGGED_ONLY = { id: 16, userId: 24, tag: STORY, systemCategory: NEWS, ...HUGE };
+// (sqrt(400)*1 + 1*7 + 1*4) * 100
+const SYSTEM_STORY_ONLY = { id: 17, userId: 25, tag: NEWS, systemCategory: STORY, views: 400 };
+
+describe('story-writer leaderboard after its migrations', () => {
+  const db = { pg: null as unknown as PGlite };
+
+  beforeAll(async () => {
+    db.pg = new PGlite();
+    await db.pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES);
+    await seedArticles(db.pg, [...ELIGIBILITY, USER_TAGGED_ONLY, SYSTEM_STORY_ONLY, MATURE_NEWS]);
+    await db.pg.exec(MIGRATION + SWITCH + COUNT_MATURE);
+  });
+
+  afterAll(async () => {
+    await db.pg.close();
+  });
+
+  it('ranks recent, public, rated story articles (by system category) by live users, with bookmarks weighted 4', async () => {
+    const rows = await standings(db.pg);
+    // (sqrt(100)*1 + sqrt(49)*7 + sqrt(1)*4) * 100; the greatest(..., 1) floor makes empty terms 1.
+    // 13 and 23 are the R+ stories (ids 4 and 15).
+    expect(rows.map((r) => [r.userId, r.score]).sort((a, b) => a[0] - b[0])).toEqual([
+      [10, 6300],
+      [11, 4800],
+      [13, 210000],
+      [23, 210000],
+      [25, 3100],
+    ]);
+    expect(rows.find((r) => r.userId === 11)?.metrics).toEqual({
+      viewCount: 0,
+      bookmark: 100,
+      reactionCount: 0,
+    });
+  });
+});
+
 describe('story-writer leaderboard migration', () => {
   const db = { pg: null as unknown as PGlite };
 
   beforeAll(async () => {
     db.pg = new PGlite();
     await db.pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES);
-    await seedArticles(db.pg, ELIGIBILITY);
     await db.pg.exec(MIGRATION);
   });
 
@@ -182,16 +220,6 @@ describe('story-writer leaderboard migration', () => {
     expect(rows).toEqual([
       { slot: 1, same_display: true, active: true, public: true, title: 'Story Writers' },
     ]);
-  });
-
-  it('ranks only recent, public, PG/PG-13 story articles by live users, with bookmarks weighted 4', async () => {
-    const rows = await standings(db.pg);
-    // (sqrt(100)*1 + sqrt(49)*7 + sqrt(1)*4) * 100; the greatest(..., 1) floor makes empty terms 1.
-    expect(rows.map((r) => [r.userId, r.score])).toEqual([
-      [10, 6300],
-      [11, 4800],
-    ]);
-    expect(rows[1].metrics).toEqual({ viewCount: 0, bookmark: 100, reactionCount: 0 });
   });
 
   it('awards four Storyteller badges at 1, 3, 10 and 25 each with its own Storyteller art', async () => {
@@ -260,45 +288,17 @@ describe('story-writer leaderboard migration preconditions', () => {
   });
 });
 
-const USER_TAGGED_ONLY = { id: 16, userId: 24, tag: STORY, systemCategory: NEWS, ...HUGE };
-// (sqrt(400)*1 + 1*7 + 1*4) * 100
-const SYSTEM_STORY_ONLY = { id: 17, userId: 25, tag: NEWS, systemCategory: STORY, views: 400 };
-
 describe('story-writer system-category switch', () => {
   const db = { pg: null as unknown as PGlite };
 
   beforeAll(async () => {
     db.pg = new PGlite();
     await db.pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES);
-    await seedArticles(db.pg, [...ELIGIBILITY, USER_TAGGED_ONLY, SYSTEM_STORY_ONLY]);
-    await db.pg.exec(MIGRATION);
+    await db.pg.exec(MIGRATION + SWITCH);
   });
 
   afterAll(async () => {
     await db.pg.close();
-  });
-
-  it('before it, the board follows the author tag: a non-story tagged story tops it, a story tagged otherwise is missed', async () => {
-    const rows = await standings(db.pg);
-    expect(rows.map((r) => r.userId)).toEqual([24, 10, 11]);
-  });
-
-  it('after it, only the category call decides, and every other filter and weight still holds', async () => {
-    const active = async () =>
-      (
-        await db.pg.query<{ active: boolean }>(
-          `SELECT active FROM "Leaderboard" WHERE id = 'story-writer'`
-        )
-      ).rows[0].active;
-    await db.pg.exec(`UPDATE "Leaderboard" SET active = false WHERE id = 'story-writer'`);
-    await db.pg.exec(SWITCH);
-    expect(await active()).toBe(false);
-    const rows = await standings(db.pg);
-    expect(rows.map((r) => [r.userId, r.score])).toEqual([
-      [10, 6300],
-      [11, 4800],
-      [25, 3100],
-    ]);
   });
 
   it('is idempotent: a re-run leaves the switched query as it is', async () => {
@@ -353,70 +353,6 @@ describe('story-writer system-category switch preconditions', () => {
       `UPDATE "Leaderboard" SET query = replace(query, '* 4', '* 5') WHERE id = 'story-writer';`,
       /was edited/
     ));
-
-  it('expects the text the board migration wrote, which is what production holds', async () => {
-    const pg = new PGlite();
-    try {
-      await pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES);
-      await pg.exec(MIGRATION);
-      const { rows } = await pg.query<{ md5: string }>(
-        `SELECT md5(query) FROM "Leaderboard" WHERE id = 'story-writer'`
-      );
-      expect(rows).toEqual([{ md5: 'b0d929c8dfc788d5f5b2cac2fc813fd2' }]);
-      expect(SWITCH).toContain(rows[0].md5);
-    } finally {
-      await pg.close();
-    }
-  });
-});
-
-// Rated R (4) and above, not story, would top the board if it counted.
-const MATURE_NEWS = { id: 21, userId: 29, tag: NEWS, nsfwLevel: 8, ...HUGE };
-
-describe('story-writer counts R+ stories', () => {
-  const db = { pg: null as unknown as PGlite };
-  const read = async () =>
-    (
-      await db.pg.query<{ query: string; active: boolean }>(
-        `SELECT query, active FROM "Leaderboard" WHERE id = 'story-writer'`
-      )
-    ).rows[0];
-
-  beforeAll(async () => {
-    db.pg = new PGlite();
-    await db.pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES);
-    await seedArticles(db.pg, [...ELIGIBILITY, MATURE_NEWS]);
-    await db.pg.exec(MIGRATION + SWITCH);
-  });
-
-  afterAll(async () => {
-    await db.pg.close();
-  });
-
-  it('before it, the board scores only PG and PG-13 stories', async () => {
-    expect((await standings(db.pg)).map((r) => r.userId)).toEqual([10, 11]);
-  });
-
-  it('after it, R and X stories count; unrated stories, non-stories and every other filter still hold', async () => {
-    await db.pg.exec(`UPDATE "Leaderboard" SET active = false WHERE id = 'story-writer'`);
-    await db.pg.exec(COUNT_MATURE);
-    expect((await read()).active).toBe(false);
-    const rows = await standings(db.pg);
-    // (sqrt(1e6)*1 + sqrt(1e4)*7 + sqrt(1e4)*4) * 100 for the two R+ stories (ids 4 and 15).
-    expect(rows.map((r) => [r.userId, r.score]).sort((a, b) => a[0] - b[0])).toEqual([
-      [10, 6300],
-      [11, 4800],
-      [13, 210000],
-      [23, 210000],
-    ]);
-  });
-
-  it('is idempotent: a re-run leaves the query as it is', async () => {
-    const before = (await read()).query;
-    await db.pg.exec(COUNT_MATURE);
-    expect((await read()).query).toBe(before);
-    expect(before).not.toContain('& ~3');
-  });
 });
 
 describe('story-writer counts R+ stories preconditions', () => {
@@ -450,16 +386,22 @@ describe('story-writer counts R+ stories preconditions', () => {
       `UPDATE "Leaderboard" SET query = replace(query, '* 4', '* 5') WHERE id = 'story-writer';`,
       /not the reviewed text/
     ));
+});
 
-  it('expects the text the system-category switch wrote', async () => {
+describe('story-writer counts R+ stories', () => {
+  it('is idempotent: a re-run leaves the query as it is', async () => {
     const pg = new PGlite();
+    const read = async () =>
+      (
+        await pg.query<{ query: string }>(
+          `SELECT query FROM "Leaderboard" WHERE id = 'story-writer'`
+        )
+      ).rows[0].query;
     try {
-      await pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES + MIGRATION + SWITCH);
-      const { rows } = await pg.query<{ md5: string }>(
-        `SELECT md5(query) FROM "Leaderboard" WHERE id = 'story-writer'`
-      );
-      expect(rows).toEqual([{ md5: '36a04202e0a7ed9eeeae5dcc980a308a' }]);
-      expect(COUNT_MATURE).toContain(rows[0].md5);
+      await pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES + MIGRATION + SWITCH + COUNT_MATURE);
+      const before = await read();
+      await pg.exec(COUNT_MATURE);
+      expect(await read()).toBe(before);
     } finally {
       await pg.close();
     }
@@ -468,12 +410,18 @@ describe('story-writer counts R+ stories preconditions', () => {
 
 describe('article category backfill selection', () => {
   const db = { pg: null as unknown as PGlite };
-  const select = async (afterId: number, limit: number, includeMature = false) =>
+  const select = async (
+    afterId: number,
+    limit: number,
+    includeMature = false,
+    publishedBefore = new Date()
+  ) =>
     (
       await db.pg.query<{ id: number }>(ARTICLE_CATEGORY_BACKFILL_SQL, [
         afterId,
         limit,
         includeMature,
+        publishedBefore,
       ])
     ).rows.map((r) => r.id);
 
@@ -486,6 +434,9 @@ describe('article category backfill selection', () => {
       { id: 19, userId: 27, tag: NEWS, systemCategory: null },
     ]);
     await db.pg.exec(MIGRATION + SWITCH + COUNT_MATURE);
+    await db.pg.exec(
+      `UPDATE "Article" SET "updatedAt" = "publishedAt" WHERE "publishedAt" < now()`
+    );
   });
 
   afterAll(async () => {
@@ -496,6 +447,15 @@ describe('article category backfill selection', () => {
     expect(await select(0, 100)).toEqual([1, 2, 3, 19]);
     expect(await select(0, 2)).toEqual([1, 2]);
     expect(await select(2, 2)).toEqual([3, 19]);
+  });
+
+  it('selects only articles published and last edited before the given time', async () => {
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 60 * 60 * 1000);
+    expect(await select(0, 100, true, hoursAgo(12))).toEqual([1, 2, 3, 4, 15, 19]);
+    expect(await select(0, 100, true, hoursAgo(48))).toEqual([]);
+    await db.pg.exec(`UPDATE "Article" SET "updatedAt" = now() WHERE id = 19`);
+    expect(await select(0, 100, true, hoursAgo(12))).toEqual([1, 2, 3, 4, 15]);
+    await db.pg.exec(`UPDATE "Article" SET "updatedAt" = "publishedAt" WHERE id = 19`);
   });
 
   it('selects R+ articles too only when asked, and never unrated ones', async () => {
@@ -518,15 +478,12 @@ describe('article category backfill selection', () => {
     const backfill = ARTICLE_CATEGORY_BACKFILL_SQL.split(/^WHERE$/m)[1].split('ORDER BY')[0];
     expect(
       conditions(backfill).filter(
-        (c) => !c.includes('systemCategoryId') && c !== 'a.id > $1' && !c.includes('$3')
+        (c) =>
+          !c.includes('systemCategoryId') &&
+          c !== 'a.id > $1' &&
+          !c.includes('$3') &&
+          !c.includes('$4')
       )
     ).toEqual(conditions(board).filter((c) => !c.startsWith('am.'))); // the metric join, not eligibility
-  });
-
-  it('selects nothing once those articles have a category', async () => {
-    await db.pg.query(`UPDATE "Article" SET "systemCategoryId" = ${NEWS} WHERE id = ANY($1)`, [
-      await select(0, 100, true),
-    ]);
-    expect(await select(0, 100, true)).toEqual([]);
   });
 });

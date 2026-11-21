@@ -57,8 +57,6 @@ describe('normalizeStepOutput — preprocessVideo', () => {
     expect(await normalize({ $type: 'preprocessVideo', output: {} })).toEqual([]);
   });
 
-  // Guards the case that produced the bug: the image sibling was handled and the
-  // video one silently fell through the switch to [].
   it('classifies preprocessImage as image, not video', async () => {
     const result = await normalize({
       $type: 'preprocessImage',
@@ -66,6 +64,19 @@ describe('normalizeStepOutput — preprocessVideo', () => {
     });
 
     expect(result[0]).toMatchObject({ type: 'image' });
+  });
+});
+
+describe('normalizeStepOutput — imageBackgroundRemoval', () => {
+  it('surfaces the cutout as an image', async () => {
+    const IMAGE_BLOB = { id: 'cutout', url: 'https://x/cutout.png', available: true };
+    const result = await normalize({
+      $type: 'imageBackgroundRemoval',
+      output: { image: IMAGE_BLOB },
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ ...IMAGE_BLOB, type: 'image' });
   });
 });
 

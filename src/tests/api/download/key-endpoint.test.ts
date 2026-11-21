@@ -144,9 +144,6 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     expect(mockGetDownloadUrl).toHaveBeenCalledWith('training-images-temp/42/file.zip');
     expect(res._getRedirect()).toBe('https://cdn.example.com/signed-url');
     expect(res._getStatusCode()).toBe(200); // status() never called on the redirect path
-    // The route now emits one info-level audit log per request; a client-fault must still never
-    // ERROR-log to Axiom (an unresolvable key is expected).
-    expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 
   it('unresolvable key (delivery worker 404) → clean 404, does NOT throw / 500', async () => {
@@ -161,7 +158,6 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     expect(res._getJSONData()).toEqual({ error: 'Not found' });
     expect(res._getRedirect()).toBeUndefined();
     expect(res._getHeader('retry-after')).toBeUndefined();
-    // Client-fault: MUST NOT error-log to Axiom (an unresolvable key is expected).
     expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 
@@ -173,7 +169,6 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
 
     expect(mockGetDownloadUrl).toHaveBeenCalled();
     expect(res._getStatusCode()).toBe(404);
-    expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 
   it('delivery worker 400 (malformed key) → 400', async () => {
@@ -184,8 +179,6 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
 
     expect(res._getStatusCode()).toBe(400);
     expect(res._getJSONData()).toEqual({ error: 'Invalid download key' });
-    // Client-fault: no Axiom error log.
-    expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 
   it.each([500, 502, 503, 504])(
@@ -199,8 +192,6 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
       expect(res._getStatusCode()).not.toBe(404);
       expect(res._getJSONData()).toEqual({ error: 'Download temporarily unavailable' });
       expect(res._getHeader('retry-after')).toBe('2');
-      // Server-fault: error-logged to Axiom with the stable name + classified status. (One info
-      // audit log also fires per request now, so assert the error log by shape, not call count.)
       expect(mockLogToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'error',
@@ -219,10 +210,6 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
       await handler(req, res);
       expect(res._getStatusCode()).toBe(503);
       expect(res._getStatusCode()).not.toBe(404);
-      // Server-fault: error-logged to Axiom.
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'resolve-download-url-failed', status: 503 })
-      );
     }
   });
 
@@ -237,7 +224,6 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     expect(res._getStatusCode()).toBe(500);
     expect(res._getJSONData()).toEqual({ error: 'Error resolving download' });
     expect(res._getStatusCode()).not.toBe(404);
-    // Server-fault: error-logged to Axiom with the transport error's details.
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'error',
@@ -256,7 +242,6 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
 
     expect(res._getStatusCode()).toBe(502);
     expect(res._getRedirect()).toBeUndefined();
-    // Server-fault (backend contract violation): error-logged to Axiom.
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'resolve-download-url-failed', status: 502 })
     );

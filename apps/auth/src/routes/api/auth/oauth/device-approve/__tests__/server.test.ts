@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { POST } from '../+server';
+import { markUnconfirmedSession } from '$lib/server/auth/unconfirmed-session';
 
 function approve(locals: Record<string, unknown>) {
   return POST({
@@ -20,7 +21,21 @@ describe('POST /api/auth/oauth/device-approve', () => {
     expect(await res.json()).toMatchObject({ error: 'access_denied' });
   });
 
+  it('answers 503 for a session accepted without reading the session store', async () => {
+    const session = { sub: '7', jti: 'j' };
+    markUnconfirmedSession(session);
+    const res = await approve({ user: { id: 7 }, session });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: 'temporarily_unavailable' });
+  });
+
   it('reaches code validation for a direct session', async () => {
+    const res = await approve({ user: { id: 7 }, session: { sub: '7', jti: 'j' } });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'invalid_request' });
+  });
+
+  it('reaches code validation with no session claims in locals', async () => {
     const res = await approve({ user: { id: 7 } });
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'invalid_request' });

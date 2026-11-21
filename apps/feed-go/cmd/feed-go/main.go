@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/flipt"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
@@ -36,7 +38,11 @@ import (
 )
 
 func main() {
+	if printVersion(os.Args[1:], os.Stdout) {
+		return
+	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log.Info("feed-go", "version", version)
 	if err := run(log); err != nil {
 		log.Error("exit", "err", err)
 		os.Exit(1)
@@ -61,8 +67,9 @@ func redisClient(rawURL string, cluster bool) (redis.UniversalClient, error) {
 
 // missCompute is how hydration answers the misses of the caches Node fills on read
 // (hydrate.MissCompute): nil with FEED_GO_COMPUTE_MISSES off (those misses fall back). primary is the
-// primary database, used (and opened) only with write-back on. The tag-ids lookup's browsing gate
-// reads blocked and addons, the blocked-tag list and addons the procedures read.
+// primary database, used (and opened) only when FEED_GO_CACHE_WRITEBACK lists a cache whose lookup
+// reads it (hydrate.PrimaryCaches). The tag-ids lookup's browsing gate reads blocked and addons, the
+// blocked-tag list and addons the procedures read.
 func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache, result string, n int),
 	blocked *feed.BlockedTags, addons func(context.Context) []browsing.Addon) *hydrate.MissCompute {
 	if !cfg.ComputeMisses {
@@ -70,10 +77,22 @@ func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache
 	}
 	c := &hydrate.MissCompute{WriteBack: cfg.CacheWriteBack, FrameNegative: cfg.FrameCacheNegative, Observe: observe,
 		TagGate: feed.ImageTagGate(blocked, addons)}
-	if cfg.CacheWriteBack {
+	if cfg.CacheWriteBack.NeedsPrimary() {
 		c.Primary = primary
 	}
 	return c
+}
+
+// attachWriteObservers hands c (the miss computation, nil when off) the cache-write counter and log
+// (FEED_GO_CACHE_WRITE_LOG_PER_MIN), and seeds the counter for the written-back caches, so a cache
+// that has written nothing reads 0 rather than an absent series.
+func attachWriteObservers(cfg *config.Config, c *hydrate.MissCompute, metrics *server.Metrics, log *slog.Logger) {
+	if c == nil {
+		return
+	}
+	c.ObserveWrite = metrics.ObserveCacheWrite
+	c.WriteLog = &hydrate.WriteLog{Log: log, PerMinute: cfg.CacheWriteLogPerMinute}
+	metrics.SeedCacheWrites(cfg.CacheWriteBack.Names())
 }
 
 // metricsReader is the ClickHouse reader the metric-hash misses are computed with: nil when it is not
@@ -92,7 +111,8 @@ func metricsReader(cfg *config.Config, tracer chread.Tracer) (hydrate.ClickHouse
 	return c, nil
 }
 
-// attachMetricsReader hands c (the miss computation, nil when off) the metrics reader and its bound,
+// attachMetricsReader hands c (the miss computation, nil when off) the metrics reader and its bounds
+// (the lookup's, FEED_GO_CLICKHOUSE_TIMEOUT_MS; the populate-lock wait's, FEED_GO_METRICS_LOCK_WAIT_MS),
 // when one is configured (FEED_GO_CLICKHOUSE_*; metricsReader). With tracing on (tp set) the reader's
 // reads are spanned (tracing.ClickHouseTracer) and so are c's waits (MissCompute.Tracer); tp nil
 // leaves both untraced. The error is metricsReader's.
@@ -108,11 +128,88 @@ func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute, tp *tracing
 	if c != nil && reader != nil {
 		c.ClickHouse = reader
 		c.MetricsTimeout = cfg.ClickHouseTimeout
+		c.MetricsLockWait = cfg.MetricsLockWait
+	}
+	if err != nil {
+		return err
+	}
+	dedicated, err := dedicatedMetricsReader(cfg, chTracer)
+	if c != nil && c.ClickHouse != nil && dedicated != nil {
+		c.MetricsClickHouse = dedicated
 	}
 	return err
 }
 
-// primaryMaxConns bounds the primary pool, used only by the write-back miss lookups (DESIGN.md §3.1).
+// errDedicatedReader is an attachMetricsReader error about the dedicated reader only: the shared
+// reader, when configured, is attached and still serves every populate.
+type errDedicatedReader struct{ err error }
+
+func (e errDedicatedReader) Error() string { return "dedicated metrics " + e.err.Error() }
+func (e errDedicatedReader) Unwrap() error { return e.err }
+
+// dedicatedMetricsReader is the dedicated ClickHouse for entity metrics (CLICKHOUSE_METRICS_*): nil
+// when it is not configured. Built from its own variables only (URL, login and password alike, so
+// none of the shared reader's credentials can reach it), with the shared reader's read cap and every
+// request bounded by CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS. The error never names the URL or
+// credentials.
+func dedicatedMetricsReader(cfg *config.Config, tracer chread.Tracer) (hydrate.ClickHouse, error) {
+	if cfg.MetricsClickHouseURL == "" {
+		return nil, nil
+	}
+	c, err := chread.New(chread.Config{URL: cfg.MetricsClickHouseURL, Username: cfg.MetricsClickHouseUsername,
+		Password: cfg.MetricsClickHousePassword, MaxInFlight: cfg.ClickHouseMaxInFlight, Tracer: tracer,
+		CredentialEnv: "CLICKHOUSE_METRICS_USERNAME / CLICKHOUSE_METRICS_PASSWORD",
+		HTTP:          &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone(), Timeout: cfg.MetricsClickHouseRequestTimeout}})
+	if err != nil {
+		return nil, errDedicatedReader{err}
+	}
+	return c, nil
+}
+
+// metricsClickHouseFlag is the Flipt flag that moves the image metric-hash populate onto the dedicated
+// ClickHouse: the Node app's FLIPT_FEATURE_FLAGS.IMAGE_METRICS_DEDICATED_CLICKHOUSE, so one switch
+// moves both runtimes.
+const metricsClickHouseFlag = "image-metrics-dedicated-clickhouse"
+
+// attachMetricsSwitch reads metricsClickHouseFlag in the background (every flipt.RefreshInterval,
+// until ctx ends) and hands its answer to c, when c has a dedicated reader (attachMetricsReader).
+// Without one, or without FLIPT_URL, nothing is read and the populate keeps the shared reader. A
+// failed read keeps the last good value (off when none) for up to flipt.DefaultMaxStale, then reads
+// off (flipt.Switch.Refresh); failures are logged at most once a minute, the staleness once per outage.
+func attachMetricsSwitch(ctx context.Context, cfg *config.Config, c *hydrate.MissCompute, log *slog.Logger) (*flipt.Switch, error) {
+	if c == nil || c.MetricsClickHouse == nil || cfg.FliptURL == "" {
+		return nil, nil
+	}
+	fc, err := flipt.New(flipt.Config{URL: cfg.FliptURL, ClientToken: cfg.FliptClientToken, Environment: cfg.FliptEnvironment})
+	if err != nil {
+		return nil, err
+	}
+	sw := flipt.NewSwitch(func(ctx context.Context) (bool, error) { return fc.Boolean(ctx, metricsClickHouseFlag) })
+	var lastLog time.Time
+	sw.OnError = func(err error) {
+		if now := time.Now(); now.Sub(lastLog) >= time.Minute {
+			lastLog = now
+			log.Warn("flag read failed; the last good value holds", "flag", metricsClickHouseFlag, "err", err)
+		}
+	}
+	sw.OnStale = func(age time.Duration) {
+		log.Error("flag unread past its staleness bound; reads as off", "flag", metricsClickHouseFlag,
+			"since_last_good", age.Round(time.Second).String())
+	}
+	c.MetricsClickHouseOn = sw.On
+	sw.Start(ctx)
+	return sw, nil
+}
+
+// opensPrimary is whether run() opens the primary pool (DATABASE_URL): only with the miss computation
+// on and a written-back cache whose lookup reads the primary (hydrate.PrimaryCaches). A replica-only
+// allowlist (e.g. metrics,tag-ids) never opens it.
+func opensPrimary(cfg *config.Config) bool {
+	return cfg.ComputeMisses && cfg.CacheWriteBack.NeedsPrimary()
+}
+
+// primaryMaxConns bounds the primary pool, used only by the written-back miss lookups that read it
+// (hydrate.PrimaryCaches; DESIGN.md §3.1).
 const primaryMaxConns = 4
 
 func run(log *slog.Logger) error {
@@ -176,7 +273,7 @@ func run(log *slog.Logger) error {
 	packed := &hydrate.PackedReader{Redis: cache, Prefix: cfg.CacheKeyPrefix}
 	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: pool}
 	var primary hydrate.Querier
-	if cfg.ComputeMisses && cfg.CacheWriteBack {
+	if opensPrimary(cfg) {
 		primaryCfg, err := dbpool.Config(cfg.PrimaryDatabaseURL, dbpool.Settings{MaxConns: primaryMaxConns})
 		if err != nil {
 			return err
@@ -195,14 +292,28 @@ func run(log *slog.Logger) error {
 	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
 	addons := &feed.AddonSource{Sys: sys}
 	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss, blocked, addons.Addons)
+	attachWriteObservers(cfg, sources.Compute, metrics, log)
 	if err := attachMetricsReader(cfg, sources.Compute, tp); err != nil {
-		log.Error("clickhouse reader not configured; metric-hash misses fall back", "err", err)
+		var dedicated errDedicatedReader
+		if errors.As(err, &dedicated) {
+			log.Error("dedicated metrics clickhouse reader not configured; metric-hash populates keep the shared reader", "err", err)
+		} else {
+			log.Error("clickhouse reader not configured; metric-hash misses fall back", "err", err)
+		}
 	}
+	metricsSwitch, err := attachMetricsSwitch(ctx, cfg, sources.Compute, log)
+	if err != nil {
+		log.Error("flag not read; metric-hash populates keep the shared clickhouse", "flag", metricsClickHouseFlag, "err", err)
+	}
+	log.Info("dedicated metrics clickhouse", "configured", sources.Compute != nil && sources.Compute.MetricsClickHouse != nil,
+		"flag_read", metricsSwitch != nil, "CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS", cfg.MetricsClickHouseRequestTimeout.Milliseconds())
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
 	// or with the rollout step (DESIGN.md §3.1) is visible in the startup log.
-	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack,
+	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack.Names(),
+		"primary_db", primary != nil, "FEED_GO_CACHE_WRITE_LOG_PER_MIN", cfg.CacheWriteLogPerMinute,
 		"FEED_GO_FRAME_CACHE_NEGATIVE", cfg.FrameCacheNegative, "clickhouse_metrics", sources.Compute != nil && sources.Compute.ClickHouse != nil,
-		"FEED_GO_CLICKHOUSE_TIMEOUT_MS", cfg.ClickHouseTimeout.Milliseconds(), "FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", cfg.ClickHouseMaxInFlight)
+		"FEED_GO_CLICKHOUSE_TIMEOUT_MS", cfg.ClickHouseTimeout.Milliseconds(), "FEED_GO_METRICS_LOCK_WAIT_MS", cfg.MetricsLockWait.Milliseconds(),
+		"FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", cfg.ClickHouseMaxInFlight)
 	degraded := &server.RevocationDegradedReporter{Log: log, Counter: metrics.RevocationDegraded}
 	// SESSION_REVOCATION_CACHE=off|0|false turns the marker record off (the plain fail-open), as in the app.
 	var markers *auth.MarkerCache
@@ -235,14 +346,23 @@ func run(log *slog.Logger) error {
 		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, Markers: markers, OnDegraded: degraded.Report},
 		Sessions:            packed,
 		CookieNames:         cfg.CookieNames,
+		OnSlot:              func(slot string) { metrics.SessionCookieSlot.WithLabelValues(slot).Inc() },
 		ModerationAccountID: cfg.ModerationAccountID,
 	}
+	if cfg.BearerAuth {
+		// API keys resolved from the app's principal cache (DESIGN.md §4.2); off, every one falls back.
+		resolver.APIKeys = &auth.APIKeys{Cache: packed, Secret: cfg.APIKeySecret, OrchestratorToken: cfg.OrchestratorServiceToken}
+	}
+	// The secrets themselves are never logged: only whether each is set.
+	log.Info("api keys", "FEED_GO_BEARER_AUTH", cfg.BearerAuth, "NEXTAUTH_SECRET_set", strings.TrimSpace(cfg.APIKeySecret) != "",
+		"ORCHESTRATOR_SERVICE_TOKEN_set", strings.TrimSpace(cfg.OrchestratorServiceToken) != "")
 	deps := &feed.Deps{
 		DB:       pool,
 		Cache:    &feed.QueryCache{Redis: cache, Prefix: cfg.CacheKeyPrefix, Enabled: cfg.ImageQueryCache},
 		Hydrator: sources,
 		Gallery:  &feed.GalleryStore{Cache: cache, Prefix: cfg.CacheKeyPrefix, DB: pool},
 		Addons:   addons,
+		Blocked:  blocked,
 		Config: feed.Config{
 			CreatorPromotions:       feed.ParsePromotionAudience(cfg.CreatorPromotion),
 			LazyPostImages:          cfg.LazyPostImages,
@@ -323,6 +443,7 @@ func run(log *slog.Logger) error {
 		Deps:             deps,
 		Models:           models,
 		ServeModelGetAll: cfg.ServeModelGetAll,
+		ServeInfinite:    cfg.ServeInfinite,
 		Hosts:            cfg.Hosts,
 		RegionRules:      cfg.RegionRules,
 		// REGION_BLOCK_CONFIG, else the app's default list (apipolicy.json).
@@ -358,6 +479,7 @@ func run(log *slog.Logger) error {
 
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll)
+	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
 	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
 	// OpenMetrics on request only with tracing on: the exemplars ride in that format alone.
 	internal := server.InternalMux(srv, server.MetricsHandler(reg, tp != nil), cfg.Pprof)

@@ -30,6 +30,7 @@ import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import type { LinkProps } from 'next/link';
 import { useRouter } from 'next/router';
+import { markAddAccountFlow } from '~/components/Onboarding/new-account-notice';
 import React, {
   createContext,
   forwardRef,
@@ -449,6 +450,7 @@ function ActionButtons({ close }: { close: () => void }) {
 
   const handleAdd = () => {
     setWaiting(true);
+    markAddAccountFlow();
     router
       .push(
         getLoginLink({

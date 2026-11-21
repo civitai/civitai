@@ -5,7 +5,10 @@ import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import type * as RegionBlocking from '~/server/utils/region-blocking';
 import { NsfwLevel } from '~/server/common/enums';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import {
+  COLLECTIONS_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
@@ -56,7 +59,12 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 
 const fetchMock = vi.fn();
 
-async function post(path: string[], body: unknown, headers: Record<string, string> = {}) {
+async function post(
+  path: string[],
+  body: unknown,
+  headers: Record<string, string> = {},
+  context?: object
+) {
   const res = {
     statusCode: 200,
     status: vi.fn().mockReturnThis(),
@@ -74,6 +82,7 @@ async function post(path: string[], body: unknown, headers: Record<string, strin
     query: { path },
     body,
     socket: { remoteAddress: '10.0.0.1' },
+    context,
   } as unknown as NextApiRequest;
   // The wrapper swaps response methods on entry; keep the spies from before the call.
   const spies = {
@@ -159,6 +168,30 @@ describe('POST /api/search/multi-search', () => {
     await post(['multi-search'], { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: '' }] });
     expect(sentQueries()[0].filter).toBeUndefined();
   });
+
+  it.each([
+    ['a scoped key', TokenScope.ModelsRead, false],
+    ['a full-access key', TokenScope.Full, true],
+  ])(
+    'a moderator on %s searches as a moderator only on full access',
+    async (_, tokenScope, asMod) => {
+      mockGetServerAuthSession.mockResolvedValue({ user: { id: 7, isModerator: true } });
+      const context = {
+        tokenScope,
+        apiKeyId: 1,
+        apiKeyType: ApiKeyType.User,
+        subject: { type: 'apiKey', id: 1 },
+      };
+      await post(
+        ['multi-search'],
+        { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: '' }] },
+        {},
+        context
+      );
+      if (asMod) expect(sentQueries()[0].filter).toBeUndefined();
+      else expect(sentQueries()[0].filter).toContain('poi != true OR user.id = 7');
+    }
+  );
 
   it('caps a signed-in viewer on civitai.com to PG and PG-13', async () => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: true } });
@@ -399,5 +432,47 @@ describe('passthrough (site-search-passthrough)', () => {
       queries: [{ indexUid: TOOLS_SEARCH_INDEX, q: 'x', hybrid: { embedder: 'e' } }],
     });
     expect(sentQueries()[0]).not.toHaveProperty('hybrid');
+  });
+});
+
+describe('collection covers for a signed-in viewer where the site caps nothing', () => {
+  const cover = { id: 20, nsfwLevel: NsfwLevel.R };
+  const search = async (user: object) => {
+    mockGetServerAuthSession.mockResolvedValue({ user });
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            results: [{ indexUid: COLLECTIONS_SEARCH_INDEX, hits: [{ id: 1, image: cover }] }],
+          })
+        )
+    );
+    const { body } = await post(['multi-search'], {
+      queries: [{ indexUid: COLLECTIONS_SEARCH_INDEX, q: '' }],
+    });
+    return body.results[0].hits[0].image;
+  };
+
+  it("drops a cover above the viewer's own level", async () => {
+    expect(
+      await search({ id: 42, isModerator: false, showNsfw: true, browsingLevel: NsfwLevel.PG })
+    ).toBeNull();
+  });
+
+  it('control: a viewer whose level includes it keeps it', async () => {
+    expect(
+      await search({
+        id: 42,
+        isModerator: false,
+        showNsfw: true,
+        browsingLevel: NsfwLevel.PG | NsfwLevel.R,
+      })
+    ).toEqual(cover);
+  });
+
+  it('a moderator keeps what they see today', async () => {
+    expect(
+      await search({ id: 7, isModerator: true, showNsfw: true, browsingLevel: NsfwLevel.PG })
+    ).toEqual(cover);
   });
 });

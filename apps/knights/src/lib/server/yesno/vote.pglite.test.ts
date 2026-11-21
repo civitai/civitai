@@ -485,3 +485,19 @@ describe('escalation', () => {
     });
   });
 });
+
+describe("a yes/no question on the player's own image", () => {
+  it('is never offered to the player who posted it, and their answer is refused', async () => {
+    const ids = await seed([row('a')]);
+    await knights(2);
+    await pg.query(`UPDATE "Image" SET "userId"=1 WHERE id=10`);
+    const offer = (userId: number) =>
+      pickYesNo(db, { userId, rank: 'Knight', secret: 's', share: 1, stretch: 10, force: true });
+
+    expect(await offer(1)).toBeNull();
+    expect((await offer(2))?.itemId).toBe(ids.a);
+
+    expect(await vote(1, ids.a, 'yes')).toEqual({ status: 'rejected', reason: 'own-image' });
+    expect(await votes(ids.a)).toEqual([]);
+  });
+});

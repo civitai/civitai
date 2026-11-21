@@ -182,7 +182,7 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
         </div>
         <ScrollArea className="px-4 pb-4" scrollRestore={{ key: selectedTab ?? 'all' }}>
           {selectedTab === 'announcements' ? (
-            <AnnouncementsPanel sources={announcementSources} />
+            <AnnouncementsPanel sources={announcementSources} onNavigate={onClose} />
           ) : (
             <>
               {loadingNotifications ? (
@@ -195,14 +195,15 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
                     items={notifications}
                     searchText={searchText}
                     onItemClick={(notification, { keepOpened, url }) => {
+                      let marked: Promise<unknown> | undefined;
                       if (notification.type === 'announcement' && !notification.read) {
                         dismissAnnouncements(notification.id);
                       } else if (!notification.read)
-                        readNotificationMutation.mutate({
-                          id: notification.id,
-                          category: notification.category,
-                        });
+                        marked = readNotificationMutation
+                          .mutateAsync({ id: notification.id, category: notification.category })
+                          .catch(() => undefined);
                       if (!keepOpened && url) onClose?.();
+                      return marked;
                     }}
                   />
                   {hasNextPage && (

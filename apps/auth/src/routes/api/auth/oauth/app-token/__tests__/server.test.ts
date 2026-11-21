@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import { TokenScope } from '@civitai/auth/token-scope';
 
 // The db mock routes selectFrom by table so the client and consent lookups are controlled independently, and
@@ -10,6 +11,9 @@ const h = vi.hoisted(() => ({
   logOAuthEvent: vi.fn(),
   rows: {} as Record<string, unknown>,
   inserts: [] as Array<Record<string, unknown>>,
+  lockAppBlockSuspended: vi.fn(),
+  inTransaction: false,
+  insertedInTransaction: [] as boolean[],
 }));
 
 vi.mock('$lib/server/db/db', () => ({
@@ -25,12 +29,30 @@ vi.mock('$lib/server/db/db', () => ({
       const qb: Record<string, unknown> = {};
       qb.values = (v: Record<string, unknown>) => {
         h.inserts.push(v);
+        h.insertedInTransaction.push(h.inTransaction);
         return qb;
       };
       qb.execute = () => Promise.resolve([{}]);
       return qb;
     },
+    transaction() {
+      return {
+        async execute(fn: (trx: unknown) => Promise<unknown>) {
+          const { db } = await import('$lib/server/db/db');
+          h.inTransaction = true;
+          try {
+            return await fn(db);
+          } finally {
+            h.inTransaction = false;
+          }
+        },
+      };
+    },
   },
+}));
+// The lock itself is exercised on a real Postgres in app-block-mint-lock.pg.test.ts.
+vi.mock('$lib/server/oauth/app-block-mint-lock', () => ({
+  lockAppBlockSuspended: h.lockAppBlockSuspended,
 }));
 vi.mock('@civitai/auth/secret-hash', () => ({
   generateKey: () => 'k',
@@ -38,7 +60,10 @@ vi.mock('@civitai/auth/secret-hash', () => ({
 }));
 vi.mock('$lib/server/auth/internal', () => ({ isInternalRequest: h.isInternalRequest }));
 vi.mock('$lib/server/auth/request', () => ({ getClientIp: () => '203.0.113.9' }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: h.checkOAuthRateLimit }));
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
+  checkOAuthRateLimit: h.checkOAuthRateLimit,
+}));
 vi.mock('$lib/server/auth/session-producer', () => ({
   getOrProduceSessionUser: h.getOrProduceSessionUser,
 }));
@@ -65,6 +90,8 @@ const body = { userId: 7, clientId: CLIENT_ID, scope: REQUESTED, ttlSeconds: 600
 beforeEach(() => {
   vi.clearAllMocks();
   h.inserts.length = 0;
+  h.insertedInTransaction.length = 0;
+  h.lockAppBlockSuspended.mockResolvedValue(false);
   h.isInternalRequest.mockReturnValue(true);
   h.checkOAuthRateLimit.mockResolvedValue(true);
   h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
@@ -90,6 +117,16 @@ describe('oauth/app-token +server', () => {
     expect((await call({ ...body, clientId: 'civitai-remix-apps' })).status).toBe(200);
   });
 
+  it('mints nothing for an impersonation', async () => {
+    const res = await call({ ...body, impersonatedBy: 3 });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe('impersonation_refused');
+    expect(h.inserts).toHaveLength(0);
+    // Control: the same request with no impersonation mints.
+    expect((await call({ ...body, impersonatedBy: null })).status).toBe(200);
+    expect(h.inserts).toHaveLength(1);
+  });
+
   it('mints nothing for a service client, which acts only as itself', async () => {
     h.rows.OauthClient = {
       allowedScopes: REQUESTED,
@@ -103,6 +140,20 @@ describe('oauth/app-token +server', () => {
     // Control: the same row without the service grant mints.
     h.rows.OauthClient = { allowedScopes: REQUESTED, accessMode: 'open', grants: [] };
     expect((await call(body)).status).toBe(200);
+  });
+
+  it('403 when the client’s app block is suspended, and the token is minted under the lock otherwise', async () => {
+    h.lockAppBlockSuspended.mockResolvedValue(true);
+    const res = await call(body);
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe('access_denied');
+    expect(h.inserts).toHaveLength(0);
+    expect(h.lockAppBlockSuspended).toHaveBeenCalledWith(expect.anything(), CLIENT_ID);
+
+    // Control: the same request mints once the block is not suspended, inside the lock's transaction.
+    h.lockAppBlockSuspended.mockResolvedValue(false);
+    expect((await call(body)).status).toBe(200);
+    expect(h.insertedInTransaction).toEqual([true]);
   });
 
   it('requires the internal token', async () => {

@@ -64,6 +64,7 @@ const GLOBALS = [
   '__civitaiRedisClients',
   'globalClickhouse',
   'globalClickhouseLongQueries',
+  'globalClickhouseMetrics',
   'globalPgWrite',
   'globalPgRead',
   'globalPgReadLong',
@@ -137,6 +138,69 @@ describe('process-global server singletons (production)', () => {
     expect(b.clickhouse).toBe(a.clickhouse);
     expect(a.clickhouseLongQueries).toBeDefined();
     expect(b.clickhouseLongQueries).toBe(a.clickhouseLongQueries);
+  });
+
+  it('dedicated metrics ClickHouse client: one per process, on its own connection settings', async () => {
+    setEnv({
+      CLICKHOUSE_METRICS_HOST: 'http://clickhouse-metrics.test',
+      CLICKHOUSE_METRICS_USERNAME: 'metrics-user',
+      CLICKHOUSE_METRICS_PASSWORD: 'metrics-pass',
+    });
+    const [a, b] = await evaluateTwice(() => import('~/server/clickhouse/metrics-client'));
+    expect(factories.createClickhouseClient).toHaveBeenCalledTimes(1);
+    expect(a.clickhouseMetrics).toBeDefined();
+    expect(b.clickhouseMetrics).toBe(a.clickhouseMetrics);
+    expect(factories.createClickhouseClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host: 'http://clickhouse-metrics.test',
+        username: 'metrics-user',
+        password: 'metrics-pass',
+      })
+    );
+  });
+
+  it('dedicated metrics ClickHouse client: an unset password is passed as unset, not left to the shared default', async () => {
+    setEnv({
+      CLICKHOUSE_METRICS_HOST: 'http://clickhouse-metrics.test',
+      CLICKHOUSE_METRICS_USERNAME: 'metrics-user',
+    });
+    await evaluateTwice(() => import('~/server/clickhouse/metrics-client'));
+    const options = (factories.createClickhouseClient.mock.calls as unknown[][])[0][0] as Record<
+      string,
+      unknown
+    >;
+    // An absent key would let the factory fill it from CLICKHOUSE_PASSWORD, the shared server's.
+    expect(Object.prototype.hasOwnProperty.call(options, 'password')).toBe(true);
+    expect(options.password).toBeUndefined();
+  });
+
+  // The factory's default is 300s; a hung dedicated server would hold the image-metrics-swr
+  // refresher's slots and the per-id populate locks that long.
+  it('dedicated metrics ClickHouse client: a short request timeout, 10s by default and overridable', async () => {
+    setEnv({
+      CLICKHOUSE_METRICS_HOST: 'http://clickhouse-metrics.test',
+      CLICKHOUSE_METRICS_USERNAME: 'metrics-user',
+    });
+    await evaluateTwice(() => import('~/server/clickhouse/metrics-client'));
+    expect(factories.createClickhouseClient).toHaveBeenLastCalledWith(
+      expect.objectContaining({ requestTimeoutMs: 10_000 })
+    );
+
+    clearGlobals();
+    factories.createClickhouseClient.mockClear();
+    setEnv({ CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS: 7_500 });
+    await evaluateTwice(() => import('~/server/clickhouse/metrics-client'));
+    expect(factories.createClickhouseClient).toHaveBeenLastCalledWith(
+      expect.objectContaining({ requestTimeoutMs: 7_500 })
+    );
+  });
+
+  it('dedicated metrics ClickHouse client: not built when its env is unset', async () => {
+    const { clickhouseMetrics } = await evaluateTwice(
+      () => import('~/server/clickhouse/metrics-client')
+    ).then(([a]) => a);
+    expect(clickhouseMetrics).toBeUndefined();
+    expect(factories.createClickhouseClient).not.toHaveBeenCalled();
   });
 
   it('primary pg pools: one write/read/read-long set per process', async () => {

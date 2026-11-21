@@ -8,7 +8,10 @@ import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-servi
 // A buyer on an in-progress deal looked for a dispute button and found only the offering's
 // report link: disputes open only after the delivery is accepted, and nothing said so.
 
-const mocks = vi.hoisted(() => ({ deal: null as Record<string, unknown> | null }));
+const mocks = vi.hoisted(() => ({
+  deal: null as Record<string, unknown> | null,
+  flags: { creatorServices: true, creatorServicesNext: false },
+}));
 
 vi.mock('~/components/Gated/Gated', () => ({
   Gated: ({ children }: { children: ReactNode }) => children,
@@ -20,6 +23,7 @@ vi.mock('~/components/CreatorShop/Services/deals/deal.util', () => ({
     error: null,
     refetch: () => undefined,
   }),
+  useServiceDealMutations: () => ({ review: { mutate: () => undefined, isPending: false } }),
 }));
 vi.mock('~/components/Chat/ChatProvider', () => ({ useChatStore: { setState: () => undefined } }));
 vi.mock('~/components/CreatorShop/Services/deals/DealAccountabilitySheet', () => ({
@@ -46,7 +50,7 @@ vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
 }));
 vi.mock('~/components/Dialog/triggers/report', () => ({ openReportModal: () => undefined }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
-  useFeatureFlags: () => ({ creatorServices: true }),
+  useFeatureFlags: () => mocks.flags,
 }));
 
 const { ServiceDealPage } = await import('~/components/CreatorShop/Services/deals/ServiceDealPage');
@@ -95,5 +99,54 @@ describe('deal page: when a dispute becomes available', () => {
 
   it('labels the offering report link as a report on the service, not the order', () => {
     expect(render('Accepted', 'buyer')).toContain('Report this service');
+  });
+});
+
+// The review card replaces the dispute window only for a deal enrolled in reviews, viewed with the
+// review flag; with the flag off the page is today's.
+describe('deal page: the review card', () => {
+  const renderCompleted = ({ next, enrolled }: { next: boolean; enrolled: boolean }) => {
+    mocks.flags = { creatorServices: true, creatorServicesNext: next };
+    mocks.deal = {
+      id: 7,
+      maxNsfwLevel: 1,
+      status: 'Completed',
+      viewerRole: 'buyer',
+      seller: { username: 'seller' },
+      buyer: { username: 'buyer' },
+      offering: { id: 42, title: 'Portrait commission' },
+      requestedAt: new Date('2026-10-01T00:00:00Z'),
+      deliveryDays: 7,
+      revisionsUsed: 0,
+      revisionsIncluded: 1,
+      requestText: 'please',
+      chatId: null,
+      deadlines: { disputeUntil: new Date(Date.now() + 3_600_000) },
+      actions: [],
+      review: enrolled ? { settled: false, finalsClear: true, review: null } : null,
+    };
+    const page = renderToStaticMarkup(
+      createElement(MantineProvider, null, createElement(ServiceDealPage, { dealId: 7 }))
+    );
+    mocks.flags = { creatorServices: true, creatorServicesNext: false };
+    return page;
+  };
+  const DISPUTE_WINDOW = 'Dispute window closes in';
+  const CARD = 'How did it turn out?';
+
+  it('replaces the dispute window on an enrolled deal for a viewer with the flag', () => {
+    const page = renderCompleted({ next: true, enrolled: true });
+    expect(page).toContain(CARD);
+    expect(page).toContain('Your review is public, with your username.');
+    expect(page).not.toContain(DISPUTE_WINDOW);
+  });
+
+  it.each([
+    ['flag off', { next: false, enrolled: true }],
+    ['not enrolled', { next: true, enrolled: false }],
+  ])('leaves the dispute window and no card with the %s', (_case, input) => {
+    const page = renderCompleted(input);
+    expect(page).toContain(DISPUTE_WINDOW);
+    expect(page).not.toContain(CARD);
   });
 });

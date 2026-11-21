@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Adapter, Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 import { FILTER_MAX_BYTES, filterRefusal } from '~/server/registry-adapter/json-schema';
+import { createSubscriptionLimiter } from '~/server/registry-adapter/limits';
+import type { VerifyToken } from '~/server/registry-adapter/auth';
+import type { ServeOptions } from '~/server/registry-adapter/serve';
 import { createRegistryServer, handleRequest } from '~/server/registry-adapter/serve';
 import { bindCursor, requestBinding } from '~/server/registry-adapter/subscription';
 
@@ -162,6 +165,168 @@ describe('the HTTP/SSE binding', () => {
   it('a missing schema is bad_request', async () => {
     const res = await get(adapter(), '/subscribe');
     expect([res.status, JSON.parse(res.text).error]).toEqual([400, 'bad_request']);
+  });
+});
+
+describe('🔴 each HTTP subscription logs its region decision once, and no address', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const META_DE = `&meta=${encodeURIComponent('{"country":"DE"}')}`;
+
+  /**
+   * One subscription from the edge's CA, with meta DE, read to its end; its region lines and the
+   * error code it was refused with, if any.
+   */
+  async function lines(
+    trustMeta: string | undefined,
+    {
+      query = sub(APPS, META_DE),
+      headers = {},
+      opts = {},
+    }: { query?: string; headers?: Record<string, string>; opts?: ServeOptions } = {}
+  ) {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', trustMeta);
+    const logged: string[] = [];
+    server = createRegistryServer(adapter(), { ...opts, onRegion: (line) => logged.push(line) });
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    const res = await fetch(`http://127.0.0.1:${port}${query}`, {
+      headers: {
+        'cf-ipcountry': 'CA',
+        'cf-connecting-ip': '192.0.2.7',
+        'x-forwarded-for': '198.51.100.1',
+        ...headers,
+      },
+    });
+    const text = await res.text();
+    const error = res.status === 200 ? undefined : (JSON.parse(text) as { error: string }).error;
+    return { status: res.status, error, logged };
+  }
+
+  it('flag on: the meta country, one line', async () => {
+    const { status, logged } = await lines('1');
+    expect(status).toBe(200);
+    expect(logged).toEqual([
+      'subscription region: binding=http country=DE region=none source=meta restricted=false principal=anonymous client=none act=none audience=m',
+    ]);
+    for (const address of ['192.0.2.7', '198.51.100.1', '127.0.0.1']) {
+      expect(logged[0]).not.toContain(address);
+    }
+  });
+
+  it('flag off: the header country, one line', async () => {
+    const { logged } = await lines(undefined);
+    expect(logged).toEqual([
+      'subscription region: binding=http country=CA region=none source=header restricted=false principal=anonymous client=none act=none audience=m',
+    ]);
+  });
+
+  it('an injected regionRestricted is the restricted logged, not the site rule', async () => {
+    const { status, logged } = await lines(undefined, { opts: { regionRestricted: () => true } });
+    expect(status).toBe(200);
+    expect(logged).toEqual([
+      'subscription region: binding=http country=CA region=none source=header restricted=true principal=anonymous client=none act=none audience=m',
+    ]);
+  });
+
+  it('🔴 the line records the audience decision, client and relay: a service reads every rating with no hold, a user is held', async () => {
+    const service: VerifyToken = async () => ({
+      subject: 'service:7e3a1c55-2b4d-4f60-9a8e-1c2d3e4f5a6b',
+      userId: null,
+      clientId: '7e3a1c55-2b4d-4f60-9a8e-1c2d3e4f5a6b',
+      scope: 0n,
+      actor: 'relay-exp-2a',
+      service: true,
+      expiresAt: null,
+    });
+    const user: VerifyToken = async () => ({
+      subject: 'user:3301/client:app-5d1f',
+      userId: 3301,
+      clientId: 'app-5d1f',
+      scope: 0n,
+      actor: null,
+      user: { showNsfw: true, browsingLevel: 31 },
+      expiresAt: null,
+    });
+    const asService = await lines(undefined, {
+      headers: { authorization: 'Bearer s' },
+      opts: { verifyToken: service, regionRestricted: () => true },
+    });
+    expect(asService.status).toBe(200);
+    expect(asService.logged).toEqual([
+      'subscription region: binding=http country=CA region=none source=header restricted=false principal=service client=7e3a1c55-2b4d-4f60-9a8e-1c2d3e4f5a6b act=relay-exp-2a audience=mrx+xxx',
+    ]);
+    const asUser = await lines(undefined, {
+      headers: { authorization: 'Bearer u' },
+      opts: { verifyToken: user, regionRestricted: () => true },
+    });
+    expect(asUser.logged).toEqual([
+      'subscription region: binding=http country=CA region=none source=header restricted=true principal=user client=app-5d1f act=none audience=m',
+    ]);
+    // No user id is logged.
+    expect(asUser.logged[0]).not.toContain('3301');
+  });
+
+  // Each refusal at a later step than the last, so a line moved ahead of any of them shows.
+  it('a request refused as malformed logs nothing', async () => {
+    const { status, error, logged } = await lines('1', { query: '/subscribe' });
+    expect([status, error]).toEqual([400, 'bad_request']);
+    expect(logged).toEqual([]);
+  });
+
+  it('a request refused over the subscription cap logs nothing', async () => {
+    const limiter = createSubscriptionLimiter({ total: 0, perSubject: 100, perAddress: 100 });
+    const { status, error, logged } = await lines('1', { opts: { limiter } });
+    expect([status, error]).toEqual([503, 'unavailable']);
+    expect(logged).toEqual([]);
+  });
+
+  it('a request refused for its token logs nothing', async () => {
+    // No verifyToken: any token is invalid_token.
+    const { status, error, logged } = await lines('1', {
+      headers: { authorization: 'Bearer x' },
+    });
+    expect([status, error]).toEqual([401, 'invalid_token']);
+    expect(logged).toEqual([]);
+  });
+});
+
+describe('🔴 an authorized stream belongs to one consumer (auth extension, relay rule 2)', () => {
+  async function head(headers: Record<string, string>) {
+    server = createRegistryServer(adapter(), {
+      verifyToken: async () => ({
+        subject: 'user:6120/client:oc-cache-3d9e',
+        userId: 6120,
+        clientId: 'oc-cache-3d9e',
+        scope: 0n,
+        actor: null,
+        user: { showNsfw: false, browsingLevel: 1 },
+        expiresAt: null,
+      }),
+    });
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    const res = await fetch(`http://127.0.0.1:${port}${sub(APPS)}`, { headers });
+    await res.text();
+    return {
+      status: res.status,
+      cacheControl: res.headers.get('cache-control'),
+      vary: res.headers.get('vary'),
+    };
+  }
+
+  it('a stream with a token is private, no-store, varying on Authorization', async () => {
+    expect(await head({ authorization: 'Bearer tok-6120' })).toEqual({
+      status: 200,
+      cacheControl: 'private, no-store',
+      vary: 'Authorization',
+    });
+  });
+
+  it('an anonymous stream keeps no-cache (POSITIVE CONTROL: the header is per subscription)', async () => {
+    expect(await head({})).toEqual({ status: 200, cacheControl: 'no-cache', vary: null });
   });
 });
 

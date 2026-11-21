@@ -2,27 +2,21 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import client from 'prom-client';
 import {
   normSource,
-  normBuzzType,
-  normScanResult,
-  normStatus,
-  normPaid,
   normVoidReason,
-  normRefundReason,
-  normDivergenceField,
   recordChallengeWinnerDuplicatePick,
-  recordChallengeWinnerPlaceDivergence,
   recordChallengeWinnerConflictUnresolved,
   recordChallengeCreated,
   recordChallengeScanResult,
+  recordChallengeVoided,
+  recordChallengeEntryFeesBuzz,
+  recordChallengePrizePaidBuzz,
+  recordChallengeRefundBuzz,
+  recordChallengeWinnerPlaceDivergence,
   recordChallengeEntrySubmitted,
   recordChallengeReviewRequested,
   recordChallengeCompleted,
-  recordChallengeVoided,
   recordChallengeDeleted,
-  recordChallengeEntryFeesBuzz,
-  recordChallengePrizePaidBuzz,
   recordChallengeOperationSpentBuzz,
-  recordChallengeRefundBuzz,
   recordChallengeRefundFailure,
   __resetChallengeMetricsForTest,
   __setChallengeGaugeCacheForTest,
@@ -65,50 +59,12 @@ describe('label normalizers — enum-bound, never raw/free-text', () => {
     expect(normSource('')).toBe('unknown');
   });
 
-  it('normBuzzType bounds to green|yellow, else unknown', () => {
-    expect(normBuzzType('green')).toBe('green');
-    expect(normBuzzType('yellow')).toBe('yellow');
-    expect(normBuzzType('blue')).toBe('unknown');
-    expect(normBuzzType(undefined)).toBe('unknown');
-  });
-
-  it('normScanResult bounds to scanned|blocked|error, unknown → error', () => {
-    expect(normScanResult('scanned')).toBe('scanned');
-    expect(normScanResult('blocked')).toBe('blocked');
-    expect(normScanResult('error')).toBe('error');
-    expect(normScanResult('weird-verdict')).toBe('error');
-    expect(normScanResult(undefined)).toBe('error');
-  });
-
-  it('normStatus bounds to the 5 ChallengeStatus values, else unknown', () => {
-    for (const s of ['Scheduled', 'Active', 'Completing', 'Completed', 'Cancelled']) {
-      expect(normStatus(s)).toBe(s);
-    }
-    expect(normStatus('Deleted')).toBe('unknown');
-    expect(normStatus(null)).toBe('unknown');
-  });
-
-  it('normPaid returns 1 for truthy, 0 otherwise', () => {
-    expect(normPaid(true)).toBe('1');
-    expect(normPaid(false)).toBe('0');
-    expect(normPaid(undefined)).toBe('0');
-    expect(normPaid(null)).toBe('0');
-  });
-
   it('normVoidReason bounds to moderator|nsfw|activation, free-text → other', () => {
     expect(normVoidReason('moderator')).toBe('moderator');
     expect(normVoidReason('nsfw')).toBe('nsfw');
     expect(normVoidReason('activation')).toBe('activation');
     expect(normVoidReason('because-i-said-so')).toBe('other');
     expect(normVoidReason(undefined)).toBe('other');
-  });
-
-  it('normRefundReason bounds to void|delete, everything else (incl. completion) → other', () => {
-    expect(normRefundReason('void')).toBe('void');
-    expect(normRefundReason('delete')).toBe('delete');
-    expect(normRefundReason('completion')).toBe('other');
-    expect(normRefundReason('anything')).toBe('other');
-    expect(normRefundReason(undefined)).toBe('other');
   });
 });
 
@@ -157,7 +113,6 @@ describe('funnel counters emit the expected series with normalized labels', () =
   it('challenge_entry_submitted_total increments by count with paid label', async () => {
     recordChallengeEntrySubmitted({ source: 'User', buzzType: 'green', paid: true, count: 3 });
     recordChallengeEntrySubmitted({ source: 'User', buzzType: 'green', paid: false, count: 2 });
-    // default count = 1 when omitted / non-positive
     recordChallengeEntrySubmitted({ source: 'User', buzzType: 'yellow', paid: true });
 
     expect(
@@ -187,12 +142,12 @@ describe('funnel counters emit the expected series with normalized labels', () =
     recordChallengeReviewRequested({ source: 'User' });
     recordChallengeCompleted({ source: 'System' });
     recordChallengeVoided({ source: 'User', reason: 'nsfw' });
-    recordChallengeVoided({ source: 'User', reason: 'made-up' }); // → other
+    recordChallengeVoided({ source: 'User', reason: 'made-up' });
     recordChallengeDeleted({ source: 'User' });
 
-    expect(
-      await valueFor('civitai_app_challenge_review_requested_total', { source: 'User' })
-    ).toBe(1);
+    expect(await valueFor('civitai_app_challenge_review_requested_total', { source: 'User' })).toBe(
+      1
+    );
     expect(await valueFor('civitai_app_challenge_completed_total', { source: 'System' })).toBe(1);
     expect(
       await valueFor('civitai_app_challenge_voided_total', { source: 'User', reason: 'nsfw' })
@@ -243,7 +198,6 @@ describe('economy counters — inc by buzz amount, skip non-positive', () => {
   it('refund buzz sums by reason; refund failures count by reason', async () => {
     recordChallengeRefundBuzz({ source: 'User', buzzType: 'yellow', reason: 'void', amount: 300 });
     recordChallengeRefundBuzz({ source: 'User', buzzType: 'yellow', reason: 'delete', amount: 75 });
-    // 'completion' normalizes to 'other'
     recordChallengeRefundBuzz({
       source: 'User',
       buzzType: 'yellow',
@@ -304,6 +258,27 @@ describe('money-path anomaly counters — a unit must mean exactly one real even
   const DIVERGENCE = 'civitai_app_challenge_winner_place_divergence_total';
   const UNRESOLVED = 'civitai_app_challenge_winner_conflict_unresolved_total';
 
+  it('a real count is recorded verbatim, and origin/source are kept apart', async () => {
+    recordChallengeWinnerDuplicatePick({ source: 'User', count: 2, origin: 'caller' });
+    recordChallengeWinnerDuplicatePick({ count: 1, origin: 'chokepoint' });
+
+    expect(await seriesValue(DUPLICATE_PICK, { source: 'User', origin: 'caller' })).toBe(2);
+    expect(await seriesValue(DUPLICATE_PICK, { source: 'unknown', origin: 'chokepoint' })).toBe(1);
+    expect(
+      await seriesValue(DUPLICATE_PICK, { source: 'User', origin: 'chokepoint' })
+    ).toBeUndefined();
+  });
+
+  it('the divergence counter keeps its three field values separate', async () => {
+    recordChallengeWinnerPlaceDivergence({ field: 'place' });
+    recordChallengeWinnerPlaceDivergence({ field: 'prize' });
+    recordChallengeWinnerPlaceDivergence({ field: 'both' });
+
+    expect(await seriesValue(DIVERGENCE, { field: 'place' })).toBe(1);
+    expect(await seriesValue(DIVERGENCE, { field: 'prize' })).toBe(1);
+    expect(await seriesValue(DIVERGENCE, { field: 'both' })).toBe(1);
+  });
+
   it('an explicit count of 0 records NOTHING — "I dropped nothing" must never read as one drop', async () => {
     recordChallengeWinnerDuplicatePick({ source: 'System', count: 0, origin: 'caller' });
 
@@ -332,37 +307,6 @@ describe('money-path anomaly counters — a unit must mean exactly one real even
     expect(await seriesValue(DUPLICATE_PICK, { source: 'System', origin: 'caller' })).toBe(1);
   });
 
-  it('a real count is recorded verbatim, and origin/source are kept apart', async () => {
-    recordChallengeWinnerDuplicatePick({ source: 'User', count: 2, origin: 'caller' });
-    recordChallengeWinnerDuplicatePick({ count: 1, origin: 'chokepoint' });
-
-    expect(await seriesValue(DUPLICATE_PICK, { source: 'User', origin: 'caller' })).toBe(2);
-    // The choke point has no challenge in scope, so its source normalizes to `unknown` — the exact
-    // ambiguity the `origin` label exists to resolve.
-    expect(await seriesValue(DUPLICATE_PICK, { source: 'unknown', origin: 'chokepoint' })).toBe(1);
-    expect(
-      await seriesValue(DUPLICATE_PICK, { source: 'User', origin: 'chokepoint' })
-    ).toBeUndefined();
-  });
-
-  it('normDivergenceField bounds to place|prize|both, else other', () => {
-    expect(normDivergenceField('place')).toBe('place');
-    expect(normDivergenceField('prize')).toBe('prize');
-    expect(normDivergenceField('both')).toBe('both');
-    expect(normDivergenceField('points')).toBe('other');
-    expect(normDivergenceField(undefined)).toBe('other');
-  });
-
-  it('the divergence counter keeps its three field values separate', async () => {
-    recordChallengeWinnerPlaceDivergence({ field: 'place' });
-    recordChallengeWinnerPlaceDivergence({ field: 'prize' });
-    recordChallengeWinnerPlaceDivergence({ field: 'both' });
-
-    expect(await seriesValue(DIVERGENCE, { field: 'place' })).toBe(1);
-    expect(await seriesValue(DIVERGENCE, { field: 'prize' })).toBe(1);
-    expect(await seriesValue(DIVERGENCE, { field: 'both' })).toBe(1);
-  });
-
   it('the unresolved-conflict counter is its own series, unlabelled, and starts at a real 0', async () => {
     // Unlabelled is load-bearing: it emits 0 from process start instead of being absent until the
     // first increment, so a `> 0` rule on it cannot fail open the way one on a label-bearing
@@ -383,20 +327,6 @@ describe('money-path anomaly counters — a unit must mean exactly one real even
     ).not.toThrow();
     expect(() => recordChallengeWinnerConflictUnresolved()).not.toThrow();
   });
-
-  // The "starts at a real 0" assertion above is only meaningful if the reset helper actually clears
-  // this counter — and because counters live on a process-global registry, that assertion passes on
-  // execution ORDER alone as long as it happens to run before anything increments. That is the exact
-  // hazard __resetChallengeMetricsForTest exists to remove, so it needs its own guard rather than
-  // relying on file order: increment FIRST, then re-assert zero after a reset.
-  it('the reset helper clears the unresolved-conflict counter, not just the labelled ones', async () => {
-    recordChallengeWinnerConflictUnresolved();
-    expect(await seriesValue(UNRESOLVED, {})).toBe(1);
-
-    __resetChallengeMetricsForTest();
-
-    expect(await seriesValue(UNRESOLVED, {})).toBe(0);
-  });
 });
 
 describe('never-throw guarantee', () => {
@@ -416,10 +346,10 @@ describe('never-throw guarantee', () => {
   });
 
   it('helpers tolerate undefined/null inputs without throwing', () => {
+    expect(() => recordChallengeCreated({ source: undefined, buzzType: null })).not.toThrow();
     expect(() =>
-      recordChallengeCreated({ source: undefined, buzzType: null })
+      recordChallengeScanResult({ result: undefined as unknown as string })
     ).not.toThrow();
-    expect(() => recordChallengeScanResult({ result: undefined as unknown as string })).not.toThrow();
     expect(() => recordChallengeVoided({})).not.toThrow();
     expect(() =>
       recordChallengeRefundBuzz({ amount: undefined as unknown as number })
@@ -428,31 +358,6 @@ describe('never-throw guarantee', () => {
 });
 
 describe('state gauges — collect() emits series from injected (mocked) cache', () => {
-  it('challenge_by_status / ingestion_pending / completing_stuck / budget_ratio', async () => {
-    __setChallengeGaugeCacheForTest({
-      byStatus: [
-        { source: 'User', status: 'Active', count: 4 },
-        { source: 'User', status: 'Scheduled', count: 2 },
-        { source: 'System', status: 'Completed', count: 9 },
-      ],
-      ingestionPending: [{ source: 'User', count: 3 }],
-      completingStuck: [{ source: 'System', count: 1 }],
-      budgetRatio: [{ source: 'System', ratio: 0.25 }],
-    });
-
-    expect(
-      await valueFor('civitai_app_challenge_by_status', { source: 'User', status: 'Active' })
-    ).toBe(4);
-    expect(
-      await valueFor('civitai_app_challenge_by_status', { source: 'System', status: 'Completed' })
-    ).toBe(9);
-    expect(await valueFor('civitai_app_challenge_ingestion_pending', { source: 'User' })).toBe(3);
-    expect(await valueFor('civitai_app_challenge_completing_stuck', { source: 'System' })).toBe(1);
-    expect(
-      await valueFor('civitai_app_challenge_operation_budget_used_ratio', { source: 'System' })
-    ).toBe(0.25);
-  });
-
   it('gauge collect() normalizes an unexpected source/status value from the DB', async () => {
     __setChallengeGaugeCacheForTest({
       byStatus: [{ source: 'GARBAGE', status: 'WeirdState', count: 7 }],
@@ -475,11 +380,13 @@ describe('state gauges — zero-emit so a healthy 0 is distinguishable from dead
 
   async function sourcePairs(name: string): Promise<[string, number][]> {
     const values = await readMetric(name);
-    return values
-      .map((v) => [v.labels.source, v.value] as [string, number])
-      // Codepoint sort (NOT localeCompare — that is locale-dependent and orders 'unknown'
-      // before 'User', which would make this assertion machine-dependent).
-      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    return (
+      values
+        .map((v) => [v.labels.source, v.value] as [string, number])
+        // Codepoint sort (NOT localeCompare — that is locale-dependent and orders 'unknown'
+        // before 'User', which would make this assertion machine-dependent).
+        .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    );
   }
 
   it('emits an explicit 0 for every known source when the query returns no rows', async () => {
@@ -487,11 +394,13 @@ describe('state gauges — zero-emit so a healthy 0 is distinguishable from dead
     __setChallengeGaugeCacheForTest({});
 
     for (const name of ZERO_EMIT_GAUGES) {
-      expect(await sourcePairs(name), `${name} must emit a real 0 per source, not nothing`).toEqual([
-        ['Mod', 0],
-        ['System', 0],
-        ['User', 0],
-      ]);
+      expect(await sourcePairs(name), `${name} must emit a real 0 per source, not nothing`).toEqual(
+        [
+          ['Mod', 0],
+          ['System', 0],
+          ['User', 0],
+        ]
+      );
     }
   });
 

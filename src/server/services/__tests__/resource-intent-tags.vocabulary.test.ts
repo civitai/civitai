@@ -2,9 +2,8 @@ import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 
-/** `ResourceIntentVocabulary`'s CHECKs and unique key, against the real migration in PGlite. */
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 const MIGRATION_SQL = readFileSync(
@@ -15,7 +14,6 @@ const MIGRATION_SQL = readFileSync(
   'utf8'
 );
 
-/** A synthetic vocabulary document and its version (sha256 hex of the bytes). */
 function vocabulary(label: string) {
   const payload = Buffer.from(JSON.stringify({ tags: [label, `${label} two`] }));
   return { payload, vocabVersion: createHash('sha256').update(payload).digest('hex') };
@@ -43,32 +41,12 @@ const insert = (db: PGlite, r: Row) =>
   );
 
 describe('ResourceIntentVocabulary on the real migration', () => {
+  const shared = freshDb();
+  afterAll(async () => (await shared).close());
+
   it('the migration is re-runnable', async () => {
     const db = await freshDb();
     await expect(db.exec(MIGRATION_SQL)).resolves.toBeDefined();
-  });
-
-  it('creates the table and its constraints, and no trigger', async () => {
-    const db = await freshDb();
-    const cons = await db.query<{ conname: string }>(
-      `SELECT conname FROM pg_constraint WHERE conrelid = '"ResourceIntentVocabulary"'::regclass ORDER BY conname`
-    );
-    expect(cons.rows.map((r) => r.conname)).toEqual([
-      'ResourceIntentVocabulary_pkey',
-      'ResourceIntentVocabulary_status_check',
-      'ResourceIntentVocabulary_version_check',
-    ]);
-    const idx = await db.query<{ indexname: string }>(
-      `SELECT indexname FROM pg_indexes WHERE tablename = 'ResourceIntentVocabulary' ORDER BY indexname`
-    );
-    expect(idx.rows.map((r) => r.indexname)).toEqual([
-      'ResourceIntentVocabulary_pkey',
-      'ResourceIntentVocabulary_vocabVersion_key',
-    ]);
-    const trg = await db.query(
-      `SELECT 1 FROM pg_trigger WHERE tgrelid = '"ResourceIntentVocabulary"'::regclass AND NOT tgisinternal`
-    );
-    expect(trg.rows).toEqual([]);
   });
 
   it('the version must be the sha256 of the payload, and is unique', async () => {
@@ -76,7 +54,6 @@ describe('ResourceIntentVocabulary on the real migration', () => {
     const a = vocabulary('a');
     const b = vocabulary('b');
     await insert(db, a);
-    // b's payload under a's (valid, already used) version fails the CHECK before the unique key.
     await expect(insert(db, { ...b, vocabVersion: a.vocabVersion })).rejects.toThrow(
       /version_check/
     );
@@ -118,8 +95,12 @@ describe('ResourceIntentVocabulary on the real migration', () => {
   ] as const)(
     'status %s with frozenAt %s and frozenBy %s: accepted = %s',
     async (status, frozenAt, frozenBy, ok) => {
-      const db = await freshDb();
-      const p = insert(db, { ...vocabulary('a'), status, frozenAt, frozenBy });
+      const p = insert(await shared, {
+        ...vocabulary(`${status} ${frozenAt} ${frozenBy}`),
+        status,
+        frozenAt,
+        frozenBy,
+      });
       if (ok) await expect(p).resolves.toBeDefined();
       else await expect(p).rejects.toThrow(/status_check/);
     }

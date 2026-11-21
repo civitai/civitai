@@ -105,7 +105,7 @@ func joinRace(leaderCtx, joinerCtx context.Context, t *testing.T, c *MissCompute
 // marked (status).
 func TestJoinSpan(t *testing.T) {
 	tracer, rec := spanRecorder(t)
-	c := &MissCompute{WriteBack: true, Tracer: tracer}
+	c := &MissCompute{WriteBack: AllWrites(), Tracer: tracer}
 	lctx, leader := tracer.Start(context.Background(), "serve leader")
 	jctx, joiner := tracer.Start(context.Background(), "serve joiner")
 	joinRace(lctx, jctx, t, c, nil)
@@ -160,14 +160,14 @@ func TestJoinSpanOnlyWhenTraced(t *testing.T) {
 	lctx, leader := tracer.Start(context.Background(), "serve leader")
 	for name, jctx := range map[string]context.Context{"unsampled": unsampled(), "no span": context.Background()} {
 		rec.Reset()
-		joinRace(lctx, jctx, t, &MissCompute{WriteBack: true, Tracer: tracer}, nil)
+		joinRace(lctx, jctx, t, &MissCompute{WriteBack: AllWrites(), Tracer: tracer}, nil)
 		if n := len(named(rec, "miss lookup join")); n != 0 {
 			t.Fatalf("%s: %d join spans, want 0", name, n)
 		}
 	}
 	rec.Reset()
 	jctx, joiner := tracer.Start(context.Background(), "serve joiner")
-	joinRace(lctx, jctx, t, &MissCompute{WriteBack: true}, nil)
+	joinRace(lctx, jctx, t, &MissCompute{WriteBack: AllWrites()}, nil)
 	joiner.End()
 	leader.End()
 	if n := len(named(rec, "miss lookup join")); n != 0 {
@@ -216,12 +216,12 @@ func lockWait(ctx context.Context, t *testing.T, tracer trace.Tracer, fill, keyE
 
 // The wait on another process's populate lock is one `metrics lock wait` span under the request's:
 // the ids waited on, the Redis reads made and the outcome, exactly those attributes. Filled is unset
-// status; exhausted (15 reads, nothing landed), the context's deadline or cancellation and a failed
-// read are the error status, by class.
+// status; exhausted (5 reads, 100 ms apart, over the default 500 ms lock-wait bound, nothing landed),
+// the context's deadline or cancellation and a failed read are the error status, by class.
 //
-// Fails on: the span dropped or not under the request (count / parent); polls miscounted (1 / 15 / 0
-// / 0 / 1); an outcome misclassified, e.g. exhausted, a deadline or a cancellation read as
-// read_error; the status not set on a failure.
+// Fails on: the span dropped or not under the request (count / parent); polls miscounted (1 / 5 / 0
+// / 0 / 1; the bound reverted to 15 × 200 ms reads 15); an outcome misclassified, e.g. exhausted, a
+// deadline or a cancellation read as read_error; the status not set on a failure.
 func TestMetricsLockWaitSpan(t *testing.T) {
 	tracer, rec := spanRecorder(t)
 	for _, c := range []struct {
@@ -235,7 +235,7 @@ func TestMetricsLockWaitSpan(t *testing.T) {
 		class, errTyp string
 	}{
 		{name: "filled", fill: true, polls: "1", outcome: "filled", code: codes.Unset},
-		{name: "exhausted", polls: "15", outcome: "exhausted", code: codes.Error, class: "other", errTyp: "*errors.errorString"},
+		{name: "exhausted", polls: "5", outcome: "exhausted", code: codes.Error, class: "other", errTyp: "*errors.errorString"},
 		{name: "deadline", expired: true, polls: "0", outcome: "ctx_done", code: codes.Error, class: "deadline"},
 		{name: "cancelled", cancelled: true, polls: "0", outcome: "ctx_done", code: codes.Error, class: "canceled", errTyp: "*errors.errorString"},
 		{name: "read error", keyErr: true, polls: "1", outcome: "read_error", code: codes.Error, class: "other", errTyp: "*errors.errorString"},

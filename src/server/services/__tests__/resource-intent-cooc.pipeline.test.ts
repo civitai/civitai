@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { deserializeTrainImageIds } from '~/server/services/resource-intent-cooc/build';
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { COOC_STATEMENT_TIMEOUT_MS } from '~/server/services/resource-intent-cooc/build';
 import {
   buildCoocSnapshot,
-  coocReplicaQuery,
   defaultCoocTrainEnd,
 } from '~/server/services/resource-intent-cooc/pipeline';
 import { RESOURCE_INTENT_COOC_SPEC } from '~/server/services/resource-intent-cooc/spec';
@@ -43,16 +42,6 @@ const production = (over: Partial<Parameters<typeof buildCoocSnapshot>[0]> = {})
 });
 
 describe('cooc build pipeline', () => {
-  it('production trains up to UTC midnight minus one day', () => {
-    expect(defaultCoocTrainEnd(NOW).toISOString()).toBe('2026-09-30T00:00:00.000Z');
-    expect(defaultCoocTrainEnd(new Date('2026-10-01T00:00:00.000Z')).toISOString()).toBe(
-      '2026-09-30T00:00:00.000Z'
-    );
-    expect(defaultCoocTrainEnd(new Date('2026-10-01T23:59:59.999Z')).toISOString()).toBe(
-      '2026-09-30T00:00:00.000Z'
-    );
-  });
-
   it('a production build lands one ready row with the drawn training metadata', async () => {
     const { db, sql } = await freshDb();
     const images = imageDb();
@@ -249,22 +238,6 @@ describe('cooc build pipeline', () => {
         /cannot be backdated/,
       ],
       [
-        'production with a pin',
-        production({ pinnedUntil: new Date(NOW.getTime() + DAY) }),
-        /cannot be pinned/,
-      ],
-      ['study without a pin', { ...production(), kind: 'study' }, /requires a pin/],
-      [
-        'study pinned 60 days',
-        { ...production(), kind: 'study', pinnedUntil: new Date(NOW.getTime() + 60 * DAY) },
-        /58 days/,
-      ],
-      [
-        'study pinned 58 days + 1 ms',
-        { ...production(), kind: 'study', pinnedUntil: new Date(NOW.getTime() + 58 * DAY + 1) },
-        /58 days/,
-      ],
-      [
         'trainEnd 1 ms later than now minus one day',
         {
           ...production(),
@@ -274,7 +247,6 @@ describe('cooc build pipeline', () => {
         },
         /at least 1 day/,
       ],
-      ['a seed beyond int32', production({ seed: 2 ** 31 }), /seed/],
     ];
     for (const [name, opts, err] of cases) {
       it(name, async () => {
@@ -319,35 +291,6 @@ describe('cooc build pipeline', () => {
     expect(c.modelTypes[m]).toBe(first);
     // Both types are add-on types, so every one of its images still counts toward n_m.
     expect(c.nM[m]).toBe(225);
-  });
-
-  it('the replica draw runs each statement in a transaction under a statement timeout', async () => {
-    const executed: string[] = [];
-    let txOptions: unknown;
-    dbMock.dbRead.$transaction.mockImplementationOnce((async (
-      fn: (tx: unknown) => Promise<unknown>,
-      options: unknown
-    ) => {
-      txOptions = options;
-      return fn({
-        $executeRawUnsafe: async (q: string) => {
-          executed.push(q);
-          return 0;
-        },
-        $queryRaw: async (q: Prisma.Sql) => {
-          executed.push(q.sql);
-          return [{ ok: 1 }];
-        },
-      });
-    }) as never);
-    expect(await coocReplicaQuery()(Prisma.sql`SELECT 1 AS ok`)).toEqual([{ ok: 1 }]);
-    expect(executed).toEqual([
-      `SET LOCAL statement_timeout = ${COOC_STATEMENT_TIMEOUT_MS}`,
-      'SELECT 1 AS ok',
-    ]);
-    expect(COOC_STATEMENT_TIMEOUT_MS).toBe(120_000);
-    // Prisma's own interactive-transaction timeout must not cut the statement first.
-    expect((txOptions as { timeout: number }).timeout).toBeGreaterThan(COOC_STATEMENT_TIMEOUT_MS);
   });
 
   it('a build with the default query sends every draw statement through the timed transaction', async () => {

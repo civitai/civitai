@@ -12,7 +12,9 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 // `AuthedEndpoint` and `getServerAuthSession` are deliberately unmocked: the guard reads the
 // `req.context` they populate, so mocking them would make these tests vacuous.
 const { hubSession, bearerSession } = vi.hoisted(() => ({
-  hubSession: { current: null as null | { user: Record<string, unknown> } },
+  hubSession: {
+    current: null as null | { user: Record<string, unknown>; impersonatedBy?: number },
+  },
   bearerSession: vi.fn(),
 }));
 
@@ -294,6 +296,44 @@ describe('the minted credential is still returned to an allowed caller', () => {
       token: 'minted-assistant-token',
       expiresAt: '2099-01-01T00:00:00Z',
     });
+  });
+});
+
+describe('an impersonation, through the real AuthedEndpoint', () => {
+  const appRoutes = routes.filter(
+    (r) =>
+      r.path.startsWith('/api/apps/assistant/') ||
+      r.path === '/api/training-studio/host' ||
+      r.path === '/api/user/orchestrator-key'
+  );
+
+  it.each(appRoutes)('$name mints nothing for an impersonation', async (route) => {
+    hubSession.current = { user: USER, impersonatedBy: 9 };
+    const { status, body } = await call(route);
+    expect(status).toBe(403);
+    expect(body).toMatchObject({
+      error: 'impersonation_refused',
+      message:
+        route.path === '/api/user/orchestrator-key'
+          ? "API keys can't be created while impersonating"
+          : 'Apps are paused while impersonating',
+    });
+    expect(route.minted()).not.toHaveBeenCalled();
+    // Control: the same session without the impersonation mints.
+    hubSession.current = { user: USER };
+    expect((await call(route)).status).toBe(200);
+    expect(route.minted()).toHaveBeenCalledTimes(1);
+  });
+
+  it('apps/assistant/token POST writes no consent for an impersonation', async () => {
+    hubSession.current = { user: USER, impersonatedBy: 9 };
+    const route = routes.find((r) => r.path === '/api/apps/assistant/token')!;
+    const { status } = await call(route, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(status).toBe(403);
+    expect(enableAppAssistant).not.toHaveBeenCalled();
   });
 });
 

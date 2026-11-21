@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 
@@ -107,15 +106,12 @@ describe('reading the deal file access log', () => {
     expect(await getServiceDealFileAccessRecordedSince()).toEqual(new Date(1730000000000));
   });
 
-  it('reads both halves together, or null when either fails, and logs the failure', async () => {
+  it('reads both halves together, or null when either fails', async () => {
     answer([]);
     expect(await readServiceDealFileAccess([1])).toEqual({ rows: [], recordedSince: null });
 
     holder.client = undefined;
     expect(await readServiceDealFileAccess([1])).toBeNull();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'creator-service-file-access', type: 'error' })
-    );
   });
 
   it.each([

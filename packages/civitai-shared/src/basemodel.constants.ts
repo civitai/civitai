@@ -1309,7 +1309,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   { ecosystemId: ECO.Krea3, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // MAI - checkpoint only (Microsoft MAI-Image-2.5, locked, no LoRA support)
+  // MAI - checkpoint only (Microsoft MAI Image, locked, no LoRA support)
   { ecosystemId: ECO.MAI, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Reve - checkpoint only (Reve 2.1, locked, FAL engine, no LoRA support)
@@ -1334,8 +1334,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // build takes no resources); LORA training is AI Toolkit only
   { ecosystemId: ECO.MiniMaxH3, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.MiniMaxH3, supportType: 'training', modelTypes: loraOnly },
-  // MiniMax H3 Image - checkpoint only, no training row: LoRAs and training are not wired yet.
-  { ecosystemId: ECO.MiniMaxH3Image, supportType: 'generation', modelTypes: checkpointOnly },
+  // MiniMax H3 Image - LoRAs and creator checkpoints for generation; LORA training (AI Toolkit only)
+  { ecosystemId: ECO.MiniMaxH3Image, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.MiniMaxH3Image, supportType: 'training', modelTypes: loraOnly },
   // Fibo 2.0 - fine-tunes and LoRAs of `dev` apply to create only; edit runs the official weights.
   { ecosystemId: ECO.Fibo2, supportType: 'generation', modelTypes: checkpointAndLora },
 
@@ -1558,7 +1559,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Ideogram,
     defaults: {
-      model: { id: 3375798 },
+      model: { id: 3480351 },
       modelLocked: true,
     },
   },
@@ -1850,7 +1851,6 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.MiniMaxH3Image,
     defaults: {
       model: { id: 3463368 },
-      modelLocked: true,
     },
   },
   {
@@ -2517,6 +2517,7 @@ export const BM = {
   GeminiOmni: 119,
   Fibo2: 120,
   Fibo2Turbo: 121,
+  Ideogram46: 122,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2538,11 +2539,12 @@ export const supportOverrides: SupportOverride[] = [
   // SD3 group - no training (redundant since all SD3 models are disabled, but kept for documentation)
   // { ecosystemId: ECO.SD3, supportType: 'training', enabled: false },
   // { ecosystemId: ECO.SD35M, supportType: 'training', enabled: false },
-  // Not licensed for on-site generation. Ideogram 4.5 shares the ecosystem but is licensed
-  // separately, so this is per base model, never per ecosystem.
+  // Not licensed for on-site generation. Ideogram 4.5 and 4.6 share the ecosystem but are
+  // licensed separately, so this is per base model, never per ecosystem.
   { baseModelId: BM.Ideogram, supportType: 'generation', disabled: true },
-  // An API model with no LoRA input; the ecosystem's LoRA support is Ideogram 4.0's.
+  // API models with no LoRA input; the ecosystem's LoRA support is Ideogram 4.0's.
   { baseModelId: BM.Ideogram45, supportType: 'generation', modelTypes: ['Checkpoint'] },
+  { baseModelId: BM.Ideogram46, supportType: 'generation', modelTypes: ['Checkpoint'] },
 ];
 
 // =============================================================================
@@ -3385,6 +3387,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 47,
     matureRestricted: ['generation', 'models', 'images'],
   },
+  {
+    id: BM.Ideogram46,
+    name: 'Ideogram 4.6',
+    description: "Ideogram, Inc.'s text-to-image and image editing model with strong typography",
+    type: 'image',
+    ecosystemId: ECO.Ideogram,
+    hidden: true,
+    licenseId: 47,
+    matureRestricted: ['generation', 'models', 'images'],
+  },
 
   // Boogu
   {
@@ -4166,7 +4178,6 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "MiniMax's image generation and editing model",
     type: 'image',
     ecosystemId: ECO.MiniMaxH3Image,
-    hidden: true,
     licenseId: 55,
   },
 
@@ -4291,12 +4302,10 @@ export const baseModelRecords: BaseModelRecord[] = [
 export const baseModelById = new Map(baseModelRecords.map((m) => [m.id, m]));
 export const baseModelByName = new Map(baseModelRecords.map((m) => [m.name, m]));
 
-/** Grouped select data for base model multi-select inputs, grouped by ecosystem family */
-export const baseModelSelectData = (() => {
-  const activeModels = baseModelRecords.filter((m) => !m.hidden);
+function groupBaseModelSelectData(records: BaseModelRecord[]) {
   const groupMap = new Map<string, { value: string; label: string }[]>();
 
-  for (const model of activeModels) {
+  for (const model of records) {
     const ecosystem = ecosystemById.get(model.ecosystemId);
     const family = ecosystem?.familyId ? ecosystemFamilyById.get(ecosystem.familyId) : undefined;
     const groupName = family?.name ?? ecosystem?.displayName ?? model.name;
@@ -4306,7 +4315,18 @@ export const baseModelSelectData = (() => {
   }
 
   return Array.from(groupMap.entries()).map(([group, items]) => ({ group, items }));
-})();
+}
+
+/** Grouped select data for base model multi-select inputs, grouped by ecosystem family */
+export const baseModelSelectData = groupBaseModelSelectData(
+  baseModelRecords.filter((m) => !m.hidden)
+);
+
+/**
+ * `baseModelSelectData` plus the hidden bases, for filtering images: a hidden base has no uploads,
+ * but images made with it (generation-only bases such as Nano Banana, or retired ones) still exist.
+ */
+export const imageBaseModelSelectData = groupBaseModelSelectData(baseModelRecords);
 
 export function getEcosystem(baseModel: string) {
   const model = baseModelByName.get(baseModel);

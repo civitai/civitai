@@ -53,6 +53,10 @@ const csamBaseDir = await vi.hoisted(async () => {
 // CommentV3 rows for `userContentSections`, served the way the keyset scan asks for them.
 const v3 = vi.hoisted(() => ({
   comments: [] as { id: number; userId: number; content: string }[],
+  tables: {} as Record<string, Record<string, unknown>[]>,
+  // Makes a `kyselyRead` statement fail, as a statement timeout would.
+  failWhen: undefined as ((table: string, eq: Record<string, unknown>) => boolean) | undefined,
+  served: [] as { table: string; eq: Record<string, unknown>; pool: string }[],
   calls: [] as {
     userId?: number;
     afterId?: number;
@@ -89,7 +93,45 @@ vi.mock('~/server/db/kyselyDb', () => {
         .slice(0, state.take);
     },
   });
-  return { kyselyV3Read: { selectFrom: () => query({}) } };
+  // The other tables `userContentSections` reads, by table name. Filtering by owner is covered
+  // against Postgres in csam-archive-user-content.behavior.test.ts; this serves rows as stored.
+  type MainState = {
+    afterId?: number;
+    take?: number;
+    eq?: Record<string, number>;
+    pool?: 'readLong';
+  };
+  const mainQuery = (table: string, state: MainState): Record<string, unknown> => ({
+    select: () => mainQuery(table, state),
+    distinct: () => mainQuery(table, state),
+    orderBy: () => mainQuery(table, state),
+    where: (column: string, op: string, value: number) =>
+      mainQuery(
+        table,
+        op === '>'
+          ? { ...state, afterId: value }
+          : { ...state, eq: { ...state.eq, [column]: value } }
+      ),
+    limit: (take: number) => mainQuery(table, { ...state, take }),
+    execute: async () => {
+      v3.served.push({ table, eq: state.eq ?? {}, pool: state.pool ?? 'read' });
+      if (v3.failWhen?.(table, state.eq ?? {}))
+        throw Object.assign(new Error('canceling statement due to statement timeout'), {
+          code: '57014',
+        });
+      return (v3.tables[table] ?? [])
+        .filter((r) => Object.entries(state.eq ?? {}).every(([c, v]) => r[c] === v))
+        .filter((r) => state.afterId === undefined || (r.id as number) > state.afterId)
+        .slice(0, state.take);
+    },
+  });
+  return {
+    kyselyV3Read: { selectFrom: () => query({}) },
+    kyselyRead: { selectFrom: (table: string) => mainQuery(table, {}) },
+    kyselyReadLong: {
+      selectFrom: (table: string) => mainQuery(table, { pool: 'readLong' }),
+    },
+  };
 });
 // The other half of the redirect: `baseDir` only honours `env.DIRNAME` when `isProd`. Scoped to
 // this file's module graph — no `process.cwd()` monkey-patching, which would leak to every other
@@ -275,16 +317,18 @@ let mockGetConsumerStrikes: (...args: unknown[]) => unknown = async () => [];
 import {
   archiveCsamDataForReport,
   archiveUserComments,
-  ARCHIVE_SCAN_PAGE_SIZE,
+  archiveUserProfile,
   CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS,
   getCsamsToArchive,
 } from '~/server/services/csam.service-new';
+import { ARCHIVE_SCAN_PAGE_SIZE } from '~/server/services/csam-archive-user-content';
 import { createHash } from 'crypto';
 import { Readable } from 'stream';
 import fsAsync from 'fs/promises';
 import type { ReadStream } from 'fs';
 import JSZip from 'jszip';
 import { logToAxiom } from '~/server/logging/client';
+import { env } from '~/env/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { readZipEntryCount } from '~/server/services/csam-archive-evidence.service';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -1044,6 +1088,21 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
         modelVersions,
         images,
         comments,
+        posts: [],
+        postTexts: [],
+        articles: [],
+        chatMessages: [],
+        profile: [],
+        resourceReviews: [],
+        collections: [],
+        bounties: [],
+        bountyEntries: [],
+        serviceOfferings: [],
+        serviceDealReviews: [],
+        serviceDealReviewReplies: [],
+        questions: [],
+        answers: [],
+        authorPassIncomplete: false,
       },
       (_k, v) => (typeof v === 'bigint' ? v.toString() : v)
     );
@@ -1056,6 +1115,9 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     dbMock.dbWrite.csamReport.update.mockResolvedValue({});
     v3.comments = comments;
     v3.calls = [];
+    v3.tables = {};
+    v3.failWhen = undefined;
+    v3.served = [];
   }
 
   /**
@@ -1192,6 +1254,196 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     expect(v3.calls).toHaveLength(2);
     expect(v3.calls[0].orderBy).toEqual(['id', 'asc']);
     expect(v3.calls[1]).toMatchObject({ afterId: pageSize, take: pageSize });
+  });
+
+  it('writes the other text sections after comments, keeping the existing keys first', async () => {
+    seedDb();
+    v3.comments = [{ id: 1, userId: report.userId, content: 'c1' }];
+    v3.tables = {
+      Post: [
+        { id: 4, userId: report.userId, detail: 'p4' },
+        { id: 5, userId: report.userId + 1, detail: 'not theirs' },
+      ],
+      ChatMember: [{ chatId: 9, userId: report.userId }],
+      ChatMessage: [
+        { id: 7, chatId: 9, userId: report.userId, content: 'mine' },
+        { id: 8, chatId: 9, userId: report.userId + 1, content: 'theirs' },
+      ],
+      ServiceOffering: [{ id: 3, sellerId: report.userId, title: 's3' }],
+    };
+
+    await archiveCsamDataForReport(report as never);
+
+    const bundle = JSON.parse(uploads.get('data.json')!.toString('utf8'));
+    expect(Object.keys(bundle)).toEqual([
+      'user',
+      'reportId',
+      'models',
+      'modelVersions',
+      'images',
+      'comments',
+      'posts',
+      'postTexts',
+      'articles',
+      'chatMessages',
+      'profile',
+      'resourceReviews',
+      'collections',
+      'bounties',
+      'bountyEntries',
+      'serviceOfferings',
+      'serviceDealReviews',
+      'serviceDealReviewReplies',
+      'questions',
+      'answers',
+      'authorPassIncomplete',
+    ]);
+    expect(bundle.posts).toEqual([{ id: 4, userId: report.userId, detail: 'p4' }]);
+    expect(bundle.chatMessages.map((m: { isReportedUser: boolean }) => m.isReportedUser)).toEqual([
+      true,
+      false,
+    ]);
+    expect(bundle.serviceOfferings).toEqual([{ id: 3, sellerId: report.userId, title: 's3' }]);
+  });
+
+  it("still writes the bundle when the pass for messages outside the user's chats fails", async () => {
+    seedDb();
+    v3.tables = {
+      ChatMember: [{ chatId: 9, userId: report.userId }],
+      ChatMessage: [
+        { id: 7, chatId: 9, userId: report.userId, content: 'mine' },
+        { id: 8, chatId: 9, userId: report.userId + 1, content: 'theirs' },
+      ],
+      Post: [{ id: 4, userId: report.userId, detail: 'p4' }],
+    };
+    // The member-chat pass filters on chatId; the other pass filters on the author.
+    v3.failWhen = (table, eq) => table === 'ChatMessage' && 'userId' in eq;
+
+    await archiveCsamDataForReport(report as never);
+
+    const bundle = JSON.parse(uploads.get('data.json')!.toString('utf8'));
+    expect(bundle.chatMessages.map((m: { id: number }) => m.id)).toEqual([7, 8]);
+    expect(bundle.posts).toEqual([{ id: 4, userId: report.userId, detail: 'p4' }]);
+    expect(bundle.answers).toEqual([]);
+    expect(bundle.authorPassIncomplete).toBe(true);
+    const warned = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([p]) => p as Record<string, unknown>)
+      .filter((p) => p.subType === 'archive-section-incomplete');
+    expect(warned).toHaveLength(1);
+    expect(warned[0].payload).toEqual({
+      passes: ['authorPass'],
+      causes: ['57014'],
+      count: 1,
+      pool: 'read',
+    });
+    expect(JSON.stringify(warned)).not.toContain(String(report.userId));
+  });
+
+  it.each([
+    ['a distinct long replica', 'postgres://replica-long.invalid/db', 'readLong'],
+    ['no long replica', undefined, 'read'],
+    ['a long URL that is the primary', 'primary', 'read'],
+  ])('runs that pass on the long-read pool only with %s', async (_label, long, pool) => {
+    const mutable = env as Record<string, unknown>;
+    const saved = {
+      DATABASE_REPLICA_URL: mutable.DATABASE_REPLICA_URL,
+      DATABASE_REPLICA_LONG_URL: mutable.DATABASE_REPLICA_LONG_URL,
+    };
+    mutable.DATABASE_REPLICA_URL = 'postgres://replica.invalid/db';
+    mutable.DATABASE_REPLICA_LONG_URL = long === 'primary' ? mutable.DATABASE_URL : long;
+    try {
+      seedDb();
+      v3.tables = { ChatMessage: [{ id: 7, chatId: 9, userId: report.userId, content: 'mine' }] };
+      await archiveCsamDataForReport(report as never);
+    } finally {
+      Object.assign(mutable, saved);
+    }
+    const authorReads = v3.served.filter((s) => s.table === 'ChatMessage' && 'userId' in s.eq);
+    expect(authorReads).not.toHaveLength(0);
+    expect(new Set(authorReads.map((s) => s.pool))).toEqual(new Set([pool]));
+    // Every other read stays on the read pool (edits follow the messages they belong to).
+    const others = v3.served.filter(
+      (s) => !authorReads.includes(s) && s.table !== 'ChatMessageEdit'
+    );
+    expect(others.filter((s) => s.pool !== 'read')).toEqual([]);
+  });
+
+  it('fails the bundle when a read other than that pass fails', async () => {
+    seedDb();
+    v3.tables = { ChatMember: [{ chatId: 9, userId: report.userId }] };
+    // The member-chat pass reads by chat, not by author.
+    v3.failWhen = (table, eq) => table === 'ChatMessage' && 'chatId' in eq;
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow('statement timeout');
+    expect(uploads.has('data.json')).toBe(false);
+  });
+
+  it('archives a profile before it is cleared, beside the report archives', async () => {
+    seedDb();
+    const profile = {
+      bio: 'b',
+      message: null,
+      messageAddedAt: null,
+      sfwBio: null,
+      sfwMessage: null,
+      location: 'l',
+      showcaseSections: [{ key: 'k' }],
+      showcaseItems: [],
+    };
+    await archiveUserProfile({
+      userId: report.userId,
+      actorId: report.userId + 1,
+      clearedFields: ['bio', 'showcaseSections'],
+      profile,
+      links: [{ id: 1, url: 'https://example.invalid/pay', type: 'Sponsorship' }],
+    });
+
+    const archived = JSON.parse(uploads.get('profile.json')!.toString('utf8'));
+    expect(Object.keys(archived)).toEqual([
+      'userId',
+      'archivedAt',
+      'actorId',
+      'clearedFields',
+      'profile',
+      'links',
+    ]);
+    const keys = uploadedKeys.filter((k) => k.endsWith('_profile.json'));
+    expect(keys).not.toHaveLength(0);
+    expect(keys.every((k) => k.startsWith(`${report.userId}/`))).toBe(true);
+    expect(archived).toMatchObject({
+      userId: report.userId,
+      actorId: report.userId + 1,
+      clearedFields: ['bio', 'showcaseSections'],
+      profile,
+    });
+  });
+
+  it('rejects when the profile upload fails, so the clear does not happen', async () => {
+    seedDb();
+    uploadFailure = new Error('s3 down');
+    try {
+      await expect(
+        archiveUserProfile({
+          userId: report.userId,
+          actorId: report.userId + 1,
+          clearedFields: ['bio'],
+          links: [],
+          profile: {
+            bio: 'b',
+            message: null,
+            messageAddedAt: null,
+            sfwBio: null,
+            sfwMessage: null,
+            location: null,
+            showcaseSections: [],
+            showcaseItems: [],
+          },
+        })
+      ).rejects.toThrow();
+    } finally {
+      uploadFailure = undefined;
+    }
   });
 
   it("archives a held user's comments on their own", async () => {

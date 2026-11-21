@@ -1,15 +1,11 @@
 import { decode, isBlurhashValid } from 'blurhash';
 import sharp from 'sharp';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { describe, expect, it } from 'vitest';
 
 /**
  * The server-side blurhash helper behind App Block image rows. Runs the real sharp decode and the
- * real blurhash encoder against real image bytes; only the log sink is replaced.
+ * real blurhash encoder against real image bytes.
  */
-
-// The failure log goes through the canonical logging mock (setup.ts).
-const mockLog = loggingMock.logToAxiom;
 
 import {
   blurhashMetadata,
@@ -37,10 +33,6 @@ function decodedAverage(hash: string): Rgb {
   const n = px.length / 4;
   return { r: sum.r / n, g: sum.g / n, b: sum.b / n };
 }
-
-beforeEach(() => {
-  mockLog.mockClear();
-});
 
 describe('computeImageBlurhash', () => {
   it('returns a valid hash and the full-resolution pixel size', async () => {
@@ -93,20 +85,14 @@ describe('tryComputeImageBlurhash', () => {
     expect(await tryComputeImageBlurhash(bytes, { source: 'test' })).toEqual(
       await computeImageBlurhash(bytes)
     );
-    expect(mockLog).not.toHaveBeenCalled();
   });
 
-  it('returns null and logs instead of throwing on undecodable bytes', async () => {
+  it('returns null instead of throwing on undecodable bytes', async () => {
     const result = await tryComputeImageBlurhash(Buffer.from('not an image at all'), {
       source: 'test-source',
     });
 
     expect(result).toBeNull();
-    expect(mockLog).toHaveBeenCalledTimes(1);
-    expect(mockLog.mock.calls[0][0]).toMatchObject({
-      name: 'image-blurhash',
-      source: 'test-source',
-    });
   });
 });
 

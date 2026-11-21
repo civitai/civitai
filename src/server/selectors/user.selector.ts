@@ -92,6 +92,7 @@ export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
     },
   },
   links: {
+    where: { user: { bannedAt: null } },
     select: {
       id: true,
       url: true,

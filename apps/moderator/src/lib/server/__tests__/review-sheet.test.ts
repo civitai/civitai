@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ReviewBatchModule from '../review-batch';
+import { keyHashSlots } from '@civitai/redis';
 
 /**
  * Review batches on the moderator app: signing the sheet in to a batch (`auth/start?batch`,
@@ -20,7 +21,7 @@ const {
   guardCheck,
   getBatchMedia,
   mintingKeyLive,
-  scannerHoldsImage,
+  scanner,
   streamStoredMedia,
   insertModActivity,
 } = vi.hoisted(() => {
@@ -88,7 +89,7 @@ const {
     guardCheck: vi.fn(async (_cookie: string, _url: string, _opts?: unknown) => ({} as unknown)),
     getBatchMedia: vi.fn(),
     mintingKeyLive: vi.fn(async (_keyId: number) => true),
-    scannerHoldsImage: vi.fn(async (_imageId: number) => false),
+    scanner: { csamHit: new Set<string>() },
     streamStoredMedia: vi.fn(async (input: { audit: () => Promise<unknown> }) => {
       await input.audit();
       return new Response('bytes', { status: 200 });
@@ -131,7 +132,21 @@ vi.mock('$lib/server/review-batch', async (importOriginal) => ({
   ...(await importOriginal<typeof ReviewBatchModule>()),
   getBatchMedia,
   mintingKeyLive,
-  scannerHoldsImage,
+}));
+// The routing rule itself runs for real; only the scanner's ClickHouse and the pattern list are faked.
+vi.mock('$lib/server/clickhouse', () => ({
+  getClickhouse: () => ({
+    query: async ({ query_params }: { query_params: { hashes: string[] } }) => ({
+      json: async () =>
+        query_params.hashes.map((contentHash) => ({
+          contentHash,
+          csamHit: scanner.csamHit.has(contentHash) ? 1 : 0,
+        })),
+    }),
+  }),
+}));
+vi.mock('$lib/server/blocked-for-patterns', () => ({
+  blockedForPatterns: () => ({ signal: [], nonMinor: [/^moderated$/] }),
 }));
 vi.mock('$lib/server/held-media-stream', () => ({ streamStoredMedia }));
 vi.mock('$lib/server/mod-activity', () => ({
@@ -149,6 +164,15 @@ const reviewCount = await import('../../../routes/api/review-media/b/[batchId]/+
 const signout = await import('../../../routes/api/review-media/auth/signout/+server');
 const { handle } = await import('../../../hooks.server');
 const { reviewBatchHash } = await import('@civitai/shared/review-batch');
+const { imageAuditContentHash } = await import('@civitai/shared/media-signals');
+/** An image's signals as `getBatchMedia` reads them, CSAM-restricted or clean. */
+const signalRow = (id: number, restricted: boolean) => ({
+  id,
+  restricted,
+  siblings: [],
+  unreadable: false,
+  blockedFor: 'moderated',
+});
 
 const ORIGIN = 'https://mod.test';
 const CALLBACK = 'https://sheet.test/held-media/callback';
@@ -278,13 +302,13 @@ beforeEach(() => {
   getSessionUserById.mockResolvedValue({ ...MOD });
   isRevoked.mockResolvedValue(false);
   mintingKeyLive.mockResolvedValue(true);
-  scannerHoldsImage.mockResolvedValue(false);
+  scanner.csamHit.clear();
   getBatchMedia.mockResolvedValue({
     imageId: 101,
     url: 'k',
     type: 'image',
     mimeType: null,
-    held: false,
+    signals: signalRow(101, false),
   });
   seedBatch(GENERAL, 'general');
   seedBatch(GENERAL_2, 'general');
@@ -514,6 +538,19 @@ describe('one general sign-in a day', () => {
     expect([...store.keys()].filter((k) => k.startsWith('app:review-sheet:session'))).toEqual([]);
   });
 
+  it('🔴 a session and its batch set share one cluster slot, so one DEL ends both', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    const keys = [...store.keys()].filter((k) => k.startsWith('app:review-sheet:session'));
+    expect(keys).toHaveLength(2);
+    expect(keys.some((k) => k.endsWith(':batches'))).toBe(true);
+    expect(keyHashSlots(keys)).toHaveLength(1);
+    redis.del.mockClear();
+    await signout.POST({
+      cookies: { get: (n: string) => (n === COOKIE.review ? token : undefined) },
+    } as never);
+    expect(redis.del).toHaveBeenCalledWith([...keys].sort());
+  });
+
   it('a revoked web session ends it on the next request', async () => {
     const token = (await signIn('review', GENERAL))!;
     expect(await open('review', GENERAL, token)).toBe(200);
@@ -537,7 +574,7 @@ describe('one general sign-in a day', () => {
       url: 'k',
       type: 'image',
       mimeType: null,
-      held: true,
+      signals: signalRow(101, true),
     });
     expect(await open('review', GENERAL_2, token)).toBe(409);
     expect(streamStoredMedia).not.toHaveBeenCalled();
@@ -636,19 +673,20 @@ describe('the batch item routes', () => {
       url: 'k',
       type: 'image',
       mimeType: null,
-      held: true,
+      signals: signalRow(101, true),
     });
     const res = await item('review', GENERAL, '0', reviewLocals([GENERAL_HASH]));
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ moved: true });
     expect(streamStoredMedia).not.toHaveBeenCalled();
-    scannerHoldsImage.mockResolvedValueOnce(true);
+    // A CSAM label the scanner wrote after the mint.
+    scanner.csamHit.add(imageAuditContentHash(101));
     getBatchMedia.mockResolvedValue({
       imageId: 101,
       url: 'k',
       type: 'image',
       mimeType: null,
-      held: false,
+      signals: signalRow(101, false),
     });
     const late = await item('review', GENERAL, '0', reviewLocals([GENERAL_HASH]));
     expect(late.status).toBe(409);
@@ -663,7 +701,7 @@ describe('the batch item routes', () => {
       url: 'k',
       type: 'image',
       mimeType: null,
-      held: n === 0,
+      signals: signalRow(101 + n, n === 0),
     }));
     expect((await item('held', HELD, '0', heldLocals([HELD_HASH]))).status).toBe(200);
     expect((await item('held', HELD, '1', heldLocals([HELD_HASH]))).status).toBe(200);

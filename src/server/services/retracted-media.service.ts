@@ -1,54 +1,69 @@
 import { Prisma } from '@prisma/client';
+import { RETRACTED_MEDIA_READ_TIMEOUT_MS } from '@civitai/shared/retracted-media';
 import {
   createScannerVerdictCache,
+  retractedAccessColumnsSql,
   retractedImageWhereSql,
-  retractedSuspectSql,
-  retractedTier,
-  type RetractedTier,
+  retractedViewable,
+  type UrlSibling,
 } from '@civitai/shared/retracted-media-tier';
 import { dbWrite } from '~/server/db/client';
 import { blockedForPatterns } from '~/server/services/blocked-for-patterns';
-import { readScannerVerdict } from '~/server/services/review-batch/review-batch.service';
+import {
+  readScannerCsamVerdict,
+  readScannerCsamVerdicts,
+} from '~/server/services/review-batch/review-batch.service';
 
-export const NEEDS_CSAM_QUEUE = 'needs-csam-queue';
-
-export const scannerVerdicts = createScannerVerdictCache(readScannerVerdict);
+export const scannerVerdicts = createScannerVerdictCache(readScannerCsamVerdict);
 
 export type RetractedMedia = {
   url: string;
   type: string;
   mimeType: string | null;
-  tier: RetractedTier;
 };
 
 /**
  * The image's storage key and type while this moderator may see it here; `null` otherwise, so an
- * image they may not see is answered exactly as a missing one. A `suspect` image needs `csamReview`.
- * Read on the primary: a flag or hold the replica has not seen yet would otherwise serve as `plain`.
- * For a moderator without `csamReview`, a `plain` image is also checked against the scanner's labels,
- * and is refused when they mark it, have none for it, or cannot be read. No labels at all is answered
- * `NEEDS_CSAM_QUEUE`, which the route explains: a moderator can do something about it.
+ * image they may not see is answered exactly as a missing one. A moderator without `csamReview` is
+ * refused what `retractedViewable` refuses. Read on the primary: a flag or hold the replica has not
+ * seen yet would otherwise be missed. A read past its timeout, or a scanner that cannot be read,
+ * refuses.
  */
 export async function getRetractedMedia(
   imageId: number,
-  { csamReview }: { csamReview: boolean },
+  { csamReview, cdnLeg = false }: { csamReview: boolean; cdnLeg?: boolean },
   db = dbWrite
-): Promise<RetractedMedia | typeof NEEDS_CSAM_QUEUE | null> {
-  const [row] = await db.$queryRaw<
-    (Omit<RetractedMedia, 'tier'> & { blockedFor: string | null; suspect: boolean })[]
-  >`
-    SELECT i.url, i.type::text AS type, i."mimeType", i."blockedFor",
-      ${Prisma.raw(retractedSuspectSql('i'))} AS suspect
-    FROM "Image" i
-    WHERE i.id = ${imageId} AND ${Prisma.raw(retractedImageWhereSql('i'))}
-  `;
+): Promise<RetractedMedia | null> {
+  const access = retractedAccessColumnsSql('i', { csamReview });
+  const [row] = await db.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`);
+    return tx.$queryRaw<
+      (RetractedMedia & {
+        blockedFor: string | null;
+        ingestion: string;
+        restricted: boolean;
+        siblings: UrlSibling[];
+      })[]
+    >`
+      SELECT i.url, i.type::text AS type, i."mimeType", i."blockedFor", i.ingestion,
+        ${Prisma.raw(access.restricted)} AS restricted,
+        ${Prisma.raw(access.siblings)} AS siblings
+      FROM "Image" i
+      WHERE i.id = ${imageId} AND ${Prisma.raw(retractedImageWhereSql('i', { cdnLeg }))}
+    `;
+  });
   if (!row) return null;
-  const tier = retractedTier(row, blockedForPatterns());
   if (!csamReview) {
-    if (tier === 'suspect') return null;
-    const verdict = await scannerVerdicts.read(imageId);
-    if (verdict === 'none') return NEEDS_CSAM_QUEUE;
-    if (verdict !== 'clear') return null;
+    const viewable = await retractedViewable(row, {
+      patterns: blockedForPatterns(),
+      // A scanned image can be rescanned, so its verdict is read fresh rather than from the cache.
+      readVerdict: () =>
+        row.ingestion === 'Scanned'
+          ? readScannerCsamVerdict(imageId)
+          : scannerVerdicts.read(imageId),
+      readVerdicts: readScannerCsamVerdicts,
+    });
+    if (!viewable) return null;
   }
-  return { url: row.url, type: row.type, mimeType: row.mimeType, tier };
+  return { url: row.url, type: row.type, mimeType: row.mimeType };
 }

@@ -8,7 +8,7 @@ import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { trpc } from '~/utils/trpc';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { TurfSummaryProvider } from '~/components/HatTurf/TurfSummaryProvider';
-import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
+import { ShowcaseGrid, useShowcaseViewAll } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import classes from '~/components/Profile/ProfileSection.module.css';
@@ -58,6 +58,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
   );
 
   const isNullState = showcaseItems.length === 0 || (!isLoading && !coverImages.length);
+  const viewAll = useShowcaseViewAll({ rows: 2, itemCount: coverImages.length });
 
   if (showcaseItems.length === 0 || (isNullState && inView)) {
     return null;
@@ -83,7 +84,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
             <TurfSummaryProvider imageIds={hatImageIds}>
               <ShowcaseGrid
                 itemCount={showcaseItems.length}
-                rows={2}
+                {...viewAll.gridProps}
                 className={clsx({
                   [classes.nullState]: !coverImages.length,
                   [classes.loading]: isRefetching,
@@ -98,6 +99,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
                   />
                 ))}
               </ShowcaseGrid>
+              {viewAll.toggle}
             </TurfSummaryProvider>
           </ProfileSection>
         ))}

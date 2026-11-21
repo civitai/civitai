@@ -42,6 +42,31 @@ describe('buildRumExperimentAttributes', () => {
     expect(other.exp_feed_go_transport_model_get_all).toBe('true');
   });
 
+  it('carries the image.getInfinite transport cohort under its exact Loki field name', () => {
+    // A wire string: the image.getInfinite Go-vs-Node RUM comparison splits on
+    // `session_attr_exp_feed_go_transport_infinite`. Its own flag, independent of the other two.
+    const on = buildRumExperimentAttributes({
+      feedGoTransport: false,
+      feedGoTransportModelGetAll: false,
+      feedGoTransportInfinite: true,
+    });
+    expect(on.exp_feed_go_transport_infinite).toBe('true');
+    expect(on.exp_feed_go_transport).toBe('false');
+    expect(on.exp_feed_go_transport_model_get_all).toBe('false');
+    const off = buildRumExperimentAttributes({ feedGoTransport: true });
+    expect(off.exp_feed_go_transport_infinite).toBe('false');
+  });
+
+  it('carries the client shadow-compare cohort under its exact Loki field name', () => {
+    // A wire string: the shadow cohort's own cost is read by splitting on
+    // `session_attr_exp_client_shadow_compare`.
+    const on = buildRumExperimentAttributes({ clientShadowCompare: true, feedGoTransport: false });
+    expect(on.exp_client_shadow_compare).toBe('true');
+    expect(on.exp_feed_go_transport).toBe('false');
+    const off = buildRumExperimentAttributes({ feedGoTransport: true });
+    expect(off.exp_client_shadow_compare).toBe('false');
+  });
+
   it('treats a missing flag as off ("false"), never undefined/absent', () => {
     const attrs = buildRumExperimentAttributes({});
     expect(attrs.exp_gen_tab_defer_view).toBe('false');

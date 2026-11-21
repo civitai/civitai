@@ -192,6 +192,9 @@
     "Ideogram 4.5": [
       "Checkpoint"
     ],
+    "Ideogram 4.6": [
+      "Checkpoint"
+    ],
     "Illustrious": [
       "Checkpoint",
       "DoRA",
@@ -275,7 +278,8 @@
       "LORA"
     ],
     "MiniMax H3 Image": [
-      "Checkpoint"
+      "Checkpoint",
+      "LORA"
     ],
     "MiniMax Music 3": [
       "Checkpoint"
@@ -285,7 +289,8 @@
       "LORA"
     ],
     "MiniMaxH3Image": [
-      "Checkpoint"
+      "Checkpoint",
+      "LORA"
     ],
     "MiniMaxMusic3": [
       "Checkpoint"
@@ -584,6 +589,7 @@
     "Hunyuan Video",
     "Ideogram 4.0",
     "Ideogram 4.5",
+    "Ideogram 4.6",
     "Kling",
     "Krea 3",
     "LTXV",
@@ -594,7 +600,6 @@
     "MAI",
     "MageFlow",
     "Ming Image Design 0.1",
-    "MiniMax H3 Image",
     "MiniMax Music 3",
     "Mochi",
     "Muse Image",
@@ -631,6 +636,7 @@
     "fibo 2.0 turbo",
     "ideogram 4.0",
     "ideogram 4.5",
+    "ideogram 4.6",
     "sd 3",
     "sd 3.5",
     "sd 3.5 large",

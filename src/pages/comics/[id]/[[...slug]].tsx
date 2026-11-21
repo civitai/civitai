@@ -323,8 +323,10 @@ function ChapterListItem({
       </div>
       {showDownload && (
         <ChapterDownloadButton
+          projectId={project.id}
           projectName={project.name}
           projectUserId={project.user.id}
+          writer={project.user.username}
           chapter={ch}
         />
       )}
@@ -883,6 +885,12 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     projectName: project.name,
     chapterName: exportChapterName,
     panels: exportPanels,
+    comicInfo: {
+      projectId: project.id,
+      writer: project.user.username,
+      chapterPosition: activeChapter?.position ?? 0,
+      chapterNsfwLevel: activeChapter?.nsfwLevel ?? 0,
+    },
   });
 
   // Pages mode: compute page spreads (pairs of panels)
@@ -1246,6 +1254,12 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                           projectName={project.name}
                           chapterName={activeChapter.name}
                           panels={activeChapter.panels}
+                          comicInfo={{
+                            projectId: project.id,
+                            writer: project.user.username,
+                            chapterPosition: activeChapter.position,
+                            chapterNsfwLevel: activeChapter.nsfwLevel,
+                          }}
                         />
                       )}
                     {currentUser && currentUser.id !== project.user.id && (

@@ -17,12 +17,12 @@ import { completeStripeBuzzTransaction } from '~/server/services/buzz.service';
 import { constants, STRIPE_PROCESSING_AWAIT_TIME } from '~/server/common/constants';
 import { BanReasonCode } from '~/server/common/enums';
 import { notifyAir } from '~/server/services/integration.service';
+import { claimIdempotencyKey } from '~/server/services/idempotency-key.service';
 import { isDev } from '~/env/other';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
 import { syncFreshdeskMembership } from '~/server/services/subscriptions.service';
 import { dbWrite } from '~/server/db/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   recordBuzzPurchaseKickback,
   recordMembershipPaymentReward,
@@ -36,8 +36,7 @@ import {
 } from '~/server/services/blocks/buzz-attribution.service';
 import { extractAttribution } from '~/server/schema/blocks/attribution.schema';
 
-const log = (data: MixedObject) =>
-  logToAxiom({ name: 'stripe-webhook', ...data }, 'webhooks');
+const log = (data: MixedObject) => logToAxiom({ name: 'stripe-webhook', ...data }, 'webhooks');
 
 // Stripe requires the raw body to construct the event.
 export const config = {
@@ -53,9 +52,6 @@ async function buffer(readable: Readable) {
   }
   return Buffer.concat(chunks);
 }
-
-// Well past Stripe's retry window.
-const AIR_NOTIFIED_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 const relevantEvents = new Set([
   'checkout.session.completed',
@@ -351,14 +347,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                   break;
                 }
 
-                // Stripe delivers at least once; AIR hears about each checkout once.
-                const notifiedKey =
-                  `${REDIS_SYS_KEYS.WEBHOOKS.STRIPE_AIR_NOTIFIED}:${checkoutSession.id}` as const;
-                const claimed = await sysRedis.set(notifiedKey, '1', {
-                  NX: true,
-                  EX: AIR_NOTIFIED_TTL_SECONDS,
-                });
-                if (!claimed) {
+                // Stripe delivers at least once; AIR hears about each checkout once. A claim that
+                // cannot be taken (the key store down, or on with its table missing) throws: 400,
+                // so Stripe redelivers later, and AIR is told nothing until then.
+                const claim = await claimIdempotencyKey('stripe-air', checkoutSession.id);
+                if (claim.status !== 'claimed') {
                   log({ type: 'info', stage: 'air-already-notified', eventId: event.id });
                   break;
                 }
@@ -366,7 +359,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                   await notifyAir({ email, name });
                 } catch (err) {
                   try {
-                    await sysRedis.del(notifiedKey);
+                    await claim.release();
                   } catch (releaseErr) {
                     // The claim outlives Stripe's retries, so AIR is never told about this checkout.
                     log({

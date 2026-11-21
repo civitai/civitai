@@ -8,6 +8,91 @@
 /** Ceiling for a per-image licensing fee, in Buzz. Mirrored by the app's model-version schema. */
 export const MAX_LICENSING_FEE = 100;
 
+/** Ceiling for a PercentOfCompute licensing fee, in percent of the compute cost (100 doubles it). */
+export const MAX_PERCENT_OF_COMPUTE_FEE = 100;
+
+/**
+ * orchestration.resourceCompensations sources that are platform revenue logged on a creator's version
+ * (the licence-fee markup): never paid, never shown as earnings. event-engine has no workspace
+ * dependencies, so update-compensation.ts spells it out; keep the two in step.
+ */
+export const PLATFORM_REVENUE_SOURCES: ReadonlySet<string> = new Set(['licenseFeeMarkup']);
+/** PLATFORM_REVENUE_SOURCES as a ClickHouse IN list: `source NOT IN (${PLATFORM_REVENUE_SOURCES_SQL})`. */
+export const PLATFORM_REVENUE_SOURCES_SQL = [...PLATFORM_REVENUE_SOURCES]
+  .map((s) => `'${s}'`)
+  .join(', ');
+
+/**
+ * Why a write that touches a percent-of-compute fee is refused, or null when it may proceed. Staff only
+ * until creators get a capped percent fee: an owner may keep, lower or clear a percent fee staff set,
+ * never start one, convert one to per-image, or raise one.
+ */
+export function percentOfComputeFeeRefusal({
+  isModerator,
+  requestedType,
+  storedType,
+  fee,
+  storedFee,
+}: {
+  isModerator: boolean;
+  /** The type the write sends; undefined keeps the stored one. */
+  requestedType: string | null | undefined;
+  storedType: string | null | undefined;
+  /** The fee the version will hold after the write (0 or null when cleared). */
+  fee: number | null;
+  storedFee: number | null;
+}): string | null {
+  const percent = 'PercentOfCompute';
+  const resultType = requestedType === undefined ? storedType : requestedType;
+  if (resultType !== percent && storedType !== percent) return null;
+  const cleared = fee == null || fee <= 0;
+  if (cleared) return null;
+  if (!isModerator) {
+    const keepsStaffPercent =
+      storedType === percent && resultType === percent && fee <= (storedFee ?? 0);
+    if (!keepsStaffPercent)
+      return 'Percentage license fees are restricted; please contact support.';
+  }
+  if (resultType === percent && fee > MAX_PERCENT_OF_COMPUTE_FEE)
+    return `A percentage license fee can be at most ${MAX_PERCENT_OF_COMPUTE_FEE}%.`;
+  return null;
+}
+
+/**
+ * Why an owner's write to a staff-locked licence fee is refused, or null when it may proceed. While
+ * `ModelVersion.licensingFeeLocked` is set only a moderator may change the fee, its type or its
+ * settlement currency; re-sending the stored values passes, because both editors re-submit them.
+ * Callers pass undefined for a field the write leaves alone. A policy clear (POI or private model,
+ * non-commercial base model) is not routed through here: it stops charging rather than changing the
+ * rate, and refusing it would strand the owner's save.
+ */
+export function lockedLicensingFeeRefusal({
+  isModerator,
+  locked,
+  stored,
+  next,
+}: {
+  isModerator: boolean;
+  locked: boolean | null | undefined;
+  stored: { fee: number | null; type: string | null; currency: string | null };
+  next: {
+    fee: number | null | undefined;
+    type: string | null | undefined;
+    currency: string | null | undefined;
+  };
+}): string | null {
+  if (!locked || isModerator) return null;
+  const cents = (fee: number | null) => Math.round((fee ?? 0) * 100);
+  // A null column reads as its default, which the handler fills in before this compare.
+  const type = (t: string | null) => t ?? 'PerImageBuzz';
+  const currency = (c: string | null) => c ?? 'Buzz';
+  const changed =
+    (next.fee !== undefined && cents(next.fee) !== cents(stored.fee)) ||
+    (next.type !== undefined && type(next.type) !== type(stored.type)) ||
+    (next.currency !== undefined && currency(next.currency) !== currency(stored.currency));
+  return changed ? 'This license fee is set by Civitai; contact support to change it.' : null;
+}
+
 // Video costs far more to generate than an image, so the fee ceiling is worth this much more on a video
 // model. Applied to the licensing-fee ceiling and the suggested defaults — but NOT to the monthly
 // pricing allowance, which counts prices rather than sizing them.

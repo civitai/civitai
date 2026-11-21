@@ -14,4 +14,17 @@ describe('retractedMediaUrl', () => {
     expect(retractedMediaUrl({ id: 7, ingestion: 'Scanned' }, { isModerator: true })).toBeNull();
     expect(retractedMediaUrl({ id: 7 }, { isModerator: true })).toBeNull();
   });
+
+  it('sends a moderator to the route for a scanned image only once the CDN has refused it', () => {
+    const failed = { cdnFailed: true };
+    expect(retractedMediaUrl({ id: 7, ingestion: 'Scanned' }, { isModerator: true }, failed)).toBe(
+      '/api/mod/retracted-media/7'
+    );
+    expect(
+      retractedMediaUrl({ id: 7, ingestion: 'Scanned' }, { isModerator: false }, failed)
+    ).toBeNull();
+    expect(
+      retractedMediaUrl({ id: 7, ingestion: 'Pending' }, { isModerator: true }, failed)
+    ).toBeNull();
+  });
 });

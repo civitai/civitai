@@ -24,11 +24,13 @@ export function CreatorAnnouncement({
   announcement,
   actions,
   withAuthor = false,
+  onNavigate,
   ...props
 }: {
   announcement: CreatorAnnouncementModel;
   actions?: React.ReactNode;
   withAuthor?: boolean;
+  onNavigate?: () => void;
 } & React.HTMLAttributes<HTMLDivElement>) {
   const { cover, user } = announcement;
   const postedAt = announcement.startsAt ?? announcement.createdAt;
@@ -68,6 +70,7 @@ export function CreatorAnnouncement({
           : null
       }
       actions={announcement.metadata?.actions ?? []}
+      onNavigate={onNavigate}
       impressions={[{ entityType: 'Announcement', entityId: announcement.id }]}
       // `creatorId` rides along because the Creator Studio read is a ClickHouse query with
       // no announcement table to join against.

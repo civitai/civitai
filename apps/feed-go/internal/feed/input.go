@@ -58,6 +58,13 @@ type Input struct {
 	// Tools is `tools` as sent (order, duplicates, zero and negative ids kept): getAllImages keeps the
 	// images whose tool ids contain every one of them; the feed-service query sends the positive ones.
 	Tools []int
+	// Tags is `tags` (z.array(z.number())) as sent: the tag inclusion filter. enforceBlockedBrowsingTags
+	// strips the blocked ids first (only blocked ones: an empty page); getAllImages then keeps the
+	// images carrying any of the rest, and the feed-service query sends the positive ones.
+	Tags []int
+	// Techniques is `techniques` (z.number().array()) as sent: getAllImages keeps the images with an
+	// ImageTechnique row for any of them; the feed-service query sends the positive ones.
+	Techniques []int
 	// IncludeProfilePictures is `include` holding 'profilePictures'. The gallery handler adds it
 	// anyway; image.getInfinite hydrates profile pictures only when the client asked.
 	IncludeProfilePictures bool
@@ -66,6 +73,10 @@ type Input struct {
 	// is [] and every image's `cosmetic` null. The gallery refuses it (Parse); image.getInfinite
 	// serves it (the model page's showcase carousel sends `include: []`).
 	IncludeCosmetics bool
+	// IncludeTags is `include` holding 'tags': getAllImagesUncaptured attaches each image's votable
+	// tags (imageTagsCache, with the viewer's own votes). Only image.getInfinite reads it (ParseInfinite);
+	// the gallery still falls back on it (Parse: input-include).
+	IncludeTags bool
 }
 
 // imagesSchema is getInfiniteImagesSchema's allow-list and defaults (why: the inputschema package doc).
@@ -94,7 +105,7 @@ var (
 		"limit", "cursor", "sort", "period", "periodMode", "browsingLevel", "preCapBrowsingLevel",
 		"modelId", "modelVersionId", "model3dId", "types", "generation", "withMeta", "requiringMeta",
 		"remixOfId", "fromPlatform", "disablePoi", "disableMinor", "hideChallenges", "excludedTagIds",
-		"excludedUserIds", "include", "tools",
+		"excludedUserIds", "include", "tools", "tags", "techniques",
 	}
 	ignoredKeys = []string{
 		"hatSort", "hatTeams", "hatTurfMine", "hideTurfHats", "hideWornHats", "includePG13",
@@ -107,7 +118,7 @@ var (
 // the feed-service path, where the query mapper refuses them (Input.RequiringMeta / HasRemixOfID).
 var unsupportedKeys = []string{
 	"collectionId", "collectionTagId", "postId", "postIds", "userId", "username", "hubId",
-	"hubExcludedSources", "imageId", "reviewId", "skip", "ids", "tags", "techniques",
+	"hubExcludedSources", "imageId", "reviewId", "skip", "ids",
 	"prioritizedUserIds", "reactions", "followed", "hidden", "newCreators", "includeBaseModel",
 	"pending", "pendingReviewOnly", "poiOnly", "minorOnly", "withTags", "jumpTo", "baseModels",
 	"notPublished", "scheduled", "publishedOnly",
@@ -119,7 +130,7 @@ var knownPeriods = map[string]bool{"AllTime": true, "Day": true, "Week": true, "
 // Parse validates the decoded input map. A shape outside the supported subset is a fallback; a value
 // the schema itself rejects is also a fallback (the Node app answers it with its own BAD_REQUEST).
 func Parse(m map[string]any) (*Input, error) {
-	in, err := parseInput(m, unsupportedKeys, trpcTransportKeys)
+	in, err := parseInput(m, unsupportedKeys, trpcTransportKeys, false)
 	if err != nil {
 		return nil, err
 	}
@@ -129,9 +140,10 @@ func Parse(m map[string]any) (*Input, error) {
 	return in, nil
 }
 
-// parseInput is Parse with the procedure's own list of keys that fall back when present, and its own
-// set of keys outside the schema that zod strips, read as absent.
-func parseInput(m map[string]any, unsupported []string, absent map[string]bool) (*Input, error) {
+// parseInput is Parse with the procedure's own list of keys that fall back when present, its own set
+// of keys outside the schema that zod strips, read as absent, and whether an `include` of 'tags' is
+// answered (IncludeTags) rather than a fallback.
+func parseInput(m map[string]any, unsupported []string, absent map[string]bool, includeTags bool) (*Input, error) {
 	for _, k := range unsupported {
 		if v, ok := m[k]; ok && !isEmpty(v) {
 			return nil, fallback.Newf("input-"+k, "%v", v)
@@ -217,12 +229,32 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 	if in.ExcludedUserIDs, err = ints(m["excludedUserIds"]); err != nil {
 		return nil, err
 	}
-	if in.Tools, err = toolIDs(m["tools"]); err != nil {
+	if in.Tools, err = int4IDs(m["tools"], "tools"); err != nil {
 		return nil, err
 	}
+	// `tags` and `techniques` are `.optional()`, not `.nullish()`: a literal null is the schema's
+	// BAD_REQUEST, so only an absent key means no filter.
+	if v, ok := m["tags"]; ok {
+		if v == nil {
+			return nil, fallback.NewfSafe("input-invalid", "tags", "tags: null")
+		}
+		if in.Tags, err = ints(v); err != nil {
+			return nil, err
+		}
+	}
+	if v, ok := m["techniques"]; ok {
+		if v == nil {
+			return nil, fallback.NewfSafe("input-invalid", "techniques", "techniques: null")
+		}
+		if in.Techniques, err = int4IDs(v, "techniques"); err != nil {
+			return nil, err
+		}
+	}
 	if v, ok := m["include"]; ok && v != nil {
-		// The default is ['cosmetics']; 'meta' is what withMeta adds. Anything else hydrates more
-		// (tags, report, count, metaSelect) and is not ported.
+		// The default is ['cosmetics']; 'meta' is what withMeta adds. Anything else falls back here:
+		// 'metaSelect' hydrates more and is not ported, nor is 'tags' for the gallery (image.getInfinite
+		// answers it: includeTags); image.getInfinite removes the 'count'/'report' it never reads
+		// before this runs (withoutUnreadIncludes).
 		list, ok := v.([]any)
 		if !ok {
 			return nil, fallback.New("input-invalid")
@@ -238,6 +270,11 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 				in.IncludeProfilePictures = true
 			case "tagIds":
 				// Both handlers add it.
+			case "tags":
+				if !includeTags {
+					return nil, fallback.NewfSafe("input-include", includeToken(e), "%v", e)
+				}
+				in.IncludeTags = true
 			default:
 				return nil, fallback.NewfSafe("input-include", includeToken(e), "%v", e)
 			}
@@ -398,11 +435,13 @@ func stringList(v any, allowed map[string]bool) ([]string, error) {
 	return out, nil
 }
 
-// toolIDs reads `tools` (z.number().array()). Not a list, or an entry that is not a number, is the
-// schema's BAD_REQUEST (input-invalid). A number the schema accepts is kept as sent, except one that
-// is not an int4 (a fraction, or past the int4 range): Node binds it into `ARRAY[…]::integer[]`,
-// and what that cast does with it (round, or fail the query) is not reproduced here (input-tools).
-func toolIDs(v any) ([]int, error) {
+// int4IDs reads an id list the schema types z.number().array(): `tools` and `techniques` (key names
+// it). Not a list, or an entry that is not a number, is the schema's BAD_REQUEST (input-invalid). A
+// number the schema accepts is kept as sent, except one that is not an int4 (a fraction, or past the
+// int4 range): Node binds `tools` into `ARRAY[…]::integer[]` and each `techniques` entry as its own
+// parameter against an integer column, and what Postgres does with such a value (round, or fail the
+// query) is not reproduced here (`input-<key>`, detail not-int4).
+func int4IDs(v any, key string) ([]int, error) {
 	if v == nil {
 		return nil, nil
 	}
@@ -417,7 +456,7 @@ func toolIDs(v any) ([]int, error) {
 			return nil, fallback.Newf("input-invalid", "%v", e)
 		}
 		if f != math.Trunc(f) || f < math.MinInt32 || f > math.MaxInt32 {
-			return nil, fallback.NewfSafe("input-tools", "not-int4", "tools: %v", e)
+			return nil, fallback.NewfSafe("input-"+key, "not-int4", "%s: %v", key, e)
 		}
 		out = append(out, int(f))
 	}

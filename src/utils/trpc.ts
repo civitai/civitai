@@ -39,6 +39,8 @@ import {
 } from '~/utils/trpc-batch-window';
 import { GO_TRANSPORT_URL, isGoTransportEnabledFor } from '~/utils/trpc-go-transport';
 import { feedTransportTimingLink } from '~/utils/faro/feedTransport';
+import { createShadowCompareFetch, goTransportCandidate } from '~/utils/faro/shadowCompare';
+import { isShadowCompareEnabledFor } from '~/utils/trpc-shadow-compare';
 
 const url = '/api/trpc';
 
@@ -373,7 +375,8 @@ export function shouldBatch(op: {
  * Send this operation over the Go transport only when ALL hold:
  *  - it's a `query` for a procedure in `GO_TRANSPORT_PROCEDURES`,
  *  - THAT procedure's own flag is on for this user (`feedGoTransport` for
- *    `image.getImagesAsPostsInfinite`, `feedGoTransportModelGetAll` for `model.getAll`),
+ *    `image.getImagesAsPostsInfinite`, `feedGoTransportModelGetAll` for `model.getAll`,
+ *    `feedGoTransportInfinite` for `image.getInfinite`),
  *  - we're in an authenticated browser — signed-out responses are edge-cached under the
  *    `/api/trpc` path, and moving them to another path would trade those hits for origin load,
  *  - it would leave as a GET (`shouldSendQueryAsPost` false): the Go service answers GETs only.
@@ -385,6 +388,51 @@ export function shouldUseGoTransport(op: { type: string; path: string; input: un
     isAuthedBrowser() &&
     !shouldSendQueryAsPost(op)
   );
+}
+
+/**
+ * Shadow-compare this operation (`clientShadowCompare`, `~/utils/faro/shadowCompare`) only when
+ * ALL hold: it's a `query` for a procedure in `SHADOW_COMPARE_PROCEDURES` with the flag on and the
+ * page load's compare cap not spent, AND that procedure's own Go-transport flag is on for this user
+ * (`isGoTransportEnabledFor`), in an authenticated browser, as a GET (`shouldSendQueryAsPost` false).
+ * Requiring the transport flag ties every compare to a procedure the Go service is already ramped to
+ * serve: at 0% transport nobody is shadowed, and killing the transport flag kills its shadow too.
+ * Evaluated only on the Go branch of `terminatingLink`. A shadowed request's control leg is the old
+ * `/api/trpc` route, so for those requests the app uses the old route's answer and the Go answer is
+ * only compared.
+ */
+export function shouldShadowCompare(op: { type: string; path: string; input: unknown }) {
+  return (
+    op.type === 'query' &&
+    isShadowCompareEnabledFor(op.path) &&
+    isGoTransportEnabledFor(op.path) &&
+    isAuthedBrowser() &&
+    !shouldSendQueryAsPost(op)
+  );
+}
+
+/**
+ * The control leg for a shadowed query: the same unbatched GET `httpLinkWithLargeQuerySupport`
+ * would send for a never-batched procedure, over a `fetch` that also sends the candidate leg and
+ * compares the raw texts. Built per operation so the fetch knows its procedure.
+ */
+function shadowCompareLink({
+  url,
+  headers,
+}: {
+  url: string;
+  headers: ReturnType<typeof getHeaders>;
+}): TRPCLink<AppRouter> {
+  return (runtime) => (opts) =>
+    httpLink({
+      transformer: clientTransformer,
+      url,
+      headers,
+      fetch: createShadowCompareFetch({
+        procedure: opts.op.path,
+        candidate: goTransportCandidate,
+      }),
+    })(runtime)(opts);
 }
 
 /**
@@ -415,10 +463,17 @@ function terminatingLink({
   });
   return splitLink({
     condition: shouldUseGoTransport,
-    true: [
-      feedTransportTimingLink({ transport: 'go', isAuthed: isAuthedBrowser }),
-      httpLink({ transformer: clientTransformer, url: GO_TRANSPORT_URL, headers }),
-    ],
+    // A shadowed request is in neither `feed_transport` arm: it is two requests, one per route. Its
+    // absence skews the shadow cohort's Go arm (most compares are spent early on a page, so their
+    // later, deeper pages are left), so read the Go arm with `exp_client_shadow_compare` filtered out.
+    true: splitLink({
+      condition: shouldShadowCompare,
+      true: shadowCompareLink({ url, headers }),
+      false: [
+        feedTransportTimingLink({ transport: 'go', isAuthed: isAuthedBrowser }),
+        httpLink({ transformer: clientTransformer, url: GO_TRANSPORT_URL, headers }),
+      ],
+    }),
     false: [
       feedTransportTimingLink({
         transport: 'node',

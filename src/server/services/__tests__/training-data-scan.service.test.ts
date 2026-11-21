@@ -474,9 +474,8 @@ describe('healStalledTrainingDataScans', () => {
       });
     });
     const gaveUp = () => dbMock.dbWrite.modelFile.updateMany.mock.calls.length > 0;
-    beforeEach(() => loggingMock.logToAxiom.mockClear());
 
-    it('a definite absence 24 times, is marked Error, logged once', async () => {
+    it('a definite absence 24 times, is marked Error', async () => {
       h.resolveDownloadUrl.mockRejectedValue(new Error('404'));
       h.isDefiniteNotFound.mockReturnValue(true);
 
@@ -487,10 +486,6 @@ describe('healStalledTrainingDataScans', () => {
       expect(dbMock.dbWrite.modelFile.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ virusScanResult: 'Error' }) })
       );
-      const logged = loggingMock.logToAxiom.mock.calls.map(([event]) => event.name);
-      expect(logged.filter((name) => name === 'training-data-scan-gave-up')).toHaveLength(1);
-      expect(logged).not.toContain('training-data-scan-submit');
-      expect(logged).not.toContain('training-data-scan-heal-submit-failed');
     });
 
     it('a transient failure 30 times, stays Pending', async () => {

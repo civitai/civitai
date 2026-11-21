@@ -1,12 +1,14 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import type * as ModelVisibility from '~/server/services/model-visibility.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 void loggingMock;
 void redisMock;
@@ -61,10 +63,11 @@ const VERSION_ID = 4242;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
-    CREATE TYPE "ModelStatus" AS ENUM ('Draft', 'Published');
+    CREATE TYPE "ModelStatus" AS ENUM ('Draft', 'Published', 'Unpublished', 'UnpublishedViolation');
     CREATE TABLE "Model" (
       id int PRIMARY KEY, name text, "sfwName" text, type text, nsfw boolean, poi boolean,
-      mode text, availability text, "userId" int, minor boolean, "sfwOnly" boolean
+      mode text, availability text, "userId" int, minor boolean, "sfwOnly" boolean,
+      status "ModelStatus" DEFAULT 'Published'
     );
     CREATE TABLE "ModelVersion" (
       id int PRIMARY KEY, "modelId" int, name text, "nsfwLevel" int, "createdAt" timestamp(3),
@@ -110,12 +113,12 @@ afterAll(async () => {
   await db.close();
 });
 
-async function getVersion() {
+async function getVersion(user?: object, credential: object = {}) {
   const mod = await import('~/pages/api/v1/model-versions/[id]');
   const handler = mod.default as unknown as (
     req: NextApiRequest,
     res: NextApiResponse,
-    user: undefined
+    user: object | undefined
   ) => Promise<void>;
   const res: any = {
     headers: {} as Record<string, unknown>,
@@ -136,8 +139,9 @@ async function getVersion() {
     method: 'GET',
     query: { id: String(VERSION_ID) },
     headers: { host: 'civitai.com' },
+    context: credential,
   } as unknown as NextApiRequest;
-  await handler(req, res, undefined);
+  await handler(req, res, user);
   return res as { statusCode: number; body: any };
 }
 
@@ -175,5 +179,55 @@ describe('GET /api/v1/model-versions/{id} — the raw SQL carries the model flag
     expect(models.get(VERSION_ID)).toEqual({ modelId: 7, ...flags });
     expect(body.model).not.toHaveProperty('minor');
     expect(body.model).not.toHaveProperty('sfwOnly');
+  });
+});
+
+describe('GET /api/v1/model-versions/{id} — a published version of a model that is not', () => {
+  const MODERATOR = { id: 1, isModerator: true };
+  const KEY = { apiKeyId: 1, apiKeyType: ApiKeyType.User, subject: { type: 'apiKey', id: 1 } };
+  const setModelStatus = (status: string) =>
+    db.query(`UPDATE "Model" SET status = $1::"ModelStatus" WHERE id = 7`, [status]);
+  afterEach(() => setModelStatus('Published'));
+
+  it.each(['Draft', 'Unpublished', 'UnpublishedViolation'])(
+    'is not found by a signed-out visitor when the model is %s',
+    async (status) => {
+      await setModelStatus(status);
+      const { statusCode, body } = await getVersion();
+      expect(statusCode).toBe(404);
+      expect(body).toEqual({ error: 'Model not found' });
+    }
+  );
+
+  it('is served to a moderator on a full-access key', async () => {
+    await setModelStatus('Unpublished');
+    expect((await getVersion(MODERATOR, { ...KEY, tokenScope: TokenScope.Full })).statusCode).toBe(
+      200
+    );
+  });
+
+  it('is not found by a moderator on a scoped key', async () => {
+    await setModelStatus('Unpublished');
+    expect(
+      (await getVersion(MODERATOR, { ...KEY, tokenScope: TokenScope.ModelsRead })).statusCode
+    ).toBe(404);
+  });
+
+  it('a version published for a later time is not found by a signed-out visitor', async () => {
+    await db.query(
+      `UPDATE "ModelVersion" SET "publishedAt" = now() + interval '1 day' WHERE id = ${VERSION_ID}`
+    );
+    try {
+      expect((await getVersion()).statusCode).toBe(404);
+      expect(
+        (await getVersion(MODERATOR, { ...KEY, tokenScope: TokenScope.Full })).statusCode
+      ).toBe(200);
+    } finally {
+      await db.query(`UPDATE "ModelVersion" SET "publishedAt" = now() WHERE id = ${VERSION_ID}`);
+    }
+  });
+
+  it('control: is served to a signed-out visitor once the model is published', async () => {
+    expect((await getVersion()).statusCode).toBe(200);
   });
 });

@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { creatorCompAmountPaidCounter, generationTipAmountPaidCounter } from '~/server/prom/client';
 import {
   GENERATION_TIP_TRANSACTION_PREFIX,
   TransactionType,
@@ -148,6 +147,19 @@ describe('buildPayoutTransactions: generation tips', () => {
     ]);
   });
 
+  // The orchestrator writes the licence-fee markup to the same table on the licensor's version; it is
+  // platform revenue and must never be paid out.
+  it('pays nothing for the licence-fee markup', () => {
+    const withMarkup = [
+      ...ROWS,
+      row('licenseFeeMarkup', 'CashSettled', 5000),
+      row('licenseFeeMarkup', 'Yellow', 70),
+    ];
+    expect(view(buildPayoutTransactions(DAY_AFTER_START, { [CREATOR]: withMarkup }))).toEqual(
+      view(buildPayoutTransactions(DAY_AFTER_START, { [CREATOR]: ROWS }))
+    );
+  });
+
   it('converts cash license fees from tenths of a penny', () => {
     const [tx] = buildPayoutTransactions(START, {
       [CREATOR]: [row('licenseFee', 'CashSettled', 105)],
@@ -211,8 +223,6 @@ describe('runPayout', () => {
     mockCreateBuzzTransactionMany.mockReset();
     mockCreateBuzzTransactionMany.mockResolvedValue({ transactions: [], conflicts: [] });
     dbMock.dbRead.$queryRaw.mockReset();
-    vi.mocked(generationTipAmountPaidCounter.inc).mockClear();
-    vi.mocked(creatorCompAmountPaidCounter.inc).mockClear();
   });
 
   const sentTransactions = () =>
@@ -255,10 +265,6 @@ describe('runPayout', () => {
       ])
     );
     expect(sent).toHaveLength(2);
-    expect(generationTipAmountPaidCounter.inc).toHaveBeenCalledWith({ account_type: 'Yellow' }, 6);
-    expect(creatorCompAmountPaidCounter.inc).toHaveBeenCalledWith({ account_type: 'Yellow' }, 50);
-    expect(generationTipAmountPaidCounter.inc).toHaveBeenCalledTimes(1);
-    expect(creatorCompAmountPaidCounter.inc).toHaveBeenCalledTimes(1);
   });
 
   it('pays a creator whose rows span ClickHouse batches one compensation and one tip transaction', async () => {
@@ -515,6 +521,71 @@ describe('the daily job after a failed run', () => {
 
     expect(paidDates()).toHaveLength(MAX_PAYOUT_DATES_PER_RUN);
     expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
+  });
+});
+
+describe('runPayout: sources beyond compensation, tip and licence fee', () => {
+  beforeEach(() => {
+    mockClickhouseQuery.mockReset();
+    mockCreateBuzzTransactionMany.mockReset();
+    mockCreateBuzzTransactionMany.mockResolvedValue({ transactions: [], conflicts: [] });
+    dbMock.dbRead.$queryRaw.mockReset();
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ userId: CREATOR, modelVersionIds: [11] }]);
+    loggingMock.logToAxiom.mockClear();
+  });
+
+  const sentTransactions = () =>
+    mockCreateBuzzTransactionMany.mock.calls.flatMap(([batch]) => batch);
+  const unknownSourceNotices = () =>
+    loggingMock.logToAxiom.mock.calls.filter(
+      ([entry]) => (entry as { name?: string }).name === 'creator-compensation-unknown-source'
+    );
+
+  // Deliberate: a denylist, not an allowlist. A one-off source such as a
+  // `compensation_recovered_*` recovery is compensation the earnings view shows as
+  // earned, so withholding it would show a creator money they never get. Only platform
+  // revenue is skipped; an unknown source is paid and named in a notice.
+  it('pays a source it does not recognise as compensation and names it in a notice', async () => {
+    mockClickhouseQuery.mockResolvedValue([
+      row('compensation', 'Yellow', 50, 11),
+      row('licenseFeeMarkup', 'Yellow', 7, 11),
+      row('compensation_recovered_20261201', 'Yellow', 30, 11),
+      row('compensation_recovered_20261201', 'Blue', 12, 11),
+    ]);
+
+    await runPayout(START);
+
+    expect(
+      sentTransactions().map(({ externalTransactionId, amount }) => [externalTransactionId, amount])
+    ).toEqual(
+      expect.arrayContaining([
+        ['creator-tip-comp-2026-10-13-7-Yellow', 80],
+        ['creator-tip-comp-2026-10-13-7-Blue', 12],
+      ])
+    );
+    expect(sentTransactions()).toHaveLength(2);
+    const notices = unknownSourceNotices();
+    expect(notices).toHaveLength(1);
+    expect(notices[0][0]).toMatchObject({
+      payload: {
+        date: '2026-10-13',
+        sources: { compensation_recovered_20261201: { rows: 2, amount: 42 } },
+      },
+    });
+  });
+
+  it('skips the licence-fee markup without a notice', async () => {
+    mockClickhouseQuery.mockResolvedValue([
+      row('compensation', 'Yellow', 50, 11),
+      row('licenseFeeMarkup', 'CashSettled', 5000, 11),
+    ]);
+
+    await runPayout(START);
+
+    expect(unknownSourceNotices()).toEqual([]);
+    expect(
+      sentTransactions().map(({ externalTransactionId, amount }) => [externalTransactionId, amount])
+    ).toEqual([['creator-tip-comp-2026-10-13-7-Yellow', 50]]);
   });
 });
 

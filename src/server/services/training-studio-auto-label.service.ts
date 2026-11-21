@@ -12,7 +12,8 @@ import type {
   StudioAutoLabelPollInput,
   StudioAutoLabelSubmitInput,
 } from '~/server/schema/training-studio-auto-label.schema';
-import { REDIS_KEYS, REDIS_SYS_KEYS, redis, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import { usageLimits, type UsageLimitRef } from '~/shared/constants/usage-limits';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
@@ -57,7 +58,7 @@ type SubmitRecord = { userId: number; day: string; count: number };
 const QUOTA_TTL_SECONDS = 2 * 24 * 60 * 60;
 const utcDay = () => new Date().toISOString().slice(0, 10);
 const dailyKey = (userId: number, day: string) =>
-  `${REDIS_SYS_KEYS.TRAINING.STUDIO_AUTO_LABEL_DAILY}:${userId}:${day}` as const;
+  `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_DAILY}:${userId}:${day}` as const;
 const submitKey = (workflowId: string) =>
   `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_SUBMITTED}:${workflowId}` as const;
 
@@ -66,7 +67,12 @@ export type StudioAutoLabelResult = {
   status: 'succeeded' | 'failed' | 'pending';
   tags?: string[];
   caption?: string;
+  error?: string;
+  /** The same item may be sent again. */
+  retryable?: boolean;
 };
+
+export const AUTO_LABEL_UNFINISHED = "Auto-labeling didn't finish for this image.";
 
 export async function submitStudioAutoLabel({
   userId,
@@ -140,10 +146,16 @@ export async function submitStudioAutoLabel({
 async function reserveDailyItems(userId: number, count: number) {
   const day = utcDay();
   const key = dailyKey(userId, day);
-  const total = await sysRedis.incrBy(key, count);
-  if (total === count) await sysRedis.expire(key, QUOTA_TTL_SECONDS);
+  // SET NX EX + INCRBY in one MULTI, so the count always carries its TTL. A failure or a reply
+  // that is not a number refuses the submit.
+  const total = await takeClusterWindowCount('reserveDailyItems', key, QUOTA_TTL_SECONDS, {
+    by: count,
+  });
+  if (!Number.isFinite(total)) throw new Error('auto-label daily quota unreadable');
   const release = async () => {
-    await sysRedis.decrBy(key, count).catch(() => undefined);
+    await takeClusterWindowCount('reserveDailyItems.release', key, QUOTA_TTL_SECONDS, {
+      by: -count,
+    }).catch(() => undefined);
   };
   if (total > STUDIO_AUTO_LABEL_DAILY_ITEMS) {
     await release();
@@ -154,9 +166,14 @@ async function reserveDailyItems(userId: number, count: number) {
   return { release, day };
 }
 
+/** The Studio sends a failed item up to this many times (apps/training-studio autolabel.ts
+ *  RESEND_DELAYS_MS, plus the first send), each one counted and given back. */
+export const SENDS_PER_FAILED_ITEM = 4;
+
 /** Gives each failed step's item back to the quota it was counted against, once per step however
  *  often the workflow is polled, and only for a workflow this service submitted for this user (its
- *  submit record), never more items than it counted, and at most the daily limit per day. Only today's quota: an earlier day's has no use
+ *  submit record), never more items than it counted, and at most SENDS_PER_FAILED_ITEM times the
+ *  daily limit per day. Only today's quota: an earlier day's has no use
  *  for it, and a decrement on an expired key would leave a negative counter with no TTL. Best effort:
  *  a poll is never failed by it, and a miss only keeps the item counted, as before. */
 async function releaseFailedItems(workflowId: string, userId: number, failedSteps: string[]) {
@@ -172,16 +189,20 @@ async function releaseFailedItems(workflowId: string, userId: number, failedStep
     const added = await redis.sAdd(releasedKey, counted);
     if (added > 0) {
       await redis.expire(releasedKey, QUOTA_TTL_SECONDS);
-      // Backstop: at most the daily limit comes back per day; past it, failed items stay counted.
+      // Backstop: past it, failed items stay counted.
+      const limit = STUDIO_AUTO_LABEL_DAILY_ITEMS * SENDS_PER_FAILED_ITEM;
       const releasedDailyKey =
         `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_RELEASED_DAILY}:${userId}:${record.day}` as const;
       const released = await redis.incrBy(releasedDailyKey, added);
       if (released === added) await redis.expire(releasedDailyKey, QUOTA_TTL_SECONDS);
-      const allowed = Math.min(
-        added,
-        Math.max(0, STUDIO_AUTO_LABEL_DAILY_ITEMS - (released - added))
-      );
-      if (allowed > 0) await sysRedis.decrBy(dailyKey(userId, record.day), allowed);
+      const allowed = Math.min(added, Math.max(0, limit - (released - added)));
+      if (allowed > 0)
+        await takeClusterWindowCount(
+          'releaseFailedItems',
+          dailyKey(userId, record.day),
+          QUOTA_TTL_SECONDS,
+          { by: -allowed }
+        );
     }
   } catch (e) {
     console.warn('[training-studio] auto-label quota release failed', workflowId, e);
@@ -238,7 +259,11 @@ export async function pollStudioAutoLabel({
     }
     if (TERMINAL_STATUSES.has(step.status)) {
       failedSteps.push(step.name ?? String(index));
-      return { key, status: 'failed' };
+      // The workflow read can't tell a step turned away for capacity from one that ran and failed
+      // (both have startedAt, neither an error), so any failure but a cancel is worth resending.
+      if (step.status === 'canceled')
+        return { key, status: 'failed', error: AUTO_LABEL_UNFINISHED };
+      return { key, status: 'failed', error: AUTO_LABEL_UNFINISHED, retryable: true };
     }
     return { key, status: 'pending' };
   });

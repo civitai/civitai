@@ -24,7 +24,8 @@ import {
 import {
   addBlockedImage,
   bulkRemoveBlockedImages,
-  deleteImageById,
+  deleteImages,
+  imagesPendingDeletion,
   getAllImagesIndex,
   getImagesForModelVersionCache,
   getPostDetailByImageId,
@@ -36,6 +37,7 @@ import {
   updateImageNsfwLevel,
   getOpenImageReportIds,
   updateImageReportStatusByReason,
+  logCsamBlocklistNoHash,
   writeModeratorBlock,
   logNoticeUnderReview,
 } from '~/server/services/image.service';
@@ -67,7 +69,6 @@ import {
 } from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
 import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
-import { trackModActivity } from '~/server/services/moderator.service';
 import {
   canConfirmReRemoval,
   heldRemovalSummary,
@@ -75,6 +76,7 @@ import {
 } from '~/server/services/image-removal-hold.service';
 import { createNotification } from '~/server/services/notification.service';
 import { queueComicsForPanelImage } from '~/server/services/nsfwLevels.service';
+import { queueDocumentsForBlockedImages } from '~/server/services/image-models-reindex.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { amIBlockedByUser, refreshProfilePicturesForImages } from '~/server/services/user.service';
 import {
@@ -195,11 +197,10 @@ export const deleteImageHandler = async ({
       .filter((tag) => tag.concrete)
       .map((tag) => ({ tagName: tag.tagName }));
 
-    const image = await deleteImageById({
-      ...input,
-      deletedById: ctx.user.id,
-      moderatorDelete: !!ctx.user.isModerator,
-    });
+    const [image] = await deleteImages([input.id], { actor: ctx.user });
+    // Only a case the owner can already see is acknowledged; any other kept delete answers like a delete.
+    if (!image && (await imagesPendingDeletion([input.id])).has(input.id))
+      return { deleteAfterReview: true as const };
 
     if (image) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
@@ -219,7 +220,8 @@ export const deleteImageHandler = async ({
       ]);
     }
 
-    return image;
+    // The id only: the deleted row also carries its moderation state, which is not the caller's to see.
+    return image ? { id: image.id } : null;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -275,11 +277,13 @@ export const setTosViolationHandler = async ({
 
     // Block image
     // This used to be a delete, but the mod team prefers to have the clean up happen later
-    const written = await writeModeratorBlock([id], {
-      blockedBy: user.id,
-      violationType,
-      reportReason: ReportReason.TOSViolation,
-    });
+    // 🔴 `moderatorId` records that a moderator took this image down, in the block's own transaction
+    // (see writeModeratorBlock). Without it the takedown reads as an automated block.
+    const written = await writeModeratorBlock(
+      [id],
+      { blockedBy: user.id, violationType, reportReason: ReportReason.TOSViolation },
+      { moderatorId: user.id }
+    );
     const held = written.held.has(id);
 
     if (!held) {
@@ -323,22 +327,6 @@ export const setTosViolationHandler = async ({
     // would let a later account restore un-block what was just moderated.
     await clearAccountDeletionImageMarkers({ ids: [id] });
 
-    // 🔴 The audit record that a MODERATOR — not automation, not a reporter, not a bulk account
-    // action — took this one image down. The other moderator-driven single-image blocks write it
-    // already (`handleBlockImages` when it is given an id list and a `moderatorId`, and
-    // `blockImage` in the moderator app); this handler, which is `moderatorProcedure`-gated and
-    // acts on exactly one image, did not, so this takedown left no row in the mod audit log at all.
-    //
-    // It is also load-bearing now: `remove-blocked-images` retracts an image's public copies
-    // only for images carrying one of `MODERATOR_TAKEDOWN_ACTIVITIES` dated at or
-    // after the block. Without this call a TOS takedown from the main app is hard-deleted with the
-    // bytes left in place — which is the safe direction, but not the intended one.
-    await trackModActivity(user.id, {
-      entityType: 'image',
-      entityId: id,
-      activity: 'review',
-    });
-
     // Remove image from all collections
     await removeEntityFromAllCollections('image', id);
 
@@ -348,13 +336,20 @@ export const setTosViolationHandler = async ({
     await queueComicsForPanelImage(id);
     if (image.postId) await bustCachesForPosts(image.postId);
     // After the steps that hide the image: a blocklist write that throws must not skip them.
-    if (image.pHash)
-      await addBlockedImage({
-        hash: image.pHash,
-        // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
-        reason: written.removedForCsam.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
-        context: { step: 'block', imageIds: [id], actorUserId: user.id },
-      });
+    const pHash = written.pHashes.get(id);
+    if (!pHash && written.removedForCsam.has(id)) logCsamBlocklistNoHash([id], 'block');
+    // The requeue follows the blocklist write and runs when it throws: the block has landed.
+    try {
+      if (pHash)
+        await addBlockedImage({
+          hash: pHash,
+          // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
+          reason: written.removedForCsam.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
+          context: { step: 'block', imageIds: [id], actorUserId: user.id },
+        });
+    } finally {
+      await queueDocumentsForBlockedImages([id]);
+    }
 
     // Look up report details for violation type resolution
     const reportDetails = await getReportViolationDetailsForImages([id]);
@@ -1182,6 +1177,7 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
         ...input,
         userId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
+        ownerSeesHeld: isSessionOrFullUserKey(ctx),
       }),
       // The hat the image detail draws when it is opened on its own, with no feed to seed it.
       // Safe per viewer only while image.get caches nothing per URL.
@@ -1200,7 +1196,14 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
         return {} as Awaited<ReturnType<typeof getEventDecorationsForEntity>>;
       }),
     ]);
-    const result = { ...image, eventDecoration: eventDecorations[image.id] ?? null };
+    // Told only to the owner, and only for a review they can already see.
+    const deleteAfterReview =
+      ctx.user?.id === image.user.id && (await imagesPendingDeletion([image.id])).has(image.id);
+    const result = {
+      ...image,
+      eventDecoration: eventDecorations[image.id] ?? null,
+      deleteAfterReview,
+    };
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: result.user.id });
@@ -1268,7 +1271,11 @@ export const getImageResourcesHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const { resources, visibleSignedOut } = await getImageResources({ ...input, viewer: ctx.user });
+    const { resources, visibleSignedOut } = await getImageResources({
+      ...input,
+      viewer: ctx.user,
+      ownerSeesHeld: isSessionOrFullUserKey(ctx),
+    });
     // The edge cache replays this body to every caller of the URL, signed in or not, so an image
     // only its owner or a moderator may open stays out of it. So does a .com face, which makes the
     // name depend on the viewer.
@@ -1299,7 +1306,7 @@ export const getEntitiesCoverImageHandler = async ({
     const covers = await getEntityCoverImage({
       ...input,
       include: ['tags'],
-      viewer: ctx.user,
+      viewer: isSessionOrFullUserKey(ctx) ? ctx.user : undefined,
       // Only signed-out responses are edge-cached (createContext), so a viewer's hats stay theirs.
       // The route must not gain edgeCacheIt/cacheIt: entities-cover-image-viewer.test.ts pins it.
       eventDecorationViewer: eventViewerOf(ctx),

@@ -338,6 +338,7 @@ describe('/admin grantable pages', () => {
       '/models/flags/auto',
       '/models/flags/needs-review',
       '/models/rule-matches',
+      '/models/merge-analysis',
     ]);
     expect(isGrantable('/models/flags')).toBe(false);
     expect(isGrantable('/models/flags/needs-review')).toBe(true);
@@ -535,5 +536,20 @@ describe('pageAccessState for the editor', () => {
     expect(outside).toEqual({
       [KEY]: { kept: ['system:dispute-agent'], retired: ['moderator:retired', 'moderator:admin'] },
     });
+  });
+});
+
+describe('a hidden page', () => {
+  const paths = (links: { path?: string; children?: unknown[] }[]): (string | undefined)[] =>
+    links.flatMap((l) => [l.path, ...paths((l.children ?? []) as typeof links)]);
+
+  it('is reachable and grantable once granted, but never listed', () => {
+    applyGrants({ '/csam/preserved-view': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/csam/preserved-view')).toBe(true);
+    expect(paths(navForUser(reviewer))).not.toContain('/csam/preserved-view');
+    const admin = { roles: ['moderator:admin'] };
+    expect(paths(navForUser(admin))).toContain('/csam/text-holds');
+    expect(paths(navForUser(admin))).not.toContain('/csam/preserved-view');
+    expect(pageAccessState().granted['/csam/preserved-view']).toEqual(['moderator:reviewer']);
   });
 });

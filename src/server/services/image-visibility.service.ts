@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import {
+  hasBlockMarkerSql,
   imageNotRestrictedSql,
   imageReviewedSql,
   minorMatureImageVisibleSql,
@@ -11,7 +12,46 @@ import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+
+/**
+ * The reviewed-only part of `getImagesForModelVersion`'s filter (its non-pending branch): not held
+ * or minor-accepted, at a level in `browsingLevel`, and reviewed. Shared with `countableImageSql`
+ * so a public image count and the gallery it counts cannot disagree.
+ */
+export const reviewedGalleryImageConditions = (
+  browsingLevel: number = allBrowsingLevelsFlag
+): Prisma.Sql[] => [
+  Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`,
+  Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`,
+  imageReviewedSql(),
+];
+
+/**
+ * What `getImagesForModelVersion` shows a signed-out viewer at some browsing level, over `"Image" i`:
+ * its viewer-dependent terms (blocked-for, minor-mature, restricted base model) with no viewer.
+ */
+export const anonymousGalleryImageConditions = (): Prisma.Sql[] => [
+  ...imageBlockedForConditions({}),
+  ...reviewedGalleryImageConditions(),
+  minorMatureImageVisibleSql({}),
+  imageNotRestrictedSql(),
+];
+
+/**
+ * The images a model's image count counts: the signed-out gallery's, less any ToS violation or
+ * block marker the gallery's own terms do not already exclude.
+ */
+export const countableImageSql = () =>
+  Prisma.sql`(${Prisma.join(
+    [
+      ...anonymousGalleryImageConditions(),
+      Prisma.sql`NOT i."tosViolation"`,
+      Prisma.sql`NOT ${hasBlockMarkerSql()}`,
+    ],
+    ' AND '
+  )})`;
 
 /**
  * An image with any `blockedFor` reason is visible only to its owner and moderators, as SQL over
@@ -34,8 +74,8 @@ export function imageBlockedForConditions({
 
 /**
  * Which images attached to an entity (a bounty, a bounty entry) a viewer is served, as SQL over
- * `"Image" i`. Held, unscanned, unrated, blocked and minor-restricted images are the owner's and
- * moderators' alone; base-model restricted images are the owner's alone.
+ * `"Image" i`. Held, unscanned, unrated, blocked, acceptable-minor and minor-restricted images are
+ * the owner's and moderators' alone; base-model restricted images are the owner's alone.
  */
 export function entityImageVisibilityConditions({
   userId,
@@ -51,14 +91,17 @@ export function entityImageVisibilityConditions({
         userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
       })`,
       userId
-        ? Prisma.sql`(i."nsfwLevel" != 0 OR i."userId" = ${userId})`
-        : Prisma.sql`i."nsfwLevel" != 0`,
+        ? Prisma.sql`(i."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) OR i."userId" = ${userId})`
+        : Prisma.sql`i."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked})`,
       userId
         ? Prisma.sql`(${Prisma.join(
             [Prisma.sql`i."needsReview" IS NULL`, Prisma.sql`i."userId" = ${userId}`],
             ' OR '
           )})`
-        : Prisma.sql`(${Prisma.join([Prisma.sql`i."needsReview" IS NULL`], ' OR ')})`
+        : Prisma.sql`(${Prisma.join([Prisma.sql`i."needsReview" IS NULL`], ' OR ')})`,
+      userId
+        ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
+        : Prisma.sql`i."acceptableMinor" = FALSE`
     );
   }
   AND.push(...imageBlockedForConditions({ userId, isModerator }));
@@ -76,9 +119,15 @@ export function entityImageVisibilityConditions({
 export function imageVisibilityConditions({
   userId,
   isModerator,
+  ownerSeesHeld = false,
 }: {
   userId?: number;
   isModerator?: boolean;
+  /**
+   * `userId` (the session user) also sees their own items under an owner-hidden review hold. Only
+   * for a read that shows the owner their item; not for one that acts on the image (a remix, say).
+   */
+  ownerSeesHeld?: boolean;
 }) {
   if (isModerator) return [];
   return [
@@ -138,8 +187,8 @@ export function imageVisibilityConditions({
     userId
       ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
       : Prisma.sql`(i."acceptableMinor" = FALSE)`,
-    // Not even to the owner (or a collection manager).
-    notHeldForReviewSql(),
+    // Not to a collection manager; to the owner only where the caller asks.
+    notHeldForReviewSql(ownerSeesHeld ? userId : undefined),
     minorMatureImageVisibleSql({ userId }),
     ...imageBlockedForConditions({ userId }),
     imageNotRestrictedSql({ viewerId: userId }),
@@ -156,10 +205,13 @@ export async function assertImageVisibleToViewer({
   isModerator,
   confirmBlockOnPrimary = false,
   withSignedOutVerdict = false,
+  ownerSeesHeld = false,
 }: {
   id: number;
   userId?: number;
   isModerator?: boolean;
+  /** `imageVisibilityConditions`' `ownerSeesHeld`. */
+  ownerSeesHeld?: boolean;
   /**
    * Only for a caller that WRITES on the strength of this check (the prompt-provenance mint):
    * confirm a cache "not blocked" against the primary. Read callers leave it off.
@@ -193,14 +245,17 @@ export async function assertImageVisibleToViewer({
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE ${Prisma.join(
-      [Prisma.sql`i.id = ${id}`, ...imageVisibilityConditions({ userId, isModerator })],
+      [
+        Prisma.sql`i.id = ${id}`,
+        ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld }),
+      ],
       ' AND '
     )}
   `
   );
   if (!visible) throw throwNotFoundError();
   if (userId && !isModerator) {
-    // Imported here: user.service sits in the image.service import cycle.
+    // Imported here, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
     const { amIBlockedByUser } = await import('~/server/services/user.service');
     const blocked = await amIBlockedByUser({
       userId,

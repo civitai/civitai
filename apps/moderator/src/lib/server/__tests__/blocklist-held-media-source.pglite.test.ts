@@ -1,13 +1,13 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { reviewSuspectImageSql, mirrorBlockedHashesSql } from '@civitai/shared/held-media';
+import { csamSignalImageSql, mirrorBlockedHashesSql } from '@civitai/shared/held-media';
 import { Kysely, sql } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../test/pglite';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /**
- * A blocklist CSAM entry is copied into "BlockedImage", the table review routing reads
- * (`suspectImageSql`), so an image whose hash only the blocklist holds still routes as suspect.
+ * A blocklist CSAM entry is copied into "BlockedImage", the table the CSAM restriction reads
+ * (`csamSignalImageSql`), so an image whose hash only the blocklist holds still counts as CSAM.
  */
 
 vi.setConfig({ hookTimeout: 60_000 });
@@ -104,7 +104,7 @@ const block = (pHash: string, csam: boolean) =>
 
 async function suspect(id: number) {
   const { rows } = await sql<{ suspect: boolean }>`
-    SELECT ${sql.raw(reviewSuspectImageSql('i'))} AS suspect FROM "Image" i WHERE i.id = ${id}
+    SELECT ${sql.raw(csamSignalImageSql('i'))} AS suspect FROM "Image" i WHERE i.id = ${id}
   `.execute(db);
   return rows[0]?.suspect;
 }

@@ -120,8 +120,8 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
-const { deleteImageFromS3, queueImageStorageDeleteRetry } = await import('../image.service');
-const { fakeVersionedBucket } = await import('~/__tests__/mocks/fake-versioned-bucket');
+const { deleteImageFromS3, queueImageStorageDelete } = await import('../image.service');
+const { fakeVersionedBucket } = await import('@civitai/storage/testing/fake-versioned-bucket');
 const { imageStorageDeletePayloadSchema } = await import('~/server/schema/job-queue.schema');
 
 const invalidateCalls = () =>
@@ -318,13 +318,18 @@ describe('deleteImageFromS3', () => {
 
   // ── The retry queue. The row is gone by now, so the key must be persisted or it is lost. ──
 
+  // The queue write goes through `queueImageStorageDelete` over `kyselyOver(dbWrite)`, so it is a
+  // `$queryRaw` whose parameters are the image id and its JSON payload.
   const retryInserts = () =>
-    dbMock.dbWrite.$executeRaw.mock.calls
+    dbMock.dbWrite.$queryRaw.mock.calls
       .map((call: unknown[]) => ({
-        sql: (call[0] as TemplateStringsArray).join('?'),
+        sql: Array.from(call[0] as ArrayLike<string>).join('?'),
         values: call.slice(1),
       }))
       .filter((w) => w.sql.includes('INSERT INTO "JobQueue"'));
+  const queuedRows = (insert: { values: unknown[] }) => [
+    { id: insert.values[0] as number, data: JSON.parse(insert.values[1] as string) as unknown },
+  ];
 
   it('queues the key for retry when the B2 delete throws', async () => {
     mockFindFirst.mockResolvedValue(null);
@@ -335,22 +340,14 @@ describe('deleteImageFromS3', () => {
     expect(outcome).toBe('failed');
     expect(retryInserts()).toHaveLength(1);
     const [insert] = retryInserts();
-    expect(insert.values.slice(0, 3)).toEqual([4242, 'Image', 'ImageStorageDelete']);
+    const rows = queuedRows(insert);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(4242);
     // The payload must be what the retry job's schema accepts, or the key is dropped as malformed.
-    expect(imageStorageDeletePayloadSchema.parse(JSON.parse(insert.values[3] as string))).toEqual({
+    expect(imageStorageDeletePayloadSchema.parse(rows[0].data)).toEqual({
       url: 'abc-def/original.jpeg',
     });
-    expect(insert.values).toHaveLength(4);
-    expect(insert.sql).toMatch(
-      /"type", "data"\)\s+VALUES \(\?, \?::"EntityType", \?::"JobQueueType", \?::jsonb\)/
-    );
-    // The retry job re-enters this path for a key already queued. Without the upsert that is a
-    // primary-key violation, logged as a lost key every run for every stuck key.
-    // Anchored at the end: an extra SET (`"createdAt" = now()`) would reset the age the overdue
-    // check reads, and a missing WHERE writes a dead row version on every failed retry.
-    expect(insert.sql).toMatch(
-      /ON CONFLICT \("entityType", "entityId", "type"\) DO UPDATE SET "data" = EXCLUDED\."data"\s+WHERE "JobQueue"\."data"->>'url' IS DISTINCT FROM EXCLUDED\."data"->>'url'\s+OR \(EXCLUDED\."data"->>'allVersions' IS NOT NULL AND "JobQueue"\."data"->>'allVersions' IS NULL\)\s*$/
-    );
+    // The upsert itself runs against Postgres in content-deletion.behavior.test.ts.
   });
 
   it("hands the caller's abort signal to the B2 delete", async () => {
@@ -411,7 +408,7 @@ describe('deleteImageFromS3', () => {
   it('logs and carries on when the queue insert fails', async () => {
     mockFindFirst.mockResolvedValue(null);
     mockB2Send.mockRejectedValue(new Error('b2 refused'));
-    dbMock.dbWrite.$executeRaw.mockRejectedValueOnce(
+    dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(
       new Error('invalid input value for enum "JobQueueType": "ImageStorageDelete"')
     );
 
@@ -482,12 +479,10 @@ describe('deleteImageFromS3', () => {
         })
       );
       const [insert] = retryInserts();
-      expect(imageStorageDeletePayloadSchema.parse(JSON.parse(insert.values[3] as string))).toEqual(
-        {
-          url: KEY,
-          allVersions: true,
-        }
-      );
+      expect(imageStorageDeletePayloadSchema.parse(queuedRows(insert)[0].data)).toEqual({
+        url: KEY,
+        allVersions: true,
+      });
     });
 
     // A row that still holds the url (a hold marker kept it) stops the purge before storage.
@@ -529,16 +524,16 @@ describe('deleteImageFromS3', () => {
 
     it('a key-only failure does not downgrade a queued all-versions purge', async () => {
       const db = await freshDb();
-      await queueImageStorageDeleteRetry({ id: 7, url: 'k', allVersions: true });
-      await queueImageStorageDeleteRetry({ id: 7, url: 'k' });
+      await queueImageStorageDelete({ id: 7, url: 'k', allVersions: true });
+      await queueImageStorageDelete({ id: 7, url: 'k' });
       expect(await replay(db)).toEqual([{ url: 'k', allVersions: true }]);
       await db.close();
     });
 
     it('an all-versions failure upgrades a queued key-only delete', async () => {
       const db = await freshDb();
-      await queueImageStorageDeleteRetry({ id: 7, url: 'k' });
-      await queueImageStorageDeleteRetry({ id: 7, url: 'k', allVersions: true });
+      await queueImageStorageDelete({ id: 7, url: 'k' });
+      await queueImageStorageDelete({ id: 7, url: 'k', allVersions: true });
       expect(await replay(db)).toEqual([{ url: 'k', allVersions: true }]);
       await db.close();
     });

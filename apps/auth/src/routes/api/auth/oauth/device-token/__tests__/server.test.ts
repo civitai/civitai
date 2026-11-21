@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import { TokenScope } from '@civitai/auth/token-scope';
 
 // Relocated from the main app's src/server/oauth/__tests__/device-token-scope.test.ts. The device-token
@@ -41,7 +42,8 @@ vi.mock('$lib/server/redis', () => ({
   }),
 }));
 
-vi.mock('$lib/server/oauth/rate-limit', () => ({
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
   checkOAuthRateLimit: h.checkRateLimit,
 }));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: h.logOAuthEvent }));
@@ -115,6 +117,20 @@ describe('device-token +server — AppBlocksSubmit scope survives into the minte
     // Audit log records the getClientIp-resolved client IP (device-token now uses getClientIp, not
     // getClientAddress) — degrades to 'unknown' when the resolver returns null.
     expect(h.logOAuthEvent).toHaveBeenCalledWith(expect.objectContaining({ ip: '203.0.113.7' }));
+  });
+
+  it('mints nothing for an app block’s client, even with an approved code', async () => {
+    h.hGet.mockResolvedValueOnce({ ...approvedCode, clientId: 'appblk-some-app' });
+    h.clientRow = { allowedScopes: CLI_SCOPE };
+    const res = await POST(
+      makeEvent({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'devcode',
+        client_id: 'appblk-some-app',
+      })
+    );
+    expect(res.status).toBe(400);
+    expect(h.createPair).not.toHaveBeenCalled();
   });
 
   it('rejects with invalid_scope when the client allowedScopes does NOT include AppBlocksSubmit', async () => {

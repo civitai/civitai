@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
@@ -17,6 +20,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/server"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
 	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
 )
@@ -32,12 +36,12 @@ func TestMissCompute(t *testing.T) {
 	addons := func(context.Context) []browsing.Addon {
 		return []browsing.Addon{{Type: "all", ExcludedTagIDs: []int{9102}}}
 	}
-	if c := missCompute(&config.Config{ComputeMisses: false, CacheWriteBack: true}, primary, nil, blocked, addons); c != nil {
+	if c := missCompute(&config.Config{ComputeMisses: false, CacheWriteBack: hydrate.AllWrites()}, primary, nil, blocked, addons); c != nil {
 		t.Fatalf("compute off = %+v, want nil (misses fall back)", c)
 	}
 	n := 0
 	c := missCompute(&config.Config{ComputeMisses: true, FrameCacheNegative: true}, primary, func(string, string, int) { n++ }, blocked, addons)
-	if c == nil || c.WriteBack || !c.FrameNegative || c.Primary != nil || c.Observe == nil || c.TagGate == nil {
+	if c == nil || c.WriteBack.Any() || !c.FrameNegative || c.Primary != nil || c.Observe == nil || c.TagGate == nil {
 		t.Fatalf("defaults = %+v, want no write-back, the frame mirror, no primary, an observer, a tag gate", c)
 	}
 	c.Observe("x", "computed", 1)
@@ -51,10 +55,95 @@ func TestMissCompute(t *testing.T) {
 	if !gate[9101] || !gate[9102] {
 		t.Fatalf("tag gate %v, want the blocked tag 9101 and the addon's 9102", gate)
 	}
-	c = missCompute(&config.Config{ComputeMisses: true, CacheWriteBack: true}, primary, nil, blocked, addons)
-	if !c.WriteBack || c.Primary != primary {
+	c = missCompute(&config.Config{ComputeMisses: true, CacheWriteBack: hydrate.AllWrites()}, primary, nil, blocked, addons)
+	if !c.WriteBack.Any() || c.Primary != primary {
 		t.Fatalf("write-back = %+v, want the primary handed over", c)
 	}
+	// Only caches whose lookups read the replica: no primary handed over (none is opened either).
+	c = missCompute(&config.Config{ComputeMisses: true, CacheWriteBack: hydrate.WriteSet{hydrate.MissMetrics: true, hydrate.MissTagIDs: true}},
+		primary, nil, blocked, addons)
+	if !c.WriteBack[hydrate.MissMetrics] || c.WriteBack[hydrate.MissImageFrames] || c.Primary != nil {
+		t.Fatalf("metrics,tag-ids = %+v, want those two written back and no primary", c)
+	}
+	// One that reads the primary: handed over.
+	c = missCompute(&config.Config{ComputeMisses: true, CacheWriteBack: hydrate.WriteSet{hydrate.MissModelData: true}}, primary, nil, blocked, addons)
+	if c.Primary != primary {
+		t.Fatalf("model-data = %+v, want the primary handed over", c)
+	}
+}
+
+// run() opens the primary pool only with the miss computation on and a written-back cache whose
+// lookup reads the primary: a replica-only allowlist (metrics,tag-ids, or every replica reader) never
+// opens it; image-frames (or model-data) does; nothing listed, or the computation off, never.
+// Fails on: the condition reverting to "any cache listed" (metrics,tag-ids would open it), or
+// dropping the ComputeMisses term.
+func TestOpensPrimary(t *testing.T) {
+	for _, c := range []struct {
+		compute bool
+		set     hydrate.WriteSet
+		want    bool
+	}{
+		{true, nil, false},
+		{true, hydrate.WriteSet{hydrate.MissMetrics: true, hydrate.MissTagIDs: true}, false},
+		{true, hydrate.WriteSet{hydrate.MissMetrics: true, hydrate.MissTagIDs: true, hydrate.MissUserCosmetics: true,
+			hydrate.MissModelTags: true, hydrate.MissOfficialModels: true}, false},
+		{true, hydrate.WriteSet{hydrate.MissImageFrames: true}, true},
+		{true, hydrate.WriteSet{hydrate.MissMetrics: true, hydrate.MissModelData: true}, true},
+		{false, hydrate.WriteSet{hydrate.MissImageFrames: true}, false},
+	} {
+		if got := opensPrimary(&config.Config{ComputeMisses: c.compute, CacheWriteBack: c.set}); got != c.want {
+			t.Errorf("compute %v, %v: opens primary %v, want %v", c.compute, c.set.Names(), got, c.want)
+		}
+	}
+}
+
+// What run() wires for the cache writes: the counter (feed_go_cache_writes_total) and the write log
+// on the miss computation, and the counter seeded at 0 for each written-back cache and result, and
+// for no other cache. Fails if attachWriteObservers drops ObserveWrite or WriteLog, seeds every
+// cache, or seeds none.
+func TestAttachWriteObservers(t *testing.T) {
+	attachWriteObservers(&config.Config{}, nil, nil, nil) // compute off: nothing to attach, no panic
+	reg := prometheus.NewRegistry()
+	m := server.NewMetrics(reg)
+	c := &hydrate.MissCompute{}
+	cfg := &config.Config{CacheWriteBack: hydrate.WriteSet{hydrate.MissMetrics: true, hydrate.MissImageFrames: true}, CacheWriteLogPerMinute: 7}
+	attachWriteObservers(cfg, c, m, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if c.ObserveWrite == nil || c.WriteLog == nil || c.WriteLog.PerMinute != 7 {
+		t.Fatalf("observers = %v, %+v; want the counter and a log at 7/min", c.ObserveWrite != nil, c.WriteLog)
+	}
+	want := map[string]float64{"image-frames/written": 0, "image-frames/nx_lost": 0, "image-frames/error": 0,
+		"metrics/written": 0, "metrics/nx_lost": 0, "metrics/error": 0}
+	if got := cacheWrites(t, reg); !reflect.DeepEqual(got, want) {
+		t.Fatalf("seeded %v, want %v", got, want)
+	}
+	c.ObserveWrite("metrics", "written", 2)
+	want["metrics/written"] = 2
+	if got := cacheWrites(t, reg); !reflect.DeepEqual(got, want) {
+		t.Fatalf("after 2 metrics writes %v, want %v", got, want)
+	}
+}
+
+// cacheWrites is feed_go_cache_writes_total on reg, as "cache/result" -> value.
+func cacheWrites(t *testing.T, reg *prometheus.Registry) map[string]float64 {
+	t.Helper()
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]float64{}
+	for _, mf := range families {
+		if mf.GetName() != "feed_go_cache_writes_total" {
+			continue
+		}
+		for _, s := range mf.GetMetric() {
+			l := map[string]string{}
+			for _, p := range s.GetLabel() {
+				l[p.GetName()] = p.GetValue()
+			}
+			out[l["cache"]+"/"+l["result"]] = s.GetCounter().GetValue()
+		}
+	}
+	return out
 }
 
 // The metric-hash misses get a ClickHouse reader only when one is configured; a URL the reader
@@ -80,15 +169,18 @@ func TestMetricsReader(t *testing.T) {
 }
 
 // loadConfig is config.Load over the required variables plus env (every ClickHouse variable, the
-// app's and feed-go's, unset unless env sets it).
+// app's, feed-go's and the dedicated metrics server's, and every Flipt variable, unset unless env
+// sets it).
 func loadConfig(t *testing.T, env map[string]string) *config.Config {
 	t.Helper()
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
 	}
 	for _, k := range []string{"FEED_GO_COMPUTE_MISSES", "FEED_GO_CACHE_WRITEBACK", "FEED_GO_CLICKHOUSE_TIMEOUT_MS",
-		"FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", "FEED_GO_REQUEST_BUDGET_MS", "CLICKHOUSE_HOST", "CLICKHOUSE_USERNAME",
-		"CLICKHOUSE_PASSWORD", "FEED_GO_CLICKHOUSE_HOST", "FEED_GO_CLICKHOUSE_USERNAME", "FEED_GO_CLICKHOUSE_PASSWORD"} {
+		"FEED_GO_METRICS_LOCK_WAIT_MS", "FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", "FEED_GO_REQUEST_BUDGET_MS", "CLICKHOUSE_HOST", "CLICKHOUSE_USERNAME",
+		"CLICKHOUSE_PASSWORD", "FEED_GO_CLICKHOUSE_HOST", "FEED_GO_CLICKHOUSE_USERNAME", "FEED_GO_CLICKHOUSE_PASSWORD",
+		"CLICKHOUSE_METRICS_HOST", "CLICKHOUSE_METRICS_USERNAME", "CLICKHOUSE_METRICS_PASSWORD", "CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS",
+		"FLIPT_URL", "FLIPT_FETCHER_SECRET", "FLIPT_ENVIRONMENT"} {
 		t.Setenv(k, env[k])
 	}
 	cfg, err := config.Load()
@@ -149,7 +241,8 @@ func TestAttachMetricsReader(t *testing.T) {
 	}
 
 	env := map[string]string{"FEED_GO_CLICKHOUSE_HOST": ownSrv.URL, "FEED_GO_CLICKHOUSE_USERNAME": "feed-go-reader",
-		"FEED_GO_CLICKHOUSE_PASSWORD": "feed-go-pw", "FEED_GO_CLICKHOUSE_TIMEOUT_MS": "10000", "FEED_GO_REQUEST_BUDGET_MS": "60000"}
+		"FEED_GO_CLICKHOUSE_PASSWORD": "feed-go-pw", "FEED_GO_CLICKHOUSE_TIMEOUT_MS": "10000", "FEED_GO_REQUEST_BUDGET_MS": "60000",
+		"FEED_GO_METRICS_LOCK_WAIT_MS": "750"}
 	for k, v := range app {
 		env[k] = v
 	}
@@ -160,6 +253,10 @@ func TestAttachMetricsReader(t *testing.T) {
 	}
 	if c.MetricsTimeout != 10*time.Second {
 		t.Fatalf("MetricsTimeout %v, want FEED_GO_CLICKHOUSE_TIMEOUT_MS (10s; the lookup holds it under Node's budget)", c.MetricsTimeout)
+	}
+	// Fails on: the lock-wait bound not handed over (0, the hydrate default) or handed the lookup's.
+	if c.MetricsLockWait != 750*time.Millisecond {
+		t.Fatalf("MetricsLockWait %v, want FEED_GO_METRICS_LOCK_WAIT_MS (750ms)", c.MetricsLockWait)
 	}
 	if _, err := c.ClickHouse.Query(context.Background(), "SELECT 1", nil); err != nil {
 		t.Fatal(err)

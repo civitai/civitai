@@ -77,6 +77,7 @@ const {
   getTrainingReviewQueue,
   invalidateTrainingReviewQueue,
   countTrainingDataReview,
+  getTrainingGateState,
   MAX_PAUSED_VERSIONS,
   resetTrainingQueueCaches,
 } = await import('../training-moderation.service');
@@ -651,7 +652,9 @@ describe('getTrainingReviewQueue', () => {
       const s = state[byId(url)];
       if (s === undefined) return new Response(null, { status: 599 });
       if (s === 404) return new Response(null, { status: 404 });
-      return json(workflow({ id: byId(url), moderationStatus: s }));
+      // `run(_, n)` is version n's run, and is tagged so.
+      const tags = ['training', `modelVersion:${/-v(\d+)$/.exec(byId(url))?.[1]}`];
+      return json(workflow({ id: byId(url), moderationStatus: s, tags }));
     };
   }
 
@@ -664,16 +667,37 @@ describe('getTrainingReviewQueue', () => {
     orchestratorFor({ [W1]: 'UnderReview', [W2]: 'Approved', [W3]: 404, [W4]: 'UnderReview' });
   }
 
-  it('lists under-review versions first, then the rest, oldest first within each, without 404s', async () => {
+  it('lists under-review versions oldest first, without 404s', async () => {
     standard();
     const queue = await getTrainingReviewQueue();
     expect(queue.items.map((i) => [i.id, i.underReview])).toEqual([
       [1, true],
       [4, true],
-      [2, false],
     ]);
     expect(queue.workflowFilterUnavailable).toBe(false);
     expect(queue.truncated).toBe(false);
+  });
+
+  // Its Approve and Deny could only fail: the orchestrator holds no gate to release.
+  it('lists a version whose gate was already ruled apart, as nothing to act on', async () => {
+    standard();
+    const queue = await getTrainingReviewQueue();
+    expect(queue.items.map((i) => i.id)).not.toContain(2);
+    expect(queue.closed).toEqual([
+      expect.objectContaining({
+        id: 2,
+        workflowId: W2,
+        reason: 'The gate is not under review (run: processing, gate: approved).',
+      }),
+    ]);
+  });
+
+  it('leaves a ruled run that names another version actionable, for Approve to refuse', async () => {
+    db([version(5)], [file(15, 5, W2)]);
+    orchestratorFor({ [W2]: 'Approved' });
+    const queue = await getTrainingReviewQueue();
+    expect(queue.closed).toEqual([]);
+    expect(queue.items.map((i) => i.id)).toEqual([5]);
   });
 
   it('checks the run awaiting the gate, not the version’s most complete run', async () => {
@@ -717,6 +741,7 @@ describe('getTrainingReviewQueue', () => {
       [1, false],
       [2, false],
     ]);
+    expect(queue.closed).toEqual([]);
     expect(queue.workflowFilterUnavailable).toBe(true);
   });
 
@@ -819,6 +844,14 @@ describe('getTrainingReviewQueue', () => {
       expect(await countTrainingDataReview()).toBeNull();
     });
 
+    it('counts the rows the page lists under review, and not the closed ones', async () => {
+      standard();
+      gates([]);
+      const queue = await getTrainingReviewQueue();
+      expect(queue.closed).toHaveLength(1);
+      expect(await countTrainingDataReview()).toBe(queue.items.filter((i) => i.underReview).length);
+    });
+
     it('counts a version whose run answered unreadably as listed, not as unknown', async () => {
       db([version(1), version(4)], [file(11, 1, W1), file(14, 4, W4)]);
       gates([]);
@@ -844,6 +877,55 @@ describe('getTrainingReviewQueue', () => {
       chQuery.mockRejectedValue(new Error('clickhouse down'));
       expect(await countTrainingDataReview()).toBeNull();
     });
+  });
+});
+
+describe('getTrainingGateState', () => {
+  const VERSION = 77;
+  beforeEach(() => fileRows.mockResolvedValueOnce([file(31, VERSION, WF)]));
+
+  it('is open while the orchestrator holds the gate under review', async () => {
+    orchestrator([workflow()]);
+    expect(await getTrainingGateState(VERSION)).toEqual({ state: 'open' });
+  });
+
+  const ruled = (tags: string[]) => ({
+    ...workflow({ moderationStatus: 'Approved', tags }),
+    status: 'Succeeded',
+  });
+
+  it('is closed, with the reason, on a finished run whose gate was approved', async () => {
+    orchestrator([ruled([`modelVersion:${VERSION}`])]);
+    expect(await getTrainingGateState(VERSION)).toEqual({
+      state: 'closed',
+      reason: 'The gate is not under review (run: succeeded, gate: approved).',
+    });
+  });
+
+  it('is unknown on a ruled run that does not name this version', async () => {
+    orchestrator([ruled(['modelVersion:78'])]);
+    expect(await getTrainingGateState(VERSION)).toMatchObject({ state: 'unknown' });
+  });
+
+  it('is closed when the orchestrator no longer has the workflow', async () => {
+    orchestrator([new Response(null, { status: 404 })]);
+    expect(await getTrainingGateState(VERSION)).toMatchObject({ state: 'closed' });
+  });
+
+  it.each([
+    ['does not answer', () => new Response(null, { status: 503 })],
+    ['answers with a run it cannot read', () => json({ ...workflow(), steps: [] })],
+  ])('is unknown, leaving the actions available, when the orchestrator %s', async (_, read) => {
+    orchestrator([read()]);
+    expect(await getTrainingGateState(VERSION)).toMatchObject({ state: 'unknown' });
+  });
+
+  it('reads through the manager API only', async () => {
+    orchestrator([workflow()]);
+    await getTrainingGateState(VERSION);
+    expect(fetchMock.mock.calls.map(([u]) => new URL(String(u)).pathname)).toEqual([
+      `/v1/manager/workflows/${WF}`,
+    ]);
   });
 });
 

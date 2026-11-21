@@ -1,3 +1,4 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
@@ -14,6 +15,7 @@ import {
 import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
 import { clampTunnelDeclaredScopes } from '~/server/services/blocks/dev-scoped-mint.service';
 import { newBlockInstanceId, newBlockUserSubscriptionId } from '~/server/utils/app-block-ids';
+import { manifestDeclaresPage } from '~/shared/utils/app-manifest-page';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -600,19 +602,6 @@ function manifestTargetsSlot(manifest: unknown, slotId: string): boolean {
     const cand = (t as { slotId?: unknown }).slotId;
     return typeof cand === 'string' && cand === slotId;
   });
-}
-
-/**
- * W10 — does the manifest declare a full-page surface? A page app carries a
- * `page: { path, title, icon? }` object (validated at registration time). Used
- * to gate the page-mint + SSR resolve so a region/model-only app can't be
- * opened as a full page.
- */
-function manifestDeclaresPage(manifest: unknown): boolean {
-  const m = (manifest ?? {}) as { page?: unknown };
-  if (!m.page || typeof m.page !== 'object') return false;
-  const page = m.page as { path?: unknown };
-  return typeof page.path === 'string' && page.path.length > 0;
 }
 
 /**
@@ -3462,7 +3451,7 @@ export class BlockRegistry {
         oc.name AS app_name,
         u.id AS owner_user_id,
         u.username AS owner_username,
-        u.image AS owner_image,
+        ${Prisma.raw(fallbackUserImageColumn)} AS owner_image,
         ab.manifest,
         ab.status,
         ab.content_rating,

@@ -1,4 +1,10 @@
 import { ilikeContains } from '~/server/utils/ilike';
+import {
+  deletePostRows,
+  ownPostDeleteBlocked,
+  type DeleteActor,
+} from '@civitai/db-queries/content-deletion';
+import { kyselyOver } from '~/server/db/prisma-kysely';
 import { Prisma } from '@prisma/client';
 import {
   isHeldForReview,
@@ -76,7 +82,6 @@ import {
 import { CONTEST_BANNED_MESSAGE, isContestBanned } from '~/server/services/contest-ban';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { canReadCollectionItems } from '~/server/services/collection-item-access';
-import { Limiter } from '~/server/utils/concurrency-helpers';
 import {
   enqueueCollectionRebuild,
   getCollectionIdsForPostCascade,
@@ -93,17 +98,14 @@ import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
   createImage,
   createImageResources,
-  deleteImageFromS3,
-  purgesAllVersions,
   deleteImagesForModelVersionCache,
   getImageMetricsObject,
   getImagesForPosts,
   imagesForModelVersionsCache,
   enqueueImageIngestion,
-  invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
-  isPlainOwnerDelete,
-  imagesWithOpenReports,
+  deleteImages,
+  imagesPendingDeletion,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/services/image.service';
 import { Flags } from '~/shared/utils/flags';
@@ -173,7 +175,10 @@ import type {
 import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { flagImagesOnRestrictedVersions } from '~/server/services/restricted-images.service';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 type GetAllPostsRaw = {
   id: number;
@@ -817,13 +822,20 @@ type PostEditInput = GetByIdInput & {
   user: SessionUser;
   /** `requestServableLevels(ctx)`: the editor takes no level, so the domain cap is applied here. */
   servableLevels: number;
+  /** The request carries the owner's view (`credentialViews`): the user's own held images show. */
+  ownerSeesHeld?: boolean;
 };
 
-export const getPostEditDetail = async ({ id, user, servableLevels }: PostEditInput) => {
+export const getPostEditDetail = async ({
+  id,
+  user,
+  servableLevels,
+  ownerSeesHeld,
+}: PostEditInput) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
   const [editImages, texts] = await Promise.all([
-    getPostEditImages({ id, user, servableLevels }),
+    getPostEditImages({ id, user, servableLevels, ownerSeesHeld }),
     getPostEditTexts(id),
   ]);
   const images = await withReactionCounts(editImages, post.publishedAt);
@@ -981,13 +993,18 @@ async function getPostEditTexts(postId: number) {
   });
 }
 
-export const getPostEditImages = async ({ id, user, servableLevels }: PostEditInput) => {
+export const getPostEditImages = async ({
+  id,
+  user,
+  servableLevels,
+  ownerSeesHeld = false,
+}: PostEditInput) => {
   const db = await getDbWithoutLag('postImages', id);
   const images = await db.image.findMany({
     where: {
       postId: id,
       AND: [
-        user.isModerator ? {} : notHeldForReviewWhere(),
+        user.isModerator ? {} : notHeldForReviewWhere(ownerSeesHeld ? user.id : undefined),
         servableLevelOrOwnUnratedWhere(servableLevels, user.id),
       ],
     },
@@ -1406,116 +1423,64 @@ export async function afterPostsUnpublish(posts: { postId: number; userId: numbe
 export const deletePost = async ({
   id,
   isModerator,
-  deletedById,
+  actor,
   viewerIsModerator = isModerator,
-}: GetByIdInput & { isModerator?: boolean; deletedById?: number; viewerIsModerator?: boolean }) => {
+}: GetByIdInput & { isModerator?: boolean; actor: DeleteActor; viewerIsModerator?: boolean }) => {
   // The delete trigger on "PostText" refuses it too; this refuses it with a message.
   if ((await heldPostTextPostIds({ postIds: [id] })).length)
     throw heldTextError(viewerIsModerator, 'Text in this post');
-  // Before the transaction: `CollectionItem.postId` cascades and the post's images go
-  // with it, so nothing can resolve this afterwards.
+  // Before the delete: `CollectionItem.postId` cascades and the post's images go with it, so
+  // nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
   // Chapter 1 of a story started from an image, whose points go with it.
   const sparked = await dbWrite.storylineChapter.findFirst({
     where: { postId: id, depth: 0, storyline: { sparkImageId: { not: null } } },
     select: { storylineId: true },
   });
+  // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
+  const images = await dbWrite.$queryRaw<
+    { id: number; url: string; userId: number; deletable: boolean }[]
+  >`
+    SELECT i.id, i.url, i."userId", ${Prisma.raw(
+      isModerator ? 'TRUE' : 'i."userId" = p."userId"'
+    )} AS deletable
+    FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE i."postId" = ${id}
+  `;
+  // Before the delete, which nulls their `postId` and leaves them public.
+  const unreleasedReviewIds = await unreleasedReviewIdsOfPosts([id]);
 
-  const { post, deletedImages, orphanedImageIds, imageOwnerIds, reported, unreleasedReviewIds } =
-    await dbWrite.$transaction(
-      async (tx) => {
-        // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
-        const images = await tx.$queryRaw<
-          { id: number; url: string; userId: number; deletable: boolean }[]
-        >`
-        SELECT i.id, i.url, i."userId", ${Prisma.raw(
-          isModerator ? 'TRUE' : 'i."userId" = p."userId"'
-        )} AS deletable
-        FROM "Image" i
-        JOIN "Post" p ON p.id = i."postId"
-        WHERE i."postId" = ${id}
-      `;
+  // Images first, then the post: a failure in between leaves a post with fewer images, which can
+  // be deleted again.
+  const deletedImages = await deleteImages(
+    images.filter((image) => image.deletable).map((image) => image.id),
+    { actor, moderatorDelete: !!viewerIsModerator, updatePosts: false }
+  );
+  // The deleter's own post under a child-safety report stays, as a pending delete, until the report
+  // is ruled on.
+  const deletedById = 'id' in actor ? actor.id : undefined;
+  const [post] = await deletePostRows(kyselyOver(dbWrite), {
+    ids: [id],
+    actor,
+    pending:
+      deletedById === undefined
+        ? undefined
+        : { blocked: ownPostDeleteBlocked(deletedById), data: { ownerId: deletedById } },
+  });
+  // Only the deleter's own images: the notice is for an owner's delete.
+  const ownImageIds = images.filter((image) => image.userId === deletedById).map((x) => x.id);
+  const deleteAfterReview = (await imagesPendingDeletion(ownImageIds)).size > 0;
 
-        const deletableImages = images.filter((image) => image.deletable);
-        // Before the delete: `ImageReport` cascades with the image.
-        const reported =
-          deletedById === undefined
-            ? new Set<number>()
-            : await imagesWithOpenReports(
-                deletableImages.map((image) => image.id),
-                tx
-              );
+  // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
+  // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
+  // never revisits them — their docs must be dropped here.
+  const deletedIds = new Set(deletedImages.map((image) => image.id));
+  const orphanedImageIds = images.filter((image) => !deletedIds.has(image.id)).map((x) => x.id);
+  const imageOwnerIds = uniq(images.map((image) => image.userId));
 
-        type DeletedImage = {
-          id: number;
-          url: string;
-          userId: number;
-          ingestion: string;
-          needsReview: string | null;
-          nsfwLevel: number;
-          blockedFor: string | null;
-        };
-        let deletedImages: DeletedImage[] = [];
-        if (deletableImages.length) {
-          const imageIds = deletableImages.map((i) => i.id);
-          deletedImages = await tx.$queryRaw<DeletedImage[]>`
-          DELETE FROM "Image"
-          WHERE id IN (${Prisma.join(imageIds)})
-          RETURNING id, url, "userId", ingestion::text, "needsReview", "nsfwLevel", "blockedFor"
-        `;
-        }
-
-        // Before the delete, which nulls their `postId` and leaves them public.
-        const unreleasedReviewIds = await unreleasedReviewIdsOfPosts([id], tx);
-
-        const [post] = await tx.$queryRaw<{ id: number; nsfwLevel: number }[]>`
-        DELETE FROM "Post"
-        WHERE id = ${id}
-        RETURNING id, "nsfwLevel"
-      `;
-
-        // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
-        // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
-        // never revisits them — their docs must be dropped here.
-        const deletedIds = new Set(deletedImages.map(({ id }) => id));
-        const orphanedImageIds = images.filter(({ id }) => !deletedIds.has(id)).map(({ id }) => id);
-
-        const imageOwnerIds = uniq(images.map((image) => image.userId));
-
-        return {
-          post,
-          deletedImages,
-          orphanedImageIds,
-          imageOwnerIds,
-          reported,
-          unreleasedReviewIds,
-        };
-      },
-      // Back to 10s (2026-08-22). This was temporarily raised to 30s in #4276 while post
-      // deletion was failing with Prisma P2028 "Transaction already closed"; that comment
-      // said to revert once the slowness was root-caused, and it now has been.
-      //
-      // The cause was NOT this budget. `UserProfile.sfwCoverImageId` is a foreign key to
-      // `Image` with ON DELETE SET NULL and no index, on a ~1.5 GB / 3.44M row table, so
-      // Postgres's referential-integrity trigger full-scanned it ONCE PER DELETED IMAGE:
-      // 1.74M calls at a 634 ms mean, ~290 hours of scan time, to null 12 rows. That made
-      // this DELETE cost ~634 ms per image, which is why ~100 images took ~63 s and why
-      // the failure was deterministic by post size rather than random.
-      //
-      // Fixed by the index in #4284, applied 2026-08-22 21:01:26Z. Measured after, on
-      // production traffic: the RI trigger went 634 ms -> 0.003 ms over 2,613 calls, and
-      // the plan went from ~193,719 buffers to 3. Slow (>5s) executions of this statement:
-      // 11 in the six minutes before the index, ZERO in the fifteen minutes after.
-      //
-      // So 10s is no longer a tight budget — at 0.003 ms/image even a 1000-image post
-      // spends ~3 ms in that trigger. Keeping 30s would only mean a genuinely stuck delete
-      // takes three times as long to surface.
-      { timeout: 10000 }
-    );
-
-  // Immediately after the commit, ahead of the de-index/S3/cache steps below. Those can
-  // reject, and by this point the rows are gone — the pre-delete snapshot is the only
-  // remaining record of which documents went stale.
+  // Ahead of the de-index and cache steps below, which can reject: by now the rows are gone, and
+  // the snapshot read before the delete is the only record of which documents went stale.
   await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'post-delete' });
   if (sparked) void onStorySparkLost(sparked.storylineId);
   announceReviewsInBackground({
@@ -1523,40 +1488,21 @@ export const deletePost = async ({
     onReviews: (reviews) => refreshHasReceivedReviews(reviews),
   });
 
-  const deletedImageIds = deletedImages.map((img) => img.id);
-
-  // Orphans leave the index but keep their rows — they must not reach the S3 delete below.
-  const deindexIds = [...deletedImageIds, ...orphanedImageIds];
-  if (deindexIds.length)
+  // Orphans keep their rows, with `postId` nulled; they leave the index too.
+  if (post && orphanedImageIds.length)
     await queueImageSearchIndexUpdate({
-      ids: deindexIds,
+      ids: orphanedImageIds,
       action: SearchIndexUpdateQueueAction.Delete,
     });
-
-  if (deletedImages.length) {
-    await invalidateManyImageExistence(deletedImageIds);
-
-    await Limiter({ batchSize: 5 }).process(deletedImages, async (batch) =>
-      Promise.all(
-        batch.map((image) =>
-          deleteImageFromS3({
-            id: image.id,
-            url: image.url,
-            allVersions: purgesAllVersions(image, !!viewerIsModerator),
-            keepShopArtwork: isPlainOwnerDelete(
-              { ...image, openReport: reported.has(image.id) },
-              deletedById
-            ),
-          })
-        )
-      )
-    );
-  }
+  const deletedImageIds = [...deletedIds];
 
   await bustCachesForPosts(id);
   await userImageVideoCountCaches.bust(imageOwnerIds);
 
-  return post ? { ...post, deletedImageIds } : post;
+  if (post) return { ...post, deletedImageIds, deleteAfterReview };
+  // Kept, with an image of theirs blocked where they can see it: the one generic notice. Otherwise it
+  // answers as if nothing was deleted.
+  return deleteAfterReview ? { deleteAfterReview } : undefined;
 };
 
 type PostQueryResult = { id: number; name: string; isCategory: boolean }[];
@@ -2245,7 +2191,7 @@ export const removeResourceFromPostImage = async ({
   return deleted;
 };
 
-type Editor = { user: SessionUser; servableLevels: number };
+type Editor = { user: SessionUser; servableLevels: number; ownerSeesHeld?: boolean };
 
 /**
  * Whether an image counts, or will once scanned, toward the version level
@@ -2255,15 +2201,16 @@ const countsTowardVersionLevel = (nsfwLevel: number) => nsfwLevel !== NsfwLevel.
 
 /**
  * The post's images this editor may not move (`ids`, `indexes`): those it did not list, and those
- * `getPostEditImages` does not serve it (held for review unless a moderator, or outside the
- * request's levels and not the editor's own unrated upload) even if it lists them. They keep their
+ * `getPostEditImages` does not serve it (held for review unless a moderator, or the image's own
+ * uploader with the owner's view; or outside the request's levels and not the editor's own unrated
+ * upload) even if it lists them. They keep their
  * index. `movable` holds the others the editor listed, with their current index and whether the
  * version level counts them.
  */
 async function editorHiddenImages(
   postId: number,
   listedIds: number[],
-  { user, servableLevels }: Editor
+  { user, servableLevels, ownerSeesHeld = false }: Editor
 ) {
   // primary: decides which indexes the reorder write that follows may take
   const images = await dbWrite.image.findMany({
@@ -2273,7 +2220,9 @@ async function editorHiddenImages(
   const listed = new Set(listedIds);
   const isHidden = (image: (typeof images)[number]) =>
     !listed.has(image.id) ||
-    (!user.isModerator && isHeldForReview(image.needsReview)) ||
+    (!user.isModerator &&
+      !(ownerSeesHeld && image.userId === user.id) &&
+      isHeldForReview(image.needsReview)) ||
     !isServableLevelOrOwnUnrated(image, servableLevels, user.id);
   const hidden = images.filter(isHidden);
   const movable = new Map(
@@ -2624,7 +2573,7 @@ export const getPostResourceCovers = async ({
       showSfwFace
     ).filter(
       (image) =>
-        Flags.intersects(image.nsfwLevel, browsingLevel) &&
+        Flags.intersects(image.nsfwLevel, browsingLevel & allBrowsingLevelsFlag) &&
         // The cache keeps images from private posts; only their owner may see them.
         (image.availability !== Availability.Private || image.userId === user.id)
     );
@@ -2662,7 +2611,13 @@ export const getPostContestCollectionDetails = async ({
   id,
   userId,
   isModerator,
-}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
+  ownerView = false,
+}: GetByIdInput & {
+  userId?: number;
+  isModerator?: boolean;
+  /** Set by the caller from credentialViews(ctx).asOwner. */
+  ownerView?: boolean;
+}) => {
   const post = await dbRead.post.findUnique({
     where: { id },
     select: { collectionId: true, userId: true },
@@ -2682,7 +2637,7 @@ export const getPostContestCollectionDetails = async ({
   });
   // A collection whose items the viewer may not read answers as none. The post's owner submitted
   // it, so they always see it.
-  const isPostOwner = !!userId && userId === post.userId;
+  const isPostOwner = ownerView && !!userId && userId === post.userId;
   if (!isPostOwner && !canReadCollectionItems(permissions))
     return {
       collection: null,
@@ -2692,7 +2647,7 @@ export const getPostContestCollectionDetails = async ({
 
   const collection = await getCollectionById({
     input: { id: post.collectionId },
-    viewer: userId ? { id: userId, isModerator } : undefined,
+    viewer: !userId ? undefined : ownerView ? { id: userId, isModerator } : {},
   });
 
   if (!collection || collection?.mode !== CollectionMode?.Contest)
@@ -2714,7 +2669,7 @@ export const getPostContestCollectionDetails = async ({
     ? [
         ...(await getImageIdsVisibleToViewer({
           ids: images.map((i) => i.id),
-          userId,
+          userId: ownerView ? userId : undefined,
           isModerator,
         })),
       ]

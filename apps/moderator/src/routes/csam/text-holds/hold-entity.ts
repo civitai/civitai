@@ -13,6 +13,8 @@ export const CSAM_HOLD_ENTITY_TYPES = [
   'UserProfile',
   'ServiceOffering',
   'PostText',
+  'ServiceDealReview',
+  'ServiceDealReviewReply',
 ] as const;
 
 export type CsamHoldEntityType = (typeof CSAM_HOLD_ENTITY_TYPES)[number];
@@ -26,6 +28,8 @@ export const CSAM_HOLD_ENTITY_LABELS: Record<CsamHoldEntityType, string> = {
   UserProfile: 'Profile',
   ServiceOffering: 'Service',
   PostText: 'Storyline text',
+  ServiceDealReview: 'Service review',
+  ServiceDealReviewReply: 'Service review reply',
 };
 
 /** What a moderator can do with a pending hold, in the order the actions are offered. */
@@ -79,6 +83,8 @@ const REMOVABLE_ENTITY_TYPES: readonly string[] = [
   'Article',
   'ServiceOffering',
   'PostText',
+  'ServiceDealReview',
+  'ServiceDealReviewReply',
 ];
 export const canRemoveHeld = (entityType: string) => REMOVABLE_ENTITY_TYPES.includes(entityType);
 
@@ -124,6 +130,11 @@ export function holdDecisionEnabled(
 export const CSAM_HOLD_CONFIRMS: Partial<
   Record<CsamHoldDecision, { label: string; title: string; description: string }>
 > = {
+  remove: {
+    label: 'Remove content',
+    title: 'Remove the content?',
+    description: 'The content is taken down.',
+  },
   remove_strike: {
     label: 'Remove content + strike',
     title: 'Remove the content and strike the author?',

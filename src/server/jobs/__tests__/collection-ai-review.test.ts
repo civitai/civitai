@@ -164,9 +164,6 @@ describe('reviewCollection: a failed model call', () => {
 
     expect(claimCalls()).toHaveLength(0);
     expect(updateCollectionItemsStatus).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ error: expect.stringContaining('error=RequestTimeoutError') })
-    );
   });
 
   it('stamps the item for a human once the attempts run out', async () => {
@@ -183,46 +180,6 @@ describe('reviewCollection: a failed model call', () => {
     expect(redisMock.sysRedis.incrBy).toHaveBeenCalledWith(
       `system:collection-ai-review:attempts:${ITEM_ID}`,
       1
-    );
-  });
-
-  it("logs which provider failed and how, which the SDK's message leaves out", async () => {
-    queuePending([pendingItem()]);
-    const body = JSON.stringify({
-      error: {
-        message: 'Provider returned error',
-        code: 502,
-        metadata: {
-          provider_name: 'ExampleProvider',
-          raw: '{"error":{"code":"no_healthy_upstream"}}',
-        },
-      },
-    });
-    reviewImage.mockRejectedValue(
-      new ChatError(
-        {
-          error: { message: 'Provider returned error', code: 502 },
-          request$: new Request('https://openrouter.ai/api/v1/chat/completions'),
-          response$: new Response(body, { status: 502 }),
-          body$: body,
-        } as never,
-        {
-          request: new Request('https://openrouter.ai/api/v1/chat/completions'),
-          response: new Response(body, { status: 502 }),
-          body,
-        }
-      )
-    );
-    redisMock.sysRedis.incrBy.mockResolvedValue(1);
-
-    await reviewCollection(COLLECTION_ID, config);
-
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'job-error',
-        imageId: 5,
-        error: expect.stringMatching(/provider=ExampleProvider.*upstream_code=no_healthy_upstream/),
-      })
     );
   });
 

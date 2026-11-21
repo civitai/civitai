@@ -104,13 +104,15 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 import handler from '~/pages/api/user/settings';
 import { resolveSettingsBootstrapForRender } from '~/server/services/settings-bootstrap.service';
 import { setSessionCookie } from '~/server/auth/civ-cookie';
-// The unit setup replaces this export with a spy (src/__tests__/setup.ts).
-import { logToAxiom } from '~/server/logging/client';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-const invoke = (headers: Record<string, string> = { host: 'civitai.com' }) => {
+const invoke = (
+  headers: Record<string, string> = { host: 'civitai.com' },
+  context?: Record<string, unknown>
+) => {
   const json = vi.fn();
   const res = { status: vi.fn(() => res), json, setHeader: vi.fn(), end: vi.fn() };
-  const req = { method: 'GET', headers, query: {}, cookies: {} };
+  const req = { method: 'GET', headers, query: {}, cookies: {}, ...(context ? { context } : {}) };
   const done = (handler as unknown as (q: NextApiRequest, s: NextApiResponse) => Promise<void>)(
     req as unknown as NextApiRequest,
     res as unknown as NextApiResponse
@@ -403,15 +405,6 @@ describe('settings bootstrap during a server render', () => {
     await expect(
       resolveSettingsBootstrapForRender(pageRequest() as unknown as RenderRequest)
     ).rejects.toThrow(/^settings bootstrap failed: Error P1001$/);
-    // …while the full reason is kept in the structured log.
-    expect(logToAxiom).toHaveBeenCalledWith(
-      {
-        type: 'warning',
-        name: 'settings bootstrap failed',
-        message: 'connect ECONNREFUSED db.internal.example:5432',
-      },
-      'settings'
-    );
 
     const { done, json } = invoke();
     await vi.runAllTimersAsync();
@@ -598,5 +591,45 @@ describe('settings bootstrap during a server render — domain resolution', () =
     expect(getRequestDomainColor({ headers: { host: 'blue.example' } })).toBe('blue');
     expect(getRequestDomainColor({ headers: { host: 'civitai.red' } })).toBe('red');
     expect(getRequestDomainColor({ headers: { host: INTERNAL_HOST } })).toBeUndefined();
+  });
+});
+
+describe('/api/user/settings — the session it returns', () => {
+  const MODERATOR = { id: 4242, username: 'mod', isModerator: true, roles: ['moderator:admin'] };
+  const reducedKey = {
+    tokenScope: TokenScope.MediaRead,
+    apiKeyId: 11,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 11 },
+  };
+  const fullKey = { ...reducedKey, tokenScope: TokenScope.Full };
+
+  beforeEach(() => {
+    h.session.mockResolvedValue({ user: MODERATOR });
+    h.contentSettings.mockResolvedValue({});
+    h.announcements.mockResolvedValue([]);
+    h.liveNow.mockResolvedValue(false);
+    h.follows.mockResolvedValue([]);
+    h.addons.mockResolvedValue([]);
+    h.navBanners.mockResolvedValue([]);
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  const sessionFor = async (context?: Record<string, unknown>) => {
+    const { done, json } = invoke({ host: 'civitai.com' }, context);
+    await done;
+    return json.mock.calls[0][0].session;
+  };
+
+  it('keeps moderator rights on a browser session', async () => {
+    expect((await sessionFor()).user).toEqual(MODERATOR);
+  });
+
+  it('keeps moderator rights on a full-scope personal key', async () => {
+    expect((await sessionFor(fullKey)).user.isModerator).toBe(true);
+  });
+
+  it('is the same user without moderator rights on a reduced-scope key', async () => {
+    expect((await sessionFor(reducedKey)).user).toEqual({ ...MODERATOR, isModerator: false });
   });
 });

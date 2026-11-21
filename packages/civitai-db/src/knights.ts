@@ -2,6 +2,7 @@ import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transactio
 import type { DB } from '@civitai/db-schema/kysely';
 import * as shared from '@civitai/shared';
 import { withheldCosmeticIds } from '@civitai/shared/knights-shop';
+import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 
 // tsx loads CommonJS-scoped workspace packages as one `default` object when an ES module imports them.
 // Checked with `in`, not read: reading a missing `default` off a vitest module mock throws.
@@ -28,6 +29,8 @@ export const YESNO_QUESTION_MAX = 600;
 export const MODERATOR_RETIRED = 'moderator-retired';
 export const MODERATION_META_KEY = 'moderation';
 export const REWORD_OF_META_KEY = 'rewordOf';
+/** The image's level when a rating item went to the Inquisitors: what "pushed down" was measured from. */
+export const ESCALATED_FROM_LEVEL_META_KEY = 'escalatedFromLevel';
 
 export type ModerationNote = { action: string; by: number; note: string; at: string };
 
@@ -47,10 +50,10 @@ export const isModeratedSql = sql<SqlBool>`COALESCE("KnightsQueueItem"."meta" ? 
 type Joined = DB & { img: DB['Image']; p: DB['Post'] };
 
 /**
- * Images the public feeds would show: a published post, a rated image with no block marker and
- * no review hold. Expects `Image as img` joined to `Post as p`.
+ * The image half of `servableImage`, whatever its post's state: a rated still image with no block marker, no review hold,
+ * and no real-person or minor flag (those go to the moderators' own queues). Expects `Image as img` joined to `Post as p`.
  */
-export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
+export const servableImageContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
   eb.and([
     eb('img.type', '=', 'image'),
     eb('img.nsfwLevel', 'not in', [0, NsfwLevel.Blocked]),
@@ -58,9 +61,45 @@ export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
     eb('img.blockedFor', 'is', null),
     eb('img.needsReview', 'is', null),
     eb('img.acceptableMinor', '=', false),
+    eb('img.poi', '=', false),
+    eb('img.minor', '=', false),
+  ]);
+
+/**
+ * Images Knights may show players: `servableImageContent` on a published post. Expects `Image as img` joined to
+ * `Post as p`.
+ */
+export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
+  eb.and([
+    servableImageContent(eb),
     eb('p.publishedAt', 'is not', null),
     eb('p.publishedAt', '<', sql<Date>`(now() AT TIME ZONE 'utc')`),
   ]);
+
+/**
+ * Open Knight-stage rating items that players can be served, counted up to `limit` (the intake cap reads `maxOpen + 1`).
+ * Items whose image fails `servableImage` cannot be judged, so they must not fill the cap and pause intake while players
+ * run out of work.
+ */
+export async function countOpenServableKnightItems(db: Kysely<DB>, limit: number): Promise<number> {
+  const row = await db
+    .selectFrom(
+      db
+        .selectFrom('KnightsQueueItem as i')
+        .innerJoin('Image as img', 'img.id', 'i.imageId')
+        .innerJoin('Post as p', 'p.id', 'img.postId')
+        .select(sql<number>`1`.as('one'))
+        .where('i.status', '=', 'Open')
+        .where('i.minRank', '=', 'Knight')
+        .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
+        .where(servableImage)
+        .limit(limit)
+        .as('open')
+    )
+    .select((eb) => eb.fn.countAll<string>().as('n'))
+    .executeTakeFirstOrThrow();
+  return Number(row.n);
+}
 
 /** Settles every still-pending vote on an item against the answer it was finally decided as. */
 export async function gradeKnightsVotes(

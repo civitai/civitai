@@ -166,6 +166,8 @@ describe('purgeListing — on-site orphan pre-approval draft (the purgeable shap
           { kind: 'offsite' },
           { kind: 'onsite', status: 'draft', appBlockId: null, revisionOfId: null },
         ],
+        // A connect listing that went live in between is not deleted.
+        NOT: { connectClientId: { not: null }, status: { in: ['approved', 'removed'] } },
       },
     });
   });

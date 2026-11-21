@@ -41,6 +41,12 @@ describe('parseBlockErrorReport', () => {
     expect(
       parseBlockErrorReport({ message: 'x', source: 'eval', stack: 7, at: 'soon' }, 9)
     ).toEqual({ message: 'x', fatal: false, at: 9 });
+    // A finite time past what a Date holds (±8.64e15 ms) is replaced too: it would make
+    // `new Date(at).toISOString()` throw for anyone formatting the report.
+    for (const at of [9e15, -9e15, Number.MAX_VALUE, Infinity, NaN]) {
+      expect(parseBlockErrorReport({ message: 'x', at }, 9)?.at).toBe(9);
+    }
+    expect(parseBlockErrorReport({ message: 'x', at: 8.64e15 }, 9)?.at).toBe(8.64e15);
     for (const raw of [null, 'boom', {}, { message: '' }, { message: '   ' }, { message: 3 }])
       expect(parseBlockErrorReport(raw)).toBeNull();
   });
@@ -135,10 +141,14 @@ describe('who reports a block’s errors', () => {
     expect(mounters.length).toBeGreaterThan(1);
   });
 
-  it('only the dev-tunnel host passes onBlockError: a production mount reports nothing new', () => {
+  it('only the dev-tunnel and review-preview hosts pass onBlockError: a production mount reports nothing new', () => {
     const reporting = mounters.filter((file) =>
       /\bonBlockError=/.test(fs.readFileSync(path.join(SRC, file), 'utf8'))
     );
-    expect(reporting).toEqual(['components/AppBlocks/DevTunnelBlockHost.tsx']);
+    // The review host keeps them in the review page's in-memory console (`ReviewConsole`).
+    expect([...reporting].sort()).toEqual([
+      'components/AppBlocks/DevTunnelBlockHost.tsx',
+      'components/Apps/ReviewBlockPreviewHost.tsx',
+    ]);
   });
 });

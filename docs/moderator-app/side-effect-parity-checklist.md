@@ -22,7 +22,7 @@ Closed/clean items are in the buckets below; this table is only what's still **o
 | 3 | Comic **project/chapter** mod tools not ported (TOS toggle, set project/chapter nsfw, unpublish chapter) | comic detail mod UI (not the queue) | BLOCKER-if-expected | 🅿️ **Deferred** — NOT a migrated page (this surface was never in the spoke); revisit if comic project/chapter moderation moves here. Every *migrated* page is at parity. |
 | 4 | **User moderation** (ban / mute / strikes / restrictions) unbuilt | `/users` still a placeholder; `/users/newest` is read-only | BLOCKER-if-expected | 🅿️ **Out of scope for now** (user decision) — stays main-app until session-revoke is designed |
 | 5 | `metadata.nsfwLevelReason` not written (+ `IMAGE_METADATA` bust) | `setLevel` (ratings/downleveled) | DEGRADED | ✅ **DONE** — reason + Model3D rollup + cache bust in `updateImageNsfwLevel` |
-| 6 | `postId` images deleted without post-nsfw recompute | article delete | COSMETIC (~0.2%) | ✅ **DONE** — `finishImageDeletes` now recomputes each affected post (`update_post_nsfw_levels` + `bustPostGalleryCaches`); postMetrics self-heals |
+| 6 | `postId` images deleted without post-nsfw recompute | article delete | COSMETIC (~0.2%) | ✅ **DONE** — each affected post's recount is queued (`UpdateNsfwLevel`) + `bustPostGalleryCaches`; postMetrics self-heals |
 | 7 | Model3D thumbnail nsfwLevel rollup dropped | `setLevel` (ratings/downleveled) | COSMETIC (rare `postId==null` edge) | ✅ **DONE** — folded into `updateImageNsfwLevel` (#5) |
 | 8 | Restore **dispute auto-resolve** dropped | article restore | COSMETIC (narrow race) | ⏳ Deferred for review — unblocked (no Flipt), but auto-**lowers** nsfwLevel; port under supervision |
 | 9 | App Store **listing rating re-derive** not mirrored (re-rating an image used as a live listing's icon, cover or screenshot) | `setLevel` (ratings/downleveled) | DEGRADED | ⏳ Open — main runs `reDeriveListingRatingsForModeratedImage` after the image-level write; the spoke leaves the listing rating and its `rating-change` history untouched. Needs a call: delegate to main (like KoNO finalize) or port |
@@ -43,30 +43,34 @@ deferred), #4 (user moderation, out of scope), #8 (dispute auto-resolve, needs a
 
 - [~] **Article delete — cover + orphaned content image cleanup** — DEGRADED (high). *(core done; 1 confirm open)*
   The spoke deleted the Article/File/ImageConnection rows + de-indexed the article, but left the cover +
-  truly-orphaned content images fully live. Now replicated the main app's `deleteImageById`
-  (`image.service.ts:388`) for the cover (`coverId`) + any content image with **zero remaining connections**
-  — see `deleteArticleById` (`article.service.ts:1265`).
+  orphaned content images fully live. It now queues them through the shared `queueImageDeletes`, the same
+  rule `deleteArticleById` uses.
   Sub-tasks:
   - [x] Wire `@civitai/storage` client in the spoke (`storage.ts` shim + dep + `STORAGE_ENDPOINT`/`STORAGE_TOKEN`)
-  - [x] Image-delete helper (`image-deletion.ts` `deleteImageRows` + `finishImageDeletes`): remove from collections → delete Image
-        row → `deleteObject` (S3, `b2Image`) w/ URL-dedup → `syncSearchIndex('image', delete)` →
-        `IMAGE_EXISTS` sysRedis false → bust `imageMeta`/`imageMetadata`
-  - [x] Wire into `deleteArticle`: capture `coverId` + content image ids before deleting connections; delete
-        cover + truly-orphaned content images (`NOT EXISTS` ImageConnection). URL-dedup guard included.
+        (no longer used by image deletion; the main app's job deletes the files)
+  - [x] Image-delete helper (`image-deletion.ts` `deleteImages`): one transaction runs the shared `deleteImageRows`
+        (`@civitai/db-queries/content-deletion`), which removes the Image row and queues, in the
+        same statement, `ImageStorageDelete` (the main app's `image-storage-deletes` job deletes the file, with URL
+        dedup), `UpdateNsfwLevel` for the post and, when asked, `CdnAccessSync`; the helper then removes the image's collection
+        links. After commit, `finishImageDeletes`:
+        `IMAGE_EXISTS` sysRedis false → bust `imageMeta`/`imageMetadata` → `syncSearchIndex('image', delete)`
+  - [x] Wire into `deleteArticle`: capture `coverId` + content image ids before deleting connections; hand
+        cover, banner and content images to the shared `queueImageDeletes` in the delete's transaction, which
+        queues the author's images nothing else uses, the same rule as `deleteArticleById`; the main app's
+        `pending-deletes` job deletes them.
   - [x] **Storage app tested functional** — `STORAGE_ENDPOINT`/`STORAGE_TOKEN` pulled from the civitai main
         worktree `.env` (localhost:8084). `/health` OK; auth enforced (401 w/o token); `head`/`delete`/
         `delete-many` all 200 with the token.
   - [x] **Backend confirmed — `b2Image` for all images.** Real image keys from the DB (oldest id=127 →
         newest) all `head` as `exists:true` on `b2Image`, `false` on `default`/`b2`. The backblaze migration
         is complete → no legacy-R2 concern; the hardcoded `b2Image` is correct.
-  - [x] **Resize/CDN purge — confirmed + replicated.** Read `apps/storage/src`: `/objects/delete` is a pure
-        S3 `DeleteObjectCommand`, **no** resize/CDN purge. Added `purgeResizeCache` to `image-deletion.ts`
-        (best-effort POST to `IMAGE_CACHER_URL/admin/invalidate`, parity with the main app). `IMAGE_CACHER_URL`
-        wired (empty in local dev → no-ops, matching the main app; prod sets it).
-  - [x] **postId images — DONE.** `finishImageDeletes` collects every deleted image's `postId` and, after the
-        batch, runs `update_post_nsfw_levels` + `bustPostGalleryCaches` (the spoke's `bustCachesForPosts`
-        port) for those posts. `deleteArticle` no longer excludes postId images (matching `deleteArticleById`,
-        which deletes cover + truly-orphaned content images regardless of postId). `postMetrics.queueUpdate`
+  - [x] **Resize/CDN purge.** `/objects/delete` is a pure S3 `DeleteObjectCommand` with no resize/CDN purge. The
+        file and its resized copies are purged by the main app's `image-storage-deletes` job, and the CDN takedown
+        is queued as `CdnAccessSync` by the delete statement itself, so the spoke has no purge helper.
+  - [x] **postId images — DONE.** The delete statement queues each deleted image's post for its recount
+        (`UpdateNsfwLevel`), `finishImageDeletes` queues a kept image's post, and both get `bustPostGalleryCaches`
+        (the spoke's `bustCachesForPosts` port). An article delete leaves posted images alone in both apps (the
+        shared `queueImageDeletes` rule). `postMetrics.queueUpdate`
         is intentionally NOT mirrored — it enqueues to the main app's bucket-based metric queue (unsafe to
         partially reimplement) and the post imageCount self-heals on the next metrics delta-scan.
 - [x] **Article delete — ClickHouse `article` Delete analytics** — COSMETIC. **DONE.** `recordArticleDeleted`

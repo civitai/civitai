@@ -1,8 +1,10 @@
 import * as grpc from '@grpc/grpc-js';
 import type { Server as HttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPollingAdapter } from '~/server/registry-adapter/cursor';
+import type { SubscriptionLimiter } from '~/server/registry-adapter/limits';
+import { createSubscriptionLimiter } from '~/server/registry-adapter/limits';
 import { abortableSleep } from '~/utils/errorHandling';
 import {
   REGISTRY_SERVICE,
@@ -14,6 +16,7 @@ import {
   listenGrpc,
 } from '~/server/registry-adapter/grpc';
 import type { Adapter, Change, Entity, StreamEvent } from '~/server/registry-adapter/protocol';
+import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
 import { createRegistryServer, sseFrame } from '~/server/registry-adapter/serve';
 import { createMemorySnapshotStore } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 
@@ -65,22 +68,39 @@ type Outcome = {
  */
 async function viaGrpc(
   a: Adapter,
-  req: Partial<{ schema: string; cursor: string; urns: string[]; filter: string }>,
+  req: Partial<{ schema: string; cursor: string; urns: string[]; filter: string; meta: Buffer }>,
   until: (events: StreamEvent[]) => boolean = () => false,
-  path: string = SPEC_PATH
+  path: string = SPEC_PATH,
+  extra: {
+    onRegion?: (line: string) => void;
+    metadata?: grpc.Metadata;
+    limiter?: SubscriptionLimiter;
+    regionRestricted?: (origin: RequestOrigin) => boolean;
+  } = {}
 ): Promise<Outcome> {
-  const server = createGrpcServer(a);
+  const server = createGrpcServer(a, {
+    onRegion: extra.onRegion,
+    limiter: extra.limiter,
+    regionRestricted: extra.regionRestricted,
+  });
   grpcServers.push(server);
   const port = await listenGrpc(server, 0);
   const PathClient = clientAt(path);
   const client = new PathClient(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
   const subscribe = (
-    client as unknown as Record<string, (r: unknown) => grpc.ClientReadableStream<StreamEvent>>
+    client as unknown as Record<
+      string,
+      (r: unknown, m: grpc.Metadata) => grpc.ClientReadableStream<StreamEvent>
+    >
   ).Subscribe;
   return new Promise<Outcome>((resolve) => {
     const events: StreamEvent[] = [];
     let cancelled = false;
-    const call = subscribe.call(client, { schema: APPS, cursor: '', urns: [], filter: '', ...req });
+    const call = subscribe.call(
+      client,
+      { schema: APPS, cursor: '', urns: [], filter: '', ...req },
+      extra.metadata ?? new grpc.Metadata()
+    );
     const finish = (outcome: Outcome) => {
       clearTimeout(timer);
       client.close();
@@ -221,6 +241,95 @@ describe('the gRPC binding', () => {
     };
     const res = await viaGrpc(failing, {});
     expect(res.error).toEqual({ code: grpc.status.UNAVAILABLE, reason: 'unavailable' });
+  });
+});
+
+describe('🔴 each gRPC subscription logs its region decision once, and no address', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /**
+   * One subscription from the edge's CA, with meta DE, read to live; its region lines and its
+   * outcome.
+   */
+  async function lines(
+    trustMeta: string | undefined,
+    {
+      req = { meta: Buffer.from('{"country":"DE"}', 'utf8') },
+      authorization,
+      limiter,
+      regionRestricted,
+    }: {
+      req?: Parameters<typeof viaGrpc>[1];
+      authorization?: string;
+      limiter?: SubscriptionLimiter;
+      regionRestricted?: (origin: RequestOrigin) => boolean;
+    } = {}
+  ) {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', trustMeta);
+    const metadata = new grpc.Metadata();
+    metadata.set('cf-ipcountry', 'CA');
+    metadata.set('cf-connecting-ip', '192.0.2.7');
+    metadata.set('x-forwarded-for', '198.51.100.1');
+    if (authorization) metadata.set('authorization', authorization);
+    const logged: string[] = [];
+    const res = await viaGrpc(
+      catalog([[ent('alpha', 'r1')]]),
+      req,
+      (e) => e.some((x) => x.type === 'live'),
+      SPEC_PATH,
+      { onRegion: (line) => logged.push(line), metadata, limiter, regionRestricted }
+    );
+    return { error: res.error, logged };
+  }
+
+  it('flag on: the meta country, one line', async () => {
+    const { error, logged } = await lines('1');
+    expect(error).toBeUndefined();
+    expect(logged).toEqual([
+      'subscription region: binding=grpc country=DE region=none source=meta restricted=false principal=anonymous client=none act=none audience=m',
+    ]);
+    for (const address of ['192.0.2.7', '198.51.100.1', '127.0.0.1']) {
+      expect(logged[0]).not.toContain(address);
+    }
+  });
+
+  it('flag off: the header country, one line', async () => {
+    const { error, logged } = await lines(undefined);
+    expect(error).toBeUndefined();
+    expect(logged).toEqual([
+      'subscription region: binding=grpc country=CA region=none source=header restricted=false principal=anonymous client=none act=none audience=m',
+    ]);
+  });
+
+  it('an injected regionRestricted is the restricted logged, not the site rule', async () => {
+    const { error, logged } = await lines(undefined, { regionRestricted: () => true });
+    expect(error).toBeUndefined();
+    expect(logged).toEqual([
+      'subscription region: binding=grpc country=CA region=none source=header restricted=true principal=anonymous client=none act=none audience=m',
+    ]);
+  });
+
+  // Each refusal at a later step than the last, so a line moved ahead of any of them shows.
+  it('a request refused as malformed logs nothing', async () => {
+    const { error, logged } = await lines('1', { req: { filter: '{not json' } });
+    expect(error).toEqual({ code: grpc.status.INVALID_ARGUMENT, reason: 'bad_request' });
+    expect(logged).toEqual([]);
+  });
+
+  it('a request refused over the subscription cap logs nothing', async () => {
+    const limiter = createSubscriptionLimiter({ total: 0, perSubject: 100, perAddress: 100 });
+    const { error, logged } = await lines('1', { limiter });
+    expect(error).toEqual({ code: grpc.status.UNAVAILABLE, reason: 'unavailable' });
+    expect(logged).toEqual([]);
+  });
+
+  it('a request refused for its token logs nothing', async () => {
+    // No verifyToken: any token is invalid_token.
+    const { error, logged } = await lines('1', { authorization: 'Bearer x' });
+    expect(error).toEqual({ code: grpc.status.UNAUTHENTICATED, reason: 'invalid_token' });
+    expect(logged).toEqual([]);
   });
 });
 

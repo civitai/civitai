@@ -31,6 +31,9 @@ export interface TrustedDomainRegistry {
   /** `matchesHost` for a full origin, which must also be https unless its host is an always-trust host. The
    * first-party OAuth client check. */
   matchesOrigin(origin: string): Promise<boolean>;
+  /** The entry that admits `origin` under the `matchesOrigin` rules: the registry entry's `domain` (so a
+   * subdomain resolves to its parent row), `'always'` for an always-trust host, or null when refused. */
+  matchedEntry(origin: string): Promise<string | null>;
   /**
    * Resolve the registry ONCE, then return a SYNCHRONOUS origin predicate for `buildPostLoginRedirect`'s
    * `isAllowedOrigin`. Allows: always-trust ∪ registry ∪ the owned-eTLD+1 backstop (`CIVITAI_OWNED_DOMAINS`).
@@ -50,10 +53,13 @@ const hostOf = (origin: string): string | null => {
   }
 };
 
-const matchesEntries = (hostname: string, entries: TrustedDomain[]): boolean =>
-  entries.some(
+const entryFor = (hostname: string, entries: TrustedDomain[]): TrustedDomain | undefined =>
+  entries.find(
     (e) => hostname === e.domain || (e.includeSubdomains && hostname.endsWith(`.${e.domain}`))
   );
+
+const matchesEntries = (hostname: string, entries: TrustedDomain[]): boolean =>
+  entryFor(hostname, entries) !== undefined;
 
 export function createTrustedDomainRegistry(
   config: TrustedDomainRegistryConfig
@@ -93,11 +99,16 @@ export function createTrustedDomainRegistry(
     return always.includes(h) || matchesEntries(h, await list());
   }
 
-  async function matchesOrigin(origin: string): Promise<boolean> {
+  async function matchedEntry(origin: string): Promise<string | null> {
     const host = hostOf(origin);
-    if (!host) return false;
-    if (always.includes(host)) return true;
-    return isSecureOrLoopbackOrigin(origin) && matchesEntries(host, await list());
+    if (!host) return null;
+    if (always.includes(host)) return 'always';
+    if (!isSecureOrLoopbackOrigin(origin)) return null;
+    return entryFor(host, await list())?.domain ?? null;
+  }
+
+  async function matchesOrigin(origin: string): Promise<boolean> {
+    return (await matchedEntry(origin)) !== null;
   }
 
   async function ownedOriginCheck(): Promise<(origin: string) => boolean> {
@@ -117,5 +128,5 @@ export function createTrustedDomainRegistry(
     fetchedAt = 0; // next list() sees the entry as stale and re-queries
   }
 
-  return { list, matchesHost, matchesOrigin, ownedOriginCheck, invalidate };
+  return { list, matchesHost, matchesOrigin, matchedEntry, ownedOriginCheck, invalidate };
 }

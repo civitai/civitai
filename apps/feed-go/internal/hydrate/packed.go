@@ -7,10 +7,10 @@
 // `{notFound: true}` ("no row", skip the lookup) and `{debounce: true}` (a bust marker, treat as a miss).
 //
 // A miss is answered from Postgres with the Node lookup's own query (a metric-hash miss, which Node
-// populates from ClickHouse, falls back). This service writes those keys back only with
-// FEED_GO_CACHE_WRITEBACK on (default off), and then exactly what the Node lookup writes (misses.go);
-// with it off a Go bug can never poison a cache the Node app reads, at the cost that a Go-only miss
-// stays a miss. See DESIGN.md §3.1.
+// populates from ClickHouse, falls back). This service writes a cache's keys back only when
+// FEED_GO_CACHE_WRITEBACK lists that cache (default: none), and then exactly what the Node lookup
+// writes (misses.go); a cache not listed can never be poisoned by a Go bug, at the cost that a Go-only
+// miss stays a miss. See DESIGN.md §3.1.
 package hydrate
 
 import (

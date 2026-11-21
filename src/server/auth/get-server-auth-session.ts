@@ -11,13 +11,13 @@ import {
   sessionCookieMode,
 } from '@civitai/auth';
 import { env } from '~/env/server';
-import { matchWebhookToken } from '~/server/utils/webhook-token';
-import { getBaseUrl } from '~/server/utils/url-helpers';
+import { readRequestBearerToken } from './request-bearer-token';
 import { getSessionFromBearerToken } from './bearer-token';
 import { applySessionScope, type SessionScope } from './session-scope';
 import { refuseModerationAccountSession } from './moderation-account';
 import { decodePreviewSessionCookie, previewCookieSignInEnabled } from './preview-session-cookie';
 import { getHubSession, maybeRollHubCookie } from './session-client';
+import { observeSessionCookieSlot } from './session-metrics';
 
 type AuthRequest = (GetServerSidePropsContext['req'] | NextApiRequest) & {
   context?: Record<string, unknown>;
@@ -64,14 +64,7 @@ export const getServerAuthSession = async ({
 async function resolveSession(req: AuthRequest, res: AuthResponse): Promise<Session | null> {
   if (req.context?.session) return req.context.session as Session | null;
 
-  // API/bearer token (Authorization header or `?token=`, excluding the webhook token).
-  let token: string | undefined;
-  if (req.headers.authorization) token = req.headers.authorization.split(' ')[1];
-  else if (req.url) {
-    const url = new URL(req.url, getBaseUrl());
-    if (!matchWebhookToken(url.searchParams.get('token')))
-      token = url.searchParams.get('token') || undefined;
-  }
+  const token = readRequestBearerToken(req);
 
   if (!req.context) req.context = {};
   if (token) {
@@ -97,6 +90,7 @@ async function resolveSession(req: AuthRequest, res: AuthResponse): Promise<Sess
     req.context.session = hub;
     const host = req.headers.host;
     const civ = readSessionToken(req.cookies, { host });
+    if (civ) observeSessionCookieSlot(host, civ.slot);
     const slot = civ && rollSlot(civ, sessionCookieMode(host));
     const device = readDeviceId(req.cookies, { host })?.value;
     if (civ && slot) {

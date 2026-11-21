@@ -7,7 +7,11 @@ import { touchAccount } from '$lib/server/auth/device';
 import { addDeviceFamily, markFamilyLive } from '$lib/server/auth/lineage';
 import { deleteOidcContext, readOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
-import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
+import {
+  checkOAuthRateLimit,
+  oauthRetryAfter,
+  rateLimitedResponse,
+} from '$lib/server/oauth/rate-limit';
 import { getClientIp } from '$lib/server/auth/request';
 import { parseBody } from '$lib/server/oauth/http';
 
@@ -56,7 +60,7 @@ export const POST: RequestHandler = async ({ request }) => {
   // not abuse-proof, just a coarse fan-out.
   const rateLimitKey = ip ?? (clientId ? `client:${clientId}` : 'unknown');
   if (!(await checkOAuthRateLimit('session', rateLimitKey))) {
-    return bad('rate_limited', 'Too many session requests', 429);
+    return rateLimitedResponse(oauthRetryAfter('session'), undefined, 'Too many session requests');
   }
 
   // The code must exist, be unexpired, and belong to THIS client.

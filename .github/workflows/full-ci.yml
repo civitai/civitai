@@ -6,8 +6,10 @@ name: Full CI on label
 # reopened, ready_for_review): with it on, the six `Unit tests` shards run and the draft
 # ESLint-only gate is lifted. What they cannot do without help is react to the label being
 # ADDED, which is a `labeled` event. This file does that, by dispatching them on the PR branch,
-# along with moderator-boot.yml, feed-go.yml, beacon-go.yml and registry-adapter-image.yml, which
-# have the same draft gate.
+# along with moderator-boot.yml, feed-go.yml, beacon-go.yml, app-index-go.yml, app-data-go.yml,
+# content-policy-go.yml, registry-adapter-image.yml and storage-hook-runner-image.yml, which have
+# the same draft gate: Lint always, the others only on a draft PR (see "ON A READY PR, LINT
+# ONLY").
 #
 # ── THE LABEL STAYS ON UNTIL THE FULL UNIT SUITE HAS PASSED ONCE ON THE PR ───────────────────
 #
@@ -49,9 +51,19 @@ name: Full CI on label
 # until a full unit run has passed (see the label section above).
 # The dispatched Lint run is `only: all`: every suite but ESLint, which is PR-only and already
 # ran on the PR. Its concurrency group is the dispatch one, so it does not cancel the PR's own
-# run in flight. The dispatched apps.yml run is not path-filtered (`paths:` applies to
-# pull_request events only), so it runs the app suites even on a PR that cannot affect them. The
-# same goes for the dispatched moderator-boot.yml run.
+# run in flight. The other workflows are dispatched only on a draft PR (next section).
+#
+# ── ON A READY PR, LINT ONLY ─────────────────────────────────────────────────────────────────
+#
+# For apps.yml, moderator-boot.yml and the other seven, the label changes nothing but the draft
+# gate. On a PR that is not a draft that gate is not in play, so the PR's own run of each on
+# this commit runs, or ran, the same jobs (on the merge commit rather than the branch head, and
+# apps.yml with its PR-only moderator scoping), or its `paths:` filter skipped it because the PR
+# cannot affect it. Dispatching them there only ran them again, unfiltered. So on a ready PR
+# this job dispatches Lint alone, and on a draft it dispatches all nine as well, as before.
+# Only an event payload whose `draft` is exactly `false` skips them; anything else dispatches.
+# The summary says, per workflow, whether it was dispatched and why. Lint is always
+# dispatched: `full-ci-done` needs its unit shards.
 #
 # Not for fork PRs: their branch is not in this repo, so there is nothing here to dispatch on,
 # and their token cannot dispatch anyway. The `if` skips them.
@@ -109,11 +121,12 @@ jobs:
       # The branch name reaches the shell through env, never interpolated into the script: a
       # branch name is attacker-chosen text, and `${{ }}` in `run:` is pasted in before the
       # shell parses it.
-      - name: Dispatch Lint (only=all), App suites and Moderator boot smoke on the PR branch
+      - name: Dispatch Lint (only=all), and on a draft the other draft-gated suites, on the PR branch
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          DRAFT: ${{ github.event.pull_request.draft }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
@@ -166,21 +179,40 @@ jobs:
             gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true \
               || gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all
           fi
-          gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"
-          # moderator-boot.yml arrived in #7673: a branch cut before it has no such workflow, and the
-          # dispatch answers 422. That must not fail the job after lint and apps were dispatched.
-          gh workflow run moderator-boot.yml -R "$REPO" --ref "$HEAD_REF" \
-            || echo "moderator-boot.yml not on this branch; rebase to get it"
-          # feed-go.yml has the same draft gate; a branch cut before it has no such workflow (422).
-          gh workflow run feed-go.yml -R "$REPO" --ref "$HEAD_REF" \
-            || echo "feed-go.yml not on this branch; rebase to get it"
-          # beacon-go.yml has the same draft gate; a branch cut before it has no such workflow (422).
-          gh workflow run beacon-go.yml -R "$REPO" --ref "$HEAD_REF" \
-            || echo "beacon-go.yml not on this branch; rebase to get it"
-          # registry-adapter-image.yml has the same draft gate; a branch cut before it has no such
-          # workflow (422).
-          gh workflow run registry-adapter-image.yml -R "$REPO" --ref "$HEAD_REF" \
-            || echo "registry-adapter-image.yml not on this branch; rebase to get it"
+          # The other workflows: each has the same draft gate as Lint, and the label lifts it. On a
+          # PR that is not a draft their own PR runs are not draft-gated, so none is dispatched (see
+          # the header, "ON A READY PR, LINT ONLY"). Only an exact `false` skips.
+          others=(apps.yml moderator-boot.yml feed-go.yml beacon-go.yml app-index-go.yml app-data-go.yml
+            content-policy-go.yml registry-adapter-image.yml storage-hook-runner-image.yml)
+          declare -A verdict reason
+          for wf in "${others[@]}"; do
+            if [ "$DRAFT" = false ]; then
+              verdict[$wf]=skip
+              reason[$wf]="the PR is not a draft, so its own run of this workflow on this commit is not draft-gated"
+            elif [ "$DRAFT" = true ]; then
+              verdict[$wf]=run
+              reason[$wf]="the PR is a draft"
+            else
+              verdict[$wf]=run
+              reason[$wf]="the PR's draft state is '$DRAFT', not false; dispatched to be safe"
+            fi
+          done
+          for wf in "${others[@]}"; do
+            if [ "${verdict[$wf]}" = skip ]; then
+              echo "$wf: not dispatched: ${reason[$wf]}"
+              continue
+            fi
+            echo "$wf: dispatching: ${reason[$wf]}"
+            # apps.yml failing to dispatch fails the step, as it always did. A branch cut before
+            # one of the others existed has no such workflow, and the dispatch answers 422: that
+            # must not fail the job after the rest were dispatched.
+            if [ "$wf" = apps.yml ]; then
+              gh workflow run "$wf" -R "$REPO" --ref "$HEAD_REF"
+            else
+              gh workflow run "$wf" -R "$REPO" --ref "$HEAD_REF" \
+                || echo "$wf not on this branch; rebase to get it"
+            fi
+          done
           # Link the runs from this job's summary: it is the only place on the PR that reaches
           # them (see the header). A dispatch's run appears a few seconds after the call returns.
           sleep 10
@@ -189,9 +221,15 @@ jobs:
           if [ -n "$nopr" ]; then
             echo "This branch's lint.yml has no \`pr\` input, so the Lint dispatch carries none: the label stays on until a PR run's unit shards pass." >> "$GITHUB_STEP_SUMMARY"
           fi
-          for wf in lint.yml apps.yml moderator-boot.yml feed-go.yml beacon-go.yml registry-adapter-image.yml; do
+          for wf in lint.yml "${others[@]}"; do
+            if [ "$wf" != lint.yml ] && [ "${verdict[$wf]}" = skip ]; then
+              echo "- $wf: not dispatched: ${reason[$wf]}" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
             url=$(gh run list -R "$REPO" --workflow "$wf" --branch "$HEAD_REF" --event workflow_dispatch \
               --limit 1 --json url -q '.[0].url' || true)
+            why=""
+            if [ "$wf" != lint.yml ]; then why=" (${reason[$wf]})"; fi
             echo "$wf: ${url:-not found yet, see the Actions tab}"
-            echo "- $wf: ${url:-not found yet, see the Actions tab}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- $wf: ${url:-not found yet, see the Actions tab}$why" >> "$GITHUB_STEP_SUMMARY"
           done

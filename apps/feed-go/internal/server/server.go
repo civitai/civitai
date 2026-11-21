@@ -1,5 +1,5 @@
-// Package server is the HTTP surface: the public tRPC path for the one procedure (and `model.getAll`'s,
-// computed only with ServeModelGetAll), and the internal
+// Package server is the HTTP surface: the public tRPC path for the one procedure (and `model.getAll`'s
+// and `image.getInfinite`'s, computed only with ServeModelGetAll / ServeInfinite), and the internal
 // shadow-compare endpoints (that procedure, `image.getInfinite`, `model.getAll`, and the public REST
 // `GET /api/v1/images`).
 package server
@@ -28,6 +28,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/safe"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
@@ -39,7 +40,8 @@ import (
 // Procedure is the one tRPC path this service answers.
 const Procedure = "image.getImagesAsPostsInfinite"
 
-// ProcedureInfinite is the tRPC procedure shadowed (never served) at /internal/shadow/<it>.
+// ProcedureInfinite is the tRPC procedure shadowed at /internal/shadow/<it>, and served on the public
+// route only with Server.ServeInfinite (FEED_GO_SERVE_INFINITE, default off).
 const ProcedureInfinite = "image.getInfinite"
 
 // ProcedureModelGetAll is the tRPC procedure shadowed at /internal/shadow/<it>, and served on the public
@@ -51,7 +53,7 @@ const ProcedureModelGetAll = "model.getAll"
 const (
 	EndpointAsPosts     = "as-posts"     // tRPC image.getImagesAsPostsInfinite
 	EndpointV1Images    = "v1-images"    // REST GET /api/v1/images
-	EndpointInfinite    = "infinite"     // tRPC image.getInfinite (shadow only)
+	EndpointInfinite    = "infinite"     // tRPC image.getInfinite (served only with ServeInfinite)
 	EndpointModelGetAll = "model-getall" // tRPC model.getAll (served only with ServeModelGetAll)
 )
 
@@ -101,8 +103,13 @@ type Server struct {
 	shadowStarts atomic.Uint64
 	// V1 serves the REST `/api/v1/images` shadow; nil = every such sample falls back.
 	V1 *feed.V1Deps
-	// Infinite serves the `image.getInfinite` shadow; nil = every such sample falls back.
+	// Infinite serves the `image.getInfinite` shadow (and the public route, with ServeInfinite); nil =
+	// every such sample or request falls back.
 	Infinite *feed.InfiniteDeps
+	// ServeInfinite is FEED_GO_SERVE_INFINITE (default off): compute `image.getInfinite` on the public
+	// route. Off, every request there is the `infinite-off` fallback (proxied to the Node app) before
+	// anything is computed or a serve slot taken.
+	ServeInfinite bool
 	// Models serves the `model.getAll` shadow (and the public route, with ServeModelGetAll); nil = every
 	// such sample or request falls back.
 	Models *modelfeed.Deps
@@ -116,12 +123,13 @@ type Server struct {
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
 	// MaxInFlight caps the public requests this pod computes at once (ResolveMaxInFlight; 0 =
-	// dbpool.DefaultMaxConns, never unlimited), across BOTH public routes: the gallery procedure and
-	// model.getAll share one pool of slots, so one route can hold slots the other then sheds for. For
-	// the gallery it stands in for the Node app's `heavy-image` bulkhead; Node has no bulkhead on
-	// model.getAll. A request past it is not computed: it is the `bulkhead` fallback, proxied to the
-	// Node app (feed_go_fallback_total and feed_go_serve_in_flight are per endpoint). Shadow samples
-	// and probes are bounded by their own queues and never take a serve slot.
+	// dbpool.DefaultMaxConns, never unlimited), across EVERY public route: the gallery procedure,
+	// model.getAll and image.getInfinite share one pool of slots, so one route can hold slots another
+	// then sheds for. For the gallery and image.getInfinite it stands in for the Node app's
+	// `heavy-image` bulkhead; Node has no bulkhead on model.getAll. A request past it is not computed:
+	// it is the `bulkhead` fallback, proxied to the Node app (feed_go_fallback_total and
+	// feed_go_serve_in_flight are per endpoint). Shadow samples and probes are bounded by their own
+	// queues and never take a serve slot.
 	MaxInFlight int
 
 	// Tracer starts the request spans (DESIGN.md §10.3); nil = tracing off: no span, no header read or
@@ -276,7 +284,8 @@ func (s *Server) prepare(ctx context.Context, r *http.Request) (feed.Request, bo
 // computeInfinite answers an `image.getInfinite` request (getInfiniteImagesHandler), or returns a
 // fallback/other error. The viewer, the domain cap and the region rules are read as for the gallery
 // procedure (the same middleware runs on both), and so is the cache policy: a signed-out answer
-// carries createContext's public TTL. It is only shadowed here.
+// carries createContext's public TTL. Shadowed, and served on the public route only with
+// ServeInfinite.
 func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*computed, error) {
 	req, signedOut, err := s.prepareInfinite(ctx, r)
 	if err != nil {
@@ -408,8 +417,12 @@ func (s *Server) computeV1(ctx context.Context, r *http.Request) (*computed, err
 	if err != nil {
 		return nil, err
 	}
-	// getApiAuthSession(whenBanned: 'anonymous'): a bearer/API key falls back (Resolve), a banned
-	// session is no user at all.
+	// getApiAuthSession(whenBanned: 'anonymous'): a banned session is no user at all. An API credential
+	// falls back: PublicEndpoint's credentialed cache headers and REST_SCOPE_ENFORCE are not ported
+	// (DESIGN.md §4.2), and the sampler never sends one.
+	if auth.HasAPICredential(r) {
+		return nil, fallback.New("bearer-token")
+	}
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
 		return nil, err
@@ -623,7 +636,9 @@ func (s *Server) computeWithin(parent context.Context, r *http.Request, where st
 // means whatever fn produced must be discarded.
 func (s *Server) within(parent context.Context, where string, fn func(context.Context) error) error {
 	budget := s.budget()
-	ctx, cancel := context.WithTimeout(parent, budget)
+	// One write-back budget for the whole computation: its cache writes, however many caches it
+	// fills in sequence, wait at most one hydrate write bound in total (hydrate.WithWriteBudget).
+	ctx, cancel := context.WithTimeout(hydrate.WithWriteBudget(parent), budget)
 	defer cancel()
 	_, err := safe.Call(func() (struct{}, error) { return struct{}{}, fn(ctx) })
 	var pe *safe.PanicError
@@ -668,6 +683,51 @@ func (s *Server) ServeModelGetAllHTTP(w http.ResponseWriter, r *http.Request) {
 	s.serve(w, r, EndpointModelGetAll, ProcedureModelGetAll, off, fn)
 }
 
+// errInfiniteOff is the `infinite-off` fallback: the public image.getInfinite route with
+// ServeInfinite off.
+var errInfiniteOff = fallback.New("infinite-off")
+
+// ServeInfiniteHTTP is the public route of `image.getInfinite`. With ServeInfinite off (the default)
+// every request is the `infinite-off` fallback: nothing is computed and no serve slot is taken, the
+// request is proxied to the Node app as it came.
+func (s *Server) ServeInfiniteHTTP(w http.ResponseWriter, r *http.Request) {
+	var off error
+	if !s.ServeInfinite {
+		off = errInfiniteOff
+	}
+	fn := s.computeInfinite
+	if s.computeInfiniteFn != nil {
+		fn = s.computeInfiniteFn
+	}
+	s.serve(w, r, EndpointInfinite, ProcedureInfinite, off, fn)
+}
+
+// bearerOrigin is fn for a request whose Origin the app would refuse unless its API key resolves to a
+// session: the key is resolved first (inside the serve slot and the budget), the answer kept on the
+// context for fn's own Resolve, and anything but an API-key viewer is the `origin` fallback.
+func (s *Server) bearerOrigin(fn func(context.Context, *http.Request) (*computed, error)) func(context.Context, *http.Request) (*computed, error) {
+	return func(ctx context.Context, r *http.Request) (*computed, error) {
+		user, err := s.Resolver.Resolve(ctx, r)
+		if err != nil {
+			return nil, err
+		}
+		if user == nil || !user.APIKey {
+			return nil, fallback.New("origin")
+		}
+		return fn(auth.WithResolved(ctx, user, nil), r)
+	}
+}
+
+// ServedByHeader is on every answer a public tRPC route writes or proxies, naming who produced it:
+// ServedByGo when this service computed (or refused) it, ServedByNode when it was handed to the Node
+// app. A client comparing this route with the Node route reads it, so a fallback answer (Node's own
+// bytes) is never counted as Go matching Node.
+const (
+	ServedByHeader = "X-Feed-Go-Served"
+	ServedByGo     = "go"
+	ServedByNode   = "node"
+)
+
 // serve is a public route: off (non-nil) is the fallback answered before anything else; then the API
 // request policy, the origin check, and fn inside a serve slot. An answer is written here; any
 // fallback is proxied to the Node app. The serve slots (MaxInFlight) are shared by every public route.
@@ -691,6 +751,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		case err != nil:
 		case AcceptableOrigin(r, s.AllowedOrigins):
 			c, err = s.computeServe(r, endpoint, fn)
+		case s.Resolver != nil && s.Resolver.APIKeys != nil && auth.CarriesBearer(r):
+			// createContext accepts any origin for a request whose API key resolved to a session
+			// (isBearerAuth); a key that resolves to none is held to the origin like a cookie caller.
+			c, err = s.computeServe(r, endpoint, s.bearerOrigin(fn))
 		default:
 			// The app's answer differs by environment and credential (non-production and bearer callers
 			// are accepted, a cookie caller in production is refused): never decided here.
@@ -704,6 +768,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		if c.trivial {
 			served = "served_empty"
 		}
+		w.Header().Set(ServedByHeader, ServedByGo)
 		trpc.WriteResult(w, c.payload, c.ttl)
 		c.release() // WriteResult has sent payload and keeps no reference
 		setOutcome(span, served)
@@ -729,9 +794,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		return
 	}
 	if s.Fallback == nil {
+		w.Header().Set(ServedByHeader, ServedByGo)
 		trpc.WriteError(w, procedure, &trpc.Error{Code: "INTERNAL_SERVER_ERROR", HTTPStatus: 503, Message: "unavailable"})
 		return
 	}
+	// Set before the proxy copies the Node app's headers in, so it is on the proxy's own 502 too.
+	w.Header().Set(ServedByHeader, ServedByNode)
 	// The original request (and its context): the budget bounded only this service's own compute.
 	s.proxy(w, r, endpoint)
 }
@@ -880,9 +948,11 @@ func SyntheticModelGetAllRequest(ctx context.Context, req ShadowRequest) (*http.
 	return syntheticTRPCRequest(ctx, req, ProcedureModelGetAll)
 }
 
+// The synthetic requests carry the sampler's credential placeholder, never a key: their context is
+// marked so an API credential stays the `bearer-token` fallback (auth.WithRedactedCredentials).
 func syntheticTRPCRequest(ctx context.Context, req ShadowRequest, procedure string) (*http.Request, error) {
 	u := &url.URL{Path: "/api/trpc/" + procedure, RawQuery: url.Values{"input": {req.Input}}.Encode()}
-	r, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	r, err := http.NewRequestWithContext(auth.WithRedactedCredentials(ctx), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -898,7 +968,7 @@ func syntheticTRPCRequest(ctx context.Context, req ShadowRequest, procedure stri
 // SyntheticV1Request rebuilds the REST request a v1-images sample describes: its path and raw query
 // string as Node received them, and the forwarded headers.
 func SyntheticV1Request(ctx context.Context, req ShadowRequest) (*http.Request, error) {
-	r, err := http.NewRequestWithContext(ctx, http.MethodGet, V1ImagesPath, nil)
+	r, err := http.NewRequestWithContext(auth.WithRedactedCredentials(ctx), http.MethodGet, V1ImagesPath, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -949,6 +1019,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		build, computeFn, compareFn, classify = b, c, shadow.CompareJSON, cl
 	}
 	span := trace.SpanFromContext(ctx)
+	// The sample's credential is the sampler's placeholder, never a key: the compute's Resolve reads
+	// the marker off this context (auth.WithRedactedCredentials).
+	ctx = auth.WithRedactedCredentials(ctx)
 	r, err := build(ctx, req)
 	if err != nil {
 		setOutcome(span, "bad_request")
