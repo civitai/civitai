@@ -1226,7 +1226,13 @@ func (it *feedItem) wire(hid [3]bool, images []superjson.Object) superjson.Objec
 // (`{...version, flags}`: flags keeps its place). A new object: the record is shared.
 func versionWire(v superjson.Object) superjson.Object {
 	if f, ok := hydrate.Int(recField(v, "flags")); ok {
-		return withField(v, "flags", int64(toPublicAPIVersionFlags(f)))
+		c := make(superjson.Object, 0, len(v))
+		for _, x := range v {
+			if x.Key != "flags" {
+				c = append(c, x)
+			}
+		}
+		return append(c, superjson.Field{Key: "flags", Val: int64(toPublicAPIVersionFlags(f))})
 	}
 	return append(make(superjson.Object, 0, len(v)), v...)
 }
