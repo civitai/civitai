@@ -26,8 +26,10 @@ import {
 } from '~/server/services/blocks/dev-tunnel-session';
 import {
   drainPreviewRevokeQueue,
+  PREVIEW_REVOKE_MAX_AGE_MS,
   revokePreviewSession,
 } from '~/server/services/blocks/preview-revoke.service';
+import { previewHostHash } from '~/server/services/blocks/preview-session-host';
 import {
   recordDevTunnelDnsGc,
   recordDevTunnelMint,
@@ -120,13 +122,22 @@ const clientStartKey = (userId: number, clientKey: string) =>
 const clientCancelledKey = (userId: number, clientKey: string) =>
   `${USER_PREFIX}:client-cancelled:{${userId}}:${clientKey}` as const;
 /**
- * App Assistant direct preview: a preview id that has had a session. Written by the script that
- * lists a direct session (`LIST_DIRECT_SESSION`), in the user's slot, and never deleted by
- * teardown: an id whose session ended must not open another (`openDirectPreviewSession` answers
- * `fresh` instead, and the runner rotates the id). Carries the 8 h session cap.
+ * App Assistant direct preview: a preview id that has had a session. Written by
+ * `openDirectPreviewSession` once the open is counted and BEFORE any of the session's records, in
+ * the user's slot, and never deleted by teardown: an id whose session ended must not open another
+ * (`openDirectPreviewSession` answers `fresh` instead, and the runner rotates the id). Written
+ * first so that an open which fails part-way (a record write, the listing) still leaves the id
+ * marked: its teardown revokes the id, so a later session on it would be killed by that revoke.
  */
 const directUsedKey = (userId: number, previewId: string) =>
   `${USER_PREFIX}:direct-used:{${userId}}:${previewId}` as const;
+/**
+ * How long a `used` marker lives: the session cap (the latest its session can end and queue a
+ * revoke) plus the longest a queued revoke is kept and retried. Shorter, and a revoke sent from
+ * the queue after the marker expired could end a new session opened on the same id.
+ */
+export const DIRECT_USED_MARKER_SECONDS =
+  DEV_TUNNEL_HARD_SECONDS + Math.ceil(PREVIEW_REVOKE_MAX_AGE_MS / 1000);
 /**
  * App Assistant direct preview: every live direct session's id, so the reaper can find them. A
  * direct session has no IngressRoute or Middleware, which is all the route sweep discovers.
@@ -1110,18 +1121,6 @@ async function listDevTunnel(
   return Number(reply) === 1;
 }
 
-/**
- * App Assistant direct preview: `LIST_DEV_TUNNEL` for a direct session (no cancel mark: it has no
- * client key), plus the preview id's `used` marker, in the same script and the same user slot, so
- * a listed session's id is always marked used.
- */
-const LIST_DIRECT_SESSION = `
-  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
-  redis.call('SADD', KEYS[2], ARGV[3])
-  if redis.call('TTL', KEYS[2]) < tonumber(ARGV[2]) then redis.call('EXPIRE', KEYS[2], ARGV[2]) end
-  redis.call('SET', KEYS[3], '1', 'EX', ARGV[2])
-  return 1
-`;
 /** SADD to the direct-session set, with the same TTL floor as the ban index. */
 const ADD_DIRECT_SESSION = `
   redis.call('SADD', KEYS[1], ARGV[1])
@@ -1130,24 +1129,16 @@ const ADD_DIRECT_SESSION = `
 `;
 
 /**
- * Lists a direct session, then adds it to the reaper's direct-session set. The set's key is not
- * in the user's slot, so it is a second call, made AFTER the session record exists: the reaper
- * reads a member whose record is absent as expired, never as one being written. Throws on a Redis
- * error (the caller tears the session down: one the reaper cannot find must not stay open).
+ * Lists a direct session (`LIST_DEV_TUNNEL`, with no cancel mark: it has no client key), then adds
+ * it to the reaper's direct-session set. The set's key is not in the user's slot, so it is a
+ * second call, made AFTER the session record exists: the reaper reads a member whose record is
+ * absent as expired, never as one being written. Throws on a Redis error (the caller tears the
+ * session down: one the reaper cannot find must not stay open). The preview id's `used` marker is
+ * not written here: `openDirectPreviewSession` wrote it before any record.
  */
 async function listDirectSession(session: DevTunnelSessionRecord): Promise<boolean> {
   if (!session.previewId) throw new Error('a direct session needs its preview id');
-  const previewId = session.previewId;
-  await cluster('listDirect', () =>
-    redis.eval(LIST_DIRECT_SESSION, {
-      keys: [
-        userBlockKey(session.userId, session.blockId),
-        userTunnelIndexKey(session.userId),
-        directUsedKey(session.userId, previewId),
-      ],
-      arguments: [session.sessionId, String(DEV_TUNNEL_HARD_SECONDS), session.blockId],
-    })
-  );
+  if (!(await listDevTunnel(session))) return false;
   await cluster('addDirect', () =>
     redis.eval(ADD_DIRECT_SESSION, {
       keys: [directSessionsKey],
@@ -1225,7 +1216,10 @@ async function teardownSession(
       sessionId: session.sessionId,
       userId: session.userId,
       blockId: session.blockId,
-      host: session.host,
+      // A direct session host is the session's credential: logged only as a hash.
+      ...(direct
+        ? { hostHash: previewHostHash(session.host), transport: 'direct' }
+        : { host: session.host }),
       reason,
     })
   );
@@ -1429,14 +1423,18 @@ export async function keepAliveDevTunnel(
  *
  * Ownership-checked like `keepAliveDevTunnel`: the record the host names must be `userId`'s and
  * still be at that host. `not_found` covers no such tunnel, another author's, and one past its
- * hard cap, so a caller learns nothing about a tunnel that is not its own.
+ * hard cap, so a caller learns nothing about a tunnel that is not its own. A direct preview session
+ * host is `not_found` here too, its own session included.
  */
 export async function keepAliveDevTunnelAtHost(
   userId: number,
   host: string
 ): Promise<DevTunnelKeepAlive> {
+  // Tunnel hosts only. A direct session host is the session's credential, so this path never
+  // takes one (it would land in the keepalive's request logs); a direct session is kept alive by
+  // its block id (`keepAliveDevTunnelForUserBlock`).
   const domains = sessionHostDomains();
-  if (!sessionHostKind(host, domains)) return { status: 'not_found' };
+  if (sessionHostKind(host, domains) !== 'tunnel') return { status: 'not_found' };
   let sessionId: unknown;
   try {
     sessionId = await withSysReadDeadline(sysRedis.get(hostKey(host)));
@@ -1464,10 +1462,7 @@ export async function keepAliveDevTunnelAtHost(
  * The session for `userId`'s (user, block) pointer, telling "none" apart from "could not read".
  * Ownership, block and the hard cap are checked as `getActiveDevTunnel` does.
  */
-async function readOwnSessionForUserBlock(
-  userId: number,
-  blockId: string
-): Promise<ReaperRead> {
+async function readOwnSessionForUserBlock(userId: number, blockId: string): Promise<ReaperRead> {
   let sessionId: unknown;
   try {
     sessionId = await cluster('pointer', () => redis.get(userBlockKey(userId, blockId)));
@@ -1589,6 +1584,12 @@ export async function openDirectPreviewSession(
   const refusal = await params.claimStart();
   if (refusal) return { kind: 'refused', refusal };
 
+  // Marked BEFORE anything of the session is written (see `directUsedKey`). A failure here throws
+  // with nothing written, so the id stays openable and the caller answers "unavailable".
+  await cluster('directUsed.mark', () =>
+    redis.set(directUsedKey(userId, previewId), '1', { EX: DIRECT_USED_MARKER_SECONDS })
+  );
+
   await stopDevTunnelForUserBlock(userId, blockId).catch(() => false);
 
   const sessionId = newBlockInstanceId();
@@ -1621,7 +1622,8 @@ export async function openDirectPreviewSession(
       sessionId,
       userId,
       blockId,
-      host: session.host,
+      // The session host is the session's credential: logged only as a hash.
+      hostHash: previewHostHash(session.host),
       transport: 'direct',
       expiresAt: hardExpiresAt,
     })
@@ -1907,7 +1909,12 @@ export async function reapExpiredDevTunnels(): Promise<ReapResult> {
   // them. Swept FIRST, from Redis alone, so a Kubernetes API outage (the early returns below) does not
   // also stop direct sessions idling out; then the revoke retry queue is drained.
   await sweepDirectSessions();
-  await drainPreviewRevokeQueue();
+  const drained = await drainPreviewRevokeQueue();
+  if (drained.sent + drained.dropped + drained.retrying > 0)
+    // eslint-disable-next-line no-console
+    console.log(
+      JSON.stringify({ event: 'app-blocks.dev-tunnel.preview-revoke-drain', ...drained })
+    );
 
   const ns = env.APPS_DEV_TUNNEL_ROUTE_NAMESPACE;
   const selector = encodeURIComponent(`${DEV_TUNNEL_LABEL}=true`);

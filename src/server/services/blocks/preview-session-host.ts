@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 
 /**
  * App Assistant direct preview: the SESSION HOST civitai mints for one preview session, and the
@@ -134,22 +134,65 @@ export function decodePreviewLabel(label: string): PreviewLabelDecode {
   };
 }
 
+export type PreviewSigningKeyParse =
+  | { ok: true; key: PreviewKey }
+  | { ok: false; reason: 'unset' | 'invalid'; error?: string };
+
+/** One `{kid, key}`: kid 0..15, key base64 of at least 32 bytes. Throws with the field at fault. */
+function parseOneKey(x: unknown, name: string): PreviewKey {
+  const o = (x && typeof x === 'object' ? x : {}) as { kid?: unknown; key?: unknown };
+  if (typeof o.kid !== 'number' || !Number.isInteger(o.kid) || o.kid < 0 || o.kid > 15)
+    throw new Error(`${name}.kid must be an integer 0..15`);
+  if (typeof o.key !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(o.key))
+    throw new Error(`${name}.key must be base64`);
+  const key = Buffer.from(o.key, 'base64');
+  if (key.length < 32) throw new Error(`${name}.key must be at least 32 bytes`);
+  return { kid: o.kid, key };
+}
+
 /**
- * The signing key from its env form, `{"kid": <0..15>, "key": "<base64, at least 32 bytes>"}`, or
- * null for anything else (unset, blank, not JSON, a short key): direct preview then stays off.
+ * The signing key from its env form. Two shapes are read:
+ *   - the preview gateway's key set, `{"current": {kid, key}, "previous"?: {kid, key}}`, so the
+ *     operator sets one value on both sides; civitai mints with `current` only, and `previous`
+ *     is checked as the gateway checks it (well formed, a different kid) so a value the gateway
+ *     would refuse is refused here too;
+ *   - a bare `{"kid": <0..15>, "key": "<base64, at least 32 bytes>"}`.
+ * `unset` for no value; `invalid` (with the reason) for anything else, and direct preview then
+ * stays off.
  */
-export function parsePreviewSigningKey(raw: string | undefined): PreviewKey | null {
-  if (!raw || !raw.trim()) return null;
+export function parsePreviewSigningKeyResult(raw: string | undefined): PreviewSigningKeyParse {
+  if (!raw || !raw.trim()) return { ok: false, reason: 'unset' };
   let v: unknown;
   try {
     v = JSON.parse(raw);
   } catch {
-    return null;
+    return { ok: false, reason: 'invalid', error: 'not JSON' };
   }
-  const o = (v && typeof v === 'object' ? v : {}) as { kid?: unknown; key?: unknown };
-  if (typeof o.kid !== 'number' || !Number.isInteger(o.kid) || o.kid < 0 || o.kid > 15) return null;
-  if (typeof o.key !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(o.key)) return null;
-  const key = Buffer.from(o.key, 'base64');
-  if (key.length < 32) return null;
-  return { kid: o.kid, key };
+  try {
+    const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+    if (!('current' in o)) return { ok: true, key: parseOneKey(o, 'key') };
+    const current = parseOneKey(o.current, 'current');
+    if (o.previous !== undefined && o.previous !== null) {
+      const previous = parseOneKey(o.previous, 'previous');
+      if (previous.kid === current.kid)
+        throw new Error('previous.kid must differ from current.kid');
+    }
+    return { ok: true, key: current };
+  } catch (e) {
+    return { ok: false, reason: 'invalid', error: (e as Error).message };
+  }
+}
+
+/** `parsePreviewSigningKeyResult`'s key, or null when there is none to mint with. */
+export function parsePreviewSigningKey(raw: string | undefined): PreviewKey | null {
+  const parsed = parsePreviewSigningKeyResult(raw);
+  return parsed.ok ? parsed.key : null;
+}
+
+/**
+ * A session host as logs may carry it: the first 12 hex of its SHA-256. The host is the session's
+ * only credential (whoever holds it is served the preview), so it is never logged in full.
+ */
+export function previewHostHash(host: string): string {
+  return createHash('sha256').update(host).digest('hex').slice(0, 12);
 }

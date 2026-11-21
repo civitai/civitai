@@ -118,11 +118,27 @@ export function classifyPreviewRevokeStatus(status: number): PreviewRevokeOutcom
   return 'retry';
 }
 
-async function sendOnce(revoke: PreviewRevoke, nowMs: number): Promise<PreviewRevokeOutcome> {
+/**
+ * What one send attempt saw: the HTTP status, `network` (no answer: refused, reset, timed out) or
+ * `unconfigured` (APP_ASSISTANT_SANDBOX_URL or the secret unset; nothing was sent).
+ */
+export type PreviewRevokeAttemptStatus = number | 'network' | 'unconfigured';
+
+type Attempt = { outcome: PreviewRevokeOutcome; status: PreviewRevokeAttemptStatus };
+
+/**
+ * One signed send. A refused (dropped) answer and a retried failure are logged with the status
+ * they got, never with the request's signature or the secret. Two retried answers stay quiet, as
+ * they are expected rather than faults: a 404 (the gateway's rollback answer, which can last as
+ * long as the rollback) and `unconfigured` (the feature not set up on this deployment). The
+ * reaper's drain summary still reports both as its last status.
+ */
+async function sendOnce(revoke: PreviewRevoke, nowMs: number): Promise<Attempt> {
   const base = env.APP_ASSISTANT_SANDBOX_URL;
   const secret = env.PREVIEW_REVOKE_HMAC_SECRET;
-  if (!base || !secret?.trim()) return 'retry';
+  if (!base || !secret?.trim()) return { outcome: 'retry', status: 'unconfigured' };
   const { body, headers } = buildPreviewRevokeRequest(revoke, secret, nowMs);
+  let attempt: Attempt;
   try {
     const res = await outboundFetch(`${base.replace(/\/+$/, '')}${PREVIEW_REVOKE_PATH}`, {
       method: 'POST',
@@ -130,19 +146,27 @@ async function sendOnce(revoke: PreviewRevoke, nowMs: number): Promise<PreviewRe
       body,
       timeoutMs: SEND_TIMEOUT_MS,
     });
-    const outcome = classifyPreviewRevokeStatus(res.status);
-    if (outcome === 'drop')
-      logToAxiom({
-        type: 'app-assistant.preview-revoke.refused',
-        message: `Preview revoke refused with ${res.status}; dropped`,
-        userId: revoke.userId,
-        status: res.status,
-        reason: revoke.reason,
-      });
-    return outcome;
+    attempt = { outcome: classifyPreviewRevokeStatus(res.status), status: res.status };
   } catch {
-    return 'retry';
+    attempt = { outcome: 'retry', status: 'network' };
   }
+  if (attempt.outcome === 'drop')
+    logToAxiom({
+      type: 'app-assistant.preview-revoke.refused',
+      message: `Preview revoke refused with ${attempt.status}; dropped`,
+      userId: revoke.userId,
+      status: attempt.status,
+      reason: revoke.reason,
+    });
+  else if (attempt.outcome === 'retry' && attempt.status !== 404)
+    logToAxiom({
+      type: 'app-assistant.preview-revoke.retry',
+      message: `Preview revoke failed with ${attempt.status}; kept for retry`,
+      userId: revoke.userId,
+      status: attempt.status,
+      reason: revoke.reason,
+    });
+  return attempt;
 }
 
 async function enqueue(entry: QueuedRevoke): Promise<void> {
@@ -170,7 +194,7 @@ async function enqueue(entry: QueuedRevoke): Promise<void> {
 
 /** Try once now; queue for the reaper on anything retryable. Never throws. */
 async function deliver(revoke: PreviewRevoke, nowMs: number): Promise<PreviewRevokeOutcome> {
-  const outcome = await sendOnce(revoke, nowMs);
+  const { outcome } = await sendOnce(revoke, nowMs);
   if (outcome === 'retry') await enqueue({ ...revoke, queuedAt: nowMs });
   return outcome;
 }
@@ -232,12 +256,19 @@ function parseQueued(raw: unknown): QueuedRevoke | null {
   }
 }
 
-export type PreviewRevokeDrain = { sent: number; dropped: number; retrying: number };
+export type PreviewRevokeDrain = {
+  sent: number;
+  dropped: number;
+  retrying: number;
+  /** The status of the last send this run attempted; absent when it attempted none. */
+  lastStatus?: PreviewRevokeAttemptStatus;
+};
 
 /**
  * Send every queued revoke (at most DRAIN_BATCH a run), each signed now and with its original
  * `issuedAt`. Sent and refused ones leave the queue; retryable ones stay; one older than the 8 h
- * cap, or unreadable, is dropped. Run by the dev-tunnel reaper. Never throws.
+ * cap, or unreadable, is dropped (an aged one is logged, so a revoke that never got through is
+ * visible rather than silently lost). Run by the dev-tunnel reaper, which logs the counts. Never throws.
  */
 export async function drainPreviewRevokeQueue(
   nowMs: number = Date.now()
@@ -252,8 +283,21 @@ export async function drainPreviewRevokeQueue(
   for (const [field, raw] of Object.entries(entries).slice(0, DRAIN_BATCH)) {
     const entry = parseQueued(raw);
     let outcome: PreviewRevokeOutcome;
-    if (!entry || nowMs - entry.queuedAt > PREVIEW_REVOKE_MAX_AGE_MS) outcome = 'drop';
-    else outcome = await sendOnce(entry, nowMs);
+    if (!entry) outcome = 'drop';
+    else if (nowMs - entry.queuedAt > PREVIEW_REVOKE_MAX_AGE_MS) {
+      outcome = 'drop';
+      logToAxiom({
+        type: 'app-assistant.preview-revoke.expired',
+        message: 'A queued preview revoke outlived its retry window; dropped unsent',
+        userId: entry.userId,
+        reason: entry.reason,
+        payload: { ageMs: nowMs - entry.queuedAt },
+      });
+    } else {
+      const attempt = await sendOnce(entry, nowMs);
+      outcome = attempt.outcome;
+      out.lastStatus = attempt.status;
+    }
     if (outcome === 'retry') {
       out.retrying += 1;
       continue;

@@ -8,6 +8,7 @@ import {
   decodePreviewLabel,
   mintPreviewLabel,
   parsePreviewSigningKey,
+  parsePreviewSigningKeyResult,
 } from '~/server/services/blocks/preview-session-host';
 
 /**
@@ -138,6 +139,49 @@ describe('the signing key from its env form', () => {
       JSON.stringify({ kid: 3, key: '!!!' }),
     ])
       expect(parsePreviewSigningKey(bad), String(bad)).toBeNull();
+  });
+
+  // The preview gateway's key-set value (its `parsePreviewKeys`), so one value is set on both sides.
+  const k32b = Buffer.alloc(32, 8).toString('base64');
+  it('reads the gateway key set {current, previous?}, minting with current', () => {
+    expect(
+      parsePreviewSigningKey(
+        JSON.stringify({ current: { kid: 2, key: k32b }, previous: { kid: 3, key: k32 } })
+      )
+    ).toEqual({ kid: 2, key: Buffer.alloc(32, 8) });
+    expect(parsePreviewSigningKey(JSON.stringify({ current: { kid: 5, key: k32b } }))).toEqual({
+      kid: 5,
+      key: Buffer.alloc(32, 8),
+    });
+  });
+
+  it('refuses a key set the gateway would refuse, naming the field and never the key', () => {
+    const cases: Array<[unknown, string]> = [
+      [
+        { current: { kid: 2, key: k32b }, previous: { kid: 2, key: k32 } },
+        'previous.kid must differ from current.kid',
+      ],
+      [
+        { current: { kid: 2, key: k32b }, previous: { kid: 3, key: '!!!' } },
+        'previous.key must be base64',
+      ],
+      [{ current: { kid: 16, key: k32b } }, 'current.kid must be an integer 0..15'],
+      [{ current: null }, 'current.kid must be an integer 0..15'],
+      [
+        { current: { kid: 2, key: Buffer.alloc(31).toString('base64') } },
+        'current.key must be at least 32 bytes',
+      ],
+    ];
+    for (const [value, error] of cases) {
+      const parsed = parsePreviewSigningKeyResult(JSON.stringify(value));
+      expect(parsed, error).toEqual({ ok: false, reason: 'invalid', error });
+    }
+    expect(parsePreviewSigningKeyResult('{nope')).toEqual({
+      ok: false,
+      reason: 'invalid',
+      error: 'not JSON',
+    });
+    expect(parsePreviewSigningKeyResult(undefined)).toEqual({ ok: false, reason: 'unset' });
   });
 });
 

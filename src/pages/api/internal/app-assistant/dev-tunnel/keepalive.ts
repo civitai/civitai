@@ -12,6 +12,8 @@ import {
   keepAliveDevTunnelAtHost,
   keepAliveDevTunnelForUserBlock,
 } from '~/server/services/blocks/dev-tunnel.service';
+import { sessionHostDomains, sessionHostKind } from '~/server/services/blocks/dev-tunnel-session';
+import { previewHostHash } from '~/server/services/blocks/preview-session-host';
 
 /**
  * POST /api/internal/app-assistant/dev-tunnel/keepalive
@@ -27,7 +29,8 @@ import {
  * Called only by the runner, with `Authorization: Bearer <ASSISTANT_RUNNER_SECRET>`. Body, one of:
  *   { grant, sessionId }   `sessionId` as `start` returned it
  *   { grant, host }        the grant's user's tunnel at `host` (the host the sandbox is connected
- *                          to), whoever opened it
+ *                          to), whoever opened it. Tunnel hosts only: a direct preview session
+ *                          host is 404 here, its own session included (keep it by `blockId`)
  *   { grant, blockId }     the grant's user's session for the app `blockId`, whichever transport
  *                          (a direct preview has no sandbox-side tunnel to name a host)
  *
@@ -67,12 +70,18 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       : 'host' in request.body
       ? { host: request.body.host }
       : { blockId: request.body.blockId };
+  // A direct preview session host is a credential: a caller that sends one gets a 404, and its
+  // logs carry only the host's hash.
+  const logTarget =
+    'host' in target && sessionHostKind(target.host, sessionHostDomains()) === 'direct'
+      ? { hostHash: previewHostHash(target.host) }
+      : target;
   const log = (type: string, extra: Record<string, unknown> = {}) =>
     logToAxiom({
       type: `app-assistant.runner-dev-tunnel.keepalive-${type}`,
       message: `App Assistant runner dev tunnel keep-alive ${type} for user ${grant.userId}`,
       userId: grant.userId,
-      ...target,
+      ...logTarget,
       grantId: grant.grantId,
       ...extra,
     });

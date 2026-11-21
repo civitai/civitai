@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
@@ -32,6 +33,12 @@ let fetchMock: ReturnType<typeof vi.fn>;
 const answer = (status: number) => fetchMock.mockResolvedValue(new Response('{}', { status }));
 const sentBodies = () =>
   fetchMock.mock.calls.map((c) => JSON.parse(String((c[1] as RequestInit).body)));
+/** Each logToAxiom payload, without its free-text message. */
+const logged = () =>
+  loggingMock.logToAxiom.mock.calls.map((c) => {
+    const { message: _message, ...rest } = c[0] as Record<string, unknown>;
+    return rest;
+  });
 const queued = () =>
   Object.fromEntries(
     Object.entries(lua.hash(QUEUE) ?? {}).map(([k, v]) => [k, JSON.parse(v) as unknown])
@@ -138,7 +145,12 @@ describe('the reaper drains the queue', () => {
     fetchMock.mockClear();
     answer(200);
     const later = NOW_MS + 600_000; // well past the 300 s signature window of the first attempt
-    expect(await drainPreviewRevokeQueue(later)).toEqual({ sent: 1, dropped: 0, retrying: 0 });
+    expect(await drainPreviewRevokeQueue(later)).toEqual({
+      sent: 1,
+      dropped: 0,
+      retrying: 0,
+      lastStatus: 200,
+    });
     const init = fetchMock.mock.calls[0][1] as RequestInit & { headers: Record<string, string> };
     expect(JSON.parse(String(init.body))).toEqual({
       userId: USER,
@@ -164,6 +176,7 @@ describe('the reaper drains the queue', () => {
       sent: 0,
       dropped: 0,
       retrying: 1,
+      lastStatus: 404,
     });
     expect(Object.keys(queued())).toEqual([`${USER}:${PID}`]);
     answer(200);
@@ -171,10 +184,11 @@ describe('the reaper drains the queue', () => {
     expect(queued()).toEqual({});
   });
 
-  it('one older than the 8 h cap is dropped unsent', async () => {
+  it('one older than the 8 h cap is dropped unsent, and the drop is logged', async () => {
     answer(503);
     await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
     fetchMock.mockClear();
+    loggingMock.logToAxiom.mockClear();
     expect(await drainPreviewRevokeQueue(NOW_MS + PREVIEW_REVOKE_MAX_AGE_MS + 1)).toEqual({
       sent: 0,
       dropped: 1,
@@ -182,6 +196,47 @@ describe('the reaper drains the queue', () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(queued()).toEqual({});
+    expect(logged()).toEqual([
+      {
+        type: 'app-assistant.preview-revoke.expired',
+        userId: USER,
+        reason: 'r',
+        payload: { ageMs: PREVIEW_REVOKE_MAX_AGE_MS + 1 },
+      },
+    ]);
+  });
+});
+
+describe('a failed revoke is visible in the logs', () => {
+  beforeEach(() => loggingMock.logToAxiom.mockClear());
+
+  it('a retried 503, 401 or network failure is logged with its status, never the signature', async () => {
+    answer(503);
+    await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    answer(401);
+    await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    fetchMock.mockRejectedValue(new TypeError('fetch failed'));
+    await revokePreviewsForBannedUser(USER, NOW_MS);
+    expect(logged()).toEqual([
+      { type: 'app-assistant.preview-revoke.retry', userId: USER, status: 503, reason: 'r' },
+      { type: 'app-assistant.preview-revoke.retry', userId: USER, status: 401, reason: 'r' },
+      {
+        type: 'app-assistant.preview-revoke.retry',
+        userId: USER,
+        status: 'network',
+        reason: 'ban',
+      },
+    ]);
+    const everything = JSON.stringify(loggingMock.logToAxiom.mock.calls);
+    expect(everything).not.toContain(SECRET);
+    expect(everything).not.toContain('v1=');
+  });
+
+  it('a 404 (the gateway rolled back) stays quiet, inline and in the drain', async () => {
+    answer(404);
+    await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);
+    await drainPreviewRevokeQueue(NOW_MS + 1000);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 });
 

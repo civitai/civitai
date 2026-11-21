@@ -1,9 +1,10 @@
 import { env } from '~/env/server';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
+import { logToAxiom } from '~/server/logging/client';
 import {
   mintPreviewLabel,
-  parsePreviewSigningKey,
+  parsePreviewSigningKeyResult,
   type PreviewKey,
 } from '~/server/services/blocks/preview-session-host';
 import type { SessionUser } from '~/types/session';
@@ -14,21 +15,37 @@ import type { SessionUser } from '~/types/session';
  * ON only when ALL of these hold, and off (the dev tunnel, exactly as before) otherwise:
  *   - the `app-assistant-direct-preview` Flipt flag is on for the user (fails closed);
  *   - APP_ASSISTANT_PREVIEW_DOMAIN is set;
- *   - APP_ASSISTANT_PREVIEW_KEYS parses to a signing key;
+ *   - APP_ASSISTANT_PREVIEW_KEYS parses to a signing key: the preview gateway's own key-set value
+ *     (`{current, previous?}`, minting with `current`) or a bare `{kid, key}`. A value that is set
+ *     but does not parse is logged (once per value per process) and leaves the feature off;
  *   - PREVIEW_REVOKE_HMAC_SECRET is set, so an ended session can be revoked at the gateway.
  * A configuration gap turns the feature off rather than failing a preview.
  */
 
 export type DirectPreviewConfig = { domain: string; key: PreviewKey };
 
+/** The last unparseable key value logged, so a bad value is reported once, not on every open. */
+let reportedBadKeys: string | undefined;
+
 /** The deployment's direct-preview configuration, or null when any piece is missing. */
 export function getDirectPreviewConfig(): DirectPreviewConfig | null {
   const domain = env.APP_ASSISTANT_PREVIEW_DOMAIN?.trim();
   if (!domain) return null;
-  const key = parsePreviewSigningKey(env.APP_ASSISTANT_PREVIEW_KEYS);
-  if (!key) return null;
+  const raw = env.APP_ASSISTANT_PREVIEW_KEYS;
+  const parsed = parsePreviewSigningKeyResult(raw);
+  if (!parsed.ok) {
+    if (parsed.reason === 'invalid' && raw !== reportedBadKeys) {
+      reportedBadKeys = raw;
+      // The reason names a field, never the value: the value is the signing key.
+      logToAxiom({
+        type: 'app-assistant.direct-preview.bad-keys',
+        message: `APP_ASSISTANT_PREVIEW_KEYS does not parse (${parsed.error}); direct preview is off`,
+      });
+    }
+    return null;
+  }
   if (!env.PREVIEW_REVOKE_HMAC_SECRET?.trim()) return null;
-  return { domain, key };
+  return { domain, key: parsed.key };
 }
 
 /** The direct-preview configuration when the flag is on for `user` too, else null. */
