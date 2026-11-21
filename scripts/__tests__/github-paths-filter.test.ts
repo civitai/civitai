@@ -27,7 +27,7 @@ const DRAFT = { draft: 'true' };
 
 describe('github-paths-filter', () => {
   describe('globToRegExp, GitHub rules', () => {
-    it.each([
+    it.each<[string, string, boolean]>([
       ['scripts/*.mjs', 'scripts/a.mjs', true],
       ['scripts/*.mjs', 'scripts/ci/a.mjs', false],
       ['apps/**', 'apps/a/src/x.ts', true],
@@ -56,7 +56,7 @@ describe('github-paths-filter', () => {
   // GitHub: the last pattern that matches a file decides it; `!` excludes, plain includes.
   describe('matchesPatterns, negation order', () => {
     const lintLike = ['**', '!docs/**', '!claudedocs/**'];
-    it.each([
+    it.each<[string[], string, boolean]>([
       [lintLike, 'src/a.ts', true],
       [lintLike, 'docs/a.md', false],
       [lintLike, 'claudedocs/x/y.md', false],
@@ -123,7 +123,7 @@ describe('github-paths-filter', () => {
       });
     });
 
-    it.each([
+    it.each<[string, string]>([
       ['no filter', 'on:\n  pull_request:\n    types: [opened]\n  push:\n    paths:\n      - x\n'],
       ['pull_request with no value', 'on:\n  pull_request:\n  push:\n'],
       ['no pull_request', 'on:\n  push:\n    paths:\n      - x\n'],
@@ -132,7 +132,7 @@ describe('github-paths-filter', () => {
       expect(readPullRequestFilter(text)).toEqual({ kind: 'none' });
     });
 
-    it.each([
+    it.each<[string, string]>([
       ['a flow list', 'on:\n  pull_request:\n    paths: [a, b]\n'],
       ['an alias', 'on:\n  pull_request:\n    paths: *x\n'],
       [
@@ -225,7 +225,7 @@ describe('github-paths-filter', () => {
     });
 
     describe('fails open, and says so', () => {
-      it.each([
+      it.each<[string, string, string[]]>([
         ['an empty changed-file list', workflow('apps.yml'), []],
         [
           'a list at the API cap',
