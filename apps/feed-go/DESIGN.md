@@ -613,7 +613,8 @@ remove, a decision the app's pod makes a few seconds differently.
 ## 5. Wire format
 
 The client decodes with a format-sniffing union (`src/shared/utils/trpc-union-transformer.ts`): an
-object payload goes to `superjson.deserialize`. This service always writes superjson:
+object payload goes to `superjson.deserialize`, a string one to `devalue.parse`. This service writes
+superjson unless `TRPC_WRITE_DEVALUE` is on (§5.2):
 
 ```
 {"result":{"data":{"json":{…},"meta":{"values":{"items.0.createdAt":["Date"],…},"v":1}}}}
@@ -632,8 +633,6 @@ object payload goes to `superjson.deserialize`. This service always writes super
   Dates by their **string** form (`"Fri Mar 01 2024 …"`), so it is the alphabetically first weekday,
   not the earliest instant. The value is on the wire and drives the Newest / Oldest post order, so
   parity requires it. (Fixing it is a separate, Node-side decision.)
-- devalue is not written: it is only ever chosen for web bundles on opted-in pools and never for a
-  cacheable response, and every reader still decodes superjson.
 
 ### 5.1 Input keys
 
@@ -692,6 +691,38 @@ That holds even when the app's deploy runs ahead of this service's.
   key outside the schema still falls back: which keys arrive is read from the fallback log's safe
   detail (the first unknown key in sorted order), so a key that only ever travels beside one of these
   shows up once they are ignored.
+
+### 5.2 devalue (`TRPC_WRITE_DEVALUE`, default off)
+
+The Node pools write devalue where `TRPC_WRITE_DEVALUE=true`; this service reads the same variable, the
+same way (exactly `true`), and writes devalue in exactly the cases the app does
+(`src/server/trpc/response-write-format.ts`): a request from the web bundle (`x-client: web`) at a
+version of at least `5.0.2080` (`canDecodeDevalueResponse`, node-semver's strict parse), for an
+answer that is not edge-cacheable (a signed-out answer is cached by URL and served to any client, so
+it stays superjson). Every other answer, every proxied one and every shadow or probe computation is
+superjson, as before. There is no response header naming the format: the client tells them apart by
+the type of `result.data` (a string is devalue). The devalue answer carries the private
+`Cache-Control`, as the app's does.
+
+The body is tRPC's envelope around `devalue.stringify(value)` as a JSON string:
+`{"result":{"data":"[{\"items\":1,…},…]"}}`. `internal/devalue` writes it byte for byte as devalue
+5.9 does: one entry per distinct value in first-reached order, equal primitives written once, the same
+object, array or Date (the same Go reference: one `superjson.Object` / `[]any` backing array, one
+`*time.Time`) written once and referenced after, `undefined` / `NaN` / `±Infinity` / `-0` as their
+fixed negative indexes, devalue's string escapes (`<` as `\u003C`, U+2028 / U+2029), JS key order
+(array-index keys first). The builders put one reference where the Node code puts one instance: an
+image's `sortAt` Date is its `publishedAt` and its post's `sortAt` / `publishedAt`, the post `user` is
+its first image's, a creator's `cosmetics` and `profilePicture` and their `deletedAt` Date are shared
+by all their images. That is what makes the bodies smaller than superjson's (shared objects written
+once) and lets a client compare Go's and Node's bytes.
+
+The goldens hold Node's own devalue body for every served fixture (`testdata/golden/devalue/`, written
+by the generators from the same value as the superjson envelope); the harness requires feed-go's bytes
+to equal them. The one known difference is the one §5 already names for superjson: a cached record's
+nested objects (a profile picture's `metadata`, a frame's `data`, a showcase image) keep sorted keys
+here and their written order in Node. The value is the same, the bytes differ there; the harness lists
+those paths (`goldenDevalueKeyOrder`) and requires every other byte to match.
+
 
 ## 6. How traffic reaches it
 

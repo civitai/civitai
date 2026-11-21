@@ -30,6 +30,7 @@ import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { importDep, mark, packMarked, packMarkedCompressed } from './pack.mjs';
+import { resetDevalueDir, writeDevalueBody } from './devalue-body.mjs';
 
 if (new Date(0).getTimezoneOffset() !== 0) throw new Error('run with TZ=UTC (the Node pods run in UTC)');
 
@@ -3145,6 +3146,7 @@ function emitAsPosts() {
   const dir = join(HERE, 'as-posts');
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
+  resetDevalueDir('as-posts');
   for (const spec of AS_POSTS) {
     newTrace(spec.name, spec);
     const nodeFlags = { ...FLAGS_ON, ...(spec.nodeFlags ?? {}) };
@@ -3162,6 +3164,7 @@ function emitAsPosts() {
       checkReplies(spec);
       alsoCached(spec);
       expect = { envelope: superjson.serialize(value), cacheable, writes: writeEntries() };
+      writeDevalueBody('as-posts', spec.name, value);
     }
     writeFixture(dir, spec.name, {
       name: spec.name,
@@ -3223,6 +3226,7 @@ function emitInfinite() {
   const dir = join(HERE, 'infinite');
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
+  resetDevalueDir('infinite');
   for (const spec of INFINITE) {
     newTrace(spec.name, spec);
     const nodeFlags = { ...FLAGS_ON, ...(spec.nodeFlags ?? {}) };
@@ -3239,6 +3243,7 @@ function emitInfinite() {
       checkReplies(spec);
       alsoCached(spec);
       expect = { envelope: superjson.serialize(value), cacheable, writes: writeEntries() };
+      writeDevalueBody('infinite', spec.name, value);
     }
     // Every image the feed named is in the tables, so a row the hydrate's own filters drop (the tag
     // scope) is one feed-go must drop too, not one the fixture never held.

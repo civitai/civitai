@@ -125,3 +125,22 @@ answer and, with write-back on, the same cache afterwards from Go.
 ```bash
 TZ=UTC node --import tsx apps/feed-go/testdata/golden/gen-metrics.mjs   # from a clone with pnpm install done
 ```
+
+## devalue
+
+`devalue/<dir>/<fixture>.txt` is the body the Node app writes for a served fixture's answer with
+`TRPC_WRITE_DEVALUE=true`: tRPC's envelope around `devalue.stringify(value)`, exact bytes, no trailing
+newline. `gen.mjs` and `gen-models.mjs` write it (`devalue-body.mjs`) from the same value they encode
+as `expect.envelope`, with the devalue the lockfile resolves, so the identity Node's value has (one
+Date for a post's `sortAt` and its image's, one `user` object, a creator's shared `cosmetics`) is in
+the bytes. `internal/server/golden_devalue_test.go` requires feed-go's devalue body for the same
+fixture to equal it (DESIGN.md §5.2) and every served fixture to have one: regenerate after adding a
+fixture.
+
+`devalue/special.json` is `gen-devalue.mjs`'s: Node's output for values that exercise each rule of
+the writer (escapes, numbers, special values, Dates, shared and empty objects, key order, Map / Set /
+BigInt, JSON.parse'd values); `internal/devalue/golden_test.go` builds the same values by name.
+
+```bash
+GOLDEN_NODE_MODULES=<clone>/node_modules node apps/feed-go/testdata/golden/gen-devalue.mjs
+```
