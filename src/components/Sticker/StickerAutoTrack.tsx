@@ -1,8 +1,12 @@
 import { Button, Loader, Text } from '@mantine/core';
 import { IconAlertTriangle, IconWand } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { StickerTrackKey } from '~/shared/utils/sticker-track';
-import { autoTrackPollDelay, mergeAutoTrackKeys } from '~/shared/utils/sticker-auto-track-keys';
+import {
+  autoTrackPollDelay,
+  discardAutoTrackKeys,
+  mergeAutoTrackKeys,
+} from '~/shared/utils/sticker-auto-track-keys';
 import { useStickerAutoTrackStore as useRuns } from '~/store/sticker-auto-track.store';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import { useStickerPlacementDraftStore as useDrafts } from '~/store/sticker-placement-draft.store';
@@ -98,17 +102,21 @@ function Tracking({
     return () => clearInterval(timer);
   }, []);
 
-  const { data, error } = trpc.placement.getStickerAutoTrack.useQuery(
-    { workflowId: run.workflowId },
-    {
-      refetchInterval: (query) =>
-        query.state.data && query.state.data.status !== 'running'
-          ? false
-          : autoTrackPollDelay(Date.now() - run.startedAt) ?? false,
-      refetchIntervalInBackground: true,
-      retry: 2,
-    }
-  );
+  // A run can outlive this panel; its age only counts against it once an answer read since
+  // mounting says it is still going, or the read keeps failing.
+  const mountedAt = useRef(Date.now());
+  const { data, error, dataUpdatedAt, errorUpdatedAt } =
+    trpc.placement.getStickerAutoTrack.useQuery(
+      { workflowId: run.workflowId },
+      {
+        refetchInterval: (query) =>
+          query.state.data && query.state.data.status !== 'running'
+            ? false
+            : autoTrackPollDelay(Date.now() - run.startedAt) ?? false,
+        refetchIntervalInBackground: true,
+        retry: 2,
+      }
+    );
 
   useEffect(() => {
     const runs = useRuns.getState();
@@ -122,23 +130,31 @@ function Tracking({
     if (data?.status === 'succeeded') {
       const current = useDrafts.getState().drafts.find((d) => d.id === draft.id);
       const before: StickerTrackKey[] = current?.motion?.keys ?? [];
-      const keys = mergeAutoTrackKeys(before, data.track, data.startMs);
+      const merged = mergeAutoTrackKeys(before, data.track, data.startMs);
+      if (!merged)
+        return runs.set(draft.id, {
+          phase: 'failed',
+          message:
+            'This sticker already has as many keys as it can hold. Remove some and try again.',
+        });
+      const { keys, startMs, endMs } = merged;
       const added = keys.filter((key) => !before.includes(key));
       const hides = added.filter(
         (key, i) => key.o === 0 && (i === 0 || added[i - 1].o !== 0)
       ).length;
       useDrafts.getState().setKeys(draft.id, keys);
-      runs.set(draft.id, { phase: 'ready', added: added.length, hides, before });
+      runs.set(draft.id, { phase: 'ready', added: added.length, hides, before, startMs, endMs });
       video.currentTime = data.startMs / 1000;
       void video.play().catch(() => undefined);
       return;
     }
-    if (autoTrackPollDelay(now - run.startedAt) === null)
+    const answered = Math.max(dataUpdatedAt ?? 0, errorUpdatedAt ?? 0) > mountedAt.current;
+    if (answered && autoTrackPollDelay(now - run.startedAt) === null)
       runs.set(draft.id, {
         phase: 'failed',
         message: 'This one took too long to track. Try again in a bit.',
       });
-  }, [data, error, now, draft.id, run, video]);
+  }, [data, error, dataUpdatedAt, errorUpdatedAt, now, draft.id, run, video]);
 
   return (
     <div role="status" className="flex items-center gap-3">
@@ -188,7 +204,10 @@ function Ready({
         variant="subtle"
         color="gray"
         onClick={() => {
-          useDrafts.getState().setKeys(draft.id, run.before);
+          const current = useDrafts.getState().drafts.find((d) => d.id === draft.id);
+          useDrafts
+            .getState()
+            .setKeys(draft.id, discardAutoTrackKeys(current?.motion?.keys ?? [], run.before, run));
           runs.clear(draft.id);
         }}
       >

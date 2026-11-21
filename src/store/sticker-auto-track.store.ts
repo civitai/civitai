@@ -7,8 +7,15 @@ import type { StickerTrackKey } from '~/shared/utils/sticker-track';
  */
 export type StickerAutoTrackRun =
   | { phase: 'tracking'; workflowId: string; startMs: number; startedAt: number }
-  /** `before` is the draft's keys before the run landed, for Discard. */
-  | { phase: 'ready'; added: number; hides: number; before: StickerTrackKey[] }
+  /** `before` is the draft's keys before the run landed, for Discard over `startMs`..`endMs`. */
+  | {
+      phase: 'ready';
+      added: number;
+      hides: number;
+      before: StickerTrackKey[];
+      startMs: number;
+      endMs: number;
+    }
   | { phase: 'failed'; message: string };
 
 type State = {

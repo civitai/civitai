@@ -10,7 +10,7 @@ const flags = { stickerAutoTrack: true };
 
 const io = vi.hoisted(() => ({
   start: vi.fn(),
-  poll: { data: undefined as unknown, error: null as unknown },
+  poll: { data: undefined as unknown, error: null as unknown, dataUpdatedAt: 0 as number },
   pollOptions: undefined as undefined | { refetchInterval: (query: unknown) => number | false },
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -84,7 +84,7 @@ const TRACK: StickerTrackV1 = {
 
 beforeEach(() => {
   io.start.mockReset();
-  io.poll = { data: undefined, error: null };
+  io.poll = { data: undefined, error: null, dataUpdatedAt: 0 };
   io.pollOptions = undefined;
   flags.stickerAutoTrack = true;
   runs.setState({ runs: {} });
@@ -103,6 +103,9 @@ const render = () => {
   );
   return video;
 };
+
+/** Re-renders the editor so the mocked status read returns `io.poll`, without waiting on its clock. */
+const rerender = () => store.getState().setPlayhead(store.getState().playheadMs + 1);
 
 const autoTrack = () => page.getByRole('button', { name: 'Auto-track' });
 
@@ -152,7 +155,12 @@ describe('auto-track', () => {
     await autoTrack().click();
     await expect.element(page.getByText(/Tracking your sticker/)).toBeInTheDocument();
 
-    io.poll = { data: { status: 'succeeded', track: TRACK, startMs: 1000 }, error: null };
+    io.poll = {
+      data: { status: 'succeeded', track: TRACK, startMs: 1000 },
+      error: null,
+      dataUpdatedAt: Date.now(),
+    };
+    rerender();
     await expect.element(page.getByText('Auto-track ready'), { timeout: 3000 }).toBeInTheDocument();
     await expect.element(page.getByText(/hidden once/)).toBeInTheDocument();
 
@@ -198,5 +206,49 @@ describe('auto-track', () => {
     expect(every({ state: { data: { status: 'running' } } })).toBeGreaterThan(0);
     expect(every({ state: { data: { status: 'succeeded' } } })).toBe(false);
     expect(every({ state: { data: { status: 'failed' } } })).toBe(false);
+  });
+
+  test('a run that fails says so and leaves the sticker as it was', async () => {
+    render();
+    await page.getByText('Movement').click();
+    const keys = selected().motion!.keys;
+    io.start.mockImplementation((_input, { onSuccess }) => onSuccess({ workflowId: 'wf-1' }));
+    await autoTrack().click();
+    await expect.element(page.getByText(/Tracking your sticker/)).toBeInTheDocument();
+    io.poll = { data: { status: 'failed' }, error: null, dataUpdatedAt: Date.now() };
+    rerender();
+    await expect.element(page.getByText("Couldn't track this one")).toBeInTheDocument();
+    await expect.element(page.getByText(/Something went wrong on our side/)).toBeInTheDocument();
+    expect(selected().motion!.keys).toEqual(keys);
+  });
+
+  test('a start the server refuses for another reason shows the generic message', async () => {
+    render();
+    await page.getByText('Movement').click();
+    io.start.mockImplementation((_input, { onError }) =>
+      onError({ message: 'placement: internal detail', data: { code: 'INTERNAL_SERVER_ERROR' } })
+    );
+    await autoTrack().click();
+    await expect.element(page.getByText(/Something went wrong on our side/)).toBeInTheDocument();
+    expect(page.getByText(/internal detail/).query()).toBeNull();
+  });
+
+  test('an old run waits for a fresh answer before timing out, then gives up', async () => {
+    render();
+    await page.getByText('Movement').click();
+    // As if the editor closed for six minutes while the run went on.
+    runs.getState().set(selected().id, {
+      phase: 'tracking',
+      workflowId: 'wf-1',
+      startMs: 0,
+      startedAt: Date.now() - 360_000,
+    });
+    await expect.element(page.getByText(/Tracking your sticker/)).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(page.getByText(/took too long/).query()).toBeNull();
+
+    io.poll = { data: { status: 'running' }, error: null, dataUpdatedAt: Date.now() };
+    rerender();
+    await expect.element(page.getByText(/took too long/)).toBeInTheDocument();
   });
 });

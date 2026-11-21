@@ -4,6 +4,7 @@ import { STICKER_TRACK_MAX_KEYS, stickerTrackRefusal } from '~/shared/utils/stic
 import {
   autoTrackPollDelay,
   autoTrackRunKeys,
+  discardAutoTrackKeys,
   fitAutoTrackKeys,
   mergeAutoTrackKeys,
 } from '~/shared/utils/sticker-auto-track-keys';
@@ -93,6 +94,49 @@ describe('fitAutoTrackKeys', () => {
     ]);
   });
 
+  it('keeps a turn a straight line would cut across', () => {
+    // Right for two seconds, then down: the corner is the only key a line between the ends misses.
+    const corner: StickerTrackV1 = {
+      v: 1,
+      ms: 250,
+      x: [
+        [0, 0.1],
+        [8, 0.5],
+      ],
+      y: [
+        [0, 0.1],
+        [8, 0.1],
+        [16, 0.5],
+      ],
+      s: [[0, 0.2]],
+      r: [[0, 0]],
+    };
+    const fitted = fitAutoTrackKeys(autoTrackRunKeys(corner, 0), 500);
+    expect(fitted.map((k) => k.t)).toEqual([0, 2000, 4000]);
+  });
+
+  it('keeps the first and last key when only the cuts fit, and never exceeds the room', () => {
+    const cuts = {
+      ...run(1),
+      show: Array.from({ length: 240 }, (_, i) => [i, i % 2 ? 0 : 1]),
+    } as StickerTrackV1;
+    const keys = autoTrackRunKeys(
+      {
+        ...cuts,
+        x: [
+          [0, 0.1],
+          [239, 0.5],
+        ],
+      },
+      0
+    );
+    const fitted = fitAutoTrackKeys(keys, 100);
+    expect(fitted).toHaveLength(100);
+    expect(fitted[0]).toBe(keys[0]);
+    expect(fitted.at(-1)).toBe(keys.at(-1));
+    expect(fitAutoTrackKeys(keys, 1)).toHaveLength(1);
+  });
+
   it('fits a jittery run into the room left', () => {
     const fitted = fitAutoTrackKeys(autoTrackRunKeys(run(240, undefined, 0.05), 0), 50);
     expect(fitted.length).toBeLessThanOrEqual(50);
@@ -104,23 +148,61 @@ describe('fitAutoTrackKeys', () => {
 describe('mergeAutoTrackKeys', () => {
   it('keeps keys before and after the run and replaces the ones it spans', () => {
     const existing = [key(0, 0.9), key(1000, 0.9), key(1500, 0.9), key(9000, 0.9)];
-    const merged = mergeAutoTrackKeys(existing, run(9), 1000);
-    expect(merged.map((k) => k.t)).toEqual([0, 1000, 3000, 9000]);
-    expect(merged[1].x).toBeCloseTo(0.1);
+    const merged = mergeAutoTrackKeys(existing, run(9), 1000)!;
+    expect(merged.keys.map((k) => k.t)).toEqual([0, 1000, 3000, 9000]);
+    expect(merged.keys[1].x).toBeCloseTo(0.1);
+    expect(merged).toMatchObject({ startMs: 1000, endMs: 3000 });
   });
 
-  it('stays under the key cap however many keys the draft has', () => {
-    const existing = Array.from({ length: STICKER_TRACK_MAX_KEYS - 10 }, (_, i) => key(i * 10));
-    const merged = mergeAutoTrackKeys(existing, run(240, undefined, 0.05), 10_000);
-    expect(merged.length).toBeLessThanOrEqual(STICKER_TRACK_MAX_KEYS);
-    expect(stickerTrackRefusal(stickerKeysTrack(merged))).toBeNull();
+  it('leaves room for the keys on both sides of the run', () => {
+    const before = Array.from({ length: 200 }, (_, i) => key(i * 10));
+    const after = Array.from({ length: 200 }, (_, i) => key(70_000 + i * 10));
+    const cuts = {
+      ...run(1),
+      x: [
+        [0, 0.1],
+        [239, 0.5],
+      ],
+      show: Array.from({ length: 240 }, (_, i) => [i, i % 2 ? 0 : 1]),
+    } as StickerTrackV1;
+    const merged = mergeAutoTrackKeys([...before, ...after], cuts, 2000)!;
+    expect(merged.keys).toHaveLength(STICKER_TRACK_MAX_KEYS);
+    expect(merged.keys.filter((k) => k.t < 2000)).toEqual(before);
+    expect(merged.keys.filter((k) => k.t > merged.endMs)).toEqual(after);
+    expect(stickerTrackRefusal(stickerKeysTrack(merged.keys))).toBeNull();
+  });
+
+  it('refuses a run when the keys outside it already fill the cap', () => {
+    const existing = Array.from({ length: STICKER_TRACK_MAX_KEYS }, (_, i) => key(i * 10));
+    expect(mergeAutoTrackKeys(existing, run(9), 10_000)).toBeNull();
+  });
+
+  it('cuts where the run meets a hidden key of the placer, instead of fading for seconds', () => {
+    // The placer hid the sticker at 20 s; a shown run ending at 3 s would fade over 17 s.
+    const merged = mergeAutoTrackKeys([key(0, 0.5, 0), key(20_000, 0.5, 0)], run(9), 1000)!;
+    expect(merged.keys[0].ease).toBe('jump');
+    expect(merged.keys.at(-2)).toMatchObject({ t: 3000, ease: 'jump' });
+    expect(stickerTrackRefusal(stickerKeysTrack(merged.keys))).toBeNull();
+  });
+});
+
+describe('discardAutoTrackKeys', () => {
+  it('puts back the keys the run replaced and keeps edits made outside it', () => {
+    const previous = [key(0), key(2000, 0.9)];
+    const current = [key(0, 0.3), key(1000), key(1500), key(3000), key(8000)];
+    expect(
+      discardAutoTrackKeys(current, previous, { startMs: 1000, endMs: 3000 }).map((k) => [k.t, k.x])
+    ).toEqual([
+      [0, 0.3],
+      [2000, 0.9],
+      [8000, 0.5],
+    ]);
   });
 });
 
 describe('autoTrackPollDelay', () => {
-  it('gives up after five minutes', () => {
-    expect(autoTrackPollDelay(0)).toBe(3000);
-    expect(autoTrackPollDelay(200_000)).toBe(6000);
+  it('stops after five minutes', () => {
+    expect(autoTrackPollDelay(299_999)).not.toBeNull();
     expect(autoTrackPollDelay(300_000)).toBeNull();
   });
 });

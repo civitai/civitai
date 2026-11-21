@@ -90,9 +90,19 @@ function thinKeys(keys: StickerTrackKey[], scale: number) {
   return kept;
 }
 
+/** `count` keys spread evenly over `keys`, keeping the first and the last. */
+const spread = (keys: StickerTrackKey[], count: number) =>
+  count >= keys.length
+    ? keys
+    : Array.from(
+        { length: count },
+        (_, i) => keys[Math.round((i * (keys.length - 1)) / Math.max(count - 1, 1))]
+      );
+
 /** The run's keys thinned to at most `room`, loosening the tolerance until they fit. */
 export function fitAutoTrackKeys(keys: StickerTrackKey[], room: number): StickerTrackKey[] {
   if (room <= 0) return [];
+  if (room === 1) return keys.slice(0, 1);
   let scale = 1;
   let out = thinKeys(keys, scale);
   while (out.length > room && scale < 64) {
@@ -104,27 +114,52 @@ export function fitAutoTrackKeys(keys: StickerTrackKey[], room: number): Sticker
   const must = out.filter(
     (key, i) => i === 0 || i === out.length - 1 || key.ease === 'jump' || out[i - 1].ease === 'jump'
   );
-  if (must.length >= room) return must.slice(0, room);
+  if (must.length >= room) return spread(must, room);
   const rest = out.filter((key) => !must.includes(key));
   const step = rest.length / (room - must.length);
   const picked = Array.from({ length: room - must.length }, (_, i) => rest[Math.floor(i * step)]);
   return [...must, ...picked].sort((a, b) => a.t - b.t);
 }
 
+/** A key ease that cuts rather than fades when the next key shows or hides the sticker. */
+const cutAtSeam = (keys: StickerTrackKey[], i: number) => {
+  const from = keys[i];
+  const to = keys[i + 1];
+  if (from && to && (from.o === 0) !== (to.o === 0)) keys[i] = { ...from, ease: 'jump' };
+};
+
 /**
  * The draft's keys with a run added at `startMs`: keys before the run stay, the run's keys
  * replace any it spans, keys after its end stay, and the total stays under the server's cap.
+ * The seams cut at a show or hide like the run does, so they never count as fading. Null when
+ * the keys outside the run already fill the cap.
  */
 export function mergeAutoTrackKeys(
   existing: StickerTrackKey[],
   track: StickerTrackV1,
   startMs: number
-): StickerTrackKey[] {
+): { keys: StickerTrackKey[]; startMs: number; endMs: number } | null {
   const run = autoTrackRunKeys(track, startMs);
-  if (!run.length) return existing;
+  if (!run.length) return null;
   const endMs = run[run.length - 1].t;
   const before = existing.filter((key) => key.t < startMs);
   const after = existing.filter((key) => key.t > endMs);
-  const fitted = fitAutoTrackKeys(run, STICKER_TRACK_MAX_KEYS - before.length - after.length);
-  return [...before, ...fitted, ...after];
+  const room = STICKER_TRACK_MAX_KEYS - before.length - after.length;
+  if (room < 2) return null;
+  const keys = [...before, ...fitAutoTrackKeys(run, room), ...after];
+  cutAtSeam(keys, before.length - 1);
+  cutAtSeam(keys, keys.length - after.length - 1);
+  return { keys, startMs, endMs };
+}
+
+/** Undoes a run: the keys it spans go back to what they were, edits elsewhere stay. */
+export function discardAutoTrackKeys(
+  current: StickerTrackKey[],
+  previous: StickerTrackKey[],
+  span: { startMs: number; endMs: number }
+) {
+  const inSpan = (key: StickerTrackKey) => key.t >= span.startMs && key.t <= span.endMs;
+  return [...current.filter((key) => !inSpan(key)), ...previous.filter(inSpan)].sort(
+    (a, b) => a.t - b.t
+  );
 }
