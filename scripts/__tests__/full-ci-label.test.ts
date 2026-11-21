@@ -1,9 +1,19 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parse } from 'yaml';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
 import { classifyUnitJobs } from '../ci/full-ci-unit-shards.mjs';
 import { SUITES } from '../ci/lint-dispatch-passed.mjs';
@@ -450,12 +460,7 @@ describe('the full-ci label', () => {
       expect(jobs[0].name).toBe('Start full CI on label');
       expect(norm(jobs[0].if ?? '')).toBe(DISPATCH_IF);
       // No `pull-requests: write`: this job no longer removes the label (lint.yml does).
-      // `pull-requests: read` lists the PR's changed files for the paths filters.
-      expect(jobs[0].permissions).toEqual({
-        actions: 'write',
-        contents: 'read',
-        'pull-requests': 'read',
-      });
+      expect(jobs[0].permissions).toEqual({ actions: 'write', contents: 'read' });
     });
 
     // Script injection: the branch name is attacker-chosen text. It must reach the shell as an
@@ -478,15 +483,14 @@ describe('the full-ci label', () => {
       expect(step['continue-on-error']).toBeUndefined();
     });
 
-    // Every workflow other than Lint is dispatched only when its own pull_request run would
-    // start and be held by the draft gate (scripts/ci/github-paths-filter.mjs, whose decisions
-    // github-paths-filter.test.ts tests). Before, all of them were dispatched unconditionally on
-    // every labelled PR, and a dispatch is never path-filtered.
+    // Lint is always dispatched; the nine other draft-gated workflows only on a draft PR. On a
+    // ready PR their own PR runs on the commit are not draft-gated, so dispatching them only ran
+    // them again, unfiltered. Before, all nine were dispatched on every labelled PR.
     describe('the other workflows', () => {
       const step = (jobs[0].steps ?? []).find((s) => /gh workflow run lint\.yml/.test(s.run ?? ''));
       const run = step?.run ?? '';
 
-      it('are dispatched by name only from the loop over the filter verdicts', () => {
+      it('are dispatched by name only from a loop that skips on a skip verdict first', () => {
         expect(run).not.toMatch(/gh workflow run (?!lint\.yml)[\w.-]+\.yml/);
         const loop =
           /for wf in "\$\{others\[@\]\}"; do\s+if \[ "\$\{verdict\[\$wf\]\}" = skip \]; then\s+echo [^\n]*\n\s+continue\n/;
@@ -497,17 +501,78 @@ describe('the full-ci label', () => {
         for (const i of dispatches) expect(i).toBeGreaterThan(at);
       });
 
-      // What the script prints, and what each flag does, is tested by running it
-      // (github-paths-filter.test.ts, "the CLI"). Pinned here is only which inputs the step
-      // hands it.
-      it('get their verdicts from the filter script, with the draft flag and changed files', () => {
-        expect(step?.env?.DRAFT).toBe('${{ github.event.pull_request.draft }}');
-        // The PR's changed files, with a rename's old path too (nothing else checks that).
-        expect(run).toMatch(/gh api --paginate "repos\/\$REPO\/pulls\/\$PR\/files[^"]*"/);
-        expect(run).toContain('.previous_filename // empty');
-        const call = /node scripts\/ci\/github-paths-filter\.mjs ([^\n]*)/.exec(run)?.[1] ?? '';
-        expect(call).toContain('--draft "$DRAFT"');
-        expect(call).toMatch(/--changed "\$changed"/);
+      // Runs the step itself, with a stand-in `gh` that records each call (and answers the
+      // unit-shard poll with a decided, skipped `Unit tests`, so it dispatches) and a no-op
+      // `sleep`, and reads which workflows it dispatched.
+      describe('run with a stand-in gh', () => {
+        const tmp = mkdtempSync(path.join(tmpdir(), 'full-ci-dispatch-'));
+        afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+        const bin = path.join(tmp, 'bin');
+        mkdirSync(bin);
+        const log = path.join(tmp, 'gh.log');
+        writeFileSync(
+          path.join(bin, 'gh'),
+          [
+            '#!/usr/bin/env bash',
+            `echo "$*" >> '${log}'`,
+            'case "$*" in',
+            '  *"/actions/workflows/lint.yml/runs"*) echo 1 ;;',
+            '  *"/actions/runs/1/jobs"*) echo \'{"jobs":[{"name":"Unit tests","conclusion":"skipped"}]}\' ;;',
+            'esac',
+            '',
+          ].join('\n')
+        );
+        writeFileSync(path.join(bin, 'sleep'), '#!/usr/bin/env bash\n');
+        chmodSync(path.join(bin, 'gh'), 0o755);
+        chmodSync(path.join(bin, 'sleep'), 0o755);
+        const script = path.join(tmp, 'step.sh');
+        writeFileSync(script, run);
+
+        const dispatched = (draft: string) => {
+          writeFileSync(log, '');
+          execFileSync('bash', ['-e', script], {
+            cwd: path.resolve(HERE, '../..'),
+            env: {
+              PATH: `${bin}:${process.env.PATH}`,
+              GITHUB_STEP_SUMMARY: path.join(tmp, 'summary'),
+              GH_TOKEN: 'x',
+              HEAD_REF: 'some-branch',
+              HEAD_SHA: 'a'.repeat(40),
+              DRAFT: draft,
+              PR: '1',
+              REPO: 'o/r',
+            },
+            stdio: ['ignore', 'ignore', 'pipe'],
+          });
+          return readFileSync(log, 'utf8')
+            .split('\n')
+            .map((l) => /^workflow run (\S+)/.exec(l)?.[1])
+            .filter(Boolean)
+            .sort();
+        };
+        const NINE = [
+          'app-data-go.yml',
+          'app-index-go.yml',
+          'apps.yml',
+          'beacon-go.yml',
+          'content-policy-go.yml',
+          'feed-go.yml',
+          'moderator-boot.yml',
+          'registry-adapter-image.yml',
+          'storage-hook-runner-image.yml',
+        ];
+
+        it('on a ready PR, dispatches Lint and none of the nine', () => {
+          expect(dispatched('false')).toEqual(['lint.yml']);
+        });
+
+        it('on a draft PR, dispatches Lint and all nine', () => {
+          expect(dispatched('true')).toEqual(['lint.yml', ...NINE].sort());
+        });
+
+        it('dispatches all nine when the draft flag is anything but an exact false', () => {
+          expect(dispatched('')).toEqual(['lint.yml', ...NINE].sort());
+        });
       });
 
       // A ledger, so a new draft-gated workflow is either dispatched here or exempted here.
@@ -528,15 +593,6 @@ describe('the full-ci label', () => {
         const others = /others=\(([^)]*)\)/.exec(run)?.[1].split(/\s+/).filter(Boolean) ?? [];
         expect(others.length).toBeGreaterThan(0);
         expect([...others].sort()).toEqual(gated.filter((f) => !(f in EXEMPT)).sort());
-      });
-
-      it('has the filter script and the workflow files on disk', () => {
-        const checkout = (jobs[0].steps ?? []).find((s) => s.uses?.startsWith('actions/checkout@'));
-        const paths = String(checkout?.with?.['sparse-checkout'] ?? '')
-          .split('\n')
-          .filter(Boolean);
-        expect(paths).toContain('scripts/ci/github-paths-filter.mjs');
-        expect(paths).toContain('.github/workflows');
       });
     });
 
@@ -580,9 +636,7 @@ describe('the full-ci label', () => {
       // The classifier must be on disk when the step runs, and the checkout must not leave the
       // dispatching token in the git config.
       const checkout = steps.slice(0, idx).find((s) => s.uses?.startsWith('actions/checkout@'));
-      expect(String(checkout?.with?.['sparse-checkout'] ?? '').split('\n')).toContain(
-        'scripts/ci/full-ci-unit-shards.mjs'
-      );
+      expect(checkout?.with?.['sparse-checkout']).toBe('scripts/ci/full-ci-unit-shards.mjs');
       expect(checkout?.with?.['persist-credentials']).toBe(false);
     });
 

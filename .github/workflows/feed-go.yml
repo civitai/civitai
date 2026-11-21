@@ -19,8 +19,8 @@ name: feed-go
 # (`Package unit tests`). The workflow also triggers on packages/civitai-flipt/parity/** for it.
 #
 # A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
-# dispatches this workflow when the label is added to a draft PR with a changed file that passes
-# the `pull_request` paths filter below (it reads the filter from this file).
+# dispatches this workflow when the label is added to a draft PR (on a ready PR, the PR's own run
+# here is not draft-gated, so nothing is dispatched).
 # A push to `main` has its own `push` paths filter below, and no draft gate.
 on:
   pull_request:
