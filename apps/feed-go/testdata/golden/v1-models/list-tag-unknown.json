@@ -6,7 +6,9 @@
     "baseUrl": "https://site.example.test",
     "coverageNext": false,
     "baseModelFeedMetrics": false,
-    "regionRestricted": false
+    "regionRestricted": false,
+    "serverDomainRed": "red.example.test",
+    "serverDomainRedAliases": " Mirror.Red.Example.Test ,"
   },
   "request": {
     "path": "/api/v1/models",
@@ -271,6 +273,7 @@
       "character": 11
     },
     "blockedTags": [],
+    "trainingData": [],
     "responseCache": {}
   },
   "redis": {

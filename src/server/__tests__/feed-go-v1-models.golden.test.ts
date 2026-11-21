@@ -20,8 +20,13 @@
  *
  * The cache layer itself is not exercised: each mocked `fetch` returns the fixture's records after
  * the cache's `appendFn` (transcribed in its mock below), which is what a cache hit returns.
+ *
+ * trainingDataListing's statement (`dbRead.$queryRaw`) is captured like the model statement and
+ * answered from the fixture's `trainingData` rows of the candidate versions; `expect.trainingDataSql`
+ * pins it, its text byte for byte (feed-go hashes those exact bytes to detect drift). isRedCapableHost reads SERVER_DOMAIN_RED* from the environment set below.
  */
 import { readdirSync, readFileSync } from 'node:fs';
+import { Prisma } from '@prisma/client';
 import { join } from 'node:path';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -34,9 +39,20 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { matureRestrictedBaseModels } from '~/shared/constants/basemodel.constants';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+
+// isRedCapableHost's domain map is built at import from process.env: set before any import. The
+// fixtures' `config.serverDomainRed*` must name the same values (checked per fixture).
+const RED = vi.hoisted(() => {
+  const red = { primary: 'red.example.test', aliases: ' Mirror.Red.Example.Test ,' };
+  process.env.SERVER_DOMAIN_RED = red.primary;
+  process.env.SERVER_DOMAIN_RED_ALIASES = red.aliases;
+  return red;
+});
 
 const FIXTURE_DIR = join(process.cwd(), 'apps/feed-go/testdata/golden/v1-models');
 const GO_CONSTANTS = join(process.cwd(), 'apps/feed-go/internal/v1models/constants.go');
+const GO_LEVELS = join(process.cwd(), 'apps/feed-go/internal/browsing/levels.go');
 const IMAGE_LOCATION = 'https://image.example.test/golden';
 const BASE_URL = 'https://site.example.test';
 
@@ -50,6 +66,8 @@ type Fixture = {
     coverageNext: boolean;
     baseModelFeedMetrics: boolean;
     regionRestricted: boolean;
+    serverDomainRed: string;
+    serverDomainRedAliases: string;
   };
   request: { path: string; query: string; headers: Record<string, string> };
   world: World;
@@ -57,6 +75,7 @@ type Fixture = {
     fallback?: string;
     body?: string | null;
     sql?: { text: string; values: unknown[] } | null;
+    trainingDataSql?: { text: string; values: unknown[] } | null;
   };
 };
 
@@ -78,6 +97,7 @@ const state = vi.hoisted(() => ({
   fx: undefined as any,
   world: {} as Record<string, any>,
   sql: [] as { text: string; values: unknown[] }[],
+  trainingDataSql: [] as { text: string; values: unknown[] }[],
 }));
 
 /** The fixture's cache records for ids, without notFound markers (what a fetch returns). */
@@ -350,8 +370,10 @@ const fixtures = loadFixtures();
 
 describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
   it('finds the fixtures (a glob that matched nothing would pass every case below)', () => {
-    expect(fixtures.length).toBeGreaterThanOrEqual(23);
-    expect(fixtures.filter(({ fx }) => !fx.expect.fallback).length).toBeGreaterThanOrEqual(17);
+    expect(fixtures.length).toBeGreaterThanOrEqual(31);
+    expect(fixtures.filter(({ fx }) => !fx.expect.fallback).length).toBeGreaterThanOrEqual(24);
+    // The Training Data listing is reached: fixtures whose statement Node sends.
+    expect(fixtures.filter(({ fx }) => fx.expect.trainingDataSql).length).toBeGreaterThanOrEqual(5);
   });
 
   it.each(fixtures.filter(({ fx }) => !fx.expect.fallback).map(({ file, fx }) => [file, fx]))(
@@ -360,9 +382,12 @@ describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
       const f = fx as Fixture;
       expect(f.config.imageLocation).toBe(IMAGE_LOCATION);
       expect(f.config.baseUrl).toBe(BASE_URL);
+      expect(f.config.serverDomainRed).toBe(RED.primary);
+      expect(f.config.serverDomainRedAliases).toBe(RED.aliases);
       state.fx = f;
       state.world = f.world;
       state.sql = [];
+      state.trainingDataSql = [];
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(new Date(f.now));
       try {
@@ -376,6 +401,25 @@ describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
           const id = f.world.tagIdsByName?.[args?.where?.name];
           return id ? { id } : null;
         });
+        // trainingDataListing's statement (the only `$queryRaw` these routes send): captured, and
+        // answered with the fixture's rows of the candidate versions (`ANY($1::int[])`).
+        dbMock.dbRead.$queryRaw.mockImplementation((async (
+          strings: TemplateStringsArray,
+          ...values: unknown[]
+        ) => {
+          const sql = Prisma.sql(strings, ...values);
+          state.trainingDataSql.push({ text: sql.text, values: sql.values });
+          const candidates = (sql.values[0] ?? []) as number[];
+          return (revive(f.world.trainingData ?? []) as Record<string, unknown>[])
+            .filter((r) => candidates.includes(r.modelVersionId as number))
+            .map(({ id, virusScanResult, nsfwLevel, fullyRated, restricted }) => ({
+              id,
+              virusScanResult,
+              nsfwLevel,
+              fullyRated,
+              restricted,
+            }));
+        }) as any);
         redisMock.redis.mGet.mockImplementation(async (keys: string[]) =>
           keys.map((k) => f.world.gallerySettings?.[k.slice(k.lastIndexOf(':') + 1)] ?? null)
         );
@@ -399,12 +443,27 @@ describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
         const sql = state.sql[0]
           ? { text: normalizeSql(state.sql[0].text), values: jsonValue(state.sql[0].values) }
           : null;
-        const actual = { status: res.statusCode, body, sql };
+        const trainingDataSql = state.trainingDataSql[0]
+          ? {
+              text: state.trainingDataSql[0].text,
+              values: jsonValue(state.trainingDataSql[0].values),
+            }
+          : null;
+        const actual = { status: res.statusCode, body, sql, trainingDataSql };
         expect(state.sql.length, `${file}: one model statement at most`).toBeLessThanOrEqual(1);
-        expect(actual, `GOLDEN-ACTUAL ${file} ${JSON.stringify({ body, sql })}`).toEqual({
+        expect(
+          state.trainingDataSql.length,
+          `${file}: one training data statement at most`
+        ).toBeLessThanOrEqual(1);
+        const want = f.expect.trainingDataSql;
+        expect(
+          actual,
+          `GOLDEN-ACTUAL ${file} ${JSON.stringify({ body, sql, trainingDataSql })}`
+        ).toEqual({
           status: 200,
           body: f.expect.body,
           sql: f.expect.sql ? { ...f.expect.sql, text: normalizeSql(f.expect.sql.text) } : null,
+          trainingDataSql: want ?? null,
         });
       } finally {
         vi.useRealTimers();
@@ -415,6 +474,25 @@ describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
 });
 
 describe('feed-go v1models constants', () => {
+  it("feed-go's SFW mask (browsing.SFWLevels) is sfwBrowsingLevelsFlag", () => {
+    // The Training Data servability test masks the rating with it (trainingDataServableOnHost).
+    const src = readFileSync(GO_LEVELS, 'utf8');
+    const bits = Object.fromEntries(
+      [...src.matchAll(/^\t(PG|PG13|R|X|XXX|Blocked)\s*=\s*(\d+)$/gm)].map((m) => [
+        m[1],
+        Number(m[2]),
+      ])
+    );
+    expect(Object.keys(bits).sort()).toEqual(['Blocked', 'PG', 'PG13', 'R', 'X', 'XXX']);
+    const expr = /^\tSFWLevels\s*=\s*([A-Za-z0-9 |]+)$/m.exec(src)?.[1];
+    expect(expr, 'SFWLevels in levels.go').toBeTruthy();
+    const goSfw = expr!
+      .split('|')
+      .map((name) => bits[name.trim()])
+      .reduce((a, b) => a | b, 0);
+    expect(goSfw).toBe(sfwBrowsingLevelsFlag);
+  });
+
   it("lists exactly matureRestrictedBaseModels('models'), lowercased", () => {
     const src = readFileSync(GO_CONSTANTS, 'utf8');
     const block = src.slice(

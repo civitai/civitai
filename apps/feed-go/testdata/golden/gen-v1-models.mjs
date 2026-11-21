@@ -32,7 +32,11 @@ const CONFIG = {
   coverageNext: false,
   baseModelFeedMetrics: false,
   regionRestricted: false,
+  // SERVER_DOMAIN_RED and its aliases, as the Node golden test sets them (isRedCapableHost).
+  serverDomainRed: 'red.example.test',
+  serverDomainRedAliases: ' Mirror.Red.Example.Test ,',
 };
+const RED_HOST = 'Mirror.Red.Example.Test';
 
 // Default browsing-settings addons as the system redis holds them (getBrowsingSettingAddons).
 const ADDONS = [
@@ -205,8 +209,36 @@ function baseWorld() {
     // The replica's Tag rows by name (the list's `tag` filter) and the blocked browsing tags.
     tagIdsByName: {},
     blockedTags: [],
+    // trainingDataListing's rows: one per Training Data file of a candidate version, as its
+    // statement returns them (`restricted` is what the statement computes; the reasons behind it are
+    // pinned on Postgres by feed-go-training-data-listing.parity.test.ts).
+    trainingData: [],
     responseCache: {},
   };
+}
+
+/** A Training Data file and its listing row (clean, rated PG, scanned) with the row's edits. */
+function dataset(w, id, versionId, { file: fo = {}, row = {} } = {}) {
+  w.trainingData.push({
+    id,
+    modelVersionId: versionId,
+    virusScanResult: 'Success',
+    nsfwLevel: 1,
+    fullyRated: true,
+    restricted: false,
+    ...row,
+  });
+  return file(id, versionId, {
+    type: 'Training Data',
+    name: `dataset_${id}.zip`,
+    sizeKB: 2048,
+    metadata: {
+      nsfwLevel: row.nsfwLevel ?? 1,
+      fullyRated: true,
+      datasetArchive: { status: 'archived' },
+    },
+    ...fo,
+  });
 }
 
 /** Adds a model: its row, data record, tags, files, images, metrics and version metrics. */
@@ -439,19 +471,110 @@ const list = (query, headers = {}) => ({
   fx('detail-minor-held-showcase', detail(5005), w);
 }
 
-// 6. A Training Data file the listing would check against the replica: not ported.
-{
+// 6. Training Data files on `[id]`: each refusal of trainingDataListing's predicate in one version
+// (the statement's restriction, NULL included; a scan not yet a Success; a mature or partly rated
+// dataset off a red-capable host), a listed one (no metadata, its download pinned by fileId), a
+// level the predicate reads as no number, a Private dataset (never listed), and a dataset the
+// statement returns no row for (listed, as Node lists it). On a red-capable host the rating no
+// longer refuses.
+function trainingDataDetailWorld() {
   const w = baseWorld();
-  addModel(w, modelRow(5006), [version(6051)], {
+  const v = 6051;
+  addModel(w, modelRow(5006, { type: 'Checkpoint' }), [version(v)], {
     files: {
-      6051: [
-        file(7051, 6051),
-        file(7052, 6051, { type: 'Training Data', name: 'data.zip', metadata: {} }),
+      [v]: [
+        file(7051, v),
+        dataset(w, 7052, v),
+        dataset(w, 7053, v, { row: { restricted: true } }),
+        dataset(w, 7054, v, { row: { nsfwLevel: 4 } }),
+        dataset(w, 7055, v, { row: { fullyRated: false } }),
+        dataset(w, 7056, v, { row: { virusScanResult: 'Pending' } }),
+        dataset(w, 7057, v, { row: { restricted: null } }),
+        dataset(w, 7058, v, { file: { visibility: 'Private' } }),
+        dataset(w, 7059, v, { row: { nsfwLevel: '4' } }),
+        file(7060, v, { type: 'Training Data', name: 'norow.zip', metadata: {} }),
       ],
     },
   });
-  fx('fallback-detail-training-data', detail(5006), w, {
-    expect: { fallback: 'v1-models-training-data' },
+  return w;
+}
+fx('detail-training-data', detail(5006), trainingDataDetailWorld());
+fx('detail-training-data-red-host', detail(5006, { host: RED_HOST }), trainingDataDetailWorld());
+
+// 6b. Every Public file of the version refused: `files: []` (the listing runs after removeEmpty).
+{
+  const w = baseWorld();
+  const v = 6061;
+  addModel(w, modelRow(5016, { type: 'Checkpoint' }), [version(v)], {
+    files: {
+      [v]: [
+        file(7061, v, { visibility: 'Private' }),
+        dataset(w, 7062, v, { row: { restricted: true } }),
+      ],
+    },
+  });
+  fx('detail-training-data-all-refused', detail(5016), w);
+}
+
+// 6c. A cached `[id]` body goes through the listing too (the origin cache keys on neither the host
+// nor a restriction placed since); a cached body without versions gains `modelVersions: []`.
+{
+  const w = baseWorld();
+  w.trainingData.push(
+    {
+      id: 7072,
+      modelVersionId: 6071,
+      virusScanResult: 'Success',
+      nsfwLevel: 1,
+      fullyRated: true,
+      restricted: true,
+    },
+    {
+      id: 7073,
+      modelVersionId: 6071,
+      virusScanResult: 'Success',
+      nsfwLevel: 1,
+      fullyRated: true,
+      restricted: false,
+    }
+  );
+  w.responseCache['packed:caches:public-model-response:v2:5026:31'] = {
+    data: {
+      id: 5026,
+      name: 'Cached Dataset Model',
+      modelVersions: [
+        {
+          id: 6071,
+          name: 'v1',
+          files: [
+            { id: 7071, name: 'model.safetensors', type: 'Model', sizeKB: 1.5 },
+            { id: 7072, name: 'held.zip', type: 'Training Data', sizeKB: 2, metadata: {} },
+            { id: 7073, name: 'shared.zip', type: 'Training Data', sizeKB: 3, metadata: {} },
+          ],
+        },
+        { id: 6072, name: 'v2', images: [] },
+      ],
+    },
+    cachedAt: NOW_MS - 60_000,
+  };
+  fx('detail-training-data-cached', detail(5026), w);
+}
+{
+  const w = baseWorld();
+  w.responseCache['packed:caches:public-model-response:v2:5036:31'] = {
+    data: { id: 5036, name: 'Cached Without Versions' },
+    cachedAt: NOW_MS - 60_000,
+  };
+  fx('detail-origin-cache-no-versions', detail(5036), w);
+}
+
+// 6d. The listing's read fails: Node leaves every Training Data file out; whether Node's own read
+// failed is unknown to feed-go, so it falls back rather than answer.
+{
+  const w = trainingDataDetailWorld();
+  w.trainingDataError = true;
+  fx('fallback-detail-training-data-unread', detail(5006), w, {
+    expect: { fallback: 'v1-models-training-data-unread' },
   });
 }
 
@@ -673,6 +796,48 @@ const list = (query, headers = {}) => ({
     files: { 6821: [file(7821, 6821)] },
   });
   fx('list-tag-blocked', list('tag=blocked%20THING&page=2&limit=5'), w);
+}
+
+// 15. Training Data files in the list: the listing reads every version listing one (a Private dataset
+// and an archived model's included), lists a clean one (no metadata, its download by discriminators),
+// and leaves a refused one out; on a red-capable host a mature dataset is listed, a scan that is not
+// a Success never is.
+function trainingDataListWorld() {
+  const w = baseWorld();
+  addModel(
+    w,
+    modelRow(5901, { cursorId: '9|9|5901' }),
+    [version(6901), version(6902, { index: 1 })],
+    {
+      files: {
+        6901: [
+          file(7901, 6901),
+          dataset(w, 7902, 6901),
+          dataset(w, 7903, 6901, { row: { restricted: true } }),
+          dataset(w, 7904, 6901, { row: { nsfwLevel: 28 } }),
+          dataset(w, 7905, 6901, { row: { virusScanResult: 'Danger' } }),
+        ],
+        6902: [file(7911, 6902), dataset(w, 7912, 6902, { file: { visibility: 'Private' } })],
+      },
+    }
+  );
+  addModel(w, modelRow(5902, { mode: 'Archived', cursorId: '8|8|5902' }), [version(6921)], {
+    files: { 6921: [file(7921, 6921), dataset(w, 7922, 6921)] },
+  });
+  return w;
+}
+fx('list-training-data', list('limit=5&archived=true'), trainingDataListWorld());
+fx(
+  'list-training-data-red-host',
+  list('limit=5&archived=true', { host: RED_HOST }),
+  trainingDataListWorld()
+);
+{
+  const w = trainingDataListWorld();
+  w.trainingDataError = true;
+  fx('fallback-list-training-data-unread', list('limit=5'), w, {
+    expect: { fallback: 'v1-models-training-data-unread' },
+  });
 }
 
 // Fallbacks before any read.
