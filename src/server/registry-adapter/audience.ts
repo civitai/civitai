@@ -56,7 +56,16 @@ export type Audience = {
    */
   key: string;
   allowed: MatureRatingsAllowed;
+  /**
+   * May read the `listing@v1` stream and its schema document (`listing-stream.ts`). Set only by
+   * {@link withListings}, which also changes the key, so no cursor crosses the gate.
+   */
+  listings?: true;
 };
+
+/** `audience`, also admitted to the listing stream: the same ratings, a key of its own. */
+export const withListings = (audience: Audience): Audience =>
+  audience.listings ? audience : { ...audience, key: `${audience.key}+lst`, listings: true };
 
 // The key names each mature rating the audience may read. An audience without XXX keeps the key
 // it had before audiences recorded XXX (`m`, `mr`, `mx`, `mrx`), so its cursors stay valid; one

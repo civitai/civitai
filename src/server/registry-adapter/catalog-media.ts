@@ -1,6 +1,8 @@
 import type { ListingMediaImage } from '~/server/services/blocks/listing-media-audience';
 import {
+  gatedListingCoverUrl,
   gatedListingIconUrl,
+  gatedListingScreenshots,
   listingRatingMediaCeiling,
 } from '~/server/services/blocks/listing-media-audience';
 
@@ -16,4 +18,21 @@ export function registryIconUrl(row: {
   icon: ListingMediaImage | null;
 }): string | null {
   return gatedListingIconUrl(row.icon, listingRatingMediaCeiling(row.contentRating));
+}
+
+/**
+ * The cover and screenshots a listing entity publishes, under the same rule as
+ * {@link registryIconUrl}: the listing's own media, each image gated at the listing's own rating,
+ * the cover falling back to the first screenshot that passes. Never the store card's cover.
+ */
+export function registryListingMedia(row: {
+  contentRating: string | null;
+  cover: ListingMediaImage | null;
+  screenshots: ReadonlyArray<{ caption: string | null; image: ListingMediaImage | null }>;
+}): { coverUrl: string | null; screenshots: Array<{ url: string; caption: string | null }> } {
+  const ceiling = listingRatingMediaCeiling(row.contentRating);
+  return {
+    coverUrl: gatedListingCoverUrl(row.cover, row.screenshots, ceiling),
+    screenshots: gatedListingScreenshots(row.screenshots, ceiling),
+  };
 }

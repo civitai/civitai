@@ -12,12 +12,17 @@ import {
   deriveCollectionMajors,
   exportedCollections,
 } from '~/server/registry-adapter/collection-schema';
+import type { ListingStoreFields } from '~/server/registry-adapter/catalog-source';
 import type { ApprovedRelease } from '~/server/registry-adapter/release';
-import { ENTITY_SCHEMA_DOCUMENTS } from '~/server/registry-adapter/schemas';
+import {
+  ENTITY_SCHEMA_DOCUMENTS,
+  LISTING_SCHEMA_DOCUMENT,
+} from '~/server/registry-adapter/schemas';
 import { sortedKeyJson, releaseBody, sha256Hex } from '~/server/registry-adapter/release';
 import {
   APP_RELEASE_SCHEMA,
   APP_SCHEMA,
+  LISTING_SCHEMA,
   REGISTRY_NAMESPACE,
   SERVICE_SCHEMA,
   parseCollectionSchemaUrn,
@@ -39,6 +44,11 @@ export const SERVED_SCHEMAS = [
   SERVICE_SCHEMA,
 ] as const;
 
+/** The schemas served: {@link SERVED_SCHEMAS}, plus the listing schema while it is switched on. */
+export function servedSchemas({ listings = false }: { listings?: boolean } = {}): string[] {
+  return listings ? [...SERVED_SCHEMAS, LISTING_SCHEMA] : [...SERVED_SCHEMAS];
+}
+
 export const RUNTIME_URN = registryUrn({ kind: 'runtime', name: 'iframe', major: 1 });
 export const APP_SEARCH_URN = registryUrn({ kind: 'service', name: 'app-search', major: 1 });
 
@@ -57,6 +67,8 @@ export type CatalogApp = {
     sourceRepoUrl: string | null;
     /** The slug of the app this one was forked from, only when that app is in the same catalog. */
     forkOf: string | null;
+    /** Its store fields, read only while the listing stream is on (`readCatalog`). */
+    store?: ListingStoreFields;
   };
   /** The backing block of an on-site listing. */
   block: {
@@ -98,6 +110,7 @@ export type EntitySets = Map<string, Entity[]>;
 export const RATED_SCHEMAS: ReadonlySet<string> = new Set([
   APP_SCHEMA,
   APP_RELEASE_SCHEMA,
+  LISTING_SCHEMA,
   JSON_SCHEMA_DIALECT,
 ]);
 
@@ -118,7 +131,9 @@ const ratingOfBody = (body: unknown): string | null => {
  */
 function appUrnOf(schema: string, e: Entity): unknown {
   if (schema === APP_SCHEMA) return e.urn;
-  if (schema === APP_RELEASE_SCHEMA) return (e.body as { app?: unknown } | null)?.app;
+  if (schema === APP_RELEASE_SCHEMA || schema === LISTING_SCHEMA) {
+    return (e.body as { app?: unknown } | null)?.app;
+  }
   const parsed = parseCollectionSchemaUrn(e.urn);
   return parsed ? registryUrn({ kind: 'app', slug: parsed.slug }) : null;
 }
@@ -135,12 +150,16 @@ function appUrnOf(schema: string, e: Entity): unknown {
  *     may not read that app (the entity's `rev` is that body's, so a re-rating of the parent
  *     reaches the fork's subscribers as an upsert with or without it, and an entity whose body
  *     differs per audience has a rev per audience);
+ *   - the listing stream, and the listing schema's document on the schema stream, reach only an
+ *     audience admitted to listings (`withListings`, `listing-stream.ts`); every other audience
+ *     reads them as absent, as it did before they existed;
  *   - a schema outside {@link RATED_SCHEMAS} is returned whole.
  * Pure; the polling adapter memoizes it per read (`createReadableMemo` in `cursor.ts`).
  */
 export function readableBy(sets: EntitySets, schema: string, audience: Audience): Entity[] {
   const all = sets.get(schema) ?? [];
   if (!RATED_SCHEMAS.has(schema)) return all;
+  if (schema === LISTING_SCHEMA && !audience.listings) return [];
   // First wins, as a stream serves a duplicate URN (`cursor.ts`).
   const ratings = new Map<string, string | null>();
   for (const app of sets.get(APP_SCHEMA) ?? []) {
@@ -153,6 +172,7 @@ export function readableBy(sets: EntitySets, schema: string, audience: Audience)
   const readable = all.filter(
     (e) =>
       (schema === JSON_SCHEMA_DIALECT && ENTITY_SCHEMA_URNS.has(e.urn)) ||
+      (schema === JSON_SCHEMA_DIALECT && e.urn === LISTING_SCHEMA && audience.listings === true) ||
       admitted(appUrnOf(schema, e))
   );
   if (schema !== APP_SCHEMA) return readable;
@@ -253,6 +273,9 @@ function urnOrSkip(ref: UrnRef, onSkip: (reason: string) => void): string | null
  *
  * `appSearchUrl` is the public app search endpoint; the app search service entity is published
  * only when it is set ({@link appSearchEntity}).
+ *
+ * `listings` switches the listing stream on: the listing schema's document, and a listing entity
+ * for each app entity whose catalog row carries its store fields ({@link listingBody}).
  */
 export function buildEntities(
   apps: readonly CatalogApp[],
@@ -261,17 +284,20 @@ export function buildEntities(
     appSearchUrl?: string;
     onSkip?: (reason: string) => void;
     features?: Readonly<Record<AppStorageFeature, boolean>>;
+    listings?: boolean;
   }
 ): EntitySets {
   const onSkip = opts.onSkip ?? (() => undefined);
   const features = opts.features ?? APP_STORAGE_ENABLED_FEATURES;
-  const sets: EntitySets = new Map(SERVED_SCHEMAS.map((s) => [s, [] as Entity[]]));
+  const listings = opts.listings === true;
+  const sets: EntitySets = new Map(servedSchemas({ listings }).map((s) => [s, [] as Entity[]]));
   const add = (schema: string, e: Entity) => sets.get(schema)!.push(e);
   // A schema entity: on the schema stream, claiming the root.
   const addSchema = (urn: string, body: unknown) =>
     add(JSON_SCHEMA_DIALECT, entity(urn, JSON_SCHEMA_DIALECT, body));
   // The schemas the entities below claim, published by this source whatever the catalog holds.
   for (const doc of ENTITY_SCHEMA_DOCUMENTS) addSchema(doc.$id as string, doc);
+  if (listings) addSchema(LISTING_SCHEMA, LISTING_SCHEMA_DOCUMENT);
   add(SERVICE_SCHEMA, runtimeEntity(opts.baseUrl));
   if (opts.appSearchUrl) add(SERVICE_SCHEMA, appSearchEntity(opts.appSearchUrl));
 
@@ -359,8 +385,66 @@ export function buildEntities(
         ...(forkOf ? { forkOf } : {}),
       })
     );
+
+    if (!listings) continue;
+    if (!listing.store) {
+      onSkip(`listing of ${slug} skipped: no store fields were read`);
+      continue;
+    }
+    const listingUrn = urnOrSkip({ kind: 'listing', slug }, (reason) =>
+      onSkip(`listing of ${slug} skipped: ${reason}`)
+    );
+    if (listingUrn !== null) {
+      add(
+        LISTING_SCHEMA,
+        entity(listingUrn, LISTING_SCHEMA, listingBody(app, appUrn, listing.store))
+      );
+    }
   }
   return sets;
+}
+
+/**
+ * A listing entity's body: the app entity's identity and rating, the store card and detail
+ * fields, and the stats. Media are the listing's own, gated at its own rating (`catalog-media.ts`).
+ */
+export function listingBody(
+  app: Pick<CatalogApp, 'listing' | 'block'>,
+  appUrn: string,
+  store: ListingStoreFields
+): Record<string, unknown> {
+  const { listing } = app;
+  return {
+    app: appUrn,
+    slug: app.block?.blockId ?? listing.slug,
+    name: listing.name,
+    kind: listing.kind,
+    contentRating: appContentRating(app),
+    tagline: listing.tagline,
+    category: listing.category,
+    description: store.description,
+    iconUrl: listing.iconUrl,
+    coverUrl: store.coverUrl,
+    screenshots: store.screenshots.map((s) => ({ url: s.url, caption: s.caption })),
+    creator: store.creator
+      ? { id: store.creator.id, username: store.creator.username, image: store.creator.image }
+      : null,
+    isBeta: store.isBeta,
+    isOfficial: store.isOfficial,
+    ...(listing.kind === 'onsite'
+      ? { hasPage: store.hasPage, ...(store.liveUrl ? { liveUrl: store.liveUrl } : {}) }
+      : { externalUrl: listing.externalUrl }),
+    stats: {
+      recommendedCount: store.recommend.recommendedCount,
+      notRecommendedCount: store.recommend.notRecommendedCount,
+      recommendPct: store.recommend.recommendPct,
+      reviewCount: store.reviewCount,
+      openCount: listing.kind === 'onsite' ? store.openCount : null,
+      installCount: store.installCount,
+    },
+    createdAt: store.createdAt,
+    updatedAt: store.updatedAt,
+  };
 }
 
 /**
