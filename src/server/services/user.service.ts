@@ -1,6 +1,6 @@
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { banNoteNamesCsamSql } from '~/server/services/ban-note-csam';
-import type { PROFILE_CLEAR_FIELDS } from '~/server/schema/moderator/user';
+import { banNoteHoldSql, banNoteNamesCsamSql } from '~/server/services/ban-note-csam';
+import { PROFILE_CLEAR_FIELDS } from '~/server/schema/moderator/user';
 import { markUserDealUploadsRemovedSql } from '~/server/services/creator-service-deal-file-retention';
 import {
   assertCollectionItemsVisibleToViewer,
@@ -1403,7 +1403,15 @@ export const deleteUser = async ({
   removeModels,
   removeImages,
   removeAppData,
-}: DeleteUserInput) => {
+  actorId,
+  archive = async (snapshot) =>
+    (await import('~/server/services/csam.service-new')).archiveUserProfile(snapshot),
+}: DeleteUserInput & {
+  /** Who is deleting: a moderator, or the account itself (`id`) for a self-delete. */
+  actorId: number;
+  /** Server-only: stores the profile and links before they are deleted. */
+  archive?: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
+}) => {
   // Refused by name; the account scrub below also rejects a non-positive id, but only as a 500.
   if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   const user = await dbWrite.user.findFirst({
@@ -1414,6 +1422,13 @@ export const deleteUser = async ({
   // Here rather than in each caller, so every caller of `deleteUser` is held to it. The scrub below
   // checks again in the same statement as its write.
   const { markerView } = await assertAccountNotUnderLegalHold(user.id);
+  // Archived first for a user a report, hold or ban note names; a failed archive deletes nothing.
+  await archiveProfileBeforeModeratorChange({
+    userId: user.id,
+    actorId,
+    fields: [...PROFILE_CLEAR_FIELDS, 'links'],
+    archive,
+  });
   // Deal uploads go only when the rest of their content does, and only with retention on.
   const removeDealUploads =
     imageRemovalMode(removeImages) === 'immediate' &&
@@ -2057,7 +2072,25 @@ export const removeAllContent = async ({
   // Here rather than in each caller (tRPC, the webhook, the moderator app's purge), so every one is
   // held to it. The deletes that destroy evidence check again in their own statements.
   const { markerView } = await assertAccountNotUnderLegalHold(id);
-  const held = accountHoldSql(Prisma.sql`${id}::int`, markerView);
+  // A ban whose note names CSAM or NCMEC stops a content removal for Legal, unless released.
+  // primary: a ban placed a moment ago must stop this removal.
+  const [banNote] = await dbWrite.$queryRaw<{ banNoteHeld: boolean | null }[]>`
+    SELECT ${banNoteHoldSql(Prisma.sql`${id}::int`)} AS "banNoteHeld"
+  `;
+  if (banNote?.banNoteHeld !== false) {
+    logToAxiom({
+      type: 'info',
+      name: 'account-legal-hold',
+      message: 'Content removal refused',
+      userId: id,
+      payload: { legs: ['ban-note'] },
+    });
+    throw new LegalHoldError();
+  }
+  const held = Prisma.sql`(${accountHoldSql(
+    Prisma.sql`${id}::int`,
+    markerView
+  )} OR ${banNoteHoldSql(Prisma.sql`${id}::int`)})`;
 
   // The primary, as the deletes below: a row the replica has not seen yet is still deleted.
   const models = await dbWrite.model.findMany({

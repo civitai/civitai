@@ -94,6 +94,10 @@ type Fixture = {
   primaryCsamReports?: CsamReport[];
   /** Named as the secondary user on a report that holds. */
   heldAsSecondary?: boolean;
+  /** Banned with a CSAM/NCMEC note and not released. */
+  banNoteHeld?: boolean;
+  /** Named on a CSAM report not yet archived. */
+  openReport?: boolean;
   /** Comes under a hold in the window between the job's image read and its delete. */
   holdAfterRead?: boolean;
   /** One of the account's images carries the moderator-only review flag, as the replica sees it. */
@@ -183,13 +187,49 @@ function metaHolds(condition: string, meta: Record<string, string> | undefined) 
  * it, so a `CASE` that normalizes the wrong way reads as the wrong mode rather than as no
  * normalization at all.
  */
-function modeExpression(sql: string) {
-  const branches = /CASE\s+WHEN ([\s\S]+?)\s+THEN '(\w+)' ELSE '(\w+)'\s+END AS mode/.exec(sql);
-  if (!branches) throw new Error(`unrecognized mode expression: ${sql}`);
+function modeExpression(sql: string, values: unknown[]) {
+  const fragment = values.find(
+    (v) =>
+      typeof (v as { sql?: unknown })?.sql === 'string' &&
+      /AS mode/.test(`${(v as { sql: string }).sql} AS mode`) &&
+      (v as { sql: string }).sql.includes('imageRemoval')
+  ) as { sql: string } | undefined;
+  const text = fragment ? `${fragment.sql} AS mode` : sql;
+  const held =
+    /CASE\s+WHEN [\s\S]+? THEN 'grace'\s+WHEN ([\s\S]+?)\s+THEN '(\w+)'\s+ELSE '(\w+)'\s+END AS mode/.exec(
+      text
+    );
+  const plain = /CASE\s+WHEN ([\s\S]+?)\s+THEN '(\w+)' ELSE '(\w+)'\s+END AS mode/.exec(text);
+  const branches = held ?? plain;
+  if (!branches) throw new Error(`unrecognized mode expression: ${text}`);
 
   const [, condition, whenTrue, whenFalse] = branches;
-  return (fixture: Fixture) => (metaHolds(condition, fixture.meta) ? whenTrue : whenFalse);
+  return (fixture: Fixture) =>
+    held && heldOnReplica(fixture)
+      ? 'grace'
+      : metaHolds(condition, fixture.meta)
+      ? whenTrue
+      : whenFalse;
 }
+
+/** Any hold the worklist (a replica read) sees on the account. */
+const heldOnReplica = (fixture: Fixture) =>
+  !!fixture.heldAsSecondary ||
+  !!fixture.banNoteHeld ||
+  !!fixture.csamFlagged ||
+  (fixture.csamReports ?? []).some(reportHolds);
+
+/** Whether the worklist leaves the account out: the `NOT <open report>` fragment it embeds. */
+const skippedByWorklist = (values: unknown[], fixture: Fixture) =>
+  values.some(
+    (v) =>
+      typeof (v as { sql?: unknown })?.sql === 'string' &&
+      (v as { sql: string }).sql.includes('orr."archivedAt" IS NULL')
+  ) && openReportOf(fixture.csamReports, fixture.openReport);
+
+/** A report not yet archived names the account. */
+const openReportOf = (reports: CsamReport[] | undefined, open?: boolean) =>
+  !!open || (reports ?? []).some((r) => r.archivedAt == null);
 
 const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 /** A report holds while unsent, unarchived, or sent within the last year. */
@@ -424,17 +464,13 @@ function seed(next: Record<number, Fixture>) {
     const skipsBlockedForGraceOnly = sql.includes(`m.mode = 'immediate'`);
     const skipsGracePosts = /m\.mode = 'immediate'\s+AND EXISTS \(SELECT 1 FROM "Post"/.test(sql);
     const selectsMode = /SELECT u\.id, u\."deletedAt", m\.mode/.test(sql);
-    const modeOf = modeExpression(sql);
+    const modeOf = modeExpression(sql, values);
     const order = ascending ? [...newestFirst].reverse() : newestFirst;
 
     return Promise.resolve(
       order
         .filter((id) => bound === undefined || inRange(fixtures[id].deletedAt))
-        .filter(
-          (id) =>
-            !blockedByLegalHold(sql, values, fixtures[id].csamReports, fixtures[id].heldAsSecondary)
-        )
-        .filter((id) => !blockedByReviewFlag(sql, values, fixtures[id].csamFlagged))
+        .filter((id) => !skippedByWorklist(values, fixtures[id]))
         .filter((id) => {
           const fixture = fixtures[id];
           const immediate = modeOf(fixture) === 'immediate';
@@ -468,6 +504,19 @@ function seed(next: Record<number, Fixture>) {
       const fixture = fixtures[userId];
       const gated = sql.includes('u."deletedAt" IS NOT NULL');
 
+      // The per-account hold read that picks skip, block or the account's own choice.
+      if (sql.includes('AS skip')) {
+        const hold = values[0] as { values: unknown[] };
+        const account = fixtures[hold.values[0] as number];
+        const reported = (reportsOnPrimary(account) ?? []).some(reportHolds);
+        const accountHeld =
+          reported ||
+          !!account.heldAsSecondary ||
+          !!account.banNoteHeld ||
+          blockedByReviewFlag(sql, values, flaggedOnPrimary(account));
+        const skip = openReportOf(reportsOnPrimary(account), account.openReport);
+        return Promise.resolve([{ skip, accountHeld }]);
+      }
       if (sql.includes('"hasImages"')) {
         const state = { stillDeleted: !fixture.restored, hasImages: fixture.images.length > 0 };
         if (fixture.restoredAfterCheck) fixture.restored = true;
@@ -1509,7 +1558,7 @@ describe('removal choice re-read on the destructive path', () => {
 });
 
 describe('an image carrying the moderator-only review flag', () => {
-  it('keeps the account out of both worklists', async () => {
+  it('blocks the account in both worklists rather than deleting it', async () => {
     cursorStore[FRESH_KEY] = NEWER;
     seed({
       7: { deletedAt: RECENT, images: ids(10), posts: [900], csamFlagged: true },
@@ -1521,7 +1570,8 @@ describe('an image carrying the moderator-only review flag', () => {
     expect(mockDeleteImages).not.toHaveBeenCalled();
     expect(deletedPostIds).toEqual([]);
     expect(result.deletedImages).toBe(0);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ candidates: 0 }));
+    // Held: hidden and kept, never deleted, its posts left alone.
+    expect(result.blockedImages).toBe(20);
   });
 
   it('stops the image delete for a flag set after the worklist read', async () => {
@@ -1530,7 +1580,8 @@ describe('an image carrying the moderator-only review flag', () => {
     const result = await run();
 
     expect(mockDeleteImages).not.toHaveBeenCalled();
-    expect(pagedImageIds).toEqual([]);
+    // Held on the primary: hidden and kept instead of deleted.
+    expect(result.blockedImages).toBe(10);
     expect(result.deletedImages).toBe(0);
   });
 
@@ -1540,7 +1591,7 @@ describe('an image carrying the moderator-only review flag', () => {
     const result = await run();
 
     expect(deletedPostIds).toEqual([]);
-    expect(result.deletedUsers).toBe(0);
+    expect(mockDeleteImages).not.toHaveBeenCalled();
   });
 
   it('does not hold an account whose images carry no flag', async () => {
@@ -1672,9 +1723,9 @@ describe('legal holds', () => {
     // The worklist is read off a replica, so its exclusion cannot see a report filed inside the
     // run; carrying the same check onto the statement is what closes that window.
     expect(mockDeleteImages).not.toHaveBeenCalled();
-    expect(pagedImageIds).toEqual([]);
+    // An unarchived report on the primary: skipped this run, neither deleted nor blocked.
+    expect(result.blockedImages).toBe(0);
     expect(result.deletedImages).toBe(0);
-    expect(result.deletedUsers).toBe(0);
   });
 
   it('stops the post delete for a report filed after the worklist read', async () => {
@@ -1685,10 +1736,10 @@ describe('legal holds', () => {
     const result = await run();
 
     expect(deletedPostIds).toEqual([]);
-    expect(result.deletedUsers).toBe(0);
+    expect(mockDeleteImages).not.toHaveBeenCalled();
   });
 
-  it('still blocks a grace user whose report is filed after the worklist read', async () => {
+  it('leaves a grace user whose report is filed after the worklist read untouched', async () => {
     seed({
       7: {
         deletedAt: NEWER,
@@ -1700,9 +1751,10 @@ describe('legal holds', () => {
 
     const result = await run();
 
-    // Deliberately not gated the way the destructive path is: blocking never touches S3 and the
-    // archive re-fetches from the CDN, which still serves a blocked image, so the only thing a
-    // gate here would buy is a restorable account stalling until the report clears.
-    expect(result.blockedImages).toBe(10);
+    // An unarchived report skips the account whatever it chose: the NCMEC archive falls back to the
+    // edge copy for a passthrough url or a missing original, and a block makes the image server
+    // refuse that copy.
+    expect(result.blockedImages).toBe(0);
+    expect(mockDeleteImages).not.toHaveBeenCalled();
   });
 });

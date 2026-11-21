@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { banNoteHeldUserIdsSql } from '~/server/services/ban-note-csam';
 import { chunk } from 'lodash-es';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
@@ -830,10 +831,16 @@ export const removeBlockedImages = createJob(
     try {
       // dbWrite because a report created within replica lag would otherwise be invisible here
       // and its evidence purged in this same run.
-      const heldUsers = await dbWrite.$queryRaw<{ userId: string }[]>(legalHoldUserIdsSql);
+      const [heldUsers, banNoteHeldUsers] = await Promise.all([
+        dbWrite.$queryRaw<{ userId: string }[]>(legalHoldUserIdsSql),
+        // primary: as above, for a ban whose note names CSAM or NCMEC.
+        dbWrite.$queryRaw<{ userId: string }[]>(banNoteHeldUserIdsSql),
+      ]);
       const heldUserIds = [
         PLACEHOLDER_OWNER_ID,
-        ...heldUsers.map((u) => Number(u.userId)).filter(Number.isSafeInteger),
+        ...[...heldUsers, ...banNoteHeldUsers]
+          .map((u) => Number(u.userId))
+          .filter(Number.isSafeInteger),
       ];
 
       // Excluded from the batch rather than filtered out after: held rows stay queued forever, so

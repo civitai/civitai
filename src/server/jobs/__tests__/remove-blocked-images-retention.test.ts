@@ -76,6 +76,7 @@ const {
   mockLogToAxiom,
   mockEnv,
   heldUsers,
+  banNoteHeldUsers,
   holdLookup,
   appealedIds,
   csamFlaggedIds,
@@ -91,6 +92,8 @@ const {
   const queueWhereLog: any[] = [];
   // Mutable so a test can vary which users are held. Text, as the hold's SQL returns them.
   const heldUsers: { userId: string }[] = [];
+  // Banned users whose ban note names CSAM or NCMEC, unreleased.
+  const banNoteHeldUsers: { userId: string }[] = [];
   const holdLookup = { error: null as Error | null };
   const appealedIds: number[] = [];
   const csamFlaggedIds: number[] = [];
@@ -192,6 +195,7 @@ const {
     if (sql.includes('SELECT to_regclass(')) return [{ present: markerView.present }];
     // Routed before the report lookup below: the account hold reads "CsamReport" too.
     if (sql.includes('SELECT c."userId" FROM')) return accountHeldIds.map((id) => ({ id }));
+    if (sql.includes('"ModActivity" bnr')) return banNoteHeldUsers;
     if (sql.includes('FROM "CsamReport"')) {
       if (holdLookup.error) throw holdLookup.error;
       return heldUsers;
@@ -245,6 +249,7 @@ const {
     sqlLog,
     queueWhereLog,
     heldUsers,
+    banNoteHeldUsers,
     holdLookup,
     appealedIds,
     csamFlaggedIds,
@@ -403,6 +408,7 @@ beforeEach(() => {
   sqlLog.length = 0;
   queueWhereLog.length = 0;
   heldUsers.length = 0;
+  banNoteHeldUsers.length = 0;
   appealedIds.length = 0;
   csamFlaggedIds.length = 0;
   csamBlockedIds.length = 0;
@@ -483,6 +489,24 @@ describe('remove-blocked-images retention clock', () => {
     expect(result.csamHeld).toBe(3);
     // Held media stays queued so it resumes once the hold lifts — it must not be swept as stale.
     expect(queuePruneIds()).not.toContain(5);
+  });
+
+  it('holds media of a user banned with a CSAM/NCMEC note', async () => {
+    heldUsers.length = 0;
+    banNoteHeldUsers.push({ userId: String(HELD_USER) });
+
+    await runJob();
+
+    expect(deletedIds()).not.toContain(5);
+    expect(queuePruneIds()).not.toContain(5);
+  });
+
+  it('deletes that media once no hold covers the user (control for the above)', async () => {
+    heldUsers.length = 0;
+
+    await runJob();
+
+    expect(deletedIds()).toContain(5);
   });
 
   // Which users the hold covers is pinned against Postgres in the hold-guard behavior test, which runs

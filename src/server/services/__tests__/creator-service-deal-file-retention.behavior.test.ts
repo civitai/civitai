@@ -328,6 +328,11 @@ describe('holds', () => {
         `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "Harassment", "detailsInternal": "NCMEC report filed"}}' WHERE id = ${p}`,
     ],
     [
+      'an external ban note naming a child-safety report',
+      (p) =>
+        `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "Harassment", "detailsExternal": "csam"}}' WHERE id = ${p}`,
+    ],
+    [
       'an image held for review',
       (p) => `INSERT INTO "Image" ("userId", "needsReview") VALUES (${p}, 'csam')`,
     ],

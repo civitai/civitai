@@ -5,7 +5,7 @@ import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { ltree } from '@electric-sql/pglite/contrib/ltree';
 import { Prisma } from '@prisma/client';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -226,6 +226,7 @@ beforeAll(async () => {
       minor boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb DEFAULT '{}', "bannedAt" timestamp(3));
     ${[...SEEDED_TABLES, ...QA_DATA]
       .map((t) => `CREATE TABLE "${t}" (id serial PRIMARY KEY, "userId" int NOT NULL);`)
       .join('\n')}
@@ -641,6 +642,47 @@ describe('removeAllContent', () => {
     expect(await remaining(userId)).toEqual(before);
     expect(dbMock.dbWrite.imageReaction.deleteMany).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  describe('a ban whose note names CSAM or NCMEC', () => {
+    const banNote = (bannedAgo: string) =>
+      holder.db.query(
+        `INSERT INTO "User" (id, meta, "bannedAt") VALUES ($1, $2, now() - $3::interval)`,
+        [CLEAN, JSON.stringify({ banDetails: { detailsExternal: 'Reported to NCMEC' } }), bannedAgo]
+      );
+    const release = (ago: string) =>
+      holder.db.query(
+        `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
+         VALUES (9, 'releaseBanNoteHold', 'user', $1, now() - $2::interval)`,
+        [CLEAN, ago]
+      );
+    afterEach(() => holder.db.exec(`DELETE FROM "User"; DELETE FROM "ModActivity"`));
+
+    it('refuses the wipe, deleting nothing', async () => {
+      await banNote('1 day');
+      const refused = await removeAllContent({ id: CLEAN }).catch((e: unknown) => e);
+      expect(refused).toBeInstanceOf(LegalHoldError);
+      // Refused before it starts, not stopped partway by the deletes' own re-check.
+      expect(refused).not.toBeInstanceOf(LegalHoldStoppedError);
+      expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
+    });
+
+    it('wipes once a moderator released the hold during this ban', async () => {
+      await banNote('2 days');
+      await release('1 day');
+      await removeAllContent({ id: CLEAN });
+      expect(await remaining(CLEAN)).toEqual(all(0));
+    });
+
+    it('refuses again after a re-ban that postdates the release', async () => {
+      await banNote('1 day');
+      await release('2 days');
+      const refused = await removeAllContent({ id: CLEAN }).catch((e: unknown) => e);
+      expect(refused).toBeInstanceOf(LegalHoldError);
+      // Refused before it starts, not stopped partway by the deletes' own re-check.
+      expect(refused).not.toBeInstanceOf(LegalHoldStoppedError);
+      expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
+    });
   });
 
   it('refuses when the hold cannot be checked', async () => {
