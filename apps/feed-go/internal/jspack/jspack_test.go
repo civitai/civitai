@@ -168,3 +168,28 @@ func TestDecodeRefusesTruncatedAndOversized(t *testing.T) {
 		t.Fatal("trailing bytes decoded")
 	}
 }
+
+// O refuses an odd argument list, Get reports an absent member, and Order is the JS own-key order
+// (jskeys.Order) over an Obj.
+func TestOGetAndOrder(t *testing.T) {
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("O with an odd argument count did not panic")
+			}
+		}()
+		_ = O("a", 1, "b")
+	}()
+	o := O("b", 1, "2", 2, "1", 3)
+	if v, ok := o.Get("missing"); ok || v != nil {
+		t.Errorf("Get(missing) = %v, %v; want nil, false", v, ok)
+	}
+	got := Order(o)
+	keys := make([]string, len(got))
+	for i, kv := range got {
+		keys[i] = kv.K
+	}
+	if strings.Join(keys, ",") != "1,2,b" {
+		t.Errorf("Order keys = %v, want [1 2 b]", keys)
+	}
+}
