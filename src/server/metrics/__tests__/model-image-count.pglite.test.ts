@@ -188,7 +188,7 @@ describe('countNextHour under concurrency', () => {
     await setWatermark({ hour: W + HOUR_MS }); // the primary: hour W is already counted
     await image(W + 5 * 60_000);
     const read = dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>;
-    const real = read.getMockImplementation()!;
+    const real = read.getMockImplementation() as (...a: unknown[]) => Promise<unknown>;
     // A replica that has not yet seen the other run's advance.
     read.mockImplementation((...args: unknown[]) =>
       String((args[0] as { strings?: string[] }).strings ?? args[0]).includes('"KeyValue"')
@@ -203,7 +203,7 @@ describe('countNextHour under concurrency', () => {
     await setWatermark({ hour: W });
     await image(W + 5 * 60_000);
     const read = dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>;
-    const real = read.getMockImplementation()!;
+    const real = read.getMockImplementation() as (...a: unknown[]) => Promise<unknown>;
     read.mockImplementation((...args: unknown[]) =>
       String((args[0] as { strings?: string[] }).strings ?? args[0]).includes('pg_is_in_recovery')
         ? Promise.resolve([{ lag: 601 }])
@@ -307,7 +307,7 @@ describe('backfill', () => {
     for (let i = 0; i < 4; i++) await image(W - HOUR_MS);
     await startBackfill(W + 24 * HOUR_MS);
     const read = dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>;
-    const real = read.getMockImplementation()!;
+    const real = read.getMockImplementation() as (...a: unknown[]) => Promise<unknown>;
     let chunks = 0;
     read.mockImplementation((...args: unknown[]) =>
       // The first chunk (dataProcessor's [1, 3]) fails; dataProcessor logs it and carries on.

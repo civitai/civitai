@@ -635,7 +635,12 @@ describe('the advisory locks have exactly one call site', () => {
   // blocks/publish-request-holds takes one per app (0x41525648, hashtext of the slug) around hold
   // placement and each approve's hold check. Hold placement takes no other lock; an off-site approve
   // takes it after its own listing row lock, which no holder of it takes; lock_timeout is 5 s.
+  // metrics/model-image-count takes one platform-wide (one-arg hashtext('model-image-count')) as the
+  // first statement of every transaction that reads or writes its watermark or backfill progress:
+  // the hourly count, recount, pause and each backfill step. The only advisory lock in those
+  // transactions; it then takes ModelVersionMetric row locks in ascending id order.
   const ALLOWED = [
+    'metrics/model-image-count.ts',
     'services/access-token.service.ts',
     'services/app-hibernation/hibernation.repo.ts',
     'services/apps/storage-migration-run.service.ts',
