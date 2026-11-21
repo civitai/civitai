@@ -114,7 +114,8 @@ function Tracking({
             ? false
             : autoTrackPollDelay(Date.now() - run.startedAt) ?? false,
         refetchIntervalInBackground: true,
-        retry: 2,
+        // A run the server no longer knows will not come back; anything else is worth two retries.
+        retry: (count, error) => error.data?.code !== 'NOT_FOUND' && count < 2,
       }
     );
 
