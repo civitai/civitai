@@ -30,7 +30,7 @@ export default function CasePage({ publicRef, open }: Props) {
         {/* See stripLinkTokenScript: it must run before any other script, on every render of this page. */}
         <script
           // eslint-disable-next-line react/no-danger
-          dangerouslySetInnerHTML={{ __html: stripLinkTokenScript(publicRef) }}
+          dangerouslySetInnerHTML={{ __html: stripLinkTokenScript(publicRef, open) }}
         />
       </Head>
       <Container size="sm" py="xl">

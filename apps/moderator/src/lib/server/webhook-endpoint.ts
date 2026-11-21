@@ -20,8 +20,8 @@ import { env } from '$env/dynamic/private';
 // reached this way cannot attribute a write — which is what keeps `human_judgement` human-only.
 //
 // TWO CREDENTIALS ARE ACCEPTED INBOUND: MOD_INBOUND_TOKEN (general) and MOD_CASES_TOKEN (case actions
-// only, below). MOD_INBOUND_TOKEN is inbound-only — this app never presents it outbound — which is what lets a service that only calls IN hold something narrower than the
-// shared token it used to need.
+// only, below). MOD_INBOUND_TOKEN is inbound-only — this app never presents it outbound — which is
+// what lets a service that only calls IN hold something narrower than the shared token it used to need.
 //
 // 🔴 WEBHOOK_TOKEN IS NO LONGER ACCEPTED INBOUND, AND IS STILL REQUIRED. Those are two different
 // facts and collapsing them breaks this app. It was dropped from `acceptedTokens` once the runtime

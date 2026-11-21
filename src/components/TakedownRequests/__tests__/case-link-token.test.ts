@@ -39,14 +39,14 @@ describe('takeCaseLinkToken', () => {
 });
 
 describe('stripLinkTokenScript', () => {
-  const run = (publicRef: string | null, hash: string) => {
+  const run = (publicRef: string | null, hash: string, open = true) => {
     const storage = memoryStorage();
     const location = { hash, pathname: '/requests/case/whatever' };
     const replaced: string[] = [];
     const history = {
       replaceState: (_s: unknown, _t: string, url: string) => void replaced.push(url),
     };
-    new Function('location', 'history', 'sessionStorage', stripLinkTokenScript(publicRef))(
+    new Function('location', 'history', 'sessionStorage', stripLinkTokenScript(publicRef, open))(
       location,
       history,
       storage
@@ -62,6 +62,12 @@ describe('stripLinkTokenScript', () => {
 
   it('still takes it out of the address when the page cannot show the case, keeping nothing', () => {
     const { storage, replaced } = run(null, '#t=tok');
+    expect(replaced).toEqual(['/requests/case/whatever']);
+    expect(storage.length).toBe(0);
+  });
+
+  it('drops the token, storing nothing, when the forms are off and the case view will not mount', () => {
+    const { storage, replaced } = run('TD-26-ABC123', '#t=tok', false);
     expect(replaced).toEqual(['/requests/case/whatever']);
     expect(storage.length).toBe(0);
   });
