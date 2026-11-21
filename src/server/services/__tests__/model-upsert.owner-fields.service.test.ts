@@ -1929,15 +1929,6 @@ describe('a .com face going away', () => {
         ? [{ name: 'Test Model', userId: OWNER_ID, at: 'x', level: 16 }]
         : original?.(strings, ...values)) as never);
   };
-  const heldDrop = () =>
-    mockDbWrite.$executeRaw.mock.calls.find(
-      ([strings]) =>
-        Array.isArray(strings) &&
-        (strings as readonly string[])
-          .join('?')
-          .includes("SET meta = m.meta - 'comFaceHeldVerdict'")
-    );
-
   it('tells the owner, after the save, when the held verdict rates the model', async () => {
     heldRow();
     mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
@@ -1954,14 +1945,15 @@ describe('a .com face going away', () => {
     ]);
   });
 
-  it('leaves the verdict to the rescan when the same save also edits the listing text', async () => {
+  // The rescan is fire-and-forget: a submit that fails only logs. The save must not rely on it.
+  it('rates it in the save when the same save also edits the listing text, even if the rescan never runs', async () => {
     heldRow();
+    mockRescanTextAfterFaceLoss.mockImplementation(async () => undefined);
     mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
     await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '', name: 'A Different Name' });
-    expect(heldFlip()).toBeUndefined();
-    expect(heldDrop()).toBeDefined();
-    expect(mockNotifyHeld).not.toHaveBeenCalled();
-    expect(mockRescanTextAfterFaceLoss).toHaveBeenCalledWith(MODEL_ID);
+    expect(heldFlip()).toBeDefined();
+    expect(mockFinishApply).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockNotifyHeld).toHaveBeenCalledWith([expect.objectContaining({ entityId: MODEL_ID })]);
   });
 
   it('does not try it when the face stays (control)', async () => {

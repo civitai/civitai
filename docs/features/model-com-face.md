@@ -97,8 +97,9 @@ prompt version that checked it; a new prompt version re-checks the face). The ve
 the model (`meta.comFaceHeldVerdict`) and applied in the same transaction as any write that takes
 the face away: the model is marked mature and the owner gets the rating notice; an already-mature
 model gets the text scan's marker; where the rating is held (minor, POI, Private, SFW-only lock), it
-waits as a moderator's lead. A save that edits the .red title or description in the same
-write drops the held verdict instead, and the rescan that follows a lost face reads the new text.
+waits as a moderator's lead. This holds even when the same save edits the .red title or
+description: the rescan that follows a lost face reads the new text, and if it is no longer mature
+it releases the marker, so the owner can change the rating.
 
 ### Dispute
 

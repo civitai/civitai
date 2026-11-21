@@ -259,7 +259,12 @@ async function dropScanRatingMarker(db: RawDb, modelId: number) {
 
 /** Stamps the origin marker on a model the scan rated mature but left as it was; an earlier
  *  marker keeps its time. Not on a locked rating, which is a moderator's. */
-async function markScanRating(db: RawDb, modelId: number, source: string) {
+async function markScanRating(
+  db: RawDb,
+  modelId: number,
+  source: string,
+  guard: Prisma.Sql = Prisma.empty
+) {
   await db.$executeRaw`
     UPDATE "Model" m
     SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
@@ -268,6 +273,7 @@ async function markScanRating(db: RawDb, modelId: number, source: string) {
     WHERE m.id = ${modelId}
       AND NOT (${asJsonbObjectSql('m.meta')} ? 'systemNsfwLock')
       AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
+      ${guard}
   `;
 }
 
@@ -366,19 +372,13 @@ export async function applyComFaceHeldVerdict(
     // Already mature and unrestricted: nothing to flip, but the verdict still stands as the scan's
     // origin marker, so the owner cannot untick the rating alone (`assertScanRatingKept`), as for
     // a scan that read an already-mature model with no face (`markScanRating`).
-    await db.$executeRaw`
-      UPDATE "Model" m
-      SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
-        'systemNsfwLock', jsonb_build_object('source', 'text-scan'::text, 'at', now())
-      )
-      WHERE m.id = ${modelId}
-        AND m.nsfw
-        AND ${asJsonbObjectSql('m.meta')} ? 'comFaceHeldVerdict'
-        AND ${noComFaceSql}
-        AND NOT (${asJsonbObjectSql('m.meta')} ? 'systemNsfwLock')
-        AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
-        AND NOT ${holdsRatingSql}
-    `;
+    await markScanRating(
+      db,
+      modelId,
+      'text-scan',
+      Prisma.sql`AND m.nsfw AND ${asJsonbObjectSql('m.meta')} ? 'comFaceHeldVerdict'
+        AND ${noComFaceSql} AND NOT ${holdsRatingSql}`
+    );
     // Where the rating may not be overridden, the verdict waits as a moderator's lead instead: only
     // a verdict the scan held, for a face that is gone.
     await holdRestrictedVerdict(db, modelId, 'text-scan', {
@@ -439,8 +439,7 @@ async function holdComFaceVerdict(db: RawDb, modelId: number, level: number) {
   return held > 0;
 }
 
-/** Spends a held verdict without applying it: the text it was read from is no longer the model's. */
-export async function dropComFaceHeldVerdict(db: RawDb, modelId: number) {
+async function dropComFaceHeldVerdict(db: RawDb, modelId: number) {
   await db.$executeRaw`
     UPDATE "Model" m
     SET meta = m.meta - 'comFaceHeldVerdict'

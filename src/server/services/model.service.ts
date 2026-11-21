@@ -4559,9 +4559,6 @@ export const upsertModel = async (
 
     let heldVerdictApplied = false;
     let faceLossNotice: NotifyTextScanRatingRaisedArgs | null = null;
-    const listingChanged =
-      (data.name !== undefined && data.name !== beforeUpdate.name) ||
-      (data.description !== undefined && data.description !== beforeUpdate.description);
     const result = await dbWrite.$transaction(
       async (tx) => {
         // Merged over the row as it is now: a wipe, a moderator or a scan may have written its meta
@@ -4853,11 +4850,9 @@ export const upsertModel = async (
           data.availability !== Availability.Private
         )
           heldVerdictApplied = await heldVerdict.applyHeldVerdictLeavingPrivate(tx, updated.id);
-        // The held verdict was read from the listing text before this save: one that also edits
-        // that text drops it, and the rescan after the face loss reads the new text instead.
-        if (losesSfwFace(beforeUpdate, data) && listingChanged)
-          await heldVerdict.dropComFaceHeldVerdict(tx, updated.id);
-        else if (losesSfwFace(beforeUpdate, data)) {
+        // Applied even when this save also edits the listing text, so a failed rescan never leaves
+        // the model unrated: the rescan of the new text releases the marker if it is not mature.
+        if (losesSfwFace(beforeUpdate, data)) {
           faceLossNotice = await heldVerdict.applyComFaceHeldVerdict(tx, updated.id);
           if (faceLossNotice) heldVerdictApplied = true;
         }
@@ -4868,6 +4863,9 @@ export const upsertModel = async (
     );
     // First after commit, so a later post-save step that throws cannot drop it. Re-checked even when
     // the gate ran: it read the description before blurb expansion, not the text stored.
+    const listingChanged =
+      (data.name !== undefined && data.name !== beforeUpdate.name) ||
+      (data.description !== undefined && data.description !== beforeUpdate.description);
     const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
     if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
       await queueComFaceRecheck(id);

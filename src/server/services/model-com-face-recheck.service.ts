@@ -193,12 +193,7 @@ async function removeComFace(
     return updated > 0;
   });
   if (removed) await finishRemoval(modelId);
-  if (notice) {
-    const { notifyComFaceHeldVerdictApplied } = await import(
-      '~/server/services/text-scan/actions/model-nsfw'
-    );
-    await notifyComFaceHeldVerdictApplied([notice]);
-  }
+  if (notice) await faceLossNotice.send([notice]);
   return removed;
 }
 
@@ -241,6 +236,17 @@ async function finishRemoval(modelId: number) {
   await bustPublicModelResponseCache(modelId);
   await rescanTextAfterFaceLoss(modelId);
 }
+
+/** The owner's rating notice for a held verdict the removal applied, sent after commit. Swapped by
+ *  tests; imported lazily, as the action reaches services that import this module. */
+export const faceLossNotice = {
+  send: async (notices: NotifyTextScanRatingRaisedArgs[]) => {
+    const { notifyComFaceHeldVerdictApplied } = await import(
+      '~/server/services/text-scan/actions/model-nsfw'
+    );
+    await notifyComFaceHeldVerdictApplied(notices);
+  },
+};
 
 /** Swapped by tests. Imported lazily: the scan reaches services that import this module. */
 export const faceLossRescan = {

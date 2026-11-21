@@ -770,7 +770,7 @@ describe('applyComFaceHeldVerdict', () => {
     });
   });
 
-  it('sends each notice once and never throws', async () => {
+  it('sends one notification per notice given, skips none-applied, and never throws', async () => {
     await insert({});
     const notice = await applyComFaceHeldVerdict(db as never, 1);
     vi.mocked(createNotification).mockRejectedValueOnce(new Error('down'));
@@ -784,6 +784,29 @@ describe('applyComFaceHeldVerdict', () => {
         details: expect.objectContaining({ entityId: 1, level: NsfwLevel.X }),
       })
     );
+  });
+
+  // A save that removed the face may also have edited the text: its rescan releases the marker.
+  it('lets a PG-13 rescan of the new text release the marker the face loss stamped', async () => {
+    await insert({});
+    await applyComFaceHeldVerdict(db as never, 1);
+    dbMock.dbWrite.$executeRaw.mockImplementation(db.$executeRaw as never);
+    await applyModelNsfwTextScan({
+      ...args(false),
+      outcome: {
+        nsfw: {
+          detectedLevel: NsfwLevel.PG13,
+          declaredLevel: NsfwLevel.PG13,
+          raised: false,
+          reason: 'r',
+        },
+        triggeredLabels: [],
+        nsfwLevel: NsfwLevel.PG13,
+      },
+    });
+    const row = await read();
+    expect(row.nsfw).toBe(true);
+    expect(row.meta).not.toHaveProperty('systemNsfwLock');
   });
 
   it('records no lead under a moderator lock: that is already a ruling', async () => {
