@@ -1,8 +1,9 @@
 /**
  * Step input fields that take media or a url, from the `@civitai/orchestration-client` input
  * types, lower-cased. Read by the pass-through prompt audit (a reference under one of these is not
- * prompt text) and the step position rule (`app-step-positions.ts`: only these take references,
- * URLs and orchestrator files).
+ * prompt text) and the step position rule (`app-step-positions.ts`, which adds its own keys).
+ * A key here is media for every step type: before adding one, check no step input uses the same
+ * name for a field that is not media (`url` is chat's `image_url.url` today).
  */
 export const STEP_MEDIA_INPUT_KEYS: ReadonlySet<string> = new Set([
   'additionalvideos',

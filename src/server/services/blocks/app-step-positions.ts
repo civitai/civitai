@@ -2,6 +2,7 @@ import { Air } from '@civitai/orchestration-client';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { STEP_MEDIA_INPUT_KEYS } from '~/server/services/blocks/step-media-keys';
+import { WORKFLOW_ARGUMENTS_REF } from '~/server/services/blocks/workflow-graph';
 import { isWorkflowOwnedBy } from '~/server/services/orchestrator/assert-workflow-owner';
 
 // What an app-built step may put where. Only media positions (the shared media input keys, and
@@ -44,8 +45,6 @@ function hostOf(url: string): string | undefined {
   }
 }
 
-const ARGUMENTS_REF = '$arguments';
-
 /**
  * The value a `{ $ref: '$arguments', path }` reference places, read from `workflowArguments`. Not
  * found for any other reference, one with a `format`, or a path that does not resolve: the
@@ -57,7 +56,7 @@ function argumentValue(
 ): { found: true; value: unknown } | { found: false } {
   const keys = Object.keys(reference);
   if (keys.some((k) => k !== '$ref' && k !== 'path')) return { found: false };
-  if (reference.$ref !== ARGUMENTS_REF || typeof reference.path !== 'string')
+  if (reference.$ref !== WORKFLOW_ARGUMENTS_REF || typeof reference.path !== 'string')
     return { found: false };
   let current: unknown = workflowArguments;
   // The orchestrator splits a path on dots; a segment with no matching key (an index) is not found.
@@ -181,7 +180,7 @@ export function findStepPositionProblem(
 
   type Where = {
     key: string | undefined;
-    /** Below a free-text key only references count. */
+    /** Below a free-text key a URL is text; references and orchestrator files still count. */
     text: boolean;
     /** The value is a repeat step's `input`, whose `for` clause names the array it iterates. */
     repeatInput: boolean;
@@ -293,8 +292,8 @@ export async function getStepPositionsMode(): Promise<StepPositionsMode> {
 }
 
 /**
- * The refusal for the first step whose input breaks the position rule, or null. Each finding is
- * logged with the app, step type and key, never the value.
+ * The refusal for the first step whose input breaks the position rule, or null. That finding is
+ * logged with the app, step type and key, never the value, unless the mode is off.
  */
 export async function stepPositionsRefusal(opts: {
   appBlockId: string;

@@ -7488,6 +7488,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       };
       await expect(caller().submitWorkflow({ blockToken: 'tok', body })).rejects.toMatchObject({
         code: 'BAD_REQUEST',
+        message: expect.stringContaining("cannot take this value at 'width'"),
       });
       expect(mockReserveAppSpend).not.toHaveBeenCalled();
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();

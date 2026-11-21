@@ -296,14 +296,15 @@ describe('media keys', () => {
 });
 
 describe('free text', () => {
-  // A long run of punctuation before a letter is the worst case for a backtracking trim.
+  // A long run of punctuation before a letter is the worst case for a backtracking trim. The
+  // bound is loose for a loaded runner; the regex this replaced took 395 ms and 5.7 s here.
   it.each([
     ['dots then a letter', `orchestrator:${'.'.repeat(20_000)}x`],
     ['one long token', `orchestrator:${'a'.repeat(100_000)}`],
   ])('scans %s in linear time and refuses it unread', (_n, token) => {
     const started = performance.now();
     const problem = findStepPositionProblem({ messages: [{ content: token }] }, VIEWER);
-    expect(performance.now() - started).toBeLessThan(50);
+    expect(performance.now() - started).toBeLessThan(200);
     expect(problem).toMatchObject({ form: 'orchestrator-file' });
   });
 
@@ -312,7 +313,7 @@ describe('free text', () => {
     expect(
       findStepPositionProblem({ messages: [{ content: `${'.'.repeat(80_000)}x` }] }, VIEWER)
     ).toBeNull();
-    expect(performance.now() - started).toBeLessThan(50);
+    expect(performance.now() - started).toBeLessThan(200);
   });
 });
 
