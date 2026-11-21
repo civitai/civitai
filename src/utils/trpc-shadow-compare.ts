@@ -13,7 +13,8 @@ let clientShadowCompareEnabled = false;
 let comparesStarted = 0;
 
 /**
- * Procedures that may be shadowed. Each must also be in `NEVER_BATCH_PROCEDURES` (`~/utils/trpc`):
+ * Procedures that may be shadowed: a deliberate opt-in subset of `GO_TRANSPORT_PROCEDURES`, not a
+ * copy of it, because each must also be in `NEVER_BATCH_PROCEDURES` (`~/utils/trpc`):
  * the control leg is sent as its own unbatched GET, which is only what the app would have sent
  * anyway for a never-batched procedure. trpc-shadow-compare.test.ts pins both.
  */
