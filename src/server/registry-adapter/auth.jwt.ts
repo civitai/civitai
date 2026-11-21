@@ -31,9 +31,8 @@
  * private feed holds every poll to. A token that carries any of the four but not all four,
  * well-formed, is refused (fail closed): a block-exchange token without its binding would read as a
  * user's token, unnarrowed. A token that carries none is a user-exchange token, exactly as before.
- * (A block-exchange token minted before the hub wrote these claims carries none, so it reads as a
- * user's token until it expires, 15 minutes at most; the hub minted such a token only for a ceiling
- * that admits every rating and the client's one approved block.)
+ * The marker is explicit although the other three would identify the token: what a token is is never
+ * inferred from which optional claims happen to be present.
  */
 import {
   BLOCK_EXCHANGE_TOKEN_KIND,

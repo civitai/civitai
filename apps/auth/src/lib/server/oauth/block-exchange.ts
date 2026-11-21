@@ -12,7 +12,7 @@ import { findExchangeResource } from './exchange-resources';
 import { basicCredentials } from './http';
 import {
   chargeTokenExchangeFailure,
-  checkBlockExchangeRateLimit,
+  checkTokenExchangeRateLimit,
   oauthRetryAfter,
   rateLimitedResponse,
 } from './rate-limit';
@@ -42,8 +42,13 @@ import { raceTimeout } from './timeout';
 // block token itself, on every poll: mature ratings within the token's ceiling, only while the token's block
 // is its client's one approved block, and nothing once the install is revoked. The hub still refuses a token
 // whose block is not the one approved block when it is exchanged (defence in depth; the feed is
-// authoritative per poll), but no longer refuses a ceiling: any ceiling is carried. Refusals are
-// `oauth-audit` events, except the two rate-limit 429s, which are not audited.
+// authoritative per poll). The ceiling is per resource: a resource that declares `narrowsBlockClaims`
+// (exchange-resources.ts) is sent a token of any ceiling; any other resource only one whose ceiling admits
+// every mature rating, so a resource that ignores the claims (an adapter older than them, or any other
+// AppDataRead resource) can never read more than the token would. The explicit `civitai_token_kind` marker
+// is kept although the other three claims alone would identify the token: a reader then never infers what
+// a token is from which optional claims happen to be present. Refusals are `oauth-audit` events, except the
+// two rate-limit 429s, which are not audited.
 
 type ExchangeError =
   | 'invalid_request'
@@ -80,6 +85,13 @@ const DESCRIPTION: Record<ExchangeError, string> = {
 };
 
 const NO_STORE = { 'Cache-Control': 'no-store', Pragma: 'no-cache' };
+
+/**
+ * R, X and XXX: the site's mature browsing-level bits (`NsfwLevel` in `src/server/common/enums.ts`, pinned by
+ * `block-exchange.test.ts`). A resource that does not declare `narrowsBlockClaims` is sent only a token whose
+ * ceiling holds all three.
+ */
+export const MATURE_BROWSING_LEVELS = 4 | 8 | 16;
 
 /** The one scope a minted token holds. */
 export const BLOCK_EXCHANGE_SCOPE = TokenScope.AppDataRead;
@@ -282,11 +294,12 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     const caller = await authenticatedConfidentialClient(request, body);
     if (!caller) return refuseUnauthenticated('invalid_client', 'client authentication failed');
     ctx.caller = caller.id;
-    // Unaudited 429 (see above), before any refusal a caller could repeat. Its own bucket, apart from the
-    // caller's user exchanges (`rate-limit.ts`): a flood of made-up block tokens never spends theirs.
-    if (!(await checkBlockExchangeRateLimit(caller.id, caller.tokenRateLimit))) {
+    // Unaudited 429 (see above), before any refusal a caller could repeat. The caller's one exchange budget,
+    // shared with its user exchanges (so a staff-set limit is the caller's whole limit); a relay checks a block
+    // token's signature itself before sending it (app-data-go), so made-up tokens do not reach it.
+    if (!(await checkTokenExchangeRateLimit(caller.id, caller.tokenRateLimit))) {
       return rateLimitedResponse(
-        oauthRetryAfter('block-exchange'),
+        oauthRetryAfter('token-exchange'),
         new Headers(NO_STORE),
         DESCRIPTION.rate_limited
       );
@@ -356,14 +369,23 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       return refuse('unauthorized_client', "block is not the app's one approved block");
     }
     // The site reads a block token's data within the token's own maturity ceiling (set from the host it was
-    // minted on). Any ceiling is carried into the minted token (`civitai_max_browsing_level`), and the
-    // registry's private feed holds every stream to it as the document store does. A token with no usable
-    // ceiling (absent, or not a non-negative integer: `verifyBlockTokenForExchange`) has nothing to carry,
-    // so it is refused rather than given one.
+    // minted on). The ceiling is carried into the minted token (`civitai_max_browsing_level`). A token with
+    // no usable ceiling (absent, or not a non-negative integer: `verifyBlockTokenForExchange`) has nothing
+    // to carry, so it is refused rather than given one.
     if (block.maxBrowsingLevel === null) {
       return refuse('invalid_grant', 'block token has no ceiling');
     }
     const ceiling = block.maxBrowsingLevel;
+    // Only a resource that declares it narrows by the claims is sent a ceiling short of every mature rating.
+    // Any other resource reads by the viewer's own settings, as a mature-capable surface, so it is sent a
+    // token only when the ceiling admits every rating: it can then never admit one the token's own reads
+    // would not. Undeclared is this strict rule.
+    if (
+      !resource.narrowsBlockClaims &&
+      (ceiling & MATURE_BROWSING_LEVELS) !== MATURE_BROWSING_LEVELS
+    ) {
+      return refuse('invalid_grant', 'block token ceiling is not every rating');
+    }
     // The feed checks the install's revocation markers by it, and refuses a token without one.
     if (!block.blockInstanceId) return refuse('invalid_grant', 'block token has no install');
 

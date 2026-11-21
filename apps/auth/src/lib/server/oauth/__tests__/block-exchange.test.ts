@@ -216,7 +216,7 @@ import { POST as introspectPOST } from '../../../../routes/api/auth/oauth/intros
 import { GET as jwksGET } from '../../../../routes/.well-known/jwks.json/+server';
 import { WorkerTokenExchangeGrant } from '../worker-grant';
 import { invalidateRoleCache } from '../access';
-import { parseBlockExchangeCallers } from '../block-exchange';
+import { MATURE_BROWSING_LEVELS, parseBlockExchangeCallers } from '../block-exchange';
 import { getSigner } from '../user-exchange';
 import { createLuaRedis } from '../../../../test/lua-sys-redis';
 import {
@@ -471,19 +471,15 @@ describe('block token exchange — the caller', () => {
     expect(refusals()).toHaveLength(3);
   });
 
-  // WIRING-LEVEL, like the tests above: the limiter is a fake. What it proves is which bucket each exchange
-  // charges, so a flood of made-up block tokens cannot spend the relay's user-exchange budget.
-  it('charges its own bucket: a relay past its user-exchange limit still exchanges block tokens (wiring-level)', async () => {
+  // WIRING-LEVEL, like the tests above: the limiter is a fake. The block exchange spends the caller's one
+  // exchange budget, the user exchange's: a staff-set limit is the caller's whole limit, never doubled.
+  it("charges the caller's one exchange budget, the user exchange's (wiring-level)", async () => {
+    expect((await exchange(await blockToken())).status).toBe(200);
+    expect(h.rate.get('oauth:token-exchange:relay-app-data')).toBe(1);
+    expect([...h.rate.keys()].filter((k) => k.includes('block-exchange'))).toEqual([]);
     h.rate.set('oauth:token-exchange:relay-app-data', 600);
-    const res = await exchange(await blockToken());
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(h.rate.get('oauth:block-exchange:relay-app-data')).toBe(1);
-    expect(h.rate.get('oauth:token-exchange:relay-app-data')).toBe(600);
-    // And past its own bucket, a 429 with no audit event.
-    h.rate.set('oauth:block-exchange:relay-app-data', 600);
     const limited = await exchange(await blockToken());
     expect(limited.status).toBe(429);
-    expect(limited.body.error).toBe('rate_limited');
     expect(issued()).toHaveLength(1);
   });
 
@@ -1039,9 +1035,10 @@ describe('block token exchange — the app and the viewer', () => {
     expect((await exchange(await blockToken())).status).toBe(200);
   });
 
-  // G2 relaxed: the hub no longer refuses a ceiling short of every rating. It carries the ceiling into the
-  // minted token, and the registry's private feed holds the token's streams to it.
-  it('issues for an SFW-host token (ceiling PG | PG13) and carries its ceiling and install', async () => {
+  // The ceiling is per resource. A resource that declares `narrowsBlockClaims` is sent a token of any ceiling
+  // (it holds the token's streams to it); any other only one whose ceiling admits every mature rating.
+  it('a resource declaring narrowsBlockClaims: issues an SFW-host token (PG | PG13) and carries its ceiling', async () => {
+    process.env.OAUTH_EXCHANGE_RESOURCES = registry({ narrowsBlockClaims: true });
     const res = await exchange(
       await blockToken({ maxBrowsingLevel: 3, blockInstanceId: 'inst-sfw-5e21' })
     );
@@ -1053,13 +1050,46 @@ describe('block token exchange — the app and the viewer', () => {
       civitai_block_instance_id: 'inst-sfw-5e21',
       civitai_max_browsing_level: 3,
     });
-    // Without XXX, and with no level at all, issue too, each carrying its own ceiling.
-    for (const level of [15, 0]) {
+    // Without XXX, with no level at all, and with every level: each issues, carrying its own ceiling.
+    for (const level of [15, 0, 31]) {
       const r = await exchange(await blockToken({ maxBrowsingLevel: level }));
       expect(r.status, String(level)).toBe(200);
       const { payload: p } = await verifyLikeTheAdapter(String(r.body.access_token));
       expect(p.civitai_max_browsing_level, String(level)).toBe(level);
     }
+  });
+
+  it('🔴 a resource NOT declaring it (the default): refuses a ceiling short of every rating, issues one with all', async () => {
+    for (const [maxBrowsingLevel, label] of [
+      [3, 'PG | PG13'],
+      [15, 'without XXX'],
+      [0, 'no level'],
+    ] as const) {
+      const res = await exchange(await blockToken({ maxBrowsingLevel }));
+      expect(res.status, label).toBe(400);
+      expect(res.body.error, label).toBe('invalid_grant');
+      expect(lastReason(), label).toBe('block token ceiling is not every rating');
+    }
+    expect(issued()).toEqual([]);
+    // Every rating issues, still carrying the claims; Blocked (32) on top does not matter.
+    for (const level of [31, 63]) {
+      const res = await exchange(await blockToken({ maxBrowsingLevel: level }));
+      expect(res.status, String(level)).toBe(200);
+      const { payload } = await verifyLikeTheAdapter(String(res.body.access_token));
+      expect(payload.civitai_max_browsing_level).toBe(level);
+    }
+    // Declared false is the same as undeclared.
+    process.env.OAUTH_EXCHANGE_RESOURCES = registry({ narrowsBlockClaims: false });
+    expect((await exchange(await blockToken({ maxBrowsingLevel: 3 }))).status).toBe(400);
+    expect(lastReason()).toBe('block token ceiling is not every rating');
+  });
+
+  it('a malformed narrowsBlockClaims registers no resource: the exchange refuses as an unknown target', async () => {
+    process.env.OAUTH_EXCHANGE_RESOURCES = registry({ narrowsBlockClaims: 'true' });
+    const res = await exchange(await blockToken());
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_target');
+    expect(lastReason()).toBe('resource not registered');
   });
 
   it('refuses a token with no usable ceiling (absent, or not a non-negative integer): nothing to carry', async () => {
@@ -1143,6 +1173,12 @@ describe('block token verification follows the site', () => {
     import.meta.url
   );
 
+  const SITE_ENUMS = new URL('../../../../../../../src/server/common/enums.ts', import.meta.url);
+  const BROWSING_LEVEL_CONSTANTS = new URL(
+    '../../../../../../../src/shared/constants/browsingLevel.constants.ts',
+    import.meta.url
+  );
+
   it('uses the site issuer, audience and signed-in subject pattern', () => {
     const service = read(BLOCK_TOKEN_SERVICE);
     expect(service).toContain("export const BLOCK_TOKEN_ISSUER = 'civitai';");
@@ -1164,6 +1200,22 @@ describe('block token verification follows the site', () => {
     expect(BLOCK_TOKEN_ISSUER).toBe('civitai');
     expect(BLOCK_TOKEN_AUDIENCE).toBe('civitai-app-block');
     expect(BLOCK_USER_SUB_RE.source).toBe('^user:[1-9][0-9]{0,11}$');
+  });
+
+  it("uses the site's mature browsing-level bits, and the site's red-host ceiling admits them", () => {
+    expect(MATURE_BROWSING_LEVELS).toBe(28);
+    const enums = read(SITE_ENUMS);
+    expect(enums).toContain(
+      'export enum NsfwLevel {\n  PG = 1,\n  PG13 = 2,\n  R = 4,\n  X = 8,\n  XXX = 16,'
+    );
+    const levels = read(BROWSING_LEVEL_CONSTANTS);
+    expect(levels).toContain(
+      'export const browsingLevels = [\n  NsfwLevel.PG,\n  NsfwLevel.PG13,\n  NsfwLevel.R,\n  NsfwLevel.X,\n  NsfwLevel.XXX,\n] as const;'
+    );
+    expect(levels).toContain(
+      'export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);'
+    );
+    expect(levels).toContain("    case 'red':\n      return allBrowsingLevelsFlag;");
   });
 
   // The hub's one-approved-block rule (block-exchange.ts) is the registry feed's own resolution of an app from

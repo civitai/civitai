@@ -146,8 +146,25 @@ block token never reaches the user exchange, the block exchange on or off.
 **On,** a token is routed by its shape (`exchange.KindOf`), never decoded or trusted here: the hub's
 prefix is a hub token; three non-empty base64url segments is a block token, sent to the block
 exchange (`subject_token_type=urn:civitai:token-type:block-token`, scope `AppDataRead`, the same relay
-client and resource as the user exchange); anything else reads REST. The hub alone decides whether a
-token is a block token it honours.
+client and resource as the user exchange); anything else reads REST.
+
+**Verified here first.** Before a block token is sent to the hub, `exchange.BlockVerifier` checks it
+as the hub's `verifyBlockTokenForExchange` does (`apps/auth/src/lib/server/oauth/block-token-verify.ts`,
+itself the site's check): the RS256 signature against the site's published key for its `kid`,
+`typ: JWT`, issuer, audience, expiry and not-before with 30 s of tolerance, the claim shapes, a
+signed-in subject, no dev / review / private-run marker, and the 15-minute age cap. A token that fails
+is refused here (refusal code `local`, remembered like a hub refusal) and never sent; its read goes to
+REST. The hub still verifies every token it is sent.
+
+- **Keys** are the site's block-token JWKS (`APP_DATA_BLOCK_JWKS_URL`, the site's
+  `/api/v1/block-tokens/jwks`, unauthenticated; current and next key, so a rotation is two keys). A
+  key is used only when its published `kid` is the site's derivation from its modulus. The set is
+  fetched on first use, refreshed after 5 minutes, and fetched again when a token names an unknown
+  `kid` (a rotation), at most once per 30 s; an unknown `kid` after a fresh fetch is refused, and one
+  inside the 30 s is not checkable yet.
+- **Fail closed.** With no usable key set (never fetched, or the last good fetch over an hour old),
+  a block token is not checkable: it is not sent to the hub, not remembered, and its read goes to REST
+  (`app_data_block_exchanges_total{outcome="unverifiable"}`).
 
 **Once per block token.** The hub claims each block token's `jti` and refuses a second exchange of it
 as a replay, so `exchange.BlockCache` sits in front of the block exchange:
@@ -158,15 +175,9 @@ as a replay, so `exchange.BlockCache` sits in front of the block exchange:
   is not asked again for a remembered one. Any token of a block token's shape reaches the hub, so a
   flood of made-up tokens produces refusals: kept apart, they can never fill the issued tokens' room
   or lock a real block token out of this cache, and past the cap a refusal is simply not remembered
-  (the hub is asked again and refuses again). They are not free, though: each distinct made-up token
-  is still sent to the hub and spends this service's block-exchange budget there. That budget is
-  its own (`block-exchange` in the hub's `rate-limit.ts`, per client, 600 a minute or the client's
-  staff-set limit), apart from the user exchange's, so a flood of made-up block tokens can push
-  other block tokens' reads to REST until it refills, but never a hub token's. That is availability
-  only. A local pre-check here (decoding the header and `exp` before sending) was the alternative,
-  and was not built: without the site's key this service can only check claims whoever made the
-  token chose, so a deliberate flood passes it; it would only save the hub a call for an accidental
-  one.
+  (the hub is asked again and refuses again). A made-up token is refused here ("Verified here
+  first"), so it never reaches the hub or spends this service's one exchange budget there, which its
+  user exchanges share.
 - **Failed** (the hub unreachable, a `5xx`, a `429`, a timeout): forgotten, so a later read may try
   again after the stream cooldown. The hub issued nothing, and gives back a claim it made (including
   one whose replay-store write timed out). If this service timed out after the hub did issue, the
@@ -193,9 +204,10 @@ user (ban, delete) still applies. Nothing else outlives the exchanged token, at 
 reasons (`block_spent`, `block_cache_full`), not the registry's `error`; both still cool the key
 down for 30 s. Each block exchange is counted in
 `app_data_block_exchanges_total{outcome,error}` (`issued`, `reused`, `refused`, `remembered`,
-`failed`, `spent`, `full`; `error` is the hub's OAuth code for `refused` and `remembered`, else
-`none`), and every outcome but `issued` and `reused` is logged with that code. Neither carries a
-token, user or app.
+`failed`, `spent`, `full`, `unverifiable`; `error` is the hub's OAuth code for `refused` and
+`remembered`, or `local` for a token refused here, else `none`). Every outcome but `issued`, `reused`,
+`unverifiable` and a `local` refusal is logged with that code (those are counted only, so a flood or a
+JWKS outage is not a flood of log lines). Neither carries a token, user or app.
 
 **No wider than REST.** The site's document store reads a block token's own block, holds mature
 ratings to the token's ceiling, and refuses at once a token whose install was uninstalled, turned
@@ -217,14 +229,23 @@ block-exchange token's streams to the same three things on every poll
 A refusal is a stream that holds nothing: the next poll (default 60 s) sends a `Delete` for every
 record it held, and the cache drops them. The hub still refuses, when it exchanges, a block token
 whose block is not its client's one approved block (defence in depth; the feed is authoritative per
-poll), and one with no usable ceiling. A token carrying some of the binding claims but not all four,
+poll), and one with no usable ceiling.
+
+**Per resource: who may be sent a low ceiling.** Each exchange resource on the hub
+(`OAUTH_EXCHANGE_RESOURCES`) declares whether it narrows by the binding claims:
+`"narrowsBlockClaims": true`. Only a resource that declares it is sent a block-exchange token whose
+ceiling leaves out R, X or XXX. Any other resource (undeclared is the default) is sent only a token
+whose ceiling admits every mature rating, the rule before the claims existed, so a hub newer than the
+adapter, or any other `AppDataRead` resource, can never read more than the block token would. A value
+that is not `true` or `false` is a bad entry, and the hub then registers no resource at all. A token carrying some of the binding claims but not all four,
 well-formed, is refused by the adapter (`invalid_token`); one carrying none is a user-exchange token
 and is not narrowed (the viewer's own settings, as before).
 
-**Who can use the registry path now:** any signed-in viewer's block token with `apps:storage`, from
-any host, whose app passes the hub's other checks. A token minted on an SFW host is exchanged and
-streams only SFW-rated apps' records; one minted on the mature-capable host streams what the viewer's
-own settings admit.
+**Who can use the registry path now:** with the adapter's resource declaring `narrowsBlockClaims`, any
+signed-in viewer's block token with `apps:storage`, from any host, whose app passes the hub's other
+checks: a token minted on an SFW host streams only SFW-rated apps' records, one minted on the
+mature-capable host what the viewer's own settings admit. Without the declaration, only tokens minted
+on the mature-capable host.
 
 **Residual windows,** each bounded by the adapter's poll interval (default 60 s) rather than the
 exchanged token's life:
@@ -233,20 +254,21 @@ exchanged token's life:
   refuses at once; the registry path may serve up to one poll longer.
 - (c) **A Redis outage** reads no install marker, so a revoked install keeps streaming until its token
   expires (at most 15 minutes), exactly as REST serves it then (both fail open).
-- (d) **A token minted before this binding shipped** carries no binding claims and reads as a
-  user-exchange token until it expires (at most 15 minutes). The hub minted such a token only for a
-  ceiling that admits every rating and the client's one approved block.
 
-**To turn it on** (none of it is in this repo): the hub needs the site's block-token public keys and
-this service's client id in its block-exchange caller allowlist (an approval for the registry owner),
-this service's client must already be a relay of the adapter's exchange resource, and the block's app
-must be listed for that resource and allowed `AppDataRead`; then set `APP_DATA_BLOCK_EXCHANGE=true`
-here.
+**To turn it on** (none of it is in this repo), in order:
 
-**Deploy order.** The hub now exchanges tokens of any ceiling and relies on the adapter to narrow
-them. An adapter older than the binding claims accepts the new tokens but ignores the claims, so it
-would stream an SFW host's token by the viewer's own settings. Deploy the adapter before the hub
-(or keep the hub's caller allowlist empty until both are deployed).
+1. Prerequisite: the hub and the adapter both run a release that writes and reads the binding claims
+   (this one or later). No block-exchange token is minted before that.
+2. The hub needs the site's block-token public keys and this service's client id in its
+   block-exchange caller allowlist (an approval for the registry owner); this service's client must
+   already be a relay of the adapter's exchange resource, and the block's app must be listed for that
+   resource and allowed `AppDataRead`.
+3. Here, set `APP_DATA_BLOCK_JWKS_URL` to the site's `/api/v1/block-tokens/jwks` and
+   `APP_DATA_BLOCK_EXCHANGE=true`. Tokens with every mature rating in their ceiling now use the
+   registry path.
+4. Only once the adapter that narrows by the claims is live, declare `"narrowsBlockClaims": true` on
+   the adapter's resource in the hub's `OAUTH_EXCHANGE_RESOURCES`: SFW-host tokens then use it too.
+   Never declare it on a resource that does not narrow.
 
 ## Token lifetime: a stream is reopened at its token's expiry
 
