@@ -51,6 +51,7 @@ import {
 } from '~/server/services/oauth/enforce-token-scope';
 import { updateVimeoVideo } from '~/server/vimeo/client';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { DELETE_PROCESSING_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { closeAppealsDeletedByOwner } from '~/server/services/report.service';
 import { isDefined } from '~/utils/type-guards';
@@ -747,6 +748,9 @@ export const deletePostHandler = async ({
       });
     }
 
+    // A member's own delete answers the same whether it went or any hold kept it, a review they can
+    // see included: that one lasts until the report is sent, so telling it apart would say when.
+    if (!ctx.user.isModerator) return { deleteNotice: DELETE_PROCESSING_MESSAGE };
     return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;

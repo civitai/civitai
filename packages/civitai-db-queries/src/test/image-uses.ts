@@ -26,6 +26,7 @@ export const imageUseTablesSql = [
   `ALTER TABLE "CsamReport" ADD COLUMN IF NOT EXISTS images jsonb NOT NULL DEFAULT '[]'`,
   `ALTER TABLE "CsamReport" ADD COLUMN IF NOT EXISTS "reportSentAt" timestamp(3)`,
   `ALTER TABLE "CsamReport" ADD COLUMN IF NOT EXISTS details jsonb NOT NULL DEFAULT '{}'`,
+  `ALTER TABLE "CsamReport" ADD COLUMN IF NOT EXISTS "userId" int`,
   `CREATE TABLE IF NOT EXISTS "Cosmetic" (id int PRIMARY KEY)`,
   `ALTER TABLE "Cosmetic" ADD COLUMN IF NOT EXISTS data jsonb`,
   `CREATE TABLE IF NOT EXISTS "CosmeticShopItem" (id serial PRIMARY KEY)`,
