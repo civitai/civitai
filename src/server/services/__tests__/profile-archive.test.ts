@@ -94,6 +94,17 @@ describe('storeVerifiedProfileArchive', () => {
     });
   });
 
+  it('rejects when the object reads back without its sha256', async () => {
+    const send = bucket.client.send.bind(bucket.client);
+    bucket.client.send = (async (command: unknown) => {
+      const out = (await send(command as never)) as { Metadata?: unknown };
+      return command instanceof GetObjectCommand ? { ...out, Metadata: {} } : out;
+    }) as never;
+    await expect(
+      storeVerifiedProfileArchive({ client: bucket.client, Bucket: BUCKET, snapshot })
+    ).rejects.toThrow(/does not match its sha256/);
+  });
+
   it('rejects when the stored bytes read back differently', async () => {
     bucket.corrupt = (b) => Buffer.concat([b, Buffer.from(' ')]);
     await expect(
