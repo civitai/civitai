@@ -23,6 +23,8 @@
     title,
     rows,
     total,
+    matched,
+    filters = $bindable({}),
     userId,
     canBulkAct,
     link,
@@ -35,6 +37,10 @@
     rows: T[];
     /** Every live comment on the account, not just this page. */
     total: number;
+    /** Those matching the search, across every page. */
+    matched: number;
+    /** The search, which the parent runs on the server. */
+    filters?: Record<string, string>;
     userId: number;
     canBulkAct: boolean;
     link: Snippet<[T]>;
@@ -46,7 +52,6 @@
 
   // Matched against the PLAIN text, not the stored HTML — searching the markup meant "p" hit every row.
   const SEARCH: FilterField[] = [{ kind: 'search', key: 'q', label: 'Search content' }];
-  let filters = $state<Record<string, string>>({});
 
   // Deleted rows drop at once, ahead of the refetch `onDeleted` triggers. Flagged
   // ones stay: "Remove as ToS" sets a flag, and a row that vanished would leave the moderator unable
@@ -61,12 +66,7 @@
   let partial = $state<string | null>(null);
 
   const uid = $props.id();
-  const live = $derived(rows.filter((r) => !removed.includes(r.id)));
-  const shown = $derived(
-    filters.q
-      ? live.filter((r) => plainText(r.content).toLowerCase().includes(filters.q.toLowerCase()))
-      : live
-  );
+  const shown = $derived(rows.filter((r) => !removed.includes(r.id)));
   const shownIds = $derived(shown.map((r) => r.id));
   // Every tick, not `postedIds`' on-screen narrowing: ticks on other pages must post too.
   const posting = $derived([...selected].filter((id) => !removed.includes(id)));
@@ -110,6 +110,7 @@
 <div class="transition-opacity" class:opacity-50={loading} aria-busy={loading}>
   <ListCard
     {title}
+    count={matched}
     total={shown.length}
     shown={shown.length}
     hint="{num(total)} in all, newest first."
@@ -121,12 +122,7 @@
         : 'No comments.'}
   >
     {#snippet controls()}
-      <ListFilterBar
-        fields={SEARCH}
-        bind:values={filters}
-        matched={shown.length}
-        total={live.length}
-      />
+      <ListFilterBar fields={SEARCH} bind:values={filters} {matched} {total} />
       {#if canBulkAct}
         <div class="mb-3 flex items-center gap-2" data-touch-target>
           <!-- Function binding, not a one-way `checked`: the primitive writes to its own `$bindable`

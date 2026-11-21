@@ -12,6 +12,7 @@ CREATE TABLE "Article" (id INTEGER PRIMARY KEY, "coverId" INTEGER, "bannerId" IN
 CREATE TABLE "ImageConnection" ("imageId" INTEGER NOT NULL, "entityId" INTEGER NOT NULL, "entityType" TEXT NOT NULL);
 CREATE TABLE "ServiceOffering" (id INTEGER PRIMARY KEY, "coverImageId" INTEGER);
 CREATE TABLE "UserProfile" ("userId" INTEGER PRIMARY KEY, "coverImageId" INTEGER, "sfwCoverImageId" INTEGER);
+CREATE TABLE "EntityModeration" ("entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, status TEXT NOT NULL, "triggeredLabels" TEXT[] NOT NULL DEFAULT '{}', result JSONB);
 `;
 
 const SIBLING = 990900001;
@@ -95,7 +96,7 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   },
   {
     label: 'a row on its url whose owner is banned for minor safety',
-    restricts: true,
+    restricts: false,
     mark: (t) => `${sibling(t)} ${ban('SexualMinor')}`,
   },
   {
@@ -316,6 +317,24 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
       }); ${hold('UserProfile', PROFILE_USER, 'Pending')}`,
   },
   {
+    label: 'the cover of a service offering whose csam verdict has no hold yet',
+    restricts: true,
+    mark: (t) =>
+      `INSERT INTO "ServiceOffering" (id, "coverImageId") VALUES (${OFFERING}, ${t.id});
+       INSERT INTO "EntityModeration" ("entityType", "entityId", status, "triggeredLabels", result)
+       VALUES ('ServiceOffering', ${OFFERING}, 'Succeeded', '{csam}', '{"textHash": "h1"}');`,
+  },
+  {
+    label: 'the cover of a service offering whose csam verdict a moderator dismissed',
+    restricts: false,
+    mark: (t) =>
+      `INSERT INTO "ServiceOffering" (id, "coverImageId") VALUES (${OFFERING}, ${t.id});
+       INSERT INTO "EntityModeration" ("entityType", "entityId", status, "triggeredLabels", result)
+       VALUES ('ServiceOffering', ${OFFERING}, 'Succeeded', '{csam}', '{"textHash": "h1"}');
+       INSERT INTO "TextScanHold" ("entityType", "entityId", label, status, "textHash")
+       VALUES ('ServiceOffering', ${OFFERING}, 'csam', 'Dismissed', 'h1');`,
+  },
+  {
     label: "the cover of a profile, and a csam hold on a service offering with the user's id",
     restricts: false,
     mark: (t) =>
@@ -346,6 +365,7 @@ export const csamCaseCleanupSql = (t: Target) => `
   DELETE FROM "Article" WHERE id = ${ARTICLE};
   DELETE FROM "ImageConnection" WHERE "entityId" = ${ARTICLE};
   DELETE FROM "ServiceOffering" WHERE id = ${OFFERING};
+  DELETE FROM "EntityModeration" WHERE "entityId" = ${OFFERING};
   DELETE FROM "UserProfile" WHERE "userId" = ${PROFILE_USER};
   DELETE FROM "TextScanHold"
     WHERE "entityId" IN (${POST}, ${MODEL}, ${TEXT}, ${ARTICLE}, ${OFFERING}, ${PROFILE_USER});

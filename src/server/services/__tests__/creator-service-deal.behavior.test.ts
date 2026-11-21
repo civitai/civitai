@@ -3528,6 +3528,77 @@ describe('site notifications', () => {
       await remind(-2);
       expect(sent()).toEqual([]);
     });
+
+    describe('to review', () => {
+      const completed = async ({ enrolled = true } = {}) => {
+        const { id } = await request({ reviewEnabled: enrolled });
+        await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+        await deliver(id);
+        await deals.acceptServiceDealDelivery({ dealId: id, userId: BUYER });
+        reset();
+        return id;
+      };
+      const releaseIn = (id: number, hours: number) =>
+        q(
+          `UPDATE "ServiceDeal" SET "releaseAt" = now() + make_interval(mins => ${hours * 60})
+           WHERE id = $1`,
+          [id]
+        );
+      const reviewDue = (id: number) => [BUYER, 'service-deal-review-due', `/services/deals/${id}`];
+
+      it('asks the buyer 2 hours after they accept, and 12 hours before payout', async () => {
+        const id = await completed();
+        await age(id, 'completedAt', 1);
+        await remind(-1);
+        expect(sent()).toEqual([]);
+
+        await age(id, 'completedAt', 3);
+        await remind(-2);
+        expect(sent()).toEqual([reviewDue(id)]);
+        reset();
+
+        // The next run's window starts after the first reminder, so only the second falls in it.
+        await releaseIn(id, 11.75);
+        await remind(-0.5);
+        await remind(0, 0.1);
+        expect(sent()).toEqual([reviewDue(id)]);
+      });
+
+      it('does not ask a buyer who already reviewed, or a deal not enrolled', async () => {
+        const reviewed = await completed();
+        await dealReviews.reviewServiceDeal({
+          dealId: reviewed,
+          userId: BUYER,
+          verdict: 'NotQuite',
+          reviewFlag: true,
+        });
+        const unenrolled = await completed({ enrolled: false });
+        reset();
+        for (const id of [reviewed, unenrolled]) {
+          await age(id, 'completedAt', 3);
+          await releaseIn(id, 11);
+        }
+        await remind(-2);
+        expect(sent()).toEqual([]);
+      });
+
+      it('asks only once, before payout, about a deal that completed on its own', async () => {
+        const { id } = await request({ reviewEnabled: true });
+        await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+        await deliver(id);
+        await age(id, 'deliveredAt', 73);
+        expect(await deals.autoCompleteServiceDeal(id)).toBe(true);
+        reset();
+
+        await age(id, 'completedAt', 3);
+        await remind(-2);
+        expect(sent()).toEqual([]);
+
+        await releaseIn(id, 11);
+        await remind(-2);
+        expect(sent()).toEqual([reviewDue(id)]);
+      });
+    });
   });
 
   it('keeps a committed move when the notification cannot be sent', async () => {

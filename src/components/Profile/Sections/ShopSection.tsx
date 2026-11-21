@@ -5,6 +5,7 @@ import type { ComponentProps } from 'react';
 import { useQueryWishlistedShopItems } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { useQueryCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
+import { ServiceHappyLine } from '~/components/CreatorShop/Services/ServiceHappyLine';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
 import { serviceHref, storefrontSectionKeys } from '~/components/CreatorShop/section-meta';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
@@ -169,6 +170,7 @@ export const ShopSection = ({ user }: ProfileSectionProps) => {
               {shop && hasCosmetics && (
                 <ShopRow featured={shop.featured} cosmetics={shop.cosmetics} />
               )}
+              {showServices && <ServiceHappyLine counts={offerings} />}
               {showServices && (
                 <ServicesRow
                   offerings={offerings}

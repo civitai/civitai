@@ -1,3 +1,4 @@
+import { csamQueueHeldText } from '@civitai/shared/held-url';
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { csamHoldBars } from '~/server/services/text-scan/csam-hold-bars';
@@ -47,15 +48,5 @@ export async function csamHoldState(
  * csam verdict a moderator has not dismissed for its text. Only that queue's decisions let a held
  * entity out.
  */
-export const csamQueueClearSql = (entityType: string, entityId: number) => Prisma.sql`
-  NOT EXISTS (SELECT 1 FROM "TextScanHold" h
-    WHERE h."entityType" = ${entityType} AND h."entityId" = ${entityId} AND h."label" = 'csam'
-      AND h."status" IN ('Pending', 'Confirmed'))
-  AND NOT EXISTS (SELECT 1 FROM "EntityModeration" em
-    WHERE em."entityType" = ${entityType} AND em."entityId" = ${entityId}
-      AND em."status" = 'Succeeded' AND 'csam' = ANY(em."triggeredLabels")
-      AND NOT EXISTS (SELECT 1 FROM "TextScanHold" h
-        WHERE h."entityType" = ${entityType} AND h."entityId" = ${entityId}
-          AND h."label" = 'csam' AND h."status" = 'Dismissed'
-          AND h."textHash" = em."result"->>'textHash'
-          AND h."meta"->>'decision' IS DISTINCT FROM 'superseded'))`;
+export const csamQueueClearSql = (entityType: string, entityId: number) =>
+  Prisma.sql`NOT ${Prisma.raw(csamQueueHeldText(entityType, String(entityId)))}`;
