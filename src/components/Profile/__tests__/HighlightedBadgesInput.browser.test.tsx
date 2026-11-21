@@ -5,7 +5,8 @@ import { HighlightedBadgesInput } from '~/components/Profile/HighlightedBadgesIn
 
 /**
  * A pinned badge the user no longer owns has no tile, so it must not take a pin number:
- * the numbers on the visible tiles stay 1, 2, 3.
+ * the numbers in the pin row stay 1, 2, 3. Numbers live only in the pin row; the grid
+ * marks pinned tiles with aria-pressed.
  */
 const badges = [
   { id: 1, name: 'One', data: { url: 'one.png' } },
@@ -45,9 +46,22 @@ describe('HighlightedBadgesInput', () => {
     await renderWithProviders(
       <HighlightedBadgesInput badges={badges} value={[3, 99, 1, 2]} onChange={vi.fn()} />
     );
-    await expect.element(page.getByRole('button', { name: 'Three' })).toHaveTextContent('1');
-    await expect.element(page.getByRole('button', { name: 'One' })).toHaveTextContent('2');
-    await expect.element(page.getByRole('button', { name: 'Two' })).toHaveTextContent('3');
+    await expect.element(page.getByRole('listitem', { name: 'Pin 1: Three' })).toBeVisible();
+    await expect.element(page.getByRole('listitem', { name: 'Pin 2: One' })).toBeVisible();
+    await expect.element(page.getByRole('listitem', { name: 'Pin 3: Two' })).toBeVisible();
+    // The grid repeats no number.
+    await expect.element(page.getByRole('button', { name: 'Three' })).not.toHaveTextContent('1');
+  });
+
+  test('pinned strip sits above an "All badges" divider; with one pin neither shows', async () => {
+    const view = await renderWithProviders(
+      <HighlightedBadgesInput badges={badges} value={[1, 2]} onChange={vi.fn()} />
+    );
+    const list = page.getByRole('list', { name: 'Pin order' }).element();
+    const label = page.getByText('All badges').element();
+    expect(list.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await view.rerender(<HighlightedBadgesInput badges={badges} value={[1]} onChange={vi.fn()} />);
+    expect(page.getByText('All badges').elements()).toHaveLength(0);
   });
 
   const siblings = [
@@ -60,7 +74,9 @@ describe('HighlightedBadgesInput', () => {
     await renderWithProviders(
       <HighlightedBadgesInput badges={siblings} value={[11]} onChange={vi.fn()} />
     );
-    await expect.element(page.getByRole('button', { name: 'Placer' })).toHaveTextContent('1');
+    await expect
+      .element(page.getByRole('button', { name: 'Placer' }))
+      .toHaveAttribute('aria-pressed', 'true');
     expect(page.getByRole('button').elements()).toHaveLength(2);
   });
 
@@ -123,11 +139,10 @@ describe('HighlightedBadgesInput', () => {
     await expect.element(page.getByText("You don't have any badges yet.")).toBeVisible();
   });
 
-  test('pin numbers count tiles, not sibling ids, so the grid matches the strip', async () => {
+  test('pin numbers count tiles, not sibling ids', async () => {
     await renderWithProviders(
       <HighlightedBadgesInput badges={siblings} value={[10, 11, 12]} onChange={vi.fn()} />
     );
-    await expect.element(page.getByRole('button', { name: 'Other' })).toHaveTextContent('2');
     await expect.element(page.getByRole('listitem', { name: 'Pin 2: Other' })).toBeVisible();
   });
 
