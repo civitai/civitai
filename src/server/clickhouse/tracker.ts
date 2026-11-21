@@ -476,6 +476,11 @@ export class Tracker {
     }
   }
 
+  /** True once the session is known (looked up or passed in), signed out included; false after a failed lookup. */
+  public get isSessionResolved() {
+    return this.sessionResolved;
+  }
+
   // The request's session, resolved once and shared with every track() call on this Tracker.
   public async getSession(scope?: SessionScope) {
     await this.resolveSession();
