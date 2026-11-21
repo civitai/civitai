@@ -1,4 +1,5 @@
 import { dbWrite } from '~/server/db/client';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { tagIdsForImagesCache, refreshThumbnailCache, imageTagsCache } from '~/server/redis/caches';
 import type { TagSource } from '~/shared/utils/prisma/enums';
 import { pgDbWrite } from '~/server/db/pgDb';
@@ -173,6 +174,9 @@ async function queueBlockedTagReviews(args: { imageId: number; tagId: number }[]
     FROM enabled e
     JOIN flagged f ON f.id = e."imageId"
   `;
+
+  if (queued.length)
+    await evictHomeBlocksForImages({ imageIds: [...new Set(queued.map((x) => x.imageId))] });
 
   const tagIdsByImage = new Map<number, number[]>();
   for (const { imageId, tagId } of queued) {
