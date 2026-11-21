@@ -61,16 +61,18 @@ vi.mock('../clickhouse', () => ({ getClickhouse: () => ({ query: chQuery, insert
 const { acceptImage, resolveImageAppeal } = await import('../image-moderation.service');
 const { refundAppealFee, notifyAppealResolved } = await import('../image-moderation-effects');
 const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
+const { syncSearchIndex } = await import('../search-index');
 
 // The stand-in keeps the real function's skip of nsfwLevelLocked rows; without it the reset assertions pass vacuously.
 const SCHEMA = `
-CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound');
+-- The real enum, so a write that does not cast to it fails here as it would in production.
+CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "userId" INTEGER,
   "needsReview" TEXT,
   "blockedFor" TEXT,
-  "ingestion" TEXT,
+  "ingestion" "ImageIngestionStatus",
   "metadata" JSONB,
   "pHash" BIGINT,
   "postId" INTEGER,
@@ -84,6 +86,7 @@ CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
 CREATE TABLE "ModActivity" ("entityType" TEXT, "entityId" INTEGER, "activity" TEXT);
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "deletedAt" TIMESTAMP(3));
 CREATE TABLE "Appeal" (
@@ -247,10 +250,14 @@ describe('approving an appeal while the image owner is deleted', () => {
       `UPDATE "Image" SET "userId" = $2, "metadata" = jsonb_build_object(
          'accountDeletionPriorIngestion', 'Blocked',
          'accountDeletionPriorBlockedFor', 'moderated',
-         'accountDeletionPriorNeedsReview', 'appeal',
+         'accountDeletionPriorNeedsReview', 'minor',
          'keep', 1)
        WHERE "id" = $1`,
       [IMAGE_ID, OWNER_ID]
+    );
+    await db.query(
+      `INSERT INTO "JobQueue" ("type", "entityType", "entityId", "createdAt") VALUES ('BlockedImageDelete', 'Image', $1, '2026-01-01')`,
+      [IMAGE_ID]
     );
   };
   const row = async () =>
@@ -279,12 +286,20 @@ describe('approving an appeal while the image owner is deleted', () => {
         keep: 1,
         accountDeletionPriorIngestion: 'Scanned',
         accountDeletionPriorBlockedFor: null,
-        accountDeletionPriorNeedsReview: null,
+        accountDeletionPriorNeedsReview: 'minor',
       },
     });
     const { rows } = await db.query<{ status: string }>(`SELECT "status" FROM "Appeal"`);
     expect(rows).toEqual([{ status: 'Approved' }]);
-    expect(chInsert).not.toHaveBeenCalled();
+    // The rating lock stays and the purge clock starts again; the pHash leaves the blocklist.
+    expect(await imageRow()).toMatchObject({ nsfwLevel: 32, nsfwLevelLocked: true });
+    const queued = await db.query<{ fresh: boolean }>(
+      `SELECT "createdAt" > now() - interval '1 hour' AS fresh FROM "JobQueue" WHERE "entityId" = $1`,
+      [IMAGE_ID]
+    );
+    expect(queued.rows).toEqual([{ fresh: true }]);
+    expect(unblocklisted()).toEqual([{ hash: PHASH, reason: 'TOS', disabled: true }]);
+    expect(vi.mocked(syncSearchIndex).mock.calls.at(-1)?.[0]).toMatchObject({ action: 'delete' });
   });
 
   it('restores it when the owner is not deleted', async () => {
@@ -295,7 +310,7 @@ describe('approving an appeal while the image owner is deleted', () => {
     expect(await row()).toEqual({
       ingestion: 'Scanned',
       blockedFor: null,
-      needsReview: null,
+      needsReview: 'minor',
       metadata: { keep: 1 },
     });
   });

@@ -1700,6 +1700,21 @@ export async function dropBlockedImageDeleteQueue(ids: number[]) {
   `;
 }
 
+/**
+ * Re-queues images that stay blocked with the clock starting now, as a fresh block would: an approval
+ * kept blocked while the owner is deleted must not inherit the original block's time.
+ */
+export async function restartBlockedImageDeleteClock(ids: number[]) {
+  if (!ids.length) return;
+  await dropBlockedImageDeleteQueue(ids);
+  await dbWrite.$executeRaw`
+    INSERT INTO "JobQueue" ("entityId", "entityType", type)
+    SELECT id, ${EntityType.Image}::"EntityType", ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+    FROM unnest(${ids}::int[]) AS id
+    ON CONFLICT DO NOTHING
+  `;
+}
+
 export const updateImageReportStatusByReason = ({
   id,
   reason,

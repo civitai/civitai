@@ -13,3 +13,16 @@ export async function dropBlockedImageDeleteQueue(imageId: number) {
     .where('entityId', '=', imageId)
     .execute();
 }
+
+/**
+ * Re-queues an image that stays blocked with the clock starting now, as a fresh block would: an
+ * approval kept blocked while its owner is deleted must not inherit the original block's time.
+ */
+export async function restartBlockedImageDeleteClock(imageId: number) {
+  await dropBlockedImageDeleteQueue(imageId);
+  await dbWrite
+    .insertInto('JobQueue')
+    .values({ type: 'BlockedImageDelete', entityType: 'Image', entityId: imageId })
+    .onConflict((oc) => oc.doNothing())
+    .execute();
+}

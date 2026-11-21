@@ -2,7 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
 import { dbRead, dbWrite } from './db';
-import { dropBlockedImageDeleteQueue } from './blocked-image-queue';
+import { dropBlockedImageDeleteQueue, restartBlockedImageDeleteClock } from './blocked-image-queue';
 import { insertModActivity, insertModActivityBatch, recordModActivity } from './mod-activity';
 import { syncSearchIndex } from './search-index';
 import { upsertTagsOnImageNew } from './tags-on-image.service';
@@ -115,7 +115,7 @@ const withoutGraceMarkers = (metadata: RawBuilder<unknown>) =>
     THEN (${metadata}) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text
     ELSE ${metadata} END)`;
 
-/** `metadata` for a row lifted while its owner is deleted: the main app's `liftedUnderGraceMetadataSql`. */
+/** `metadata` for a row lifted while its owner is deleted: the main app's `liftedMetadataSql`, deleted-owner branch. */
 const liftedUnderGraceMetadata = sql`(COALESCE(${withoutGraceMarkers(sql`"metadata"`)}, '{}'::jsonb)
   || jsonb_build_object(${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text, 'Scanned', ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text, NULL::text,
     ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLifted}))`;
@@ -997,6 +997,7 @@ export async function resolveImageAppeal({
       .executeTakeFirst();
     written = !!row;
     restored = written && !row?.keptBlocked;
+    if (written && !restored) await restartBlockedImageDeleteClock(imageId);
     if (restored) {
       await dropBlockedImageDeleteQueue(imageId);
       await resetBlockedNsfwLevel(imageId);
@@ -1038,7 +1039,9 @@ export async function resolveImageAppeal({
   }
 
   const postId = img?.postId ?? null;
-  if (restored)
+  // An approval takes the pHash off the blocklist even while the owner is deleted: an account restore
+  // brings the image back but never revisits the blocklist.
+  if (approved)
     await applyAcceptSideEffects({ pHash: img?.pHash ?? null, postId }, imageId, userId);
   else await applyVisibilitySideEffects(imageId, postId);
 
