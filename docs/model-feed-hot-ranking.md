@@ -1599,7 +1599,8 @@ hotScore = greatest(model term, best Published version)
 ```
 
 The model term is unchanged, so no score falls. A version never borrows the model's lifetime
-engagement: pairing that with a fresh date is the `lastVersionAt` design §2 measured and rejected.
+engagement (superseded by §19, which lends a small, capped share): pairing that with a fresh date is
+the `lastVersionAt` design §2 measured and rejected.
 An empty re-upload therefore ranks like an empty new model. The best version counts, not only the
 newest, so a weak release after a hit does not cost the hit's credit.
 
@@ -1650,3 +1651,51 @@ column; 2.5 let 10 of them in.
   way to lift it.
 - The migration's in-file `CALL` rescores only rows where a version term beats the stored score,
   then refreshes mirrored slices. Apply it without `--single-transaction`.
+
+## 19. A proven model's new version gets a small head start (2026-11-21)
+
+### What changed and why
+
+§18 credits a version only on its own engagement, so an established model's new release starts
+like an empty new model however proven the model is. This reverses §18's "never borrows" rule on
+purpose, with the §2 failure kept out by a cap and a bar.
+
+```
+qualifying version = least(log10(1 + e_v + 0.01 * max(E - e_v, 0)), 2.2) + publishedAt / 30d
+other versions     = §18's term, unchanged (cap 2.0)
+```
+
+`E` is the model's (or slice's) lifetime engagement and `e_v` the version's own. A version
+qualifies while all three hold:
+
+- its own likes + downloads / 6.4 >= 25. Generations do not count, because a version's generation
+  term is capped by the whole model's generator count, so the owner's own generating could clear
+  the bar.
+- it was published in the last 60 days.
+- `publishedAt < initialPublishedAt + 1 day`, so a version re-dated when a timed paid-access gate
+  ends gets no second head start. As a consequence, a version whose first scheduled date slipped by
+  more than a day gets none at all.
+
+Paid-access versions qualify like free ones.
+
+### Measured before choosing (replica snapshot, 2026-11-20)
+
+| Feed | Top-50 churn | Top-100 churn | Old model, new version in top 1,000 |
+| --- | ---: | ---: | ---: |
+| All levels | 0 | 0 | 31 → 128 |
+| SFW | 0 | 1 | 48 → 110 |
+
+A hypothetical new version with 100 engagement on a proven model ranks about 175 on day 0 and 590
+by day 14 on the all-levels feed, against about 414 and 1,315 under §18. A bigger setting (0.003
+share, cap 2.5) moved 13 of the all-levels top 100 and was rejected for that.
+
+### How it is maintained
+
+- `public.hot_version_score()` holds the version term. Both trigger functions call it. It is one
+  expression with no `FROM`, so the planner inlines it like `hot_score()`.
+- The 60-day window reads `NOW()`, so a stored score keeps its head start until the row's next
+  metrics write; by then its date term is two months old.
+- The migration (`20271121120000_model_hot_score_version_head_start`) is applied by hand. Its
+  `rollback.sql` restores §18 and rescores in both directions. Both refuse to run unless replica
+  lag is visible, and both are run with `psql -X -v ON_ERROR_STOP=1`.
+
