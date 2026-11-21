@@ -381,6 +381,7 @@ export function modelDataHeldSql(modelId: Prisma.Sql, markerView: boolean): Pris
  * guard for a DELETE of its files or versions.
  */
 export function modelRowHeldSql(): Prisma.Sql {
+  // The owner leg is also covered by `modelDataHeldSql`'s current-owner leg; kept on purpose.
   return Prisma.sql`(${ownerHeldSql(Prisma.raw('m."userId"'))} OR ${modelDataHeldSql(
     Prisma.raw('m.id'),
     true
