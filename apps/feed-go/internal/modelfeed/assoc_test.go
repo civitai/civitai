@@ -665,7 +665,7 @@ func TestAssocCanGenerate(t *testing.T) {
 	if !gen(e, nil) {
 		t.Fatal("covered SDXL checkpoint: want true")
 	}
-	e.sources.page.Data[5001].Versions[0]["coveredNext"] = false
+	e.sources.page.Data[5001].Versions[0].Set("coveredNext", false)
 	if gen(e, nil) {
 		t.Fatal("not covered under the next column: want false")
 	}
@@ -674,7 +674,7 @@ func TestAssocCanGenerate(t *testing.T) {
 		t.Fatal("flag off reads the live column: want true")
 	}
 	e = twoModelEnv()
-	e.sources.page.Data[5001].Versions[0]["availability"] = "Private"
+	e.sources.page.Data[5001].Versions[0].Set("availability", "Private")
 	if gen(e, &Viewer{ID: 1003}) {
 		t.Fatal("private version, a stranger: want false")
 	}
@@ -699,8 +699,8 @@ func TestAssocCanGenerate(t *testing.T) {
 	}
 	// The rules are read only when a shown card could generate.
 	e = twoModelEnv()
-	e.sources.page.Data[5001].Versions[0]["covered"] = false
-	e.sources.page.Data[5001].Versions[0]["coveredNext"] = false
+	e.sources.page.Data[5001].Versions[0].Set("covered", false)
+	e.sources.page.Data[5001].Versions[0].Set("coveredNext", false)
 	gen(e, nil)
 	if e.gates.calls != 0 {
 		t.Fatalf("gate rules read %d times with no card that could generate", e.gates.calls)
