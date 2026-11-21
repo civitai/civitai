@@ -113,6 +113,12 @@ const featureFlags = createFeatureFlags({
   // gallery feed; its own flag, so each can be turned on or killed alone. Enable only once the edge
   // routes `/api/trpc-go/image.getInfinite`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
   feedGoTransportInfinite: { availability: [], fliptKey: 'feed-go-transport-infinite' },
+  // Client shadow compare (`~/utils/faro/shadowCompare`): a signed-in browser sends an allowlisted
+  // feed query to both the `/api/trpc` route and the Go transport path and beacons whether the two
+  // raw responses were byte-identical; the app uses the `/api/trpc` answer. Only for a procedure
+  // whose own Go-transport flag is also on for the user. Every compare is one extra request, so keep
+  // the rollout small (about 1% of users). `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  clientShadowCompare: { availability: [], fliptKey: 'client-shadow-compare' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
