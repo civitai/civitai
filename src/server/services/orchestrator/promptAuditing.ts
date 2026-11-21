@@ -436,8 +436,7 @@ export async function classifyPromptServer(
   // on .com and passes on .red. Everything else below runs identically everywhere.
   //
   // With `profanity-managed-list` on, the gate stops running the profanity list and the
-  // orchestrator's rating decides (#9952). Off keeps
-  // today's shipped-list check, so the flag is the rollback.
+  // orchestrator's rating decides. Off, the gate checks the shipped list; the flag is the rollback.
   const profanity =
     isGreen && !(await isFlipt(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST))
       ? getProfanityFilter()

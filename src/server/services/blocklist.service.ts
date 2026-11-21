@@ -399,7 +399,7 @@ export async function stripBenignPhrases(text = '', type: BlocklistType) {
  * `SearchLayout`) run their POI / minor / profanity checks client-side against Meili
  * directly, so there is no server hop to strip on — the lists have to be shipped down.
  * Public and edge-cached. With `profanity-managed-list` on it also carries the managed
- * blocked words, until the browser checks move to the server.
+ * blocked words.
  */
 export type ClientBenignLists = {
   prompt: string[];

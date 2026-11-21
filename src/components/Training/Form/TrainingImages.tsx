@@ -67,7 +67,6 @@ import type {
 } from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
 import { auditTrainingTriggerWord, labelAsTrained } from '~/utils/metadata/training-trigger-word';
-// The browser's trigger-word warning checks the shipped list.
 import { getProfanityFilter } from '~/libs/profanity-simple';
 import {
   blankTagStr,

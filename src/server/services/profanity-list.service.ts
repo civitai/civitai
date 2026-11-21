@@ -19,7 +19,7 @@ import { readBlocklistWithSource } from '~/server/services/blocklist.service';
  */
 export type ProfanityListSource = 'managed' | 'stale' | 'fallback' | 'shipped';
 
-/** `words: null` is the shipped list, in both the block and the allow slot. */
+/** `null` in `blocked` or `allowed` means the shipped list for that slot. */
 export type ProfanityLists = {
   blocked: string[] | null;
   allowed: string[] | null;
@@ -63,8 +63,8 @@ export function createProfanityListReader({
   return {
     async read() {
       if (!(await isFlipt(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST))) {
-        // Flag off restores today's lists: shipped block list and shipped allow list. That is
-        // what this pod now enforces, so it is what an outage after the flag returns falls back to.
+        // Flag off: the shipped block and allow lists. Held as what this pod enforces, so an outage
+        // after the flag returns falls back to them.
         held = { blocked: null, allowed: null };
         metrics().fallback.set(0);
         return { blocked: null, allowed: null, source: 'shipped' };
@@ -88,7 +88,7 @@ export function createProfanityListReader({
         return { blocked: null, allowed: null, source: 'fallback' };
       }
 
-      // A MISSING allow row is the shipped allow list; an EMPTY one is honoured (index.ts).
+      // A MISSING allow row is the shipped allow list; an EMPTY one is honoured (`moderatorWhitelist`, src/libs/profanity-simple/index.ts).
       const allowed = allowedRow.dto.id == null ? null : allowedRow.dto.data;
       const usable =
         blockedRow.dto.id == null ? [] : blockedRow.dto.data.filter(isUsableBlockedEntry);
