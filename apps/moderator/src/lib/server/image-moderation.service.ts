@@ -106,11 +106,19 @@ const reviewKeptWhenLifted = sql<string | null>`(CASE
   THEN "metadata"->>${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text
 END)`;
 
+/** The image's owner has deleted their account (in its grace period, or not yet purged). */
+const OWNER_DELETED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "Image"."userId" AND u."deletedAt" IS NOT NULL)`;
+
 /** The grace-block breadcrumbs off `metadata`; a non-object value is left as it is. */
 const withoutGraceMarkers = (metadata: RawBuilder<unknown>) =>
   sql`(CASE WHEN jsonb_typeof(${metadata}) = 'object'
     THEN (${metadata}) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text
     ELSE ${metadata} END)`;
+
+/** `metadata` for a row lifted while its owner is deleted: the main app's `liftedUnderGraceMetadataSql`. */
+const liftedUnderGraceMetadata = sql`(COALESCE(${withoutGraceMarkers(sql`"metadata"`)}, '{}'::jsonb)
+  || jsonb_build_object(${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text, 'Scanned', ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text, NULL::text,
+    ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLifted}))`;
 
 const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
@@ -965,31 +973,41 @@ export async function resolveImageAppeal({
     .executeTakeFirst();
 
   let restored = false;
+  let written = false;
   // An appeal verdict never reaches an image under the moderator-only review flag; that flag's own
   // queue decides it.
   if (status === 'Approved') {
-    const { numUpdatedRows } = await dbWrite
+    const row = await dbWrite
       .updateTable('Image')
       // On a row an account deletion blocked, the approval settles the appeal but not a review the
-      // deletion recorded, which comes back.
+      // deletion recorded, which comes back. While the owner is deleted the row stays blocked,
+      // recorded as Scanned for an account restore.
       .set({
-        needsReview: reviewKeptWhenLifted,
-        blockedFor: null,
-        ingestion: 'Scanned',
-        metadata: withoutGraceMarkers(sql`"metadata"`),
+        needsReview: sql`CASE WHEN ${OWNER_DELETED} THEN NULL ELSE ${reviewKeptWhenLifted} END`,
+        blockedFor: sql`CASE WHEN ${OWNER_DELETED} THEN ${BLOCKED_REASON_MODERATED} END`,
+        ingestion: sql`(CASE WHEN ${OWNER_DELETED} THEN 'Blocked' ELSE 'Scanned' END)::"ImageIngestionStatus"`,
+        metadata: sql`CASE WHEN ${OWNER_DELETED} THEN ${liftedUnderGraceMetadata} ELSE ${withoutGraceMarkers(
+          sql`"metadata"`
+        )} END`,
       })
       .where('id', '=', imageId)
       .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
       .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
+      .returning(sql<boolean>`ingestion = 'Blocked'`.as('keptBlocked'))
       .executeTakeFirst();
-    restored = numUpdatedRows > 0n;
+    written = !!row;
+    restored = written && !row?.keptBlocked;
     if (restored) {
       await dropBlockedImageDeleteQueue(imageId);
       await resetBlockedNsfwLevel(imageId);
+      await recompute(imageId);
+      await rescanIfUnrated(imageId);
     }
-    await recompute(imageId);
-    await rescanIfUnrated(imageId);
-    syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
+    syncSearchIndex({
+      entityType: 'image',
+      entityId: imageId,
+      action: restored ? 'update' : 'delete',
+    });
     if (restored) await trackImageRestore({ imageId, actorUserId: userId });
   } else {
     await dbWrite
@@ -1001,8 +1019,8 @@ export async function resolveImageAppeal({
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
   }
 
-  // Restored nothing: back to Pending, with no refund and no notice, even if the revert fails.
-  if (approved && !restored) {
+  // Wrote nothing: back to Pending, with no refund and no notice, even if the revert fails.
+  if (approved && !written) {
     await dbWrite
       .updateTable('Appeal')
       .set({ status: 'Pending', resolvedBy: null, resolvedAt: null })

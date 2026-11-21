@@ -64,8 +64,10 @@ const { queueDocumentsForImageMinorChanges } = await import('../image-models-rei
 
 // The stand-in keeps the real function's skip of nsfwLevelLocked rows; without it the reset assertions pass vacuously.
 const SCHEMA = `
+CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound');
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
+  "userId" INTEGER,
   "needsReview" TEXT,
   "blockedFor" TEXT,
   "ingestion" TEXT,
@@ -83,7 +85,7 @@ CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled
 CREATE TABLE "ModActivity" ("entityType" TEXT, "entityId" INTEGER, "activity" TEXT);
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
   PRIMARY KEY ("entityType", "entityId", "type"));
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "deletedAt" TIMESTAMP(3));
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -234,6 +236,68 @@ describe('approving an appeal on an image an account deletion blocked', () => {
       metadata: unknown;
     }>(`SELECT "needsReview", "ingestion", "metadata" FROM "Image" WHERE "id" = $1`, [IMAGE_ID]);
     expect(rows[0]).toEqual({ needsReview: flag, ingestion: 'Scanned', metadata: { keep: 1 } });
+  });
+});
+
+describe('approving an appeal while the image owner is deleted', () => {
+  const OWNER_ID = 7;
+  const seed = async (deletedAt: string | null) => {
+    await db.query(`INSERT INTO "User" ("id", "deletedAt") VALUES ($1, $2)`, [OWNER_ID, deletedAt]);
+    await db.query(
+      `UPDATE "Image" SET "userId" = $2, "metadata" = jsonb_build_object(
+         'accountDeletionPriorIngestion', 'Blocked',
+         'accountDeletionPriorBlockedFor', 'moderated',
+         'accountDeletionPriorNeedsReview', 'appeal',
+         'keep', 1)
+       WHERE "id" = $1`,
+      [IMAGE_ID, OWNER_ID]
+    );
+  };
+  const row = async () =>
+    (
+      await db.query<{
+        ingestion: string;
+        blockedFor: string | null;
+        needsReview: string | null;
+        metadata: unknown;
+      }>(
+        `SELECT "ingestion", "blockedFor", "needsReview", "metadata" FROM "Image" WHERE "id" = $1`,
+        [IMAGE_ID]
+      )
+    ).rows[0];
+
+  it('keeps it Blocked, recorded as Scanned for an account restore, and settles the appeal', async () => {
+    await seed('2026-11-20 00:00:00');
+
+    await expect(approve()).resolves.toBeDefined();
+
+    expect(await row()).toEqual({
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+      needsReview: null,
+      metadata: {
+        keep: 1,
+        accountDeletionPriorIngestion: 'Scanned',
+        accountDeletionPriorBlockedFor: null,
+        accountDeletionPriorNeedsReview: null,
+      },
+    });
+    const { rows } = await db.query<{ status: string }>(`SELECT "status" FROM "Appeal"`);
+    expect(rows).toEqual([{ status: 'Approved' }]);
+    expect(chInsert).not.toHaveBeenCalled();
+  });
+
+  it('restores it when the owner is not deleted', async () => {
+    await seed(null);
+
+    await approve();
+
+    expect(await row()).toEqual({
+      ingestion: 'Scanned',
+      blockedFor: null,
+      needsReview: null,
+      metadata: { keep: 1 },
+    });
   });
 });
 

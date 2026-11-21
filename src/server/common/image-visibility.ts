@@ -416,6 +416,20 @@ export const withoutGraceMarkersSql = (metadata: Prisma.Sql = Prisma.sql`"metada
     THEN (${metadata}) - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text
     ELSE ${metadata} END)`;
 
+/** The image's owner has deleted their account (in its grace period, or not yet purged). */
+export const ownerDeletedSql = Prisma.sql`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "Image"."userId" AND u."deletedAt" IS NOT NULL)`;
+
+/**
+ * `metadata` for a row a moderator lifts: without the grace breadcrumbs, or, while its owner is
+ * deleted (when the row stays blocked), with breadcrumbs recording it as Scanned, so an account
+ * restore brings it back and a purge removes it.
+ */
+export const liftedMetadataSql = Prisma.sql`(CASE WHEN ${ownerDeletedSql}
+  THEN COALESCE(${withoutGraceMarkersSql()}, '{}'::jsonb) || jsonb_build_object(
+    ${PRIOR_INGESTION_KEY}::text, 'Scanned', ${PRIOR_BLOCKED_FOR_KEY}::text, NULL::text,
+    ${PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLiftedSql})
+  ELSE ${withoutGraceMarkersSql()} END)`;
+
 export const ingestionAfterScanErrorSql = () => Prisma.sql`(CASE
   WHEN "ingestion" = 'NotFound'::"ImageIngestionStatus" OR ${graceBlockedSql} THEN "ingestion"
   ELSE ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
