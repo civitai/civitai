@@ -62,8 +62,8 @@ describe('HighlightedBadgesInput', () => {
     await expect.element(page.getByText('Drag to reorder')).toBeVisible();
     expect(list.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await view.rerender(<HighlightedBadgesInput badges={badges} value={[1]} onChange={vi.fn()} />);
-    expect(page.getByText('All badges').elements()).toHaveLength(0);
-    expect(page.getByText('Drag to reorder').elements()).toHaveLength(0);
+    await expect.element(page.getByText('All badges')).not.toBeInTheDocument();
+    await expect.element(page.getByText('Drag to reorder')).not.toBeInTheDocument();
   });
 
   const siblings = [
