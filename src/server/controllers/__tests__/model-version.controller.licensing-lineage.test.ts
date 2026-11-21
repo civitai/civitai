@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as FliptClient from '~/server/flipt/client';
 
 /**
  * `licensingSourceVersionId` makes a version inherit a root's per-image licence fee: the fee is
@@ -12,9 +13,15 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * the reporter paid 10 Buzz/image instead of 5 for a month and no surface on the site could clear it.
  */
 
-const { mockUpsertModelVersion, mockGetModel } = vi.hoisted(() => ({
+const { mockUpsertModelVersion, mockGetModel, mockReadFliptBoolean } = vi.hoisted(() => ({
   mockUpsertModelVersion: vi.fn(),
   mockGetModel: vi.fn(),
+  mockReadFliptBoolean: vi.fn(),
+}));
+
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  readFliptBoolean: mockReadFliptBoolean,
 }));
 
 vi.mock('~/server/services/model-version.service', () => ({
@@ -59,6 +66,7 @@ const call = async ({
   licensingSourceVersionId = ANIMA_ROOT_VERSION_ID as number | null,
   omitSource = false,
   storedLicensingSourceVersionId = null as number | null,
+  storedFee = {} as Record<string, unknown>,
   extraInput = {} as Record<string, unknown>,
   isModerator = false,
 }: {
@@ -76,6 +84,8 @@ const call = async ({
   omitSource?: boolean;
   /** What the row being edited already holds — what a payload that omits the field falls back to. */
   storedLicensingSourceVersionId?: number | null;
+  /** Fee columns on the row being edited. */
+  storedFee?: Record<string, unknown>;
   extraInput?: Record<string, unknown>;
   isModerator?: boolean;
 }) => {
@@ -91,6 +101,7 @@ const call = async ({
             usageControl: 'Download',
             modelId: STORED_MODEL_ID,
             licensingSourceVersionId: storedLicensingSourceVersionId,
+            ...storedFee,
           }
         : null
   );
@@ -134,6 +145,8 @@ const creating = (type: string | null) => ({ modelTypes: { [PAYLOAD_MODEL_ID]: t
 beforeEach(() => {
   vi.clearAllMocks();
   mockUpsertModelVersion.mockResolvedValue({ id: VERSION_ID, modelId: PAYLOAD_MODEL_ID });
+  mockReadFliptBoolean.mockReset();
+  mockReadFliptBoolean.mockResolvedValue(true);
 });
 
 describe('upsertModelVersionHandler — licensing lineage scope', () => {
@@ -368,5 +381,64 @@ describe('upsertModelVersionHandler — trainingStatus on create', () => {
     });
 
     expect(mockUpsertModelVersion).toHaveBeenCalled();
+  });
+});
+
+describe('upsertModelVersionHandler — percent-of-compute fee, type-only write', () => {
+  // The fee block in the handler runs only when the payload carries a fee; a payload with only the type
+  // must still reach the percent rule, or a creator turns a per-image fee into a percent of compute.
+  const typeOnly = (isModerator: boolean) =>
+    call({
+      ...creating('Checkpoint'),
+      id: VERSION_ID,
+      licensingSourceVersionId: null,
+      isModerator,
+      storedFee: { licensingFee: 5, licensingFeeType: 'PerImageBuzz' },
+      extraInput: { licensingFee: undefined, licensingFeeType: 'PercentOfCompute' },
+    });
+
+  it('refuses a creator', async () => {
+    await expect(typeOnly(false)).rejects.toThrow(/Percentage license fees are restricted/);
+  });
+
+  it('lets a moderator (control)', async () => {
+    expect(await typeOnly(true)).toMatchObject({ licensingFeeType: 'PercentOfCompute' });
+    expect(mockReadFliptBoolean).toHaveBeenCalledWith('licensing-fee-percent-of-compute');
+  });
+
+  // Until the orchestrator charges by the type, a percent is charged as that many Buzz per image, so
+  // not even staff may set one before the flag is turned on. Do not drop this gate while the
+  // orchestrator still reads the fee as Buzz per image.
+  it.each([
+    ['off', false],
+    ['unreadable', null],
+  ])('refuses a moderator while the percent flag is %s', async (_label, flag) => {
+    mockReadFliptBoolean.mockResolvedValue(flag);
+    await expect(typeOnly(true)).rejects.toThrow(/Percentage license fees are not available yet/);
+    expect(mockUpsertModelVersion).not.toHaveBeenCalled();
+  });
+
+  // The handler defaults an omitted type. Defaulting to PerImageBuzz would turn a staff-set 35% into
+  // 35 Buzz per image, a fee only staff could have created, now in the owner's hands.
+  it('a null type with no fee keeps a staff-set percent (never writes the null)', async () => {
+    const written = (await call({
+      ...creating('Checkpoint'),
+      id: VERSION_ID,
+      licensingSourceVersionId: null,
+      storedFee: { licensingFee: 35, licensingFeeType: 'PercentOfCompute' },
+      extraInput: { licensingFee: undefined, licensingFeeType: null },
+    })) as { licensingFeeType?: string | null };
+    expect(written.licensingFeeType).toBeUndefined();
+  });
+
+  it('a fee-only save keeps a staff-set percent a percent', async () => {
+    const written = (await call({
+      ...creating('Checkpoint'),
+      id: VERSION_ID,
+      licensingSourceVersionId: null,
+      storedFee: { licensingFee: 35, licensingFeeType: 'PercentOfCompute' },
+      extraInput: { licensingFee: 35 },
+    })) as { licensingFeeType?: string };
+    expect(written.licensingFeeType).toBe('PercentOfCompute');
   });
 });

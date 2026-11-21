@@ -218,3 +218,19 @@ describe('Model.type — the audit trail for what clears a lineage fee', () => {
    * still present while the spread overwrites it. Strictly stronger, on the mutation that matters.
    */
 });
+
+describe('licensingFeeType: the settings audit', () => {
+  // A type change rewrites what the stored fee number means, so it is a pricing change in its own right.
+  it('records a staff change of fee type', () => {
+    const rows = diff(
+      { licensingFeeType: 'PerImageBuzz' },
+      { licensingFeeType: 'PercentOfCompute' }
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      field: 'licensingFeeType',
+      oldValue: JSON.stringify('PerImageBuzz'),
+      newValue: JSON.stringify('PercentOfCompute'),
+    });
+  });
+});

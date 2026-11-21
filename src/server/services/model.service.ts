@@ -1,5 +1,6 @@
 import { deletePostRows } from '@civitai/db-queries/content-deletion';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
+import { PLATFORM_REVENUE_SOURCES_SQL } from '@civitai/buzz';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
@@ -8372,6 +8373,7 @@ export async function getTopWeeklyEarners(fresh = false) {
         cast(SUM(amount) as int) as earned
         FROM orchestration.resourceCompensations
         WHERE date >= toStartOfDay(${auctionReset}::Date)
+          AND source NOT IN (${PLATFORM_REVENUE_SOURCES_SQL})
         GROUP BY modelVersionId
         ORDER BY earned DESC
         LIMIT 100;
