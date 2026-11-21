@@ -1111,7 +1111,7 @@ describe('getCompensationPool', () => {
     expect(pool.size.forecasted).toBe(2000000);
   });
 
-  it("forecasts from last month's net banked pool account", async () => {
+  it("forecasts from last month's net banked pool account (#9981, docs/features/creator-program.md)", async () => {
     mockClickhouse.$query
       .mockResolvedValueOnce([{ balance: 50000 }]) // pool value
       .mockResolvedValueOnce([{ balance: 2000000 }]); // last month banked
@@ -1119,12 +1119,14 @@ describe('getCompensationPool', () => {
 
     await getCompensationPool({ month: new Date('2026-04-01') });
 
-    const forecastSql = String(mockClickhouse.$query.mock.calls[1][0]);
+    const forecastSql = mockClickhouse.$query.mock.calls
+      .map(([sql]) => String(sql))
+      .find((sql) => sql.includes('creatorProgramBank'));
     expect(forecastSql).toContain('toAccountId = 202603');
     expect(forecastSql).toContain('fromAccountId = 202603');
   });
 
-  it('never forecasts a smaller pool than is already banked', async () => {
+  it('never forecasts a smaller pool than is already banked (#9981)', async () => {
     // Banking still open (pinned clock 2026-04-15); this month has outgrown last month's 500k.
     mockClickhouse.$query
       .mockResolvedValueOnce([{ balance: 50000 }]) // pool value
@@ -1136,7 +1138,7 @@ describe('getCompensationPool', () => {
     expect(pool.size.forecasted).toBe(1000000);
   });
 
-  it('floors the forecast at current on the cached (no-month) path too', async () => {
+  it('floors the forecast at current on the cached (no-month) path too (#9981)', async () => {
     mockClickhouse.$query
       .mockResolvedValueOnce([{ balance: 50000 }]) // pool value
       .mockResolvedValueOnce([{ balance: 500000 }]); // last month banked
