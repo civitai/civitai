@@ -522,6 +522,19 @@ describe('buildStickerAutoTrackWorkflow', () => {
     expect(workflow['7'].inputs.max_objects).toBe(64);
   });
 
+  it('keeps a sticker on the bottom-right corner inside the frame', () => {
+    const workflow = buildStickerAutoTrackWorkflow({
+      videoAir: 'air',
+      pose: { ...pose, x: 1, y: 1 },
+      startMs: 0,
+      maxMs: 1000,
+      frame: { width: 1920, height: 1080 },
+    }) as { input: { workflow: Record<string, { inputs: Record<string, unknown> }> } };
+    expect(JSON.parse(workflow.input.workflow['12'].inputs.positive_coords as string)).toEqual([
+      { x: 1023, y: 575 },
+    ]);
+  });
+
   it('picks from heads only when the video size is unknown', () => {
     const workflow = graph();
     expect(workflow['12']).toBeUndefined();

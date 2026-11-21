@@ -159,13 +159,13 @@ export function buildStickerAutoTrackWorkflow({
   const placement = JSON.stringify(pose);
   // The point under the sticker, in pixels of the frame StickerLoadVideo returns (max_side 1024).
   const fit = frame ? Math.min(1, 1024 / Math.max(frame.width, frame.height)) : 0;
+  // A sticker on the right or bottom edge still lands on the last pixel, not one past it.
+  const pixel = (fraction: number, side: number) => {
+    const size = Math.round(side * fit);
+    return Math.min(size - 1, Math.round(fraction * size));
+  };
   const underSticker = frame
-    ? JSON.stringify([
-        {
-          x: Math.round(pose.x * Math.round(frame.width * fit)),
-          y: Math.round(pose.y * Math.round(frame.height * fit)),
-        },
-      ])
+    ? JSON.stringify([{ x: pixel(pose.x, frame.width), y: pixel(pose.y, frame.height) }])
     : null;
   // Heads come first in the batch, so a head holding the point wins the pick.
   const fallback = underSticker
