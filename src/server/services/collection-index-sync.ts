@@ -1,4 +1,5 @@
 import { dbRead } from '~/server/db/client';
+import { COLLECTION_SEARCH_ELIGIBLE } from '~/server/search-index/collection-search-eligibility';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
@@ -101,10 +102,11 @@ const postOnHeldModelSql = (postId: Prisma.Sql) => Prisma.sql`EXISTS (
 )`;
 
 /**
- * One page, by collection id after `cursor`, of the collections whose cover may come from a minor
- * or SFW-only model: by a model item, a post or image item on one of its posts, an article item
- * whose cover or banner is on one, or a stored cover image on one. The page is `limit` collections
- * scanned, not matched, so its cost does not grow with how many collections one model reaches.
+ * One page, by collection id after `cursor`, of the search-indexed collections whose cover may come
+ * from a minor or SFW-only model: by a model item, a post or image item on one of its posts, an
+ * article item whose cover or banner is on one, or a stored cover image on one. The page is `limit`
+ * collections scanned, not matched, so its cost does not grow with how many collections one model
+ * reaches; a collection the index does not hold has no document to rebuild and is not selected.
  * `lastScannedId` is the cursor for the next page; it is null when the page scanned nothing.
  */
 export async function getCollectionPageCoveredByHeldModels({
@@ -116,12 +118,13 @@ export async function getCollectionPageCoveredByHeldModels({
 }) {
   const rows = await dbRead.$queryRaw<{ id: number; held: boolean }[]>`
     WITH page AS MATERIALIZED (
-      SELECT c.id, c."imageId" FROM "Collection" c
+      SELECT c.id, c."imageId", (${Prisma.join(COLLECTION_SEARCH_ELIGIBLE, ' AND ')}) AS eligible
+      FROM "Collection" c
       WHERE c.id > ${cursor}
       ORDER BY c.id
       LIMIT ${limit}
     )
-    SELECT p.id, (
+    SELECT p.id, p.eligible AND (
       EXISTS (
         SELECT 1 FROM "CollectionItem" ci JOIN "Model" m ON m.id = ci."modelId"
         WHERE ci."collectionId" = p.id AND (m.minor OR m."sfwOnly")
