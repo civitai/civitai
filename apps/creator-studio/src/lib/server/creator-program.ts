@@ -67,7 +67,7 @@ async function fetchPool(): Promise<CompensationPool> {
 
 // Platform pool figures — global (arg-less key), Redis-cached for a day like the main app.
 export const getCompensationPool = createCache({
-  name: 'creator-program:pool',
+  name: 'creator-program:pool-v2',
   fetch: (_args: Record<string, never>) => fetchPool(),
   ttlSeconds: 86_400,
 }).get;

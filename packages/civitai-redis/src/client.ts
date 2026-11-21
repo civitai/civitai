@@ -3644,7 +3644,7 @@ const REDIS_KEYS_UNPREFIXED = {
     PREV_MONTH_STATS: 'packed:caches:creator-program:prev-month-stats',
     POOL_VALUE: 'packed:caches:creator-program:pool-value',
     POOL_SIZE: 'packed:caches:creator-program:pool-size',
-    POOL_FORECAST: 'packed:caches:creator-program:pool-forecast',
+    POOL_FORECAST: 'packed:caches:creator-program:pool-forecast-v2',
   },
   NEW_ORDER: {
     RATED: 'new-order:rated',

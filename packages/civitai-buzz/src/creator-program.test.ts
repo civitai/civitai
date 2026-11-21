@@ -15,6 +15,13 @@ describe('poolNetBankedSql', () => {
     );
   });
 
+  it('only reads rows from the month onward', () => {
+    // The bound must wrap both branches, not just the deposit side.
+    expect(sql).toMatch(
+      /WHERE date >= toDate\('2026-10-01'\) - INTERVAL 1 DAY AND \( \(.*\) OR \(.*\) \)$/
+    );
+  });
+
   it('never interpolates a non-integer account id', () => {
     expect(poolNetBankedSql(202610.9, "'yellow'")).toContain('toAccountId = 202610');
   });

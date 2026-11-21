@@ -43,18 +43,23 @@ export function getCurrentValue(
  *  `bankableTypesSql` the quoted bankable account types, e.g. `'yellow', 'green'`. */
 export function poolNetBankedSql(monthAccount: number, bankableTypesSql: string): string {
   const month = Math.trunc(monthAccount);
+  const monthStart = `${Math.floor(month / 100)}-${String(month % 100).padStart(2, '0')}-01`;
+  // Nothing is banked into a month's account before it opens (a day of margin for zone skew); the bound lets ClickHouse prune.
   return `
     SELECT SUM(if(toAccountType = 'creatorProgramBank', amount, -amount)) AS balance
     FROM buzzTransactions
-    WHERE (
-      toAccountType = 'creatorProgramBank'
-      AND toAccountId = ${month}
-      AND fromAccountType IN (${bankableTypesSql})
-    ) OR (
-      fromAccountType = 'creatorProgramBank'
-      AND fromAccountId = ${month}
-      AND toAccountType IN (${bankableTypesSql})
-    )`;
+    WHERE date >= toDate('${monthStart}') - INTERVAL 1 DAY
+      AND (
+        (
+          toAccountType = 'creatorProgramBank'
+          AND toAccountId = ${month}
+          AND fromAccountType IN (${bankableTypesSql})
+        ) OR (
+          fromAccountType = 'creatorProgramBank'
+          AND fromAccountId = ${month}
+          AND toAccountType IN (${bankableTypesSql})
+        )
+      )`;
 }
 
 /** The pool size a forecast divides by: what last month's pool ended at, or what is banked
