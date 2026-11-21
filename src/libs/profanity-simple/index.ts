@@ -25,6 +25,7 @@ import {
 
 import { getCachedNsfwWords } from './word-processor';
 import { customLeetSpeakTransformer } from './custom-transformers';
+import { createAnyTermPrefilter } from './any-term-prefilter';
 import { whitelistWords } from '@civitai/mod-utils/profanity/lists';
 import { removeTags } from '~/utils/string-helpers';
 import { NsfwLevel } from '~/server/common/enums';
@@ -139,6 +140,7 @@ export const LIBRARY_OVERMATCH_TOKENS = ['fu'] as const;
 
 export class SimpleProfanityFilter {
   private matcher!: RegExpMatcher;
+  private anyTermPrefilter: ((text: string) => boolean) | null = null;
   private censor!: TextCensor;
   private options: ProfanityFilterOptions;
   private dataset: DataSet<{ originalWord: string }>;
@@ -190,11 +192,16 @@ export class SimpleProfanityFilter {
     });
   }
 
+  private getAllMatches(text: string, sorted = false): MatchPayload[] {
+    if (this.anyTermPrefilter && !this.anyTermPrefilter(text)) return [];
+    return this.matcher.getAllMatches(text, sorted);
+  }
+
   /**
    * Clean profane words from text
    */
   clean(text: string): string {
-    const matches = this.excludeWhitelisted(text, this.matcher.getAllMatches(text));
+    const matches = this.excludeWhitelisted(text, this.getAllMatches(text));
     return this.censor.applyTo(text, matches);
   }
 
@@ -202,7 +209,7 @@ export class SimpleProfanityFilter {
    * Get detailed information about matches
    */
   analyze(text: string) {
-    const matches = this.matcher.getAllMatches(text, true); // sorted by position
+    const matches = this.getAllMatches(text, true); // sorted by position
 
     if (matches.length === 0) {
       return {
@@ -427,6 +434,7 @@ export class SimpleProfanityFilter {
       ],
       whitelistMatcherTransformers: englishRecommendedWhitelistMatcherTransformers,
     });
+    this.anyTermPrefilter = createAnyTermPrefilter(this.matcher);
   }
 
   private initializeCensor(): void {
