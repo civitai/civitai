@@ -178,8 +178,7 @@ func TestOGetAndOrder(t *testing.T) {
 				t.Error("O with an odd argument count did not panic")
 			}
 		}()
-		odd := []any{"a", 1, "b"}
-		_ = O(odd...)
+		_ = O("a", 1, "b") //nolint:staticcheck // SA5012: the odd argument count is the case under test
 	}()
 	o := O("b", 1, "2", 2, "1", 3)
 	if v, ok := o.Get("missing"); ok || v != nil {
