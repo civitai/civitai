@@ -22,6 +22,7 @@ internal/flipt 88
 internal/feedsvc 92
 internal/hydrate 86
 internal/inputschema 80
+internal/jskeys 100
 internal/jspack 88
 internal/modelfeed 92
 internal/safe 100

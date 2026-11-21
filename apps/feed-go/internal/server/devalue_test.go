@@ -40,8 +40,7 @@ func encodingAnswer(v any, ttl *trpc.CacheTTL) func(context.Context, *http.Reque
 	}
 }
 
-// superjsonBody is the body this service wrote for v before devalue existed: the superjson envelope in
-// tRPC's.
+// superjsonBody is the superjson envelope in tRPC's, the body written when devalue is off or refused.
 func superjsonBody(t *testing.T, v any) string {
 	t.Helper()
 	b, err := superjson.Serialize(v)
