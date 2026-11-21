@@ -83,7 +83,7 @@ describe('/api/requests/case/[publicRef]', () => {
     flags.takedownRequests = false;
     moderatorAnswers(200, view);
     const out = await call({ body: { token: TOKEN } });
-    expect(out.status).toBe(503);
+    expect(out.status).toBe(404);
     expect(out.headers['set-cookie']).toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
   });

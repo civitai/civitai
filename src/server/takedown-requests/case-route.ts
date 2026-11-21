@@ -56,7 +56,7 @@ export const createCaseRoute = ({ formsOpen }: CaseRouteDeps) =>
     const svc = await import('~/server/services/takedown-requests.service');
     if (!svc.takedownRequestsConfigured()) return res.status(503).json({ message: 'unavailable' });
     // The forms' flag closes the case links too, so switching it off shuts the whole public surface.
-    if (!(await formsOpen(req, res))) return res.status(503).json({ message: 'unavailable' });
+    if (!(await formsOpen(req, res))) return res.status(404).json({ message: 'Not found' });
     const ip = resolveClientIp(req);
     const userAgent = req.headers['user-agent']?.slice(0, 512);
 

@@ -6,6 +6,8 @@ describe('isAdFreeRoute', () => {
     expect(isAdFreeRoute('/requests', '/requests')).toBe(true);
     expect(isAdFreeRoute('/requests/[process]', '/requests/dmca-notice')).toBe(true);
     expect(isAdFreeRoute('/requests/case/[publicRef]', '/requests/case/TD-26-ABC123')).toBe(true);
+    // A request URL the app answered with its 404 page.
+    expect(isAdFreeRoute('/404', '/requests/case/not-a-ref#t=abc')).toBe(true);
   });
 
   it('still allows ads on an ordinary page, and keeps the existing exclusions', () => {

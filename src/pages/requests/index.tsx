@@ -1,5 +1,4 @@
 import { Anchor, Container, Loader, Stack, Text, Title } from '@mantine/core';
-import Link from 'next/link';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -23,7 +22,7 @@ export default function RequestsPage() {
           ) : forms?.length ? (
             <Stack gap="xs">
               {forms.map((f) => (
-                <Anchor key={f.key} component={Link} href={`/requests/${f.key}`}>
+                <Anchor key={f.key} href={`/requests/${f.key}`}>
                   {f.title}
                 </Anchor>
               ))}

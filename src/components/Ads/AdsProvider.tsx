@@ -1,7 +1,7 @@
 import { useRouter } from 'next/router';
-import { isAdFreeRoute } from '~/components/Ads/ad-free-routes';
+import { isAdFreeRoute, isRequestsRoute } from '~/components/Ads/ad-free-routes';
 import Script from 'next/script';
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
 import { SparteoTag } from '~/components/Ads/SparteoTag';
@@ -158,6 +158,17 @@ export function AdsProvider({
       consentAllowed &&
       (allowAds || !isMember) &&
       !isAdFreeRoute(router.pathname, router.asPath);
+
+  // Ad scripts loaded on an earlier page keep running after a client-side route change. A request page
+  // holds contact details or a case link, so reaching one that way reloads it without them.
+  const adsLoadedBefore = useRef(false);
+  useEffect(() => {
+    if (adsEnabled) adsLoadedBefore.current = true;
+  }, [adsEnabled]);
+  useEffect(() => {
+    if (adsLoadedBefore.current && isRequestsRoute(router.pathname, router.asPath))
+      window.location.reload();
+  }, [router.pathname, router.asPath]);
 
   function handleLoadedError() {
     useAdProviderStore.setState({ adsBlocked: true });
