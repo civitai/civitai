@@ -213,6 +213,22 @@ describe('the masked copy on a saved comment', () => {
     const edited = await update(AUTHOR, 101);
     expect(edited).toMatchObject({ id: 101, maskedContent: undefined });
   });
+
+  // Synthetic managed entries, on no real list, so a mask can only come from the list read.
+  it('carries the masked copy on the create and the edit, and null for clean text', async () => {
+    setProfanityListReaderForTests({
+      read: async () => ({ blocked: ['zqvoxblat', 'zqvoxcrud'], allowed: null, source: 'managed' }),
+    });
+    m.insertComment.mockResolvedValueOnce(row(300, { content: '<p>well zqvoxblat then</p>' }));
+    const saved = await create(STRANGER, {});
+    expect(saved.maskedContent).toMatch(/^<p>well \*+ then<\/p>$/);
+
+    m.updateCommentContent.mockResolvedValueOnce(row(101, { content: '<p>zqvoxcrud</p>' }));
+    expect((await update(AUTHOR, 101)).maskedContent).toMatch(/^<p>\*+<\/p>$/);
+
+    m.updateCommentContent.mockResolvedValueOnce(row(101, { content: '<p>all clean</p>' }));
+    expect(await update(AUTHOR, 101)).toHaveProperty('maskedContent', null);
+  });
 });
 
 describe('commentv3 create', () => {

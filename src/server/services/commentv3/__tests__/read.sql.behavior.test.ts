@@ -8,7 +8,7 @@ import {
   PostgresIntrospector,
   PostgresQueryCompiler,
 } from 'kysely';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { blockedWords } from '@civitai/mod-utils/profanity/lists';
 import { cleanWord, isUsableBlockedEntry } from '@civitai/mod-utils/profanity/word-rules';
 import { createProfanityFilter } from '~/libs/profanity-simple';
@@ -30,6 +30,11 @@ import {
 
 // Against real Postgres, with CommentV3 rows as the mirror or the v3 write path stores them.
 vi.setConfig({ hookTimeout: 120_000, testTimeout: 60_000 });
+// Reset even when a test fails part way, so its flag and list read never reach the next test.
+afterEach(() => {
+  profanityFlag.on = true;
+  setProfanityListReaderForTests();
+});
 
 // `profanity-managed-list` per test; every other flag as the real client answers it.
 const profanityFlag = vi.hoisted(() => ({ on: true }));
@@ -303,7 +308,6 @@ describe('getCommentSection', () => {
     });
     expect([7700, 7702].map((id) => item(off, id).maskedContent)).toEqual([undefined, undefined]);
     expect(item(off, 7702).content).toBe(`<p>then ${word}</p>`);
-    setProfanityListReaderForTests();
   });
 
   it('never opens through a deleted comment what a ToS removal or an excluded author hid', async () => {
