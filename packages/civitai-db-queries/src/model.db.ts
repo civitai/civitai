@@ -69,7 +69,6 @@ export async function listModelStake(db: Kysely<DB>, input: { userId: number; li
       .orderBy('e.createdAt', 'desc')
       .limit(input.limit)
       .execute(),
-    // Uncapped: a Mute must not fall out behind newer favourites.
     db
       .selectFrom('ModelEngagement as e')
       .innerJoin('Model as m', 'm.id', 'e.modelId')
