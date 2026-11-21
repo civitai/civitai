@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptModule from '~/server/flipt/client';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { STEP_MEDIA_INPUT_KEYS } from '~/server/services/blocks/step-media-keys';
+import { resolveBlockWorkflowGraph } from '~/server/services/blocks/workflow-graph';
 import {
   findInlineGraphProblem,
   findStepPositionProblem,
@@ -16,6 +17,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 
 const VIEWER = 42;
 const ref = (extra: Record<string, unknown> = {}) => ({ $ref: '$arguments', path: 'v', ...extra });
+// A reference to an earlier step's output, placed at run time.
+const stepRef = () => ({ $ref: 'previous', path: 'output.images' });
 const ownJob = `urn:air:sdxl:lora:orchestrator:${VIEWER}-20261121@epoch_5.safetensors`;
 const otherJob = 'urn:air:sdxl:lora:orchestrator:7001-20261121@epoch_5.safetensors';
 const blob = 'urn:air:sdxl:lora:orchestrator:blob@abc123.safetensors';
@@ -47,11 +50,11 @@ describe('findStepPositionProblem', () => {
     });
 
     it.each([
-      ['Mesh', { mesh: ref() }],
-      ['SourceUrl', { sourceUrl: ref() }],
-      ['an image list', { images: [ref()] }],
-      ['a media key in another case', { SourceImage: ref() }],
-      ['inside a media object', { trainingData: { type: 'blobs', items: [{ air: ref() }] } }],
+      ['Mesh', { mesh: stepRef() }],
+      ['SourceUrl', { sourceUrl: stepRef() }],
+      ['an image list', { images: [stepRef()] }],
+      ['a media key in another case', { SourceImage: stepRef() }],
+      ['inside a media object', { trainingData: { type: 'blobs', items: [{ air: stepRef() }] } }],
     ])('lets one chain into %s', (_label, input) => {
       expect(findStepPositionProblem(input, VIEWER)).toBeNull();
     });
@@ -60,17 +63,27 @@ describe('findStepPositionProblem', () => {
       const clause = { $ref: '$arguments', path: 'items', as: 'item' };
       const repeat = (template: unknown) => ({ for: clause, template });
       expect(
-        findStepPositionProblem(repeat({ input: { image: ref() } }), VIEWER, undefined, 'repeat')
+        findStepPositionProblem(
+          repeat({ input: { image: { $ref: 'item' } } }),
+          VIEWER,
+          { items: [] },
+          'repeat'
+        )
       ).toBeNull();
       expect(
-        findStepPositionProblem(repeat({ input: { model: ref() } }), VIEWER, undefined, 'repeat')
+        findStepPositionProblem(
+          repeat({ input: { model: ref() } }),
+          VIEWER,
+          { items: [] },
+          'repeat'
+        )
       ).toMatchObject({ form: 'reference', key: 'model' });
       // A repeat nested in another step's template is exempt the same way.
       expect(
         findStepPositionProblem(
-          { template: { $type: 'repeat', input: repeat({ input: { image: ref() } }) } },
+          { template: { $type: 'repeat', input: repeat({ input: { image: { $ref: 'item' } } }) } },
           VIEWER,
-          undefined,
+          { items: [] },
           'repeat'
         )
       ).toBeNull();
@@ -247,10 +260,10 @@ describe('findStepPositionProblem', () => {
       expect(findStepPositionProblem({ model: ownJob }, VIEWER)).toBeNull();
     });
 
-    it('lets a blob through at a media key', () => {
+    it('refuses a blob at a media key', () => {
       expect(
         findStepPositionProblem({ trainingData: { type: 'blobs', items: [{ air: blob }] } }, VIEWER)
-      ).toBeNull();
+      ).toMatchObject({ form: 'media-reference', key: 'air' });
     });
   });
 
@@ -264,11 +277,365 @@ describe('findStepPositionProblem', () => {
   });
 });
 
+describe('media references (#9982)', () => {
+  const civitaiImage = 'urn:air:other:image:civitai:12345';
+  const blobKey = 'JNFDW54JNTATNW42HACYCWSQP0';
+  const inputs: [string, (value: unknown) => unknown][] = [
+    ['a controlnet image', (v) => ({ controlNets: [{ preprocessor: 'canny', image: v }] })],
+    ['prompt-enhancement images', (v) => ({ prompt: 'a cat', images: [v] })],
+    ['a TTS refAudioUrl', (v) => ({ text: 'hello', refAudioUrl: v })],
+    [
+      'a training item air',
+      (v) => ({ trainingData: { type: 'blobs', items: [{ air: v, caption: 'a cat' }] } }),
+    ],
+  ];
+  const refused: [string, string][] = [
+    ["another user's job file", otherJob],
+    ['a blob AIR', blob],
+    ['a Civitai image AIR', civitaiImage],
+    ['a bare blob key', blobKey],
+    ['a bare blob key with an extension', `${blobKey}.png`],
+    ['a bare number', '12345'],
+  ];
+
+  describe.each(inputs)('at %s', (_input, build) => {
+    it.each(refused)('refuses %s', (_label, value) => {
+      expect(findStepPositionProblem(build(value), VIEWER)).toMatchObject({
+        form: 'media-reference',
+      });
+    });
+
+    it('refuses one placed through the arguments', () => {
+      expect(findStepPositionProblem(build(ref()), VIEWER, { v: blob })).toMatchObject({
+        form: 'media-reference',
+      });
+    });
+
+    it("lets the viewer's own job file, a URL and a data URI through", () => {
+      for (const value of [
+        ownJob,
+        'https://image.civitai.com/x/y.png',
+        'data:image/png;base64,AAAA',
+      ])
+        expect(findStepPositionProblem(build(value), VIEWER)).toBeNull();
+    });
+  });
+
+  it.each(['12345', blobKey, 'scene: 00:01, style:anime'])(
+    "reads a training item's caption %s as text",
+    (caption) => {
+      expect(
+        findStepPositionProblem(
+          { trainingData: { type: 'blobs', items: [{ air: ownJob, caption }] } },
+          VIEWER
+        )
+      ).toBeNull();
+    }
+  );
+
+  it.each([
+    ['a training blob key', 'a'.repeat(32) + '.zip'],
+    ['a blob path on another host', `https://example.com/v2/consumer/blobs/${blobKey}`],
+    ['an encoded blob path on another host', `https://example.com/v2/consumer%2Fblobs/${blobKey}`],
+  ])('refuses %s', (_label, value) => {
+    expect(
+      findStepPositionProblem({ trainingData: { type: 'blobs', items: [{ air: value }] } }, VIEWER)
+    ).toMatchObject({ form: 'media-reference', key: 'air' });
+    expect(findStepPositionProblem({ image: value }, VIEWER)).toMatchObject({
+      form: 'media-reference',
+    });
+  });
+
+  it.each([
+    ['an escaped backslash path', `https://example.com/v2/consumer%5Cblobs/${blobKey}`],
+    ['a malformed escape', `https://example.com/v2/consumer/blobs/%E0%A4%A`],
+  ])('refuses a blob URL on another host with %s', (_label, value) => {
+    expect(findStepPositionProblem({ image: value }, VIEWER)).toMatchObject({
+      form: 'media-reference',
+    });
+  });
+
+  it.each([
+    ['a short Civitai AIR', 'https:civitai:12345'],
+    ['a Civitai image AIR', 'https:urn:air:other:image:civitai:12345'],
+    ["another user's job file", 'https:orchestrator:7001-20261121@epoch_5.safetensors'],
+  ])('refuses %s behind a scheme with no slashes', (_label, value) => {
+    expect(findStepPositionProblem({ image: value }, VIEWER)).toMatchObject({
+      form: 'media-reference',
+      key: 'image',
+    });
+  });
+
+  it('refuses a colon in a non-caption field of a media object', () => {
+    expect(
+      findStepPositionProblem(
+        { keyframes: [{ image: 'https://image.civitai.com/x/y.png', label: 'start: 00:01' }] },
+        VIEWER
+      )
+    ).toMatchObject({ form: 'media-reference', key: 'label' });
+  });
+
+  it.each(['data:,urn:air:other:image:civitai:1', 'data:text/plain,orchestrator:x'])(
+    'refuses %s, a data URI that is not media',
+    (value) => {
+      expect(findStepPositionProblem({ image: value }, VIEWER)).toMatchObject({
+        form: 'media-reference',
+        key: 'image',
+      });
+    }
+  );
+
+  it.each(['orchestrator://x@y.safetensors', 'civitai://12345', 'ftp://example.com/a.png'])(
+    'refuses %s, a scheme other than http(s)',
+    (value) => {
+      expect(findStepPositionProblem({ image: value }, VIEWER)).toMatchObject({
+        form: 'media-reference',
+        key: 'image',
+      });
+    }
+  );
+
+  it("passes a real URL and the viewer's own job file", () => {
+    for (const value of ['https://image.civitai.com/x/y.png', 'http://example.com/a.png', ownJob])
+      expect(findStepPositionProblem({ image: value }, VIEWER)).toBeNull();
+  });
+
+  it("leaves a blob URL on the orchestrator's own host to the source gate", () => {
+    expect(
+      findStepPositionProblem(
+        { image: `https://orchestration.civitai.com/v2/consumer/blobs/${blobKey}` },
+        VIEWER
+      )
+    ).toBeNull();
+  });
+
+  it.each([
+    ['an extension-less training key', 'b'.repeat(32)],
+    ['a number', 12345],
+  ])('refuses %s', (_label, value) => {
+    expect(findStepPositionProblem({ image: value }, VIEWER)).toMatchObject({
+      form: 'media-reference',
+      key: 'image',
+    });
+    expect(
+      findStepPositionProblem({ trainingData: { type: 'blobs', items: [{ air: value }] } }, VIEWER)
+    ).toMatchObject({ form: 'media-reference', key: 'air' });
+  });
+
+  it.each([
+    ['reasoning', { $ref: 'chat', path: 'output.choices[0].message.reasoning_content' }],
+    ['a refusal', { $ref: 'chat', path: 'output.choices[0].message.refusal' }],
+    ['no path', { $ref: 'chat' }],
+  ])('refuses a step output that is not media (%s) at a media key', (_label, reference) => {
+    expect(findStepPositionProblem({ image: reference }, VIEWER)).toMatchObject({
+      form: 'reference',
+      key: 'image',
+    });
+  });
+
+  it("refuses a step's text output at a media key, and passes its media output", () => {
+    expect(
+      findStepPositionProblem({ image: { $ref: 'chat', path: 'output.text' } }, VIEWER)
+    ).toMatchObject({ form: 'reference', key: 'image' });
+    expect(
+      findStepPositionProblem({ image: { $ref: 'gen', path: 'output.images[0].url' } }, VIEWER)
+    ).toBeNull();
+  });
+
+  describe('a repeat over the arguments', () => {
+    const repeat = (path = 'items') => ({
+      for: { $ref: '$arguments', path, as: 'item' },
+      template: { $type: 'imageGen', input: { prompt: 'a cat', image: { $ref: 'item' } } },
+    });
+
+    it.each([
+      ["another user's job file", otherJob],
+      ['a blob AIR', blob],
+      ['a bare blob key', blobKey],
+    ])('refuses an item holding %s placed at a media key', (_label, value) => {
+      expect(
+        findStepPositionProblem(repeat(), VIEWER, { items: [ownJob, value] }, 'repeat')
+      ).toMatchObject({ form: 'media-reference', key: 'image' });
+    });
+
+    it.each([
+      ['as', { $ref: '$arguments', path: 'items', as: 5 }],
+      ['$ref', { $ref: ['$arguments'], path: 'items', as: 'item' }],
+      ['path', { $ref: '$arguments', path: { p: 'items' }, as: 'item' }],
+    ])('refuses a clause whose %s is not a string', (_label, clause) => {
+      const input = {
+        for: clause,
+        template: { $type: 'imageGen', input: { image: { $ref: 'item' } } },
+      };
+      expect(findStepPositionProblem(input, VIEWER, { items: [] }, 'repeat')).toMatchObject({
+        form: 'reference',
+        key: 'for',
+      });
+    });
+
+    it.each([
+      ['a caption', { caption: blobKey }],
+      ['a number field', { n: 12345 }],
+    ])('refuses what the loop path picks out of %s', (_label, item) => {
+      const field = Object.keys(item)[0];
+      const input = {
+        for: { $ref: '$arguments', path: 'items', as: 'item' },
+        template: { $type: 'imageGen', input: { image: { $ref: 'item', path: field } } },
+      };
+      expect(findStepPositionProblem(input, VIEWER, { items: [item] }, 'repeat')).toMatchObject({
+        form: 'media-reference',
+        key: 'image',
+      });
+    });
+
+    it.each([
+      ['a caption', { caption: blobKey }],
+      ['a number field', { n: 12345 }],
+    ])('refuses a whole item placed at a media key with %s in it', (_label, item) => {
+      expect(findStepPositionProblem(repeat(), VIEWER, { items: [item] }, 'repeat')).toMatchObject({
+        form: 'media-reference',
+        key: 'image',
+      });
+    });
+
+    it('refuses a loop path that does not resolve on every item, and passes one that does', () => {
+      const input = {
+        for: { $ref: '$arguments', path: 'items', as: 'item' },
+        template: { $type: 'imageGen', input: { image: { $ref: 'item', path: 'src' } } },
+      };
+      const url = 'https://image.civitai.com/x/y.png';
+      expect(
+        findStepPositionProblem(input, VIEWER, { items: [{ src: url }, {}] }, 'repeat')
+      ).toMatchObject({ form: 'reference', key: 'image' });
+      expect(
+        findStepPositionProblem(input, VIEWER, { items: [{ src: url }, { src: ownJob }] }, 'repeat')
+      ).toBeNull();
+    });
+
+    it('refuses a clause that does not name an array in the arguments', () => {
+      for (const args of [{}, { items: ownJob }])
+        expect(findStepPositionProblem(repeat(), VIEWER, args, 'repeat')).toMatchObject({
+          form: 'reference',
+          key: 'for',
+        });
+    });
+
+    it.each(['$ARGUMENTS', '$arguments', 'Gen'])(
+      'refuses a loop variable named %s, like the arguments or a step',
+      (as) => {
+        const input = {
+          for: { $ref: '$arguments', path: 'items', as },
+          template: { $type: 'imageGen', input: { image: { $ref: '$arguments', path: 'img' } } },
+        };
+        expect(
+          findStepPositionProblem(
+            input,
+            VIEWER,
+            { items: ['https://image.civitai.com/x/y.png'], img: blob },
+            'repeat',
+            new Set(['gen'])
+          )
+        ).toMatchObject({ form: 'reference', key: 'for' });
+      }
+    );
+
+    it("lets the viewer's own files and URLs through", () => {
+      expect(
+        findStepPositionProblem(
+          repeat(),
+          VIEWER,
+          { items: [ownJob, 'https://image.civitai.com/x/y.png'] },
+          'repeat'
+        )
+      ).toBeNull();
+    });
+  });
+
+  it('refuses a recased default end to end', () => {
+    const input = { prompt: 'a cat', image: { $ref: '$arguments', path: 'v', Default: blob } };
+    const graph = resolveBlockWorkflowGraph({
+      steps: [{ $type: 'imageGen', input }],
+      arguments: { v: ownJob },
+    });
+    expect(graph.ok).toBe(false);
+    expect(findStepPositionProblem(input, VIEWER, { v: ownJob })).toMatchObject({
+      form: 'media-reference',
+      key: 'image',
+    });
+  });
+
+  describe('references at a media key', () => {
+    const step = (extra: Record<string, unknown> = {}) => ({
+      $ref: 'previous',
+      path: 'output.blobs',
+      ...extra,
+    });
+
+    it.each([
+      ["another user's job file", otherJob],
+      ['a blob AIR', blob],
+      ['a bare blob key', blobKey],
+    ])('refuses a default holding %s', (_label, value) => {
+      for (const reference of [step({ default: value }), ref({ default: value })])
+        expect(findStepPositionProblem({ image: reference }, VIEWER, { v: ownJob })).toMatchObject({
+          form: 'media-reference',
+          key: 'image',
+        });
+    });
+
+    it('refuses a formatted reference', () => {
+      expect(
+        findStepPositionProblem({ image: ref({ format: '{0}' }) }, VIEWER, { v: ownJob })
+      ).toMatchObject({ form: 'reference', key: 'image' });
+      expect(findStepPositionProblem({ image: step({ format: '{0}' }) }, VIEWER)).toMatchObject({
+        form: 'reference',
+      });
+    });
+
+    it('refuses an arguments reference that does not resolve', () => {
+      expect(findStepPositionProblem({ image: ref() }, VIEWER, {})).toMatchObject({
+        form: 'reference',
+        key: 'image',
+      });
+    });
+
+    it("checks an arguments reference's value when it also carries a default", () => {
+      expect(
+        findStepPositionProblem({ image: ref({ default: ownJob }) }, VIEWER, { v: blob })
+      ).toMatchObject({ form: 'media-reference' });
+      expect(
+        findStepPositionProblem({ image: ref({ default: ownJob }) }, VIEWER, { v: ownJob })
+      ).toBeNull();
+    });
+
+    it("lets a reference to another step's output through, with an own default", () => {
+      expect(findStepPositionProblem({ image: step() }, VIEWER)).toBeNull();
+      expect(findStepPositionProblem({ image: step({ default: ownJob }) }, VIEWER)).toBeNull();
+    });
+  });
+
+  it('leaves an air outside training data to the weights rule', () => {
+    expect(
+      findStepPositionProblem(
+        { resources: [{ air: 'urn:air:sdxl:checkpoint:civitai:1@2' }] },
+        VIEWER
+      )
+    ).toBeNull();
+    expect(
+      findStepPositionProblem({ resources: [{ air: 'https://example.com/w.safetensors' }] }, VIEWER)
+    ).toMatchObject({ form: 'url', key: 'air' });
+  });
+
+  it('leaves a number at a key that is not media alone', () => {
+    expect(findStepPositionProblem({ seed: '12345', steps: 20 }, VIEWER)).toBeNull();
+  });
+});
+
 describe('media keys', () => {
   it("are the prompt audit's list, plus trainingData", () => {
     for (const key of ['blob', 'frames', 'keyframes', 'url', 'sampleInputImages']) {
       expect(STEP_MEDIA_INPUT_KEYS.has(key.toLowerCase())).toBe(true);
-      expect(findStepPositionProblem({ [key]: ref() }, VIEWER)).toBeNull();
+      expect(findStepPositionProblem({ [key]: stepRef() }, VIEWER)).toBeNull();
     }
     expect(STEP_MEDIA_INPUT_KEYS.has('trainingdata')).toBe(false);
   });
