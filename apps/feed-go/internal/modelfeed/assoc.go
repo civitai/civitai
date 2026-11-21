@@ -419,13 +419,13 @@ func resolveCanGenerate(ctx context.Context, d *AssocDeps, cards []*assocCard, v
 // status test always passes; usageControl and the generation alias are not passed by the handler.
 func assocBaseCanGenerate(it *feedItem, viewer *Viewer, next bool) bool {
 	v := it.version
-	coveredLive, _ := v["covered"].(bool)
+	coveredLive, _ := recField(v, "covered").(bool)
 	covered := coveredLive
 	if next {
-		covered, _ = v["coveredNext"].(bool)
+		covered, _ = recField(v, "coveredNext").(bool)
 	}
-	bm, _ := v["baseModel"].(string)
-	rawFlags, _ := hydrate.Int(v["flags"])
+	bm, _ := recField(v, "baseModel").(string)
+	rawFlags, _ := hydrate.Int(recField(v, "flags"))
 	flags := toPublicAPIVersionFlags(rawFlags)
 	if !isGenerationEligible(covered, coveredLive, bm, it.row.Type, flags) {
 		return false

@@ -193,7 +193,11 @@ func assocGoldenDeps(t *testing.T, fx *assocFixture) *AssocDeps {
 	}
 	for k, d := range w.ModelData {
 		id, _ := strconv.Atoi(k)
-		sources.page.Data[id] = hydrate.ModelData{Hashes: d.Hashes, TagIDs: d.TagIDs, Versions: d.Versions}
+		versions := make([]superjson.Object, len(d.Versions))
+		for i, v := range d.Versions {
+			versions[i] = sortedRecord(v)
+		}
+		sources.page.Data[id] = hydrate.ModelData{Hashes: d.Hashes, TagIDs: d.TagIDs, Versions: versions}
 	}
 	for k, p := range w.PrivacyDefaults {
 		id, _ := strconv.Atoi(k)
