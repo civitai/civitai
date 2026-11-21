@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import {
+  hasBlockMarkerSql,
   imageNotRestrictedSql,
   imageReviewedSql,
   minorMatureImageVisibleSql,
@@ -11,7 +12,42 @@ import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+
+/**
+ * The reviewed-only part of `getImagesForModelVersion`'s filter (its non-pending branch): not held
+ * or minor-accepted, at a level in `browsingLevel`, and reviewed. Shared with `countableImageSql`
+ * so a public image count and the gallery it counts cannot disagree.
+ */
+export const reviewedGalleryImageConditions = (
+  browsingLevel: number = allBrowsingLevelsFlag
+): Prisma.Sql[] => [
+  Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`,
+  Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`,
+  imageReviewedSql(),
+];
+
+/** What `getImagesForModelVersion` shows a signed-out viewer at some browsing level, over `"Image" i`. */
+export const anonymousGalleryImageConditions = (): Prisma.Sql[] => [
+  ...imageBlockedForConditions({}),
+  ...reviewedGalleryImageConditions(),
+  minorMatureImageVisibleSql({}),
+];
+
+/**
+ * The images a model's image count counts: the signed-out gallery's, less any ToS violation or
+ * block marker the gallery's own terms do not already exclude.
+ */
+export const countableImageSql = () =>
+  Prisma.sql`(${Prisma.join(
+    [
+      ...anonymousGalleryImageConditions(),
+      Prisma.sql`NOT i."tosViolation"`,
+      Prisma.sql`NOT ${hasBlockMarkerSql()}`,
+    ],
+    ' AND '
+  )})`;
 
 /**
  * An image with any `blockedFor` reason is visible only to its owner and moderators, as SQL over

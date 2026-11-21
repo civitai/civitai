@@ -1,3 +1,6 @@
+import { Prisma } from '@prisma/client';
+import fs from 'node:fs';
+import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
@@ -16,6 +19,10 @@ import {
   stageRange,
   startBackfill,
 } from '~/server/metrics/model-image-count-backfill';
+import {
+  anonymousGalleryImageConditions,
+  countableImageSql,
+} from '~/server/services/image-visibility.service';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -131,6 +138,51 @@ describe('the count', () => {
 
     expect(await countNextHour(W + 25 * HOUR_MS)).toMatchObject({ hour: W, images: 4 });
     expect(await imageCount()).toBe(4);
+  });
+
+  // A public count must never reveal a held, minor-flagged, needs-review or blocked image by
+  // differing from what a signed-out visitor sees (moderation ruling on PR #9948).
+  it('counts exactly what the signed-out gallery shows, less ToS and block markers', async () => {
+    const at = W + 10 * 60_000;
+    const states = [
+      '',
+      `"needsReview" = 'minor'`,
+      `ingestion = 'Blocked'`,
+      `ingestion = 'Pending'`,
+      `"blockedFor" = 'tos'`,
+      `"nsfwLevel" = 0`,
+      `"nsfwLevel" = 32`,
+      `"tosViolation" = true`,
+      `"acceptableMinor" = true`,
+      `ingestion = 'Pending', "nsfwLevelLocked" = true`,
+      `minor = true, "nsfwLevel" = 4`,
+      `minor = true, "nsfwLevel" = 1`,
+      `"nsfwLevel" = 16`,
+    ];
+    for (const state of states) await image(at, FAN, state);
+    const ids = async (where: Prisma.Sql) =>
+      (
+        await h.pg.query<{ id: number }>(
+          `SELECT id FROM "Image" i WHERE ${where.text} ORDER BY id`,
+          where.values
+        )
+      ).rows.map((r) => r.id);
+    const gallery = await ids(Prisma.join(anonymousGalleryImageConditions(), ' AND '));
+    const extras = await ids(Prisma.sql`(i."tosViolation" OR i."nsfwLevel" = 32)`);
+    expect(await ids(countableImageSql())).toEqual(gallery.filter((id) => !extras.includes(id)));
+    expect(gallery).toEqual([1, 8, 10, 12, 13]); // the gallery itself does not check tosViolation
+  });
+
+  it("is the gallery's own filter: getImagesForModelVersion builds from the shared conditions", () => {
+    const source = fs.readFileSync(
+      path.resolve(__dirname, '../../services/image.service.ts'),
+      'utf8'
+    );
+    const start = source.indexOf('export const getImagesForModelVersion = ');
+    const body = source.slice(start, source.indexOf('\nexport ', start + 1));
+    expect(body).toContain('reviewedGalleryImageConditions(');
+    expect(body).toContain('imageBlockedForConditions(');
+    expect(body).toContain('minorMatureImageVisibleSql(');
   });
 
   // Decided 2026-11-21 (PR #9948): the owner's own showcase images count. The writer this replaces

@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { countableImageSql } from '~/server/common/image-visibility';
+import { countableImageSql } from '~/server/services/image-visibility.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 /**

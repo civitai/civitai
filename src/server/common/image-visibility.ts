@@ -420,19 +420,3 @@ export const isImageNotFlagged = (image: {
   minor: boolean | null;
   nsfwLevel: number;
 }) => !image.acceptableMinor && !isMinorMatureImage(image);
-
-/**
- * The images a signed-out gallery shows at some browsing level, as SQL over `"Image" i`: the
- * anonymous path of `getImagesForModelVersion` (image.service.ts) with `allBrowsingLevelsFlag`.
- * `NOT hasBlockMarkerSql` stands in for its `imageBlockedForConditions({})` and is the wider
- * test. This is what a model's image count counts.
- */
-export const countableImageSql = () => Prisma.sql`(
-  i."needsReview" IS NULL
-  AND i."acceptableMinor" = FALSE
-  AND NOT i."tosViolation"
-  AND (i."nsfwLevel" & ${allBrowsingLevelsFlag}) != 0
-  AND ${imageReviewedSql()}
-  AND NOT ${hasBlockMarkerSql()}
-  AND ${minorMatureImageVisibleSql()}
-)`;
