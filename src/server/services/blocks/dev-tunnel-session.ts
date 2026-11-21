@@ -1,11 +1,13 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
+import { env } from '~/env/server';
+import { decodePreviewLabel } from '~/server/services/blocks/preview-session-host';
 
 /** Buzz one tunnel session may spend; also the daily consent limit of its OAuth token. */
 export const DEV_TUNNEL_SESSION_BUZZ_CAP = 5000;
 
 /**
- * APP DEV TUNNEL — pure crypto primitives (no DB / Redis / k8s), so they are
- * unit-testable in isolation. This is the direct sibling of `review-session.ts`
+ * APP DEV TUNNEL — pure crypto primitives (no DB / Redis / k8s; env only for
+ * `sessionHostDomains`), so they are unit-testable in isolation. This is the direct sibling of `review-session.ts`
  * (the mod review sandbox), with the "mod-bound" binding swapped for
  * "author-bound", and adds the tunnel-credential (sish `ssh -R` pubkey) helpers.
  *
@@ -67,6 +69,46 @@ export function devHostRegexForDomain(appsDomain: string): RegExp {
 export function isValidDevHost(host: string | null | undefined, appsDomain: string): boolean {
   if (!host || typeof host !== 'string') return false;
   return devHostRegexForDomain(appsDomain).test(host);
+}
+
+/** The domains a session host may live under: the dev-tunnel one, and the direct preview one (unset = direct preview off). */
+export type SessionHostDomains = { appsDomain: string; previewDomain?: string };
+
+/** The domains `isValidSessionHost` judges a record's host against, as this deployment sets them. */
+export function sessionHostDomains(): SessionHostDomains {
+  return { appsDomain: env.APPS_DOMAIN, previewDomain: env.APP_ASSISTANT_PREVIEW_DOMAIN };
+}
+
+/**
+ * Which kind of session host `host` is: a `dev-<16hex>.<appsDomain>` tunnel host, a direct-preview
+ * session host (a canonical session label, `preview-session-host.ts`, under `previewDomain`), or
+ * neither. The two shapes are disjoint, so the host alone decides.
+ */
+export function sessionHostKind(
+  host: string | null | undefined,
+  domains: SessionHostDomains
+): 'tunnel' | 'direct' | null {
+  if (!host || typeof host !== 'string') return null;
+  if (isValidDevHost(host, domains.appsDomain)) return 'tunnel';
+  const previewDomain = domains.previewDomain?.trim();
+  if (!previewDomain) return null;
+  const suffix = `.${previewDomain}`;
+  if (!host.endsWith(suffix)) return null;
+  const label = host.slice(0, -suffix.length);
+  return decodePreviewLabel(label).ok ? 'direct' : null;
+}
+
+/**
+ * THE host predicate for a session record — every reader of the dev-tunnel session record asks
+ * this, never a host regex of its own. A record with no `transport` is a tunnel and must carry a
+ * dev host; a `transport: "direct"` record must carry a session host under the preview domain.
+ */
+export function isValidSessionHost(
+  record: { host: string | null | undefined; transport?: 'direct' },
+  domains: SessionHostDomains
+): boolean {
+  const kind = sessionHostKind(record.host, domains);
+  return kind !== null && kind === (record.transport === 'direct' ? 'direct' : 'tunnel');
 }
 
 /** Generate a fresh unguessable dev host label `dev-<16hex>` (8 random bytes). */

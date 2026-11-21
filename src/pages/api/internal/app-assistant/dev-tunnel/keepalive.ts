@@ -10,6 +10,7 @@ import {
   DEV_TUNNEL_IDLE_SECONDS,
   keepAliveDevTunnel,
   keepAliveDevTunnelAtHost,
+  keepAliveDevTunnelForUserBlock,
 } from '~/server/services/blocks/dev-tunnel.service';
 
 /**
@@ -27,6 +28,8 @@ import {
  *   { grant, sessionId }   `sessionId` as `start` returned it
  *   { grant, host }        the grant's user's tunnel at `host` (the host the sandbox is connected
  *                          to), whoever opened it
+ *   { grant, blockId }     the grant's user's session for the app `blockId`, whichever transport
+ *                          (a direct preview has no sandbox-side tunnel to name a host)
  *
  * Re-judged on every call, for the grant's user: the App Assistant gates, the author capability and
  * the `app-blocks-dev-tunnel` kill switch, as `start` — so turning any of them off stops keeping
@@ -46,6 +49,7 @@ const grantField = z.string().min(1).max(4096);
 const body = z.union([
   z.object({ grant: grantField, sessionId: z.string().min(1).max(128) }),
   z.object({ grant: grantField, host: z.string().min(1).max(253) }),
+  z.object({ grant: grantField, blockId: z.string().min(1).max(64) }),
 ]);
 
 export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
@@ -53,14 +57,16 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     req,
     res,
     body,
-    'Expected { grant, sessionId } or { grant, host }'
+    'Expected { grant, sessionId }, { grant, host } or { grant, blockId }'
   );
   if (!request) return;
   const { grant } = request;
-  const target: { sessionId: string } | { host: string } =
+  const target: { sessionId: string } | { host: string } | { blockId: string } =
     'sessionId' in request.body
       ? { sessionId: request.body.sessionId }
-      : { host: request.body.host };
+      : 'host' in request.body
+      ? { host: request.body.host }
+      : { blockId: request.body.blockId };
   const log = (type: string, extra: Record<string, unknown> = {}) =>
     logToAxiom({
       type: `app-assistant.runner-dev-tunnel.keepalive-${type}`,
@@ -89,7 +95,9 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     const kept =
       'sessionId' in target
         ? await keepAliveDevTunnel(grant.userId, target.sessionId)
-        : await keepAliveDevTunnelAtHost(grant.userId, target.host);
+        : 'host' in target
+        ? await keepAliveDevTunnelAtHost(grant.userId, target.host)
+        : await keepAliveDevTunnelForUserBlock(grant.userId, target.blockId);
     if (kept.status === 'not_found')
       return res.status(404).json({ error: 'No such dev tunnel', code: 'NOT_FOUND' });
     if (kept.status === 'unavailable')

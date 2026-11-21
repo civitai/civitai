@@ -10,6 +10,10 @@ import {
 // was extracted to avoid. Inert today; this keeps it that way.
 import { subjectForUserId } from '~/server/services/block-token-subject';
 import { listActiveDevTunnelBlockIds } from '~/server/services/blocks/dev-tunnel.service';
+import {
+  clearQueuedBanRevoke,
+  revokePreviewsForBannedUser,
+} from '~/server/services/blocks/preview-revoke.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 /**
@@ -308,21 +312,31 @@ export async function revokeBlockInstancesForPublisher({
 }: {
   userId: number;
 }): Promise<number> {
-  const { global, subjectScoped } = await resolvePublisherInstanceIds(userId);
-  const subject = subjectForUserId(userId);
+  try {
+    const { global, subjectScoped } = await resolvePublisherInstanceIds(userId);
+    const subject = subjectForUserId(userId);
 
-  // `limitConcurrency` keeps N continuously in flight. A hand-rolled
-  // `for (i += N) { await Promise.all(slice) }` is a BARRIER — every batch waits on
-  // its slowest member — which is not what the ceiling above says it is.
-  await limitConcurrency(
-    [
-      ...global.map((id) => () => BlockRevocation.revokeInstanceForBan(id)),
-      ...subjectScoped.map((id) => () => BlockRevocation.revokeInstanceForBan(id, { subject })),
-    ],
-    REVOKE_CONCURRENCY
-  );
+    // `limitConcurrency` keeps N continuously in flight. A hand-rolled
+    // `for (i += N) { await Promise.all(slice) }` is a BARRIER — every batch waits on
+    // its slowest member — which is not what the ceiling above says it is.
+    await limitConcurrency(
+      [
+        ...global.map((id) => () => BlockRevocation.revokeInstanceForBan(id)),
+        ...subjectScoped.map((id) => () => BlockRevocation.revokeInstanceForBan(id, { subject })),
+      ],
+      REVOKE_CONCURRENCY
+    );
 
-  return global.length + subjectScoped.length;
+    return global.length + subjectScoped.length;
+  } finally {
+    // 🔴 IN A `finally`, NOT AFTER THE MARKERS: App Assistant direct previews of every Sandbox
+    // the user owns are revoked at the sandbox service (`"*"`) whether or not
+    // `resolvePublisherInstanceIds` threw — its DB reads are not isolated inside it, and the
+    // revoke must not depend on them. Sent after the markers when they are written. It
+    // swallows its own errors (queueing on failure), so it cannot change what this returns or
+    // throws.
+    await revokePreviewsForBannedUser(userId);
+  }
 }
 
 /**
@@ -352,16 +366,22 @@ export async function clearBlockInstancesForPublisher({
 }: {
   userId: number;
 }): Promise<number> {
-  const { global, subjectScoped } = await resolvePublisherInstanceIds(userId);
-  const subject = subjectForUserId(userId);
+  try {
+    const { global, subjectScoped } = await resolvePublisherInstanceIds(userId);
+    const subject = subjectForUserId(userId);
 
-  await limitConcurrency(
-    [
-      ...global.map((id) => () => BlockRevocation.clearBanInstance(id)),
-      ...subjectScoped.map((id) => () => BlockRevocation.clearBanInstance(id, { subject })),
-    ],
-    REVOKE_CONCURRENCY
-  );
+    await limitConcurrency(
+      [
+        ...global.map((id) => () => BlockRevocation.clearBanInstance(id)),
+        ...subjectScoped.map((id) => () => BlockRevocation.clearBanInstance(id, { subject })),
+      ],
+      REVOKE_CONCURRENCY
+    );
 
-  return global.length + subjectScoped.length;
+    return global.length + subjectScoped.length;
+  } finally {
+    // The ban's `"*"` preview revoke, if still queued, is dropped (an unban sends nothing). Belt
+    // and braces: a late `"*"` already cannot reach a session opened after the unban.
+    await clearQueuedBanRevoke(userId);
+  }
 }

@@ -1,10 +1,10 @@
-import { env } from '~/env/server';
 import { isAppBlocksDevTunnelUnsubmittedSpendEnabled } from '~/server/services/app-blocks-flag';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { getActiveDevTunnel } from '~/server/services/blocks/dev-tunnel.service';
 import { isDevTunnelHostPublished } from '~/server/services/blocks/dev-tunnel-dns.service';
 import {
-  isValidDevHost,
+  isValidSessionHost,
+  sessionHostDomains,
   signDevTunnelAccessToken,
 } from '~/server/services/blocks/dev-tunnel-session';
 import type { SessionUser } from '~/types/session';
@@ -27,6 +27,12 @@ export interface DevTunnelFrame {
   host: string | null;
   /** The tunnel is live but its host's DNS record is not published yet; `iframeSrc` is withheld. */
   dnsPending: boolean;
+  /**
+   * `"direct"` when the session is an App Assistant direct preview: `iframeSrc` is then
+   * `https://<session host>/`, whose host is itself the credential (no entry token, no DNS wait).
+   * Absent for a tunnel.
+   */
+  transport?: 'direct';
 }
 
 /**
@@ -52,10 +58,14 @@ export async function resolveDevTunnelFrame(
   let iframeSrc: string | null = null;
   let host: string | null = null;
   let dnsPending = false;
-  if (tunnel && isValidDevHost(tunnel.host, env.APPS_DOMAIN)) {
+  const direct = tunnel?.transport === 'direct';
+  if (tunnel && isValidSessionHost(tunnel, sessionHostDomains())) {
     host = tunnel.host;
-    dnsPending = !(await isDevTunnelHostPublished(host));
-    if (!dnsPending) {
+    // A direct preview's session host is itself the credential, minted once per session, so
+    // every render returns the same origin; it has no record of its own to wait for.
+    if (direct) iframeSrc = `https://${host}/`;
+    else dnsPending = !(await isDevTunnelHostPublished(host));
+    if (!direct && !dnsPending) {
       // A fresh short-TTL, author-bound entry token on every render, so the live iframe never
       // serves a stale one; the apps-domain edge verifies it on the ENTRY document (T3).
       const token = signDevTunnelAccessToken({ userId: user.id, host });
@@ -75,5 +85,6 @@ export async function resolveDevTunnelFrame(
     iframeSrc,
     host,
     dnsPending,
+    ...(direct && iframeSrc ? { transport: 'direct' as const } : {}),
   };
 }

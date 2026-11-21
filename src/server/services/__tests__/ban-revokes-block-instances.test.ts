@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Setup-order import: installs the `~/env/server` mock carrying the real test RSA keypair
 // BEFORE `block-token.service` reads env at module load. Same posture as the sibling
 // real-JWT suites (`block-scope.approved-gate.test.ts`).
@@ -66,6 +66,8 @@ vi.mock('~/server/meilisearch/util', async (importOriginal) => {
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import { withBlockScope } from '~/server/middleware/block-scope.middleware';
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { authorizeBlockBridgeToken } from '~/server/services/blocks/block-bridge-auth.service';
@@ -912,5 +914,74 @@ describe('the writer can never fail a ban', () => {
   it('a failing Redis write still completes the ban', async () => {
     redisMock.redis.set.mockRejectedValue(new Error('redis is down'));
     await expect(banPublisher()).resolves.toMatchObject({ id: PUBLISHER_ID });
+  });
+});
+
+/**
+ * App Assistant direct previews: a ban also revokes every preview session of the user at the
+ * sandbox service (`"*"`), from a `finally`, so it does not depend on the instance lookup, whose
+ * DB reads can reject. The unban clears a `"*"` still queued and sends nothing itself.
+ */
+describe('a ban revokes the publisher’s App Assistant direct previews', () => {
+  const QUEUE = `${REDIS_KEYS.BLOCKS.DEV_TUNNEL_USER}:preview-revoke-queue`;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  let lua: LuaRedis;
+  const revokesSent = () =>
+    fetchMock.mock.calls
+      .filter((c) => String(c[0]).endsWith('/internal/v1/previews/revoke'))
+      .map((c) => JSON.parse(String((c[1] as RequestInit).body)));
+
+  beforeEach(() => {
+    setEnv({
+      APP_ASSISTANT_SANDBOX_URL: 'https://sandbox.test',
+      PREVIEW_REVOKE_HMAC_SECRET: 'test-only-preview-revoke-secret',
+    });
+    fetchMock = vi.fn(async () => new Response('{"rotated":0}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    lua = createLuaRedis(Date.now(), { integerArgs: true });
+    redisMock.redis.eval.mockImplementation(
+      (script: string, opts: { keys: string[]; arguments: string[] }) => lua.eval(script, opts)
+    );
+    redisMock.redis.hDel.mockImplementation((k: string, f: string) =>
+      lua.eval("return redis.call('HDEL', KEYS[1], ARGV[1])", { keys: [k], arguments: [f] })
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setEnv({ APP_ASSISTANT_SANDBOX_URL: undefined, PREVIEW_REVOKE_HMAC_SECRET: undefined });
+  });
+
+  it('sends "*" even when resolvePublisherInstanceIds throws', async () => {
+    appBlockFindMany.mockRejectedValue(new Error('primary unreachable'));
+    await expect(revokeBlockInstancesForPublisher({ userId: PUBLISHER_ID })).rejects.toThrow(
+      'primary unreachable'
+    );
+    expect(revokesSent()).toEqual([
+      { userId: PUBLISHER_ID, previewId: '*', issuedAt: expect.any(Number), reason: 'ban' },
+    ]);
+  });
+
+  it('a ban through toggleBan sends it after the markers', async () => {
+    await banPublisher();
+    expect(revokesSent()).toEqual([
+      { userId: PUBLISHER_ID, previewId: '*', issuedAt: expect.any(Number), reason: 'ban' },
+    ]);
+  });
+
+  it('an unban sends nothing, and clears a "*" still queued for that user', async () => {
+    fetchMock.mockResolvedValue(new Response('', { status: 503 }));
+    await revokeBlockInstancesForPublisher({ userId: PUBLISHER_ID });
+    expect(Object.keys(lua.hash(QUEUE) ?? {})).toEqual([`${PUBLISHER_ID}:*`]);
+    fetchMock.mockClear();
+
+    userFindUnique.mockResolvedValue({
+      bannedAt: ALREADY_BANNED_AT,
+      meta: {},
+      username: 'publisher',
+      email: null,
+    });
+    await banPublisher(); // `bannedAt` set ⇒ the UNBAN branch
+    expect(revokesSent()).toEqual([]);
+    expect(lua.hash(QUEUE) ?? {}).toEqual({});
   });
 });
