@@ -6,10 +6,7 @@ import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import type * as RegionBlocking from '~/server/utils/region-blocking';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setProfanityListReaderForTests } from '~/server/services/profanity-list.service';
-import {
-  SEARCH_REFUSAL_MAX,
-  SEARCH_REFUSAL_WINDOW_SECONDS,
-} from '~/server/utils/search-refusal-budget';
+import { SEARCH_REFUSAL_LIMITS } from '~/server/utils/search-refusal-budget';
 import { NsfwLevel } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
@@ -559,14 +556,14 @@ describe('profanity refusal', () => {
   it('answers every search 429 once the viewer has spent its refusals, without searching', async () => {
     mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: true, isGreen: true });
     const spent = vi
-      .spyOn(redisMock.redis, 'get')
-      .mockResolvedValue(String(SEARCH_REFUSAL_MAX) as never);
+      .spyOn(redisMock.redis, 'sCard')
+      .mockResolvedValue(SEARCH_REFUSAL_LIMITS[0].max as never);
     try {
       const result = await post(['multi-search'], {
         queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'ordinary words' }],
       });
       expect(result.status).toBe(429);
-      expect(result.retryAfter).toBe(String(SEARCH_REFUSAL_WINDOW_SECONDS));
+      expect(result.retryAfter).toBeDefined();
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       spent.mockRestore();

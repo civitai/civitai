@@ -52,9 +52,9 @@ const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
       onError: () => searchAvailability.setUnavailable(true),
       onSuccess: () => {
         searchAvailability.setUnavailable(false);
-        searchAvailability.setRefused(false);
+        searchAvailability.setRefusedQuery(null);
       },
-      onRefused: () => searchAvailability.setRefused(true),
+      onRefused: (query) => searchAvailability.setRefusedQuery(query ?? null),
     }
   )
 );
@@ -153,11 +153,11 @@ export function SearchLayout({
     parsedQuery?.sortBy,
     'siteSearch'
   );
-  const serverRefused = useSearchAvailabilityStore((state) => state.refused);
+  const refusedQuery = useSearchAvailabilityStore((state) => state.refusedQuery);
   const shownRefusal =
     refusal === 'illegal' || refusal === 'profanity'
       ? refusal
-      : serverRefused && searchQuery
+      : !!searchQuery && refusedQuery?.trim() === searchQuery.trim()
       ? 'profanity'
       : undefined;
   const isSearchUnavailable = useSearchAvailabilityStore((state) => state.unavailable);

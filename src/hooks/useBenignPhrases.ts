@@ -20,7 +20,6 @@ export function useBenignPhrases() {
 
   const promptPattern = useMemo(() => buildBenignPhraseRegex(data?.prompt ?? []), [data?.prompt]);
   const profanityWords = data?.profanityWords;
-  const serverProfanity = !!data?.serverProfanity;
 
   return useMemo(
     () => ({
@@ -30,11 +29,6 @@ export function useBenignPhrases() {
       // the query resolves, after a failed fetch, and before the seed migration is applied —
       // as a deliberate emptying, dropping the shipped words on every one of them.
       profanityWords: profanityWords ?? null,
-      /**
-       * The server refuses a profane query itself (`profanity-managed-list` on). False until the
-       * fetch settles, so the browser keeps its own check until then.
-       */
-      serverProfanity,
       /**
        * Whether the fetch has SETTLED — not whether it succeeded. Until it settles, `strip` is
        * the identity function and the gates judge the RAW query; that direction is safe (they
@@ -50,6 +44,6 @@ export function useBenignPhrases() {
       /** Blank whitelisted phrases before a detection check — never for display or query. */
       strip: (text: string | undefined) => stripBenignPhrasesWith(text, promptPattern),
     }),
-    [promptPattern, profanityWords, serverProfanity, isFetched]
+    [promptPattern, profanityWords, isFetched]
   );
 }

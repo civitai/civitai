@@ -41,14 +41,19 @@ function SearchableBountiesFeed(props: Props) {
   const filters = useInfiniteBountyFilters(props);
   const searchText = useFeedSearchQuery();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
-  const { refusal, profanityMatches } = useSearchRefusal(
+  const { refusal, profanityMatches, browserProfane } = useSearchRefusal(
     searchText,
     'bounties_semantic',
     'semantic'
   );
   const search = useSemanticBountyFeed(filters, refusal ? undefined : searchText);
   useScrollToTopOnChange(search.searchKey);
-  const shownRefusal = refusal ?? (isSearchRefusedError(search.error) ? 'profanity' : undefined);
+  // A failed semantic search falls back to a keyword search the server does not check.
+  const shownRefusal =
+    refusal ??
+    (isSearchRefusedError(search.error) || (search.isError && browserProfane)
+      ? 'profanity'
+      : undefined);
   if (shownRefusal)
     return <SearchRefusalNotice refusal={shownRefusal} profanityMatches={profanityMatches} />;
   return searchText ? (

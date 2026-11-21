@@ -218,14 +218,19 @@ export function siteSearchQueries(body: unknown): string[] {
  * so a server refusal could reject a search the page let through.
  */
 export async function isProfaneSearch(queries: string[]): Promise<boolean> {
+  return (await profaneSearchCheck(queries)) === 'profane';
+}
+
+/** `isProfaneSearch`, telling `off` (flag off: nothing checked) apart from `clean`. */
+export async function profaneSearchCheck(queries: string[]): Promise<'off' | 'clean' | 'profane'> {
   const texts = queries.filter((query) => query.trim().length > 0);
-  if (!texts.length) return false;
+  if (!texts.length) return 'clean';
   try {
     const profanity = await getServerProfanityFilter();
-    if (profanity.source === 'shipped') return false;
+    if (profanity.source === 'shipped') return 'off';
     const refused = texts.some((text) => profanity.filter.analyze(text).isProfane);
     if (refused) profanity.countHit('search');
-    return refused;
+    return refused ? 'profane' : 'clean';
   } catch (error) {
     logToAxiom({
       name: 'profanity-search-check-failed',
@@ -233,6 +238,6 @@ export async function isProfaneSearch(queries: string[]): Promise<boolean> {
       message: 'Site search profanity check failed; the search ran unchecked',
       details: { error: error instanceof Error ? error.message : String(error) },
     });
-    return false;
+    return 'clean';
   }
 }

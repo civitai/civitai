@@ -265,6 +265,12 @@ const featureFlags = createFeatureFlags({
   // Ramp it by percentage in Flipt. `[]`, not `['mod']`: nobody gets it until the Flipt flag
   // exists (see `reactionCountsUnknown`).
   siteSearchProxy: { availability: [], fliptKey: 'site-search-proxy' },
+  // The server enforces the moderator-managed profanity list (the same key the server reads), so
+  // the browser leaves search checks to it where it can (`browserChecksProfanity`). `[]`: off, and
+  // the browser checks, when the key is absent or Flipt is down. Keep it all-or-nothing: the server
+  // reads the key with no user, so a per-user rollout would let a browser skip a check the server
+  // is not running.
+  profanityManagedList: { availability: [], fliptKey: 'profanity-managed-list' },
   // Measurement switch: while ON, signed-in `/images/[imageId]` HTML renders write a capped log
   // line (imageId, Cloudflare colo, minute) — see `~/server/logging/image-render-sample`. Read with
   // no user (entity `anonymous`), so it is all-or-nothing, not a per-user rollout. `availability:

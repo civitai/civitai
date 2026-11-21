@@ -17,9 +17,9 @@ import { create } from 'zustand';
 type SearchAvailabilityState = {
   unavailable: boolean;
   setUnavailable: (value: boolean) => void;
-  /** The server refused the last search for profanity; cleared by the next one that runs. */
-  refused: boolean;
-  setRefused: (value: boolean) => void;
+  /** The query the server last refused for profanity; cleared by the next search that runs. */
+  refusedQuery: string | null;
+  setRefusedQuery: (value: string | null) => void;
 };
 
 function createAvailabilityStore() {
@@ -29,14 +29,15 @@ function createAvailabilityStore() {
       // Avoid a no-op state write (and re-render) when the flag is unchanged —
       // `.search` fires on every keystroke, so `onSuccess` runs constantly.
       set((state) => (state.unavailable === value ? state : { unavailable: value })),
-    refused: false,
-    setRefused: (value) => set((state) => (state.refused === value ? state : { refused: value })),
+    refusedQuery: null,
+    setRefusedQuery: (value) =>
+      set((state) => (state.refusedQuery === value ? state : { refusedQuery: value })),
   }));
 
   return {
     useStore,
     setUnavailable: (value: boolean) => useStore.getState().setUnavailable(value),
-    setRefused: (value: boolean) => useStore.getState().setRefused(value),
+    setRefusedQuery: (value: string | null) => useStore.getState().setRefusedQuery(value),
   };
 }
 
@@ -45,7 +46,7 @@ const searchStore = createAvailabilityStore();
 export const useSearchAvailabilityStore = searchStore.useStore;
 export const searchAvailability = {
   setUnavailable: searchStore.setUnavailable,
-  setRefused: searchStore.setRefused,
+  setRefusedQuery: searchStore.setRefusedQuery,
 };
 
 // Header quick-search autocomplete dropdown error item (AutocompleteSearch).
@@ -53,5 +54,5 @@ const autocompleteStore = createAvailabilityStore();
 export const useAutocompleteAvailabilityStore = autocompleteStore.useStore;
 export const autocompleteAvailability = {
   setUnavailable: autocompleteStore.setUnavailable,
-  setRefused: autocompleteStore.setRefused,
+  setRefusedQuery: autocompleteStore.setRefusedQuery,
 };

@@ -537,10 +537,12 @@ describe('getClientBenignLists', () => {
       expect(atFloor.filter((word) => served.includes(word))).toEqual([]);
     });
 
-    it('tells the browser the server checks profanity only while the flag is on', async () => {
-      expect((await getClientBenignLists()).serverProfanity).toBe(true);
-      managedListFlag.on = false;
-      expect((await getClientBenignLists()).serverProfanity).toBe(false);
+    it('carries the benign lists and nothing about the managed one', async () => {
+      expect(Object.keys(await getClientBenignLists()).sort()).toEqual([
+        'available',
+        'profanityWords',
+        'prompt',
+      ]);
     });
 
     it('stays cacheable when the managed row cannot be read, since it no longer reads it', async () => {

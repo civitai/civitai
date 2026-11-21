@@ -71,10 +71,19 @@ function SearchableModelsFeed(props: InfiniteModelsProps) {
   const browsingLevel = useBrowsingLevelDebounced();
   const text = normalizeFeedQuery(filters.query);
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
-  const { refusal, profanityMatches } = useSearchRefusal(text, 'models_semantic', 'semantic');
+  const { refusal, profanityMatches, browserProfane } = useSearchRefusal(
+    text,
+    'models_semantic',
+    'semantic'
+  );
   const search = useSemanticModelFeed({ ...filters, browsingLevel }, refusal ? undefined : text);
   useScrollToTopOnChange(search.searchKey);
-  const shownRefusal = refusal ?? (isSearchRefusedError(search.error) ? 'profanity' : undefined);
+  // A failed semantic search falls back to a keyword search the server does not check.
+  const shownRefusal =
+    refusal ??
+    (isSearchRefusedError(search.error) || (search.isError && browserProfane)
+      ? 'profanity'
+      : undefined);
   if (shownRefusal)
     return <SearchRefusalNotice refusal={shownRefusal} profanityMatches={profanityMatches} />;
   return <ModelsFeed {...props} feedSearch={text ? { text, search } : undefined} />;

@@ -45,6 +45,9 @@ vi.mock('~/components/Sticker/sticker.util', async (importOriginal) => ({
 
 const { RenderRichText } = await import('~/components/RichTextEditor/RenderRichText');
 const { RenderHtml } = await import('~/components/RenderHtml/RenderHtml');
+const { blockedWords } = await import('@civitai/mod-utils/profanity/lists');
+const { cleanWord, isUsableBlockedEntry } = await import('@civitai/mod-utils/profanity/word-rules');
+const { getProfanityFilter } = await import('~/libs/profanity-simple');
 const { CustomMarkdown } = await import('~/components/Markdown/CustomMarkdown');
 const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
 
@@ -168,6 +171,17 @@ describe('announcement action buttons', () => {
   });
 });
 
+// A shipped entry read at runtime, never written down: this repository is public. Assertions on it
+// are booleans, so a failure does not print it.
+const SHIPPED = blockedWords
+  .map(cleanWord)
+  .find(
+    (word) =>
+      isUsableBlockedEntry(word) &&
+      /^[a-z]+$/.test(word) &&
+      getProfanityFilter().clean(word) !== word
+  ) as string;
+
 // Lives here for the stubs above.
 describe('RenderHtml comment masking, server render', () => {
   const comment = (maskedHtml?: string | null) =>
@@ -184,6 +198,26 @@ describe('RenderHtml comment masking, server render', () => {
       expect(masked).toContain('a ******* here');
       expect(masked).not.toContain('zorblat');
       expect(render(comment(null))).toContain('a zorblat here');
+    } finally {
+      viewing.blurNsfw = false;
+    }
+  });
+
+  it('with no masked copy from the server, masks in the browser with the shipped list', () => {
+    const shipped = (maskedHtml?: string | null) =>
+      createElement(RenderHtml, {
+        html: `<p>a ${SHIPPED} here</p>`,
+        maskedHtml,
+        withProfanityFilter: true,
+      });
+    expect(typeof SHIPPED).toBe('string');
+    // Control: shown as written to a viewer with masking off.
+    expect(render(shipped()).includes(SHIPPED), 'masking off').toBe(true);
+    viewing.blurNsfw = true;
+    try {
+      expect(render(shipped()).includes(SHIPPED), 'no server copy').toBe(false);
+      // The server said clean (the managed list dropped it): shown as written.
+      expect(render(shipped(null)).includes(SHIPPED), 'server says clean').toBe(true);
     } finally {
       viewing.blurNsfw = false;
     }

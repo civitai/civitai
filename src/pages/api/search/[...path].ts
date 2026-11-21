@@ -26,7 +26,7 @@ import { checkSiteSearchRateLimit } from '~/server/utils/site-search-rate-limit'
 import { siteSearchQueries } from '~/server/services/profanity-list.service';
 import {
   profaneSearchVerdict,
-  SEARCH_REFUSAL_WINDOW_SECONDS,
+  SEARCH_REFUSAL_LIMITS,
   searchRefusalBucket,
 } from '~/server/utils/search-refusal-budget';
 import { SEARCH_REFUSED_CODE } from '~/shared/constants/search-refusal.constants';
@@ -95,7 +95,7 @@ export default MixedAuthEndpoint(
         )
       : null;
     if (verdict === 'limited') {
-      res.setHeader('Retry-After', String(SEARCH_REFUSAL_WINDOW_SECONDS));
+      res.setHeader('Retry-After', String(SEARCH_REFUSAL_LIMITS[0].windowSeconds));
       return res.status(429).json({
         message: 'Too many searches. Try again in a moment.',
         code: 'too_many_requests',

@@ -54,25 +54,20 @@ beforeEach(() => {
 });
 
 describe('training.auditTriggerWord', () => {
-  it('warns on civitai.com, naming the word as typed', async () => {
-    expect(await audit(`my${TOKEN}style`, true)).toEqual({
-      severity: 'soft',
-      offendingWords: [`my${TOKEN}style`],
-    });
+  it('warns on civitai.com', async () => {
+    expect(await audit(`my${TOKEN}style`, true)).toEqual({ severity: 'soft' });
   });
 
   it('runs no profanity check off civitai.com', async () => {
-    expect(await audit(`my${TOKEN}style`, false)).toEqual({
-      severity: 'clean',
-      offendingWords: [],
-    });
+    expect(await audit(`my${TOKEN}style`, false)).toEqual({ severity: 'clean' });
   });
 
-  it('never names the list entry behind a leetspeak match, only what was typed', async () => {
-    const typed = TOKEN.replace('o', '0');
+  // One call could otherwise test many words against the list and say which matched.
+  it('answers with a verdict only, naming no word, whether typed or behind a leetspeak match', async () => {
+    const typed = `${TOKEN.replace('o', '0')} and ${TOKEN}`;
     const result = await audit(typed, true);
-    expect(result.severity).toBe('soft');
-    expect(result.offendingWords).toEqual([typed]);
+    expect(result).toEqual({ severity: 'soft' });
+    expect(JSON.stringify(result)).not.toMatch(/zqv/);
   });
 });
 

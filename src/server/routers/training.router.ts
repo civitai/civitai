@@ -102,8 +102,7 @@ export const trainingRouter = router({
 
   /**
    * The trainer's trigger-word warning, against the server's profanity list so the browser needs
-   * no copy of it. Soft: the submit check (training-trigger-word-check.ts) is unchanged. Names only
-   * words the input itself contains, never a list entry.
+   * no copy of it. Soft: the submit check (training-trigger-word-check.ts) is unchanged.
    */
   auditTriggerWord: protectedProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
@@ -119,12 +118,8 @@ export const trainingRouter = router({
       const profanity = ctx.features.isGreen
         ? (await getServerProfanityFilter()).filter
         : undefined;
-      const audit = auditTrainingTriggerWord(input.triggerWord, profanity);
-      const typed = input.triggerWord.toLowerCase();
-      return {
-        ...audit,
-        offendingWords: audit.offendingWords.filter((word) => typed.includes(word.toLowerCase())),
-      };
+      // Severity only: naming the matched words would let one call test many against the list.
+      return { severity: auditTrainingTriggerWord(input.triggerWord, profanity).severity };
     }),
 
   moveAsset: protectedProcedure

@@ -137,9 +137,9 @@ const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
       onError: () => autocompleteAvailability.setUnavailable(true),
       onSuccess: () => {
         autocompleteAvailability.setUnavailable(false);
-        autocompleteAvailability.setRefused(false);
+        autocompleteAvailability.setRefusedQuery(null);
       },
-      onRefused: () => autocompleteAvailability.setRefused(true),
+      onRefused: (query) => autocompleteAvailability.setRefusedQuery(query ?? null),
     }
   )
 );
@@ -393,9 +393,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   // Profanity (green domain only): the server's verdict where every request reaches it, else the
   // browser's own check with the shipped list.
-  const serverRefused = useAutocompleteAvailabilityStore((state) => state.refused);
+  const refusedQuery = useAutocompleteAvailabilityStore((state) => state.refusedQuery);
   const serverChecksProfanity = !browserChecksProfanity({
-    serverProfanity: benignPhrases.serverProfanity,
+    serverProfanity: !!features.profanityManagedList,
     via: 'siteSearch',
     proxyEnabled: isSiteSearchProxyEnabled(),
   });
@@ -404,8 +404,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       domainColor === 'green' && !isIllegalSearch && !!debouncedSearch && !serverChecksProfanity,
   });
 
+  // Keyed to the query, so a refusal never blocks a different one.
   const isProfaneSearch = serverChecksProfanity
-    ? serverRefused && !!debouncedSearch
+    ? !!debouncedSearch && refusedQuery?.trim() === debouncedSearch.trim()
     : profanityAnalysis.hasProfanity;
 
   const items = useMemo(() => {

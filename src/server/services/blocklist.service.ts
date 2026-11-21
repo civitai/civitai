@@ -13,7 +13,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/benign-phrases';
 import { removeTags, removeTagsCompact } from '~/utils/string-helpers';
 import { foldConfusables } from '~/server/utils/confusable-fold';
-import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '~/server/flipt/client';
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { domainAcceptsMail } from '~/server/utils/email-domain';
 
 export type BlocklistDTO = {
@@ -400,20 +400,11 @@ export type ClientBenignLists = {
   prompt: string[];
   /** `null` means "no moderator row", which is NOT the same as an empty one — see the filter. */
   profanityWords: string[] | null;
-  /**
-   * `profanity-managed-list` is on: the server refuses a profane search itself, so the browser's
-   * own check, which only has the shipped list, steps aside where the server answers.
-   */
-  serverProfanity: boolean;
   /** False when any list could not be read. The caller MUST NOT let the edge cache this. */
   available: boolean;
 };
 
 export async function getClientBenignLists(): Promise<ClientBenignLists> {
-  // Its own catch: a flag read failure leaves the browser on its own check, as before the flag.
-  const serverProfanity = await isFlipt(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST).catch(
-    () => false
-  );
   try {
     const [prompt, profanityRow] = await Promise.all([
       getBlocklistData(BlocklistType.PromptBenignPhrase),
@@ -423,7 +414,7 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
     // strongest possible "do not whitelist" intent. Only a MISSING row means "not migrated",
     // which is the case that falls back to the list shipped in the bundle.
     const profanityWords = profanityRow.id == null ? null : profanityRow.data;
-    return { prompt, profanityWords, serverProfanity, available: true };
+    return { prompt, profanityWords, available: true };
   } catch (error) {
     // Fails OPEN, and empty is the safe direction: nothing is stripped, so the gates flag
     // more rather than less. `available: false` exists because the caller must then skip the
@@ -436,7 +427,7 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
       message: 'Serving empty benign lists to the client; search gates will not strip',
       details: { error: error instanceof Error ? error.message : String(error) },
     });
-    return { prompt: [], profanityWords: null, serverProfanity, available: false };
+    return { prompt: [], profanityWords: null, available: false };
   }
 }
 // #endregion

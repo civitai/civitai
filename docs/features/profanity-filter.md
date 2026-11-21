@@ -62,9 +62,9 @@ Automatically integrated in:
 - **Where moderators edit it**: the `ProfanityWord` tab of the moderator app's Blocklists page (a `Blocklist` row, seeded by hand from `blocked-words.json`; the tab refuses edits until the row exists).
 - **Who reads it**: the server only, through `getServerProfanityFilter`, while `profanity-managed-list` is on. The browser never receives it:
   - comment, review and chat responses carry `maskedContent` / `maskedDetails`: a string when masking changed the text, `null` when it is clean, absent when it was not computed (the browser then masks with the shipped list);
-  - `/api/search` and the semantic search procedures refuse a profane query themselves (`search_refused`, verdict only), and a caller's refusals per window are capped (`search-refusal-budget.ts`), after which all its searches are refused;
-  - the trainer's trigger-word warning comes from `training.auditTriggerWord`;
-  - `system.getBenignPhrases` carries only `serverProfanity`, the flag state, so search leaves the check to the server on the paths where the server checks (`browserChecksProfanity`).
+  - `/api/search` and the semantic search procedures refuse a profane query themselves (`search_refused`, verdict only), and a caller's refusals are capped (`search-refusal-budget.ts`), after which all its searches are refused for a while;
+  - the trainer's trigger-word warning comes from `training.auditTriggerWord`, which answers with a severity only;
+  - the `profanityManagedList` feature flag (the same Flipt key) tells search to leave the check to the server on the paths where the server checks (`browserChecksProfanity`); `system.getBenignPhrases` carries no profanity list.
 - **When it is not used**: flag off (the browser checks and masks with the shipped list, as before), no row, a row below the floor, a failed read, or a list the filter cannot build all mean the shipped list.
 
 ### Whitelist Words List

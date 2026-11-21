@@ -1,20 +1,23 @@
+import { createHash } from 'crypto';
 import { TRPCError } from '@trpc/server';
 import { prefixCacheKey } from '@civitai/redis';
 import { redis } from '~/server/redis/client';
-import { resolveClientIp } from '~/server/utils/client-ip';
-import { isProfaneSearch } from '~/server/services/profanity-list.service';
+import { profaneSearchCheck } from '~/server/services/profanity-list.service';
 import { middleware } from '~/server/trpc';
-import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
+import { resolveClientIp } from '~/server/utils/client-ip';
 import { SEARCH_REFUSED_CODE } from '~/shared/constants/search-refusal.constants';
 
 /**
  * A profanity refusal tells the caller its query matched the list, so refusals would let anyone
- * test words against it. Each caller gets this many per window, shared by every search that can
- * refuse; once they are spent, every search the caller makes is refused as rate limited until the
- * window ends, so a refusal and a clean answer can no longer be told apart.
+ * test words against it. Each caller may be refused this many DISTINCT queries per window (a repeat,
+ * or the same query from another search surface, spends nothing), counted across every search that
+ * can refuse. Once either window is spent, every search the caller makes is refused as rate limited
+ * until it ends, so a refusal and a clean answer can no longer be told apart.
  */
-export const SEARCH_REFUSAL_MAX = 20;
-export const SEARCH_REFUSAL_WINDOW_SECONDS = 10 * 60;
+export const SEARCH_REFUSAL_LIMITS = [
+  { window: '10m', max: 20, windowSeconds: 10 * 60 },
+  { window: 'day', max: 60, windowSeconds: 24 * 60 * 60 },
+] as const;
 
 type BucketRequest = Parameters<typeof resolveClientIp>[0];
 
@@ -23,35 +26,68 @@ export function searchRefusalBucket(req: BucketRequest, userId?: number) {
   return typeof userId === 'number' ? `user:${userId}` : `ip:${resolveClientIp(req)}`;
 }
 
-const keyFor = (bucket: string) => prefixCacheKey(`search-refusal:${bucket}`);
+// The cache client's typed keys do not cover a literal key; the environment prefix is explicit.
+type SetStore = {
+  sCard(key: string): Promise<number>;
+  sAdd(key: string, member: string): Promise<number>;
+  ttl(key: string): Promise<number>;
+  expire(key: string, seconds: number): Promise<unknown>;
+};
+const store = redis as unknown as SetStore;
+const keyFor = (window: string, bucket: string) =>
+  prefixCacheKey(`search-refusal:${window}:${bucket}`);
+
+const queryHash = (queries: string[]) =>
+  createHash('sha256')
+    .update(
+      queries
+        .map((query) => query.trim().toLowerCase())
+        .filter(Boolean)
+        .sort()
+        .join('\n')
+    )
+    .digest('hex')
+    .slice(0, 16);
 
 /** Fails open: a Redis incident must not take search down. */
 export async function isSearchRefusalBudgetSpent(bucket: string): Promise<boolean> {
   try {
-    const store = redis as unknown as { get(key: string): Promise<string | null> };
-    return Number(await store.get(keyFor(bucket))) >= SEARCH_REFUSAL_MAX;
+    const counts = await Promise.all(
+      SEARCH_REFUSAL_LIMITS.map(({ window }) => store.sCard(keyFor(window, bucket)))
+    );
+    return SEARCH_REFUSAL_LIMITS.some(({ max }, i) => Number(counts[i]) >= max);
   } catch {
     return false;
   }
 }
 
-export async function spendSearchRefusal(bucket: string): Promise<void> {
-  await checkFixedWindow(keyFor(bucket), SEARCH_REFUSAL_MAX, SEARCH_REFUSAL_WINDOW_SECONDS);
+export async function spendSearchRefusal(bucket: string, queries: string[]): Promise<void> {
+  const member = queryHash(queries);
+  await Promise.all(
+    SEARCH_REFUSAL_LIMITS.map(async ({ window, windowSeconds }) => {
+      const key = keyFor(window, bucket);
+      await store.sAdd(key, member);
+      // A fixed window from the first refusal; re-asserted if the TTL was lost.
+      if ((await store.ttl(key)) < 0) await store.expire(key, windowSeconds);
+    })
+  );
 }
 
 /**
  * The profanity verdict on a search (civitai.com only; the caller decides the domain): `refused`
  * for a profane query, `limited` once the caller has spent its refusals, `null` to run it.
- * Verdict only: never which word matched.
+ * Verdict only: never which word matched. With `profanity-managed-list` off it reads nothing.
  */
 export async function profaneSearchVerdict(
   queries: string[],
   bucket: string
 ): Promise<'refused' | 'limited' | null> {
-  if (!queries.some((query) => query.trim().length > 0)) return null;
+  const check = await profaneSearchCheck(queries);
+  if (check === 'off') return null;
+  // Asked whatever the check found, so `limited` says nothing about this query.
   if (await isSearchRefusalBudgetSpent(bucket)) return 'limited';
-  if (!(await isProfaneSearch(queries))) return null;
-  await spendSearchRefusal(bucket).catch(() => undefined);
+  if (check === 'clean') return null;
+  await spendSearchRefusal(bucket, queries).catch(() => undefined);
   return 'refused';
 }
 

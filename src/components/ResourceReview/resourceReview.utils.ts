@@ -92,7 +92,10 @@ export const useUpdateResourceReview = () => {
           if (!old) return;
           old.forEach((review) => {
             if (review.modelVersionId === modelVersionId) {
-              if (request.details) review.details = request.details as string;
+              if (request.details) {
+                review.details = request.details as string;
+                review.maskedDetails = undefined;
+              }
               if (request.recommended != null) review.recommended = request.recommended;
             }
           });
@@ -107,7 +110,10 @@ export const useUpdateResourceReview = () => {
           if (!old) return;
 
           if (request.recommended != null) old.recommended = request.recommended;
-          if (request.details) old.details = request.details as string;
+          if (request.details) {
+            old.details = request.details as string;
+            old.maskedDetails = undefined;
+          }
           if (request.rating) old.rating = request.rating;
         })
       );
@@ -122,7 +128,10 @@ export const useUpdateResourceReview = () => {
           if (item) {
             shouldInvalidate = false;
             if (request.rating) item.rating = request.rating;
-            if (request.details) item.details = request.details as string;
+            if (request.details) {
+              item.details = request.details as string;
+              item.maskedDetails = undefined;
+            }
           }
         })
       );

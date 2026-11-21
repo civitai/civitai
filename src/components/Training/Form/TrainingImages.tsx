@@ -66,7 +66,12 @@ import type {
   SelectedImage,
 } from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
-import { labelAsTrained } from '~/utils/metadata/training-trigger-word';
+import {
+  auditTrainingTriggerWord,
+  labelAsTrained,
+  type TriggerWordAudit,
+} from '~/utils/metadata/training-trigger-word';
+import { getProfanityFilter } from '~/libs/profanity-simple';
 import {
   blankTagStr,
   labelDescriptions,
@@ -348,12 +353,17 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const theme = useMantineTheme();
   const queryUtils = trpc.useUtils();
-  // The server's verdict, so the browser holds no copy of the list. Soft: the submit check on the
-  // server is unchanged, so a failed call shows no warning rather than blocking.
-  const auditTriggerWord = (word: string) =>
-    word.trim()
-      ? queryUtils.training.auditTriggerWord.fetch({ triggerWord: word }).catch(() => null)
-      : Promise.resolve(null);
+  const isGreen = useDomainColor() === 'green';
+  // The server's verdict, so the browser holds no copy of the managed list. When the call fails
+  // (offline, rate limited) the shipped list decides, as it did before the server answered.
+  const auditTriggerWord = async (
+    word: string
+  ): Promise<Pick<TriggerWordAudit, 'severity'> | null> => {
+    if (!word.trim()) return null;
+    return queryUtils.training.auditTriggerWord
+      .fetch({ triggerWord: word })
+      .catch(() => auditTrainingTriggerWord(word, isGreen ? getProfanityFilter() : undefined));
+  };
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
   const { connected } = useSignalContext();
   const features = useFeatureFlags();
@@ -1309,9 +1319,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           autoClose: false,
           color: 'red',
           title: 'Inappropriate trigger word',
-          message: `This trigger word has been blocked. Please review it and resubmit. Reason: ${audit.offendingWords.join(
-            ', '
-          )}`,
+          message: 'This trigger word has been blocked. Please review it and resubmit.',
         });
         return;
       }
@@ -1345,10 +1353,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           ),
           children: (
             <Stack gap="xs">
-              <Text size="sm">
-                {`These look like they might be inappropriate: ${audit.offendingWords.join(', ')}.`}
-              </Text>
-              <Text size="sm">If they are legitimate for your dataset, you can continue.</Text>
+              <Text size="sm">This trigger word looks like it might be inappropriate.</Text>
+              <Text size="sm">If it is legitimate for your dataset, you can continue.</Text>
             </Stack>
           ),
           labels: { cancel: 'Review trigger word', confirm: 'Continue anyway' },
@@ -1663,12 +1669,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                             color: soft ? 'yellow' : 'red',
                             title: soft ? 'Check this trigger word' : 'Inappropriate trigger word',
                             message: soft
-                              ? `This trigger word looks like it might be inappropriate: ${audit.offendingWords.join(
-                                  ', '
-                                )}. You can still continue if it is legitimate.`
-                              : `This trigger word has been blocked. Please review. Reason: ${audit.offendingWords.join(
-                                  ', '
-                                )}`,
+                              ? 'This trigger word looks like it might be inappropriate. You can still continue if it is legitimate.'
+                              : 'This trigger word has been blocked. Please review it.',
                           });
                         }
                       } else {

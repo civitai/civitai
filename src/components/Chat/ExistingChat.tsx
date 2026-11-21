@@ -834,7 +834,7 @@ function ChatInputBox({
   };
 
   const { mutate: updateMessage, isPending: isSavingEdit } = trpc.chat.updateMessage.useMutation({
-    onSuccess({ messageId, chatId, content }) {
+    onSuccess({ messageId, chatId, content, maskedContent }) {
       queryUtils.chat.getInfiniteMessages.setInfiniteData(
         { chatId },
         produce((old) => {
@@ -843,6 +843,7 @@ function ChatInputBox({
             const msg = page.items.find((m) => m.id === messageId);
             if (msg) {
               msg.content = content;
+              msg.maskedContent = maskedContent;
               msg.editedAt = new Date();
             }
           }

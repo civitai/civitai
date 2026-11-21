@@ -400,10 +400,12 @@ describe('createResilientSearchClient — a search the server refused for profan
     );
 
     expect(result.results).toHaveLength(2);
-    expect({ refused: onRefused.mock.calls.length, outage: onError.mock.calls.length }).toEqual({
-      refused: 1,
+    expect({ refused: onRefused.mock.calls, outage: onError.mock.calls.length }).toEqual({
+      refused: [['cat']],
       outage: 0,
     });
+    // Not retried: a retry would ask the server for the same verdict again.
+    expect(base.search).toHaveBeenCalledTimes(1);
     expect(pushError).not.toHaveBeenCalled();
   });
 });
