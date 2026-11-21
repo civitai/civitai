@@ -125,12 +125,14 @@ describe('the count', () => {
     await image(at, FAN, `"tosViolation" = true`);
     await image(at, FAN, `"acceptableMinor" = true`);
     await image(at, FAN, `ingestion = 'Pending', "nsfwLevelLocked" = true`); // a mod's rating stands in for the scan
+    await image(at, FAN, `minor = true, "nsfwLevel" = 4`); // minor-restricted at R and up
+    await image(at, FAN, `minor = true, "nsfwLevel" = 1`); // a minor flag at PG is shown
 
-    expect(await countNextHour(W + 25 * HOUR_MS)).toMatchObject({ hour: W, images: 3 });
-    expect(await imageCount()).toBe(3);
+    expect(await countNextHour(W + 25 * HOUR_MS)).toMatchObject({ hour: W, images: 4 });
+    expect(await imageCount()).toBe(4);
   });
 
-  // Decided 2026-11-21: the owner's own showcase images count. The writer this replaces
+  // Decided 2026-11-21 (PR #9948): the owner's own showcase images count. The writer this replaces
   // excluded them; do not restore that exclusion without a new product decision.
   it("counts the model owner's own images", async () => {
     await setWatermark({ hour: W });
@@ -230,6 +232,13 @@ describe('recountVersions', () => {
     await image(W + 5 * 60_000); // the job's, not yet counted
     expect(await recountVersions([V])).toEqual([{ modelVersionId: V, count: 2 }]);
     expect(await imageCount()).toBe(2);
+  });
+
+  it('sets a stale count with nothing countable to 0', async () => {
+    await setWatermark({ hour: W });
+    await q(`INSERT INTO "ModelVersionMetric" ("modelVersionId", "imageCount") VALUES (11, 9)`);
+    expect(await recountVersions([11])).toEqual([{ modelVersionId: 11, count: 0 }]);
+    expect(await imageCount(11)).toBe(0);
   });
 });
 

@@ -4,11 +4,11 @@ import { dbRead, dbWrite } from '~/server/db/client';
 
 /**
  * ModelVersionMetric.imageCount, kept current by counting each hour of newly published posts
- * exactly once, a day after the hour closes, and adding the result. Recounting a version's whole
- * history was what made the old writer too expensive to run (getImageTasks, model.metrics.ts).
- * The watermark advances in the same transaction as the counts, so a repeated, crashed or
+ * exactly once, a day after the hour closes, and adding the result: recounting a version's whole
+ * history is too expensive to run. The watermark advances in the same transaction as the counts, so a repeated, crashed or
  * concurrent run can neither skip an hour nor count one twice. The job never subtracts:
- * removals after the count are drift, repaired per version with `recountVersions`.
+ * removals after the count, and images added to a post after its hour was counted, are drift,
+ * repaired per version with `recountVersions`.
  */
 
 export const WATERMARK_KEY = 'model-image-count:watermark';
@@ -41,8 +41,7 @@ export const floorHour = (ms: number) => Math.floor(ms / HOUR_MS) * HOUR_MS;
 
 /**
  * Per-version counts of countable images on posts matching `where` (over `"Post" p`, `"Image" i`,
- * `"ImageResourceNew" ir`). The model owner's own images count: a product decision (2026-11-21),
- * where the writer this replaces counted only other people's.
+ * `"ImageResourceNew" ir`). The model owner's own images are counted.
  */
 export function countImagesSql(where: Prisma.Sql) {
   return Prisma.sql`
