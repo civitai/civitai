@@ -79,8 +79,6 @@ export const routes: ApiRoutes = {
     import('~/server/api-routes/admin/temp/backfill-video-blurhash'),
   'temp/clamp-publishedat-bumps': () =>
     import('~/server/api-routes/admin/temp/clamp-publishedat-bumps'),
-  'temp/clear-user-image-keys': () =>
-    import('~/server/api-routes/admin/temp/clear-user-image-keys'),
   'temp/convert-model-rules': () => import('~/server/api-routes/admin/temp/convert-model-rules'),
   'temp/merge-moss-image-base': () =>
     import('~/server/api-routes/admin/temp/merge-moss-image-base'),

@@ -61,6 +61,13 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
   showErrorNotification: vi.fn(),
 }));
 
+// The reports queue renders on the moderator-only /apps/review page, and each row's "History"
+// entry point is drawn for a moderator (`moderationHistoryTarget`). The real hook needs a
+// session provider this harness does not mount ("missing CivitaiSessionContext").
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => ({ id: 1, username: 'mod', isModerator: true }),
+}));
+
 // Only the `trpc` client itself is overridden — the rest of `~/utils/trpc`'s real exports
 // (setTrpcBatchingEnabled, trpcVanilla, queryClient, ...) are kept via importOriginal so any
 // transitively-imported consumer elsewhere in the tree (e.g. session/provider chains) still
@@ -69,13 +76,18 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
 // link ("does not provide an export named X") and the whole file collects 0 tests.
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
+  // `onSuccess` gets `(data, variables)` like react-query's: the delist success handler reads
+  // which listing it took down from them.
   const mutation =
     (name: string) =>
-    (opts?: { onSuccess?: () => void; onError?: (e: { message: string }) => void }) => ({
+    (opts?: {
+      onSuccess?: (data: unknown, vars: unknown) => void;
+      onError?: (e: { message: string }) => void;
+    }) => ({
       mutate: (vars: unknown) => {
         mocks.mutate(name, vars);
         if (mocks.errorMode) opts?.onError?.({ message: 'boom' });
-        else void opts?.onSuccess?.();
+        else void opts?.onSuccess?.(undefined, vars);
       },
       mutateAsync: vi.fn(),
       isPending: false,

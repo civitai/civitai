@@ -10,6 +10,7 @@ import {
   getOwnTriggerWords,
 } from '~/server/services/model-sfw-face.service';
 import type { SfwFaceVerdict } from '~/server/services/model-sfw-face.service';
+import type { NotifyTextScanRatingRaisedArgs } from '~/server/services/text-scan/notify';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 import { backoffDelay } from '~/utils/backoff';
 
@@ -171,6 +172,7 @@ async function removeComFace(
     reason,
     ...(detail && { detail }),
   };
+  let notice: NotifyTextScanRatingRaisedArgs | null = null;
   const removed = await dbWrite.$transaction(async (tx) => {
     const updated = await tx.$executeRaw(comFaceRemovalSql(modelId, coverId, marker));
     if (updated) {
@@ -178,7 +180,7 @@ async function removeComFace(
       const { applyComFaceHeldVerdict } = await import(
         '~/server/services/text-scan/actions/model-nsfw'
       );
-      await applyComFaceHeldVerdict(tx, modelId);
+      notice = await applyComFaceHeldVerdict(tx, modelId);
     }
     if (updated)
       await tx.modActivity.create({
@@ -190,7 +192,13 @@ async function removeComFace(
       });
     return updated > 0;
   });
-  if (removed) await finishRemoval(modelId);
+  // The notice in the finally: after the level refresh, so a slow notice cannot keep the old level
+  // listed, and even when the refresh throws, as a retry does not re-apply the verdict.
+  try {
+    if (removed) await finishRemoval(modelId);
+  } finally {
+    if (notice) await faceLossNotice.send([notice]);
+  }
   return removed;
 }
 
@@ -233,6 +241,17 @@ async function finishRemoval(modelId: number) {
   await bustPublicModelResponseCache(modelId);
   await rescanTextAfterFaceLoss(modelId);
 }
+
+/** The owner's rating notice for a held verdict the removal applied, sent after commit. Swapped by
+ *  tests; imported lazily, as the action reaches services that import this module. */
+export const faceLossNotice = {
+  send: async (notices: NotifyTextScanRatingRaisedArgs[]) => {
+    const { notifyComFaceHeldVerdictApplied } = await import(
+      '~/server/services/text-scan/actions/model-nsfw'
+    );
+    await notifyComFaceHeldVerdictApplied(notices);
+  },
+};
 
 /** Swapped by tests. Imported lazily: the scan reaches services that import this module. */
 export const faceLossRescan = {

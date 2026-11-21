@@ -30,6 +30,11 @@ vi.mock('$lib/server/game-frame', async (importOriginal) => ({
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 // Imports the main-app client (`$app/server`, private env), which nothing else in this graph loads.
 vi.mock('$lib/server/storyline-scan-lift.service', () => ({ liftStorylineScanTakedown: vi.fn() }));
+vi.mock('$lib/server/service-review-reports.service', () => ({
+  getReportedServiceReviews: vi.fn(),
+  getReportServiceReview: vi.fn(),
+  moderateServiceReview: vi.fn(),
+}));
 // Stubbed for a different reason than the others: no database, but `canAccess` reads a grants store
 // only the request hook fills, so the real one answers false for everything here.
 vi.mock('$lib/server/access', () => ({ canAccess }));

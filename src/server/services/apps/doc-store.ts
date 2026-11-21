@@ -106,6 +106,7 @@
 // order equals commit order, which is what a future change-feed poller needs.
 
 import { escapeLiteral } from 'pg';
+import { POOLER_TRANSIENT_08P01_MESSAGE } from '@civitai/db/db-errors';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { newUlid } from '~/server/utils/app-block-ids';
@@ -3968,16 +3969,6 @@ function buildDocStore(deps: DocStoreDeps) {
  */
 const PG_CONNECTION_SQLSTATES = new Set(['53300', '57P01', '57P02', '57P03']);
 /**
- * 08P01 protocol_violation is retryable ONLY with one of these PgBouncer messages. Postgres also
- * raises 08P01 for a malformed message from US (e.g. "bind message supplies 1 parameters, but
- * prepared statement requires 2") — a bug, which must stay a 500 — and PgBouncer uses it for
- * permanent refusals too ("unsupported startup parameter"). Trade-off: a PgBouncer outage
- * message not listed here is a 500 rather than a retryable 503; widen the list when one is seen,
- * rather than matching 08P01 by code alone.
- */
-const PGBOUNCER_TRANSIENT_08P01 =
-  /server conn crashed\?|no more connections allowed|pgbouncer cannot connect to server|query_wait_timeout/i;
-/**
  * Node socket errors a broken or unreachable database connection surfaces as. Name-resolution
  * failures (ENOTFOUND, EAI_AGAIN) are deliberately absent: they are a wrong host far more often
  * than a blip, and a retry loop would hide the misconfiguration.
@@ -4009,7 +4000,11 @@ function isPgConnectionFault(err: unknown): boolean {
     const { code, message } = e as { code?: unknown; message?: unknown };
     if (typeof code === 'string') {
       if (code === '08P01') {
-        if (typeof message === 'string' && PGBOUNCER_TRANSIENT_08P01.test(message)) return true;
+        // 08P01 is also Postgres's answer to a malformed message from US, a bug that must stay a
+        // 500, so it is retryable only with one of PgBouncer's outage messages. A message not
+        // listed in POOLER_TRANSIENT_08P01_MESSAGE is a 500: widen the list when one is seen.
+        if (typeof message === 'string' && POOLER_TRANSIENT_08P01_MESSAGE.test(message))
+          return true;
       } else if (PG_CONNECTION_SQLSTATES.has(code) || /^08[0-9A-Z]{3}$/.test(code)) {
         // A SQLSTATE is exactly five characters; class 08 is its first two.
         return true;

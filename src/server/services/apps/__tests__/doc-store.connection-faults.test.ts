@@ -168,6 +168,13 @@ describe('doc-store: a connection-class failure inside the transaction is a retr
       pgError('08P01', 'pgbouncer cannot connect to server'),
     ],
     ["08P01 from PgBouncer: 'query_wait_timeout'", pgError('08P01', 'query_wait_timeout')],
+    [
+      "08P01 from PgBouncer during a primary failover: 'server login has been failing'",
+      pgError(
+        '08P01',
+        'server login has been failing, cached error: connect failed (server_login_retry)'
+      ),
+    ],
     ['ECONNRESET', errnoError('ECONNRESET')],
     ['ECONNREFUSED', errnoError('ECONNREFUSED')],
     ['EPIPE', errnoError('EPIPE')],
