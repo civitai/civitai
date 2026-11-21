@@ -320,6 +320,11 @@ const { SPLIT_FLOOR_STEP_ID } = vi.hoisted(() => ({
 const { HIGH_ESTIMATE_STEP_ID } = vi.hoisted(() => ({
   HIGH_ESTIMATE_STEP_ID: 'fixture-high-estimate-step',
 }));
+// A registry entry that forwards an OPTIONAL url param into its built input, at a key
+// the request picks. Its canonical params omit it, so it registers cleanly.
+const { POSITION_STEP_ID } = vi.hoisted(() => ({
+  POSITION_STEP_ID: 'fixture-position-step',
+}));
 vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
   const actual = await importOriginal<typeof BlockStepsModule>();
   const z = await import('zod');
@@ -424,6 +429,22 @@ vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
     }),
   };
   actual.assertStepInvariants(HIGH_ESTIMATE_STEP_ID, highEstimateFixtureStep as never);
+  const positionFixtureStep = {
+    ...splitFloorFixtureStep,
+    id: POSITION_STEP_ID,
+    orchestratorType: 'fixturePositionType',
+    paramSchema: z
+      .object({ url: z.string().optional(), at: z.enum(['weightsUrl', 'image']).optional() })
+      .strict(),
+    canonicalParamsFor: () => ({}),
+    priceForVariant: () => 5,
+    estimateBuzz: () => 5,
+    buildStep: (p: { url?: string; at?: 'weightsUrl' | 'image' }) => ({
+      $type: 'fixturePositionType',
+      input: p.url ? { [p.at ?? 'weightsUrl']: p.url } : {},
+    }),
+  };
+  actual.assertStepInvariants(POSITION_STEP_ID, positionFixtureStep as never);
   return {
     ...actual,
     // The wire `step` enum is DERIVED from this, so widening it is what lets the
@@ -434,6 +455,7 @@ vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
       DIVERGENT_STEP_ID,
       SPLIT_FLOOR_STEP_ID,
       HIGH_ESTIMATE_STEP_ID,
+      POSITION_STEP_ID,
     ],
     getStep: (id: string) =>
       id === AUDITED_STEP_ID
@@ -444,6 +466,8 @@ vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
         ? (splitFloorFixtureStep as never)
         : id === HIGH_ESTIMATE_STEP_ID
         ? (highEstimateFixtureStep as never)
+        : id === POSITION_STEP_ID
+        ? (positionFixtureStep as never)
         : actual.getStep(id),
   };
 });
@@ -8943,6 +8967,45 @@ describe("step-type registry bridge (kind: 'step')", () => {
         })
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('REFUSES a registry step whose built input puts a url outside a media input', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      mockSubmitWorkflow.mockClear();
+      mockReserveAppSpend.mockClear();
+      const body = {
+        kind: 'step' as const,
+        step: POSITION_STEP_ID,
+        params: { url: 'https://files.example/a' },
+      };
+      await expect(caller().estimateWorkflow({ blockToken: 'tok', body })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining("at 'weightsUrl'"),
+      });
+      await expect(caller().submitWorkflow({ blockToken: 'tok', body })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining("at 'weightsUrl'"),
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('NEGATIVE CONTROL: the same url at a media input submits', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit(5);
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: {
+            kind: 'step',
+            step: POSITION_STEP_ID,
+            params: { url: 'https://files.example/a', at: 'image' },
+          },
+        })
+      ).resolves.toBeDefined();
     });
 
     it('NEGATIVE CONTROL: the SAME fixture submits fine when the types agree', async () => {

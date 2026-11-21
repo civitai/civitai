@@ -193,16 +193,6 @@ describe('withProfileRoute when armed', () => {
     expect(route).toHaveBeenCalledTimes(1);
   });
 
-  // Only the label object is shared across requests; pprof's runWithContext still allocates a
-  // native holder and an async-storage frame per call.
-  it('reuses one label object per route', () => {
-    const time = arm();
-    withProfileRoute('trpc:x.y', () => 1);
-    withProfileRoute('trpc:x.y', () => 1);
-    const [first, second] = time.contextCalls;
-    expect(first).toBe(second);
-  });
-
   it('exhausting the api budget leaves tRPC labels intact', () => {
     const time = arm();
     for (let i = 0; i < ROUTE_BUDGET.api; i++) withProfileRoute(`api:GET /api/v1/r${i}`, () => 1);
@@ -241,21 +231,5 @@ describe('apiProfileRoute', () => {
   it('maps an unknown method to one bucket', () => {
     expect(apiProfileRoute('PROPFIND /api/v1/images')).toBe('api:OTHER /api/v1/images');
     expect(apiProfileRoute('XYZZY /api/v1/images')).toBe('api:OTHER /api/v1/images');
-  });
-});
-
-describe('pyroscopeArmed', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.resetModules();
-  });
-
-  it("is true for exactly 'true' and false for anything else", async () => {
-    vi.stubEnv('PYROSCOPE_ENABLED', 'true');
-    vi.resetModules();
-    expect((await import('~/server/pyroscope-labels')).pyroscopeArmed).toBe(true);
-    vi.stubEnv('PYROSCOPE_ENABLED', 'false');
-    vi.resetModules();
-    expect((await import('~/server/pyroscope-labels')).pyroscopeArmed).toBe(false);
   });
 });

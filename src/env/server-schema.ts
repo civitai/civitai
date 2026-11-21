@@ -1050,7 +1050,6 @@ export const serverSchema = z
     // Creator Program Related:
     CREATOR_POOL_TAXES: z.coerce.number().optional(),
     CREATOR_POOL_PORTION: z.coerce.number().optional(),
-    CREATOR_POOL_FORECAST_PORTION: z.coerce.number().optional().default(50),
 
     // NOWPayments Related:
 

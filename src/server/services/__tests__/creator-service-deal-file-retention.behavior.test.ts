@@ -323,16 +323,6 @@ describe('holds', () => {
         `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "SexualMinor"}}' WHERE id = ${p}`,
     ],
     [
-      'ban notes naming a child-safety report',
-      (p) =>
-        `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "Harassment", "detailsInternal": "NCMEC report filed"}}' WHERE id = ${p}`,
-    ],
-    [
-      'an external ban note naming a child-safety report',
-      (p) =>
-        `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "Harassment", "detailsExternal": "csam"}}' WHERE id = ${p}`,
-    ],
-    [
       'an image held for review',
       (p) => `INSERT INTO "Image" ("userId", "needsReview") VALUES (${p}, 'csam')`,
     ],
@@ -408,6 +398,30 @@ describe('holds', () => {
     await sweepAndPurge();
     expect(await kept(finalId)).toBe(true);
     await q(`UPDATE "Report" SET status = 'Unactioned', "statusSetAt" = ${daysAgo(35)}`);
+    await sweepAndPurge();
+    expect(await kept(finalId)).toBe(false);
+  });
+
+  // A ban note alone is not a hold.
+  it.each([
+    [
+      'an internal ban note naming a child-safety report on the buyer',
+      BUYER,
+      'detailsInternal',
+      'NCMEC report filed',
+    ],
+    [
+      'an external ban note naming a child-safety report on the seller',
+      SELLER,
+      'detailsExternal',
+      'csam',
+    ],
+  ] as const)('%s keeps nothing', async (_name, party, field, note) => {
+    const { finalId } = await closedDeal('Cancelled', 40);
+    await q(`UPDATE "User" SET "bannedAt" = now(), meta = $2 WHERE id = $1`, [
+      party,
+      JSON.stringify({ banDetails: { reasonCode: 'Harassment', [field]: note } }),
+    ]);
     await sweepAndPurge();
     expect(await kept(finalId)).toBe(false);
   });

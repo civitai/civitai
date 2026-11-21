@@ -125,16 +125,14 @@ describe('delete-user-images on an account banned with a CSAM/NCMEC note', () =>
     );
   });
 
-  it('refuses, deleting nothing', async () => {
-    const res = await call(NOTED);
+  // A ban note alone is not a hold.
+  it.each([
+    ['with the note', NOTED],
+    ['with no note', PLAIN],
+  ])('deletes the images of an account %s', async (_, userId) => {
+    const res = await call(userId);
 
-    expect(res.statusCode).toBeGreaterThanOrEqual(400);
-    expect(await imagesOf(NOTED)).toBe(2);
-  });
-
-  it('deletes the images of an account with no such note (control for the above)', async () => {
-    await call(PLAIN);
-
-    expect(await imagesOf(PLAIN)).toBe(0);
+    expect(res.statusCode).toBe(200);
+    expect(await imagesOf(userId)).toBe(0);
   });
 });

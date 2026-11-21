@@ -1,4 +1,7 @@
 import { PostPublishedWithApp } from '~/components/Post/Detail/PostPublishedWithApp';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { resolveClientStoreScope } from '~/shared/utils/app-blocks-access';
+import { scopeAdmitsListingKind } from '~/shared/utils/store-visibility-scope';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -21,9 +24,20 @@ import { trpc } from '~/utils/trpc';
  * 🔴 The wrapper adds no horizontal padding and no margin: the card must be exactly as wide as
  * the cards beside it, and the sidebar column's `gap-3` spaces them
  * (`ImagePublishedWithApp.geometry.test.tsx` measures it).
+ *
+ * Enabled only when the client store scope admits on-site listings; the server answers null
+ * otherwise (`resolveAppChip`). When Flipt cannot answer, the client scope is the wider one
+ * (see `resolveClientStoreScope`), so that case costs a wasted request, never a hidden credit.
  */
 export function ImagePublishedWithApp({ imageId }: { imageId: number }) {
-  const { data } = trpc.image.getPublishedWithApp.useQuery({ id: imageId });
+  const canSeeOnsiteApps = scopeAdmitsListingKind(
+    resolveClientStoreScope(useOptionalFeatureFlags()),
+    'onsite'
+  );
+  const { data } = trpc.image.getPublishedWithApp.useQuery(
+    { id: imageId },
+    { enabled: canSeeOnsiteApps }
+  );
   if (!data) return null;
   return (
     <div data-testid="image-published-with-app">
