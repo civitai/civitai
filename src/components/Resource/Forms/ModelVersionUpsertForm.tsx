@@ -746,8 +746,16 @@ export function ModelVersionUpsertForm({
           const { donationGoalEnabled, donationGoal, ...rest } = gatedConfig;
           paidAccess = rest;
         }
+        // A percent fee is not a Buzz value, so the fee half keeps whatever was remembered before.
+        const remembered = monetizationDefaultsSchema.safeParse(
+          monetizationDefaultsStore.get(model.type)
+        );
         monetizationDefaultsStore.set(model.type, {
-          fee: feeToRatio(percentOfComputeFee ? 0 : submittedFee),
+          fee: percentOfComputeFee
+            ? remembered.success
+              ? remembered.data.fee
+              : feeToRatio(0)
+            : feeToRatio(submittedFee),
           paidAccess,
         });
       }
@@ -1982,6 +1990,11 @@ export function ModelVersionUpsertForm({
                             onChange={(e) => {
                               const checked = e.target.checked;
                               setFeeEnabled(checked);
+                              // Read-only here, so switching back on can only mean the stored percent.
+                              if (checked && percentOfComputeFee)
+                                form.setValue('licensingFee', Number(version?.licensingFee ?? 0), {
+                                  shouldDirty: true,
+                                });
                               if (!checked && (form.getValues('licensingFee') ?? 0) > 0) {
                                 form.setValue('licensingFee', 0, { shouldDirty: true });
                                 setFeeRatio((r) => ({ buzz: 0, images: r.images }));
@@ -1998,13 +2011,22 @@ export function ModelVersionUpsertForm({
                                 <Text fw={500} size="sm">
                                   Fee per generation
                                 </Text>
-                                <Text size="sm">
-                                  {currentLicensingFee}% of the compute cost of each generation
-                                </Text>
-                                <Text size="xs" c="dimmed">
-                                  Civitai staff set this fee. Contact support to change it, or turn
-                                  the fee off to remove it.
-                                </Text>
+                                {currentLicensingFee > 0 ? (
+                                  <>
+                                    <Text size="sm">
+                                      {currentLicensingFee}% of the compute cost of each generation
+                                    </Text>
+                                    <Text size="xs" c="dimmed">
+                                      Civitai staff set this fee. Contact support to change it, or
+                                      turn the fee off to remove it.
+                                    </Text>
+                                  </>
+                                ) : (
+                                  <Text size="sm">
+                                    No fee is set. Only Civitai staff can set a percent-of-compute
+                                    fee; contact support to set one.
+                                  </Text>
+                                )}
                               </Stack>
                             ) : (
                               <Input.Wrapper

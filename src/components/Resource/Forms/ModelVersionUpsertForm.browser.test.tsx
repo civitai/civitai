@@ -1287,7 +1287,7 @@ describe('ModelVersionUpsertForm — a staff-set percent-of-compute fee', () => 
 
   // A percent version whose fee was cleared keeps its type, so turning the fee back on must not drop a
   // Buzz suggestion or a remembered Buzz fee into it: either would be saved as a percent.
-  test('a cleared percent fee re-opens at 0%, without a Buzz suggestion or remembered fee', async () => {
+  test('a cleared percent fee re-opens with no fee, without a Buzz suggestion or remembered fee', async () => {
     monetizationDefaultsStore.set('LORA', { fee: { buzz: 7, images: 10 }, paidAccess: null });
     flags.current = { licensingFee: true, earlyAccessModel: true };
     renderWithProviders(
@@ -1305,9 +1305,56 @@ describe('ModelVersionUpsertForm — a staff-set percent-of-compute fee', () => 
     await expect.element(feeSwitch()).not.toBeChecked();
     await userEvent.click(feeSwitch());
 
-    await expect
-      .element(page.getByText('0% of the compute cost of each generation', { exact: true }))
-      .toBeInTheDocument();
+    await expect.element(page.getByText(/^No fee is set\./)).toBeInTheDocument();
     expect(feeInput().elements()).toHaveLength(0);
+  });
+  test('switching the fee off and on again shows and saves the stored percent', async () => {
+    renderPercentForm();
+
+    await expect.element(feeSwitch()).toBeChecked();
+    await userEvent.click(feeSwitch());
+    await userEvent.click(feeSwitch());
+
+    // The editor is read-only, so the only fee it can switch back on is the stored one; a form value
+    // left at 0 would show "0%" beside a line saying staff set it.
+    await expect
+      .element(page.getByText('35% of the compute cost of each generation', { exact: true }))
+      .toBeInTheDocument();
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({ licensingFee: 35 });
+  });
+
+  test('a save that remembers its gate keeps the Buzz fee remembered before', async () => {
+    const REMEMBERED_FEE = { buzz: 7, images: 10 };
+    monetizationDefaultsStore.set('LORA', { fee: REMEMBERED_FEE, paidAccess: null });
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        version={
+          {
+            ...(percentVersion as object),
+            paidAccess: (chargingVersion as { paidAccess: unknown }).paidAccess,
+          } as typeof percentVersion
+        }
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await expect.element(page.getByTestId('percent-of-compute-fee')).toBeInTheDocument();
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    // The gate is remembered; the fee half is the one this creator saved before, not 0 or 35.
+    await vi.waitFor(() =>
+      expect(useMonetizationDefaultsStore.getState().byModelType.LORA).toMatchObject({
+        fee: REMEMBERED_FEE,
+        paidAccess: expect.anything(),
+      })
+    );
   });
 });
