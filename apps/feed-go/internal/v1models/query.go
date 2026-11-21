@@ -26,6 +26,8 @@ type ListInput struct {
 	EarlyAccess     bool
 	Archived        bool
 	IDs             []int // nil = absent
+	// Tag is the `tag` filter's name ("" = none: the empty string is falsy to `tagname ?? tag`).
+	Tag string
 	// Query is req.query in Object.keys order, for nextPage.
 	Query []feed.QueryParam
 }
@@ -35,13 +37,14 @@ type ListInput struct {
 var ported = map[string]bool{
 	"limit": true, "page": true, "cursor": true, "sort": true, "period": true, "periodMode": true,
 	"types": true, "baseModels": true, "username": true, "nsfw": true, "primaryFileOnly": true,
-	"earlyAccess": true, "archived": true, "ids": true, "status": true,
+	"earlyAccess": true, "archived": true, "ids": true, "status": true, "tag": true,
 }
 
 // unported are the schema's other keys (getAllModelsSchema + userPreferencesSchema + the endpoint's
 // own), each its own fallback reason (`v1-models-<key>`), so the reason label is bounded by the schema.
+// `query` is read apart (textQueryAbsent): only its falsy value is ported.
 var unported = map[string]bool{
-	"query": true, "tag": true, "tagname": true, "user": true, "rating": true, "favorites": true,
+	"tagname": true, "user": true, "rating": true, "favorites": true,
 	"hidden": true, "checkpointType": true, "needsReview": true, "paidAccess": true, "hidePaid": true,
 	"onSale": true, "modelVersionIds": true, "supportsGeneration": true, "fromPlatform": true,
 	"followed": true, "newCreators": true, "collectionId": true, "collectionItemStatus": true,
@@ -107,6 +110,15 @@ func postgresSlugify(s string) string {
 	return strings.ToLower(b.String())
 }
 
+// textQueryAbsent reports whether a `query` parameter leaves the handler on its database path, as
+// if it were absent. `query` is `z.string().optional()` (no trim, no coercion), and the handler
+// branches on its truthiness (`if (query)`, `query && page`, `!query ? cursor : undefined`), so only
+// the one empty value is falsy. A repeated key is an array, which the schema answers with a 400; a
+// blank (`query=%20`) is a truthy text query.
+func textQueryAbsent(vals []string) bool {
+	return len(vals) == 1 && vals[0] == ""
+}
+
 // ParseList parses a `/api/v1/models` query string for a signed-out caller. Every input Node answers
 // with a 400, 401 or 429, and every schema key not ported, falls back.
 func ParseList(raw string) (*ListInput, error) {
@@ -120,6 +132,9 @@ func ParseList(raw string) (*ListInput, error) {
 		case p.Key == "favorites" || p.Key == "hidden":
 			// authedOnlyOptions: a signed-out caller naming either is a 401.
 			return nil, fallback.New("v1-models-authed-only")
+		case p.Key == "query" && !textQueryAbsent(p.Values):
+			// A text query is the Meilisearch path: not ported.
+			return nil, fallback.New("v1-models-query")
 		case unported[p.Key]:
 			return nil, fallback.New("v1-models-" + p.Key)
 		}
@@ -239,6 +254,17 @@ func ParseList(raw string) (*ListInput, error) {
 				ids = append(ids, n)
 			}
 			in.IDs = ids
+		case "tag":
+			s, err := scalar(v)
+			if err != nil {
+				return nil, err
+			}
+			if !isASCII(s) {
+				// The blocked-name test lowercases the name (`toLowerCase`), whose non-ASCII mappings
+				// Go's tables do not follow exactly.
+				return nil, fallback.New("v1-models-tag")
+			}
+			in.Tag = s
 		}
 	}
 	usingPaging := in.Page > 0 && in.Cursor == ""

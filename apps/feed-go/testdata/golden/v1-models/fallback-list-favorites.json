@@ -109,6 +109,8 @@
     },
     "vaeFiles": [],
     "usernames": {},
+    "tagIdsByName": {},
+    "blockedTags": [],
     "responseCache": {}
   },
   "redis": {
@@ -202,6 +204,9 @@
         }
       },
       "packed": "3gACqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[]"
     }
   },
   "sysRedis": {

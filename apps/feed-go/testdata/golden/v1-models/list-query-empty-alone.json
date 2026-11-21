@@ -1,0 +1,569 @@
+{
+  "name": "list-query-empty-alone",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "imageLocation": "https://image.example.test/golden",
+    "baseUrl": "https://site.example.test",
+    "coverageNext": false,
+    "baseModelFeedMetrics": false,
+    "regionRestricted": false
+  },
+  "request": {
+    "path": "/api/v1/models",
+    "query": "query=",
+    "headers": {
+      "host": "site.example.test",
+      "cf-ipcountry": "US"
+    }
+  },
+  "world": {
+    "models": [
+      {
+        "id": 5701,
+        "name": "Model 5701",
+        "sfwName": null,
+        "coverImageId": null,
+        "sfwCoverImageId": null,
+        "description": "<p>About model 5701</p>",
+        "sfwDescription": null,
+        "allowNoCredit": true,
+        "allowCommercialUse": [
+          "Image",
+          "RentCivit"
+        ],
+        "allowDerivatives": true,
+        "allowDifferentLicense": false,
+        "type": "LORA",
+        "minor": false,
+        "sfwOnly": false,
+        "poi": false,
+        "nsfw": false,
+        "nsfwLevel": 1,
+        "status": "Published",
+        "createdAt": {
+          "$date": "2026-05-01T08:00:00.000Z"
+        },
+        "lastVersionAt": {
+          "$date": "2026-06-01T10:00:00.500Z"
+        },
+        "publishedAt": {
+          "$date": "2026-05-02T08:00:00.000Z"
+        },
+        "locked": false,
+        "meta": {},
+        "mode": null,
+        "availability": "Public",
+        "rank": {
+          "downloadCount": 10,
+          "thumbsUpCount": 5,
+          "thumbsDownCount": 0,
+          "commentCount": 1,
+          "collectedCount": 2,
+          "tippedAmountCount": 0
+        },
+        "userId": 1001,
+        "cursorId": "1|1|5701"
+      }
+    ],
+    "modelData": {
+      "5701": {
+        "modelId": 5701,
+        "hashes": [
+          "H5701"
+        ],
+        "tags": [],
+        "versions": [
+          {
+            "id": 6701,
+            "index": 0,
+            "name": "v6701",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "SDXL 1.0",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-05-03T09:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-05-04T09:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>Version 6701</p>",
+            "trainedWords": [],
+            "vaeId": null,
+            "covered": false,
+            "coveredNext": false
+          }
+        ]
+      }
+    },
+    "modelTags": {
+      "5701": {
+        "modelId": 5701,
+        "tagIds": [
+          11,
+          12
+        ]
+      }
+    },
+    "tags": {
+      "11": {
+        "id": 11,
+        "name": "character",
+        "nsfwLevel": 1,
+        "type": "UserGenerated"
+      },
+      "12": {
+        "id": 12,
+        "name": "style",
+        "nsfwLevel": 1,
+        "type": "Label"
+      },
+      "13": {
+        "id": 13,
+        "name": "excluded thing",
+        "nsfwLevel": 1,
+        "type": "UserGenerated"
+      }
+    },
+    "users": {
+      "1001": {
+        "id": 1001,
+        "username": "artist_one",
+        "deletedAt": null,
+        "image": "00000000-0000-4000-8000-000000000901"
+      },
+      "1002": {
+        "id": 1002,
+        "username": "artist_two",
+        "deletedAt": null,
+        "image": null
+      }
+    },
+    "profilePictures": {
+      "1001": {
+        "id": 8901,
+        "name": null,
+        "url": "00000000-0000-4000-8000-000000008901",
+        "nsfwLevel": 1,
+        "hash": "UPROFILE8901",
+        "userId": 1001,
+        "ingestion": "Scanned",
+        "type": "image",
+        "width": 512,
+        "height": 512,
+        "metadata": {
+          "width": 512,
+          "height": 512
+        }
+      },
+      "1002": "notFound"
+    },
+    "paidAccessGates": [],
+    "paidAccess": {
+      "6701": "notFound"
+    },
+    "images": {
+      "6701": {
+        "modelVersionId": 6701,
+        "images": [
+          {
+            "id": 8701,
+            "userId": 1001,
+            "name": "00000000-0000-4000-8000-000000008701.jpeg",
+            "url": "00000000-0000-4000-8000-000000008701",
+            "nsfwLevel": 1,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8701",
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216,
+              "hash": "UHASH8701"
+            },
+            "onSite": false,
+            "hasMeta": true,
+            "hasPositivePrompt": true,
+            "remixOfId": null,
+            "poi": false,
+            "minor": false,
+            "availability": "Public",
+            "modelVersionId": 6701
+          }
+        ]
+      }
+    },
+    "imageTags": {
+      "8701": {
+        "imageId": 8701,
+        "tags": []
+      }
+    },
+    "files": {
+      "6701": {
+        "modelVersionId": 6701,
+        "files": [
+          {
+            "id": 7701,
+            "url": "https://storage.example.test/models/7701.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "file_7701.safetensors",
+            "overrideName": null,
+            "type": "Model",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6701,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7701"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7701"
+              }
+            ],
+            "metadata": {
+              "format": "SafeTensor",
+              "size": "pruned",
+              "fp": "fp16"
+            }
+          }
+        ]
+      }
+    },
+    "metricPrivacy": {
+      "1001": {
+        "hideModelBuzz": false,
+        "hideModelDownloads": false,
+        "hideModelGenerations": false
+      }
+    },
+    "membership": {},
+    "gallerySettings": {},
+    "addons": [
+      {
+        "type": "none",
+        "nsfwLevels": [
+          8,
+          16
+        ],
+        "disablePoi": false
+      },
+      {
+        "type": "some",
+        "nsfwLevels": [
+          4,
+          8,
+          16
+        ],
+        "disableMinor": true,
+        "disablePoi": true
+      }
+    ],
+    "stats": {
+      "vaeLinked": [],
+      "modelMetrics": [
+        {
+          "modelId": 5701,
+          "downloadCount": 1003,
+          "thumbsUpCount": 307,
+          "thumbsDownCount": 3,
+          "commentCount": 12,
+          "tippedAmountCount": 40
+        }
+      ],
+      "versionMetrics": [
+        {
+          "modelVersionId": 6701,
+          "downloadCount": 102,
+          "thumbsUpCount": 21,
+          "thumbsDownCount": 1
+        }
+      ],
+      "versionMeta": [
+        {
+          "id": 6701,
+          "meta": {}
+        }
+      ]
+    },
+    "vaeFiles": [],
+    "usernames": {},
+    "tagIdsByName": {},
+    "blockedTags": [],
+    "responseCache": {}
+  },
+  "redis": {
+    "packed:caches:data-for-model-2:5701": {
+      "value": {
+        "modelId": 5701,
+        "hashes": [
+          "H5701"
+        ],
+        "tags": [],
+        "versions": [
+          {
+            "id": 6701,
+            "index": 0,
+            "name": "v6701",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "SDXL 1.0",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-05-03T09:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-05-04T09:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>Version 6701</p>",
+            "trainedWords": [],
+            "vaeId": null,
+            "covered": false,
+            "coveredNext": false
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFp21vZGVsSWTNFkWmaGFzaGVzkaVINTcwMaR0YWdzkKh2ZXJzaW9uc5HeABKiaWTNGi2laW5kZXgApG5hbWWldjY3MDG0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKhTRFhMIDEuMK1iYXNlTW9kZWxUeXBlqFN0YW5kYXJkqWNyZWF0ZWRBdNb/afcOkK50cmFpbmluZ1N0YXR1c8CrcHVibGlzaGVkQXTW/2n4YBCmc3RhdHVzqVB1Ymxpc2hlZKVmbGFncwCsYXZhaWxhYmlsaXR5plB1YmxpY6luc2Z3TGV2ZWwBq2Rlc2NyaXB0aW9uszxwPlZlcnNpb24gNjcwMTwvcD6sdHJhaW5lZFdvcmRzkKV2YWVJZMCnY292ZXJlZMKrY292ZXJlZE5leHTCqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:model-tags:5701": {
+      "value": {
+        "modelId": 5701,
+        "tagIds": [
+          11,
+          12
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp21vZGVsSWTNFkWmdGFnSWRzkgsMqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:basic-tags:11": {
+      "value": {
+        "id": 11,
+        "name": "character",
+        "nsfwLevel": 1,
+        "type": "UserGenerated",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkC6RuYW1lqWNoYXJhY3Rlcqluc2Z3TGV2ZWwBpHR5cGWtVXNlckdlbmVyYXRlZKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:basic-tags:12": {
+      "value": {
+        "id": 12,
+        "name": "style",
+        "nsfwLevel": 1,
+        "type": "Label",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkDKRuYW1lpXN0eWxlqW5zZndMZXZlbAGkdHlwZaVMYWJlbKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:basic-tags:13": {
+      "value": {
+        "id": 13,
+        "name": "excluded thing",
+        "nsfwLevel": 1,
+        "type": "UserGenerated",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkDaRuYW1lrmV4Y2x1ZGVkIHRoaW5nqW5zZndMZXZlbAGkdHlwZa1Vc2VyR2VuZXJhdGVkqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:basic-users:1001": {
+      "value": {
+        "id": 1001,
+        "username": "artist_one",
+        "deletedAt": null,
+        "image": "00000000-0000-4000-8000-000000000901",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQPpqHVzZXJuYW1lqmFydGlzdF9vbmWpZGVsZXRlZEF0wKVpbWFnZdkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwOTAxqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:basic-users:1002": {
+      "value": {
+        "id": 1002,
+        "username": "artist_two",
+        "deletedAt": null,
+        "image": null,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQPqqHVzZXJuYW1lqmFydGlzdF90d2+pZGVsZXRlZEF0wKVpbWFnZcCoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:profile-pictures:v4:1001": {
+      "value": {
+        "id": 8901,
+        "name": null,
+        "url": "00000000-0000-4000-8000-000000008901",
+        "nsfwLevel": 1,
+        "hash": "UPROFILE8901",
+        "userId": 1001,
+        "ingestion": "Scanned",
+        "type": "image",
+        "width": 512,
+        "height": 512,
+        "metadata": {
+          "width": 512,
+          "height": 512
+        },
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAMomlkzSLFpG5hbWXAo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTAxqW5zZndMZXZlbAGkaGFzaKxVUFJPRklMRTg5MDGmdXNlcklkzQPpqWluZ2VzdGlvbqdTY2FubmVkpHR5cGWlaW1hZ2Wld2lkdGjNAgCmaGVpZ2h0zQIAqG1ldGFkYXRh3gACpXdpZHRozQIApmhlaWdodM0CAKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:profile-pictures:v4:1002": {
+      "value": {
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gACqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:paid-access:ModelVersion:6701": {
+      "value": {
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gACqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:images-for-model-version-2:6701": {
+      "value": {
+        "modelVersionId": 6701,
+        "images": [
+          {
+            "id": 8701,
+            "userId": 1001,
+            "name": "00000000-0000-4000-8000-000000008701.jpeg",
+            "url": "00000000-0000-4000-8000-000000008701",
+            "nsfwLevel": 1,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8701",
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216,
+              "hash": "UHASH8701"
+            },
+            "onSite": false,
+            "hasMeta": true,
+            "hasPositivePrompt": true,
+            "remixOfId": null,
+            "poi": false,
+            "minor": false,
+            "availability": "Public",
+            "modelVersionId": 6701
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzRotpmltYWdlc5HeABKiaWTNIf2mdXNlcklkzQPppG5hbWXZKTAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwODcwMS5qcGVno3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4NzAxqW5zZndMZXZlbAGld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4NzAxpHR5cGWlaW1hZ2WobWV0YWRhdGHeAAOld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4NzAxpm9uU2l0ZcKnaGFzTWV0YcOxaGFzUG9zaXRpdmVQcm9tcHTDqXJlbWl4T2ZJZMCjcG9pwqVtaW5vcsKsYXZhaWxhYmlsaXR5plB1YmxpY65tb2RlbFZlcnNpb25JZM0aLahjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:files-for-model-version-2:6701": {
+      "value": {
+        "modelVersionId": 6701,
+        "files": [
+          {
+            "id": 7701,
+            "url": "https://storage.example.test/models/7701.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "file_7701.safetensors",
+            "overrideName": null,
+            "type": "Model",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6701,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7701"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7701"
+              }
+            ],
+            "metadata": {
+              "format": "SafeTensor",
+              "size": "pruned",
+              "fp": "fp16"
+            }
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzRotpWZpbGVzkd4AD6JpZM0eFaN1cmzZNGh0dHBzOi8vc3RvcmFnZS5leGFtcGxlLnRlc3QvbW9kZWxzLzc3MDEuc2FmZXRlbnNvcnOmc2l6ZUtCy0DIHNbmMfihpG5hbWW1ZmlsZV83NzAxLnNhZmV0ZW5zb3JzrG92ZXJyaWRlTmFtZcCkdHlwZaVNb2RlbKp2aXNpYmlsaXR5plB1YmxpY7BwaWNrbGVTY2FuUmVzdWx0p1N1Y2Nlc3OxcGlja2xlU2Nhbk1lc3NhZ2WxTm8gUGlja2xlIGltcG9ydHOvdmlydXNTY2FuUmVzdWx0p1N1Y2Nlc3OwdmlydXNTY2FuTWVzc2FnZcCpc2Nhbm5lZEF01v9p+GcYrm1vZGVsVmVyc2lvbklkzRotpmhhc2hlc5LeAAKkdHlwZaZBdXRvVjKkaGFzaKVBNzcwMd4AAqR0eXBlplNIQTI1NqRoYXNoqkFCQ0RFRjc3MDGobWV0YWRhdGHeAAOmZm9ybWF0qlNhZmVUZW5zb3Kkc2l6ZaZwcnVuZWSiZnCkZnAxNqhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:tag-ids-for-images:8701": {
+      "value": {
+        "imageId": 8701,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNIf2kdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:user-metric-privacy-defaults:1001": {
+      "value": {
+        "hideModelBuzz": false,
+        "hideModelDownloads": false,
+        "hideModelGenerations": false
+      },
+      "packed": "3gADrWhpZGVNb2RlbEJ1enrCsmhpZGVNb2RlbERvd25sb2Fkc8K0aGlkZU1vZGVsR2VuZXJhdGlvbnPC"
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[]"
+    }
+  },
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"none\",\"nsfwLevels\":[8,16],\"disablePoi\":false},{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"disablePoi\":true}]"
+    }
+  },
+  "expect": {
+    "body": null,
+    "sql": null
+  }
+}
