@@ -1,8 +1,8 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
-import { CIVITAI_OWNED_DOMAINS, registrableDomain } from '@civitai/auth';
+import { CIVITAI_OWNED_DOMAINS, hubBaseUrl, hubFetch, registrableDomain } from '@civitai/auth';
 import { env } from '~/env/server';
-import { HUB_BASE_URL } from '~/server/auth/oauth-bridge';
+import { isLocalOrigin } from '~/env/local-origin';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type {
@@ -10,7 +10,7 @@ import type {
   FeaturePageVoteInput,
 } from '~/server/schema/feature-pages.schema';
 import { fetchThroughCache, setFetchThroughCache } from '~/server/utils/cache-helpers';
-import { outboundFetch } from '~/server/utils/fetch-timeout';
+import { fetchTimeoutSignal, outboundFetch } from '~/server/utils/fetch-timeout';
 
 // The data.civitai.com platform's internal write path (no ingress), and the audience of its tokens.
 const SIGNER_TOKEN_RESOURCE = 'https://data.civitai.com';
@@ -42,8 +42,8 @@ export function resolveFeaturePageEmbed(
   } catch {
     return null;
   }
-  const loopback = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) return null;
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLocalOrigin(url.href)))
+    return null;
   const site = registrableDomain(url.hostname.replace(/\.$/, ''));
   if (site && (CIVITAI_OWNED_DOMAINS as readonly string[]).includes(site)) return null;
   url.searchParams.set('feature', feature);
@@ -54,7 +54,7 @@ function signerConfig() {
   const { FEATURE_PAGES_SIGNER_URL, FEATURE_PAGES_CLIENT_ID, FEATURE_PAGES_CLIENT_SECRET } = env;
   if (!FEATURE_PAGES_SIGNER_URL || !FEATURE_PAGES_CLIENT_ID || !FEATURE_PAGES_CLIENT_SECRET)
     return null;
-  if (!HUB_BASE_URL) return null;
+  if (!hubBaseUrl()) return null;
   return {
     signerUrl: FEATURE_PAGES_SIGNER_URL.replace(/\/+$/, ''),
     clientId: FEATURE_PAGES_CLIENT_ID,
@@ -71,8 +71,8 @@ async function mintServiceToken({ clientId, clientSecret }: SignerConfig): Promi
   const basic = Buffer.from(
     `${encodeURIComponent(clientId)}:${encodeURIComponent(clientSecret)}`
   ).toString('base64');
-  const res = await outboundFetch(`${HUB_BASE_URL}/api/auth/oauth/token`, {
-    timeoutMs: HUB_TOKEN_TIMEOUT_MS,
+  const res = await hubFetch('/api/auth/oauth/token', {
+    signal: fetchTimeoutSignal(HUB_TOKEN_TIMEOUT_MS),
     method: 'POST',
     headers: {
       Authorization: `Basic ${basic}`,
