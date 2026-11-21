@@ -248,7 +248,6 @@ const updateNsfwLevelsCollectionsJob = createJob(
 
 const batchSize = 1000;
 const handleJobQueueCleanup = createJob('job-queue-cleanup', '*/1 * * * *', async (e) => {
-  const now = new Date();
   const jobQueue = await dbRead.jobQueue.findMany({
     where: { type: JobQueueType.CleanUp },
   });
@@ -281,9 +280,9 @@ const handleJobQueueCleanup = createJob('job-queue-cleanup', '*/1 * * * *', asyn
 
   await updateNsfwLevels(relatedEntities);
 
-  await dbWrite.jobQueue.deleteMany({
-    where: { createdAt: { lt: now }, type: JobQueueType.CleanUp },
-  });
+  // Only the rows read: the read is on the replica, so a row it has not yet received would be
+  // deleted unprocessed, leaving that image's connections and collection items behind.
+  await deleteProcessedJobQueueItems(jobQueue, JobQueueType.CleanUp);
 });
 
 const handleJobQueueCleanIfEmpty = createJob(
