@@ -1,4 +1,4 @@
-import { sql, type Kysely, type Transaction } from 'kysely';
+import { sql, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
 /** How long a mint waits on a suspension's row lock before it fails (and mints nothing). */
@@ -31,20 +31,6 @@ export async function lockAppBlockSuspended(trx: Transaction<DB>, clientId: stri
     .where('app_id', '=', clientId)
     .orderBy('id')
     .forShare()
-    .execute();
-  return suspendedWithoutApproved(blocks);
-}
-
-/**
- * The same rule, read without a lock: for a mint that writes no row (the block token exchange's JWT), so
- * there is nothing for a suspension's delete to find and nothing to wait for. A suspension that commits
- * after this read is not seen; the token it lets through lives at most 15 minutes.
- */
-export async function appBlockSuspended(db: Kysely<DB>, clientId: string): Promise<boolean> {
-  const blocks = await db
-    .selectFrom('app_blocks')
-    .select('status')
-    .where('app_id', '=', clientId)
     .execute();
   return suspendedWithoutApproved(blocks);
 }

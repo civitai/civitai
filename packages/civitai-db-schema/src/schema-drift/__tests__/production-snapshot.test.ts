@@ -385,6 +385,8 @@ describe('production catalog snapshot (2026-10-20)', () => {
       // 20271121140000_licensing_fee_paid_by_invoice (manual apply).
       'ModelVersion.licensingFeeLocked',
       'ModelVersion.licensingFeePaidByInvoice',
+      // Restricted licensing roots, migration 20271121150000_licensing_root_restricted (manual apply).
+      'LicensingRoot.restricted',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

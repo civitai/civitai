@@ -53,6 +53,8 @@ type VideoProps = Omit<
   imageId?: number;
   /** Play after a second of hover when not autoplaying. */
   hoverPlay?: boolean;
+  /** A video the viewer started keeps playing when the pointer leaves; it pauses when scrolled out of view. */
+  keepPlaying?: boolean;
   /** Never autoplays, whatever the viewport says: mounted for preloading, or another control owns playback. */
   standby?: boolean;
 };
@@ -97,6 +99,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       disablePoster,
       imageId,
       hoverPlay = true,
+      keepPlaying = false,
       standby = false,
       autoPlay,
       onLoad,
@@ -346,18 +349,35 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       }
     }, [canPlay, isCurrentStack, standby, autoPlay, isSelfFullscreen, resumeId, videoUrl]);
 
+    // A play the hover timer started is a preview; any other play is the viewer's.
+    const hoverStartedRef = useRef(false);
+    const viewerStartedRef = useRef(false);
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
-        const [event] = e;
-        (event.target as HTMLVideoElement).play();
+        hoverStartedRef.current = true;
+        (e[0].target as HTMLVideoElement).play();
       },
       1000
     );
 
     const handleMouseLeave: MouseEventHandler<HTMLVideoElement> = (e) => {
-      e.currentTarget.pause();
       clear();
+      hoverStartedRef.current = false;
+      if (keepPlaying && viewerStartedRef.current) return;
+      e.currentTarget.pause();
     };
+
+    // The in-view observer above only runs for anim videos; a kept-playing video still has to
+    // stop when it leaves the screen.
+    useEffect(() => {
+      const videoElem = ref.current;
+      if (!keepPlaying || !videoElem) return;
+      const observer = new IntersectionObserver(([entry]) => {
+        if (!entry.isIntersecting && !videoElem.paused) videoElem.pause();
+      });
+      observer.observe(videoElem);
+      return () => observer.disconnect();
+    }, [keepPlaying, loaded]);
 
     // Dark translucent buttons + white icons so the controls stay legible over bright media.
     const controlButtonClass = 'z-10 border-0 !bg-black/50 !text-white hover:!bg-black/70';
@@ -432,8 +452,15 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
             setAutoplayFailed(false);
             detectAudio();
           }}
-          onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
+          onPlay={() => {
+            setIsPlaying(true);
+            viewerStartedRef.current = !hoverStartedRef.current;
+          }}
+          onPause={() => {
+            setIsPlaying(false);
+            viewerStartedRef.current = false;
+            hoverStartedRef.current = false;
+          }}
           onVolumeChange={(e) => {
             // Native controls own the element's volume/mute here (custom slider/toggle update state
             // directly, so forwarding them would double-fire). Mirror BOTH volume and muted from the

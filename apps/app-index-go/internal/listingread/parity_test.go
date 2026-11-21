@@ -1,0 +1,221 @@
+package listingread
+
+import (
+	"encoding/json"
+	"os"
+	"reflect"
+	"testing"
+
+	"github.com/civitai/civitai/apps/app-index-go/internal/store"
+)
+
+// parityFixture is testdata/media-parity.json. The site reads the same file twice:
+//   - listing-media-parity.test.ts runs each listing through the adapter (registryListingMedia,
+//     and listingBody for its two ratings: the app entity's and the listing's own) and through the
+//     store's gate and projection (scopeAdmitsListingKind, matureRatingAllowed, projectListingMedia)
+//     for `expected`;
+//   - listing-card-parity.test.ts checks `cards`: recommend is recommendRollup of the counts (and
+//     the stream's recommendPct is its), reviewCount is listingReviewCount and openCount is
+//     cardOpenCount, the functions projectListingCard uses (app-listing-card-stats.ts).
+//
+// This side runs it through the read model: each listing becomes the store-listing@v1 body the
+// adapter would publish, decoded by the ingest's own decoder, and is gated and projected per viewer.
+// Both sides must give `expected` and `cards` exactly.
+type parityFixture struct {
+	Viewers []struct {
+		Name          string `json:"name"`
+		RedCapable    bool   `json:"redCapable"`
+		BrowsingLevel int64  `json:"browsingLevel"`
+		Scope         string `json:"scope"`
+	} `json:"viewers"`
+	Listings []struct {
+		Slug          string  `json:"slug"`
+		Kind          string  `json:"kind"`
+		ContentRating *string `json:"contentRating"`
+		// AppContentRating is the app entity's rating, which the stream body carries as
+		// contentRating; absent, it is the listing's own.
+		AppContentRating *string         `json:"appContentRating"`
+		Stats            json.RawMessage `json:"stats"`
+		Media            []struct {
+			Key       string  `json:"key"`
+			Slot      string  `json:"slot"`
+			Host      string  `json:"host"`
+			NsfwLevel int64   `json:"nsfwLevel"`
+			Rating    string  `json:"rating"`
+			Caption   *string `json:"caption"`
+		} `json:"media"`
+	} `json:"listings"`
+	Expected map[string]map[string]*parityMedia `json:"expected"`
+	Cards    map[string]parityCard              `json:"cards"`
+}
+
+type parityMedia struct {
+	Icon        *string  `json:"icon"`
+	Cover       *string  `json:"cover"`
+	Screenshots []string `json:"screenshots"`
+}
+
+type parityCard struct {
+	Recommend   Recommend `json:"recommend"`
+	ReviewCount int64     `json:"reviewCount"`
+	OpenCount   *int64    `json:"openCount"`
+}
+
+// The URLs the fixture's stream bodies carry for an item keyed k: a screenshot's cover rendition
+// is a different URL, so a cover taken from a screenshot is told apart from the screenshot.
+func coverRendition(k string) string { return k + "#cover" }
+
+func loadParity(t *testing.T) (parityFixture, map[string]store.Listing) {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/media-parity.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f parityFixture
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	listings := map[string]store.Listing{}
+	for _, l := range f.Listings {
+		media := []map[string]any{}
+		for _, m := range l.Media {
+			item := map[string]any{"slot": m.Slot, "host": m.Host, "url": m.Key, "nsfwLevel": m.NsfwLevel, "rating": m.Rating}
+			if m.Slot == "screenshot" {
+				item["caption"] = m.Caption
+				item["coverUrl"] = coverRendition(m.Key)
+			}
+			media = append(media, item)
+		}
+		appRating := l.ContentRating
+		if l.AppContentRating != nil {
+			appRating = l.AppContentRating
+		}
+		body, err := json.Marshal(map[string]any{
+			"app": "urn:apps.civitai.com:app/" + l.Slug, "slug": l.Slug, "name": l.Slug, "kind": l.Kind,
+			"contentRating": appRating, "listingContentRating": l.ContentRating, "tagline": nil, "category": nil, "media": media, "creator": nil,
+			"stats": l.Stats, "createdAt": "2026-01-02T03:04:05.000Z", "updatedAt": nil,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sl, drops, err := store.ListingFromEntity("urn:apps.civitai.com:store-listing/"+l.Slug, "r", body)
+		if err != nil || drops != nil {
+			t.Fatalf("%s: the fixture body does not decode cleanly: %v %+v", l.Slug, err, drops)
+		}
+		listings[l.Slug] = sl
+	}
+	return f, listings
+}
+
+// keyOfURL maps a projected URL back to the fixture key it was built from.
+func keyOfURL(t *testing.T, u *string, want string) *string {
+	t.Helper()
+	if u == nil {
+		return nil
+	}
+	k := *u
+	if k == coverRendition(want) {
+		k = want
+	}
+	return &k
+}
+
+// TestMediaParity runs every fixture listing through Admits and ProjectMedia for every fixture
+// viewer and compares with `expected`, and through ProjectCard for `cards`.
+func TestMediaParity(t *testing.T) {
+	f, listings := loadParity(t)
+	if len(f.Viewers) < 7 || len(f.Listings) < 11 {
+		t.Fatalf("the fixture shrank: %d viewers, %d listings", len(f.Viewers), len(f.Listings))
+	}
+	shown := 0
+	for _, fv := range f.Viewers {
+		v := Viewer{RedCapable: fv.RedCapable, BrowsingLevel: fv.BrowsingLevel, Scope: fv.Scope}
+		want, ok := f.Expected[fv.Name]
+		if !ok || len(want) != len(f.Listings) {
+			t.Fatalf("viewer %q: expected has %d listings, want %d", fv.Name, len(want), len(f.Listings))
+		}
+		for slug, l := range listings {
+			w, ok := want[slug]
+			if !ok {
+				t.Fatalf("viewer %q: no expectation for %s", fv.Name, slug)
+			}
+			if !Admits(l, v) {
+				if w != nil {
+					t.Errorf("viewer %q, %s: hidden, want shown", fv.Name, slug)
+				}
+				continue
+			}
+			if w == nil {
+				t.Errorf("viewer %q, %s: shown, want hidden", fv.Name, slug)
+				continue
+			}
+			shown++
+			m := ProjectMedia(l, v, true)
+			cover := ""
+			if w.Cover != nil {
+				cover = *w.Cover
+			}
+			got := parityMedia{Icon: m.IconURL, Cover: keyOfURL(t, m.CoverURL, cover), Screenshots: []string{}}
+			for _, s := range m.Screenshots {
+				got.Screenshots = append(got.Screenshots, s.URL)
+			}
+			if !reflect.DeepEqual(got, *w) {
+				t.Errorf("viewer %q, %s:\n got %s\nwant %s", fv.Name, slug, show(got), show(*w))
+			}
+			// A cover taken from a screenshot is its cover rendition, never the screenshot's own URL.
+			for _, fl := range f.Listings {
+				if fl.Slug != slug {
+					continue
+				}
+				for _, fm := range fl.Media {
+					if fm.Slot == "screenshot" && m.CoverURL != nil && *m.CoverURL == fm.Key {
+						t.Errorf("viewer %q, %s: the cover is a screenshot's gallery URL, not its cover rendition", fv.Name, slug)
+					}
+				}
+			}
+		}
+	}
+	// Positive control: the matrix shows listings at all, so a gate that hid everything would fail.
+	if shown < 30 {
+		t.Fatalf("only %d listing views shown across the matrix", shown)
+	}
+	for slug, l := range listings {
+		c, err := ProjectCard(l, Viewer{Scope: ScopeFull})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := parityCard{Recommend: c.Recommend, ReviewCount: c.ReviewCount, OpenCount: c.OpenCount}
+		if want := f.Cards[slug]; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s card stats:\n got %s\nwant %s", slug, show(got), show(want))
+		}
+		// The card shows the listing's own rating (projectListingCard: row.contentRating), never the
+		// app entity's, which falls back to the block's.
+		for _, fl := range f.Listings {
+			if fl.Slug == slug && !reflect.DeepEqual(c.ContentRating, fl.ContentRating) {
+				t.Errorf("%s card contentRating %v, want the listing's own %v", slug, show(c.ContentRating), show(fl.ContentRating))
+			}
+		}
+	}
+}
+
+// Captions travel with the gallery: a screenshot's own caption, null when it has none.
+func TestMediaParityCaptions(t *testing.T) {
+	_, listings := loadParity(t)
+	m := ProjectMedia(listings["pg-mixed"], Viewer{RedCapable: true, BrowsingLevel: 31, Scope: ScopeFull}, true)
+	var caps []any
+	for _, s := range m.Screenshots {
+		if s.Caption == nil {
+			caps = append(caps, nil)
+		} else {
+			caps = append(caps, *s.Caption)
+		}
+	}
+	if want := []any{"an R shot", "a PG shot", nil}; !reflect.DeepEqual(caps, want) {
+		t.Fatalf("captions %v, want %v", caps, want)
+	}
+}
+
+func show(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
+}

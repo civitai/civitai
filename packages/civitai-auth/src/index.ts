@@ -77,8 +77,13 @@ export {
 } from './first-party-bridge'; // framework-agnostic first-party login bridge (spoke side)
 export type { AuthorizeRedirect, FirstPartyCallbackResult } from './first-party-bridge';
 export { createSessionSigner, maybeCreateSessionSigner } from './sign';
-export { ACCESS_TOKEN_JWT_TYP } from './sign';
-export type { SessionSigner, SessionSignerConfig, AccessTokenJwtClaims } from './sign';
+export { ACCESS_TOKEN_JWT_TYP, BLOCK_EXCHANGE_TOKEN_KIND } from './sign';
+export type {
+  SessionSigner,
+  SessionSignerConfig,
+  AccessTokenJwtClaims,
+  BlockExchangeBinding,
+} from './sign';
 export { createAuthMiddleware } from './middleware';
 export type { AuthMiddlewareConfig } from './middleware';
 export {

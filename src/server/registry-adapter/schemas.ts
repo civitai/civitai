@@ -110,6 +110,11 @@ export const STORE_LISTING_SCHEMA_DOCUMENT: Record<string, unknown> = {
       description:
         "The app entity's rating; the listing reaches exactly the audiences the app does",
     },
+    listingContentRating: {
+      ...nullableString,
+      description:
+        "The listing's own content rating, without the block fallback `contentRating` has: what the store gates the listing and its media on, and shows on the card. Null when the listing has none",
+    },
     tagline: nullableString,
     category: nullableString,
     description: nullableString,

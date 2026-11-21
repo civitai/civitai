@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func listingURN(slug string) string { return "urn:apps.civitai.com:store-listing
 func listingJSON(slug, name string) json.RawMessage {
 	return json.RawMessage(`{
   "app": "urn:apps.civitai.com:app/` + slug + `", "slug": "` + slug + `", "name": "` + name + `", "kind": "onsite",
-  "contentRating": "r", "tagline": "t", "category": "generation", "description": "d", "iconUrl": "https://img.invalid/icon",
+  "contentRating": "r", "listingContentRating": "r", "tagline": "t", "category": "generation", "description": "d", "iconUrl": "https://img.invalid/icon",
   "media": [
     {"slot": "icon", "host": "any", "url": "https://img.invalid/icon", "nsfwLevel": 1, "rating": "pg"},
     {"slot": "cover", "host": "any", "url": "https://img.invalid/cover", "nsfwLevel": 2, "rating": "pg13"},
@@ -65,6 +66,21 @@ var wantMedia = []ListingMedia{
 	{Position: 5, Slot: "cover", Host: "red", URL: "https://img.invalid/red-cover", NsfwLevel: 8, Rating: "x"},
 }
 
+// firstMedia is body with only its first n media items.
+func firstMedia(t *testing.T, body json.RawMessage, n int) json.RawMessage {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["media"] = m["media"].([]any)[:n]
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 func mustGet(t *testing.T, s Listings, gen int64, urn string) (Listing, bool) {
 	t.Helper()
 	l, ok, err := s.Get(t.Context(), gen, urn)
@@ -89,7 +105,7 @@ func checkListing(t *testing.T, got Listing, slug, name string) {
 	t.Helper()
 	created := time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
 	want := Listing{URN: listingURN(slug), Rev: "rev-" + slug, App: "urn:apps.civitai.com:app/" + slug, Slug: slug,
-		Name: name, Kind: "onsite", Category: "generation", ContentRating: "r", CreatorID: i64(42), CreatedAt: &created,
+		Name: name, Kind: "onsite", Category: "generation", ContentRating: "r", ListingContentRating: "r", CreatorID: i64(42), CreatedAt: &created,
 		Stats: ListingStats{RecommendedCount: i64(7), NotRecommendedCount: i64(3), ReviewCount: i64(5), OpenCount: i64(120), InstallCount: i64(0)},
 		Media: wantMedia}
 	body := got.Body
@@ -131,8 +147,11 @@ func runListingsContract(t *testing.T, newStore func(t *testing.T) listingsTestS
 			t.Fatal(err)
 		}
 		mustApply(t, s, g.ID, listingUpsert(mustListing("alpha", "Alpha"), ""), listingUpsert(mustListing("beta", "Beta"), ""))
-		fewer := mustListing("alpha", "Alpha Two")
-		fewer.Media = fewer.Media[:1]
+		// The media are read back from the body, so the shorter list is a body with one item.
+		fewer, _, err := ListingFromEntity(listingURN("alpha"), "rev-alpha", firstMedia(t, listingJSON("alpha", "Alpha Two"), 1))
+		if err != nil {
+			t.Fatal(err)
+		}
 		mustApply(t, s, g.ID, listingUpsert(fewer, "c1"))
 		l, _ := mustGet(t, s, g.ID, listingURN("alpha"))
 		if l.Name != "Alpha Two" || !reflect.DeepEqual(l.Media, wantMedia[:1]) {
@@ -203,6 +222,88 @@ func runListingsContract(t *testing.T, newStore func(t *testing.T) listingsTestS
 		}
 	})
 
+	t.Run("ReadsForTheAPI", func(t *testing.T) {
+		s := newStore(t)
+		if _, err := s.Keys(t.Context(), 999); !errors.Is(err, ErrNoGeneration) {
+			t.Fatalf("keys of a missing generation: %v, want ErrNoGeneration", err)
+		}
+		if _, err := s.GetMany(t.Context(), 999, []string{listingURN("alpha")}); !errors.Is(err, ErrNoGeneration) {
+			t.Fatalf("get many from a missing generation: %v, want ErrNoGeneration", err)
+		}
+		if _, _, err := s.BySlug(t.Context(), 999, "alpha"); !errors.Is(err, ErrNoGeneration) {
+			t.Fatalf("by slug from a missing generation: %v, want ErrNoGeneration", err)
+		}
+		g, err := s.NewBuilding(t.Context(), listingSchemaURN, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if keys, err := s.Keys(t.Context(), g.ID); err != nil || len(keys) != 0 {
+			t.Fatalf("keys of an empty generation: %v %v", keys, err)
+		}
+		mustApply(t, s, g.ID, listingUpsert(mustListing("alpha", "Alpha"), ""), listingUpsert(mustListing("beta", "Beta"), ""))
+
+		keys, err := s.Keys(t.Context(), g.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		slices.SortFunc(keys, func(a, b Listing) int { return strings.Compare(a.URN, b.URN) })
+		want := mustListing("alpha", "Alpha")
+		want.Body, want.Media = nil, nil
+		if len(keys) != 2 || !reflect.DeepEqual(keys[0], want) || keys[1].Slug != "beta" {
+			t.Fatalf("keys\n got %+v\nwant [%+v beta]", keys, want)
+		}
+
+		many, err := s.GetMany(t.Context(), g.ID, []string{listingURN("beta"), listingURN("gone"), listingURN("alpha"), listingURN("beta")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		slices.SortFunc(many, func(a, b Listing) int { return strings.Compare(a.URN, b.URN) })
+		if len(many) != 2 {
+			t.Fatalf("get many: %d listings, want alpha and beta once each", len(many))
+		}
+		checkListing(t, many[0], "alpha", "Alpha")
+		checkListing(t, many[1], "beta", "Beta")
+
+		l, ok, err := s.BySlug(t.Context(), g.ID, "beta")
+		if err != nil || !ok {
+			t.Fatalf("by slug: %v %v", ok, err)
+		}
+		checkListing(t, l, "beta", "Beta")
+		if _, ok, err := s.BySlug(t.Context(), g.ID, "gone"); ok || err != nil {
+			t.Fatalf("by an unknown slug: %v %v", ok, err)
+		}
+	})
+
+	// A generation switched away from answers ErrNoGeneration to every read, never an empty one:
+	// the API turns that into a 503 rather than an empty page.
+	t.Run("ReadsOfASwitchedAwayGeneration", func(t *testing.T) {
+		s := newStore(t)
+		g, err := s.NewBuilding(t.Context(), listingSchemaURN, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustApply(t, s, g.ID, listingUpsert(mustListing("alpha", "Alpha"), ""))
+		mustLive(t, s, g.ID, "L1")
+		g2, err := s.NewBuilding(t.Context(), listingSchemaURN, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustApply(t, s, g2.ID, listingUpsert(mustListing("beta", "Beta"), ""))
+		mustLive(t, s, g2.ID, "L2")
+		if k, err := s.Keys(t.Context(), g.ID); !errors.Is(err, ErrNoGeneration) {
+			t.Errorf("keys of the old generation: %v %v", k, err)
+		}
+		if m, err := s.GetMany(t.Context(), g.ID, []string{listingURN("alpha")}); !errors.Is(err, ErrNoGeneration) {
+			t.Errorf("get many from the old generation: %v %v", m, err)
+		}
+		if _, _, err := s.BySlug(t.Context(), g.ID, "alpha"); !errors.Is(err, ErrNoGeneration) {
+			t.Errorf("by slug from the old generation: %v", err)
+		}
+		if _, _, err := s.Get(t.Context(), g.ID, listingURN("alpha")); !errors.Is(err, ErrNoGeneration) {
+			t.Errorf("get from the old generation: %v", err)
+		}
+	})
+
 	t.Run("FailedCommitWritesNothing", func(t *testing.T) {
 		s := newStore(t)
 		g, err := s.NewBuilding(t.Context(), listingSchemaURN, 1)
@@ -243,12 +344,12 @@ func TestListingFromEntity(t *testing.T) {
 		t.Fatalf("valid body: err %v drops %+v", err, drops)
 	}
 	checkListing(t, Listing{URN: l.URN, Rev: "rev-alpha", Body: l.Body, App: l.App, Slug: l.Slug, Name: l.Name, Kind: l.Kind,
-		Category: l.Category, ContentRating: l.ContentRating, CreatorID: l.CreatorID, CreatedAt: l.CreatedAt,
+		Category: l.Category, ContentRating: l.ContentRating, ListingContentRating: l.ListingContentRating, CreatorID: l.CreatorID, CreatedAt: l.CreatedAt,
 		UpdatedAt: l.UpdatedAt, Stats: l.Stats, Media: l.Media}, "alpha", "Alpha")
 
 	// Off-site: openCount null, no creator, no media, no dates.
 	off, drops, err := ListingFromEntity(listingURN("o"), "r", json.RawMessage(`{"app":"urn:apps.civitai.com:app/o","slug":"o","name":"O",
-		"kind":"offsite","contentRating":null,"media":[],"creator":null,"stats":{"recommendedCount":0,"notRecommendedCount":0,
+		"kind":"offsite","contentRating":null,"listingContentRating":null,"media":[],"creator":null,"stats":{"recommendedCount":0,"notRecommendedCount":0,
 		"recommendPct":null,"reviewCount":0,"openCount":null,"installCount":9}}`))
 	if err != nil || drops != nil {
 		t.Fatalf("off-site body: err %v drops %+v (a null openCount is not a drop)", err, drops)
@@ -277,6 +378,9 @@ func TestListingFromEntity(t *testing.T) {
 		{"no name", `"name": "Alpha"`, `"nameX": "Alpha"`, "name missing"},
 		{"no contentRating", `"contentRating": "r"`, `"contentRatingX": "r"`, "contentRating missing"},
 		{"bad contentRating", `"contentRating": "r"`, `"contentRating": 3`, "contentRating: not a string or null"},
+		// The listing's own rating is what the read API gates on: without it the body is unusable.
+		{"no listingContentRating", `"listingContentRating": "r"`, `"listingContentRatingX": "r"`, "listingContentRating missing"},
+		{"bad listingContentRating", `"listingContentRating": "r"`, `"listingContentRating": 4`, "listingContentRating: not a string or null"},
 		{"bad category", `"category": "generation"`, `"category": []`, "category: not a string or null"},
 		{"bad creator", `"creator": {"id": 42, "username": "maker", "image": null}`, `"creator": "maker"`, "creator: not an object or null"},
 		{"media not an object", `"media": [`, `"media": [7, `, "media[0]: not an object"},

@@ -638,7 +638,8 @@ export type LicensingSourceRejection =
   | 'not-a-root'
   | 'base-model-mismatch'
   | 'model-not-found'
-  | 'model-type-mismatch';
+  | 'model-type-mismatch'
+  | 'restricted-root';
 
 export type GetLicensingRootsSchema = z.infer<typeof getLicensingRootsSchema>;
 export const getLicensingRootsSchema = z.object({
