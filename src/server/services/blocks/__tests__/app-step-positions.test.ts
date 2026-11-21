@@ -375,6 +375,16 @@ describe('media references (#9982)', () => {
     ).toMatchObject({ form: 'media-reference', key: 'label' });
   });
 
+  it.each(['data:,urn:air:other:image:civitai:1', 'data:text/plain,orchestrator:x'])(
+    'refuses %s, a data URI that is not media',
+    (value) => {
+      expect(findStepPositionProblem({ image: value }, VIEWER)).toMatchObject({
+        form: 'media-reference',
+        key: 'image',
+      });
+    }
+  );
+
   it.each(['orchestrator://x@y.safetensors', 'civitai://12345', 'ftp://example.com/a.png'])(
     'refuses %s, a scheme other than http(s)',
     (value) => {
