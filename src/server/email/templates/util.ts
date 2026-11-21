@@ -3,15 +3,7 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 
 // The shell lives in @civitai/email so apps/auth and apps/moderator render the same layout. The main
 // app loads the logo from its own origin (getBaseUrl), so staging and dev emails point at themselves.
-export {
-  emailTheme,
-  emailFontStack,
-  emailLogoPath,
-  EMAIL_LOGO_WIDTH,
-  EMAIL_LOGO_HEIGHT,
-  EMAIL_PREHEADER_CLASS,
-  EMAIL_MUTED_CLASS,
-} from '@civitai/email';
+export { emailTheme, EMAIL_PREHEADER_CLASS, EMAIL_MUTED_CLASS } from '@civitai/email';
 
 /**
  * The shared transactional email layout (see `renderEmailShell` in @civitai/email). Every value is
