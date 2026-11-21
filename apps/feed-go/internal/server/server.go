@@ -74,12 +74,45 @@ const shadowSampleTimeout = 30 * time.Second
 // verifiedBotHeader is VERIFIED_BOT_HEADER: a verified crawler is "authorized" where NSFW is viewable.
 const verifiedBotHeader = "x-civitai-verified-bot"
 
+// sampledKey marks a request rebuilt from a Node sample (a shadow comparison or a Go-first probe):
+// its headers are the ones the app's route saw after applyApiRequestPolicy.
+type sampledKey struct{}
+
+func withSampled(ctx context.Context) context.Context {
+	return context.WithValue(ctx, sampledKey{}, true)
+}
+
+func isSampled(ctx context.Context) bool {
+	v, _ := ctx.Value(sampledKey{}).(bool)
+	return v
+}
+
+// verifiedCrawler is requestVerifiedCrawler (src/server/utils/browsing-level.ts) as the app reads it
+// after applyApiRequestPolicy has decided the header:
+//
+//   - on a Node sample, the app has already decided it, so its value is read as the app parses it
+//     (parseVerifiedBotHeader: `googlebot` or `bingbot`, anything else is no crawler);
+//   - on a public request, a crawler's user agent never gets here: apiRequestPolicy (serve) hands it
+//     back first (`crawler-user-agent`: only the app holds the address ranges that verify it). For
+//     any other user agent the app's policy removes whatever header came in, so it is no crawler
+//     whatever it carries.
+func verifiedCrawler(r *http.Request) bool {
+	if isSampled(r.Context()) {
+		v := r.Header.Get(verifiedBotHeader)
+		return v == "googlebot" || v == "bingbot"
+	}
+	return false
+}
+
 // Server wires a request to the port.
 type Server struct {
-	Resolver    *auth.Resolver
-	Deps        *feed.Deps
-	Hosts       browsing.HostColors
-	RegionRules []browsing.RegionRule
+	Resolver *auth.Resolver
+	Deps     *feed.Deps
+	Hosts    browsing.HostColors
+	// HostPrimaries is each color's SERVER_DOMAIN_<COLOR> (config.HostPrimaries): the board color of
+	// image.getInfinite's `newCreators` reads it.
+	HostPrimaries map[string]string
+	RegionRules   []browsing.RegionRule
 	// RegionBlockRules is REGION_BLOCK_CONFIG (config.RegionBlockRules): a public request from a region
 	// on it is handed to Fallback, where applyApiRequestPolicy answers the 451.
 	RegionBlockRules []browsing.RegionRule
@@ -287,7 +320,7 @@ func (s *Server) prepare(ctx context.Context, r *http.Request) (feed.Request, bo
 // carries createContext's public TTL. Shadowed, and served on the public route only with
 // ServeInfinite.
 func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*computed, error) {
-	req, signedOut, err := s.prepareInfinite(ctx, r)
+	req, cacheable, err := s.prepareInfinite(ctx, r)
 	if err != nil {
 		return nil, err
 	}
@@ -300,16 +333,18 @@ func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*compute
 		return nil, err
 	}
 	out := &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}
-	if signedOut {
-		// createContext: cacheable without a session user, as for the gallery procedure. Nothing in
-		// this procedure's chain lowers it, so Node answers a signed-out unbatched call public.
+	if cacheable {
+		// createContext: cacheable without a session user and without a verified crawler. Nothing in
+		// this procedure's chain lowers it, so Node answers such an unbatched call public.
 		out.ttl = &trpc.SignedOutTTL
 	}
 	return out, nil
 }
 
-// prepareInfinite is computeInfinite up to the handler call, and whether there is no session user at
-// all; the Go-first probe runs the same steps.
+// prepareInfinite is computeInfinite up to the handler call, and whether createContext makes the
+// answer edge-cacheable (no session user at all, and no verified crawler); the Go-first probe runs
+// the same steps. A verified crawler (verifiedCrawler) counts as signed in for the domain cap where
+// NSFW is viewable (requestDomainBrowsingLevelCap) and is never cached; it is no viewer.
 func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.InfiniteRequest, bool, error) {
 	if s.Infinite == nil {
 		return feed.InfiniteRequest{}, false, fallback.New("infinite-unconfigured")
@@ -325,9 +360,7 @@ func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.Inf
 	if err != nil {
 		return feed.InfiniteRequest{}, false, err
 	}
-	if r.Header.Get(verifiedBotHeader) != "" {
-		return feed.InfiniteRequest{}, false, fallback.New("verified-bot")
-	}
+	crawler := verifiedCrawler(r)
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
 		return feed.InfiniteRequest{}, false, err
@@ -336,12 +369,17 @@ func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.Inf
 	isModerator := authorized && user.IsModerator
 	color := s.Hosts.ColorOf(r.Host)
 	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
-	req := feed.InfiniteRequest{Input: in, Cap: browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))}
+	canViewNsfw := browsing.CanViewNsfw(color, restricted, isModerator)
+	req := feed.InfiniteRequest{
+		Input:      in,
+		Cap:        browsing.DomainCap(authorized || (crawler && canViewNsfw), canViewNsfw),
+		BoardColor: s.Hosts.BoardColorOf(r.Host, s.HostPrimaries),
+	}
 	if authorized {
 		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
 		req.ViewerUsername = user.Username
 	}
-	return req, user == nil, nil
+	return req, user == nil && !crawler, nil
 }
 
 // computeModelGetAll answers a `model.getAll` request (getModelsInfiniteHandler), or returns a
@@ -949,10 +987,11 @@ func SyntheticModelGetAllRequest(ctx context.Context, req ShadowRequest) (*http.
 }
 
 // The synthetic requests carry the sampler's credential placeholder, never a key: their context is
-// marked so an API credential stays the `bearer-token` fallback (auth.WithRedactedCredentials).
+// marked so an API credential stays the `bearer-token` fallback (auth.WithRedactedCredentials). It is
+// also marked as a sample (withSampled): its verified-crawler header is the app's own decision.
 func syntheticTRPCRequest(ctx context.Context, req ShadowRequest, procedure string) (*http.Request, error) {
 	u := &url.URL{Path: "/api/trpc/" + procedure, RawQuery: url.Values{"input": {req.Input}}.Encode()}
-	r, err := http.NewRequestWithContext(auth.WithRedactedCredentials(ctx), http.MethodGet, u.String(), nil)
+	r, err := http.NewRequestWithContext(withSampled(auth.WithRedactedCredentials(ctx)), http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
