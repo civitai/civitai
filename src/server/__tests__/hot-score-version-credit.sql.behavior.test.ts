@@ -127,9 +127,7 @@ let preexisting: number;
 let preexistingByDownloads: number;
 const DAY_45 = daysAgo(45);
 
-beforeAll(async () => {
-  db.pg = new PGlite();
-  await db.pg.exec(`
+const SCHEMA = `
     CREATE TABLE "ModelMetric" (
       "modelId" int PRIMARY KEY, "thumbsUpCount" int NOT NULL DEFAULT 0,
       "downloadCount" int NOT NULL DEFAULT 0, "generationCount" int NOT NULL DEFAULT 0,
@@ -148,7 +146,11 @@ beforeAll(async () => {
       "thumbsUpCount" int NOT NULL DEFAULT 0, "downloadCount" int NOT NULL DEFAULT 0,
       "hotScore" int, PRIMARY KEY ("modelId", "baseModel")
     );
-  `);
+`;
+
+beforeAll(async () => {
+  db.pg = new PGlite();
+  await db.pg.exec(SCHEMA);
   // PGlite has no replicas: opt out of the lag watch the way an operator would. 'the rescore lag
   // watch' below runs the files without this and expects them to refuse.
   await db.pg.exec(`SET hot_rescore.lag_watch = off`);
@@ -479,29 +481,88 @@ describe('the head-start rollback', () => {
 });
 
 describe('the rescore lag watch', () => {
+  // The backstop for a run that ignored the preflight's error: the procedure itself must refuse
+  // before its first write. Applied with the opt-out, then the procedure is recreated from the
+  // file and called without it.
+  it.each([
+    [
+      'migration.sql',
+      /CREATE OR REPLACE PROCEDURE public\.rescore_hot_version_head_start\([\s\S]*?\$procedure\$;/,
+      'rescore_hot_version_head_start',
+    ],
+    [
+      'rollback.sql',
+      /CREATE OR REPLACE PROCEDURE public\.rescore_hot_version_head_start_rollback\([\s\S]*?\$procedure\$;/,
+      'rescore_hot_version_head_start_rollback',
+    ],
+  ])(
+    'the %s procedure refuses before writing when it cannot see replica lag',
+    async (file, re, proc) => {
+      const procedure = readFileSync(path.join(MIGRATIONS, HEAD_START, file), 'utf8').match(
+        re
+      )?.[0];
+      const id = await model(OLD, 3_000, [
+        { at: OLD, likes: 2_970 },
+        { at: RECENT, likes: 30 },
+      ]);
+      // Knock the stored score down without firing the trigger, so a rescore would visibly raise it.
+      await db.pg.query(`UPDATE "ModelMetric" SET "hotScore" = 1 WHERE "modelId" = $1`, [id]);
+      await db.pg.exec(procedure ?? 'SELECT missing_procedure()');
+
+      await db.pg.exec(`RESET hot_rescore.lag_watch`);
+      try {
+        await expect(db.pg.exec(`CALL public.${proc}()`)).rejects.toThrow('no replica lag visible');
+      } finally {
+        await db.pg.exec(`SET hot_rescore.lag_watch = off`);
+      }
+      expect(await score(id)).toBe(1);
+    }
+  );
+
   const HEAD_START = '20271121120000_model_hot_score_version_head_start';
   const functionExists = async (pg: PGlite, name: string) =>
     (await pg.query(`SELECT 1 FROM pg_proc WHERE proname = $1`, [name])).rows.length > 0;
 
   // Run as written, on a database with no replicas and no opt-out: each file must stop before it
   // changes anything.
-  it('refuses to apply the migration, changing nothing, when it cannot see replica lag', async () => {
+  /** A database at the given point of the hot-score history, applied with the lag watch waived. */
+  async function freshDb(through: string) {
     const pg = new PGlite();
+    await pg.exec(SCHEMA);
+    await pg.exec(`SET hot_rescore.lag_watch = off`);
+    for (const dir of [...BASELINE, ...LATER].filter((d) => d <= through))
+      await apply(dir, 'migration.sql', pg);
+    await pg.exec(`RESET hot_rescore.lag_watch`);
+    return pg;
+  }
+  const usesHeadStart = async (pg: PGlite) =>
+    (
+      await pg.query(
+        `SELECT 1 FROM pg_proc WHERE proname = 'model_metric_hot_score' AND prosrc LIKE '%hot_version_score%'`
+      )
+    ).rows.length > 0;
 
-    await expect(apply(HEAD_START, 'migration.sql', pg)).rejects.toThrow('no replica lag visible');
+  // Run as written, with no replicas and no opt-out: each file must stop before it changes anything.
+  // PGlite runs each chunk as one implicit transaction, so the explicit BEGIN that protects a psql
+  // run without ON_ERROR_STOP is not exercised here.
+  it('refuses to apply the migration, changing nothing, when it cannot see replica lag', async () => {
+    const pg = await freshDb('20271117190000_model_hot_score_version_credit');
+
+    await expect(apply(HEAD_START, 'migration.sql', pg)).rejects.toThrow();
+    await pg.exec('ROLLBACK');
     expect(await functionExists(pg, 'hot_version_score')).toBe(false);
+    expect(await usesHeadStart(pg)).toBe(false);
     await pg.close();
   });
 
   it('refuses to apply the rollback, changing nothing, when it cannot see replica lag', async () => {
-    const pg = new PGlite();
-    await pg.exec(
-      `CREATE FUNCTION public.hot_version_score() RETURNS int LANGUAGE sql AS 'SELECT 1'`
-    );
+    const pg = await freshDb(HEAD_START);
+    expect(await usesHeadStart(pg)).toBe(true);
 
-    await expect(apply(HEAD_START, 'rollback.sql', pg)).rejects.toThrow('no replica lag visible');
+    await expect(apply(HEAD_START, 'rollback.sql', pg)).rejects.toThrow();
+    await pg.exec('ROLLBACK');
     expect(await functionExists(pg, 'hot_version_score')).toBe(true);
-    expect(await functionExists(pg, 'model_metric_hot_score')).toBe(false);
+    expect(await usesHeadStart(pg)).toBe(true);
     await pg.close();
   });
 });

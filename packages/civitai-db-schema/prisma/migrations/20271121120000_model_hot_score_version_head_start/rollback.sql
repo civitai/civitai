@@ -1,10 +1,14 @@
 -- Rollback for migration.sql: restores the 20271117190000 (#9397) trigger functions and rescores,
 -- in both directions, every model with a version published since `since`. Pass the apply date
--- minus 60 days; the default is 60 days before this migration was written, which covers any apply
--- date. The pre-apply snapshot is for comparison only: restoring it would rewind real metric gains.
+-- minus 61 days (a qualifying version's initialPublishedAt can be a day before its publishedAt); the
+-- default is 61 days before this migration was written, which covers any apply date. The pre-apply snapshot is for comparison only: restoring it would rewind real metric gains.
 --
 -- 🔴 APPLY WITH psql -v ON_ERROR_STOP=1 AND WITHOUT --single-transaction: the preflight must stop
--- the file on refusal, and the CALL COMMITs per batch. Re-running resumes.
+-- the file on refusal, and the CALL COMMITs per batch. A re-run is safe; it starts the rescore over.
+
+-- Everything up to the CALL runs as one transaction: if the preflight refuses and psql carries on anyway (no
+-- ON_ERROR_STOP), every later statement in it fails and nothing is replaced. The CALL runs after.
+BEGIN;
 
 -- Preflight ------------------------------------------------------------
 --
@@ -101,9 +105,9 @@ DROP FUNCTION IF EXISTS public.hot_version_score(
 
 -- Unconditional: a head start only ever raised a score, so the predicate migration.sql used
 -- would match none of the rows to lower. Any status: a version unpublished since may have raised a
--- row that has not been rewritten. Re-running is safe.
+-- row that has not been rewritten. A re-run rewrites every candidate again: correct, not a resume.
 CREATE OR REPLACE PROCEDURE public.rescore_hot_version_head_start_rollback(
-    since TIMESTAMP DEFAULT TIMESTAMP '2026-09-22',
+    since TIMESTAMP DEFAULT TIMESTAMP '2026-09-21',
     batch_size INT DEFAULT 2000,
     max_lag_bytes BIGINT DEFAULT 268435456,
     max_wait INTERVAL DEFAULT '15 minutes'
@@ -134,7 +138,7 @@ BEGIN
     WHILE i <= coalesce(array_length(ids, 1), 0) LOOP
         batch := ids[i:i + batch_size - 1];
         -- Waits on replica lag before each batch, committing between polls so no snapshot is held
-        -- while it sleeps. Raises after max_wait: committed batches stay, and a re-run resumes.
+        -- while it sleeps. Raises after max_wait: committed batches stay; a re-run starts over.
         IF watch THEN
             waited_since := clock_timestamp();
             LOOP
@@ -142,11 +146,11 @@ BEGIN
                   INTO visible, replica_lag
                   FROM pg_stat_replication;
                 IF visible = 0 THEN
-                    RAISE EXCEPTION 'no replica lag visible: stopping. Committed batches stay; re-run to resume';
+                    RAISE EXCEPTION 'no replica lag visible: stopping. Committed batches stay; re-running is safe';
                 END IF;
                 EXIT WHEN replica_lag <= max_lag_bytes;
                 IF clock_timestamp() - waited_since > max_wait THEN
-                    RAISE EXCEPTION 'a replica is still % bytes behind after %: stopping. Committed batches stay; re-run to resume', replica_lag, max_wait;
+                    RAISE EXCEPTION 'a replica is still % bytes behind after %: stopping. Committed batches stay; re-running is safe', replica_lag, max_wait;
                 END IF;
                 RAISE NOTICE 'replica % bytes behind, waiting', replica_lag;
                 COMMIT;
@@ -171,10 +175,16 @@ BEGIN
            AND bm."uniqueGeneratorCount" IS NULL;
 
         COMMIT;
+        -- Opted out of the watch: pace the batches for whoever is watching lag by hand.
+        IF NOT watch THEN
+            PERFORM pg_sleep(1);
+        END IF;
         i := i + batch_size;
     END LOOP;
 END
 $procedure$;
+
+COMMIT;
 
 CALL public.rescore_hot_version_head_start_rollback();
 

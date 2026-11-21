@@ -22,6 +22,10 @@
 --
 -- No application change ships with this: the formula lives only in these functions.
 
+-- Sections 0-3 and the procedure run as one transaction: if the preflight refuses and psql carries on anyway (no
+-- ON_ERROR_STOP), every later statement in it fails and nothing is replaced. The CALL runs after.
+BEGIN;
+
 -- 0. Preflight ----------------------------------------------------------------
 --
 -- The rescore below must watch replica lag. Refuse before changing anything when this role cannot
@@ -288,10 +292,16 @@ BEGIN
         RAISE NOTICE 'ModelBaseModelMetric mirror batch from id %: % refreshed', batch[1], touched;
 
         COMMIT;
+        -- Opted out of the watch: pace the batches for whoever is watching lag by hand.
+        IF NOT watch THEN
+            PERFORM pg_sleep(1);
+        END IF;
         i := i + batch_size;
     END LOOP;
 END
 $procedure$;
+
+COMMIT;
 
 CALL public.rescore_hot_version_head_start();
 
