@@ -1231,8 +1231,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	var respDiffs []shadow.Diff
 	switch {
 	case req.ResponseHeaders == nil || (isRESTEndpoint(endpoint) && c.headers == nil):
-		// A sampler that predates the field sends none, and the /api/v1/images port writes no headers
-		// of its own yet: nothing to compare.
+		// A sampler that predates the field sends none; the /api/v1/images port writes no headers of
+		// its own yet; and a model list sample with an `etag` query has none computed
+		// (v1ModelsHeadersUnknown): nothing to compare.
 		s.Metrics.ShadowResponse.WithLabelValues(endpoint, "uncompared").Inc()
 	default:
 		goHeaders, names := trpc.ResultHeaders(c.ttl), shadow.ComparedHeaders

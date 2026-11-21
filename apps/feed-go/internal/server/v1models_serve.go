@@ -20,7 +20,8 @@ import (
 // crawler), a serve slot from the one shared pool (MaxInFlight), the request budget, and the compute
 // the shadow runs (v1ModelsCompute). An answer is the shadow-compared body and headers plus
 // X-Feed-Go-Served: go; every fallback is proxied to V1Fallback, the Node app that serves `/api/v1`.
-// No origin allow-list (unlike model.getAll): the list answers any origin (CORS `*`); an `[id]` request with an Origin falls back (v1-models-origin).
+// No origin allow-list (unlike model.getAll): the list answers any origin (CORS `*`); an `[id]`
+// request with an Origin falls back (v1-models-origin).
 
 // errV1ModelsOff is the `v1-models-off` fallback: a public model route with ServeV1Models off.
 var errV1ModelsOff = fallback.New("v1-models-off")
@@ -200,8 +201,6 @@ func v1ModelsServeOnly(r *http.Request, detail bool) error {
 
 // v1ModelsHeadersUnknown: on the list, an `etag` query lets Node add X-Expires read from its
 // database, so the headers are not computed here and the shadow's response compare is `uncompared`.
-// A session cookie leaves Node's 200 headers computable. (The sampler forwards neither an Origin nor
-// a conditional header, and the public route falls back on both before computing.)
 func v1ModelsHeadersUnknown(r *http.Request, detail bool) bool {
 	return !detail && etagChecked(r)
 }
