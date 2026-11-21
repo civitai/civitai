@@ -2411,15 +2411,18 @@ deployment config. Every answer carries `X-Feed-Go-Served` (`go` or `node`), as 
 2. A serve slot from the one shared pool (`FEED_GO_MAX_IN_FLIGHT`, §6.1; `bulkhead` past it), and the
    request budget (`deadline`), as every public route; `feed_go_serve_in_flight` and the `bulkhead`
    series are seeded per model endpoint. A client that leaves is `canceled` and not proxied.
-3. The checks no Node read can answer (`v1ModelsPreflight`), before the port runs: not a GET
-   (`method`); any API credential, an Authorization header of any value or a `?token=`
-   (`bearer-token`); a conditional request, `If-None-Match` or `If-Modified-Since`
+3. The checks no Node read can answer, before the port runs: not a GET (`method`) and any API
+   credential, an Authorization header of any value or a `?token=` (`bearer-token`), in the shadow
+   too (`v1ModelsPreflight`); then, on the public route only (`v1ModelsServeOnly`), a conditional request, `If-None-Match` or `If-Modified-Since`
    (`v1-models-conditional`: Next's `res.json` answers a matching one 304); on the list, a cookie under
    any session cookie name, the legacy next-auth one included, valid or not
    (`v1-models-session-cookie`: the list serves signed-out callers only) and an `etag` query value
    (`v1-models-etag`: MixedAuthEndpoint checks it against the database and may add X-Expires); on
    `[id]`, an `Origin` header (`v1-models-origin`: withBlockScope adds its CORS headers for an origin
-   on the block-app allow-list, which lives in the database).
+   on the block-app allow-list, which lives in the database). A shadow sample of any of these is
+   still computed and its body compared; its response headers too, except for an `etag` query and an
+   Origin on `[id]`, whose headers Node may take from its database: those are `uncompared`
+   (`v1ModelsHeadersUnknown`).
 4. The port, with every fallback of §16.2 (unsupported inputs, cache misses, a list session); serving,
    `[id]` reads every origin cache entry within its TTL as Node's handler does (the shadow alone skips
    one younger than `NodeBuiltWindow`, §16.5), and a not-found `[id]` falls back

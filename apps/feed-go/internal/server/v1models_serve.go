@@ -98,10 +98,13 @@ func writeV1Models(w http.ResponseWriter, c *computed) {
 }
 
 // v1ModelsCompute is the compute of a model route, the shadow's and the public route's alike (serving
-// tells them apart): the request checks of v1ModelsPreflight, the port (computeV1Models /
-// computeV1ModelsID), then the body as JSON.stringify writes it (v1models.NodeBody) and the headers
-// Node sends with it (v1models.ResponseHeaders). Serving, a not-found `[id]` falls back
-// (`v1-models-not-found`): Node's answer is a 404, and a served answer here is a 200.
+// tells them apart): the request checks of v1ModelsPreflight, then, serving only, those of
+// v1ModelsServeOnly; the port (computeV1Models / computeV1ModelsID); then the body as JSON.stringify
+// writes it (v1models.NodeBody) and the headers Node sends with it (v1models.ResponseHeaders).
+// Serving, a not-found `[id]` falls back (`v1-models-not-found`): Node's answer is a 404, and a served
+// answer here is a 200. In the shadow the serve-only shapes are still computed and their bodies
+// compared; a request whose headers Node may take from its database (v1ModelsHeadersUnknown) carries
+// no headers here, so its response compare is `uncompared`.
 func (s *Server) v1ModelsCompute(endpoint string, serving bool) func(context.Context, *http.Request) (*computed, error) {
 	detail := endpoint == EndpointV1ModelsID
 	inner := s.computeV1Models
@@ -112,8 +115,13 @@ func (s *Server) v1ModelsCompute(endpoint string, serving bool) func(context.Con
 		inner = s.computeV1ModelsFn
 	}
 	return func(ctx context.Context, r *http.Request) (*computed, error) {
-		if err := v1ModelsPreflight(r, detail); err != nil {
+		if err := v1ModelsPreflight(r); err != nil {
 			return nil, err
+		}
+		if serving {
+			if err := v1ModelsServeOnly(r, detail); err != nil {
+				return nil, err
+			}
 		}
 		c, err := inner(ctx, r)
 		if err != nil {
@@ -144,16 +152,29 @@ func (s *Server) v1ModelsCompute(endpoint string, serving bool) func(context.Con
 		}
 		// body is c.payload, or a copy when an escape was rewritten; c.buf still owns the pooled bytes.
 		c.payload = body
-		c.headers = v1models.ResponseHeaders(in, body)
+		if !v1ModelsHeadersUnknown(r, detail) {
+			c.headers = v1models.ResponseHeaders(in, body)
+		}
 		return c, nil
 	}
 }
 
-// v1ModelsPreflight falls back on a request whose answer or headers depend on something this service
-// does not read, before anything is computed:
+// v1ModelsPreflight falls back, in the shadow and serving alike, on a request that is not a GET
+// (`method`) or carries any API credential, a `?token=` or an Authorization header of any value
+// (`bearer-token`: the block-scope middleware and the scoped-key views are not ported).
+func v1ModelsPreflight(r *http.Request) error {
+	if r.Method != http.MethodGet {
+		return fallback.New("method")
+	}
+	if auth.HasAPICredential(r) || len(r.Header.Values("Authorization")) > 0 {
+		return fallback.New("bearer-token")
+	}
+	return nil
+}
+
+// v1ModelsServeOnly falls back, on the public route only, on a request whose answer or headers depend
+// on something this service does not read, before anything is computed:
 //
-//   - not a GET (`method`); any API credential, a `?token=` or an Authorization header of any value
-//     (`bearer-token`: the block-scope middleware and the scoped-key views are not ported);
 //   - a conditional request, If-None-Match or If-Modified-Since (`v1-models-conditional`): Next's
 //     sendData may answer it 304 (fresh), which is not reproduced;
 //   - the list: a cookie under a session cookie name (`v1-models-session-cookie`): the list serves
@@ -162,13 +183,10 @@ func (s *Server) v1ModelsCompute(endpoint string, serving bool) func(context.Con
 //     the database and may add X-Expires;
 //   - `[id]`: an Origin header (`v1-models-origin`): withBlockScope adds its CORS headers for an
 //     origin on the block-app allow-list, which is read from the database.
-func v1ModelsPreflight(r *http.Request, detail bool) error {
-	if r.Method != http.MethodGet {
-		return fallback.New("method")
-	}
-	if auth.HasAPICredential(r) || len(r.Header.Values("Authorization")) > 0 {
-		return fallback.New("bearer-token")
-	}
+//
+// A shadow sample of any of these is computed and compared (Node answered it 200, so its body is a
+// body like any other); see v1ModelsHeadersUnknown for its headers.
+func v1ModelsServeOnly(r *http.Request, detail bool) error {
 	if r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != "" {
 		return fallback.New("v1-models-conditional")
 	}
@@ -181,14 +199,34 @@ func v1ModelsPreflight(r *http.Request, detail bool) error {
 	if v1models.HasSessionCookie(r.Header) {
 		return fallback.New("v1-models-session-cookie")
 	}
-	if params, err := feed.ParseSearch(r.URL.RawQuery); err == nil {
-		for _, p := range params {
-			// `!!req.query.etag && req.query.etag !== ''`: one empty value is no check; a non-empty
-			// value, or the key repeated (an array, truthy), is.
-			if p.Key == "etag" && (len(p.Values) > 1 || (len(p.Values) == 1 && p.Values[0] != "")) {
-				return fallback.New("v1-models-etag")
-			}
-		}
+	if etagChecked(r) {
+		return fallback.New("v1-models-etag")
 	}
 	return nil
+}
+
+// v1ModelsHeadersUnknown: Node may add a response header read from its database (the list's
+// X-Expires for an `etag` query; `[id]`'s block-scope CORS headers for an Origin), so the headers are
+// not computed here and the shadow's response compare is `uncompared`. A conditional request or a
+// session cookie leaves Node's 200 headers computable.
+func v1ModelsHeadersUnknown(r *http.Request, detail bool) bool {
+	if detail {
+		return len(r.Header.Values("Origin")) > 0
+	}
+	return etagChecked(r)
+}
+
+// etagChecked is MixedAuthEndpoint's `!!req.query.etag && req.query.etag !== ""`: one empty value is
+// no check; a non-empty value, or the key repeated (an array, truthy), is.
+func etagChecked(r *http.Request) bool {
+	params, err := feed.ParseSearch(r.URL.RawQuery)
+	if err != nil {
+		return false
+	}
+	for _, p := range params {
+		if p.Key == "etag" && (len(p.Values) > 1 || (len(p.Values) == 1 && p.Values[0] != "")) {
+			return true
+		}
+	}
+	return false
 }

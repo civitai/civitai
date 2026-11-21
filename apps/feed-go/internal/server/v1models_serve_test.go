@@ -673,3 +673,81 @@ func TestV1ModelsTrainingDataHashOnlyFromASample(t *testing.T) {
 		}
 	}
 }
+
+// The serve-only checks (v1ModelsServeOnly) do not drop shadow samples: a sample carrying an Origin
+// (`[id]`), an If-None-Match, a session cookie or an `etag` query is still computed and its body
+// compared. Its headers are compared where Go can compute them, and `uncompared` where Node may take
+// one from its database (an Origin on `[id]`, an `etag` query). The same requests on the public route
+// fall back (TestServeV1ModelsFallsBackBeforeComputing).
+func TestV1ModelsShadowComparesTheServeOnlyShapes(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	s := newPhaseServer(reg, 1, nil)
+	computes := 0
+	s.computeV1ModelsFn = func(_ context.Context, r *http.Request) (*computed, error) {
+		computes++
+		if strings.HasPrefix(r.URL.Path, V1ModelsPath+"/") {
+			return &computed{payload: []byte(v1DetailBody)}, nil
+		}
+		return &computed{payload: []byte(v1ListBody)}, nil
+	}
+	const public = "public, s-maxage=300, stale-while-revalidate=150"
+	count := func(endpoint, metric, result string) float64 {
+		v, _ := metricValue(t, reg, metric, map[string]string{"feed_endpoint": endpoint, "result": result})
+		return v
+	}
+	post := func(handler http.HandlerFunc, req ShadowRequest) {
+		t.Helper()
+		b, err := json.Marshal(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := httptest.NewRecorder()
+		handler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow", strings.NewReader(string(b))))
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("code %d, want 202", w.Code)
+		}
+	}
+	for i, c := range []struct {
+		name, endpoint, path, query string
+		handler                     http.HandlerFunc
+		reqHeaders, nodeHeaders     map[string]string
+		node, response              string
+	}{
+		{"[id] with an Origin", EndpointV1ModelsID, "/api/v1/models/42", "", s.ShadowV1ModelsIDHandler,
+			map[string]string{"origin": "https://block.example.test"}, map[string]string{"cache-control": "private, no-store"}, v1DetailBody, "uncompared"},
+		{"list with If-None-Match", EndpointV1Models, V1ModelsPath, "limit=2", s.ShadowV1ModelsHandler,
+			map[string]string{"if-none-match": `"x"`}, v1ModelsResponse(public), v1ListBody, "match"},
+		{"list with a session cookie", EndpointV1Models, V1ModelsPath, "limit=2", s.ShadowV1ModelsHandler,
+			map[string]string{"cookie": "__Secure-civ-token=t"}, nil, v1ListBody, ""},
+		{"list with an etag query", EndpointV1Models, V1ModelsPath, "limit=2&etag=abc", s.ShadowV1ModelsHandler,
+			nil, map[string]string{"cache-control": public, "x-expires": "2026-11-21T00:01:00.000Z"}, v1ListBody, "uncompared"},
+	} {
+		h := map[string]string{"host": "site.example.test"}
+		for k, v := range c.reqHeaders {
+			h[k] = v
+		}
+		set := ""
+		if c.nodeHeaders != nil {
+			set = ResponseHeaderSetREST
+		}
+		before := count(c.endpoint, "feed_go_shadow_compare_total", "match")
+		beforeResp := count(c.endpoint, "feed_go_shadow_response_total", c.response)
+		post(c.handler, ShadowRequest{Input: c.query, Path: c.path, Headers: h, Node: json.RawMessage(c.node), ResponseHeaders: c.nodeHeaders, ResponseHeaderSet: set})
+		waitFor(t, c.name, func() bool {
+			return count(c.endpoint, "feed_go_shadow_compare_total", "match") == before+1 && len(s.ShadowQueue) == 0
+		})
+		if computes != i+1 {
+			t.Fatalf("%s: computes = %d, want %d (the sample fell back)", c.name, computes, i+1)
+		}
+		if c.response != "" {
+			if got := count(c.endpoint, "feed_go_shadow_response_total", c.response); got != beforeResp+1 {
+				t.Errorf("%s: response %s = %v, want %v", c.name, c.response, got, beforeResp+1)
+			}
+		}
+	}
+	for _, e := range []string{EndpointV1Models, EndpointV1ModelsID} {
+		if v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": e, "result": "unsupported"}); v != 0 {
+			t.Errorf("%s: %v samples fell back", e, v)
+		}
+	}
+}

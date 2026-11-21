@@ -120,7 +120,7 @@ func v1ModelsAnswer(ans *v1models.Answer) (*computed, error) {
 }
 
 // sampledRequest reports whether r was rebuilt from a Node sample (withSampled): `[id]` then reads the
-// origin cache as a sample does. A read of r's marker, not a context the compute runs under.
+// origin cache as a sample does.
 func sampledRequest(r *http.Request) bool {
 	return isSampled(r.Context())
 }

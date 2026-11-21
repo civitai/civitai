@@ -18,6 +18,7 @@ import {
   FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH,
   FEED_GO_SHADOW_MODEL_GET_ALL_PATH,
   FEED_GO_SHADOW_PATH,
+  FEED_GO_COMPARED_RESPONSE_HEADERS,
   FEED_GO_COMPARED_REST_RESPONSE_HEADERS,
   pickShadowHeaders,
   pickShadowResponseHeaders,
@@ -1379,21 +1380,24 @@ describe('createFeedGoShadow — REST response headers', () => {
     }),
   });
 
-  it('the REST list is the compared list plus the ETag, CORS, config and X-Expires headers', () => {
-    expect([...FEED_GO_COMPARED_REST_RESPONSE_HEADERS]).toEqual([
-      'cache-control',
-      'vary',
-      'cache-tag',
-      'set-cookie',
-      'x-update-required',
-      'etag',
-      'access-control-allow-origin',
-      'access-control-allow-headers',
-      'access-control-allow-methods',
-      'access-control-expose-headers',
-      'x-frame-options',
-      'x-expires',
-    ]);
+  it('both lists are the ones feed-go compares (shadow.ComparedHeaders / RESTComparedHeaders)', () => {
+    // Read from the Go source, so a header added on either side without the other fails here: one
+    // Node forwards that Go never compares is dead weight, one Go compares that Node never sends
+    // reads as missing-in-node on every sample.
+    const src = readFileSync(
+      join(process.cwd(), 'apps/feed-go/internal/shadow/response.go'),
+      'utf8'
+    );
+    const names = (text: string | undefined) =>
+      [...(text ?? '').matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    const base = names(/var ComparedHeaders = \[\]string\{([^}]*)\}/.exec(src)?.[1]);
+    const extras = names(
+      /var RESTComparedHeaders = append\(slices\.Clone\(ComparedHeaders\),([^)]*)\)/.exec(src)?.[1]
+    );
+    expect(base.length).toBeGreaterThan(0);
+    expect(extras.length).toBeGreaterThan(0);
+    expect([...FEED_GO_COMPARED_RESPONSE_HEADERS]).toEqual(base);
+    expect([...FEED_GO_COMPARED_REST_RESPONSE_HEADERS]).toEqual([...base, ...extras]);
   });
 
   it.each([
