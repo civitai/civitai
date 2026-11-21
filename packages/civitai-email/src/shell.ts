@@ -1,5 +1,4 @@
-// The shared transactional email layout (moved here from the main app's templates/util.ts so the
-// spoke apps render the same shell). Layout only: branded copy stays in each app.
+// The shared transactional email layout. Layout only: branded copy stays in each app.
 
 /**
  * Colour tokens for every email built on `renderEmailShell`, taken from the site theme (the main

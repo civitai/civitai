@@ -1,8 +1,8 @@
 import { createEmail, emailTheme, EMAIL_MUTED_CLASS, renderEmailShell } from '@civitai/email';
 
 // Branded magic-link email. App content (lives in the app, not @civitai/email) built on the
-// package's generic createEmail factory and its shared layout. Mirrors the main app's
-// verification.email.ts intent.
+// package's generic createEmail factory and its shared layout. Mirrors the intent of the main app's
+// src/server/email/templates/emailVerification.email.ts.
 type VerificationData = { to: string; url: string };
 
 export const verificationEmail = createEmail<VerificationData, void>({
