@@ -54,9 +54,15 @@ export const reportHolds = (hc: string) =>
 /** The report predicate, over the `"CsamReport"` alias it is given. */
 export type ReportFilter = (alias: string) => Prisma.Sql;
 
-/** `csamReportNamedUserIdsSql` for a raw `ReportFilter`. */
+/** `csamReportNamedUserIdsSql` for a `ReportFilter`, which must bind no values: only its text is kept. */
 export const reportNamedUserIdsSql = (filter: ReportFilter) =>
-  Prisma.raw(csamReportNamedUserIdsSql((alias) => filter(alias).sql));
+  Prisma.raw(
+    csamReportNamedUserIdsSql((alias) => {
+      const predicate = filter(alias);
+      if (predicate.values.length) throw new Error('A report filter must bind no values');
+      return predicate.sql;
+    })
+  );
 
 /**
  * The owners of images a report passing `filter` lists, whoever the report names. Walks the reports'

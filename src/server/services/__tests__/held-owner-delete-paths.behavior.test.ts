@@ -291,11 +291,11 @@ describe.each([
       await remove(uid);
       expect(await queuedFiles()).toEqual([]);
       expect(await imageRow(imageOf(uid))).toEqual(before);
-      const { rows } = await holder.db.query(
+      const { rows } = await holder.db.query<{ type: string; data: { ownerId?: number } }>(
         `SELECT "entityType"::text AS type, data FROM "JobQueue" WHERE type = 'PendingDelete'`
       );
       expect(rows.length).toBeGreaterThan(0);
-      expect(rows.every((row) => (row.data as { ownerId?: number }).ownerId === uid)).toBe(true);
+      expect(rows.every((row) => row.data.ownerId === uid)).toBe(true);
     }
   );
 

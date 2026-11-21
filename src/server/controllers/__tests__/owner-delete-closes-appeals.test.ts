@@ -91,9 +91,9 @@ describe('deleteImageHandler', () => {
   });
 });
 
-// Decided with Legal and the product owner: a member's delete answers the same whether it went or
-// any hold kept it, a review they can already see included (it lasts until the report is sent, so
-// telling it apart would say when). Do not tell a kept delete apart here.
+// A product decision, recorded on the review of civitai/civitai#9940: a member's delete answers the
+// same whether it went or any hold kept it, a review they can already see included (it lasts until
+// the report is sent, so telling it apart would say when). Do not tell a kept delete apart here.
 describe('deleteImageHandler, a delete a hold keeps', () => {
   it.each([
     ['a review its owner can see', new Set([55])],
