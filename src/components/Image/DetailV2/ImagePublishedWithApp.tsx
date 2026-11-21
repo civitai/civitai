@@ -25,15 +25,9 @@ import { trpc } from '~/utils/trpc';
  * the cards beside it, and the sidebar column's `gap-3` spaces them
  * (`ImagePublishedWithApp.geometry.test.tsx` measures it).
  *
- * The query is sent only to viewers whose store scope admits on-site listings. The server
- * answers `null` before any read for everyone else (`resolveAppChip` gates on
- * `scopeAdmitsListingKind(storeScope, 'onsite')`), so for them the request could only ever
- * render nothing. The client scope comes from `resolveClientStoreScope`, which reads the same
- * Flipt keys the server's `resolveStoreVisibilityScope` evaluates (same entity id and context
- * for a signed-in viewer), and the same `scopeAdmitsListingKind` rule decides. Where they can
- * differ when Flipt answers nothing, the client is the wider side (an absent flag or a Flipt
- * outage falls back to `availability: ['mod']` here and to `false` on the server), so that
- * case costs a request the server answers `null`, never a hidden credit.
+ * Enabled only when the client store scope admits on-site listings; the server answers null
+ * otherwise (`resolveAppChip`). When Flipt cannot answer, the client scope is the wider one
+ * (see `resolveClientStoreScope`), so that case costs a wasted request, never a hidden credit.
  */
 export function ImagePublishedWithApp({ imageId }: { imageId: number }) {
   const canSeeOnsiteApps = scopeAdmitsListingKind(
