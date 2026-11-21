@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
@@ -589,7 +590,7 @@ func parseBlockedList(raw []byte) (*blockedList, error) {
 			l.names, l.namesErr = nil, fallback.New("blocked-tags-stale")
 		} else if l.names != nil {
 			l.names[strings.ToLower(name)] = true
-			l.namesASCII = l.namesASCII && isASCIIText(name)
+			l.namesASCII = l.namesASCII && IsASCII(name)
 		}
 	}
 	return l, nil
@@ -1174,9 +1175,11 @@ func BuildInfiniteImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.
 	return images
 }
 
-func isASCIIText(s string) bool {
+// IsASCII reports whether s is all ASCII: the text on which Go's case mapping (strings.ToLower,
+// case-insensitive matching) is exactly JS's. The one ASCII predicate the ports share.
+func IsASCII(s string) bool {
 	for i := 0; i < len(s); i++ {
-		if s[i] >= 0x80 {
+		if s[i] >= utf8.RuneSelf {
 			return false
 		}
 	}

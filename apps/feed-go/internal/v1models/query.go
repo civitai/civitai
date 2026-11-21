@@ -259,7 +259,7 @@ func ParseList(raw string) (*ListInput, error) {
 			if err != nil {
 				return nil, err
 			}
-			if !isASCII(s) {
+			if !feed.IsASCII(s) {
 				// The blocked-name test lowercases the name (`toLowerCase`), whose non-ASCII mappings
 				// Go's tables do not follow exactly.
 				return nil, fallback.New("v1-models-tag")

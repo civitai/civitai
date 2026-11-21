@@ -10,6 +10,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -212,12 +213,17 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 		}
 		target = id
 	}
-	// getModelsRaw's tag clause: `dbRead.tag.findUnique({ where: { name } })`; a name no tag has adds
+	// getModelsRaw's tag clause: `dbRead.tag.findUnique({ where: { name } })` (Tag.name is citext:
+	// the name is passed as given, matched case-insensitively by the replica); a name no tag has adds
 	// no clause.
 	var tagID *int
 	if in.Tag != "" {
-		if tagID, err = tagIDByName(ctx, d.DB, in.Tag); err != nil {
+		id, found, err := hydrate.TagIDByName(ctx, d.DB, in.Tag)
+		if err != nil {
 			return nil, err
+		}
+		if found {
+			tagID = &id
 		}
 	}
 	res, err := d.getModelsWithVersions(ctx, withVersionsInput{
@@ -285,20 +291,4 @@ func (d *Deps) tagBlocked(ctx context.Context, tag string) (bool, error) {
 		return false, fallback.New("v1-models-tag")
 	}
 	return names[strings.ToLower(tag)], nil
-}
-
-// tagIDByName is the tag lookup by its unique name on the replica: nil when no tag has the name.
-func tagIDByName(ctx context.Context, db Querier, name string) (*int, error) {
-	rows, err := queryRows(ctx, db, `SELECT id FROM "Tag" WHERE name = $1 LIMIT 1`, name)
-	if err != nil {
-		return nil, err
-	}
-	if len(rows) == 0 {
-		return nil, nil
-	}
-	id, ok := intOf(rows[0]["id"])
-	if !ok {
-		return nil, fallback.New("v1-models-tag")
-	}
-	return &id, nil
 }

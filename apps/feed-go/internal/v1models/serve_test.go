@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -67,6 +68,7 @@ type testWorld struct {
 	tagRows    map[int]string // the replica's Tag rows (tagCache's lookup), by id
 	tagLookups int
 	tagIDs     map[string]int // the replica's Tag rows by name (the `tag` filter's lookup)
+	tagNames   []string       // each name the `tag` lookup bound
 	db         *testkit.DB
 }
 
@@ -185,7 +187,9 @@ func (w *testWorld) deps(t *testing.T) *Deps {
 			return rows([]string{"id"}), nil
 		}},
 		{Match: `SELECT id FROM "Tag" WHERE name = $1`, Rows: func(args []any) (*testkit.Rows, error) {
-			if id, ok := w.tagIDs[args[0].(string)]; ok {
+			// Tag.name is citext: the replica folds case (internal/hydrate's integration test runs it).
+			w.tagNames = append(w.tagNames, args[0].(string))
+			if id, ok := w.tagIDs[strings.ToLower(args[0].(string))]; ok {
 				return rows([]string{"id"}, []any{int64(id)}), nil
 			}
 			return rows([]string{"id"}), nil
@@ -584,6 +588,20 @@ func TestServeListTag(t *testing.T) {
 	}
 	if sql := w.modelStatement(t); !strings.Contains(sql, tagClause) {
 		t.Errorf("no tag clause in:\n%s", sql)
+	}
+	// The name reaches the lookup as the request gave it (no lowercasing, no trim): the case-insensitive
+	// match is citext's on the replica, as for Node's findUnique. `tag=Character` finds `character`.
+	w = newTestWorld()
+	w.raw[blockedKey] = `[]`
+	w.tagIDs = map[string]int{"character": 11}
+	if _, err := list(w, "tag=Character"); err != nil {
+		t.Fatalf("tag=Character: %v (%s)", err, reason(err))
+	}
+	if !reflect.DeepEqual(w.tagNames, []string{"Character"}) {
+		t.Errorf("lookup names %q, want [Character]", w.tagNames)
+	}
+	if sql := w.modelStatement(t); !strings.Contains(sql, tagClause) {
+		t.Errorf("tag=Character: no tag clause in:\n%s", sql)
 	}
 	// A name no tag has, and an empty `tag`: no clause (`if (tagId)`, `if (tagname ?? tag)`).
 	for _, q := range []string{"tag=nosuch", "tag="} {
