@@ -36,7 +36,7 @@ where it loads on demand:
 ## Where knowledge lives
 - **`.claude/rules/`** — load automatically when you read or edit matching files: `testing`,
   `convention-guards`, `server` (architecture map, jobs), `database`, `sveltekit`, `components`,
-  `comments`, `debug-endpoints`, `public-api`, `label-store`, `generation-form`. Creating a new file loads nothing, so read the matching
+  `comments`, `debug-endpoints`, `public-api`, `label-store`, `generation-form`, `import-cycles`. Creating a new file loads nothing, so read the matching
   rule first; read one directly whenever you need it before touching code.
 - **`docs/dev/`** — `local-setup.md` (env setup and the traps that cost hours: auth hub, SSL, env
   precedence, feature flags), `worktrees.md`, `prettier.md`, `filing-follow-ups.md`,
@@ -53,7 +53,7 @@ where it loads on demand:
 - **Worktrees are optional.** If you use one, create it with
   `node .claude/skills/dev-server/cli.mjs wt new <name> <branch>` and remove it with `wt stale` / `wt rm`,
   not the `EnterWorktree` tool or a hand-rolled `git worktree add`.
-- `pnpm run typecheck` (authoritative; `typecheck:fast` is edit-loop only), `pnpm run lint`.
+- `pnpm run typecheck` (TypeScript 7 from `tools/ts7`, single-threaded locally; authoritative), `pnpm run lint`.
   In SvelteKit apps use `typecheck`, never `check` or a manual `svelte-kit sync`
   (details: `.claude/rules/sveltekit.md`).
 - **Formatting:** `pnpm run prettier:write` formats uncommitted files only. Never run a repo-wide

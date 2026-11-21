@@ -1,3 +1,4 @@
+import { json } from '@sveltejs/kit';
 import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 
 // OAuth endpoint rate limits, ported from the main app's src/server/oauth/rate-limit.ts RATE_LIMITS.
@@ -45,8 +46,8 @@ import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 //                bound to an authenticated client before it is used as a key.
 //   - introspect-worker: per-client (1200/min) — `introspect` for a caller allowed to see Worker tokens,
 //                which checks each worker that registers.
-//   - token-exchange: per-client (600/min, or the client's staff-set `tokenRateLimit`) — the user token
-//                exchange, charged after client auth. One relay exchanges for many users from one IP, so the
+//   - token-exchange: per-client (600/min, or the client's staff-set `tokenRateLimit`) — the user and
+//                block token exchanges (one budget per client), charged after client auth. One relay exchanges for many users from one IP, so the
 //                per-IP `token` limit never applies to it.
 //   - token-exchange-ip: per-IP (120/min) — FAILED client-secret checks on the user token exchange. A request
 //                whose secret checks out is never charged or refused by it. With no resolvable IP the
@@ -81,6 +82,54 @@ const OAUTH_RATE_LIMITS = {
 
 export type OAuthRateLimitBucket = keyof typeof OAUTH_RATE_LIMITS;
 
+// The only place the auth app writes this status: every 429 goes through rateLimitedResponse, and
+// rate-limited-response.test.ts fails on a 429 built anywhere else.
+export const RATE_LIMITED_STATUS = 429;
+
+/**
+ * A bucket's Retry-After: its static window, not the key's remaining TTL, so callers sharing one bucket
+ * (a worker pool behind one IP) spread their retries instead of all returning at the window edge.
+ */
+export function oauthRetryAfter(bucket: OAuthRateLimitBucket): number {
+  return OAUTH_RATE_LIMITS[bucket].windowSeconds;
+}
+
+const waitText = (seconds: number) => {
+  if (seconds < 60) return seconds === 1 ? '1 second' : `${seconds} seconds`;
+  const minutes = Math.ceil(seconds / 60);
+  return minutes === 1 ? '1 minute' : `${minutes} minutes`;
+};
+
+const escapeHtml = (text: string) =>
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/**
+ * A 429 with `Retry-After` and `retry_after` (whole seconds, at least 1). Pass `request` on a route a
+ * browser navigates to: a request that accepts text/html gets a readable page instead of JSON.
+ */
+export function rateLimitedResponse(
+  retryAfter: number,
+  headers?: HeadersInit,
+  description = 'Too many requests',
+  options: { request?: Request } = {}
+): Response {
+  const seconds = Math.max(1, Math.ceil(retryAfter));
+  const out = new Headers(headers);
+  out.set('Retry-After', String(seconds));
+  if (options.request?.headers.get('accept')?.includes('text/html')) {
+    out.set('Content-Type', 'text/html; charset=utf-8');
+    const text = `${escapeHtml(description)}. Try again in ${waitText(seconds)}.`;
+    return new Response(
+      `<!doctype html><html lang="en"><meta charset="utf-8"><title>Too many requests</title><p>${text}</p></html>`,
+      { status: RATE_LIMITED_STATUS, headers: out }
+    );
+  }
+  return json(
+    { error: 'rate_limited', error_description: description, retry_after: seconds },
+    { status: RATE_LIMITED_STATUS, headers: out }
+  );
+}
+
 /**
  * Check an OAuth endpoint's rate limit for `identifier` (userId for /authorize, IP for /token, /revoke
  * and /device, device_code for the device poll). Returns true if allowed, false if the caller should 429.
@@ -112,7 +161,13 @@ export async function tokenOverflowExhausted(ip: string | null | undefined): Pro
 
 /** The `token-client` check: a client's own per-minute /oauth/token limit, as set by staff. */
 export async function checkClientTokenRateLimit(clientId: string, limit: number): Promise<boolean> {
-  return checkRateLimit('oauth:token-client', clientId, limit, 60);
+  // The token route answers this refusal with the `token` window.
+  return checkRateLimit(
+    'oauth:token-client',
+    clientId,
+    limit,
+    OAUTH_RATE_LIMITS.token.windowSeconds
+  );
 }
 
 /** The `token-exchange` check: per authenticated client, at its staff-set limit when it has one. */

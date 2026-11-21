@@ -1,6 +1,7 @@
 import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
+import { forecastPoolSize, poolNetBankedSql } from '@civitai/buzz';
 import { CacheTTL } from '~/server/common/constants';
 import {
   NotificationCategory,
@@ -429,20 +430,15 @@ async function getPoolSize(month?: Date) {
 
 async function getPoolForecast(month?: Date) {
   month ??= new Date();
+  const lastMonthAccount = getMonthAccount(dayjs(month).subtract(1, 'month').toDate());
+  const [result] = await clickhouse!.$query<{ balance: number }>(
+    poolNetBankedSql(lastMonthAccount, buzzBankTypesSql)
+  );
+  return Number(result?.balance ?? 0);
+}
 
-  const [result] = await clickhouse!.$query<{ balance: number }>`
-    SELECT
-      SUM(amount) AS balance
-    FROM buzzTransactions
-    WHERE toAccountType IN (${buzzBankTypesSql})
-    AND (
-      (type IN ('compensation','tip')) -- Generation
-      OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
-    )
-    AND toAccountId != 0
-    AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(${month}, 1));
-  `;
-  return result.balance * (env.CREATOR_POOL_FORECAST_PORTION / 100);
+function withForecastFloor(size: { current: number; forecasted: number }) {
+  return { ...size, forecasted: forecastPoolSize(size.forecasted, size.current) };
 }
 
 function isBankingClosed(phases: ReturnType<typeof getPhases>) {
@@ -466,10 +462,10 @@ export async function getCompensationPool({ month }: CompensationPoolInput = {})
     return {
       value: await getPoolValue(month),
       size: clampForecastAfterBankingDeadline(
-        {
+        withForecastFloor({
           current: await getPoolSize(month),
           forecasted: await getPoolForecast(month),
-        },
+        }),
         phases
       ),
       phases,
@@ -496,7 +492,7 @@ export async function getCompensationPool({ month }: CompensationPoolInput = {})
 
   return {
     value,
-    size: clampForecastAfterBankingDeadline({ current, forecasted }, phases),
+    size: clampForecastAfterBankingDeadline(withForecastFloor({ current, forecasted }), phases),
     phases,
   };
 }
@@ -518,9 +514,8 @@ async function getFlippedPhaseStatus() {
 }
 
 /**
- * The keyed-charge helpers, loaded at the call site and only for a keyed request: imported at the
- * top of this file they join its import cycle (the same reason `refundTransactionOnce` is loaded
- * in `withdrawCash`).
+ * The keyed-charge helpers, loaded at the call site and only for a keyed request. Not a cycle cut:
+ * the cycle guards count dynamic imports (docs/dev/import-cycles.md).
  */
 async function loadKeyedCharge() {
   const [charge, lock] = await Promise.all([
@@ -1154,7 +1149,7 @@ export async function withdrawCash(userId: number, amount: number, idempotencyKe
 
     if (data.transactionId) {
       // We failed at creating the Tipalti payment. We should refund the user their buzz.
-      // Loaded here so the refund helper stays out of this service's import cycle.
+      // Loaded at the call site, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
       const { refundTransactionOnce } = await import('~/server/services/buzz-prefix-refund');
       await withRetries(async () => {
         await refundTransactionOnce(

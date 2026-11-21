@@ -14,6 +14,9 @@ import { civitaiAppUrl } from './civitai-url';
 //                                          index, recompute nsfwLevel and write ClickHouse tracking
 //   6. `/api/v1/model-versions/bust-cache` — `bustMvCache` spans six caches, a CDN purge and the search
 //                                          queue; `resourceDataCache` holds `Model.nsfw` for an hour
+//   7. `home-block-evict` (home-blocks.ts) — main owns the home-block cache: its keys, the lookup of
+//                                          the collections showing an image, and the second refresh
+//                                          once replicas catch up
 //
 // Adding to this list requires writing the capability next to it. An entry that cannot name one is a
 // port that was skipped.

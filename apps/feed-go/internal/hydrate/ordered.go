@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/vmihailenco/msgpack/v5/msgpcode"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/jskeys"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -53,7 +53,7 @@ func decodeOrdered(dec *msgpack.Decoder, depth int) (any, error) {
 		}
 		obj := make(superjson.Object, 0, max(n, 0))
 		for i := 0; i < n; i++ {
-			k, err := dec.DecodeInterfaceLoose()
+			key, err := decodeOrderedKey(dec)
 			if err != nil {
 				return nil, err
 			}
@@ -64,10 +64,10 @@ func decodeOrdered(dec *msgpack.Decoder, depth int) (any, error) {
 			if isUndef(v) {
 				// A repeated key's undefined still deletes it, as the JS assignment would leave it
 				// undefined; JSON.stringify then omits it either way.
-				obj = dropKey(obj, toKey(k))
+				obj = dropKey(obj, key)
 				continue
 			}
-			obj.Set(toKey(k), v)
+			obj.Set(key, v)
 		}
 		return jsKeyOrder(obj), nil
 	case msgpcode.IsFixedArray(c) || c == msgpcode.Array16 || c == msgpcode.Array32:
@@ -104,6 +104,24 @@ func decodeOrdered(dec *msgpack.Decoder, depth int) (any, error) {
 	return v, nil
 }
 
+// decodeOrderedKey is one map key as its JS property name (toKey). A string key, the only kind
+// msgpackr writes for an object, is read as a string, without the interface value a loose decode
+// allocates for it.
+func decodeOrderedKey(dec *msgpack.Decoder) (string, error) {
+	c, err := dec.PeekCode()
+	if err != nil {
+		return "", err
+	}
+	if msgpcode.IsString(c) {
+		return dec.DecodeString()
+	}
+	k, err := dec.DecodeInterfaceLoose()
+	if err != nil {
+		return "", err
+	}
+	return toKey(k), nil
+}
+
 func dropKey(o superjson.Object, key string) superjson.Object {
 	for i, f := range o {
 		if f.Key == key {
@@ -113,49 +131,9 @@ func dropKey(o superjson.Object, key string) superjson.Object {
 	return o
 }
 
-// jsKeyOrder moves array-index keys ("0", "17", … below 2^32-1, no leading zero) first, ascending, the
-// order a JS engine gives an object's integer-like keys whatever their insertion order.
+// jsKeyOrder is o in the order a JS engine gives an object's keys (jskeys.Order).
 func jsKeyOrder(o superjson.Object) superjson.Object {
-	idx := 0
-	for _, f := range o {
-		if isIndexKey(f.Key) {
-			idx++
-		}
-	}
-	if idx == 0 {
-		return o
-	}
-	out := make(superjson.Object, 0, len(o))
-	for _, f := range o {
-		if isIndexKey(f.Key) {
-			out = append(out, f)
-		}
-	}
-	// Insertion sort: index keys are few.
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0; j-- {
-			a, _ := strconv.ParseUint(out[j-1].Key, 10, 64)
-			b, _ := strconv.ParseUint(out[j].Key, 10, 64)
-			if a <= b {
-				break
-			}
-			out[j-1], out[j] = out[j], out[j-1]
-		}
-	}
-	for _, f := range o {
-		if !isIndexKey(f.Key) {
-			out = append(out, f)
-		}
-	}
-	return out
-}
-
-func isIndexKey(k string) bool {
-	if k == "" || len(k) > 10 || (len(k) > 1 && k[0] == '0') {
-		return false
-	}
-	n, err := strconv.ParseUint(k, 10, 64)
-	return err == nil && n < 1<<32-1
+	return jskeys.Order(o, func(f superjson.Field) string { return f.Key })
 }
 
 // OrderedEntry is one decoded cache value with its key order (UnpackOrdered).

@@ -6,7 +6,12 @@
  * A schema changes only additively (annotations and new optional properties) within its `@v1`;
  * anything else is a new major.
  */
-import { APP_RELEASE_SCHEMA, APP_SCHEMA, SERVICE_SCHEMA } from '~/server/registry-adapter/urn';
+import {
+  APP_RELEASE_SCHEMA,
+  APP_SCHEMA,
+  STORE_LISTING_SCHEMA,
+  SERVICE_SCHEMA,
+} from '~/server/registry-adapter/urn';
 
 const DIALECT = 'https://json-schema.org/draft/2020-12/schema';
 const nullableString = { type: ['string', 'null'] };
@@ -82,3 +87,93 @@ export const ENTITY_SCHEMA_DOCUMENTS: ReadonlyArray<Record<string, unknown>> = [
     },
   },
 ];
+
+const count = { type: 'integer', minimum: 0 };
+
+/**
+ * The listing schema. Not one of {@link ENTITY_SCHEMA_DOCUMENTS}: it is published only while the
+ * listing stream is switched on, and only to the audiences that may read it (`listing-stream.ts`).
+ */
+export const STORE_LISTING_SCHEMA_DOCUMENT: Record<string, unknown> = {
+  $schema: DIALECT,
+  $id: STORE_LISTING_SCHEMA,
+  title: "An app's store listing: what a store card and detail page show, with its stats",
+  type: 'object',
+  required: ['app', 'slug', 'name', 'kind', 'contentRating', 'media', 'stats'],
+  properties: {
+    app: { type: 'string', description: 'URN of the app entity this listing presents' },
+    slug: { type: 'string' },
+    name: { type: 'string' },
+    kind: { enum: ['onsite', 'offsite'] },
+    contentRating: {
+      ...nullableString,
+      description:
+        "The app entity's rating; the listing reaches exactly the audiences the app does",
+    },
+    listingContentRating: {
+      ...nullableString,
+      description:
+        "The listing's own content rating, without the block fallback `contentRating` has: what the store gates the listing and its media on, and shows on the card. Null when the listing has none",
+    },
+    tagline: nullableString,
+    category: nullableString,
+    description: nullableString,
+    iconUrl: {
+      ...nullableString,
+      description: "The app entity's icon, capped at the listing's rating; `media` has the rest",
+    },
+    media: {
+      type: 'array',
+      description:
+        'Every image the store may show, each with its own rating: a subscription receives the items whose rating its audience admits under the app-rating rule (pg and pg13 for all). Apply the listing-rating ceiling and the host rule per request. `host: red` is a civitai.red override, shown only on a red-capable host, preferred there over the own image of its slot. Order: own icon, own cover, screenshots in order, red icon, red cover',
+      items: {
+        type: 'object',
+        required: ['slot', 'host', 'url', 'nsfwLevel', 'rating'],
+        properties: {
+          slot: { enum: ['icon', 'cover', 'screenshot'] },
+          host: { enum: ['any', 'red'] },
+          url: { type: 'string' },
+          nsfwLevel: { type: 'integer' },
+          rating: { enum: ['pg', 'pg13', 'r', 'x', 'xxx'] },
+          caption: { ...nullableString, description: 'Screenshot only' },
+          coverUrl: { type: 'string', description: 'Screenshot only: its rendition as a cover' },
+        },
+      },
+    },
+    creator: {
+      type: ['object', 'null'],
+      properties: { id: { type: 'integer' }, username: nullableString, image: nullableString },
+    },
+    isBeta: { type: 'boolean' },
+    isOfficial: { type: 'boolean' },
+    hasPage: { type: 'boolean', description: 'On-site only: the app declares a launch page' },
+    liveUrl: { type: 'string', description: "On-site only: the app's standalone origin" },
+    externalUrl: { ...nullableString, description: 'Off-site only' },
+    stats: {
+      type: 'object',
+      description: 'Rollups refreshed by a periodic job, so they move at its cadence',
+      required: [
+        'recommendedCount',
+        'notRecommendedCount',
+        'recommendPct',
+        'reviewCount',
+        'openCount',
+        'installCount',
+      ],
+      properties: {
+        recommendedCount: count,
+        notRecommendedCount: count,
+        recommendPct: { type: ['number', 'null'], minimum: 0, maximum: 1 },
+        reviewCount: count,
+        openCount: { type: ['integer', 'null'], minimum: 0, description: 'null for off-site' },
+        installCount: count,
+      },
+    },
+    createdAt: {
+      type: 'string',
+      format: 'date-time',
+      description: "When the listing was created: the store's `newest` sort key",
+    },
+    updatedAt: { type: ['string', 'null'], format: 'date-time' },
+  },
+};

@@ -13,6 +13,7 @@ import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { withoutGraceMarkersSql } from '~/server/common/image-visibility';
 import {
   readJobFailureReason,
@@ -238,6 +239,7 @@ export async function processImageScanWorkflow({
       );
       await refreshProfilePicturesForImagesLazy([imageId]);
       await bustPostOfImage(imageId);
+      await evictHomeBlocksForImages({ imageIds: [imageId] });
       if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
       return;
     }
@@ -313,6 +315,9 @@ export async function processImageScanWorkflow({
     );
     // Backstop: the in-pipeline showcase bust may not have run if an earlier step threw.
     if (image.postId) await bustPostCachesLazy(image.postId);
+    // Likewise the home-block refresh, which never throws.
+    if (outcome.ingestion === ImageIngestionStatus.Blocked)
+      await evictHomeBlocksForImages({ imageIds: [image.id] });
   }
 
   // Last step, after everything is committed — throwing here would 400 a finished webhook

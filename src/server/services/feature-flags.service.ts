@@ -113,6 +113,12 @@ const featureFlags = createFeatureFlags({
   // gallery feed; its own flag, so each can be turned on or killed alone. Enable only once the edge
   // routes `/api/trpc-go/image.getInfinite`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
   feedGoTransportInfinite: { availability: [], fliptKey: 'feed-go-transport-infinite' },
+  // Client shadow compare (`~/utils/faro/shadowCompare`): a signed-in browser sends an allowlisted
+  // feed query to both the `/api/trpc` route and the Go transport path and beacons whether the two
+  // raw responses were byte-identical; the app uses the `/api/trpc` answer. Only for a procedure
+  // whose own Go-transport flag is also on for the user. Every compare is one extra request, so ramp
+  // it slowly. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  clientShadowCompare: { availability: [], fliptKey: 'client-shadow-compare' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
@@ -352,6 +358,8 @@ const featureFlags = createFeatureFlags({
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
+  // The public takedown forms (/requests) and the case links they send.
+  takedownRequests: { availability: ['mod'], fliptKey: 'takedown-requests' },
   // Every entity except Article, which keeps `articleRatingDispute`. Flipt-down falls back to off.
   ratingDispute: { availability: [], fliptKey: 'rating-dispute' },
   // The on-site appeal form (`/appeal`) and the appeal box on the banned screen.
@@ -552,6 +560,9 @@ const featureFlags = createFeatureFlags({
   // moderators at deploy: an absent Flipt key falls through to ['mod']. Create
   // `mod-retracted-media` in Flipt, disabled, to turn it off.
   modRetractedMedia: { availability: ['mod'], fliptKey: 'mod-retracted-media' },
+  // The retracted-media route's CDN-refusal leg and its tile fallback. DARK, fails CLOSED when the
+  // Flipt key is absent or Flipt is down. Only takes effect within modRetractedMedia.
+  modRetractedMediaCdnLeg: { availability: [], fliptKey: 'mod-retracted-media-cdn-leg' },
   appealReports: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
   chat: {

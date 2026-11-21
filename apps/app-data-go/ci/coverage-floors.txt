@@ -5,7 +5,7 @@
 # measured value the "Coverage floors" step prints and set the floor to it. Never lower a floor to
 # get a red run green. Packages without unit tests (cmd/app-data-go, metrics) are not listed; they
 # count in the total.
-total 87
+total 89
 internal/api 99
 internal/config 98
 internal/exchange 100

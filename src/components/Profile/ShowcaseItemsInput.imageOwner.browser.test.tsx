@@ -148,10 +148,22 @@ describe('Images search in the showcase picker', () => {
       <ShowcaseItemsInput username="fox" supportedIndexes={['images']} value={[]} />
     );
 
-    await userEvent.type(page.getByPlaceholder('Search Civitai'), 'kuro');
+    // Typed in two strokes past the 300ms debounce, as a slow CI runner does: a search fires on the prefix.
+    await userEvent.type(page.getByPlaceholder('Search Civitai'), 'kur');
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await userEvent.type(page.getByPlaceholder('Search Civitai'), 'o');
 
-    await vi.waitFor(() => expect(offeredIds()).toEqual([OWNER_IMAGE]), { timeout: 3000 });
-    expect(state.semanticQuery).toHaveBeenCalledWith(expect.objectContaining({ query: 'kuro' }));
+    // Slow typing can let the debounce fire on a prefix ("kur"), which the fake answers the same way:
+    // wait for the full word's search, not just for a matching list.
+    await vi.waitFor(
+      () => {
+        expect(state.semanticQuery).toHaveBeenCalledWith(
+          expect.objectContaining({ query: 'kuro' })
+        );
+        expect(offeredIds()).toEqual([OWNER_IMAGE]);
+      },
+      { timeout: 3000 }
+    );
     for (const [input] of state.semanticQuery.mock.calls) expect(input.usernames).toEqual(['fox']);
   });
 

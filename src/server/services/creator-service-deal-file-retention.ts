@@ -61,12 +61,10 @@ export const dealFilesHeld = Prisma.sql`(
     WHERE sr."serviceOfferingId" = o."id" AND (r."status"::text IN ('Pending', 'Processing')
       OR GREATEST(r."createdAt", r."statusSetAt") + ${retentionWindow} > now()))
   OR EXISTS (SELECT 1 FROM "User" bu
-    WHERE bu."id" IN ${parties} AND (
-      bu."meta" -> 'banDetails' ->> 'reasonCode' IN (${Prisma.join([
+    WHERE bu."id" IN ${parties}
+      AND bu."meta" -> 'banDetails' ->> 'reasonCode' IN (${Prisma.join([
         ...banReasonsAlwaysRemovingMedia,
-      ])})
-      OR concat_ws(' ', bu."meta" -> 'banDetails' ->> 'detailsInternal',
-        bu."meta" -> 'banDetails' ->> 'detailsExternal') ~* '(csam|ncmec)'))
+      ])}))
   OR EXISTS (SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r."id" = ur."reportId"
     WHERE ur."userId" IN ${parties} AND r."status"::text IN ('Pending', 'Processing'))
   OR EXISTS (SELECT 1 FROM "Appeal" a

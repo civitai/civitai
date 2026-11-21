@@ -31,6 +31,7 @@ export const serviceDealNotificationTypes = {
   autoCompleteSoon: 'service-deal-auto-complete-soon',
   dueSoon: 'service-deal-due-soon',
   overdue: 'service-deal-overdue',
+  reviewDue: 'service-deal-review-due',
 } as const;
 export type ServiceDealNotice = keyof typeof serviceDealNotificationTypes;
 
@@ -185,5 +186,10 @@ export const creatorServiceNotifications = createNotificationProcessor({
       `Your deal for "${offeringTitle}" is past due. Deliver it, or it cancels and refunds the buyer in ${
         SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS / DAY
       } days.`
+  ),
+  [serviceDealNotificationTypes.reviewDue]: dealNotification(
+    'Services: Review your order',
+    ({ offeringTitle }) =>
+      `How did "${offeringTitle}" turn out? Leave the seller a review before the deal pays out.`
   ),
 });

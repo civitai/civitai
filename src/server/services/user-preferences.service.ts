@@ -1037,7 +1037,7 @@ async function removeBlockedUsersFollow({
   if (!unfollowed) return;
   await setUserFollowCached({ userId: targetUserId, targetUserId: userId, following: false });
   // The metric job finds changed pairs by `createdAt`, which a deleted row lacks.
-  // Dynamic: a static import closes an import cycle through the search index.
+  // Dynamic import, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
   const { userMetrics } = await import('~/server/metrics/user.metrics');
   await userMetrics.queueUpdate([userId, targetUserId]);
 }

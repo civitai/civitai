@@ -4,7 +4,7 @@ import { createDetailFetcher } from '~/server/notifications/detail-fetchers/base
 import type { SimpleUser } from '~/server/selectors/user.selector';
 import { isDefined } from '~/utils/type-guards';
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const userService = () => import('~/server/services/user.service');
 
 export const reviewDetailFetcher = createDetailFetcher({

@@ -147,6 +147,9 @@ importers:
       '@contentauth/c2pa-wasm':
         specifier: 0.15.1
         version: 0.15.1
+      '@datadog/pprof':
+        specifier: 5.14.4
+        version: 5.14.4
       '@discordjs/rest':
         specifier: ^2.6.0
         version: 2.6.0

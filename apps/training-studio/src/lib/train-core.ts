@@ -1,5 +1,9 @@
 import { ZodError } from 'zod';
 import { parseAiToolkitOptions, type AiToolkitOptions } from '@civitai/shared/training-options';
+import {
+  KOHYA_CONTINUE_KEYS as SHARED_KOHYA_CONTINUE_KEYS,
+  pickDefinedKeys,
+} from '@civitai/shared/training-kohya-replay';
 import type { AiToolkitTrainingInput } from '@civitai/orchestration-client';
 import { buildKohyaInput } from './kohya-training';
 import { engineTakesRepeats, expandRepeats, isRepeatExt, MAX_REPEATS } from './repeats';
@@ -1073,37 +1077,7 @@ async function buildContinuation(
   };
 }
 
-const KOHYA_CONTINUE_KEYS = [
-  'model',
-  'numRepeats',
-  'trainBatchSize',
-  'resolution',
-  'enableBucket',
-  'shuffleCaption',
-  'keepTokens',
-  'clipSkip',
-  'flipAugmentation',
-  'unetLR',
-  'textEncoderLR',
-  'trainTextEncoder',
-  'lrScheduler',
-  'lrSchedulerNumCycles',
-  'minSnrGamma',
-  'networkDim',
-  'networkAlpha',
-  'noiseOffset',
-  'optimizerType',
-  'seed',
-  'fp8Base',
-  'blocksToSwap',
-  'vParameterization',
-  'zeroTerminalSnr',
-  'trainingData',
-  'samples',
-  'clipLModel',
-  'textEncoderModel',
-  'vaeModel',
-] as const satisfies readonly (keyof KohyaInput)[];
+const KOHYA_CONTINUE_KEYS = SHARED_KOHYA_CONTINUE_KEYS satisfies readonly (keyof KohyaInput)[];
 
 function continueKohyaInput(
   input: Record<string, unknown>,
@@ -1117,9 +1091,7 @@ function continueKohyaInput(
       'keep training: Kohya supports at most 20 checkpoints and 10,000 steps per run.'
     );
   return {
-    ...Object.fromEntries(
-      KOHYA_CONTINUE_KEYS.filter((key) => input[key] !== undefined).map((key) => [key, input[key]])
-    ),
+    ...pickDefinedKeys(input, KOHYA_CONTINUE_KEYS),
     engine: 'kohya',
     maxTrainEpochs: epochs,
     ...(steps ? { steps } : {}),

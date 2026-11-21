@@ -881,7 +881,7 @@ export const deleteUserHandler = async ({
     throw new TRPCError({ code: 'FORBIDDEN', message: SELF_DELETE_RESTRICTED_MESSAGE });
 
   try {
-    const user = await deleteUser(input);
+    const user = await deleteUser({ ...input, actorId: currentUser.id });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
     await ctx.track.userActivity({

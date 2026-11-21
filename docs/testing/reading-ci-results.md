@@ -26,9 +26,9 @@ design: `Typecheck` (Tekton's covers an internal PR) and `Unit tests` (runs on `
 dispatch and on a PR with the `full-ci` label; skipped, it is one check, not six shards). With the
 `full-ci` label the `Unit tests` check expands to 6 shard check-runs (`Unit tests (1)` .. `(6)`), so
 the PR run has 10 `Lint` check-runs, one of them (`Typecheck`) skipped. Adding the label leaves a
-`Start full CI on label` check; the Lint and App suites runs it dispatches are NOT in the PR's
-checks list (`gh pr checks` lists pull_request runs only). They are on the head commit's check-runs
-and in the Actions tab, and that check's summary links them. Adding any other label leaves only a
+`Start full CI on label` check; the Lint run it dispatches (and on a draft the App suites run) is NOT in the PR's
+checks list (`gh pr checks` lists pull_request runs only). Dispatched runs are on the head commit's
+check-runs and in the Actions tab, and that check's summary links them. Adding any other label leaves only a
 skipped `Start full CI on label`. A PR that touches `apps/`, `packages/` or
 the root files the app suites read also gets 2 `App suites` check-runs (`App unit tests`, `App typecheck`);
 any other PR gets none, and that is by design, not a missing run (the list is the `paths:` filter in
@@ -48,9 +48,12 @@ dispatch: `gh workflow run windows-dev-env.yml -R civitai/civitai --ref <branch>
 marked ready (`gh pr ready <pr>`). To get a full verdict while it is still a draft, add the `full-ci`
 label (`gh pr edit <pr> --add-label full-ci`) — only when the change touches code the unit or
 component suites cover and the PR is near merge-ready, not on every PR. Adding it dispatches Lint (`only: all`, every job but
-ESLint) and the app suites on the branch head straight away (`.github/workflows/full-ci.yml`;
-nothing is dispatched when the PR's own run on that commit already started the unit shards; so a
-PR opened WITH the label gets the app suites only if its paths reach them). The label stays on
+ESLint) on the branch head straight away, and on a draft also the app suites and the other
+draft-gated workflows (`.github/workflows/full-ci.yml`; on a ready PR their own PR runs already
+cover them, so only Lint is dispatched; nothing is dispatched when the PR's own run on that commit
+already started the unit shards, so a PR opened WITH the label gets the app suites only if its
+paths reach them). The `Start full CI on label` summary says, per workflow, whether it was
+dispatched and why. The label stays on
 until the full unit suite has passed once on the PR (on some commit, not necessarily the head):
 lint.yml's `full-ci-done` job then removes it,
 so later pushes run the normal PR suites (a cancelled or red unit run leaves it on); re-add it to
@@ -178,6 +181,22 @@ suite passed, ~5 where only the two short ones did), against ~100 minutes the wa
 so ~119 job-minutes a day net. A non-draft PR run's green shard 1 does not cover geometry, which
 is report-only there; the 24 h held one dispatch where geometry was red with the PR's shard green,
 so the dispatch still runs geometry.
+
+Re-measured 2026-11-20 on the 25 latest dispatches whose `passed` job ran (~19:00 to 00:35 UTC):
+the job held a runner 157 minutes in all (6.3 a run, almost all of it polling for the PR run's
+component shards to finish). On 18 it skipped all three suites, ~348 job-minutes going by the PR
+run's own times for the jobs skipped; on 4 it waited the full 10 minutes and the component shards
+ran anyway, keeping only the two short suites' skip. Still a net saving, so the wait stays.
+
+**Dispatched workflows other than Lint** (`.github/workflows/full-ci.yml`, "ON A READY PR, LINT
+ONLY"). Over a 2026-11-20 sample (19:47 to 00:21 UTC) of the Lint and App suites jobs,
+`workflow_dispatch` runs were 29% of the job-minutes; of those, Lint 2,147 minutes (83%) and App
+suites 435 (17%). Of the 60 App suites dispatches of 2026-11-20 15:23 to 11-21 00:42 UTC, 54 came
+from the label dispatcher and 6 were started by hand (those are unaffected). Of the 54, 53 were on a
+ready PR (draft state at the dispatch from each PR's timeline), ~1,150 job-minutes that are no
+longer dispatched, and 1 on a draft, which still is. The other eight workflows were dispatched
+in the same step, so on the same PRs, and are skipped on ready PRs too; their minutes were not
+measured.
 
 **Push runs on `main`: cancel vs queue** (`concurrency` in lint.yml, apps.yml, moderator-boot.yml).
 Push runs on `main` over 2026-10-30..11-13, and a replay of the same push times with one run in

@@ -1,6 +1,8 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { MIN_MANAGED_PROFANITY_ENTRIES } from '@civitai/mod-utils/profanity/word-rules';
 import { TRPCError } from '@trpc/server';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as WordRules from '@civitai/mod-utils/profanity/word-rules';
 
 // getBlocklistData -> getBlocklistDTO reads redis.get first and, when a cached
 // value is present, returns it WITHOUT touching the DB. So stubbing redis.get to
@@ -31,6 +33,20 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
         : // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (original.isFlipt as any)(flag, ...rest)
     ),
+  };
+});
+
+// The floor rule must be decided by `managedProfanityEntries` alone: this override makes it refuse a
+// full list, and the test that sets it goes red if this caller writes the rule out inline again.
+const managedRule = vi.hoisted(() => ({ refuseAll: false }));
+vi.mock('@civitai/mod-utils/profanity/word-rules', async (importOriginal) => {
+  const original = await importOriginal<typeof WordRules>();
+  return {
+    ...original,
+    managedProfanityEntries: (entries: readonly string[]) => {
+      const result = original.managedProfanityEntries(entries);
+      return managedRule.refuseAll ? { ...result, enforced: false } : result;
+    },
   };
 });
 
@@ -499,13 +515,18 @@ describe('getClientBenignLists', () => {
   });
 
   describe('the managed blocked list', () => {
+    // Synthetic entries, as many as the floor asks for.
+    const atFloor = Array.from(
+      { length: MIN_MANAGED_PROFANITY_ENTRIES },
+      (_, i) => `zorb${String.fromCharCode(97 + (i % 26))}${'q'.repeat(Math.floor(i / 26))}`
+    );
     let blockedRow: { id: number; data: string[] } | null;
     let whitelist: string[];
     let blockedReadFails: boolean;
 
     beforeEach(() => {
       managedListFlag.on = true;
-      blockedRow = { id: 31, data: ['zorblat'] };
+      blockedRow = { id: 31, data: atFloor };
       whitelist = ['spreadsheet'];
       blockedReadFails = false;
       dbMock.dbWrite.blocklist.findMany.mockImplementation(
@@ -528,8 +549,25 @@ describe('getClientBenignLists', () => {
 
     it('is served with a version naming its row when the flag is on', async () => {
       const result = await getClientBenignLists();
-      expect(result.profanityBlockedWords).toEqual(['zorblat']);
+      expect(result.profanityBlockedWords).toEqual(atFloor);
       expect(result.profanityListVersion).toMatch(/^31:/);
+    });
+
+    // The server's filter falls back below the floor; the browser must enforce the same list.
+    it('falls back to the shipped list below the floor, and serves only usable entries', async () => {
+      blockedRow = { id: 31, data: [...atFloor.slice(1), 'zq'] };
+      expect((await getClientBenignLists()).profanityBlockedWords).toBeNull();
+      blockedRow = { id: 31, data: [...atFloor, 'zq'] };
+      expect((await getClientBenignLists()).profanityBlockedWords).toEqual(atFloor);
+    });
+
+    it('decides the floor through managedProfanityEntries', async () => {
+      managedRule.refuseAll = true;
+      try {
+        expect((await getClientBenignLists()).profanityBlockedWords).toBeNull();
+      } finally {
+        managedRule.refuseAll = false;
+      }
     });
 
     it('is withheld while the flag is off, so the browser keeps the shipped list', async () => {
@@ -566,7 +604,7 @@ describe('getClientBenignLists', () => {
       const first = (await getClientBenignLists()).profanityListVersion;
       whitelist = ['spreadsheet', 'cockpit'];
       const afterWhitelistEdit = (await getClientBenignLists()).profanityListVersion;
-      blockedRow = { id: 31, data: ['zorblat', 'quaxle'] };
+      blockedRow = { id: 31, data: [...atFloor, 'quaxle'] };
       const afterBlockedEdit = (await getClientBenignLists()).profanityListVersion;
       expect(new Set([first, afterWhitelistEdit, afterBlockedEdit]).size).toBe(3);
     });

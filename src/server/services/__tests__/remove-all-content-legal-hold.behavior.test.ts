@@ -5,7 +5,7 @@ import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { ltree } from '@electric-sql/pglite/contrib/ltree';
 import { Prisma } from '@prisma/client';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -226,6 +226,7 @@ beforeAll(async () => {
       minor boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb DEFAULT '{}', "bannedAt" timestamp(3));
     ${[...SEEDED_TABLES, ...QA_DATA]
       .map((t) => `CREATE TABLE "${t}" (id serial PRIMARY KEY, "userId" int NOT NULL);`)
       .join('\n')}
@@ -641,6 +642,20 @@ describe('removeAllContent', () => {
     expect(await remaining(userId)).toEqual(before);
     expect(dbMock.dbWrite.imageReaction.deleteMany).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  // A ban note alone is not a hold.
+  it('wipes an account banned with a note naming CSAM or NCMEC and no hold', async () => {
+    await holder.db.query(
+      `INSERT INTO "User" (id, meta, "bannedAt") VALUES ($1, $2, now() - interval '1 day')`,
+      [CLEAN, JSON.stringify({ banDetails: { detailsExternal: 'Reported to NCMEC' } })]
+    );
+    try {
+      await removeAllContent({ id: CLEAN });
+      expect(await remaining(CLEAN)).toEqual(all(0));
+    } finally {
+      await holder.db.exec(`DELETE FROM "User"`);
+    }
   });
 
   it('refuses when the hold cannot be checked', async () => {

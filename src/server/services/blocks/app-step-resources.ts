@@ -4,6 +4,7 @@ import { dbRead } from '~/server/db/client';
 import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
 import { isWeightFile } from '~/server/services/huggingface.service';
 import { capsGenerationOutput } from '~/server/services/orchestrator/form-graph/output-restrictions';
+import { canAccessGenerationResource } from '~/server/utils/resource-access';
 
 // The resource rule for an orchestrator step an app builds itself: a pass-through `kind:'step'`,
 // every step of a `kind:'workflow'`, and a customComfy graph. Apps load weights only from Civitai
@@ -51,19 +52,20 @@ function collectAppStepVersionIds(input: unknown): number[] {
     if (HUGGING_FACE_TRAINING_DATA_RE.test(value)) return;
     if (HUGGING_FACE_RE.test(value))
       refuse('Hugging Face resources are not available to apps; use a Civitai model version');
+    const parsed = Air.parseSafe(value);
+    const source = parsed?.source.toLowerCase();
+    // Before the URL test: the AIR grammar also reads `https:civitai:1@2` as a Civitai version.
+    if (parsed && source === 'civitai') {
+      versionIds.add(versionIdOf(value, parsed));
+      return;
+    }
     if (URL_RE.test(value)) {
       if (isKey || namesWeightsFile(value))
         refuse('model weights must be a Civitai model version, not a URL');
       return;
     }
-    const parsed = Air.parseSafe(value);
-    if (!parsed) {
+    if (!parsed || !source) {
       if (AIR_URN_RE.test(value)) refuse(`unreadable resource AIR: '${value.slice(0, 200)}'`);
-      return;
-    }
-    const source = parsed.source.toLowerCase();
-    if (source === 'civitai') {
-      versionIds.add(versionIdOf(value, parsed));
       return;
     }
     // Timecodes and ratios (`00:00:05:00`) parse too; no resource host is a number.
@@ -89,24 +91,46 @@ function collectAppStepVersionIds(input: unknown): number[] {
 }
 
 /**
- * Refuses an app-built step input that names a resource other than a Civitai model version, or a
- * version on a base model no app may use, and returns whether its output is held to PG-13.
+ * Refuses an app-built step input that names a resource other than a Civitai model version, a
+ * version the viewer may not generate with, or a version on a base model no app may use, and
+ * returns whether its output is held to PG-13.
+ *
+ * Only the generation check's access rule applies here, without its moderator exemption, and not
+ * its coverage or base-model rules: training steps name base checkpoints that are not covered for
+ * generation.
  *
  * A step that names no resource (a provider API, or an engine's default weights) is not capped
  * here: its `ecosystem` string is the orchestrator's spelling and does not map back to one base
  * model, so such a step relies on the provider's own refusal.
  */
-export async function checkAppStepResources(input: unknown): Promise<{ capOutput: boolean }> {
+export async function checkAppStepResources(
+  input: unknown,
+  viewerId: number
+): Promise<{ capOutput: boolean }> {
   const versionIds = collectAppStepVersionIds(input);
   const versions = versionIds.length
     ? await dbRead.modelVersion.findMany({
         where: { id: { in: versionIds } },
-        select: { id: true, baseModel: true },
+        select: {
+          id: true,
+          baseModel: true,
+          status: true,
+          availability: true,
+          usageControl: true,
+          model: { select: { userId: true } },
+        },
       })
     : [];
   const found = new Set(versions.map((v) => v.id));
   const missing = versionIds.find((id) => !found.has(id));
   if (missing !== undefined) refuse(`model version ${missing} is not available for generation`);
+
+  // 🔴 No isModerator: the app's code names these resources, not the viewer, so a moderator's
+  // rights must not reach a third-party or pending app.
+  const denied = versions.find(
+    (v) => !canAccessGenerationResource({ ...v, modelUserId: v.model.userId }, { id: viewerId })
+  );
+  if (denied) refuse(`model version ${denied.id} is not available for generation`);
 
   const baseModels = versions.map((v) => v.baseModel);
   assertNoRestrictedBaseModels({ baseModels });

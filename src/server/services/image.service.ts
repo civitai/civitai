@@ -1,7 +1,7 @@
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
-import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
+import { isSessionOrFullUserKey, withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { credentialLogFields, type RequestCredential } from '~/server/auth/request-credential';
 import { Prisma } from '@prisma/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
@@ -88,6 +88,7 @@ import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
   imageBlockedForConditions,
+  reviewedGalleryImageConditions,
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
 import {
@@ -105,6 +106,7 @@ import {
 } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import {
   getDbWithoutLag,
   getDbWithoutLagBatch,
@@ -120,6 +122,7 @@ import {
 import { poolCounters } from '~/server/games/new-order/utils';
 import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { flagImagesForCsamReview } from '~/server/services/csam-image-review';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { isStatementTimeout } from '~/server/utils/statement-timeout';
@@ -390,7 +393,7 @@ import {
   shopArtworkUrls,
 } from '~/server/services/image-url-ownership';
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const model3dService = () => import('~/server/services/model3d.service');
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -968,7 +971,8 @@ export async function imagesPendingDeletion(ids: number[]) {
 type ImageDeleteOptions = {
   actor: DeleteActor;
   /** Extra condition on the DELETE itself; ids it (or a member actor's ownership limit) excludes
-   *  are skipped and not returned. */
+   *  are skipped and not returned. Skips the owner's delete hold, so an owner's own delete must
+   *  never pass it, except to undo images created in the same request. */
   onlyWhere?: Prisma.Sql | RawBuilder<boolean>;
   /** A moderator or moderation job ordered it: the stored file goes with every version (see
    *  `moderatorPurge`) and each url's CDN takedown is queued. Every other delete is by key alone.
@@ -1124,6 +1128,7 @@ async function invalidateDeletedImages({
     bustCachesForPosts(postIds),
     postMetrics.queueUpdate(postIds),
     enqueueCollectionRebuild({ ...collections, source: 'image-delete' }),
+    evictHomeBlocksForImages({ collectionIds: collections.collectionIds }),
     ...(thumbnailParentIds.length ? [thumbnailCache.refresh(thumbnailParentIds)] : []),
     refreshProfilePicturesForUsers(profilePictureUserIds),
     ...(kept.length ? [bustKeptImages(kept, updatePosts)] : []),
@@ -1391,7 +1396,7 @@ export async function writeModeratorBlock(
       removedForCsam: new Set(),
       pHashes: new Map(),
     };
-  return dbWrite.$transaction(async (tx) => {
+  const written = await dbWrite.$transaction(async (tx) => {
     // Locks the rows and reads what they were before this block.
     const prior = await tx.$queryRaw<{ id: number; removed: boolean }[]>`
       SELECT id, ingestion = 'Blocked' AS removed FROM "Image" WHERE id = ANY(${ids}::int[]) FOR UPDATE
@@ -1451,6 +1456,8 @@ export async function writeModeratorBlock(
       pHashes: new Map(rows.map((r) => [r.id, r.pHash])),
     };
   });
+  await evictHomeBlocksForImages({ imageIds: ids });
+  return written;
 }
 
 /** Logged when an owner notice goes out for an image under the moderator-only review flag. */
@@ -1787,9 +1794,10 @@ export const getImageDetail = async ({
   id,
   userId,
   isModerator,
-}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
+  ownerSeesHeld = false,
+}: GetByIdInput & { userId?: number; isModerator?: boolean; ownerSeesHeld?: boolean }) => {
   // The resource and tag caches are keyed by image id alone, so the viewer check runs first.
-  await assertImageVisibleToViewer({ id, userId, isModerator });
+  await assertImageVisibleToViewer({ id, userId, isModerator, ownerSeesHeld });
   const [resourcesData, tagsData] = await Promise.all([
     imageResourcesCache.fetch([id]),
     imageTagsCache.fetch([id]),
@@ -4330,8 +4338,17 @@ export const getImage = async ({
   id,
   userId,
   isModerator,
-}: GetImageInput & { userId?: number; isModerator?: boolean }) => {
-  const AND = [Prisma.sql`i.id = ${id}`, ...imageVisibilityConditions({ userId, isModerator })];
+  ownerSeesHeld = false,
+}: GetImageInput & {
+  userId?: number;
+  isModerator?: boolean;
+  /** `imageVisibilityConditions`' `ownerSeesHeld`: the image page's read, not a remix or other use. */
+  ownerSeesHeld?: boolean;
+}) => {
+  const AND = [
+    Prisma.sql`i.id = ${id}`,
+    ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld }),
+  ];
 
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
     SELECT
@@ -4446,12 +4463,14 @@ export const getImage = async ({
 export const getImageResources = async ({
   id,
   viewer,
-}: GetByIdInput & { viewer?: { id: number; isModerator?: boolean } }) => {
+  ownerSeesHeld = false,
+}: GetByIdInput & { viewer?: { id: number; isModerator?: boolean }; ownerSeesHeld?: boolean }) => {
   const { visibleSignedOut } = await assertImageVisibleToViewer({
     id,
     userId: viewer?.id,
     isModerator: viewer?.isModerator,
     withSignedOutVerdict: true,
+    ownerSeesHeld,
   });
   const resources = await dbRead.$queryRaw<
     (ImageResourceHelperModel & { sfwName: string | null })[]
@@ -4589,9 +4608,7 @@ export const getImagesForModelVersion = async ({
       );
     }
   } else {
-    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`);
-    imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel || allBrowsingLevelsFlag}) != 0`);
-    imageWhere.push(imageReviewedSql());
+    imageWhere.push(...reviewedGalleryImageConditions(browsingLevel || allBrowsingLevelsFlag));
   }
   imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
 
@@ -4840,7 +4857,8 @@ export const getImagesForPosts = async ({
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
       imageWhere.push(
-        ...pendingOthersImageConditions(userId),
+        // `user` must come from a request that carries the owner's view: their held images show.
+        ...pendingOthersImageConditions(userId, { ownerSeesHeld: true }),
         pendingLevelImageSql(userId, browsingLevel)
       );
     } else {
@@ -5107,6 +5125,7 @@ export const getImagesByEntity = async ({
   include,
   userId,
   isModerator,
+  ownerSeesHeld = false,
 }: {
   id?: number;
   ids?: number[];
@@ -5115,14 +5134,15 @@ export const getImagesByEntity = async ({
   include?: ['tags'];
   userId?: number;
   isModerator?: boolean;
+  /** The request carries the owner's view (`credentialViews`): `userId`'s held images show. */
+  ownerSeesHeld?: boolean;
 }) => {
   if (!id && (!ids || ids.length === 0)) {
     return [];
   }
 
   const AND = entityImageVisibilityConditions({ userId, isModerator });
-  // Owner-hidden review holds are left out here even for the owner; bounty images keep their own rule.
-  if (!isModerator) AND.push(notHeldForReviewSql());
+  if (!isModerator) AND.push(notHeldForReviewSql(ownerSeesHeld ? userId : undefined));
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
     WITH targets AS (
@@ -6321,27 +6341,9 @@ export async function reportCsamImages({
   if (!user.isModerator) throw throwAuthorizationError();
   // An appeal that starts after the flag is refused by createEntityAppeal; one already Pending stays
   // Pending, and no approval of it restores the image while the flag is on.
-  await dbWrite.$transaction(async (tx) => {
-    await tx.image.updateMany({
-      where: { id: { in: imageIds } },
-      data: { needsReview: 'csam' },
-    });
-    // Reporting an image already flagged leaves its flag unchanged, so the set-aside trigger does not
-    // fire and this delete is what puts the image back in the queue. It must follow the flag write:
-    // that write's row lock is what a concurrent dismiss waits on, and its new row version is what
-    // makes that dismiss refuse. The table and its grants are applied by hand; a role that may not
-    // delete skips it rather than fail the report.
-    const [setAside] = await tx.$queryRaw<{ deletable: boolean | null }[]>`
-      SELECT has_table_privilege(to_regclass('"CsamQueueSetAside"'), 'DELETE') AS deletable`;
-    if (setAside?.deletable)
-      await tx.$executeRaw`DELETE FROM "CsamQueueSetAside" WHERE "imageId" = ANY(${imageIds}::int[])`;
-    else if (setAside?.deletable === false)
-      logToAxiom({
-        type: 'warning',
-        name: 'csam-queue-set-aside-not-deletable',
-        message: 'the table exists but this role may not delete from it; grant DELETE',
-      });
-  });
+  await dbWrite.$transaction((tx) => flagImagesForCsamReview(tx, imageIds));
+  // First: it never throws, and the picture refresh after it can.
+  await evictHomeBlocksForImages({ imageIds });
   await refreshProfilePicturesForImages(imageIds);
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
@@ -6976,6 +6978,7 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
     id,
     userId: viewer.user?.id,
     isModerator: viewer.user?.isModerator,
+    ownerSeesHeld: isSessionOrFullUserKey(viewer),
   });
   const showMedia = await viewerCanSeeImageMedia(viewer, visible);
 

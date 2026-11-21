@@ -203,13 +203,14 @@ func TestServeInfiniteFollowedPostgresPath(t *testing.T) {
 	}
 }
 
-// Inputs `followed` does not widen still fall back, as before the port: a hub, the new-creators board
-// beside it, and a Hat Turf sort.
+// Inputs `followed` does not widen still fall back, as before the port: a hub, the viewer's hidden
+// images beside it, and a Hat Turf sort. (`newCreators` beside it is answered: an empty page,
+// TestServeInfiniteNewCreatorsEmptyAnswers.)
 func TestServeInfiniteFollowedStillFallsBack(t *testing.T) {
 	for input, reason := range map[string]string{
-		`{"followed":true,"hubId":7}`:          "input-hubId",
-		`{"followed":true,"newCreators":true}`: "input-newCreators",
-		`{"followed":true,"hatSort":"most"}`:   "infinite-hat-turf",
+		`{"followed":true,"hubId":7}`:        "input-hubId",
+		`{"followed":true,"hidden":true}`:    "input-hidden",
+		`{"followed":true,"hatSort":"most"}`: "infinite-hat-turf",
 	} {
 		if _, err := ParseInfinite(parseObj(t, input)); fallback.Reason(err) != reason {
 			t.Errorf("ParseInfinite %s: reason %q (err %v), want %q", input, fallback.Reason(err), err, reason)

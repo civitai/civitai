@@ -485,6 +485,7 @@ export const getLicensingRoots = async ({
       licensingFeeType: LicensingFeeType | null;
       licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
       isDefault: boolean;
+      restricted: boolean;
     }>
   >`
     SELECT
@@ -494,7 +495,8 @@ export const getLicensingRoots = async ({
       mv."licensingFee"::float8 AS "licensingFee",
       mv."licensingFeeType",
       mv."licensingFeeSettlementCurrency",
-      lr."isDefault"
+      lr."isDefault",
+      lr.restricted
     FROM "LicensingRoot" lr
     JOIN "ModelVersion" mv ON mv.id = lr."modelVersionId"
     JOIN "Model" m ON m.id = mv."modelId"
@@ -507,7 +509,9 @@ export const getLicensingRoots = async ({
     ORDER BY lr."isDefault" DESC, m.name, mv.index
   `;
 
-  const defaultVersionId = roots.find((r) => r.isDefault)?.id ?? null;
+  // Restricted roots stay in the returned list (the editor needs them to recognise a root's own version);
+  // only the pre-selected default skips them.
+  const defaultVersionId = roots.find((r) => r.isDefault && !r.restricted)?.id ?? null;
   return { roots, defaultVersionId };
 };
 
@@ -1117,6 +1121,7 @@ export const upsertModelVersion = async ({
         usageControl: true,
         flags: true,
         licensingFee: true,
+        licensingFeeType: true,
         // Read for the audit diff, not for the write. `watchedEntityFields` compares before/after by
         // key, so a watched field missing from this select silently produces no row rather than an
         // error — the audit would look wired up and record nothing.
@@ -1161,12 +1166,6 @@ export const upsertModelVersion = async ({
     // them computes the refund that unpublishModelVersionById owes its buyers. So this refuses
     // LEAVING Published rather than listing the values that do it: an enumeration of forbidden
     // statuses is not a control, and ModelStatus has eight members.
-    //
-    // ⚠️ This closes the take-down, NOT every way this route can defeat the gate. The same save
-    // clears the PaidAccess row when `paidAccess` is omitted (writePaidAccessForModelVersion →
-    // deleteMany), and the requirement returns empty with no active gate — so one save then an
-    // ordinary unpublish still refunds nobody. That is tracked separately; do not read this guard
-    // as "the editor can no longer strand a buyer".
     if (
       existingVersion.status === ModelStatus.Published &&
       data.status !== undefined &&
@@ -1403,7 +1402,11 @@ export const upsertModelVersion = async ({
     const feeBefore =
       existingVersion.licensingFee != null ? Number(existingVersion.licensingFee) : null;
     const feeAfter = feeProvided ? data.licensingFee ?? null : feeBefore;
-    if (feeBefore !== feeAfter)
+    // The type changes what the number means (Buzz per image or a percent), so it busts too.
+    const typeChanged =
+      data.licensingFeeType !== undefined &&
+      data.licensingFeeType !== existingVersion.licensingFeeType;
+    if (feeBefore !== feeAfter || typeChanged)
       await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
 
     if (version.description !== existingVersion.description)

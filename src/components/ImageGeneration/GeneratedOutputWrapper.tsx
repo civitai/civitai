@@ -65,7 +65,7 @@ export function GeneratedOutputWrapper({
     if (isSelecting) {
       handleToggleSelect(!selected, e?.shiftKey ?? false);
     } else {
-      // Lazy import to avoid circular dependency
+      // Lazy import, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
       import('./GeneratedOutputLightbox').then(({ default: GeneratedOutputLightbox }) => {
         dialogStore.trigger({
           id: 'generated-image',

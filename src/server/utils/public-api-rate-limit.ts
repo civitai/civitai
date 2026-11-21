@@ -2,7 +2,7 @@ import type { NextApiRequest } from 'next';
 // From the package rather than the `~/server/redis/client` shim on purpose: it is a pure helper
 // with no client state, and importing it through the shim would force every suite that mocks the
 // shim to add it to its mock factory.
-import { prefixCacheKey } from '@civitai/redis';
+import { checkFixedWindowWith, type FixedWindowCounter, prefixCacheKey } from '@civitai/redis';
 import { redis } from '~/server/redis/client';
 import { resolveClientIp } from '~/server/utils/client-ip';
 
@@ -77,35 +77,21 @@ export type PublicApiRateLimitResult =
   | { allowed: true }
   | { allowed: false; retryAfterSeconds: number };
 
-export async function checkFixedWindow(
+export function checkFixedWindow(
   key: string,
   max: number,
   windowSeconds: number,
-  { failOpen = true }: { failOpen?: boolean } = {}
+  options: { failOpen?: boolean } = {}
 ): Promise<PublicApiRateLimitResult> {
-  try {
-    const count = await redis.incrBy(key as never, 1);
-    if (count === 1) {
-      await redis.expire(key as never, windowSeconds);
-    } else {
-      // Re-assert a lost TTL (a crash between INCR and EXPIRE would otherwise
-      // strand a TTL-less key → permanent lock). Same mitigation the sibling
-      // limiters use.
-      const ttl = await redis.ttl(key as never);
-      if (ttl < 0) await redis.expire(key as never, windowSeconds);
-    }
-
-    if (count <= max) return { allowed: true };
-
-    let retryAfter = await redis.ttl(key as never);
-    if (!Number.isFinite(retryAfter) || retryAfter < 1) retryAfter = windowSeconds;
-    return { allowed: false, retryAfterSeconds: retryAfter };
-  } catch {
-    // Fail open — a redis incident must never break a public read. A caller guarding something
-    // other than a public read can ask to fail closed.
-    if (!failOpen) return { allowed: false, retryAfterSeconds: windowSeconds };
-    return { allowed: true };
-  }
+  // Fails open by default: a redis incident must never break a public read. A caller guarding
+  // something other than a public read can ask to fail closed.
+  return checkFixedWindowWith(
+    redis as unknown as FixedWindowCounter,
+    key,
+    max,
+    windowSeconds,
+    options
+  );
 }
 
 /**

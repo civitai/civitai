@@ -6,7 +6,7 @@ import { authenticatedConfidentialClient, clientIdMismatch } from './client-auth
 import { SERVICE_GRANT } from './constants';
 import { findExchangeResource, isServiceClient } from './exchange-resources';
 import { basicCredentials } from './http';
-import { checkOAuthRateLimit } from './rate-limit';
+import { checkOAuthRateLimit, oauthRetryAfter, rateLimitedResponse } from './rate-limit';
 import { parseScopeRequest } from './scope';
 import { EXCHANGED_TOKEN_MAX_TTL, scopeNames, writeExchangeRecord } from './token-exchange';
 import { getSigner } from './user-exchange';
@@ -25,12 +25,11 @@ type ServiceTokenError =
   | 'server_error'
   | 'temporarily_unavailable';
 
-const STATUS: Record<ServiceTokenError, number> = {
+const STATUS: Record<Exclude<ServiceTokenError, 'rate_limited'>, number> = {
   invalid_request: 400,
   invalid_target: 400,
   unauthorized_client: 400,
   invalid_scope: 400,
-  rate_limited: 429,
   server_error: 500,
   temporarily_unavailable: 503,
 };
@@ -78,6 +77,13 @@ export async function handleServiceToken(input: ServiceTokenInput): Promise<Resp
 
   const refuse = (error: ServiceTokenError, reason: string, extra?: Record<string, string>) => {
     void logToAxiom({ event: 'service_token', result: 'refused', error, reason, ...ctx });
+    if (error === 'rate_limited') {
+      return rateLimitedResponse(
+        oauthRetryAfter('token-service'),
+        { ...NO_STORE, ...extra },
+        DESCRIPTION[error]
+      );
+    }
     return json(
       { error, error_description: DESCRIPTION[error] },
       { status: STATUS[error], headers: { ...NO_STORE, ...extra } }
@@ -86,7 +92,7 @@ export async function handleServiceToken(input: ServiceTokenInput): Promise<Resp
 
   try {
     if (!(await checkOAuthRateLimit('token-service', client.id))) {
-      return refuse('rate_limited', 'client limit', { 'Retry-After': '60' });
+      return refuse('rate_limited', 'client limit');
     }
     if (input.resources.length !== 1 || !input.resources[0]) {
       return refuse('invalid_request', 'exactly one resource is required');

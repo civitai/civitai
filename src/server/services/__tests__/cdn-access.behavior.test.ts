@@ -225,6 +225,7 @@ beforeAll(async () => {
       "entityId" int,
       "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb DEFAULT '{}', "bannedAt" timestamp(3));
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY,
       "userId" int,

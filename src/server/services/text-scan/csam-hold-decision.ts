@@ -27,6 +27,7 @@ import { unpublishModelById } from '~/server/services/model.service';
 import { unpublishPostAsModerator } from '~/server/services/post.service';
 import { createStrike } from '~/server/services/strike.service';
 import { archiveUserProfile } from '~/server/services/csam.service-new';
+import { PROFILE_CLEAR_FIELDS } from '~/server/schema/moderator/user';
 import { clearUserProfileFields, toggleBan } from '~/server/services/user.service';
 import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
 import type { EntityType } from '~/shared/utils/prisma/enums';
@@ -145,6 +146,7 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
     case 'UserProfile':
       await clearUserProfileFields({
         userId: entityId,
+        fields: [...PROFILE_CLEAR_FIELDS],
         actorId: actor.id,
         archive: archiveUserProfile,
         alwaysArchive: true,

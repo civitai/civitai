@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
-import { accountHoldSql } from '~/server/services/legal-hold.service';
+import { contentRemovalHeldSql } from '~/server/services/legal-hold.service';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
@@ -125,7 +125,7 @@ async function runRollback(params: MigrationParams): Promise<{
   const heldImages = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT i.id FROM "Image" i
     WHERE i.id IN (${Prisma.join(imageIds)})
-      AND ${accountHoldSql(Prisma.raw('i."userId"'), true)}
+      AND ${contentRemovalHeldSql(Prisma.raw('i."userId"'), true)}
   `;
   const heldImageIds = new Set(heldImages.map((r) => r.id));
   const orphanedImageIds = imageIds.filter(
@@ -152,7 +152,7 @@ async function runRollback(params: MigrationParams): Promise<{
       DELETE FROM "TagsOnImageNew" t
       USING "Image" i
       WHERE t."imageId" = i.id AND i.id IN (${Prisma.join(orphanedImageIds)})
-        AND NOT ${accountHoldSql(Prisma.raw('i."userId"'), true)}
+        AND NOT ${contentRemovalHeldSql(Prisma.raw('i."userId"'), true)}
     `;
     tagsDeleted = tagResult;
     log(`Deleted ${tagsDeleted} tag associations`);
@@ -170,7 +170,7 @@ async function runRollback(params: MigrationParams): Promise<{
   if (orphanedImageIds.length > 0) {
     const deleted = await deleteImages(orphanedImageIds, {
       actor: { system: 'migrate-article-images' },
-      onlyWhere: Prisma.sql`NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}`,
+      onlyWhere: Prisma.sql`NOT ${contentRemovalHeldSql(Prisma.raw('"Image"."userId"'), true)}`,
       keepStoredFiles: true,
     });
     imagesDeleted = deleted.length;

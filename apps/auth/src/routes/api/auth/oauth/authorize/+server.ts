@@ -2,7 +2,11 @@ import { json, redirect, type RequestHandler } from '@sveltejs/kit';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { oauthServer } from '$lib/server/oauth/server';
-import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
+import {
+  checkOAuthRateLimit,
+  oauthRetryAfter,
+  rateLimitedResponse,
+} from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { getOrCreateDeviceId, touchAccount } from '$lib/server/auth/device';
@@ -168,7 +172,11 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
       // Answering needs the client looked up, which a signed-out request never did before: charge the
       // caller's IP first, as there's no user to charge.
       if (!(await checkOAuthRateLimit('authorize-anon', getClientIp(request)))) {
-        return oauthError(429, 'rate_limited', 'Too many authorization requests');
+        return rateLimitedResponse(
+          oauthRetryAfter('authorize-anon'),
+          undefined,
+          'Too many authorization requests'
+        );
       }
       const verified = await resolveVerifiedClient(params);
       if ('error' in verified) return verified.error;
@@ -179,7 +187,11 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
 
   // Rate limit by user id.
   if (!(await checkOAuthRateLimit('authorize', String(user.id)))) {
-    return oauthError(429, 'rate_limited', 'Too many authorization requests');
+    return rateLimitedResponse(
+      oauthRetryAfter('authorize'),
+      undefined,
+      'Too many authorization requests'
+    );
   }
 
   const verified = await resolveVerifiedClient(params);

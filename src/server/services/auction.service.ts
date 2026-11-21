@@ -950,7 +950,7 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
   const isActive = bid.auction.startAt <= now && bid.auction.endAt > now;
   if (!isActive) throw throwBadRequestError('Cannot delete a bid from a different day.');
 
-  // Loaded here so the refund helper stays out of this service's import cycle.
+  // Loaded at the call site, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
   const { refundAllLegsByPrefix, refundTransactionOnce } = await import(
     '~/server/services/buzz-prefix-refund'
   );
@@ -1004,7 +1004,7 @@ export const refundBidsForVersions = async ({
   if (!versionIds.length) return { bidsDeleted: [], recurringBidsDeleted: [], refundFailed: [] };
   const db = tx ?? dbWrite;
   const now = new Date();
-  // Loaded here so the refund helper stays out of this service's import cycle.
+  // Loaded at the call site, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
   const { refundAllLegsByPrefix, refundTransactionOnce } = await import(
     '~/server/services/buzz-prefix-refund'
   );

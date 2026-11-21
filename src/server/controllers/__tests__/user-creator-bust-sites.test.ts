@@ -23,23 +23,32 @@ const upload = vi.hoisted(() => ({
   done: [] as string[],
   bodies: [] as string[],
 }));
-vi.mock('@aws-sdk/lib-storage', () => {
-  const Upload = class {
-    private readonly params: { Body: NodeJS.ReadableStream; Key: string };
-    constructor({ params }: { params: { Body: NodeJS.ReadableStream; Key: string } }) {
-      this.params = params;
+// Both carry `default`: the package is pre-bundled for CJS interop, so consumers resolve through it.
+vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@aws-sdk/client-s3')>();
+  const objects = new Map<string, { body: Uint8Array; Metadata?: Record<string, string> }>();
+  const S3Client = class {
+    async send(command: unknown) {
+      if (command instanceof real.PutObjectCommand) {
+        if (upload.fail) throw upload.fail;
+        const { Key, Body, Metadata } = command.input;
+        objects.set(Key!, { body: Body as Uint8Array, Metadata });
+        upload.done.push(Key!);
+        upload.bodies.push(Buffer.from(Body as Uint8Array).toString('utf8'));
+        return {};
+      }
+      if (command instanceof real.GetObjectCommand) {
+        const found = objects.get(command.input.Key!)!;
+        return { Metadata: found.Metadata, Body: { transformToByteArray: async () => found.body } };
+      }
+      return {};
     }
-    async done() {
-      const chunks: Buffer[] = [];
-      for await (const chunk of this.params.Body)
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
-      if (upload.fail) throw upload.fail;
-      upload.done.push(this.params.Key);
-      upload.bodies.push(Buffer.concat(chunks).toString('utf8'));
-      return { ETag: '"etag"' };
+    destroy() {
+      return undefined;
     }
   };
-  return { Upload, default: { Upload } };
+  const mocked = { ...real, S3Client };
+  return { ...mocked, default: mocked };
 });
 
 /** ModActivity rows written through `trackModActivity`: [actor, entityType, activity, entityIds]. */
@@ -107,7 +116,9 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
   usersSearchIndex: { queueUpdate: vi.fn(async () => undefined) },
 }));
 
-const { getUserCreator } = await import('~/server/services/user.service');
+const { getUserCreator, removeUserLinkAsModerator } = await import(
+  '~/server/services/user.service'
+);
 const { updateUserProfileHandler, addEntityToShowcaseHandler } = await import(
   '~/server/controllers/user-profile.controller'
 );
@@ -172,6 +183,30 @@ async function cardsAfter(write: () => Promise<unknown>) {
 }
 
 describe('creator-card bust in the profile and user write handlers', () => {
+  describe("a moderator's link removal", () => {
+    const remove = () =>
+      removeUserLinkAsModerator({
+        userId: OWNER,
+        linkId: 990300009,
+        actorId: MODERATOR,
+        archive: async () => undefined,
+      });
+    beforeEach(() => {
+      dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(null as never);
+      dbMock.dbWrite.userLink.findMany.mockResolvedValue([] as never);
+    });
+
+    it('busts the owner’s card when a link was removed', async () => {
+      dbMock.dbWrite.userLink.deleteMany.mockResolvedValue({ count: 1 } as never);
+      expect(await cardsAfter(remove)).toEqual({ owner: 'owner-after', moderator: 'mod-before' });
+    });
+
+    it('leaves the card alone when nothing was removed', async () => {
+      dbMock.dbWrite.userLink.deleteMany.mockResolvedValue({ count: 0 } as never);
+      expect(await cardsAfter(remove)).toEqual({ owner: 'owner-before', moderator: 'mod-before' });
+    });
+  });
+
   it('control: with no write, both cached cards are served', async () => {
     expect(await cardsAfter(async () => undefined)).toEqual({
       owner: 'owner-before',
@@ -254,6 +289,22 @@ describe('creator-card bust in the profile and user write handlers', () => {
         await expect(edit({ id: MODERATOR, isModerator: true })).rejects.toThrow();
         expect(mocks.updateUserProfile).not.toHaveBeenCalled();
         expect(modActivityRows()).toEqual([]);
+      });
+
+      it('archives before an edit of only the profile section settings', async () => {
+        await updateUserProfileHandler({
+          input: { userId: OWNER, profileSectionsSettings: [] },
+          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+        } as never);
+        expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
+      });
+
+      it('archives before an edit of only the showcase', async () => {
+        await updateUserProfileHandler({
+          input: { userId: OWNER, showcaseItems: [] },
+          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+        } as never);
+        expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
       });
 
       it('archives before an edit of only the civitai.com copies', async () => {
