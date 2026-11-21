@@ -6,8 +6,6 @@ import {
   impressionTelemetryOn,
   recordImpression,
 } from '~/components/TrackView/impressionBuffer';
-
-export { impressionTelemetryOn };
 import type { ImpressionEntityType, ImpressionSurface } from '~/server/schema/track.schema';
 
 export type ImpressionTarget = { entityType: ImpressionEntityType; entityId: number };
