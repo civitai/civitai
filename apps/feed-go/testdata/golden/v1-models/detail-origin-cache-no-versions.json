@@ -231,7 +231,8 @@
     }
   },
   "expect": {
-    "body": null,
-    "sql": null
+    "body": "{\"id\":5036,\"name\":\"Cached Without Versions\",\"modelVersions\":[]}",
+    "sql": null,
+    "trainingDataSql": null
   }
 }
