@@ -1943,6 +1943,16 @@ describe('a .com face going away', () => {
         workflowId: 'com-face-held-x',
       }),
     ]);
+    expect(mockNotifyHeld).toHaveBeenCalledTimes(1);
+  });
+
+  it('still tells the owner when a post-save step throws', async () => {
+    heldRow();
+    mockFinishApply.mockRejectedValueOnce(new Error('level refresh failed'));
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' }).catch(() => undefined);
+    expect(mockFinishApply).toHaveBeenCalled();
+    expect(mockNotifyHeld).toHaveBeenCalledTimes(1);
   });
 
   // The rescan is fire-and-forget: a submit that fails only logs. The save must not rely on it.
@@ -1954,6 +1964,7 @@ describe('a .com face going away', () => {
     expect(heldFlip()).toBeDefined();
     expect(mockFinishApply).toHaveBeenCalledWith(MODEL_ID);
     expect(mockNotifyHeld).toHaveBeenCalledWith([expect.objectContaining({ entityId: MODEL_ID })]);
+    expect(mockNotifyHeld).toHaveBeenCalledTimes(1);
   });
 
   it('does not try it when the face stays (control)', async () => {

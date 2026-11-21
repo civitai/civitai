@@ -192,8 +192,9 @@ async function removeComFace(
       });
     return updated > 0;
   });
-  if (removed) await finishRemoval(modelId);
+  // The notice first: a throw in what follows must not lose it, and a retry does not re-apply.
   if (notice) await faceLossNotice.send([notice]);
+  if (removed) await finishRemoval(modelId);
   return removed;
 }
 

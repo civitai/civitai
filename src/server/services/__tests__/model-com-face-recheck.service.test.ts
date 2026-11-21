@@ -307,6 +307,18 @@ describe('the .com face listing re-check', () => {
       expect(committedWhenSent).toBe(true);
     });
 
+    it('still tells the owner when the level refresh after the removal throws', async () => {
+      arrange({ fresh: [MODEL_ID] });
+      mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+      removal(1);
+      mockUpdateModelNsfwLevels.mockRejectedValueOnce(new Error('level refresh failed'));
+
+      await processComFaceRechecks(NOW).catch(() => undefined);
+
+      expect(mockUpdateModelNsfwLevels).toHaveBeenCalled();
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+
     it('sends nothing when the held verdict does not rate it', async () => {
       arrange({ fresh: [MODEL_ID] });
       mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
