@@ -16,7 +16,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Box, Group, Stack, Text } from '@mantine/core';
+import { Box, Divider, Group, Paper, Stack, Text } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { IconEyeOff } from '@tabler/icons-react';
 import type { KeyboardEvent } from 'react';
@@ -117,9 +117,9 @@ function SortablePin({ id, badge, position }: { id: number; badge: BadgeItem; po
 }
 
 // Owned badges as clickable tiles; clicking toggles a badge into the list.
-// - highlight: click order is the display order; selected tiles show a ring +
-//   the pin position. With two or more pins, a strip above the grid reorders
-//   them by drag (or keyboard: space to lift, arrows to move, space to drop).
+// - highlight: click order is the display order; selected tiles show a ring. With two or
+//   more pins, a strip above the grid shows the pin numbers and reorders them by drag
+//   (or keyboard: space to lift, arrows to move, space to drop).
 // - hide: selected tiles are dimmed with a red ring + eye-off marker (order is
 //   irrelevant).
 // Value is an array of cosmetic ids (ordered for highlight).
@@ -192,24 +192,27 @@ export function HighlightedBadgesInput({
   return (
     <Stack gap="sm">
       {pins.length > 1 && (
-        <div>
-          <Text size="xs" c="dimmed" mb={4}>
-            Drag to reorder your pins
-          </Text>
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext items={pins.map((pin) => pin.id)} strategy={rectSortingStrategy}>
-              <Group gap="xs" role="list" aria-label="Pin order">
-                {pins.map((pin, index) => (
-                  <SortablePin key={pin.id} id={pin.id} badge={pin.badge} position={index + 1} />
-                ))}
-              </Group>
-            </SortableContext>
-          </DndContext>
-        </div>
+        <>
+          <Paper withBorder radius="md" p="sm" className="bg-gray-0 dark:bg-dark-7">
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext items={pins.map((pin) => pin.id)} strategy={rectSortingStrategy}>
+                <Group gap="xs" role="list" aria-label="Pin order">
+                  {pins.map((pin, index) => (
+                    <SortablePin key={pin.id} id={pin.id} badge={pin.badge} position={index + 1} />
+                  ))}
+                </Group>
+              </SortableContext>
+            </DndContext>
+            <Text size="xs" c="dimmed" mt={6}>
+              Drag to reorder
+            </Text>
+          </Paper>
+          <Divider label="All badges" labelPosition="center" />
+        </>
       )}
       <Group gap="xs">
         {tiles.map(({ badge, ids }) => {
@@ -228,6 +231,7 @@ export function HighlightedBadgesInput({
               <Box
                 role="button"
                 aria-label={name}
+                aria-pressed={selected}
                 tabIndex={0}
                 onClick={() => toggle(ids)}
                 onKeyDown={(e: KeyboardEvent) => {
@@ -251,28 +255,25 @@ export function HighlightedBadgesInput({
                 }}
               >
                 <BadgeImage badge={badge} />
-                {selected &&
-                  (variant === 'hide' ? (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: -6,
-                        right: -6,
-                        width: 18,
-                        height: 18,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        borderRadius: '50%',
-                        color: 'white',
-                        background: 'var(--mantine-color-red-5)',
-                      }}
-                    >
-                      <IconEyeOff size={12} />
-                    </div>
-                  ) : (
-                    <PinNumber>{pins.findIndex((pin) => pin.badge === badge) + 1}</PinNumber>
-                  ))}
+                {selected && variant === 'hide' && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: -6,
+                      right: -6,
+                      width: 18,
+                      height: 18,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: '50%',
+                      color: 'white',
+                      background: 'var(--mantine-color-red-5)',
+                    }}
+                  >
+                    <IconEyeOff size={12} />
+                  </div>
+                )}
                 {hidden && (
                   <IconEyeOff
                     size={14}
