@@ -8,8 +8,8 @@
  * `resolveTs7` installs it from its own lockfile when it is missing.
  *
  * Two typechecks can start at once in a fresh worktree, so the install takes an exclusive lock
- * file and a second caller waits for the lock to be released, rather than installing over, or
- * running from, a half-written `node_modules`.
+ * file: a caller that finds TypeScript 7 missing waits for the lock instead of starting a second
+ * install over a half-written `node_modules`.
  */
 
 import { spawnSync } from 'node:child_process';
