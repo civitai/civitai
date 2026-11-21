@@ -57,6 +57,24 @@ describe('getAllImages on a statement timeout', () => {
     expect(rawQuery).toHaveBeenCalledTimes(1);
   });
 
+  // An empty page on the viewer's own reactions or own gallery reads as "you have none".
+  it.each([
+    ['their reactions', { reactions: ['Heart'] }],
+    ['their own gallery', { userId: 1 }],
+  ])('rethrows it on a page only the viewer sees: %s', async (_, extra) => {
+    rawQuery.mockRejectedValue(timeout());
+    await expect(getAllImages(request(extra))).rejects.toMatchObject({ code: '57014' });
+  });
+
+  // Controls: the same timeout on a page other viewers share is still an empty page.
+  it.each([
+    ["another creator's gallery", { userId: 2 }],
+    ['reactions signed out', { reactions: ['Heart'], user: undefined }],
+  ])('answers an empty page on a shared page: %s', async (_, extra) => {
+    rawQuery.mockRejectedValue(timeout());
+    expect(await getAllImages(request(extra))).toEqual({ items: [], nextCursor: undefined });
+  });
+
   it('[invariant on the pre-change code] still propagates a 57014 that is not a statement timeout', async () => {
     rawQuery.mockRejectedValue(
       Object.assign(new Error('canceling statement due to user request'), { code: '57014' })
