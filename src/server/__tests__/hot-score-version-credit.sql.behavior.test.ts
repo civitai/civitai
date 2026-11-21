@@ -24,29 +24,20 @@ const LATER = readdirSync(MIGRATIONS)
 const db = { pg: null as unknown as PGlite };
 
 /** A CALL whose procedure COMMITs must run as its own statement, outside a transaction block. */
-async function apply(dir: string, file = 'migration.sql') {
+async function apply(dir: string, file = 'migration.sql', pg = db.pg) {
   const sql = readFileSync(path.join(MIGRATIONS, dir, file), 'utf8');
   let chunk: string[] = [];
   for (const line of sql.split('\n')) {
     if (/^CALL /.test(line)) {
-      await db.pg.exec(chunk.join('\n'));
-      // Batches of 2, so the few candidates here still span more than one batch. PGlite has no
-      // replicas, so the lag watch, which refuses to run blind, is waived here.
-      await db.pg.exec(
-        line
-          .replace(
-            'rescore_hot_version_head_start()',
-            'rescore_hot_version_head_start(2, require_lag_watch => false)'
-          )
-          .replace(
-            'rescore_hot_version_head_start_rollback()',
-            'rescore_hot_version_head_start_rollback(require_lag_watch => false)'
-          )
+      await pg.exec(chunk.join('\n'));
+      // Batches of 2, so the few candidates here still span more than one batch.
+      await pg.exec(
+        line.replace('rescore_hot_version_head_start()', 'rescore_hot_version_head_start(2)')
       );
       chunk = [];
     } else chunk.push(line);
   }
-  await db.pg.exec(chunk.join('\n'));
+  await pg.exec(chunk.join('\n'));
 }
 
 const DAY = 86_400_000;
@@ -158,6 +149,9 @@ beforeAll(async () => {
       "hotScore" int, PRIMARY KEY ("modelId", "baseModel")
     );
   `);
+  // PGlite has no replicas: opt out of the lag watch the way an operator would. 'the rescore lag
+  // watch' below runs the files without this and expects them to refuse.
+  await db.pg.exec(`SET hot_rescore.lag_watch = off`);
   for (const dir of BASELINE) await apply(dir);
 
   // Scored by today's trigger, before the later migrations land: their backfill must reach it.
@@ -452,7 +446,22 @@ describe('the head-start rollback', () => {
     expect(await score(id)).toBeGreaterThan(term(30, at) + 1);
     expect(measured).toBe(await score(id));
 
+    // Raised, then made private: its versions go to Draft with publishedAt NULL, and nothing rewrites
+    // the ModelMetric row. The rollback must still reach it.
+    const madePrivate = await model(OLD, 3_000, [
+      { at: OLD, likes: 2_970 },
+      { at, likes: 30 },
+    ]);
+    const raised = await score(madePrivate);
+    await db.pg.query(
+      `UPDATE "ModelVersion" SET status = 'Draft', "publishedAt" = NULL WHERE "modelId" = $1`,
+      [madePrivate]
+    );
+    expect(await score(madePrivate)).toBe(raised);
+
     await apply('20271121120000_model_hot_score_version_head_start', 'rollback.sql');
+
+    expect(Math.abs((await score(madePrivate)) - modelTerm(3_000, OLD))).toBeLessThanOrEqual(1);
 
     const slices = await db.pg.query<{ baseModel: string; hotScore: number }>(
       `SELECT "baseModel", "hotScore" FROM "ModelBaseModelMetric" WHERE "modelId" = $1`,
@@ -461,27 +470,38 @@ describe('the head-start rollback', () => {
     expect(Math.abs((await score(id)) - term(30, at))).toBeLessThanOrEqual(1);
     for (const row of slices.rows) expect(row.hotScore).toBe(await score(id));
   });
+
+  it('can be re-run, which is how a stopped rollback resumes', async () => {
+    await expect(
+      apply('20271121120000_model_hot_score_version_head_start', 'rollback.sql')
+    ).resolves.toBeUndefined();
+  });
 });
 
 describe('the rescore lag watch', () => {
-  // Extracted from the migration so the guard is tested as written, on a database with no replicas.
-  const helper = readFileSync(
-    path.join(MIGRATIONS, '20271121120000_model_hot_score_version_head_start', 'migration.sql'),
-    'utf8'
-  ).match(
-    /CREATE OR REPLACE FUNCTION public\.hot_rescore_wait_for_replicas[\s\S]*?\$function\$;/
-  )?.[0];
+  const HEAD_START = '20271121120000_model_hot_score_version_head_start';
+  const functionExists = async (pg: PGlite, name: string) =>
+    (await pg.query(`SELECT 1 FROM pg_proc WHERE proname = $1`, [name])).rows.length > 0;
 
-  it('refuses to rescore when it cannot see replica lag, unless told to', async () => {
+  // Run as written, on a database with no replicas and no opt-out: each file must stop before it
+  // changes anything.
+  it('refuses to apply the migration, changing nothing, when it cannot see replica lag', async () => {
     const pg = new PGlite();
-    await pg.exec(helper ?? 'SELECT missing_helper()');
 
-    await expect(
-      pg.query(`SELECT public.hot_rescore_wait_for_replicas(1, '1 minute', true)`)
-    ).rejects.toThrow('no replica lag visible');
-    await expect(
-      pg.query(`SELECT public.hot_rescore_wait_for_replicas(1, '1 minute', false)`)
-    ).resolves.toBeDefined();
+    await expect(apply(HEAD_START, 'migration.sql', pg)).rejects.toThrow('no replica lag visible');
+    expect(await functionExists(pg, 'hot_version_score')).toBe(false);
+    await pg.close();
+  });
+
+  it('refuses to apply the rollback, changing nothing, when it cannot see replica lag', async () => {
+    const pg = new PGlite();
+    await pg.exec(
+      `CREATE FUNCTION public.hot_version_score() RETURNS int LANGUAGE sql AS 'SELECT 1'`
+    );
+
+    await expect(apply(HEAD_START, 'rollback.sql', pg)).rejects.toThrow('no replica lag visible');
+    expect(await functionExists(pg, 'hot_version_score')).toBe(true);
+    expect(await functionExists(pg, 'model_metric_hot_score')).toBe(false);
     await pg.close();
   });
 });
