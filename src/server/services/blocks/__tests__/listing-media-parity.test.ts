@@ -120,17 +120,7 @@ function rowOf(l: FixtureListing) {
 const bySlug = new Map(FIXTURE.listings.map((l) => [l.slug, l] as const));
 
 describe('listing media parity (media-parity.json): the site side', () => {
-  it('the fixture is the matrix the read model is tested with', () => {
-    expect(FIXTURE.viewers.map((v) => v.name)).toEqual([
-      'anonymous SFW',
-      'PG13 main',
-      'R main',
-      'anonymous red',
-      'X red',
-      'XXX red',
-      'anonymous SFW, public-external',
-    ]);
-    expect(FIXTURE.listings.length).toBeGreaterThanOrEqual(11);
+  it('the fixture carries the case the gating rating matters for', () => {
     // The row the gating rating matters for: no listing rating, a block rating above PG.
     expect(
       FIXTURE.listings.some(

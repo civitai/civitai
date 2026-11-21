@@ -224,6 +224,10 @@ exactly like a missing one.
   page. A read that races a generation switch is 503: each store read checks, after reading, that its
   generation still exists. A serving generation of an older row layout is 503 too, until the rebuild
   beside it switches over.
+- The gate and the filters run twice: on the rows a page is ranked from, and again on the rows its
+  cards are projected from, since the consumer keeps writing the serving generation between the two
+  reads. A listing re-rated or re-kinded in between is left out, so a page can be short by it; it is
+  never shown to a viewer it no longer admits.
 - `app_index_listings_requests_total{route, outcome}` counts them.
 
 The media rule is pinned on both sides by one fixture, `internal/listingread/testdata/media-parity.json`:

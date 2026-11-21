@@ -192,8 +192,10 @@ func (s *Server) listListings(ctx context.Context, w http.ResponseWriter, r *htt
 		return s.fail(w, "listing keys", err)
 	}
 	var page listingread.Page
+	userID := q.UserID
 	if slugs != nil {
 		page = listingread.BySlugs(keys, slugs, q.Kind, q.Category, v)
+		userID = nil
 	} else {
 		page = listingread.Rank(keys, q, v)
 	}
@@ -201,14 +203,19 @@ func (s *Server) listListings(ctx context.Context, w http.ResponseWriter, r *htt
 	if err != nil {
 		return s.fail(w, "listing page", err)
 	}
-	byURN := make(map[string]store.Listing, len(listings))
-	for _, l := range listings {
+	// The gate and the filters again, on the rows that are projected: the consumer keeps writing
+	// the serving generation, so a listing ranked above may have been re-rated or re-kinded since.
+	// Such a row is left out, and the page is short by it; it is never shown to a viewer the
+	// listing no longer admits.
+	admitted := listingread.Filter(listings, q.Kind, q.Category, userID, v)
+	byURN := make(map[string]store.Listing, len(admitted))
+	for _, l := range admitted {
 		byURN[l.URN] = l
 	}
 	res := listingsResponse{Items: []listingread.Card{}, NextCursor: page.NextCursor}
 	for _, urn := range page.URNs {
-		// A listing deleted between the two reads is left out, as the site's hydration drops an id
-		// with no row.
+		// A listing deleted between the two reads, or no longer admitted, is left out, as the site's
+		// hydration drops an id with no row.
 		l, ok := byURN[urn]
 		if !ok {
 			continue

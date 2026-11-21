@@ -37,7 +37,7 @@ const ViewerHeader = "X-App-Index-Viewer"
 
 // Bounds of a viewer token.
 const (
-	// MinViewerKeyLen is the shortest key accepted: 32 bytes, the HMAC-SHA256 block of security.
+	// MinViewerKeyLen is the shortest key accepted: 32 bytes, the size of an HMAC-SHA256 output.
 	MinViewerKeyLen = 32
 	// MaxViewerTTL is the longest a token may be valid for, from now. The web tier signs one per
 	// request, so this only bounds how long a token seen in transit stays usable.
