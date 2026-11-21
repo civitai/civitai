@@ -210,6 +210,11 @@ type SearchQueryRuleModActivity = {
   activity: 'dryRun';
 };
 
+type ProfanityListModActivity = {
+  entityType: 'profanityList';
+  activity: 'dryRun';
+};
+
 type PublishRequestHoldModActivity = {
   entityType: 'publishRequestHold';
   activity: 'publishRequestHoldOverride' | 'publishRequestHoldLateResuspend';
@@ -235,6 +240,7 @@ type ModActivity = {
 } & (
   | PublishRequestHoldModActivity
   | ServiceDealReviewModActivity
+  | ProfanityListModActivity
   | CsamReportModActivity
   | ModelModActivity
   | ModelVersionModActivity

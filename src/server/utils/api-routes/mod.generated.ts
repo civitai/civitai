@@ -109,6 +109,7 @@ export const routes: ApiRoutes = {
   'poi-flag/flag-match': () => import('~/server/api-routes/mod/poi-flag/flag-match'),
   'poi-flag/revert': () => import('~/server/api-routes/mod/poi-flag/revert'),
   'post-text/moderate': () => import('~/server/api-routes/mod/post-text/moderate'),
+  'profanity-dry-run': () => import('~/server/api-routes/mod/profanity-dry-run'),
   'queue-model-metric-update': () => import('~/server/api-routes/mod/queue-model-metric-update'),
   'reconcile-nowpayments': () => import('~/server/api-routes/mod/reconcile-nowpayments'),
   'remove-all-content': () => import('~/server/api-routes/mod/remove-all-content'),
