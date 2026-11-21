@@ -1358,3 +1358,44 @@ describe('ModelVersionUpsertForm — a staff-set percent-of-compute fee', () => 
     );
   });
 });
+
+// A staff-locked fee is a rate agreed with Civitai: the owner sees it but has no control that changes or
+// clears it (the server refuses one anyway). A moderator still edits it.
+describe('ModelVersionUpsertForm — a staff-locked licence fee', () => {
+  const lockedVersion = {
+    ...(chargingVersion as object),
+    licensingFee: 0.25,
+    licensingFeeSettlementCurrency: 'Cash',
+    licensingFeeLocked: true,
+    paidAccess: null,
+  } as unknown as React.ComponentProps<typeof ModelVersionUpsertForm>['version'];
+
+  const renderLocked = () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm model={model} version={lockedVersion} onSubmit={vi.fn()}>
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+  };
+
+  test('shows the owner the rate read-only, with no control that changes or clears it', async () => {
+    renderLocked();
+
+    await expect.element(page.getByTestId('locked-licensing-fee')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('5 Buzz per 20 generations', { exact: true }))
+      .toBeInTheDocument();
+    expect(feeInput().elements()).toHaveLength(0);
+    await expect.element(feeSwitch()).toBeDisabled();
+    await expect.element(chargeSwitch()).toBeDisabled();
+  });
+
+  test('a moderator gets the ordinary editor (control)', async () => {
+    currentUser.value = { id: 1, tier: 'free', isModerator: true, meta: {} };
+    renderLocked();
+
+    await expect.element(feeInput()).toBeInTheDocument();
+    expect(page.getByTestId('locked-licensing-fee').elements()).toHaveLength(0);
+  });
+});

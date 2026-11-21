@@ -1371,6 +1371,8 @@ model ModelVersion {
   // fee alone is what the licensor is owed. Ours, never paid out. Staff set and clear it by hand; it is
   // read only while the type is PercentOfCompute, so clearing the fee leaves it inert.
   licensingFeeMarkup             Decimal?                        @db.Decimal(5, 2)
+  // Staff set it by hand: while true only a moderator may change the fee, its type or its currency.
+  licensingFeeLocked             Boolean                         @default(false)
 
   // Licensing lineage: the root version whose fee this version inherits (e.g. a
   // checkpoint built on Anima-Turbo points at the turbo version). Null means NO
