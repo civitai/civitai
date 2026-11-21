@@ -730,8 +730,8 @@ func TestAssocExplicitCoverage(t *testing.T) {
 // isBaseModelGenerationDisabled is `.some` over the base model's generation overrides, while
 // isGenerationEligible reads the first override only: with two overrides on one base model, the first
 // enabled and a later one disabled, the base model is generation-supported (its first override) and
-// still generation-disabled. basemodels.json holds no such model today, so the table entry is set
-// here: a supported, covered SDXL checkpoint then does not generate.
+// still generation-disabled. The table entry is set here, independent of basemodels.json: a
+// supported, covered SDXL checkpoint then does not generate.
 func TestAssocGenerationDisabledOverride(t *testing.T) {
 	it := &feedItem{row: &modelRow{ID: 5001, UserID: 1001, Type: "Checkpoint"}, versionID: 6001,
 		version: map[string]any{"id": int64(6001), "baseModel": "SDXL 1.0", "status": "Published", "availability": "Public",
