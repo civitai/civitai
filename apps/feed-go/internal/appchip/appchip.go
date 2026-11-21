@@ -95,7 +95,7 @@ type Input struct {
 
 // Int4 is isPgInt4 (src/server/db/prisma-sql-kysely.ts): an integer an int4 column can hold.
 func (in *Input) Int4() (int32, bool) {
-	if in.ID != math.Trunc(in.ID) || in.ID < math.MinInt32 || in.ID > math.MaxInt32 {
+	if in.ID < math.MinInt32 || in.ID > math.MaxInt32 {
 		return 0, false
 	}
 	return int32(in.ID), true
