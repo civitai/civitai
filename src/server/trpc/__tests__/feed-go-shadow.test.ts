@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createFeedGoShadow,
   feedGoV1ShapeClass,
+  FEED_GO_SHADOW_IMAGE_PUBLISHED_APP_PATH,
   FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH,
   FEED_GO_SHADOW_MODEL_GET_ALL_PATH,
   FEED_GO_SHADOW_PATH,
@@ -33,6 +34,7 @@ const PROBE_URL = 'http://feed-go.test:9090/internal/probe/image.getImagesAsPost
 const INF_URL = 'http://feed-go.test:9090/internal/shadow/image.getInfinite';
 const MODELS_URL = 'http://feed-go.test:9090/internal/shadow/model.getAll';
 const ASSOC_URL = 'http://feed-go.test:9090/internal/shadow/model.getAssociatedResourcesCardData';
+const PUBAPP_URL = 'http://feed-go.test:9090/internal/shadow/image.getPublishedWithApp';
 const V1_MODELS_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/models';
 const V1_MODEL_ID_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/models/id';
 const INPUT = '{"json":{"modelId":7,"limit":50},"meta":{"values":{"cursor":["undefined"]}}}';
@@ -44,6 +46,7 @@ function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig
     infiniteUrl: INF_URL,
     modelGetAllUrl: MODELS_URL,
     modelAssociatedUrl: ASSOC_URL,
+    imagePublishedAppUrl: PUBAPP_URL,
     v1ModelsUrl: V1_MODELS_URL,
     v1ModelsIdUrl: V1_MODEL_ID_URL,
     rate: 1,
@@ -84,6 +87,8 @@ function harness(
     models?: boolean;
     /** The `feed-go-shadow-model-associated` flag (default OFF here, as in production). */
     associated?: boolean;
+    /** The `feed-go-shadow-image-published-app` flag (default OFF here, as in production). */
+    publishedApp?: boolean;
     /** The `feed-go-shadow-v1-models` flag (default on here, as `v1` is). */
     v1Models?: boolean;
     random?: number;
@@ -105,6 +110,7 @@ function harness(
     enabledInfinite: () => opts.infinite ?? false,
     enabledModelGetAll: () => opts.models ?? false,
     enabledModelAssociated: () => opts.associated ?? false,
+    enabledImagePublishedApp: () => opts.publishedApp ?? false,
     enabledV1Models: () => opts.v1Models ?? true,
     random: () => opts.random ?? 0,
     fetch: fetchMock as unknown as typeof fetch,
@@ -155,6 +161,7 @@ describe('readFeedGoShadowConfig', () => {
       infiniteUrl: undefined,
       modelGetAllUrl: undefined,
       modelAssociatedUrl: undefined,
+      imagePublishedAppUrl: undefined,
       v1ModelsUrl: undefined,
       v1ModelsIdUrl: undefined,
       rate: 0,
@@ -184,6 +191,8 @@ describe('readFeedGoShadowConfig', () => {
       modelGetAllUrl: 'http://feed-go.internal.test:9090/internal/shadow/model.getAll',
       modelAssociatedUrl:
         'http://feed-go.internal.test:9090/internal/shadow/model.getAssociatedResourcesCardData',
+      imagePublishedAppUrl:
+        'http://feed-go.internal.test:9090/internal/shadow/image.getPublishedWithApp',
       v1ModelsUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/models',
       v1ModelsIdUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/models/id',
       rate: 0.25,
@@ -211,6 +220,7 @@ describe('readFeedGoShadowConfig', () => {
     expect(c.infiniteUrl).toBeUndefined();
     expect(c.modelGetAllUrl).toBeUndefined();
     expect(c.modelAssociatedUrl).toBeUndefined();
+    expect(c.imagePublishedAppUrl).toBeUndefined();
     expect(c.v1ModelsUrl).toBeUndefined();
     expect(c.v1ModelsIdUrl).toBeUndefined();
     expect(c.rate).toBe(1);
@@ -433,6 +443,23 @@ describe('createFeedGoShadow — sampling decision', () => {
       }),
     ],
     [
+      'image.getPublishedWithApp, its flag off',
+      { associated: true },
+      request({ query: { trpc: 'image.getPublishedWithApp', input: '{"json":{"id":7}}' } }),
+    ],
+    [
+      'image.getPublishedWithApp with no URL',
+      { publishedApp: true, config: { imagePublishedAppUrl: undefined } },
+      request({ query: { trpc: 'image.getPublishedWithApp', input: '{"json":{"id":7}}' } }),
+    ],
+    [
+      'image.getPublishedWithApp batched (a signed-in browser with tRPC batching on)',
+      { publishedApp: true },
+      request({
+        query: { trpc: 'image.getPublishedWithApp', batch: '1', input: '{"0":{"json":{"id":7}}}' },
+      }),
+    ],
+    [
       'an unmirrored procedure',
       { infinite: true },
       request({ query: { trpc: 'image.get', input: INPUT } }),
@@ -513,6 +540,56 @@ describe('createFeedGoShadow — sampling decision', () => {
     expect(harness({ models: true }).shadow.begin(assoc)).toBeUndefined();
     expect(harness({ associated: true }).shadow.begin(getAll)).toBeUndefined();
     expect(harness({ associated: true }).shadow.begin(assoc)?.endpoint).toBe('model-associated');
+  });
+
+  it('samples image.getPublishedWithApp under its own flag and posts it to its own path', async () => {
+    const h = harness({ publishedApp: true, enabled: false });
+    const input = '{"json":{"id":8101}}';
+    // The procedure's usual answer: no chip.
+    const written = superjson.serialize(null);
+    const sample = serve(h, request({ query: { trpc: 'image.getPublishedWithApp', input } }), {
+      data: null,
+      written,
+    });
+    expect(sample?.endpoint).toBe('image-published-app');
+    await h.flush();
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = h.fetchMock.mock.calls[0];
+    expect(url).toBe(PUBAPP_URL);
+    expect(url.endsWith(FEED_GO_SHADOW_IMAGE_PUBLISHED_APP_PATH)).toBe(true);
+    expect(JSON.parse(init.body as string)).toEqual({
+      input,
+      headers: { host: 'civitai.com' },
+      node: { json: null },
+    });
+    expect(h.outcomes).toEqual(['sent']);
+    expect(h.endpoints).toEqual(['image-published-app']);
+  });
+
+  // A devalue answer of null is captured as the value (not a missing capture) and re-encoded as
+  // superjson for the comparison.
+  it('sends a devalue-written null answer as the superjson envelope of null', async () => {
+    const h = harness({ publishedApp: true, enabled: false });
+    serve(
+      h,
+      request({ query: { trpc: 'image.getPublishedWithApp', input: '{"json":{"id":8101}}' } }),
+      { data: null, written: '[null]', devalue: true }
+    );
+    await h.flush();
+    expect(h.outcomes).toEqual(['sent']);
+    expect(JSON.parse(h.fetchMock.mock.calls[0][1].body as string).node).toEqual({ json: null });
+  });
+
+  it('the model-associated flag does not sample image.getPublishedWithApp, nor its flag another procedure', () => {
+    const pub = request({
+      query: { trpc: 'image.getPublishedWithApp', input: '{"json":{"id":7}}' },
+    });
+    const assoc = request({
+      query: { trpc: 'model.getAssociatedResourcesCardData', input: INPUT },
+    });
+    expect(harness({ associated: true }).shadow.begin(pub)).toBeUndefined();
+    expect(harness({ publishedApp: true }).shadow.begin(assoc)).toBeUndefined();
+    expect(harness({ publishedApp: true }).shadow.begin(pub)?.endpoint).toBe('image-published-app');
   });
 
   it('samples a fraction: random below the rate is sampled, at the rate is not', () => {

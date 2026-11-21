@@ -118,6 +118,28 @@ TZ=UTC node --import tsx apps/feed-go/testdata/golden/gen-assoc.mjs   # model-as
 
 Raise `assocGoldenMin` with the count.
 
+## image-published-app
+
+`gen-published-app.mjs` writes them (image.getPublishedWithApp, DESIGN.md §18), and Node's devalue
+body for each fixture feed-go serves in `devalue/image-published-app/`. It runs the REAL Node
+functions for every pure step (`getByIdSchema`, `isPgInt4`, the marker key, the whole chip decision
+`resolveAppChip` with `readAppIdMarker`, `superjson`, `devalue`) and transcribes the orchestration of
+`readImageAppChip` / `readAppChip`: the viewer's store scope and whether the image and its media are
+visible to the viewer are recorded as the world's facts, with the rule that decided each in `why`.
+Its own format: `request` (the raw input, the viewer or a banned session, the host), `world` (the
+scope, the image with its full `metadata`, the app rows, the hidden listing ids), `binds` (the image
+id Node's reads bind, null when `isPgInt4` refuses it), `expect` (Node's `envelope`, or `status: 400`)
+and `go` (`served` with the viewer class, or the named `fallback`; the generator refuses a served
+fixture whose Node answer is not `null`). `internal/server/published_app_golden_test.go` runs each
+through `computePublishedApp` over a fake replica that answers `metadata -> 'blockPublishedAppId'` as
+Postgres does, requires the read and its bind, and the envelope byte for byte.
+
+```bash
+TZ=UTC node --import tsx apps/feed-go/testdata/golden/gen-published-app.mjs   # image-published-app/
+```
+
+Raise `pubAppGoldenMin` with the count.
+
 ## v1-models
 
 `gen-v1-models.mjs` writes each fixture's request and `world` (the model statement's rows, every cache

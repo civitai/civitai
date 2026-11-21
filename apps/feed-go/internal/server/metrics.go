@@ -7,6 +7,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/appchip"
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
@@ -31,7 +32,7 @@ type Metrics struct {
 	ShadowDropped *prometheus.CounterVec   // endpoint
 
 	// ShadowViewer counts the body comparison results of the endpoints whose answer reports a viewer
-	// class (model-associated: modelfeed.ViewerClasses), so a serve gate can require samples per class
+	// class (model-associated: modelfeed.ViewerClasses; image-published-app: appchip.ViewerClasses), so a serve gate can require samples per class
 	// (endpoint, viewer, result: ShadowResults' values). Seeded for each class's match result.
 	ShadowViewer *prometheus.CounterVec
 
@@ -304,6 +305,9 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}
 	for _, v := range modelfeed.ViewerClasses {
 		m.ShadowViewer.WithLabelValues(EndpointAssociated, v, "match")
+	}
+	for _, v := range appchip.ViewerClasses {
+		m.ShadowViewer.WithLabelValues(EndpointPublishedApp, v, "match")
 	}
 	reg.MustRegister(m.ShadowViewer)
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowResponse, m.ShadowDropped,

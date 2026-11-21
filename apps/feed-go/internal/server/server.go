@@ -21,6 +21,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/apipolicy"
+	"github.com/civitai/civitai/apps/feed-go/internal/appchip"
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
@@ -59,7 +60,7 @@ const (
 )
 
 // Endpoints is every feed_endpoint value, in a fixed order (the seeded series are per endpoint).
-var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID, EndpointAssociated}
+var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID, EndpointAssociated, EndpointPublishedApp}
 
 // V1ImagesPath is the REST route the v1-images shadow describes.
 const V1ImagesPath = "/api/v1/images"
@@ -163,6 +164,9 @@ type Server struct {
 	// Associated serves the `model.getAssociatedResourcesCardData` shadow (associated.go); nil = every
 	// such sample falls back.
 	Associated *modelfeed.AssocDeps
+	// PublishedApp serves the `image.getPublishedWithApp` shadow (published_app.go); nil = every such
+	// sample falls back.
+	PublishedApp *appchip.Deps
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
 	// MaxInFlight caps the public requests this pod computes at once (ResolveMaxInFlight; 0 =
@@ -207,6 +211,8 @@ type Server struct {
 	computeV1ModelsFn func(context.Context, *http.Request) (*computed, error)
 	// computeAssociatedFn replaces computeAssociated (tests only).
 	computeAssociatedFn func(context.Context, *http.Request) (*computed, error)
+	// computePublishedAppFn replaces computePublishedApp (tests only).
+	computePublishedAppFn func(context.Context, *http.Request) (*computed, error)
 }
 
 // phaseClock is the start of one shadow phase.
@@ -274,7 +280,7 @@ type computed struct {
 	// answers that did the work.
 	trivial bool
 	// viewerClass is the sample's viewer class when the endpoint reports one (model-associated:
-	// modelfeed.ViewerClasses); "" = not reported. The comparison result is also counted under it.
+	// modelfeed.ViewerClasses; image-published-app: appchip.ViewerClasses); "" = not reported. The comparison result is also counted under it.
 	viewerClass string
 	// cached: the answer is a cached response body read as Node read it (v1models.Answer.Cached), no
 	// build. Recorded as outcome served_cached and result match_cached, apart for the same reason.
@@ -1129,6 +1135,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		build, computeFn, compareFn, classify = b, c, shadow.CompareJSON, cl
 	}
 	if b, c, cl, ok := s.associatedRoute(endpoint); ok {
+		build, computeFn, classify = b, c, cl
+	}
+	if b, c, cl, ok := s.publishedAppRoute(endpoint); ok {
 		build, computeFn, classify = b, c, cl
 	}
 	span := trace.SpanFromContext(ctx)

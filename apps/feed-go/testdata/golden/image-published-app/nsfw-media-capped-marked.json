@@ -1,0 +1,58 @@
+{
+  "name": "nsfw-media-capped-marked",
+  "request": {
+    "input": "{\"json\":{\"id\":8101}}",
+    "viewer": null,
+    "banned": null,
+    "host": "civitai.example"
+  },
+  "world": {
+    "storeScope": "full",
+    "image": {
+      "id": 8101,
+      "userId": 1001,
+      "metadata": {
+        "blockPublishedAppId": "appblk-sketchpad",
+        "width": 832,
+        "height": 1216
+      },
+      "visible": true,
+      "mediaVisible": false,
+      "why": "an R image on a domain capped to PG (canViewImageMedia): no media"
+    },
+    "apps": {
+      "appblk-sketchpad": {
+        "name": "Sketchpad",
+        "appBlocks": [
+          {
+            "status": "approved",
+            "currentVersionDeployedAt": "2026-06-01T00:00:00.000Z",
+            "appListing": {
+              "id": "lst_sketchpad",
+              "slug": "sketchpad",
+              "name": "Sketchpad",
+              "status": "approved",
+              "kind": "onsite",
+              "contentRating": "pg",
+              "revisionOfId": null,
+              "icon": null
+            }
+          }
+        ],
+        "connectListings": []
+      }
+    },
+    "hiddenListingIds": []
+  },
+  "binds": {
+    "imageId": 8101
+  },
+  "expect": {
+    "envelope": {
+      "json": null
+    }
+  },
+  "go": {
+    "fallback": "published-app-marked"
+  }
+}

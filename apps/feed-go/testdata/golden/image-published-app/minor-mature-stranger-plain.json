@@ -1,0 +1,40 @@
+{
+  "name": "minor-mature-stranger-plain",
+  "request": {
+    "input": "{\"json\":{\"id\":8101}}",
+    "viewer": {
+      "id": 1002,
+      "isModerator": false
+    },
+    "banned": null,
+    "host": "civitai.example"
+  },
+  "world": {
+    "storeScope": "full",
+    "image": {
+      "id": 8101,
+      "userId": 1001,
+      "metadata": {
+        "width": 832,
+        "height": 1216
+      },
+      "visible": false,
+      "mediaVisible": true,
+      "why": "minor + mature: minorMatureImageVisibleSql hides it from anyone but its owner"
+    },
+    "apps": {},
+    "hiddenListingIds": []
+  },
+  "binds": {
+    "imageId": 8101
+  },
+  "expect": {
+    "envelope": {
+      "json": null
+    }
+  },
+  "go": {
+    "served": true,
+    "viewerClass": "user"
+  }
+}

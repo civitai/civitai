@@ -26,6 +26,7 @@ scripts touch it; its CI is `.github/workflows/feed-go.yml`.
 |                                   | `POST /internal/shadow/api/v1/images`                  | shadow comparison of the REST endpoint (DESIGN.md §13); never served publicly                                                                   |
 |                                   | `POST /internal/shadow/image.getInfinite`              | shadow comparison of `image.getInfinite` (DESIGN.md §14)                                                                                        |
 |                                   | `POST /internal/shadow/model.getAll`                   | shadow comparison of `model.getAll` (DESIGN.md §15)                                                                                             |
+|                                   | `POST /internal/shadow/image.getPublishedWithApp`      | shadow comparison of `image.getPublishedWithApp` (DESIGN.md §18); never served publicly                                                         |
 |                                   | `GET /debug/pprof/…`                                   | `net/http/pprof`, only with `FEED_GO_PPROF=true` (default off; DESIGN.md §10.2)                                                                 |
 
 Every answer on the public tRPC routes carries `X-Feed-Go-Served`: `go` when this service computed it

@@ -25,6 +25,7 @@ function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig
     modelGetAllUrl: 'http://feed-go.test:9090/internal/shadow/model.getAll',
     modelAssociatedUrl:
       'http://feed-go.test:9090/internal/shadow/model.getAssociatedResourcesCardData',
+    imagePublishedAppUrl: 'http://feed-go.test:9090/internal/shadow/image.getPublishedWithApp',
     v1ModelsUrl: 'http://feed-go.test:9090/internal/shadow/api/v1/models',
     v1ModelsIdUrl: 'http://feed-go.test:9090/internal/shadow/api/v1/models/id',
     rate: 1,
@@ -75,6 +76,7 @@ function harness(
     enabledInfinite: () => true,
     enabledModelGetAll: () => true,
     enabledModelAssociated: () => true,
+    enabledImagePublishedApp: () => true,
     enabledProbe: () => opts.probe ?? true,
     random: opts.random ?? (() => 0),
     fetch: fetchMock as unknown as typeof fetch,
@@ -252,6 +254,19 @@ describe('the Go-first probe', () => {
       request({ query: { trpc: 'model.getAssociatedResourcesCardData', input: INPUT } })
     );
     expect(sample?.endpoint).toBe('model-associated');
+    h.shadow.probe(sample);
+    await h.settle();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.probeOutcomes).toEqual([]);
+  });
+
+  // Nor for image.getPublishedWithApp: no probe exists for it in feed-go.
+  it('never probes an image.getPublishedWithApp sample', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(
+      request({ query: { trpc: 'image.getPublishedWithApp', input: '{"json":{"id":7}}' } })
+    );
+    expect(sample?.endpoint).toBe('image-published-app');
     h.shadow.probe(sample);
     await h.settle();
     expect(h.fetchMock).not.toHaveBeenCalled();

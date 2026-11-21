@@ -1,0 +1,40 @@
+{
+  "name": "no-such-image",
+  "request": {
+    "input": "{\"json\":{\"id\":8199}}",
+    "viewer": {
+      "id": 1002,
+      "isModerator": false
+    },
+    "banned": null,
+    "host": "civitai.example"
+  },
+  "world": {
+    "storeScope": "full",
+    "image": {
+      "id": 8101,
+      "userId": 1001,
+      "metadata": {
+        "width": 832,
+        "height": 1216
+      },
+      "visible": true,
+      "mediaVisible": true,
+      "why": "a published image every viewer may open, rated within the domain cap"
+    },
+    "apps": {},
+    "hiddenListingIds": []
+  },
+  "binds": {
+    "imageId": 8199
+  },
+  "expect": {
+    "envelope": {
+      "json": null
+    }
+  },
+  "go": {
+    "served": true,
+    "viewerClass": "user"
+  }
+}

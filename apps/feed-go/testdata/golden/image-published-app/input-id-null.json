@@ -1,0 +1,32 @@
+{
+  "name": "input-id-null",
+  "request": {
+    "input": "{\"json\":{\"id\":null}}",
+    "viewer": null,
+    "banned": null,
+    "host": "civitai.example"
+  },
+  "world": {
+    "storeScope": "none",
+    "image": {
+      "id": 8101,
+      "userId": 1001,
+      "metadata": {
+        "width": 832,
+        "height": 1216
+      },
+      "visible": true,
+      "mediaVisible": true,
+      "why": "a published image every viewer may open, rated within the domain cap"
+    },
+    "apps": {},
+    "hiddenListingIds": []
+  },
+  "binds": null,
+  "expect": {
+    "status": 400
+  },
+  "go": {
+    "fallback": "input-invalid"
+  }
+}

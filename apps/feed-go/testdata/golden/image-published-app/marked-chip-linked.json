@@ -1,0 +1,65 @@
+{
+  "name": "marked-chip-linked",
+  "request": {
+    "input": "{\"json\":{\"id\":8101}}",
+    "viewer": {
+      "id": 1002,
+      "isModerator": false
+    },
+    "banned": null,
+    "host": "civitai.example"
+  },
+  "world": {
+    "storeScope": "full",
+    "image": {
+      "id": 8101,
+      "userId": 1001,
+      "metadata": {
+        "blockPublishedAppId": "appblk-sketchpad",
+        "width": 832,
+        "height": 1216
+      },
+      "visible": true,
+      "mediaVisible": true,
+      "why": "a published image every viewer may open, rated within the domain cap"
+    },
+    "apps": {
+      "appblk-sketchpad": {
+        "name": "Sketchpad",
+        "appBlocks": [
+          {
+            "status": "approved",
+            "currentVersionDeployedAt": "2026-06-01T00:00:00.000Z",
+            "appListing": {
+              "id": "lst_sketchpad",
+              "slug": "sketchpad",
+              "name": "Sketchpad",
+              "status": "approved",
+              "kind": "onsite",
+              "contentRating": "pg",
+              "revisionOfId": null,
+              "icon": null
+            }
+          }
+        ],
+        "connectListings": []
+      }
+    },
+    "hiddenListingIds": []
+  },
+  "binds": {
+    "imageId": 8101
+  },
+  "expect": {
+    "envelope": {
+      "json": {
+        "slug": "sketchpad",
+        "name": "Sketchpad",
+        "iconUrl": null
+      }
+    }
+  },
+  "go": {
+    "fallback": "published-app-marked"
+  }
+}

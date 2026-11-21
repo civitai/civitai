@@ -51,6 +51,8 @@ var minorRuleSites = map[string]minorRuleSite{
 		"getPostImageCounts: an upper bound before any visibility filter, as Node counts"},
 	"internal/modelfeed/assoc_images.go": {2, 0, 1,
 		"getImagesForModelVersion for model.getAssociatedResourcesCardData's cards, with minorMatureImageVisibleSql({ userId, isModerator })"},
+	"internal/appchip/appchip.go": {1, 0, 0,
+		"image.getPublishedWithApp's marker read: serves only the null every viewer gets (no marker or no image); a marked image falls back, so Node's visibility check, minor content rule included, decides every other answer"},
 	"internal/modelfeed/serve.go": {1, 0, 0,
 		"getCoverImages' locate step (post, version, model of a cover id); the cover itself is read from the showcase cache"},
 	"internal/hydrate/meta.go": {1, 0, 0,
