@@ -295,11 +295,18 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     const caller = await authenticatedConfidentialClient(request, body);
     if (!caller) return refuseUnauthenticated('invalid_client', 'client authentication failed');
     ctx.caller = caller.id;
+    // The caller's own `token-exchange` limit, right after authentication as in the user exchange, and
+    // before any refusal it could repeat. Past it the answer is a 429 with NO audit event (the user exchange
+    // audits it), so no authenticated client, listed or not, can drive the audit log's volume.
+    if (!(await checkTokenExchangeRateLimit(caller.id, caller.tokenRateLimit))) {
+      return rateLimitedResponse(
+        oauthRetryAfter('token-exchange'),
+        new Headers(NO_STORE),
+        DESCRIPTION.rate_limited
+      );
+    }
     if (!allow.callers.has(caller.id)) {
       return refuse('unauthorized_client', 'caller not allowlisted');
-    }
-    if (!(await checkTokenExchangeRateLimit(caller.id, caller.tokenRateLimit))) {
-      return refuse('rate_limited', 'client limit');
     }
     if (caller.accessMode === 'disabled') return refuse('unauthorized_client', 'caller disabled');
 

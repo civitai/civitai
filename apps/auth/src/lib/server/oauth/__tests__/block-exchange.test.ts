@@ -43,6 +43,7 @@ const h = await vi.hoisted(async () => {
     forger,
     siteKid: kidOf(site.publicKey),
     forgerKid: kidOf(forger.publicKey),
+    hubPublicKey: hub.publicKey,
     tables: {} as Record<string, Record<string, unknown>[]>,
     cache: new Map<string, string>(),
     sys: new Map<string, { value: string; ex: number }>(),
@@ -169,6 +170,7 @@ import {
 import { TokenScope } from '@civitai/auth/token-scope';
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { POST as tokenPOST } from '../../../../routes/api/auth/oauth/token/+server';
+import { POST as introspectPOST } from '../../../../routes/api/auth/oauth/introspect/+server';
 import { GET as jwksGET } from '../../../../routes/.well-known/jwks.json/+server';
 import { WorkerTokenExchangeGrant } from '../worker-grant';
 import { invalidateRoleCache } from '../access';
@@ -180,6 +182,7 @@ const RESOURCE = 'https://apps.registry.test';
 const APP = 'appblk-notes';
 const RELAY = 'relay-app-data';
 const OTHER_RELAY = 'relay-other';
+const INTROSPECTOR = 'origin-introspector';
 const SECRET = 'client-secret-value';
 const USER_ID = 42;
 const BLOCK_TOKEN_TYPE = 'urn:civitai:token-type:block-token';
@@ -377,6 +380,40 @@ describe('block token exchange — the caller', () => {
     expect(lastReason()).toBe('client authentication failed');
   });
 
+  it('rate-limits an authenticated caller before the allowlist: past it, 429 with no audit event', async () => {
+    // A staff-set limit of 3 (honoured for a system-owned client) instead of the default 600.
+    const other = h.tables.OauthClient.find((c) => c.id === OTHER_RELAY)!;
+    other.userId = -1;
+    other.tokenRateLimit = 3;
+    const token = await blockToken();
+    for (let i = 0; i < 3; i++) {
+      expect((await exchange(token, { caller: OTHER_RELAY })).status).toBe(400);
+      expect(lastReason()).toBe('caller not allowlisted');
+    }
+    const res = await exchange(token, { caller: OTHER_RELAY });
+    expect(res.status).toBe(429);
+    expect(res.body.error).toBe('rate_limited');
+    expect(refusals()).toHaveLength(3);
+  });
+
+  it('refuses a disabled caller', async () => {
+    h.tables.OauthClient.find((c) => c.id === RELAY)!.accessMode = 'disabled';
+    const res = await exchange(await blockToken());
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('unauthorized_client');
+    expect(lastReason()).toBe('caller disabled');
+    expect(issued()).toEqual([]);
+  });
+
+  it('refuses a resource that may not receive AppDataRead', async () => {
+    process.env.OAUTH_EXCHANGE_RESOURCES = registry({ scopes: ['AppsRead'] });
+    const res = await exchange(await blockToken());
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_target');
+    expect(lastReason()).toBe('resource does not receive AppDataRead');
+    expect(issued()).toEqual([]);
+  });
+
   it('refuses an allowlisted caller that is not a relay of the resource', async () => {
     process.env.OAUTH_EXCHANGE_RESOURCES = registry({ relays: [OTHER_RELAY] });
     const res = await exchange(await blockToken());
@@ -546,6 +583,36 @@ describe('block token exchange — the block token', () => {
     expect(lastReason()).toBe('block token anonymous');
   });
 
+  it('refuses a review run-for-real token', async () => {
+    const res = await exchange(await blockToken({ reviewRunForReal: true }));
+    expect(res.status).toBe(400);
+    expect(lastReason()).toBe('block token review token');
+    expect(issued()).toEqual([]);
+  });
+
+  it('refuses a block token that is past its exp but inside the verifier skew', async () => {
+    // jose accepts it (30 s clock tolerance); the exchange would mint a token already expired.
+    const res = await exchange(await blockToken({ iat: NOW - 600, exp: NOW - 10 }));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
+    expect(lastReason()).toBe('block token expiring');
+    expect(issued()).toEqual([]);
+  });
+
+  it('refuses every token when the public-key variable holds a non-RSA (EC) public key', async () => {
+    process.env.BLOCK_TOKEN_PUBLIC_KEY = h.hubPublicKey;
+    const res = await exchange(await blockToken());
+    expect(res.status).toBe(500);
+    expect(lastReason()).toBe('block token keys misconfigured');
+    expect(h.logs.filter((l) => l.name === 'block-token-public-key-invalid')).toEqual([
+      {
+        type: 'error',
+        name: 'block-token-public-key-invalid',
+        message: 'BLOCK_TOKEN_PUBLIC_KEY is not an RSA public key',
+      },
+    ]);
+  });
+
   it('refuses dev and private-run tokens', async () => {
     await exchange(await blockToken({ dev: true }));
     expect(lastReason()).toBe('block token dev token');
@@ -664,6 +731,15 @@ describe('block token exchange — the app and the viewer', () => {
     expect(lastReason()).toBe('app disabled');
   });
 
+  it('refuses a workload account', async () => {
+    h.tables.UserRole = [{ userId: USER_ID, role: 'system:workload' }];
+    const res = await exchange(await blockToken());
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
+    expect(lastReason()).toBe('workload account');
+    expect(issued()).toEqual([]);
+  });
+
   it('refuses a banned viewer', async () => {
     h.tables.User[0].bannedAt = new Date(NOW * 1000);
     const res = await exchange(await blockToken());
@@ -683,6 +759,40 @@ describe('block token exchange — the app and the viewer', () => {
     h.tables.app_blocks[0].status = 'suspended';
     h.tables.app_blocks.push({ id: 'apb_02notes', app_id: APP, status: 'approved' });
     expect((await exchange(await blockToken())).status).toBe(200);
+  });
+});
+
+describe('a minted block-exchange token is inert elsewhere at the hub', () => {
+  it('reads as inactive at introspection, at the record check (everything before it passes)', async () => {
+    process.env.OAUTH_EXCHANGE_RESOURCES = registry({ introspectors: [INTROSPECTOR] });
+    h.tables.OauthClient.push(client(INTROSPECTOR));
+    const minted = await exchange(await blockToken());
+    expect(minted.status).toBe(200);
+    const request = new Request('https://auth.test/api/auth/oauth/introspect', {
+      method: 'POST',
+      body: new URLSearchParams({ token: String(minted.body.access_token) }),
+      headers: { authorization: basic(INTROSPECTOR) },
+    });
+    const res = await introspectPOST({ request } as never);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ active: false });
+    const inactive = h.logs.filter((l) => l.event === 'token_exchange_introspect');
+    expect(inactive.map((l) => l.reason)).toEqual(['record does not match token']);
+  });
+
+  it('is refused as a subject by the client exchange (signature verified, subject shape refused)', async () => {
+    const minted = await exchange(await blockToken());
+    expect(minted.status).toBe(200);
+    const res = await exchange(String(minted.body.access_token), {
+      params: { subject_token_type: ACCESS_TOKEN_TYPE },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
+    const clientExchange = h.logs.filter((l) => l.event === 'client_token_exchange');
+    expect(clientExchange.map((l) => [l.result, l.reason])).toEqual([
+      ['refused', 'subject is not a service token'],
+    ]);
+    expect(issued()).toHaveLength(1);
   });
 });
 
