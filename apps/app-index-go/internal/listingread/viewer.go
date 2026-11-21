@@ -106,9 +106,10 @@ func viewerMAC(key []byte, signed string) []byte {
 // ParseViewer checks a viewer token at now against keys (the current key, then the next one while a
 // rotation is under way) and returns its viewer, or ErrBadViewer. The token is accepted when its
 // signature is any key's; every key is compared, each in constant time. No keys, or any key shorter
-// than MinViewerKeyLen, accepts nothing. The signature is checked before the payload is read. A scope this build does not know is `none` (NarrowScope),
-// as on the site; an unknown host, a level outside 0..63, an unknown field, a missing field, or an
-// expiry in the past or more than MaxViewerTTL ahead (each with viewerSkew) is refused.
+// than MinViewerKeyLen, accepts nothing. The signature is checked before the payload is read. A
+// scope this build does not know is `none` (NarrowScope), as on the site; an unknown host, a level
+// outside 0..63, an unknown field, a missing field, or an expiry in the past or more than
+// MaxViewerTTL ahead (each with viewerSkew) is refused.
 func ParseViewer(keys [][]byte, token string, now time.Time) (Viewer, error) {
 	if !KeysUsable(keys) || token == "" || len(token) > maxViewerToken {
 		return Viewer{}, ErrBadViewer

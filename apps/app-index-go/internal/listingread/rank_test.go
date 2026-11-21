@@ -181,6 +181,27 @@ func TestRankCursors(t *testing.T) {
 	}
 }
 
+// The cursor format as literals: the web tier's shadow builds this service's cursor from a database
+// cursor (readModelCursor, app-listings-read-model-shadow.service.ts) and its test pins the same two
+// strings, so a format change on either side fails a test.
+func TestCursorVector(t *testing.T) {
+	for _, c := range []struct {
+		key, slug string
+		mean      *float64
+		want      string
+	}{
+		{"00000700000000000000000000120", "paint", ptr(0.625), "cm0xHzAwMDAwNzAwMDAwMDAwMDAwMDAwMDAwMDAwMTIwH3BhaW50HzAuNjI1"},
+		{"paint", "paint", nil, "cm0xH3BhaW50H3BhaW50"},
+	} {
+		if got := EncodeCursor(c.key, c.slug, c.mean); got != c.want {
+			t.Errorf("EncodeCursor(%q, %q): %s, want %s", c.key, c.slug, got, c.want)
+		}
+		if d := decodeCursor(c.want); !d.ok || d.key != c.key || d.slug != c.slug {
+			t.Errorf("decodeCursor(%s): %+v", c.want, d)
+		}
+	}
+}
+
 func ptr(f float64) *float64 { return &f }
 
 func TestRankFilters(t *testing.T) {

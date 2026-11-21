@@ -102,7 +102,7 @@ func sortKey(sort string, l store.Listing, mean float64) (string, bool) {
 // GlobalMean mirrors getGlobalRecommendMean over the listings the read model holds: the mean of
 // up / (up + down) over the listings with at least one review, or 0.5 with none. The site averages
 // over every approved listing, restricted ones included, which the read model never sees
-// (LISTINGS-READ-MODEL.md, "Known divergence").
+// (LISTINGS-READ-MODEL.md, "Sort and paging", the first of its "Known divergences").
 func GlobalMean(keys []store.Listing) float64 {
 	var sum float64
 	var n int
@@ -206,8 +206,9 @@ func Filter(keys []store.Listing, kind, category string, userID *int64, v Viewer
 //	ORDER BY sort_key DIR, id DIR LIMIT limit + 1
 //
 // with the listing's slug in place of its id, which the stream does not carry (both are unique;
-// they order ties differently, LISTINGS-READ-MODEL.md "Known divergence"). Keys compare as bytes;
-// the database compares them under its collation, which can only differ for the name sort.
+// they order ties differently). Keys compare as bytes; the database compares them under its
+// collation, which can only differ for the name sort. Both are listed in LISTINGS-READ-MODEL.md,
+// "Sort and paging", "Known divergences".
 // top-rated uses the cursor's pinned mean when it has one, else GlobalMean over every listing held
 // (not only those v may see, as the site's mean is not per viewer).
 func Rank(keys []store.Listing, q ListQuery, v Viewer) Page {
