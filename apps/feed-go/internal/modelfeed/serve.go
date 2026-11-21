@@ -290,7 +290,8 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 
 	tagID := 0
 	if in.Tag != "" {
-		id, err := tagIDByName(ctx, d.DB, in.Tag)
+		// A name no tag has is 0: no filter.
+		id, _, err := hydrate.TagIDByName(ctx, d.DB, in.Tag)
 		if err != nil {
 			return nil, err
 		}
@@ -444,23 +445,6 @@ func subtractMonths(t time.Time, n int) time.Time {
 		day = last
 	}
 	return time.Date(first.Year(), first.Month(), day, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
-}
-
-// tagIDByName is `dbRead.tag.findUnique({ where: { name } })` (Tag.name is citext): 0 = no such tag,
-// which adds no filter.
-func tagIDByName(ctx context.Context, db Querier, name string) (int, error) {
-	rows, err := db.Query(ctx, `SELECT id FROM "Tag" WHERE name = $1 LIMIT 1`, name)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-	id := 0
-	if rows.Next() {
-		if err := rows.Scan(&id); err != nil {
-			return 0, err
-		}
-	}
-	return id, rows.Err()
 }
 
 // paidAccessGates is getModelPaidAccessGates: per model with a live gate, its latest deadline.

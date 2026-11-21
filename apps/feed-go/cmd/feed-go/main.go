@@ -439,6 +439,7 @@ func run(log *slog.Logger) error {
 			Sources: sources,
 			Gallery: deps.Gallery,
 			Addons:  deps.Addons.Addons,
+			Blocked: blocked,
 			Config: v1models.Config{
 				ImageLocation:        cfg.ImageLocation,
 				BaseURL:              mc.BaseURL,

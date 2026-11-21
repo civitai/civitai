@@ -393,7 +393,7 @@ func TestServeV1ModelsUnsupportedInputs(t *testing.T) {
 	for _, c := range []struct{ target, reason string }{
 		{"/api/v1/models?query=x", "v1-models-query"},
 		{"/api/v1/models?limit=500", "v1-models-limit"},
-		{"/api/v1/models?tag=x", "v1-models-tag"},
+		{"/api/v1/models?tagname=x", "v1-models-tagname"},
 		{"/api/v1/models/abc", "v1-models-id"},
 		{"/api/v1/models/42/versions", "v1-models-path"},
 	} {
