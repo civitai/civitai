@@ -412,13 +412,12 @@ describe('(5) audit round 1', () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
     const heldAtInsert: number[] = [];
-    let t!: SecondaryMetricTee;
     const secondary = fakeClient(async (args, call) => {
       heldAtInsert.push(args.values.length + t.pendingRows);
       if (call === 1) await gate;
     });
     // Bound 5 -> send chunks of at most 2 rows, so one chunk in flight plus one queued fits.
-    t = tee(secondary.client, { maxQueueRows: 5 });
+    const t = tee(secondary.client, { maxQueueRows: 5 });
     const rowsBefore = await counter(secondaryTeeMetrics.rowsDropped, { reason: 'overflow' });
 
     t.enqueue(rows(2, 33));
