@@ -14,6 +14,9 @@ const VERSIONS = [
   { id: 21, baseModel: 'SDXL 1.0', ...published, status: 'Draft' },
   { id: 22, baseModel: 'SDXL 1.0', ...published, status: 'Training' },
   { id: 23, baseModel: 'SDXL 1.0', ...published, usageControl: 'InternalGeneration' },
+  { id: 24, baseModel: 'SDXL 1.0', ...published, status: 'UnpublishedViolation' },
+  { id: 25, baseModel: 'SDXL 1.0', ...published, status: 'Scheduled' },
+  { id: 26, baseModel: 'SDXL 1.0', ...published, status: 'Unpublished' },
 ];
 const civitai = (versionId: number) => `urn:air:sdxl:lora:civitai:1@${versionId}`;
 const check = (input: unknown, viewerId = VIEWER) => checkAppStepResources(input, viewerId);
@@ -129,6 +132,9 @@ describe('checkAppStepResources', () => {
       ['a Draft version', 21],
       ['a Training version', 22],
       ['an InternalGeneration version', 23],
+      ['an UnpublishedViolation version', 24],
+      ['a Scheduled version', 25],
+      ['an Unpublished version', 26],
     ])('refuses %s to a viewer who does not own it', async (_, id) => {
       await expect(check({ model: civitai(id) })).rejects.toThrow(
         `model version ${id} is not available for generation`
@@ -164,8 +170,11 @@ describe('checkAppStepResources', () => {
       });
     });
 
-    it('allows a Private version to its owner', async () => {
-      await expect(check({ model: civitai(20) }, OWNER)).resolves.toEqual({ capOutput: false });
+    it.each([
+      ['a Private', 20],
+      ['a Scheduled', 25],
+    ])('allows %s version to its owner', async (_, id) => {
+      await expect(check({ model: civitai(id) }, OWNER)).resolves.toEqual({ capOutput: false });
     });
 
     // Deliberate (see checkAppStepResources): do not add a moderator exemption back.
