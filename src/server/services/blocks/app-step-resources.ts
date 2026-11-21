@@ -133,9 +133,14 @@ function isComfyNode(value: unknown): value is Record<string, unknown> {
   return typeof node.class_type === 'string' && !!node.inputs && typeof node.inputs === 'object';
 }
 
-function isComfyMediaInput(key: string): boolean {
+// A `file` input loads media only on these classes; on a loader it may name weights.
+const COMFY_FILE_MEDIA_CLASSES: ReadonlySet<string> = new Set(['LoadVideo']);
+
+function isComfyMediaInput(key: string, classType: string | undefined): boolean {
   const name = key.toLowerCase();
-  return name !== 'model_file' && COMFY_MEDIA_INPUT_NAMES.has(name);
+  if (name === 'model_file') return false;
+  if (name === 'file') return classType !== undefined && COMFY_FILE_MEDIA_CLASSES.has(classType);
+  return COMFY_MEDIA_INPUT_NAMES.has(name);
 }
 
 type Where = {
@@ -143,6 +148,8 @@ type Where = {
   depth: number;
   /** Inside a ComfyUI node: its media input names count, and free text is not exempt. */
   comfy?: boolean;
+  /** The `class_type` of the ComfyUI node the value is in. */
+  comfyClass?: string;
   /** Every leaf lands at `key`, whatever the names inside. */
   flat?: boolean;
   /** The value is a workflow's `steps` array or a repeat's `template`: each entry is a step. */
@@ -163,21 +170,24 @@ function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
     workflow && input && typeof input === 'object' && !Array.isArray(input)
       ? (input as Record<string, unknown>).arguments
       : undefined;
-  // The items a repeat places through its loop variable, by name (lower-cased); null when this
-  // check cannot read its clause, so a reference to it places every argument.
+  // The items a repeat places through its loop variable, by name (lower-cased); null when its
+  // clause reaches no array, or a reused name may bind either loop, so a reference to it places
+  // every argument. A repeat whose clause cannot be read registers nothing, and a reference to its
+  // loop name is skipped below as another step's output: safe only because resolveBlockWorkflowGraph
+  // refuses a malformed repeat clause first (readRepeatInput, workflow-graph.ts:130-137).
   const loopItems = new Map<string, unknown[] | null>();
   let formatFill = 0;
 
   const visit = (value: unknown, where: Where): void => {
-    const { key, depth, comfy = false, flat = false } = where;
+    const { key, depth, comfy = false, flat = false, comfyClass } = where;
     if (key !== undefined) {
       // In a graph only its own media input names count: a node's `url` input may load weights.
-      if (comfy ? isComfyMediaInput(key) : isMediaKey(key)) return;
+      if (comfy ? isComfyMediaInput(key, comfyClass) : isMediaKey(key)) return;
       if (!comfy && FREE_TEXT_KEYS.has(key.toLowerCase())) return;
     }
     if (depth > STORED_FILE_DEPTH_MAX) refuse('step input is nested too deeply');
     const at = (child: unknown, extra: Partial<Where> = {}) =>
-      visit(child, { key, depth: depth + 1, comfy, flat, ...extra });
+      visit(child, { key, depth: depth + 1, comfy, comfyClass, flat, ...extra });
     if (typeof value === 'string') {
       const trimmed = asParsed(value);
       if ((URL_RE.test(trimmed) || trimmed.startsWith('//')) && namesStoredFile(trimmed))
@@ -241,7 +251,7 @@ function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
             ? items.flatMap((item) => argumentPathValues(path, item, { wide: true }) ?? [])
             : null;
         if (!placed) return placeFlat(items);
-      } else return; // Another step's output is not known yet; the position rule judges it.
+      } else return; // Another step's output (or an unregistered loop; see loopItems), judged by the position rule.
       if (!placed) return placeFlat(workflowArguments);
       for (const one of placed) {
         at(one);
@@ -257,9 +267,11 @@ function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
           continue;
         }
         at(nodeId, { key: undefined });
+        const comfyClass = node.class_type as string;
         for (const [field, v] of Object.entries(node))
-          if (field === 'inputs') visit(v, { key: undefined, depth: depth + 2, comfy: true });
-          else visit(v, { key: field, depth: depth + 2, comfy: true });
+          if (field === 'inputs')
+            visit(v, { key: undefined, depth: depth + 2, comfy: true, comfyClass });
+          else visit(v, { key: field, depth: depth + 2, comfy: true, comfyClass });
       }
       return;
     }

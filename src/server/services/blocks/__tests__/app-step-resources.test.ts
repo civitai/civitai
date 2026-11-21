@@ -21,7 +21,7 @@ const VERSIONS = [
 const civitai = (versionId: number) => `urn:air:sdxl:lora:civitai:1@${versionId}`;
 const check = (input: unknown, viewerId = VIEWER) => checkAppStepResources(input, viewerId);
 const checkWorkflow = (body: unknown) => checkAppStepResources(body, VIEWER, { workflow: true });
-// The two workflow arms pass the whole body and say so; every other arm passes a step input.
+// Stands in for the router: the two workflow arms pass { workflow: true }, detected here by shape.
 const checkAny = (input: unknown) =>
   input &&
   typeof input === 'object' &&
@@ -723,12 +723,12 @@ describe('stored files and blob keys off media inputs', () => {
               model: {
                 $ref: '$arguments',
                 path: 'xs',
-                format: `https://example.com/${'a'.repeat(60_000)}{0}`,
+                format: `https://example.com/${'a'.repeat(1_000)}{0}`,
               },
             },
           },
         ],
-        arguments: { xs: Array(20_000).fill('') },
+        arguments: { xs: Array(2_000).fill('') },
       })
     ).rejects.toThrow('too large to check');
   });
@@ -775,5 +775,34 @@ describe('stored files and blob keys off media inputs', () => {
 
   it('refuses a blob key at a *BlobId field off media', async () => {
     await expect(check({ entries: [{ blobId: KEY }] })).rejects.toThrow(BLOB_KEY);
+  });
+  it.each([
+    ['a loader', 'CheckpointLoaderSimple', 'file'],
+    ['a node of no class this check knows', 'X', 'file'],
+  ])('refuses a stored file URL at the file input of %s', async (_, classType, input) => {
+    await expect(
+      check({
+        resources: [],
+        trace: 'binary',
+        workflow: {
+          '1': {
+            class_type: classType,
+            inputs: { [input]: 'https://example.com/v2/consumer/blobs/abc' },
+          },
+        },
+      })
+    ).rejects.toThrow(STORED);
+  });
+
+  it('accepts a stored video at LoadVideo file', async () => {
+    await expect(
+      check({
+        resources: [],
+        trace: 'binary',
+        workflow: {
+          '1': { class_type: 'LoadVideo', inputs: { file: 'https://image.civitai.com/a.mp4' } },
+        },
+      })
+    ).resolves.toEqual({ capOutput: false });
   });
 });
