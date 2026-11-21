@@ -71,9 +71,7 @@ func (s *Server) computePublishedApp(ctx context.Context, r *http.Request) (*com
 		return nil, err
 	}
 	out := &computed{value: ans.Value, trivial: ans.Trivial, viewerClass: ans.ViewerClass}
-	if signedOut {
-		out.ttl = &trpc.SignedOutTTL
-	}
+	_ = signedOut
 	if err := out.encode(ctx); err != nil {
 		return nil, err
 	}
