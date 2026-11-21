@@ -61,7 +61,6 @@
  *                  5120 MB -> pass, error found    8192 MB -> pass, error found
  *   node 22.22.2   6144 MB -> pass, error found    8192 MB -> pass, error found
  *
- * Incremental runs need more heap than cold ones; the 8192 MB default can abort on one.
  * Override per run with TYPECHECK_HEAP_MB.
  */
 
@@ -77,10 +76,10 @@ import { typecheckQueueDecision } from './typecheck-queue.mjs';
 const require = createRequire(import.meta.url);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-// A full typecheck costs up to ~8 GB, and several agents starting one at once is what pegs the
-// box. With CIVITAI_TEST_QUEUE set this hands the run to the dev-server queue's typecheck lane,
-// which spawns `pnpm run typecheck` back in this worktree with the flag off — so the child comes
-// through here again and falls to the direct path below.
+// A full typecheck is memory-heavy, and several agents starting one at once is what pegs the box.
+// With CIVITAI_TEST_QUEUE set this hands the run to the dev-server queue's typecheck lane, which
+// spawns `pnpm run typecheck` back in this worktree with the flag off — so the child comes through
+// here again and falls to the direct path below.
 //
 // Top-level await on purpose: a queued run never returns (the client exits the process with the
 // run's verdict), so everything below is reached only when the queue could not take the run.

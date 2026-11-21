@@ -177,8 +177,8 @@ describe('typecheck wrapper outcome classification', () => {
   });
 });
 
-// The TS7 rollout's threading rule (R1): single-threaded on dev machines so several agents
-// typechecking at once cannot exhaust a machine's memory; two checkers in CI.
+// Threading rule: single-threaded on dev machines so several agents typechecking at once cannot
+// exhaust memory; two checkers in CI.
 describe('typecheck wrapper compiler selection', () => {
   it('runs TypeScript 7 single-threaded outside CI, with its own .tsbuildinfo', () => {
     const res = run(stub('argv-dev', ARGV_STUB));

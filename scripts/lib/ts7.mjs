@@ -55,7 +55,9 @@ function install(toolDir, log) {
         // Gone between the check and the stat: the other install finished.
       }
       if (Date.now() > deadline) {
-        throw new Error(`timed out waiting for another TypeScript 7 install (${lock})`);
+        throw new Error(
+          `timed out waiting for another TypeScript 7 install (${lock}). Run: ${TS7_INSTALL_COMMAND}`
+        );
       }
       sleep(1000);
     }
@@ -72,7 +74,9 @@ function install(toolDir, log) {
     if (res.status !== 0 || !isInstalled(toolDir)) {
       const detail = [res.error?.message, res.stdout, res.stderr].filter(Boolean).join('\n').trim();
       throw new Error(
-        `the tools/ts7 install failed (exit ${res.status})${detail ? `:\n${detail}` : ''}`
+        `the tools/ts7 install failed (exit ${res.status}). Run: ${TS7_INSTALL_COMMAND}${
+          detail ? `\n${detail}` : ''
+        }`
       );
     }
   } finally {
