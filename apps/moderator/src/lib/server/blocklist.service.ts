@@ -6,6 +6,10 @@ import { dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
 import { getRedis } from './redis';
+import {
+  isUsableBlockedEntry,
+  MIN_MANAGED_PROFANITY_ENTRIES,
+} from '@civitai/mod-utils/profanity/word-rules';
 
 // Owns the Blocklist table AND the shared Redis key the main app reads. Writers BUST that key rather
 // than rewriting it, so a main-app validator repopulates from the table on its next read.
@@ -134,6 +138,14 @@ export class BlocklistNotSeededError extends Error {
   constructor() {
     super('This list has not been seeded yet.');
     this.name = 'BlocklistNotSeededError';
+  }
+}
+
+/** A removal that would leave the profanity list below the floor the main app enforces. */
+export class BlocklistBelowFloorError extends Error {
+  constructor() {
+    super(`The list must keep at least ${MIN_MANAGED_PROFANITY_ENTRIES} usable entries.`);
+    this.name = 'BlocklistBelowFloorError';
   }
 }
 
@@ -266,6 +278,13 @@ export async function removeBlocklistItems({
     const filtered = row.data.filter((item) => !lower.includes(item));
     const count = row.data.length - filtered.length;
     if (count === 0) return { count: 0, rowId: row.id };
+    // Inside the lock, so two removals cannot each pass a check made against the same pre-state.
+    // Below the floor the main app ignores the row and enforces the shipped list.
+    if (
+      type === 'ProfanityWord' &&
+      filtered.filter(isUsableBlockedEntry).length < MIN_MANAGED_PROFANITY_ENTRIES
+    )
+      throw new BlocklistBelowFloorError();
 
     await trx
       .updateTable('Blocklist')

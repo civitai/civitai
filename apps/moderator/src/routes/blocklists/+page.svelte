@@ -87,6 +87,11 @@
     if (confirming && !shown.visible.includes(confirming)) untrack(() => (confirming = null));
   });
 
+  // The add action warned about this exact text; resubmitting it unchanged confirms.
+  const confirmingImpact = $derived(
+    mode === 'add' && !!form && 'confirmImpact' in form && form.confirmImpact === text
+  );
+
   const submit: SubmitFunction = () => async ({ result, update }) => {
     if (result.type === 'success') text = '';
     await update(); // re-runs load → fresh blocklist (and the shared Redis cache is already updated)
@@ -296,6 +301,7 @@
     >
       <input type="hidden" name="type" value={data.type} />
       {#if data.blocklist.id}<input type="hidden" name="id" value={data.blocklist.id} />{/if}
+      {#if confirmingImpact}<input type="hidden" name="confirmImpact" value={text} />{/if}
       <Textarea
         name="blocklist"
         bind:value={text}
@@ -304,7 +310,9 @@
           : 'Remove comma-delimited items from blocklist'}
       />
       <div class="flex justify-end">
-        <Button type="submit" disabled={text.trim().length === 0}>Submit</Button>
+        <Button type="submit" disabled={text.trim().length === 0}>
+          {confirmingImpact ? 'Add anyway' : 'Submit'}
+        </Button>
       </div>
     </form>
   </div>

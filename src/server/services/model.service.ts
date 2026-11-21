@@ -150,6 +150,7 @@ import { readSimpleModelWithOwner } from '~/server/services/hot-reads-12.reads';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { evaluateAutoNsfw, writeAutoNsfw } from '~/server/services/auto-nsfw';
+import { getServerProfanityFilter } from '~/server/services/profanity-list.service';
 import { holdRestrictedVerdict } from '~/server/services/text-scan/actions/hold-restricted-verdict';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import {
@@ -4348,6 +4349,7 @@ export const upsertModel = async (
       description: data.description,
       alreadyNsfw: !!data.nsfw,
       lockedProperties: storedLockedProperties,
+      profanity: await getServerProfanityFilter(),
     });
 
     if (evaluation) {
@@ -5173,6 +5175,7 @@ export async function applyModelContentChange({
           description,
           alreadyNsfw: stored.nsfw,
           lockedProperties: stored.lockedProperties,
+          profanity: await getServerProfanityFilter(),
         })
       : null;
     if (flagged) await writeAutoNsfw(dbWrite, { id, ...flagged });

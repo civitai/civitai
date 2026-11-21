@@ -67,6 +67,8 @@ import type {
 } from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
 import { auditTrainingTriggerWord, labelAsTrained } from '~/utils/metadata/training-trigger-word';
+// Until the trainer asks the server (the follow-up PR): the shipped list, as before.
+import { getProfanityFilter } from '~/libs/profanity-simple';
 import {
   blankTagStr,
   labelDescriptions,
@@ -1293,7 +1295,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      const audit = auditTrainingTriggerWord(triggerWord, isGreen);
+      const audit = auditTrainingTriggerWord(
+        triggerWord,
+        isGreen ? getProfanityFilter() : undefined
+      );
       if (triggerWordInvalid !== (audit.severity !== 'clean')) {
         setTriggerWordInvalid(model.id, thisMediaType, audit.severity !== 'clean');
       }
@@ -1647,7 +1652,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       setTriggerWord(model.id, thisMediaType, event.currentTarget.value)
                     }
                     onBlur={() => {
-                      const audit = auditTrainingTriggerWord(triggerWord, isGreen);
+                      const audit = auditTrainingTriggerWord(
+                        triggerWord,
+                        isGreen ? getProfanityFilter() : undefined
+                      );
                       if (audit.severity !== 'clean') {
                         if (!triggerWordInvalid) {
                           setTriggerWordInvalid(model.id, thisMediaType, true);

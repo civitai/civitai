@@ -1,4 +1,6 @@
 import { randomUUID } from 'crypto';
+import { getProfanityFilter } from '~/libs/profanity-simple';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { constants } from '~/server/common/constants';
 import { env } from '~/env/server';
 import { BlocklistType } from '~/server/common/enums';
@@ -129,8 +131,14 @@ async function reauditSeededRow(row: {
       stripBenignPhrases(normalizeText(row.prompt), BlocklistType.PromptBenignPhrase),
       stripBenignPhrases(normalizeText(negativePrompt), BlocklistType.NegativeBenignPhrase),
     ]);
-    // Profanity on, so a soft block recorded on the green domain re-audits as one.
-    const { success, triggers } = auditPromptEnriched(prompt ?? row.prompt, negative, true);
+    // Profanity on, so a soft block recorded on the green domain re-audits as one. The shipped
+    // list, whatever the gate uses now: these rows were recorded against it, and a soft block that
+    // re-audits clean becomes a hard one below.
+    const { success, triggers } = auditPromptEnriched(
+      prompt ?? row.prompt,
+      negative,
+      getProfanityFilter()
+    );
     if (success || triggers.length === 0) return { hardBlock: !overLengthShape };
     if (isSoftBlock(triggers)) return { hardBlock: false };
     return { hardBlock: true, evidence: triggers[0] };
@@ -426,7 +434,14 @@ export async function classifyPromptServer(
   // 🔴 The green blocklist (`blocked-words.json`) is the ONLY list in this audit that
   // varies by domain, and it is not profanity in the ordinary sense — "breasts" blocks
   // on .com and passes on .red. Everything else below runs identically everywhere.
-  const checkProfanity = isGreen;
+  //
+  // With `profanity-managed-list` on, the gate stops running the profanity list and the
+  // orchestrator's rating decides (Justin, J7: the one generator change Briant allowed). Off keeps
+  // today's shipped-list check, so the flag is the rollback.
+  const profanity =
+    isGreen && !(await isFlipt(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST))
+      ? getProfanityFilter()
+      : undefined;
 
   // Moderator-managed benign phrases (proper nouns / technical terms that
   // coincidentally contain a detection token) are blanked before auditing, so the
@@ -448,7 +463,7 @@ export async function classifyPromptServer(
     triggers,
     success,
     blockedFor: regexBlockedFor,
-  } = auditPromptEnriched(auditedPrompt ?? prompt, auditedNegativePrompt, checkProfanity);
+  } = auditPromptEnriched(auditedPrompt ?? prompt, auditedNegativePrompt, profanity);
 
   let softRegexTriggers: PromptTrigger[] | null = null;
 

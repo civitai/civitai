@@ -92,7 +92,7 @@ export const auditRemixSourcesJob = createJob(
         let isProblematic = false;
 
         // Regex-based audit
-        const regex = auditPromptEnriched(prompt ?? '', negativePrompt, false);
+        const regex = auditPromptEnriched(prompt ?? '', negativePrompt);
         let success = regex.success;
         let classified = false;
         const [firstTrigger] = regex.triggers;
@@ -105,7 +105,7 @@ export const auditRemixSourcesJob = createJob(
           });
           if (!decision.block) {
             classified = true;
-            ({ success } = auditPromptEnriched(decision.withoutAge, negativePrompt, false));
+            ({ success } = auditPromptEnriched(decision.withoutAge, negativePrompt));
           }
         }
         if (!success) {

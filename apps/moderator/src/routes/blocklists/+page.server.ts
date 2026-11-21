@@ -4,8 +4,10 @@ import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { BLOCKLIST_TYPES } from '$lib/blocklist';
 import { callModEndpoint } from '$lib/server/user-actions.service';
-import { inertEntries, inertEntriesError, parseRowId } from './form';
+import { whitelistWords } from '@civitai/mod-utils/profanity/lists';
+import { allowedWordsWarning, inertEntries, inertEntriesError, parseRowId } from './form';
 import {
+  BlocklistBelowFloorError,
   BlocklistNotSeededError,
   BlocklistRowMismatchError,
   getBlocklistDTO,
@@ -72,6 +74,15 @@ export const actions: Actions = {
     const inert = inertEntries(type, items);
     if (inert.length > 0) return fail(400, { error: inertEntriesError(type, inert) });
 
+    // Asked once per submitted text: the page resubmits the same text with `confirmImpact` set.
+    const raw = String(form.get('blocklist') ?? '');
+    if (type === 'ProfanityWord' && form.get('confirmImpact') !== raw) {
+      // The allow list the site applies: the moderators' row, or the shipped one when there is none.
+      const benign = await getBlocklistDTO({ type: 'ProfanityBenignWord' });
+      const warning = allowedWordsWarning(items, benign.id == null ? whitelistWords : benign.data);
+      if (warning) return fail(409, { error: warning, confirmImpact: raw });
+    }
+
     // `type` and `id` arrive as two independent form fields, so the pair is checked in the
     // statement itself rather than here — see `upsertBlocklist`.
     let result;
@@ -109,7 +120,16 @@ export const actions: Actions = {
     if (!id) return fail(400, { error: 'Nothing to remove from.' });
     if (items.length === 0) return fail(400, { error: 'No items to remove.' });
 
-    const result = await removeBlocklistItems({ id, type, items, userId: locals.user.id });
+    let result;
+    try {
+      result = await removeBlocklistItems({ id, type, items, userId: locals.user.id });
+    } catch (error) {
+      if (error instanceof BlocklistBelowFloorError)
+        return fail(409, {
+          error: `${error.message} Below that the site ignores this list and uses the built-in one, so add replacements before removing more.`,
+        });
+      throw error;
+    }
     // A submitted-but-unmatched removal is a failure, not a quiet "Removed 0 items." The list is
     // served from a short-lived Redis cache, so the likeliest cause is that this page is stale. An
     // id belonging to another type lands here too.

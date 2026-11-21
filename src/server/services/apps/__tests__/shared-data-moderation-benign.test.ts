@@ -54,7 +54,7 @@ describe('the shared-data audit with benign phrases', () => {
 describe('auditPromptEnriched without the nsfw option', () => {
   const { n, y } = pickPair();
   const category = (text: string, nsfw?: boolean) =>
-    auditPromptEnriched(text, undefined, false, nsfw === undefined ? undefined : { nsfw })
+    auditPromptEnriched(text, undefined, undefined, nsfw === undefined ? undefined : { nsfw })
       .triggers[0]?.category;
 
   it('flags the pair', () => {
