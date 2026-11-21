@@ -37,7 +37,9 @@ export interface ProfanityListReader {
  * shipped list (`null`). Holding a missing or tiny row as "last good" would serve it in the next
  * outage, which is exactly what the floor exists to stop.
  */
-export function createProfanityListReader(): ProfanityListReader {
+export function createProfanityListReader({
+  readRow = readBlocklistWithSource,
+}: { readRow?: typeof readBlocklistWithSource } = {}): ProfanityListReader {
   let held: Held | null = null;
   const metrics = () => ensureRegisterProfanityListMetrics();
 
@@ -51,8 +53,8 @@ export function createProfanityListReader(): ProfanityListReader {
       let blockedRow, allowedRow;
       try {
         [blockedRow, allowedRow] = await Promise.all([
-          readBlocklistWithSource(BlocklistType.ProfanityWord),
-          readBlocklistWithSource(BlocklistType.ProfanityBenignWord),
+          readRow(BlocklistType.ProfanityWord),
+          readRow(BlocklistType.ProfanityBenignWord),
         ]);
       } catch (error) {
         if (held) return { ...held, source: 'stale' };
@@ -79,7 +81,7 @@ export function createProfanityListReader(): ProfanityListReader {
             name: 'profanity-blocklist-below-floor',
             type: 'error',
             message: 'Managed profanity list is below the floor; enforcing the shipped list',
-            details: { usable: usable.length, floor: MIN_MANAGED_PROFANITY_ENTRIES },
+            payload: { usable: usable.length, floor: MIN_MANAGED_PROFANITY_ENTRIES },
           });
         }
         return { blocked: null, allowed, source: 'fallback' };

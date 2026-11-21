@@ -17,20 +17,25 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: async () => h.flagOn,
 }));
-vi.mock('~/server/services/blocklist.service', () => ({
-  readBlocklistWithSource: async (type: string) => {
-    const row = h.rows.get(type) ?? { data: [] };
-    if (row instanceof Error) throw row;
-    return { dto: { type, ...row }, source: 'cache' };
-  },
-}));
-
 import {
+  createProfanityListReader,
   getServerProfanityFilter,
   isProfaneSearch,
   setProfanityListReaderForTests,
   siteSearchQueries,
 } from '~/server/services/profanity-list.service';
+
+// The reader's one read, injected: the rows each test sets, or the error it throws.
+const freshReader = () =>
+  setProfanityListReaderForTests(
+    createProfanityListReader({
+      readRow: async (type) => {
+        const row = h.rows.get(type) ?? { data: [] };
+        if (row instanceof Error) throw row;
+        return { dto: { type, ...row }, source: 'cache' };
+      },
+    })
+  );
 
 // Synthetic entries, on no real list: a match on one can only come from the managed row.
 const letters = (n: number) =>
@@ -63,7 +68,7 @@ async function verdicts() {
 beforeEach(() => {
   h.flagOn = true;
   h.rows.clear();
-  setProfanityListReaderForTests();
+  freshReader();
 });
 
 describe('getServerProfanityFilter', () => {
@@ -87,7 +92,7 @@ describe('getServerProfanityFilter', () => {
     // To whoever wants this to match ProfanityBenignWord (where an emptied row is honoured): an
     // honoured empty BLOCK list filters nothing anywhere, which is what the floor exists to stop.
     for (const data of [[], MANAGED.slice(0, MIN_MANAGED_PROFANITY_ENTRIES - 1)]) {
-      setProfanityListReaderForTests();
+      freshReader();
       setBlocked({ id: 1, data });
       expect(await verdicts()).toEqual({ source: 'fallback', managed: false, shipped: true });
     }

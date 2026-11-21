@@ -4,7 +4,7 @@ import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import type * as RegionBlocking from '~/server/utils/region-blocking';
-import type * as ProfanityList from '~/server/services/profanity-list.service';
+import { setProfanityListReaderForTests } from '~/server/services/profanity-list.service';
 import { NsfwLevel } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
@@ -21,19 +21,12 @@ const {
   mockRateLimit,
   mockRegionBlocked,
   mockPassthroughOn,
-  mockIsProfaneSearch,
 } = vi.hoisted(() => ({
   mockGetServerAuthSession: vi.fn(),
   mockGetFeatureFlagsLazy: vi.fn(),
   mockRateLimit: vi.fn(),
   mockRegionBlocked: vi.fn(),
   mockPassthroughOn: vi.fn(),
-  mockIsProfaneSearch: vi.fn(),
-}));
-
-vi.mock('~/server/services/profanity-list.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof ProfanityList>()),
-  isProfaneSearch: mockIsProfaneSearch,
 }));
 
 vi.mock('~/server/services/site-search-passthrough', () => ({
@@ -66,6 +59,12 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 }));
 
 const fetchMock = vi.fn();
+
+// A managed profanity list holding one synthetic token, on no real list.
+const PROFANE = 'zqvoxprofanitytoken';
+const managedList = {
+  read: async () => ({ blocked: [PROFANE], allowed: null, source: 'managed' as const }),
+};
 
 async function post(
   path: string[],
@@ -136,7 +135,7 @@ beforeEach(() => {
   mockRateLimit.mockResolvedValue({ allowed: true });
   mockRegionBlocked.mockReturnValue(false);
   mockPassthroughOn.mockReturnValue(false);
-  mockIsProfaneSearch.mockResolvedValue(false);
+  setProfanityListReaderForTests(managedList);
   setEnv({ NEXT_PUBLIC_SEARCH_HOST: 'http://search.test', SEARCH_TOKEN_API_KEY: 'server-key' });
 });
 afterEach(() => {
@@ -487,13 +486,11 @@ describe('collection covers for a signed-in viewer where the site caps nothing',
 });
 
 describe('profanity refusal', () => {
-  const multi = { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'typed words' }] };
+  const multi = { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: `a ${PROFANE} b` }] };
 
   it('refuses a profane search on civitai.com without searching or naming the words', async () => {
     mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: true, isGreen: true });
-    mockIsProfaneSearch.mockResolvedValue(true);
     const result = await post(['multi-search'], multi);
-    expect(mockIsProfaneSearch).toHaveBeenCalledWith(['typed words']);
     expect(result.status).toBe(422);
     expect(result.body).toEqual({
       message: 'This search is not allowed.',
@@ -503,10 +500,16 @@ describe('profanity refusal', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('runs a clean search on civitai.com', async () => {
+    mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: true, isGreen: true });
+    const result = await post(['multi-search'], {
+      queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'ordinary words' }],
+    });
+    expect(result.status).toBe(200);
+  });
+
   it('runs no profanity check off civitai.com', async () => {
-    mockIsProfaneSearch.mockResolvedValue(true);
     const result = await post(['multi-search'], multi);
-    expect(mockIsProfaneSearch).not.toHaveBeenCalled();
     expect(result.status).toBe(200);
   });
 });

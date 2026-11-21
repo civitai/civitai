@@ -41,7 +41,32 @@ const dryRunVerdict = z.object({
 const dryRunResponse = z.object({ nonModerator: dryRunVerdict, moderator: dryRunVerdict });
 export type DryRunState = z.infer<typeof dryRunResponse> & { query: string };
 
+const profanityDryRunResponse = z.object({
+  flagged: z.boolean(),
+  listSource: z.enum(['managed', 'stale', 'fallback', 'shipped']),
+});
+export type ProfanityDryRunState = z.infer<typeof profanityDryRunResponse> & { text: string };
+
 export const actions: Actions = {
+  // The main app's server profanity filter; it answers flagged or not, never which entry matched.
+  profanityDryRun: async ({ request }) => {
+    const form = await request.formData();
+    const text = String(form.get('text') ?? '').trim();
+    if (!text) return fail(400, { profanityDryRunError: 'Enter some text to test.' });
+    if (text.length > 500)
+      return fail(400, { profanityDryRunError: 'Keep the text under 500 characters.' });
+
+    const result = await callModEndpoint('profanity-dry-run', { text }, 'Dry run');
+    if (!result.ok)
+      return fail(result.status && result.status >= 400 ? result.status : 502, {
+        profanityDryRunError: result.error,
+      });
+    const parsed = profanityDryRunResponse.safeParse(result.body);
+    if (!parsed.success)
+      return fail(502, { profanityDryRunError: 'The dry run answered in an unexpected shape.' });
+    const profanityDryRun: ProfanityDryRunState = { text, ...parsed.data };
+    return { profanityDryRun };
+  },
   // The main app's query audit, rules included; it answers the verdict only, never what matched.
   dryRun: async ({ request }) => {
     const form = await request.formData();
