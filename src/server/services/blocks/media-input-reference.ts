@@ -1,0 +1,75 @@
+import { Air } from '@civitai/orchestration-client';
+import { ORCHESTRATOR_PROXY_HOST } from '~/server/orchestrator/region-proxy';
+import { isWorkflowOwnedBy } from '~/server/services/orchestrator/assert-workflow-owner';
+import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
+
+// The one decision on what an app-built step may name at a media input besides a URL or a
+// reference. Blob-named media keys (`blob`, `blobKey`, `audioBlob`, `videoBlob`) are closed to
+// bare blob keys from app-built steps.
+
+// An orchestrator AIR the AIR grammar cannot read is still one to the orchestrator.
+const ORCHESTRATOR_SOURCE_RE = /(^|:)orchestrator:/i;
+const AIR_PREFIX_RE = /^(urn:)?air:/i;
+const URL_VALUE_RE = /^([a-z][a-z0-9+.-]*:\/\/|https?:|data:)/i;
+// An orchestrator blob key, with or without a file extension, and a training blob key.
+const BLOB_KEY_RE = /^([0-9a-z]{26}(\.[0-9a-z]{1,10})?|[0-9a-f]{32}(\.[0-9a-z]{1,10})?)$/i;
+// The orchestrator reads a blob from this path on any host.
+const BLOB_PATH_RE = /\/consumer\/blobs\//i;
+const BARE_ID_RE = /^\d+$/;
+
+export type MediaReferenceRefusal = 'air' | 'blob-key' | 'bare-id' | 'blob-url';
+
+/** A URL whose path names an orchestrator blob, on a host that is not the orchestrator's. */
+function isForeignHostBlobUrl(value: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  let path = parsed.pathname;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const decoded = decodeURIComponent(path);
+      if (decoded === path) break;
+      path = decoded;
+    } catch {
+      return true;
+    }
+  }
+  if (!BLOB_PATH_RE.test(path.replace(/\\/g, '/'))) return false;
+  return !isTrustedOrchestratorUrl(value) && parsed.host.toLowerCase() !== ORCHESTRATOR_PROXY_HOST;
+}
+
+/** Whether `value` names the orchestrator source at all (an AIR, or a token in text). */
+export function namesOrchestratorSource(value: string): boolean {
+  return ORCHESTRATOR_SOURCE_RE.test(value);
+}
+
+/** A job file is `orchestrator:<jobId>@<file>`, owned by the user its id names. A blob names no
+ *  owner, so it is never the viewer's own. */
+export function isOwnOrchestratorFile(value: string, viewerId: number): boolean {
+  const parsed = Air.parseSafe(value);
+  return (
+    parsed?.source.toLowerCase() === 'orchestrator' &&
+    parsed.id.toLowerCase() !== 'blob' &&
+    isWorkflowOwnedBy(parsed.id, viewerId)
+  );
+}
+
+/**
+ * Why a value at a media input is refused, or null. A URL, a data URI or any other value passes
+ * here (the source gate judges URLs), except one naming an orchestrator blob on another host. The
+ * viewer's own orchestrator job file passes. Any other AIR
+ * (another user's file, a blob, a Civitai image or model), a bare blob key and a bare number are
+ * refused.
+ */
+export function mediaReferenceRefusal(raw: string, viewerId: number): MediaReferenceRefusal | null {
+  const value = raw.trim();
+  if (BARE_ID_RE.test(value)) return 'bare-id';
+  if (BLOB_KEY_RE.test(value)) return 'blob-key';
+  if (URL_VALUE_RE.test(value)) return isForeignHostBlobUrl(value) ? 'blob-url' : null;
+  if (AIR_PREFIX_RE.test(value) || namesOrchestratorSource(value) || Air.parseSafe(value))
+    return isOwnOrchestratorFile(value, viewerId) ? null : 'air';
+  return null;
+}
