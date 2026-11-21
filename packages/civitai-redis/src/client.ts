@@ -2641,6 +2641,9 @@ export const REDIS_SYS_KEYS = {
     // Training Studio dataset blobs already sent to the v2 rater, key :<raterModel>:<blobId lowercased>,
     // so a failed or unanswered rating is not sent again on every view.
     STUDIO_DATASET_RATING_SENT: 'training:studio-dataset-rating-sent',
+    // Hash of source workflow id → 'retrain' | 'refund-only': the only runs `/api/mod/training/retrain-source`
+    // acts on, and how. Written and deleted by hand; deleting it refuses every call at once.
+    RETRAIN_ALLOWLIST: 'training:retrain-allowlist',
   },
   CLIENT: 'client',
   SITE_ALERTS: {
