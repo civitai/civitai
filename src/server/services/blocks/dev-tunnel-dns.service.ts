@@ -136,7 +136,6 @@ async function serverHasName(server: string, name: string): Promise<boolean | nu
  */
 export async function isDevTunnelHostPublished(host: string): Promise<boolean> {
   const kind = sessionHostKind(host, sessionHostDomains());
-  // A direct-preview session host has no record of its own (one wildcard covers the zone).
   if (kind === 'direct') return true;
   if (!env.APPS_DEV_TUNNEL_INGRESS_TARGET) return true;
   if (kind !== 'tunnel') return false;

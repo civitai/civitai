@@ -184,6 +184,67 @@ describe('the reaper drains the queue', () => {
     expect(queued()).toEqual({});
   });
 
+  describe('a down sandbox service stops the run after 3 consecutive failures', () => {
+    const pid = (n: number) => `${'0'.repeat(31)}${n}`;
+    /** Five revokes queued (each first send answered 503), then a clean fetch mock and log. */
+    async function queueFive() {
+      answer(503);
+      for (let n = 1; n <= 5; n++)
+        await revokePreviewSession({ userId: USER, previewId: pid(n), reason: 'r' }, NOW_MS);
+      fetchMock.mockReset();
+      loggingMock.logToAxiom.mockClear();
+    }
+
+    it.each([
+      ['a 503', () => answer(503)],
+      ['a timeout or network error', () => fetchMock.mockRejectedValue(new TypeError('timeout'))],
+    ])('%s three times in a row: 3 sends, the other 2 left queued and untried', async (_, fail) => {
+      await queueFive();
+      fail();
+      const drained = await drainPreviewRevokeQueue(NOW_MS + 1000);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(drained).toMatchObject({ sent: 0, dropped: 0, retrying: 3, unattempted: 2 });
+      expect(Object.keys(queued())).toHaveLength(5);
+      expect(
+        logged().filter((l) => l.type === 'app-assistant.preview-revoke.drain-stopped')
+      ).toEqual([
+        {
+          type: 'app-assistant.preview-revoke.drain-stopped',
+          payload: expect.objectContaining({ retrying: 3, unattempted: 2 }),
+        },
+      ]);
+    });
+
+    it('a succeeding sender sends every due entry', async () => {
+      await queueFive();
+      answer(200);
+      expect(await drainPreviewRevokeQueue(NOW_MS + 1000)).toEqual({
+        sent: 5,
+        dropped: 0,
+        retrying: 0,
+        lastStatus: 200,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+      expect(queued()).toEqual({});
+    });
+
+    it('failures that are not consecutive, or a 404, do not stop it', async () => {
+      await queueFive();
+      for (const s of [503, 503, 200, 503, 503])
+        fetchMock.mockResolvedValueOnce(new Response('{}', { status: s }));
+      expect(await drainPreviewRevokeQueue(NOW_MS + 1000)).toEqual({
+        sent: 1,
+        dropped: 0,
+        retrying: 4,
+        lastStatus: 503,
+      });
+      fetchMock.mockReset();
+      answer(404);
+      expect((await drainPreviewRevokeQueue(NOW_MS + 2000)).retrying).toBe(4);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    });
+  });
+
   it('one older than the 8 h cap is dropped unsent, and the drop is logged', async () => {
     answer(503);
     await revokePreviewSession({ userId: USER, previewId: PID, reason: 'r' }, NOW_MS);

@@ -380,8 +380,6 @@ export async function clearBlockInstancesForPublisher({
 
     return global.length + subjectScoped.length;
   } finally {
-    // The ban's `"*"` preview revoke, if still queued, is dropped (an unban sends nothing). Belt
-    // and braces: a late `"*"` already cannot reach a session opened after the unban.
     await clearQueuedBanRevoke(userId);
   }
 }

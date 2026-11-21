@@ -1827,9 +1827,7 @@ export async function sweepDirectSessions(now: number = nowSec()): Promise<Direc
     if (read.status === 'absent') {
       try {
         await cluster('dropDirect', () => redis.sRem(directSessionsKey, sessionId));
-      } catch {
-        // left for the next run
-      }
+      } catch {}
       continue;
     }
     const session = read.session;

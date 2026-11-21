@@ -61,8 +61,7 @@ export async function resolveDevTunnelFrame(
   const direct = tunnel?.transport === 'direct';
   if (tunnel && isValidSessionHost(tunnel, sessionHostDomains())) {
     host = tunnel.host;
-    // A direct preview's session host is itself the credential, minted once per session, so
-    // every render returns the same origin; it has no record of its own to wait for.
+    // Same origin on every render: a direct preview's host is minted once per session.
     if (direct) iframeSrc = `https://${host}/`;
     else dnsPending = !(await isDevTunnelHostPublished(host));
     if (!direct && !dnsPending) {
