@@ -207,17 +207,67 @@ export const imageNotFlaggedWhere = () =>
     AND: [minorContentNotRestrictedWhere()],
   } satisfies Prisma.ImageWhereInput);
 
-// Ratings a challenge cover may never carry.
+// Ratings a cover may never carry.
 const COVER_EXCLUDED_LEVELS = [0, NsfwLevel.Blocked];
+
+/**
+ * How a cover treats a minor-flagged image. `strict` refuses every one (public collection covers);
+ * `minorContent` refuses one only where the minor content rule restricts it (challenge covers).
+ */
+export type CoverMinorRule = 'strict' | 'minorContent';
+
+type CoverCoreImage = {
+  needsReview: string | null;
+  tosViolation: boolean;
+  acceptableMinor: boolean;
+  minor: boolean | null;
+  nsfwLevel: number | null;
+};
+
+/**
+ * The checks every cover passes, whoever is shown it. `coverCoreSql` and `isCoverCore` are its
+ * twins: change all three together.
+ */
+export const coverCoreWhere = (minor: CoverMinorRule): Prisma.ImageWhereInput[] => [
+  { needsReview: null },
+  { tosViolation: false },
+  { acceptableMinor: false },
+  { nsfwLevel: { notIn: COVER_EXCLUDED_LEVELS } },
+  minor === 'strict' ? { minor: false } : minorContentNotRestrictedWhere(),
+];
+
+/** `coverCoreWhere` as SQL over `"Image" i`. */
+export const coverCoreSql = (minor: CoverMinorRule) => Prisma.sql`(
+  i."needsReview" IS NULL
+  AND i."tosViolation" = FALSE
+  AND i."acceptableMinor" = FALSE
+  AND i."nsfwLevel" NOT IN (${Prisma.join(COVER_EXCLUDED_LEVELS)})
+  AND ${
+    minor === 'strict'
+      ? Prisma.sql`i."minor" = FALSE`
+      : Prisma.sql`NOT ${minorContentRestrictedSql({
+          minor: Prisma.sql`COALESCE(i."minor", FALSE)`,
+          nsfwLevel: Prisma.sql`i."nsfwLevel"`,
+        })}`
+  }
+)`;
+
+/** `coverCoreWhere` over an image already read. */
+export const isCoverCore = (image: CoverCoreImage, minor: CoverMinorRule) =>
+  image.needsReview === null &&
+  image.tosViolation === false &&
+  image.acceptableMinor === false &&
+  // An unrated (NULL) level fails, as NOT IN does in SQL.
+  image.nsfwLevel != null &&
+  !COVER_EXCLUDED_LEVELS.includes(image.nsfwLevel) &&
+  (minor === 'strict'
+    ? image.minor === false
+    : !isMinorMatureImage({ minor: image.minor, nsfwLevel: image.nsfwLevel }));
 
 /** A challenge cover any viewer may be shown. `challengeCoverSql` is its SQL twin: change both together. */
 export const challengeCoverWhere = (): Prisma.ImageWhereInput => ({
   AND: [
-    { needsReview: null },
-    { tosViolation: false },
-    { acceptableMinor: false },
-    { nsfwLevel: { notIn: COVER_EXCLUDED_LEVELS } },
-    minorContentNotRestrictedWhere(),
+    ...coverCoreWhere('minorContent'),
     {
       OR: [
         { postId: null },
@@ -234,14 +284,7 @@ export const challengeCoverWhere = (): Prisma.ImageWhereInput => ({
 
 /** `challengeCoverWhere` as SQL over `"Image" i`. */
 export const challengeCoverSql = () => Prisma.sql`(
-  i."needsReview" IS NULL
-  AND i."tosViolation" = FALSE
-  AND i."acceptableMinor" = FALSE
-  AND i."nsfwLevel" NOT IN (${Prisma.join(COVER_EXCLUDED_LEVELS)})
-  AND NOT ${minorContentRestrictedSql({
-    minor: Prisma.sql`COALESCE(i."minor", FALSE)`,
-    nsfwLevel: Prisma.sql`i."nsfwLevel"`,
-  })}
+  ${coverCoreSql('minorContent')}
   AND (i."postId" IS NULL OR EXISTS (
     SELECT 1 FROM "Post" cp
     WHERE cp.id = i."postId"
