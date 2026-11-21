@@ -1263,10 +1263,6 @@ export function getResourceCanGenerate({
 
   let canGenerate = !!(covered && hasValidStatus && canAccessGenerationResource(resource, user));
 
-  if (resource.usageControl === 'InternalGeneration' && !user.isModerator) {
-    canGenerate = false;
-  }
-
   if (isBaseModelGenerationDisabled(resource.baseModel)) canGenerate = false;
 
   if (canGenerate && isTargetedBy(resource, hiddenGates)) canGenerate = false;

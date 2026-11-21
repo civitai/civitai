@@ -13,6 +13,7 @@ const VERSIONS = [
   { id: 20, baseModel: 'SDXL 1.0', ...published, availability: 'Private' },
   { id: 21, baseModel: 'SDXL 1.0', ...published, status: 'Draft' },
   { id: 22, baseModel: 'SDXL 1.0', ...published, status: 'Training' },
+  { id: 23, baseModel: 'SDXL 1.0', ...published, usageControl: 'InternalGeneration' },
 ];
 const civitai = (versionId: number) => `urn:air:sdxl:lora:civitai:1@${versionId}`;
 const check = (input: unknown, viewerId = VIEWER) => checkAppStepResources(input, viewerId);
@@ -127,9 +128,27 @@ describe('checkAppStepResources', () => {
       ['a Private version', 20],
       ['a Draft version', 21],
       ['a Training version', 22],
+      ['an InternalGeneration version', 23],
     ])('refuses %s to a viewer who does not own it', async (_, id) => {
       await expect(check({ model: civitai(id) })).rejects.toThrow(
         `model version ${id} is not available for generation`
+      );
+    });
+
+    it('refuses a restricted version named alongside a usable one', async () => {
+      await expect(check({ model: civitai(10), lora: civitai(20) })).rejects.toThrow(
+        'model version 20 is not available for generation'
+      );
+    });
+
+    it.each([
+      'https:civitai:1@20',
+      'http:checkpoint:civitai:1@20',
+      'sdxl://lora:civitai:1@20',
+      'urn://air:civitai:1@20',
+    ])('refuses a restricted version named by the URL-shaped AIR %s', async (model) => {
+      await expect(check({ model })).rejects.toThrow(
+        'model version 20 is not available for generation'
       );
     });
 
@@ -139,24 +158,39 @@ describe('checkAppStepResources', () => {
       });
     });
 
-    it.each([
-      ['its owner', OWNER],
-      ['a moderator', MODERATOR],
-    ])('allows a Private version to %s', async (_, viewerId) => {
-      await expect(check({ model: civitai(20) }, viewerId)).resolves.toEqual({
-        capOutput: false,
+    it('refuses an InternalGeneration version to its owner', async () => {
+      await expect(check({ model: civitai(23) }, OWNER)).rejects.toMatchObject({
+        code: 'FORBIDDEN',
       });
     });
 
-    it('allows a public version without looking the viewer up', async () => {
+    it('allows a Private version to its owner', async () => {
+      await expect(check({ model: civitai(20) }, OWNER)).resolves.toEqual({ capOutput: false });
+    });
+
+    // Deliberate: the app's code names these resources, not the viewer, so a moderator running a
+    // third-party or pending app gets no exemption here. Moderators test drafts in the generator,
+    // where getResourceCanGenerate still exempts them. Do not add a moderator lookup back.
+    it.each([
+      ['a Private version', 20],
+      ['a Draft version', 21],
+    ])("refuses a moderator running an app that names someone else's %s", async (_, id) => {
+      await expect(check({ model: civitai(id) }, MODERATOR)).rejects.toThrow(
+        `model version ${id} is not available for generation`
+      );
+    });
+
+    it('allows a public version', async () => {
       await expect(check({ model: civitai(10) })).resolves.toEqual({ capOutput: false });
-      expect(dbMock.dbRead.user.findUnique).not.toHaveBeenCalled();
     });
 
     // Coverage and base-model eligibility are deliberately NOT applied on step paths: a training
     // step names a public base checkpoint as its input, and that checkpoint need not be covered
     // for generation. Do not widen this check to the full canGenerate rule without that case.
     it('allows a training step naming a public base checkpoint', async () => {
+      dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+        { id: 10, baseModel: 'SDXL 1.0', ...published, covered: false },
+      ] as never);
       await expect(
         check({
           engine: 'ai-toolkit',

@@ -24,14 +24,6 @@ const URL_RE = /^([a-z][a-z0-9+.-]*:\/\/|https?:)/i;
 // links, which the AIR grammar also matches.
 const ALLOWED_NON_CIVITAI_SOURCES: ReadonlySet<string> = new Set(['orchestrator', 'mailto']);
 
-async function isModerator(userId: number): Promise<boolean> {
-  const user = await dbRead.user.findUnique({
-    where: { id: userId },
-    select: { isModerator: true },
-  });
-  return !!user?.isModerator;
-}
-
 function refuse(message: string): never {
   throw new TRPCError({ code: 'FORBIDDEN', message });
 }
@@ -60,19 +52,20 @@ function collectAppStepVersionIds(input: unknown): number[] {
     if (HUGGING_FACE_TRAINING_DATA_RE.test(value)) return;
     if (HUGGING_FACE_RE.test(value))
       refuse('Hugging Face resources are not available to apps; use a Civitai model version');
+    const parsed = Air.parseSafe(value);
+    const source = parsed?.source.toLowerCase();
+    // Before the URL test: the AIR grammar also reads `https:civitai:1@2` as a Civitai version.
+    if (parsed && source === 'civitai') {
+      versionIds.add(versionIdOf(value, parsed));
+      return;
+    }
     if (URL_RE.test(value)) {
       if (isKey || namesWeightsFile(value))
         refuse('model weights must be a Civitai model version, not a URL');
       return;
     }
-    const parsed = Air.parseSafe(value);
-    if (!parsed) {
+    if (!parsed || !source) {
       if (AIR_URN_RE.test(value)) refuse(`unreadable resource AIR: '${value.slice(0, 200)}'`);
-      return;
-    }
-    const source = parsed.source.toLowerCase();
-    if (source === 'civitai') {
-      versionIds.add(versionIdOf(value, parsed));
       return;
     }
     // Timecodes and ratios (`00:00:05:00`) parse too; no resource host is a number.
@@ -102,8 +95,9 @@ function collectAppStepVersionIds(input: unknown): number[] {
  * version the viewer may not generate with, or a version on a base model no app may use, and
  * returns whether its output is held to PG-13.
  *
- * Only the generation check's access rule applies here, not its coverage or base-model rules:
- * training steps name base checkpoints that are not covered for generation.
+ * Only the generation check's access rule applies here, without its moderator exemption, and not
+ * its coverage or base-model rules: training steps name base checkpoints that are not covered for
+ * generation.
  *
  * A step that names no resource (a provider API, or an engine's default weights) is not capped
  * here: its `ecosystem` string is the orchestrator's spelling and does not map back to one base
@@ -122,6 +116,7 @@ export async function checkAppStepResources(
           baseModel: true,
           status: true,
           availability: true,
+          usageControl: true,
           model: { select: { userId: true } },
         },
       })
@@ -130,12 +125,13 @@ export async function checkAppStepResources(
   const missing = versionIds.find((id) => !found.has(id));
   if (missing !== undefined) refuse(`model version ${missing} is not available for generation`);
 
-  const denied = versions.filter(
+  // 🔴 No moderator exemption: the app's code names these resources, not the viewer, so a
+  // moderator's rights must not reach a third-party or pending app. Refused in the same words as a
+  // missing version.
+  const denied = versions.find(
     (v) => !canAccessGenerationResource({ ...v, modelUserId: v.model.userId }, { id: viewerId })
   );
-  // Looked up only when it decides something. Refused in the same words as a missing version.
-  if (denied.length && !(await isModerator(viewerId)))
-    refuse(`model version ${denied[0].id} is not available for generation`);
+  if (denied) refuse(`model version ${denied.id} is not available for generation`);
 
   const baseModels = versions.map((v) => v.baseModel);
   assertNoRestrictedBaseModels({ baseModels });
