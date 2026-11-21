@@ -448,7 +448,7 @@ export function liftedUnderGraceSql(stripped: Prisma.Sql) {
 /** `metadata` for an approved appeal. */
 export const liftedMetadataSql = liftedUnderGraceSql(withoutGraceMarkersSql());
 
-/** `metadata` for an unblock: the rule keys off as well. */
+/** `metadata` for an unblock: also drops the rule keys; an unblocked row is not the account deletion's to put back. */
 export const unblockedMetadataSql = liftedUnderGraceSql(
   Prisma.sql`"metadata" - 'ruleId' - 'ruleReason' - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text`
 );

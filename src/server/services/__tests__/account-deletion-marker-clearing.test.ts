@@ -1,16 +1,6 @@
 import { readFileSync } from 'fs';
-import {
-  GRACE_PRIOR_BLOCKED_FOR_KEY,
-  GRACE_PRIOR_INGESTION_KEY,
-  GRACE_PRIOR_NEEDS_REVIEW_KEY,
-} from '@civitai/shared/account-deletion-grace';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import {
-  PRIOR_BLOCKED_FOR_KEY,
-  PRIOR_INGESTION_KEY,
-  PRIOR_NEEDS_REVIEW_KEY,
-} from '~/server/utils/image-removal-mode';
 
 /**
  * The account-deletion grace block writes two `Image.metadata` breadcrumbs so a later account
@@ -67,15 +57,6 @@ describe('the moderator app strips the same account-deletion breadcrumbs the mai
     expect(source().length, `${MOD_BLOCK_FILE} is empty or unreadable`).toBeGreaterThan(1000);
   });
 
-  // The main app's keys are the shared ones the moderator app reads, so the two cannot drift.
-  it('takes every key from the shared module', () => {
-    expect([PRIOR_INGESTION_KEY, PRIOR_BLOCKED_FOR_KEY, PRIOR_NEEDS_REVIEW_KEY]).toEqual([
-      GRACE_PRIOR_INGESTION_KEY,
-      GRACE_PRIOR_BLOCKED_FOR_KEY,
-      GRACE_PRIOR_NEEDS_REVIEW_KEY,
-    ]);
-  });
-
   /**
    * `blockImage` writes `metadata` through a TERNARY on `needsReview === 'remixSource'`, and the
    * two arms spell the subject of the strip differently: the remixSource arm has to `COALESCE`
@@ -88,9 +69,9 @@ describe('the moderator app strips the same account-deletion breadcrumbs the mai
    * `"metadata"` is a comma, so the bare-subject pattern below cannot match it.
    */
   const STRIP_KEYS =
-    String.raw`\s*-\s*\$\{ACCOUNT_DELETION_PRIOR_INGESTION_KEY\}::text` +
-    String.raw`\s*-\s*\$\{ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY\}::text` +
-    String.raw`\s*-\s*\$\{ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY\}::text`;
+    String.raw`\s*-\s*\$\{GRACE_PRIOR_INGESTION_KEY\}::text` +
+    String.raw`\s*-\s*\$\{GRACE_PRIOR_BLOCKED_FOR_KEY\}::text` +
+    String.raw`\s*-\s*\$\{GRACE_PRIOR_NEEDS_REVIEW_KEY\}::text`;
   const BRANCHES = [
     ['remixSource', String.raw`COALESCE\("metadata",\s*'\{\}'::jsonb\)`],
     ['every other', String.raw`"metadata"`],

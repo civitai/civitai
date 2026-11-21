@@ -167,7 +167,7 @@ describe('imageModerate unblock of a CSAM-blocked image', () => {
     await expect(unblock([MODERATED])).resolves.toEqual({ count: 1, restored: 1, kept: 0 });
   });
 
-  // Policy: DESIGN GO A on the appeal task, "a deleted owner's image is never served".
+  // Policy: LIFT_WHILE_OWNER_DELETED in @civitai/shared/account-deletion-grace: a deleted owner's image is never served.
   it('counts an image kept blocked for its deleted owner apart from the restored ones', async () => {
     await db.exec(`INSERT INTO "User" ("id", "deletedAt") VALUES (8, now())`);
 

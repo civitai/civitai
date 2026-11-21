@@ -242,7 +242,7 @@ describe('approving an appeal on an image an account deletion blocked', () => {
   });
 });
 
-// Policy: DESIGN GO A on the appeal task, "a deleted owner's image is never served".
+// Policy: LIFT_WHILE_OWNER_DELETED in @civitai/shared/account-deletion-grace: a deleted owner's image is never served.
 describe('approving an appeal while the image owner is deleted', () => {
   const OWNER_ID = 7;
   const activities = async () =>

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 // Regression guard for the "unblock leaves nsfwLevel stuck at Blocked" bug
 // (ClickUp 868kfwdzq). Blocking force-sets nsfwLevel=Blocked(32) and leaves the
@@ -188,6 +189,7 @@ const { handleUnblockImages, handleBlockImages, rescanUnratedImages } = await im
   '../image.service'
 );
 const { unblockAccountDeletionImages } = await import('../account-deletion-images');
+const { imagesMetricsSearchIndex } = await import('~/server/search-index');
 const { queueDocumentsForImageMinorChanges, queueDocumentsForBlockedImages } = await import(
   '~/server/services/image-models-reindex.service'
 );
@@ -688,7 +690,7 @@ describe('handleUnblockImages — minor queue Accept truth table', () => {
   });
 });
 
-// Policy: DESIGN GO A on the appeal task, "a deleted owner's image is never served".
+// Policy: LIFT_WHILE_OWNER_DELETED in @civitai/shared/account-deletion-grace: a deleted owner's image is never served.
 describe('handleUnblockImages while the owner is deleted', () => {
   it('keeps the image Blocked, recorded as Scanned for an account restore; another owner is restored', async () => {
     const pg = new PGlite();
@@ -701,13 +703,23 @@ describe('handleUnblockImages while the owner is deleted', () => {
       minor boolean NOT NULL DEFAULT false, "needsReview" text, "blockedFor" text, metadata jsonb,
       "scannedAt" timestamp, ingestion "ImageIngestionStatus", "scanJobs" jsonb);
       CREATE TABLE "TagsOnImageDetails" ("imageId" int, disabled boolean);
-      CREATE TABLE "ModActivity" ("entityType" text, "entityId" int, activity text);
+      CREATE TABLE "ModActivity" ("userId" int, "entityType" text, "entityId" int, activity text);
+      CREATE DOMAIN "JobQueueType" AS text;
+      CREATE TABLE "JobQueue" ("entityId" int, "entityType" "EntityType", type "JobQueueType",
+        "createdAt" timestamp(3) NOT NULL DEFAULT now(), PRIMARY KEY ("entityType", "entityId", type));
+      INSERT INTO "JobQueue" VALUES (1, 'Image', 'BlockedImageDelete', '2026-01-01');
       INSERT INTO "User" VALUES (1, now()), (2, NULL);
       INSERT INTO "Image" (id, "userId", "nsfwLevel", "blockedFor", metadata, ingestion) VALUES
         (1, 1, 4, 'moderated', '{"ruleId": 3, "keep": 1}', 'Blocked'),
         (2, 2, 32, 'moderated', '{"ruleId": 3, "keep": 1}', 'Blocked');`);
     const raw = pgliteRaw(pg);
     const capture = dbWrite.$queryRaw.getMockImplementation();
+    const captureExec = dbWrite.$executeRaw.getMockImplementation();
+    dbWrite.$executeRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      /INSERT INTO "(ModActivity|JobQueue)"/.test(strings.join(''))
+        ? raw.executeRaw(strings, ...values)
+        : Promise.resolve(0)) as never);
+    vi.mocked(imagesMetricsSearchIndex.queueUpdate).mockClear();
     dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
       /AS "keptBlocked"|RETURNING "Image".id/.test(strings.join(''))
         ? raw.queryRaw(strings, ...values)
@@ -725,7 +737,7 @@ describe('handleUnblockImages while the owner is deleted', () => {
     );
 
     try {
-      const result = await handleUnblockImages({ ids: [1, 2], moderatorId: undefined } as any);
+      const result = await handleUnblockImages({ ids: [1, 2], moderatorId: 9 } as any);
       expect({
         restored: result.restored.map((x) => x.id),
         kept: result.kept.map((x) => x.id),
@@ -754,6 +766,26 @@ describe('handleUnblockImages while the owner is deleted', () => {
       ]);
       const level = await pg.query(`SELECT "nsfwLevel" FROM "Image" WHERE id = 1`);
       expect(level.rows).toEqual([{ nsfwLevel: 32 }]);
+      // Not a takedown activity for the kept row; 'review' only for the restored one.
+      const acts = await pg.query(`SELECT "entityId", activity FROM "ModActivity" ORDER BY 1`);
+      expect(acts.rows).toEqual([
+        { entityId: 1, activity: 'reviewOwnerDeleted' },
+        { entityId: 2, activity: 'review' },
+      ]);
+      // The kept row's purge clock starts again.
+      const clock = await pg.query(
+        `SELECT "createdAt" > now() - interval '1 hour' AS fresh FROM "JobQueue" WHERE "entityId" = 1`
+      );
+      expect(clock.rows).toEqual([{ fresh: true }]);
+      // Out of search for the kept row, updated for the restored one.
+      expect(
+        vi.mocked(imagesMetricsSearchIndex.queueUpdate).mock.calls.flatMap(([items]) => items)
+      ).toEqual(
+        expect.arrayContaining([
+          { id: 1, action: SearchIndexUpdateQueueAction.Delete },
+          { id: 2, action: SearchIndexUpdateQueueAction.Update },
+        ])
+      );
 
       // The owner comes back: the account restore brings the kept image back Scanned.
       await pg.query(`UPDATE "User" SET "deletedAt" = NULL WHERE id = 1`);
@@ -766,12 +798,13 @@ describe('handleUnblockImages while the owner is deleted', () => {
       ]);
     } finally {
       if (capture) dbWrite.$queryRaw.mockImplementation(capture);
+      if (captureExec) dbWrite.$executeRaw.mockImplementation(captureExec);
       await pg.close();
     }
   });
 });
 
-// Policy: DESIGN GO A on the appeal task, "a deleted owner's image is never served".
+// Policy: LIFT_WHILE_OWNER_DELETED in @civitai/shared/account-deletion-grace: a deleted owner's image is never served.
 describe('rescanUnratedImages after a lift kept blocked for a deleted owner', () => {
   it('counts the kept lift as a moderator review and does not send the image back to the scanner', async () => {
     const pg = new PGlite();

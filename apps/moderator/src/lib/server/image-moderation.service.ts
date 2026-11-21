@@ -63,18 +63,6 @@ const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM} OR ("need
   SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = "Image".id AND s.outcome = 'Dismissed'
 )))`;
 
-/**
- * The three `Image.metadata` breadcrumbs the main app's account-deletion grace block writes; canonical
- * definitions are `GRACE_PRIOR_*` in `@civitai/shared/account-deletion-grace`.
- *
- * A block strips them: the main app's restore path un-blocks an image on the presence of the first
- * key alone, so a row marked during a grace period and then moderated would be put back by a later
- * account restore.
- */
-const ACCOUNT_DELETION_PRIOR_INGESTION_KEY = GRACE_PRIOR_INGESTION_KEY;
-const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = GRACE_PRIOR_BLOCKED_FOR_KEY;
-const ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY = GRACE_PRIOR_NEEDS_REVIEW_KEY;
-
 /** Blocked by an automated moderation rule: it carries a rule's keys, unless that rule is a Hold rule and
  *  never was a Block rule. A Hold rule's keys can stay on an image a moderator later removed; a rule since deleted, or edited away from Block, still counts as the blocker.
  *  Compared as text, so a malformed `ruleId` matches no rule rather than failing. */
@@ -87,10 +75,10 @@ const RULE_BLOCKED = sql<boolean>`(("Image"."metadata" -> 'ruleId') IS NOT NULL 
 /** Removed by a moderator, or under an account-deletion grace block, which a report verdict does not lift
  *  either. Not a block by an automated moderation rule (`metadata.ruleId`): a report review is where a rule's
  *  false positive is restored. Never NULL, so `NOT` of it is safe. */
-const REMOVED_BY_MODERATOR = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS NOT DISTINCT FROM ${BLOCKED_REASON_MODERATED} AND (NOT ${RULE_BLOCKED} OR ("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NOT NULL))`;
+const REMOVED_BY_MODERATOR = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS NOT DISTINCT FROM ${BLOCKED_REASON_MODERATED} AND (NOT ${RULE_BLOCKED} OR ("metadata" -> ${GRACE_PRIOR_INGESTION_KEY}::text) IS NOT NULL))`;
 /** `isModerationBlocked` as a condition: a grace block is not one. Remove still blocks a grace-blocked image,
  *  which strips its breadcrumbs, so a later account restore cannot put it back. */
-const MODERATION_BLOCKED = sql<boolean>`(${REMOVED_BY_MODERATOR} AND ("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NULL)`;
+const MODERATION_BLOCKED = sql<boolean>`(${REMOVED_BY_MODERATOR} AND ("metadata" -> ${GRACE_PRIOR_INGESTION_KEY}::text) IS NULL)`;
 const OWNER_BANNED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "Image"."userId" AND u."bannedAt" IS NOT NULL)`;
 /** A banned owner's image, blocked for anything but CSAM: a report verdict neither restores it nor blocks it
  *  again, whatever blocked it. The ban's own block skips rows already blocked, so a rule block can be the
@@ -98,24 +86,30 @@ const OWNER_BANNED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "I
 const BANNED_OWNER_BLOCKED = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS DISTINCT FROM ${BLOCKED_REASON_CSAM} AND ${OWNER_BANNED})`;
 /** What Remove leaves as it is: a banned owner's grace-blocked image still gets the real block, which
  *  clears the breadcrumbs an account restore reads. */
-const KEPT_BY_REMOVE = sql<boolean>`(${MODERATION_BLOCKED} OR (${BANNED_OWNER_BLOCKED} AND ("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NULL))`;
+const KEPT_BY_REMOVE = sql<boolean>`(${MODERATION_BLOCKED} OR (${BANNED_OWNER_BLOCKED} AND ("metadata" -> ${GRACE_PRIOR_INGESTION_KEY}::text) IS NULL))`;
 
 /** `needsReview` for a row a moderator lifts (an unblock or an approved appeal): the review a grace
  *  block recorded, when lifting does not settle it, else none. The main app's `reviewKeptWhenLiftedSql`. */
 const reviewKeptWhenLifted = sql<string | null>`(CASE
-  WHEN "metadata"->>${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text = ANY(${[
+  WHEN "metadata"->>${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text = ANY(${[
   ...REVIEWS_KEPT_WHEN_LIFTED,
 ]}::text[])
-  THEN "metadata"->>${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text
+  THEN "metadata"->>${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text
 END)`;
 
 /** The image's owner has deleted their account (in its grace period, or not yet purged). */
 const OWNER_DELETED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "Image"."userId" AND u."deletedAt" IS NOT NULL)`;
 
-/** The grace-block breadcrumbs off `metadata`; a non-object value is left as it is. */
+/**
+ * The grace-block breadcrumbs off `metadata`; a non-object value is left as it is.
+ *
+ * A block strips them: the main app's restore path un-blocks an image on the presence of the first
+ * key alone, so a row marked during a grace period and then moderated would be put back by a later
+ * account restore.
+ */
 const withoutGraceMarkers = (metadata: RawBuilder<unknown>) =>
   sql`(CASE WHEN jsonb_typeof(${metadata}) = 'object'
-    THEN (${metadata}) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text
+    THEN (${metadata}) - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text
     ELSE ${metadata} END)`;
 
 // A lift (approved appeal, accept) while the owner is deleted keeps the row blocked and records the
@@ -136,8 +130,8 @@ const LIFT_KEPT_BLOCKED = sql<boolean>`(ingestion = ${KEPT.ingestion}::"ImageIng
 /** `metadata` for a lifted row: `stripped`, or while the owner is deleted, that recording the lift. */
 const liftedMetadata = (stripped: RawBuilder<unknown>) => sql`(CASE WHEN ${OWNER_DELETED}
   THEN COALESCE(${stripped}, '{}'::jsonb) || jsonb_build_object(
-    ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text, ${RECORDED.ingestion}::text, ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text, ${RECORDED.blockedFor}::text,
-    ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLifted})
+    ${GRACE_PRIOR_INGESTION_KEY}::text, ${RECORDED.ingestion}::text, ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text, ${RECORDED.blockedFor}::text,
+    ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLifted})
   ELSE ${stripped} END)`;
 
 const recompute = async (imageId: number) => {
@@ -350,7 +344,7 @@ export async function acceptImage({
       const removed = await dbWrite
         .selectFrom('Image')
         .select(
-          sql<boolean>`(("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NOT NULL OR ${OWNER_BANNED})`.as(
+          sql<boolean>`(("metadata" -> ${GRACE_PRIOR_INGESTION_KEY}::text) IS NOT NULL OR ${OWNER_BANNED})`.as(
             'unpaid'
           )
         )
@@ -460,7 +454,7 @@ export async function isModerationBlocked(imageId: number): Promise<boolean> {
     .where('id', '=', imageId)
     .where('ingestion', '=', 'Blocked')
     .where('blockedFor', '=', BLOCKED_REASON_MODERATED)
-    .where(sql<boolean>`("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NULL`)
+    .where(sql<boolean>`("metadata" -> ${GRACE_PRIOR_INGESTION_KEY}::text) IS NULL`)
     .executeTakeFirst();
   return !!row;
 }
@@ -586,8 +580,8 @@ export async function blockImage({
         //     NULL-propagates too and would drop the stamp.
         metadata:
           img.needsReview === 'remixSource'
-            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
-            : sql`"metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason'`,
+            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
+            : sql`"metadata" - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason'`,
       })
       .where('id', '=', imageId)
       // Already removed with only the review flag left: blocking again would only notify the uploader a
