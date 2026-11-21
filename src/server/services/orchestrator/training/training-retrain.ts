@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { TRPCError } from '@trpc/server';
 import {
   Air,
   type KohyaTrainingInput,
@@ -11,8 +12,7 @@ import {
 import { KOHYA_REPLAY_KEYS, replayKohyaInput } from '@civitai/shared/training-kohya-replay';
 
 // One-off: refunds a training run broken by a trainer bug and, in `retrain` mode, submits the same run
-// again on the owner's Buzz. Every rule is here, over injected orchestrator and gate calls; the endpoint
-// (`api-routes/mod/training/retrain-source.ts`) wires them.
+// again on the owner's Buzz.
 
 export const RETRAIN_MODES = ['retrain', 'refund-only'] as const;
 export type RetrainMode = (typeof RETRAIN_MODES)[number];
@@ -62,6 +62,7 @@ export type RetrainOutcome =
   | 'would-retrain'
   | 'would-refund'
   | 'retrained'
+  | 'retrained-unmarked'
   | 'already-retrained'
   | 'refunded'
   | 'already-refunded'
@@ -130,6 +131,25 @@ export type RetrainDeps = {
 
 /** Thrown when a read the decision needs failed: nothing moved, and the call can be repeated. */
 export class RetrainUnavailableError extends Error {}
+
+/** The endpoint's handler: the grant first, then the run. A read that could not be made answers 503. */
+export async function retrainSourceHandler(
+  input: { sourceWorkflowId: string; execute: boolean },
+  { holdsGrant, deps }: { holdsGrant: () => Promise<boolean>; deps: RetrainDeps }
+): Promise<RetrainResult> {
+  if (!(await holdsGrant()))
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Retraining a run needs the "training.retrain" moderator permission.',
+    });
+  try {
+    return await runRetrainSource(input, deps);
+  } catch (e) {
+    if (e instanceof RetrainUnavailableError)
+      throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: e.message, cause: e });
+    throw e;
+  }
+}
 
 export function retrainExternalId(sourceWorkflowId: string): string {
   const id = `retrain-${sourceWorkflowId}`;
@@ -211,7 +231,7 @@ export function buildRetrainBody(
     metadata,
     steps: [step],
     currencies: workflow.currencies,
-    // As every other submit path pins it: a mature sample must not re-price the run after the quote.
+    // A mature sample must not re-price the run after the quote.
     upgradeMode: 'manual',
     ...(typeof workflow.allowMatureContent === 'boolean'
       ? { allowMatureContent: workflow.allowMatureContent }
@@ -368,7 +388,6 @@ export async function runRetrainSource(
 
   if (startedAt >= RETRAIN_HARD_STOP) return skip('expired');
   if (userId === null) return skip('not-allowlisted', 'not a workflow id');
-  // Fails closed: a store that cannot answer throws, and nothing runs.
   const listed = await deps.readAllowlist(sourceWorkflowId);
   const markedId = listed?.startsWith(RETRAINED_MARKER)
     ? listed.slice(RETRAINED_MARKER.length)
@@ -477,10 +496,18 @@ export async function runRetrainSource(
   });
   if (classified.outcome === 'bad-submit-result')
     return Object.assign(result, { outcome: classified.outcome, detail: classified.detail });
-  // The run exists either way; a failed write is reported, and the externalId still covers a repeat.
-  await deps
-    .markRetrained(sourceWorkflowId, `${RETRAINED_MARKER}${submitted.workflow.id}`)
-    .catch(() => result.warnings.push('marker-not-written'));
+  // Unmarked, a repeat would charge again if the owner deleted this retrain: it is recorded by hand.
+  let marked = false;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS && !marked; attempt++)
+    marked = await deps
+      .markRetrained(sourceWorkflowId, `${RETRAINED_MARKER}${submitted.workflow.id}`)
+      .then(() => true)
+      .catch(() => false);
+  if (!marked)
+    return Object.assign(result, {
+      outcome: 'retrained-unmarked',
+      retrain: retrainOf(submitted.workflow),
+    });
   return Object.assign(result, {
     outcome: classified.outcome,
     retrain: retrainOf(submitted.workflow),

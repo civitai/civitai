@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { TransactionInfo, Workflow, WorkflowTemplate } from '@civitai/orchestration-client';
 import {
   RETRAIN_HARD_STOP,
+  retrainSourceHandler,
   runRetrainSource,
   type OwnerOrchestrator,
   type RetrainDeps,
@@ -102,7 +103,8 @@ function createWorld(
   source: Workflow,
   opts: { quote?: number; nsfw?: Record<string, string | null> } = {}
 ) {
-  const runs = new Map<string, Workflow>([[source.id as string, structuredClone(source)]]);
+  // Stored under the requested id, so a read can answer with another workflow.
+  const runs = new Map<string, Workflow>([[SOURCE, structuredClone(source)]]);
   const byExternalId = new Map<string, Workflow>();
   const refundKeys = new Set<string>();
   const calls = { refund: 0, quote: 0, submit: 0, quoteBodies: [] as WorkflowTemplate[] };
@@ -111,6 +113,8 @@ function createWorld(
   let allowlist: Record<string, string> = { [SOURCE]: 'retrain' };
   let allowlistDown = false;
   let markerDown = false;
+  let markAttempts = 0;
+  let allowlistReads = 0;
   let kohyaFlag = true;
   /** A gate that refuses: `withheld: true`, or the refusal text of the others. */
   const refuse: Partial<
@@ -151,10 +155,12 @@ function createWorld(
   const deps: RetrainDeps = {
     now: () => clock,
     readAllowlist: async (id) => {
+      allowlistReads++;
       if (allowlistDown) throw new Error('sysRedis down');
       return allowlist[id] ?? null;
     },
     markRetrained: async (id, marker) => {
+      markAttempts++;
       if (markerDown) throw new Error('redis down');
       allowlist = { ...allowlist, [id]: marker };
     },
@@ -205,6 +211,8 @@ function createWorld(
     setAllowlist: (a: Record<string, string>) => (allowlist = a),
     setAllowlistDown: () => (allowlistDown = true),
     setMarkerDown: () => (markerDown = true),
+    markAttempts: () => markAttempts,
+    allowlistReads: () => allowlistReads,
     allowlistValue: () => allowlist[SOURCE],
     setKohyaFlag: (on: boolean) => (kohyaFlag = on),
     advance: (ms: number) => (clock = new Date(clock.getTime() + ms)),
@@ -295,16 +303,13 @@ describe('runRetrainSource', () => {
     expect(credited(w)).toHaveLength(2);
   });
 
-  it('still reports the retrain when the marker cannot be written, and a repeat gets the same run back by its externalId', async () => {
+  it('reports a retrain whose marker could not be written as unmarked, after 3 tries, so it is not read as settled', async () => {
     const w = createWorld(sourceRun());
     w.setMarkerDown();
     const first = await w.run(true);
-    expect(first).toMatchObject({ outcome: 'retrained', warnings: ['marker-not-written'] });
-    w.advance(10 * 60_000);
-    const second = await w.run(true);
-    expect(second.outcome).toBe('already-retrained');
-    expect(second.retrain?.id).toBe(first.retrain!.id);
-    expect(w.calls.refund).toBe(1);
+    expect(first.outcome).toBe('retrained-unmarked');
+    expect(first.retrain?.id).toMatch(new RegExp(`^${OWNER}-`));
+    expect(w.markAttempts()).toBe(3);
   });
 
   it('does not take the force-refunded flag as proof: a colour left owed is refunded again before the submit, or nothing is submitted', async () => {
@@ -449,6 +454,75 @@ describe('runRetrainSource', () => {
     deleted.runs.delete(SOURCE);
     expect(await deleted.run(true)).toMatchObject({ outcome: 'skipped', reason: 'source-deleted' });
     expect(deleted.calls.refund).toBe(0);
+  });
+
+  it.each([
+    ['still training', { status: 'processing' }],
+    ['failed but not force-refunded', { status: 'failed', forceRefunded: false }],
+    ['created before the window', { createdAt: '2026-11-19T23:59:00Z' }],
+    ['another workflow', { id: `${OWNER}-20261120183000123-zz00` }],
+  ] as const)(
+    'refuses a source that is not an eligible broken run, before any money moves: %s',
+    async (_, over) => {
+      const w = createWorld(sourceRun(over as Partial<Workflow>));
+      expect(await w.run(true)).toMatchObject({ outcome: 'skipped', reason: 'source-ineligible' });
+      expect(w.calls.refund + w.calls.submit).toBe(0);
+    }
+  );
+
+  it.each([
+    ['two steps', (s: Workflow) => ({ steps: [s.steps[0], s.steps[0]] })],
+    [
+      'a non-Kohya engine',
+      (s: Workflow) => ({
+        steps: [
+          {
+            ...s.steps[0],
+            input: { ...(s.steps[0] as { input: object }).input, engine: 'ai-toolkit' },
+          },
+        ],
+      }),
+    ],
+    [
+      'no base model',
+      (s: Workflow) => ({
+        steps: [
+          {
+            ...s.steps[0],
+            input: { ...(s.steps[0] as { input: object }).input, model: undefined },
+          },
+        ],
+      }),
+    ],
+  ] as const)('refuses a source whose steps are not one Kohya run: %s', async (_, shape) => {
+    const base = sourceRun();
+    const w = createWorld({ ...base, ...shape(base) } as Workflow);
+    expect(await w.run(true)).toMatchObject({ outcome: 'skipped', reason: 'source-ineligible' });
+    expect(w.calls.refund + w.calls.submit).toBe(0);
+  });
+
+  it('the handler refuses a caller without the training.retrain grant before reading anything, and answers 503 when a read fails', async () => {
+    const w = createWorld(sourceRun());
+    const input = { sourceWorkflowId: SOURCE, execute: true };
+    await expect(
+      retrainSourceHandler(input, { holdsGrant: async () => false, deps: w.deps })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(w.allowlistReads() + w.calls.refund + w.calls.submit).toBe(0);
+
+    expect(
+      (await retrainSourceHandler(input, { holdsGrant: async () => true, deps: w.deps })).outcome
+    ).toBe('retrained');
+
+    const down = createWorld(sourceRun());
+    const owner = down.deps.ownerOrchestrator;
+    down.deps.ownerOrchestrator = async (userId) => ({
+      ...(await owner(userId))!,
+      read: async () => ({ status: 502 }),
+    });
+    await expect(
+      retrainSourceHandler(input, { holdsGrant: async () => true, deps: down.deps })
+    ).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+    expect(down.calls.refund).toBe(0);
   });
 
   it.each([

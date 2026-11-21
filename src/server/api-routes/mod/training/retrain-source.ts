@@ -16,7 +16,7 @@ import {
   RETRAIN_HARD_STOP,
   RETRAIN_SOURCE_ID,
   RetrainUnavailableError,
-  runRetrainSource,
+  retrainSourceHandler,
   type OrchestratorAnswer,
   type OwnerOrchestrator,
   type RetrainDeps,
@@ -28,7 +28,6 @@ import { defineModeratorEndpoint, moderatorBoolean } from '~/server/utils/modera
 import { getTrainingLicenseTerms } from '~/shared/constants/generation-license.constants';
 import type { SessionUser } from '~/types/session';
 
-/** A call's answer as { status, workflow }; a thrown transport error is status 0. */
 async function answer(
   call: () => Promise<{ data?: unknown; error?: unknown; response?: Response }>
 ): Promise<OrchestratorAnswer> {
@@ -157,7 +156,7 @@ export default defineModeratorEndpoint('training.retrainSource', {
     `Every call is refused from ${RETRAIN_HARD_STOP.toISOString()}.`,
     'Before any money moves: the owner must be issued a token; the source must be a one-step Kohya run in the bug window, Succeeded (or already force-refunded); and in retrain mode no moderator action may withhold the source’s outputs (`source-withheld`), and the training service, the Studio Kohya flag for the owner (Studio runs only), the trigger word, the licence, the Green-mature rule and the quote (at most what the source charged) must all pass.',
     'Execute: `/refund` (up to 3 tries), then the source is read back and must net 0 in every colour (`refund-unconfirmed` otherwise, and nothing is submitted). Then the submit (up to 3 tries) under externalId `retrain-<source>`, so a repeat returns the first retrain (`already-retrained`) instead of charging again.',
-    'After a retrain the source’s allowlist value becomes `retrained:<retrain id>`, and every later call answers `already-retrained-marked` with that retrain and its status, without a refund or a submit. Resuming `refund-unconfirmed` or `refunded-not-submitted` is safe: a source that already nets 0 is not refunded again.',
+    'After a retrain the source’s allowlist value becomes `retrained:<retrain id>`, and every later call is skipped with reason `already-retrained-marked`, reporting that retrain and its status, without a refund or a submit. If that value cannot be written (3 tries) the outcome is `retrained-unmarked`: record the retrain by hand and never execute that source again. Add fields to the allowlist; never replace the key, which would drop the markers. Resuming `refund-unconfirmed` or `refunded-not-submitted` is safe: a source that already nets 0 is not refunded again.',
     'Audit row `affected`: the source, owner, mode, outcome, reason, the nets before and after, the quote, the body sha256 and the retrain id.',
   ],
   rateLimit: { max: 10, windowSeconds: 60 },
@@ -166,19 +165,10 @@ export default defineModeratorEndpoint('training.retrainSource', {
     execute: moderatorBoolean.default(false),
   }),
   async handler(input, ctx) {
-    if (!(await hasModeratorGrant(ctx.actor, 'training.retrain')))
-      throw new TRPCError({
-        code: 'FORBIDDEN',
-        message: 'Retraining a run needs the "training.retrain" moderator permission.',
-      });
-    let result;
-    try {
-      result = await runRetrainSource(input, deps);
-    } catch (e) {
-      if (e instanceof RetrainUnavailableError)
-        throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: e.message, cause: e });
-      throw e;
-    }
+    const result = await retrainSourceHandler(input, {
+      holdsGrant: () => hasModeratorGrant(ctx.actor, 'training.retrain'),
+      deps,
+    });
     return {
       ...result,
       affected: {
