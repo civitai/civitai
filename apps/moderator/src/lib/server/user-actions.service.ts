@@ -2296,6 +2296,12 @@ export async function removeReactions(input: {
 // Only the three free-text fields are writable. Retool's GUI write pointed at the whole `User` row,
 // which put username and email one mis-click from being overwritten.
 
+// The archive the endpoints take first can be slow, so a lost response may follow a change that landed.
+const CLEAR_PROFILE_MAY_HAVE_COMPLETED =
+  'Could not confirm the clear. Reload the profile to see whether it went through.';
+const REMOVE_LINK_MAY_HAVE_COMPLETED =
+  'Could not confirm the removal. Reload the links to see whether it went through.';
+
 export async function clearProfileText(input: {
   userId: number;
   fields: ProfileField[];
@@ -2309,9 +2315,11 @@ export async function clearProfileText(input: {
   const result = await callModEndpoint(
     'user/clear-profile',
     { userId: input.userId, fields },
-    'Profile clear'
+    'Profile clear',
+    60_000
   );
-  if (!result.ok) return result;
+  if (!result.ok)
+    return { ok: false, error: writeFailureError(result, CLEAR_PROFILE_MAY_HAVE_COMPLETED) };
   if (result.body.updated === false)
     return { ok: false, error: 'This account has no profile row to edit.' };
   return { ok: true };
@@ -2332,9 +2340,11 @@ export async function removeSocial(input: {
   const result = await callModEndpoint(
     'user/remove-link',
     { userId: input.userId, linkId: input.id },
-    'Link removal'
+    'Link removal',
+    60_000
   );
-  if (!result.ok) return result;
+  if (!result.ok)
+    return { ok: false, error: writeFailureError(result, REMOVE_LINK_MAY_HAVE_COMPLETED) };
   if (result.body.removed === false)
     return { ok: false, error: 'That link does not belong to this user.' };
   return { ok: true };

@@ -123,6 +123,34 @@ describe('removeSocial', () => {
   });
 });
 
+describe('a lost response', () => {
+  const lost = () => {
+    vi.stubGlobal('fetch', () =>
+      Promise.reject(
+        Object.assign(new TypeError('fetch failed'), { cause: { code: 'UND_ERR_SOCKET' } })
+      )
+    );
+  };
+
+  it('tells the operator a link removal may have gone through', async () => {
+    lost();
+    const result = await removeSocial({ id: LINK, userId: TARGET, moderatorId: MOD });
+    expect(result).toEqual({
+      ok: false,
+      error: 'Could not confirm the removal. Reload the links to see whether it went through.',
+    });
+  });
+
+  it('tells the operator a profile clear may have gone through', async () => {
+    lost();
+    const result = await clearProfileText({ userId: TARGET, fields: ['bio'], moderatorId: MOD });
+    expect(result).toEqual({
+      ok: false,
+      error: 'Could not confirm the clear. Reload the profile to see whether it went through.',
+    });
+  });
+});
+
 describe('the /users access check stays in front of both', () => {
   const event = (fields: Record<string, string | string[]>) => {
     const form = new FormData();
