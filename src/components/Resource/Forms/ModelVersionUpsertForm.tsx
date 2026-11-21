@@ -126,6 +126,7 @@ import {
 import {
   Availability,
   LicensingFeeSettlementCurrency,
+  LicensingFeeType,
   ModelStatus,
   ModelType,
   ModelUsageControl,
@@ -384,6 +385,10 @@ export function ModelVersionUpsertForm({
   const currentLicensingFee = form.watch('licensingFee') ?? 0;
   const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
   const hasExistingLicensingFee = Number(version?.licensingFee ?? 0) > 0;
+  // A percent-of-compute fee is staff-set and its number is a percent. This editor speaks Buzz per N
+  // generations, so it shows that fee read-only and never seeds, remembers or re-derives a Buzz value onto
+  // it: a number typed here would be saved as a percent. Clearing it (the fee switch) still works.
+  const percentOfComputeFee = version?.licensingFeeType === LicensingFeeType.PercentOfCompute;
   // Two reasons a version can't earn anything at all — not a gate, not a per-generation fee. Every
   // control goes and the section explains itself, rather than leaving editable inputs whose values the
   // submit would drop. Private models keep their fee editor; only the gate is theirs to lose.
@@ -656,7 +661,8 @@ export function ModelVersionUpsertForm({
   useEffect(() => {
     if (!feeEditorOpen || feeSeededRef.current) return;
     feeSeededRef.current = true;
-    if (hasExistingCharge || (form.getValues('licensingFee') ?? 0) > 0) return;
+    if (percentOfComputeFee || hasExistingCharge || (form.getValues('licensingFee') ?? 0) > 0)
+      return;
     const seeded = seedFeeRatio({ modelType: model?.type, baseModel });
     if (seeded.buzz > 0) applyFeeRatio(seeded);
   }, [feeEditorOpen]);
@@ -734,13 +740,16 @@ export function ModelVersionUpsertForm({
       // Remembered only once the server has taken it, so what comes back next time is a configuration
       // that already cleared the eligibility floor, the fee ceiling and the affirmation — and read off
       // the submitted values rather than form state, which can still hold a charge the payload dropped.
-      if (model?.type && (submittedFee > 0 || submittedGate)) {
+      if (model?.type && ((submittedFee > 0 && !percentOfComputeFee) || submittedGate)) {
         let paidAccess: MonetizationDefaults['paidAccess'] = null;
         if (submittedGate && gatedConfig) {
           const { donationGoalEnabled, donationGoal, ...rest } = gatedConfig;
           paidAccess = rest;
         }
-        monetizationDefaultsStore.set(model.type, { fee: feeToRatio(submittedFee), paidAccess });
+        monetizationDefaultsStore.set(model.type, {
+          fee: feeToRatio(percentOfComputeFee ? 0 : submittedFee),
+          paidAccess,
+        });
       }
 
       await queryUtils.modelVersion.getById.invalidate({ id: result.id, withFiles: true });
@@ -955,7 +964,12 @@ export function ModelVersionUpsertForm({
     // Clamped, not rejected: the ceiling is 5x on a video base model, so a fee remembered from one can
     // exceed what this version may charge. The denominator has no such fallback — one the select cannot
     // offer would seed an option with no item.
-    if (fee.buzz > 0 && showLicensingFeeBlock && feeImageOptions.includes(fee.images)) {
+    if (
+      fee.buzz > 0 &&
+      showLicensingFeeBlock &&
+      !percentOfComputeFee &&
+      feeImageOptions.includes(fee.images)
+    ) {
       feeSeededRef.current = true;
       setFeeEnabled(true);
       applyFeeRatio({
@@ -1979,82 +1993,97 @@ export function ModelVersionUpsertForm({
                       {feeEditorOpen && (
                         <Card.Section inheritPadding py="sm">
                           <Stack gap="xs">
-                            <Input.Wrapper
-                              label={
-                                <Group gap="xs">
-                                  <Text fw={500} size="sm">
-                                    Fee per generation
+                            {percentOfComputeFee ? (
+                              <Stack gap={2} data-testid="percent-of-compute-fee">
+                                <Text fw={500} size="sm">
+                                  Fee per generation
+                                </Text>
+                                <Text size="sm">
+                                  {currentLicensingFee}% of the compute cost of each generation
+                                </Text>
+                                <Text size="xs" c="dimmed">
+                                  Civitai staff set this fee. Contact support to change it, or turn
+                                  the fee off to remove it.
+                                </Text>
+                              </Stack>
+                            ) : (
+                              <Input.Wrapper
+                                label={
+                                  <Group gap="xs">
+                                    <Text fw={500} size="sm">
+                                      Fee per generation
+                                    </Text>
+                                    <Popover width={320} withArrow withinPortal shadow="sm">
+                                      <Popover.Target>
+                                        <IconInfoCircle size={16} />
+                                      </Popover.Target>
+                                      <Popover.Dropdown>
+                                        <Stack gap="xs">
+                                          <Text size="sm">
+                                            You earn this in Buzz each time someone generates with
+                                            this version on-site, set as Buzz per number of
+                                            generations.
+                                          </Text>
+                                          <Text size="sm">
+                                            If this is a derivative of a base model that already
+                                            charges a licensing fee, yours is added on top of it.
+                                          </Text>
+                                          <Text size="sm">
+                                            A licensing fee can be at most {licensingFeeCap} Buzz
+                                            per generation.
+                                          </Text>
+                                        </Stack>
+                                      </Popover.Dropdown>
+                                    </Popover>
+                                  </Group>
+                                }
+                              >
+                                <Group gap="xs" wrap="nowrap" mt={4}>
+                                  <NumberInput
+                                    aria-label="Licensing fee (Buzz)"
+                                    value={feeRatio.buzz}
+                                    onChange={(v) =>
+                                      applyFeeRatio({
+                                        buzz: typeof v === 'number' ? v : 0,
+                                        images: feeRatio.images,
+                                      })
+                                    }
+                                    min={0}
+                                    max={feeMaxFor(limits, feeRatio.images)}
+                                    step={1}
+                                    allowDecimal={false}
+                                    leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                                    w={140}
+                                  />
+                                  <Text size="sm" c="dimmed">
+                                    per
                                   </Text>
-                                  <Popover width={320} withArrow withinPortal shadow="sm">
-                                    <Popover.Target>
-                                      <IconInfoCircle size={16} />
-                                    </Popover.Target>
-                                    <Popover.Dropdown>
-                                      <Stack gap="xs">
-                                        <Text size="sm">
-                                          You earn this in Buzz each time someone generates with
-                                          this version on-site, set as Buzz per number of
-                                          generations.
-                                        </Text>
-                                        <Text size="sm">
-                                          If this is a derivative of a base model that already
-                                          charges a licensing fee, yours is added on top of it.
-                                        </Text>
-                                        <Text size="sm">
-                                          A licensing fee can be at most {licensingFeeCap} Buzz per
-                                          generation.
-                                        </Text>
-                                      </Stack>
-                                    </Popover.Dropdown>
-                                  </Popover>
+                                  <Select
+                                    aria-label="Number of generations"
+                                    value={String(feeRatio.images)}
+                                    onChange={(v) => {
+                                      const images = Number(v) || DEFAULT_FEE_IMAGES;
+                                      // Clamp to the absolute ceiling only, in the RATIO domain: the cap is
+                                      // per-image and can be fractional, so `cap * images` would put a decimal
+                                      // into a whole-number field the schema rejects. floor() keeps it valid.
+                                      applyFeeRatio({
+                                        buzz: Math.min(feeRatio.buzz, feeMaxFor(limits, images)),
+                                        images,
+                                      });
+                                    }}
+                                    data={feeImageOptions.map((n) => ({
+                                      value: String(n),
+                                      label: String(n),
+                                    }))}
+                                    allowDeselect={false}
+                                    w={90}
+                                  />
+                                  <Text size="sm" c="dimmed">
+                                    {feeRatio.images === 1 ? 'generation' : 'generations'}
+                                  </Text>
                                 </Group>
-                              }
-                            >
-                              <Group gap="xs" wrap="nowrap" mt={4}>
-                                <NumberInput
-                                  aria-label="Licensing fee (Buzz)"
-                                  value={feeRatio.buzz}
-                                  onChange={(v) =>
-                                    applyFeeRatio({
-                                      buzz: typeof v === 'number' ? v : 0,
-                                      images: feeRatio.images,
-                                    })
-                                  }
-                                  min={0}
-                                  max={feeMaxFor(limits, feeRatio.images)}
-                                  step={1}
-                                  allowDecimal={false}
-                                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                                  w={140}
-                                />
-                                <Text size="sm" c="dimmed">
-                                  per
-                                </Text>
-                                <Select
-                                  aria-label="Number of generations"
-                                  value={String(feeRatio.images)}
-                                  onChange={(v) => {
-                                    const images = Number(v) || DEFAULT_FEE_IMAGES;
-                                    // Clamp to the absolute ceiling only, in the RATIO domain: the cap is
-                                    // per-image and can be fractional, so `cap * images` would put a decimal
-                                    // into a whole-number field the schema rejects. floor() keeps it valid.
-                                    applyFeeRatio({
-                                      buzz: Math.min(feeRatio.buzz, feeMaxFor(limits, images)),
-                                      images,
-                                    });
-                                  }}
-                                  data={feeImageOptions.map((n) => ({
-                                    value: String(n),
-                                    label: String(n),
-                                  }))}
-                                  allowDeselect={false}
-                                  w={90}
-                                />
-                                <Text size="sm" c="dimmed">
-                                  {feeRatio.images === 1 ? 'generation' : 'generations'}
-                                </Text>
-                              </Group>
-                            </Input.Wrapper>
+                              </Input.Wrapper>
+                            )}
                             {showLicensingFeeSettlementCurrency && (
                               <InputSelect
                                 name="licensingFeeSettlementCurrency"

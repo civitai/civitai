@@ -1222,3 +1222,92 @@ describe('ModelVersionUpsertForm — back in the wizard from a template', () => 
     expect(payload.templateId).toBeUndefined();
   });
 });
+
+// A percent-of-compute fee is staff-set and stores a percent. This editor speaks Buzz per N generations,
+// so it must never present that number as Buzz: an owner "lowering" it here would save a percent they
+// never meant. Shown read-only on purpose, with the fee switch still able to clear it (the server lets an
+// owner clear a percent fee). Before you make this editable, the server rule (percentOfComputeFeeRefusal
+// in @civitai/buzz) and the Creator Studio lock both assume no owner-facing editor writes a percent.
+describe('ModelVersionUpsertForm — a staff-set percent-of-compute fee', () => {
+  const percentVersion = {
+    ...(chargingVersion as object),
+    licensingFee: 35,
+    licensingFeeType: 'PercentOfCompute',
+    paidAccess: null,
+  } as unknown as React.ComponentProps<typeof ModelVersionUpsertForm>['version'];
+
+  const renderPercentForm = () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm model={model} version={percentVersion} onSubmit={vi.fn()}>
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+  };
+
+  beforeEach(() => {
+    useMonetizationDefaultsStore.setState({ byModelType: {} });
+  });
+
+  test('shows the fee as a percent, with no Buzz input to edit it in', async () => {
+    renderPercentForm();
+
+    await expect
+      .element(page.getByText('35% of the compute cost of each generation', { exact: true }))
+      .toBeInTheDocument();
+    expect(feeInput().elements()).toHaveLength(0);
+  });
+
+  test('saves the stored percent unchanged, and remembers no Buzz fee from it', async () => {
+    renderPercentForm();
+
+    await expect.element(page.getByTestId('percent-of-compute-fee')).toBeInTheDocument();
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({
+      licensingFee: 35,
+      licensingFeeType: 'PercentOfCompute',
+    });
+    // Remembering it would offer "35 Buzz per generation" on the creator's next new LORA version.
+    expect(useMonetizationDefaultsStore.getState().byModelType.LORA).toBeUndefined();
+  });
+
+  test('turning the fee off clears it', async () => {
+    renderPercentForm();
+
+    await expect.element(feeSwitch()).toBeChecked();
+    await userEvent.click(feeSwitch());
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({ licensingFee: 0 });
+  });
+
+  // A percent version whose fee was cleared keeps its type, so turning the fee back on must not drop a
+  // Buzz suggestion or a remembered Buzz fee into it: either would be saved as a percent.
+  test('a cleared percent fee re-opens at 0%, without a Buzz suggestion or remembered fee', async () => {
+    monetizationDefaultsStore.set('LORA', { fee: { buzz: 7, images: 10 }, paidAccess: null });
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        version={{ ...(percentVersion as object), licensingFee: 0 } as typeof percentVersion}
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await userEvent.click(chargeSwitch());
+    // A remembered fee would switch the fee on by itself here (and the click below would turn it off).
+    await expect.element(feeSwitch()).not.toBeChecked();
+    await userEvent.click(feeSwitch());
+
+    await expect
+      .element(page.getByText('0% of the compute cost of each generation', { exact: true }))
+      .toBeInTheDocument();
+    expect(feeInput().elements()).toHaveLength(0);
+  });
+});
