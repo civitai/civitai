@@ -32,3 +32,19 @@ export function reportOpensCsamHold({
   if (!details || typeof details !== 'object' || Array.isArray(details)) return false;
   return (details as Record<string, unknown>).violation === MINOR_SEXUALIZATION_VIOLATION;
 }
+
+export type ServiceReviewReportAction = 'hide' | 'restore' | 'hold';
+
+/**
+ * What a report on a buyer review may do to it, for the main app's moderator endpoint and the
+ * moderator app's queue alike: a report that opens a CSAM hold (`reportOpensCsamHold`) is answered
+ * with a hold, which also hides the review, and never with a plain hide; any other report is hidden,
+ * never held. Restoring lifts a moderator's hide whatever the report said.
+ */
+export function serviceReviewReportActionAllowed(
+  action: ServiceReviewReportAction,
+  report: { reason: string; details: unknown }
+): boolean {
+  if (action === 'restore') return true;
+  return (action === 'hold') === reportOpensCsamHold(report);
+}

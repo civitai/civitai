@@ -1,6 +1,6 @@
-import { reportOpensCsamHold } from '@civitai/shared/post-text-report';
+import type { ServiceReviewReportAction } from '@civitai/shared/post-text-report';
 
-export type ServiceReviewAction = 'hide' | 'restore' | 'hold';
+export type ServiceReviewAction = ServiceReviewReportAction;
 export type ServiceReviewText = 'comment' | 'reply';
 
 /** The buyer review a report in the offering queue is about, as it is now. */
@@ -21,13 +21,3 @@ export type ReportedServiceReview = {
   /** Its images, hidden or not: the Image row's `url` key. */
   images: { id: number; url: string }[];
 };
-
-/**
- * Whether a report on a buyer review may take this action: a CSAM or minor-sexualization report
- * sends a text to the CSAM text-hold queue and is never answered with a plain hide; any other report
- * is hidden, never held. Restoring lifts a moderator's hide whatever the report said.
- */
-export const serviceReviewActionAllowed = (
-  action: ServiceReviewAction,
-  report: { reason: string; details: unknown }
-) => action === 'restore' || (action === 'hold') === reportOpensCsamHold(report);

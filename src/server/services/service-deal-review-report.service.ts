@@ -1,13 +1,21 @@
-import { reportOpensCsamHold } from '@civitai/shared/post-text-report';
+import {
+  serviceReviewReportActionAllowed,
+  type ServiceReviewReportAction,
+} from '@civitai/shared/post-text-report';
 import { dbWrite } from '~/server/db/client';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { blockServiceDealReviewText } from '~/server/services/service-deal-review-moderation.adapter';
+import {
+  lockDealReviewCounters,
+  syncDealReviewPublication,
+} from '~/server/services/creator-service-deal-review-publish';
+import { setServiceDealReviewHidden } from '~/server/services/creator-service-deal-review.service';
 import {
   csamHoldLockKey,
   pendingCsamHoldFields,
 } from '~/server/services/text-scan/actions/csam-hold';
 import {
   loadServiceDealReviewSubjects,
+  SERVICE_DEAL_REVIEW_TEXTS,
   type ServiceDealReviewTextType,
 } from '~/server/services/text-scan/profiles/service-deal-review.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
@@ -22,50 +30,83 @@ async function getServiceDealReviewReportReason(reportId: number, reviewId: numb
   return row ?? null;
 }
 
+/** Whether a report on this review may take this action (`serviceReviewReportActionAllowed`). */
+export async function reportedServiceDealReviewActionAllowed(
+  action: ServiceReviewReportAction,
+  reportId: number,
+  reviewId: number
+) {
+  const report = await getServiceDealReviewReportReason(reportId, reviewId);
+  return !!report && serviceReviewReportActionAllowed(action, report);
+}
+
 /**
- * Sends one of a reported review's texts (the buyer's comment or the seller's reply) to the CSAM
- * text-hold queue: a Pending csam hold on its current words, raised even on words an earlier hold
- * dismissed, and the text blocked so it is not shown until the hold is decided there. A text with a
- * pending hold already is left in it (`changed: false`). Null when the review has no such text.
+ * A moderator's csam hold on a reported review, which only a CSAM or minor-sexualization report on
+ * this review opens. In one transaction: a Pending csam hold on the named text's current words (raised
+ * even on words an earlier hold dismissed; a pending one is kept), that text blocked, and the whole
+ * review hidden, images included. So a hold never exists over a text still shown, and a review with
+ * no text, or a held reply, still comes down. `type` is required when the review has any text and
+ * refused when it has none.
  */
-async function holdServiceDealReviewTextForCsam({
+export async function holdReportedServiceDealReview({
   reviewId,
   type,
   moderatorId,
   reportId,
 }: {
   reviewId: number;
-  type: ServiceDealReviewTextType;
+  type: ServiceDealReviewTextType | null;
   moderatorId: number;
   reportId: number;
-}): Promise<{ holdId: number; changed: boolean } | null> {
-  const subject = (await loadServiceDealReviewSubjects(type, [reviewId])).get(reviewId);
-  if (!subject) return null;
+}): Promise<'refused' | 'pickText' | null | { holdId: number | null; changed: boolean }> {
+  if (!(await reportedServiceDealReviewActionAllowed('hold', reportId, reviewId))) return 'refused';
+  const subject = type
+    ? (await loadServiceDealReviewSubjects(type, [reviewId])).get(reviewId)
+    : null;
+  if (type && !subject) return 'pickText';
   const result = await dbWrite.$transaction(async (tx) => {
-    // The scan's hold writer and a decision take the same lock (`lockCsamHold`).
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${csamHoldLockKey(
-      type
-    )}), ${reviewId}::int)`;
-    const [pending] = await tx.$queryRaw<{ id: number }[]>`
-      SELECT "id" FROM "TextScanHold"
-      WHERE "entityType" = ${type} AND "entityId" = ${reviewId}::int AND "label" = 'csam'
-        AND "status" = 'Pending'`;
-    if (pending) return { holdId: pending.id, changed: false };
-    const { userId, text } = pendingCsamHoldFields(subject);
-    const meta = { kind: 'moderator', moderatorId, reportId };
-    const [hold] = await tx.$queryRaw<{ id: number }[]>`
-      INSERT INTO "TextScanHold" ("entityType", "entityId", "label", "textHash", "userId", "text",
-        "reason", "meta", "updatedAt")
-      VALUES (${type}, ${reviewId}::int, 'csam', ${textScanTextHash(subject)}, ${userId}::int,
-        ${text}, ${`Moderator hold from report #${reportId}`}, ${JSON.stringify(
-      meta
-    )}::jsonb, now())
-      RETURNING "id"`;
-    return { holdId: hold.id, changed: true };
+    const [review] = await tx.$queryRaw<{ dealId: number; hasText: boolean }[]>`
+      SELECT "dealId", ("comment" IS NOT NULL OR "sellerReply" IS NOT NULL) AS "hasText"
+      FROM "ServiceDealReview" WHERE "id" = ${reviewId}::int`;
+    if (!review) return null;
+    if (review.hasText !== (type !== null)) return 'pickText' as const;
+    // The counters first, as every review writer takes them.
+    await lockDealReviewCounters(tx, review.dealId);
+    let hold: { holdId: number | null; changed: boolean } = { holdId: null, changed: false };
+    if (type && subject) {
+      // The lock the scan's hold writer and a decision take (`lockCsamHold`).
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${csamHoldLockKey(
+        type
+      )}), ${reviewId}::int)`;
+      const [pending] = await tx.$queryRaw<{ id: number }[]>`
+        SELECT "id" FROM "TextScanHold"
+        WHERE "entityType" = ${type} AND "entityId" = ${reviewId}::int AND "label" = 'csam'
+          AND "status" = 'Pending'`;
+      if (pending) hold = { holdId: pending.id, changed: false };
+      else {
+        const { userId, text } = pendingCsamHoldFields(subject);
+        const meta = { kind: 'moderator', moderatorId, reportId };
+        const [inserted] = await tx.$queryRaw<{ id: number }[]>`
+          INSERT INTO "TextScanHold" ("entityType", "entityId", "label", "textHash", "userId", "text",
+            "reason", "meta", "updatedAt")
+          VALUES (${type}, ${reviewId}::int, 'csam', ${textScanTextHash(subject)}, ${userId}::int,
+            ${text}, ${`Moderator hold from report #${reportId}`}, ${JSON.stringify(
+          meta
+        )}::jsonb, now())
+          RETURNING "id"`;
+        hold = { holdId: inserted.id, changed: true };
+      }
+      const cols = SERVICE_DEAL_REVIEW_TEXTS[type];
+      await tx.$executeRaw`
+        UPDATE "ServiceDealReview" SET ${cols.status} = 'Blocked' WHERE "id" = ${reviewId}::int`;
+    }
+    const hidden = await tx.$executeRaw`
+      UPDATE "ServiceDealReview" SET "hiddenAt" = now(), "hiddenById" = ${moderatorId}::int
+      WHERE "id" = ${reviewId}::int AND "hiddenAt" IS NULL`;
+    await syncDealReviewPublication(tx, review.dealId);
+    return { holdId: hold.holdId, changed: hold.changed || hidden > 0 };
   });
-  // After the hold commits, as the scan's own hold does before its verdict: a dismissal requeues it.
-  await blockServiceDealReviewText(type, reviewId);
-  if (result.changed)
+  if (result && typeof result === 'object' && result.holdId !== null && result.changed)
     await trackModActivity(moderatorId, {
       entityType: 'serviceDealReview',
       entityId: reviewId,
@@ -74,18 +115,37 @@ async function holdServiceDealReviewTextForCsam({
   return result;
 }
 
+/** Whether either of the review's texts is held in the CSAM text-hold queue now. */
+async function serviceDealReviewCsamHeld(reviewId: number) {
+  // primary: a hold may have been raised a moment ago.
+  const [row] = await dbWrite.$queryRaw<{ held: boolean }[]>`
+    SELECT EXISTS (SELECT 1 FROM "TextScanHold"
+      WHERE "entityType" IN ('ServiceDealReview', 'ServiceDealReviewReply')
+        AND "entityId" = ${reviewId}::int AND "label" = 'csam' AND "status" = 'Pending') AS "held"`;
+  return !!row?.held;
+}
+
 /**
- * A moderator's csam hold on a reported review's text, which only a CSAM or minor-sexualization report
- * on this review opens (T&S, hub mail 2026-11-20-224207-28bf58b5). `refused` when the report is not
- * on this review or gives another reason; null when the review has no such text.
+ * A moderator's hide or restore of a reported review. A hide needs a report on this review that may
+ * be answered with one (never a CSAM report: that one is held); a review the CSAM text-hold queue
+ * holds is restored only once that queue has decided it.
  */
-export async function holdReportedServiceDealReviewText(args: {
+export async function setReportedServiceDealReviewHidden({
+  reviewId,
+  moderatorId,
+  hidden,
+  reportId,
+}: {
   reviewId: number;
-  type: ServiceDealReviewTextType;
   moderatorId: number;
-  reportId: number;
+  hidden: boolean;
+  reportId?: number;
 }) {
-  const report = await getServiceDealReviewReportReason(args.reportId, args.reviewId);
-  if (!report || !reportOpensCsamHold(report)) return 'refused' as const;
-  return holdServiceDealReviewTextForCsam(args);
+  if (
+    hidden &&
+    !(reportId && (await reportedServiceDealReviewActionAllowed('hide', reportId, reviewId)))
+  )
+    return 'refused' as const;
+  if (!hidden && (await serviceDealReviewCsamHeld(reviewId))) return 'held' as const;
+  return setServiceDealReviewHidden({ reviewId, moderatorId, hidden });
 }

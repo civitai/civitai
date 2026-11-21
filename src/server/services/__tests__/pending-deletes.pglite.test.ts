@@ -129,8 +129,7 @@ describe('childSafetyImageCase', () => {
         await pg.exec(`INSERT INTO "PostReport" VALUES (50, 1)`);
       },
     ],
-    // T&S ruling (hub mail 2026-11-20-224207-28bf58b5): a child-safety report on a service review
-    // holds the delete of the images attached to it.
+    // A child-safety report on a service review holds the delete of the images attached to it.
     [
       'attached to a service review reported as a minor',
       async () => {

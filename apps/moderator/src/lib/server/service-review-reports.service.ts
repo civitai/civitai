@@ -57,7 +57,13 @@ export async function getReportServiceReview(reportId: number) {
   const row = await dbWrite
     .selectFrom('ServiceDealReviewReport as rr')
     .innerJoin('Report as rep', 'rep.id', 'rr.reportId')
-    .select(['rr.serviceDealReviewId as reviewId', 'rep.reason', 'rep.details'])
+    .innerJoin('ServiceDealReview as r', 'r.id', 'rr.serviceDealReviewId')
+    .select([
+      'rr.serviceDealReviewId as reviewId',
+      'rep.reason',
+      'rep.details',
+      sql<boolean>`r.comment IS NOT NULL OR r."sellerReply" IS NOT NULL`.as('hasText'),
+    ])
     .where('rr.reportId', '=', reportId)
     .executeTakeFirst();
   return row ?? null;

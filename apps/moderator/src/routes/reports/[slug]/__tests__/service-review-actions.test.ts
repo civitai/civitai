@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MINOR_SEXUALIZATION_VIOLATION } from '@civitai/shared/post-text-report';
 
 /**
- * The offering queue's review actions: a CSAM or minor-sexualization report holds a text for the CSAM
- * queue and is never answered with a plain hide (T&S, hub mail 2026-11-20-224207-28bf58b5); the review
- * acted on is the one the report names; and the ruling each leaves on the report.
+ * The offering queue's review actions: a CSAM or minor-sexualization report is held (a text for the
+ * CSAM queue, and the review taken down) and never answered with a plain hide; the review acted on is
+ * the one the report names; and the ruling each leaves on the report.
  */
 
 const setReportStatus = vi.fn();
@@ -42,7 +42,7 @@ const minors = { reason: 'TOSViolation', details: { violation: MINOR_SEXUALIZATI
 beforeEach(() => {
   vi.clearAllMocks();
   canAccess.mockReturnValue(true);
-  getReportServiceReview.mockResolvedValue({ reviewId: REVIEW, ...tos });
+  getReportServiceReview.mockResolvedValue({ reviewId: REVIEW, hasText: true, ...tos });
   moderateServiceReview.mockResolvedValue({ ok: true, changed: true });
   setReportStatus.mockResolvedValue({ ok: true, changed: true });
 });
@@ -66,7 +66,7 @@ describe('hiding a reported review', () => {
 
   it('is refused for a minor-sexualization or CSAM report, which go to the CSAM queue', async () => {
     for (const report of [minors, { reason: 'CSAM', details: {} }]) {
-      getReportServiceReview.mockResolvedValueOnce({ reviewId: REVIEW, ...report });
+      getReportServiceReview.mockResolvedValueOnce({ reviewId: REVIEW, hasText: true, ...report });
       expect(await run('hideServiceReview')).toMatchObject({ status: 400 });
     }
     expect(moderateServiceReview).not.toHaveBeenCalled();
@@ -93,7 +93,7 @@ describe('hiding a reported review', () => {
 
 describe('holding a reported review text for CSAM review', () => {
   it('holds the chosen text of a minor-sexualization report and actions it', async () => {
-    getReportServiceReview.mockResolvedValueOnce({ reviewId: REVIEW, ...minors });
+    getReportServiceReview.mockResolvedValueOnce({ reviewId: REVIEW, hasText: true, ...minors });
     expect(await run('holdServiceReview', { id: String(REPORT), text: 'reply' })).toEqual({
       success: true,
       serviceReviewAction: 'Held for CSAM review',
@@ -107,11 +107,25 @@ describe('holding a reported review text for CSAM review', () => {
     expect(setReportStatus).toHaveBeenCalledWith(expect.objectContaining({ status: 'Actioned' }));
   });
 
-  it('is refused for an ordinary report, or without a text', async () => {
+  it('holds a review with no text by taking it down, with no text named', async () => {
+    getReportServiceReview.mockResolvedValueOnce({ reviewId: REVIEW, hasText: false, ...minors });
+    expect(await run('holdServiceReview')).toEqual({
+      success: true,
+      serviceReviewAction: 'Held for CSAM review',
+    });
+    expect(moderateServiceReview).toHaveBeenCalledWith({
+      reviewId: REVIEW,
+      action: 'hold',
+      text: undefined,
+      reportId: REPORT,
+    });
+  });
+
+  it('is refused for an ordinary report, or without a text the review has', async () => {
     expect(await run('holdServiceReview', { id: String(REPORT), text: 'comment' })).toMatchObject({
       status: 400,
     });
-    getReportServiceReview.mockResolvedValueOnce({ reviewId: REVIEW, ...minors });
+    getReportServiceReview.mockResolvedValueOnce({ reviewId: REVIEW, hasText: true, ...minors });
     expect(await run('holdServiceReview')).toMatchObject({ status: 400 });
     expect(moderateServiceReview).not.toHaveBeenCalled();
   });

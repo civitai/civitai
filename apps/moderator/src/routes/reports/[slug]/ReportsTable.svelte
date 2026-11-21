@@ -43,7 +43,7 @@
   } from '$lib/reports';
   import { serviceOfferingTakedownReasons } from '@civitai/shared/service-offering-takedown';
   import { browsingLevelLabels } from '@civitai/shared';
-  import { serviceReviewActionAllowed } from '$lib/service-review-report';
+  import { serviceReviewReportActionAllowed } from '@civitai/shared/post-text-report';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
@@ -591,7 +591,9 @@
         {#if data.type === 'serviceOffering' && data.serviceReviews[selected.id]}
           {@const review = data.serviceReviews[selected.id]}
           {@const offering = data.serviceOfferings.find((o) => o.id === selected.entityId)}
-          {@const canHold = serviceReviewActionAllowed('hold', selected)}
+          {@const hasText = review.comment != null || review.sellerReply != null}
+          {@const canHold = serviceReviewReportActionAllowed('hold', selected)}
+          {@const held = review.commentHeld || review.replyHeld}
           <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
             <p class="mb-1 flex flex-wrap items-center gap-2 text-sm">
               <span class="font-medium">Buyer review ({review.verdict})</span>
@@ -658,6 +660,17 @@
                     Hold reply for CSAM review
                   </Button>
                 {/if}
+                {#if !hasText}
+                  <Button
+                    type="submit"
+                    formaction="?/holdServiceReview"
+                    size="sm"
+                    variant="destructive"
+                    disabled={reviewForm.submitting || review.hidden}
+                  >
+                    Hide for CSAM review
+                  </Button>
+                {/if}
               {:else if !review.hidden}
                 <Button
                   type="submit"
@@ -669,7 +682,7 @@
                   Hide review
                 </Button>
               {/if}
-              {#if review.hidden}
+              {#if review.hidden && !held}
                 <Button
                   type="submit"
                   formaction="?/restoreServiceReview"
@@ -683,7 +696,7 @@
             </form>
             <p class="mt-2 text-xs text-dark-2">
               {canHold
-                ? 'A CSAM or minor report sends the text to the CSAM text-hold queue, which keeps the review off the site until it is decided there, and sets this report Actioned.'
+                ? 'A hold hides the whole review, images included, and sends the chosen text to the CSAM text-hold queue; restoring waits for that queue. It sets this report Actioned.'
                 : 'Hiding takes the review off the service page and out of its counts, and sets this report Actioned. Restoring sets it Unactioned.'}
             </p>
             {#if reviewForm.error}

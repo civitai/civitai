@@ -4039,12 +4039,16 @@ describe('review publishing and counters', () => {
       expect(await reviewRow(id)).toMatchObject({ scanStatus: 'Pending' });
     });
 
-    // T&S ruling (hub mail 2026-11-20-224207-28bf58b5): only a CSAM or minor-sexualization report
-    // on the review opens a moderator's csam hold on its text.
+    // Only a CSAM or minor-sexualization report on the review opens a moderator's csam hold, and a
+    // hold always takes the whole review down.
     describe("a moderator's csam hold from a report", () => {
-      const reported = async (reason: string, details: Record<string, unknown> = {}) => {
+      const reported = async (
+        reason: string,
+        details: Record<string, unknown> = {},
+        comment: string | null = 'Lovely'
+      ) => {
         const id = await completedBy();
-        await review(id, 'Happy', BUYER, 'Lovely');
+        await review(id, 'Happy', BUYER, comment ?? undefined);
         const [{ id: reviewId }] = await q<{ id: number }>(
           `UPDATE "ServiceDealReview" SET "scanStatus" = 'Scanned' WHERE "dealId" = $1 RETURNING id`,
           [id]
@@ -4061,10 +4065,15 @@ describe('review publishing and counters', () => {
         );
         return { id, reviewId, reportId };
       };
-      const hold = (reviewId: number, reportId: number) =>
-        reviewReports.holdReportedServiceDealReviewText({
+      const minor = { violation: 'Child abuse and exploitation' };
+      const hold = (
+        reviewId: number,
+        reportId: number,
+        type: 'ServiceDealReview' | 'ServiceDealReviewReply' | null = 'ServiceDealReview'
+      ) =>
+        reviewReports.holdReportedServiceDealReview({
           reviewId,
-          type: 'ServiceDealReview',
+          type,
           moderatorId: STRANGER,
           reportId,
         });
@@ -4074,16 +4083,51 @@ describe('review publishing and counters', () => {
            WHERE "entityType" = 'ServiceDealReview' AND "entityId" = $1`,
           [reviewId]
         );
+      const hiddenAt = async (reviewId: number) =>
+        (
+          await q<{ hiddenAt: Date | null }>(
+            `SELECT "hiddenAt" FROM "ServiceDealReview" WHERE id = $1`,
+            [reviewId]
+          )
+        )[0].hiddenAt;
 
-      it('holds the comment of a review reported as a minor, and unshows it', async () => {
-        const { id, reviewId, reportId } = await reported('TOSViolation', {
-          violation: 'Child abuse and exploitation',
-        });
+      it('holds the comment of a review reported as a minor, and takes the review down', async () => {
+        const { id, reviewId, reportId } = await reported('TOSViolation', minor);
         expect(await hold(reviewId, reportId)).toMatchObject({ changed: true });
         expect(await holds(reviewId)).toEqual([{ status: 'Pending', label: 'csam' }]);
         expect(await reviewRow(id)).toMatchObject({ scanStatus: 'Blocked', publishedAt: null });
+        expect(await hiddenAt(reviewId)).not.toBeNull();
         expect(await hold(reviewId, reportId)).toMatchObject({ changed: false });
         expect(await holds(reviewId)).toHaveLength(1);
+      });
+
+      it('takes down a review with no text on a CSAM report, with no text hold', async () => {
+        const { id, reviewId, reportId } = await reported('CSAM', {}, null);
+        expect(await hold(reviewId, reportId)).toBe('pickText');
+        expect(await hold(reviewId, reportId, null)).toEqual({ holdId: null, changed: true });
+        expect((await reviewRow(id)).publishedAt).toBeNull();
+        expect(await hiddenAt(reviewId)).not.toBeNull();
+        expect(await holds(reviewId)).toEqual([]);
+      });
+
+      it('commits neither the hold nor the takedown when the takedown fails', async () => {
+        const { id, reviewId, reportId } = await reported('CSAM');
+        await holder.db.exec(`
+          CREATE FUNCTION fail_review_update() RETURNS trigger LANGUAGE plpgsql AS
+            $$ BEGIN RAISE EXCEPTION 'takedown failed'; END $$;
+          CREATE TRIGGER fail_review_update BEFORE UPDATE ON "ServiceDealReview"
+            FOR EACH ROW EXECUTE FUNCTION fail_review_update();
+        `);
+        try {
+          await expect(hold(reviewId, reportId)).rejects.toThrow('takedown failed');
+        } finally {
+          await holder.db.exec(`
+            DROP TRIGGER fail_review_update ON "ServiceDealReview";
+            DROP FUNCTION fail_review_update();
+          `);
+        }
+        expect(await holds(reviewId)).toEqual([]);
+        expect((await reviewRow(id)).publishedAt).not.toBeNull();
       });
 
       it('opens no hold from a report with another reason, or one on another review', async () => {
@@ -4093,6 +4137,27 @@ describe('review publishing and counters', () => {
         expect(await hold(spam.reviewId, csam.reportId)).toBe('refused');
         expect(await holds(spam.reviewId)).toEqual([]);
         expect((await reviewRow(spam.id)).publishedAt).not.toBeNull();
+      });
+
+      it('hides only on a report that is not CSAM, and restores only once the CSAM queue has decided', async () => {
+        const setHidden = (reviewId: number, hidden: boolean, reportId?: number) =>
+          reviewReports.setReportedServiceDealReviewHidden({
+            reviewId,
+            moderatorId: STRANGER,
+            hidden,
+            reportId,
+          });
+        const csam = await reported('TOSViolation', minor);
+        expect(await setHidden(csam.reviewId, true, csam.reportId)).toBe('refused');
+        expect(await hiddenAt(csam.reviewId)).toBeNull();
+        await hold(csam.reviewId, csam.reportId);
+        expect(await setHidden(csam.reviewId, false)).toBe('held');
+        expect(await hiddenAt(csam.reviewId)).not.toBeNull();
+
+        const spam = await reported('Spam');
+        expect(await setHidden(spam.reviewId, true)).toBe('refused');
+        expect(await setHidden(spam.reviewId, true, spam.reportId)).toBe(true);
+        expect(await setHidden(spam.reviewId, false)).toBe(true);
       });
     });
 

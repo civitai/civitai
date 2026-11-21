@@ -11851,9 +11851,9 @@ model ServiceDealReviewReport {
   reportId            Int               @id
   report              Report            @relation(fields: [reportId], references: [id], onDelete: Cascade)
   serviceDealReviewId Int
-  serviceDealReview   ServiceDealReview @relation(fields: [serviceDealReviewId], references: [id], onDelete: Cascade)
+  serviceDealReview   ServiceDealReview @relation(fields: [serviceDealReviewId], references: [id], onDelete: Restrict)
   serviceOfferingId   Int
-  serviceOffering     ServiceOffering   @relation(fields: [serviceOfferingId], references: [id], onDelete: Cascade)
+  serviceOffering     ServiceOffering   @relation(fields: [serviceOfferingId], references: [id], onDelete: Restrict)
 
   @@index([serviceDealReviewId], type: Hash)
   @@index([serviceOfferingId], type: Hash)

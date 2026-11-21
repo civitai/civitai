@@ -5,11 +5,8 @@ import {
   getReportServiceReview,
   moderateServiceReview,
 } from '$lib/server/service-review-reports.service';
-import {
-  serviceReviewActionAllowed,
-  type ServiceReviewAction,
-  type ServiceReviewText,
-} from '$lib/service-review-report';
+import { serviceReviewReportActionAllowed } from '@civitai/shared/post-text-report';
+import type { ServiceReviewAction, ServiceReviewText } from '$lib/service-review-report';
 import { reportEntityForSlug, reportPath, ReportStatus } from '$lib/reports';
 
 /** The report each review action leaves behind it: upheld by a hide or a hold, dismissed by a restore. */
@@ -43,16 +40,19 @@ const reviewAction =
     const textField = data.get('text');
     const text: ServiceReviewText | undefined =
       textField === 'comment' || textField === 'reply' ? textField : undefined;
-    if (action === 'hold' && !text) return fail(400, { error: 'Pick the text to hold.' });
 
     const report = await getReportServiceReview(id);
     if (!report) return fail(410, { error: 'That report no longer exists.', gone: true });
-    if (!serviceReviewActionAllowed(action, report))
+    if (!serviceReviewReportActionAllowed(action, report))
       return fail(400, {
         error:
           action === 'hold'
             ? 'Only a CSAM or minor-sexualization report goes to the CSAM queue.'
-            : 'A CSAM or minor-sexualization report goes to the CSAM queue, not a hide.',
+            : 'A CSAM or minor-sexualization report is held for the CSAM queue, which also hides the review.',
+      });
+    if (action === 'hold' && report.hasText !== !!text)
+      return fail(400, {
+        error: report.hasText ? 'Pick the text to hold.' : 'This review has no text.',
       });
 
     const result = await moderateServiceReview({

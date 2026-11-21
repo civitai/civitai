@@ -15,6 +15,8 @@ CREATE INDEX IF NOT EXISTS "ServiceDealReviewReport_serviceDealReviewId_idx"
 CREATE INDEX IF NOT EXISTS "ServiceDealReviewReport_serviceOfferingId_idx"
   ON "ServiceDealReviewReport" USING HASH ("serviceOfferingId");
 
+-- RESTRICT, not CASCADE, on the review and the offering: a report is moderation evidence (a CSAM one
+-- among them), so deleting what it is about fails rather than silently dropping the report's subject.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ServiceDealReviewReport_reportId_fkey') THEN
@@ -23,10 +25,10 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ServiceDealReviewReport_serviceDealReviewId_fkey') THEN
     ALTER TABLE "ServiceDealReviewReport" ADD CONSTRAINT "ServiceDealReviewReport_serviceDealReviewId_fkey"
-      FOREIGN KEY ("serviceDealReviewId") REFERENCES "ServiceDealReview"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+      FOREIGN KEY ("serviceDealReviewId") REFERENCES "ServiceDealReview"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ServiceDealReviewReport_serviceOfferingId_fkey') THEN
     ALTER TABLE "ServiceDealReviewReport" ADD CONSTRAINT "ServiceDealReviewReport_serviceOfferingId_fkey"
-      FOREIGN KEY ("serviceOfferingId") REFERENCES "ServiceOffering"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+      FOREIGN KEY ("serviceOfferingId") REFERENCES "ServiceOffering"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
   END IF;
 END $$;
