@@ -30,6 +30,10 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
  * - `model.getAssociatedResourcesCardData` (tRPC; flag `feed-go-shadow-model-associated`): the same
  *   capture, posted to its own compare path (`feed_endpoint="model-associated"`). A signed-in browser
  *   batches it when `trpcBatching` is on for that user, and a batched call is never sampled;
+ * - `image.getPublishedWithApp` (tRPC; flag `feed-go-shadow-image-published-app`): the same capture,
+ *   posted to its own compare path (`feed_endpoint="image-published-app"`). A signed-in browser
+ *   batches it when `trpcBatching` is on for that user, so it too is sampled for anonymous sessions
+ *   and for signed-in sessions with batching off only;
  * - the REST routes, `GET /api/v1/images` (flag `feed-go-shadow-v1-images`) and
  *   `GET /api/v1/models` + `GET /api/v1/models/[id]` (one flag, `feed-go-shadow-v1-models`): the raw
  *   query string, the path and the JSON body the handler passed to `res.json`, captured by the
@@ -84,6 +88,9 @@ export const FEED_GO_SHADOW_MODEL_GET_ALL_PATH = `/internal/shadow/${FEED_GO_SHA
 /** The fourth tRPC procedure mirrored under its own flag, and feed-go's compare path for it. */
 export const FEED_GO_SHADOW_MODEL_ASSOCIATED_PROCEDURE = 'model.getAssociatedResourcesCardData';
 export const FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH = `/internal/shadow/${FEED_GO_SHADOW_MODEL_ASSOCIATED_PROCEDURE}`;
+/** The fifth tRPC procedure mirrored under its own flag, and feed-go's compare path for it. */
+export const FEED_GO_SHADOW_IMAGE_PUBLISHED_APP_PROCEDURE = 'image.getPublishedWithApp';
+export const FEED_GO_SHADOW_IMAGE_PUBLISHED_APP_PATH = `/internal/shadow/${FEED_GO_SHADOW_IMAGE_PUBLISHED_APP_PROCEDURE}`;
 /** feed-go's Go-first probe path for the procedure. */
 export const FEED_GO_PROBE_PATH = `/internal/probe/${FEED_GO_SHADOW_PROCEDURE}`;
 /** feed-go's Go-first probe path for `image.getInfinite`. */
@@ -165,6 +172,8 @@ export type FeedGoShadowConfig = {
   modelGetAllUrl: string | undefined;
   /** Full compare endpoint URL for `model.getAssociatedResourcesCardData`, or undefined (disabled). */
   modelAssociatedUrl: string | undefined;
+  /** Full compare endpoint URL for `image.getPublishedWithApp`, or undefined (disabled). */
+  imagePublishedAppUrl: string | undefined;
   rate: number;
   timeoutMs: number;
   maxInFlight: number;
@@ -194,6 +203,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
   let infiniteUrl: string | undefined;
   let modelGetAllUrl: string | undefined;
   let modelAssociatedUrl: string | undefined;
+  let imagePublishedAppUrl: string | undefined;
   let probeUrl: string | undefined;
   let probeInfiniteUrl: string | undefined;
   let probeModelGetAllUrl: string | undefined;
@@ -209,6 +219,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
         infiniteUrl = new URL(FEED_GO_SHADOW_INFINITE_PATH, parsed).toString();
         modelGetAllUrl = new URL(FEED_GO_SHADOW_MODEL_GET_ALL_PATH, parsed).toString();
         modelAssociatedUrl = new URL(FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH, parsed).toString();
+        imagePublishedAppUrl = new URL(FEED_GO_SHADOW_IMAGE_PUBLISHED_APP_PATH, parsed).toString();
         probeUrl = new URL(FEED_GO_PROBE_PATH, parsed).toString();
         probeInfiniteUrl = new URL(FEED_GO_PROBE_INFINITE_PATH, parsed).toString();
         probeModelGetAllUrl = new URL(FEED_GO_PROBE_MODEL_GET_ALL_PATH, parsed).toString();
@@ -221,6 +232,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
       infiniteUrl = undefined;
       modelGetAllUrl = undefined;
       modelAssociatedUrl = undefined;
+      imagePublishedAppUrl = undefined;
       probeUrl = undefined;
       probeInfiniteUrl = undefined;
       probeModelGetAllUrl = undefined;
@@ -234,6 +246,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
     infiniteUrl,
     modelGetAllUrl,
     modelAssociatedUrl,
+    imagePublishedAppUrl,
     probeUrl,
     probeInfiniteUrl,
     probeModelGetAllUrl,
@@ -337,6 +350,11 @@ export type FeedGoShadowDeps = {
    * never sampled).
    */
   enabledModelAssociated?: () => boolean;
+  /**
+   * The `feed-go-shadow-image-published-app` flag (absent: `image.getPublishedWithApp` is never
+   * sampled).
+   */
+  enabledImagePublishedApp?: () => boolean;
   random?: () => number;
   fetch?: typeof fetch;
   record?: (outcome: FeedGoShadowOutcome, endpoint: FeedGoShadowEndpoint) => void;
@@ -362,6 +380,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   const enabledInfinite = deps.enabledInfinite ?? (() => false);
   const enabledModelGetAll = deps.enabledModelGetAll ?? (() => false);
   const enabledModelAssociated = deps.enabledModelAssociated ?? (() => false);
+  const enabledImagePublishedApp = deps.enabledImagePublishedApp ?? (() => false);
   const random = deps.random ?? Math.random;
   const doFetch = deps.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   const record = deps.record ?? recordFeedGoShadowOutcome;
@@ -415,6 +434,11 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       url: config.modelAssociatedUrl,
       enabled: enabledModelAssociated,
     },
+    [FEED_GO_SHADOW_IMAGE_PUBLISHED_APP_PROCEDURE]: {
+      endpoint: 'image-published-app',
+      url: config.imagePublishedAppUrl,
+      enabled: enabledImagePublishedApp,
+    },
   };
 
   /** The compare URL a sample of this endpoint is posted to. */
@@ -423,6 +447,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     if (endpoint === 'infinite') return config.infiniteUrl;
     if (endpoint === 'model-getall') return config.modelGetAllUrl;
     if (endpoint === 'model-associated') return config.modelAssociatedUrl;
+    if (endpoint === 'image-published-app') return config.imagePublishedAppUrl;
     return config.url;
   }
 
@@ -620,8 +645,8 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     if (inFlight === 0) return;
     try {
       const sample = storage.getStore();
-      // The tRPC samples (as-posts, infinite, model-getall, model-associated); a REST sample
-      // captures its own body.
+      // The tRPC samples (as-posts, infinite, model-getall, model-associated,
+      // image-published-app); a REST sample captures its own body.
       if (!sample || isRestEndpoint(sample.endpoint) || sample.captured || sample.done) return;
       sample.captured = wroteDevalue ? { data } : { envelope: written };
     } catch {
@@ -768,6 +793,9 @@ function getInstance(): FeedGoShadow {
     ),
     enabledModelAssociated: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_MODEL_ASSOCIATED)
+    ),
+    enabledImagePublishedApp: createCachedFlagGate(
+      readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_IMAGE_PUBLISHED_APP)
     ),
     enabledProbe: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_GOFIRST_PROBE)

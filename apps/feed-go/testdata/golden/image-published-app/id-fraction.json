@@ -1,0 +1,35 @@
+{
+  "name": "id-fraction",
+  "request": {
+    "input": "{\"json\":{\"id\":8101.5}}",
+    "viewer": null,
+    "banned": null,
+    "host": "civitai.example"
+  },
+  "world": {
+    "storeScope": "full",
+    "image": {
+      "id": 8101,
+      "userId": 1001,
+      "metadata": {
+        "width": 832,
+        "height": 1216
+      },
+      "visible": true,
+      "mediaVisible": true,
+      "why": "a published image every viewer may open, rated within the domain cap"
+    },
+    "apps": {},
+    "hiddenListingIds": []
+  },
+  "binds": null,
+  "expect": {
+    "envelope": {
+      "json": null
+    }
+  },
+  "go": {
+    "served": true,
+    "viewerClass": "anon"
+  }
+}

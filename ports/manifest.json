@@ -103,6 +103,31 @@
       "nodeDeletion": null
     },
     {
+      "id": "image.getPublishedWithApp",
+      "kind": "trpc",
+      "service": "feed-go",
+      "metricEndpoint": "image-published-app",
+      "status": "shadow",
+      "routes": ["/api/trpc/image.getPublishedWithApp"],
+      "nodeEntry": {
+        "file": "src/server/routers/image.router.ts",
+        "symbol": "imageRouter.getPublishedWithApp"
+      },
+      "goHandler": [
+        "apps/feed-go/internal/server/published_app.go",
+        "apps/feed-go/internal/appchip/appchip.go"
+      ],
+      "goRoots": ["apps/feed-go/internal/appchip"],
+      "flags": {
+        "shadow": "feed-go-shadow-image-published-app",
+        "transport": null,
+        "probe": null
+      },
+      "holdout": null,
+      "soak": null,
+      "nodeDeletion": null
+    },
+    {
       "id": "GET /api/v1/images",
       "kind": "rest",
       "service": "feed-go",

@@ -21,6 +21,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/propagation"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/appchip"
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/chread"
@@ -470,7 +471,9 @@ func run(log *slog.Logger) error {
 		Infinite:       infinite,
 		V1Models:       v1Models,
 		Associated:     associated,
-		RequestBudget:  cfg.RequestBudget,
+		// The image.getPublishedWithApp shadow reads one image's app marker from the replica.
+		PublishedApp:  &appchip.Deps{DB: pool},
+		RequestBudget: cfg.RequestBudget,
 		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
 		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
 		Events:      &server.EventLog{Log: log, FallbackPerMinute: cfg.FallbackLogPerMinute, ErrorPerMinute: cfg.ErrorLogPerMinute},

@@ -304,6 +304,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // the sample rate and the in-flight cap with FEED_GO_SHADOW, with its own per-second bucket.
   // Default OFF. See `src/server/trpc/feed-go-shadow.ts`.
   FEED_GO_SHADOW_MODEL_ASSOCIATED = 'feed-go-shadow-model-associated',
+  // Mirror sampled `image.getPublishedWithApp` requests (raw input, the headers the answer depends
+  // on, Node's superjson envelope) to feed-go's `/internal/shadow/image.getPublishedWithApp`. Its own
+  // flag; shares FEED_GO_SHADOW_URL, the sample rate and the in-flight cap with FEED_GO_SHADOW, with
+  // its own per-second bucket. Default OFF. See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW_IMAGE_PUBLISHED_APP = 'feed-go-shadow-image-published-app',
   // The Go-first cache-presence probe: for a request the feed-go shadow sampler sampled, a POST at
   // the START of the request (before the handler fills the caches) to feed-go's
   // `/internal/probe/image.getImagesAsPostsInfinite`, which records the serve-time cache misses a

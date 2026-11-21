@@ -1,0 +1,39 @@
+{
+  "name": "banned-session",
+  "request": {
+    "input": "{\"json\":{\"id\":8101}}",
+    "viewer": null,
+    "banned": {
+      "id": 1003,
+      "isModerator": false
+    },
+    "host": "civitai.example"
+  },
+  "world": {
+    "storeScope": "none",
+    "image": {
+      "id": 8101,
+      "userId": 1001,
+      "metadata": {
+        "width": 832,
+        "height": 1216
+      },
+      "visible": true,
+      "mediaVisible": true,
+      "why": "a published image every viewer may open, rated within the domain cap"
+    },
+    "apps": {},
+    "hiddenListingIds": []
+  },
+  "binds": {
+    "imageId": 8101
+  },
+  "expect": {
+    "envelope": {
+      "json": null
+    }
+  },
+  "go": {
+    "fallback": "published-app-banned-session"
+  }
+}

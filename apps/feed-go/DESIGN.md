@@ -879,7 +879,8 @@ path as serving, and compares decoded values:
   `feed_go_shadow_field_diffs_total{feed_endpoint="as-posts",category="items.*.images.*.stats.likeCountAllTime",kind="value"}`;
 - every `feed_go_*` series carries `feed_endpoint` (`as-posts` for this procedure, `v1-images` for §13,
   `infinite` for §14, `model-getall` for §15, `v1-models` / `v1-models-id` for §16, `model-associated`
-  for §17): seven values, so the label at most multiplies a family's cardinality by seven;
+  for §17, `image-published-app` for §18): eight values, so the label at most multiplies a family's
+  cardinality by eight;
 - differing paths (never values) are logged for a sample, so a category can be traced to a field;
 - numbers compare numerically, except that two integer literals compare **exactly** (int64, else as
   big integers). As float64, an integer above 2^53 cannot be told from its neighbour, and the
@@ -2411,3 +2412,98 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-assoc
   `src/shared/constants/generation.constants.ts`;
 - the gate rules are read live on every call; Node answers its last good read when the read fails,
   which falls back here.
+
+## 18. `image.getPublishedWithApp` (tRPC, shadow only)
+
+The image page's "Published with <app>" credit: `src/server/routers/image.router.ts`
+(`publicProcedure`, `requiredScope: MediaRead`, input `getByIdSchema`, no `edgeCacheIt`) →
+`getImagePublishedWithAppHandler` (`src/server/controllers/image.controller.ts`) → `readImageAppChip`
+(`src/server/services/blocks/image-app-chip.service.ts`) → `readAppChip` and `resolveAppChip`
+(`post-app-chip.service.ts`, `post-app-chip.logic.ts`). Ported in `internal/appchip`, wired in
+`internal/server/published_app.go`, compared at `POST /internal/shadow/image.getPublishedWithApp`
+(`feed_endpoint="image-published-app"`). No public route and no Go-first probe.
+
+### 18.1 What the Node path does
+
+1. **Input.** `{ id: z.number() }`; zod strips any other key. A refusal is the 400 the sampler never
+   mirrors.
+2. **Scope gate.** `resolveStoreVisibilityScope({ user })` (Flipt, per viewer). A scope that does not
+   admit an on-site listing answers `null` before anything is read.
+3. **Marker, after the gate.** `assertImageVisibleToViewer` (image.get's visibility predicate, which
+   includes the minor content rule of §4.1, plus the owner's block of the viewer; an id `isPgInt4`
+   refuses is NOT_FOUND before any read), then `viewerCanSeeImageMedia` (the domain cap, owner and
+   moderator exemptions, the collection-manager exemption), then `Image.metadata.blockPublishedAppId`
+   of the visible row (`readAppIdMarker`: a string whose trim is non-empty). Not visible, no media or
+   no marker: `null`.
+4. **App.** The marker's `OauthClient` (allowlisted select), the listing visibility levels, and the
+   projection: a linked chip, an unlinked one (lifecycle), or `null` (no app, the maturity silence, no
+   usable name).
+5. **Fail-open.** Any error in 2–4 is `null` (counted `degraded`).
+
+### 18.2 What is ported, and what falls back
+
+The marker is the only term that does not depend on the viewer, and no path reaches a chip without
+it. So feed-go reads only the marker: `SELECT "userId", "metadata" -> 'blockPublishedAppId' FROM
+"Image" WHERE "id" = $1` on the replica (the table Node's own marker read uses). An image with no
+marker, or no image, is `null` for every viewer, scope, host and level, and is served; an image with
+one falls back, because the gate, the visibility rules and the app resolution that then decide the
+answer are not ported. The served answer is the same whether or not the viewer may open the image, so
+the read carries no visibility term and discloses nothing (the §4.1 call-site ledger lists it with
+that reason).
+
+| Area | Ported | Falls back (reason) |
+|---|---|---|
+| Input | `id` (any JS number); the client keys `authed` / `direction` | any other key (`input-unknown-key`); a value `z.number()` refuses: absent, null, a string, a superjson bigint, a literal past the double range (`input-invalid`) |
+| Viewer | as §4 (only the class is read) | a banned session (`published-app-banned-session`); an API credential (`bearer-token`); a verified crawler (`verified-bot`: Node changes the cache policy for one) |
+| Id | an int4 integer is read; a fraction or an id past int4 is `null` with no read (Node's NOT_FOUND) | — |
+| Marker | absent, JSON null, a number, an object, an empty string, a metadata that is not an object: `null` | any non-empty string, a whitespace-only one included (`published-app-marked`: Node then decides; feed-go does not reimplement JS's trim to serve the one blank case) |
+| Store | — | no deps (`published-app-unconfigured`); a read error is `go_error` (Node's fail-open `null` is not this read's to claim) |
+
+The answer is written through `computed.encode`: superjson for a sample, and devalue for a request
+marked for it when the answer is not edge-cacheable, so a later public route writes what the app
+writes. Cache policy is `createContext`'s (the public TTL signed out, none for a session): nothing on
+a served path changes it.
+
+### 18.3 Sampler, comparison, measurement
+
+The Node sampler mirrors the procedure under its own flag, `feed-go-shadow-image-published-app`
+(default off), with the shared URL, sample rate and in-flight cap and its own per-second bucket. The
+comparison is §7's over one value; the classifier is `match` or `fields` (a Go `null` against a Node
+chip is a `type` difference at the root, category `""`). Only an answer that read nothing (an id int4
+cannot hold) is `served_empty` / `match_empty`.
+
+**Signed-in coverage.** The procedure is in neither `CACHEABLE_PROCEDURES` nor
+`NEVER_BATCH_PROCEDURES` (`src/utils/trpc.ts`), so a signed-in browser batches it when `trpcBatching`
+is on for it, and the sampler never samples a batched call: the shadow sees anonymous sessions and
+signed-in sessions with batching off only. Each compared sample is also counted by viewer class,
+`feed_go_shadow_compare_viewer_total{feed_endpoint="image-published-app",viewer,result}`, with
+`viewer` one of `anon`, `user`, `owner` (the image's owner), `moderator` (`appchip.ViewerClasses`,
+each seeded at 0 for `match`). As for §17, 🔴 serving is blocked until signed-in calls are sampled
+or the serving transport takes unbatched calls only.
+
+```promql
+sum by (viewer) (increase(feed_go_shadow_compare_viewer_total{feed_endpoint="image-published-app"}[7d]))
+
+sum(rate(feed_go_shadow_compare_total{feed_endpoint="image-published-app",result="match"}[1h]))
+  / sum(rate(feed_go_shadow_compare_total{feed_endpoint="image-published-app",result=~"match|fields"}[1h]))
+
+topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="image-published-app",mode="shadow"}[1h])))
+```
+
+Turning the shadow on needs feed-go deployed with this build (its internal listener reachable at the
+app's `FEED_GO_SHADOW_URL`), `FEED_GO_SHADOW_SAMPLE_RATE` above 0 on the app, and the flag
+`feed-go-shadow-image-published-app` on. Turning the flag off stops it.
+
+### 18.4 Parity evidence and known divergences
+
+`testdata/golden/image-published-app` (written by `gen-published-app.mjs`, README
+"image-published-app"), run through the whole `computePublishedApp` by
+`internal/server/published_app_golden_test.go`, with Node's devalue bodies in
+`devalue/image-published-app`. Divergences:
+
+- feed-go reads the image row for every request it computes, including a viewer the scope gate
+  answers before any read in Node; that is one primary-key read per call Node does not make, to weigh
+  before serving;
+- timing: the sample is computed after Node answered, so an image whose marker or row changed in
+  between can differ (a chip Node saw on an image deleted since is a `fields` difference);
+- the whitespace-only marker falls back (above).

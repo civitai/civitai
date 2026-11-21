@@ -393,6 +393,7 @@ describe('feed-go shadow, end to end', () => {
           'v1-models',
           'v1-models-id',
           'model-associated',
+          'image-published-app',
         ])
       );
       for (const v of values) expect(Object.keys(v.labels), name).not.toContain('endpoint');

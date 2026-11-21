@@ -1,0 +1,60 @@
+{
+  "name": "other-provenance-key",
+  "request": {
+    "input": "{\"json\":{\"id\":8101}}",
+    "viewer": {
+      "id": 1001,
+      "isModerator": false
+    },
+    "banned": null,
+    "host": "civitai.example"
+  },
+  "world": {
+    "storeScope": "full",
+    "image": {
+      "id": 8101,
+      "userId": 1001,
+      "metadata": {
+        "blockUploadedAppId": "appblk-sketchpad"
+      },
+      "visible": true,
+      "mediaVisible": true,
+      "why": "a published image every viewer may open, rated within the domain cap"
+    },
+    "apps": {
+      "appblk-sketchpad": {
+        "name": "Sketchpad",
+        "appBlocks": [
+          {
+            "status": "approved",
+            "currentVersionDeployedAt": "2026-06-01T00:00:00.000Z",
+            "appListing": {
+              "id": "lst_sketchpad",
+              "slug": "sketchpad",
+              "name": "Sketchpad",
+              "status": "approved",
+              "kind": "onsite",
+              "contentRating": "pg",
+              "revisionOfId": null,
+              "icon": null
+            }
+          }
+        ],
+        "connectListings": []
+      }
+    },
+    "hiddenListingIds": []
+  },
+  "binds": {
+    "imageId": 8101
+  },
+  "expect": {
+    "envelope": {
+      "json": null
+    }
+  },
+  "go": {
+    "served": true,
+    "viewerClass": "owner"
+  }
+}
