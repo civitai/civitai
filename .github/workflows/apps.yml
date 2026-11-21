@@ -22,9 +22,10 @@ name: App suites
 #       `vitest --project 'app:*'` loads the ROOT config (which imports these) before any app
 #       config, and its root-level sequencer applies to the whole run.
 #   scripts/ci/assert-workspace-suites-ran.mjs, scripts/ci/typecheck-apps.mjs,
-#   scripts/ci/assert-apps-paths-filter.mjs, scripts/ci/app-suite-scope.mjs
-#       what the steps below run. (The test step calls vitest itself rather than
-#       `test:apps:run`/queued-check; see it.)
+#   scripts/ci/assert-apps-paths-filter.mjs, scripts/ci/app-suite-scope.mjs,
+#   scripts/ci/github-paths-filter.mjs
+#       what the steps below run, and the glob matcher the paths-filter check imports. (The
+#       test step calls vitest itself rather than `test:apps:run`/queued-check; see it.)
 #   scripts/generate-slim-schema.js, scripts/prisma-*-generator.mjs
 #       the root `postinstall` (`db:generate`) runs them during `pnpm install`, and they write
 #       the generated `@civitai/db-schema` sources most apps import.
@@ -56,7 +57,9 @@ name: App suites
 #
 # Same label as lint.yml (read its header): on a PR carrying `full-ci` the draft gate is lifted.
 # `types` deliberately omits `labeled`; full-ci.yml dispatches this workflow when the label is
-# added. That first, dispatched run is NOT path-filtered (`paths:` applies to pull_request
+# added to a draft PR with a changed file that passes the `pull_request` paths filter below (it
+# reads the filter from this file; a ready PR's own run here already has the label's effect).
+# The dispatched run itself is not path-filtered or scoped (`paths:` applies to pull_request
 # events only); later pushes are: a PR that touches nothing these suites read starts no PR run
 # here, label or not.
 #
@@ -105,6 +108,7 @@ on:
       - 'scripts/ci/assert-workspace-suites-ran.mjs'
       - 'scripts/ci/typecheck-apps.mjs'
       - 'scripts/ci/assert-apps-paths-filter.mjs'
+      - 'scripts/ci/github-paths-filter.mjs'
       - 'scripts/ci/app-suite-scope.mjs'
       - 'scripts/generate-slim-schema.js'
       - 'scripts/prisma-enum-generator.mjs'

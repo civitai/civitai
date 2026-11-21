@@ -18,7 +18,8 @@ name: Storage hook runner image
 # package.json declares, the workspace packages the Dockerfile copies, and .dockerignore.
 #
 # A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
-# dispatches this workflow when the label is added.
+# dispatches this workflow when the label is added to a draft PR with a changed file that passes
+# the `pull_request` paths filter below (it reads the filter from this file).
 on:
   pull_request:
     branches: [main, release]

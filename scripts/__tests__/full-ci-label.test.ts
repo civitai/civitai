@@ -450,7 +450,12 @@ describe('the full-ci label', () => {
       expect(jobs[0].name).toBe('Start full CI on label');
       expect(norm(jobs[0].if ?? '')).toBe(DISPATCH_IF);
       // No `pull-requests: write`: this job no longer removes the label (lint.yml does).
-      expect(jobs[0].permissions).toEqual({ actions: 'write', contents: 'read' });
+      // `pull-requests: read` lists the PR's changed files for the paths filters.
+      expect(jobs[0].permissions).toEqual({
+        actions: 'write',
+        contents: 'read',
+        'pull-requests': 'read',
+      });
     });
 
     // Script injection: the branch name is attacker-chosen text. It must reach the shell as an
@@ -471,8 +476,71 @@ describe('the full-ci label', () => {
       expect(step.env?.PR).toBe('${{ github.event.pull_request.number }}');
       // A continue-on-error dispatch step would read green after failing to start anything.
       expect(step['continue-on-error']).toBeUndefined();
-      expect(step.run).toContain('gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"');
-      expect(step.run).toContain('gh workflow run moderator-boot.yml -R "$REPO" --ref "$HEAD_REF"');
+    });
+
+    // Every workflow other than Lint is dispatched only when its own pull_request run would
+    // start and be held by the draft gate (scripts/ci/github-paths-filter.mjs, whose decisions
+    // github-paths-filter.test.ts tests). Before, all of them were dispatched unconditionally on
+    // every labelled PR, and a dispatch is never path-filtered.
+    describe('the other workflows', () => {
+      const step = (jobs[0].steps ?? []).find((s) => /gh workflow run lint\.yml/.test(s.run ?? ''));
+      const run = step?.run ?? '';
+
+      it('are dispatched by name only from the loop over the filter verdicts', () => {
+        expect(run).not.toMatch(/gh workflow run (?!lint\.yml)[\w.-]+\.yml/);
+        const loop =
+          /for wf in "\$\{others\[@\]\}"; do\s+if \[ "\$\{verdict\[\$wf\]\}" = skip \]; then\s+echo [^\n]*\n\s+continue\n/;
+        const at = run.search(loop);
+        expect(at, 'no dispatch loop that skips on a skip verdict first').toBeGreaterThan(-1);
+        const dispatches = [...run.matchAll(/gh workflow run "\$wf"/g)].map((m) => m.index ?? -1);
+        expect(dispatches.length).toBeGreaterThan(0);
+        for (const i of dispatches) expect(i).toBeGreaterThan(at);
+      });
+
+      it('get their verdicts from the filter script, with the draft flag and changed files', () => {
+        expect(step?.env?.DRAFT).toBe('${{ github.event.pull_request.draft }}');
+        expect(run).toMatch(
+          /gh api --paginate "repos\/\$REPO\/pulls\/\$PR\/files\?per_page=100" \\\s+--jq '\.\[\] \| \.filename, \(\.previous_filename \/\/ empty\)' > "\$changed"/
+        );
+        const call =
+          'node scripts/ci/github-paths-filter.mjs --draft "$DRAFT" --changed "$changed" "${files[@]}"';
+        expect(run).toContain(call);
+        // Only an exact `skip` line from the script skips; anything else dispatches.
+        expect(run).toMatch(/^\s*verdict\[\$wf\]=run$/m);
+        expect(run).toContain('if [ "$(cut -f2 <<< "$line")" = skip ]; then verdict[$wf]=skip; fi');
+      });
+
+      // A ledger, so a new draft-gated workflow is either dispatched here or exempted here.
+      it('are exactly the draft-gated, dispatchable workflows other than Lint', () => {
+        const EXEMPT: Record<string, string> = {
+          'lint.yml': 'dispatched first, with its own inputs, and never filtered',
+          'feed-go-release.yml':
+            'a dispatch publishes a release for a tag input; its PR run only builds',
+        };
+        const gated = readdirSync(WORKFLOW_DIR)
+          .filter((f) => /\.ya?ml$/.test(f))
+          .filter((f) => {
+            const wf = load(f);
+            const jobsIfs = Object.values(wf.jobs ?? {}).map((j) => j.if ?? '');
+            return wf.on && 'workflow_dispatch' in wf.on && jobsIfs.some((c) => c.includes(FULL));
+          });
+        for (const f of Object.keys(EXEMPT)) expect(gated, f).toContain(f);
+        const others = /others=\(([^)]*)\)/.exec(run)?.[1].split(/\s+/).filter(Boolean) ?? [];
+        expect(others.length).toBeGreaterThan(0);
+        expect([...others].sort()).toEqual(gated.filter((f) => !(f in EXEMPT)).sort());
+      });
+
+      it('has the filter script and the workflow files on disk', () => {
+        const checkout = (jobs[0].steps ?? []).find((s) => s.uses?.startsWith('actions/checkout@'));
+        const paths = String(checkout?.with?.['sparse-checkout'] ?? '')
+          .split('\n')
+          .filter(Boolean);
+        expect(paths).toEqual([
+          'scripts/ci/full-ci-unit-shards.mjs',
+          'scripts/ci/github-paths-filter.mjs',
+          '.github/workflows',
+        ]);
+      });
     });
 
     // A branch cut before `pr` existed rejects it with this text (measured: gh prints
@@ -515,7 +583,9 @@ describe('the full-ci label', () => {
       // The classifier must be on disk when the step runs, and the checkout must not leave the
       // dispatching token in the git config.
       const checkout = steps.slice(0, idx).find((s) => s.uses?.startsWith('actions/checkout@'));
-      expect(checkout?.with?.['sparse-checkout']).toBe('scripts/ci/full-ci-unit-shards.mjs');
+      expect(String(checkout?.with?.['sparse-checkout'] ?? '').split('\n')).toContain(
+        'scripts/ci/full-ci-unit-shards.mjs'
+      );
       expect(checkout?.with?.['persist-credentials']).toBe(false);
     });
 

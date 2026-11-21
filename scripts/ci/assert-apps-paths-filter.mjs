@@ -30,6 +30,11 @@ import { fileURLToPath } from 'node:url';
 
 import { parse } from 'yaml';
 
+import { globToRegExp } from './github-paths-filter.mjs';
+
+// Re-exported: GitHub's glob rules live in github-paths-filter.mjs, shared with full-ci.yml.
+export { globToRegExp };
+
 export const WORKFLOW = '.github/workflows/apps.yml';
 
 /**
@@ -44,26 +49,6 @@ export const NOT_INPUTS = {
 const SKIP_FILE = /^\.eslintrc|^eslint\.config\./;
 const SKIP_DIR = new Set(['node_modules', '.svelte-kit', 'dist', 'build', '.turbo']);
 const SOURCE_FILE = /\.(c|m)?(t|j)sx?$|\.svelte$/;
-
-/** GitHub `paths` glob -> RegExp. Only `*` and `**` are supported; anything else throws. */
-export function globToRegExp(pattern) {
-  if (/[?[\]{}!+]/.test(pattern)) {
-    throw new Error(`unsupported glob syntax in "${pattern}" (only * and ** are handled here)`);
-  }
-  let re = '';
-  for (let i = 0; i < pattern.length; i++) {
-    const c = pattern[i];
-    if (c === '*' && pattern[i + 1] === '*') {
-      re += '.*';
-      i++;
-    } else if (c === '*') {
-      re += '[^/]*';
-    } else {
-      re += c.replace(/[.^$|()\\]/g, '\\$&');
-    }
-  }
-  return new RegExp(`^${re}$`);
-}
 
 export const isCovered = (file, patterns) => patterns.some((p) => globToRegExp(p).test(file));
 

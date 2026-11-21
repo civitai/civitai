@@ -18,7 +18,8 @@ name: content-policy-go
 # started in this job; the plain unit run never compiles that file.
 #
 # A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
-# dispatches this workflow when the label is added. A push to `main` is unfiltered.
+# dispatches this workflow when the label is added to a draft PR with a changed file that passes
+# the `pull_request` paths filter below (it reads the filter from this file). A push to `main` is unfiltered.
 on:
   pull_request:
     branches: [main, release]
