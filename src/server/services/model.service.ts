@@ -8812,7 +8812,11 @@ async function refreshPersonalLeadCandidates() {
     limit: PERSONAL_LEAD_CANDIDATES_LIMIT,
   });
   if (data.length >= PERSONAL_LEAD_CANDIDATES_LIMIT)
-    logToAxiom({ type: 'info', name: 'personal-hot-lead-candidates-capped', count: data.length });
+    logToAxiom({
+      type: 'info',
+      name: 'personal-hot-lead-candidates-capped',
+      payload: { count: data.length },
+    });
   await clusterCacheGuard.writeBestEffort('personal hot lead candidates set', () =>
     redis.packed.set(key, { data, cachedAt: Date.now() } satisfies CandidatesEntry, {
       EX: PERSONAL_LEAD_CANDIDATES_TTL_S,
