@@ -43,11 +43,15 @@ const caseViewSchema = z.object({
 });
 export type CaseView = z.infer<typeof caseViewSchema>;
 
+/** The moderator app answers every action as `{ ok, result }` (modActionResponse). */
+const resultOf = <T extends z.ZodType>(schema: T, answer: unknown): z.infer<T> =>
+  z.object({ result: schema }).parse(answer).result;
+
 export async function getRequestForms(): Promise<RequestForm[]> {
-  const res = z
-    .object({ definitions: z.array(formSchema) })
-    .parse(await casesClient.caseDefinitions());
-  return res.definitions;
+  return resultOf(
+    z.object({ definitions: z.array(formSchema) }),
+    await casesClient.caseDefinitions()
+  ).definitions;
 }
 
 export type SubmitResult =
@@ -84,9 +88,10 @@ export async function submitRequest(
   if (tooLong)
     return { ok: false, message: 'Some answers are too long.', fieldErrors: tooLong, status: 400 };
   try {
-    const res = z
-      .object({ publicRef: z.string() })
-      .parse(await casesClient.caseIntake(input as CaseIntakeInput));
+    const res = resultOf(
+      z.object({ publicRef: z.string() }),
+      await casesClient.caseIntake(input as CaseIntakeInput)
+    );
     return { ok: true, publicRef: res.publicRef };
   } catch (e) {
     return refusal(e);
@@ -97,7 +102,7 @@ export async function viewCase(input: CasePartyViewInput) {
   try {
     return {
       ok: true as const,
-      view: caseViewSchema.parse(await casesClient.casePartyView(input)),
+      view: resultOf(caseViewSchema, await casesClient.casePartyView(input)),
     };
   } catch (e) {
     return refusal(e);

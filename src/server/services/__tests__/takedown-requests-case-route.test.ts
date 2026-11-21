@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { modActionResponse } from '@civitai/moderation';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 
 // The moderator app is the network boundary: fetch is the only fake.
@@ -64,7 +65,9 @@ function call({
 // Stubbed before the module loads: the client keeps the fetch it was built with.
 const fetchMock = vi.fn<typeof fetch>();
 function moderatorAnswers(status: number, body: unknown) {
-  fetchMock.mockImplementation(async () => new Response(JSON.stringify(body), { status }));
+  // A success goes out in the moderator app's envelope, as the real route sends it.
+  const wire = status < 400 ? modActionResponse(body) : body;
+  fetchMock.mockImplementation(async () => new Response(JSON.stringify(wire), { status }));
   return fetchMock;
 }
 
