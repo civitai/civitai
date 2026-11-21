@@ -54,6 +54,10 @@ const h = await vi.hoisted(async () => {
     replayDeferred: null as (() => void)[] | null,
     replaySetCalled: false,
     dbThrowsOn: null as string | null,
+    // Runs a script on the replay store's state in real Lua (set in beforeEach from the harness).
+    luaEval: null as
+      | null
+      | ((script: string, options: { keys: string[]; arguments: string[] }) => Promise<unknown>),
     sys: new Map<string, { value: string; ex: number }>(),
     sysSetThrows: false,
     redisNull: false,
@@ -95,6 +99,7 @@ vi.mock('$lib/server/db/db', () => ({
         select: () => qb,
         innerJoin: () => qb,
         orderBy: () => qb,
+        limit: () => qb,
         where: (column: string, op: string, value: unknown) => {
           if (typeof column === 'string') where.push([column, op, value]);
           return qb;
@@ -145,6 +150,9 @@ vi.mock('$lib/server/redis', async (orig) => ({
           },
           async del(key: string) {
             return h.cache.delete(key) ? 1 : 0;
+          },
+          async eval(script: string, options: { keys: string[]; arguments: string[] }) {
+            return h.luaEval!(script, options);
           },
         },
   getSysRedis: () => ({
@@ -204,8 +212,9 @@ import { POST as introspectPOST } from '../../../../routes/api/auth/oauth/intros
 import { GET as jwksGET } from '../../../../routes/.well-known/jwks.json/+server';
 import { WorkerTokenExchangeGrant } from '../worker-grant';
 import { invalidateRoleCache } from '../access';
-import { parseBlockExchangeCallers } from '../block-exchange';
+import { MATURE_BROWSING_LEVELS, parseBlockExchangeCallers } from '../block-exchange';
 import { getSigner } from '../user-exchange';
+import { createLuaRedis } from '../../../../test/lua-sys-redis';
 import {
   BLOCK_TOKEN_AUDIENCE,
   BLOCK_TOKEN_ISSUER,
@@ -267,6 +276,16 @@ beforeEach(() => {
   h.replayHang = false;
   h.replayApplyThenHang = false;
   h.replayDeferred = null;
+  // The release's compare-and-delete runs as real Lua over the fake store's current value of its key.
+  h.luaEval = async (script, options) => {
+    const lua = createLuaRedis(Date.now());
+    const [key] = options.keys;
+    const before = h.cache.get(key);
+    if (before !== undefined) lua.setString(key, before);
+    const result = await lua.eval(script, options);
+    if (before !== undefined && lua.string(key) === undefined) h.cache.delete(key);
+    return result;
+  };
   h.replaySetCalled = false;
   h.dbThrowsOn = null;
   h.sys.clear();
@@ -308,6 +327,7 @@ async function blockToken(
     blockInstanceId: 'inst-1',
     ctx: {},
     scopes: ['apps:storage', 'user:read:self'],
+    maxBrowsingLevel: 31, // minted on a mature-capable host: every rating
     ...over,
   };
   for (const [k, v] of Object.entries(claims)) if (v === undefined) delete claims[k];
@@ -958,10 +978,51 @@ describe('block token exchange — the app and the viewer', () => {
     expect(issued()).toEqual([]);
   });
 
-  it('issues while another block of the app is still approved', async () => {
+  // The registry's private feed resolves the app from the client id, not the token's block: a token for a
+  // suspended block of a client that has another approved block would read THAT block's data there, where
+  // the site's document store refuses the token outright.
+  it("refuses a token whose block is not the app's approved one, while another block is approved", async () => {
     h.tables.app_blocks[0].status = 'suspended';
     h.tables.app_blocks.push({ id: 'apb_02notes', app_id: APP, status: 'approved' });
+    const res = await exchange(await blockToken());
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('unauthorized_client');
+    expect(lastReason()).toBe("block is not the app's one approved block");
+    expect(issued()).toEqual([]);
+  });
+
+  it('refuses while the app has two approved blocks (the registry could not tell which is read)', async () => {
+    h.tables.app_blocks.push({ id: 'apb_02notes', app_id: APP, status: 'approved' });
+    const res = await exchange(await blockToken());
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('unauthorized_client');
+    expect(lastReason()).toBe("block is not the app's one approved block");
+    expect(issued()).toEqual([]);
+  });
+
+  it("issues for the app's one approved block while another block of it is suspended", async () => {
+    h.tables.app_blocks.push({ id: 'apb_02notes', app_id: APP, status: 'suspended' });
     expect((await exchange(await blockToken())).status).toBe(200);
+  });
+
+  // The site's document store holds a block token's reads to the token's own ceiling (an SFW host's token
+  // reads no mature-rated app's data); the registry's private feed holds them to the viewer's own settings.
+  // So a token whose ceiling does not admit every rating is not exchanged.
+  it('refuses a token minted with an SFW ceiling, or with none', async () => {
+    for (const [maxBrowsingLevel, label] of [
+      [3, 'PG | PG13'],
+      [15, 'without XXX'],
+      [undefined, 'absent'],
+      ['31', 'not a number'],
+    ] as const) {
+      const res = await exchange(await blockToken({ maxBrowsingLevel }));
+      expect(res.status, label).toBe(400);
+      expect(res.body.error, label).toBe('invalid_grant');
+      expect(lastReason(), label).toBe('block token ceiling is not every rating');
+    }
+    expect(issued()).toEqual([]);
+    // The mature bits are what count: Blocked (32) on top of every rating still issues.
+    expect((await exchange(await blockToken({ maxBrowsingLevel: 63 }))).status).toBe(200);
   });
 });
 
@@ -1017,6 +1078,11 @@ describe('block token verification follows the site', () => {
     '../../../../../../../src/server/middleware/block-scope.middleware.ts',
     import.meta.url
   );
+  const SITE_ENUMS = new URL('../../../../../../../src/server/common/enums.ts', import.meta.url);
+  const BROWSING_LEVEL_CONSTANTS = new URL(
+    '../../../../../../../src/shared/constants/browsingLevel.constants.ts',
+    import.meta.url
+  );
 
   it('uses the site issuer, audience and signed-in subject pattern', () => {
     const service = read(BLOCK_TOKEN_SERVICE);
@@ -1039,6 +1105,22 @@ describe('block token verification follows the site', () => {
     expect(BLOCK_TOKEN_ISSUER).toBe('civitai');
     expect(BLOCK_TOKEN_AUDIENCE).toBe('civitai-app-block');
     expect(BLOCK_USER_SUB_RE.source).toBe('^user:[1-9][0-9]{0,11}$');
+  });
+
+  it("uses the site's mature browsing-level bits, and the site's red-host ceiling admits them", () => {
+    expect(MATURE_BROWSING_LEVELS).toBe(28);
+    const enums = read(SITE_ENUMS);
+    expect(enums).toContain(
+      'export enum NsfwLevel {\n  PG = 1,\n  PG13 = 2,\n  R = 4,\n  X = 8,\n  XXX = 16,'
+    );
+    const levels = read(BROWSING_LEVEL_CONSTANTS);
+    expect(levels).toContain(
+      'export const browsingLevels = [\n  NsfwLevel.PG,\n  NsfwLevel.PG13,\n  NsfwLevel.R,\n  NsfwLevel.X,\n  NsfwLevel.XXX,\n] as const;'
+    );
+    expect(levels).toContain(
+      'export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);'
+    );
+    expect(levels).toContain("    case 'red':\n      return allBrowsingLevelsFlag;");
   });
 
   it('computes the kid as the site does', () => {

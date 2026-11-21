@@ -87,13 +87,14 @@ func run(log *slog.Logger) error {
 				ClientSecret: cfg.Relay.ClientSecret, Resource: cfg.Relay.Resource},
 			HTTP: &http.Client{Timeout: exchangeTimeout},
 		}
-		// Nil while APP_DATA_BLOCK_EXCHANGE is off: exchange.Route is then the user exchange itself.
-		var blocks *exchange.BlockCache
+		// One router decides which tokens are exchanged, for the handler and the streams alike. Its
+		// block cache is nil while APP_DATA_BLOCK_EXCHANGE is off: block tokens then read REST only.
+		router := &exchange.Router{User: ex.Exchange}
 		if cfg.BlockExchange {
-			blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Margin: expiryMargin,
+			router.Blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Margin: expiryMargin,
 				Observe: m.ObserveBlockExchange(log.With("component", "block-exchange"))}
-			srv.BlockExchange = true
 		}
+		srv.Exchangeable = router.Accepts
 		mgr = session.New(session.ClientSubscriber{Client: &registry.Client{
 			BaseURL: cfg.RegistryURL, UserAgent: "app-data-go", HTTP: registry.NewHTTPClient(),
 		}}, session.Options{
@@ -101,7 +102,7 @@ func run(log *slog.Logger) error {
 			IdleTTL: cfg.IdleTTL, MaxAge: cfg.MaxAge,
 			MaxRecords: cfg.MaxRecords, MaxBytes: cfg.MaxBytes,
 			Cooldown: streamCooldown, NotPrivateCooldown: notPrivateCooldown,
-			Exchange: exchange.Route(ex.Exchange, blocks), ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
+			Exchange: router.Exchange, ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
 			Opened: m.StreamsOpened.Inc,
 			Closed: func(reason string) { m.StreamsClosed.WithLabelValues(reason).Inc() },
 		})

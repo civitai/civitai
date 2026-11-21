@@ -934,7 +934,7 @@ func TestNoReadMeansNoRecheck(t *testing.T) {
 	}
 }
 
-// 🔴 A block token (APP_DATA_BLOCK_EXCHANGE on) is exchanged ONCE, as main wires it (exchange.Route
+// 🔴 A block token (APP_DATA_BLOCK_EXCHANGE on) is exchanged ONCE, as main wires it (exchange.Router
 // with a BlockCache): the hub refuses a second exchange of it. Its streams of two collections share
 // that one exchange; a live stream's re-check reuses it rather than re-exchanging (a re-exchange
 // would be refused as a replay and close the stream as revoked); and once its token is past the
@@ -944,7 +944,8 @@ func TestABlockTokensStreamsShareOneExchangeAndNeverReExchange(t *testing.T) {
 	h := newHarness(t, Options{Recheck: 2 * time.Minute, IdleTTL: time.Hour, MaxAge: time.Hour, ExpiryMargin: 10 * time.Second})
 	h.o.life = 5 * time.Minute
 	const block = "eyJhbGciOiJSUzI1NiJ9.eyJqdGkiOiJibGstMSJ9.c2ln"
-	h.m.opts.Exchange = exchange.Route(h.o.Exchange, &exchange.BlockCache{Hub: h.o.Exchange, Margin: 10 * time.Second, Now: h.c.now})
+	router := &exchange.Router{User: h.o.Exchange, Blocks: &exchange.BlockCache{Hub: h.o.Exchange, Margin: 10 * time.Second, Now: h.c.now}}
+	h.m.opts.Exchange = router.Exchange
 	h.o.records[block] = []registry.Entity{entity("urn:apps.civitai.com:todo-app/notes/r-1", "BLOCK-CANARY")}
 	exchanges := func() int {
 		h.o.mu.Lock()
@@ -973,10 +974,24 @@ func TestABlockTokensStreamsShareOneExchangeAndNeverReExchange(t *testing.T) {
 	if st := h.m.Stats(); st.Streams != 0 || h.closedFor(CloseExpiry) != 2 {
 		t.Fatalf("not closed at the expiry margin: %+v", st)
 	}
-	if _, err := read(t, h.m, block, schemaA); !errors.Is(err, ErrFailed) {
-		t.Fatalf("after expiry: %v, want ErrFailed (the read goes to REST)", err)
+	if _, err := read(t, h.m, block, schemaA); !errors.Is(err, ErrBlockSpent) || h.closedFor(CloseBlockSpent) != 1 {
+		t.Fatalf("after expiry: %v, closed block_spent %d; want ErrBlockSpent (the read goes to REST)", err, h.closedFor(CloseBlockSpent))
 	}
 	if n := exchanges(); n != 1 {
 		t.Fatalf("%d exchanges, want 1: a spent block token was exchanged again", n)
+	}
+}
+
+// A block cache that is full closes the stream with its own reason, not a registry error.
+func TestAFullBlockCacheIsItsOwnCloseReason(t *testing.T) {
+	h := newHarness(t, Options{})
+	h.m.opts.Exchange = func(context.Context, string) (exchange.Token, error) {
+		return exchange.Token{}, exchange.ErrBlockCacheFull
+	}
+	if _, err := read(t, h.m, "a.b.c", schemaA); !errors.Is(err, ErrBlockFull) {
+		t.Fatalf("got %v, want ErrBlockFull", err)
+	}
+	if h.closedFor(CloseBlockFull) != 1 || h.closedFor(CloseError) != 0 {
+		t.Fatalf("closed block_cache_full %d, error %d", h.closedFor(CloseBlockFull), h.closedFor(CloseError))
 	}
 }

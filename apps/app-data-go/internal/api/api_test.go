@@ -168,7 +168,7 @@ func newFakeHub(t *testing.T) *fakeHub {
 			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "x.AppDataRead." + subject,
 				"token_type": "Bearer", "expires_in": 900, "scope": "AppDataRead"})
 		case r.PostForm.Get("grant_type") != exchange.GrantType || r.PostForm.Get("subject_token_type") != exchange.AccessTokenType ||
-			r.PostForm.Get("resource") != "https://apps.invalid" || !strings.HasPrefix(subject, HubTokenPrefix):
+			r.PostForm.Get("resource") != "https://apps.invalid" || !strings.HasPrefix(subject, exchange.HubTokenPrefix):
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(w, `{"error":"invalid_request"}`)
 		case refused:
@@ -274,14 +274,14 @@ func newStackWith(t *testing.T, registryOn, blockOn bool, opts session.Options) 
 	opts.NotPrivateCooldown, opts.ExpiryMargin = time.Hour, 30*time.Second
 	ex := &exchange.Exchanger{Config: exchange.Config{URL: s.hub.srv.URL, ClientID: "relay-client",
 		ClientSecret: "relay-secret", Resource: "https://apps.invalid"}}
-	var blocks *exchange.BlockCache
+	router := &exchange.Router{User: ex.Exchange}
 	if blockOn {
-		blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Margin: opts.ExpiryMargin,
+		router.Blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Margin: opts.ExpiryMargin,
 			Observe: func(outcome, code string) {
 				s.m.ObserveBlockExchange(slog.New(slog.DiscardHandler))(outcome, code)
 			}}
 	}
-	opts.Exchange = exchange.Route(ex.Exchange, blocks)
+	opts.Exchange = router.Exchange
 	s.mgr = session.New(session.ClientSubscriber{Client: &registry.Client{BaseURL: s.reg.srv.URL}}, opts)
 	t.Cleanup(s.mgr.Close)
 	reg := prometheus.NewRegistry()
@@ -299,7 +299,7 @@ func newStackWith(t *testing.T, registryOn, blockOn bool, opts session.Options) 
 	if registryOn {
 		s.srv.Streams = s.mgr
 	}
-	s.srv.BlockExchange = blockOn
+	s.srv.Exchangeable = router.Accepts
 	s.h = s.srv.Handler()
 	return s
 }
@@ -759,6 +759,8 @@ func TestEveryStreamErrorHasAFallbackReason(t *testing.T) {
 		session.ErrClosed:        "closed",
 		session.ErrRefused:       "exchange_refused",
 		session.ErrNotPrivate:    "not_private",
+		session.ErrBlockSpent:    "block_spent",
+		session.ErrBlockFull:     "block_cache_full",
 	} {
 		got := fallbackReason(err)
 		if got != want {
@@ -833,3 +835,38 @@ func TestTheExchangedTokenHoldsOnlyAppDataRead(t *testing.T) {
 		t.Fatalf("%d subscriptions, want 1 (the positive control: a stream was opened)", n)
 	}
 }
+
+// 🔴 Even if the handler's gate let a block token through while the block exchange is off, the
+// router sends it nowhere: never to the user exchange, never to the hub. The read goes to REST.
+func TestABlockTokenNeverReachesTheUserExchangeWithTheBlockExchangeOff(t *testing.T) {
+	s := newStackWith(t, true, false, session.Options{})
+	s.srv.Exchangeable = func(string) bool { return true } // a gate that disagrees with the router
+	s.store.by[blockTok] = restAnswer{200, `{"items":[],"nextCursor":null}`}
+	g := s.get(t, notesPath, blockTok)
+	if g.status != 200 || g.ans.Source != "rest" || fallbacks(s, "failed") != 1 {
+		t.Fatalf("%d %s, failed %v", g.status, g.body, fallbacks(s, "failed"))
+	}
+	if len(s.hub.subjects) != 0 || s.reg.subs.Load() != 0 {
+		t.Fatalf("hub sent %d tokens, %d subscriptions", len(s.hub.subjects), s.reg.subs.Load())
+	}
+}
+
+// With no router given, only a hub token is exchanged: a block token reads REST and reaches no hub.
+func TestWithoutARouterOnlyHubTokensReachAStream(t *testing.T) {
+	s := newStackWith(t, true, false, session.Options{})
+	s.srv.Exchangeable = nil
+	s.reg.records["civitai_alice"] = []registry.Entity{ent("urn:apps.civitai.com:todo-app/notes/r-a", "NIL-GATE-3c9d")}
+	s.store.by[otherBlockTok] = restAnswer{200, `{"items":[],"nextCursor":null}`}
+	if g := s.get(t, notesPath, "civitai_alice"); g.ans.Source != "registry" {
+		t.Fatalf("hub token: %d %s", g.status, g.body)
+	}
+	if g := s.get(t, notesPath, otherBlockTok); g.ans.Source != "rest" || fallbacks(s, "token_not_exchangeable") != 1 {
+		t.Fatalf("block token: %d %s", g.status, g.body)
+	}
+	if s.hub.blockExchanges(otherBlockTok) != 0 {
+		t.Fatal("a block token reached the hub")
+	}
+}
+
+// otherBlockTok is a second block token, distinct from blockTok.
+const otherBlockTok = "eyJhbGciOiJSUzI1NiJ9.eyJqdGkiOiJibGstbmlsIn0.c2lnLW5pbA"

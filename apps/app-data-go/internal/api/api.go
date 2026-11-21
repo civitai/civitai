@@ -49,26 +49,19 @@ type Lister interface {
 	List(ctx context.Context, token, collection, from string) ([]rest.Doc, error)
 }
 
-// HubTokenPrefix starts every OAuth access token the hub issues (apps/auth OAUTH_TOKEN_PREFIX). Such a
-// token can reach a private stream: this service exchanges it at the hub, which looks the subject
-// token up among its own access tokens (apps/auth/src/lib/server/oauth/user-exchange.ts, step 5), so
-// a token the hub already exchanged never can. An App Block token can too, through the hub's block
-// exchange, only while BlockExchange is on. Any other token reads REST only, and is never sent to the
-// hub.
-const HubTokenPrefix = exchange.HubTokenPrefix
-
 // Server serves the API.
 type Server struct {
 	// Streams is nil when the registry path is off: every read is the REST read.
 	Streams Streams
-	// BlockExchange sends App Block tokens to the registry path too (APP_DATA_BLOCK_EXCHANGE); the
-	// streams' exchange must then route them to the hub's block exchange (exchange.Route). Off, a
-	// block token reads REST only (`token_not_exchangeable`) and is never sent to the hub.
-	BlockExchange bool
-	REST          Lister
-	Metrics       *metrics.Metrics
-	Gatherer      prometheus.Gatherer
-	Log           *slog.Logger
+	// Exchangeable reports whether a token can reach a stream: the streams' own exchange.Router's
+	// Accepts, so the handler and the exchange cannot disagree about which tokens are exchanged. Nil
+	// is hub tokens only (exchange.KindHub). Any other token reads REST only
+	// (`token_not_exchangeable`) and is never sent to the hub.
+	Exchangeable func(token string) bool
+	REST         Lister
+	Metrics      *metrics.Metrics
+	Gatherer     prometheus.Gatherer
+	Log          *slog.Logger
 	// Deadline bounds one read; LiveWait bounds how long of it a new stream may take to reach Live.
 	Deadline, LiveWait time.Duration
 	// RESTSlots bounds concurrent REST reads: a read takes one without waiting, or answers 503.
@@ -155,10 +148,9 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	reason := "registry_off"
-	kind := exchange.KindOf(token)
 	switch {
 	case s.Streams == nil:
-	case kind == exchange.KindOther, kind == exchange.KindBlock && !s.BlockExchange:
+	case !s.exchangeable(token):
 		reason = "token_not_exchangeable"
 	default:
 		lctx, lcancel := context.WithTimeout(ctx, s.LiveWait)
@@ -200,6 +192,13 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 	s.write(w, start, http.StatusOK, out, "rest", "ok")
 }
 
+func (s *Server) exchangeable(token string) bool {
+	if s.Exchangeable == nil {
+		return exchange.KindOf(token) == exchange.KindHub
+	}
+	return s.Exchangeable(token)
+}
+
 func fallbackReason(err error) string {
 	switch {
 	case err == nil:
@@ -226,6 +225,10 @@ func fallbackReason(err error) string {
 		return "ended"
 	case errors.Is(err, session.ErrClosed):
 		return "closed"
+	case errors.Is(err, session.ErrBlockSpent):
+		return "block_spent"
+	case errors.Is(err, session.ErrBlockFull):
+		return "block_cache_full"
 	default:
 		return "failed"
 	}

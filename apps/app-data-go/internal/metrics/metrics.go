@@ -20,10 +20,11 @@ var Sources = []string{"registry", "rest", "none"}
 var FallbackReasons = []string{
 	"registry_off", "token_not_exchangeable", "empty", "capacity", "token_capacity", "not_live", "stalled",
 	"cooling_down", "invalid_token", "exchange_refused", "not_private", "too_large", "ended", "failed", "closed",
+	"block_spent", "block_cache_full",
 }
 
 // CloseReasons are the `reason` values of app_data_streams_closed_total (session.Close*).
-var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "revoked", "too_large", "end", "malformed", "error", "shutdown"}
+var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "revoked", "too_large", "end", "malformed", "error", "shutdown", "block_spent", "block_cache_full"}
 
 // Outcomes are the `outcome` values of app_data_reads_total.
 var Outcomes = []string{"ok", "refused", "bad_request", "unauthenticated", "busy", "error"}

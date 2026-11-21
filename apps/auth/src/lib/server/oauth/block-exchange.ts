@@ -34,7 +34,9 @@ import { raceTimeout } from './timeout';
 // exp = min(block exp, now + 15 min), no refresh), so the adapter's private feed accepts it. Dark unless the
 // caller is in OAUTH_BLOCK_EXCHANGE_CALLERS (empty by default). The required `apps:storage` scope is
 // consent-exempt, so it is not the viewer's consent: access is decided by the allowlisted relay, the app's
-// listing and `allowedScopes`, and the private feed's per-poll `decideCollectionRead`. No revocation state is
+// listing and `allowedScopes`, and the private feed's per-poll `decideCollectionRead`. Two checks keep that
+// feed from reading more than the site's document store would with the block token itself: the token's block
+// must be its client's one approved block, and its maturity ceiling must admit every rating. No revocation state is
 // read (no hub signal covers every block app); a revoked or uninstalled app's token lives out its exp, at most
 // 15 minutes. Refusals are `oauth-audit` events, except the two rate-limit 429s, which are not audited.
 
@@ -74,6 +76,12 @@ const DESCRIPTION: Record<ExchangeError, string> = {
 
 const NO_STORE = { 'Cache-Control': 'no-store', Pragma: 'no-cache' };
 
+/**
+ * R, X and XXX: the site's mature browsing-level bits (`NsfwLevel` in `src/server/common/enums.ts`, pinned by
+ * `block-exchange.test.ts`).
+ */
+export const MATURE_BROWSING_LEVELS = 4 | 8 | 16;
+
 /** The one scope a minted token holds. */
 export const BLOCK_EXCHANGE_SCOPE = TokenScope.AppDataRead;
 
@@ -108,9 +116,12 @@ function blockExchangeCallers(): { callers: ReadonlySet<string>; invalid: boolea
 
 type ReplayRedis = {
   set(key: string, value: string, opts: { NX: true; EX: number }): Promise<string | null>;
-  get(key: string): Promise<string | null>;
-  del(key: string): Promise<unknown>;
+  eval(script: string, options: { keys: string[]; arguments: string[] }): Promise<unknown>;
 };
+
+/** Delete KEYS[1] only while it holds ARGV[1]: one atomic compare-and-delete. */
+const RELEASE_SCRIPT =
+  "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
 
 const REPLAY_TIMEOUT_MS = 2000;
 
@@ -145,19 +156,14 @@ async function claimBlockTokenJti(claim: JtiClaim, ttlSeconds: number): Promise<
 
 /**
  * Give a `jti` back when no token was issued for it, so the caller's retry is not refused as a replay. Only
- * this request's own claim is deleted (its nonce is the stored value): a request whose claim lost, or whose
- * SET never landed, must not free another request's claim. GET then DEL is safe here: while the key holds
- * this request's nonce no other request can claim it (NX), and it cannot expire in between (its TTL is at
- * least a minute; the release runs within seconds of the claim).
+ * this request's own claim is deleted, by an atomic compare-and-delete on its nonce (RELEASE_SCRIPT): a
+ * request whose claim lost, or whose SET never landed, never frees another request's claim.
  */
 async function releaseBlockTokenJti(claim: JtiClaim): Promise<void> {
   const redis = getRedis() as unknown as ReplayRedis | null;
   if (!redis) return;
-  const key = replayKey(claim.jti);
   await raceTimeout(
-    (async () => {
-      if ((await redis.get(key)) === claim.nonce) await redis.del(key);
-    })(),
+    redis.eval(RELEASE_SCRIPT, { keys: [replayKey(claim.jti)], arguments: [claim.nonce] }),
     REPLAY_TIMEOUT_MS,
     'replay store timed out'
   );
@@ -334,6 +340,30 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
 
     if (await appBlockSuspended(db, block.appId)) {
       return refuse('unauthorized_client', 'app block suspended');
+    }
+    // The registry's private feed resolves the app from the client id alone (`decideCollectionRead`
+    // without a block), while the site's document store reads the token's own block. So the exchanged token
+    // is minted only when the token's block IS the client's one approved block: a token for another block of
+    // the client (not approved itself) must not read the approved one's data through the registry.
+    const approved = await db
+      .selectFrom('app_blocks')
+      .select('id')
+      .where('app_id', '=', block.appId)
+      .where('status', '=', 'approved')
+      .limit(2)
+      .execute();
+    if (approved.length !== 1 || approved[0].id !== block.appBlockId) {
+      return refuse('unauthorized_client', "block is not the app's one approved block");
+    }
+    // The site reads a block token's data within the token's own maturity ceiling (set from the host it was
+    // minted on); the registry's private feed reads within the viewer's own settings, as a mature-capable
+    // surface. So only a token whose ceiling admits every mature rating is exchanged: the registry can then
+    // never admit a rating the token's own reads would not.
+    if (
+      block.maxBrowsingLevel === null ||
+      (block.maxBrowsingLevel & MATURE_BROWSING_LEVELS) !== MATURE_BROWSING_LEVELS
+    ) {
+      return refuse('invalid_grant', 'block token ceiling is not every rating');
     }
 
     const issuer = env.AUTH_JWT_ISSUER;

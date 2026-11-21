@@ -242,7 +242,7 @@ func TestAFailureIsForgottenSoALaterCallRetries(t *testing.T) {
 	if _, err := bc.Exchange(context.Background(), blockA); err == nil || errors.Is(err, ErrRefused) {
 		t.Fatalf("got %v, want a failure", err)
 	}
-	if bc.Len() != 0 {
+	if issued, refused := bc.Len(); issued != 0 || refused != 0 {
 		t.Fatal("a failure was remembered")
 	}
 	h.mu.Lock()
@@ -340,8 +340,9 @@ func TestAnAnswerIsHeldToFifteenMinutes(t *testing.T) {
 	}
 }
 
-// The cache is bounded: full, a new block token is not exchanged; entries are forgotten once no
-// exchange of their token could succeed, which frees the room.
+// The issued tokens are bounded: full, a new block token is not exchanged (and the full answer
+// scans nothing); entries are forgotten at the first sweep once no exchange of their token could
+// succeed, which frees the room. Fixture: memory 16 min, a sweep at most once a minute.
 func TestTheCacheIsBoundedAndForgets(t *testing.T) {
 	bc, h, c, o := newBlockCache()
 	bc.Observe = nil
@@ -361,41 +362,88 @@ func TestTheCacheIsBoundedAndForgets(t *testing.T) {
 	if _, err := bc.Exchange(context.Background(), blockA); !errors.Is(err, ErrBlockCacheFull) {
 		t.Fatalf("forgot before its memory ended: %v", err)
 	}
-	c.add(time.Second)
+	c.add(30 * time.Second) // past the memory, but the last sweep was 30 s ago
+	if _, err := bc.Exchange(context.Background(), blockA); !errors.Is(err, ErrBlockCacheFull) {
+		t.Fatalf("swept twice within a minute: %v", err)
+	}
+	c.add(45 * time.Second)
 	if _, err := bc.Exchange(context.Background(), blockA); err != nil {
-		t.Fatalf("after the memory ended: %v", err)
+		t.Fatalf("after the memory ended and a sweep: %v", err)
 	}
-	if bc.Len() != 1 {
-		t.Fatalf("%d remembered, want 1", bc.Len())
+	if issued, _ := bc.Len(); issued != 1 {
+		t.Fatalf("%d held, want 1", issued)
 	}
-	if got := o.String(); got != "[full/none full/none issued/none]" {
+	if got := o.String(); got != "[full/none full/none full/none issued/none]" {
 		t.Fatalf("observed %s", got)
 	}
 }
 
-func TestRouteSendsOnlyBlockTokensToTheBlockExchange(t *testing.T) {
+// 🔴 A flood of made-up tokens of the block-token shape (each refused by the hub) never locks a real
+// block token out: refusals are kept apart from issued tokens, and only MaxRememberedRefusals of them.
+func TestAFloodOfRefusedTokensNeverLocksOutARealOne(t *testing.T) {
+	bc, h, _, _ := newBlockCache()
+	bc.Observe = nil
+	const flood = MaxBlockTokens + MaxRememberedRefusals + 500
+	for i := range flood {
+		tok := fmt.Sprintf("g.%d.g", i)
+		h.answer[tok] = &RefusedError{Status: 400, Code: "invalid_grant"}
+		if _, err := bc.Exchange(context.Background(), tok); !errors.Is(err, ErrRefused) {
+			t.Fatalf("garbage %d: %v", i, err)
+		}
+	}
+	issued, refused := bc.Len()
+	if issued != 0 || refused != MaxRememberedRefusals {
+		t.Fatalf("held %d issued, %d refusals; want 0 and %d", issued, refused, MaxRememberedRefusals)
+	}
+	if tok, err := bc.Exchange(context.Background(), blockA); err != nil || tok.Access != "x."+blockA {
+		t.Fatalf("a real block token after the flood: %+v, %v", tok, err)
+	}
+	// A remembered refusal is not asked again; one past the cap is (and is refused again).
+	if _, err := bc.Exchange(context.Background(), "g.0.g"); !errors.Is(err, ErrRefused) || h.count("g.0.g") != 1 {
+		t.Fatalf("remembered refusal: %v, asked %d", err, h.count("g.0.g"))
+	}
+	last := fmt.Sprintf("g.%d.g", flood-1)
+	if _, err := bc.Exchange(context.Background(), last); !errors.Is(err, ErrRefused) || h.count(last) != 2 {
+		t.Fatalf("unremembered refusal: %v, asked %d", err, h.count(last))
+	}
+}
+
+// 🔴 The Router is the one place deciding what is exchanged: Accepts and Exchange agree, and a block
+// token never reaches the user exchange, whether the block exchange is on or off.
+func TestTheRouterSendsABlockTokenOnlyToTheBlockExchange(t *testing.T) {
 	var user []string
 	userEx := func(_ context.Context, s string) (Token, error) {
 		user = append(user, s)
 		return Token{Access: "u"}, nil
 	}
-	// Off: the user exchange itself, whatever the token.
-	off := Route(userEx, nil)
-	for _, s := range []string{"civitai_a", blockA} {
-		if tok, _ := off(context.Background(), s); tok.Access != "u" {
-			t.Fatalf("off routed %q elsewhere", s)
+	off := &Router{User: userEx}
+	if !off.Accepts("civitai_a") || off.Accepts(blockA) || off.Accepts("opaque") {
+		t.Fatal("off: Accepts")
+	}
+	if tok, _ := off.Exchange(context.Background(), "civitai_a"); tok.Access != "u" {
+		t.Fatal("off: a hub token left the user exchange")
+	}
+	for _, s := range []string{blockA, "opaque"} {
+		if _, err := off.Exchange(context.Background(), s); !errors.Is(err, ErrNotExchangeable) {
+			t.Fatalf("off: %q: %v, want ErrNotExchangeable", s, err)
 		}
 	}
 	bc, h, _, _ := newBlockCache()
 	bc.Now = nil // the real clock
-	on := Route(userEx, bc)
-	if tok, _ := on(context.Background(), "civitai_b"); tok.Access != "u" {
-		t.Fatal("a hub token left the user exchange")
+	on := &Router{User: userEx, Blocks: bc}
+	if !on.Accepts("civitai_b") || !on.Accepts(blockA) || on.Accepts("opaque") {
+		t.Fatal("on: Accepts")
 	}
-	if tok, err := on(context.Background(), blockA); err != nil || tok.Access != "x."+blockA {
+	if tok, _ := on.Exchange(context.Background(), "civitai_b"); tok.Access != "u" {
+		t.Fatal("on: a hub token left the user exchange")
+	}
+	if tok, err := on.Exchange(context.Background(), blockA); err != nil || tok.Access != "x."+blockA {
 		t.Fatalf("%+v, %v", tok, err)
 	}
-	if fmt.Sprint(user) != "[civitai_a "+blockA+" civitai_b]" || h.count(blockA) != 1 {
+	if _, err := on.Exchange(context.Background(), "opaque"); !errors.Is(err, ErrNotExchangeable) {
+		t.Fatalf("on: opaque: %v", err)
+	}
+	if fmt.Sprint(user) != "[civitai_a civitai_b]" || h.count(blockA) != 1 {
 		t.Fatalf("user exchange saw %v, block exchange %d", user, h.count(blockA))
 	}
 }

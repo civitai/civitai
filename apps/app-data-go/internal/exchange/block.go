@@ -48,18 +48,44 @@ func KindOf(token string) Kind {
 // base64URL is the alphabet of a JWS compact segment (RFC 7515: base64url, no padding).
 const base64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 
+// ErrNotExchangeable is a token the Router sends nowhere: neither a hub token nor, with the block
+// exchange on, a block token. Not a refusal by the hub, which was not asked.
+var ErrNotExchangeable = errors.New("exchange: this token is not exchanged")
 
-// Route is the exchange a stream calls: a block token goes to blocks, any other token to user. With
-// blocks nil (the block exchange off) it is user itself, so nothing changes.
-func Route(user func(context.Context, string) (Token, error), blocks *BlockCache) func(context.Context, string) (Token, error) {
-	if blocks == nil {
-		return user
+// Router is THE one place that decides which tokens are exchanged, and how: the HTTP handler asks
+// Accepts before it opens a stream, and the stream calls Exchange, so the two cannot disagree. Blocks
+// nil is the block exchange off (APP_DATA_BLOCK_EXCHANGE).
+type Router struct {
+	// User is the user exchange (Exchanger.Exchange).
+	User func(ctx context.Context, subject string) (Token, error)
+	// Blocks is the block exchange's cache; nil is off.
+	Blocks *BlockCache
+}
+
+// Accepts reports whether token is one Exchange sends to the hub: a hub token always, a block token
+// only with the block exchange on.
+func (r *Router) Accepts(token string) bool {
+	switch KindOf(token) {
+	case KindHub:
+		return true
+	case KindBlock:
+		return r.Blocks != nil
+	default:
+		return false
 	}
-	return func(ctx context.Context, subject string) (Token, error) {
-		if KindOf(subject) == KindBlock {
-			return blocks.Exchange(ctx, subject)
-		}
-		return user(ctx, subject)
+}
+
+// Exchange sends a hub token to the user exchange and, with the block exchange on, a block token to
+// the block cache. Any other token, a block token with it off included, is sent nowhere: a block
+// token never reaches the user exchange.
+func (r *Router) Exchange(ctx context.Context, subject string) (Token, error) {
+	switch {
+	case KindOf(subject) == KindHub:
+		return r.User(ctx, subject)
+	case KindOf(subject) == KindBlock && r.Blocks != nil:
+		return r.Blocks.Exchange(ctx, subject)
+	default:
+		return Token{}, ErrNotExchangeable
 	}
 }
 
@@ -72,8 +98,19 @@ const MaxTokenLife = 15 * time.Minute
 // exchanged, so past this no exchange of a remembered token could succeed anyway.
 const blockMemory = MaxTokenLife + time.Minute
 
-// MaxBlockTokens bounds how many block tokens the cache remembers at once.
+// MaxBlockTokens bounds how many block tokens the cache holds a token for (or is exchanging) at
+// once. Only a token the hub issued stays, so tokens the hub refuses can never fill it.
 const MaxBlockTokens = 10_000
+
+// MaxRememberedRefusals bounds the refusals remembered, kept apart from the issued tokens: any
+// token of the right shape is sent to the hub, so refusals are what a flood of made-up tokens
+// produces. Past it a refusal is not remembered (the hub is asked again for that token, and refuses
+// again); a flood never evicts, or locks out, an issued token.
+const MaxRememberedRefusals = 1_000
+
+// sweepEvery is how often the expired entries are forgotten: a scan of both maps, at most once per
+// interval, so a full cache answers in O(1).
+const sweepEvery = time.Minute
 
 // Why a block token's exchange was not made. Neither is a refusal by the hub, so a live stream that
 // re-checks and gets one keeps serving until its own expiry closes it.
@@ -81,7 +118,7 @@ var (
 	// ErrSpent is a block token whose one exchange happened and whose exchanged token is (about to
 	// be) expired. The hub would refuse it as a replay; it is not asked.
 	ErrSpent = errors.New("exchange: the block token's exchanged token has expired; it cannot be exchanged again")
-	// ErrBlockCacheFull is MaxBlockTokens remembered and none forgettable yet.
+	// ErrBlockCacheFull is MaxBlockTokens held and none forgettable yet.
 	ErrBlockCacheFull = errors.New("exchange: too many block tokens remembered")
 )
 
@@ -98,7 +135,8 @@ const (
 
 // BlockCache makes at most one successful exchange per App Block token: the hub refuses a second
 // one (it claims the block token's `jti`), so a token it issued is handed to every stream of that
-// block token until it expires, and a refusal is remembered rather than asked again. Only a failure
+// block token until it expires, and a refusal is remembered (up to MaxRememberedRefusals, apart from
+// the issued tokens) rather than asked again. Only a failure
 // (the hub unreachable, a 5xx, a timeout: no token issued, and the hub gives a claim it made back) is
 // forgotten, so a later read may try again.
 //
@@ -118,7 +156,8 @@ type BlockCache struct {
 	Observe func(outcome, code string)
 
 	mu      sync.Mutex
-	entries map[[sha256.Size]byte]*blockEntry
+	entries map[[sha256.Size]byte]*blockEntry // issued, or being exchanged
+	refused map[[sha256.Size]byte]*blockEntry // refusals remembered
 	swept   time.Time
 }
 
@@ -136,12 +175,16 @@ func (c *BlockCache) Exchange(ctx context.Context, subject string) (Token, error
 	c.mu.Lock()
 	if c.entries == nil {
 		c.entries = map[[sha256.Size]byte]*blockEntry{}
+		c.refused = map[[sha256.Size]byte]*blockEntry{}
+	}
+	if r := c.refused[k]; r != nil && c.now().Before(r.forget) {
+		c.mu.Unlock()
+		return c.again(r)
 	}
 	e := c.entries[k]
 	if e == nil {
 		now := c.now()
-		// Forgetting scans every entry: done when full, and otherwise at most once a minute.
-		if len(c.entries) >= MaxBlockTokens || now.Sub(c.swept) >= time.Minute {
+		if now.Sub(c.swept) >= sweepEvery {
 			c.forget(now)
 			c.swept = now
 		}
@@ -175,7 +218,12 @@ func (c *BlockCache) first(ctx context.Context, k [sha256.Size]byte, e *blockEnt
 		}
 		e.tok, e.forget = tok, start.Add(blockMemory)
 	case errors.Is(err, ErrRefused):
+		// Out of the issued tokens' map either way; remembered only while there is room.
 		e.err, e.forget = err, start.Add(blockMemory)
+		delete(c.entries, k)
+		if len(c.refused) < MaxRememberedRefusals {
+			c.refused[k] = e
+		}
 	default:
 		// No token was issued: forgotten, so a later read may try again. Callers waiting on this
 		// exchange get its error.
@@ -214,18 +262,21 @@ func (c *BlockCache) again(e *blockEntry) (Token, error) {
 
 // forget drops every entry past its memory. c.mu is held.
 func (c *BlockCache) forget(now time.Time) {
-	for k, e := range c.entries {
-		if !e.forget.IsZero() && !now.Before(e.forget) {
-			delete(c.entries, k)
+	for _, m := range []map[[sha256.Size]byte]*blockEntry{c.entries, c.refused} {
+		for k, e := range m {
+			if !e.forget.IsZero() && !now.Before(e.forget) {
+				delete(m, k)
+			}
 		}
 	}
 }
 
-// Len is how many block tokens are remembered (or being exchanged) now.
-func (c *BlockCache) Len() int {
+// Len is how many block tokens the cache holds a token for (or is exchanging) now, and how many
+// refusals it remembers.
+func (c *BlockCache) Len() (issued, refused int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return len(c.entries)
+	return len(c.entries), len(c.refused)
 }
 
 func (c *BlockCache) now() time.Time {

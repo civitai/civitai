@@ -34,9 +34,11 @@ name: App suites
 #   src/server/utils/__tests__/redis-lua-harness.ts
 #       the real-Lua redis harness apps/auth's device tests run their scripts through.
 #   src/server/services/block-token.service.ts, src/server/services/block-token-subject.ts,
-#   src/server/middleware/block-scope.middleware.ts
+#   src/server/middleware/block-scope.middleware.ts, src/server/common/enums.ts,
+#   src/shared/constants/browsingLevel.constants.ts
 #       read by apps/auth's block-exchange test, which pins the hub's copies of the site's block-token
-#       constants (issuer, audience, subject pattern, kid, age cap, clock tolerance) to them.
+#       constants (issuer, audience, subject pattern, kid, age cap, clock tolerance, the mature
+#       browsing-level bits) to them.
 #   containers/notification-db/docker-init/**
 #       the DDL apps/notifications' behavioural test builds its database from.
 #   package.json
@@ -120,6 +122,8 @@ on:
       - 'src/server/services/block-token.service.ts'
       - 'src/server/services/block-token-subject.ts'
       - 'src/server/middleware/block-scope.middleware.ts'
+      - 'src/server/common/enums.ts'
+      - 'src/shared/constants/browsingLevel.constants.ts'
       - 'src/server/services/knights/**'
       - 'containers/notification-db/docker-init/**'
   push:
