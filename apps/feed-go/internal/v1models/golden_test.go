@@ -10,7 +10,9 @@ package v1models
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,7 +36,7 @@ import (
 const (
 	goldenDir = "../../testdata/golden/v1-models"
 	// The fixture count gen-v1-models.mjs writes: fewer found means the glob matched the wrong place.
-	goldenMin = 23
+	goldenMin = 31
 )
 
 type goldenEntry struct {
@@ -50,6 +53,9 @@ type goldenFixture struct {
 		CoverageNext         bool   `json:"coverageNext"`
 		BaseModelFeedMetrics bool   `json:"baseModelFeedMetrics"`
 		RegionRestricted     bool   `json:"regionRestricted"`
+		// SERVER_DOMAIN_RED and its aliases, as the Node golden test sets them.
+		ServerDomainRed        string `json:"serverDomainRed"`
+		ServerDomainRedAliases string `json:"serverDomainRedAliases"`
 	} `json:"config"`
 	Request struct {
 		Path    string            `json:"path"`
@@ -60,13 +66,39 @@ type goldenFixture struct {
 	Redis    map[string]goldenEntry     `json:"redis"`
 	SysRedis map[string]goldenEntry     `json:"sysRedis"`
 	Expect   struct {
-		Fallback string  `json:"fallback"`
-		Body     *string `json:"body"`
-		SQL      *struct {
-			Text   string            `json:"text"`
-			Values []json.RawMessage `json:"values"`
-		} `json:"sql"`
+		Fallback string     `json:"fallback"`
+		Body     *string    `json:"body"`
+		SQL      *goldenSQL `json:"sql"`
+		// TrainingDataSQL is trainingDataListing's statement, when Node sent one.
+		TrainingDataSQL *goldenSQL `json:"trainingDataSql"`
 	} `json:"expect"`
+}
+
+type goldenSQL struct {
+	Text   string            `json:"text"`
+	Values []json.RawMessage `json:"values"`
+}
+
+// sameStatement is nil when the statement is the fixture's: the text whitespace-normalised (exact
+// bytes when exact), and the values.
+func (g *goldenSQL) sameStatement(what, sql string, args []any, exact bool) error {
+	if exact && sql != g.Text {
+		return fmt.Errorf("%s is not Node's text byte for byte:\n go:   %q\n node: %q", what, sql, g.Text)
+	}
+	if got, want := NormalizeSQL(sql), NormalizeSQL(g.Text); got != want {
+		return fmt.Errorf("%s differs from Node's:\n go:   %s\n node: %s", what, got, want)
+	}
+	if len(args) != len(g.Values) {
+		return fmt.Errorf("%s: %d values, Node binds %d", what, len(args), len(g.Values))
+	}
+	for i, a := range args {
+		var want any
+		_ = json.Unmarshal(g.Values[i], &want)
+		if got := jsonArg(a); !reflect.DeepEqual(got, want) {
+			return fmt.Errorf("%s value $%d: go %#v, node %#v", what, i+1, got, want)
+		}
+	}
+	return nil
 }
 
 // revive turns the fixture's JSON-with-markers into the Go values a pgx row holds: `{"$date": …}` a
@@ -181,11 +213,15 @@ func jsonArg(v any) any {
 }
 
 type goldenEnv struct {
-	deps  *Deps
-	users UsernameResolver
-	db    *testkit.DB
-	stmts int
+	deps    *Deps
+	users   UsernameResolver
+	db      *testkit.DB
+	stmts   int
+	tdStmts int
 }
+
+// trainingDataColumns are the training data statement's columns.
+var trainingDataColumns = []string{"id", "virusScanResult", "nsfwLevel", "fullyRated", "restricted"}
 
 func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	t.Helper()
@@ -218,6 +254,11 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	vae := fx.rows(t, "vaeFiles")
 	var usernames map[string]int
 	fx.world(t, "usernames", &usernames)
+	trainingData := fx.rows(t, "trainingData")
+	var tdError bool
+	if raw, ok := fx.World["trainingDataError"]; ok {
+		_ = json.Unmarshal(raw, &tdError)
+	}
 	var tagIDs map[string]int
 	fx.world(t, "tagIdsByName", &tagIDs)
 
@@ -231,20 +272,27 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 			if fx.Expect.SQL == nil {
 				return nil, errors.New("a model statement was built; the fixture expects none")
 			}
-			if got, want := NormalizeSQL(sql), NormalizeSQL(fx.Expect.SQL.Text); got != want {
-				return nil, fmt.Errorf("model statement differs from Node's:\n go:   %s\n node: %s", got, want)
-			}
-			if len(args) != len(fx.Expect.SQL.Values) {
-				return nil, fmt.Errorf("model statement: %d values, Node binds %d", len(args), len(fx.Expect.SQL.Values))
-			}
-			for i, a := range args {
-				var want any
-				_ = json.Unmarshal(fx.Expect.SQL.Values[i], &want)
-				if got := jsonArg(a); !reflect.DeepEqual(got, want) {
-					return nil, fmt.Errorf("model statement value $%d: go %#v, node %#v", i+1, got, want)
-				}
+			if err := fx.Expect.SQL.sameStatement("model statement", sql, args, false); err != nil {
+				return nil, err
 			}
 			return toRows(modelColumns, models), nil
+		}},
+		// trainingDataListing's statement: Node's text and candidates, answered from the fixture's rows
+		// of those versions (or its read error).
+		{Match: `AS restricted`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			env.tdStmts++
+			if fx.Expect.Fallback == "" {
+				if fx.Expect.TrainingDataSQL == nil {
+					return nil, errors.New("a training data statement was sent; the fixture expects none")
+				}
+				if err := fx.Expect.TrainingDataSQL.sameStatement("training data statement", sql, args, true); err != nil {
+					return nil, err
+				}
+			}
+			if tdError {
+				return nil, errors.New("the fixture's training data read fails")
+			}
+			return toRows(trainingDataColumns, filterRows(trainingData, "modelVersionId", argIDs(args))), nil
 		}},
 		{Match: `AS deadline`, Rows: func(args []any) (*testkit.Rows, error) {
 			ids := argIDs(args)
@@ -325,6 +373,9 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 			ResponseCacheTTL:     180 * time.Second,
 			// The Node golden test runs the non-production build (isProd false): localhost origins.
 			Production: false,
+			// isRedCapableHost's list from the env the Node golden test sets (config.Hosts["red"] order).
+			RedHosts: RedHosts(fx.Config.ServerDomainRed,
+				append([]string{fx.Config.ServerDomainRed}, strings.Split(fx.Config.ServerDomainRedAliases, ",")...)),
 		},
 		Now: nowFn,
 	}
@@ -374,14 +425,41 @@ func goldenLoad(t *testing.T, path string) *goldenFixture {
 	return fx
 }
 
-// goldenServe computes the fixture's request.
+// goldenNodeSQLHash is what the Node of these fixtures sends as its statement hash
+// (trainingDataListingSqlSha256): the SHA-256 of the training data statement its route sent, as one
+// fixture recorded it. Not derived from Go's embedded copy, so a drifted copy fails here.
+var goldenNodeSQLHash = sync.OnceValues(func() (string, error) {
+	raw, err := os.ReadFile(filepath.Join(goldenDir, "detail-training-data.json"))
+	if err != nil {
+		return "", err
+	}
+	var fx goldenFixture
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		return "", err
+	}
+	if fx.Expect.TrainingDataSQL == nil {
+		return "", errors.New("detail-training-data.json records no training data statement")
+	}
+	sum := sha256.Sum256([]byte(fx.Expect.TrainingDataSQL.Text))
+	return hex.EncodeToString(sum[:]), nil
+})
+
+// goldenServe computes the fixture's request, as a sample from the fixtures' Node (its statement
+// hash attached).
 func goldenServe(ctx context.Context, env *goldenEnv, fx *goldenFixture) (*Answer, error) {
+	hash, err := goldenNodeSQLHash()
+	if err != nil {
+		return nil, err
+	}
 	if id, ok := strings.CutPrefix(fx.Request.Path, "/api/v1/models/"); ok {
-		return ServeDetail(ctx, env.deps, DetailRequest{ID: id, RegionRestricted: fx.Config.RegionRestricted})
+		return ServeDetail(ctx, env.deps, DetailRequest{
+			ID: id, RegionRestricted: fx.Config.RegionRestricted, Host: fx.Request.Headers["host"],
+			TrainingDataSQL: hash,
+		})
 	}
 	return ServeList(ctx, env.deps, env.users, ListRequest{
 		Query: fx.Request.Query, Path: fx.Request.Path, Host: fx.Request.Headers["host"],
-		RegionRestricted: fx.Config.RegionRestricted,
+		RegionRestricted: fx.Config.RegionRestricted, TrainingDataSQL: hash,
 	})
 }
 
@@ -410,6 +488,9 @@ func goldenRun(t *testing.T, fx *goldenFixture) {
 	want := []byte(*fx.Expect.Body)
 	if fx.Expect.SQL != nil && env.stmts != 1 {
 		t.Errorf("model statements: %d, want 1", env.stmts)
+	}
+	if fx.Expect.TrainingDataSQL != nil && env.tdStmts != 1 {
+		t.Errorf("training data statements: %d, want 1", env.tdStmts)
 	}
 	if bytes.Equal(got, want) {
 		return

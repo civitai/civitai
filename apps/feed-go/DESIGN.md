@@ -2248,9 +2248,24 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
    `fileId`, drops image `id`s and uses `getBaseUrl()` for download URLs; the list keeps nulls and
    empty arrays, uses the request origin, and passes every image through on `nsfw=true`. Both pick the
    primary file by the default preferences (a version without one is dropped), name each file
-   (`resolveModelFileName`), build edge URLs, and leave Training Data files to
-   `trainingDataListing`.
-8. **Body.** `res.json`: the list `{ items, metadata: { nextCursor, nextPage, currentPage?, pageSize? } }`
+   (`resolveModelFileName`), build edge URLs, and give a Training Data file no metadata
+   (`publicFileMetadata`).
+8. **Training Data listing.** A `Training Data` file is listed only where `trainingDataListing`
+   (`src/server/services/training-data-restricted.service.ts`) lists it: the list runs it over every
+   item's versions (all their files) inside its shaper (`file.visibility === Public && listed(file)`);
+   `[id]` runs it over the body's versions AFTER the origin cache (`withListableTrainingData`), since
+   that cache keys on neither the host nor a restriction placed since. Every version listing a
+   Training Data file is a candidate; one replica statement reads each candidate's Training Data
+   rows with `restricted` (the owner's legal hold through `ownerHeldSql`: the placeholder owner, a
+   holding report naming them as subject or secondary user, a hold marker, an image of theirs under
+   CSAM review, blocked or listed in a holding report; any `CsamReport` naming them; a POI, minor or
+   ToS-violation model; a post image of the version with `needsReview`, `blockedFor` or ingestion
+   `Blocked`). A row is refused when `restricted !== false` (NULL included), its virus scan is not
+   `Success`, or, off a red-capable host (`isRedCapableHost`: the Host header, lowercased, port
+   kept, is SERVER_DOMAIN_RED or an alias), its `metadata.fullyRated` is `false` or its
+   `metadata.nsfwLevel` is a number with a bit outside PG|PG-13. A file with no row is listed. The
+   read failing leaves every Training Data file out.
+9. **Body.** `res.json`: the list `{ items, metadata: { nextCursor, nextPage, currentPage?, pageSize? } }`
    (`nextPage` is the request's query with `cursor` set, on `https://<host>` in production — `page`
    never advances); `[id]` the model object, from the origin response cache
    (`packed:caches:public-model-response:v2:<id>:<level>`, 180 s) when fresh.
@@ -2263,7 +2278,8 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 | Viewer | the list signed out; `[id]` always (it reads no session) | a list session (`v1-models-session`); API credentials (`bearer-token`; the sampler never sends them) |
 | Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, `tag` (the blocked-name empty page, the Tag lookup, its `EXISTS`), ids, earlyAccess, archived, the addons' POI/minor/tag clauses | a username the replica does not hold (`v1-models-username-miss`) |
 | Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads); a tag-name miss with `FEED_GO_COMPUTE_MISSES` (tagCache's lookup, §16.7) | a model-data, model-tags, images, files or membership miss (`v1-models-*-miss`), a tag-name miss with `FEED_GO_COMPUTE_MISSES` off, a stale images/files/tag entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level |
-| Shaping | both shapers, the file naming over ASCII model names | a Public Training Data file (`v1-models-training-data`), a name the scheme strips non-ASCII text from (`v1-models-filename`) |
+| Shaping | both shapers, the file naming over ASCII model names, Training Data files' empty metadata | a name the scheme strips non-ASCII text from (`v1-models-filename`) |
+| Training Data | the listing on both routes (list: in the shaper; `[id]`: after the build or the cache, a body without `modelVersions` gaining an empty one): the candidates, the statement (`internal/v1models/training_data_listing.sql`, Node's rendered text), the predicate, the red-capable host (SERVER_DOMAIN_RED and its aliases, read as Node reads them) | a sample whose Training Data statement hash is missing or is not this build's (`v1-models-training-data-drift`, below), the statement failing (`v1-models-training-data-unread`, see §16.7), a value of a type a jsonb read does not produce, an absolute-form request line (`v1-models-host`: its host replaces the Host header Node reads), a body or row shape the Node code would throw on (`v1-models-training-data`), non-ASCII text in the Host header or the red host list (`v1-models-host`) |
 | Config | | no `NEXT_PUBLIC_IMAGE_LOCATION` or (`[id]`) `NEXTAUTH_URL` (`v1-models-unconfigured-urls`) |
 
 ### 16.3 Flags and settings
@@ -2316,6 +2332,22 @@ reads) and requires the fixture's `expect.body` to be the exact bytes `res.json`
 `expect.sql` the statement it builds; `internal/v1models/golden_test.go` requires the same bytes and
 the same statement (text and bound values) from Go.
 
+The Training Data statement is held to Node in two more ways: the golden fixtures pin its text and
+candidates (`expect.trainingDataSql`), and
+`src/server/services/__tests__/feed-go-training-data-listing.parity.test.ts` requires the embedded
+file to be, byte for byte, the text Node's builder (`trainingDataListingSql`) renders (re-render it when `ownerHeldSql` or the restriction legs
+change) and runs both on Postgres (PGlite with the hold migrations), one Training Data file per
+refusal reason, requiring the same rows. The predicate over the rows is pinned per rule by
+`internal/v1models/trainingdata_test.go`.
+
+**Drift.** feed-go and the Node app deploy separately, so a Node change to the rules (`ownerHeldSql`,
+the restriction legs) would otherwise leave feed-go listing by the old ones. Every model sample
+carries the SHA-256 of the Node build's statement text (`trainingDataListingSqlSha256`, header
+`x-feed-go-training-data-sql`, added by the sampler); a body with a Training Data candidate is
+answered only when it equals the hash of the embedded copy (`v1models.TrainingDataSQLHash`), and
+falls back (`v1-models-training-data-drift`) when it differs or is absent, before anything is read.
+A body with no Training Data file needs no hash.
+
 ### 16.7 Known divergences
 
 - response headers (§16.8): the sampler forwards only the `civ-token` session cookies, so a sample
@@ -2328,6 +2360,10 @@ the same statement (text and bound values) from Go.
   unit with the engine's `toUpperCase`. That is the running Node build's ICU case table, a newer
   Unicode version than Go's `unicode` package carries, and a golden fixture pins it for one Node
   build only; ASCII text, where both agree, is ported;
+- the Training Data statement failing: Node leaves every Training Data file out (fails closed);
+  here it falls back (`v1-models-training-data-unread`). Whether Node's own read failed is not
+  known here, so answering Node's fail-closed body would differ from Node's whenever only this read
+  failed, while a fallback can neither list a file Node left out nor differ from Node's answer;
 - `superjson.Plain` escapes U+2028/U+2029 where `JSON.stringify` writes them raw (same decoded
   value; the comparator decodes);
 - a cursor timestamp's fraction is padded to three digits before it is read, as parseCursor's
@@ -2387,7 +2423,12 @@ deployment config. Every answer carries `X-Feed-Go-Served` (`go` or `node`), as 
 4. The port, with every fallback of §16.2 (unsupported inputs, cache misses, a list session); serving,
    `[id]` reads every origin cache entry within its TTL as Node's handler does (the shadow alone skips
    one younger than `NodeBuiltWindow`, §16.5), and a not-found `[id]` falls back
-   (`v1-models-not-found`: Node's answer is a 404, an answer here is a 200).
+   (`v1-models-not-found`: Node's answer is a 404, an answer here is a 200). The Training Data
+   listing runs exactly as in the shadow (§16.2, the same compute), with one difference by design: the
+   statement-hash header that vouches for this build's rules (`x-feed-go-training-data-sql`) is read
+   only off a Node sample, never off a public request (there it would be the client's), so a served
+   body with any Training Data candidate falls back (`v1-models-training-data-drift`) and Go never
+   lists a dataset by rules the Node app has not confirmed.
 5. The body as `JSON.stringify` writes it (`v1models.NodeBody`: the plain writer's `\u2028` /
    `\u2029` escapes written raw); a body holding an escaped U+FFFD (an invalid UTF-8 byte) has no
    known `JSON.stringify` text and falls back (`v1-models-invalid-utf8`).

@@ -99,6 +99,17 @@ func SyntheticV1ModelsRequest(ctx context.Context, req ShadowRequest) (*http.Req
 	return r, nil
 }
 
+// v1ModelsHost is the request's Host header as Node reads it (`req.headers.host`: nextPage's origin,
+// isRedCapableHost). net/http keeps it in r.Host, except on an absolute-form request line, where
+// r.Host is the URL's host and the header is gone: such a request falls back rather than read a host
+// Node would not. (A shadow sample is rebuilt in origin form with r.Host the forwarded header.)
+func v1ModelsHost(r *http.Request) (string, error) {
+	if r.URL != nil && r.URL.Host != "" {
+		return "", fallback.New("v1-models-host")
+	}
+	return r.Host, nil
+}
+
 // v1ModelsAnswer encodes an answer as `res.json` writes it.
 func v1ModelsAnswer(ans *v1models.Answer) (*computed, error) {
 	buf, err := superjson.PlainBuffer(ans.Body)
@@ -112,6 +123,17 @@ func v1ModelsAnswer(ans *v1models.Answer) (*computed, error) {
 // origin cache as a sample does. A read of r's marker, not a context the compute runs under.
 func sampledRequest(r *http.Request) bool {
 	return isSampled(r.Context())
+}
+
+// trainingDataSQL is the Node Training Data statement hash a sample carries
+// (v1models.TrainingDataSQLHeader), and "" on a public request: there the header is a client's, not
+// Node's, so it never vouches for Go's rules, and a body with a Training Data candidate falls back
+// (`v1-models-training-data-drift`) rather than list a file the Node app might refuse.
+func trainingDataSQL(r *http.Request) string {
+	if !sampledRequest(r) {
+		return ""
+	}
+	return r.Header.Get(v1models.TrainingDataSQLHeader)
 }
 
 func (s *Server) regionRestricted(r *http.Request) bool {
@@ -144,8 +166,13 @@ func (s *Server) computeV1Models(ctx context.Context, r *http.Request) (*compute
 		// privacy: not ported.
 		return nil, fallback.New("v1-models-session")
 	}
+	host, err := v1ModelsHost(r)
+	if err != nil {
+		return nil, err
+	}
 	ans, err := v1models.ServeList(ctx, s.V1Models.Deps, s.V1Models.Users, v1models.ListRequest{
-		Query: r.URL.RawQuery, Path: r.URL.Path, Host: r.Host, RegionRestricted: s.regionRestricted(r),
+		Query: r.URL.RawQuery, Path: r.URL.Path, Host: host, RegionRestricted: s.regionRestricted(r),
+		TrainingDataSQL: trainingDataSQL(r),
 	})
 	if err != nil {
 		return nil, err
@@ -170,8 +197,13 @@ func (s *Server) computeV1ModelsID(ctx context.Context, r *http.Request) (*compu
 	if !ok || strings.Contains(id, "/") {
 		return nil, fallback.New("v1-models-path")
 	}
+	host, err := v1ModelsHost(r)
+	if err != nil {
+		return nil, err
+	}
 	ans, err := v1models.ServeDetail(ctx, s.V1Models.Deps, v1models.DetailRequest{
-		ID: id, RegionRestricted: s.regionRestricted(r), Serving: !sampledRequest(r),
+		ID: id, RegionRestricted: s.regionRestricted(r), Serving: !sampledRequest(r), Host: host,
+		TrainingDataSQL: trainingDataSQL(r),
 	})
 	if err != nil {
 		return nil, err

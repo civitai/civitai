@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createFeedGoShadow,
   feedGoV1ShapeClass,
+  FEED_GO_TRAINING_DATA_SQL_HEADER,
   FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH,
   FEED_GO_SHADOW_MODEL_GET_ALL_PATH,
   FEED_GO_SHADOW_PATH,
@@ -27,6 +28,7 @@ import {
   type FeedGoShadowConfig,
 } from '~/server/trpc/feed-go-shadow';
 import { pickSessionCookies } from '~/server/utils/session-cookies';
+import { trainingDataListingSqlSha256 } from '~/server/services/training-data-restricted.service';
 
 const URL_ = 'http://feed-go.test:9090/internal/shadow/image.getImagesAsPostsInfinite';
 const V1_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/images';
@@ -90,6 +92,7 @@ function harness(
     random?: number;
     fetchImpl?: (url: string, init: RequestInit) => Promise<Response>;
     now?: () => number;
+    modelSampleHeaders?: () => Record<string, string>;
   } = {}
 ) {
   const outcomes: string[] = [];
@@ -116,6 +119,7 @@ function harness(
     recordEncode: (seconds, bytes) => void encodes.push({ seconds, bytes }),
     now: opts.now ?? (() => 0),
     schedule: (fn) => void queued.push(fn),
+    modelSampleHeaders: opts.modelSampleHeaders,
   });
   const flush = async () => {
     while (queued.length) queued.shift()!();
@@ -991,6 +995,41 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
       node: { id: 42 },
     });
     expect(h.endpoints).toEqual(['v1-models-id']);
+  });
+
+  it("a model sample carries the Training Data statement hash; another route's does not", async () => {
+    const hash = { [FEED_GO_TRAINING_DATA_SQL_HEADER]: 'abc123' };
+    const h = harness({ modelSampleHeaders: () => hash });
+    serveModels(h, 'v1-models', modelsRequest('/api/v1/models?limit=1'));
+    serveModels(h, 'v1-models-id', modelsRequest('/api/v1/models/42'), { body: { id: 42 } });
+    const img = h.shadow.beginV1Images(restRequest());
+    if (img) {
+      h.shadow.captureV1Images(img, { items: [] });
+      h.shadow.finish(img, 200);
+    }
+    await h.flush();
+    const headers = h.fetchMock.mock.calls.map(
+      ([url, init]) => [url, JSON.parse(init.body as string).headers] as const
+    );
+    expect(headers.filter(([url]) => url === V1_MODELS_URL || url === V1_MODEL_ID_URL)).toEqual([
+      [V1_MODELS_URL, expect.objectContaining(hash)],
+      [V1_MODEL_ID_URL, expect.objectContaining(hash)],
+    ]);
+    const others = headers.filter(([url]) => url !== V1_MODELS_URL && url !== V1_MODEL_ID_URL);
+    expect(others).toHaveLength(1);
+    expect(others[0][1]).not.toHaveProperty(FEED_GO_TRAINING_DATA_SQL_HEADER);
+    // A source that throws leaves the header off (feed-go then falls back on Training Data).
+    const broken = harness({
+      modelSampleHeaders: () => {
+        throw new Error('x');
+      },
+    });
+    const s = broken.shadow.beginRest('v1-models', modelsRequest('/api/v1/models'));
+    expect(s?.headers).not.toHaveProperty(FEED_GO_TRAINING_DATA_SQL_HEADER);
+  });
+
+  it("the production sampler sends this build's statement hash", () => {
+    expect(trainingDataListingSqlSha256()).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('one flag covers both model routes, and neither the images nor the gallery flag does', () => {

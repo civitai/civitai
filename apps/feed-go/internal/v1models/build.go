@@ -50,6 +50,9 @@ type Config struct {
 	ResponseCacheTTL time.Duration
 	// Production is isProd: `nextPage`'s origin is https://<host> (else http://localhost:3000).
 	Production bool
+	// RedHosts are the red domain's hosts, lowercased (RedHosts): a request on one is red-capable,
+	// which lists a Training Data file whatever its rating (trainingDataServableOnHost).
+	RedHosts []string
 	// FetchConcurrency bounds the parallel reads (0 = DefaultFetchConcurrency).
 	FetchConcurrency int
 }

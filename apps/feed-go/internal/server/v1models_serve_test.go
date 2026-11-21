@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
+	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/jspack"
@@ -611,7 +612,8 @@ func TestComputeV1ModelsIDCacheWindowByMode(t *testing.T) {
 	}}}
 	ctx := context.Background()
 	c, err := s.computeV1ModelsID(ctx, v1Request("/api/v1/models/42", nil))
-	if err != nil || !c.cached || string(c.payload) != `{"id":42,"name":"cached"}` {
+	// The cached body, through the Training Data listing (no versions: none listed).
+	if err != nil || !c.cached || string(c.payload) != `{"id":42,"name":"cached","modelVersions":[]}` {
 		t.Fatalf("public request: %+v %v, want the cached entry", c, err)
 	}
 	c, err = s.computeV1ModelsID(ctx, v1Request("/api/v1/models/42", nil).WithContext(withSampled(ctx)))
@@ -621,5 +623,53 @@ func TestComputeV1ModelsIDCacheWindowByMode(t *testing.T) {
 	r, err := SyntheticV1ModelsRequest(ctx, ShadowRequest{Path: "/api/v1/models/42"})
 	if err != nil || !isSampled(r.Context()) {
 		t.Fatalf("a synthetic model request is not marked a sample: %v", err)
+	}
+}
+
+// Go never serves a Training Data file by its own rules unless the Node app vouched for them: on a
+// public request the statement-hash header is a client's, so it is not read, and a body listing a
+// Training Data candidate falls back (`v1-models-training-data-drift`) even when the header carries
+// this build's hash. A sample's header is Node's: with this build's hash the listing goes on to read
+// the replica (here a replica with no rows route: `v1-models-training-data-unread`).
+func TestV1ModelsTrainingDataHashOnlyFromASample(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	cache := testkit.NewRedis()
+	cache.SetString(v1models.KeyPublicModelResponse+":v2:42:31", jspack.Pack(jspack.Obj{
+		{K: "data", V: jspack.Obj{{K: "id", V: int64(42)}, {K: "modelVersions", V: []any{jspack.Obj{
+			{K: "id", V: int64(7)},
+			{K: "files", V: []any{jspack.Obj{{K: "id", V: int64(1)}, {K: "type", V: "Training Data"}}}},
+		}}}}},
+		{K: "cachedAt", V: float64(now.Add(-time.Minute).UnixMilli())},
+	}))
+	db := &testkit.DB{}
+	packed := &hydrate.PackedReader{Redis: cache, Now: func() time.Time { return now }}
+	s := &Server{V1Models: &V1ModelsDeps{Deps: &v1models.Deps{
+		DB: db, Packed: packed, Sources: &hydrate.Sources{Packed: packed, Cache: cache, Replica: db},
+		Gallery: &feed.GalleryStore{Cache: cache, DB: db},
+		Addons:  (&feed.AddonSource{Sys: testkit.NewRedis()}).Addons,
+		Config:  v1models.Config{ImageLocation: "https://i.example", BaseURL: "https://s.example", ResponseCacheTTL: 180 * time.Second},
+		Now:     func() time.Time { return now },
+	}}}
+	ctx := context.Background()
+	hash := map[string]string{v1models.TrainingDataSQLHeader: v1models.TrainingDataSQLHash}
+	for _, c := range []struct {
+		name    string
+		sampled bool
+		headers map[string]string
+		reason  string
+	}{
+		{"public, no header", false, nil, "v1-models-training-data-drift"},
+		{"public, a client sending the hash", false, hash, "v1-models-training-data-drift"},
+		{"sample, no header", true, nil, "v1-models-training-data-drift"},
+		{"sample, Node's hash", true, hash, "v1-models-training-data-unread"},
+	} {
+		r := v1Request("/api/v1/models/42", c.headers)
+		if c.sampled {
+			r = r.WithContext(withSampled(ctx))
+		}
+		_, err := s.computeV1ModelsID(ctx, r)
+		if got := fallback.Reason(err); got != c.reason {
+			t.Errorf("%s: %q (%v), want %q", c.name, got, err, c.reason)
+		}
 	}
 }
