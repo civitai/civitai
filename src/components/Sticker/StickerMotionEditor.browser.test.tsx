@@ -194,7 +194,7 @@ describe('the sticker timeline', () => {
           clientY: y,
         })
       );
-    // Pointer capture sends every move to the element that was grabbed.
+    // Pointer capture sends every move to the element that was grabbed, while it stays mounted.
     const grabbed = bar.querySelector('[data-key-index="0"]')!;
 
     send('pointerdown', grabbed, at(0));
@@ -202,6 +202,8 @@ describe('the sticker timeline', () => {
       send('pointermove', grabbed, at(fraction));
       // Lets React render the retimed key before the next move, as a real drag does.
       await new Promise((resolve) => setTimeout(resolve, 20));
+      // A remounted diamond would drop pointer capture in a browser and end the drag there.
+      expect(grabbed.isConnected).toBe(true);
     }
     send('pointerup', grabbed, at(0.4));
 
