@@ -434,11 +434,6 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       url: config.modelAssociatedUrl,
       enabled: enabledModelAssociated,
     },
-    [FEED_GO_SHADOW_IMAGE_PUBLISHED_APP_PROCEDURE]: {
-      endpoint: 'image-published-app',
-      url: config.imagePublishedAppUrl,
-      enabled: enabledImagePublishedApp,
-    },
   };
 
   /** The compare URL a sample of this endpoint is posted to. */
