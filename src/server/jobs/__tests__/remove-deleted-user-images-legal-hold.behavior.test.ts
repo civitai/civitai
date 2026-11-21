@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * The deleted-account drain leaves every image and post of a user under a legal hold, including a
@@ -484,23 +485,25 @@ describe('a held account deleted for good', () => {
   });
 
   it('stops picking up a held account once every image of it is blocked', async () => {
-    const holdReads = () =>
+    const candidates = () =>
       vi
-        .mocked(dbMock.dbWrite.$queryRaw)
-        .mock.calls.filter(([first, ...values]) =>
-          toSql(first as TemplateStringsArray, values).text.includes('AS skip')
-        );
+        .mocked(loggingMock.logToAxiom)
+        .mock.calls.map(([entry]) => entry as { name?: string; candidates?: number })
+        .filter(
+          (entry) => entry.name === 'remove-deleted-user-images' && entry.candidates !== undefined
+        )
+        .map((entry) => entry.candidates);
     await banNote(HELD, '2 days');
-    vi.mocked(dbMock.dbWrite.$queryRaw).mockClear();
+    vi.mocked(loggingMock.logToAxiom).mockClear();
     await run();
     expect(await blockedOf(HELD)).toBe(MANY);
-    // The control: the first run did read the account's hold.
-    expect(holdReads()).not.toEqual([]);
+    // The control: the first run did pick the account up.
+    expect(candidates()[0]).toBeGreaterThan(0);
 
-    vi.mocked(dbMock.dbWrite.$queryRaw).mockClear();
+    vi.mocked(loggingMock.logToAxiom).mockClear();
     await run();
 
-    expect(holdReads()).toEqual([]);
+    expect(candidates()).toEqual([0]);
   });
 
   it('hides and keeps the images of a ban-note account with no ban date', async () => {

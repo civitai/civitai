@@ -482,17 +482,29 @@ export function contentRemovalHeldSql(id: Prisma.Sql, markerView: boolean): Pris
 
 /**
  * `assertAccountNotUnderLegalHold`, plus the ban-note leg of `contentRemovalHeldSql`: throws
- * `LegalHoldError` when either holds or cannot be read. For an immediate removal of a user's content.
+ * `LegalHoldError` when either holds, and `LegalHoldUnconfirmedError` (also a `LegalHoldError`) when
+ * either cannot be read. For an immediate removal of a user's content.
  */
 export async function assertContentRemovalNotHeld(
   userId: number,
   refused = 'Content removal refused'
 ): Promise<Pick<AccountLegalHold, 'markerView'>> {
   const hold = await assertAccountNotUnderLegalHold(userId, refused);
-  // primary: a ban placed a moment ago must stop this removal.
-  const [row] = await dbWrite.$queryRaw<{ banNoteHeld: boolean | null }[]>`
-    SELECT ${banNoteHoldSql(Prisma.sql`${userId}::int`)} AS "banNoteHeld"
-  `;
+  let row: { banNoteHeld: boolean | null } | undefined;
+  try {
+    // primary: a ban placed a moment ago must stop this removal.
+    [row] = await dbWrite.$queryRaw<{ banNoteHeld: boolean | null }[]>`
+      SELECT ${banNoteHoldSql(Prisma.sql`${userId}::int`)} AS "banNoteHeld"
+    `;
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'account-legal-hold-check-failed',
+      message: (e as Error).message,
+      details: { userId },
+    });
+    throw new LegalHoldUnconfirmedError();
+  }
   if (row?.banNoteHeld === false) return hold;
   logToAxiom({
     type: 'info',
