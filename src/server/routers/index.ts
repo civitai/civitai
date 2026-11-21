@@ -96,6 +96,7 @@ const routers = {
   subscriptions: () =>
     import('~/server/routers/subscriptions.router').then((m) => m.subscriptionsRouter),
   tag: () => import('./tag.router').then((m) => m.tagRouter),
+  takedownRequest: () => import('./takedown-request.router').then((m) => m.takedownRequestRouter),
   track: () => import('./track.router').then((m) => m.trackRouter),
   training: () => import('./training.router').then((m) => m.trainingRouter),
   user: () => import('./user.router').then((m) => m.userRouter),
