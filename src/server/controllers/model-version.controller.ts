@@ -762,7 +762,8 @@ export const upsertModelVersionHandler = async ({
           currency: storedVersion?.licensingFeeSettlementCurrency ?? null,
         },
         next: {
-          fee: input.licensingFee,
+          // The service clears the fee on a non-commercial base model even when the write omits it.
+          fee: isNonCommercialBaseModel(input.baseModel) ? 0 : input.licensingFee,
           type: input.licensingFeeType,
           currency: input.licensingFeeSettlementCurrency,
         },

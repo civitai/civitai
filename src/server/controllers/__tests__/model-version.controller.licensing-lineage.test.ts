@@ -528,6 +528,19 @@ describe('upsertModelVersionHandler — a staff-locked licence fee', () => {
     );
   });
 
+  it('refuses that move when the write omits the fee, which the service would clear', async () => {
+    await expect(
+      call({
+        ...creating('Checkpoint'),
+        id: VERSION_ID,
+        baseModel: nonCommercial,
+        licensingSourceVersionId: null,
+        storedFee: { ...stored, licensingFeeLocked: true },
+        extraInput: { licensingFee: undefined },
+      })
+    ).rejects.toThrow(/set by Civitai/);
+  });
+
   // Policy clears stop charging rather than change the rate (decided on civitai/civitai#9951).
   it('lets a version already on a non-commercial base model clear it', async () => {
     const written = (await call({
