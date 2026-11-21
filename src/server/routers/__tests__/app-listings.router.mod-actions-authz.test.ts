@@ -33,7 +33,8 @@ const {
   mockRetryCut,
 } = vi.hoisted(() => ({
   mockDelist: vi.fn(async () => ({ appListingId: 'apl_1', status: 'removed' as const })),
-  mockRetryCut: vi.fn(async () => ({
+  // Typed with the service's input so `mock.calls[0][0]` is a real element, not index 0 of `[]`.
+  mockRetryCut: vi.fn(async (_opts: { appListingId: string; moderatorUserId: number }) => ({
     appListingId: 'apl_1',
     outcome: 'cut' as const,
     deleted: 4,

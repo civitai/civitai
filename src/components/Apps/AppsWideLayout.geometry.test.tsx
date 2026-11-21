@@ -71,7 +71,7 @@
  * `origin/main` for exactly that reason. Two guards, one for the mechanism and one for its
  * adoption; neither is a substitute for the other.
  */
-import { describe, expect, test, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import {
@@ -200,8 +200,12 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOrigina
   ...(await importOriginal<typeof BrowsingLevelMod>()),
   useViewerBrowsingLevelDebounced: () => 1,
 }));
+// `isModerator` is per-describe: the /apps/review reports queue renders only for moderators, and
+// its rows' "History" entry point is drawn only for one, so measuring it as a non-moderator
+// measures a table no real viewer sees. Every other route keeps the non-moderator author.
+const viewer = vi.hoisted(() => ({ isModerator: false }));
 vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'author', isModerator: false }),
+  useCurrentUser: () => ({ id: 1, username: 'author', isModerator: viewer.isModerator }),
 }));
 // Spread the REAL module and override only `trpc` — the sub-nav's summary query is the
 // only network this file's tree reaches.
@@ -336,6 +340,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       items: [
         {
           id: 'rep_1',
+          // The server's report select always carries it (`reportQueueSelect`); the row's
+          // "History" entry point is drawn only for a row that names its listing.
+          appListingId: 'apl_1',
           status: 'pending',
           reason: 'TOSViolation',
           details:
@@ -1269,6 +1276,12 @@ describe('/apps/review reports — the other table a ledger cannot help', () => 
    * taller than natural at 1200 or clipped the `lineClamp={2}` details harder.
    */
   const queue = () => <OffsiteReportsQueue />;
+  beforeAll(() => {
+    viewer.isModerator = true;
+  });
+  afterAll(() => {
+    viewer.isModerator = false;
+  });
 
   test('the queue renders its row (guards a vacuous measurement)', async () => {
     await renderRoute(queue(), WIDE);
