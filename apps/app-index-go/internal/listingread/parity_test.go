@@ -15,8 +15,8 @@ import (
 //     store's gate and projection (scopeAdmitsListingKind, matureRatingAllowed, projectListingMedia)
 //     for `expected`;
 //   - listing-card-parity.test.ts checks `cards`: recommend is recommendRollup of the counts (and
-//     the stream's recommendPct is its), openCount is cardOpenCount, and reviewCount is the sum of
-//     the counts, as projectListingCard computes it.
+//     the stream's recommendPct is its), reviewCount is listingReviewCount and openCount is
+//     cardOpenCount, the functions projectListingCard uses (app-listing-card-stats.ts).
 //
 // This side runs it through the read model: each listing becomes the store-listing@v1 body the
 // adapter would publish, decoded by the ingest's own decoder, and is gated and projected per viewer.

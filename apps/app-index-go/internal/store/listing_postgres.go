@@ -20,10 +20,8 @@ import (
 //
 // The media live in the body only, every item as the stream sent it, each with its own nsfwLevel,
 // rating and host; a read decodes them from it (decodeStored). Nothing here applies a ceiling: the
-// read API does, per request (ListingMedia). The per-item table slice 2 also kept,
-// app_index_listing_media, held the same items a second time and nothing read it; it is dropped
-// here. Its rows were copies of the bodies, which every generation still holds, so dropping it
-// changes no row and needs no ListingsLayoutVersion bump.
+// read API does, per request (listingread.ProjectMedia). app_index_listing_media, a second copy of
+// the items that nothing reads, is dropped.
 const listingsSQL = `
 CREATE TABLE IF NOT EXISTS app_index_listing_cursors (
   generation bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

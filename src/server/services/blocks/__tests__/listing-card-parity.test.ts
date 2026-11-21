@@ -1,38 +1,22 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import {
+  cardOpenCount,
+  listingReviewCount,
+  recommendRollup,
+} from '~/server/services/blocks/app-listing-card-stats';
 
 /**
  * The `cards` half of the listing parity fixture (`media-parity.json`; the media half is
  * `listing-media-parity.test.ts`). The read model's `parity_test.go` projects each fixture listing's
- * stream stats into a card; here the same stats go through the store's own card rules:
+ * stream stats into a card; here the same stats go through the store's own card rules, the ones
+ * `projectListingCard` uses (`app-listing-card-stats.ts`, a pure module, so nothing is mocked):
  *   - `recommend` is `recommendRollup` of the rollup counts, and the stream's `recommendPct` (which
  *     the read model passes through) is that rollup's;
- *   - `openCount` is `cardOpenCount`: a number on-site (0 with no metric), null off-site;
- *   - `reviewCount` is the sum of the rollup's counts, which `projectListingCard` computes inline.
- *
- * `app-listing.service` is imported for its pure exports; the mocks below only keep its import
- * graph off the database and Redis (the same set `app-listing.service.test.ts` uses).
+ *   - `reviewCount` is `listingReviewCount` of that rollup;
+ *   - `openCount` is `cardOpenCount`: a number on-site (0 with no metric), null off-site.
  */
-
-const { mockDbRead } = vi.hoisted(() => ({
-  mockDbRead: {
-    $queryRaw: vi.fn(async (): Promise<unknown[]> => []),
-    appListing: { findMany: vi.fn(async () => []), findFirst: vi.fn(async () => null) },
-  },
-}));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
-vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, sm: 180 } }));
-vi.mock('~/server/utils/cache-helpers', () => ({
-  queryCache:
-    () =>
-    async (sql: unknown): Promise<unknown[]> =>
-      mockDbRead.$queryRaw(sql),
-  bustCacheTag: vi.fn(async () => undefined),
-}));
-
-import { cardOpenCount, recommendRollup } from '~/server/services/blocks/app-listing.service';
 
 type Stats = {
   recommendedCount: number;
@@ -79,7 +63,7 @@ describe('listing card parity (media-parity.json cards): the site side', () => {
     expect(recommend).toEqual(want.recommend);
     // The stream's pct is the rollup's: the read model passes it through.
     expect(l.stats.recommendPct).toBe(recommend.recommendPct);
-    expect(want.reviewCount).toBe(recommend.recommendedCount + recommend.notRecommendedCount);
+    expect(listingReviewCount(recommend)).toBe(want.reviewCount);
     // `open_count` is NOT NULL DEFAULT 0 in the database; the stream's null is no metric row.
     expect(cardOpenCount({ kind: l.kind, metric: { openCount: l.stats.openCount ?? 0 } })).toBe(
       want.openCount
