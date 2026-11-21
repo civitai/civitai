@@ -1,9 +1,11 @@
 import {
+  assignIncrementingIds,
   englishDataset,
   parseRawPattern,
+  pattern,
+  RegExpMatcher,
   SyntaxKind,
   type ParsedPattern,
-  type RegExpMatcher,
 } from 'obscenity';
 import { createAnyTermPrefilter } from '~/libs/profanity-simple/any-term-prefilter';
 import { describe, expect, it } from 'vitest';
@@ -15,21 +17,17 @@ import { formatStickerToken } from '~/shared/utils/sticker-token';
 // Inputs are built from the lists at runtime and failures name an input's position, never the
 // input: this file and its CI logs are public.
 
-/** One string per way through a pattern: each optional both ways, a wildcard as a letter. */
+/** Ways through a pattern: each optional both ways, a wildcard as a letter and as a newline. */
 function samplesOf(p: ParsedPattern): string[] {
+  const options = (n: ParsedPattern['nodes'][number]): string[] =>
+    n.kind === SyntaxKind.Literal
+      ? [String.fromCodePoint(...n.chars)]
+      : n.kind === SyntaxKind.Wildcard
+      ? ['a', '\n']
+      : ['', ...options(n.childNode)];
   let out = [''];
   for (const node of p.nodes) {
-    const text = (n: typeof node): string =>
-      n.kind === SyntaxKind.Literal
-        ? String.fromCodePoint(...n.chars)
-        : n.kind === SyntaxKind.Wildcard
-        ? 'a'
-        : text(n.childNode);
-    out =
-      node.kind === SyntaxKind.Optional
-        ? out.flatMap((s) => [s, s + text(node)])
-        : out.map((s) => s + text(node));
-    out = out.slice(0, 4);
+    out = out.flatMap((s) => options(node).map((o) => s + o)).slice(0, 6);
   }
   return out;
 }
@@ -66,11 +64,13 @@ const termPatterns: ParsedPattern[] = [
 ];
 
 const corpus = [
-  ...termPatterns.flatMap(samplesOf).flatMap(variants).flatMap(contexts),
-  ...whitelistWords.flatMap((word) => [word, `a ${word} here`, word.toUpperCase()]),
-  'the model works great with these settings and I really like how the lighting turned out',
-  'thanks for sharing your prompt, could you post the sampler, steps, cfg scale and seed?',
-  '',
+  ...new Set([
+    ...termPatterns.flatMap(samplesOf).flatMap(variants).flatMap(contexts),
+    ...whitelistWords.flatMap((word) => [word, `a ${word} here`, word.toUpperCase()]),
+    'the model works great with these settings and I really like how the lighting turned out',
+    'thanks for sharing your prompt, could you post the sampler, steps, cfg scale and seed?',
+    '',
+  ]),
 ];
 
 const prefilterOf = (filter: SimpleProfanityFilter) =>
@@ -127,4 +127,21 @@ it('falls back to the per-term pass when the matcher internals are not the expec
   const notText = Object.create(matcher);
   notText.applyTransformers = () => [[], 42];
   expect(createAnyTermPrefilter(notText)?.('anything')).toBe(true);
+  const otherFlags = Object.create(matcher);
+  otherFlags.blacklistedTerms = [{ regExp: /x/gi }];
+  expect(createAnyTermPrefilter(otherFlags)).toBeNull();
+  const notArray = Object.create(matcher);
+  notArray.blacklistedTerms = {};
+  expect(createAnyTermPrefilter(notArray)).toBeNull();
+});
+
+// No shipped term has a wildcard today (list entries are stripped of them), so the corpus above
+// cannot see this; a dataset that adds one must still match across a line break, as the
+// per-term regexes (flag 's') do.
+it('matches a wildcard term across a line break', () => {
+  const matcher = new RegExpMatcher({
+    blacklistedTerms: assignIncrementingIds([pattern`zor?blat`]),
+  });
+  expect(matcher.hasMatch('a zor\nblat b')).toBe(true);
+  expect(createAnyTermPrefilter(matcher)?.('a zor\nblat b')).toBe(true);
 });
