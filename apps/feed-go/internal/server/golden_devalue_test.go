@@ -86,7 +86,7 @@ func TestGoldenDevalueAsPosts(t *testing.T) {
 }
 
 func TestGoldenDevalueInfinite(t *testing.T) {
-	goldenDevalueRun(t, "infinite", goldenMinInfinite, 47, goldenDevalueInfinite)
+	goldenDevalueRun(t, "infinite", goldenMinInfinite, 69, goldenDevalueInfinite)
 }
 
 func TestGoldenDevalueModelGetAll(t *testing.T) {

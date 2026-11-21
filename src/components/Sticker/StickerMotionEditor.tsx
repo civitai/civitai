@@ -20,6 +20,11 @@ import clsx from 'clsx';
 import { PAGE_MODAL_Z_INDEX } from '~/components/Dialog/Templates/PageModal';
 import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
 import { Menu } from '~/components/MantineOverlays';
+import {
+  AutoTrackButton,
+  AutoTrackPanel,
+  useAutoTrackRun,
+} from '~/components/Sticker/StickerAutoTrack';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { StickerTrackEase, StickerTrackKey } from '~/shared/utils/sticker-track';
 import { STICKER_TRACK_EASES } from '~/shared/utils/sticker-track';
@@ -105,7 +110,14 @@ export const useStickerTimelineOpen = (imageId: number) =>
  * play, frame steps, a scrub bar with the draft's keys, and an inspector for the key under the
  * playhead. The playhead is the video's own time, so one clock plays every draft.
  */
-export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
+export function StickerMotionEditor({
+  video,
+  autoTrack = false,
+}: {
+  video: HTMLVideoElement;
+  /** Offers Auto-track in Movement. */
+  autoTrack?: boolean;
+}) {
   const drafts = useStore((state) => state.drafts);
   const selectedId = useStore((state) => state.selectedDraftId);
   const trayOpen = useStore((state) => state.trayOpen);
@@ -115,6 +127,9 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
   const primaryLabel = useStore((state) => (selectedId ? state.primaryLabels[selectedId] : null));
   const open = !!selected && !trayOpen;
   const moving = open && !!selected.motion?.on;
+  const run = useAutoTrackRun(selected?.id);
+  // A run in progress or refused takes the timeline's place; a landed one sits above it.
+  const runCovers = run?.phase === 'tracking' || run?.phase === 'failed';
 
   const playing = useStore((state) => state.videoPlaying);
   const [durationMs, setDurationMs] = useState(() => videoDurationMs(video));
@@ -252,61 +267,70 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
           aria-label="Sticker timeline"
           className="w-full max-w-[560px] rounded-xl bg-black/60 px-3 py-2 text-white backdrop-blur"
         >
-          <div className="flex items-center gap-2">
-            <ActionIcon
-              radius="xl"
-              size="lg"
-              color="gray"
-              variant="filled"
-              aria-label={playing ? 'Pause' : 'Play'}
-              onClick={toggle}
-            >
-              {playing ? <IconPlayerPauseFilled size={16} /> : <IconPlayerPlayFilled size={16} />}
-            </ActionIcon>
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              aria-label="Back one frame"
-              onClick={() => seek(playheadMs - STICKER_KEY_STEP_MS)}
-            >
-              <IconChevronLeft size={16} />
-            </ActionIcon>
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              aria-label="Forward one frame"
-              onClick={() => seek(playheadMs + STICKER_KEY_STEP_MS)}
-            >
-              <IconChevronRight size={16} />
-            </ActionIcon>
-            <ScrubBar
-              durationMs={durationMs}
-              playheadMs={playheadMs}
-              keys={keys}
-              selectedKey={at}
-              others={drafts.filter((draft) => draft.id !== selected.id)}
-              onSeek={seek}
-              onRetime={(index, t) => setKeys(editKey(keys, index, { t }))}
-            />
-            <Text size="xs" className="shrink-0 tabular-nums">
-              {formatTime(playheadMs)} / {formatTime(durationMs)}
-            </Text>
-          </div>
-          <KeyInspector
-            draft={selected}
-            keys={keys}
-            index={at}
-            playheadMs={playheadMs}
-            onChange={setKeys}
-          />
-          {refusal && (
-            <Text size="xs" c="red.4" mt={4} role="alert">
-              {refusal === 'keys: too much fading'
-                ? 'Too much fading to place: shorten or remove a fade.'
-                : refusal === STICKER_KEYS_TOO_FAINT
-                ? 'A key is too faint for this sticker’s opacity: raise the key or the sticker.'
-                : `This movement can't be placed (${refusal}).`}
-            </Text>
+          <AutoTrackPanel draft={selected} video={video} />
+          {!runCovers && (
+            <>
+              <div className="flex items-center gap-2">
+                <ActionIcon
+                  radius="xl"
+                  size="lg"
+                  color="gray"
+                  variant="filled"
+                  aria-label={playing ? 'Pause' : 'Play'}
+                  onClick={toggle}
+                >
+                  {playing ? (
+                    <IconPlayerPauseFilled size={16} />
+                  ) : (
+                    <IconPlayerPlayFilled size={16} />
+                  )}
+                </ActionIcon>
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  aria-label="Back one frame"
+                  onClick={() => seek(playheadMs - STICKER_KEY_STEP_MS)}
+                >
+                  <IconChevronLeft size={16} />
+                </ActionIcon>
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  aria-label="Forward one frame"
+                  onClick={() => seek(playheadMs + STICKER_KEY_STEP_MS)}
+                >
+                  <IconChevronRight size={16} />
+                </ActionIcon>
+                <ScrubBar
+                  durationMs={durationMs}
+                  playheadMs={playheadMs}
+                  keys={keys}
+                  selectedKey={at}
+                  others={drafts.filter((draft) => draft.id !== selected.id)}
+                  onSeek={seek}
+                  onRetime={(index, t) => setKeys(editKey(keys, index, { t }))}
+                />
+                <Text size="xs" className="shrink-0 tabular-nums">
+                  {formatTime(playheadMs)} / {formatTime(durationMs)}
+                </Text>
+              </div>
+              <KeyInspector
+                draft={selected}
+                keys={keys}
+                index={at}
+                playheadMs={playheadMs}
+                onChange={setKeys}
+              />
+              {refusal && (
+                <Text size="xs" c="red.4" mt={4} role="alert">
+                  {refusal === 'keys: too much fading'
+                    ? 'Too much fading to place: shorten or remove a fade.'
+                    : refusal === STICKER_KEYS_TOO_FAINT
+                    ? 'A key is too faint for this sticker’s opacity: raise the key or the sticker.'
+                    : `This movement can't be placed (${refusal}).`}
+                </Text>
+              )}
+            </>
           )}
         </div>
       )}
@@ -319,7 +343,8 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
             useStore.getState().setMotion(selected.id, movement);
           }}
         />
-        {primaryLabel && !previewing && !refusal && (
+        {moving && autoTrack && <AutoTrackButton draft={selected} playheadMs={playheadMs} />}
+        {primaryLabel && !previewing && !refusal && run?.phase !== 'tracking' && (
           // Presses the selected draft's own pay button: one way to pay, and any choice it
           // offers (free or Buzz, a use or a pack) is still made under the sticker. Gone while
           // previewing, which hides that button and the price and payee beside it.

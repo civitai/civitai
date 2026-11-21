@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -206,5 +209,73 @@ func TestDevalueAnswerIsReleased(t *testing.T) {
 	}
 	if made == nil || !made.devalue || made.dbuf != nil || made.payload != nil {
 		t.Fatalf("answer %+v: want a devalue answer, released after writing", made)
+	}
+}
+
+// feed_go_devalue_write_total counts each written answer by format, every series exported from the
+// start, and a devalue fallback is also logged once (the app's devalueFallbackObserver).
+func TestDevalueWriteCounterAndFallbackLog(t *testing.T) {
+	writes := func(t *testing.T, reg *prometheus.Registry, result string) float64 {
+		t.Helper()
+		v, found := metricValue(t, reg, "feed_go_devalue_write_total", map[string]string{EndpointLabel: EndpointAsPosts, "result": result})
+		if !found {
+			t.Fatalf("feed_go_devalue_write_total{result=%q} not exported", result)
+		}
+		return v
+	}
+	reg := prometheus.NewRegistry()
+	_ = NewMetrics(reg)
+	for _, e := range []string{EndpointAsPosts, EndpointInfinite, EndpointModelGetAll} {
+		for _, r := range []string{"devalue", "superjson_fallback", "superjson"} {
+			if v, found := metricValue(t, reg, "feed_go_devalue_write_total", map[string]string{EndpointLabel: e, "result": r}); !found || v != 0 {
+				t.Errorf("%s/%s: seeded %v (found %v), want an exported 0", e, r, v, found)
+			}
+		}
+	}
+	refused := superjson.Object{{Key: "m", Val: json.RawMessage(`{not json`)}}
+	for name, c := range map[string]struct {
+		v    any
+		ttl  *trpc.CacheTTL
+		want string
+		logs int
+	}{
+		"devalue":         {devalueTestValue(), nil, "devalue", 0},
+		"edge-cacheable":  {devalueTestValue(), &trpc.SignedOutTTL, "superjson", 0},
+		"devalue refused": {refused, nil, "superjson_fallback", 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			reg := prometheus.NewRegistry()
+			var logs bytes.Buffer
+			s := serveServer(reg, encodingAnswer(c.v, c.ttl), &proxyRecorder{})
+			s.Log = slog.New(slog.NewTextHandler(&logs, nil))
+			s.WriteDevalue = true
+			w := httptest.NewRecorder()
+			s.ServeHTTP(w, capableRequest())
+			if w.Code != http.StatusOK {
+				t.Fatalf("code %d", w.Code)
+			}
+			for _, r := range []string{"devalue", "superjson_fallback", "superjson"} {
+				want := 0.0
+				if r == c.want {
+					want = 1
+				}
+				if got := writes(t, reg, r); got != want {
+					t.Errorf("result %s = %v, want %v", r, got, want)
+				}
+			}
+			if n := strings.Count(logs.String(), "devalue refused the answer"); n != c.logs {
+				t.Errorf("%d fallback log lines, want %d: %s", n, c.logs, logs.String())
+			}
+			if c.want == "superjson_fallback" && !strings.HasPrefix(w.Body.String(), `{"result":{"data":{"json":`) {
+				t.Errorf("a refused value must be answered as superjson: %s", w.Body.String())
+			}
+		})
+	}
+	// The switch off counts superjson too.
+	reg = prometheus.NewRegistry()
+	s := serveServer(reg, encodingAnswer(devalueTestValue(), nil), &proxyRecorder{})
+	s.ServeHTTP(httptest.NewRecorder(), capableRequest())
+	if got := writes(t, reg, "superjson"); got != 1 {
+		t.Fatalf("switch off: superjson = %v, want 1", got)
 	}
 }

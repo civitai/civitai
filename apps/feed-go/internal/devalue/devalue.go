@@ -319,9 +319,17 @@ func (e *encoder) seen(r ref) (int, bool) {
 	return i, false
 }
 
-// sliceRef is the identity of a slice: its backing array and length. A slice without capacity has
-// no backing array of its own (every empty literal shares one address), so it has no identity: ok is
-// false and it is always a new value.
+// sliceRef is the identity of a slice: its backing array's address and its length. A slice without
+// capacity has no backing array of its own (every empty literal shares one address), so it has no
+// identity: ok is false and it is always a new value.
+//
+// The model assumes the builders never hold two DIFFERENT values in one backing array at one length.
+// That holds for how they build answers (each object or array is made once and its header copied to
+// every place that shares it), but slicing and append can break it: `b := a[:n]` placed beside `a`
+// truncated to the same n is one value here, and `x := append(base, f)` / `y := append(base, g)` on a
+// base with spare capacity write the SAME array, so x and y alias and, at equal length, would be
+// written once. A builder that derives two objects from one base must copy (or use a base without
+// spare capacity) rather than append twice.
 func sliceRef[T any](kind refKind, s []T) (ref, bool) {
 	if cap(s) == 0 {
 		return ref{}, false

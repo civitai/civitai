@@ -78,3 +78,57 @@ describe('reporting a service that does not exist', () => {
     expect(reportCreate).not.toHaveBeenCalled();
   });
 });
+
+describe('reporting a buyer review', () => {
+  const shownReview = {
+    offeringId: 17,
+    dealId: 5,
+    buyerId: 8,
+    sellerId: 9,
+    comment: 'Great work',
+    sellerReply: 'Thanks',
+    shown: true,
+  };
+  const reportReview = (userId = 41) =>
+    createReport({
+      userId,
+      id: 23,
+      type: ReportEntity.ServiceDealReview,
+      reason: ReportReason.TOSViolation,
+      // A client-sent snapshot, which the server must drop.
+      details: Object.assign(
+        { violation: 'Spam' },
+        { serviceDealReview: { comment: 'forged by the client' } }
+      ),
+    });
+
+  it('links the report to the review and its offering, with the words as the server read them', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([shownReview] as never);
+    await reportReview();
+
+    const { data } = reportCreate.mock.calls[0][0];
+    expect(data.serviceDealReview).toEqual({
+      create: { serviceDealReviewId: 23, serviceOfferingId: 17 },
+    });
+    expect(data.status).toBe(ReportStatus.Pending);
+    expect(data.details).toMatchObject({
+      reportType: 'serviceDealReview',
+      serviceDealReview: { dealId: 5, comment: 'Great work', sellerReply: 'Thanks' },
+    });
+  });
+
+  it('is a 404 for a review that is not shown, before any report is written', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ ...shownReview, shown: false }] as never);
+    await expect(reportReview()).rejects.toThrow('That review is not shown.');
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+    await expect(reportReview()).rejects.toThrow('That review is not shown.');
+    expect(reportCreate).not.toHaveBeenCalled();
+  });
+
+  it("is refused to the deal's buyer and seller", async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([shownReview] as never);
+    await expect(reportReview(8)).rejects.toThrow('You cannot report a review of your own deal.');
+    await expect(reportReview(9)).rejects.toThrow('You cannot report a review of your own deal.');
+    expect(reportCreate).not.toHaveBeenCalled();
+  });
+});

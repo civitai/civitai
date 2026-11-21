@@ -43,6 +43,7 @@ type Config struct {
 	SysReadTimeout   time.Duration
 	FallbackURL      string // FEED_GO_FALLBACK_URL: the Node app, for everything not served here
 	Hosts            browsing.HostColors
+	HostPrimaries    map[string]string // each color's SERVER_DOMAIN_<COLOR> (unset colors absent)
 	RegionRules      []browsing.RegionRule
 	RegionBlockRules []browsing.RegionRule
 	CreatorPromotion string          // FEED_GO_CREATOR_PROMOTIONS: the `creator-promotions` flag's audience (feed.ParsePromotionAudience)
@@ -253,11 +254,13 @@ func Load() (*Config, error) {
 		c.OrchestratorServiceToken = os.Getenv("ORCHESTRATOR_SERVICE_TOKEN")
 	}
 	c.Hosts = browsing.HostColors{}
+	c.HostPrimaries = map[string]string{}
 	for _, color := range []string{"green", "blue", "red"} {
 		up := strings.ToUpper(color)
 		var hosts []string
 		if h := os.Getenv("SERVER_DOMAIN_" + up); h != "" {
 			hosts = append(hosts, h)
+			c.HostPrimaries[color] = strings.ToLower(h)
 		}
 		hosts = append(hosts, list(os.Getenv("SERVER_DOMAIN_"+up+"_ALIASES"))...)
 		c.Hosts[color] = hosts

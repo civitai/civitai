@@ -34,8 +34,8 @@ export const READ_WINDOW_BYTES = 64 * 1024;
  * The kinds of run the queue serialises, and the npm script each one is.
  *
  * Separate lanes with separate limits rather than one pool, because they are not the same load: a
- * unit run saturates every core, while `tsc` is effectively single-threaded and spends its budget
- * on an 8 GB heap (see scripts/typecheck.mjs). One shared number would either starve the
+ * unit run saturates every core, while a typecheck is single-threaded locally and memory-heavy
+ * (see scripts/typecheck.mjs). One shared number would either starve the
  * typechecks behind a suite or let several suites run at once; there is no value right for both.
  *
  * `capWorkers` says whether `--max-workers` means anything to that script. tsc has no worker pool,

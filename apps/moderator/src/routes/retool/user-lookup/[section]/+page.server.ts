@@ -25,6 +25,8 @@ import {
   mintMembershipCode,
   previewMembershipExtension,
   extendMembership,
+  previewCompGift,
+  compGift,
   previewMembershipCancel,
   setMembershipCancel,
   previewMembershipResync,
@@ -61,6 +63,11 @@ import { sendAsCivitai } from '$lib/server/message-as-civitai';
 import { MESSAGE_AS_CIVITAI_MAX_LENGTH } from '$lib/message-as-civitai';
 import { MEMBERSHIP_CODE_MAX_MONTHS, MEMBERSHIP_CODE_TIERS } from '$lib/membership-code';
 import { MEMBERSHIP_EXTEND_MAX_DAYS, MEMBERSHIP_EXTEND_REASON_MIN } from '$lib/membership-extend';
+import {
+  COMP_GIFT_MAX_MONTHS,
+  COMP_GIFT_REASON_MIN,
+  COMP_GIFT_TIERS,
+} from '$lib/membership-gift-comp';
 import {
   CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT,
   CREATOR_SCORE_GRANT_MAX_AMOUNT,
@@ -106,6 +113,23 @@ const membershipCodeFail = (message: string) =>
   fail(400, { scope: 'membershipCode' as const, error: message });
 const membershipExtendFail = (message: string) =>
   fail(400, { scope: 'membershipExtend' as const, error: message });
+const compGiftFail = (message: string) => fail(400, { scope: 'compGift' as const, error: message });
+const compGiftSchema = userIdSchema.extend({
+  tier: z.enum(COMP_GIFT_TIERS),
+  months: z.coerce.number().int().min(1).max(COMP_GIFT_MAX_MONTHS),
+  reason: z.string().trim().min(COMP_GIFT_REASON_MIN).max(500),
+  message: z
+    .string()
+    .trim()
+    .max(500)
+    .optional()
+    .transform((v) => v || undefined),
+  // An unticked checkbox sends nothing.
+  anonymous: z
+    .string()
+    .optional()
+    .transform((v) => v === 'on'),
+});
 const membershipCancelFail = (message: string) =>
   fail(400, { scope: 'membershipCancel' as const, error: message });
 const membershipResyncFail = (message: string) =>
@@ -638,6 +662,25 @@ export const actions: Actions = {
     const result = await extendMembership(input);
     if (!result.ok) return membershipExtendFail(result.error);
     return { success: true, extended: result.result };
+  }),
+
+  // Bounds are enforced again by the endpoint; these only turn a bad form into a readable refusal.
+  previewCompGift: requiresGrant('user.membership.gift.comp', async ({ request }) => {
+    const input = parseForm(compGiftSchema, await request.formData());
+    if (typeof input === 'string') return compGiftFail(input);
+
+    const result = await previewCompGift(input);
+    if (!result.ok) return compGiftFail(result.error);
+    return { success: true, compPreview: result.preview };
+  }),
+
+  compGift: requiresGrant('user.membership.gift.comp', async ({ request }) => {
+    const input = parseForm(compGiftSchema, await request.formData());
+    if (typeof input === 'string') return compGiftFail(input);
+
+    const result = await compGift(input);
+    if (!result.ok) return compGiftFail(result.error);
+    return { success: true, comped: result.result };
   }),
 
   previewMembershipCancel: requiresGrant('user.membership.cancel', async ({ request }) => {

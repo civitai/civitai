@@ -105,6 +105,38 @@
     </TableBody>
   </Table>
 
+  <h2 class="text-lg font-semibold text-white">Filed requests</h2>
+  <Table>
+    <TableHeader>
+      <TableRow>
+        <TableHead>Case</TableHead>
+        <TableHead>Request</TableHead>
+        <TableHead>State</TableHead>
+        <TableHead>Received</TableHead>
+        <TableHead>Due</TableHead>
+        <TableHead>Receipt</TableHead>
+      </TableRow>
+    </TableHeader>
+    <TableBody>
+      {#each data.filed as c (c.publicRef)}
+        <TableRow>
+          <TableCell>
+            {c.publicRef}
+            {#if c.minor}<Badge variant="destructive">Minor</Badge>{/if}
+            {#if c.isTest}<Badge variant="outline">Test</Badge>{/if}
+          </TableCell>
+          <TableCell>{c.title}</TableCell>
+          <TableCell>{c.state}</TableCell>
+          <TableCell>{dateTime(new Date(c.receivedAt))}</TableCell>
+          <TableCell>{c.dueAt ? dateTime(new Date(c.dueAt)) : '—'}</TableCell>
+          <TableCell>{c.receiptUnsent ? 'not sent' : (c.receipt ?? '—')}</TableCell>
+        </TableRow>
+      {:else}
+        <TableRow><TableCell colspan={6} class="text-dark-2">No filed requests.</TableCell></TableRow>
+      {/each}
+    </TableBody>
+  </Table>
+
   {#if data.grants.act}
     <form method="POST" action="?/import" enctype="multipart/form-data" use:enhance class="flex gap-2">
       <Input type="file" name="file" accept="application/json" required class="max-w-sm" />

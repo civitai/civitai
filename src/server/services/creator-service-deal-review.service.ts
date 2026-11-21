@@ -11,6 +11,7 @@ import {
 import { dealFinalsClear, releaseDeal } from '~/server/services/creator-service-escrow.service';
 import { getReviewImages } from '~/server/services/creator-service-deal-review-images';
 import { scanServiceDealReviewText } from '~/server/services/service-deal-review-moderation.adapter';
+import { liveCsamTextHoldText } from '@civitai/shared/held-url';
 import { csamQueueClearSql } from '~/server/services/text-scan/csam-hold-state';
 import { SERVICE_DEAL_REVIEW_EDIT_MS } from '~/shared/constants/creator-services.constants';
 import type { ServiceDealReviewVerdict } from '~/shared/utils/prisma/enums';
@@ -212,6 +213,16 @@ export async function setServiceDealReviewHidden({
       SELECT "dealId" FROM "ServiceDealReview" WHERE "id" = ${reviewId}::int`;
     if (!target) return false;
     await lockDealReviewCounters(tx, target.dealId);
+    // Every restore path: a review the CSAM text-hold queue holds stays down until it decides.
+    if (!hidden) {
+      const [held] = await tx.$queryRaw<{ held: boolean }[]>`
+        SELECT EXISTS (SELECT 1 FROM "TextScanHold" th
+          WHERE th."entityType" IN ('ServiceDealReview', 'ServiceDealReviewReply')
+            AND th."entityId" = ${reviewId}::int AND ${Prisma.raw(
+        liveCsamTextHoldText('th')
+      )}) AS "held"`;
+      if (held?.held) return 'held' as const;
+    }
     const [review] = await tx.$queryRaw<{ dealId: number }[]>`
       UPDATE "ServiceDealReview"
       SET "hiddenAt" = CASE WHEN ${hidden} THEN now() END,

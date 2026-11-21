@@ -820,8 +820,8 @@ request header. The public route applies it as follows, before the origin check 
   pattern and the IP is in that crawler's published ranges. A request whose user agent matches one of
   the patterns (generated into the same file) falls back as `crawler-user-agent`, because only the app
   holds the ranges and the header changes the answer. One that matches none can never be verified, so a
-  header it carries is one the app would strip: it still falls back (`verified-bot`, as before) rather
-  than being stripped here.
+  header it carries is one the app would strip: `image.getInfinite` reads it as absent (§14.2), the
+  other procedures still fall back (`verified-bot`).
 - **Default response headers.** Every answer written here carries its Cache-Control: the app's
   `PRIVATE_CACHE_CONTROL` (from the same file) unless the answer is edge-cacheable (signed out, §4).
   `X-Handled-By` (the Node pod name) is not set. It does not affect caching and names a Node pod.
@@ -878,8 +878,8 @@ path as serving, and compares decoded values:
   opaque JSON (`metadata`, cosmetic `data`) so label cardinality is bounded by the schema:
   `feed_go_shadow_field_diffs_total{feed_endpoint="as-posts",category="items.*.images.*.stats.likeCountAllTime",kind="value"}`;
 - every `feed_go_*` series carries `feed_endpoint` (`as-posts` for this procedure, `v1-images` for §13,
-  `infinite` for §14, `model-getall` for §15, `v1-models` / `v1-models-id` for §16): six values, so the
-  label at most multiplies a family's cardinality by six;
+  `infinite` for §14, `model-getall` for §15, `v1-models` / `v1-models-id` for §16, `model-associated`
+  for §17): seven values, so the label at most multiplies a family's cardinality by seven;
 - differing paths (never values) are logged for a sample, so a category can be traced to a field;
 - numbers compare numerically, except that two integer literals compare **exactly** (int64, else as
   big integers). As float64, an integer above 2^53 cannot be told from its neighbour, and the
@@ -1186,7 +1186,8 @@ will show.
 - a failed miss computation (§3.1, `<reason>-failed`; for tag ids also a browsing gate this service
   cannot read when a row needs it), cache misses on metric hashes without a ClickHouse reader
   (`metrics-miss`), session users (auth hub fetch not ported), gallery settings (rebuild not ported);
-- API keys other than those §4.2 serves, verified crawlers, POST (`methodOverride`) requests;
+- API keys other than those §4.2 serves, verified crawlers (but on `image.getInfinite`, §14.2), POST
+  (`methodOverride`) requests;
 - public requests from an origin the app's allow-list does not hold (reason `origin`, see §4).
 
 **Matched behaviour worth knowing:** a page query that runs past the 20s statement timeout answers an
@@ -1838,15 +1839,18 @@ domain cap.
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Input | the global feed; `modelVersionId` (with or without `modelId`), `model3dId`; a `modelId` alone (Postgres); the creator scope (`userId`, `username`); the post scope (`postId`, Postgres); the tag scope (`tags`); `baseModels` (below); `prioritizedUserIds`, `pending` and an `include` without `cosmetics` (below); `include` values Node never reads (`count`, `report`: answered as the list without them); `include` holding `tags` (below); `followed` (below); `collectionId` with `collectionTagId` and the Recently Added sort (below); the stripped keys of §5.1 (`view`, `section`, `query`, `similarTo`, `useIndex`, `search`); every sort, period, browsing level, filter and cursor §2 ports, with the same cursor refusals | Hat Turf keys (`infinite-hat-turf`); `hubId` and every other key in §2's right-hand column but `baseModels`, `followed`, `collectionId` and `collectionTagId` (`input-<key>`); `include` holding `metaSelect` or any other value not listed here (`input-include`, the entry in the safe detail; the gallery still falls back on `tags` too); `userId: 0` (`infinite-user-zero`: the feed and the hydrate read it differently) |
+| Input | the global feed; `modelVersionId` (with or without `modelId`), `model3dId`; a `modelId` alone (Postgres); the creator scope (`userId`, `username`); the post scope (`postId`, Postgres); the tag scope (`tags`); `baseModels` (below); `prioritizedUserIds`, `pending` and an `include` without `cosmetics` (below); `include` values Node never reads (`count`, `report`: answered as the list without them); `include` holding `tags` (below); `followed` (below); `collectionId` with `collectionTagId` and the Recently Added sort (below); `ids`, `reactions` and `newCreators` (below); the stripped keys of §5.1 (`view`, `section`, `query`, `similarTo`, `useIndex`, `search`); every sort, period, browsing level, filter and cursor §2 ports, with the same cursor refusals | Hat Turf keys (`infinite-hat-turf`); `hubId` and every other key in §2's right-hand column but `baseModels`, `followed`, `collectionId`, `collectionTagId`, `ids`, `reactions` and `newCreators` (`input-<key>`); `include` holding `metaSelect` or any other value not listed here (`input-include`, the entry in the safe detail; the gallery still falls back on `tags` too); `userId: 0` (`infinite-user-zero`: the feed and the hydrate read it differently) |
 | `baseModels` | `z.string().array()`, read as sent (no list of names is consulted: the schema has no enum, and the match is on `ModelVersion."baseModel"` text). Feed path: the non-empty names, in order with repeats, as the feed query's `baseModels` after the POI exclusion (`.map(String).filter(Boolean)`, written as URLSearchParams writes it); the hydrate, and every Postgres read, binds the whole list into getAllImages' `EXISTS (… "ModelVersion" mv RIGHT JOIN "ImageResourceNew" ir … WHERE mv."baseModel" = ANY(…))`; the cache policy is unchanged (Node does not mark it personalized). `image-resource-use-write` would send these reads to the primary in Node; it is not mirrored (§8) | not a list, or an entry that is not a string (`input-invalid`: Node's BAD_REQUEST) |
-| `prioritizedUserIds` (the model page's showcase carousel: `modelVersionId`, the owner's id, `pending`, `include: []`) | with a `modelId` or `modelVersionId`, the Postgres page of `getAllImages`' prioritizeUser branch with the version cache off: no `ImageResourceNew` join (`p."modelVersionId" = <version>` when there is one, no model scope at all for a model alone), `i."userId" = ANY(<ids>)`, ordered `(i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"`, the cursor column still the sort's (`nextCursor` is the look-ahead row's id), never cached; without a model, the feed path's empty page (the mapper refuses `input:prioritizedUserIds`) | a truthy cursor (`prioritized-cursor`: Node's BAD_REQUEST); `[-1]` alone (`prioritized-system-user`: one more read, then an `IIF` order over every creator); `FEED_GO_PRIORITIZED_VERSION_CACHE` on (`prioritized-version-cache`) |
+| `prioritizedUserIds` (the model page's showcase carousel: `modelVersionId`, the owner's id, `pending`, `include: []`) | with a `modelId` or `modelVersionId`, the Postgres page of `getAllImages`' prioritizeUser branch with the version cache off: no `ImageResourceNew` join (`p."modelVersionId" = <version>` when there is one, no model scope at all for a model alone), `i."userId" = ANY(<ids>)`, ordered `(i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"`, the cursor column still the sort's (`nextCursor` is the look-ahead row's id), never cached; without a model, the feed path's empty page (the mapper refuses `input:prioritizedUserIds`); `[-1]` alone (the system user) with a version: Node's `hasSystemPosts` read on the replica (`SELECT id FROM "Post" WHERE "userId" = -1 AND "modelVersionId" = <version> LIMIT 1`); with a post, the branch above; without one, no creator clause and `IIF(i."userId" IN (-1), i.index, 1000),  ` ahead of the sort's own order | a truthy cursor (`prioritized-cursor`: Node's BAD_REQUEST); `[-1]` alone on a model without a version (`prioritized-system-user-no-version`: Node reads no post and sorts every visible image on the site by the `IIF`, with no model or creator clause; that unbounded sort is left to Node); `FEED_GO_PRIORITIZED_VERSION_CACHE` on (`prioritized-version-cache`) |
+| `ids` | `z.array(z.number()).max(200)`, as sent; non-empty, always the Postgres path (`requiresImageDbPath`): `i."id" = ANY(<ids>::int[])` first in the WHERE clause, the sort's own order and cursor, the scope's cache policy. The answered images are then held by their own post's model (the handler's `withoutHeldFromViewer`, not for a moderator): `getHeldLevelsByPost` over the post→version and version→model caches and the gallery settings, and for a held model its owner (`SELECT id, "userId" FROM "Model"` on the replica); an image on a held model's post is kept only at a level intersecting the hold, or for the model's owner. An empty list is no filter and no routing (`?.length`) | not a list, a null, an entry that is not a number, or more than 200 (`input-invalid`); an entry that is not an int4 integer (`ids-not-int4`: Postgres refuses the bind); a held model without a level (`held-level-unset`); the gallery still falls back (`input-ids`) |
+| `reactions` | `z.array(z.enum(ReviewReactions))`, as sent; non-empty, always the Postgres path. Signed in: `i.id = ANY(ARRAY(SELECT ir."imageId" FROM "ImageReaction" ir WHERE ir."userId" = <viewer> AND ir.reaction = ANY(<kinds>)))` after the prioritizeUser branch and before `tools`, never cached. Signed out: no clause (`userId && reactions?.length`), the unfiltered Postgres page | not a list, a null, or a value outside the enum (`input-invalid`); the gallery still falls back (`input-reactions`) |
+| `newCreators` | `z.boolean()`, not coerced. The board of the request's board color (`getRequestBoardDomainColor`: a host on red's list, or an alias of a color whose primary is, reads `images-new-red`; every other `images-new`), read from `getNewCreatorUserIds`' fetchThroughCache entry (`packed:caches:new-creators:<board>`, fresh within its hour) once per request where Node reads it twice; the addons resolved under the `newCreators` scope. Feed path: an empty board is `serveFromFeed`'s empty page before the mapping; past 10,000 (`newCreators>10000`), or beside a creator scope or any `followed: true` (`flag:newCreators:userId`), the mapper's empty page, refused after the follow list's checks; otherwise the board's positive ids as `userIds`, and the hydrate binds the board. Postgres path: `i."userId" = ANY(<board>)` after the follow clause, `1 = 0` for an empty board. Not personalized | not a boolean, a null included (`input-invalid`); no entry (`new-creators-miss`: Node builds it from the database), an expired one or one whose `data` is not a list of integers (`new-creators-stale`), a failed read (`new-creators-read-failed`); the gallery still falls back (`input-newCreators`) |
 | `pending` | no published-before-now clause; a moderator's view `(nsfwLevel & level) != 0 OR nsfwLevel = 0`, a signed-in viewer's `pendingViewerImageSql` (no `reviewCollectionId`: server-set), signed out the reviewed view; the pending view is never cached; on the feed path the mapper's empty page (`flag:pending`) | |
 | `include` without `cosmetics` | no user-cosmetic, frame or cosmetic read (nor their miss lookups): `user.cosmetics` `[]`, `cosmetic` `null`; the probe checks the same keys | (the gallery still falls back: `input-include-no-cosmetics`) |
 | `include` holding `tags` | the votable tags (`getImageTagsForImages`): `imageTagsCache` (`packed:caches:image-tags:<imageId>`) read in the page's first pipeline, each tag `{...rest, imageId, id: tagId, type: tagType, nsfwLevel: tagNsfwLevel, name: tagName}` in cached order; for a signed-in viewer their `TagsOnImageVote` rows on the page's images (replica, as Node's `dbRead`) merged as `vote` (`1` for a vote > 0, else `-1`) on the tags they voted; an image whose entry is a `notFound` marker or holds no tag has `tags: undefined`. A miss is computed (§3.1, `image-tags-miss`), never written back; the probe checks the same keys | a miss without the miss computation (`image-tags-miss`), a failed lookup (`image-tags-miss-failed`), an entry Node's `.tags.map` would throw on (`image-tags-shape`); the gallery still falls back (`input-include`) |
 | `followed` | `z.boolean()`, not coerced. Signed out: dropped on both paths (no follow read). Signed in: the viewer's follow list (`getUserFollows`: `userFollowsCache`, `packed:caches:user-follows:<userId>`, `userFollows[userId]?.follows ?? []`, a `notFound` marker as none), read once per request where Node reads it twice (the feed call and the hydrate). Feed path: no follows is `serveFromFeed`'s empty page before the mapping (an unreadable cursor included); more than 10,000 (`followed>10000`) or beside a creator scope, `userId` or a resolved `username` (`flag:followed:userId`), the mapper's empty page, refused after the post ids and before the sort and cursor; otherwise the positive ids, in cached order, as `userIds`, and the hydrate binds the list as `i."userId" = ANY(…)` after the creator clause (Node inlines `IN (…)`). Postgres path: the same clause for a non-empty list, none for an empty one (the unfiltered page, as `prefetchedUserFollows?.length` reads it). Personalized: never cached. A miss is computed (§3.1, `user-follows-miss`), never written back | not a boolean (`input-invalid`); a miss without the miss computation (`user-follows-miss`), a failed lookup (`user-follows-miss-failed`), an entry Node would read differently: another user's record under the key, a `follows` that is not a list of integers (`user-follows-shape`); on the Postgres path a list longer than 10,000 (`followed-db-many`: Node binds one parameter per id); beside `newCreators`, `hubId` or a Hat Turf key, those keys' own fallbacks; the gallery still falls back (`input-followed`) |
 | `collectionId` | `z.number()`, a positive int4; always the Postgres path (`requiresImageDbPath`). After this service's own refusals (the cursor, `prioritizedUserIds`), the permission read on the replica: the `Collection` row's `read` and owner, and for a signed-in viewer their `CollectionContributor` permissions (Node's accepted-invite join only feeds `isCollaborator`, so it is not read). Answered: a Public or Unlisted collection (to anyone, a moderator included), a collection the viewer owns, and no read at all (a collection that does not exist, a private one signed out, to a contributor without VIEW, or to anyone else): Node's `{ nextCursor: undefined, items: [] }`, stamped `source: 'db'`, with no page query. The page: the `ct` CTE over `CollectionItem` (`ci."collectionId"`, `ci."imageId" IS NOT NULL`, the status filter `ci."status" = 'ACCEPTED'`, for a signed-in viewer `OR (ci."status" <> 'REJECTED' AND ci."addedById" = <viewer>)`, the empty-seed `sortKey` hash Node computes outside Random), `JOIN ct ON ct."imageId" = i.id` after the Post join, `ct.note`, `ct.status` and `ct."addedById"` selected after the cursor column; outside the pending view the acceptableMinor clause is `= FALSE` signed out, `(= FALSE OR i."userId" = <viewer>)` signed in, none for a moderator. Not personalized: the cache policy is the scope's (a version, model or Model3D gallery in a collection is cached as without it). The collection, tag and viewer are bound where Node inlines the tag and the viewer. `collectionTagId` (truthy only: `0` is none) adds `AND ci."tagId" = <tag>`. Recently Added (only beside a collection) orders `ct."collectionItemId" DESC`, the cursor on it (inclusive), so `nextCursor` is the look-ahead item's id. Each item's `collectionItemStatus` and `collectionItemAddedById` on the wire; `judgeScore` is `parseJudgeScore(note)`, answered only when it is null | not a number (`input-invalid`); `0`, a negative, a fraction or past int4 (`collection-id`); read granted only by the moderator branch (`collection-moderator`) or only by a contributor row holding VIEW (`collection-contributor`): a private collection's items are answered only to its owner; a failed permission read (the request's error); an item whose note holds a score that is not null (`collection-judge-score`); the Random sort (`input-sort`: the hourly seed and the `seed:sortKey:id` cursor); `collectionTagId` that is not an int4 integer (`collection-tag-id`: Node inlines it) or without a collection (`input-collectionTagId`: Node's BAD_REQUEST); Recently Added without one (`input-sort`); `pendingReviewOnly` (`input-pendingReviewOnly`); the gallery still falls back (`input-collectionId`) |
-| Viewer | as §4 (signed out, cookie sessions, a banned session as signed out); the session's username for the own-feed rule | as §4 |
+| Viewer | as §4 (signed out, cookie sessions, a banned session as signed out); the session's username for the own-feed rule. A verified crawler: on a Node sample (shadow, probe) the app has already decided `x-civitai-verified-bot`, read as `parseVerifiedBotHeader` reads it (`googlebot` or `bingbot`); it counts as signed in for the cap where NSFW is viewable and as signed out elsewhere, is no viewer, and is never edge-cached (createContext): the private Cache-Control. On the public route the app's policy strips the header from any user agent that is not a crawler's, so such a request is a signed-out visitor whatever it carries | as §4; on the public route a crawler's user agent (`crawler-user-agent`: only the app holds the address ranges that verify it) |
 | Gates | withheld, held level, a version or post that cannot be found; moderators exempt | a held model whose settings carry no level (`held-level-unset`), a settings key Node would rebuild (`gallery-settings-miss`) |
 | Tag scope | `system:blocked-browsing-tags` read from the cache cluster | that key absent (`blocked-tags-miss`) or not a `[{id}]` list (`blocked-tags-stale`): Node rebuilds it from the database |
 | Pages | the feed's page and cursor, the empty-page answers; the Postgres page for a post, a collection or a model alone | a feed failure or non-200 (`feed-unavailable`, `feed-status`), a refusal Node answers with a 400 (`feed-cursor:unparsed`, `feed-offset>20000`), a feed cursor on the Postgres path (`input-cursor`), a hydrate that errors or empties the page (`feed-hydrate-error`, `feed-hydrate-empty`), a username the replica does not hold (`username-miss`) |
@@ -2318,3 +2322,92 @@ the same statement (text and bound values) from Go.
     metadata (`fetchModelFilesForCache`); no Go port exists;
   - creator membership (`creator-membership-valid`): falls back. Its origin parses subscription
     products with the app's tier key (as model.getAll's does).
+
+## 17. `model.getAssociatedResourcesCardData` (tRPC, shadow only)
+
+A model page's Suggested Resources cards: `src/server/routers/model.router.ts` (`publicProcedure`,
+input `getAssociatedResourcesSchema`, the `associationSourceVisible` middleware) →
+`getAssociatedResourcesCardDataHandler` (`src/server/controllers/model.controller.ts`). Ported in
+`internal/modelfeed/assoc*.go`, wired in `internal/server/associated.go`, compared at
+`POST /internal/shadow/model.getAssociatedResourcesCardData` (`feed_endpoint="model-associated"`).
+No public route and no Go-first probe: a probe needs a case in the server's golden probe harness
+(`internal/server/probe_test.go`), which these fixtures are not in yet.
+
+### 17.1 What the Node path does
+
+1. **Levels.** `applyDomainFeature` on the raw input (`stripBlockedForNonModerator`, the domain
+   clamp); then the schema's `browsingLevel` default (`allBrowsingLevelsFlag`). No saved level is
+   read. The schema keeps `fromId`, `type` (`Suggested`) and `browsingLevel`; zod strips the rest.
+2. **Source visibility.** Not for a moderator or `fromId` 0: the source model's `poi` and owner; a POI
+   model is its owner's and moderators' (`canViewPoiModel`), anyone else gets NOT_FOUND.
+3. **Targets.** The `ModelAssociations` rows of the source and type, by `index`; a falsy `toModelId`
+   is an article card (`getArticles`). With `type` Suggested, `getSponsoredModel` may put a paid run
+   in the second slot (`creator-promotions`).
+4. **Models.** `getModelsRaw` with `ids` (so Private versions are listed), the default sort, no
+   `take` (at most 101 rows, none popped), no `include` (no frames or event hats). Its addon
+   resolution mutates the handler's `modelInput`, so the image read sees the same exclusions.
+5. **Images.** `getImagesForModelVersion` over every item's shown version: one image per version,
+   viewer-specific (`blockedFor`, the minor content rule, `modelRestricted`, the excluded tags, the
+   level), no tags, no meta, rows untrimmed. Then `associatedCardImages`: the showcase hold
+   (`holdShowcaseImages`, owner exempt, moderators skip it) and `filterImagesForViewer` at every level.
+6. **Cards.** Per item: dropped with no image; `canGenerate` from `resolveCanGenerateForVersions`
+   (`getResourceCanGenerate` with the hidden gate rules, `isGenerationEligible`, a Wildcards
+   version's own gate); metric privacy as model.getAll's; a taken-down model keeps its card with
+   `images: []`.
+7. **Answer.** The association order (a repeated id repeats the card), without models the page query
+   did not return and without owners in the viewer's `HiddenUsers` / `BlockedByUsers` /
+   `BlockedUsers` caches (user `-1` signed out); each card `{ resourceType: 'model', ...model, tags,
+   hashes, hiddenMetrics, rank, images, canGenerate, version, sponsored }`.
+
+### 17.2 What is ported, and what falls back
+
+| Area | Ported | Falls back (reason) |
+|---|---|---|
+| Input | `fromId` (int4), `type`, `browsingLevel`; the client keys `authed` / `direction` | any other key (`input-unknown-key`); a value the schema refuses, a fractional or out-of-int4 `fromId`, a non-numeric or negative `browsingLevel` (`input-invalid`) |
+| Viewer | as §4 | a banned session (`model-assoc-banned-session`); a POI source for a viewer who may not see it (`model-assoc-source-hidden`: Node's 404, never sampled) |
+| Targets | model associations | an article among them (`model-assoc-articles`); more than 100 distinct models (`model-assoc-many`); with `creator-promotions` not known off for the viewer (`FEED_GO_CREATOR_PROMOTIONS`, as §8), any approved model-card run on the source resolved within 7 days, live or not (`model-assoc-sponsored`: Node picks one at random) |
+| Caches | model.getAll's (§15.2), including the misses it computes; the hidden-preferences hash | a missing hidden-preferences field (`model-assoc-hidden-prefs-miss`: Node reads the database and writes it); the gallery-settings and held-level fallbacks of §15.2 |
+| canGenerate | coverage (`generation-coverage-next` mirrored by `FEED_GO_GENERATION_COVERAGE_NEXT`, both states), the explicit-coverage versions, Private versions, `hidden` gate rules on version ids for moderators / nobody / signed out testers | a shown Wildcards card (`model-assoc-wildcards`); the gate rules unmigrated or unreadable (`gate-rules-unmigrated`, `gate-rules-unreadable`); an applicable `hidden` rule naming an ecosystem (`gate-rules-ecosystem`: the base model's ecosystem key is not held here); a `hidden` testers rule naming a shown version or an ecosystem, for a signed-in non-moderator (`gate-rules-testers`: testing access is a per-user Flipt answer) |
+
+### 17.3 Sampler, comparison, measurement
+
+The Node sampler (`src/server/trpc/feed-go-shadow.ts`) mirrors the procedure under its own flag,
+`feed-go-shadow-model-associated` (default off), with the shared URL, sample rate and in-flight cap
+and its own per-second bucket. The comparison is §7's over an array: `shadow.ClassifyArray` keys the
+cards by `id`; categories are `*.<field>`. An answer that loaded no model row is `served_empty` /
+`match_empty`.
+
+**Signed-in coverage.** A signed-in browser batches the procedure when `trpcBatching` is on for it,
+and the sampler never samples a batched call, so the shadow sees anonymous sessions and signed-in
+sessions with batching off only. Each compared sample is therefore also counted by its viewer class,
+`feed_go_shadow_compare_viewer_total{feed_endpoint="model-associated",viewer,result}`, with `viewer`
+one of `anon`, `user`, `owner` (the source model's owner) and `moderator` (`modelfeed.ViewerClasses`,
+a fixed set, each seeded at 0 for `match`). The serve gate requires a minimum number of compared
+samples in every class, not only an overall match rate.
+
+🔴 **Serving this procedure is blocked** until one of these holds: signed-in calls are sampled (a
+per-call capture inside a batch, or a signed-in cohort with batching off), or the serving transport
+takes unbatched calls only, so every call Go would serve is a shape the shadow measured.
+
+```promql
+sum by (viewer) (increase(feed_go_shadow_compare_viewer_total{feed_endpoint="model-associated"}[7d]))
+
+sum(rate(feed_go_shadow_compare_total{feed_endpoint="model-associated",result="match"}[1h]))
+  / sum(rate(feed_go_shadow_compare_total{feed_endpoint="model-associated",result=~"match|fields|order|membership"}[1h]))
+
+topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-associated",mode="shadow"}[1h])))
+```
+
+### 17.4 Parity evidence and known divergences
+
+`testdata/golden/model-assoc` (written by `gen-assoc.mjs`, README "model-assoc"), run by
+`internal/modelfeed/assoc_golden_test.go`. Divergences:
+
+- those of §15.7 that apply (timing, cache staleness, the replica-only reads);
+- `isBaseModelGenerationDisabled` is its own list in `basemodels.json` (`generationDisabled`, from the
+  Node function), read with `.some` semantics: a base model with a later disabled generation override
+  does not generate, as in Node;
+- the two explicitly covered version ids are constants transcribed from
+  `src/shared/constants/generation.constants.ts`;
+- the gate rules are read live on every call; Node answers its last good read when the read fails,
+  which falls back here.

@@ -22,7 +22,7 @@ hosts.
 | `feed` | every call the request makes to the image feed service: the exact `query` string (asserted: an unlisted query fails, and on a served fixture an unasked one fails) and the reply `status` / `body` |
 | `redis` | cache-cluster keys: `packed` (base64 of msgpackr bytes, with the readable `value`; `compressed: true` marks a `compress: true` cache's value, the 0x01 sentinel then brotli of those bytes), `raw` (JSON strings such as gallery settings) or `hash` (metric hashes) |
 | `sysRedis` | system-redis keys (the browsing-settings addons) |
-| `db` | Postgres tables (`images` rows as the getAllImages SELECT returns them, plus `_resources`, their ImageResourceNew rows, in `infinite/` `_tags`, their TagsOnImageDetails tag ids, and in `v1-images/` with `withMeta` `_meta`, their meta jsonb as Postgres prints it; `posts`, `modelVersions`, `models`, `reviews`, `reactions`, `placements`, `users`; for the cache-miss lookups `userCosmetics`, `cosmetics`, `cosmeticShopItems`, their jsonb columns as the text Postgres prints; in an `infinite/` fixture naming a collection, `collections` with their contributor rows and `collectionItems`, every item of it). The harness answers each query feed-go sends from these, evaluating the clauses the fixtures reach |
+| `db` | Postgres tables (`images` rows as the getAllImages SELECT returns them, plus `_resources`, their ImageResourceNew rows, in `infinite/` `_tags`, their TagsOnImageDetails tag ids, and in `v1-images/` with `withMeta` `_meta`, their meta jsonb as Postgres prints it; `posts`, `modelVersions`, `models`, `reviews`, `reactions`, `placements`, `users`; for the cache-miss lookups `userCosmetics`, `cosmetics`, `cosmeticShopItems`, their jsonb columns as the text Postgres prints; in an `infinite/` fixture naming a collection, `collections` with their contributor rows and `collectionItems`, every item of it; in one sending `prioritizedUserIds: [-1]` with a version, `systemPosts`, the system user's posts on each version Node looked one up for). The harness answers each query feed-go sends from these, evaluating the clauses the fixtures reach |
 | `expect` | `fallback` (the reason feed-go must fall back with), or the Node answer: `envelope` (`{json, meta}`) plus `cacheable` (signed out), or `body` (REST); for tRPC also `writes`, every cache key Node's fetches write on the request's misses (`packed` + `value` + `ex`). The harness runs each served fixture twice: write-back off (the cache must be untouched) and on (it must change by exactly `writes`) |
 
 A `cold-*` fixture holds some cache keys absent (the spec's `cold` list): the mirror runs the cache's
@@ -95,6 +95,28 @@ the fetch writes (`expect.writes`); the harness runs every served fixture with w
 cache untouched) and on (exactly those writes). Extra keys: `config` holds the model flag mirrors;
 `db` holds `paidAccess`, `coverImages`, `tags` (by name) and `creators` (by username). Raise
 `goldenMinModels` with the count.
+
+## model-assoc
+
+`gen-assoc.mjs` writes them (model.getAssociatedResourcesCardData, DESIGN.md §17). Like
+`gen-models.mjs` it runs the REAL Node functions for every pure step (the input schemas, the level
+middleware, the addons, the .com face, the viewer image filter, the minor content rule, metric
+privacy, `isGenerationEligible`, the gate rule schema and its helpers, `superjson`) and transcribes
+the orchestration that reads the database and the caches. Its own format: `request` (the raw input,
+the viewer, the domain cap), `config` (the coverage and promotions mirrors), `world` (the source
+model, the association rows, the approved promotion count, the page-query rows and the image-query
+rows Node's queries returned, the model-data cache entries, the users, the gallery settings, the
+privacy defaults and memberships, the hidden-preferences ids, the stored gate rules, the addons),
+`binds` (the model ids and level Node bound on the page query, the version ids of the image read) and
+`expect` (`envelope` or `fallback`). `internal/modelfeed/assoc_golden_test.go` runs each through
+`ParseAssociated` and `ServeAssociated` over fakes holding that world (the real hidden-preferences
+and gate-rule readers over in-memory Redis), requires the binds, and compares with `shadow.Compare`.
+
+```bash
+TZ=UTC node --import tsx apps/feed-go/testdata/golden/gen-assoc.mjs   # model-assoc/
+```
+
+Raise `assocGoldenMin` with the count.
 
 ## v1-models
 

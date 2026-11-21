@@ -201,6 +201,10 @@ func parseOfficialEntry(raw []byte) ([]OfficialModel, float64, bool) {
 	return list, at, true
 }
 
+// Float is toFloat for the other packages reading a fetchThroughCache entry (its `cachedAt`, its
+// numbers).
+func Float(v any) (float64, bool) { return toFloat(v) }
+
 // toFloat is a msgpack number as a float64 (`typeof cachedAt === 'number'`; NaN is one, and never
 // expires, as `x > NaN` is false in Node too).
 func toFloat(v any) (float64, bool) {
