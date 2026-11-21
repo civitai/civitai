@@ -107,7 +107,12 @@ export async function payDueCompensation(now: Date) {
   }
 }
 
-type UserVersions = { userId: number; modelVersionIds: number[]; baseModels?: string[] };
+type UserVersions = {
+  userId: number;
+  modelVersionIds: number[];
+  baseModels?: string[];
+  paidByInvoice?: boolean[];
+};
 // Orchestrator ships PascalCase accountType (e.g. 'Yellow', 'CashSettled'); the
 // buzz API tolerates the aliases so we forward them as-is and only branch on
 // cashSettled below for the pennies conversion.
@@ -303,14 +308,15 @@ export async function runPayout(lastUpdate: Date) {
         SELECT
           m."userId" as "userId",
           array_agg(mv.id::int ORDER BY mv.id) as "modelVersionIds",
-          array_agg(mv."baseModel" ORDER BY mv.id) as "baseModels"
+          array_agg(mv."baseModel" ORDER BY mv.id) as "baseModels",
+          array_agg(mv."licensingFeePaidByInvoice" ORDER BY mv.id) as "paidByInvoice"
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
         WHERE mv.id IN (${Prisma.join(versionIds)})
         GROUP BY m."userId";
       `;
 
-    for (const { userId, modelVersionIds, baseModels = [] } of userVersions) {
+    for (const { userId, modelVersionIds, baseModels = [], paidByInvoice = [] } of userVersions) {
       if (!modelVersionIds.length || userId === -1) continue;
 
       if (!creatorsToPay[userId]) creatorsToPay[userId] = [];
@@ -321,11 +327,14 @@ export async function runPayout(lastUpdate: Date) {
       const earningsStoppedIds = modelVersionIds.filter((_, i) =>
         stopsCreatorEarnings(baseModels[i])
       );
+      // An invoice-paid licensor is paid against their invoice, so minting the fee as well would pay it twice.
+      const invoicedIds = modelVersionIds.filter((_, i) => paidByInvoice[i] === true);
       creatorsToPay[userId].push(
         ...batch.filter(
           (r) =>
             modelVersionIds.includes(r.modelVersionId) &&
-            !(r.source !== 'tip' && earningsStoppedIds.includes(r.modelVersionId))
+            !(r.source !== 'tip' && earningsStoppedIds.includes(r.modelVersionId)) &&
+            !(r.source === 'licenseFee' && invoicedIds.includes(r.modelVersionId))
         )
       );
     }

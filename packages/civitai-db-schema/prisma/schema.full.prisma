@@ -1373,6 +1373,9 @@ model ModelVersion {
   licensingFeeMarkup             Decimal?                        @db.Decimal(5, 2)
   // Staff set it by hand: while true only a moderator may change the fee, its type or its currency.
   licensingFeeLocked             Boolean                         @default(false)
+  // Staff set it by hand: the licensor is paid by invoice, so the daily payout mints none of this
+  // version's licence fee. Its resourceCompensations rows stay as the usage ledger.
+  licensingFeePaidByInvoice      Boolean                         @default(false)
 
   // Licensing lineage: the root version whose fee this version inherits (e.g. a
   // checkpoint built on Anima-Turbo points at the turbo version). Null means NO
