@@ -117,6 +117,15 @@ describe('deleteImageHandler, a delete a hold keeps', () => {
 
     expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(9, true) })).toEqual({ id: 55 });
   });
+
+  it('tells a moderator their kept delete waits on a review the owner can see', async () => {
+    deleteImagesMock.mockResolvedValue([]);
+    pendingDeletionMock.mockResolvedValue(new Set([55]));
+
+    expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(9, true) })).toEqual({
+      deleteAfterReview: true,
+    });
+  });
 });
 
 describe('deletePostHandler', () => {

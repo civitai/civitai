@@ -5,9 +5,9 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { DELETE_AFTER_REVIEW_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 
 /**
- * Shows what the server says about a delete of the caller's own content, and whether it said
- * anything: the review notice, or the one text every other member delete gets (`deleteNotice`). A
- * server from before `deleteNotice` sends only the review flag.
+ * Shows what the server says about a delete, and whether it said anything: the one text every member
+ * delete gets (`deleteNotice`), or the review notice, which only a moderator's kept delete, or a
+ * server from before `deleteNotice`, still sends.
  */
 export function notifyDeleteNotice(result: unknown) {
   const { deleteAfterReview, deleteNotice } = (result ?? {}) as {
