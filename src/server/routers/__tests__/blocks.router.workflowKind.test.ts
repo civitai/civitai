@@ -533,6 +533,60 @@ describe("kind:'workflow' ESTIMATE", () => {
     expect(whatifs()).toHaveLength(0);
   });
 
+  // Media inputs take references; nothing else does (app-step-positions.ts).
+  it('refuses a reference at a model input before pricing, and chains one into an image', async () => {
+    await expect(
+      estimate(
+        body({
+          steps: [
+            { $type: 'imageGen', name: 'gen', input: GEN_INPUT },
+            {
+              $type: 'imageGen',
+              name: '$1',
+              input: { prompt: 'a cat', model: { $ref: 'gen', path: 'output.text' } },
+            },
+          ],
+        })
+      )
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining("'model'") });
+    expect(whatifs()).toHaveLength(0);
+
+    await estimate(body());
+    expect(whatifs()).toHaveLength(1);
+  });
+
+  // Goes red until civitai/civitai#9935 (the access rule in checkAppStepResources) is on this
+  // branch; this PR must not merge before it. A value placed through `arguments` is a literal, so
+  // the literal resource check has to refuse another user's Private version there.
+  it("refuses another user's Private version placed through arguments", async () => {
+    dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+      where: { id: { in: number[] } };
+    }) =>
+      args.where.id.in.map((id) => ({
+        id,
+        baseModel: 'SDXL 1.0',
+        status: 'Published',
+        availability: 'Private',
+        usageControl: 'Download',
+        model: { userId: VIEWER + 1 },
+      }))) as never);
+    await expect(
+      estimate(
+        body({
+          steps: [
+            {
+              $type: 'imageGen',
+              name: 'gen',
+              input: { prompt: 'a cat', model: { $ref: '$arguments', path: 'model' } },
+            },
+          ],
+          arguments: { model: 'urn:air:sdxl:checkpoint:civitai:1@555' },
+        })
+      )
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(whatifs()).toHaveLength(0);
+  });
+
   it('refuses a workflow that runs a TRAINING step before pricing it, as the submit does', async () => {
     whatifCost = { total: 20, base: 20 };
     const { snapshot } = await estimate(
