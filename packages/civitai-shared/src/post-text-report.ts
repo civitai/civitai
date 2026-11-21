@@ -6,8 +6,8 @@
 export const MINOR_SEXUALIZATION_VIOLATION = 'Child abuse and exploitation';
 
 /**
- * The TOS violations whose open report puts an image or post in a child-safety case, which holds
- * its owner's delete (`childSafetyImageCase` in @civitai/db-queries/content-deletion). Entries of
+ * The TOS violations whose open report puts an image or post in a child-safety case, which holds a
+ * delete of it (`childSafetyImageCase` in @civitai/db-queries/child-safety-case). Entries of
  * `TOS_VIOLATIONS`, held together by the same test.
  */
 export const CHILD_SAFETY_VIOLATIONS = [

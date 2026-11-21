@@ -7,17 +7,15 @@ import type * as Caches from '~/server/redis/caches';
 
 // A post delete emits no per-image event, so the sweep cannot attribute it to the owner.
 
-const { deleteImagesMock, deletePostMock, closeMock, pendingDeletionMock } = vi.hoisted(() => ({
+const { deleteImagesMock, deletePostMock, closeMock } = vi.hoisted(() => ({
   deleteImagesMock: vi.fn(),
-  pendingDeletionMock: vi.fn(),
   deletePostMock: vi.fn(),
   closeMock: vi.fn(),
 }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
-  deleteImages: deleteImagesMock,
-  imagesPendingDeletion: pendingDeletionMock,
+  deleteImagesWithOutcome: deleteImagesMock,
 }));
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
@@ -35,6 +33,12 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 import { deleteImageHandler } from '../image.controller';
 import { deletePostHandler } from '../post.controller';
 
+/** The delete's outcome: the rows it deleted, and the ids its child-safety case kept. */
+const outcome = (deleted: unknown[], kept: { id: number; ownerTold: boolean }[] = []) => ({
+  deleted,
+  kept,
+});
+
 const ctx = (userId: number, isModerator = false) =>
   ({
     user: { id: userId, isModerator },
@@ -44,13 +48,12 @@ const ctx = (userId: number, isModerator = false) =>
 beforeEach(() => {
   vi.clearAllMocks();
   closeMock.mockResolvedValue(undefined);
-  pendingDeletionMock.mockResolvedValue(new Set());
 });
 
 describe('deleteImageHandler', () => {
   it("closes the deleter's pending appeals on the deleted image", async () => {
     // The image row names another owner: ownerId must still be the deleter.
-    deleteImagesMock.mockResolvedValue([{ userId: 99, nsfwLevel: 1 }]);
+    deleteImagesMock.mockResolvedValue(outcome([{ userId: 99, nsfwLevel: 1 }]));
 
     await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) });
 
@@ -64,7 +67,7 @@ describe('deleteImageHandler', () => {
     ['a member', false],
     ['a moderator', true],
   ])('tells the delete who is deleting, and nothing else: %s', async (_, isModerator) => {
-    deleteImagesMock.mockResolvedValue([]);
+    deleteImagesMock.mockResolvedValue(outcome([]));
 
     await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7, isModerator) });
 
@@ -72,15 +75,17 @@ describe('deleteImageHandler', () => {
   });
 
   it("returns the deleted image's id and none of its moderation state", async () => {
-    deleteImagesMock.mockResolvedValue([
-      { id: 55, userId: 7, nsfwLevel: 1, url: 'k', needsReview: 'csam', blockedFor: 'CSAM' },
-    ]);
+    deleteImagesMock.mockResolvedValue(
+      outcome([
+        { id: 55, userId: 7, nsfwLevel: 1, url: 'k', needsReview: 'csam', blockedFor: 'CSAM' },
+      ])
+    );
 
     expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) })).toEqual({ id: 55 });
   });
 
   it('closes nothing when nothing was deleted', async () => {
-    deleteImagesMock.mockResolvedValue([]);
+    deleteImagesMock.mockResolvedValue(outcome([]));
 
     await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) });
 
@@ -91,8 +96,7 @@ describe('deleteImageHandler', () => {
 // Only a case the owner can already see is acknowledged; any other kept delete answers like a delete.
 describe('deleteImageHandler, a delete that waits on a review', () => {
   it('answers with the notice when the kept image waits on a review its owner can see', async () => {
-    deleteImagesMock.mockResolvedValue([]);
-    pendingDeletionMock.mockResolvedValue(new Set([55]));
+    deleteImagesMock.mockResolvedValue(outcome([], [{ id: 55, ownerTold: true }]));
 
     expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) })).toEqual({
       deleteAfterReview: true,
@@ -101,15 +105,21 @@ describe('deleteImageHandler, a delete that waits on a review', () => {
   });
 
   it('answers like a delete when the review is one its owner cannot see', async () => {
-    deleteImagesMock.mockResolvedValue([]);
+    deleteImagesMock.mockResolvedValue(outcome([], [{ id: 55, ownerTold: false }]));
 
     expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) })).toBeNull();
-    expect(pendingDeletionMock).toHaveBeenCalledWith([55]);
+  });
+
+  it('tells a moderator their delete was kept, whatever the owner may see', async () => {
+    deleteImagesMock.mockResolvedValue(outcome([], [{ id: 55, ownerTold: false }]));
+
+    expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(9, true) })).toEqual({
+      deleteAfterReview: true,
+    });
   });
 
   it('answers with the deleted id when the image went', async () => {
-    deleteImagesMock.mockResolvedValue([{ id: 55, userId: 7, nsfwLevel: 1 }]);
-    pendingDeletionMock.mockResolvedValue(new Set([55]));
+    deleteImagesMock.mockResolvedValue(outcome([{ id: 55, userId: 7, nsfwLevel: 1 }]));
 
     expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) })).toEqual({ id: 55 });
   });

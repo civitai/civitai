@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -90,7 +91,7 @@ CREATE TABLE "File" ("entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "CommentTopic" ("entityType" TEXT, "entityId" INTEGER);
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
-CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel', 'ImageDelete');
+CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel', 'ImageDelete');
 CREATE TABLE "JobQueue" (
   "entityId" INTEGER, "entityType" "EntityType", "type" "JobQueueType", "data" JSONB,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
@@ -109,6 +110,7 @@ beforeEach(async () => {
   vi.mocked(syncSearchIndexBulk).mockClear();
   db = await freshPglite();
   await db.exec(SCHEMA);
+  await db.exec(imageUseTablesSql);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
 
@@ -348,18 +350,21 @@ const flagImage2Late = () =>
 describe('the stored file a deleted image leaves queued', () => {
   beforeEach(() => image(PLAIN));
 
-  // The holds refuse CSAM-marked images today; this one is flagged after the check and its DELETE's
-  // re-check is skipped, as if it got through: its earlier versions stay.
-  it('is deleted by key alone for a CSAM-marked image, purging no versions', async () => {
+  // Flagged after the hold check, with the DELETE's hold re-check skipped: the delete's own
+  // child-safety case check still keeps it, queued for when the case closes, its file untouched.
+  it('keeps an image flagged for CSAM review after the check, as a pending delete', async () => {
     await image(2);
     await flagImage2Late();
     skipHoldRecheck.current = true;
-    await deleteImages([PLAIN, 2]);
-    expect(await remaining()).toEqual([]);
+    const refused = await deleteImages([PLAIN, 2]);
+    expect(await remaining()).toEqual([2]);
     expect(await queuedFiles()).toEqual([
       { entityId: PLAIN, data: { url: `key-${PLAIN}`, allVersions: true } },
-      { entityId: 2, data: { url: 'key-2' } },
     ]);
+    expect(refused).toEqual([{ id: 2, reason: 'review' }]);
+    expect(
+      (await db.query(`SELECT "entityId", data FROM "JobQueue" WHERE type = 'PendingDelete'`)).rows
+    ).toEqual([{ entityId: 2, data: { deletedBy: 'moderator:1', moderatorDelete: true } }]);
   });
 });
 
@@ -390,13 +395,13 @@ describe('removeImages on an owner with a hold marker', () => {
     await image(PLAIN, { userId: OTHER_OWNER });
   });
 
-  it.each([
-    ['a clean image', {}],
-    ['an image flagged for CSAM review', { needsReview: 'csam' }],
-  ])('blocks %s instead of leaving it live, and keeps its file', async (_label, state) => {
-    await image(2, state);
+  it('blocks a clean image instead of leaving it live, and keeps its file', async () => {
+    await image(2);
     await db.query(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 2`);
     await db.query(`INSERT INTO "CollectionItem" VALUES ($1), (2)`, [PLAIN]);
+    // A cleanup still queued for it from before: the trigger, not a case, is what keeps it now.
+    await db.query(`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+      VALUES (2, 'Image', 'PendingDelete', '{"cleanup": true}')`);
     const refused = await deleteImages([PLAIN, 2]);
     expect(await remaining()).toEqual([2]);
     expect(await collectionItems()).toEqual([2]);
@@ -406,5 +411,19 @@ describe('removeImages on an owner with a hold marker', () => {
     expect(refused).toEqual([{ id: 2, reason: 'evidence' }]);
     // Blocked by the trigger, so it leaves search with the deleted one.
     expect(deindexed()).toEqual([PLAIN, 2]);
+  });
+
+  // Its child-safety case keeps it before the trigger is reached, so it stays as it was.
+  it('keeps an image flagged for CSAM review untouched, as a pending delete', async () => {
+    await image(2, { needsReview: 'csam' });
+    await db.query(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 2`);
+    await db.query(`INSERT INTO "CollectionItem" VALUES ($1), (2)`, [PLAIN]);
+    const refused = await deleteImages([PLAIN, 2]);
+    expect(await remaining()).toEqual([2]);
+    expect(await collectionItems()).toEqual([2]);
+    expect(await imageRow(2)).toMatchObject({ ingestion: 'Scanned' });
+    expect(await queuedUrls()).toEqual([`key-${PLAIN}`]);
+    expect(refused).toEqual([{ id: 2, reason: 'review' }]);
+    expect(deindexed()).toEqual([PLAIN]);
   });
 });

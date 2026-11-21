@@ -24,7 +24,7 @@ import {
 import {
   addBlockedImage,
   bulkRemoveBlockedImages,
-  deleteImages,
+  deleteImagesWithOutcome,
   imagesPendingDeletion,
   getAllImagesIndex,
   getImagesForModelVersionCache,
@@ -197,9 +197,13 @@ export const deleteImageHandler = async ({
       .filter((tag) => tag.concrete)
       .map((tag) => ({ tagName: tag.tagName }));
 
-    const [image] = await deleteImages([input.id], { actor: ctx.user });
-    // Only a case the owner can already see is acknowledged; any other kept delete answers like a delete.
-    if (!image && (await imagesPendingDeletion([input.id])).has(input.id))
+    const {
+      deleted: [image],
+      kept: [kept],
+    } = await deleteImagesWithOutcome([input.id], { actor: ctx.user });
+    // A moderator hears of a delete its child-safety case keeps; an owner only of one on a case they can
+    // already see. Any other kept delete answers like a delete.
+    if (kept && (ctx.user.isModerator || kept.ownerTold))
       return { deleteAfterReview: true as const };
 
     if (image) {
