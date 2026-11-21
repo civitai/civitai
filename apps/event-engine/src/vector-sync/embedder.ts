@@ -32,6 +32,8 @@ type WorkflowStep = {
 };
 
 const MAX_DETAIL_CHARS = 600;
+// An outage fails a whole batch alike: a few of its steps say what the rest would.
+const MAX_DETAILED_STEPS = 10;
 /**
  * What a failed step says about itself, for the log: everything but its input (the media URL) and
  * the embedding. The step schema documents no error field, so nothing is picked by name.
@@ -48,6 +50,11 @@ export function failedStepDetail(step: WorkflowStep | undefined): string {
   const detail = JSON.stringify(kept).replace(/https?:\/\/[^"\s]*/g, '<url>');
   return detail.length > MAX_DETAIL_CHARS ? `${detail.slice(0, MAX_DETAIL_CHARS)}…` : detail;
 }
+
+const stepDetails = (ids: string[], steps: Map<string | undefined, WorkflowStep>) =>
+  ids
+    .slice(0, MAX_DETAILED_STEPS)
+    .map((id) => ({ id, detail: failedStepDetail(steps.get(stepName(id))) }));
 
 export const MAX_INPUTS_PER_WORKFLOW = 128;
 export const MAX_VIDEOS_PER_WORKFLOW = 8;
@@ -563,7 +570,7 @@ export class Embedder {
           workflow: workflow.id,
           status: workflow.status,
           ids: failed,
-          steps: failed.map((id) => ({ id, detail: failedStepDetail(steps.get(stepName(id))) })),
+          steps: stepDetails(failed, steps),
         },
         'vector-sync: workflow kept failing after retries; inputs failed'
       );
@@ -576,7 +583,7 @@ export class Embedder {
           workflow: workflow.id,
           ids: failed,
           ...(batch.length === 1 && { reason: 'media-unavailable' }),
-          steps: failed.map((id) => ({ id, detail: failedStepDetail(steps.get(stepName(id))) })),
+          steps: stepDetails(failed, steps),
         },
         'vector-sync: steps failed to embed'
       );
