@@ -165,13 +165,11 @@ describe('github-paths-filter', () => {
       ).toEqual({ run: true, reason: 'a changed file passes its pull_request paths filter' });
     });
 
-    it('reads the filter from the file: a main-app file apps.yml lists dispatches it', () => {
-      expect(decide(workflow('apps.yml'), ['src/server/services/knights/x/y.ts'], DRAFT).run).toBe(
-        true
-      );
-      expect(
-        decide(workflow('moderator-boot.yml'), ['src/server/services/knights/x/y.ts'], DRAFT).run
-      ).toBe(false);
+    it('reads the filter from the workflow text: one change, two filters, two verdicts', () => {
+      const lists = (p: string) => `on:\n  pull_request:\n    paths:\n      - '${p}'\n`;
+      const change = ['lib/shared/x.ts'];
+      expect(decide(lists('lib/**'), change, DRAFT).run).toBe(true);
+      expect(decide(lists('apps/**'), change, DRAFT).run).toBe(false);
     });
 
     it('MUST NOT dispatch on a ready PR: its own run on the commit is not draft-gated', () => {

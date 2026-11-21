@@ -19,7 +19,8 @@
  *     a `!pattern` un-ignores).
  *   - no filter: the run starts.
  * Not supported here: `?`, `+`, `[]`, `{}` (no workflow in this repo uses them). Such a pattern
- * throws, and every caller treats a throw as "it would run".
+ * throws: `decide` treats that as "it would run"; assert-apps-paths-filter.mjs does not catch
+ * it, so that check fails on such a pattern instead.
  *
  * The workflow file is read by a small YAML reader for this one block, not a YAML library: the
  * job that calls it installs no packages. It understands block lists of plain or quoted scalars

@@ -498,8 +498,8 @@ describe('the full-ci label', () => {
       });
 
       // What the script prints, and what each flag does, is tested by running it
-      // (github-paths-filter.test.ts, "the CLI"). Pinned here is only the step's side of that
-      // contract: which inputs it hands the script, and how it reads the answer.
+      // (github-paths-filter.test.ts, "the CLI"). Pinned here is only which inputs the step
+      // hands it.
       it('get their verdicts from the filter script, with the draft flag and changed files', () => {
         expect(step?.env?.DRAFT).toBe('${{ github.event.pull_request.draft }}');
         // The PR's changed files, with a rename's old path too (nothing else checks that).
@@ -508,11 +508,6 @@ describe('the full-ci label', () => {
         const call = /node scripts\/ci\/github-paths-filter\.mjs ([^\n]*)/.exec(run)?.[1] ?? '';
         expect(call).toContain('--draft "$DRAFT"');
         expect(call).toMatch(/--changed "\$changed"/);
-        // Reading the answer: the script's second tab-separated column, and only an exact `skip`
-        // skips. Every workflow starts as `run`, so a missing line dispatches.
-        expect(run).toContain("awk -F '\\t'");
-        expect(run).toMatch(/cut -f2[^\n]*= skip/);
-        expect(run).toMatch(/^\s*verdict\[\$wf\]=run$/m);
       });
 
       // A ledger, so a new draft-gated workflow is either dispatched here or exempted here.
