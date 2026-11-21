@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as SearchIndex from '~/server/search-index';
 
 // The moderator app syncs every image it moderates through this endpoint
@@ -43,13 +44,46 @@ function call(body: unknown) {
 describe('search-index-update', () => {
   beforeEach(() => {
     metricsQueue.mockReset();
+    // The collections leg first checks for its cover index; with none it throws and the requeue retries.
+    dbMock.dbWrite.$queryRaw
+      .mockReset()
+      .mockImplementation((async (sql: TemplateStringsArray) =>
+        sql.join('?').includes('pg_index') ? [{ present: true }] : []) as never);
   });
+
+  /** The image -> model lookup that opens every blocked-image requeue, by the ids it read. */
+  const documentLookups = () =>
+    dbMock.dbWrite.$queryRaw.mock.calls
+      .filter(([strings]) =>
+        (strings as TemplateStringsArray)
+          .join('?')
+          .includes('SELECT DISTINCT p."modelVersionId", mv."modelId"')
+      )
+      .map(([, ...values]) => values);
 
   it("syncs a moderated image's metrics index", async () => {
     const res = await call({ entityType: 'image', entityId: 42, action: 'delete' });
     expect(res.statusCode).toBe(200);
     expect(metricsQueue).toHaveBeenCalledTimes(1);
     expect(metricsQueue.mock.calls[0][0]).toEqual([{ id: 42, action: 'Delete' }]);
+  });
+
+  // The moderator app's single-image block sends exactly this body.
+  it('queues the documents showing an image the moderator app removed', async () => {
+    const res = await call({ entityType: 'image', entityIds: [42, 43], action: 'delete' });
+    expect(res.statusCode).toBe(200);
+    expect(documentLookups()).toEqual([[[42, 43]]]);
+  });
+
+  it('leaves the documents of an image it only updates, as on a restore (control)', async () => {
+    await call({ entityType: 'image', entityId: 42, action: 'update' });
+    expect(metricsQueue).toHaveBeenCalledTimes(1);
+    expect(documentLookups()).toEqual([]);
+  });
+
+  it('leaves image documents alone when another entity is deleted (control)', async () => {
+    await call({ entityType: 'model', entityId: 42, action: 'delete' });
+    expect(documentLookups()).toEqual([]);
   });
 
   it('still refuses an entity type it has no index for', async () => {
