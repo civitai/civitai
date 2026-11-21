@@ -31,7 +31,8 @@ type Viewer struct {
 
 // ViewerHeader carries the viewer of a listing request: a token the web tier signs with the key
 // it shares with this service (APP_INDEX_VIEWER_KEY). The listing routes answer nothing without a
-// valid one.
+// valid one. During a key rotation the service also accepts APP_INDEX_VIEWER_KEY_NEXT, so the web
+// tier can switch to the new key with no window in which its tokens are refused.
 const ViewerHeader = "X-App-Index-Viewer"
 
 // Bounds of a viewer token.
@@ -51,6 +52,20 @@ const (
 	// which every gate masks off) and no more.
 	maxBrowsingLevel = 63
 )
+
+// KeysUsable reports whether keys can verify tokens: at least one key, and every key at least
+// MinViewerKeyLen bytes. A short key is a misconfiguration, never a key to try.
+func KeysUsable(keys [][]byte) bool {
+	if len(keys) == 0 {
+		return false
+	}
+	for _, k := range keys {
+		if len(k) < MinViewerKeyLen {
+			return false
+		}
+	}
+	return true
+}
 
 // ErrBadViewer is any viewer token that is missing, malformed, wrongly signed or expired.
 var ErrBadViewer = errors.New("listingread: bad viewer token")
@@ -88,12 +103,14 @@ func viewerMAC(key []byte, signed string) []byte {
 	return m.Sum(nil)
 }
 
-// ParseViewer checks a viewer token at now and returns its viewer, or ErrBadViewer. The signature
-// is checked before the payload is read. A scope this build does not know is `none` (NarrowScope),
+// ParseViewer checks a viewer token at now against keys (the current key, then the next one while a
+// rotation is under way) and returns its viewer, or ErrBadViewer. The token is accepted when its
+// signature is any key's; every key is compared, each in constant time. No keys, or any key shorter
+// than MinViewerKeyLen, accepts nothing. The signature is checked before the payload is read. A scope this build does not know is `none` (NarrowScope),
 // as on the site; an unknown host, a level outside 0..63, an unknown field, a missing field, or an
 // expiry in the past or more than MaxViewerTTL ahead (each with viewerSkew) is refused.
-func ParseViewer(key []byte, token string, now time.Time) (Viewer, error) {
-	if len(key) < MinViewerKeyLen || token == "" || len(token) > maxViewerToken {
+func ParseViewer(keys [][]byte, token string, now time.Time) (Viewer, error) {
+	if !KeysUsable(keys) || token == "" || len(token) > maxViewerToken {
 		return Viewer{}, ErrBadViewer
 	}
 	parts := strings.Split(token, ".")
@@ -101,7 +118,16 @@ func ParseViewer(key []byte, token string, now time.Time) (Viewer, error) {
 		return Viewer{}, ErrBadViewer
 	}
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil || !hmac.Equal(sig, viewerMAC(key, parts[0]+"."+parts[1])) {
+	if err != nil {
+		return Viewer{}, ErrBadViewer
+	}
+	signed := false
+	for _, key := range keys {
+		if hmac.Equal(sig, viewerMAC(key, parts[0]+"."+parts[1])) {
+			signed = true
+		}
+	}
+	if !signed {
 		return Viewer{}, ErrBadViewer
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])

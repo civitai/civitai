@@ -20,12 +20,19 @@ type Listing struct {
 	Rev  string
 	Body json.RawMessage
 	// App is the URN of the app entity the listing presents.
-	App           string
-	Slug          string
-	Name          string
-	Kind          string
-	Category      string
+	App      string
+	Slug     string
+	Name     string
+	Kind     string
+	Category string
+	// ContentRating is the app entity's rating, the body's contentRating: the listing's own when it
+	// is known, else its block's (the adapter's appContentRating). The stream reaches exactly the
+	// audiences that rating admits. It is NOT what the store gates on.
 	ContentRating string
+	// ListingContentRating is the listing's own rating, the body's listingContentRating: the
+	// column the store gates on and shows (al.content_rating: listingMatureFilter,
+	// listingMediaCeiling, the card's contentRating). Empty is null.
+	ListingContentRating string
 	// CreatorID is the creator chip's user id; nil without a creator.
 	CreatorID *int64
 	// CreatedAt is the `newest` sort key; nil when the body has none.
@@ -84,17 +91,19 @@ var (
 )
 
 type listingBody struct {
-	App           *string           `json:"app"`
-	Slug          *string           `json:"slug"`
-	Name          *string           `json:"name"`
-	Kind          *string           `json:"kind"`
-	ContentRating json.RawMessage   `json:"contentRating"`
-	Category      json.RawMessage   `json:"category"`
-	Media         []json.RawMessage `json:"media"`
-	Creator       json.RawMessage   `json:"creator"`
-	Stats         json.RawMessage   `json:"stats"`
-	CreatedAt     json.RawMessage   `json:"createdAt"`
-	UpdatedAt     json.RawMessage   `json:"updatedAt"`
+	App           *string         `json:"app"`
+	Slug          *string         `json:"slug"`
+	Name          *string         `json:"name"`
+	Kind          *string         `json:"kind"`
+	ContentRating json.RawMessage `json:"contentRating"`
+	// ListingContentRating is required (null allowed): without it a listing cannot be gated.
+	ListingContentRating json.RawMessage   `json:"listingContentRating"`
+	Category             json.RawMessage   `json:"category"`
+	Media                []json.RawMessage `json:"media"`
+	Creator              json.RawMessage   `json:"creator"`
+	Stats                json.RawMessage   `json:"stats"`
+	CreatedAt            json.RawMessage   `json:"createdAt"`
+	UpdatedAt            json.RawMessage   `json:"updatedAt"`
 }
 
 type mediaBody struct {
@@ -130,6 +139,8 @@ func ListingFromEntity(urn, rev string, body json.RawMessage) (Listing, []Drop, 
 		return Listing{}, nil, errors.New("kind missing or unknown")
 	case b.ContentRating == nil:
 		return Listing{}, nil, errors.New("contentRating missing")
+	case b.ListingContentRating == nil:
+		return Listing{}, nil, errors.New("listingContentRating missing")
 	case b.Media == nil:
 		return Listing{}, nil, errors.New("media missing")
 	}
@@ -137,6 +148,9 @@ func ListingFromEntity(urn, rev string, body json.RawMessage) (Listing, []Drop, 
 	var err error
 	if l.ContentRating, err = nullableString(b.ContentRating); err != nil {
 		return Listing{}, nil, fmt.Errorf("contentRating: %w", err)
+	}
+	if l.ListingContentRating, err = nullableString(b.ListingContentRating); err != nil {
+		return Listing{}, nil, fmt.Errorf("listingContentRating: %w", err)
 	}
 	if l.Category, err = nullableString(b.Category); err != nil {
 		return Listing{}, nil, fmt.Errorf("category: %w", err)

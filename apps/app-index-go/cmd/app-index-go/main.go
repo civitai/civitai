@@ -118,9 +118,14 @@ func run(log *slog.Logger) error {
 	if listingStore != nil {
 		apiServer.Listings = listingStore
 		apiServer.ViewerKey = []byte(cfg.ViewerKey)
+		apiServer.ViewerKeyNext = []byte(cfg.ViewerKeyNext)
+		apiServer.ListingsLayout = index.ListingsLayoutVersion
 		apiServer.ListingReads = metrics.NewListingReads(reg)
 		if len(cfg.ViewerKey) < listingread.MinViewerKeyLen {
 			log.Error("APP_INDEX_VIEWER_KEY is unset or shorter than 32 bytes; the listing API answers 503")
+		}
+		if cfg.ViewerKeyNext != "" && len(cfg.ViewerKeyNext) < listingread.MinViewerKeyLen {
+			log.Error("APP_INDEX_VIEWER_KEY_NEXT is set but shorter than 32 bytes; the listing API answers 503")
 		}
 	}
 	srv := &http.Server{

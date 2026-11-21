@@ -24,7 +24,7 @@ import (
 var viewerKey = []byte("0123456789abcdef0123456789abcdef")
 
 // listingBody is a store-listing@v1 body as the adapter sends it (entities.ts listingBody).
-const paintBody = `{"app":"urn:apps.civitai.com:app/paint","slug":"paint","name":"Paint","kind":"onsite","contentRating":"pg",
+const paintBody = `{"app":"urn:apps.civitai.com:app/paint","slug":"paint","name":"Paint","kind":"onsite","contentRating":"pg","listingContentRating":"pg",
 "tagline":"Paint things","category":"generation","description":"Long text","iconUrl":"https://img.invalid/paint/icon",
 "media":[
  {"slot":"icon","host":"any","url":"https://img.invalid/paint/icon","nsfwLevel":1,"rating":"pg"},
@@ -36,13 +36,13 @@ const paintBody = `{"app":"urn:apps.civitai.com:app/paint","slug":"paint","name"
 "stats":{"recommendedCount":7,"notRecommendedCount":3,"recommendPct":0.7,"reviewCount":10,"openCount":120,"installCount":4},
 "createdAt":"2026-03-04T05:06:07.123Z","updatedAt":"2026-03-05T00:00:00.000Z"}`
 
-const linksBody = `{"app":"urn:apps.civitai.com:app/links","slug":"links","name":"Links","kind":"offsite","contentRating":null,
+const linksBody = `{"app":"urn:apps.civitai.com:app/links","slug":"links","name":"Links","kind":"offsite","contentRating":null,"listingContentRating":null,
 "tagline":null,"category":"tools","description":null,"iconUrl":null,"media":[],"creator":null,"isBeta":false,"isOfficial":true,
 "externalUrl":"https://example.invalid/app",
 "stats":{"recommendedCount":0,"notRecommendedCount":0,"recommendPct":null,"reviewCount":0,"openCount":null,"installCount":9},
 "createdAt":"2026-03-01T00:00:00.000Z","updatedAt":null}`
 
-const nightBody = `{"app":"urn:apps.civitai.com:app/night","slug":"night","name":"Night","kind":"onsite","contentRating":"r",
+const nightBody = `{"app":"urn:apps.civitai.com:app/night","slug":"night","name":"Night","kind":"onsite","contentRating":"r","listingContentRating":"r",
 "tagline":"After dark","category":"generation","description":"d","iconUrl":null,
 "media":[{"slot":"icon","host":"any","url":"https://img.invalid/night/icon","nsfwLevel":4,"rating":"r"}],
 "creator":{"id":7,"username":"owl","image":"https://img.invalid/owl"},"isBeta":false,"isOfficial":false,"hasPage":false,
@@ -80,6 +80,14 @@ var testNow = time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
 type listingServer struct {
 	*httptest.Server
 	reads *prometheus.CounterVec
+	s     *Server
+}
+
+func (l listingServer) setLayout(n int) { l.s.ListingsLayout = n }
+
+func testutilCount(t *testing.T, l listingServer, route, outcome string) float64 {
+	t.Helper()
+	return testutil.ToFloat64(l.reads.WithLabelValues(route, outcome))
 }
 
 func newListingServer(t *testing.T, apps store.Store, ls store.Listings, key []byte) listingServer {
@@ -92,7 +100,7 @@ func newListingServer(t *testing.T, apps store.Store, ls store.Listings, key []b
 	}
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
-	return listingServer{srv, s.ListingReads}
+	return listingServer{srv, s.ListingReads, s}
 }
 
 var (
@@ -261,8 +269,9 @@ func TestListingQueryValidation(t *testing.T) {
 	srv := newListingServer(t, readyStore(t), readyListings(t, paintBody), viewerKey)
 	for _, q := range []string{
 		"kind=teleport", "sort=random", "limit=0", "limit=51", "limit=x", "userId=0", "userId=-3",
-		"category=" + strings.Repeat("c", 65), "cursor=" + strings.Repeat("c", 513), "q=" + strings.Repeat("q", 201),
-		"q=paint&cursor=abc",
+		"category=" + strings.Repeat("c", 65), "cursor=" + strings.Repeat("c", 513), "q=paint", "q=",
+		"slugs=a&cursor=abc", "slugs=a&userId=3", "slugs=" + strings.Repeat("s", 65),
+		"slugs=" + strings.TrimSuffix(strings.Repeat("s,", 51), ","),
 	} {
 		if code, _, b := getAs(t, srv.URL+"/listings?"+q, &sfwViewer); code != http.StatusBadRequest {
 			t.Errorf("%.40s: %d %s, want 400", q, code, b)
@@ -278,16 +287,17 @@ func TestListingQueryValidation(t *testing.T) {
 	}
 }
 
-// A text query is answered through the app index's search, in its order, narrowed to what the
-// viewer may see.
-func TestListingTextQuery(t *testing.T) {
-	apps := readyStore(t, app("paint", "Paint", "onsite", "generation"), app("night", "Night Paint", "onsite", "generation"),
-		app("links", "Links", "offsite", "tools"), app("other", "Paint Other", "onsite", "generation"))
-	srv := newListingServer(t, apps, readyListings(t, paintBody, linksBody, nightBody), viewerKey)
+// Slug hydration: the cards of the named listings this viewer could find in the grid, in the
+// given order, each once, through the same gate as the list.
+func TestListingSlugs(t *testing.T) {
+	srv := newListingServer(t, readyStore(t), readyListings(t, paintBody, linksBody, nightBody), viewerKey)
 	slugs := func(b []byte) []string {
-		var p struct{ Items []struct{ Slug string } }
-		if err := json.Unmarshal(b, &p); err != nil {
-			t.Fatal(err)
+		var p struct {
+			Items      []struct{ Slug string }
+			NextCursor *string
+		}
+		if err := json.Unmarshal(b, &p); err != nil || p.NextCursor != nil {
+			t.Fatalf("%v, nextCursor %v in %s", err, p.NextCursor, b)
 		}
 		out := make([]string, 0, len(p.Items))
 		for _, i := range p.Items {
@@ -295,22 +305,31 @@ func TestListingTextQuery(t *testing.T) {
 		}
 		return out
 	}
-	// "other" is in the index but holds no listing; "night" is R, hidden on the SFW host.
-	if _, _, b := getAs(t, srv.URL+"/listings?q=paint", &sfwViewer); !reflect.DeepEqual(slugs(b), []string{"paint"}) {
-		t.Errorf("SFW search: %s", b)
+	for _, c := range []struct {
+		name, query string
+		v           listingread.Viewer
+		want        []string
+	}{
+		{"given order, gone and repeated slugs dropped", "slugs=paint,gone,links,paint", sfwViewer, []string{"paint", "links"}},
+		{"the R listing hidden on the SFW host", "slugs=night,paint", sfwViewer, []string{"paint"}},
+		{"and shown to a red X viewer", "slugs=night,paint", redXViewer, []string{"night", "paint"}},
+		{"public-external is off-site only", "slugs=paint,links", listingread.Viewer{Scope: listingread.ScopePublicExternal}, []string{"links"}},
+		{"scope none is empty", "slugs=paint,links", listingread.Viewer{Scope: listingread.ScopeNone}, []string{}},
+		{"the kind filter", "slugs=paint,links&kind=offsite", sfwViewer, []string{"links"}},
+		{"the category filter", "slugs=paint,links&category=generation", sfwViewer, []string{"paint"}},
+		{"an empty list", "slugs=", sfwViewer, []string{}},
+		{"sort and limit do not apply", "slugs=paint,links&sort=name&limit=1", sfwViewer, []string{"paint", "links"}},
+	} {
+		code, _, b := getAs(t, srv.URL+"/listings?"+c.query, &c.v)
+		if code != http.StatusOK || !reflect.DeepEqual(slugs(b), c.want) {
+			t.Errorf("%s: %d %s, want %v", c.name, code, b, c.want)
+		}
 	}
-	_, _, b := getAs(t, srv.URL+"/listings?q=paint", &redXViewer)
-	if got := slugs(b); len(got) != 2 || !strings.Contains(strings.Join(got, ","), "night") {
-		t.Errorf("red X search: %s", b)
-	}
-	if _, _, b := getAs(t, srv.URL+"/listings?q=paint&limit=1", &redXViewer); len(slugs(b)) != 1 || strings.Contains(string(b), "nextCursor") {
-		t.Errorf("one page, no cursor: %s", b)
-	}
-	if _, _, b := getAs(t, srv.URL+"/listings?q=links", &listingread.Viewer{Scope: listingread.ScopePublicExternal}); !reflect.DeepEqual(slugs(b), []string{"links"}) {
-		t.Errorf("public-external search: %s", b)
-	}
-	if _, _, b := getAs(t, srv.URL+"/listings?q=paint", &listingread.Viewer{Scope: listingread.ScopePublicExternal}); len(slugs(b)) != 0 {
-		t.Errorf("public-external search for on-site apps: %s", b)
+	// The cards are the list path's cards.
+	_, _, one := getAs(t, srv.URL+"/listings?slugs=paint", &sfwViewer)
+	_, _, list := getAs(t, srv.URL+"/listings?kind=onsite", &sfwViewer)
+	if string(one) != string(list) {
+		t.Errorf("hydrated card differs from the grid's:\n%s\n%s", one, list)
 	}
 }
 
@@ -379,11 +398,6 @@ func TestListingStoreFailures(t *testing.T) {
 	srv := newListingServer(t, readyStore(t), failingListings{ls, "deleted", nil}, viewerKey)
 	if code, _, b := getAs(t, srv.URL+"/listings", &sfwViewer); code != http.StatusOK || string(b) != "{\"items\":[]}\n" {
 		t.Errorf("page of deleted listings: %d %q", code, b)
-	}
-	// The app index not serving yet: a text query is a 503.
-	srv = newListingServer(t, store.NewMemory(), ls, viewerKey)
-	if code, _, b := getAs(t, srv.URL+"/listings?q=paint", &sfwViewer); code != http.StatusServiceUnavailable {
-		t.Errorf("search before the app index is ready: %d %s", code, b)
 	}
 	// A stored body the card cannot read (a tagline that is not a string) is a 500 on both routes.
 	odd := readyListings(t, strings.Replace(paintBody, `"tagline":"Paint things"`, `"tagline":5`, 1))

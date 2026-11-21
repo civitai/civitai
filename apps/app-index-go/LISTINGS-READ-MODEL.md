@@ -208,9 +208,11 @@ These match `listAvailableListings`.
   `top-rated` pins the mean in the cursor for the whole session, as `decodeListingCursor` does. The
   limit is 1–50, default 20. The read model's cursors carry their own version (`rm1`), so a
   database cursor sent to it, or one of its own sent to the database, pages from the start.
-- **Filters:** `kind`, `category`, `q` (the existing word-prefix match), and `userId` (developer
-  filter). Search results are ranked by relevance; with no `q`, by the requested sort.
+- **Filters:** `kind`, `category` and `userId` (developer filter). Text search stays the site's: it
+  asks the app index (`/search`, under its `viewerNotRoutable` rule) for slugs, and hydrates them
+  from the read model (`slugs`) instead of from the database.
 - **Known divergences,** each measured by the shadow diff rather than assumed small:
+
   - `getGlobalRecommendMean` averages over every approved listing, restricted ones included. The
     read model sees public listings only. If the order moves materially, the adapter can publish the
     mean as a single `service@v1` parameter.
@@ -219,9 +221,7 @@ These match `listAvailableListings`.
     stream (Rollout, slice 3b).
   - The keys compare as bytes; the database compares `sort_key` under its collation. Only the `name`
     sort can differ (punctuation, case-folded non-ASCII).
-  - A card's `contentRating` is the app entity's (`appContentRating`: the listing's, else its
-    block's), where the database card shows the listing's own. They differ only for a listing whose
-    own rating is unknown or unset.
+
 - **Sub-listing cards** (`app-store-sub-listings`) are not in the stream. A grid request that asks
   for them merges them from the DB page, as index search already does.
 
@@ -322,10 +322,18 @@ served for a week.
      and the NsfwLevel-to-rating ladder in one place.
 3. **Slice 3 (done): read API.** `GET /listings` (the four sorts, keyset paging, the kind, category
    and developer filters, text search through the app index, full cards) and `GET /listings/{slug}`
-   (detail), with the viewer gates, behind `APP_INDEX_LISTINGS` and a signed viewer token (README,
+   (detail), and `slugs` hydration for the site's own search (the read model runs no text search),
+   with the viewer gates, behind `APP_INDEX_LISTINGS` and a signed viewer token (README,
    "Listing API"). The media rule is pinned on both sides by one fixture
    (`internal/listingread/testdata/media-parity.json`, read by `parity_test.go` and the site's
    `listing-media-parity.test.ts`); the shadow diff relies on it.
+   - Also in slice 3: `listingContentRating`, the listing's own rating, added to `store-listing@v1`
+     (additive, nullable). The body's `contentRating` is the app entity's, which falls back to the
+     block's when the listing has none; the store gates and shows the listing column alone, so the
+     read model gates on the new field (`ListingsLayoutVersion` 2: a new column, rebuilt beside; the
+     API answers 503 from an older-layout generation until the switch). The ingest treats a body
+     without it as unusable, so a read model never gates a listing on the wrong rating.
+   - A second viewer key, `APP_INDEX_VIEWER_KEY_NEXT`, for rotation with no refused requests.
    - **Slice 3b (adapter, additive to `store-listing@v1`):** the listing `id` (the card key and the
      database's tie-break), then the detail fields (`serialId`, `collaborators`, `scopes`,
      `connectScopes`, the links, `betaMessage`, the fork fields). Until then the read API answers

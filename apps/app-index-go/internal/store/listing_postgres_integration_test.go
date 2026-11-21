@@ -112,6 +112,10 @@ CREATE TABLE app_index_listing_media (
 		g.ID, listingURN("alpha")); err != nil {
 		t.Fatal(err)
 	}
+	// Nor had slice 2 the listing's own rating column.
+	if _, err := pool.Exec(ctx, `ALTER TABLE app_index_listings DROP COLUMN listing_content_rating`); err != nil {
+		t.Fatal(err)
+	}
 	ls2, err := NewListingsPostgres(ctx, pool)
 	if err != nil {
 		t.Fatalf("restart over a slice 2 database: %v", err)
@@ -125,4 +129,13 @@ CREATE TABLE app_index_listing_media (
 		t.Fatal("the listing was lost")
 	}
 	checkListing(t, l, "alpha", "Alpha")
+	// The column is back, and an upsert writes it.
+	g2, err := ls2.NewBuilding(ctx, listingSchemaURN, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustApply(t, ls2, g2.ID, listingUpsert(mustListing("beta", "Beta"), ""))
+	if keys, err := ls2.Keys(ctx, g2.ID); err != nil || len(keys) != 1 || keys[0].ListingContentRating != "r" {
+		t.Fatalf("keys after the column was added back: %+v %v", keys, err)
+	}
 }

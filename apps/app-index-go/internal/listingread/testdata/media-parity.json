@@ -1,5 +1,5 @@
 {
-  "$comment": "The listing media parity fixture, read by two tests that must both pass: apps/app-index-go/internal/listingread/parity_test.go (the read model) and src/server/services/blocks/__tests__/listing-media-parity.test.ts (the site's database path and the adapter). Each listing is a database row's media as the adapter publishes them (registryListingMedia order: own icon, own cover, screenshots, red icon, red cover), keyed by the image's stored url. `expected` is, per viewer and listing, null when the store does not show the listing to that viewer, else the keys of the icon, the cover (a screenshot key: its cover rendition) and the gallery. `cards` is each listing's stats as the card shows them (checked on the read model side; the site side's stats come from the same card read the adapter publishes). Change a value here only together with the rule it pins, on both sides.",
+  "$comment": "The listing media parity fixture, read by two tests that must both pass: apps/app-index-go/internal/listingread/parity_test.go (the read model) and src/server/services/blocks/__tests__/listing-media-parity.test.ts (the site's database path and the adapter). Each listing is a database row's media as the adapter publishes them (registryListingMedia order: own icon, own cover, screenshots, red icon, red cover), keyed by the image's stored url. `contentRating` is the listing's own rating (the column the store gates on); `appContentRating`, when present, is the app entity's rating the stream also carries as `contentRating` (`appContentRating`: the listing's if known, else its block's, `blockContentRating`), which must not be gated on. `expected` is, per viewer and listing, null when the store does not show the listing to that viewer, else the keys of the icon, the cover (a screenshot key: its cover rendition) and the gallery. `cards` is each listing's stats as the card shows them (checked on the read model side; the site side's stats come from the same card read the adapter publishes). Change a value here only together with the rule it pins, on both sides.",
   "viewers": [
     {
       "name": "anonymous SFW",
@@ -413,6 +413,76 @@
           "rating": "pg13"
         }
       ]
+    },
+    {
+      "slug": "null-listing-pg13-block",
+      "kind": "onsite",
+      "contentRating": null,
+      "blockContentRating": "pg13",
+      "appContentRating": "pg13",
+      "stats": {
+        "recommendedCount": 6,
+        "notRecommendedCount": 0,
+        "recommendPct": 1,
+        "reviewCount": 6,
+        "openCount": null,
+        "installCount": 2
+      },
+      "media": [
+        {
+          "key": "img/null-listing-pg13-block/icon-pg13",
+          "slot": "icon",
+          "host": "any",
+          "nsfwLevel": 2,
+          "rating": "pg13"
+        },
+        {
+          "key": "img/null-listing-pg13-block/cover-pg",
+          "slot": "cover",
+          "host": "any",
+          "nsfwLevel": 1,
+          "rating": "pg"
+        },
+        {
+          "key": "img/null-listing-pg13-block/s1-pg13",
+          "slot": "screenshot",
+          "host": "any",
+          "nsfwLevel": 2,
+          "rating": "pg13",
+          "caption": null
+        }
+      ]
+    },
+    {
+      "slug": "null-listing-r-block",
+      "kind": "onsite",
+      "contentRating": null,
+      "blockContentRating": "r",
+      "appContentRating": "r",
+      "stats": {
+        "recommendedCount": 0,
+        "notRecommendedCount": 0,
+        "recommendPct": null,
+        "reviewCount": 0,
+        "openCount": 4,
+        "installCount": 0
+      },
+      "media": [
+        {
+          "key": "img/null-listing-r-block/icon-pg",
+          "slot": "icon",
+          "host": "any",
+          "nsfwLevel": 1,
+          "rating": "pg"
+        },
+        {
+          "key": "img/null-listing-r-block/cover-pg13",
+          "slot": "cover",
+          "host": "any",
+          "nsfwLevel": 2,
+          "rating": "pg13"
+        }
+      ]
     }
   ],
   "expected": {
@@ -449,6 +519,16 @@
         "icon": "img/pg13-red-safe/icon-pg13",
         "cover": "img/pg13-red-safe/cover-pg",
         "screenshots": []
+      },
+      "null-listing-pg13-block": {
+        "icon": null,
+        "cover": "img/null-listing-pg13-block/cover-pg",
+        "screenshots": []
+      },
+      "null-listing-r-block": {
+        "icon": "img/null-listing-r-block/icon-pg",
+        "cover": null,
+        "screenshots": []
       }
     },
     "PG13 main": {
@@ -483,6 +563,16 @@
       "pg13-red-safe": {
         "icon": "img/pg13-red-safe/icon-pg13",
         "cover": "img/pg13-red-safe/cover-pg",
+        "screenshots": []
+      },
+      "null-listing-pg13-block": {
+        "icon": null,
+        "cover": "img/null-listing-pg13-block/cover-pg",
+        "screenshots": []
+      },
+      "null-listing-r-block": {
+        "icon": "img/null-listing-r-block/icon-pg",
+        "cover": null,
         "screenshots": []
       }
     },
@@ -519,6 +609,16 @@
         "icon": "img/pg13-red-safe/icon-pg13",
         "cover": "img/pg13-red-safe/cover-pg",
         "screenshots": []
+      },
+      "null-listing-pg13-block": {
+        "icon": null,
+        "cover": "img/null-listing-pg13-block/cover-pg",
+        "screenshots": []
+      },
+      "null-listing-r-block": {
+        "icon": "img/null-listing-r-block/icon-pg",
+        "cover": null,
+        "screenshots": []
       }
     },
     "anonymous red": {
@@ -553,6 +653,16 @@
       "pg13-red-safe": {
         "icon": "img/pg13-red-safe/red-icon-pg",
         "cover": "img/pg13-red-safe/red-cover-pg13",
+        "screenshots": []
+      },
+      "null-listing-pg13-block": {
+        "icon": null,
+        "cover": "img/null-listing-pg13-block/cover-pg",
+        "screenshots": []
+      },
+      "null-listing-r-block": {
+        "icon": "img/null-listing-r-block/icon-pg",
+        "cover": null,
         "screenshots": []
       }
     },
@@ -596,6 +706,16 @@
       "pg13-red-safe": {
         "icon": "img/pg13-red-safe/red-icon-pg",
         "cover": "img/pg13-red-safe/red-cover-pg13",
+        "screenshots": []
+      },
+      "null-listing-pg13-block": {
+        "icon": "img/null-listing-pg13-block/icon-pg13",
+        "cover": "img/null-listing-pg13-block/cover-pg",
+        "screenshots": ["img/null-listing-pg13-block/s1-pg13"]
+      },
+      "null-listing-r-block": {
+        "icon": "img/null-listing-r-block/icon-pg",
+        "cover": "img/null-listing-r-block/cover-pg13",
         "screenshots": []
       }
     },
@@ -644,6 +764,16 @@
         "icon": "img/pg13-red-safe/red-icon-pg",
         "cover": "img/pg13-red-safe/red-cover-pg13",
         "screenshots": []
+      },
+      "null-listing-pg13-block": {
+        "icon": "img/null-listing-pg13-block/icon-pg13",
+        "cover": "img/null-listing-pg13-block/cover-pg",
+        "screenshots": ["img/null-listing-pg13-block/s1-pg13"]
+      },
+      "null-listing-r-block": {
+        "icon": "img/null-listing-r-block/icon-pg",
+        "cover": "img/null-listing-r-block/cover-pg13",
+        "screenshots": []
       }
     },
     "anonymous SFW, public-external": {
@@ -663,7 +793,9 @@
         "cover": "img/g-listing/cover-pg",
         "screenshots": []
       },
-      "pg13-red-safe": null
+      "pg13-red-safe": null,
+      "null-listing-pg13-block": null,
+      "null-listing-r-block": null
     }
   },
   "cards": {
@@ -747,6 +879,24 @@
       },
       "reviewCount": 0,
       "openCount": 1
+    },
+    "null-listing-pg13-block": {
+      "recommend": {
+        "recommendedCount": 6,
+        "notRecommendedCount": 0,
+        "recommendPct": 1
+      },
+      "reviewCount": 6,
+      "openCount": 0
+    },
+    "null-listing-r-block": {
+      "recommend": {
+        "recommendedCount": 0,
+        "notRecommendedCount": 0,
+        "recommendPct": null
+      },
+      "reviewCount": 0,
+      "openCount": 4
     }
   }
 }

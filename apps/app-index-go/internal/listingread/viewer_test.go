@@ -25,7 +25,7 @@ func TestViewerVector(t *testing.T) {
 	if got := SignViewer(testKey, Viewer{RedCapable: true, BrowsingLevel: 15, Scope: "full"}, vectorExp); got != vectorToken {
 		t.Fatalf("SignViewer\n got %s\nwant %s", got, vectorToken)
 	}
-	v, err := ParseViewer(testKey, vectorToken, vectorExp.Add(-time.Minute))
+	v, err := ParseViewer([][]byte{testKey}, vectorToken, vectorExp.Add(-time.Minute))
 	if err != nil || v != (Viewer{RedCapable: true, BrowsingLevel: 15, Scope: "full"}) {
 		t.Fatalf("ParseViewer: %+v %v", v, err)
 	}
@@ -44,7 +44,7 @@ func TestParseViewer(t *testing.T) {
 	exp := "1767225600"
 	ok := func(name, payload string, want Viewer) {
 		t.Helper()
-		v, err := ParseViewer(testKey, sign(testKey, payload), now)
+		v, err := ParseViewer([][]byte{testKey}, sign(testKey, payload), now)
 		if err != nil || v != want {
 			t.Errorf("%s: %+v %v, want %+v", name, v, err, want)
 		}
@@ -61,7 +61,7 @@ func TestParseViewer(t *testing.T) {
 
 	bad := func(name, token string, at time.Time, key []byte) {
 		t.Helper()
-		if v, err := ParseViewer(key, token, at); !errors.Is(err, ErrBadViewer) {
+		if v, err := ParseViewer([][]byte{key}, token, at); !errors.Is(err, ErrBadViewer) {
 			t.Errorf("%s: %+v %v, want ErrBadViewer", name, v, err)
 		}
 	}
@@ -86,10 +86,10 @@ func TestParseViewer(t *testing.T) {
 	bad("not JSON", sign(testKey, `host=red`), now, testKey)
 	bad("trailing data", sign(testKey, good+`{}`), now, testKey)
 	// The edges themselves are accepted.
-	if _, err := ParseViewer(testKey, sign(testKey, good), vectorExp.Add(viewerSkew)); err != nil {
+	if _, err := ParseViewer([][]byte{testKey}, sign(testKey, good), vectorExp.Add(viewerSkew)); err != nil {
 		t.Errorf("at expiry + skew: %v", err)
 	}
-	if _, err := ParseViewer(testKey, sign(testKey, good), vectorExp.Add(-MaxViewerTTL-viewerSkew)); err != nil {
+	if _, err := ParseViewer([][]byte{testKey}, sign(testKey, good), vectorExp.Add(-MaxViewerTTL-viewerSkew)); err != nil {
 		t.Errorf("at the longest lifetime: %v", err)
 	}
 }

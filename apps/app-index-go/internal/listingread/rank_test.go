@@ -16,7 +16,7 @@ func n(v int64) *int64 { return &v }
 func key(slug, kind, rating string, up, down, open, installs int64) store.Listing {
 	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	l := store.Listing{URN: "urn:apps.civitai.com:store-listing/" + slug, Slug: slug, Name: strings.ToUpper(slug[:1]) + slug[1:],
-		Kind: kind, ContentRating: rating, CreatedAt: &created,
+		Kind: kind, ContentRating: rating, ListingContentRating: rating, CreatedAt: &created,
 		Stats: store.ListingStats{RecommendedCount: n(up), NotRecommendedCount: n(down), ReviewCount: n(up + down),
 			OpenCount: n(open), InstallCount: n(installs)}}
 	if kind != "onsite" {

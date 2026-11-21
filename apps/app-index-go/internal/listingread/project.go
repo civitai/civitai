@@ -36,7 +36,9 @@ type Screenshot struct {
 // The URLs are the stream's own: the adapter built each with the same builder the store uses for
 // that slot (registryListingMedia), so nothing is rebuilt here.
 func ProjectMedia(l store.Listing, v Viewer, gallery bool) Media {
-	ceiling := listingMediaCeiling(v, l.ContentRating)
+	// The listing's own rating, as projectListingMedia reads row.contentRating (the listing
+	// column), never the app entity's, which falls back to the block's.
+	ceiling := listingMediaCeiling(v, l.ListingContentRating)
 	var ownIcon, ownCover, redIcon, redCover *store.ListingMedia
 	var shots []store.ListingMedia
 	first := func(p **store.ListingMedia, m store.ListingMedia) {
@@ -102,12 +104,14 @@ func ProjectMedia(l store.Listing, v Viewer, gallery bool) Media {
 
 // Admits is the store's per-listing viewer gate as the read model applies it: the scope's kind
 // rule (storeVisibleListingRowGate / listingPublicVisibilityFilter), then the mature rating rule
-// (matureRatingAllowed with matureRatingsAllowed). Everything else the database gate checks (the
+// (matureRatingAllowed with matureRatingsAllowed) over the listing's own rating, as
+// listingMatureFilter reads al.content_rating: a null or unknown rating is not mature, so it is
+// admitted, and its media ceiling is PG (nsfwLevelFromContentRating). Everything else the database gate checks (the
 // status and level, a shadow revision, the deploy gate, a banned or deleted owner) is applied
 // upstream: such a listing is not in the stream.
 func Admits(l store.Listing, v Viewer) bool {
 	return scopeAdmitsKind(NarrowScope(v.Scope), l.Kind) &&
-		matureRatingAllowed(l.ContentRating, matureRatingsAllowed(v.RedCapable, v.BrowsingLevel))
+		matureRatingAllowed(l.ListingContentRating, matureRatingsAllowed(v.RedCapable, v.BrowsingLevel))
 }
 
 // Creator is the creator chip (ListingCreatorChip).
@@ -241,7 +245,7 @@ func project(l store.Listing, v Viewer, gallery bool) (projected, cardBody, erro
 	media := ProjectMedia(l, v, gallery)
 	c := Card{
 		Slug: l.Slug, Kind: l.Kind, Name: l.Name,
-		Tagline: b.Tagline, Category: nullable(l.Category), ContentRating: nullable(l.ContentRating),
+		Tagline: b.Tagline, Category: nullable(l.Category), ContentRating: nullable(l.ListingContentRating),
 		IconURL: media.IconURL, CoverURL: media.CoverURL,
 		Recommend: Recommend{
 			RecommendedCount:    orZero(l.Stats.RecommendedCount),

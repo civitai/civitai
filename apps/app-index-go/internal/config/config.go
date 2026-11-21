@@ -52,6 +52,10 @@ type Config struct {
 	// listings on. Unset or short, the process still starts and the listing routes answer 503:
 	// like APP_INDEX_LISTINGS itself, a dark feature's setting never takes /search down.
 	ViewerKey string
+	// ViewerKeyNext is a second key the viewer token may be signed with, during a rotation
+	// (APP_INDEX_VIEWER_KEY_NEXT, optional, at least 32 bytes when set). Set short, the listing
+	// routes answer 503, as with a short current key: never silently ignored.
+	ViewerKeyNext string
 }
 
 // Client is the index's OAuth client for the client credentials grant.
@@ -75,6 +79,7 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 		DatabaseURL:   getenv("APP_INDEX_DATABASE_URL"),
 		Addr:          getenv("APP_INDEX_ADDR"),
 		ViewerKey:     getenv("APP_INDEX_VIEWER_KEY"),
+		ViewerKeyNext: getenv("APP_INDEX_VIEWER_KEY_NEXT"),
 	}
 	if c.RegistryURL == "" {
 		return nil, errors.New("APP_INDEX_REGISTRY_URL is required")

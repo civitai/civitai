@@ -259,3 +259,28 @@ func Rank(keys []store.Listing, q ListQuery, v Viewer) Page {
 	}
 	return p
 }
+
+// MaxSlugs bounds a slug hydration (GET /listings?slugs=): one store grid page.
+const MaxSlugs = 50
+
+// BySlugs mirrors listStoreListingsBySlugs: the listings slugs name that v could find in the store
+// grid with the same kind and category (Filter, the list path's gate), in the order of slugs, each
+// once (idsInSlugOrder: the first mention wins). A slug the viewer could not find there, or that
+// no listing has, is left out. One page: no cursor.
+func BySlugs(keys []store.Listing, slugs []string, kind, category string, v Viewer) Page {
+	bySlug := map[string]string{}
+	for _, l := range Filter(keys, kind, category, nil, v) {
+		bySlug[l.Slug] = l.URN
+	}
+	seen := map[string]bool{}
+	var p Page
+	for _, s := range slugs {
+		urn, ok := bySlug[s]
+		if !ok || seen[urn] {
+			continue
+		}
+		seen[urn] = true
+		p.URNs = append(p.URNs, urn)
+	}
+	return p
+}

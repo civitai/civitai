@@ -2,6 +2,8 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { registryListingMedia } from '~/server/registry-adapter/catalog-media';
+import type { ListingStoreFields } from '~/server/registry-adapter/catalog-source';
+import { listingBody, type CatalogApp } from '~/server/registry-adapter/entities';
 import {
   matureRatingAllowed,
   matureRatingsAllowed,
@@ -29,6 +31,8 @@ import { scopeAdmitsListingKind, narrowStoreScope } from '~/shared/utils/store-v
  *
  *   - the adapter (`registryListingMedia`), which must publish exactly the fixture's media items, in
  *     its order, each with its own level and rating: that is what the Go side is fed;
+ *   - the adapter's `listingBody`, whose two ratings must be the fixture's: the app entity's
+ *     (`appContentRating`, which falls back to the block's) and the listing's own, the one gated on;
  *   - the store's gate (`scopeAdmitsListingKind`, `matureRatingAllowed`) and media projection
  *     (`projectListingMedia`), which must give `expected` for every viewer.
  *
@@ -47,7 +51,12 @@ type FixtureItem = {
 type FixtureListing = {
   slug: string;
   kind: 'onsite' | 'offsite';
+  /** The listing's own rating: the column the store gates on. */
   contentRating: string | null;
+  /** The backing block's rating, for a listing that has one. */
+  blockContentRating?: string;
+  /** The app entity's rating the stream carries as `contentRating`; absent, the listing's own. */
+  appContentRating?: string;
   media: FixtureItem[];
 };
 type FixtureViewer = {
@@ -121,7 +130,13 @@ describe('listing media parity (media-parity.json): the site side', () => {
       'XXX red',
       'anonymous SFW, public-external',
     ]);
-    expect(FIXTURE.listings.length).toBeGreaterThanOrEqual(9);
+    expect(FIXTURE.listings.length).toBeGreaterThanOrEqual(11);
+    // The row the gating rating matters for: no listing rating, a block rating above PG.
+    expect(
+      FIXTURE.listings.some(
+        (l) => l.contentRating === null && l.blockContentRating && l.appContentRating
+      )
+    ).toBe(true);
   });
 
   it.each(FIXTURE.listings.map((l) => [l.slug, l] as const))(
@@ -153,6 +168,58 @@ describe('listing media parity (media-parity.json): the site side', () => {
           : {}),
       }));
       expect(published).toEqual(want);
+    }
+  );
+
+  it.each(FIXTURE.listings.map((l) => [l.slug, l] as const))(
+    'the adapter publishes %s with the fixture ratings',
+    (_slug, l) => {
+      const app: CatalogApp = {
+        listing: {
+          slug: l.slug,
+          kind: l.kind,
+          name: l.slug,
+          tagline: null,
+          category: null,
+          contentRating: l.contentRating,
+          iconUrl: null,
+          creatorUsername: null,
+          externalUrl: null,
+          sourceRepoUrl: null,
+          forkOf: null,
+        },
+        block: l.blockContentRating
+          ? {
+              id: `ab_${l.slug}`,
+              blockId: l.slug,
+              version: '1.0.0',
+              status: 'approved',
+              contentRating: l.blockContentRating,
+              manifest: {},
+            }
+          : null,
+        approved: [],
+      };
+      const store: ListingStoreFields = {
+        creator: null,
+        recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
+        reviewCount: 0,
+        isBeta: false,
+        isOfficial: false,
+        openCount: null,
+        updatedAt: null,
+        hasPage: false,
+        liveUrl: null,
+        description: null,
+        media: [],
+        installCount: 0,
+        createdAt: '2026-01-02T03:04:05.000Z',
+      };
+      const body = listingBody(app, `urn:apps.civitai.com:app/${l.slug}`, store);
+      expect([body.contentRating, body.listingContentRating]).toEqual([
+        l.appContentRating ?? l.contentRating,
+        l.contentRating,
+      ]);
     }
   );
 

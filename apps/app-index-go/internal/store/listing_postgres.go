@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS app_index_listings (
   kind text NOT NULL,
   category text,
   content_rating text,
+  listing_content_rating text,
   creator_id bigint,
   created_at timestamptz,
   updated_at timestamptz,
@@ -61,6 +62,7 @@ CREATE TABLE IF NOT EXISTS app_index_listings (
 );
 DROP TABLE IF EXISTS app_index_listing_media;
 CREATE INDEX IF NOT EXISTS app_index_listings_slug ON app_index_listings (generation, slug);
+ALTER TABLE app_index_listings ADD COLUMN IF NOT EXISTS listing_content_rating text;
 ALTER TABLE app_index_listings
   ALTER COLUMN recommended_count DROP NOT NULL,
   ALTER COLUMN not_recommended_count DROP NOT NULL,
@@ -104,11 +106,13 @@ func (p *ListingsPostgres) Apply(ctx context.Context, gen int64, c Change) error
 		}
 		_, err := tx.Exec(ctx, `
 INSERT INTO app_index_listings (generation, urn, rev, body, app, slug, name, name_key, kind, category, content_rating,
-  creator_id, created_at, updated_at, recommended_count, not_recommended_count, review_count, open_count, install_count)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), NULLIF($11, ''), $12, $13, $14, $15, $16, $17, $18, $19)`,
+  creator_id, created_at, updated_at, recommended_count, not_recommended_count, review_count, open_count, install_count,
+  listing_content_rating)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), NULLIF($11, ''), $12, $13, $14, $15, $16, $17, $18, $19,
+  NULLIF($20, ''))`,
 			gen, l.URN, l.Rev, []byte(l.Body), l.App, l.Slug, l.Name, nameKey(l.Name), l.Kind, l.Category, l.ContentRating,
 			l.CreatorID, l.CreatedAt, l.UpdatedAt, l.Stats.RecommendedCount, l.Stats.NotRecommendedCount,
-			l.Stats.ReviewCount, l.Stats.OpenCount, l.Stats.InstallCount)
+			l.Stats.ReviewCount, l.Stats.OpenCount, l.Stats.InstallCount, l.ListingContentRating)
 		return err
 	})
 }
@@ -125,10 +129,21 @@ WHERE g.generation = $1 AND g.state <> 'retired' GROUP BY g.generation`, gen).Sc
 	return n, err
 }
 
-// exists is ErrNoGeneration unless gen exists and is not retired.
-func (p *ListingsPostgres) exists(ctx context.Context, gen int64) error {
-	_, err := p.Count(ctx, gen)
-	return err
+// stillThere is ErrNoGeneration unless gen exists and is not retired. Every read calls it AFTER
+// reading, not before: a generation switch drops the old generation's rows in one transaction, so a
+// read that raced it may have seen none of them, and only a check after the read can tell that
+// empty answer from a real one. A read that saw the rows and then lost the race is also refused, so
+// the API never mixes two reads of different generations into one answer (it answers 503).
+func (p *ListingsPostgres) stillThere(ctx context.Context, gen int64) error {
+	var ok bool
+	if err := p.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app_index_listing_cursors
+WHERE generation = $1 AND state <> 'retired')`, gen).Scan(&ok); err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNoGeneration
+	}
+	return nil
 }
 
 // Get implements Listings.
@@ -142,18 +157,19 @@ func (p *ListingsPostgres) BySlug(ctx context.Context, gen int64, slug string) (
 }
 
 func (p *ListingsPostgres) one(ctx context.Context, gen int64, where string, arg string) (Listing, bool, error) {
-	if err := p.exists(ctx, gen); err != nil {
-		return Listing{}, false, err
-	}
 	var urn, rev string
 	var body []byte
 	err := p.pool.QueryRow(ctx, `SELECT urn, rev, body FROM app_index_listings WHERE generation = $1 AND `+where+
 		` ORDER BY urn LIMIT 1`, gen, arg).Scan(&urn, &rev, &body)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Listing{}, false, nil
-	}
-	if err != nil {
+	found := !errors.Is(err, pgx.ErrNoRows)
+	if found && err != nil {
 		return Listing{}, false, err
+	}
+	if err := p.stillThere(ctx, gen); err != nil {
+		return Listing{}, false, err
+	}
+	if !found {
+		return Listing{}, false, nil
 	}
 	l, err := decodeStored(urn, rev, body)
 	return l, err == nil, err
@@ -161,9 +177,6 @@ func (p *ListingsPostgres) one(ctx context.Context, gen int64, where string, arg
 
 // GetMany implements Listings.
 func (p *ListingsPostgres) GetMany(ctx context.Context, gen int64, urns []string) ([]Listing, error) {
-	if err := p.exists(ctx, gen); err != nil {
-		return nil, err
-	}
 	rows, err := p.pool.Query(ctx, `SELECT urn, rev, body FROM app_index_listings WHERE generation = $1 AND urn = ANY($2)`, gen, urns)
 	if err != nil {
 		return nil, err
@@ -182,17 +195,21 @@ func (p *ListingsPostgres) GetMany(ctx context.Context, gen int64, urns []string
 		}
 		out = append(out, l)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := p.stillThere(ctx, gen); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // Keys implements Listings.
 func (p *ListingsPostgres) Keys(ctx context.Context, gen int64) ([]Listing, error) {
-	if err := p.exists(ctx, gen); err != nil {
-		return nil, err
-	}
 	rows, err := p.pool.Query(ctx, `
-SELECT urn, rev, app, slug, name, kind, coalesce(category, ''), coalesce(content_rating, ''), creator_id,
-  created_at, updated_at, recommended_count, not_recommended_count, review_count, open_count, install_count
+SELECT urn, rev, app, slug, name, kind, coalesce(category, ''), coalesce(content_rating, ''),
+  coalesce(listing_content_rating, ''), creator_id, created_at, updated_at, recommended_count, not_recommended_count,
+  review_count, open_count, install_count
 FROM app_index_listings WHERE generation = $1`, gen)
 	if err != nil {
 		return nil, err
@@ -201,7 +218,8 @@ FROM app_index_listings WHERE generation = $1`, gen)
 	var out []Listing
 	for rows.Next() {
 		var l Listing
-		if err := rows.Scan(&l.URN, &l.Rev, &l.App, &l.Slug, &l.Name, &l.Kind, &l.Category, &l.ContentRating, &l.CreatorID,
+		if err := rows.Scan(&l.URN, &l.Rev, &l.App, &l.Slug, &l.Name, &l.Kind, &l.Category, &l.ContentRating,
+			&l.ListingContentRating, &l.CreatorID,
 			&l.CreatedAt, &l.UpdatedAt, &l.Stats.RecommendedCount, &l.Stats.NotRecommendedCount, &l.Stats.ReviewCount,
 			&l.Stats.OpenCount, &l.Stats.InstallCount); err != nil {
 			return nil, err
@@ -214,5 +232,11 @@ FROM app_index_listings WHERE generation = $1`, gen)
 		}
 		out = append(out, l)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := p.stillThere(ctx, gen); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

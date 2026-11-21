@@ -69,10 +69,16 @@ type Server struct {
 	// Listings is the listings read model, nil while APP_INDEX_LISTINGS is off: the listing routes
 	// (listings.go) are then not registered at all, so they answer 404.
 	Listings store.Listings
-	// ViewerKey verifies the viewer token of a listing request (APP_INDEX_VIEWER_KEY). Shorter
-	// than listingread.MinViewerKeyLen (unset included), every listing request answers 503
-	// `unconfigured` and reads nothing.
-	ViewerKey []byte
+	// ViewerKey verifies the viewer token of a listing request (APP_INDEX_VIEWER_KEY), and
+	// ViewerKeyNext, when set, too (APP_INDEX_VIEWER_KEY_NEXT, for a rotation with no 401 window).
+	// The current key shorter than listingread.MinViewerKeyLen (unset included), or a next key set
+	// but short, makes every listing request answer 503 `unconfigured` and read nothing.
+	ViewerKey     []byte
+	ViewerKeyNext []byte
+	// ListingsLayout is the row layout the listings consumer builds (index.ListingsLayoutVersion).
+	// A serving generation of another layout is answered 503 `not_ready` until the rebuild beside
+	// it switches over: its rows may lack what the gates read. 0 checks nothing.
+	ListingsLayout int
 	// ListingReads counts listing requests (metrics.NewListingReads); nil counts nothing.
 	ListingReads *prometheus.CounterVec
 	// Now is the clock viewer tokens are checked against; nil is time.Now.

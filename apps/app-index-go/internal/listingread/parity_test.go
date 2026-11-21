@@ -9,12 +9,18 @@ import (
 	"github.com/civitai/civitai/apps/app-index-go/internal/store"
 )
 
-// parityFixture is testdata/media-parity.json. The same file is read by the site's
-// listing-media-parity.test.ts, which runs it through the database path (projectListingMedia,
-// matureRatingAllowed, scopeAdmitsListingKind, recommendRollup, cardOpenCount) and through the
-// adapter (registryListingMedia). This side runs it through the read model: each listing becomes
-// the store-listing@v1 body the adapter would publish, decoded by the ingest's own decoder, and is
-// gated and projected per viewer. Both sides must give `expected` and `cards` exactly.
+// parityFixture is testdata/media-parity.json. The site reads the same file twice:
+//   - listing-media-parity.test.ts runs each listing through the adapter (registryListingMedia,
+//     and listingBody for its two ratings: the app entity's and the listing's own) and through the
+//     store's gate and projection (scopeAdmitsListingKind, matureRatingAllowed, projectListingMedia)
+//     for `expected`;
+//   - listing-card-parity.test.ts checks `cards`: recommend is recommendRollup of the counts (and
+//     the stream's recommendPct is its), openCount is cardOpenCount, and reviewCount is the sum of
+//     the counts, as projectListingCard computes it.
+//
+// This side runs it through the read model: each listing becomes the store-listing@v1 body the
+// adapter would publish, decoded by the ingest's own decoder, and is gated and projected per viewer.
+// Both sides must give `expected` and `cards` exactly.
 type parityFixture struct {
 	Viewers []struct {
 		Name          string `json:"name"`
@@ -23,11 +29,14 @@ type parityFixture struct {
 		Scope         string `json:"scope"`
 	} `json:"viewers"`
 	Listings []struct {
-		Slug          string          `json:"slug"`
-		Kind          string          `json:"kind"`
-		ContentRating *string         `json:"contentRating"`
-		Stats         json.RawMessage `json:"stats"`
-		Media         []struct {
+		Slug          string  `json:"slug"`
+		Kind          string  `json:"kind"`
+		ContentRating *string `json:"contentRating"`
+		// AppContentRating is the app entity's rating, which the stream body carries as
+		// contentRating; absent, it is the listing's own.
+		AppContentRating *string         `json:"appContentRating"`
+		Stats            json.RawMessage `json:"stats"`
+		Media            []struct {
 			Key       string  `json:"key"`
 			Slot      string  `json:"slot"`
 			Host      string  `json:"host"`
@@ -77,9 +86,13 @@ func loadParity(t *testing.T) (parityFixture, map[string]store.Listing) {
 			}
 			media = append(media, item)
 		}
+		appRating := l.ContentRating
+		if l.AppContentRating != nil {
+			appRating = l.AppContentRating
+		}
 		body, err := json.Marshal(map[string]any{
 			"app": "urn:apps.civitai.com:app/" + l.Slug, "slug": l.Slug, "name": l.Slug, "kind": l.Kind,
-			"contentRating": l.ContentRating, "tagline": nil, "category": nil, "media": media, "creator": nil,
+			"contentRating": appRating, "listingContentRating": l.ContentRating, "tagline": nil, "category": nil, "media": media, "creator": nil,
 			"stats": l.Stats, "createdAt": "2026-01-02T03:04:05.000Z", "updatedAt": nil,
 		})
 		if err != nil {
@@ -111,7 +124,7 @@ func keyOfURL(t *testing.T, u *string, want string) *string {
 // viewer and compares with `expected`, and through ProjectCard for `cards`.
 func TestMediaParity(t *testing.T) {
 	f, listings := loadParity(t)
-	if len(f.Viewers) < 7 || len(f.Listings) < 9 {
+	if len(f.Viewers) < 7 || len(f.Listings) < 11 {
 		t.Fatalf("the fixture shrank: %d viewers, %d listings", len(f.Viewers), len(f.Listings))
 	}
 	shown := 0
@@ -174,6 +187,13 @@ func TestMediaParity(t *testing.T) {
 		got := parityCard{Recommend: c.Recommend, ReviewCount: c.ReviewCount, OpenCount: c.OpenCount}
 		if want := f.Cards[slug]; !reflect.DeepEqual(got, want) {
 			t.Errorf("%s card stats:\n got %s\nwant %s", slug, show(got), show(want))
+		}
+		// The card shows the listing's own rating (projectListingCard: row.contentRating), never the
+		// app entity's, which falls back to the block's.
+		for _, fl := range f.Listings {
+			if fl.Slug == slug && !reflect.DeepEqual(c.ContentRating, fl.ContentRating) {
+				t.Errorf("%s card contentRating %v, want the listing's own %v", slug, show(c.ContentRating), show(fl.ContentRating))
+			}
 		}
 	}
 }

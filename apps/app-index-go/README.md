@@ -134,7 +134,7 @@ series is registered, nothing subscribes to the schema and the listing routes ar
   by one on a resumed stream are applied as they come.
 - **`unavailable`** (the adapter's answer when its listing read failed) deletes nothing: the
   subscription is opened again from the stored cursor, like any other `unavailable`.
-- A body missing an identity field (`app`, `slug`, `name`, `kind`, `contentRating`), or a media item
+- A body missing an identity field (`app`, `slug`, `name`, `kind`, `contentRating`, `listingContentRating`), or a media item
   whose host or rating is unknown or whose `nsfwLevel` is not exactly its rating's level (pg 1, pg13
   2, r 4, x 8, xxx 16), is treated as deleted (`app_index_listings_events_applied_total{type="invalid"}`):
   such an item could not be gated.
@@ -179,40 +179,58 @@ signature = base64url, unpadded, of HMAC-SHA256(key, "v1." + payload)
 - A missing, malformed, wrongly signed or expired token is 401 `bad_viewer`, and nothing is read. An
   unknown scope is `none`, as `narrowStoreScope` reads it. With the key unset or short, every listing
   request is 503 `unconfigured`.
+- **Key rotation.** `APP_INDEX_VIEWER_KEY_NEXT` (optional, at least 32 bytes) is a second key a
+  token may be signed with; the signature is compared against both, each in constant time. To
+  rotate: set the new key as `APP_INDEX_VIEWER_KEY_NEXT` here, move the web tier's signer to it, then
+  make it `APP_INDEX_VIEWER_KEY` and unset the next one. No request is refused along the way. A next
+  key that is set but short is a misconfiguration: every listing request is 503 `unconfigured` and
+  the process logs an error at start, as for a short current key; it is never ignored.
 - `internal/listingread/viewer_test.go` holds a literal token for a test key, computed outside Go, for
   the web tier's signer to be tested against.
 
 **The gates, per request.** A listing is answered only when the scope admits its kind (`none`
 nothing, `public-external` off-site only) and the mature rule admits its rating (`r`, `x`, `xxx` only
-on a red host and only with that bit in the level). Its media are projected for the viewer
+on a red host and only with that bit in the level). The rating gated on, and shown on the card, is
+the listing's own (`listingContentRating` in the stream; null is not mature, and its media ceiling
+is PG), never the app entity's `contentRating`, which falls back to the block's. Its media are projected for the viewer
 (`projectListingMedia`): the listing-rating ceiling, lifted on a red host by the viewer's levels;
 the civitai.red overrides only on a red host, preferred over the own image of their slot; the
 cover falling back to the first visible screenshot. A listing the viewer may not see is a 404,
 exactly like a missing one.
 
-| Route                  | Parameters                                                                                                                                                      | Answer                         |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| `GET /listings`        | `sort` (`top-rated` default, `popular`, `newest`, `name`), `kind` (`all`, `onsite`, `offsite`), `category`, `userId`, `cursor` (≤ 512), `limit` (1-50, 20), `q` | `{items: [card], nextCursor?}` |
-| `GET /listings/{slug}` | the slug (≤ 64 bytes)                                                                                                                                           | the detail, or 404             |
+| Route                       | Parameters                                                                                                                                                 | Answer                         |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `GET /listings`             | `sort` (`top-rated` default, `popular`, `newest`, `name`), `kind` (`all`, `onsite`, `offsite`), `category`, `userId`, `cursor` (≤ 512), `limit` (1-50, 20) | `{items: [card], nextCursor?}` |
+| `GET /listings?slugs=a,b,c` | up to 50 slugs (each ≤ 64 bytes), `kind`, `category`; no `cursor`, no `userId`                                                                             | `{items: [card]}`              |
+| `GET /listings/{slug}`      | the slug (≤ 64 bytes)                                                                                                                                      | the detail, or 404             |
 
 - The sorts and the keyset paging are the store grid's: the same sort keys, `top-rated` with the
   global mean pinned in the cursor for the paging session. The global mean is over the listings the
   read model holds. Ties fall to the slug, where the database uses the listing id, which the stream
-  does not carry. A cursor this service did not mint pages from the start.
-- `q` is the store's text search, answered by the app index's `/search` ranking, narrowed to the
-  listings this viewer may see: one page in relevance order, no cursor.
+  does not carry. A cursor that is not this service's format (the database path's `v2` cursors, or
+  anything that does not decode) pages from the start. Cursors are not signed: any well-formed one
+  is accepted and only positions the page, which every viewer may read from any position anyway.
+- `slugs` hydrates a search the site answered itself: the site keeps its text search where it is
+  (the app index's `/search`, routed by its own `viewerNotRoutable` rule) and asks here for the cards
+  of the slugs it found, as `listStoreListingsBySlugs` does from the database. They come back in the
+  given order, each once, through the same gate and filters as the list; a slug the viewer could not
+  find in the grid is left out. There is no text search here: `q` is refused (400).
 - A card is the site's `ListingCard` for the fields the stream carries: no `id` and no on-site
   `kindData.appBlockId`; `restrictedAudience` is always null. A detail adds `description`,
   `installCount` and `screenshots`, and leaves out the detail-only fields the stream does not carry
   yet (`serialId`, `collaborators`, `scopes`, `connectScopes`, the links, `betaMessage`, the fork
   fields).
 - Every response is `no-store` and carries no CORS header. A store failure is 500, never an empty
-  page; a read that races a generation switch, or a text query before the app index is ready, is 503.
+  page. A read that races a generation switch is 503: each store read checks, after reading, that its
+  generation still exists. A serving generation of an older row layout is 503 too, until the rebuild
+  beside it switches over.
 - `app_index_listings_requests_total{route, outcome}` counts them.
 
 The media rule is pinned on both sides by one fixture, `internal/listingread/testdata/media-parity.json`:
-`parity_test.go` runs it through the read model, and the site's `listing-media-parity.test.ts`
-through `projectListingMedia` and the adapter's `registryListingMedia`.
+`parity_test.go` runs it through the read model; the site's `listing-media-parity.test.ts` runs it
+through `projectListingMedia`, the store gate and the adapter's `registryListingMedia` and
+`listingBody`, and `listing-card-parity.test.ts` checks its card stats against `recommendRollup` and
+`cardOpenCount`.
 
 ## Configuration
 
