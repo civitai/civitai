@@ -24,7 +24,7 @@ func listingEntity(slug, name string) map[string]any {
 		"schemas": []string{ListingSchema},
 		"rev":     "rev-" + name,
 		"body": map[string]any{
-			"app": "urn:apps.civitai.com:app/" + slug, "slug": slug, "name": name, "kind": "onsite", "contentRating": "pg13",
+			"app": "urn:apps.civitai.com:app/" + slug, "slug": slug, "name": name, "kind": "onsite", "contentRating": "pg13", "listingContentRating": "pg13",
 			"tagline": nil, "category": "generation", "description": nil, "iconUrl": nil,
 			"media": []map[string]any{
 				{"slot": "icon", "host": "any", "url": "https://img.invalid/" + slug + "/icon", "nsfwLevel": 1, "rating": "pg"},
@@ -387,7 +387,7 @@ func TestListingsConsumerOnlyWhenOn(t *testing.T) {
 		if c == nil || opened != 1 || series != 9 {
 			t.Fatalf("on: consumer %v, store opened %d times, %d listing series; want one, 1, 9", c, opened, series)
 		}
-		if c.Schema != "urn:schema:apps.civitai.com:store-listing@v1" || c.Layout != 1 || c.Count == nil || c.Decode == nil {
+		if c.Schema != "urn:schema:apps.civitai.com:store-listing@v1" || c.Layout != 2 || c.Count == nil || c.Decode == nil {
 			t.Fatalf("on: schema %q layout %d count %v decode %v", c.Schema, c.Layout, c.Count != nil, c.Decode != nil)
 		}
 		ctx, cancel := context.WithCancel(context.Background())

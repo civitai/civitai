@@ -38,6 +38,12 @@ export interface VerifiedBlockToken {
   scopes: string[];
   iat: number;
   exp: number;
+  /**
+   * The token's maturity ceiling (the site's `maxBrowsingLevel` claim: a browsing-level bit flag set from
+   * the host it was minted on), or null when absent or not a non-negative integer, which the site reads
+   * as SFW.
+   */
+  maxBrowsingLevel: number | null;
 }
 
 export type BlockTokenRefusal =
@@ -149,7 +155,8 @@ export async function verifyBlockTokenForExchange(
     return { ok: false, reason: 'signature or claims' };
   }
 
-  const { sub, appId, appBlockId, blockInstanceId, jti, scopes, iat, exp, aud } = payload;
+  const { sub, appId, appBlockId, blockInstanceId, jti, scopes, iat, exp, aud, maxBrowsingLevel } =
+    payload;
   if (
     typeof sub !== 'string' ||
     typeof appId !== 'string' ||
@@ -193,6 +200,12 @@ export async function verifyBlockTokenForExchange(
       scopes: scopes as string[],
       iat,
       exp,
+      maxBrowsingLevel:
+        typeof maxBrowsingLevel === 'number' &&
+        Number.isInteger(maxBrowsingLevel) &&
+        maxBrowsingLevel >= 0
+          ? maxBrowsingLevel
+          : null,
     },
   };
 }

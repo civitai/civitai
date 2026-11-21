@@ -167,6 +167,7 @@ describe('store-listing@v1 field mapping', () => {
       kind: 'onsite',
       // The app entity's rating: the listing's own when known, never its block's.
       contentRating: 'pg13',
+      listingContentRating: 'pg13',
       tagline: 'Notes in orbit',
       category: 'productivity-k2',
       description: 'Long-form orbit description',
@@ -207,6 +208,18 @@ describe('store-listing@v1 field mapping', () => {
     });
   });
 
+  it('🔴 a listing with no rating of its own carries null, not its block rating, as the rating the store gates on', () => {
+    const unrated: CatalogApp = {
+      ...ONSITE,
+      listing: { ...ONSITE.listing, contentRating: null },
+      block: { ...ONSITE.block!, contentRating: 'pg13' },
+    };
+    const body = listingSet(buildEntities([unrated], { ...BASE, listings: true }))[0]?.body as
+      | Record<string, unknown>
+      | undefined;
+    expect([body?.contentRating, body?.listingContentRating]).toEqual(['pg13', null]);
+  });
+
   it('an off-site listing carries its link and no play count', () => {
     const e = listingSet(sets).find((x) => x.urn === 'urn:apps.civitai.com:store-listing/tide-log');
     expect(e?.body).toEqual({
@@ -215,6 +228,7 @@ describe('store-listing@v1 field mapping', () => {
       name: 'Name of tide-log',
       kind: 'offsite',
       contentRating: 'g',
+      listingContentRating: 'g',
       tagline: 'Tides, logged',
       category: 'utility-m4',
       description: null,

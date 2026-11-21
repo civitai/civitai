@@ -32,6 +32,7 @@ export type ModeratorGrantId =
   | 'labelStore.submitPrediction'
   | 'apps.buzz.refund'
   | 'apps.buzz.refund.large'
+  | 'training.retrain'
   | 'feedback.status.set'
   | 'tickets.escalate';
 

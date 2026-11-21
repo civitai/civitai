@@ -156,6 +156,7 @@ export const routes: ApiRoutes = {
     import('~/server/api-routes/mod/text-scan/model-rules-hold/resolve'),
   'tipalti-resync-payee': () => import('~/server/api-routes/mod/tipalti-resync-payee'),
   'training-data/resolve': () => import('~/server/api-routes/mod/training-data/resolve'),
+  'training/retrain-source': () => import('~/server/api-routes/mod/training/retrain-source'),
   'unblock-images': () => import('~/server/api-routes/mod/unblock-images'),
   'unequip-event-cosmetics': () => import('~/server/api-routes/mod/unequip-event-cosmetics'),
   'update-image-flag': () => import('~/server/api-routes/mod/update-image-flag'),
