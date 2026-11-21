@@ -5,7 +5,6 @@ import {
   type ServerDomainPrimaryMap,
   type ServerDomains,
 } from '~/shared/constants/domain.constants';
-import { allowMatureContentForCeiling } from '~/shared/constants/browsingLevel.constants';
 
 /**
  * The OAuth provider IDs the connected-accounts UI knows how to render. `getAvailableOAuthProviders`
@@ -128,23 +127,6 @@ const MATURE_CONTENT_RATINGS = new Set(['r', 'x', 'xxx']);
 export function isMatureContentRating(rating: string | null | undefined): boolean {
   if (typeof rating !== 'string') return false;
   return MATURE_CONTENT_RATINGS.has(rating.toLowerCase());
-}
-
-/**
- * Whether a block token with this `maxBrowsingLevel` claim may reach an app rated `rating`: the
- * mint's rule ({@link isMatureContentRating}, refused off a red-capable host) read from the ceiling
- * the mint derived from that host (`allowMatureContentForCeiling`). An absent claim is the SFW
- * ceiling. The one statement of it: the document store's import read (`doc-store-access.ts`) and the
- * registry's private feed, for a block-exchange token's `civitai_max_browsing_level`
- * (`registry-adapter/private-feed.ts`), both call it.
- */
-export function ratingAllowedForCeiling(
-  rating: unknown,
-  maxBrowsingLevel: number | undefined
-): boolean {
-  if (!isMatureContentRating(typeof rating === 'string' ? rating : null)) return true;
-  if (typeof maxBrowsingLevel !== 'number' || !Number.isFinite(maxBrowsingLevel)) return false;
-  return allowMatureContentForCeiling(maxBrowsingLevel) !== false;
 }
 
 /**
