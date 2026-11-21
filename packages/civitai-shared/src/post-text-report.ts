@@ -39,7 +39,8 @@ export type ServiceReviewReportAction = 'hide' | 'restore' | 'hold';
  * What a report on a buyer review may do to it, for the main app's moderator endpoint and the
  * moderator app's queue alike: a report that opens a CSAM hold (`reportOpensCsamHold`) is answered
  * with a hold, which also hides the review, and never with a plain hide; any other report is hidden,
- * never held. Restoring lifts a moderator's hide whatever the report said.
+ * never held. Any report allows a restore; a live CSAM text hold on the review still refuses one
+ * (`setServiceDealReviewHidden`).
  */
 export function serviceReviewReportActionAllowed(
   action: ServiceReviewReportAction,

@@ -1,4 +1,5 @@
-import { ActionIcon, Tooltip } from '@mantine/core';
+import { ActionIcon } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconFlag } from '@tabler/icons-react';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';

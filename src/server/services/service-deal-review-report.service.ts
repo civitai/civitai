@@ -9,10 +9,8 @@ import {
   syncDealReviewPublication,
 } from '~/server/services/creator-service-deal-review-publish';
 import { setServiceDealReviewHidden } from '~/server/services/creator-service-deal-review.service';
-import {
-  csamHoldLockKey,
-  pendingCsamHoldFields,
-} from '~/server/services/text-scan/actions/csam-hold';
+import { flagImagesForCsamReview } from '~/server/services/csam-image-review';
+import { lockCsamHold, pendingCsamHoldFields } from '~/server/services/text-scan/actions/csam-hold';
 import {
   loadServiceDealReviewSubjects,
   SERVICE_DEAL_REVIEW_TEXTS,
@@ -45,8 +43,8 @@ export async function reportedServiceDealReviewActionAllowed(
  * this review opens. In one transaction: a Pending csam hold on the named text's current words (raised
  * even on words an earlier hold dismissed; a pending one is kept), that text blocked, and the whole
  * review hidden, images included. So a hold never exists over a text still shown, and a review with
- * no text, or a held reply, still comes down. `type` is required when the review has any text and
- * refused when it has none.
+ * no text, or a held reply, still comes down, and its images go to the CSAM review queue. `type` names
+ * a text when the review has any, and is null when it has none (`'pickText'` otherwise).
  */
 export async function holdReportedServiceDealReview({
   reviewId,
@@ -74,10 +72,8 @@ export async function holdReportedServiceDealReview({
     await lockDealReviewCounters(tx, review.dealId);
     let hold: { holdId: number | null; changed: boolean } = { holdId: null, changed: false };
     if (type && subject) {
-      // The lock the scan's hold writer and a decision take (`lockCsamHold`).
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${csamHoldLockKey(
-        type
-      )}), ${reviewId}::int)`;
+      // The lock the scan's hold writer and a decision take.
+      await lockCsamHold(tx, type, reviewId);
       const [pending] = await tx.$queryRaw<{ id: number }[]>`
         SELECT "id" FROM "TextScanHold"
         WHERE "entityType" = ${type} AND "entityId" = ${reviewId}::int AND "label" = 'csam'
@@ -100,6 +96,14 @@ export async function holdReportedServiceDealReview({
       await tx.$executeRaw`
         UPDATE "ServiceDealReview" SET ${cols.status} = 'Blocked' WHERE "id" = ${reviewId}::int`;
     }
+    // Its images go to the CSAM review queue, whose flag holds their owner's delete until it decides.
+    const images = await tx.$queryRaw<{ imageId: number }[]>`
+      SELECT "imageId" FROM "ServiceDealReviewImage" WHERE "reviewId" = ${reviewId}::int`;
+    if (images.length)
+      await flagImagesForCsamReview(
+        tx,
+        images.map((i) => i.imageId)
+      );
     const hidden = await tx.$executeRaw`
       UPDATE "ServiceDealReview" SET "hiddenAt" = now(), "hiddenById" = ${moderatorId}::int
       WHERE "id" = ${reviewId}::int AND "hiddenAt" IS NULL`;
@@ -115,20 +119,10 @@ export async function holdReportedServiceDealReview({
   return result;
 }
 
-/** Whether either of the review's texts is held in the CSAM text-hold queue now. */
-async function serviceDealReviewCsamHeld(reviewId: number) {
-  // primary: a hold may have been raised a moment ago.
-  const [row] = await dbWrite.$queryRaw<{ held: boolean }[]>`
-    SELECT EXISTS (SELECT 1 FROM "TextScanHold"
-      WHERE "entityType" IN ('ServiceDealReview', 'ServiceDealReviewReply')
-        AND "entityId" = ${reviewId}::int AND "label" = 'csam' AND "status" = 'Pending') AS "held"`;
-  return !!row?.held;
-}
-
 /**
  * A moderator's hide or restore of a reported review. A hide needs a report on this review that may
- * be answered with one (never a CSAM report: that one is held); a review the CSAM text-hold queue
- * holds is restored only once that queue has decided it.
+ * be answered with one (never a CSAM report: that one is held). A restore is refused as every restore
+ * is (`setServiceDealReviewHidden`).
  */
 export async function setReportedServiceDealReviewHidden({
   reviewId,
@@ -146,6 +140,5 @@ export async function setReportedServiceDealReviewHidden({
     !(reportId && (await reportedServiceDealReviewActionAllowed('hide', reportId, reviewId)))
   )
     return 'refused' as const;
-  if (!hidden && (await serviceDealReviewCsamHeld(reviewId))) return 'held' as const;
   return setServiceDealReviewHidden({ reviewId, moderatorId, hidden });
 }

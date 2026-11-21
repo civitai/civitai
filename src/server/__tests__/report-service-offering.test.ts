@@ -95,7 +95,11 @@ describe('reporting a buyer review', () => {
       id: 23,
       type: ReportEntity.ServiceDealReview,
       reason: ReportReason.TOSViolation,
-      details: { violation: 'Spam', serviceDealReview: { comment: 'forged by the client' } },
+      // A client-sent snapshot, which the server must drop.
+      details: Object.assign(
+        { violation: 'Spam' },
+        { serviceDealReview: { comment: 'forged by the client' } }
+      ),
     });
 
   it('links the report to the review and its offering, with the words as the server read them', async () => {

@@ -79,7 +79,26 @@ vi.mock('~/server/utils/distributed-lock', () => ({
 type Raw = ReturnType<typeof pgliteRaw>;
 const bridge = (db: { query: PGlite['query'] }) => {
   const raw = pgliteRaw(db as PGlite);
-  return { $executeRaw: raw.executeRaw, $queryRaw: raw.queryRaw };
+  return {
+    $executeRaw: raw.executeRaw,
+    $queryRaw: raw.queryRaw,
+    // The one Prisma model write a transaction here makes: the CSAM review flag on images.
+    image: {
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { id: { in: number[] } };
+        data: { needsReview: string };
+      }) => {
+        const { affectedRows } = await db.query(
+          `UPDATE "Image" SET "needsReview" = $1 WHERE id = ANY($2::int[])`,
+          [data.needsReview, where.id.in]
+        );
+        return { count: affectedRows ?? 0 };
+      },
+    },
+  };
 };
 dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw']>) =>
   pgliteRaw(holder.db).executeRaw(...a)) as never);
@@ -4130,6 +4149,27 @@ describe('review publishing and counters', () => {
         expect((await reviewRow(id)).publishedAt).not.toBeNull();
       });
 
+      it("sends the review's images to the CSAM review queue, filing no CsamReport", async () => {
+        const { reviewId, reportId } = await reported('CSAM');
+        const imageIds = (
+          await q<{ id: number }>(`INSERT INTO "Image" (url) VALUES ('a'), ('b') RETURNING id`)
+        ).map((r) => r.id);
+        for (const imageId of imageIds)
+          await q(`INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId") VALUES ($1, $2)`, [
+            reviewId,
+            imageId,
+          ]);
+        await holder.db.exec(`CREATE TABLE IF NOT EXISTS "CsamReport" (id serial PRIMARY KEY)`);
+        expect(await hold(reviewId, reportId)).toMatchObject({ changed: true });
+        expect(
+          await q<{ needsReview: string | null }>(
+            `SELECT "needsReview" FROM "Image" WHERE id = ANY($1::int[]) ORDER BY id`,
+            [imageIds]
+          )
+        ).toEqual([{ needsReview: 'csam' }, { needsReview: 'csam' }]);
+        expect(await q(`SELECT 1 FROM "CsamReport"`)).toEqual([]);
+      });
+
       it('opens no hold from a report with another reason, or one on another review', async () => {
         const spam = await reported('Spam');
         expect(await hold(spam.reviewId, spam.reportId)).toBe('refused');
@@ -4152,7 +4192,23 @@ describe('review publishing and counters', () => {
         expect(await hiddenAt(csam.reviewId)).toBeNull();
         await hold(csam.reviewId, csam.reportId);
         expect(await setHidden(csam.reviewId, false)).toBe('held');
+        // The deal page's restore takes the same refusal, for a confirmed hold too.
+        const restore = () =>
+          dealReviews.setServiceDealReviewHidden({
+            reviewId: csam.reviewId,
+            moderatorId: STRANGER,
+            hidden: false,
+          });
+        expect(await restore()).toBe('held');
+        await q(`UPDATE "TextScanHold" SET status = 'Confirmed' WHERE "entityId" = $1`, [
+          csam.reviewId,
+        ]);
+        expect(await restore()).toBe('held');
         expect(await hiddenAt(csam.reviewId)).not.toBeNull();
+        await q(`UPDATE "TextScanHold" SET status = 'Dismissed' WHERE "entityId" = $1`, [
+          csam.reviewId,
+        ]);
+        expect(await restore()).toBe(true);
 
         const spam = await reported('Spam');
         expect(await setHidden(spam.reviewId, true)).toBe('refused');
