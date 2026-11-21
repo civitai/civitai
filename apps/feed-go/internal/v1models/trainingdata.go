@@ -58,7 +58,7 @@ var TrainingDataSQLHash = func() string {
 const TrainingDataSQLHeader = "x-feed-go-training-data-sql"
 
 // listingRequest is what the listing reads from the request: its Host header (isRedCapableHost) and
-// the Node statement hash the sample carried ("" = none).
+// the Node rule-set id the sample carried ("" = none).
 type listingRequest struct {
 	host, sqlHash string
 }

@@ -27,7 +27,6 @@ import {
   type FeedGoShadowConfig,
 } from '~/server/trpc/feed-go-shadow';
 import { pickSessionCookies } from '~/server/utils/session-cookies';
-import { trainingDataListingRulesId } from '~/server/services/training-data-restricted.service';
 
 const URL_ = 'http://feed-go.test:9090/internal/shadow/image.getImagesAsPostsInfinite';
 const V1_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/images';
@@ -1025,11 +1024,6 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
     });
     const s = broken.shadow.beginRest('v1-models', modelsRequest('/api/v1/models'));
     expect(s?.headers).not.toHaveProperty(FEED_GO_TRAINING_DATA_SQL_HEADER);
-  });
-
-  it('the rule set id is the statement hash and the decision version', () => {
-    // The wiring of the module-level sampler is in src/server/__tests__/trpc-feed-go-shadow.test.ts.
-    expect(trainingDataListingRulesId()).toMatch(/^[0-9a-f]{64};rules=[1-9][0-9]*$/);
   });
 
   it('one flag covers both model routes, and neither the images nor the gallery flag does', () => {

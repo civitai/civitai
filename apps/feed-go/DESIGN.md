@@ -2342,10 +2342,16 @@ Node build's rule set id, `<sha256 of the statement text>;rules=<TRAINING_DATA_L
 with a Training Data candidate is answered only when it equals this build's
 (`v1models.TrainingDataSQLHash`: the embedded copy's hash and `TrainingDataRulesVersion`), and falls
 back (`v1-models-training-data-drift`) when it differs or is absent, before anything is read. A body
-with no Training Data file needs no id. The version is held to its source by
-`feed-go-training-data-listing.parity.test.ts`: it records the SHA-256 of
-`training-data-visibility.ts` and the marked decision block of `trainingDataListing` per version,
-fails when that source changes without a bump, and requires the Go constant to equal Node's.
+with no Training Data file needs no id. `feed-go-training-data-listing.parity.test.ts` records, per
+version, the SHA-256 of exactly: `training-data-visibility.ts`, the body of `trainingDataListing`
+between its `feed-go-rules` markers (the owner/moderator return, the candidate filter, the read, its
+fail-closed return and the predicate), and the values of `sfwBrowsingLevelsFlag` and
+`ScanResultCode.Success`. It fails when that changes without a bump, and requires the Go constant to
+equal Node's. Outside the hash: the call sites' inputs, `isRedCapableHost(req.headers.host)` in
+`src/pages/api/v1/models/[id].ts` and in `model-search.service.ts` (`redCapable`), and feed-go's
+`redCapable`; a change there needs the same bump by hand (the test's failure message lists them).
+Known limit: a version bump that is not ported to Go passes every check; nothing compares the two
+decisions' behaviour beyond the golden fixtures.
 
 ### 16.7 Known divergences
 

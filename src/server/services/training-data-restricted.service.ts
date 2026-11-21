@@ -79,8 +79,9 @@ export function trainingDataListingSql(candidates: number[]): Prisma.Sql {
 }
 
 /**
- * The version of `trainingDataListing`'s JS decision over the rows (the marked block below and
- * src/shared/utils/training-data-visibility.ts). feed-go mirrors it (TrainingDataRulesVersion in
+ * The version of `trainingDataListing`'s JS decision (its whole body, between the feed-go-rules
+ * markers, src/shared/utils/training-data-visibility.ts, and the values of sfwBrowsingLevelsFlag and
+ * ScanResultCode.Success it reads). feed-go mirrors it (TrainingDataRulesVersion in
  * apps/feed-go/internal/v1models/trainingdata.go) and lists Training Data files only for a Node
  * sending the same version. feed-go-training-data-listing.parity.test.ts hashes that source and fails
  * until this is bumped (in both places) whenever it changes.
@@ -118,6 +119,7 @@ export async function trainingDataListing(
   versions: { id: number; files?: ListedFile[] | null }[],
   { redCapable, viewerManages = false }: { redCapable: boolean; viewerManages?: boolean }
 ): Promise<(file: ListedFile) => boolean> {
+  // feed-go-rules:begin (TRAINING_DATA_LISTING_RULES_VERSION: bump it when this body changes)
   if (viewerManages) return () => true;
   const candidates = versions
     // `files` is absent when the read did not select them (model-version getById without
@@ -141,7 +143,6 @@ export async function trainingDataListing(
     });
     return null;
   });
-  // feed-go-rules:begin (TRAINING_DATA_LISTING_RULES_VERSION: bump it when this block changes)
   if (!rows) return (file) => file.type !== 'Training Data';
   const refused = new Set(
     rows
