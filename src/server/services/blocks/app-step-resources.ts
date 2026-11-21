@@ -174,7 +174,7 @@ function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
   // clause reaches no array, or a reused name may bind either loop, so a reference to it places
   // every argument. A repeat whose clause cannot be read registers nothing, and a reference to its
   // loop name is skipped below as another step's output: safe only because resolveBlockWorkflowGraph
-  // refuses a malformed repeat clause first (readRepeatInput, workflow-graph.ts:130-137).
+  // refuses a malformed repeat clause first (readRepeatInput, workflow-graph.ts).
   const loopItems = new Map<string, unknown[] | null>();
   let formatFill = 0;
 
