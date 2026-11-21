@@ -441,6 +441,11 @@ describe('despikeStickerTrack', () => {
     for (const tick of [6, 7, 8]) expect(scaleAt(out, tick)).toBeCloseTo(0.1);
   });
 
+  it('keeps a four-tick swell, longer than a bad mask lasts', () => {
+    const track = sized({ 6: 0.3, 7: 0.3, 8: 0.3, 9: 0.3 });
+    expect(despikeStickerTrack(track)).toBe(track);
+  });
+
   it('keeps a real size step, as at a cut to a close-up', () => {
     const step = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i + 10, 0.2]));
     const out = despikeStickerTrack(sized(step));

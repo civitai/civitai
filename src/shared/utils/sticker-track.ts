@@ -149,7 +149,7 @@ const round = (value: number, places: number) => {
 /** Wraps degrees into [-180, 180). */
 export const wrapDegrees = (degrees: number) => ((((degrees + 180) % 360) + 360) % 360) - 180;
 
-/** `fraction` of the way from `from` to `to`, the shortest way round. */
+/** `fraction` of the way from `from` to `to`, the shortest way round: 170° to -170° turns 20°. */
 export const lerpDegrees = (from: number, to: number, fraction: number) =>
   wrapDegrees(from + wrapDegrees(to - from) * fraction);
 
@@ -235,7 +235,6 @@ function sampleContinuous(pairs: StickerTrackPair[], tick: number, angular: bool
   const [toTick, to] = pairs[index + 1];
   const fraction = (tick - fromTick) / (toTick - fromTick);
   if (!angular) return from + (to - from) * fraction;
-  // The shortest way round, so a sticker spun from 170° to -170° turns 20°, not 340°.
   return lerpDegrees(from, to, fraction);
 }
 
@@ -301,7 +300,6 @@ function sampleKeys({ keys }: StickerTrackV2, timeMs: number): StickerTrackPose 
     x: lerp(from.x, to.x),
     y: lerp(from.y, to.y),
     scale: lerp(from.s, to.s),
-    // The shortest way round, as v1 turns.
     rotation: lerpDegrees(from.r, to.r, eased),
     opacity,
     show: opacity > 0,
