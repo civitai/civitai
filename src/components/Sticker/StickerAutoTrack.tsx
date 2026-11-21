@@ -30,7 +30,7 @@ const formatElapsed = (ms: number) => {
 export const useAutoTrackRun = (draftId: string | undefined) =>
   useRuns((state) => (draftId ? state.runs[draftId] : undefined));
 
-/** Starts a run from the draft's pose at the playhead. Hidden while one is open for this draft. */
+/** Starts a run from the draft's pose at the playhead. Hidden while this draft is tracking. */
 export function AutoTrackButton({
   draft,
   playheadMs,

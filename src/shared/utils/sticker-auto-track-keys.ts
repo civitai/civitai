@@ -1,11 +1,8 @@
-import {
-  STICKER_PLACEMENT_MAX_ROTATION,
-  STICKER_PLACEMENT_MAX_SCALE,
-  STICKER_PLACEMENT_MIN_SCALE,
-} from '~/shared/utils/sticker-placement';
+import { normalizeStickerPlacement } from '~/shared/utils/sticker-placement';
 import type { StickerTrackKey, StickerTrackV1 } from '~/shared/utils/sticker-track';
 import {
   sampleStickerTrack,
+  wrapDegrees,
   STICKER_TRACK_MAX_DURATION_MS,
   STICKER_TRACK_MAX_KEYS,
 } from '~/shared/utils/sticker-track';
@@ -22,9 +19,6 @@ export function autoTrackPollDelay(elapsedMs: number): number | null {
 
 /** How far a dropped key may sit from the line its neighbours draw: x/y fraction, scale, degrees. */
 const TOLERANCE = { x: 0.002, y: 0.002, s: 0.005, r: 0.5 };
-
-const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
-const wrapDegrees = (degrees: number) => ((((degrees + 180) % 360) + 360) % 360) - 180;
 
 /**
  * A tracker run as keys on the video's clock. Tick 0 is `startMs`. Every tick any channel
@@ -43,15 +37,9 @@ export function autoTrackRunKeys(track: StickerTrackV1, startMs: number): Sticke
     const t = startMs + Math.round(tick * track.ms);
     if (t > STICKER_TRACK_MAX_DURATION_MS) break;
     const pose = sampleStickerTrack(track, tick * track.ms);
-    keys.push({
-      t,
-      x: clamp(pose.x, 0, 1),
-      y: clamp(pose.y, 0, 1),
-      s: clamp(pose.scale, STICKER_PLACEMENT_MIN_SCALE, STICKER_PLACEMENT_MAX_SCALE),
-      r: clamp(pose.rotation, -STICKER_PLACEMENT_MAX_ROTATION, STICKER_PLACEMENT_MAX_ROTATION),
-      o: pose.show ? 1 : 0,
-      ease: 'linear',
-    });
+    // The same bounds a placed sticker is held to.
+    const { x, y, scale, rotation } = normalizeStickerPlacement(pose);
+    keys.push({ t, x, y, s: scale, r: rotation, o: pose.show ? 1 : 0, ease: 'linear' });
   }
   for (let i = 0; i < keys.length - 1; i++)
     if ((keys[i].o === 0) !== (keys[i + 1].o === 0)) keys[i].ease = 'jump';

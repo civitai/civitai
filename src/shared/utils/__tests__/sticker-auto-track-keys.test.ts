@@ -203,9 +203,10 @@ describe('discardAutoTrackKeys', () => {
 describe('autoTrackPollDelay', () => {
   it('bounds the reads a run makes, and stops after five minutes', () => {
     let reads = 0;
+    // Capped, so a schedule that never ends fails here instead of hanging the run.
     for (
       let t = 0, delay = autoTrackPollDelay(0);
-      delay !== null;
+      delay !== null && reads <= 200;
       t += delay, delay = autoTrackPollDelay(t)
     )
       reads++;
