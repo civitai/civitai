@@ -151,8 +151,8 @@ function ts7Args(args) {
 
 // TYPECHECK_TSC_PATH is a test seam: it lets the suite drive this classifier with a stub that
 // exits the way a crashed / clean / erroring compiler does, without paying a real typecheck per
-// case. The stub is a node script and replaces the compiler binary in either mode, so the
-// arguments and heap flag it receives are the ones the real compiler would get.
+// case. The stub is a node script and replaces the compiler binary in either mode, receiving the
+// arguments the real compiler would get (plus the 5.9 heap flag under TYPECHECK_COMPILER=5).
 const seam = process.env.TYPECHECK_TSC_PATH;
 let compilerLabel;
 let command;
