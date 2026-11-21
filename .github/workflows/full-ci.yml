@@ -206,7 +206,8 @@ jobs:
           # failure the list is left empty, which the script treats as "dispatch everything".
           gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" \
               --jq '.[] | .filename, (.previous_filename // empty)' > "$changed" \
-            || { echo "Reading the PR's changed files failed; failing open." >&2; : > "$changed"; }
+            || { echo "Reading the PR's changed files failed; failing open." >&2; : > "$changed"
+                 echo "Reading the PR's changed files failed, so every draft-gated workflow below was dispatched." >> "$GITHUB_STEP_SUMMARY"; }
           files=()
           for wf in "${others[@]}"; do files+=(".github/workflows/$wf"); done
           decisions=$(node scripts/ci/github-paths-filter.mjs --draft "$DRAFT" --changed "$changed" "${files[@]}" || true)
