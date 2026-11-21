@@ -149,9 +149,10 @@ export async function purgeExpiredReviewSnapshots(
       // gte cursor+1ms: don't re-walk what previous runs already handled. The
       // cursor is stored in whole MILLISECONDS (epoch ms) while the column is
       // `timestamptz(6)` (microseconds), so the saved value truncates the last
-      // row's timestamp: a `gt cursor` would match that same row again on every
-      // run and the cursor would never advance. Starting at the next whole
-      // millisecond skips everything in the cursor's millisecond.
+      // row's timestamp: a `gt cursor` matches that same row again, so while it
+      // is the newest due row every run re-scans it and the cursor stays put.
+      // Starting at the next whole millisecond skips everything in the
+      // cursor's millisecond.
       // lt cutoff: THE RETENTION GATE — not yet 30 days terminal, not eligible.
       updatedAt: { gte: new Date(cursor.getTime() + 1), lt: cutoff },
     },

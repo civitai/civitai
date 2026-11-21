@@ -431,8 +431,8 @@ describe('purgeExpiredReviewSnapshots — batching, resumability, resilience', (
   /**
    * Regression: the cursor is persisted as epoch MILLISECONDS but `updatedAt` is
    * `timestamptz(6)`. A last row at `…:05.356842` saves the cursor as `…:05.356`,
-   * and a `gt` resume matches that same row again — every run, forever, so the
-   * cursor never advances. Drives two consecutive runs through a findMany mock
+   * and a `gt` resume matches that same row again — every run, for as long as
+   * it is the newest due row. Drives two consecutive runs through a findMany mock
    * that applies the filter at microsecond resolution and round-trips the
    * cursor exactly as `getJobDate` does (`new Date(storedEpochMs)`).
    */
