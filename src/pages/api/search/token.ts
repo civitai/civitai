@@ -1,5 +1,5 @@
 import { mintSearchToken } from '~/server/meilisearch/search-token';
-import { restModeratorViewer } from '~/server/auth/rest-viewer';
+import { restModeratorViewer, restOwnerOrModeratorViewer } from '~/server/auth/rest-viewer';
 import { applyApiRequestPolicy } from '~/server/middleware/api-request-policy';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { requestDomainBrowsingLevelCap } from '~/server/utils/browsing-level';
@@ -29,7 +29,7 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
     return res.status(200).json({ token: null });
 
   const minted = mintSearchToken({
-    id: user?.id,
+    id: restOwnerOrModeratorViewer(req, user)?.id,
     isModerator: restModeratorViewer(req, user)?.isModerator,
     browsingLevelCap: null,
   });

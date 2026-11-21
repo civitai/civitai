@@ -1,5 +1,5 @@
 import type { NextApiRequest } from 'next';
-import { restModeratorViewer } from '~/server/auth/rest-viewer';
+import { restModeratorViewer, restOwnerOrModeratorViewer } from '~/server/auth/rest-viewer';
 import type * as z from 'zod';
 import {
   siteFacetSearchSchema,
@@ -95,7 +95,7 @@ export default MixedAuthEndpoint(
       req: req as NextApiRequest,
     });
     const viewer: SiteSearchViewer = {
-      userId: user?.id,
+      userId: restOwnerOrModeratorViewer(req, user)?.id,
       isModerator,
       browsingLevelCap,
       collectionImageLevel: collectionImageLevelFor({
