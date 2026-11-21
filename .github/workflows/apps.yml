@@ -33,6 +33,10 @@ name: App suites
 #       main app's).
 #   src/server/utils/__tests__/redis-lua-harness.ts
 #       the real-Lua redis harness apps/auth's device tests run their scripts through.
+#   src/server/services/block-token.service.ts, src/server/services/block-token-subject.ts,
+#   src/server/middleware/block-scope.middleware.ts
+#       read by apps/auth's block-exchange test, which pins the hub's copies of the site's block-token
+#       constants (issuer, audience, subject pattern, kid, age cap, clock tolerance) to them.
 #   containers/notification-db/docker-init/**
 #       the DDL apps/notifications' behavioural test builds its database from.
 #   package.json
@@ -113,6 +117,9 @@ on:
       - 'src/components/Account/creator-score-copy.ts'
       - 'src/server/services/crucible-bradley-terry.ts'
       - 'src/server/utils/__tests__/redis-lua-harness.ts'
+      - 'src/server/services/block-token.service.ts'
+      - 'src/server/services/block-token-subject.ts'
+      - 'src/server/middleware/block-scope.middleware.ts'
       - 'src/server/services/knights/**'
       - 'containers/notification-db/docker-init/**'
   push:

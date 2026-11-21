@@ -847,21 +847,34 @@ describe('a minted block-exchange token is inert elsewhere at the hub', () => {
 describe('block token verification follows the site', () => {
   // The hub cannot import the site's modules, so its copies of the site's constants are pinned to the
   // site's source text: a change on either side fails here.
-  const read = (rel: string) =>
-    readFileSync(fileURLToPath(new URL(`../../../../../../../${rel}`, import.meta.url)), 'utf8');
+  // Each site file by its own literal path, so the apps paths filter (scripts/ci/assert-apps-paths-filter.mjs)
+  // can see and cover exactly these files.
+  const read = (url: URL) => readFileSync(fileURLToPath(url), 'utf8');
+  const BLOCK_TOKEN_SERVICE = new URL(
+    '../../../../../../../src/server/services/block-token.service.ts',
+    import.meta.url
+  );
+  const BLOCK_TOKEN_SUBJECT = new URL(
+    '../../../../../../../src/server/services/block-token-subject.ts',
+    import.meta.url
+  );
+  const BLOCK_SCOPE_MIDDLEWARE = new URL(
+    '../../../../../../../src/server/middleware/block-scope.middleware.ts',
+    import.meta.url
+  );
 
   it('uses the site issuer, audience and signed-in subject pattern', () => {
-    const service = read('src/server/services/block-token.service.ts');
+    const service = read(BLOCK_TOKEN_SERVICE);
     expect(service).toContain("export const BLOCK_TOKEN_ISSUER = 'civitai';");
     expect(service).toContain("export const BLOCK_TOKEN_AUDIENCE = 'civitai-app-block';");
-    const subject = read('src/server/services/block-token-subject.ts');
+    const subject = read(BLOCK_TOKEN_SUBJECT);
     expect(subject).toContain('export const USER_SUB_RE = /^user:[1-9][0-9]{0,11}$/;');
   });
 
   it('uses the site age cap and clock tolerance', () => {
     expect(MAX_AGE_SECONDS).toBe(900);
     expect(CLOCK_TOLERANCE_SECONDS).toBe(30);
-    const middleware = read('src/server/middleware/block-scope.middleware.ts');
+    const middleware = read(BLOCK_SCOPE_MIDDLEWARE);
     expect(middleware).toContain('const MAX_TOKEN_AGE_DEFAULT_SECONDS = 15 * 60;');
     expect(middleware).toContain('const MAX_TOKEN_AGE_CLOCK_TOLERANCE_SECONDS = 30;');
     expect(middleware).toContain("clockTolerance: '30s',");
@@ -874,7 +887,7 @@ describe('block token verification follows the site', () => {
   });
 
   it('computes the kid as the site does', () => {
-    const service = read('src/server/services/block-token.service.ts');
+    const service = read(BLOCK_TOKEN_SERVICE);
     expect(service).toContain("return createHash('sha256').update(n).digest('hex').slice(0, 32);");
   });
 });
