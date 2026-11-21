@@ -62,9 +62,9 @@ export function percentOfComputeFeeRefusal({
  * Why an owner's write to a staff-locked licence fee is refused, or null when it may proceed. While
  * `ModelVersion.licensingFeeLocked` is set only a moderator may change the fee, its type or its
  * settlement currency; re-sending the stored values passes, because both editors re-submit them.
- * Callers pass undefined for a field the write leaves alone. A policy clear (POI, non-commercial base
- * model, policyKeepsFee) is not routed through here: it stops charging rather than changing the rate,
- * and refusing it would strand the owner's save.
+ * Callers pass undefined for a field the write leaves alone. A policy clear (POI or private model,
+ * non-commercial base model) is not routed through here: it stops charging rather than changing the
+ * rate, and refusing it would strand the owner's save.
  */
 export function lockedLicensingFeeRefusal({
   isModerator,

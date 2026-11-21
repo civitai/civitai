@@ -749,8 +749,10 @@ export const upsertModelVersionHandler = async ({
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
     }
 
-    // Policy clears (see lockedLicensingFeeRefusal) run on a locked fee; the service strips the fee.
-    if (policyKeepsFee && !isNonCommercialBaseModel(input.baseModel)) {
+    // Skipped when a policy clear (POI/private owner, a version already on a non-commercial base model)
+    // strips the fee: refusing it would strand the owner's save. Keyed on the STORED base model, so an
+    // owner cannot clear a locked fee by choosing a non-commercial one.
+    if (policyKeepsFee && !isNonCommercialBaseModel(storedVersion?.baseModel)) {
       const lockRefusal = lockedLicensingFeeRefusal({
         isModerator: !!ctx.user.isModerator,
         locked: storedVersion?.licensingFeeLocked,

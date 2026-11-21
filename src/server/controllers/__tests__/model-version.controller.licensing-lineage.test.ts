@@ -71,6 +71,7 @@ const call = async ({
   storedFee = {} as Record<string, unknown>,
   extraInput = {} as Record<string, unknown>,
   isModerator = false,
+  ownerModel = {} as Record<string, unknown>,
 }: {
   modelTypes: Record<number, string | null>;
   id?: number;
@@ -90,6 +91,8 @@ const call = async ({
   storedFee?: Record<string, unknown>;
   extraInput?: Record<string, unknown>;
   isModerator?: boolean;
+  /** Extra fields on the model the handler reads for its owner (e.g. `poi`). */
+  ownerModel?: Record<string, unknown>;
 }) => {
   dbMock.dbWrite.licensingRoot.findUnique.mockResolvedValue(root);
   // Keyed on the argument, NOT a flat `mockResolvedValue`. A mock that ignores its `where` hands
@@ -112,7 +115,7 @@ const call = async ({
     return type == null ? null : { type };
   });
   // Only reached after the write, for the nsfw read on the create branch.
-  mockGetModel.mockResolvedValue({ nsfw: false, type: 'LORA' });
+  mockGetModel.mockResolvedValue({ nsfw: false, type: 'LORA', ...ownerModel });
 
   await upsertModelVersionHandler({
     input: {
@@ -511,16 +514,43 @@ describe('upsertModelVersionHandler — a staff-locked licence fee', () => {
     });
   });
 
-  it('lets a non-commercial base model clear it', async () => {
-    const nonCommercial = Object.keys(baseModelLicenses).find(
-      (k) =>
-        baseModelLicenses[k as keyof typeof baseModelLicenses]?.nonCommercial &&
-        !isHiddenBaseModel(k)
-    );
+  const nonCommercial = Object.keys(baseModelLicenses).find(
+    (k) =>
+      baseModelLicenses[k as keyof typeof baseModelLicenses]?.nonCommercial && !isHiddenBaseModel(k)
+  ) as string;
+
+  // The exemption is keyed on the STORED base model: choosing a non-commercial one is the owner's own
+  // input, and would otherwise be a way to clear a fee only a moderator may clear.
+  it('refuses an owner who moves a locked fee to a non-commercial base model', async () => {
     expect(nonCommercial).toBeDefined();
-    await expect(
-      save({ licensingFee: 0 }, { baseModel: nonCommercial as string })
-    ).resolves.toBeDefined();
+    await expect(save({ licensingFee: 0 }, { baseModel: nonCommercial })).rejects.toThrow(
+      /set by Civitai/
+    );
+  });
+
+  // Policy clears stop charging rather than change the rate (decided on civitai/civitai#9951).
+  it('lets a version already on a non-commercial base model clear it', async () => {
+    const written = (await call({
+      ...creating('Checkpoint'),
+      id: VERSION_ID,
+      baseModel: nonCommercial,
+      licensingSourceVersionId: null,
+      storedFee: { ...stored, licensingFeeLocked: true, baseModel: nonCommercial },
+      extraInput: { ...stored, licensingFee: 0 },
+    })) as { licensingFee?: number };
+    expect(written.licensingFee).toBe(0);
+  });
+
+  it('lets a POI model clear it', async () => {
+    const written = (await call({
+      ...creating('Checkpoint'),
+      id: VERSION_ID,
+      licensingSourceVersionId: null,
+      ownerModel: { userId: OWNER_ID, poi: true },
+      storedFee: { ...stored, licensingFeeLocked: true },
+      extraInput: { ...stored, licensingFee: 0 },
+    })) as { licensingFee?: number };
+    expect(written.licensingFee).toBe(0);
   });
 
   it('does not apply to an unlocked fee (control)', async () => {
