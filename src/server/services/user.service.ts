@@ -486,9 +486,9 @@ export { isUsernamePermitted } from '~/server/services/username-permitted';
 
 /**
  * Before a moderator clears, edits or bans away another user's profile text or links: when the user
- * is named on a CSAM report or under an account hold, or `alwaysArchive` is set, `archive` stores the current text and links, and this throws if it
- * rejects so the change does not happen. If they change during an upload they are archived again, up
- * to three uploads, after which this refuses. Returns what the last `archive` call resolved to, or
+ * is named on a CSAM report or under an account hold, or `alwaysArchive` is set, `archive` stores
+ * the current text and links, and this throws if it rejects so the change does not happen. If they
+ * change during an upload they are archived again, up to three uploads, after which this refuses. Returns what the last `archive` call resolved to, or
  * undefined when nothing was archived.
  */
 export async function archiveProfileBeforeModeratorChange<TStored = unknown>({
