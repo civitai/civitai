@@ -4861,28 +4861,32 @@ export const upsertModel = async (
       },
       { maxWait: 10000, timeout: 30000 }
     );
-    // The owner's notice first: a post-save step that throws must not lose it.
-    if (faceLossNotice) {
-      const { notifyComFaceHeldVerdictApplied } = await import(
-        '~/server/services/text-scan/actions/model-nsfw'
-      );
-      await notifyComFaceHeldVerdictApplied([faceLossNotice]);
-    }
-    // First after commit, so a later post-save step that throws cannot drop it. Re-checked even when
-    // the gate ran: it read the description before blurb expansion, not the text stored.
-    const listingChanged =
-      (data.name !== undefined && data.name !== beforeUpdate.name) ||
-      (data.description !== undefined && data.description !== beforeUpdate.description);
-    const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
-    if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
-      await queueComFaceRecheck(id);
-    if (!isModerator && listingChanged) await queueComFaceRestore(id);
-    if (losesSfwFace(beforeUpdate, data)) await rescanTextAfterFaceLoss(id);
-    if (heldVerdictApplied) {
-      const { finishHeldVerdictApply } = await import(
-        '~/server/services/text-scan/actions/model-nsfw'
-      );
-      await finishHeldVerdictApply(id);
+    // The owner's notice goes in the finally: after the level refresh, so a slow notice cannot keep
+    // the old level listed, and even when a step before it throws.
+    try {
+      // First of the post-save steps, so a later one that throws cannot drop it. Re-checked even when
+      // the gate ran: it read the description before blurb expansion, not the text stored.
+      const listingChanged =
+        (data.name !== undefined && data.name !== beforeUpdate.name) ||
+        (data.description !== undefined && data.description !== beforeUpdate.description);
+      const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
+      if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
+        await queueComFaceRecheck(id);
+      if (!isModerator && listingChanged) await queueComFaceRestore(id);
+      if (losesSfwFace(beforeUpdate, data)) await rescanTextAfterFaceLoss(id);
+      if (heldVerdictApplied) {
+        const { finishHeldVerdictApply } = await import(
+          '~/server/services/text-scan/actions/model-nsfw'
+        );
+        await finishHeldVerdictApply(id);
+      }
+    } finally {
+      if (faceLossNotice) {
+        const { notifyComFaceHeldVerdictApplied } = await import(
+          '~/server/services/text-scan/actions/model-nsfw'
+        );
+        await notifyComFaceHeldVerdictApplied([faceLossNotice]);
+      }
     }
     await preventReplicationLag('model', id);
     await userModelCountCache.refresh(userId);
@@ -7454,18 +7458,21 @@ export async function migrateResourceToCollection({
     },
     { timeout: 60000, maxWait: 10000 }
   );
-  // The owners' notices first: a post-commit step that throws must not lose them.
-  if (faceLossNotices.some(Boolean)) {
-    const { notifyComFaceHeldVerdictApplied } = await import(
-      '~/server/services/text-scan/actions/model-nsfw'
-    );
-    await notifyComFaceHeldVerdictApplied(faceLossNotices);
+  // The owners' notices go in the finally: after the level refresh, so a slow notice cannot keep the
+  // old level listed, and even when the refresh throws.
+  try {
+    // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
+    // each was given its version's stored level. Versions first: the model level reads them.
+    await updateModelVersionNsfwLevels(filteredVersions.map((v) => v.id));
+    await updateModelNsfwLevels(modelIds);
+  } finally {
+    if (faceLossNotices.some(Boolean)) {
+      const { notifyComFaceHeldVerdictApplied } = await import(
+        '~/server/services/text-scan/actions/model-nsfw'
+      );
+      await notifyComFaceHeldVerdictApplied(faceLossNotices);
+    }
   }
-
-  // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
-  // each was given its version's stored level. Versions first: the model level reads them.
-  await updateModelVersionNsfwLevels(filteredVersions.map((v) => v.id));
-  await updateModelNsfwLevels(modelIds);
 
   // Set the showcase collection for the original model
   await setModelShowcaseCollection({

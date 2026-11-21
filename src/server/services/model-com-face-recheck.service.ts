@@ -192,9 +192,13 @@ async function removeComFace(
       });
     return updated > 0;
   });
-  // The notice first: a throw in what follows must not lose it, and a retry does not re-apply.
-  if (notice) await faceLossNotice.send([notice]);
-  if (removed) await finishRemoval(modelId);
+  // The notice in the finally: after the level refresh, so a slow notice cannot keep the old level
+  // listed, and even when the refresh throws, as a retry does not re-apply the verdict.
+  try {
+    if (removed) await finishRemoval(modelId);
+  } finally {
+    if (notice) await faceLossNotice.send([notice]);
+  }
   return removed;
 }
 

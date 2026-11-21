@@ -1931,6 +1931,10 @@ describe('a .com face going away', () => {
   };
   it('tells the owner, after the save, when the held verdict rates the model', async () => {
     heldRow();
+    let levelRefreshedWhenSent: boolean | undefined;
+    mockNotifyHeld.mockImplementationOnce(async () => {
+      levelRefreshedWhenSent = mockFinishApply.mock.calls.length > 0;
+    });
     mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
     await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
     expect(mockFinishApply).toHaveBeenCalledWith(MODEL_ID);
@@ -1944,6 +1948,8 @@ describe('a .com face going away', () => {
       }),
     ]);
     expect(mockNotifyHeld).toHaveBeenCalledTimes(1);
+    // After the level refresh: a slow notice must not keep the old level listed.
+    expect(levelRefreshedWhenSent).toBe(true);
   });
 
   it('still tells the owner when a post-save step throws', async () => {

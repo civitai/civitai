@@ -294,8 +294,10 @@ describe('the .com face listing re-check', () => {
       mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
       const committed = removal(1);
       let committedWhenSent: boolean | undefined;
+      let levelRefreshedWhenSent: boolean | undefined;
       send.mockImplementation(async () => {
         committedWhenSent = committed();
+        levelRefreshedWhenSent = mockUpdateModelNsfwLevels.mock.calls.length > 0;
       });
 
       await processComFaceRechecks(NOW);
@@ -305,6 +307,8 @@ describe('the .com face listing re-check', () => {
         expect.objectContaining({ entityId: MODEL_ID, userId: 99, level: R }),
       ]);
       expect(committedWhenSent).toBe(true);
+      // After the level refresh: a slow notice must not keep the old level listed.
+      expect(levelRefreshedWhenSent).toBe(true);
     });
 
     it('still tells the owner when the level refresh after the removal throws', async () => {
