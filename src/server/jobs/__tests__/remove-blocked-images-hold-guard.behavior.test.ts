@@ -43,8 +43,10 @@ import {
   blockedQueueBatchSql,
   reviewHeldBlockedImagesSql,
   blockedQueueExpiredAmongSql,
+  banNoteHeldQueuedImagesSql,
   purgeHoldGuard,
 } from '~/server/jobs/image-ingestion';
+import { banNoteHoldSql } from '~/server/services/ban-note-csam';
 import { legalHoldUserIdsSql, userNamedOnHoldingReportSql } from '~/server/utils/legal-hold';
 import {
   accountHoldSql,
@@ -154,6 +156,11 @@ const BASE_SCHEMA = `
       "cascadeParentId" int
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb DEFAULT '{}', "bannedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (
+      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
     CREATE TABLE "Post" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
@@ -1534,5 +1541,54 @@ describe('the blocked-image queue reads, with a held set past the bind-variable 
 
     expect(rows).toHaveLength(HELD.length + 5);
     expect(rows[0].entityId).toBe(3);
+  });
+});
+
+// The account-deletion job blocks a held account's images and queues them here; both jobs must read
+// the same hold, or what one keeps the other purges.
+describe('a CSAM/NCMEC ban note on a row with no ban date', () => {
+  const NOTE_USER = 990077001;
+  const PLAIN_USER = 990077002;
+  const NOTE_IMAGE = 990077101;
+  const PLAIN_IMAGE = 990077102;
+  const run = (sql: Prisma.Sql) => holder.db.query<Record<string, unknown>>(sql.text, sql.values);
+
+  beforeEach(() =>
+    holder.db.exec(`
+      INSERT INTO "User" (id, meta, "bannedAt") VALUES
+        (${NOTE_USER}, '{"banDetails": {"detailsInternal": "NCMEC report filed"}}', NULL),
+        (${PLAIN_USER}, '{}', NULL);
+      INSERT INTO "Image" (id, "userId", ingestion) VALUES
+        (${NOTE_IMAGE}, ${NOTE_USER}, 'Blocked'), (${PLAIN_IMAGE}, ${PLAIN_USER}, 'Blocked');
+      INSERT INTO "JobQueue" (type, "entityType", "entityId", "createdAt") VALUES
+        ('BlockedImageDelete', 'Image', ${NOTE_IMAGE}, now() - interval '30 days'),
+        ('BlockedImageDelete', 'Image', ${PLAIN_IMAGE}, now() - interval '30 days');
+    `)
+  );
+  afterEach(() =>
+    holder.db.exec(`
+      DELETE FROM "JobQueue" WHERE "entityId" IN (${NOTE_IMAGE}, ${PLAIN_IMAGE});
+      DELETE FROM "Image" WHERE id IN (${NOTE_IMAGE}, ${PLAIN_IMAGE});
+      DELETE FROM "User" WHERE id IN (${NOTE_USER}, ${PLAIN_USER});
+    `)
+  );
+
+  it('is held by the account-deletion job and by remove-blocked-images alike', async () => {
+    const held = async (id: number) =>
+      (await run(Prisma.sql`SELECT ${banNoteHoldSql(Prisma.sql`${id}::int`)} AS held`)).rows[0]
+        .held;
+    expect(await held(NOTE_USER)).toBe(true);
+    expect(await held(PLAIN_USER)).toBe(false);
+
+    const excluded = (await run(banNoteHeldQueuedImagesSql)).rows.map((r) => r.id);
+    expect(excluded).toContain(NOTE_IMAGE);
+    expect(excluded).not.toContain(PLAIN_IMAGE);
+
+    const deleted = await imageService.deleteImages([NOTE_IMAGE, PLAIN_IMAGE], {
+      actor: { system: 'test' },
+      onlyWhere: purgeHoldGuard(NO_COPY),
+    });
+    expect(deleted.map((r) => r.id)).toEqual([PLAIN_IMAGE]);
+    expect(await remaining()).toContain(NOTE_IMAGE);
   });
 });

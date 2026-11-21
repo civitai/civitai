@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { banNoteHeldUserIdsSql } from '~/server/services/ban-note-csam';
-import { chunk } from 'lodash-es';
+import { banNoteHoldSql } from '~/server/services/ban-note-csam';
+import { chunk, uniq } from 'lodash-es';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { keepPermanentScanFailureSql } from '~/server/common/image-visibility';
@@ -759,6 +759,19 @@ export const reviewHeldBlockedImagesSql = Prisma.sql`
 `;
 
 /**
+ * Queued blocked-image deletes whose owner a ban-note hold covers, by the same predicate the
+ * account-deletion job and `purgeHoldGuard` read, evaluated per queued image's owner.
+ */
+export const banNoteHeldQueuedImagesSql = Prisma.sql`
+  SELECT j."entityId" AS id
+  FROM "JobQueue" j
+  JOIN "Image" bi ON bi.id = j."entityId"
+  WHERE j.type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+    AND j."entityType" = ${EntityType.Image}::"EntityType"
+    AND ${banNoteHoldSql(Prisma.raw('bi."userId"'))}
+`;
+
+/**
  * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
  * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it. Only valid
  * on a statement over an unaliased "Image".
@@ -772,6 +785,7 @@ export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: b
     AND "Image"."blockedFor" IS DISTINCT FROM 'CSAM'
     AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
     AND NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}
+    AND NOT ${banNoteHoldSql(Prisma.raw('"Image"."userId"'))}
     AND NOT ${captureImageKeptSql('"Image"')}
     ${
       holdForTrainingCopy
@@ -831,28 +845,26 @@ export const removeBlockedImages = createJob(
     try {
       // dbWrite because a report created within replica lag would otherwise be invisible here
       // and its evidence purged in this same run.
-      const [heldUsers, banNoteHeldUsers] = await Promise.all([
-        dbWrite.$queryRaw<{ userId: string }[]>(legalHoldUserIdsSql),
-        // primary: as above, for a ban whose note names CSAM or NCMEC.
-        dbWrite.$queryRaw<{ userId: string }[]>(banNoteHeldUserIdsSql),
-      ]);
+      const heldUsers = await dbWrite.$queryRaw<{ userId: string }[]>(legalHoldUserIdsSql);
       const heldUserIds = [
         PLACEHOLDER_OWNER_ID,
-        ...[...heldUsers, ...banNoteHeldUsers]
-          .map((u) => Number(u.userId))
-          .filter(Number.isSafeInteger),
+        ...heldUsers.map((u) => Number(u.userId)).filter(Number.isSafeInteger),
       ];
 
       // Excluded from the batch rather than filtered out after: held rows stay queued forever, so
       // in an oldest-first window they would occupy the whole batch every run, stalling deletion
       // site-wide for every other user.
-      heldActive = (
-        await dbRead.$queryRaw<{ id: number }[]>`
-          SELECT id FROM "Image"
-          WHERE "userId" = ANY(${heldUserIds})
-            AND ingestion = 'Blocked'::"ImageIngestionStatus"
-        `
-      ).map((x) => x.id);
+      heldActive = uniq([
+        ...(
+          await dbRead.$queryRaw<{ id: number }[]>`
+            SELECT id FROM "Image"
+            WHERE "userId" = ANY(${heldUserIds})
+              AND ingestion = 'Blocked'::"ImageIngestionStatus"
+          `
+        ).map((x) => x.id),
+        // primary: a ban placed a moment ago must keep its images out of this run.
+        ...(await dbWrite.$queryRaw<{ id: number }[]>(banNoteHeldQueuedImagesSql)).map((x) => x.id),
+      ]);
 
       // The held images that are past retention, i.e. the ones this run would otherwise delete.
       const wouldSkip = heldActive.length

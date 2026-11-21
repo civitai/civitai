@@ -30,11 +30,3 @@ export const banNoteHoldSql = (id: Prisma.Sql) =>
   Prisma.sql`EXISTS (SELECT 1 FROM "User" bnu WHERE bnu.id = ${id} AND ${banNoteHeldUserSql(
     'bnu'
   )})`;
-
-/**
- * The ids of banned users `banNoteHeldUserSql` holds, as one text column `userId`. Only rows with a
- * `bannedAt`, to stay on its partial index: a ban note on a user with none is not read here.
- */
-export const banNoteHeldUserIdsSql = Prisma.sql`
-  SELECT bnu.id::text AS "userId" FROM "User" bnu
-  WHERE bnu."bannedAt" IS NOT NULL AND ${banNoteHeldUserSql('bnu')}`;

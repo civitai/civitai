@@ -129,6 +129,7 @@ type Fixture = {
 
 type CsamReport = { reportSentAt: Date | null; archivedAt: Date | null };
 
+let holdReadFails = false;
 let fixtures: Record<number, Fixture> = {};
 let cursorStore: Record<string, Date> = {};
 let cursorSets: Record<string, Date[]> = {};
@@ -506,6 +507,7 @@ function seed(next: Record<number, Fixture>) {
 
       // The per-account hold read that picks skip, block or the account's own choice.
       if (sql.includes('AS skip')) {
+        if (holdReadFails) return Promise.reject(new Error('primary unreachable'));
         const hold = values[0] as { values: unknown[] };
         const account = fixtures[hold.values[0] as number];
         const reported = (reportsOnPrimary(account) ?? []).some(reportHolds);
@@ -1606,6 +1608,21 @@ describe('an image carrying the moderator-only review flag', () => {
 
 describe('legal holds', () => {
   const UNFINISHED: CsamReport[] = [{ reportSentAt: null, archivedAt: null }];
+
+  it('deletes and blocks nothing when the hold cannot be read on the primary', async () => {
+    holdReadFails = true;
+    try {
+      seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900] } });
+
+      const result = await run();
+
+      expect(mockDeleteImages).not.toHaveBeenCalled();
+      expect(deletedPostIds).toEqual([]);
+      expect(result.blockedImages).toBe(0);
+    } finally {
+      holdReadFails = false;
+    }
+  });
 
   it('keeps an account with an unfinished report out of both worklists', async () => {
     cursorStore[FRESH_KEY] = NEWER;

@@ -115,24 +115,26 @@ const accountHeldSql = (id: Prisma.Sql, markerView: boolean) =>
     markerView
   )} OR ${banNoteHoldSql(id)})`;
 
-/** An account a CSAM report not yet archived names, as subject or secondary user, or lists images of. */
-const openReportSql = (id: Prisma.Sql) => Prisma.sql`(
-  EXISTS (
-    SELECT 1 FROM "CsamReport" orr
-    WHERE orr."archivedAt" IS NULL
-      AND (orr."userId" = ${id} OR orr.details ->> 'secondaryUserId' = (${id})::text)
-  )
-  OR EXISTS (
-    SELECT 1
-    FROM "CsamReport" ori
-    CROSS JOIN LATERAL jsonb_array_elements(
-      CASE WHEN jsonb_typeof(ori.images) = 'array' THEN ori.images ELSE '[]'::jsonb END
-    ) oe
-    JOIN "Image" oi
-      ON oi.id = CASE WHEN (oe ->> 'id') ~ '^[0-9]{1,18}$' THEN (oe ->> 'id')::bigint END
-    WHERE ori."archivedAt" IS NULL AND oi."userId" = ${id}
-  )
-)`;
+/**
+ * An account a CSAM report not yet archived names, as subject or secondary user, or lists images of.
+ * Uncorrelated, so Postgres builds the set once per statement rather than once per candidate.
+ */
+const openReportSql = (id: Prisma.Sql) => Prisma.sql`((${id})::text IN (
+  SELECT orr."userId"::text FROM "CsamReport" orr
+  WHERE orr."archivedAt" IS NULL AND orr."userId" IS NOT NULL
+  UNION
+  SELECT ors.details ->> 'secondaryUserId' FROM "CsamReport" ors
+  WHERE ors."archivedAt" IS NULL AND ors.details ->> 'secondaryUserId' IS NOT NULL
+  UNION
+  SELECT oi."userId"::text
+  FROM "CsamReport" ori
+  CROSS JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(ori.images) = 'array' THEN ori.images ELSE '[]'::jsonb END
+  ) oe
+  JOIN "Image" oi
+    ON oi.id = CASE WHEN (oe ->> 'id') ~ '^[0-9]{1,18}$' THEN (oe ->> 'id')::bigint END
+  WHERE ori."archivedAt" IS NULL
+))`;
 
 /** Left out of the worklist: the placeholder owner, and an account an unarchived report names. */
 const skippedSql = (id: Prisma.Sql) =>

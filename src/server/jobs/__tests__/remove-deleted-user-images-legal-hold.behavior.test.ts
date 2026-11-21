@@ -499,6 +499,18 @@ describe('a held account deleted for good', () => {
     expect(holdReads).toEqual([]);
   });
 
+  it('hides and keeps the images of a ban-note account with no ban date', async () => {
+    await holder.db.query(`UPDATE "User" SET "bannedAt" = NULL, meta = $2 WHERE id = $1`, [
+      HELD,
+      JSON.stringify({ banDetails: { detailsExternal: 'csam' } }),
+    ]);
+
+    await run();
+
+    expect(await blockedOf(HELD)).toBe(MANY);
+    expect(await imagesOf(HELD)).toBe(MANY);
+  });
+
   it('drains an account whose ban-note hold a moderator released during this ban', async () => {
     await banNote(HELD, '2 days');
     await release(HELD, '1 day');

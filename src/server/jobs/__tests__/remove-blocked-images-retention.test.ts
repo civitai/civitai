@@ -76,7 +76,7 @@ const {
   mockLogToAxiom,
   mockEnv,
   heldUsers,
-  banNoteHeldUsers,
+  banNoteHeldImageIds,
   holdLookup,
   appealedIds,
   csamFlaggedIds,
@@ -92,8 +92,8 @@ const {
   const queueWhereLog: any[] = [];
   // Mutable so a test can vary which users are held. Text, as the hold's SQL returns them.
   const heldUsers: { userId: string }[] = [];
-  // Banned users whose ban note names CSAM or NCMEC, unreleased.
-  const banNoteHeldUsers: { userId: string }[] = [];
+  // Queued images whose owner's ban note names CSAM or NCMEC, unreleased.
+  const banNoteHeldImageIds: number[] = [];
   const holdLookup = { error: null as Error | null };
   const appealedIds: number[] = [];
   const csamFlaggedIds: number[] = [];
@@ -190,12 +190,14 @@ const {
       : flatten(first, rawValues);
     if (values.length > MAX_BIND_VARIABLES) throw tooManyBindVariables(values.length);
     sqlLog.push(sql);
+    // The ban-note hold over the queue, before the job's own queue reads.
+    if (sql.includes('FROM "JobQueue" j') && sql.includes('"ModActivity" bnr'))
+      return banNoteHeldImageIds.map((id) => ({ id }));
     // The job's two queue reads; its backlog count reads "JobQueue" too, and falls through.
     if (sql.includes('FROM "JobQueue" j')) return queueRead(sql, values);
     if (sql.includes('SELECT to_regclass(')) return [{ present: markerView.present }];
     // Routed before the report lookup below: the account hold reads "CsamReport" too.
     if (sql.includes('SELECT c."userId" FROM')) return accountHeldIds.map((id) => ({ id }));
-    if (sql.includes('"ModActivity" bnr')) return banNoteHeldUsers;
     if (sql.includes('FROM "CsamReport"')) {
       if (holdLookup.error) throw holdLookup.error;
       return heldUsers;
@@ -249,7 +251,7 @@ const {
     sqlLog,
     queueWhereLog,
     heldUsers,
-    banNoteHeldUsers,
+    banNoteHeldImageIds,
     holdLookup,
     appealedIds,
     csamFlaggedIds,
@@ -408,7 +410,7 @@ beforeEach(() => {
   sqlLog.length = 0;
   queueWhereLog.length = 0;
   heldUsers.length = 0;
-  banNoteHeldUsers.length = 0;
+  banNoteHeldImageIds.length = 0;
   appealedIds.length = 0;
   csamFlaggedIds.length = 0;
   csamBlockedIds.length = 0;
@@ -493,7 +495,7 @@ describe('remove-blocked-images retention clock', () => {
 
   it('holds media of a user banned with a CSAM/NCMEC note', async () => {
     heldUsers.length = 0;
-    banNoteHeldUsers.push({ userId: String(HELD_USER) });
+    banNoteHeldImageIds.push(5);
 
     await runJob();
 
