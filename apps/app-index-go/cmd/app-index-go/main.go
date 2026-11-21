@@ -21,6 +21,7 @@ import (
 	"github.com/civitai/civitai/apps/app-index-go/internal/api"
 	"github.com/civitai/civitai/apps/app-index-go/internal/config"
 	"github.com/civitai/civitai/apps/app-index-go/internal/index"
+	"github.com/civitai/civitai/apps/app-index-go/internal/listingread"
 	"github.com/civitai/civitai/apps/app-index-go/internal/metrics"
 	"github.com/civitai/civitai/apps/app-index-go/internal/registry"
 	"github.com/civitai/civitai/apps/app-index-go/internal/store"
@@ -97,15 +98,39 @@ func run(log *slog.Logger) error {
 	}
 	// The listings read model's consumer (APP_INDEX_LISTINGS); nil while off. It shares the app
 	// consumer's subscriber and token, never its store, cursor or lock.
+	// The listing API reads the store the consumer writes; it stays nil, and its routes
+	// unregistered, while listings are off.
+	var listingStore store.Listings
 	listings, err := index.ListingsConsumer(ctx, cfg.Listings, *consumer, reg,
-		func(ctx context.Context) (store.Listings, error) { return store.NewListingsPostgres(ctx, pool) })
+		func(ctx context.Context) (store.Listings, error) {
+			ls, err := store.NewListingsPostgres(ctx, pool)
+			if err != nil {
+				return nil, err
+			}
+			listingStore = ls
+			return ls, nil
+		})
 	if err != nil {
 		return err
 	}
+	apiServer := &api.Server{Store: st, Metrics: m, Gatherer: reg, Log: log.With("component", "api"),
+		SearchTimeout: cfg.SearchTimeout}
+	if listingStore != nil {
+		apiServer.Listings = listingStore
+		apiServer.ViewerKey = []byte(cfg.ViewerKey)
+		apiServer.ViewerKeyNext = []byte(cfg.ViewerKeyNext)
+		apiServer.ListingsLayout = index.ListingsLayoutVersion
+		apiServer.ListingReads = metrics.NewListingReads(reg)
+		if len(cfg.ViewerKey) < listingread.MinViewerKeyLen {
+			log.Error("APP_INDEX_VIEWER_KEY is unset or shorter than 32 bytes; the listing API answers 503")
+		}
+		if cfg.ViewerKeyNext != "" && len(cfg.ViewerKeyNext) < listingread.MinViewerKeyLen {
+			log.Error("APP_INDEX_VIEWER_KEY_NEXT is set but shorter than 32 bytes; the listing API answers 503")
+		}
+	}
 	srv := &http.Server{
-		Addr: cfg.Addr,
-		Handler: (&api.Server{Store: st, Metrics: m, Gatherer: reg, Log: log.With("component", "api"),
-			SearchTimeout: cfg.SearchTimeout}).Handler(),
+		Addr:              cfg.Addr,
+		Handler:           apiServer.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,

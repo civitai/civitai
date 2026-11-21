@@ -84,3 +84,58 @@ func TestIntegrationListingsBesideTheAppIndex(t *testing.T) {
 		t.Fatalf("a second listings consumer locked: %v, want ErrLocked", err)
 	}
 }
+
+// A database slice 2 created still has app_index_listing_media. Starting drops it and keeps every
+// listing, whose media are read from its body.
+func TestIntegrationListingsDropsTheMediaTable(t *testing.T) {
+	pool := pgtest.Pool(t)
+	ctx := context.Background()
+	ls, err := NewListingsPostgres(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := ls.NewBuilding(ctx, listingSchemaURN, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustApply(t, ls, g.ID, listingUpsert(mustListing("alpha", "Alpha"), ""))
+	// The slice 2 table, as it was created, with a row in it.
+	if _, err := pool.Exec(ctx, `
+CREATE TABLE app_index_listing_media (
+  generation bigint NOT NULL, urn text NOT NULL, position integer NOT NULL, slot text NOT NULL, host text NOT NULL,
+  url text NOT NULL, nsfw_level bigint NOT NULL, rating text NOT NULL, caption text, cover_url text,
+  PRIMARY KEY (generation, urn, position),
+  FOREIGN KEY (generation, urn) REFERENCES app_index_listings (generation, urn) ON DELETE CASCADE)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO app_index_listing_media VALUES ($1, $2, 0, 'icon', 'any', 'u', 1, 'pg', NULL, NULL)`,
+		g.ID, listingURN("alpha")); err != nil {
+		t.Fatal(err)
+	}
+	// Nor had slice 2 the listing's own rating column.
+	if _, err := pool.Exec(ctx, `ALTER TABLE app_index_listings DROP COLUMN listing_content_rating`); err != nil {
+		t.Fatal(err)
+	}
+	ls2, err := NewListingsPostgres(ctx, pool)
+	if err != nil {
+		t.Fatalf("restart over a slice 2 database: %v", err)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_tables WHERE schemaname = current_schema() AND tablename = 'app_index_listing_media'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("app_index_listing_media still exists (%d, %v)", n, err)
+	}
+	l, ok := mustGet(t, ls2, g.ID, listingURN("alpha"))
+	if !ok {
+		t.Fatal("the listing was lost")
+	}
+	checkListing(t, l, "alpha", "Alpha")
+	// The column is back, and an upsert writes it.
+	g2, err := ls2.NewBuilding(ctx, listingSchemaURN, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustApply(t, ls2, g2.ID, listingUpsert(mustListing("beta", "Beta"), ""))
+	if keys, err := ls2.Keys(ctx, g2.ID); err != nil || len(keys) != 1 || keys[0].ListingContentRating != "r" {
+		t.Fatalf("keys after the column was added back: %+v %v", keys, err)
+	}
+}

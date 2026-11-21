@@ -111,6 +111,8 @@
     },
     "vaeFiles": [],
     "usernames": {},
+    "tagIdsByName": {},
+    "blockedTags": [],
     "trainingData": [],
     "responseCache": {
       "packed:caches:public-model-response:v2:5036:31": {
@@ -223,6 +225,9 @@
         "cachedAt": 1781524740000
       },
       "packed": "3gACpGRhdGHeAAKiaWTNE6ykbmFtZbdDYWNoZWQgV2l0aG91dCBWZXJzaW9uc6hjYWNoZWRBdMtCeeyyY3oAAA=="
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[]"
     }
   },
   "sysRedis": {

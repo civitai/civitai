@@ -11,6 +11,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -241,11 +242,11 @@ func (d *Deps) redCapable(host string) (bool, error) {
 	if host == "" {
 		return false, nil
 	}
-	if !isASCII(host) {
+	if !feed.IsASCII(host) {
 		return false, fallback.New("v1-models-host")
 	}
 	for _, h := range d.Config.RedHosts {
-		if !isASCII(h) {
+		if !feed.IsASCII(h) {
 			return false, fallback.New("v1-models-host")
 		}
 	}

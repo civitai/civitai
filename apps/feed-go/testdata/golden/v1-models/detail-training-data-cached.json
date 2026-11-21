@@ -111,6 +111,8 @@
     },
     "vaeFiles": [],
     "usernames": {},
+    "tagIdsByName": {},
+    "blockedTags": [],
     "trainingData": [
       {
         "id": 7072,
@@ -306,6 +308,9 @@
         "cachedAt": 1781524740000
       },
       "packed": "3gACpGRhdGHeAAOiaWTNE6KkbmFtZbRDYWNoZWQgRGF0YXNldCBNb2RlbK1tb2RlbFZlcnNpb25zkt4AA6JpZM0Xt6RuYW1lonYxpWZpbGVzk94ABKJpZM0bn6RuYW1lsW1vZGVsLnNhZmV0ZW5zb3JzpHR5cGWlTW9kZWymc2l6ZUtCyz/4AAAAAAAA3gAFomlkzRugpG5hbWWoaGVsZC56aXCkdHlwZa1UcmFpbmluZyBEYXRhpnNpemVLQgKobWV0YWRhdGHeAADeAAWiaWTNG6GkbmFtZapzaGFyZWQuemlwpHR5cGWtVHJhaW5pbmcgRGF0YaZzaXplS0IDqG1ldGFkYXRh3gAA3gADomlkzRe4pG5hbWWidjKmaW1hZ2VzkKhjYWNoZWRBdMtCeeyyY3oAAA=="
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[]"
     }
   },
   "sysRedis": {

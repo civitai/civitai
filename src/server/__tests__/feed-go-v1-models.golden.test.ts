@@ -204,7 +204,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
 
 vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof SystemCache>()),
-  getBlockedBrowsingTags: vi.fn(async () => []),
+  getBlockedBrowsingTags: vi.fn(async () => revive(state.world.blockedTags ?? [])),
   getBrowsingSettingAddons: vi.fn(async () => revive(state.world.addons)),
 }));
 
@@ -370,8 +370,8 @@ const fixtures = loadFixtures();
 
 describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
   it('finds the fixtures (a glob that matched nothing would pass every case below)', () => {
-    expect(fixtures.length).toBeGreaterThanOrEqual(22);
-    expect(fixtures.filter(({ fx }) => !fx.expect.fallback).length).toBeGreaterThanOrEqual(18);
+    expect(fixtures.length).toBeGreaterThanOrEqual(31);
+    expect(fixtures.filter(({ fx }) => !fx.expect.fallback).length).toBeGreaterThanOrEqual(24);
     // The Training Data listing is reached: fixtures whose statement Node sends.
     expect(fixtures.filter(({ fx }) => fx.expect.trainingDataSql).length).toBeGreaterThanOrEqual(5);
   });
@@ -394,6 +394,11 @@ describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
         dbMock.dbRead.modelFile.findMany.mockImplementation(async () => revive(f.world.vaeFiles));
         dbMock.dbRead.user.findUnique.mockImplementation(async (args: any) => {
           const id = f.world.usernames?.[args?.where?.username];
+          return id ? { id } : null;
+        });
+        // getModelsRaw's `tag` lookup: the replica's Tag row by its (unique, exact) name.
+        dbMock.dbRead.tag.findUnique.mockImplementation(async (args: any) => {
+          const id = f.world.tagIdsByName?.[args?.where?.name];
           return id ? { id } : null;
         });
         // trainingDataListing's statement (the only `$queryRaw` these routes send): captured, and

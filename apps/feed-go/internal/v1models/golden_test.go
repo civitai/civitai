@@ -36,7 +36,7 @@ import (
 const (
 	goldenDir = "../../testdata/golden/v1-models"
 	// The fixture count gen-v1-models.mjs writes: fewer found means the glob matched the wrong place.
-	goldenMin = 22
+	goldenMin = 31
 )
 
 type goldenEntry struct {
@@ -259,6 +259,8 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	if raw, ok := fx.World["trainingDataError"]; ok {
 		_ = json.Unmarshal(raw, &tdError)
 	}
+	var tagIDs map[string]int
+	fx.world(t, "tagIdsByName", &tagIDs)
 
 	env.db = &testkit.DB{Routes: []testkit.Route{
 		{Match: `as "cursorId"`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
@@ -342,6 +344,14 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 			}
 			return toRows([]string{"id"}, nil), nil
 		}},
+		// The `tag` filter's lookup by name (Node: dbRead.tag.findUnique over the same map).
+		{Match: `FROM "Tag" WHERE name`, Rows: func(args []any) (*testkit.Rows, error) {
+			name, _ := args[0].(string)
+			if id, ok := tagIDs[name]; ok {
+				return toRows([]string{"id"}, []map[string]any{{"id": float64(id)}}), nil
+			}
+			return toRows([]string{"id"}, nil), nil
+		}},
 	}}
 
 	packed := &hydrate.PackedReader{Redis: cache, Now: nowFn}
@@ -352,6 +362,9 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 		Sources: sources,
 		Gallery: &feed.GalleryStore{Cache: cache, DB: env.db},
 		Addons:  (&feed.AddonSource{Sys: sys}).Addons,
+		// The blocked browsing tags under their real key in the cache redis (Node's
+		// getBlockedBrowsingTags reads the fixture's `blockedTags`), unmemoized.
+		Blocked: &feed.BlockedTags{Cache: cache, TTL: -1},
 		Config: Config{
 			ImageLocation:        fx.Config.ImageLocation,
 			BaseURL:              fx.Config.BaseURL,

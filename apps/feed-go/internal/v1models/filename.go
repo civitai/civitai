@@ -4,9 +4,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 )
 
 // The download filename (resolveModelFileName in src/utils/model-file-naming.ts, through
@@ -148,7 +148,7 @@ func replaceInsensitive(value, search string) (string, error) {
 	if search == "" {
 		return value, nil
 	}
-	if !isASCII(value) || !isASCII(search) {
+	if !feed.IsASCII(value) || !feed.IsASCII(search) {
 		return "", fallback.New("v1-models-filename")
 	}
 	lv, ls := strings.ToLower(value), strings.ToLower(search)
@@ -162,15 +162,6 @@ func replaceInsensitive(value, search string) (string, error) {
 		i++
 	}
 	return b.String(), nil
-}
-
-func isASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= utf8.RuneSelf {
-			return false
-		}
-	}
-	return true
 }
 
 // jsTrim is String.prototype.trim for ASCII text (the only text it reaches here).
