@@ -75,7 +75,7 @@ func (s *Server) computeAssociated(ctx context.Context, r *http.Request) (*compu
 }
 
 // prepareAssociated is computeAssociated up to the handler call, and whether there is no session user
-// at all; the Go-first probe runs the same steps.
+// at all.
 func (s *Server) prepareAssociated(ctx context.Context, r *http.Request) (modelfeed.AssocRequest, bool, error) {
 	if s.Associated == nil {
 		return modelfeed.AssocRequest{}, false, fallback.New("model-assoc-unconfigured")
