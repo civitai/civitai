@@ -30,6 +30,7 @@ type InsertArgs = {
   values: MetricEventRow[];
   format: string;
   clickhouse_settings?: Record<string, unknown>;
+  abort_signal?: AbortSignal;
 };
 
 const NEVER = new Promise<never>(() => undefined);
@@ -305,6 +306,70 @@ describe('(3) a failing or hanging secondary never touches the primary path', ()
     expect(await settlesWithin(1_000, t.idle())).toBe('settled');
     expect(secondary.inserts.map((i) => i.values)).toEqual([rows(2, 17), rows(2, 17)]);
     expect((await counter(secondaryTeeMetrics.batchesFailed)) - failedBefore).toBe(1);
+  });
+
+  test('a timed-out secondary insert has its request aborted, not left running', async () => {
+    let firstSignal: AbortSignal | undefined;
+    const secondary = fakeClient((args, call) => {
+      if (call === 1) {
+        firstSignal = args.abort_signal;
+        return NEVER;
+      }
+      return Promise.resolve();
+    });
+    const t = tee(secondary.client, { insertTimeoutMs: 20 });
+    t.enqueue(rows(2, 18));
+    await new Promise((r) => setImmediate(r));
+    expect(firstSignal).toBeInstanceOf(AbortSignal);
+    expect(firstSignal!.aborted).toBe(false); // still in flight
+    expect(await settlesWithin(1_000, t.idle())).toBe('settled');
+    expect(firstSignal!.aborted).toBe(true);
+    expect(secondary.inserts).toHaveLength(2);
+  });
+
+  test('shutdown with a failing secondary stops retrying and drops the rest as shutdown', async () => {
+    const secondary = fakeClient(async () => Promise.reject(new Error('secondary down')));
+    const t = tee(secondary.client, {
+      baseBackoffMs: 60_000,
+      maxBackoffMs: 60_000,
+      shutdownTimeoutMs: 3_000,
+    });
+    const batchesBefore = await counter(secondaryTeeMetrics.batchesDropped, { reason: 'shutdown' });
+    const rowsBefore = await counter(secondaryTeeMetrics.rowsDropped, { reason: 'shutdown' });
+
+    t.enqueue(rows(3, 19));
+    // Let the first insert fail; the send loop is now in its (60s) backoff sleep.
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    expect(secondary.inserts).toHaveLength(1);
+    t.enqueue(rows(4, 20));
+    expect(t.pendingRows).toBe(7);
+
+    const started = Date.now();
+    // Well under both the retry backoff and the shutdown timeout: one drain attempt, then give up.
+    expect(await settlesWithin(1_000, t.stop())).toBe('settled');
+    expect(Date.now() - started).toBeLessThan(1_000);
+
+    expect(secondary.inserts.map((i) => i.values)).toEqual([rows(3, 19), rows(3, 19)]);
+    expect(t.pendingRows).toBe(0);
+    expect(secondary.client.close).toHaveBeenCalledTimes(1);
+    expect(
+      (await counter(secondaryTeeMetrics.batchesDropped, { reason: 'shutdown' })) - batchesBefore
+    ).toBe(2);
+    expect(
+      (await counter(secondaryTeeMetrics.rowsDropped, { reason: 'shutdown' })) - rowsBefore
+    ).toBe(7);
+  });
+
+  test('batcher.stop() stops the secondary even when the final flush fails, and still rethrows', async () => {
+    const primary = fakeClient(async () => Promise.reject(new Error('primary down at shutdown')));
+    const sink = { enqueue: vi.fn(), stop: vi.fn(async () => undefined) };
+    const batcher = new MetricEventBatcher(primary.client as never, 60_000, 10_000, 500_000, sink);
+    for (const e of events(2, 21)) batcher.add(e);
+
+    await expect(batcher.stop()).rejects.toThrow('primary down at shutdown');
+    expect(primary.inserts).toHaveLength(1);
+    expect(sink.stop).toHaveBeenCalledTimes(1);
+    expect(sink.enqueue).not.toHaveBeenCalled();
   });
 
   for (const [name, behaviour] of [
