@@ -41,6 +41,7 @@ import { GO_TRANSPORT_URL, isGoTransportEnabledFor } from '~/utils/trpc-go-trans
 import { feedTransportTimingLink } from '~/utils/faro/feedTransport';
 import { createShadowCompareFetch, goTransportCandidate } from '~/utils/faro/shadowCompare';
 import { isShadowCompareEnabledFor } from '~/utils/trpc-shadow-compare';
+import { setFeedEventsCache } from '~/utils/feed-events';
 
 const url = '/api/trpc';
 
@@ -658,7 +659,10 @@ function getBrowserQueryClient(): QueryClient {
         'QueryClient (see `ServerQueryClient`).'
     );
   }
-  if (!browserQueryClient) browserQueryClient = new QueryClient(queryClientConfig);
+  if (!browserQueryClient) {
+    browserQueryClient = new QueryClient(queryClientConfig);
+    setFeedEventsCache(browserQueryClient.getQueryCache());
+  }
   return browserQueryClient;
 }
 
