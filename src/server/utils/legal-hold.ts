@@ -59,7 +59,7 @@ export const reportNamedUserIdsSql = (filter: ReportFilter) =>
   Prisma.raw(
     csamReportNamedUserIdsSql((alias) => {
       const predicate = filter(alias);
-      if (predicate.values.length) throw new Error('A report filter must bind no values');
+      if (predicate.values?.length) throw new Error('A report filter must bind no values');
       return predicate.sql;
     })
   );
