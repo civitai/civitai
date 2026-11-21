@@ -509,8 +509,7 @@ export const getLicensingRoots = async ({
     ORDER BY lr."isDefault" DESC, m.name, mv.index
   `;
 
-  // Restricted roots stay in the list so the editor can tell a root's own version is a root; the picker
-  // offers one only to a moderator or a version already linked to it, and it is never the default.
+  // Restricted roots stay in the list so the editor can tell a root's own version is a root.
   const defaultVersionId = roots.find((r) => r.isDefault && !r.restricted)?.id ?? null;
   return { roots, defaultVersionId };
 };

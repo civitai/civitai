@@ -1013,13 +1013,20 @@ describe('ModelVersionUpsertForm — licensing lineage pre-selection', () => {
   });
 
   test('a creator is not offered a restricted root', async () => {
-    licensingRoots.respond = () => ({
-      roots: [
-        { id: 777, modelId: 9, versionName: 'Restricted', isDefault: false, restricted: true },
-      ],
-      defaultVersionId: null,
-    });
+    // Served synchronously by the useQuery mock, but counted so the absence below is read only after the
+    // roots have been handed to the form.
+    let served = 0;
+    licensingRoots.respond = () => {
+      served++;
+      return {
+        roots: [
+          { id: 777, modelId: 9, versionName: 'Restricted', isDefault: false, restricted: true },
+        ],
+        defaultVersionId: null,
+      };
+    };
     renderNew();
+    await vi.waitFor(() => expect(served).toBeGreaterThan(0));
     await expect.element(page.getByRole('button', { name: 'Save' })).toBeInTheDocument();
     expect(page.getByRole('textbox', { name: 'Fine-tuned from' }).elements()).toHaveLength(0);
   });
