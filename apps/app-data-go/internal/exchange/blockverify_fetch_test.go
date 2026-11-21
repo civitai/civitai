@@ -124,6 +124,10 @@ func TestASlowRefreshDoesNotBlockACachedKid(t *testing.T) {
 // 🔴 Concurrent Checks naming a kid not held all wait on ONE fetch and all get its answer: here the rotated-in
 // key, so every one verifies. Without the shared fetch only the first caller fetches and the rest, inside
 // JWKSRefetchEvery, answer ErrBlockUnverifiable at once.
+//
+// INVARIANT GUARD, not regression coverage: the old key() held the lock across the fetch, which serialised
+// these callers into the same outcome, so this passes on it too. It goes red when a caller that needs the
+// fetch does not join the one in flight.
 func TestConcurrentUnknownKidsShareOneFetch(t *testing.T) {
 	testKeys(t)
 	s := newHeldJWKS(t, jwk(&siteKey.PublicKey, siteKid))
@@ -199,5 +203,130 @@ func TestACancelledWaiterLeavesTheSharedFetchRunning(t *testing.T) {
 	}
 	if got := s.fetches.Load(); got != 1 {
 		t.Fatalf("fetches %d; want 1", got)
+	}
+}
+
+// settle waits for the fetch in flight, if any, to finish; it reports whether there was one. The fetch is
+// started under the lock inside key, so one Check started has set v.inflight by the time Check returns.
+func settle(t *testing.T, v *BlockVerifier) bool {
+	t.Helper()
+	v.mu.Lock()
+	f := v.inflight
+	v.mu.Unlock()
+	if f == nil {
+		return false
+	}
+	select {
+	case <-f.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the JWKS fetch never finished")
+	}
+	return true
+}
+
+// 🔴 A caller that joins a fetch already running when it arrived does not get a refusal for a kid that fetch
+// did not return: the fetch may predate a key rotated in since, and a refusal is remembered (BlockCache).
+// It gets ErrBlockUnverifiable, which is not. (A fetch the caller started itself still refuses an unknown
+// kid: TestAnUnknownKidIsRefetchedThenRefused.)
+func TestJoiningAnEarlierFetchDoesNotRefuseAnUnknownKid(t *testing.T) {
+	testKeys(t)
+	s := newHeldJWKS(t, jwk(&siteKey.PublicKey, siteKid))
+	c := &clock{t: verifyNow}
+	v := &BlockVerifier{JWKSURL: s.url, Now: c.now}
+	if err := v.Check(context.Background(), siteToken(t, nil)); err != nil {
+		t.Fatal(err)
+	}
+	s.waitEntered(t)
+
+	// A due refresh starts, from a Check for the held kid, and is held.
+	c.add(JWKSRefresh)
+	s.holdNext(jwk(&siteKey.PublicKey, siteKid))
+	if err := v.Check(context.Background(), siteToken(t, map[string]any{"iat": c.now().Unix(), "exp": c.now().Unix() + 900})); err != nil {
+		t.Fatal(err)
+	}
+	s.waitEntered(t)
+
+	// A token naming a kid the refresh will not return arrives after it started, and joins it.
+	c.add(time.Second)
+	unknown := sign(t, forgerKey, map[string]any{"alg": "RS256", "typ": "JWT", "kid": forgerKid}, claimsAt(c.now()))
+	done := make(chan error, 1)
+	go func() { done <- v.Check(context.Background(), unknown) }()
+	select {
+	case err := <-done:
+		t.Fatalf("answered before the fetch it joined: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	s.release()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrBlockUnverifiable) || errors.Is(err, ErrRefused) {
+			t.Fatalf("want ErrBlockUnverifiable (forgotten), got %v (reason %q)", err, localReason(err))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("never answered")
+	}
+	if n := s.fetches.Load(); n != 2 {
+		t.Fatalf("fetches %d; want 2", n)
+	}
+}
+
+// A held kid checked while the set is fresh (older than JWKSRefetchEvery, younger than JWKSRefresh) starts
+// no fetch. Measured at both ends of that span.
+func TestNoRefreshWhileTheKeySetIsFresh(t *testing.T) {
+	testKeys(t)
+	s := newJWKS(t, jwk(&siteKey.PublicKey, siteKid))
+	c := &clock{t: verifyNow}
+	v := verifier(s, c)
+	if err := v.Check(context.Background(), siteToken(t, nil)); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []time.Duration{JWKSRefetchEvery, JWKSRefresh - JWKSRefetchEvery - time.Second} {
+		c.add(step)
+		tok := siteToken(t, map[string]any{"iat": c.now().Unix(), "exp": c.now().Unix() + 900})
+		if err := v.Check(context.Background(), tok); err != nil {
+			t.Fatalf("at +%v: %v", c.now().Sub(verifyNow), err)
+		}
+		if settle(t, v) {
+			t.Fatalf("at +%v: a refresh started while the set is fresh", c.now().Sub(verifyNow))
+		}
+		if n := s.fetches.Load(); n != 1 {
+			t.Fatalf("at +%v: fetches %d; want 1", c.now().Sub(verifyNow), n)
+		}
+	}
+}
+
+// panicOnce panics on its first round trip, then serves through the default transport.
+type panicOnce struct{ calls atomic.Int32 }
+
+func (p *panicOnce) RoundTrip(r *http.Request) (*http.Response, error) {
+	if p.calls.Add(1) == 1 {
+		panic("boom")
+	}
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// A fetch that panics is settled as a failed fetch: the waiting Check gets ErrBlockUnverifiable, nothing is
+// left in flight, and the next allowed fetch runs and verifies.
+func TestAPanickingFetchIsAFailedFetch(t *testing.T) {
+	testKeys(t)
+	s := newJWKS(t, jwk(&siteKey.PublicKey, siteKid))
+	c := &clock{t: verifyNow}
+	v := &BlockVerifier{JWKSURL: s.url, Now: c.now, HTTP: &http.Client{Transport: &panicOnce{}}}
+	if err := v.Check(context.Background(), siteToken(t, nil)); !errors.Is(err, ErrBlockUnverifiable) {
+		t.Fatalf("%v", err)
+	}
+	v.mu.Lock()
+	left := v.inflight
+	v.mu.Unlock()
+	if left != nil {
+		t.Fatal("the panicked fetch is still in flight")
+	}
+	c.add(JWKSRefetchEvery)
+	tok := siteToken(t, map[string]any{"iat": c.now().Unix(), "exp": c.now().Unix() + 900})
+	if err := v.Check(context.Background(), tok); err != nil {
+		t.Fatalf("after the panic: %v", err)
+	}
+	if n := s.fetches.Load(); n != 1 {
+		t.Fatalf("server fetches %d; want 1 (the panicked one never reached it)", n)
 	}
 }

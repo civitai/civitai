@@ -58,9 +58,10 @@ type BlockVerifier struct {
 
 // jwksFetch is one JWKS fetch; keys and err are set before done is closed.
 type jwksFetch struct {
-	done chan struct{}
-	keys map[string]*rsa.PublicKey
-	err  error
+	started time.Time // when the fetch was started
+	done    chan struct{}
+	keys    map[string]*rsa.PublicKey
+	err     error
 }
 
 const (
@@ -256,7 +257,12 @@ func (v *BlockVerifier) key(ctx context.Context, kid string) (*rsa.PublicKey, er
 	if k, ok := f.keys[kid]; ok {
 		return k, nil
 	}
-	// Unknown after a fetch that answered: the site holds no such key.
+	// Unknown after a fetch started for it (at or after this call arrived): the site holds no such key.
+	// A fetch already running when the call arrived may predate a key rotated in since, so that is not a
+	// refusal (a refusal is remembered; this is not).
+	if f.started.Before(now) {
+		return nil, ErrBlockUnverifiable
+	}
 	return nil, localRefusal("unknown key")
 }
 
@@ -271,17 +277,24 @@ func (v *BlockVerifier) startFetchLocked(ctx context.Context, now time.Time) *jw
 		return nil
 	}
 	v.triedAt = now
-	f := &jwksFetch{done: make(chan struct{})}
+	f := &jwksFetch{started: now, done: make(chan struct{})}
 	v.inflight = f
 	go func() {
+		// Always settle the fetch, a panic included: a fetch left in flight would make every later Check
+		// that needs one wait on it forever.
+		defer func() {
+			if r := recover(); r != nil {
+				f.keys, f.err = nil, fmt.Errorf("jwks: fetch panicked: %v", r)
+			}
+			v.mu.Lock()
+			if f.err == nil {
+				v.keys, v.fetchedAt = f.keys, now
+			}
+			v.inflight = nil
+			v.mu.Unlock()
+			close(f.done)
+		}()
 		f.keys, f.err = v.fetch(context.WithoutCancel(ctx))
-		v.mu.Lock()
-		if f.err == nil {
-			v.keys, v.fetchedAt = f.keys, now
-		}
-		v.inflight = nil
-		v.mu.Unlock()
-		close(f.done)
 	}()
 	return f
 }
