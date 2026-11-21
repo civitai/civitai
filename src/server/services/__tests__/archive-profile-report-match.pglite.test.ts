@@ -140,6 +140,14 @@ describe('archiveProfileBeforeModeratorChange report match', () => {
     expect(await archivedBeforeClear()).toBe(true);
   });
 
+  it('archives a user whose only mark is an external ban note naming CSAM', async () => {
+    await pg.query(`INSERT INTO "User" (id, meta) VALUES ($1, $2)`, [
+      USER,
+      JSON.stringify({ banDetails: { detailsInternal: 'tos', detailsExternal: 'CSAM' } }),
+    ]);
+    expect(await archived()).toBe(true);
+  });
+
   it('archives nothing for a user whose ban note names neither', async () => {
     await banNote('spam links in bio');
     expect(await archived()).toBe(false);

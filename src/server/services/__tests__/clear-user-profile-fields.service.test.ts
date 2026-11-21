@@ -29,6 +29,21 @@ const failModActivityOnce = () => {
 const reportNames = (named: boolean) =>
   dbMock.dbWrite.$queryRaw.mockImplementation((async (s: readonly string[]) =>
     s.join('?').includes('"CsamReport"') ? [{ named }] : []) as never);
+/**
+ * Runs `$transaction` on a client of its own, so a write that skips the transaction lands on `db`
+ * instead and shows. Returns that client.
+ */
+const separateTx = () => {
+  const tx = {
+    userProfile: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    userLink: { deleteMany: vi.fn(async () => ({ count: 1 })) },
+    $executeRaw: vi.fn(async () => 1),
+  };
+  db.$transaction.mockImplementation((async (fn: (client: unknown) => unknown) => fn(tx)) as never);
+  return tx;
+};
+const writesModActivity = (fn: { mock: { calls: unknown[][] } }) =>
+  fn.mock.calls.some(([s]) => (s as readonly string[]).join('?').includes('"ModActivity"'));
 const USER = 990100001;
 const MOD = 990100002;
 const stored = {
@@ -52,6 +67,7 @@ beforeEach(() => {
   db.$executeRaw.mockResolvedValue(0 as never);
   db.userLink.findMany.mockResolvedValue([] as never);
   archive = vi.fn(async () => ({}));
+  db.$transaction.mockImplementation((async (fn: (client: unknown) => unknown) => fn(db)) as never);
 });
 
 const clear = (args: Partial<Parameters<typeof clearUserProfileFields>[0]> = {}) =>
@@ -131,6 +147,15 @@ describe('clearUserProfileFields', () => {
     db.userProfile.updateMany.mockResolvedValue({ count: 0 } as never);
     await clear();
     expect(archive).not.toHaveBeenCalled();
+    expect(modActivityRows()).toEqual([]);
+  });
+
+  it('clears and records on one transaction', async () => {
+    const tx = separateTx();
+    await expect(clear()).resolves.toEqual({ updated: true });
+    expect(tx.userProfile.updateMany).toHaveBeenCalledTimes(1);
+    expect(writesModActivity(tx.$executeRaw)).toBe(true);
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
     expect(modActivityRows()).toEqual([]);
   });
 
@@ -234,6 +259,15 @@ describe('removeUserLinkAsModerator', () => {
     await expect(remove()).resolves.toEqual({ removed: true });
     expect(archive).not.toHaveBeenCalled();
     expect(db.userLink.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes and records on one transaction', async () => {
+    const tx = separateTx();
+    await expect(remove()).resolves.toEqual({ removed: true });
+    expect(tx.userLink.deleteMany).toHaveBeenCalledWith({ where: { id: LINK, userId: USER } });
+    expect(writesModActivity(tx.$executeRaw)).toBe(true);
+    expect(db.userLink.deleteMany).not.toHaveBeenCalled();
+    expect(modActivityRows()).toEqual([]);
   });
 
   it('fails the removal when its record fails to write', async () => {

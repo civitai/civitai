@@ -1,4 +1,5 @@
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { banNoteNamesCsamSql } from '~/server/services/ban-note-csam';
 import type { PROFILE_CLEAR_FIELDS } from '~/server/schema/moderator/user';
 import { markUserDealUploadsRemovedSql } from '~/server/services/creator-service-deal-file-retention';
 import {
@@ -483,7 +484,7 @@ export { isUsernamePermitted } from '~/server/services/username-permitted';
 
 /**
  * Before a moderator clears, edits or bans away another user's profile text or links: when the user
- * is named on a CSAM report, under an account hold or banned with an internal note naming CSAM or
+ * is named on a CSAM report, under an account hold or banned with a note naming CSAM or
  * NCMEC, or `alwaysArchive` is set, `archive` stores the current text and links, and this throws if it
  * rejects so the change does not happen. If they change during an upload they are archived again, up
  * to three uploads, after which this refuses. Returns what the last `archive` call resolved to, or
@@ -504,7 +505,7 @@ export async function archiveProfileBeforeModeratorChange<TStored = unknown>({
 }): Promise<TStored | undefined> {
   // Every account hold `deleteUser` refuses on (`accountHoldSql`: holding reports, CSAM-flagged or
   // blocked images, images on a holding report, evidence holds), plus any report naming the user,
-  // held or not, plus internal ban notes naming CSAM or NCMEC: archiving more is the safe side here.
+  // held or not, plus ban notes naming CSAM or NCMEC: archiving more is the safe side here.
   const heldSql = accountHoldSql(Prisma.sql`${userId}::int`, await holdMarkerViewExists());
   const idText = String(userId);
   const mustArchive =
@@ -523,7 +524,7 @@ export async function archiveProfileBeforeModeratorChange<TStored = unknown>({
           OR EXISTS (
             SELECT 1 FROM "User" u
             WHERE u.id = ${userId}
-              AND u.meta -> 'banDetails' ->> 'detailsInternal' ~* '(csam|ncmec)'
+              AND ${banNoteNamesCsamSql(Prisma.sql`u.meta`)}
           )
         ) AS named
       `
