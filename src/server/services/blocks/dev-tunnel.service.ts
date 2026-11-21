@@ -1024,9 +1024,9 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
 /**
  * Persists a session the caller has built: its records, then its listing (the (user, block)
  * pointer and the ban index; for a direct session also its place in the reaper's direct-session
- * set; its `used` marker is written earlier, by `openDirectPreviewSession`). The one writer both a tunnel start and a direct preview session
- * go through. Throws, after tearing the session down, when any write fails or the start was
- * cancelled (`DEV_TUNNEL_START_CANCELLED`).
+ * set). The one writer both a tunnel start and a direct preview session go through. Throws,
+ * after tearing the session down, when any write fails or the start was cancelled
+ * (`DEV_TUNNEL_START_CANCELLED`).
  *
  * `credential` is the sish authz record; a direct session has none.
  */
