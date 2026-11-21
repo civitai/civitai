@@ -118,7 +118,7 @@ function SortablePin({ id, badge, position }: { id: number; badge: BadgeItem; po
 
 // Owned badges as clickable tiles; clicking toggles a badge into the list.
 // - highlight: click order is the display order; selected tiles show a ring +
-//   the pin position. With two or more pins, a strip above the grid reorders
+//   (the pin position shows only in the strip). With two or more pins, a strip above the grid reorders
 //   them by drag (or keyboard: space to lift, arrows to move, space to drop).
 // - hide: selected tiles are dimmed with a red ring + eye-off marker (order is
 //   irrelevant).
@@ -207,6 +207,9 @@ export function HighlightedBadgesInput({
                 </Group>
               </SortableContext>
             </DndContext>
+            <Text size="xs" c="dimmed" mt={6}>
+              Drag to reorder
+            </Text>
           </Paper>
           <Divider label="All badges" labelPosition="center" />
         </>
@@ -252,26 +255,25 @@ export function HighlightedBadgesInput({
                 }}
               >
                 <BadgeImage badge={badge} />
-                {selected &&
-                  (variant === 'hide' ? (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: -6,
-                        right: -6,
-                        width: 18,
-                        height: 18,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        borderRadius: '50%',
-                        color: 'white',
-                        background: 'var(--mantine-color-red-5)',
-                      }}
-                    >
-                      <IconEyeOff size={12} />
-                    </div>
-                  ) : null)}
+                {selected && variant === 'hide' && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: -6,
+                      right: -6,
+                      width: 18,
+                      height: 18,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: '50%',
+                      color: 'white',
+                      background: 'var(--mantine-color-red-5)',
+                    }}
+                  >
+                    <IconEyeOff size={12} />
+                  </div>
+                )}
                 {hidden && (
                   <IconEyeOff
                     size={14}

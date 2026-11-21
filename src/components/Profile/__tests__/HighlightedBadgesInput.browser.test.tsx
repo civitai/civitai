@@ -59,9 +59,11 @@ describe('HighlightedBadgesInput', () => {
     );
     const list = page.getByRole('list', { name: 'Pin order' }).element();
     const label = page.getByText('All badges').element();
+    await expect.element(page.getByText('Drag to reorder')).toBeVisible();
     expect(list.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await view.rerender(<HighlightedBadgesInput badges={badges} value={[1]} onChange={vi.fn()} />);
     expect(page.getByText('All badges').elements()).toHaveLength(0);
+    expect(page.getByText('Drag to reorder').elements()).toHaveLength(0);
   });
 
   const siblings = [
