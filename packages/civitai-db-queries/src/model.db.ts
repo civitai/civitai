@@ -33,13 +33,15 @@ export async function listModelEngagements(
 /**
  * A viewer's stake in models, for the personalised Hot lead: the models they liked (a thumbs-up
  * review) and their Favorite / Notify / Mute engagements, with each model's owner and the time of
- * the touch. Likes and Favorite / Notify are each capped at `limit` rows in index order, not newest
- * first: ordering by time sorts every row a heavy user has before the limit applies. A liked model
- * can come back once per review; the caller keeps its latest touch. Mutes are not capped, so one
- * cannot fall out behind newer favourites.
+ * the touch. Likes, Favorites and Notifies are each capped at `limit`. Notify is the type heavy users
+ * pile up, so it reads newest first, served by the partial notify (userId, createdAt) index. Likes and
+ * Favorites have no such index, and ordering them by time sorts every row a user has before the limit
+ * applies, so past the cap they keep an arbitrary `limit`. A liked model can come back once per
+ * review; the caller keeps its latest touch. Mutes are not capped, so one cannot fall out behind
+ * newer favourites.
  */
 export async function listModelStake(db: Kysely<DB>, input: { userId: number; limit: number }) {
-  const [likes, engagements, mutes] = await Promise.all([
+  const [likes, favorites, notifies, mutes] = await Promise.all([
     db
       .selectFrom('ResourceReview as rr')
       .innerJoin('Model as m', 'm.id', 'rr.modelId')
@@ -55,7 +57,16 @@ export async function listModelStake(db: Kysely<DB>, input: { userId: number; li
       .innerJoin('Model as m', 'm.id', 'e.modelId')
       .select(['e.modelId', 'm.userId', 'e.type', 'e.createdAt as touchedAt'])
       .where('e.userId', '=', input.userId)
-      .where('e.type', 'in', ['Favorite', 'Notify'])
+      .where('e.type', '=', 'Favorite')
+      .limit(input.limit)
+      .execute(),
+    db
+      .selectFrom('ModelEngagement as e')
+      .innerJoin('Model as m', 'm.id', 'e.modelId')
+      .select(['e.modelId', 'm.userId', 'e.type', 'e.createdAt as touchedAt'])
+      .where('e.userId', '=', input.userId)
+      .where('e.type', '=', 'Notify')
+      .orderBy('e.createdAt', 'desc')
       .limit(input.limit)
       .execute(),
     // Uncapped: a Mute must not fall out behind newer favourites.
@@ -67,7 +78,7 @@ export async function listModelStake(db: Kysely<DB>, input: { userId: number; li
       .where('e.type', '=', 'Mute')
       .execute(),
   ]);
-  return { likes, engagements: [...engagements, ...mutes] };
+  return { likes, engagements: [...favorites, ...notifies, ...mutes] };
 }
 
 /**

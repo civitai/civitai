@@ -311,17 +311,21 @@ describe('listModelStake', () => {
       INSERT INTO "ModelEngagement" VALUES
         (9, 5, 'Mute', now() - interval '30 days'),
         (9, 6, 'Favorite', now()),
+        (9, 2, 'Notify', now() - interval '5 days'),
         (9, 1, 'Notify', now() - interval '1 day');
     `);
   });
   afterAll(() => pg.close());
 
-  it('reads thumbs-up likes only, and keeps a Mute even when the engagement cap is reached', async () => {
+  it('reads thumbs-up likes only, keeps the newest Notify under the cap, and keeps every Mute', async () => {
     const db = pgliteKysely(() => pg);
     const { likes } = await listModelStake(db, { userId: 9, limit: 10 });
     expect(likes.map((l) => [l.modelId, l.userId])).toEqual([[1, 50]]);
     const { engagements } = await listModelStake(db, { userId: 9, limit: 1 });
-    expect(engagements).toHaveLength(2); // one capped Favorite / Notify row, plus every Mute
-    expect(engagements.filter((e) => e.type === 'Mute').map((e) => e.modelId)).toEqual([5]);
+    const ofType = (type: string) =>
+      engagements.filter((e) => e.type === type).map((e) => e.modelId);
+    expect(ofType('Favorite')).toEqual([6]);
+    expect(ofType('Notify')).toEqual([1]); // the older Notify is stored first, so only ORDER BY keeps 1
+    expect(ofType('Mute')).toEqual([5]);
   });
 });
