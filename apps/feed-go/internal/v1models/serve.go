@@ -21,6 +21,8 @@ type Answer struct {
 	Trivial bool
 	// Cached: the `[id]` body came from the origin response cache, as Node's did (no build).
 	Cached bool
+	// NotFound: the `[id]` body is the not-found answer, which Node sends with a 404.
+	NotFound bool
 }
 
 // NodeBuiltWindow is how recent an origin cache entry must be to count as the one Node built for the
@@ -39,6 +41,9 @@ type DetailRequest struct {
 	ID string
 	// RegionRestricted: the caller's region holds the level to PG/PG-13 (apiBrowsingLevel).
 	RegionRestricted bool
+	// Serving: a public request, not a shadow sample. Every fresh origin cache entry is read, as Node
+	// reads it; a sample ignores one younger than NodeBuiltWindow.
+	Serving bool
 }
 
 // ServeDetail answers `GET /api/v1/models/[id]` (the PublicEndpoint path: no session is read).
@@ -56,7 +61,7 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 		level = browsing.SFWLevels
 	}
 	if d.Config.ResponseCacheTTL > 0 {
-		if body, age, ok := d.cachedDetail(ctx, id, level); ok && age >= NodeBuiltWindow {
+		if body, age, ok := d.cachedDetail(ctx, id, level); ok && (req.Serving || age >= NodeBuiltWindow) {
 			if err := refuseTrainingData(body); err != nil {
 				return nil, err
 			}
@@ -74,7 +79,7 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 		return nil, err
 	}
 	if len(res.items) == 0 {
-		return &Answer{Body: superjson.Object{{Key: "error", Val: "No model with id " + strconv.Itoa(id)}}, Trivial: true}, nil
+		return &Answer{Body: superjson.Object{{Key: "error", Val: "No model with id " + strconv.Itoa(id)}}, Trivial: true, NotFound: true}, nil
 	}
 	body, err := shapeModel(res.items[0], shapeOptions{
 		level: level, detail: true, downloadBase: d.Config.BaseURL, imageLocation: d.Config.ImageLocation,

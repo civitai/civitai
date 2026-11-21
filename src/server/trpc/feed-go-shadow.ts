@@ -119,6 +119,25 @@ export const FEED_GO_COMPARED_RESPONSE_HEADERS = [
   'x-update-required',
 ] as const;
 
+/**
+ * The response headers mirrored with a REST sample (`/api/v1/images`, `/api/v1/models`,
+ * `/api/v1/models/[id]`): the list above, plus what the public API's caching and browser access
+ * depend on there (shadow.RESTComparedHeaders in apps/feed-go): the ETag Next's `res.json` sets (a
+ * cache revalidates with it), the CORS headers the endpoint wrappers set, the config's
+ * X-Frame-Options, and the X-Expires an `etag` query can add. The sample says which list it carries
+ * (`responseHeaderSet: 'rest'`), so feed-go compares these only when Node sent them.
+ */
+export const FEED_GO_COMPARED_REST_RESPONSE_HEADERS = [
+  ...FEED_GO_COMPARED_RESPONSE_HEADERS,
+  'etag',
+  'access-control-allow-origin',
+  'access-control-allow-headers',
+  'access-control-allow-methods',
+  'access-control-expose-headers',
+  'x-frame-options',
+  'x-expires',
+] as const;
+
 /** Longest header value mirrored; a longer one is cut (a Cache-Tag list is the only one that grows). */
 const RESPONSE_HEADER_MAX_CHARS = 1024;
 
@@ -129,15 +148,19 @@ export type ShadowResponseHeaders = Record<string, string | string[] | number | 
 export type ShadowResponseLike = { getHeaders?: () => ShadowResponseHeaders };
 
 /**
- * The FEED_GO_COMPARED_RESPONSE_HEADERS a response carries, lowercased, each a string (an array
- * joined with `, `, cut at RESPONSE_HEADER_MAX_CHARS); Set-Cookie as `present`. Never throws.
+ * The `names` (default FEED_GO_COMPARED_RESPONSE_HEADERS) a response carries, lowercased, each a
+ * string (an array joined with `, `, cut at RESPONSE_HEADER_MAX_CHARS); Set-Cookie as `present`.
+ * Never throws.
  */
-export function pickShadowResponseHeaders(headers: ShadowResponseHeaders): Record<string, string> {
+export function pickShadowResponseHeaders(
+  headers: ShadowResponseHeaders,
+  names: readonly string[] = FEED_GO_COMPARED_RESPONSE_HEADERS
+): Record<string, string> {
   const out: Record<string, string> = {};
   try {
     const lower: Record<string, ShadowResponseHeaders[string]> = {};
     for (const [k, v] of Object.entries(headers)) lower[k.toLowerCase()] = v;
-    for (const name of FEED_GO_COMPARED_RESPONSE_HEADERS) {
+    for (const name of names) {
       const v = lower[name];
       if (v === undefined) continue;
       const value = Array.isArray(v) ? v.join(', ') : String(v);
@@ -317,6 +340,8 @@ export type FeedGoShadowSample = {
   captured?: Captured;
   /** Node's compared response headers, set in `finish`. */
   responseHeaders?: Record<string, string>;
+  /** `rest` when responseHeaders is FEED_GO_COMPARED_REST_RESPONSE_HEADERS (a REST sample). */
+  responseHeaderSet?: 'rest';
   done: boolean;
 };
 
@@ -637,7 +662,12 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       const captured = sample.captured!;
       const node = 'envelope' in captured ? captured.envelope : superjson.serialize(captured.data);
       // No status: only 200s are posted, and feed-go does not compare it.
-      const response = sample.responseHeaders ? { responseHeaders: sample.responseHeaders } : {};
+      const response = sample.responseHeaders
+        ? {
+            responseHeaders: sample.responseHeaders,
+            ...(sample.responseHeaderSet ? { responseHeaderSet: sample.responseHeaderSet } : {}),
+          }
+        : {};
       body = JSON.stringify(
         isRestEndpoint(endpoint)
           ? { input: sample.input, path: sample.path, headers: sample.headers, node, ...response }
@@ -714,7 +744,15 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
           release(sample);
           return;
         }
-        sample.responseHeaders = pickShadowResponseHeaders(headers);
+        if (isRestEndpoint(sample.endpoint)) {
+          sample.responseHeaders = pickShadowResponseHeaders(
+            headers,
+            FEED_GO_COMPARED_REST_RESPONSE_HEADERS
+          );
+          sample.responseHeaderSet = 'rest';
+        } else {
+          sample.responseHeaders = pickShadowResponseHeaders(headers);
+        }
       }
       if (!sample.holdsSlot) {
         // A REST sample is bounded here, after the handler: it held nothing while it ran.

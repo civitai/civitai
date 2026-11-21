@@ -1,7 +1,8 @@
 // Package server is the HTTP surface: the public tRPC path for the one procedure (and `model.getAll`'s
-// and `image.getInfinite`'s, computed only with ServeModelGetAll / ServeInfinite), and the internal
+// and `image.getInfinite`'s, computed only with ServeModelGetAll / ServeInfinite), the public REST
+// `GET /api/v1/models` routes (computed only with ServeV1Models, v1models_serve.go), and the internal
 // shadow-compare endpoints (that procedure, `image.getInfinite`, `model.getAll`, and the public REST
-// `GET /api/v1/images`).
+// `GET /api/v1/images` and `/api/v1/models` routes).
 package server
 
 import (
@@ -36,6 +37,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
 	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
+	"github.com/civitai/civitai/apps/feed-go/internal/v1models"
 )
 
 // Procedure is the one tRPC path this service answers.
@@ -157,9 +159,17 @@ type Server struct {
 	// (trpc.CanDecodeDevalueResponse) and an answer that is not edge-cacheable (trpc.DevalueWrite).
 	// Proxied answers are the app's own bytes, and the shadow comparison always computes superjson.
 	WriteDevalue bool
-	// V1Models serves the REST `/api/v1/models` and `/api/v1/models/[id]` shadows (v1models.go); nil =
-	// every such sample falls back.
+	// V1Models serves the REST `/api/v1/models` and `/api/v1/models/[id]` shadows (v1models.go), and
+	// their public routes with ServeV1Models; nil = every such sample or request falls back.
 	V1Models *V1ModelsDeps
+	// ServeV1Models is FEED_GO_SERVE_V1_MODELS (default off): compute `GET /api/v1/models` and
+	// `/api/v1/models/{id}` on the public routes (v1models_serve.go). Off, every request there is the
+	// `v1-models-off` fallback (proxied to V1Fallback) before anything is computed or a serve slot taken.
+	ServeV1Models bool
+	// V1Fallback serves what the public `/api/v1/models` routes do not (a reverse proxy to the Node app
+	// that answers `/api/v1`, FEED_GO_V1_FALLBACK_URL: a different upstream from Fallback). The routes
+	// are mounted only when it is set.
+	V1Fallback http.Handler
 	// Associated serves the `model.getAssociatedResourcesCardData` shadow (associated.go); nil = every
 	// such sample falls back.
 	Associated *modelfeed.AssocDeps
@@ -279,6 +289,12 @@ type computed struct {
 	// cached: the answer is a cached response body read as Node read it (v1models.Answer.Cached), no
 	// build. Recorded as outcome served_cached and result match_cached, apart for the same reason.
 	cached bool
+	// notFound: the `/api/v1/models/[id]` not-found body, which Node answers with a 404
+	// (v1models.Answer.NotFound). Compared in the shadow; never served (v1models_serve.go).
+	notFound bool
+	// headers are a REST answer's response headers (v1models.ResponseHeaders): what the public route
+	// writes and what the shadow compares. nil for the tRPC answers and for /api/v1/images.
+	headers []v1models.Header
 }
 
 // compute answers a request, or returns a fallback/other error.
@@ -885,6 +901,25 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "serve", served), time.Since(start).Seconds())
 		return
 	}
+	if !s.serveFallback(ctx, span, start, endpoint, err) {
+		return
+	}
+	if s.Fallback == nil {
+		w.Header().Set(ServedByHeader, ServedByGo)
+		trpc.WriteError(w, procedure, &trpc.Error{Code: "INTERNAL_SERVER_ERROR", HTTPStatus: 503, Message: "unavailable"})
+		return
+	}
+	// Set before the proxy copies the Node app's headers in, so it is on the proxy's own 502 too.
+	w.Header().Set(ServedByHeader, ServedByNode)
+	// The original request (and its context): the budget bounded only this service's own compute.
+	s.proxy(w, r, endpoint)
+}
+
+// serveFallback records a public request that was not answered here (err, a fallback or an error)
+// and reports whether it is to be proxied: not when the client has gone (`canceled`), as nobody would
+// read the answer and proxying would only make the Node app compute one. Every public route's
+// fallback goes through it.
+func (s *Server) serveFallback(ctx context.Context, span trace.Span, start time.Time, endpoint string, err error) bool {
 	outcome := "fallback"
 	reason := fallback.Reason(err)
 	if reason == "" {
@@ -897,20 +932,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 	s.Metrics.Requests.WithLabelValues(endpoint, "serve", outcome).Inc()
 	s.Metrics.Fallbacks.WithLabelValues(endpoint, "serve", reason).Inc()
 	tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "serve", outcome), time.Since(start).Seconds())
-	if reason == "canceled" {
-		// The client has gone: nobody would read a proxied answer, and proxying would only make the
-		// Node app compute one.
-		return
-	}
-	if s.Fallback == nil {
-		w.Header().Set(ServedByHeader, ServedByGo)
-		trpc.WriteError(w, procedure, &trpc.Error{Code: "INTERNAL_SERVER_ERROR", HTTPStatus: 503, Message: "unavailable"})
-		return
-	}
-	// Set before the proxy copies the Node app's headers in, so it is on the proxy's own 502 too.
-	w.Header().Set(ServedByHeader, ServedByNode)
-	// The original request (and its context): the budget bounded only this service's own compute.
-	s.proxy(w, r, endpoint)
+	return reason != "canceled"
 }
 
 // ShadowRequest is what the Node app posts after it has answered a sampled request.
@@ -928,7 +950,14 @@ type ShadowRequest struct {
 	// ResponseHeaders are Node's response headers of shadow.ComparedHeaders, lowercased, Set-Cookie as
 	// `present` (nil = a sampler that predates them: not compared).
 	ResponseHeaders map[string]string `json:"responseHeaders,omitempty"`
+	// ResponseHeaderSet names the list ResponseHeaders was picked from: ResponseHeaderSetREST for a REST
+	// sample (shadow.RESTComparedHeaders), "" for shadow.ComparedHeaders (a tRPC sample, or a REST one
+	// from a sampler that predates the REST list).
+	ResponseHeaderSet string `json:"responseHeaderSet,omitempty"`
 }
+
+// ResponseHeaderSetREST marks a sample whose ResponseHeaders are shadow.RESTComparedHeaders.
+const ResponseHeaderSetREST = "rest"
 
 // maxShadowBody bounds a shadow request body (a response page can be large).
 const maxShadowBody = 32 << 20
@@ -1203,12 +1232,20 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	// meaning, and the response's is its own figure. The status is not compared (DESIGN.md §7).
 	var respDiffs []shadow.Diff
 	switch {
-	case isRESTEndpoint(endpoint) || req.ResponseHeaders == nil:
-		// The REST ports write no headers of their own yet, and a sampler that predates the field sends
-		// none: nothing to compare.
+	case req.ResponseHeaders == nil || (isRESTEndpoint(endpoint) && c.headers == nil):
+		// A sampler that predates the field sends none, and the /api/v1/images port writes no headers
+		// of its own yet: nothing to compare.
 		s.Metrics.ShadowResponse.WithLabelValues(endpoint, "uncompared").Inc()
 	default:
-		respDiffs = shadow.CompareResponse(trpc.ResultHeaders(c.ttl), req.ResponseHeaders)
+		goHeaders, names := trpc.ResultHeaders(c.ttl), shadow.ComparedHeaders
+		if isRESTEndpoint(endpoint) {
+			// The model routes: the headers the public route writes (v1models_serve.go).
+			goHeaders = v1models.HeaderMap(c.headers)
+			if req.ResponseHeaderSet == ResponseHeaderSetREST {
+				names = shadow.RESTComparedHeaders
+			}
+		}
+		respDiffs = shadow.CompareResponseHeaders(goHeaders, req.ResponseHeaders, names)
 		if len(respDiffs) > 0 {
 			s.Metrics.ShadowResponse.WithLabelValues(endpoint, "mismatch").Inc()
 		} else {

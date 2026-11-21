@@ -18,6 +18,13 @@
  * On a mismatch the failure message carries `GOLDEN-ACTUAL <file> <json>`: the answer this code gave.
  * A fixture's expectation is only ever set from that output (see the golden README), never from Go's.
  *
+ * The response headers (apps/feed-go/testdata/golden/v1-models-headers, gen-v1-models-headers.mjs):
+ * each case runs a body fixture's request, with its own extra request headers, through the REAL
+ * endpoint wrappers too (MixedAuthEndpoint / PublicEndpoint, withBlockScope on [id]), which the body
+ * cases replace with pass-throughs, and requires exactly the headers the route set, plus the ETag
+ * Next's res.json sets (its own generateETag over the body string). feed-go's
+ * internal/v1models/headers_golden_test.go requires the same headers from Go.
+ *
  * The cache layer itself is not exercised: each mocked `fetch` returns the fixture's records after
  * the cache's `appendFn` (transcribed in its mock below), which is what a cache hit returns.
  */
@@ -25,7 +32,9 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { generateETag } from 'next/dist/server/lib/etag';
 import type * as BlockScopeMiddleware from '~/server/middleware/block-scope.middleware';
+import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as MeiliClient from '~/server/meilisearch/client';
 import type * as SystemCache from '~/server/services/system-cache';
@@ -36,6 +45,7 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 import { matureRestrictedBaseModels } from '~/shared/constants/basemodel.constants';
 
 const FIXTURE_DIR = join(process.cwd(), 'apps/feed-go/testdata/golden/v1-models');
+const HEADER_DIR = join(process.cwd(), 'apps/feed-go/testdata/golden/v1-models-headers');
 const GO_CONSTANTS = join(process.cwd(), 'apps/feed-go/internal/v1models/constants.go');
 const IMAGE_LOCATION = 'https://image.example.test/golden';
 const BASE_URL = 'https://site.example.test';
@@ -78,6 +88,8 @@ const state = vi.hoisted(() => ({
   fx: undefined as any,
   world: {} as Record<string, any>,
   sql: [] as { text: string; values: unknown[] }[],
+  // The header cases run the real endpoint wrappers; the body cases pass straight to the handler.
+  realWrappers: false,
 }));
 
 /** The fixture's cache records for ids, without notFound markers (what a fetch returns). */
@@ -267,16 +279,32 @@ vi.mock('~/server/utils/region-blocking', async (importOriginal) => ({
   }),
   isRegionRestricted: () => !!state.fx?.config.regionRestricted,
 }));
-vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  PublicEndpoint: (handler: any) => (req: any, res: any) => handler(req, res),
-  MixedAuthEndpoint: (handler: any) => (req: any, res: any) => handler(req, res, undefined),
-  handleEndpointError: (res: any, e: any) => res.status(500).json({ error: String(e) }),
-}));
-vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => ({
-  ...(await importOriginal<typeof BlockScopeMiddleware>()),
-  withBlockScope: (handler: any) => (req: any, res: any) => handler(req, res),
-}));
+vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof EndpointHelpers>();
+  return {
+    ...actual,
+    PublicEndpoint: (handler: any, ...rest: any[]) => {
+      const real = (actual.PublicEndpoint as any)(handler, ...rest);
+      return (req: any, res: any) => (state.realWrappers ? real(req, res) : handler(req, res));
+    },
+    MixedAuthEndpoint: (handler: any, ...rest: any[]) => {
+      const real = (actual.MixedAuthEndpoint as any)(handler, ...rest);
+      return (req: any, res: any) =>
+        state.realWrappers ? real(req, res) : handler(req, res, undefined);
+    },
+    handleEndpointError: (res: any, e: any) => res.status(500).json({ error: String(e) }),
+  };
+});
+vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => {
+  const actual = await importOriginal<typeof BlockScopeMiddleware>();
+  return {
+    ...actual,
+    withBlockScope: (handler: any, opts: any) => {
+      const real = actual.withBlockScope(handler, opts);
+      return (req: any, res: any) => (state.realWrappers ? real(req, res) : handler(req, res));
+    },
+  };
+});
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (handler: any) => handler }));
 vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
   ...(await importOriginal<typeof MeiliClient>()),
@@ -358,52 +386,102 @@ describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
     '%s',
     async (file, fx) => {
       const f = fx as Fixture;
-      expect(f.config.imageLocation).toBe(IMAGE_LOCATION);
-      expect(f.config.baseUrl).toBe(BASE_URL);
-      state.fx = f;
-      state.world = f.world;
-      state.sql = [];
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(new Date(f.now));
-      try {
-        dbMock.dbRead.modelFile.findMany.mockImplementation(async () => revive(f.world.vaeFiles));
-        dbMock.dbRead.user.findUnique.mockImplementation(async (args: any) => {
-          const id = f.world.usernames?.[args?.where?.username];
-          return id ? { id } : null;
-        });
-        redisMock.redis.mGet.mockImplementation(async (keys: string[]) =>
-          keys.map((k) => f.world.gallerySettings?.[k.slice(k.lastIndexOf(':') + 1)] ?? null)
-        );
-        redisMock.redis.packed.get.mockImplementation(
-          async (key: string) => revive(f.world.responseCache?.[key]) ?? null
-        );
+      const { res } = await runFixture(f, {}, false);
+      const body = JSON.stringify(res.body);
+      const sql = state.sql[0]
+        ? { text: normalizeSql(state.sql[0].text), values: jsonValue(state.sql[0].values) }
+        : null;
+      const actual = { status: res.statusCode, body, sql };
+      expect(state.sql.length, `${file}: one model statement at most`).toBeLessThanOrEqual(1);
+      expect(actual, `GOLDEN-ACTUAL ${file} ${JSON.stringify({ body, sql })}`).toEqual({
+        status: 200,
+        body: f.expect.body,
+        sql: f.expect.sql ? { ...f.expect.sql, text: normalizeSql(f.expect.sql.text) } : null,
+      });
+    },
+    120_000
+  );
+});
 
-        const { path, query, headers } = f.request;
-        const req: any = {
-          method: 'GET',
-          url: query ? `${path}?${query}` : path,
-          headers,
-          query: nextQuery(query),
-        };
-        const id = path.startsWith('/api/v1/models/') ? path.slice('/api/v1/models/'.length) : '';
-        if (id) req.query = { ...req.query, id };
-        const res = fakeRes();
-        await (id ? detailHandler : listHandler)(req, res);
+/**
+ * Runs a fixture's request (with `extraHeaders` merged into its headers) through the route over the
+ * fixture's world: through the real endpoint wrappers when `realWrappers`, else straight to the
+ * handler.
+ */
+async function runFixture(f: Fixture, extraHeaders: Record<string, string>, realWrappers: boolean) {
+  expect(f.config.imageLocation).toBe(IMAGE_LOCATION);
+  expect(f.config.baseUrl).toBe(BASE_URL);
+  state.fx = f;
+  state.world = f.world;
+  state.sql = [];
+  state.realWrappers = realWrappers;
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(f.now));
+  try {
+    dbMock.dbRead.modelFile.findMany.mockImplementation(async () => revive(f.world.vaeFiles));
+    dbMock.dbRead.user.findUnique.mockImplementation(async (args: any) => {
+      const id = f.world.usernames?.[args?.where?.username];
+      return id ? { id } : null;
+    });
+    redisMock.redis.mGet.mockImplementation(async (keys: string[]) =>
+      keys.map((k) => f.world.gallerySettings?.[k.slice(k.lastIndexOf(':') + 1)] ?? null)
+    );
+    redisMock.redis.packed.get.mockImplementation(
+      async (key: string) => revive(f.world.responseCache?.[key]) ?? null
+    );
 
-        const body = JSON.stringify(res.body);
-        const sql = state.sql[0]
-          ? { text: normalizeSql(state.sql[0].text), values: jsonValue(state.sql[0].values) }
-          : null;
-        const actual = { status: res.statusCode, body, sql };
-        expect(state.sql.length, `${file}: one model statement at most`).toBeLessThanOrEqual(1);
-        expect(actual, `GOLDEN-ACTUAL ${file} ${JSON.stringify({ body, sql })}`).toEqual({
-          status: 200,
-          body: f.expect.body,
-          sql: f.expect.sql ? { ...f.expect.sql, text: normalizeSql(f.expect.sql.text) } : null,
-        });
-      } finally {
-        vi.useRealTimers();
-      }
+    const { path, query } = f.request;
+    const req: any = {
+      method: 'GET',
+      url: query ? `${path}?${query}` : path,
+      headers: { ...f.request.headers, ...extraHeaders },
+      query: nextQuery(query),
+    };
+    const id = path.startsWith('/api/v1/models/') ? path.slice('/api/v1/models/'.length) : '';
+    if (id) req.query = { ...req.query, id };
+    const res = fakeRes();
+    await (id ? detailHandler : listHandler)(req, res);
+    return { res };
+  } finally {
+    state.realWrappers = false;
+    vi.useRealTimers();
+  }
+}
+
+type HeaderCase = {
+  name: string;
+  fixture: string;
+  request: { headers: Record<string, string> };
+  expect: { headers: Record<string, string> };
+};
+
+const headerCases: { file: string; hc: HeaderCase }[] = readdirSync(HEADER_DIR)
+  .filter((f) => f.endsWith('.json'))
+  .sort()
+  .map((file) => ({ file, hc: JSON.parse(readFileSync(join(HEADER_DIR, file), 'utf8')) }));
+
+describe('feed-go /api/v1/models header cases: the real Node response headers', () => {
+  it('finds the cases (a glob that matched nothing would pass every case below)', () => {
+    expect(headerCases.length).toBeGreaterThanOrEqual(9);
+  });
+
+  it.each(headerCases.map(({ file, hc }) => [file, hc]))(
+    '%s',
+    async (file, c) => {
+      const hc = c as HeaderCase;
+      const found = fixtures.find(({ file: f }) => f === hc.fixture);
+      expect(found, `${file}: no body fixture ${hc.fixture}`).toBeDefined();
+      const f = found!.fx;
+      const { res } = await runFixture(f, hc.request.headers, true);
+      const body = JSON.stringify(res.body);
+      // The real wrappers change no byte of the body.
+      expect(body, `${file}: the body under the real wrappers`).toBe(f.expect.body);
+      // What the route set, and the ETag Next's res.json sets over the string it sends.
+      const headers = { ...res.headers, etag: generateETag(body) };
+      expect(
+        { status: res.statusCode, headers },
+        `HEADERS-ACTUAL ${file} ${JSON.stringify(headers)}`
+      ).toEqual({ status: 200, headers: hc.expect.headers });
     },
     120_000
   );

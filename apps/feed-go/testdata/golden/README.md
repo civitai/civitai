@@ -132,6 +132,20 @@ that test fails with `GOLDEN-ACTUAL <file> <json>`, the real answer, which is co
 GOLDEN_NODE_MODULES=<clone>/node_modules node apps/feed-go/testdata/golden/gen-v1-models.mjs
 ```
 
+`v1-models-headers/` holds the response headers of the same two routes (DESIGN.md §16.8):
+`gen-v1-models-headers.mjs` writes one case per header arm, naming a `v1-models/` body fixture, extra
+request headers, and the headers Node's route sets on its 200 (written by hand there), plus the ETag,
+which it computes with Next's own `generateETag` over the fixture's `expect.body`: re-run it after a
+body fixture changes. The same Node golden test runs each case through the REAL endpoint wrappers and
+requires exactly those headers (`HEADERS-ACTUAL <file> <json>` on a mismatch);
+`internal/v1models/headers_golden_test.go` requires them from Go. The router's `headers()` from
+next.config (X-Frame-Options) are not in the cases: `internal/v1models/configheaders.json` holds them,
+pinned to the real config by `src/server/__tests__/feed-go-v1-models-config-headers.test.ts`.
+
+```bash
+GOLDEN_NODE_MODULES=<clone>/node_modules node apps/feed-go/testdata/golden/gen-v1-models-headers.mjs
+```
+
 ## metrics
 
 `metrics/populate.json` is what Node's `MetricService.fetch('Image', ids)` did on a set of cache-miss
