@@ -66,6 +66,15 @@ describe('feed load events', () => {
     expect(sent.map((e) => e.pageIndex)).toEqual([0, 1, 0]);
   });
 
+  it('sends the pages fetched after a refetch that came back shorter', () => {
+    const { sent, tracker, setPages } = setup();
+    tracker.start();
+    setPages(page(1), page(2), page(3));
+    setPages(page(1));
+    setPages(page(1), page(2));
+    expect(sent.map((e) => e.pageIndex)).toEqual([0, 1, 2, 1]);
+  });
+
   it('sends the pages the server filled before it started', () => {
     const { sent, tracker, setPages } = setup();
     setPages(page(1, 2));

@@ -3,8 +3,11 @@ import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   getCurrentImpressionSurface,
+  impressionTelemetryOn,
   recordImpression,
 } from '~/components/TrackView/impressionBuffer';
+
+export { impressionTelemetryOn };
 import type { ImpressionEntityType, ImpressionSurface } from '~/server/schema/track.schema';
 
 export type ImpressionTarget = { entityType: ImpressionEntityType; entityId: number };
@@ -128,18 +131,6 @@ function getRegistry(root: Element | null): Registry {
 
   registries.set(root, registry);
   return registry;
-}
-
-/**
- * THE gate for impression telemetry (the `feedImpressions` Flipt dial). Exported so a surface
- * that also records clicks against its impressions (the app store funnel) can put every event
- * of the funnel behind the SAME gate — otherwise turning the dial changes the denominator
- * while the numerator keeps flowing, and every ratio silently breaks.
- */
-export function impressionTelemetryOn(
-  features: { feedImpressions?: boolean } | null | undefined
-): boolean {
-  return !!features?.feedImpressions;
 }
 
 /**

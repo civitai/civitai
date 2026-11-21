@@ -112,6 +112,9 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
     } else if (pages > state.pages) {
       emit(query, state.pages, pages);
       state.pages = pages;
+    } else {
+      // A refetch can come back shorter; the pages fetched after it are new loads.
+      state.pages = pages;
     }
   }
 

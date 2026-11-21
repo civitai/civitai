@@ -215,3 +215,15 @@ export const __impressionBufferTestHooks = {
   },
   constants: { FLUSH_INTERVAL_MS, FLUSH_AT_SIZE, SEEN_CAP },
 };
+
+/**
+ * THE gate for impression telemetry (the `feedImpressions` Flipt dial). Exported so a surface
+ * that also records clicks against its impressions (the app store funnel) can put every event
+ * of the funnel behind the SAME gate — otherwise turning the dial changes the denominator
+ * while the numerator keeps flowing, and every ratio silently breaks.
+ */
+export function impressionTelemetryOn(
+  features: { feedImpressions?: boolean } | null | undefined
+): boolean {
+  return !!features?.feedImpressions;
+}

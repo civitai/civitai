@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { type FeatureAccess } from '~/server/services/feature-flags.service';
 import { queryClient, setTrpcBatchingEnabled, trpc } from '~/utils/trpc';
 import { setFeedEventsEnabled } from '~/utils/feed-events';
-import { impressionTelemetryOn } from '~/components/TrackView/useTrackImpression';
+import { impressionTelemetryOn } from '~/components/TrackView/impressionBuffer';
 import {
   setFeedGoTransportEnabled,
   setFeedGoTransportInfiniteEnabled,
