@@ -94,6 +94,7 @@ const { acceptImage, ImageNotRestoredError, RemovedImageNotRestorableError } = a
 const { imageQueueActions } = await import('../image-queue');
 
 const SCHEMA = `
+CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
 CREATE TABLE "Image" (
@@ -130,7 +131,7 @@ CREATE TABLE "Appeal" (
   "buzzTransactionId" TEXT,
   "entityRemovedAt" TIMESTAMP(3)
 );
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "bannedAt" TIMESTAMP(3));
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "bannedAt" TIMESTAMP(3), "deletedAt" TIMESTAMP(3));
 CREATE TABLE "ModerationRule" ("id" INTEGER PRIMARY KEY, "action" TEXT NOT NULL);
 CREATE TABLE "ModerationRuleVersion" ("id" SERIAL PRIMARY KEY, "ruleId" INTEGER NOT NULL, "action" TEXT NOT NULL);
 -- 7 was a Block rule, since edited to Hold; 5 blocks; 6 only ever held.

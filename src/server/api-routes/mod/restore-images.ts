@@ -49,13 +49,15 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ images: 0, skipped });
     }
 
-    // Counted and tracked only as the service restored them: it re-checks each image itself.
+    // Counted and tracked only as the service restored them: it re-checks each image itself, and one
+    // it kept blocked (its owner is deleted) is not restored.
     const restoredIds = new Set<number>();
     for (const chunkIds of chunk(
       candidates.map((x) => x.id),
       batchSize
     )) {
-      for (const image of await handleUnblockImages({ ids: chunkIds })) restoredIds.add(image.id);
+      const { restored } = await handleUnblockImages({ ids: chunkIds });
+      for (const image of restored) restoredIds.add(image.id);
     }
     const images = candidates.filter((x) => restoredIds.has(x.id));
     if (images.length === 0) {
