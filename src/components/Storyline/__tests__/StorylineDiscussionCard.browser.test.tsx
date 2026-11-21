@@ -123,11 +123,16 @@ describe('the discussion card', () => {
     await page.viewport(1280, 900);
     renderPage();
     await expect.element(page.getByRole('heading', { name: 'Discussion' })).toBeVisible();
-    const editor = await vi.waitFor(() => {
-      const el = document.querySelector<HTMLElement>('[contenteditable="true"]');
-      if (!el) throw new Error('the comment input has not mounted');
-      return el;
-    });
+    // 10s, not vi.waitFor's default 1s: on a shared-CPU runner the editor took longer than 1s
+    // to mount (shard 2/3 failed twice on civitai-dc that way) while the test itself is sound.
+    const editor = await vi.waitFor(
+      () => {
+        const el = document.querySelector<HTMLElement>('[contenteditable="true"]');
+        if (!el) throw new Error('the comment input has not mounted');
+        return el;
+      },
+      { timeout: 10_000 }
+    );
     await userEvent.click(editor);
 
     const radius = (el: Element | null) => getComputedStyle(el!).borderTopLeftRadius;
