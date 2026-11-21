@@ -327,7 +327,7 @@ export async function runPayout(lastUpdate: Date) {
       const earningsStoppedIds = modelVersionIds.filter((_, i) =>
         stopsCreatorEarnings(baseModels[i])
       );
-      // An invoice-paid licensor is paid against their invoice, so minting the fee as well would pay it twice.
+      // Licence fee is paid by invoice; minting it too would pay twice.
       const invoicedIds = modelVersionIds.filter((_, i) => paidByInvoice[i] === true);
       creatorsToPay[userId].push(
         ...batch.filter(
