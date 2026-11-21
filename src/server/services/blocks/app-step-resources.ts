@@ -95,7 +95,8 @@ function followPath(segments: string[], from: unknown, brackets: boolean): unkno
  * not a string.
  */
 function argumentValues(path: unknown, workflowArguments: unknown): unknown[] | null {
-  if (typeof path !== 'string') return null;
+  // JSONPath forms (quotes, recursive descent, a root) are not read here.
+  if (typeof path !== 'string' || /['"]|\.\.|^\$/.test(path)) return null;
   const values = [
     ...followPath(path.split('.'), workflowArguments, false),
     ...followPath(path.split(/[.[\]]+/).filter(Boolean), workflowArguments, true),
@@ -103,19 +104,23 @@ function argumentValues(path: unknown, workflowArguments: unknown): unknown[] | 
   return values.filter((v) => v !== undefined);
 }
 
-/** Every string in `value`, map keys included. */
-function stringLeaves(value: unknown): string[] {
+/** Every scalar in `value` as a format writes it (null as empty), map keys included. */
+function scalarLeaves(value: unknown): string[] {
   const out: string[] = [];
   const stack: unknown[] = [value];
   while (stack.length) {
     const node = stack.pop();
-    if (typeof node === 'string') out.push(node);
+    if (node === null || node === undefined) out.push('');
+    else if (typeof node === 'string') out.push(node);
+    else if (typeof node === 'number' || typeof node === 'boolean') out.push(String(node));
     else if (Array.isArray(node)) stack.push(...node);
-    else if (node && typeof node === 'object')
-      for (const [k, v] of Object.entries(node)) stack.push(k, v);
+    else if (typeof node === 'object') for (const [k, v] of Object.entries(node)) stack.push(k, v);
   }
   return out;
 }
+
+// The characters formats may be filled out to in one input; more is refused unread.
+const FORMAT_FILL_BUDGET = 1_000_000;
 
 /** The items a repeat iterates: the arrays its clause reaches, or null when it reaches none. */
 function loopItemsOf(values: unknown[] | null): unknown[] | null {
@@ -198,6 +203,7 @@ function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
   // The items a repeat places through its loop variable, by name (lower-cased); null when this
   // check cannot read its clause, so a reference to it places every argument.
   const loopItems = new Map<string, unknown[] | null>();
+  let formatFill = 0;
 
   const visit = (value: unknown, where: Where): void => {
     const { key, depth, comfy = false, flat = false } = where;
@@ -243,11 +249,20 @@ function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
       const path = field('path');
       const name = target.toLowerCase();
       const format = field('format');
+      // The orchestrator may write any value that lands here, a default or nothing into the format.
+      const fillFormat = (from: unknown) => {
+        if (typeof format !== 'string') return;
+        for (const leaf of ['', ...scalarLeaves(from)]) {
+          formatFill += format.length + leaf.length;
+          if (formatFill > FORMAT_FILL_BUDGET) refuse('step input is too large to check');
+          at(formatWith(format, leaf));
+        }
+      };
+      fillFormat(field('default'));
       // Every leaf lands here, and any of them may be written into the format.
       const placeFlat = (from: unknown) => {
         at(from, { flat: true });
-        if (typeof format === 'string')
-          for (const leaf of stringLeaves(from)) at(formatWith(format, leaf));
+        fillFormat(from);
       };
       let placed: unknown[] | null;
       if (name === WORKFLOW_ARGUMENTS_REF.toLowerCase())
@@ -267,8 +282,7 @@ function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
       for (const one of placed) {
         at(one);
         // The argument may be written into the format, so the two are judged together.
-        if (typeof format === 'string')
-          for (const leaf of stringLeaves(one)) at(formatWith(format, leaf));
+        fillFormat(one);
       }
       return;
     }

@@ -677,4 +677,71 @@ describe('stored files and blob keys off media inputs', () => {
       })
     ).resolves.toEqual({ capOutput: false });
   });
+  it.each([
+    ['a number', 'https://blobs-b{0}.example.com/w', { n: 2 }],
+    ['null', 'https://blobs-b2{0}.example.com/w', { n: null }],
+    ['nothing', 'https://blobs-b2{0}.example.com/w', {}],
+  ])('judges a format filled with %s', async (_, format, args) => {
+    await expect(
+      checkWorkflow({
+        steps: [
+          { $type: 'textToImage', input: { model: { $ref: '$arguments', path: 'n', format } } },
+        ],
+        arguments: args,
+      })
+    ).rejects.toThrow(STORED);
+  });
+
+  it('judges a format filled with its default', async () => {
+    await expect(
+      checkWorkflow({
+        steps: [
+          {
+            $type: 'textToImage',
+            input: {
+              model: {
+                $ref: '$arguments',
+                path: 'n',
+                format: 'https://{0}/w',
+                default: 'blobs-b2.example.com',
+              },
+            },
+          },
+        ],
+        arguments: {},
+      })
+    ).rejects.toThrow(STORED);
+  });
+
+  it('refuses a format it would take too long to fill', async () => {
+    await expect(
+      checkWorkflow({
+        steps: [
+          {
+            $type: 'textToImage',
+            input: {
+              model: {
+                $ref: '$arguments',
+                path: 'xs',
+                format: `https://example.com/${'a'.repeat(60_000)}{0}`,
+              },
+            },
+          },
+        ],
+        arguments: { xs: Array(20_000).fill('') },
+      })
+    ).rejects.toThrow('too large to check');
+  });
+
+  it.each([["['a']"], ['..a'], ['$.a']])(
+    'places every argument for the JSONPath form %s',
+    async (path) => {
+      await expect(
+        checkWorkflow({
+          steps: [{ $type: 'textToImage', input: { model: { $ref: '$arguments', path } } }],
+          arguments: { a: 'https://image.civitai.com/x' },
+        })
+      ).rejects.toThrow(STORED);
+    }
+  );
 });
