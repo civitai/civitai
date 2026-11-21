@@ -11545,6 +11545,13 @@ async function submitCustomComfyWorkflow(opts: {
         workflow: inlineBody.workflow,
       }
     : buildCustomComfyWorkflowInput(recipe!, recipeBody!.params, {});
+  await assertStepPositionsAllowed(
+    claims,
+    userId,
+    [{ $type: 'comfy', input: stepInput }],
+    undefined,
+    true
+  );
   // Every resource the graph loads must be a Civitai version; their base models decide the cap.
   const { capOutput } = await checkAppStepResources(stepInput, userId);
 
@@ -13710,6 +13717,7 @@ async function estimatePassThroughStepWorkflow(opts: {
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
   await assertBlockTrainingModelsAllowed([body]);
+  await assertStepPositionsAllowed(claims, userId, [body]);
   await checkAppStepResources(body.input, userId);
   // Before the mint and the quote: a disallowed pick refuses here, as on the submit.
   const currencies = resolveBlockCurrenciesForAccount(
@@ -13946,6 +13954,8 @@ async function submitPassThroughStepWorkflow(opts: {
     ...passThroughAuditContext(claims, userId, isGreen),
     steps: [body],
   });
+  // After the audit, whose refusal of a non-literal prompt is the more specific one.
+  await assertStepPositionsAllowed(claims, userId, [body]);
   // The viewer's pick (`body.accountType`) goes first, the rest of the
   // domain-allowed set stays as fallback; absent → Auto (blue-first). The quote
   // below is priced with the same array.
@@ -14534,6 +14544,7 @@ async function estimateMultiStepWorkflow(opts: {
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   await assertBlockTrainingModelsAllowed(prepared.steps);
+  await assertStepPositionsAllowed(claims, userId, prepared.steps, body.arguments);
   await checkAppStepResources(body, userId);
   // Per-WORKFLOW pick: the orchestrator takes one `currencies` list per workflow.
   const currencies = resolveBlockCurrenciesForAccount(
@@ -14634,6 +14645,8 @@ async function submitMultiStepWorkflow(opts: {
     ...passThroughAuditContext(claims, userId, isGreen),
     steps: prepared.steps,
   });
+  // After the audit, whose refusal of a non-literal prompt is the more specific one.
+  await assertStepPositionsAllowed(claims, userId, prepared.steps, body.arguments);
   // Per-WORKFLOW pick (see the schema): one `currencies` list for every step.
   const currencies = resolveBlockCurrenciesForAccount(isGreen, body.accountType);
 
@@ -16346,6 +16359,7 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
           steps: [body],
         });
         await assertBlockTrainingModelsAllowed([body]);
+        await assertStepPositionsAllowed(claims, userId, [body]);
         capOutput = (await checkAppStepResources(body.input, userId)).capOutput;
         const { isAppConfirmedStepWithinLimitEnabled } = await import(
           '~/server/services/app-blocks-flag'
@@ -16611,6 +16625,25 @@ async function assertBlockTrainingModelsAllowed(
   if (collected.models.length === 0) return;
   const { getTrainingServiceStatus } = await import('~/server/services/training.service');
   const refusal = trainingStepModelRefusal(collected.models, await getTrainingServiceStatus());
+  if (refusal) throw new TRPCError({ code: 'BAD_REQUEST', message: refusal });
+}
+
+/** Which values an app-built step may place outside its media inputs (`app-step-positions`). */
+async function assertStepPositionsAllowed(
+  claims: { appBlockId: string },
+  userId: number,
+  steps: ReadonlyArray<{ $type: string; input: unknown }>,
+  workflowArguments?: unknown,
+  inlineGraph = false
+): Promise<void> {
+  const { stepPositionsRefusal } = await import('~/server/services/blocks/app-step-positions');
+  const refusal = await stepPositionsRefusal({
+    appBlockId: claims.appBlockId,
+    viewerId: userId,
+    steps,
+    workflowArguments,
+    inlineGraph,
+  });
   if (refusal) throw new TRPCError({ code: 'BAD_REQUEST', message: refusal });
 }
 
