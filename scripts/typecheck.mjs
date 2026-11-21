@@ -12,11 +12,7 @@
  *
  *   local / agent machines  --singleThreaded   several agents typechecking at once must not
  *                                              exhaust a dev machine's memory
- *   CI (`CI` set)           --checkers 2       faster, on a runner sized for it
- *
- * Measured on this repo (2026-11-20, 32-core box, cold): 5.9 134 s at 8.4 GB peak;
- * TS7 single-threaded 48 s at 7.3 GB; TS7 `--checkers 2` 32 s at 8.4 GB. The first edit to a
- * router file after a build: 5.9 ~194 s, TS7 single-threaded ~56 s.
+ *   CI (`CI` set)           --checkers 2       faster; CI runners have the memory
  *
  * `TYPECHECK_COMPILER=5` runs TypeScript 5.9 instead, as before. It never resolves or installs
  * TypeScript 7, so it still works when TS7 or the package registry is what is broken. Without
@@ -40,8 +36,7 @@
  * Classification
  * --------------
  *   exit 0, no `error TS`      -> clean.
- *   exit != 0, has `error TS`  -> ordinary type errors; exit code passed through (TS7 and a
- *                                warm 5.9 exit 1, a cold 5.9 exits 2; any non-zero is a failure).
+ *   exit != 0, has `error TS`  -> ordinary type errors; exit code passed through.
  *   exit != 0, no `error TS`   -> CRASH. Never report this as a typecheck result.
  *                                Names out-of-memory / outside kill / unknown crash
  *                                separately, since the fixes differ.
@@ -66,14 +61,14 @@
  *                  5120 MB -> pass, error found    8192 MB -> pass, error found
  *   node 22.22.2   6144 MB -> pass, error found    8192 MB -> pass, error found
  *
- * Incremental runs need more: an incremental 5.9 run after adding one `src/pages` module hit
- * the 8192 MB cap and aborted (2026-11-20). Override per run with TYPECHECK_HEAP_MB.
+ * Incremental runs need more heap than cold ones; the 8192 MB default can abort on one.
+ * Override per run with TYPECHECK_HEAP_MB.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { basename, dirname, resolve } from 'node:path';
+import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveTs7, TS7_INSTALL_COMMAND } from './lib/ts7.mjs';
 import { typecheckAppsGateDecision } from './typecheck-apps-gate.mjs';
@@ -125,18 +120,18 @@ if (!Number.isFinite(heapMb) || heapMb <= 0) {
   process.exit(2);
 }
 
-// `pnpm run typecheck -- -p x` passes the `--` through; TypeScript 7 rejects it (TS5023).
+// `pnpm run typecheck -- -p x` passes the `--` through; both compilers reject it (TS5023).
 const userArgs = process.argv.slice(2).filter((a) => a !== '--');
 
-// The threading flag is R1 of the TS7 rollout: single-threaded on dev machines. Arguments that
-// already choose one win, so a narrowed run can still ask for something else.
+// Single-threaded by default on dev machines (see header); an argument that already chooses a
+// thread mode wins.
 function ts7Args(args) {
   const out = ['--noEmit'];
   const choosesThreads = args.some((a) => a === '--singleThreaded' || a === '--checkers');
   if (!choosesThreads) out.push(...(process.env.CI ? ['--checkers', '2'] : ['--singleThreaded']));
-  // tsconfig.json turns `incremental` on, and TS7's .tsbuildinfo is a different format from 5.9's,
-  // so TS7 keeps its own file per project instead of overwriting 5.9's next to the tsconfig.
-  // Skipped when the caller manages incrementality or names files (no project, so no buildinfo).
+  // TS7's .tsbuildinfo format differs from 5.9's; a separate file per project stops the two
+  // compilers overwriting each other's cache. Named after the project's repo-relative path, so
+  // two configs that share a file name do not share a cache.
   const managesIncremental = args.some(
     (a) => a === '--incremental' || a === '--tsBuildInfoFile' || a === '--build' || a === '-b'
   );
@@ -146,10 +141,10 @@ function ts7Args(args) {
     const project = pIndex >= 0 ? args[pIndex + 1] ?? 'tsconfig.json' : 'tsconfig.json';
     const cacheDir = resolve(repoRoot, 'node_modules', '.cache', 'typecheck');
     mkdirSync(cacheDir, { recursive: true });
-    out.push(
-      '--tsBuildInfoFile',
-      resolve(cacheDir, `ts7-${basename(project, '.json')}.tsbuildinfo`)
-    );
+    const name = relative(repoRoot, resolve(project))
+      .replace(/\.json$/, '')
+      .replace(/[\\/]+/g, '-');
+    out.push('--tsBuildInfoFile', resolve(cacheDir, `ts7-${name || 'tsconfig'}.tsbuildinfo`));
   }
   return [...out, ...args];
 }

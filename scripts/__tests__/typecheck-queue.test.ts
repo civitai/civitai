@@ -46,7 +46,7 @@ describe('which typechecks go through the queue', () => {
     expect(typecheckQueueDecision([], { ...ON, TYPECHECK_HEAP_MB: '12288' }).queue).toBe(false);
   });
 
-  // The same reason, for the 5.9 brake: a queued run would silently run TypeScript 7.
+  // A queued run takes the daemon's environment, so TYPECHECK_COMPILER=5 would be ignored and TS7 would run.
   it('stays direct when the caller chooses the compiler', () => {
     expect(typecheckQueueDecision([], { ...ON, TYPECHECK_COMPILER: '5' }).queue).toBe(false);
   });

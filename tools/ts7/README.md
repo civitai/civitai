@@ -42,7 +42,8 @@ It was, briefly. Adding `tools/*` to `pnpm-workspace.yaml` made `pnpm install` r
 own — the bin isolation a subpackage buys was working correctly at the same time (root
 `.bin/tsc` stayed 5.9.2).
 
-Keeping it outside the workspace costs the one install command above and buys a root
+Keeping it outside the workspace costs nothing at use time (`scripts/lib/ts7.mjs` installs it on
+first run) and buys a root
 `pnpm-lock.yaml` that does not move at all. Verified: with `tools/ts7` outside the workspace,
 `git diff pnpm-lock.yaml` is empty and `grep -c 'typescript@7.0.2' pnpm-lock.yaml` is 0.
 
@@ -71,7 +72,8 @@ alias wins, and every `npx tsc` and `pnpm run tsc:trace` in the repo silently be
 
 ## Upgrading
 
-Bump the version in `tools/ts7/package.json`, re-run `pnpm -C tools/ts7 install --ignore-workspace`, then check three
+Bump the version in `tools/ts7/package.json`, run `pnpm -C tools/ts7 install --ignore-workspace` (without
+`--frozen-lockfile`, which the automatic install uses) to refresh this directory's lockfile, then check three
 things rather than one. **All of these run from the repo root:**
 
 ```bash

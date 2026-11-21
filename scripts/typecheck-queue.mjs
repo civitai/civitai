@@ -14,7 +14,7 @@ function queueFlagSet(env) {
  * Whether a `pnpm run typecheck:apps` should go through the dev-server queue.
  *
  * Deliberately NOT the rule below. The root typecheck's extra exits are about ITS env seams
- * (`TYPECHECK_TSC_PATH`, `TYPECHECK_HEAP_MB`), and honouring them here would mean a seam exported
+ * (`TYPECHECK_TSC_PATH`, `TYPECHECK_COMPILER`, `TYPECHECK_HEAP_MB`), and honouring them here would mean a seam exported
  * for a root-typecheck test silently un-queued the app typechecks too.
  */
 export function typecheckAppsQueueDecision(env) {

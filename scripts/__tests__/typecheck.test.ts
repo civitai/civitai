@@ -39,7 +39,6 @@ const run = (tscPath: string, env: Record<string, string> = {}, args: string[] =
     },
   });
 
-// Prints what the compiler process received, then exits clean.
 const ARGV_STUB =
   'console.log(JSON.stringify({ argv: process.argv.slice(2), execArgv: process.execArgv }));\nprocess.exit(0);\n';
 const received = (stdout: string) =>
@@ -184,7 +183,6 @@ describe('typecheck wrapper compiler selection', () => {
     expect(buildInfo).toMatch(
       /node_modules[\\/]\.cache[\\/]typecheck[\\/]ts7-tsconfig\.tsbuildinfo$/
     );
-    // No V8 heap flag: TS7 is a native binary.
     expect(execArgv.some((a) => a.startsWith('--max-old-space-size'))).toBe(false);
     expect(res.stdout).toContain('TypeScript 7');
   });
@@ -202,7 +200,6 @@ describe('typecheck wrapper compiler selection', () => {
   });
 
   it('keeps a per-project .tsbuildinfo for a narrowed run passed through pnpm', () => {
-    // `pnpm run typecheck -- -p x` delivers the `--`; TypeScript 7 rejects it as an option.
     const res = run(stub('argv-scripts', ARGV_STUB), {}, ['--', '-p', 'tsconfig.scripts.json']);
 
     const { argv } = received(res.stdout);
@@ -210,6 +207,15 @@ describe('typecheck wrapper compiler selection', () => {
     expect(argv[argv.indexOf('--tsBuildInfoFile') + 1]).toMatch(
       /ts7-tsconfig\.scripts\.tsbuildinfo$/
     );
+  });
+
+  it('gives two projects whose configs share a file name separate .tsbuildinfo files', () => {
+    const buildInfoFor = (project: string) => {
+      const { argv } = received(run(stub('argv-same-name', ARGV_STUB), {}, ['-p', project]).stdout);
+      return argv[argv.indexOf('--tsBuildInfoFile') + 1];
+    };
+
+    expect(buildInfoFor('tsconfig.json')).not.toBe(buildInfoFor('apps/moderator/tsconfig.json'));
   });
 
   it('runs TypeScript 5.9 with the heap cap under TYPECHECK_COMPILER=5', () => {

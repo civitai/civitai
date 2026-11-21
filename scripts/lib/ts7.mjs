@@ -7,9 +7,9 @@
  * worktree, a CI job) would otherwise fail until someone installed it by hand, so
  * `resolveTs7` installs it from its own lockfile when it is missing.
  *
- * Two typechecks can start at once in one fresh worktree (runs with arguments, the brake and
- * the gates all bypass the queue), so the install takes an exclusive lock file and a second
- * caller waits for it rather than installing over a half-written `node_modules`.
+ * Two typechecks can start at once in a fresh worktree, so the install takes an exclusive lock
+ * file and a second caller waits for the lock to be released, rather than installing over, or
+ * running from, a half-written `node_modules`.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -54,7 +54,6 @@ function install(toolDir, log) {
       } catch {
         // Gone between the check and the stat: the other install finished.
       }
-      if (isInstalled(toolDir)) return;
       if (Date.now() > deadline) {
         throw new Error(`timed out waiting for another TypeScript 7 install (${lock})`);
       }
