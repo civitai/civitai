@@ -533,31 +533,75 @@ describe("kind:'workflow' ESTIMATE", () => {
     expect(whatifs()).toHaveLength(0);
   });
 
-  // Media inputs take references; nothing else does (app-step-positions.ts).
-  it('refuses a reference at a model input before pricing, and chains one into an image', async () => {
-    await expect(
-      estimate(
-        body({
-          steps: [
-            { $type: 'imageGen', name: 'gen', input: GEN_INPUT },
-            {
-              $type: 'imageGen',
-              name: '$1',
-              input: { prompt: 'a cat', model: { $ref: 'gen', path: 'output.text' } },
-            },
-          ],
-        })
-      )
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining("'model'") });
+  // Media inputs take references; nothing else does (app-step-positions.ts, #9955).
+  const refAtModel = { prompt: 'a cat', model: { $ref: 'gen', path: 'output.text' } };
+  it.each([
+    [
+      'workflow estimate',
+      () =>
+        estimate(
+          body({
+            steps: [
+              { $type: 'imageGen', name: 'gen', input: GEN_INPUT },
+              { $type: 'imageGen', name: '$1', input: refAtModel },
+            ],
+          })
+        ),
+    ],
+    [
+      'workflow submit',
+      () =>
+        submit(
+          body({
+            steps: [
+              { $type: 'imageGen', name: 'gen', input: GEN_INPUT },
+              { $type: 'imageGen', name: '$1', input: refAtModel },
+            ],
+          })
+        ),
+    ],
+    [
+      'step estimate',
+      () => estimate({ kind: 'step', $type: 'imageGen', input: refAtModel, maxBuzz: 30 }),
+    ],
+    [
+      'step submit',
+      () => submit({ kind: 'step', $type: 'imageGen', input: refAtModel, maxBuzz: 30 }),
+    ],
+  ])('refuses a reference at a model input on the %s path, before pricing', async (_n, run) => {
+    await expect(run()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining("'model'"),
+    });
     expect(whatifs()).toHaveLength(0);
+    expect(realSubmits()).toHaveLength(0);
+  });
 
-    await estimate(body());
+  it('runs a chained workflow with a merge whole, under enforce', async () => {
+    await estimate(
+      body({
+        steps: [
+          { $type: 'imageGen', name: 'gen', input: GEN_INPUT },
+          { $type: 'imageUpscaler', name: '$1', input: UPSCALE_INPUT },
+          {
+            $type: 'merge',
+            name: 'all',
+            input: {
+              fields: {
+                captions: { $ref: 'gen', path: 'output.caption', reduce: 'concat' },
+                tags: { $ref: '$1', path: 'output.tags', reduce: 'push' },
+              },
+            },
+          },
+          { $type: 'imageBackgroundRemoval', input: CONVERT_INPUT },
+        ],
+      })
+    ).then((r) => expect(r.snapshot.status).not.toBe('failed'));
     expect(whatifs()).toHaveLength(1);
   });
 
-  // Goes red until civitai/civitai#9935 (the access rule in checkAppStepResources) is on this
-  // branch; this PR must not merge before it. A value placed through `arguments` is a literal, so
-  // the literal resource check has to refuse another user's Private version there.
+  // A value placed through `arguments` is a literal, so the literal resource check has to refuse
+  // another user's Private version there.
   it("refuses another user's Private version placed through arguments", async () => {
     dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
       where: { id: { in: number[] } };

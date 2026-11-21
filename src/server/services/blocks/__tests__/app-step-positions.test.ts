@@ -25,7 +25,7 @@ beforeEach(() => {
   loggingMock.logToAxiom.mockClear();
 });
 
-// Deliberate: media inputs may take references, URLs and orchestrator files, and every other key
+// Deliberate (#9955): media inputs may take references, URLs and orchestrator files, and every other key
 // takes literals only, a key the list has not met included. Loosening this to a list of the keys
 // that take model weights reopens what it closes; ask the moderation team first.
 describe('findStepPositionProblem', () => {
@@ -260,6 +260,48 @@ describe('findStepPositionProblem', () => {
         VIEWER
       )
     ).toBeNull();
+  });
+});
+
+describe('merge steps', () => {
+  const field = (over: Record<string, unknown> = {}) => ({
+    $ref: 'gen',
+    path: 'output.images',
+    reduce: 'concat',
+    ...over,
+  });
+  const run = (merge: { $type: string; input: unknown }) =>
+    stepPositionsRefusal({
+      appBlockId: 'apb_1',
+      viewerId: VIEWER,
+      steps: [
+        { $type: 'imageGen', name: 'gen', input: {} },
+        { name: 'm', ...merge },
+      ],
+    });
+
+  it("lets a merge read an earlier step's output", async () => {
+    await expect(run({ $type: 'merge', input: { fields: { tags: field() } } })).resolves.toBeNull();
+  });
+
+  it.each([
+    ['at a step that is not a merge', { $type: 'imageGen', input: { fields: { tags: field() } } }],
+    [
+      'naming no earlier step',
+      { $type: 'merge', input: { fields: { tags: field({ $ref: 'm' }) } } },
+    ],
+    [
+      'naming the arguments',
+      { $type: 'merge', input: { fields: { tags: field({ $ref: '$arguments' }) } } },
+    ],
+    ['with another key', { $type: 'merge', input: { fields: { tags: field({ default: 1 }) } } }],
+    [
+      'without a reduce',
+      { $type: 'merge', input: { fields: { tags: field({ reduce: undefined }) } } },
+    ],
+    ['outside fields', { $type: 'merge', input: { other: field() } }],
+  ])('refuses a merge-shaped reference %s', async (_n, step) => {
+    await expect(run(step)).resolves.toMatch(/cannot take/);
   });
 });
 

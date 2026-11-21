@@ -645,6 +645,20 @@ describe("a TRAINING step type is never a confirmed step — use kind:'training'
     }
   );
 
+  it('refuses a reference at a model input on the confirmed path (app-step-positions)', async () => {
+    const refBody = body({
+      input: { engine: 'meshy', prompt: 'a teapot', model: { $ref: 'x', path: 'y' } },
+    });
+    seedQuote(SEEDED, {
+      bodyHash: hashPassThroughStepBody(blockPassThroughStepBodySchema.parse(refBody)),
+    });
+    await expect(submit({ ...refBody, quoteId: SEEDED })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining("'model'"),
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
   // Step types are matched case-insensitively, consistent with the denylist.
   const CASED = [
     'Training',

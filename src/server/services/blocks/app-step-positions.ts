@@ -127,6 +127,22 @@ function isRepeatStepType(stepType: string): boolean {
   return stepType.toLowerCase() === 'repeat';
 }
 
+/** Each field is `{ $ref, path, reduce }`, exactly, reading an earlier step of this workflow. */
+function areMergeSources(fields: unknown, earlierSteps: ReadonlySet<string>): boolean {
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields)) return false;
+  return Object.values(fields).every((field) => {
+    if (!field || typeof field !== 'object' || Array.isArray(field)) return false;
+    const { $ref, path, reduce, ...rest } = field as Record<string, unknown>;
+    return (
+      Object.keys(rest).length === 0 &&
+      typeof $ref === 'string' &&
+      earlierSteps.has($ref) &&
+      typeof path === 'string' &&
+      typeof reduce === 'string'
+    );
+  });
+}
+
 /** `{ $ref, path, as }`, exactly: the orchestrator's RepeatForClause. */
 function isRepeatForClause(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -143,7 +159,9 @@ export function findStepPositionProblem(
   input: unknown,
   viewerId: number,
   workflowArguments?: unknown,
-  stepType?: string
+  stepType?: string,
+  /** The names of the steps that run before this one in the same workflow. */
+  earlierSteps: ReadonlySet<string> = new Set()
 ): StepPositionProblem | null {
   const orchestratorFileProblem = (value: string, key: string): StepPositionProblem | null => {
     if (!ORCHESTRATOR_SOURCE_RE.test(value)) return null;
@@ -176,21 +194,27 @@ export function findStepPositionProblem(
     text: boolean;
     /** The value is a repeat step's `input`, whose `for` clause names the array it iterates. */
     repeatInput: boolean;
+    /** The value is a merge step's `input`, whose `fields` read earlier steps' outputs. */
+    mergeInput: boolean;
     depth: number;
   };
 
   // `key` is the nearest key above the value; below a media key everything is media.
   const visit = (value: unknown, where: Where): StepPositionProblem | null => {
-    const { key, repeatInput, depth } = where;
+    const { key, repeatInput, mergeInput, depth } = where;
     if (isMediaKey(key)) return null;
     const at = key ?? '(input)';
     // An argument that places itself, or input nested past any real step, is refused, not walked.
     if (depth > MAX_DEPTH) return { form: 'reference', key: at };
     const text = where.text || (key !== undefined && FREE_TEXT_KEYS.has(key.toLowerCase()));
-    const below = (childKey: string | undefined, isRepeatInput = false): Where => ({
+    const below = (
+      childKey: string | undefined,
+      nested: { repeat?: boolean; merge?: boolean } = {}
+    ): Where => ({
       key: childKey,
       text,
-      repeatInput: isRepeatInput,
+      repeatInput: !!nested.repeat,
+      mergeInput: !!nested.merge,
       depth: depth + 1,
     });
     if (typeof value === 'string') return text ? checkText(value, at) : checkString(value, at);
@@ -211,7 +235,7 @@ export function findStepPositionProblem(
       return argument.found ? visit(argument.value, below(key)) : { form: 'reference', key: at };
     }
     // A nested step (a repeat's template) names its own `$type`.
-    const nestedRepeat = typeof record.$type === 'string' && isRepeatStepType(record.$type);
+    const nestedType = typeof record.$type === 'string' ? record.$type.toLowerCase() : undefined;
     for (const [childKey, child] of entries) {
       if (!text) {
         const problem = checkString(childKey, at);
@@ -220,10 +244,14 @@ export function findStepPositionProblem(
       // The items the clause iterates are placed by references inside the template, which this
       // walk checks where they land.
       if (repeatInput && childKey === 'for' && isRepeatForClause(child)) continue;
-      const childWhere = below(
-        FIELD_KEY_RE.test(childKey) ? childKey : key,
-        nestedRepeat && childKey === 'input'
-      );
+      // A merge collects earlier steps' outputs into its own; what reads the merge is checked
+      // where it lands.
+      if (mergeInput && childKey === 'fields' && areMergeSources(child, earlierSteps)) continue;
+      const isInput = childKey === 'input';
+      const childWhere = below(FIELD_KEY_RE.test(childKey) ? childKey : key, {
+        repeat: isInput && nestedType === 'repeat',
+        merge: isInput && nestedType === 'merge',
+      });
       const problem = visit(child, childWhere);
       if (problem) return problem;
     }
@@ -234,6 +262,7 @@ export function findStepPositionProblem(
     key: undefined,
     text: false,
     repeatInput: stepType !== undefined && isRepeatStepType(stepType),
+    mergeInput: stepType?.toLowerCase() === 'merge',
     depth: 0,
   });
 }
@@ -281,15 +310,23 @@ export async function getStepPositionsMode(): Promise<StepPositionsMode> {
 export async function stepPositionsRefusal(opts: {
   appBlockId: string;
   viewerId: number;
-  steps: ReadonlyArray<{ $type: string; input: unknown }>;
+  steps: ReadonlyArray<{ $type: string; name?: string; input: unknown }>;
   workflowArguments?: unknown;
   /** The step is an inline ComfyUI graph (`findInlineGraphProblem`). */
   inlineGraph?: boolean;
 }): Promise<string | null> {
+  const earlierSteps = new Set<string>();
   for (const step of opts.steps) {
     const problem = opts.inlineGraph
       ? findInlineGraphProblem(step.input)
-      : findStepPositionProblem(step.input, opts.viewerId, opts.workflowArguments, step.$type);
+      : findStepPositionProblem(
+          step.input,
+          opts.viewerId,
+          opts.workflowArguments,
+          step.$type,
+          earlierSteps
+        );
+    if (step.name) earlierSteps.add(step.name);
     if (!problem) continue;
     const mode = await getStepPositionsMode();
     if (mode === 'off') return null;
@@ -302,7 +339,7 @@ export async function stepPositionsRefusal(opts: {
       form: problem.form,
       host: problem.host,
       mode,
-    }).catch(() => undefined);
+    });
     if (mode === 'log') return null;
     return `step '${step.$type}' cannot take this value at '${problem.key}'; only media inputs take references, URLs or orchestrator files`;
   }
