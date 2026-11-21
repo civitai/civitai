@@ -12499,10 +12499,11 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
  * `buildStep` that varies a PRICED field breaks this outright. Keep
  * per-request variation confined to fields the quote cannot see.
  */
-function buildStepOrchestratorStep(
+async function buildStepOrchestratorStep(
   step: ReturnType<typeof resolveBlockStep>,
   params: unknown,
-  plan: Pick<ReturnType<typeof planStepSpend>, 'stepTimeoutSeconds'>
+  plan: Pick<ReturnType<typeof planStepSpend>, 'stepTimeoutSeconds'>,
+  auth: { claims: BlockClaims; userId: number }
 ) {
   const built = step.buildStep(params);
 
@@ -12598,6 +12599,11 @@ function buildStepOrchestratorStep(
     });
   }
 
+  // The position rule every app-built step is held to, on the input this request built.
+  await assertStepPositionsAllowed(auth.claims, auth.userId, [
+    { $type: built.$type, input: built.input },
+  ]);
+
   return {
     $type: built.$type,
     name: BLOCK_STEP_NAME,
@@ -12681,7 +12687,7 @@ async function estimateStepWorkflow(opts: {
   // paths — so surfacing them is what makes the estimate honest. A failed
   // orchestrator ROUND-TRIP becomes a coded `step_quote_*` snapshot instead.
   const plan = planStepSpend(step, params, variant);
-  const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
+  const orchestratorStep = await buildStepOrchestratorStep(step, params, plan, { claims, userId });
   // The submit's own call, so the estimate prices the order the submit drains.
   const currencies = resolveBlockCurrenciesForAccount(
     resolveBlockMaturity(claims).isGreen,
@@ -12804,7 +12810,7 @@ async function quoteStepBuzz(opts: {
   ctx: Context;
   claims: BlockClaims;
   step: ReturnType<typeof resolveBlockStep>;
-  orchestratorStep: ReturnType<typeof buildStepOrchestratorStep>;
+  orchestratorStep: Awaited<ReturnType<typeof buildStepOrchestratorStep>>;
   userId: number;
   /** The caller's own submitted params, serialized — see `classifyQuoteFailure`. */
   callerText: string;
@@ -12967,7 +12973,7 @@ async function submitStepWorkflow(opts: {
   // reservation, so a rejection costs nothing and has nothing to refund.
   // (`timeout` is stamped ONLY for a billing mode whose cap IS a timeout; see
   // the helper.)
-  const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
+  const orchestratorStep = await buildStepOrchestratorStep(step, params, plan, { claims, userId });
   // Parameterized tags: emit the step id as both the workflow-type tag and the
   // `baseModel` slot (a registry step has no base model), preserving the
   // `app-block:*` provenance tags the per-app subqueue read depends on.
