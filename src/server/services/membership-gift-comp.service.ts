@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -9,6 +10,7 @@ import {
   revokeMembershipGift,
   type RecipientGiftability,
 } from '~/server/services/membership-gift.service';
+import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { trackModActivity } from '~/server/services/moderator.service';
 import {
   throwBadRequestError,
@@ -27,6 +29,27 @@ const REVOKE_ACTIVITY_PREFIX = 'revokeCompMembershipGift:';
 const COMP_LOCK_CLASS = 0x4d470001;
 
 const log = (data: MixedObject) => logToAxiom({ name: 'membership-gift', ...data }, 'webhooks');
+
+/** Collaborators, injectable so tests need not mock this repo's own modules. */
+export const compGiftDeps = {
+  trackModActivity,
+  fulfillMembershipGift,
+  getRecipientGiftability,
+  revokeMembershipGift,
+  throwOnBlockedUserContent,
+};
+type CompGiftDeps = typeof compGiftDeps;
+
+type Actor = { id: number; roles?: string[] };
+
+async function assertCompGrant(actor: Actor) {
+  if (!(await hasModeratorGrant(actor, 'user.membership.gift.comp')))
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        'Comping a membership gift needs the "user.membership.gift.comp" moderator permission.',
+    });
+}
 
 /** A comp is the only gift with no Stripe payment behind it. */
 export const isCompGift = (gift: {
@@ -69,7 +92,8 @@ export async function compMembershipGift({
   message,
   anonymous = false,
   execute = false,
-  moderatorId,
+  actor,
+  deps = compGiftDeps,
 }: {
   recipientId: number;
   tier: GiftableTier;
@@ -78,8 +102,11 @@ export async function compMembershipGift({
   message?: string;
   anonymous?: boolean;
   execute?: boolean;
-  moderatorId: number;
+  actor: Actor;
+  deps?: CompGiftDeps;
 }): Promise<CompGiftResult> {
+  await assertCompGrant(actor);
+  const moderatorId = actor.id;
   if (!Number.isInteger(months) || months < 1 || months > COMP_GIFT_LIMITS.maxMonths)
     throw throwBadRequestError(
       `Months must be a whole number from 1 to ${COMP_GIFT_LIMITS.maxMonths}.`
@@ -102,14 +129,14 @@ export async function compMembershipGift({
     throw throwBadRequestError('This user is banned and cannot receive gifts.');
   if (recipient.muted) throw throwBadRequestError('This user is muted and cannot receive gifts.');
 
-  const giftability = await getRecipientGiftability({ recipientUserId: recipientId });
+  const giftability = await deps.getRecipientGiftability({ recipientUserId: recipientId });
   if (giftability.status === 'blocked' && giftability.reason === 'unsupported-provider')
     throw throwBadRequestError("This user's membership cannot receive gifted months.");
 
   const trimmedMessage = message?.trim() || undefined;
   // The message is emailed to the recipient.
   if (trimmedMessage)
-    await throwOnBlockedUserContent(trimmedMessage, { surface: 'membership-gift' });
+    await deps.throwOnBlockedUserContent(trimmedMessage, { surface: 'membership-gift' });
 
   const who = { id: recipient.id, username: recipient.username };
   const since = () => dayjs().subtract(24, 'hour').toDate();
@@ -155,7 +182,7 @@ export async function compMembershipGift({
       },
       select: { id: true },
     });
-    await trackModActivity(
+    await deps.trackModActivity(
       moderatorId,
       {
         entityType: 'user',
@@ -181,7 +208,7 @@ export async function compMembershipGift({
   // Outside the transaction: fulfilment notifies and emails. A failure here leaves a Pending row
   // that fulfilment can finish later, so it is reported rather than thrown into a retry that
   // would comp a second gift.
-  const fulfilled = await fulfillMembershipGift({ giftId: gift.id }).then(
+  const fulfilled = await deps.fulfillMembershipGift({ giftId: gift.id }).then(
     () => true,
     async (error: unknown) => {
       await log({ type: 'error', stage: 'comp-fulfil', giftId: gift.id, message: String(error) });
@@ -208,19 +235,23 @@ const REVOKED_STATUSES: MembershipGiftStatus[] = [
 ];
 
 /**
- * Take back a comped gift, for a comp made by mistake. Only a gift with no Stripe subscription of
- * its own: that subscription may since have been kept and paid for by the holder, so ending it is
- * left to an engineer.
+ * Take back a comped gift that has not been accepted, for a comp made by mistake. Acceptance can move
+ * the holder up a tier, and removing the gift afterwards would leave them paying for that tier, so an
+ * accepted comp is left to an engineer.
  */
 export async function revokeCompMembershipGift({
   giftId,
   execute = false,
-  moderatorId,
+  actor,
+  deps = compGiftDeps,
 }: {
   giftId: string;
   execute?: boolean;
-  moderatorId: number;
+  actor: Actor;
+  deps?: CompGiftDeps;
 }): Promise<CompGiftRevocation> {
+  await assertCompGrant(actor);
+  const moderatorId = actor.id;
   // primary: guards the revoke that follows.
   const gift = await dbWrite.membershipGift.findUnique({
     where: { id: giftId },
@@ -229,10 +260,10 @@ export async function revokeCompMembershipGift({
       status: true,
       holderId: true,
       monthsRemaining: true,
+      acceptedAt: true,
       amountCents: true,
       stripePaymentIntentId: true,
       stripeCheckoutSessionId: true,
-      stripeSubscriptionId: true,
     },
   });
   if (!gift) throw throwNotFoundError(`No membership gift ${giftId}.`);
@@ -242,20 +273,20 @@ export async function revokeCompMembershipGift({
     );
   if (REVOKED_STATUSES.includes(gift.status))
     return { outcome: 'already-revoked', status: gift.status };
-  if (gift.status === MembershipGiftStatus.Completed)
+  const unaccepted =
+    !gift.acceptedAt &&
+    (gift.status === MembershipGiftStatus.Pending ||
+      gift.status === MembershipGiftStatus.Fulfilled);
+  if (!unaccepted)
     throw throwConflictError(
-      'Every month of this gift has been used; there is nothing left to take back.'
-    );
-  if (gift.stripeSubscriptionId)
-    throw throwConflictError(
-      'This gift started a subscription of its own. Ending it needs an engineer, so nothing was changed.'
+      'This comp has been accepted. Taking it back can change what the holder pays, so it needs an engineer; nothing was changed.'
     );
 
   const summary = { giftId: gift.id, status: gift.status, monthsRemaining: gift.monthsRemaining };
   if (!execute) return { outcome: 'would-revoke', ...summary };
 
-  await revokeMembershipGift({ giftId: gift.id, reason: 'chargeback' });
-  await trackModActivity(moderatorId, {
+  await deps.revokeMembershipGift({ giftId: gift.id, reason: 'chargeback' });
+  await deps.trackModActivity(moderatorId, {
     entityType: 'user',
     entityId: gift.holderId,
     activity: `${REVOKE_ACTIVITY_PREFIX}${gift.id}`,

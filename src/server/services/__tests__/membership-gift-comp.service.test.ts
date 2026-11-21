@@ -1,52 +1,59 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * Comped membership gifts: every refusal is paired with the valid call that writes, so a refusal
  * cannot pass because nothing ever writes. The gift row and its ModActivity row must share the
- * transaction client, since the daily cap counts ModActivity.
+ * transaction client, since the daily cap counts ModActivity. The permission check is the real
+ * `hasModeratorGrant`, fed through the database boundary.
  */
 
 const db = dbMock.dbWrite;
 
-const {
-  trackModActivity,
-  fulfillMembershipGift,
-  getRecipientGiftability,
-  revokeMembershipGift,
-  throwOnBlockedUserContent,
-} = vi.hoisted(() => ({
-  throwOnBlockedUserContent: vi.fn(async (_text: string, _opts: unknown) => undefined),
-  trackModActivity: vi.fn(async () => undefined),
-  fulfillMembershipGift: vi.fn(),
-  getRecipientGiftability: vi.fn(),
-  revokeMembershipGift: vi.fn(async () => true),
-}));
-vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
-vi.mock('~/server/services/membership-gift.service', () => ({
-  fulfillMembershipGift,
-  getRecipientGiftability,
-  revokeMembershipGift,
-}));
-vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedUserContent }));
+const { grantRow } = vi.hoisted(() => ({ grantRow: { roles: [] as string[] } }));
+vi.mock('~/server/db/kyselyDb', async (importOriginal) => {
+  const chain = {
+    selectFrom: () => chain,
+    select: () => chain,
+    where: () => chain,
+    executeTakeFirst: async () => grantRow,
+  };
+  return {
+    ...(await importOriginal<typeof import('~/server/db/kyselyDb')>()),
+    kyselyWrite: chain,
+  };
+});
+
 import {
   compMembershipGift,
   revokeCompMembershipGift,
 } from '~/server/services/membership-gift-comp.service';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const MODERATOR = 990000007;
 const RECIPIENT = 990100021;
+const ROLE = 'moderator:support';
+const actor = { id: MODERATOR, roles: [ROLE] };
 
-const valid = (over: Record<string, unknown> = {}) => ({
-  recipientId: RECIPIENT,
-  tier: 'gold' as const,
-  months: 3,
-  reason: 'Thank-you for community work',
-  execute: true,
-  moderatorId: MODERATOR,
-  ...over,
-});
+let deps: {
+  trackModActivity: ReturnType<typeof vi.fn>;
+  fulfillMembershipGift: ReturnType<typeof vi.fn>;
+  getRecipientGiftability: ReturnType<typeof vi.fn>;
+  revokeMembershipGift: ReturnType<typeof vi.fn>;
+  throwOnBlockedUserContent: ReturnType<typeof vi.fn>;
+};
+
+const valid = (over: Record<string, unknown> = {}) =>
+  ({
+    recipientId: RECIPIENT,
+    tier: 'gold' as const,
+    months: 3,
+    reason: 'Thank-you for community work',
+    execute: true,
+    actor,
+    deps,
+    ...over,
+  } as Parameters<typeof compMembershipGift>[0]);
 
 const liveUser = (over: Record<string, unknown> = {}) => ({
   id: RECIPIENT,
@@ -68,6 +75,14 @@ let tx: {
 beforeEach(() => {
   vi.clearAllMocks();
   order = [];
+  grantRow.roles = [ROLE];
+  deps = {
+    trackModActivity: vi.fn(async () => undefined),
+    fulfillMembershipGift: vi.fn(async () => ({ fulfilled: true, queued: true })),
+    getRecipientGiftability: vi.fn(async () => ({ status: 'no-subscription' })),
+    revokeMembershipGift: vi.fn(async () => true),
+    throwOnBlockedUserContent: vi.fn(async () => undefined),
+  };
   tx = {
     $executeRaw: vi.fn(async () => {
       order.push('lock');
@@ -89,8 +104,30 @@ beforeEach(() => {
   db.$transaction.mockImplementation(async (cb: (client: unknown) => unknown) => cb(tx));
   db.user.findUnique.mockResolvedValue(liveUser());
   dbMock.dbRead.modActivity.count.mockResolvedValue(0);
-  getRecipientGiftability.mockResolvedValue({ status: 'no-subscription' });
-  fulfillMembershipGift.mockResolvedValue({ fulfilled: true, queued: true });
+});
+
+describe('the comp permission', () => {
+  it('refuses a moderator whose roles do not hold user.membership.gift.comp, before reading anything', async () => {
+    grantRow.roles = ['moderator:other'];
+    await expect(compMembershipGift(valid())).rejects.toThrow(/user\.membership\.gift\.comp/);
+    expect(db.user.findUnique).not.toHaveBeenCalled();
+    expect(tx.membershipGift.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses revoking a comp without it too', async () => {
+    grantRow.roles = [];
+    await expect(
+      revokeCompMembershipGift({ giftId: 'gift_9', execute: true, actor, deps })
+    ).rejects.toThrow(/user\.membership\.gift\.comp/);
+    expect(deps.revokeMembershipGift).not.toHaveBeenCalled();
+  });
+
+  it('lets moderator:admin through with no grant row', async () => {
+    grantRow.roles = [];
+    await expect(
+      compMembershipGift(valid({ actor: { id: MODERATOR, roles: ['moderator:admin'] } }))
+    ).resolves.toMatchObject({ outcome: 'comped' });
+  });
 });
 
 describe('compMembershipGift', () => {
@@ -110,13 +147,13 @@ describe('compMembershipGift', () => {
       },
       select: { id: true },
     });
-    expect(trackModActivity).toHaveBeenCalledWith(
+    expect(deps.trackModActivity).toHaveBeenCalledWith(
       MODERATOR,
       { entityType: 'user', entityId: RECIPIENT, activity: 'compMembershipGift:gold:3' },
       tx
     );
     expect(order).toEqual(['lock', 'count', 'create']);
-    expect(fulfillMembershipGift).toHaveBeenCalledWith({ giftId: 'gift_9' });
+    expect(deps.fulfillMembershipGift).toHaveBeenCalledWith({ giftId: 'gift_9' });
     expect(result).toEqual({
       outcome: 'comped',
       giftId: 'gift_9',
@@ -127,8 +164,29 @@ describe('compMembershipGift', () => {
     });
   });
 
+  it('serialises one moderator by an int4 advisory lock on the comp class and their id', async () => {
+    await compMembershipGift(valid());
+    const [strings, ...values] = tx.$executeRaw.mock.calls[0];
+    const sql = (strings as string[]).join('?');
+    expect(sql).toContain('pg_advisory_xact_lock(');
+    expect(sql.match(/::int/g)).toHaveLength(2);
+    expect(values).toEqual([0x4d470001, MODERATOR]);
+  });
+
+  it('logs the comp, with its reason, to Axiom', async () => {
+    await compMembershipGift(valid());
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: 'comp',
+        giftId: 'gift_9',
+        reason: 'Thank-you for community work',
+      }),
+      'webhooks'
+    );
+  });
+
   it('refuses a message the blocklist rejects, before anything is written', async () => {
-    throwOnBlockedUserContent.mockRejectedValueOnce(new Error('blocked content'));
+    deps.throwOnBlockedUserContent.mockRejectedValueOnce(new Error('blocked content'));
     await expect(compMembershipGift(valid({ message: 'bad words' }))).rejects.toThrow(
       'blocked content'
     );
@@ -137,7 +195,7 @@ describe('compMembershipGift', () => {
 
   it('screens the message it sends and stores the same text', async () => {
     await compMembershipGift(valid({ message: '  Thanks for everything  ' }));
-    expect(throwOnBlockedUserContent).toHaveBeenCalledWith('Thanks for everything', {
+    expect(deps.throwOnBlockedUserContent).toHaveBeenCalledWith('Thanks for everything', {
       surface: 'membership-gift',
     });
     expect(tx.membershipGift.create).toHaveBeenCalledWith(
@@ -163,9 +221,8 @@ describe('compMembershipGift', () => {
     const result = await compMembershipGift(valid({ execute: false }));
     expect(result).toMatchObject({ outcome: 'would-comp', compsInLast24h: 0 });
     expect(db.$transaction).not.toHaveBeenCalled();
-    expect(tx.membershipGift.create).not.toHaveBeenCalled();
-    expect(trackModActivity).not.toHaveBeenCalled();
-    expect(fulfillMembershipGift).not.toHaveBeenCalled();
+    expect(deps.trackModActivity).not.toHaveBeenCalled();
+    expect(deps.fulfillMembershipGift).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -187,14 +244,17 @@ describe('compMembershipGift', () => {
   });
 
   it('refuses a membership that cannot take gifted months, but not an annual one', async () => {
-    getRecipientGiftability.mockResolvedValue({
+    deps.getRecipientGiftability.mockResolvedValue({
       status: 'blocked',
       reason: 'unsupported-provider',
     });
     await expect(compMembershipGift(valid())).rejects.toThrow(/cannot receive gifted months/);
     expect(tx.membershipGift.create).not.toHaveBeenCalled();
 
-    getRecipientGiftability.mockResolvedValue({ status: 'blocked', reason: 'annual-interval' });
+    deps.getRecipientGiftability.mockResolvedValue({
+      status: 'blocked',
+      reason: 'annual-interval',
+    });
     await expect(compMembershipGift(valid())).resolves.toMatchObject({ outcome: 'comped' });
   });
 
@@ -214,7 +274,7 @@ describe('compMembershipGift', () => {
   });
 
   it('reports a failed fulfilment instead of throwing into a retry that would comp twice', async () => {
-    fulfillMembershipGift.mockRejectedValue(new Error('mail down'));
+    deps.fulfillMembershipGift.mockRejectedValue(new Error('mail down'));
     await expect(compMembershipGift(valid())).resolves.toMatchObject({
       outcome: 'comped',
       giftId: 'gift_9',
@@ -229,47 +289,49 @@ describe('revokeCompMembershipGift', () => {
     status: 'Fulfilled',
     holderId: RECIPIENT,
     monthsRemaining: 3,
+    acceptedAt: null,
     amountCents: 0,
     stripePaymentIntentId: null,
     stripeCheckoutSessionId: null,
-    stripeSubscriptionId: null,
     ...over,
   });
+  const revoke = (execute: boolean) =>
+    revokeCompMembershipGift({ giftId: 'gift_9', execute, actor, deps });
 
-  it('revokes a comp and logs it against the holder', async () => {
+  it('revokes an unaccepted comp and logs it against the holder', async () => {
     db.membershipGift.findUnique.mockResolvedValue(compGift());
-    const result = await revokeCompMembershipGift({
+    await expect(revoke(true)).resolves.toMatchObject({ outcome: 'revoked' });
+    expect(deps.revokeMembershipGift).toHaveBeenCalledWith({
       giftId: 'gift_9',
-      execute: true,
-      moderatorId: MODERATOR,
+      reason: 'chargeback',
     });
-    expect(revokeMembershipGift).toHaveBeenCalledWith({ giftId: 'gift_9', reason: 'chargeback' });
-    expect(trackModActivity).toHaveBeenCalledWith(MODERATOR, {
+    expect(deps.trackModActivity).toHaveBeenCalledWith(MODERATOR, {
       entityType: 'user',
       entityId: RECIPIENT,
       activity: 'revokeCompMembershipGift:gift_9',
     });
-    expect(result).toMatchObject({ outcome: 'revoked' });
   });
 
-  it('a dry run changes nothing', async () => {
+  it('a dry run changes nothing and writes no audit row', async () => {
     db.membershipGift.findUnique.mockResolvedValue(compGift());
-    await expect(
-      revokeCompMembershipGift({ giftId: 'gift_9', moderatorId: MODERATOR })
-    ).resolves.toMatchObject({ outcome: 'would-revoke' });
-    expect(revokeMembershipGift).not.toHaveBeenCalled();
-    expect(trackModActivity).not.toHaveBeenCalled();
+    await expect(revoke(false)).resolves.toMatchObject({ outcome: 'would-revoke' });
+    expect(deps.revokeMembershipGift).not.toHaveBeenCalled();
+    expect(deps.trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('answers already-revoked without revoking again', async () => {
+    db.membershipGift.findUnique.mockResolvedValue(compGift({ status: 'Revoked' }));
+    await expect(revoke(true)).resolves.toEqual({ outcome: 'already-revoked', status: 'Revoked' });
+    expect(deps.revokeMembershipGift).not.toHaveBeenCalled();
   });
 
   it.each([
     ['a paid gift', compGift({ amountCents: 3000, stripePaymentIntentId: 'pi_1' }), /was paid for/],
-    ['a gift with its own subscription', compGift({ stripeSubscriptionId: 'sub_1' }), /engineer/],
-    ['a used-up gift', compGift({ status: 'Completed' }), /nothing left/],
+    ['an accepted comp', compGift({ status: 'Active', acceptedAt: new Date() }), /accepted/],
+    ['a used-up comp', compGift({ status: 'Completed', acceptedAt: new Date() }), /accepted/],
   ])('refuses %s', async (_label, gift, message) => {
     db.membershipGift.findUnique.mockResolvedValue(gift);
-    await expect(
-      revokeCompMembershipGift({ giftId: 'gift_9', execute: true, moderatorId: MODERATOR })
-    ).rejects.toThrow(message);
-    expect(revokeMembershipGift).not.toHaveBeenCalled();
+    await expect(revoke(true)).rejects.toThrow(message);
+    expect(deps.revokeMembershipGift).not.toHaveBeenCalled();
   });
 });

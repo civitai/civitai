@@ -1,12 +1,10 @@
 import * as z from 'zod';
-import { TRPCError } from '@trpc/server';
 import { userId } from '~/server/schema/moderator/user';
 import { giftableTierSchema } from '~/server/schema/membership-gift.schema';
 import {
   COMP_GIFT_LIMITS,
   compMembershipGift,
 } from '~/server/services/membership-gift-comp.service';
-import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { defineModeratorEndpoint, moderatorBoolean } from '~/server/utils/moderator-endpoint';
 
 export default defineModeratorEndpoint('membershipGift.comp', {
@@ -36,13 +34,6 @@ export default defineModeratorEndpoint('membershipGift.comp', {
     execute: moderatorBoolean.default(false),
   }),
   async handler(input, ctx) {
-    if (!(await hasModeratorGrant(ctx.actor, 'user.membership.gift.comp')))
-      throw new TRPCError({
-        code: 'FORBIDDEN',
-        message:
-          'Comping a membership gift needs the "user.membership.gift.comp" moderator permission.',
-      });
-
     const result = await compMembershipGift({
       recipientId: input.userId,
       tier: input.tier,
@@ -51,7 +42,7 @@ export default defineModeratorEndpoint('membershipGift.comp', {
       message: input.message,
       anonymous: input.anonymous,
       execute: input.execute,
-      moderatorId: ctx.actor.id,
+      actor: ctx.actor,
     });
     return {
       ...result,

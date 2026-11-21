@@ -18,8 +18,8 @@ Like every new permission, nobody holds it until a role is granted it on the mod
   `reason` (10 to 500 characters, staff only), optional `message` and `anonymous`, and `execute`.
   A dry run unless `execute=true`.
 - `POST /api/mod/membership-gift/comp-revoke`: `giftId`, `execute`. Takes back a comp made by
-  mistake. Refuses paid gifts, gifts whose months are all used, and gifts that started a
-  subscription of their own.
+  mistake, before the recipient accepts it. Refuses paid gifts and accepted comps: acceptance can
+  move the holder up a tier, so taking one back afterwards needs an engineer.
 
 ## Rules
 
