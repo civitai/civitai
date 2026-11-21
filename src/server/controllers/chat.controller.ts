@@ -1,4 +1,8 @@
 import { Prisma } from '@prisma/client';
+import {
+  maskProfanityInChat,
+  withMaskedChatContent,
+} from '~/server/services/profanity-mask.service';
 import { getModerationAccountId } from '~/server/auth/moderation-account';
 import { getMessageAuthors } from '~/server/services/message-as-civitai.service';
 import { TRPCError } from '@trpc/server';
@@ -212,10 +216,15 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: ProtectedContext })
       const clearedAt = chat.chatMembers.find((cm) => cm.userId === userId)?.clearedAt;
       return !clearedAt || chat.messages.some((msg) => msg.createdAt > clearedAt);
     });
-    return (await scopeChatPreviews(listed, userId)).map((chat) => ({
-      ...chat,
-      chatMembers: chat.chatMembers.map(scopeMemberPrivacy(userId)),
-    }));
+    const scoped = await scopeChatPreviews(listed, userId);
+    // The preview is the latest message; it carries a masked copy like any other message.
+    return Promise.all(
+      scoped.map(async (chat) => ({
+        ...chat,
+        messages: await withMaskedChatContent(chat.messages),
+        chatMembers: chat.chatMembers.map(scopeMemberPrivacy(userId)),
+      }))
+    );
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -969,7 +978,7 @@ export const getInfiniteMessagesHandler = async ({
 
     return {
       nextCursor,
-      items,
+      items: await withMaskedChatContent(items),
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -1122,6 +1131,8 @@ export const updateMessageHandler = async ({
     // Deleted between the check above and the write.
     if (previousContent === null) throw throwBadRequestError('Deleted messages cannot be edited');
     if (isOwn) queueScamScan({ entityType: 'ChatMessage', entityId: existing.id });
+    // The edit is saved; a masking failure leaves the copy absent rather than failing it.
+    const [maskedContent] = await maskProfanityInChat([trimmed]).catch(() => [undefined]);
 
     const before = truncateAuditValue(previousContent);
     const after = truncateAuditValue(trimmed);
@@ -1150,13 +1161,14 @@ export const updateMessageHandler = async ({
             messageId: existing.id,
             chatId: existing.chatId,
             content: trimmed,
+            maskedContent,
             editedAt,
           }),
         }
       )
     ).catch(() => undefined);
 
-    return { messageId: existing.id, chatId: existing.chatId, content: trimmed };
+    return { messageId: existing.id, chatId: existing.chatId, content: trimmed, maskedContent };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
