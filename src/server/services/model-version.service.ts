@@ -1162,12 +1162,6 @@ export const upsertModelVersion = async ({
     // them computes the refund that unpublishModelVersionById owes its buyers. So this refuses
     // LEAVING Published rather than listing the values that do it: an enumeration of forbidden
     // statuses is not a control, and ModelStatus has eight members.
-    //
-    // ⚠️ This closes the take-down, NOT every way this route can defeat the gate. The same save
-    // clears the PaidAccess row when `paidAccess` is omitted (writePaidAccessForModelVersion →
-    // deleteMany), and the requirement returns empty with no active gate — so one save then an
-    // ordinary unpublish still refunds nobody. That is tracked separately; do not read this guard
-    // as "the editor can no longer strand a buyer".
     if (
       existingVersion.status === ModelStatus.Published &&
       data.status !== undefined &&
