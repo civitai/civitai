@@ -282,8 +282,11 @@ func (m *Manager) read(ctx context.Context, s *session, token string) ([]registr
 	s.mu.Lock()
 	switch {
 	case s.ended:
+		// end publishes ended before it has finished (stream closed, close counted): wait for that,
+		// so a read never reports a close the manager has not completed. end does not block.
 		err := s.err
 		s.mu.Unlock()
+		<-s.done
 		return nil, err
 	case s.isLive && m.opts.Recheck > 0 && !s.checking && now().Sub(s.checked) >= m.opts.Recheck:
 		// One read re-checks; reads arriving meanwhile are answered from the cache, still within
@@ -480,10 +483,12 @@ func (m *Manager) end(s *session, reason string, err error) {
 	if st != nil {
 		_ = st.Close()
 	}
-	close(s.done)
+	// Observed before done is closed: a reader woken by done (Read returning the session's error)
+	// then finds the close already counted, never a moment before it.
 	if m.opts.Closed != nil {
 		m.opts.Closed(reason)
 	}
+	close(s.done)
 }
 
 // Sweep closes every stream idle for IdleTTL, open for MaxAge, or within ExpiryMargin of its token

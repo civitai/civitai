@@ -995,3 +995,52 @@ func TestAFullBlockCacheIsItsOwnCloseReason(t *testing.T) {
 		t.Fatalf("closed block_cache_full %d, error %d", h.closedFor(CloseBlockFull), h.closedFor(CloseError))
 	}
 }
+
+// A stream's close is counted before a read waiting on it returns, so a caller (or a test) that sees the
+// read fail never sees the close uncounted. A slow observer makes the order visible: were the read woken
+// first, it would return while the close is still being counted. (This was a CI flake of the test above,
+// 22 of 6000 runs on main locally: end closed done, and published ended, before calling Closed.)
+func TestACloseIsCountedBeforeTheReadReturns(t *testing.T) {
+	h := newHarness(t, Options{})
+	count := h.m.opts.Closed
+	h.m.opts.Closed = func(reason string) {
+		time.Sleep(50 * time.Millisecond)
+		count(reason)
+	}
+	h.m.opts.Exchange = func(context.Context, string) (exchange.Token, error) {
+		return exchange.Token{}, exchange.ErrBlockCacheFull
+	}
+	if _, err := read(t, h.m, "a.b.c", schemaA); !errors.Is(err, ErrBlockFull) {
+		t.Fatalf("got %v, want ErrBlockFull", err)
+	}
+	if n := h.closedFor(CloseBlockFull); n != 1 {
+		t.Fatalf("closed block_cache_full %d when the read returned; want 1", n)
+	}
+}
+
+// The other way a read meets a closing session: it finds ended already set (end publishes it first) and
+// must still wait for end to finish rather than return at once. Built directly, since which of the two
+// paths a real read takes depends on scheduling.
+func TestAReadOfAnEndingSessionWaitsForTheEnd(t *testing.T) {
+	h := newHarness(t, Options{})
+	s := &session{live: make(chan struct{}), done: make(chan struct{}), ended: true, err: ErrBlockFull}
+	got := make(chan error, 1)
+	go func() {
+		_, err := h.m.read(context.Background(), s, "a.b.c")
+		got <- err
+	}()
+	select {
+	case err := <-got:
+		t.Fatalf("returned %v before the session's end finished", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(s.done)
+	select {
+	case err := <-got:
+		if !errors.Is(err, ErrBlockFull) {
+			t.Fatalf("got %v, want ErrBlockFull", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("never returned after the end finished")
+	}
+}
