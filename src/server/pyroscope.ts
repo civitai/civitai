@@ -28,8 +28,34 @@
 // statically from any client-reachable module — it pulls in @datadog/pprof's
 // native profiler.
 
-// Read the gate ONCE at module load.
-export const pyroscopeArmed = process.env.PYROSCOPE_ENABLED === 'true';
+import {
+  type PprofTime,
+  pyroscopeArmed,
+  startWallProfilingWithAsyncContext,
+} from '~/server/pyroscope-labels';
+
+// The gate is read ONCE at module load, in ~/server/pyroscope-labels (the import-free module
+// request code can reach without touching this one).
+export { pyroscopeArmed };
+
+/**
+ * `@datadog/pprof`'s `time` export — the SAME copy @pyroscope/nodejs loads, because package.json
+ * pins it to the SDK's exact dependency version (pnpm then links one store entry). Loaded only
+ * when armed, for the same native-addon reason as the SDK itself (see above). Undefined on any
+ * failure: profiling then starts without route labels.
+ */
+async function loadPprofTime(): Promise<PprofTime | undefined> {
+  try {
+    const mod = (await import('@datadog/pprof')) as unknown as {
+      time?: PprofTime;
+      default?: { time?: PprofTime };
+    };
+    return mod.time ?? mod.default?.time;
+  } catch (err) {
+    console.warn('[pyroscope] could not load @datadog/pprof; profiling without route labels:', err);
+    return undefined;
+  }
+}
 
 function resolvePod(): string {
   // Mirror cpu-profiler's precedence: explicit PODNAME (metadata.name), then the
@@ -114,13 +140,18 @@ export async function registerPyroscope(): Promise<void> {
     // start() would ALSO start heap (allocation) profiling — extra overhead we
     // don't want for a CPU-focused rollout. startWallProfiling() runs the wall/cpu
     // sampler ONLY. (It lives on the default export, not as a top-level named
-    // export.)
-    Pyroscope.startWallProfiling();
+    // export.) It is started in @datadog/pprof's async-context mode so request-scoped
+    // `route` labels follow a request across `await`; see ~/server/pyroscope-labels.
+    const routeLabels = startWallProfilingWithAsyncContext(
+      () => Pyroscope.startWallProfiling(),
+      await loadPprofTime()
+    );
 
     console.log(
       `[pyroscope] armed: wall+cpu profiling -> ${serverAddress} ` +
         `(appName=${process.env.PYROSCOPE_APP_NAME ?? 'civitai-dp-prod'}, ` +
-        `pool=${process.env.SERVICE_NAME ?? 'unknown'}, 100Hz, collectCpuTime=true)`
+        `pool=${process.env.SERVICE_NAME ?? 'unknown'}, 100Hz, collectCpuTime=true, ` +
+        `routeLabels=${routeLabels})`
     );
   } catch (err) {
     // e.g. the native addon failing to load. Never crash boot.

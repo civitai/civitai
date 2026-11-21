@@ -150,6 +150,26 @@ RUN --mount=type=cache,target=/app/.next/cache \
 # (`> model-share@… size /app`) stays out of the report/comment.
 RUN node scripts/bundle-budget.mjs --json > /app/bundle-budget.txt 2>&1 || true; cat /app/bundle-budget.txt
 
+# Server source maps (.next/server/**/*.js.map) are emitted by the build
+# (experimental.serverSourceMaps; browser maps stay off — see next.config.mjs) but
+# @vercel/nft does NOT trace sibling .map files into .next/standalone, so they never
+# reach runtime. Collect ONLY the server-chunk maps into a structure-preserving staging
+# dir. They are NOT shipped in the runtime image (too large for a debug aid). Instead
+# they are published as a separate, fetched-on-demand `maps` artifact image (see the
+# `maps` target below), keyed by the same commit as the runtime image, so a
+# `.cpuprofile` captured from image X can be de-minified offline against X's maps
+# (scripts/resolve-cpuprofile.mjs --image-sha <sha>).
+# Build-chunk map filenames are content hashes (no spaces/newlines), so the
+# newline-delimited `tar -T -` files-from list is safe and works under both GNU tar
+# and busybox tar (alpine). `tar | tar` preserves the dir structure
+# (e.g. chunks/<hash>.js.map) so each map keeps its .next/server-relative path.
+# (Comments must stay OUTSIDE the RUN: Docker collapses the \-continuations into one
+# line, where an inline `#` would swallow the rest of the command.)
+RUN mkdir -p /app/server-maps && \
+    cd /app/.next/server && \
+    { find . -name '*.js.map' | tar -cf - -T - | tar -xf - -C /app/server-maps || true; } && \
+    echo "Staged $(find /app/server-maps -name '*.js.map' | wc -l) server source maps ($(du -sh /app/server-maps | cut -f1))"
+
 # Duplicate server chunks -> one-line re-export stubs, in the SHIPPED tree only.
 #
 # Turbopack emits the same server chunk under many file names, and its Node runtime loads
@@ -162,6 +182,16 @@ RUN node scripts/bundle-budget.mjs --json > /app/bundle-budget.txt 2>&1 || true;
 # Touches only `.next/standalone/.next/server`. Exits 1 if a stub does not resolve to a real chunk, 2 if it
 # finds no chunks — both fail the build.
 RUN node scripts/dedupe-server-chunks.mjs /app/.next/standalone/.next/server
+
+##### MAPS ARTIFACT (fetched on-demand; NOT part of the runtime image)
+#
+# A minimal `FROM scratch` image holding ONLY the staged server source maps, under
+# /server-maps mirroring the .next/server tree. The build pipeline publishes it to a
+# sibling registry repo next to the runtime image; it shares every builder layer with
+# the runtime build, so building this target is a cache hit plus one small layer, and
+# no running pod ever pulls it. scripts/resolve-cpuprofile.mjs fetches it on demand.
+FROM scratch AS maps
+COPY --from=builder /app/server-maps/ /server-maps/
 
 ##### RUNNER
 

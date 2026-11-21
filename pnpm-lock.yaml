@@ -147,6 +147,9 @@ importers:
       '@contentauth/c2pa-wasm':
         specifier: 0.15.1
         version: 0.15.1
+      '@datadog/pprof':
+        specifier: 5.14.4
+        version: 5.14.4
       '@discordjs/rest':
         specifier: ^2.6.0
         version: 2.6.0
@@ -642,6 +645,9 @@ importers:
       socket.io-client:
         specifier: ^4.5.4
         version: 4.8.1(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      source-map:
+        specifier: ^0.7.4
+        version: 0.7.6
       sqids:
         specifier: ^0.3.0
         version: 0.3.0

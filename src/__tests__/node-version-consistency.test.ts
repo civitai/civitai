@@ -65,8 +65,9 @@ const DOCKERFILE = 'Dockerfile';
  * The three node stages are the per-libc bases selected by the `LIBC` build-arg:
  * `base-musl` and `runtime-musl` (Alpine: the production image's build and runtime
  * bases) and `base-glibc` (Debian, an opt-in measurement variant; its runtime stage is
- * `FROM base-glibc`). The other four directives are `FROM base-${LIBC}` (deps),
- * `FROM deps` (builder), `FROM base-glibc` (runtime-glibc) and `FROM runtime-${LIBC}` (runner).
+ * `FROM base-glibc`). The other five directives are `FROM base-${LIBC}` (deps),
+ * `FROM deps` (builder), `FROM scratch` (maps), `FROM base-glibc` (runtime-glibc) and
+ * `FROM runtime-${LIBC}` (runner).
  *
  * Together these are the controls that stop the whole file passing vacuously. Every
  * verdict below is universally quantified over the tags the extractor returns — and
@@ -85,7 +86,7 @@ const DOCKERFILE = 'Dockerfile';
  * that a blind spot shared by both readers still trips something.
  */
 const EXPECTED_NODE_STAGES = 3;
-const EXPECTED_FROM_DIRECTIVES = 7;
+const EXPECTED_FROM_DIRECTIVES = 8;
 
 /**
  * `FROM node:<tag>`, tolerating the spellings Docker accepts and a reader writing

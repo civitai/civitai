@@ -25,6 +25,7 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
 import { instrumentApiResponse, reconstructApiRoute } from '~/server/prom/http-errors';
+import { pyroscopeArmed, withProfileRoute } from '~/server/pyroscope-labels';
 import {
   isClientAbortError,
   isDriverAuthoredMessage,
@@ -294,6 +295,11 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
 // response — however it's produced — by attaching one `finish` listener. Steady-
 // state cost is one listener registration + an int compare; the route
 // normalization runs only on 5xx. See src/server/prom/http-errors.ts.
+//
+// On a Pyroscope-armed pool it also runs the handler under the profiler's `route` label —
+// `api:<reconstructApiRoute(req)>`, the same bounded string the 5xx counter uses — so CPU
+// samples across the handler's `await`s are attributed to the route (~/server/pyroscope-labels).
+// Dark, that branch is a single boolean test.
 function withApiMetrics(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void | NextApiResponse>
 ) {
@@ -302,6 +308,13 @@ function withApiMetrics(
     // `await` without returning so this closure is Promise<void> — withAxiom's
     // AxiomApiHandler overload requires that, and withAxiom already discards a
     // handler's return value (same shape the 6 wrappers below rely on).
+    if (pyroscopeArmed) {
+      await withProfileRoute(
+        () => `api:${reconstructApiRoute(req)}`,
+        () => handler(req, res)
+      );
+      return;
+    }
     await handler(req, res);
   });
 }
