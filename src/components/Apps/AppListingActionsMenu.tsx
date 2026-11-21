@@ -5,7 +5,6 @@ import {
   IconDotsVertical,
   IconEyeOff,
   IconFlag,
-  IconHistory,
   IconMail,
   IconPencil,
   IconRefresh,
@@ -27,11 +26,6 @@ import {
 import { canOwnerEditListing, getOwnerEditHref } from '~/components/Apps/appListingCardView';
 import { listingEditHref } from '~/components/Apps/appListingEditorTabs';
 import { ListingTakedownModal } from '~/components/Apps/ListingTakedownModal';
-import { openListingModerationHistory } from '~/components/Apps/ListingModerationHistoryModal';
-import {
-  moderationHistoryTarget,
-  type ModerationHistoryTarget,
-} from '~/components/Apps/appListingModerationView';
 import { ListingVisibilityMenuModal } from '~/components/Apps/ListingVisibilityMenuModal';
 import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
 import { ModListingVisibilityModal } from '~/components/Apps/ModListingVisibilityModal';
@@ -175,8 +169,6 @@ type AppListingMenuGates = {
   canReview: boolean;
   canReport: boolean;
   modActions: ReturnType<typeof appListingDetailModActions>;
-  /** The moderator "Moderation history" item's target, or null (non-moderator, preview). */
-  historyTarget: ModerationHistoryTarget | null;
   /** Would the menu hold at least one item? */
   showMenu: boolean;
 };
@@ -276,12 +268,6 @@ function useAppListingMenuGates(
     canReview,
     canReport,
     modActions,
-    // Preview may carry a publish-REQUEST id rather than a listing id (see
-    // `ListingTakedownModal`), so the history is offered on the live arm only, like every other
-    // moderator item.
-    historyTarget: preview
-      ? null
-      : moderationHistoryTarget(currentUser, { appListingId: listing.id, slug: listing.slug }),
     // `modActions` is already empty in preview, so the leading `!preview` is not
     // what suppresses the mod section — it is the clause that suppresses the WHOLE
     // menu, on every surface.
@@ -318,16 +304,8 @@ export function AppListingActionsMenu({
   stopPropagation = false,
   onOpenReview,
 }: AppListingActionsMenuProps) {
-  const {
-    showEdit,
-    editHref,
-    showOwnerVisibility,
-    canReview,
-    canReport,
-    modActions,
-    historyTarget,
-    showMenu,
-  } = useAppListingMenuGates(listing, surface, preview);
+  const { showEdit, editHref, showOwnerVisibility, canReview, canReport, modActions, showMenu } =
+    useAppListingMenuGates(listing, surface, preview);
 
   // 🔴 The report affordance's STATE comes from `useReportListingAffordance`, not a
   // bare `useDisclosure`: the server allows one open report per reporter, so once a
@@ -522,15 +500,6 @@ export function AppListingActionsMenu({
                     resolves to the PENDING tab, and Relist is on the manage tab. The
                     href is a named constant so the destination this menu promises is
                     pinned in the blocking tier rather than typed inline. */}
-                {historyTarget && (
-                  <Menu.Item
-                    leftSection={<IconHistory size={14} stroke={1.5} />}
-                    onClick={() => openListingModerationHistory(historyTarget)}
-                    data-testid="apps-listing-mod-history"
-                  >
-                    Moderation history
-                  </Menu.Item>
-                )}
                 <Menu.Item
                   component={Link}
                   href={REVIEW_QUEUE_MANAGE_HREF}

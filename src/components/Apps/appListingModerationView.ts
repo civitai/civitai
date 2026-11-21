@@ -173,8 +173,8 @@ export type ModerationHistoryTarget = { appListingId: string; slug: string };
 /**
  * The moderation history a viewer may open for a listing, or null when the entry point must not
  * be drawn. MOD-ONLY: the history read is `moderatorProcedure`, so offering it to anyone else is
- * a button that can only fail. Every surface (the reports queue, the /apps/review table, the
- * store detail menu) draws its "History" entry from this one predicate.
+ * a button that can only fail. Both surfaces that draw a "History" entry (the reports queue and
+ * the /apps/review table) draw it from this one predicate.
  *
  * NOT behind the offline-grant flag: the history (delists, reports, messages...) is useful to a
  * moderator on its own. What the flag gates is what the history CONTAINS — cut rows and their

@@ -57,8 +57,8 @@ export type ModerationHistoryListing = { appListingId: string; slug: string };
 /**
  * MOD per-listing moderation history (newest-first audit trail), with "Retry cut" on the newest
  * `offline-cut-failed` row. ONE component for every moderator surface: the reports queue, the
- * /apps/review management table, the store detail page's `⋮` menu and the takedown warning toast
- * all open it through {@link openListingModerationHistory}. It reads `listModerationEvents`, which
+ * /apps/review management table and the takedown warning toast (from whichever surface the
+ * takedown started) all open it through {@link openListingModerationHistory}. It reads `listModerationEvents`, which
  * is `moderatorProcedure`, so a non-moderator who somehow mounted it would read nothing.
  */
 export function ListingModerationHistoryModal({
