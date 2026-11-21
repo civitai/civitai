@@ -1754,6 +1754,7 @@ describe('legal holds', () => {
 
     expect(deletedPostIds).toEqual([]);
     expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(result.deletedUsers).toBe(0);
   });
 
   it('leaves a grace user whose report is filed after the worklist read untouched', async () => {

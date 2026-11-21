@@ -11,8 +11,7 @@ export const BAN_NOTE_HOLD_RELEASE_ACTIVITY = 'releaseBanNoteHold';
 /**
  * SQL: true when the User row aliased `u` is banned with a note naming CSAM or NCMEC and no moderator
  * has released that hold during the current ban. A release counts only when recorded at or after
- * `bannedAt`, so a re-ban needs a new one; a NULL `bannedAt` counts as unreleased. Nothing writes
- * that release yet, so until it lands the hold ends only with an unban, which clears the note.
+ * `bannedAt`, so a re-ban needs a new one; a NULL `bannedAt` counts as unreleased.
  */
 export const banNoteHeldUserSql = (u: string) => {
   const row = Prisma.raw(u);

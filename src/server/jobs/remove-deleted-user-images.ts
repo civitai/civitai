@@ -443,7 +443,6 @@ async function drainPage(
       break;
     }
 
-    // Held: block, never delete. An unarchived report skips (see the worklist).
     const action = await primaryHoldAction(user.id, markerView);
     if (action === 'skip') {
       stalled = true;

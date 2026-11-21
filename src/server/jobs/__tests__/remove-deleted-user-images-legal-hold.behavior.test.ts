@@ -484,19 +484,23 @@ describe('a held account deleted for good', () => {
   });
 
   it('stops picking up a held account once every image of it is blocked', async () => {
+    const holdReads = () =>
+      vi
+        .mocked(dbMock.dbWrite.$queryRaw)
+        .mock.calls.filter(([first, ...values]) =>
+          toSql(first as TemplateStringsArray, values).text.includes('AS skip')
+        );
     await banNote(HELD, '2 days');
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockClear();
     await run();
     expect(await blockedOf(HELD)).toBe(MANY);
+    // The control: the first run did read the account's hold.
+    expect(holdReads()).not.toEqual([]);
 
     vi.mocked(dbMock.dbWrite.$queryRaw).mockClear();
     await run();
 
-    const holdReads = vi
-      .mocked(dbMock.dbWrite.$queryRaw)
-      .mock.calls.filter(([first, ...values]) =>
-        toSql(first as TemplateStringsArray, values).text.includes('AS skip')
-      );
-    expect(holdReads).toEqual([]);
+    expect(holdReads()).toEqual([]);
   });
 
   it('hides and keeps the images of a ban-note account with no ban date', async () => {

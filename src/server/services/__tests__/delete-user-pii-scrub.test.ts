@@ -399,6 +399,16 @@ describe('the profile archive before an account deletion', () => {
     );
   });
 
+  it('archives nothing for a user no report, hold or ban note names', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (s: readonly string[]) =>
+      s.join('?').includes('"CsamReport"') ? [{ named: false }] : []) as never);
+    const archive = vi.fn(async () => ({}));
+    await deleteAs(archive);
+
+    expect(archive).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.userProfile.deleteMany).toHaveBeenCalled();
+  });
+
   it('deletes nothing when the archive fails', async () => {
     await expect(deleteAs(async () => Promise.reject(new Error('s3 down')))).rejects.toThrow(
       's3 down'
