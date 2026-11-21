@@ -71,13 +71,6 @@ func (s *Server) serveV1Models(w http.ResponseWriter, r *http.Request, endpoint 
 	if !s.serveFallback(ctx, span, start, endpoint, err) {
 		return
 	}
-	if s.V1Fallback == nil {
-		// Not reachable through PublicMux, which mounts these routes only with V1Fallback.
-		w.Header().Set(ServedByHeader, ServedByGo)
-		w.Header().Set("Cache-Control", "no-store")
-		http.Error(w, `{"error":"unavailable"}`, http.StatusServiceUnavailable)
-		return
-	}
 	w.Header().Set(ServedByHeader, ServedByNode)
 	s.proxyVia(s.V1Fallback, w, r, endpoint)
 }
@@ -102,9 +95,9 @@ func writeV1Models(w http.ResponseWriter, c *computed) {
 // v1ModelsServeOnly; the port (computeV1Models / computeV1ModelsID); then the body as JSON.stringify
 // writes it (v1models.NodeBody) and the headers Node sends with it (v1models.ResponseHeaders).
 // Serving, a not-found `[id]` falls back (`v1-models-not-found`): Node's answer is a 404, and a served
-// answer here is a 200. In the shadow the serve-only shapes are still computed and their bodies
-// compared; a request whose headers Node may take from its database (v1ModelsHeadersUnknown) carries
-// no headers here, so its response compare is `uncompared`.
+// answer here is a 200. In the shadow a list sample with a session cookie or an `etag` query is still
+// computed and its body compared; an `etag` query's headers are not computed (v1ModelsHeadersUnknown),
+// so its response compare is `uncompared`.
 func (s *Server) v1ModelsCompute(endpoint string, serving bool) func(context.Context, *http.Request) (*computed, error) {
 	detail := endpoint == EndpointV1ModelsID
 	inner := s.computeV1Models
@@ -184,8 +177,8 @@ func v1ModelsPreflight(r *http.Request) error {
 //   - `[id]`: an Origin header (`v1-models-origin`): withBlockScope adds its CORS headers for an
 //     origin on the block-app allow-list, which is read from the database.
 //
-// A shadow sample of any of these is computed and compared (Node answered it 200, so its body is a
-// body like any other); see v1ModelsHeadersUnknown for its headers.
+// In the shadow these do not drop a sample: of them the sampler forwards only the session cookie and
+// the query, and such a list sample is computed and compared (v1ModelsHeadersUnknown for its headers).
 func v1ModelsServeOnly(r *http.Request, detail bool) error {
 	if r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != "" {
 		return fallback.New("v1-models-conditional")
@@ -205,15 +198,12 @@ func v1ModelsServeOnly(r *http.Request, detail bool) error {
 	return nil
 }
 
-// v1ModelsHeadersUnknown: Node may add a response header read from its database (the list's
-// X-Expires for an `etag` query; `[id]`'s block-scope CORS headers for an Origin), so the headers are
-// not computed here and the shadow's response compare is `uncompared`. A conditional request or a
-// session cookie leaves Node's 200 headers computable.
+// v1ModelsHeadersUnknown: on the list, an `etag` query lets Node add X-Expires read from its
+// database, so the headers are not computed here and the shadow's response compare is `uncompared`.
+// A session cookie leaves Node's 200 headers computable. (The sampler forwards neither an Origin nor
+// a conditional header, and the public route falls back on both before computing.)
 func v1ModelsHeadersUnknown(r *http.Request, detail bool) bool {
-	if detail {
-		return len(r.Header.Values("Origin")) > 0
-	}
-	return etagChecked(r)
+	return !detail && etagChecked(r)
 }
 
 // etagChecked is MixedAuthEndpoint's `!!req.query.etag && req.query.etag !== ""`: one empty value is

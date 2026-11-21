@@ -2431,10 +2431,10 @@ deployment config. Every answer carries `X-Feed-Go-Served` (`go` or `node`), as 
    (`v1-models-session-cookie`: the list serves signed-out callers only) and an `etag` query value
    (`v1-models-etag`: MixedAuthEndpoint checks it against the database and may add X-Expires); on
    `[id]`, an `Origin` header (`v1-models-origin`: withBlockScope adds its CORS headers for an origin
-   on the block-app allow-list, which lives in the database). A shadow sample of any of these is
-   still computed and its body compared; its response headers too, except for an `etag` query and an
-   Origin on `[id]`, whose headers Node may take from its database: those are `uncompared`
-   (`v1ModelsHeadersUnknown`).
+   on the block-app allow-list, which lives in the database). Of these the sampler forwards only
+   the session cookie and the query, so in the shadow a list sample with a session cookie or an `etag`
+   query is still computed and its body compared; its headers too, except an `etag` query's (Node may
+   add X-Expires from its database): `uncompared` (`v1ModelsHeadersUnknown`).
 4. The port, with every fallback of §16.2 (unsupported inputs, cache misses, a list session); serving,
    `[id]` reads every origin cache entry within its TTL as Node's handler does (the shadow alone skips
    one younger than `NodeBuiltWindow`, §16.5), and a not-found `[id]` falls back

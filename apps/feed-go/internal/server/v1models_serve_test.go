@@ -477,13 +477,6 @@ func TestPublicMuxMountsTheModelRoutesWithTheirUpstream(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("without V1Fallback: %d, want 404", w.Code)
 	}
-	// Reached directly without an upstream (not through the mux), a fallback is a 503 from here.
-	s.ServeV1Models = false
-	w = httptest.NewRecorder()
-	s.ServeV1ModelsHTTP(w, v1Request("/api/v1/models", nil))
-	if w.Code != http.StatusServiceUnavailable || w.Header().Get(ServedByHeader) != ServedByGo {
-		t.Fatalf("no upstream: %d %s", w.Code, w.Header().Get(ServedByHeader))
-	}
 }
 
 func TestPublicEndpointNamesTheModelRoutes(t *testing.T) {
@@ -674,11 +667,10 @@ func TestV1ModelsTrainingDataHashOnlyFromASample(t *testing.T) {
 	}
 }
 
-// The serve-only checks (v1ModelsServeOnly) do not drop shadow samples: a sample carrying an Origin
-// (`[id]`), an If-None-Match, a session cookie or an `etag` query is still computed and its body
-// compared. Its headers are compared where Go can compute them, and `uncompared` where Node may take
-// one from its database (an Origin on `[id]`, an `etag` query). The same requests on the public route
-// fall back (TestServeV1ModelsFallsBackBeforeComputing).
+// The serve-only checks (v1ModelsServeOnly) do not drop the shadow samples the sampler can send: a
+// list sample with a session cookie or an `etag` query is still computed and its body compared; an
+// `etag` query's response compare is `uncompared` (Node may add X-Expires from its database). The
+// same requests on the public route fall back (TestServeV1ModelsFallsBackBeforeComputing).
 func TestV1ModelsShadowComparesTheServeOnlyShapes(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	s := newPhaseServer(reg, 1, nil)
@@ -713,10 +705,6 @@ func TestV1ModelsShadowComparesTheServeOnlyShapes(t *testing.T) {
 		reqHeaders, nodeHeaders     map[string]string
 		node, response              string
 	}{
-		{"[id] with an Origin", EndpointV1ModelsID, "/api/v1/models/42", "", s.ShadowV1ModelsIDHandler,
-			map[string]string{"origin": "https://block.example.test"}, map[string]string{"cache-control": "private, no-store"}, v1DetailBody, "uncompared"},
-		{"list with If-None-Match", EndpointV1Models, V1ModelsPath, "limit=2", s.ShadowV1ModelsHandler,
-			map[string]string{"if-none-match": `"x"`}, v1ModelsResponse(public), v1ListBody, "match"},
 		{"list with a session cookie", EndpointV1Models, V1ModelsPath, "limit=2", s.ShadowV1ModelsHandler,
 			map[string]string{"cookie": "__Secure-civ-token=t"}, nil, v1ListBody, ""},
 		{"list with an etag query", EndpointV1Models, V1ModelsPath, "limit=2&etag=abc", s.ShadowV1ModelsHandler,
