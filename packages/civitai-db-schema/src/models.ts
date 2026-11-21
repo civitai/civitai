@@ -1191,6 +1191,7 @@ export interface ModelVersion {
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
   licensingFeeMarkup: Decimal | null;
   licensingFeeLocked: boolean;
+  licensingFeePaidByInvoice: boolean;
   licensingSourceVersionId: number | null;
   licensingSource?: ModelVersion | null;
   monetization?: ModelVersionMonetization | null;

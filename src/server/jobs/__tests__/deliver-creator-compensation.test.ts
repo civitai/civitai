@@ -324,6 +324,47 @@ describe('runPayout', () => {
     );
     expect(sentTransactions()).toHaveLength(3);
   });
+
+  // A licensor paid against their invoice (staff-set licensingFeePaidByInvoice) would be paid twice if the
+  // fee were also minted into a withdrawable balance. Only the licence fee is held back.
+  it('mints no licence fee for an invoice-paid version, and pays everything else as before', async () => {
+    mockClickhouseQuery.mockResolvedValue([
+      row('licenseFee', 'CashSettled', 250, 11),
+      row('licenseFee', 'CashSettled', 100, 12),
+      row('compensation', 'Yellow', 50, 11),
+      row('tip', 'Yellow', 6, 11),
+    ]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      {
+        userId: CREATOR,
+        modelVersionIds: [11, 12],
+        baseModels: ['SDXL 1.0', 'SDXL 1.0'],
+        paidByInvoice: [true, false],
+      },
+    ]);
+
+    await runPayout(START);
+
+    // Paired with modelVersionIds by index, so it must share their order.
+    const sql = (dbMock.dbRead.$queryRaw.mock.calls[0][0] as string[]).join('?');
+    expect(sql).toContain(
+      'array_agg(mv."licensingFeePaidByInvoice" ORDER BY mv.id) as "paidByInvoice"'
+    );
+    expect(
+      sentTransactions().map(({ externalTransactionId, amount }) => ({
+        externalTransactionId,
+        amount,
+      }))
+    ).toEqual(
+      expect.arrayContaining([
+        // v12 only: 100 tenths of a penny. v11's 250 would make it 35.
+        { externalTransactionId: 'license-fee-2026-10-13-7-CashSettled', amount: 10 },
+        { externalTransactionId: 'creator-tip-comp-2026-10-13-7-Yellow', amount: 50 },
+        { externalTransactionId: 'generation-tip-2026-10-13-7-Yellow', amount: 6 },
+      ])
+    );
+    expect(sentTransactions()).toHaveLength(3);
+  });
 });
 
 describe('the daily job after a failed run', () => {
