@@ -123,6 +123,7 @@ import type {
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
+import { bustVersionShowcasesForPosts } from '~/server/services/version-showcase.service';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { capPostGetInfiniteImages } from '~/server/utils/post-getinfinite-images';
 import {
@@ -1871,6 +1872,8 @@ export async function bustCachesForPosts(postIds: number | number[]) {
   const showcaseVersionIds = results
     .filter((x) => x.isShowcase && x.modelVersionId != null)
     .map((x) => x.modelVersionId as number);
+  // Community images are always someone else's posts, so this runs before the owner-only return.
+  await bustVersionShowcasesForPosts(ids);
   if (!showcaseVersionIds.length) return;
 
   const showcaseModelIds = [

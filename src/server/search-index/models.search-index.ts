@@ -1,3 +1,4 @@
+import type { getShowcaseHeldLevels } from '~/server/services/model.service';
 import { indexedVersionEligibility } from '~/shared/generation/coverage-fields';
 import { toIndexedVersion, toIndexedVersions } from '~/server/search-index/models-index-versions';
 import { Prisma } from '@prisma/client';
@@ -10,6 +11,10 @@ import { dbRead } from '~/server/db/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { modelTagCache } from '~/server/redis/caches';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
+import {
+  getShowcaseCommunityCovers,
+  isShowcaseCoverImage,
+} from '~/server/services/version-showcase.service';
 import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type {
@@ -178,6 +183,70 @@ type PullDataResult = {
   images: ImagesForModelVersions[];
 };
 
+/**
+ * A cover can be someone else's image the creator featured in the model's showcase. The document's
+ * image list holds only the creator's images, so such a cover's row is added for the hoist below to
+ * find. Only the cover: the rest of the community showcase stays out of search.
+ */
+// The models each appended community cover was checked for. Kept beside the image so the document
+// itself carries no extra field.
+const featuredForModels = new WeakMap<object, Set<number>>();
+
+export async function appendCommunityCoverImages(
+  models: {
+    id: number;
+    coverImageId?: number | null;
+    sfwCoverImageId?: number | null;
+    minor?: boolean;
+    sfwOnly?: boolean;
+  }[],
+  images: ImagesForModelVersions[],
+  lookups: {
+    communityCovers?: typeof getShowcaseCommunityCovers;
+    heldLevels?: typeof getShowcaseHeldLevels;
+  } = {}
+) {
+  const present = new Set(images.map((image) => image.id));
+  const missing = models.flatMap((model) =>
+    (
+      [
+        ['red', model.coverImageId],
+        ['com', model.sfwCoverImageId],
+      ] as const
+    )
+      .filter((cover): cover is ['red' | 'com', number] => !!cover[1] && !present.has(cover[1]))
+      .map(([site, imageId]) => ({ modelId: model.id, imageId, site }))
+  );
+  if (!missing.length) return;
+  const { getShowcaseHeldLevels, withinHeldLevel } = await import(
+    '~/server/services/model.service'
+  );
+  const {
+    communityCovers = getShowcaseCommunityCovers,
+    heldLevels: getHeldLevels = getShowcaseHeldLevels,
+  } = lookups;
+  const [community, heldLevels] = await Promise.all([
+    communityCovers(missing),
+    getHeldLevels(
+      models
+        .filter((model) => missing.some((cover) => cover.modelId === model.id))
+        .map((model) => ({ modelId: model.id, minor: model.minor, sfwOnly: model.sfwOnly }))
+    ),
+  ]);
+  for (const cover of missing) {
+    const image = isShowcaseCoverImage(community, cover);
+    // The document is shared by every searcher: a held model's cover stays within its level.
+    if (!image || !withinHeldLevel([image], heldLevels.get(cover.modelId)).length) continue;
+    const appended = images.find((row) => row.id === image.id && featuredForModels.has(row));
+    if (appended) featuredForModels.get(appended)?.add(cover.modelId);
+    else if (!present.has(image.id)) {
+      images.push(image);
+      present.add(image.id);
+      featuredForModels.set(image, new Set([cover.modelId]));
+    }
+  }
+}
+
 /** A taken-down model's document names none of its images: its cover ids are cleared. */
 export const withheldCoverIds = (model: { mode?: string | null }) =>
   isModelWithheld(model) ? { coverImageId: null, sfwCoverImageId: null } : {};
@@ -190,6 +259,7 @@ export const withheldCoverIds = (model: { mode?: string | null }) =>
  */
 export function pickModelIndexImages<TImage extends ImagesForModelVersions>(
   model: {
+    id?: number;
     mode?: string | null;
     coverImageId?: number | null;
     sfwCoverImageId?: number | null;
@@ -212,7 +282,15 @@ export function pickModelIndexImages<TImage extends ImagesForModelVersions>(
     (list, coverId) =>
       hoistCoverImage(
         list,
-        list.find((image) => image.id === coverId)
+        list.find((image) => image.id === coverId) ??
+          // A featured community cover can sit on any of the model's versions, and counts only for
+          // the models it was checked for.
+          images.find(
+            (image) =>
+              image.id === coverId &&
+              model.id !== undefined &&
+              !!featuredForModels.get(image)?.has(model.id)
+          )
       ),
     coveredVersionIds.flatMap((versionId) =>
       images.filter(
@@ -681,6 +759,7 @@ export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSe
     models
   );
   const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
+  await appendCommunityCoverImages(models, images);
 
   const { indexReadyRecords, indexRecordsWithImages } = await transformData({
     models,
@@ -884,6 +963,7 @@ export const pullModelsData = async (
     }
   }
   await limitConcurrency(tasks, 2);
+  await appendCommunityCoverImages(models, results.images);
 
   logger(`PullData :: Finished pulling data for batch`, batchLogKey);
 

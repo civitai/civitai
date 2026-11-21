@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { showcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -695,5 +696,30 @@ describe('toggleBan -> reviews written from the posts its model unpublish takes 
         expect.objectContaining({ change: 'unpublish', postIds: [9] })
       )
     );
+  });
+});
+
+describe('toggleBan -> version showcases', () => {
+  it("takes a banned author's featured images out of every showcase, and back on an unban", async () => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+    const showcaseReads = () =>
+      showcaseQueries(dbMock.dbWrite.$queryRaw).map((read) => read.values);
+    await call();
+    expect(showcaseReads()).toEqual([[USER_ID]]);
+
+    dbMock.dbWrite.$queryRaw.mockClear();
+    userFindUnique.mockResolvedValue({
+      bannedAt: ALREADY_BANNED_AT,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+    await call();
+    expect(showcaseReads()).toEqual([[USER_ID]]);
   });
 });

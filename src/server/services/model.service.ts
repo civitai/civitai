@@ -1,3 +1,4 @@
+import type { withCuratedShowcases } from '~/server/services/version-showcase.service';
 import { deletePostRows } from '@civitai/db-queries/content-deletion';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
 import { PLATFORM_REVENUE_SOURCES_SQL } from '@civitai/buzz';
@@ -363,6 +364,10 @@ import {
   updateModelVersionNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
+import {
+  showcaseSiteForBrowsingLevel,
+  siteForCoverId,
+} from '~/shared/constants/version-showcase.constants';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import {
   hasSfwFaceParts,
@@ -2067,6 +2072,7 @@ export const getModelsWithImagesAndModelVersions = async ({
       ownerId: model.user.id,
       shownVersionId: model.modelVersions[0]?.id,
       coverId: pickCoverImageId(model, showSfwFace),
+      site: siteForCoverId(model, pickCoverImageId(model, showSfwFace)),
     })),
     modelVersionImages,
     // Under a base-model filter or Hide Paid the card shows a chosen version, so a cover from another
@@ -4626,13 +4632,29 @@ export const upsertModel = async (
         let mergedMeta: ModelMeta = { ...prevMeta, ...meta };
         // The cover gate compared against the first read; a cover written since then (the listing
         // re-check clearing it) would be overwritten without the gate running.
+        // The showcase writes both covers too, so either one changing since the first read conflicts.
         const lockedCover =
-          !isModerator && data.sfwCoverImageId !== undefined
-            ? await tx.model.findUnique({ where: { id }, select: { sfwCoverImageId: true } })
+          !isModerator && (data.sfwCoverImageId !== undefined || data.coverImageId !== undefined)
+            ? await tx.model.findUnique({
+                where: { id },
+                select: { sfwCoverImageId: true, coverImageId: true },
+              })
             : null;
-        if (lockedCover && lockedCover.sfwCoverImageId !== (beforeUpdate.sfwCoverImageId ?? null))
+        if (
+          lockedCover &&
+          data.sfwCoverImageId !== undefined &&
+          lockedCover.sfwCoverImageId !== (beforeUpdate.sfwCoverImageId ?? null)
+        )
           throw throwConflictError(
             'This model’s civitai.com card changed while you were editing. Reload and save again.'
+          );
+        if (
+          lockedCover &&
+          data.coverImageId !== undefined &&
+          lockedCover.coverImageId !== (beforeUpdate.coverImageId ?? null)
+        )
+          throw throwConflictError(
+            'This model’s cover changed while you were editing. Reload and save again.'
           );
         // A .com cover this save changed (through the gate, for an owner) ends the re-check's
         // removal, and so does turning the face off: there is no face left to have removed.
@@ -4968,8 +4990,10 @@ export const upsertModel = async (
       tagsChanged: !!tagsOnModels,
     });
 
-    // The face and the .com cover feed the model's level, which decides whether .com lists it.
-    if (sfwFaceChanged || coverChanged) {
+    // The face, the .com cover and maturity feed the model's level, which decides whether .com
+    // lists it.
+    const maturityChanged = result.nsfw !== beforeUpdate.nsfw;
+    if (sfwFaceChanged || coverChanged || maturityChanged) {
       await updateModelNsfwLevels([result.id]);
       await bustPublicModelResponseCache(result.id);
     }
@@ -6942,6 +6966,7 @@ export async function getModelsWithVersions({
   ignoreBrowsingAddons,
   ownerUserId,
   publicVersionsOnly,
+  curate,
 }: {
   input: GetAllModelsOutput & { take?: number; skip?: number };
   user?: {
@@ -6956,6 +6981,8 @@ export async function getModelsWithVersions({
   ownerUserId?: number;
   /** See `getModelsRaw`. */
   publicVersionsOnly?: boolean;
+  /** Puts each version's curated showcase in place of its default images. */
+  curate?: typeof withCuratedShowcases;
 }) {
   const { items, nextCursor } = await getModelsRaw({
     input,
@@ -6970,8 +6997,12 @@ export async function getModelsWithVersions({
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
   const paidAccessMap = await getPublicPaidAccessForModelVersions(modelVersionIds);
   // Let's swap to the new cache based method for now...
+  curate ??= (await import('~/server/services/version-showcase.service')).withCuratedShowcases;
   const images = await holdShowcaseImages(
-    await getImagesForModelVersionCache(modelVersionIds),
+    await curate(
+      await getImagesForModelVersionCache(modelVersionIds),
+      showcaseSiteForBrowsingLevel(input.browsingLevel ?? sfwBrowsingLevelsFlag)
+    ),
     new Map(
       items.flatMap((model) =>
         model.modelVersions.map(

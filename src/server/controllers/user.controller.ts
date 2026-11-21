@@ -1,3 +1,4 @@
+import { showcaseOptOutChanged } from '~/shared/constants/version-showcase.constants';
 import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import { TRPCError } from '@trpc/server';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
@@ -1749,6 +1750,12 @@ export const setUserSettingHandler = async ({
       (k) => k in restInput && (restSettings as Record<string, unknown>)[k] !== restInput[k]
     );
     if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
+    if (showcaseOptOutChanged(restSettings, restInput)) {
+      const { bustVersionShowcasesForUser } = await import(
+        '~/server/services/version-showcase.service'
+      );
+      await bustVersionShowcasesForUser(id);
+    }
 
     // Some settings keys are PROJECTED ONTO THE SESSION by the auth hub — `shapeSessionUser`
     // reads `allowAds` and `isEarlyAdopter` out of `User.settings` and

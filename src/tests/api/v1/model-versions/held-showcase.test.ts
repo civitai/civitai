@@ -10,12 +10,15 @@ import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
  * returns it. The hold itself is covered in model.service.v1-showcase-hold.test.ts.
  */
 
-const { mockGetVaeFiles, mockGetImages, mockGetPaidAccess, mockHold } = vi.hoisted(() => ({
-  mockGetVaeFiles: vi.fn(),
-  mockGetImages: vi.fn(),
-  mockGetPaidAccess: vi.fn(),
-  mockHold: vi.fn(),
-}));
+const { mockGetVaeFiles, mockGetImages, mockGetPaidAccess, mockHold, mockCurated } = vi.hoisted(
+  () => ({
+    mockGetVaeFiles: vi.fn(),
+    mockGetImages: vi.fn(),
+    mockGetPaidAccess: vi.fn(),
+    mockHold: vi.fn(),
+    mockCurated: vi.fn(),
+  })
+);
 
 // No privacy row: a version with no privacy inputs.
 vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
@@ -136,7 +139,8 @@ async function prepare(images?: unknown[]) {
     null,
     false,
     false,
-    allBrowsingLevelsFlag
+    allBrowsingLevelsFlag,
+    mockCurated
   );
 }
 
@@ -147,6 +151,7 @@ beforeEach(() => {
   mockGetVaeFiles.mockResolvedValue([]);
   mockGetImages.mockResolvedValue(SHOWCASE);
   mockGetPaidAccess.mockResolvedValue({});
+  mockCurated.mockImplementation(async (byVersion: unknown) => byVersion);
   // Stand-in for the hold on a held model: keeps only the PG image.
   mockHold.mockImplementation(
     async (byVersion: Record<number, { images: { nsfwLevel: number }[] }>) =>
@@ -174,6 +179,22 @@ describe('a model version response', () => {
   it('holds images handed in by the by-hash batch the same way', async () => {
     const body = await prepare(SHOWCASE);
     expect(mockGetImages).not.toHaveBeenCalled();
+    expect(servedUrls(body)).toEqual(['u2']);
+  });
+
+  it('serves a curated showcase in its place, and holds the community images it features', async () => {
+    const community = { ...image(9, NsfwLevel.X), url: 'community' };
+    mockCurated.mockImplementation(async (byVersion: Record<number, { images: unknown[] }>) => ({
+      [VERSION]: { images: [community, ...byVersion[VERSION].images] },
+    }));
+    const body = await prepare();
+    expect(mockCurated).toHaveBeenCalledWith(expect.anything(), 'red');
+    const [held] = mockHold.mock.calls[0];
+    expect(held[VERSION].images.map((i: { url: string }) => i.url)).toEqual([
+      'community',
+      'u1',
+      'u2',
+    ]);
     expect(servedUrls(body)).toEqual(['u2']);
   });
 

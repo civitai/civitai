@@ -16,13 +16,13 @@ const VERSION_ID = 42;
 const MODEL_ID = 7;
 const USER_ID = 5;
 
-const { mockGetFilesForModelVersionCache, mockCancellableQuery, mockImagesCache } = vi.hoisted(
-  () => ({
+const { mockGetFilesForModelVersionCache, mockCancellableQuery, mockImagesCache, mockCurated } =
+  vi.hoisted(() => ({
     mockGetFilesForModelVersionCache: vi.fn(),
     mockCancellableQuery: vi.fn(),
     mockImagesCache: vi.fn(),
-  })
-);
+    mockCurated: vi.fn(),
+  }));
 
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: { cancellableQuery: mockCancellableQuery },
@@ -182,6 +182,7 @@ function primeOneModel(flags: { minor: boolean; sfwOnly: boolean }) {
 async function servedByModelsApi() {
   const { items } = await getModelsWithVersions({
     input: { browsingLevel: 1, take: 10, period: 'AllTime' } as never,
+    curate: mockCurated,
   });
   expect(items).toHaveLength(1);
   return items[0].modelVersions[0].images.map((i: { id: number }) => i.id);
@@ -199,6 +200,28 @@ async function servedByVersionApi() {
 beforeEach(() => {
   vi.clearAllMocks();
   redisMock.redis.get.mockResolvedValue(null);
+  mockCurated.mockImplementation(async (byVersion: unknown) => byVersion);
+});
+
+describe('/api/v1/models — a curated showcase', () => {
+  const COMMUNITY = image(9, NsfwLevel.X);
+  beforeEach(() => {
+    mockCurated.mockImplementation(async () => ({
+      [VERSION_ID]: { modelVersionId: VERSION_ID, images: [COMMUNITY, ...SHOWCASE] },
+    }));
+  });
+
+  it('is served in place of the default list, the .com one to a caller served only safe levels', async () => {
+    primeOneModel({ minor: false, sfwOnly: false });
+    expect(await servedByModelsApi()).toEqual([9, ...ALL_IDS]);
+    expect(mockCurated).toHaveBeenCalledWith(expect.anything(), 'com');
+  });
+
+  it("keeps a held model's curated images within its gallery level", async () => {
+    primeOneModel({ minor: true, sfwOnly: false });
+    storedModel({ minor: true, gallerySettings: { level: 0 } });
+    expect(await servedByModelsApi()).toEqual(SFW_IDS);
+  });
 });
 
 describe('/api/v1/models — a minor or SFW-only model', () => {
@@ -288,6 +311,7 @@ describe('/api/v1/models — a page with a held and an unflagged model', () => {
 
     const { items } = await getModelsWithVersions({
       input: { browsingLevel: 1, take: 10, period: 'AllTime' } as never,
+      curate: mockCurated,
     });
     const served = Object.fromEntries(
       items.map((item: { id: number; modelVersions: { images: { id: number }[] }[] }) => [

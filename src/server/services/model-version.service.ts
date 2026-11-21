@@ -3234,7 +3234,7 @@ export const modelVersionDonationGoal = async ({
 
 // Public-response cache (origin-side cache for GET /api/v1/models/[id]) toggle —
 // only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler).
-const PUBLIC_MODEL_RESPONSE_CACHE_ENABLED = env.IS_DATAPACKET;
+const publicModelResponseCacheEnabled = () => env.IS_DATAPACKET;
 
 export function publicModelResponseKey(
   modelId: number,
@@ -3255,7 +3255,7 @@ export function publicModelResponseKey(
 // throw into the mutation path, so it is swallowed (the entry otherwise expires
 // via its TTL).
 export async function bustPublicModelResponseCache(modelId: number | number[]) {
-  if (!PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) return;
+  if (!publicModelResponseCacheEnabled()) return;
   const modelIds = Array.isArray(modelId) ? modelId : [modelId];
   if (modelIds.length === 0) return;
   const keys = modelIds.flatMap((id) => [
@@ -4196,6 +4196,9 @@ export const mergeVersions = async ({
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);
+  // A showcase failure never fails the merge.
+  const { repointVersionShowcases } = await import('~/server/services/version-showcase.service');
+  await repointVersionShowcases(targetVersionId, sourceVersionIds);
   // Then the AIRs read before the write, and the file-pinned AIRs, which version busts never reach: a
   // pinned AIR names its version, so a moved file is cached under its source's AIR, and the target's
   // coverage now counts the moved files.
