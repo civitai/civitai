@@ -365,6 +365,7 @@ import {
   sfwFaceStamp,
 } from '~/server/services/model-sfw-face-stamp';
 import {
+  faceLossNotice as heldVerdictNotice,
   queueComFaceRecheck,
   queueComFaceRestore,
   rescanTextAfterFaceLoss,
@@ -4881,12 +4882,7 @@ export const upsertModel = async (
         await finishHeldVerdictApply(id);
       }
     } finally {
-      if (faceLossNotice) {
-        const { notifyComFaceHeldVerdictApplied } = await import(
-          '~/server/services/text-scan/actions/model-nsfw'
-        );
-        await notifyComFaceHeldVerdictApplied([faceLossNotice]);
-      }
+      if (faceLossNotice) await heldVerdictNotice.send([faceLossNotice]);
     }
     await preventReplicationLag('model', id);
     await userModelCountCache.refresh(userId);
@@ -7458,41 +7454,37 @@ export async function migrateResourceToCollection({
     },
     { timeout: 60000, maxWait: 10000 }
   );
-  // The owners' notices go in the finally: after the level refresh, so a slow notice cannot keep the
-  // old level listed, and even when the refresh throws.
+  // The owners' notices go in the finally: after the level refresh and the cache busts, so a slow
+  // notice cannot keep the old level listed, and even when one of them throws.
   try {
     // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
     // each was given its version's stored level. Versions first: the model level reads them.
     await updateModelVersionNsfwLevels(filteredVersions.map((v) => v.id));
     await updateModelNsfwLevels(modelIds);
+
+    // Set the showcase collection for the original model
+    await setModelShowcaseCollection({
+      collectionId: collection.id,
+      id: modelId,
+      userId: model.userId,
+      isModerator,
+      modelAlreadyInCollection: true,
+    });
+
+    // Bust caches
+    await Promise.all([
+      dataForModelsCache.refresh(modelIds),
+      bustMvCache(
+        filteredVersions.map((v) => v.id),
+        modelIds
+      ),
+      // The versions now belong to new models.
+      bustTwice(() => versionModelCache().bust(filteredVersions.map((v) => v.id))),
+    ]);
   } finally {
-    if (faceLossNotices.some(Boolean)) {
-      const { notifyComFaceHeldVerdictApplied } = await import(
-        '~/server/services/text-scan/actions/model-nsfw'
-      );
-      await notifyComFaceHeldVerdictApplied(faceLossNotices);
-    }
+    const notices = faceLossNotices.filter((notice) => notice !== null);
+    if (notices.length) await heldVerdictNotice.send(notices);
   }
-
-  // Set the showcase collection for the original model
-  await setModelShowcaseCollection({
-    collectionId: collection.id,
-    id: modelId,
-    userId: model.userId,
-    isModerator,
-    modelAlreadyInCollection: true,
-  });
-
-  // Bust caches
-  await Promise.all([
-    dataForModelsCache.refresh(modelIds),
-    bustMvCache(
-      filteredVersions.map((v) => v.id),
-      modelIds
-    ),
-    // The versions now belong to new models.
-    bustTwice(() => versionModelCache().bust(filteredVersions.map((v) => v.id))),
-  ]);
 
   modelMetrics
     .queueUpdate(modelIds)
