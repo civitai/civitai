@@ -1128,6 +1128,14 @@ export const serverSchema = z
     SHOPIFY_CLIENT_SECRET: z.string().optional(),
     SHOPIFY_ADMIN_TOKEN: z.string().optional(),
 
+    // Feature pages (/features/<slug>). The page 404s until all four are set; votes need only the
+    // signer URL and client id/secret. EMBED_URL must be on a registrable domain that is not one of
+    // ours, at an origin that serves only feature pages.
+    FEATURE_PAGES_EMBED_URL: z.url().optional(),
+    FEATURE_PAGES_SIGNER_URL: z.url().optional(),
+    FEATURE_PAGES_CLIENT_ID: z.string().optional(),
+    FEATURE_PAGES_CLIENT_SECRET: z.string().optional(),
+
     FLIPT_URL: z.string(),
     FLIPT_FETCHER_SECRET: z.string(),
     FLIPT_DEPLOYMENT_ID: z.string().optional(),
