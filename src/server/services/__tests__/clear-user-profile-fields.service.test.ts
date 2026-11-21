@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   clearUserProfileFields,
   removeUserLinkAsModerator,
+  type ProfileClearField,
   type ProfileClearSnapshot,
 } from '~/server/services/user.service';
 
@@ -40,6 +41,7 @@ const stored = {
   showcaseSections: [{ key: 'k' }],
   showcaseItems: [{ entityType: 'Model', entityId: 1 }],
 };
+const ALL_FIELDS: ProfileClearField[] = ['location', 'bio', 'message', 'showcaseSections'];
 let archive: ReturnType<typeof vi.fn<(s: ProfileClearSnapshot) => Promise<unknown>>>;
 
 beforeEach(() => {
@@ -53,11 +55,19 @@ beforeEach(() => {
 });
 
 const clear = (args: Partial<Parameters<typeof clearUserProfileFields>[0]> = {}) =>
-  clearUserProfileFields({ userId: USER, actorId: MOD, archive, ...args });
+  clearUserProfileFields({ userId: USER, actorId: MOD, archive, fields: ALL_FIELDS, ...args });
 
 // Showcase titles and button links are profile text a moderator must be able to clear.
 describe('clearUserProfileFields', () => {
-  it('clears custom showcase sections by default', async () => {
+  it('refuses an empty or missing field list, archiving and writing nothing', async () => {
+    reportNames(true);
+    await expect(clear({ fields: [] })).rejects.toThrow('at least one field');
+    await expect(clear({ fields: undefined })).rejects.toThrow('at least one field');
+    expect(archive).not.toHaveBeenCalled();
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('clears custom showcase sections when they are named', async () => {
     await clear();
     expect(db.userProfile.updateMany).toHaveBeenCalledWith({
       where: { userId: USER },
@@ -124,9 +134,9 @@ describe('clearUserProfileFields', () => {
     expect(modActivityRows()).toEqual([]);
   });
 
-  it('returns the committed clear when its record fails to write', async () => {
+  it('fails the clear when its record fails to write', async () => {
     failModActivityOnce();
-    await expect(clear()).resolves.toEqual({ updated: true });
+    await expect(clear()).rejects.toThrow('db blip');
   });
 
   it('records who cleared the profile, on every clear', async () => {
