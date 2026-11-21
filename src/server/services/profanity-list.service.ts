@@ -178,7 +178,7 @@ function filterFor({ blocked, allowed }: ProfanityLists) {
 
 /**
  * The one profanity filter every server check uses: one list, and the moderators' allow list
- * everywhere (#9952). Flag off: the shipped block and allow lists, as before this existed.
+ * everywhere. Flag off: the shipped block and allow lists.
  */
 export async function getServerProfanityFilter(): Promise<ServerProfanityFilter> {
   const lists = await readShared();

@@ -42,7 +42,7 @@ describe('maskProfanityInHtml', () => {
     expect(empty).toBeNull();
   });
 
-  // Long text is masked as it is today, never left raw or blurred for its length (#9952).
+  // Long text is masked in full, never left raw or blurred for its length.
   // To whoever adds a length cap: that was considered and declined.
   it('masks text of any length, with no cap', async () => {
     const long = `<p>${'word '.repeat(60_000)}${WORD}</p>`;
@@ -109,5 +109,21 @@ describe('withMaskedChatPreviews', () => {
         ],
       ],
     ]);
+  });
+});
+
+describe('a quoted reply', () => {
+  it('carries its own masked copy beside the message', async () => {
+    const [message, plain] = await withMaskedChatContent([
+      { content: CLEAN, referenceMessage: { id: 9, content: WORD } },
+      { content: WORD, referenceMessage: null },
+    ]);
+    expect(message.maskedContent).toBeNull();
+    expect(message.referenceMessage).toMatchObject({ id: 9, content: WORD });
+    expect(
+      (message.referenceMessage as { maskedContent: string | null }).maskedContent
+    ).not.toBeNull();
+    expect(plain.maskedContent).not.toBeNull();
+    expect(plain.referenceMessage).toBeNull();
   });
 });

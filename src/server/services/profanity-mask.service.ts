@@ -6,7 +6,7 @@ import { stripStickerTokens } from '~/shared/utils/sticker-token';
  * The masked copy of user text that a viewer with profanity masking on is shown in its place:
  * a string when masking changed it, `null` when it is clean. Computed for every text whatever the
  * viewer's settings, so a settings toggle needs no refetch, and at any length: long text is masked
- * as it is today, never blurred (#9952).
+ * in full, never blurred.
  */
 export type MaskedText = string | null;
 
@@ -53,11 +53,27 @@ export async function withMaskedDetails<T extends { details?: string | null }>(
 }
 
 /** Chat messages, each with `maskedContent` beside its `content`. Optional in the type as above. */
-export async function withMaskedChatContent<T extends { content: string }>(
-  messages: T[]
-): Promise<(T & { maskedContent?: MaskedText })[]> {
-  const masked = await maskProfanityInChat(messages.map((message) => message.content));
-  return messages.map((message, i) => ({ ...message, maskedContent: masked[i] }));
+export async function withMaskedChatContent<
+  T extends { content: string; referenceMessage?: { content: string } | null }
+>(messages: T[]): Promise<(T & { maskedContent?: MaskedText })[]> {
+  // A quoted reply is shown too, so it carries its own copy: one call for messages and quotes.
+  const quotes = messages.map((message) => message.referenceMessage?.content ?? '');
+  const masked = await maskProfanityInChat([
+    ...messages.map((message) => message.content),
+    ...quotes,
+  ]);
+  return messages.map((message, i) => ({
+    ...message,
+    maskedContent: masked[i],
+    ...(message.referenceMessage
+      ? {
+          referenceMessage: {
+            ...message.referenceMessage,
+            maskedContent: masked[messages.length + i],
+          },
+        }
+      : {}),
+  }));
 }
 
 /** Chats with their messages masked, in one masking call for all of them. */

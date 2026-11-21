@@ -218,7 +218,6 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: ProtectedContext })
       return !clearedAt || chat.messages.some((msg) => msg.createdAt > clearedAt);
     });
     const scoped = await scopeChatPreviews(listed, userId);
-    // The preview is the latest message; it carries a masked copy like any other message.
     return (await withMaskedChatPreviews(scoped)).map((chat) => ({
       ...chat,
       chatMembers: chat.chatMembers.map(scopeMemberPrivacy(userId)),
@@ -1036,8 +1035,10 @@ export const getMessageByIdHandler = async ({
       throw throwNotFoundError(`No message found for ID (${input.messageId})`);
     }
 
+    const [maskedContent] = await maskProfanityInChat([msg.content]);
     return {
       content: msg.content,
+      maskedContent,
       contentType: msg.contentType,
       user: msg.user,
     };

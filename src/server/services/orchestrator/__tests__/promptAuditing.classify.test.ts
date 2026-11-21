@@ -265,7 +265,7 @@ describe('classifyPromptServer — the verdict', () => {
     expect(mockAuditPromptEnriched.mock.calls.map((c) => c[2])).toEqual([SHIPPED, undefined]);
   });
 
-  // With the managed list on, the gate leaves profanity to the orchestrator's rating (#9952).
+  // With the managed list on, the gate leaves profanity to the orchestrator's rating.
   // Flag off restores the shipped-list check above.
   it('runs no profanity check on any domain while profanity-managed-list is on', async () => {
     flags.managedList = true;

@@ -461,7 +461,7 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
  * Its own try/catch: a failure here falls back to the shipped list instead of emptying the
  * benign lists above. Unlike ProfanityBenignWord, a row below the floor falls back too, the same
  * rule and the same usable entries as the server's filter (`profanity-list.service.ts`), so the
- * browser and the server never enforce different lists.
+ * browser and the server enforce the same list whenever both can read the row.
  */
 async function getManagedProfanityWords(): Promise<
   { id: number; data: string[] } | null | 'unavailable'
