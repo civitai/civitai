@@ -83,6 +83,10 @@ type Server struct {
 	ListingReads *prometheus.CounterVec
 	// Now is the clock viewer tokens are checked against; nil is time.Now.
 	Now func() time.Time
+
+	// keys memoises the serving generation's listing keys per (generation, cursor)
+	// (listings_keys_memo.go). Its zero value is empty.
+	keys keysMemo
 }
 
 // Handler is the routes.

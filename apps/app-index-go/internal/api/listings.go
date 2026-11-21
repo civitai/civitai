@@ -113,7 +113,7 @@ func ParseListingsQuery(v map[string][]string) (listingread.ListQuery, []string,
 // listingRequest runs the steps every listing route shares, then fn: the configuration, the
 // viewer, and the serving generation. It counts the outcome fn's answer reports.
 func (s *Server) listingRequest(route string, fn func(ctx context.Context, w http.ResponseWriter, r *http.Request,
-	v listingread.Viewer, gen int64) string) http.HandlerFunc {
+	v listingread.Viewer, gen store.Generation) string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		outcome := "ok"
 		defer func() {
@@ -155,7 +155,7 @@ func (s *Server) listingRequest(route string, fn func(ctx context.Context, w htt
 			writeJSON(w, http.StatusServiceUnavailable, apiError{Error: "not_ready"})
 			return
 		}
-		outcome = fn(ctx, w, r, v, st.Serving.ID)
+		outcome = fn(ctx, w, r, v, *st.Serving)
 	}
 }
 
@@ -181,13 +181,13 @@ func (s *Server) fail(w http.ResponseWriter, what string, err error) string {
 	return "error"
 }
 
-func (s *Server) listListings(ctx context.Context, w http.ResponseWriter, r *http.Request, v listingread.Viewer, gen int64) string {
+func (s *Server) listListings(ctx context.Context, w http.ResponseWriter, r *http.Request, v listingread.Viewer, gen store.Generation) string {
 	q, slugs, err := ParseListingsQuery(r.URL.Query())
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, apiError{Error: "bad_request", Message: err.Error()})
 		return "bad_request"
 	}
-	keys, err := s.Listings.Keys(ctx, gen)
+	keys, err := s.keys.keys(ctx, s.Listings, gen, s.SearchTimeout)
 	if err != nil {
 		return s.fail(w, "listing keys", err)
 	}
@@ -199,7 +199,7 @@ func (s *Server) listListings(ctx context.Context, w http.ResponseWriter, r *htt
 	} else {
 		page = listingread.Rank(keys, q, v)
 	}
-	listings, err := s.Listings.GetMany(ctx, gen, page.URNs)
+	listings, err := s.Listings.GetMany(ctx, gen.ID, page.URNs)
 	if err != nil {
 		return s.fail(w, "listing page", err)
 	}
@@ -230,13 +230,13 @@ func (s *Server) listListings(ctx context.Context, w http.ResponseWriter, r *htt
 	return "ok"
 }
 
-func (s *Server) listingDetail(ctx context.Context, w http.ResponseWriter, r *http.Request, v listingread.Viewer, gen int64) string {
+func (s *Server) listingDetail(ctx context.Context, w http.ResponseWriter, r *http.Request, v listingread.Viewer, gen store.Generation) string {
 	slug := r.PathValue("slug")
 	if slug == "" || len(slug) > MaxSlugLen {
 		writeJSON(w, http.StatusBadRequest, apiError{Error: "bad_request", Message: "slug must be 1 to 64 bytes"})
 		return "bad_request"
 	}
-	l, ok, err := s.Listings.BySlug(ctx, gen, slug)
+	l, ok, err := s.Listings.BySlug(ctx, gen.ID, slug)
 	if err != nil {
 		return s.fail(w, "listing detail", err)
 	}
