@@ -6,7 +6,9 @@ import {
   type StickerTrackV1,
   encodeStickerTrack,
   sampleStickerTrack,
-  wrapDegrees,
+  lerpDegrees,
+  STICKER_TRACK_MAX_DURATION_MS,
+  STICKER_TRACK_MIN_MS,
 } from '~/shared/utils/sticker-track';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { throwRateLimited } from '~/server/utils/rate-limit-error';
@@ -88,7 +90,11 @@ export function parseStickerAutoTrack(body: unknown, maxScale: number): StickerT
  */
 export function despikeStickerTrack(track: StickerTrackV1, ratio = 1.3): StickerTrackV1 {
   const channels = [track.x, track.y, track.s, track.r, ...(track.show ? [track.show] : [])];
+  if (channels.some((c) => c.length === 0)) return track;
   const n = Math.max(...channels.map((c) => c[c.length - 1][0])) + 1;
+  // A tick past the longest video the player accepts is a broken file, not one to sample tick by tick.
+  if (!(n <= STICKER_TRACK_MAX_DURATION_MS / Math.max(track.ms, STICKER_TRACK_MIN_MS) + 1))
+    return track;
   const poses = Array.from({ length: n }, (_, k) => sampleStickerTrack(track, k * track.ms));
   const limit = Math.log(ratio);
   let changed = false;
@@ -111,7 +117,7 @@ export function despikeStickerTrack(track: StickerTrackV1, ratio = 1.3): Sticker
         if (inner.every((v) => v > high) || inner.every((v) => v < low))
           for (let i = a + 1; i < b; i++) spike[i] = true;
       }
-    // A spike never touches a run's ends (b < logs.length, a >= 0), so both sides have a good tick.
+    // Keep a >= 0 and b < logs.length above: the walks below rely on a run's ends never being spikes.
     for (let i = start; i < end; i++) {
       if (!spike[i - start]) continue;
       changed = true;
@@ -127,7 +133,7 @@ export function despikeStickerTrack(track: StickerTrackV1, ratio = 1.3): Sticker
         x: from.x + (to.x - from.x) * f,
         y: from.y + (to.y - from.y) * f,
         scale: from.scale + (to.scale - from.scale) * f,
-        rotation: wrapDegrees(from.rotation + wrapDegrees(to.rotation - from.rotation) * f),
+        rotation: lerpDegrees(from.rotation, to.rotation, f),
       };
     }
     start = end;

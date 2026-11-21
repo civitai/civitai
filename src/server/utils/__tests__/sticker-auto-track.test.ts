@@ -451,7 +451,15 @@ describe('despikeStickerTrack', () => {
   it('redraws position and rotation across the spike, turning the short way round', () => {
     const track: StickerTrackV1 = {
       ...sized({ 6: 0.3, 7: 0.31 }),
-      // x moves steadily; y jumps with the bad mask; rotation crosses 180 degrees.
+      // x and y jump with the bad mask; rotation crosses 180 degrees.
+      x: [
+        [0, 0.2],
+        [5, 0.3],
+        [6, 0.9],
+        [7, 0.9],
+        [8, 0.36],
+        [19, 0.6],
+      ],
       y: [
         [0, 0.5],
         [5, 0.5],
@@ -469,7 +477,8 @@ describe('despikeStickerTrack', () => {
     };
     const out = despikeStickerTrack(track);
     const at = (tick: number) => sampleStickerTrack(out, tick * out.ms);
-    expect(at(6).x).toBeCloseTo(0.2 + (0.4 * 6) / 19, 3);
+    expect(at(6).x).toBeCloseTo(0.32);
+    expect(at(7).x).toBeCloseTo(0.34);
     expect(at(6).y).toBeCloseTo(0.5);
     expect(at(7).y).toBeCloseTo(0.5);
     // 170 to -170 is 20 degrees through 180, so ticks 6 and 7 sit near 180, not near 0.
@@ -490,6 +499,16 @@ describe('despikeStickerTrack', () => {
     const out = despikeStickerTrack(track);
     expect(out).toBe(track);
     expect(scaleAt(out, 7)).toBeCloseTo(0.3);
+  });
+
+  it('returns a track with an empty channel as it came, instead of throwing', () => {
+    const track = { ...sized({ 6: 0.3 }), r: [] };
+    expect(despikeStickerTrack(track)).toBe(track);
+  });
+
+  it('returns a track whose last tick is far past any video as it came', () => {
+    const track = { ...sized({ 6: 0.3 }), r: [[1e9, 0]] as [number, number][] };
+    expect(despikeStickerTrack(track)).toBe(track);
   });
 
   it('returns a track with no spike as it came', () => {

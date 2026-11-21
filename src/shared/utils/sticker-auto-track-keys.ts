@@ -2,6 +2,7 @@ import { normalizeStickerPlacement } from '~/shared/utils/sticker-placement';
 import type { StickerTrackKey, StickerTrackV1 } from '~/shared/utils/sticker-track';
 import {
   sampleStickerTrack,
+  lerpDegrees,
   wrapDegrees,
   STICKER_TRACK_MAX_DURATION_MS,
   STICKER_TRACK_MAX_KEYS,
@@ -91,7 +92,7 @@ function onLine(from: StickerTrackKey, mid: StickerTrackKey, to: StickerTrackKey
   if (from.ease !== 'linear' || mid.ease !== 'linear' || mid.o !== from.o || to.o !== from.o)
     return false;
   const f = (mid.t - from.t) / (to.t - from.t);
-  const r = wrapDegrees(from.r + wrapDegrees(to.r - from.r) * f);
+  const r = lerpDegrees(from.r, to.r, f);
   return (
     Math.abs(from.x + (to.x - from.x) * f - mid.x) <= TOLERANCE.x * scale &&
     Math.abs(from.y + (to.y - from.y) * f - mid.y) <= TOLERANCE.y * scale &&
