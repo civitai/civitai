@@ -138,8 +138,10 @@ describe('comp gift endpoints', () => {
     expect(revokeCompMembershipGift).not.toHaveBeenCalled();
 
     grant.held = true;
+    grant.asked = [];
     const ok = await call(revokeHandler, { giftId: 'gift_9', execute: true });
     expect(ok.status).toBe(200);
+    expect(grant.asked).toEqual(['user.membership.gift.comp']);
     expect(revokeCompMembershipGift).toHaveBeenCalledWith({
       giftId: 'gift_9',
       execute: true,

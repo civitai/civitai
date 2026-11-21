@@ -29,12 +29,11 @@ vi.mock('~/server/services/membership-gift.service', () => ({
   revokeMembershipGift,
 }));
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedUserContent }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
-
 import {
   compMembershipGift,
   revokeCompMembershipGift,
 } from '~/server/services/membership-gift-comp.service';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const MODERATOR = 990000007;
 const RECIPIENT = 990100021;
@@ -59,23 +58,37 @@ const liveUser = (over: Record<string, unknown> = {}) => ({
 });
 
 let order: string[];
+// A tx distinct from dbWrite, so a write that skips the transaction client is visible.
+let tx: {
+  $executeRaw: ReturnType<typeof vi.fn>;
+  modActivity: { count: ReturnType<typeof vi.fn> };
+  membershipGift: { create: ReturnType<typeof vi.fn> };
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
   order = [];
+  tx = {
+    $executeRaw: vi.fn(async () => {
+      order.push('lock');
+      return 1;
+    }),
+    modActivity: {
+      count: vi.fn(async () => {
+        order.push('count');
+        return 0;
+      }),
+    },
+    membershipGift: {
+      create: vi.fn(async () => {
+        order.push('create');
+        return { id: 'gift_9' };
+      }),
+    },
+  };
+  db.$transaction.mockImplementation(async (cb: (client: unknown) => unknown) => cb(tx));
   db.user.findUnique.mockResolvedValue(liveUser());
-  db.modActivity.count.mockImplementation(async () => {
-    order.push('count');
-    return 0;
-  });
-  db.$executeRaw.mockImplementation(async () => {
-    order.push('lock');
-    return 1;
-  });
-  db.membershipGift.create.mockImplementation(async () => {
-    order.push('create');
-    return { id: 'gift_9' };
-  });
+  dbMock.dbRead.modActivity.count.mockResolvedValue(0);
   getRecipientGiftability.mockResolvedValue({ status: 'no-subscription' });
   fulfillMembershipGift.mockResolvedValue({ fulfilled: true, queued: true });
 });
@@ -84,7 +97,7 @@ describe('compMembershipGift', () => {
   it('creates a $0 gift from the moderator, logs it in the same transaction, then fulfils it', async () => {
     const result = await compMembershipGift(valid());
 
-    expect(db.membershipGift.create).toHaveBeenCalledWith({
+    expect(tx.membershipGift.create).toHaveBeenCalledWith({
       data: {
         gifterId: MODERATOR,
         recipientId: RECIPIENT,
@@ -100,7 +113,7 @@ describe('compMembershipGift', () => {
     expect(trackModActivity).toHaveBeenCalledWith(
       MODERATOR,
       { entityType: 'user', entityId: RECIPIENT, activity: 'compMembershipGift:gold:3' },
-      db
+      tx
     );
     expect(order).toEqual(['lock', 'count', 'create']);
     expect(fulfillMembershipGift).toHaveBeenCalledWith({ giftId: 'gift_9' });
@@ -119,7 +132,7 @@ describe('compMembershipGift', () => {
     await expect(compMembershipGift(valid({ message: 'bad words' }))).rejects.toThrow(
       'blocked content'
     );
-    expect(db.membershipGift.create).not.toHaveBeenCalled();
+    expect(tx.membershipGift.create).not.toHaveBeenCalled();
   });
 
   it('screens the message it sends and stores the same text', async () => {
@@ -127,7 +140,7 @@ describe('compMembershipGift', () => {
     expect(throwOnBlockedUserContent).toHaveBeenCalledWith('Thanks for everything', {
       surface: 'membership-gift',
     });
-    expect(db.membershipGift.create).toHaveBeenCalledWith(
+    expect(tx.membershipGift.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ message: 'Thanks for everything' }),
       })
@@ -136,7 +149,7 @@ describe('compMembershipGift', () => {
 
   it("counts only this moderator's comps from the last 24 hours toward the cap", async () => {
     await compMembershipGift(valid());
-    const where = db.modActivity.count.mock.calls[0][0].where;
+    const where = tx.modActivity.count.mock.calls[0][0].where;
     expect(where).toEqual({
       userId: MODERATOR,
       activity: { startsWith: 'compMembershipGift:' },
@@ -149,7 +162,8 @@ describe('compMembershipGift', () => {
   it('a dry run reports and writes nothing', async () => {
     const result = await compMembershipGift(valid({ execute: false }));
     expect(result).toMatchObject({ outcome: 'would-comp', compsInLast24h: 0 });
-    expect(db.membershipGift.create).not.toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(tx.membershipGift.create).not.toHaveBeenCalled();
     expect(trackModActivity).not.toHaveBeenCalled();
     expect(fulfillMembershipGift).not.toHaveBeenCalled();
   });
@@ -162,14 +176,14 @@ describe('compMembershipGift', () => {
   ])('refuses a %s recipient', async (_label, user, message) => {
     db.user.findUnique.mockResolvedValue(user);
     await expect(compMembershipGift(valid())).rejects.toThrow(message);
-    expect(db.membershipGift.create).not.toHaveBeenCalled();
+    expect(tx.membershipGift.create).not.toHaveBeenCalled();
   });
 
   it('refuses a moderator comping themselves', async () => {
     await expect(compMembershipGift(valid({ recipientId: MODERATOR }))).rejects.toThrow(
       /your own account/
     );
-    expect(db.membershipGift.create).not.toHaveBeenCalled();
+    expect(tx.membershipGift.create).not.toHaveBeenCalled();
   });
 
   it('refuses a membership that cannot take gifted months, but not an annual one', async () => {
@@ -178,7 +192,7 @@ describe('compMembershipGift', () => {
       reason: 'unsupported-provider',
     });
     await expect(compMembershipGift(valid())).rejects.toThrow(/cannot receive gifted months/);
-    expect(db.membershipGift.create).not.toHaveBeenCalled();
+    expect(tx.membershipGift.create).not.toHaveBeenCalled();
 
     getRecipientGiftability.mockResolvedValue({ status: 'blocked', reason: 'annual-interval' });
     await expect(compMembershipGift(valid())).resolves.toMatchObject({ outcome: 'comped' });
@@ -186,16 +200,16 @@ describe('compMembershipGift', () => {
 
   it('refuses months past the cap, and accepts the cap itself', async () => {
     await expect(compMembershipGift(valid({ months: 13 }))).rejects.toThrow(/1 to 12/);
-    expect(db.membershipGift.create).not.toHaveBeenCalled();
+    expect(tx.membershipGift.create).not.toHaveBeenCalled();
     await expect(compMembershipGift(valid({ months: 12 }))).resolves.toMatchObject({ months: 12 });
   });
 
   it('stops at the daily cap, inside the lock', async () => {
-    db.modActivity.count.mockResolvedValue(10);
+    tx.modActivity.count.mockResolvedValue(10);
     await expect(compMembershipGift(valid())).rejects.toThrow(/Daily limit of 10/);
-    expect(db.membershipGift.create).not.toHaveBeenCalled();
+    expect(tx.membershipGift.create).not.toHaveBeenCalled();
 
-    db.modActivity.count.mockResolvedValue(9);
+    tx.modActivity.count.mockResolvedValue(9);
     await expect(compMembershipGift(valid())).resolves.toMatchObject({ outcome: 'comped' });
   });
 

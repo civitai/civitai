@@ -1,5 +1,5 @@
 import dayjs from '~/shared/utils/dayjs';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { giftableTierSchema, type GiftableTier } from '~/server/schema/membership-gift.schema';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -91,6 +91,7 @@ export async function compMembershipGift({
   if (recipientId === moderatorId)
     throw throwBadRequestError('You cannot comp a membership gift to your own account.');
 
+  // primary: a ban or mute applied moments ago must refuse the gift.
   const recipient = await dbWrite.user.findUnique({
     where: { id: recipientId },
     select: { id: true, username: true, deletedAt: true, bannedAt: true, muted: true },
@@ -114,7 +115,7 @@ export async function compMembershipGift({
   const since = () => dayjs().subtract(24, 'hour').toDate();
 
   if (!execute) {
-    const compsInLast24h = await dbWrite.modActivity.count({
+    const compsInLast24h = await dbRead.modActivity.count({
       where: {
         userId: moderatorId,
         activity: { startsWith: COMP_ACTIVITY_PREFIX },
@@ -220,6 +221,7 @@ export async function revokeCompMembershipGift({
   execute?: boolean;
   moderatorId: number;
 }): Promise<CompGiftRevocation> {
+  // primary: guards the revoke that follows.
   const gift = await dbWrite.membershipGift.findUnique({
     where: { id: giftId },
     select: {
