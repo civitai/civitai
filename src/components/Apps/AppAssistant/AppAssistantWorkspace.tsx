@@ -516,6 +516,15 @@ export function AppAssistantWorkspace({
       setTab('preview');
     }
   }, []);
+  // The pane found the preview a direct one: its session host is a bearer credential, so the
+  // session keeps none (the runner sends none either; this holds if one ever did). Only for the
+  // session the pane fetched it for, not one shown since.
+  const forgetDirectHost = useCallback((shown: PreviewSession) => {
+    if (live.current.session !== shown || !shown.host) return;
+    const next = { ...shown, host: '' };
+    live.current.session = next;
+    setSession(next);
+  }, []);
   // Each preview the server runner starts gets its own frame, even on the same host.
   const runnerViews = useRef(0);
   // How often the runner said the open app's dev server came back up while its preview was shown
@@ -1797,6 +1806,7 @@ export function AppAssistantWorkspace({
                 tunnelStatus={tunnelStatus}
                 devServerStatus={devServerStatus}
                 devServerUp={devServerUp}
+                onDirectFrame={forgetDirectHost}
               />
             </div>
             {session && (

@@ -91,6 +91,7 @@ export function AppAssistantPreview({
   tunnelStatus,
   devServerStatus,
   devServerUp = 0,
+  onDirectFrame,
 }: {
   canPreview: boolean;
   session: PreviewSession | null;
@@ -111,6 +112,11 @@ export function AppAssistantPreview({
   devServerStatus?: () => Promise<SandboxDevServerStatus | null>;
   /** Counts the times the open app's dev server came back up (`devServerUpOf`). */
   devServerUp?: number;
+  /**
+   * The frame fetched for `session` is a direct preview, while the session still names a host: a
+   * direct preview's session host is a bearer credential, which the caller must not keep.
+   */
+  onDirectFrame?: (session: PreviewSession) => void;
 }) {
   const frame = useQuery({
     // A new start (the page's own tunnel id, or the runner's next start) fetches a fresh frame.
@@ -122,6 +128,12 @@ export function AppAssistantPreview({
     gcTime: 0,
     retry: false,
   });
+  const direct = !!frame.data && 'transport' in frame.data && frame.data.transport === 'direct';
+  const onDirectFrameRef = useRef(onDirectFrame);
+  onDirectFrameRef.current = onDirectFrame;
+  useEffect(() => {
+    if (direct && session?.host) onDirectFrameRef.current?.(session);
+  }, [direct, session]);
   // The frame reached its host's terminal fallback (never ready, its token failed, a fatal error).
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [frame.data]);
@@ -209,6 +221,18 @@ export function AppAssistantPreview({
     gcTime: 0,
     retry: false,
   });
+  // A direct preview's sandbox side is its dev server, which the assistant restarts while it builds:
+  // one that came back up (`devServerUp`) ends a "down" the sandbox gave meanwhile, so the preview
+  // shows again with no click. A tunnel's "down" is about its tunnel and still stands.
+  const seenUpDirect = useRef(devServerUp);
+  useEffect(() => {
+    const up = devServerUp > seenUpDirect.current;
+    seenUpDirect.current = devServerUp;
+    if (!up || !sandboxDownView.current) return;
+    if (!direct) return;
+    sandboxDownView.current = null;
+    void live.refetch();
+  }, [devServerUp, direct, live]);
   const gone = !!restart && live.data === false;
 
   if (!canPreview)

@@ -80,16 +80,28 @@ const clip = (text: string, max: number) =>
 const PREVIEW_HOST_PLACEHOLDER = '[preview]';
 
 /**
+ * The shortest piece of a session label, cut at the end of a report, that is still taken for it:
+ * 8 base32 characters (40 bits) never match by chance.
+ */
+const MIN_CUT_LABEL = 8;
+
+/**
  * `text` with `host` (any case) replaced by the placeholder. The host's first label alone is the
- * credential, so a host cut short after it (a capped stack) is caught too: the label and whatever
- * of the domain follows it go.
+ * credential, so the match is on the label, with whatever of the domain follows it. The SDK caps a
+ * report's message and stack by cutting their END, which can fall inside the label: a trailing
+ * start of the label (at least `MIN_CUT_LABEL` characters) is replaced too.
  */
 function hideHost(text: string, host: string | null): string {
-  const label = host?.split('.')[0];
+  const label = host?.split('.')[0]?.toLowerCase();
   if (!label) return text;
   const escape = (part: string) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = new RegExp(`${escape(label)}(?:\\.[a-z0-9-]+)*`, 'gi');
-  return text.replace(pattern, PREVIEW_HOST_PLACEHOLDER);
+  const hidden = text.replace(pattern, PREVIEW_HOST_PLACEHOLDER);
+  const tail = hidden.toLowerCase();
+  for (let cut = label.length - 1; cut >= MIN_CUT_LABEL; cut--)
+    if (tail.endsWith(label.slice(0, cut)))
+      return hidden.slice(0, hidden.length - cut) + PREVIEW_HOST_PLACEHOLDER;
+  return hidden;
 }
 
 /**
