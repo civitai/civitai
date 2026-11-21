@@ -385,9 +385,8 @@ export function ModelVersionUpsertForm({
   const currentLicensingFee = form.watch('licensingFee') ?? 0;
   const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
   const hasExistingLicensingFee = Number(version?.licensingFee ?? 0) > 0;
-  // A percent-of-compute fee is staff-set and its number is a percent. This editor speaks Buzz per N
-  // generations, so it shows that fee read-only and never seeds, remembers or re-derives a Buzz value onto
-  // it: a number typed here would be saved as a percent. Clearing it (the fee switch) still works.
+  // The stored number is a percent, not Buzz per N generations: never seed, remember or edit a Buzz
+  // value onto it.
   const percentOfComputeFee = version?.licensingFeeType === LicensingFeeType.PercentOfCompute;
   // Two reasons a version can't earn anything at all — not a gate, not a per-generation fee. Every
   // control goes and the section explains itself, rather than leaving editable inputs whose values the
