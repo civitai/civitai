@@ -188,6 +188,7 @@ describe('a model version response', () => {
       [VERSION]: { images: [community, ...byVersion[VERSION].images] },
     }));
     const body = await prepare();
+    expect(mockCurated).toHaveBeenCalledTimes(1);
     expect(mockCurated).toHaveBeenCalledWith(expect.anything(), 'red');
     const [held] = mockHold.mock.calls[0];
     expect(held[VERSION].images.map((i: { url: string }) => i.url)).toEqual([

@@ -556,9 +556,8 @@ async function afterShowcaseChange(modelVersionIds: number[], modelIds: number[]
 }
 
 /**
- * After images are deleted: refreshes every showcase that featured them (a cover that was one of
- * them is skipped by readers at once, and cleared by the curation sweep). Showcase rows have no foreign key, so they are found by image id once the image row
- * is gone, which the post-based bust can't do.
+ * After images are deleted: refreshes every showcase that featured them. Showcase rows have no
+ * foreign key, so they are found by image id once the image row is gone.
  */
 export async function bustVersionShowcasesForImages(imageIds: number[]) {
   const ids = [...new Set(imageIds)];

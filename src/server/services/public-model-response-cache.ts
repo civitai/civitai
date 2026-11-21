@@ -18,15 +18,8 @@ export function publicModelResponseKey(
   return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:v2:${modelId}:${browsingLevel}`;
 }
 
-// Best-effort, fail-open invalidation of the origin-side public response cache for
-// GET /api/v1/models/[id] (see the handler). Called from bustMvCache so an
-// unpublish / takedown / update / delete drops the cached 200 immediately rather
-// than serving stale for up to the cache TTL globally. Busts BOTH browsing-level
-// keys the handler can write (all-levels for unrestricted regions, sfw-only for
-// region-restricted ones). Deletes the physical key — the handler's read keys off
-// key PRESENCE, so a clean delete forces a rebuild. A Redis error here must NOT
-// throw into the mutation path, so it is swallowed (the entry otherwise expires
-// via its TTL).
+// Drops the origin-side cached GET /api/v1/models/[id] response, whose read keys off the key's
+// presence. Never throws into the mutation path: a failed delete leaves the entry to its TTL.
 export async function bustPublicModelResponseCache(modelId: number | number[]) {
   if (!publicModelResponseCacheEnabled()) return;
   const modelIds = Array.isArray(modelId) ? modelId : [modelId];

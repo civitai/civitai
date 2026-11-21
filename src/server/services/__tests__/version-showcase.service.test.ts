@@ -404,12 +404,13 @@ describe('setVersionShowcase: what the write path refuses', () => {
 
   it('refuses an image its author removed, even on the other site', async () => {
     // The author removed it while it was featured on .red only; the save is for the other site.
-    dbMock.dbWrite.modelVersionShowcaseItem.findMany.mockImplementation((async (args: {
-      where: { removed?: boolean; site?: string };
-    }) =>
-      args.where.removed && (args.where.site ?? 'red') === 'red'
+    // The model's removals, read across its versions and sites.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (query: unknown) =>
+      ((query as { strings?: string[] })?.strings ?? (query as string[]))
+        .join('')
+        .includes('s."removed"')
         ? [{ imageId: 77 }]
-        : []) as never);
+        : answerShowcase(query as never)) as never);
     await expect(
       curation.setVersionShowcase({
         modelVersionId: VERSION,
@@ -561,6 +562,9 @@ const publishedVersion = () =>
   } as never);
 
 describe('moderatorRemoveFromVersionShowcase', () => {
+  beforeEach(() => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(2 as never);
+  });
   it('leaves a tombstone instead of deleting, so the creator can’t feature it again', async () => {
     publishedVersion();
     await curation.moderatorRemoveFromVersionShowcase({
@@ -570,6 +574,22 @@ describe('moderatorRemoveFromVersionShowcase', () => {
     });
     expect(tombstoneWrites()).toHaveLength(1);
     expect(dbMock.dbWrite.modelVersionShowcaseItem.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses an image not featured in that version, and records nothing', async () => {
+    publishedVersion();
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
+    await expect(
+      curation.moderatorRemoveFromVersionShowcase({
+        modelVersionId: VERSION,
+        imageId: 77,
+        moderatorId: 3,
+      })
+    ).rejects.toThrow(/isn’t featured/);
+    const audits = dbMock.dbWrite.$executeRaw.mock.calls.filter(([strings]) =>
+      (strings as string[]).join('').includes('INSERT INTO "ModActivity"')
+    );
+    expect(audits).toHaveLength(0);
   });
 
   it('records which moderator removed it, from which version', async () => {
@@ -765,6 +785,7 @@ describe('while showcases are paused', () => {
   });
 
   it('still lets a moderator remove an image', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(2 as never);
     await curation.moderatorRemoveFromVersionShowcase({
       modelVersionId: VERSION,
       imageId: 77,

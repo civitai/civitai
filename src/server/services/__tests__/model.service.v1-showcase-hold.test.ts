@@ -214,6 +214,7 @@ describe('/api/v1/models — a curated showcase', () => {
   it('is served in place of the default list, the .com one to a caller served only safe levels', async () => {
     primeOneModel({ minor: false, sfwOnly: false });
     expect(await servedByModelsApi()).toEqual([9, ...ALL_IDS]);
+    expect(mockCurated).toHaveBeenCalledTimes(1);
     expect(mockCurated).toHaveBeenCalledWith(expect.anything(), 'com');
   });
 

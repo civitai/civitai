@@ -262,12 +262,14 @@ export async function setVersionShowcase({
   const ids = unique.map((item) => item.imageId);
   const [ownerIds, tombstones, existing] = await Promise.all([
     getOwnerImageIds(modelVersionId, ids),
-    // An author's removal holds on both sites, whichever site the image was featured on.
+    // A removal holds on both sites and on every version of the model, wherever it was made.
     // primary: the tombstone check guarding this write.
-    dbWrite.modelVersionShowcaseItem.findMany({
-      where: { modelVersionId, removed: true },
-      select: { imageId: true },
-    }),
+    dbWrite.$queryRaw<{ imageId: number }[]>`
+      SELECT DISTINCT s."imageId"
+      FROM "ModelVersionShowcaseItem" s
+      JOIN "ModelVersion" mv ON mv.id = s."modelVersionId"
+      WHERE mv."modelId" = ${version.model.id} AND s."removed"
+    `,
     // primary: who is newly featured, to notify only them after the write.
     dbWrite.modelVersionShowcaseItem.findMany({
       where: { modelVersionId, removed: false, source: 'Community' },
@@ -442,7 +444,8 @@ export async function moderatorRemoveFromVersionShowcase({
   imageId: number;
   moderatorId: number;
 }) {
-  await tombstoneOnEverySite(modelVersionId, imageId);
+  const count = await tombstoneOnEverySite(modelVersionId, imageId);
+  if (!count) throw throwNotFoundError('This image isn’t featured in that showcase.');
   const { trackModActivity } = await import('~/server/services/moderator.service');
   await trackModActivity(moderatorId, {
     entityType: 'image',
