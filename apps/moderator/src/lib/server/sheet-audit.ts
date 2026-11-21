@@ -68,6 +68,7 @@ export function auditSheetSignout(event: {
     type: event.error ? 'error' : 'info',
     tier: 'general',
     moderatorId: event.moderatorId ?? undefined,
-    ended: event.ended,
+    // Under `payload`: the main dataset is at its field limit, so a new top-level key is dropped.
+    payload: { ended: event.ended },
   });
 }
