@@ -14,7 +14,9 @@ name: app-index-go
 # it stays hermetic (it runs the same contract and scenarios against the in-memory store).
 #
 # A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
-# dispatches this workflow when the label is added. A push to `main` is unfiltered.
+# dispatches this workflow when the label is added to a draft PR (on a ready PR, the PR's own run
+# here is not draft-gated, so nothing is dispatched).
+# A push to `main` has its own `push` paths filter below, and no draft gate.
 on:
   pull_request:
     branches: [main, release]

@@ -1,9 +1,19 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parse } from 'yaml';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
 import { classifyUnitJobs } from '../ci/full-ci-unit-shards.mjs';
 import { SUITES } from '../ci/lint-dispatch-passed.mjs';
@@ -471,8 +481,119 @@ describe('the full-ci label', () => {
       expect(step.env?.PR).toBe('${{ github.event.pull_request.number }}');
       // A continue-on-error dispatch step would read green after failing to start anything.
       expect(step['continue-on-error']).toBeUndefined();
-      expect(step.run).toContain('gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"');
-      expect(step.run).toContain('gh workflow run moderator-boot.yml -R "$REPO" --ref "$HEAD_REF"');
+    });
+
+    // Lint is always dispatched; the nine other draft-gated workflows only on a draft PR. On a
+    // ready PR their own PR runs on the commit are not draft-gated, so dispatching them only ran
+    // them again, unfiltered. Before, all nine were dispatched on every labelled PR.
+    describe('the other workflows', () => {
+      const step = (jobs[0].steps ?? []).find((s) => /gh workflow run lint\.yml/.test(s.run ?? ''));
+      const run = step?.run ?? '';
+
+      it('are dispatched by name only from a loop that skips on a skip verdict first', () => {
+        expect(run).not.toMatch(/gh workflow run (?!lint\.yml)[\w.-]+\.yml/);
+        const loop =
+          /for wf in "\$\{others\[@\]\}"; do\s+if \[ "\$\{verdict\[\$wf\]\}" = skip \]; then\s+echo [^\n]*\n\s+continue\n/;
+        const at = run.search(loop);
+        expect(at, 'no dispatch loop that skips on a skip verdict first').toBeGreaterThan(-1);
+        const dispatches = [...run.matchAll(/gh workflow run "\$wf"/g)].map((m) => m.index ?? -1);
+        expect(dispatches.length).toBeGreaterThan(0);
+        for (const i of dispatches) expect(i).toBeGreaterThan(at);
+      });
+
+      // Runs the step itself, with a stand-in `gh` that records each call (and answers the
+      // unit-shard poll with a decided, skipped `Unit tests`, so it dispatches) and a no-op
+      // `sleep`, and reads which workflows it dispatched.
+      describe('run with a stand-in gh', () => {
+        const tmp = mkdtempSync(path.join(tmpdir(), 'full-ci-dispatch-'));
+        afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+        const bin = path.join(tmp, 'bin');
+        mkdirSync(bin);
+        const log = path.join(tmp, 'gh.log');
+        writeFileSync(
+          path.join(bin, 'gh'),
+          [
+            '#!/usr/bin/env bash',
+            `echo "$*" >> '${log}'`,
+            'case "$*" in',
+            '  *"/actions/workflows/lint.yml/runs"*) echo 1 ;;',
+            '  *"/actions/runs/1/jobs"*) echo \'{"jobs":[{"name":"Unit tests","conclusion":"skipped"}]}\' ;;',
+            'esac',
+            '',
+          ].join('\n')
+        );
+        writeFileSync(path.join(bin, 'sleep'), '#!/usr/bin/env bash\n');
+        chmodSync(path.join(bin, 'gh'), 0o755);
+        chmodSync(path.join(bin, 'sleep'), 0o755);
+        const script = path.join(tmp, 'step.sh');
+        writeFileSync(script, run);
+
+        const dispatched = (draft: string) => {
+          writeFileSync(log, '');
+          execFileSync('bash', ['-e', script], {
+            cwd: path.resolve(HERE, '../..'),
+            env: {
+              PATH: `${bin}:${process.env.PATH}`,
+              GITHUB_STEP_SUMMARY: path.join(tmp, 'summary'),
+              GH_TOKEN: 'x',
+              HEAD_REF: 'some-branch',
+              HEAD_SHA: 'a'.repeat(40),
+              DRAFT: draft,
+              PR: '1',
+              REPO: 'o/r',
+            },
+            stdio: ['ignore', 'ignore', 'pipe'],
+          });
+          return readFileSync(log, 'utf8')
+            .split('\n')
+            .map((l) => /^workflow run (\S+)/.exec(l)?.[1])
+            .filter(Boolean)
+            .sort();
+        };
+        const NINE = [
+          'app-data-go.yml',
+          'app-index-go.yml',
+          'apps.yml',
+          'beacon-go.yml',
+          'content-policy-go.yml',
+          'feed-go.yml',
+          'moderator-boot.yml',
+          'registry-adapter-image.yml',
+          'storage-hook-runner-image.yml',
+        ];
+
+        it('on a ready PR, dispatches Lint and none of the nine', () => {
+          expect(dispatched('false')).toEqual(['lint.yml']);
+        });
+
+        it('on a draft PR, dispatches Lint and all nine', () => {
+          expect(dispatched('true')).toEqual(['lint.yml', ...NINE].sort());
+        });
+
+        it('dispatches all nine when the draft flag is anything but an exact false', () => {
+          expect(dispatched('')).toEqual(['lint.yml', ...NINE].sort());
+        });
+      });
+
+      // A ledger, so a new draft-gated workflow is either dispatched here or exempted here.
+      it('are exactly the draft-gated, dispatchable workflows other than Lint', () => {
+        const EXEMPT: Record<string, string> = {
+          'lint.yml': 'dispatched first, with its own inputs, and never filtered',
+          'feed-go-release.yml':
+            'a dispatch publishes a release for a tag input; its PR run only builds',
+        };
+        const gated = readdirSync(WORKFLOW_DIR)
+          .filter((f) => /\.ya?ml$/.test(f))
+          .filter((f) => {
+            const wf = load(f);
+            const jobsIfs = Object.values(wf.jobs ?? {}).map((j) => j.if ?? '');
+            return wf.on && 'workflow_dispatch' in wf.on && jobsIfs.some((c) => c.includes(FULL));
+          });
+        for (const f of Object.keys(EXEMPT)) expect(gated, f).toContain(f);
+        const others = /others=\(([^)]*)\)/.exec(run)?.[1].split(/\s+/).filter(Boolean) ?? [];
+        expect(others.length).toBeGreaterThan(0);
+        expect([...others].sort()).toEqual(gated.filter((f) => !(f in EXEMPT)).sort());
+      });
     });
 
     // A branch cut before `pr` existed rejects it with this text (measured: gh prints
