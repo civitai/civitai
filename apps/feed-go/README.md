@@ -33,6 +33,11 @@ Every answer on the public tRPC routes carries `X-Feed-Go-Served`: `go` when thi
 which is Node's own bytes, is never counted as Go matching Node. Same-origin, so no CORS
 `Access-Control-Expose-Headers` is needed for the browser to read it.
 
+Answers are superjson unless `TRPC_WRITE_DEVALUE=true` (the Node app's own switch, read the same way):
+then an answer this service computes for a web bundle new enough to read devalue, and not
+edge-cacheable, is devalue, byte for byte the body the Node app writes (DESIGN.md §5.2). Proxied
+answers and shadow comparisons are unchanged either way.
+
 ## Run locally
 
 **It just works with `pnpm dev`.** The root `dev` script (`scripts/dev-feed-go/launcher.mjs`) starts

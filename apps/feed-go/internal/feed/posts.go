@@ -576,7 +576,7 @@ func buildPost(postID int, images []Image, sortBy string, reviews map[int]Review
 		{Key: "nsfwLevel", Val: int64(nsfw)},
 		{Key: "modelVersionId", Val: first.ModelVerID},
 		{Key: "publishedAt", Val: first.PublishedAt},
-		{Key: "sortAt", Val: first.SortAt},
+		{Key: "sortAt", Val: first.SortAtWire()},
 		{Key: "createdAt", Val: createdAt},
 		{Key: "user", Val: first.User},
 	}

@@ -279,7 +279,7 @@ func integWantUser(t *testing.T, u BasicUser, id int, username, image any, delet
 		}
 		return
 	}
-	if at, ok := u.DeletedAt.(time.Time); !ok || !at.Equal(*deletedAt) {
+	if at, ok := u.DeletedAt.(*time.Time); !ok || !at.Equal(*deletedAt) {
 		t.Fatalf("user %d deletedAt = %#v, want %v", id, u.DeletedAt, *deletedAt)
 	}
 }

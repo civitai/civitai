@@ -72,6 +72,11 @@ type Metrics struct {
 	JWKSStale prometheus.Counter
 	// SessionCookieSlot counts resolved sessions by the cookie slot they were read from (auth.CookieSlot).
 	SessionCookieSlot *prometheus.CounterVec
+	// DevalueWrites counts the answers a public tRPC route computed and wrote, by write format
+	// (endpoint, result: devalue | superjson_fallback | superjson). superjson_fallback is a request
+	// that would have been devalue whose value devalue refused (computed.encode), so it was written as
+	// superjson: the app's devalueFallbackObserver case, also logged once per answer.
+	DevalueWrites *prometheus.CounterVec
 	// FallbackProxyErrors counts fallback requests the proxy answered 502 because the Node app failed
 	// before a response started, by reason (upstream | canceled). A failure mid-body aborts the
 	// response with http.ErrAbortHandler and is not counted. Not per endpoint.
@@ -234,6 +239,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_jwks_stale_total",
 			Help: "Times the JWKS key set was dropped (sessions verify as signed out) because no fetch had succeeded for FEED_GO_JWKS_MAX_STALENESS_MS.",
 		}),
+		DevalueWrites: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_devalue_write_total",
+			Help: "Answers written on a public tRPC route, by format: devalue (TRPC_WRITE_DEVALUE on, a capable web bundle, not edge-cacheable), superjson_fallback (would have been devalue, but devalue refused the value), superjson (every other answer).",
+		}, []string{EndpointLabel, "result"}),
 		SessionCookieSlot: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_session_cookie_slot_total",
 			Help: "Sessions resolved from a session cookie, by the cookie slot they were read from (host | shared).",
@@ -252,6 +261,9 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	for _, e := range []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite} {
 		m.ServeInFlight[e] = serveInFlight.WithLabelValues(e)
 		m.Fallbacks.WithLabelValues(e, "serve", "bulkhead")
+		for _, r := range []string{DevalueWriteDevalue, DevalueWriteFallback, DevalueWriteSuperjson} {
+			m.DevalueWrites.WithLabelValues(e, r)
+		}
 	}
 	// Seed the dropped counter per endpoint, and the panic and refresh counters, so "none" reads 0
 	// rather than an absent series.
@@ -298,7 +310,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
 		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight,
-		m.SessionCookieSlot)
+		m.SessionCookieSlot, m.DevalueWrites)
 	for _, s := range []string{"host", "shared"} {
 		m.SessionCookieSlot.WithLabelValues(s)
 	}

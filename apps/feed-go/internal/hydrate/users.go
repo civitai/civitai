@@ -13,7 +13,7 @@ type BasicUser struct {
 	ID        int
 	Username  any // string or nil
 	Image     any // string or nil
-	DeletedAt any // time.Time or nil
+	DeletedAt any // *time.Time (one Date per user, basicUserFrom) or nil
 }
 
 // basicUsersFrom is getBasicDataForUsers over the `basic-users` cache's answer got for (unique) ids
@@ -46,7 +46,10 @@ func (s *Sources) basicUsersFrom(ctx context.Context, ids []int, got map[int]Ent
 func basicUserFrom(id int, m map[string]any) BasicUser {
 	u := BasicUser{ID: id, Username: m["username"], Image: m["image"], DeletedAt: m["deletedAt"]}
 	if t, ok := u.DeletedAt.(time.Time); ok {
-		u.DeletedAt = t
+		// One Date per user: every image's `user` carries `deletedAt: userData?.deletedAt ?? null`, the
+		// same Date from the user's cached entry, so the devalue writer writes it once (a pointer is
+		// that identity; the superjson writer reads through it).
+		u.DeletedAt = &t
 	}
 	return u
 }

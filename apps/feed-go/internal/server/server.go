@@ -25,6 +25,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
+	"github.com/civitai/civitai/apps/feed-go/internal/devalue"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
@@ -150,6 +151,12 @@ type Server struct {
 	// route. Off, every request there is the `model-getall-off` fallback (proxied to the Node app)
 	// before anything is computed or a serve slot taken.
 	ServeModelGetAll bool
+	// WriteDevalue is TRPC_WRITE_DEVALUE, the main app's own switch (default off: every answer is
+	// superjson). On, an answer this service computes on a public route is written as devalue, byte for
+	// byte as the app writes it, exactly when the app would: a web bundle that can read it
+	// (trpc.CanDecodeDevalueResponse) and an answer that is not edge-cacheable (trpc.DevalueWrite).
+	// Proxied answers are the app's own bytes, and the shadow comparison always computes superjson.
+	WriteDevalue bool
 	// V1Models serves the REST `/api/v1/models` and `/api/v1/models/[id]` shadows (v1models.go); nil =
 	// every such sample falls back.
 	V1Models *V1ModelsDeps
@@ -250,9 +257,18 @@ func (s *Server) aloneInFlight() bool {
 // computeWithin releases an answer it discards.
 type computed struct {
 	payload []byte
-	// buf owns payload when it is pooled (nil when payload is an ordinary slice, as in tests).
-	buf *superjson.Buffer
-	ttl *trpc.CacheTTL
+	// buf owns payload when it is a pooled superjson payload, dbuf when it is a pooled devalue one (both
+	// nil when payload is an ordinary slice, as in tests).
+	buf  *superjson.Buffer
+	dbuf *devalue.Buffer
+	// value is the answer payload encodes (nil for the REST answers and in tests that set payload).
+	value any
+	// devalue: payload is devalue (a JSON string literal), not the superjson envelope (encode).
+	devalue bool
+	// devalueRefused is why devalue refused a value encode would have written as devalue (payload is
+	// then superjson); nil otherwise.
+	devalueRefused error
+	ttl            *trpc.CacheTTL
 	// trivial: answered without loading any image (feed.V1Answer.Trivial). Recorded as outcome
 	// served_empty and result match_empty, so the per-served-call CPU and the match rate cover only
 	// answers that did the work.
@@ -275,14 +291,13 @@ func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error
 	if err != nil {
 		return nil, err
 	}
-	buf, err := superjson.SerializeBuffer(res.Value())
-	if err != nil {
-		return nil, err
-	}
-	out := &computed{payload: buf.Bytes(), buf: buf}
+	out := &computed{value: res.Value()}
 	if signedOut {
 		// createContext: cacheable only without a session user (a banned user still has one).
 		out.ttl = &trpc.SignedOutTTL
+	}
+	if err := out.encode(ctx); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -336,15 +351,14 @@ func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*compute
 	if err != nil {
 		return nil, err
 	}
-	buf, err := superjson.SerializeBuffer(ans.Value)
-	if err != nil {
-		return nil, err
-	}
-	out := &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}
+	out := &computed{value: ans.Value, trivial: ans.Trivial}
 	if cacheable {
 		// createContext: cacheable without a session user and without a verified crawler. Nothing in
 		// this procedure's chain lowers it, so Node answers such an unbatched call public.
 		out.ttl = &trpc.SignedOutTTL
+	}
+	if err := out.encode(ctx); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -403,14 +417,13 @@ func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*comp
 	if err != nil {
 		return nil, err
 	}
-	buf, err := superjson.SerializeBuffer(ans.Value)
-	if err != nil {
-		return nil, err
-	}
-	out := &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}
+	out := &computed{value: ans.Value, trivial: ans.Trivial}
 	if signedOut {
 		// createContext: cacheable without a session user (a banned user still has one).
 		out.ttl = &trpc.SignedOutTTL
+	}
+	if err := out.encode(ctx); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -500,7 +513,53 @@ func (c *computed) release() {
 		return
 	}
 	c.buf.Release()
-	c.buf, c.payload = nil, nil
+	c.dbuf.Release()
+	c.buf, c.dbuf, c.payload = nil, nil, nil
+}
+
+// encode writes c.value into payload in the format the app writes this answer in: devalue when the
+// request is marked for it (Server.WriteDevalue and a capable client, see serve) and the answer is not
+// edge-cacheable (c.ttl), else superjson. Set c.ttl first. The shadow and probe paths never mark their
+// requests, so their answers are superjson, the format the Node sampler sends. A value devalue
+// refuses (a json column that is not JSON) is written as superjson for that answer, as the app's
+// writer falls back (writeSerializeWithFallback).
+func (c *computed) encode(ctx context.Context) error {
+	if trpc.DevalueWrite(ctx, c.ttl) {
+		b, err := devalue.PayloadBuffer(c.value)
+		if err == nil {
+			c.payload, c.dbuf, c.devalue = b.Bytes(), b, true
+			return nil
+		}
+		c.devalueRefused = err
+	}
+	buf, err := superjson.SerializeBuffer(c.value)
+	if err != nil {
+		return err
+	}
+	c.payload, c.buf = buf.Bytes(), buf
+	return nil
+}
+
+// Results of feed_go_devalue_write_total.
+const (
+	DevalueWriteDevalue   = "devalue"
+	DevalueWriteFallback  = "superjson_fallback"
+	DevalueWriteSuperjson = "superjson"
+)
+
+// noteWriteFormat counts a written answer by format, and logs a devalue fallback: the answer is
+// correct (superjson, which every client reads), but a value devalue refuses is a payload shape to
+// fix, as the app reports it through devalueFallbackObserver.
+func (s *Server) noteWriteFormat(ctx context.Context, endpoint string, c *computed) {
+	result := DevalueWriteSuperjson
+	switch {
+	case c.devalue:
+		result = DevalueWriteDevalue
+	case c.devalueRefused != nil:
+		result = DevalueWriteFallback
+		s.Log.Log(ctx, slog.LevelWarn, "devalue refused the answer; wrote superjson", traceAttrs(ctx, []any{"endpoint", endpoint, "err", c.devalueRefused.Error()})...)
+	}
+	s.Metrics.DevalueWrites.WithLabelValues(endpoint, result).Inc()
 }
 
 // apiRequestPolicy is the part of applyApiRequestPolicy (src/server/middleware/api-request-policy.ts)
@@ -786,6 +845,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 	if s.Tracer != nil {
 		r = r.WithContext(ctx)
 	}
+	if s.WriteDevalue && trpc.CanDecodeDevalueResponse(r.Header) {
+		// runWithResponseWriteFormat: the answer may be devalue (encode decides, after the cache policy).
+		r = r.WithContext(trpc.WithDevalueWrite(r.Context()))
+	}
 	var (
 		c   *computed
 		err error
@@ -816,6 +879,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		}
 		w.Header().Set(ServedByHeader, ServedByGo)
 		trpc.WriteResult(w, c.payload, c.ttl)
+		s.noteWriteFormat(ctx, endpoint, c)
 		c.release() // WriteResult has sent payload and keeps no reference
 		setOutcome(span, served)
 		s.Metrics.Requests.WithLabelValues(endpoint, "serve", served).Inc()
