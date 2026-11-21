@@ -55,12 +55,28 @@ const resultOf = <T extends z.ZodType>(schema: T, answer: unknown): z.infer<T> =
 
 // Definitions change only by a hand-applied version, so a minute's staleness costs nothing and keeps
 // every form page view from being a cross-app call (single-flight, failures not cached).
-export const getRequestForms = createTtlMemo(
-  async (): Promise<RequestForm[]> =>
-    resultOf(z.object({ definitions: z.array(formSchema) }), await casesClient.caseDefinitions())
-      .definitions,
-  60_000
-);
+// Each form is checked on its own, so one bad definition takes down only its own form.
+export const getRequestForms = createTtlMemo(async (): Promise<RequestForm[]> => {
+  const { definitions } = resultOf(
+    z.object({ definitions: z.array(z.unknown()) }),
+    await casesClient.caseDefinitions()
+  );
+  const forms: RequestForm[] = [];
+  for (const d of definitions) {
+    const form = formSchema.safeParse(d);
+    if (form.success) forms.push(form.data);
+    else
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'takedown-request-form-skipped',
+          processKey: (d as { key?: unknown } | null)?.key,
+        },
+        'moderator-app'
+      );
+  }
+  return forms;
+}, 60_000);
 
 export type SubmitResult =
   | { ok: true; publicRef: string }

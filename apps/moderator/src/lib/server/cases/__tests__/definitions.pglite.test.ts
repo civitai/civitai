@@ -62,7 +62,7 @@ describe('enabledDefinitions', () => {
 });
 
 describe('publicDefinition', () => {
-  it('carries only the public parts: the fields and the form\'s own contact mailbox', () => {
+  it("carries only the public parts: the fields and the form's own contact mailbox", () => {
     const view = publicDefinition(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       minimal('dmca-notice') as any
