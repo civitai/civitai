@@ -21,12 +21,25 @@ export interface MetricRowSink {
 
 type InsertClient = Pick<ClickHouseClient, 'insert' | 'close'>;
 
+/** A single secondary insert is abandoned (and retried later) after this long. */
+export const SECONDARY_INSERT_TIMEOUT_MS = 10_000;
+/** Upper bound on the best-effort drain at shutdown. */
+export const SECONDARY_SHUTDOWN_TIMEOUT_MS = 5_000;
+/**
+ * Most rows sent in one secondary insert. The primary flushes at 10k rows in steady state, so a
+ * normal batch goes out unsplit; a backlog flush (the primary drains its whole queue, up to 500k
+ * rows, after an outage) is split so no single insert encodes the whole backlog at once and the
+ * overflow bound drops whole chunks instead of whole backlogs.
+ */
+export const SECONDARY_SEND_CHUNK_ROWS = 10_000;
+
 export type SecondaryMetricTeeOptions = {
   /** Fully-qualified target table, e.g. `metrics.entityMetricEvents_month`. */
   table: string;
+  /** Rows held for the secondary (queued + in flight) before the oldest queued chunks drop. */
   maxQueueRows: number;
-  insertTimeoutMs: number;
-  shutdownTimeoutMs: number;
+  insertTimeoutMs?: number;
+  shutdownTimeoutMs?: number;
   baseBackoffMs?: number;
   maxBackoffMs?: number;
 };
@@ -38,14 +51,21 @@ type DropReason = 'overflow' | 'shutdown';
  * primary path: enqueue() is synchronous and swallows everything, and the sends happen on
  * this object's own loop with its own client.
  *
- * The queue is bounded by rows. When it is over the bound the OLDEST queued batches are
- * dropped (the newest batch is always kept) and counted, because the destination's gaps are
- * repaired out of band. A failed insert is retried with capped exponential backoff; the rows
- * are idempotent downstream, so a retry that duplicates a slow-but-successful insert is fine.
+ * Incoming rows are split into chunks of at most `chunkRows` (SECONDARY_SEND_CHUNK_ROWS, or
+ * half the bound when the bound is smaller, so one chunk in flight plus one queued always fits).
+ * The rows held (queued + the chunk in flight) are bounded by maxQueueRows: when over it the
+ * OLDEST queued chunks are dropped and counted, because the destination's gaps are repaired out
+ * of band. A failed insert is retried with capped exponential backoff; the rows are idempotent
+ * downstream, so a retry that duplicates a slow-but-successful insert is fine.
+ *
+ * Sends start on a later event-loop turn (setImmediate), never inside enqueue(): the client
+ * encodes array values synchronously when insert() is called, and that must not happen on the
+ * caller's path.
  */
 export class SecondaryMetricTee implements MetricRowSink {
   private queue: MetricEventRow[][] = [];
   private queuedRows = 0;
+  private inFlightRows = 0;
   private pumpPromise: Promise<void> | null = null;
   private consecutiveFailures = 0;
   private draining = false;
@@ -53,18 +73,30 @@ export class SecondaryMetricTee implements MetricRowSink {
   private cancelSleep: (() => void) | null = null;
   private readonly baseBackoffMs: number;
   private readonly maxBackoffMs: number;
+  private readonly insertTimeoutMs: number;
+  private readonly shutdownTimeoutMs: number;
+  private readonly chunkRows: number;
 
   constructor(private client: InsertClient, private opts: SecondaryMetricTeeOptions) {
     this.baseBackoffMs = opts.baseBackoffMs ?? 1_000;
     this.maxBackoffMs = opts.maxBackoffMs ?? 30_000;
+    this.insertTimeoutMs = opts.insertTimeoutMs ?? SECONDARY_INSERT_TIMEOUT_MS;
+    this.shutdownTimeoutMs = opts.shutdownTimeoutMs ?? SECONDARY_SHUTDOWN_TIMEOUT_MS;
+    this.chunkRows = Math.max(
+      1,
+      Math.min(SECONDARY_SEND_CHUNK_ROWS, Math.floor(opts.maxQueueRows / 2))
+    );
   }
 
   enqueue(rows: MetricEventRow[]): void {
     try {
       if (this.stopped || rows.length === 0) return;
-      this.queue.push(rows);
-      this.queuedRows += rows.length;
-      this.enforceBound();
+      for (let i = 0; i < rows.length; i += this.chunkRows) {
+        const chunk = rows.slice(i, i + this.chunkRows);
+        this.queue.push(chunk);
+        this.queuedRows += chunk.length;
+        this.enforceBound();
+      }
       this.updateGauge();
       if (!this.pumpPromise) this.startPump();
     } catch (err) {
@@ -72,7 +104,7 @@ export class SecondaryMetricTee implements MetricRowSink {
     }
   }
 
-  /** Rows waiting to be sent (excludes the batch in flight). */
+  /** Rows waiting to be sent (excludes the chunk in flight). */
   get pendingRows(): number {
     return this.queuedRows;
   }
@@ -86,7 +118,7 @@ export class SecondaryMetricTee implements MetricRowSink {
    * Best-effort drain, bounded by timeoutMs, then close the client. Never throws and never
    * waits longer than about timeoutMs (+ at most 1s for close()).
    */
-  async stop(timeoutMs: number = this.opts.shutdownTimeoutMs): Promise<void> {
+  async stop(timeoutMs: number = this.shutdownTimeoutMs): Promise<void> {
     if (this.stopped) return;
     this.draining = true;
     this.cancelSleep?.();
@@ -107,7 +139,9 @@ export class SecondaryMetricTee implements MetricRowSink {
   }
 
   private startPump(): void {
-    this.pumpPromise = this.pump()
+    // Yield to the event loop first: enqueue() must stay O(1) for its caller.
+    this.pumpPromise = new Promise<void>((resolve) => setImmediate(resolve))
+      .then(() => this.pump())
       .catch((err) => {
         logger.error({ err }, 'Secondary metric tee send loop crashed');
       })
@@ -119,13 +153,16 @@ export class SecondaryMetricTee implements MetricRowSink {
   private async pump(): Promise<void> {
     while (!this.stopped && this.queue.length > 0) {
       const batch = this.shiftOldest();
+      this.inFlightRows = batch.length;
       this.updateGauge();
 
       try {
         await this.insert(batch);
+        this.inFlightRows = 0;
         secondaryTeeMetrics.rowsSent.inc(batch.length);
         this.consecutiveFailures = 0;
       } catch (err) {
+        this.inFlightRows = 0;
         secondaryTeeMetrics.batchesFailed.inc();
         this.consecutiveFailures++;
         logger.warn(
@@ -134,6 +171,7 @@ export class SecondaryMetricTee implements MetricRowSink {
         );
         if (this.stopped) {
           this.drop(batch, 'shutdown');
+          this.updateGauge();
           return;
         }
         // Back at the head: it is the oldest, so it is the first to go if the queue is over.
@@ -145,6 +183,7 @@ export class SecondaryMetricTee implements MetricRowSink {
         if (this.draining) return;
         await this.sleep(this.backoffMs());
       }
+      this.updateGauge();
     }
   }
 
@@ -159,15 +198,15 @@ export class SecondaryMetricTee implements MetricRowSink {
     });
     // If the timeout wins, the aborted insert rejects later; that rejection is expected.
     sent.catch(() => undefined);
-    await raceTimeout(sent, this.opts.insertTimeoutMs, () => {
+    await raceTimeout(sent, this.insertTimeoutMs, () => {
       abort.abort();
-      throw new Error(`secondary insert timed out after ${this.opts.insertTimeoutMs}ms`);
+      throw new Error(`secondary insert timed out after ${this.insertTimeoutMs}ms`);
     });
   }
 
-  /** Drop the oldest queued batches until the queue is within its bound; the newest stays. */
+  /** Drop the oldest queued chunks until the rows held (queued + in flight) are within the bound. */
   private enforceBound(): void {
-    while (this.queuedRows > this.opts.maxQueueRows && this.queue.length > 1) {
+    while (this.queuedRows + this.inFlightRows > this.opts.maxQueueRows && this.queue.length > 0) {
       this.drop(this.shiftOldest(), 'overflow');
     }
   }
@@ -203,7 +242,7 @@ export class SecondaryMetricTee implements MetricRowSink {
   }
 
   private updateGauge(): void {
-    secondaryTeeMetrics.queueRows.set(this.queuedRows);
+    secondaryTeeMetrics.queueRows.set(this.queuedRows + this.inFlightRows);
   }
 }
 
@@ -246,20 +285,28 @@ export function createSecondaryMetricTee(
 ): SecondaryMetricTee | null {
   if (!cfg.enabled) return null;
 
-  const client = makeClient({
-    url: cfg.url,
-    username: cfg.username,
-    password: cfg.password,
-    database: cfg.database,
-    request_timeout: cfg.insertTimeoutMs,
-    // One send at a time; a second socket covers a stuck one being torn down.
-    max_open_connections: 2,
-  });
+  let client: InsertClient;
+  try {
+    // createClient validates the URL synchronously; a bad one must not take the primary down.
+    client = makeClient({
+      url: cfg.url,
+      username: cfg.username,
+      password: cfg.password,
+      database: cfg.database,
+      request_timeout: SECONDARY_INSERT_TIMEOUT_MS,
+      // One send at a time; a second socket covers a stuck one being torn down.
+      max_open_connections: 2,
+    });
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      'Secondary metric tee disabled: could not create its ClickHouse client (check CLICKHOUSE_SECONDARY_URL)'
+    );
+    return null;
+  }
   logger.info({ database: cfg.database, table }, 'Secondary metric tee enabled');
   return new SecondaryMetricTee(client, {
     table: `${cfg.database}.${table}`,
     maxQueueRows: cfg.maxQueueRows,
-    insertTimeoutMs: cfg.insertTimeoutMs,
-    shutdownTimeoutMs: cfg.shutdownTimeoutMs,
   });
 }

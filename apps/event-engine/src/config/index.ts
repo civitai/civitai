@@ -70,12 +70,8 @@ export type SecondaryClickhouseConfig = {
   username: string;
   password: string;
   database: string;
-  /** Rows held in memory for the secondary destination before the oldest batches are dropped. */
+  /** Rows held for the secondary destination (queued + in flight) before the oldest are dropped. */
   maxQueueRows: number;
-  /** A single secondary insert is abandoned (and retried later) after this long. */
-  insertTimeoutMs: number;
-  /** Upper bound on the best-effort drain at shutdown. */
-  shutdownTimeoutMs: number;
 };
 
 /**
@@ -94,8 +90,6 @@ export function secondaryClickhouseConfig(
     password: env.CLICKHOUSE_SECONDARY_PASSWORD ?? '',
     database: env.CLICKHOUSE_SECONDARY_DATABASE?.trim() || 'metrics',
     maxQueueRows: positiveInt(env.METRICS_SECONDARY_TEE_MAX_QUEUE_ROWS, 200_000),
-    insertTimeoutMs: positiveInt(env.METRICS_SECONDARY_TEE_INSERT_TIMEOUT_MS, 10_000),
-    shutdownTimeoutMs: positiveInt(env.METRICS_SECONDARY_TEE_SHUTDOWN_TIMEOUT_MS, 5_000),
   };
 }
 

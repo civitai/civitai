@@ -157,7 +157,7 @@ export const secondaryTeeMetrics = {
   }),
   queueRows: new Gauge({
     name: 'mew_metric_secondary_queue_rows',
-    help: 'Rows waiting for the secondary destination (excluding the batch in flight)',
+    help: 'Rows held for the secondary destination: queued plus the chunk in flight',
     registers: [register],
   }),
 };

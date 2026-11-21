@@ -14,6 +14,7 @@ vi.mock('@clickhouse/client', async (importOriginal) => {
 });
 
 import { createClient } from '@clickhouse/client';
+import { logger } from '@/utils/logger';
 import { config, secondaryClickhouseConfig, SecondaryClickhouseConfig } from '@/config';
 import { secondaryTeeMetrics } from '@/metrics';
 import { EventProcessor } from '@/services/event-processor';
@@ -111,8 +112,6 @@ const enabledCfg: SecondaryClickhouseConfig = {
   password: 'tee_pass',
   database: 'tee_db',
   maxQueueRows: 1000,
-  insertTimeoutMs: 1000,
-  shutdownTimeoutMs: 200,
 };
 
 const originalSecondary = config.clickhouse.secondary;
@@ -280,6 +279,8 @@ describe('(3) a failing or hanging secondary never touches the primary path', ()
       const started = Date.now();
       expect(await settlesWithin(500, batcher.flush())).toBe('settled');
       expect(Date.now() - started).toBeLessThan(500);
+      expect(secondary.inserts).toHaveLength(0); // the send starts on a later event-loop turn
+      await new Promise((r) => setImmediate(r));
       expect(secondary.inserts).toHaveLength(1);
       expect(primary.inserts.map((i) => i.values)).toEqual([rows(4, 6)]);
       expect(commits).toEqual([new Map([['metrics:3', '9001']])]);
@@ -331,49 +332,129 @@ describe('(3) a failing or hanging secondary never touches the primary path', ()
   });
 });
 
-describe('(4) overflow drops the oldest batches and counts them', () => {
-  test('bounded by rows; oldest queued batch dropped, newest kept, drop counted', async () => {
+describe('(4) overflow drops the oldest chunks and counts them', () => {
+  test('bounded by rows held; oldest queued chunk dropped, newest kept, drop counted', async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
     const secondary = fakeClient(async (_a, call) => {
-      if (call === 1) await gate; // first batch stays in flight
+      if (call === 1) await gate; // first chunk stays in flight
     });
-    const t = tee(secondary.client, { maxQueueRows: 5 });
+    const t = tee(secondary.client, { maxQueueRows: 10 }); // chunks of at most 5 rows
     const batchesBefore = await counter(secondaryTeeMetrics.batchesDropped, { reason: 'overflow' });
     const rowsBefore = await counter(secondaryTeeMetrics.rowsDropped, { reason: 'overflow' });
 
-    t.enqueue(rows(2, 10)); // in flight
-    t.enqueue(rows(3, 11)); // queued: 3
-    t.enqueue(rows(2, 12)); // queued: 5 (at the bound, nothing dropped)
-    expect(t.pendingRows).toBe(5);
-    t.enqueue(rows(4, 13)); // queued: 9 > 5 -> drop seed 11 (3) -> 6 > 5 -> drop seed 12 (2) -> 4
-    expect(t.pendingRows).toBe(4);
-    expect((await secondaryTeeMetrics.queueRows.get()).values[0].value).toBe(4);
+    t.enqueue(rows(2, 10));
+    await new Promise((r) => setImmediate(r)); // in flight: 2
+    expect(secondary.inserts).toHaveLength(1);
+    t.enqueue(rows(3, 11)); // held 5
+    t.enqueue(rows(3, 12)); // held 8
+    expect(t.pendingRows).toBe(6);
+    t.enqueue(rows(4, 13)); // held 12 > 10 -> drop seed 11 (3) -> held 9
+    expect(t.pendingRows).toBe(7);
+    expect((await secondaryTeeMetrics.queueRows.get()).values[0].value).toBe(9);
     expect(
       (await counter(secondaryTeeMetrics.batchesDropped, { reason: 'overflow' })) - batchesBefore
-    ).toBe(2);
+    ).toBe(1);
     expect(
       (await counter(secondaryTeeMetrics.rowsDropped, { reason: 'overflow' })) - rowsBefore
-    ).toBe(5);
+    ).toBe(3);
 
     release();
     await t.idle();
-    expect(secondary.inserts.map((i) => i.values)).toEqual([rows(2, 10), rows(4, 13)]);
+    expect(secondary.inserts.map((i) => i.values)).toEqual([rows(2, 10), rows(3, 12), rows(4, 13)]);
+  });
+});
+
+describe('(5) audit round 1', () => {
+  const badUrlCfg: SecondaryClickhouseConfig = { ...enabledCfg, url: 'clickhouse-2:8123' };
+
+  test('a malformed secondary URL disables the tee; EventProcessor and the primary are unaffected', async () => {
+    config.clickhouse.secondary = badUrlCfg;
+    let p: { metricBatcher: { secondary: unknown } } | undefined;
+    expect(() => {
+      p = new EventProcessor(1) as unknown as { metricBatcher: { secondary: unknown } };
+    }).not.toThrow();
+    expect(p!.metricBatcher.secondary).toBeNull();
+
+    vi.mocked(logger.error).mockClear();
+    const t = createSecondaryMetricTee(badUrlCfg, 'entityMetricEvents_month');
+    expect(t).toBeNull();
+    expect(vi.mocked(logger.error)).toHaveBeenCalledTimes(1);
+
+    const primary = fakeClient(async () => undefined);
+    const batcher = new MetricEventBatcher(primary.client as never, 60_000, 10_000, 500_000, t);
+    const commits: Map<string, string>[] = [];
+    batcher.onFlushed((s) => void commits.push(s));
+    for (const e of events(3, 31)) batcher.add(e);
+    batcher.markOffset({ topic: 'metrics', partition: 2, offset: '77' });
+    await batcher.flush();
+    expect(primary.inserts.map((i) => i.values)).toEqual([rows(3, 31)]);
+    expect(commits).toEqual([new Map([['metrics:2', '77']])]);
   });
 
-  test('a single batch larger than the bound is still kept (the newest is never dropped)', async () => {
+  test('enqueue does O(1) work: the insert (which encodes eagerly) starts on a later event-loop turn', async () => {
+    const primary = fakeClient(async () => undefined);
+    const secondary = fakeClient(async () => undefined);
+    const t = tee(secondary.client);
+    const batcher = new MetricEventBatcher(primary.client as never, 60_000, 10_000, 500_000, t);
+    for (const e of events(3, 32)) batcher.add(e);
+    await batcher.flush();
+    // Drain every pending microtask: deferring with a microtask would not be enough.
+    for (let i = 0; i < 100; i++) await Promise.resolve();
+    expect(secondary.client.insert).not.toHaveBeenCalled();
+
+    await new Promise((r) => setImmediate(r));
+    expect(secondary.inserts.map((i) => i.values)).toEqual([rows(3, 32)]);
+    await t.idle();
+  });
+
+  test('rows held (queued + in flight) never exceed the bound, even for one oversized batch', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const heldAtInsert: number[] = [];
+    let t!: SecondaryMetricTee;
+    const secondary = fakeClient(async (args, call) => {
+      heldAtInsert.push(args.values.length + t.pendingRows);
+      if (call === 1) await gate;
+    });
+    // Bound 5 -> send chunks of at most 2 rows, so one chunk in flight plus one queued fits.
+    t = tee(secondary.client, { maxQueueRows: 5 });
+    const rowsBefore = await counter(secondaryTeeMetrics.rowsDropped, { reason: 'overflow' });
+
+    t.enqueue(rows(2, 33));
+    await new Promise((r) => setImmediate(r));
+    expect(secondary.inserts).toHaveLength(1); // 2 rows in flight
+
+    const big = rows(12, 34);
+    t.enqueue(big);
+    // 2 in flight + at most 3 queued; whole chunks only, so 2 queued (the newest chunk).
+    expect(2 + t.pendingRows).toBeLessThanOrEqual(5);
+    expect(t.pendingRows).toBe(2);
+    expect((await secondaryTeeMetrics.queueRows.get()).values[0].value).toBe(4);
+    expect(
+      (await counter(secondaryTeeMetrics.rowsDropped, { reason: 'overflow' })) - rowsBefore
+    ).toBe(10);
+
+    release();
+    await t.idle();
+    expect(secondary.inserts.map((i) => i.values)).toEqual([rows(2, 33), big.slice(10, 12)]);
+    expect(Math.max(...heldAtInsert)).toBeLessThanOrEqual(5);
+  });
+
+  test('the queue gauge counts the rows in flight', async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
     const secondary = fakeClient(async (_a, call) => {
       if (call === 1) await gate;
     });
-    const t = tee(secondary.client, { maxQueueRows: 2 });
-    t.enqueue(rows(1, 14)); // in flight
-    t.enqueue(rows(1, 15)); // queued: 1
-    t.enqueue(rows(7, 16)); // queued: 8 > 2 -> drop seed 15 -> 7, the only (newest) batch: kept
-    expect(t.pendingRows).toBe(7);
+    const t = tee(secondary.client, { maxQueueRows: 100 });
+    t.enqueue(rows(3, 35));
+    await new Promise((r) => setImmediate(r));
+    expect(secondary.inserts).toHaveLength(1); // 3 rows in flight
+    t.enqueue(rows(2, 36));
+    expect((await secondaryTeeMetrics.queueRows.get()).values[0].value).toBe(5);
     release();
     await t.idle();
-    expect(secondary.inserts.map((i) => i.values)).toEqual([rows(1, 14), rows(7, 16)]);
+    expect((await secondaryTeeMetrics.queueRows.get()).values[0].value).toBe(0);
   });
 });
