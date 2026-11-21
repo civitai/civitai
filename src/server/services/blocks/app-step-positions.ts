@@ -1,7 +1,10 @@
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { STEP_MEDIA_INPUT_KEYS } from '~/server/services/blocks/step-media-keys';
-import { isTextRefPath, WORKFLOW_ARGUMENTS_REF } from '~/server/services/blocks/workflow-graph';
+import {
+  isMediaLikeSegment,
+  WORKFLOW_ARGUMENTS_REF,
+} from '~/server/services/blocks/workflow-graph';
 import {
   isOwnOrchestratorFile,
   mediaReferenceRefusal,
@@ -196,8 +199,8 @@ export function findStepPositionProblem(
   const loopItems = new Map<string, readonly unknown[]>();
 
   // Below a media key every string is held to `mediaReferenceRefusal`. A reference to another
-  // step's media output passes: this workflow produces it at run time. A text output does not pass,
-  // since the app's prompt shapes it.
+  // step's output passes only when its path ends on a media field: this workflow produces that value
+  // at run time. Any other output (text the app's prompt shapes) is refused.
   const visitMedia = (value: unknown, key: string, depth: number): StepPositionProblem | null => {
     if (depth > MAX_DEPTH) return { form: 'reference', key };
     if (typeof value === 'string')
@@ -241,9 +244,15 @@ export function findStepPositionProblem(
       const items = loopItems.get(target.toLowerCase());
       if (items) return visitMedia(items, key, depth + 1);
       const pathKey = Object.keys(reference).find((k) => k.toLowerCase() === 'path');
-      return isTextRefPath(pathKey === undefined ? undefined : reference[pathKey])
-        ? { form: 'reference', key }
-        : null;
+      const path = pathKey === undefined ? undefined : reference[pathKey];
+      const last =
+        typeof path === 'string'
+          ? path
+              .split(/[.[\]]+/)
+              .filter(Boolean)
+              .pop()
+          : undefined;
+      return last !== undefined && isMediaLikeSegment(last) ? null : { form: 'reference', key };
     }
     for (const [childKey, child] of Object.entries(record)) {
       if (MEDIA_TEXT_KEYS.has(childKey.toLowerCase())) continue;

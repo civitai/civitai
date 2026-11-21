@@ -365,6 +365,17 @@ describe('media references (#9982)', () => {
     ).toMatchObject({ form: 'media-reference', key: 'air' });
   });
 
+  it.each([
+    ['reasoning', { $ref: 'chat', path: 'output.choices[0].message.reasoning_content' }],
+    ['a refusal', { $ref: 'chat', path: 'output.choices[0].message.refusal' }],
+    ['no path', { $ref: 'chat' }],
+  ])('refuses a step output that is not media (%s) at a media key', (_label, reference) => {
+    expect(findStepPositionProblem({ image: reference }, VIEWER)).toMatchObject({
+      form: 'reference',
+      key: 'image',
+    });
+  });
+
   it("refuses a step's text output at a media key, and passes its media output", () => {
     expect(
       findStepPositionProblem({ image: { $ref: 'chat', path: 'output.text' } }, VIEWER)
