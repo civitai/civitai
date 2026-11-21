@@ -251,4 +251,15 @@ describe('auto-track', () => {
     rerender();
     await expect.element(page.getByText(/took too long/)).toBeInTheDocument();
   });
+
+  test('a run the server no longer knows ends as failed', async () => {
+    render();
+    await page.getByText('Movement').click();
+    io.start.mockImplementation((_input, { onSuccess }) => onSuccess({ workflowId: 'wf-1' }));
+    await autoTrack().click();
+    await expect.element(page.getByText(/Tracking your sticker/)).toBeInTheDocument();
+    io.poll = { data: undefined, error: { data: { code: 'NOT_FOUND' } }, dataUpdatedAt: 0 };
+    rerender();
+    await expect.element(page.getByText("Couldn't track this one")).toBeInTheDocument();
+  });
 });

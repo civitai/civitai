@@ -12,7 +12,7 @@ import {
 
 /**
  * How long to wait before the next status read of a run, or null to give up. The read has no
- * rate limit of its own, so the schedule is the bound. Runs take about 35 to 90 s.
+ * rate limit of its own, so the schedule is the bound.
  */
 export function autoTrackPollDelay(elapsedMs: number): number | null {
   if (elapsedMs < 120_000) return 3000;

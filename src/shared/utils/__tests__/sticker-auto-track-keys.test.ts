@@ -201,7 +201,15 @@ describe('discardAutoTrackKeys', () => {
 });
 
 describe('autoTrackPollDelay', () => {
-  it('stops after five minutes', () => {
+  it('bounds the reads a run makes, and stops after five minutes', () => {
+    let reads = 0;
+    for (
+      let t = 0, delay = autoTrackPollDelay(0);
+      delay !== null;
+      t += delay, delay = autoTrackPollDelay(t)
+    )
+      reads++;
+    expect(reads).toBeLessThanOrEqual(80);
     expect(autoTrackPollDelay(299_999)).not.toBeNull();
     expect(autoTrackPollDelay(300_000)).toBeNull();
   });
