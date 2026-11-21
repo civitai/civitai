@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { listRecentlyVersionedModels } from '@civitai/db-queries/model';
+import { listModelStake, listRecentlyVersionedModels } from '@civitai/db-queries/model';
 import { redisMock } from '~/__tests__/mocks';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
 
@@ -19,6 +19,7 @@ vi.mock('~/server/redis/cluster-cache-guard', () => ({
 }));
 
 import {
+  computePersonalLead,
   getPersonalLeadModelIds,
   pickPersonalLead,
   type PersonalLeadCandidate,
@@ -111,6 +112,22 @@ describe('pickPersonalLead', () => {
     ).toEqual([23]);
   });
 
+  it('drops a muted model even when its creator is followed, and the viewer’s own liked model', () => {
+    expect(
+      pick({
+        stake: [
+          { modelId: 11, userId: 60, touchedAt: ago(9), muted: true },
+          { modelId: 12, userId: VIEWER, touchedAt: ago(9) },
+        ],
+        follows: [60],
+        candidates: [
+          candidate({ modelId: 11, userId: 60 }),
+          candidate({ modelId: 12, userId: VIEWER }),
+        ],
+      })
+    ).toEqual([]);
+  });
+
   it('caps the lead at k', () => {
     const stake = Array.from({ length: 9 }, (_, i) => ({
       modelId: i + 1,
@@ -172,7 +189,15 @@ describe('getPersonalLeadModelIds', () => {
       () => new Promise<typeof lead>((resolve) => setTimeout(() => resolve(lead), 1000))
     );
     expect(await getPersonalLeadModelIds(args, slow)).toEqual([]);
-    expect(packedSet).toHaveBeenCalledWith(expect.any(String), [], { EX: 3600 });
+    expect(packedSet).toHaveBeenCalledWith(expect.any(String), [], { EX: 60 });
+  });
+
+  it('serves no lead and caches nothing when the compute fails', async () => {
+    packedGet.mockResolvedValue(null);
+    expect(await getPersonalLeadModelIds(args, vi.fn().mockRejectedValue(new Error('db')))).toEqual(
+      []
+    );
+    expect(packedSet).not.toHaveBeenCalled();
   });
 
   it('writes nothing when the candidate list is not ready', async () => {
@@ -181,6 +206,36 @@ describe('getPersonalLeadModelIds', () => {
       await getPersonalLeadModelIds(args, vi.fn().mockResolvedValue('no-candidates' as const))
     ).toEqual([]);
     expect(packedSet).not.toHaveBeenCalled();
+  });
+});
+
+describe('computePersonalLead', () => {
+  it('feeds likes, engagements, follows and hidden lists into the pick', async () => {
+    const result = await computePersonalLead(VIEWER, PG, {
+      getCandidates: async () => [
+        candidate({ modelId: 10, userId: 50 }), // liked
+        candidate({ modelId: 11, userId: 51 }), // favourited
+        candidate({ modelId: 12, userId: 52 }), // muted
+        candidate({ modelId: 20, userId: 60 }), // followed creator
+        candidate({ modelId: 21, userId: 61 }), // creator who blocked the viewer
+        candidate({ modelId: 22, userId: 62 }), // hidden model
+      ],
+      listStake: async () => ({
+        likes: [{ modelId: 10, userId: 50, touchedAt: ago(9) }],
+        engagements: [
+          { modelId: 11, userId: 51, type: 'Favorite' as const, touchedAt: ago(9) },
+          { modelId: 12, userId: 52, type: 'Mute' as const, touchedAt: ago(9) },
+        ],
+      }),
+      getFollows: async () => [60, 61, 62],
+      getHidden: async () => ({
+        hiddenModels: [{ id: 22 }],
+        hiddenUsers: [],
+        blockedUsers: [],
+        blockedByUsers: [{ id: 61 }],
+      }),
+    });
+    expect(result !== 'no-candidates' && result.ids.sort()).toEqual([10, 11, 20]);
   });
 });
 
@@ -212,7 +267,8 @@ describe('listRecentlyVersionedModels', () => {
         (3, 52, 'Published', '${t(1)}', 300),
         (4, 53, 'Published', '${t(1)}', 400),
         (5, 54, 'Unpublished', '${t(1)}', 500),
-        (6, 55, 'Published', '${t(30)}', 600);
+        (6, 55, 'Published', '${t(30)}', 600),
+        (7, 56, 'Published', '${t(1)}', 700);
       INSERT INTO "ModelVersion" VALUES
         (101, 1, 'Published', 'Public', '${t(1)}', '${t(1)}', 1),
         (102, 1, 'Published', 'Public', '${t(3)}', '${t(3)}', 1),
@@ -220,7 +276,9 @@ describe('listRecentlyVersionedModels', () => {
         (301, 3, 'Published', 'Private', '${t(2)}', '${t(2)}', 1),
         (401, 4, 'Published', 'Public', '${t(2)}', '${t(200)}', 1),
         (501, 5, 'Published', 'Public', '${t(2)}', '${t(2)}', 1),
-        (601, 6, 'Published', 'Public', '${t(30)}', '${t(30)}', 1);
+        (601, 6, 'Published', 'Public', '${t(30)}', '${t(30)}', 1),
+        (103, 1, 'Draft', 'Public', '${t(0.5)}', '${t(0.5)}', 1),
+        (701, 7, 'Published', 'Public', '${t(40)}', '${t(40)}', 1);
     `);
     const rows = await listRecentlyVersionedModels(
       pgliteKysely(() => pg),
@@ -228,5 +286,44 @@ describe('listRecentlyVersionedModels', () => {
     );
     expect(rows.map((r) => r.modelId)).toEqual([1, 2]);
     expect(new Date(rows[0].versionPublishedAt!).getTime()).toBeGreaterThan(ago(2).getTime());
+  });
+});
+
+describe('listModelStake', () => {
+  let pg: PGlite;
+  beforeAll(async () => {
+    pg = new PGlite();
+    await pg.exec(`
+      CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+      CREATE TABLE "ResourceReview" (
+        "modelId" int NOT NULL, "userId" int NOT NULL, recommended boolean NOT NULL,
+        exclude boolean NOT NULL, "tosViolation" boolean NOT NULL, "createdAt" timestamp(3) NOT NULL
+      );
+      CREATE TABLE "ModelEngagement" (
+        "userId" int NOT NULL, "modelId" int NOT NULL, type text NOT NULL, "createdAt" timestamp(3) NOT NULL
+      );
+      INSERT INTO "Model" VALUES (1, 50), (2, 51), (3, 52), (4, 53), (5, 54), (6, 55);
+      INSERT INTO "ResourceReview" VALUES
+        (1, 9, true, false, false, now()),
+        (2, 9, false, false, false, now()),
+        (3, 9, true, true, false, now()),
+        (4, 9, true, false, true, now());
+      INSERT INTO "ModelEngagement" VALUES
+        (9, 5, 'Mute', now() - interval '30 days'),
+        (9, 6, 'Favorite', now()),
+        (9, 1, 'Notify', now() - interval '1 day');
+    `);
+  });
+  afterAll(() => pg.close());
+
+  it('reads thumbs-up likes only, and keeps a Mute even when the engagement cap is reached', async () => {
+    const db = pgliteKysely(() => pg);
+    const { likes } = await listModelStake(db, { userId: 9, limit: 10 });
+    expect(likes.map((l) => [l.modelId, l.userId])).toEqual([[1, 50]]);
+    const { engagements } = await listModelStake(db, { userId: 9, limit: 1 });
+    expect(engagements.map((e) => [e.modelId, e.type]).sort()).toEqual([
+      [5, 'Mute'],
+      [6, 'Favorite'],
+    ]);
   });
 });

@@ -32,6 +32,7 @@ vi.mock('~/server/services/resource-select.service', async (importOriginal) => (
 }));
 
 import { getModelsInfiniteHandler } from '~/server/controllers/model.controller';
+import { buildFliptContext } from '~/server/services/feature-flags.service';
 
 /**
  * /models on Hot with a base-model filter leads with the official checkpoints for that base. The
@@ -56,6 +57,7 @@ function feed({ pinnedRows }: { pinnedRows: { id: number }[] }) {
   );
 }
 
+let lastCtx: { cache: { canCache: boolean } } | undefined;
 async function run(input: Record<string, unknown>, ctxExtra: Record<string, unknown> = {}) {
   const ctx = {
     user: undefined,
@@ -64,6 +66,7 @@ async function run(input: Record<string, unknown>, ctxExtra: Record<string, unkn
     cache: { canCache: true },
     ...ctxExtra,
   };
+  lastCtx = ctx;
   const result = await getModelsInfiniteHandler({
     input: { limit: 20, browsingLevel: 1, excludedUserIds: [77], ...input },
     ctx,
@@ -160,8 +163,7 @@ describe('model feed: the personal Hot lead', () => {
     await run({ sort: ModelSort.Hot }, signedIn);
     expect(isFlipt).toHaveBeenCalledWith('personal-hot-lead', '5', expect.any(Object));
     const call = isFlipt.mock.calls.find(([flag]) => flag === 'personal-hot-lead')!;
-    const context = call[2] as Record<string, string>;
-    expect(Object.keys(context).length).toBeGreaterThan(0);
+    expect(call[2]).toEqual(buildFliptContext(VIEWER as never));
   });
 
   it('leads page 1 with the lead in its own order, ahead of the official pin and the stream', async () => {
@@ -190,6 +192,30 @@ describe('model feed: the personal Hot lead', () => {
       browsingLevel: 1,
       firstPage: true,
     });
+    expect(lastCtx?.cache.canCache).toBe(false); // a personal page never reaches a shared cache
+  });
+
+  it('shows an official checkpoint that is also in the lead once, in the lead', async () => {
+    isFlipt.mockResolvedValue(true);
+    getPersonalLeadModelIds.mockResolvedValue([OFFICIAL_A]);
+    getModelsWithImagesAndModelVersions.mockImplementation(async ({ onlyModelIds }: Call) =>
+      onlyModelIds
+        ? { items: onlyModelIds.map((id) => ({ id })), isPrivate: false }
+        : { items: STREAM, isPrivate: false, nextCursor: undefined }
+    );
+    expect(await run({ sort: ModelSort.Hot, baseModels: ['Flux.1 D'] }, signedIn)).toEqual([
+      OFFICIAL_A,
+      OFFICIAL_B,
+      1,
+      2,
+    ]);
+  });
+
+  it('leaves the page cacheable when the viewer has no lead', async () => {
+    isFlipt.mockResolvedValue(true);
+    feed({ pinnedRows: [] });
+    await run({ sort: ModelSort.Hot }, signedIn);
+    expect(lastCtx?.cache.canCache).toBe(true);
   });
 
   it('keeps the lead out of later pages without fetching it again', async () => {
@@ -212,6 +238,12 @@ describe('model feed: the personal Hot lead', () => {
     ['a text search', { sort: ModelSort.Hot, query: 'flux' }, signedIn],
     ["a creator's page", { sort: ModelSort.Hot, username: 'someone' }, signedIn],
     ['the followed filter', { sort: ModelSort.Hot, followed: true }, signedIn],
+    ['a user filter', { sort: ModelSort.Hot, user: 'someone' }, signedIn],
+    ['a collection', { sort: ModelSort.Hot, collectionId: 3 }, signedIn],
+    ['favorites', { sort: ModelSort.Hot, favorites: true }, signedIn],
+    ['hidden', { sort: ModelSort.Hot, hidden: true }, signedIn],
+    ['an id list', { sort: ModelSort.Hot, ids: [1] }, signedIn],
+    ['archived', { sort: ModelSort.Hot, archived: true }, signedIn],
   ])('gives no lead for %s', async (_, input, ctx) => {
     isFlipt.mockResolvedValue(true);
     getPersonalLeadModelIds.mockResolvedValue(LEAD);

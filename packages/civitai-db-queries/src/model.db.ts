@@ -33,10 +33,10 @@ export async function listModelEngagements(
 /**
  * A viewer's stake in models, for the personalised Hot lead: the models they liked (a thumbs-up
  * review) and their Favorite / Notify / Mute engagements, newest touch first, with each model's
- * owner. Two reads because the two tables have different shapes; each is capped at `limit`.
+ * owner. Likes and Favorite / Notify are each capped at `limit`; Mutes are not.
  */
 export async function listModelStake(db: Kysely<DB>, input: { userId: number; limit: number }) {
-  const [likes, engagements] = await Promise.all([
+  const [likes, engagements, mutes] = await Promise.all([
     db
       .selectFrom('ResourceReview as rr')
       .innerJoin('Model as m', 'm.id', 'rr.modelId')
@@ -44,6 +44,7 @@ export async function listModelStake(db: Kysely<DB>, input: { userId: number; li
       .where('rr.userId', '=', input.userId)
       .where('rr.recommended', '=', true)
       .where('rr.exclude', '=', false)
+      .where('rr.tosViolation', '=', false)
       .groupBy(['rr.modelId', 'm.userId'])
       .orderBy('touchedAt', 'desc')
       .limit(input.limit)
@@ -53,12 +54,20 @@ export async function listModelStake(db: Kysely<DB>, input: { userId: number; li
       .innerJoin('Model as m', 'm.id', 'e.modelId')
       .select(['e.modelId', 'm.userId', 'e.type', 'e.createdAt as touchedAt'])
       .where('e.userId', '=', input.userId)
-      .where('e.type', 'in', ['Favorite', 'Notify', 'Mute'])
+      .where('e.type', 'in', ['Favorite', 'Notify'])
       .orderBy('e.createdAt', 'desc')
       .limit(input.limit)
       .execute(),
+    // Uncapped: a Mute must not fall out behind newer favourites.
+    db
+      .selectFrom('ModelEngagement as e')
+      .innerJoin('Model as m', 'm.id', 'e.modelId')
+      .select(['e.modelId', 'm.userId', 'e.type', 'e.createdAt as touchedAt'])
+      .where('e.userId', '=', input.userId)
+      .where('e.type', '=', 'Mute')
+      .execute(),
   ]);
-  return { likes, engagements };
+  return { likes, engagements: [...engagements, ...mutes] };
 }
 
 /**

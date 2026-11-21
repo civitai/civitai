@@ -8700,6 +8700,7 @@ const PERSONAL_LEAD_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 const PERSONAL_LEAD_STAKE_LIMIT = 500;
 const PERSONAL_LEAD_BUDGET_MS = 150;
 const PERSONAL_LEAD_TTL_S = 60 * 60;
+const PERSONAL_LEAD_TIMEOUT_TTL_S = 60;
 const PERSONAL_LEAD_CANDIDATES_FRESH_MS = 5 * 60 * 1000;
 const PERSONAL_LEAD_CANDIDATES_TTL_S = 60 * 60;
 
@@ -8792,6 +8793,9 @@ export function pickPersonalLead({
 
 type CandidatesEntry = { data: PersonalLeadCandidate[]; cachedAt: number };
 let candidatesRefreshing = false;
+// Per-pod copy of the global list, so a per-viewer compute does not fetch and decode it from Redis.
+const PERSONAL_LEAD_CANDIDATES_L1_MS = 60 * 1000;
+let candidatesL1: { data: PersonalLeadCandidate[]; at: number } | undefined;
 
 async function refreshPersonalLeadCandidates() {
   const key = REDIS_KEYS.CACHES.PERSONAL_HOT_LEAD_CANDIDATES;
@@ -8817,6 +8821,8 @@ async function refreshPersonalLeadCandidates() {
  * as it is (missing: null), so no viewer waits on the global query.
  */
 async function getPersonalLeadCandidates() {
+  if (candidatesL1 && Date.now() - candidatesL1.at < PERSONAL_LEAD_CANDIDATES_L1_MS)
+    return candidatesL1.data;
   const entry = await clusterCacheGuard.readOr(
     'personal hot lead candidates get',
     () => redis.packed.get<CandidatesEntry>(REDIS_KEYS.CACHES.PERSONAL_HOT_LEAD_CANDIDATES),
@@ -8839,17 +8845,36 @@ async function getPersonalLeadCandidates() {
         });
     }
   }
+  if (entry) candidatesL1 = { data: entry.data, at: Date.now() };
   return entry?.data ?? null;
 }
 
-async function computePersonalLead(userId: number, browsingLevel: number) {
-  const candidates = await getPersonalLeadCandidates();
+const personalLeadSources = {
+  getCandidates: getPersonalLeadCandidates,
+  listStake: async (userId: number) =>
+    listModelStake((await loadKyselyDb()).kyselyRead, { userId, limit: PERSONAL_LEAD_STAKE_LIMIT }),
+  getFollows: getUserFollows,
+  getHidden: (userId: number) => getAllHiddenForUser({ userId }),
+};
+
+export async function computePersonalLead(
+  userId: number,
+  browsingLevel: number,
+  sources: Pick<typeof personalLeadSources, 'getCandidates' | 'listStake' | 'getFollows'> & {
+    getHidden: (userId: number) => Promise<{
+      hiddenModels: { id: number }[];
+      hiddenUsers: { id: number }[];
+      blockedUsers: { id: number }[];
+      blockedByUsers: { id: number }[];
+    }>;
+  } = personalLeadSources
+) {
+  const candidates = await sources.getCandidates();
   if (!candidates) return 'no-candidates' as const;
-  const { kyselyRead } = await loadKyselyDb();
   const [{ likes, engagements }, follows, hidden] = await Promise.all([
-    listModelStake(kyselyRead, { userId, limit: PERSONAL_LEAD_STAKE_LIMIT }),
-    getUserFollows(userId),
-    getAllHiddenForUser({ userId }),
+    sources.listStake(userId),
+    sources.getFollows(userId),
+    sources.getHidden(userId),
   ]);
   return pickPersonalLead({
     viewerId: userId,
@@ -8881,7 +8906,10 @@ export async function getPersonalLeadModelIds(
     browsingLevel: number;
     firstPage: boolean;
   },
-  compute: typeof computePersonalLead = computePersonalLead
+  compute: (
+    userId: number,
+    browsingLevel: number
+  ) => ReturnType<typeof computePersonalLead> = computePersonalLead
 ): Promise<number[]> {
   const key = `${REDIS_KEYS.CACHES.PERSONAL_HOT_LEAD}:${userId}:${browsingLevel}` as const;
   const cached = await clusterCacheGuard.readOr(
@@ -8899,14 +8927,21 @@ export async function getPersonalLeadModelIds(
     timer = setTimeout(() => resolve('timeout'), PERSONAL_LEAD_BUDGET_MS);
   });
   const result = await Promise.race([
-    compute(userId, browsingLevel).catch(() => 'failed' as const),
+    compute(userId, browsingLevel).catch((error) => {
+      logToAxiom({ type: 'error', name: 'personal-hot-lead', error: safeError(error) });
+      return 'failed' as const;
+    }),
     budget,
   ]).finally(() => clearTimeout(timer));
   if (result === 'failed' || result === 'no-candidates') return [];
 
   const ids = result === 'timeout' ? [] : result.ids;
+  // A timeout is cached briefly: long enough that a slow viewer is not recomputed on every page 1
+  // and page 2 hides nothing, short enough that a passing slowdown does not cost an hour of leads.
   await clusterCacheGuard.writeBestEffort('personal hot lead set', () =>
-    redis.packed.set(key, ids, { EX: PERSONAL_LEAD_TTL_S })
+    redis.packed.set(key, ids, {
+      EX: result === 'timeout' ? PERSONAL_LEAD_TIMEOUT_TTL_S : PERSONAL_LEAD_TTL_S,
+    })
   );
   logToAxiom({
     type: 'info',
