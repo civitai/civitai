@@ -402,6 +402,52 @@ describe('runRetrainSource', () => {
     }
   });
 
+  it('retries a failed submit under the same externalId, and after the last failure reports the refund it kept', async () => {
+    const flaky = createWorld(sourceRun());
+    const owner = flaky.deps.ownerOrchestrator;
+    let failures = 2;
+    flaky.deps.ownerOrchestrator = async (userId) => {
+      const orch = (await owner(userId))!;
+      return {
+        ...orch,
+        submit: async (body) => (failures-- > 0 ? { status: 503 } : orch.submit(body)),
+      };
+    };
+    expect((await flaky.run(true)).outcome).toBe('retrained');
+    expect(flaky.calls.submit).toBe(1);
+
+    const down = createWorld(sourceRun());
+    const downOwner = down.deps.ownerOrchestrator;
+    let submits = 0;
+    down.deps.ownerOrchestrator = async (userId) => ({
+      ...(await downOwner(userId))!,
+      submit: async () => (submits++, { status: 503 }),
+    });
+    expect(await down.run(true)).toMatchObject({
+      outcome: 'refunded-not-submitted',
+      confirmedNetByColour: { blue: 0, yellow: 0 },
+    });
+    expect(submits).toBe(3);
+    // Resuming does not refund again.
+    expect((await down.run(true)).outcome).toBe('refunded-not-submitted');
+    expect(down.calls.refund).toBe(1);
+    expect(credited(down)).toHaveLength(2);
+  });
+
+  it('skips an owner who cannot be issued a token, and a source its owner deleted', async () => {
+    const restricted = createWorld(sourceRun());
+    restricted.deps.ownerOrchestrator = async () => null;
+    expect(await restricted.run(true)).toMatchObject({
+      outcome: 'skipped',
+      reason: 'owner-restricted',
+    });
+
+    const deleted = createWorld(sourceRun());
+    deleted.runs.delete(SOURCE);
+    expect(await deleted.run(true)).toMatchObject({ outcome: 'skipped', reason: 'source-deleted' });
+    expect(deleted.calls.refund).toBe(0);
+  });
+
   it.each([
     ['source-withheld', { withheld: true }],
     ['training-unavailable', { training: 'Training is currently disabled' }],

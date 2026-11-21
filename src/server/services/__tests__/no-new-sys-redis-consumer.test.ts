@@ -41,7 +41,6 @@ const BASELINE: string[] = [
   'src/pages/api/internal/redis-sys-usage.ts',
   'src/server/api-routes/mod/flip-phases.ts',
   'src/server/api-routes/mod/new-order/rate-limit-config.ts',
-  'src/server/api-routes/mod/training/retrain-source.ts',
   'src/pages/api/testing/fee-allowance-boost.ts',
   'src/pages/api/testing/redis-cluster.ts',
   'src/pages/api/v1/blocks/dev-token.ts',
