@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as KyselyDb from '~/server/db/kyselyDb';
 
 /**
  * Comped membership gifts: every refusal is paired with the valid call that writes, so a refusal
@@ -20,11 +21,12 @@ vi.mock('~/server/db/kyselyDb', async (importOriginal) => {
     executeTakeFirst: async () => grantRow,
   };
   return {
-    ...(await importOriginal<typeof import('~/server/db/kyselyDb')>()),
+    ...(await importOriginal<typeof KyselyDb>()),
     kyselyWrite: chain,
   };
 });
 
+import type { compGiftDeps } from '~/server/services/membership-gift-comp.service';
 import {
   compMembershipGift,
   revokeCompMembershipGift,
@@ -39,9 +41,10 @@ let deps: {
   trackModActivity: ReturnType<typeof vi.fn>;
   fulfillMembershipGift: ReturnType<typeof vi.fn>;
   getRecipientGiftability: ReturnType<typeof vi.fn>;
-  revokeMembershipGift: ReturnType<typeof vi.fn>;
   throwOnBlockedUserContent: ReturnType<typeof vi.fn>;
 };
+
+const fakeDeps = () => deps as unknown as typeof compGiftDeps;
 
 const valid = (over: Record<string, unknown> = {}) =>
   ({
@@ -51,7 +54,7 @@ const valid = (over: Record<string, unknown> = {}) =>
     reason: 'Thank-you for community work',
     execute: true,
     actor,
-    deps,
+    deps: fakeDeps(),
     ...over,
   } as Parameters<typeof compMembershipGift>[0]);
 
@@ -80,7 +83,6 @@ beforeEach(() => {
     trackModActivity: vi.fn(async () => undefined),
     fulfillMembershipGift: vi.fn(async () => ({ fulfilled: true, queued: true })),
     getRecipientGiftability: vi.fn(async () => ({ status: 'no-subscription' })),
-    revokeMembershipGift: vi.fn(async () => true),
     throwOnBlockedUserContent: vi.fn(async () => undefined),
   };
   tx = {
@@ -117,9 +119,10 @@ describe('the comp permission', () => {
   it('refuses revoking a comp without it too', async () => {
     grantRow.roles = [];
     await expect(
-      revokeCompMembershipGift({ giftId: 'gift_9', execute: true, actor, deps })
+      revokeCompMembershipGift({ giftId: 'gift_9', execute: true, actor, deps: fakeDeps() })
     ).rejects.toThrow(/user\.membership\.gift\.comp/);
-    expect(deps.revokeMembershipGift).not.toHaveBeenCalled();
+    expect(db.membershipGift.findUnique).not.toHaveBeenCalled();
+    expect(db.membershipGift.updateMany).not.toHaveBeenCalled();
   });
 
   it('lets moderator:admin through with no grant row', async () => {
@@ -296,42 +299,64 @@ describe('revokeCompMembershipGift', () => {
     ...over,
   });
   const revoke = (execute: boolean) =>
-    revokeCompMembershipGift({ giftId: 'gift_9', execute, actor, deps });
+    revokeCompMembershipGift({ giftId: 'gift_9', execute, actor, deps: fakeDeps() });
 
-  it('revokes an unaccepted comp and logs it against the holder', async () => {
+  beforeEach(() => {
+    db.membershipGift.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it.each([
+    ['Fulfilled', compGift()],
+    ['Pending', compGift({ status: 'Pending', monthsRemaining: 0 })],
+  ])(
+    'revokes an unaccepted %s comp in one write conditioned on it staying unaccepted',
+    async (_l, gift) => {
+      db.membershipGift.findUnique.mockResolvedValue(gift);
+      await expect(revoke(true)).resolves.toMatchObject({ outcome: 'revoked' });
+      expect(db.membershipGift.updateMany).toHaveBeenCalledWith({
+        where: { id: 'gift_9', acceptedAt: null, status: { in: ['Pending', 'Fulfilled'] } },
+        data: { status: 'Revoked', monthsRemaining: 0 },
+      });
+      expect(deps.trackModActivity).toHaveBeenCalledWith(MODERATOR, {
+        entityType: 'user',
+        entityId: RECIPIENT,
+        activity: 'revokeCompMembershipGift:gift_9',
+      });
+    }
+  );
+
+  it('loses to an accept that claimed the gift first, and writes no audit row', async () => {
     db.membershipGift.findUnique.mockResolvedValue(compGift());
-    await expect(revoke(true)).resolves.toMatchObject({ outcome: 'revoked' });
-    expect(deps.revokeMembershipGift).toHaveBeenCalledWith({
-      giftId: 'gift_9',
-      reason: 'chargeback',
-    });
-    expect(deps.trackModActivity).toHaveBeenCalledWith(MODERATOR, {
-      entityType: 'user',
-      entityId: RECIPIENT,
-      activity: 'revokeCompMembershipGift:gift_9',
-    });
+    db.membershipGift.updateMany.mockResolvedValue({ count: 0 });
+    await expect(revoke(true)).rejects.toThrow(/accepted or changed just now/);
+    expect(deps.trackModActivity).not.toHaveBeenCalled();
   });
 
   it('a dry run changes nothing and writes no audit row', async () => {
     db.membershipGift.findUnique.mockResolvedValue(compGift());
     await expect(revoke(false)).resolves.toMatchObject({ outcome: 'would-revoke' });
-    expect(deps.revokeMembershipGift).not.toHaveBeenCalled();
+    expect(db.membershipGift.updateMany).not.toHaveBeenCalled();
     expect(deps.trackModActivity).not.toHaveBeenCalled();
   });
 
   it('answers already-revoked without revoking again', async () => {
     db.membershipGift.findUnique.mockResolvedValue(compGift({ status: 'Revoked' }));
     await expect(revoke(true)).resolves.toEqual({ outcome: 'already-revoked', status: 'Revoked' });
-    expect(deps.revokeMembershipGift).not.toHaveBeenCalled();
+    expect(db.membershipGift.updateMany).not.toHaveBeenCalled();
   });
 
   it.each([
     ['a paid gift', compGift({ amountCents: 3000, stripePaymentIntentId: 'pi_1' }), /was paid for/],
+    [
+      'a gift with only a checkout session',
+      compGift({ stripeCheckoutSessionId: 'cs_1' }),
+      /was paid for/,
+    ],
     ['an accepted comp', compGift({ status: 'Active', acceptedAt: new Date() }), /accepted/],
     ['a used-up comp', compGift({ status: 'Completed', acceptedAt: new Date() }), /accepted/],
   ])('refuses %s', async (_label, gift, message) => {
     db.membershipGift.findUnique.mockResolvedValue(gift);
     await expect(revoke(true)).rejects.toThrow(message);
-    expect(deps.revokeMembershipGift).not.toHaveBeenCalled();
+    expect(db.membershipGift.updateMany).not.toHaveBeenCalled();
   });
 });

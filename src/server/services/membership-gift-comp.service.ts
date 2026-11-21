@@ -7,7 +7,6 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   fulfillMembershipGift,
   getRecipientGiftability,
-  revokeMembershipGift,
   type RecipientGiftability,
 } from '~/server/services/membership-gift.service';
 import { hasModeratorGrant } from '~/server/services/moderator-grants';
@@ -35,7 +34,6 @@ export const compGiftDeps = {
   trackModActivity,
   fulfillMembershipGift,
   getRecipientGiftability,
-  revokeMembershipGift,
   throwOnBlockedUserContent,
 };
 type CompGiftDeps = typeof compGiftDeps;
@@ -285,7 +283,19 @@ export async function revokeCompMembershipGift({
   const summary = { giftId: gift.id, status: gift.status, monthsRemaining: gift.monthsRemaining };
   if (!execute) return { outcome: 'would-revoke', ...summary };
 
-  await deps.revokeMembershipGift({ giftId: gift.id, reason: 'chargeback' });
+  // The unaccepted state is part of the write, so an accept that claims the gift first wins
+  // (see acceptMembershipGift). An unaccepted gift has nothing in Stripe to undo.
+  const { count } = await dbWrite.membershipGift.updateMany({
+    where: {
+      id: gift.id,
+      acceptedAt: null,
+      status: { in: [MembershipGiftStatus.Pending, MembershipGiftStatus.Fulfilled] },
+    },
+    data: { status: MembershipGiftStatus.Revoked, monthsRemaining: 0 },
+  });
+  if (count === 0)
+    throw throwConflictError('This comp was accepted or changed just now; nothing was revoked.');
+
   await deps.trackModActivity(moderatorId, {
     entityType: 'user',
     entityId: gift.holderId,
