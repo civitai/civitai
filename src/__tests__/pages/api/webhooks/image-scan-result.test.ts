@@ -352,6 +352,8 @@ describe('image-scan-result webhook - pipeline tests', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // clearAllMocks keeps implementations: undo any test's throwing $executeRaw.
+    mockDbWrite.$executeRaw.mockImplementation(async () => 0);
     imageDbState.clear();
     imageUpdates.length = 0;
     envOverrides.BLOCKED_IMAGE_HASH_CHECK = false;

@@ -21,7 +21,7 @@ export const COVER_INDEX_NAME = 'Collection_imageId_idx';
  * has a second one (`fk_remediation_backup`).
  *
  * A catalog lookup, not a cached flag: two index scans, cost 5.01 — far less than the
- * seven-leg query it guards — and re-reading it means the leg starts working the
+ * queries it guards — and re-reading it means the leg starts working the
  * moment the index becomes valid, with no deploy or restart.
  *
  * Once the index is valid in every environment, this gate and its branch can go.
