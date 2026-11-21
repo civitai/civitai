@@ -15,7 +15,9 @@ Authorization: Bearer <the app's hub access token for the user>
 A read is answered from a per-user stream on the registry adapter, opened lazily with a token this
 service exchanges from the user's own, as the adapter's relay (the origin judges it). When no stream
 can answer in time, the read comes from the site's document-store REST list, made with the user's
-token. With `APP_DATA_REGISTRY_URL` unset every read is the REST read and no token is exchanged.
+token. With `APP_DATA_REGISTRY_URL` unset every read is the REST read and no token is exchanged. An
+App Block token is exchanged at the hub's block exchange, once per block token, only with
+`APP_DATA_BLOCK_EXCHANGE` on (default off: it reads REST); DESIGN.md, "Block tokens".
 
 ## Layout
 
@@ -24,7 +26,7 @@ token. With `APP_DATA_REGISTRY_URL` unset every read is the REST read and no tok
 | `cmd/app-data-go`   | wiring and shutdown                                                                       |
 | `internal/api`      | the HTTP surface, the fallback decision                                                   |
 | `internal/session`  | per-token streams: lazy open, idle, age and expiry close, caps, the cache                 |
-| `internal/exchange` | the RFC 8693 token exchange at the hub, as this service's relay client                    |
+| `internal/exchange` | the RFC 8693 token exchange at the hub, as this service's relay client; the block cache   |
 | `internal/registry` | the registry HTTP binding consumer, a byte-identical copy of app-index-go's (CI compares) |
 | `internal/rest`     | the document-store REST read                                                              |
 | `internal/urn`      | the collection schema URN, pinned to the adapter's by golden vectors                      |

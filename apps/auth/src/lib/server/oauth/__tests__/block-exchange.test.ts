@@ -48,7 +48,12 @@ const h = await vi.hoisted(async () => {
     cache: new Map<string, string>(),
     cacheEx: new Map<string, number | undefined>(),
     replayHang: false,
+    // The SET is applied at once but its reply never comes (it landed; the caller timed out).
+    replayApplyThenHang: false,
+    // The SET is held until the test lands it (it lands only after the caller timed out).
+    replayDeferred: null as (() => void)[] | null,
     replaySetCalled: false,
+    dbThrowsOn: null as string | null,
     sys: new Map<string, { value: string; ex: number }>(),
     sysSetThrows: false,
     redisNull: false,
@@ -94,8 +99,14 @@ vi.mock('$lib/server/db/db', () => ({
           if (typeof column === 'string') where.push([column, op, value]);
           return qb;
         },
-        executeTakeFirst: async () => run()[0],
-        execute: async () => run(),
+        executeTakeFirst: async () => {
+          if (h.dbThrowsOn === table) throw new Error('db fake: connection lost');
+          return run()[0];
+        },
+        execute: async () => {
+          if (h.dbThrowsOn === table) throw new Error('db fake: connection lost');
+          return run();
+        },
       };
       return qb;
     },
@@ -110,11 +121,24 @@ vi.mock('$lib/server/redis', async (orig) => ({
       : {
           async set(key: string, value: string, opts?: { NX?: boolean; EX?: number }) {
             h.replaySetCalled = true;
+            const apply = () => {
+              if (opts?.NX && h.cache.has(key)) return null;
+              h.cache.set(key, value);
+              h.cacheEx.set(key, opts?.EX);
+              return 'OK';
+            };
             if (h.replayHang) return new Promise<never>(() => undefined);
-            if (opts?.NX && h.cache.has(key)) return null;
-            h.cache.set(key, value);
-            h.cacheEx.set(key, opts?.EX);
-            return 'OK';
+            if (h.replayApplyThenHang) {
+              apply();
+              return new Promise<never>(() => undefined);
+            }
+            const deferred = h.replayDeferred;
+            if (deferred) {
+              return new Promise<string | null>((resolve) => {
+                deferred.push(() => resolve(apply()));
+              });
+            }
+            return apply();
           },
           async get(key: string) {
             return h.cache.get(key) ?? null;
@@ -181,6 +205,7 @@ import { GET as jwksGET } from '../../../../routes/.well-known/jwks.json/+server
 import { WorkerTokenExchangeGrant } from '../worker-grant';
 import { invalidateRoleCache } from '../access';
 import { parseBlockExchangeCallers } from '../block-exchange';
+import { getSigner } from '../user-exchange';
 import {
   BLOCK_TOKEN_AUDIENCE,
   BLOCK_TOKEN_ISSUER,
@@ -240,7 +265,10 @@ beforeEach(() => {
   h.cache.clear();
   h.cacheEx.clear();
   h.replayHang = false;
+  h.replayApplyThenHang = false;
+  h.replayDeferred = null;
   h.replaySetCalled = false;
+  h.dbThrowsOn = null;
   h.sys.clear();
   h.sysSetThrows = false;
   h.redisNull = false;
@@ -350,6 +378,7 @@ describe('block token exchange — dark by default (empty caller allowlist)', ()
     process.env.OAUTH_BLOCK_EXCHANGE_CALLERS = ' , ';
     const res = await exchange(await blockToken());
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('unauthorized_client');
     expect(lastReason()).toBe('caller allowlist empty');
   });
 
@@ -357,6 +386,7 @@ describe('block token exchange — dark by default (empty caller allowlist)', ()
     process.env.OAUTH_BLOCK_EXCHANGE_CALLERS = `${RELAY}, bad/id`;
     const res = await exchange(await blockToken());
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('unauthorized_client');
     expect(lastReason()).toBe('caller allowlist invalid');
     expect(issued()).toEqual([]);
   });
@@ -395,6 +425,7 @@ describe('block token exchange — the caller', () => {
   it('refuses a caller with the wrong secret', async () => {
     const res = await exchange(await blockToken(), { secret: 'wrong' });
     expect(res.status).toBe(401);
+    expect(res.body.error).toBe('invalid_client');
     expect(lastReason()).toBe('client authentication failed');
   });
 
@@ -437,6 +468,7 @@ describe('block token exchange — the caller', () => {
     process.env.OAUTH_EXCHANGE_RESOURCES = registry({ relays: [OTHER_RELAY] });
     const res = await exchange(await blockToken());
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('unauthorized_client');
     expect(lastReason()).toBe('caller not a relay of resource');
   });
 
@@ -572,12 +604,14 @@ describe('block token exchange — the block token', () => {
   it('refuses an expired block token', async () => {
     const res = await exchange(await blockToken({ iat: NOW - 1000, exp: NOW - 60 }));
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
     expect(lastReason()).toBe('block token signature or claims');
   });
 
   it('refuses a block token signed by another key under the site kid (forged)', async () => {
     const res = await exchange(await blockToken({}, { key: h.forger.privateKey }));
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
     expect(lastReason()).toBe('block token signature or claims');
     expect(issued()).toEqual([]);
   });
@@ -587,24 +621,28 @@ describe('block token exchange — the block token', () => {
       await blockToken({}, { key: h.forger.privateKey, kid: h.forgerKid })
     );
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
     expect(lastReason()).toBe('block token unknown key');
   });
 
   it('refuses a block token for another audience', async () => {
     const res = await exchange(await blockToken({ aud: 'civitai-other' }));
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
     expect(lastReason()).toBe('block token signature or claims');
   });
 
   it('refuses an anonymous viewer', async () => {
     const res = await exchange(await blockToken({ sub: 'anon' }));
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
     expect(lastReason()).toBe('block token anonymous');
   });
 
   it('refuses a review run-for-real token', async () => {
     const res = await exchange(await blockToken({ reviewRunForReal: true }));
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
     expect(lastReason()).toBe('block token review token');
     expect(issued()).toEqual([]);
   });
@@ -622,6 +660,7 @@ describe('block token exchange — the block token', () => {
     process.env.BLOCK_TOKEN_PUBLIC_KEY = h.hubPublicKey;
     const res = await exchange(await blockToken());
     expect(res.status).toBe(500);
+    expect(res.body.error).toBe('server_error');
     expect(lastReason()).toBe('block token keys misconfigured');
     expect(h.logs.filter((l) => l.name === 'block-token-public-key-invalid')).toEqual([
       {
@@ -633,9 +672,15 @@ describe('block token exchange — the block token', () => {
   });
 
   it('refuses dev and private-run tokens', async () => {
-    await exchange(await blockToken({ dev: true }));
+    const dev = await exchange(await blockToken({ dev: true }));
+    expect(dev.status).toBe(400);
+    expect(dev.body.error).toBe('invalid_grant');
     expect(lastReason()).toBe('block token dev token');
-    await exchange(await blockToken({ privateRun: true, privateRunAudience: 'owner' }));
+    const privateRun = await exchange(
+      await blockToken({ privateRun: true, privateRunAudience: 'owner' })
+    );
+    expect(privateRun.status).toBe(400);
+    expect(privateRun.body.error).toBe('invalid_grant');
     expect(lastReason()).toBe('block token private run');
     expect(issued()).toEqual([]);
   });
@@ -643,6 +688,7 @@ describe('block token exchange — the block token', () => {
   it('refuses a block token older than 15 minutes even if its exp is later', async () => {
     const res = await exchange(await blockToken({ iat: NOW - 931, exp: NOW + 600 }));
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
     expect(lastReason()).toBe('block token too old');
   });
 
@@ -650,6 +696,7 @@ describe('block token exchange — the block token', () => {
     delete process.env.BLOCK_TOKEN_PUBLIC_KEY;
     const res = await exchange(await blockToken());
     expect(res.status).toBe(500);
+    expect(res.body.error).toBe('server_error');
     expect(lastReason()).toBe('block token keys not configured');
   });
 
@@ -659,6 +706,8 @@ describe('block token exchange — the block token', () => {
     const second = await exchange(await blockToken());
     expect(first.status).toBe(500);
     expect(second.status).toBe(500);
+    expect(first.body.error).toBe('server_error');
+    expect(second.body.error).toBe('server_error');
     expect(lastReason()).toBe('block token keys misconfigured');
     expect(h.logs.filter((l) => l.name === 'block-token-public-key-invalid')).toEqual([
       {
@@ -674,6 +723,7 @@ describe('block token exchange — the block token', () => {
     process.env.BLOCK_TOKEN_PUBLIC_KEY_NEXT = h.site.publicKey;
     const res = await exchange(await blockToken());
     expect(res.status).toBe(500);
+    expect(res.body.error).toBe('server_error');
     expect(lastReason()).toBe('block token keys misconfigured');
     expect(h.logs.filter((l) => l.name === 'block-token-public-key-invalid')).toEqual([
       {
@@ -685,6 +735,28 @@ describe('block token exchange — the block token', () => {
   });
 });
 
+/**
+ * Run one exchange whose replay claim does not answer in time (whatever the fake replay store is set to do
+ * with the SET), and return its answer: wait for the SET to be sent, then let the 2 s timeout pass.
+ */
+async function exchangeWithReplayTimeout(token: string) {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  vi.setSystemTime(NOW * 1000);
+  h.replaySetCalled = false;
+  const pending = exchange(token);
+  // Real async work (signature checks) runs before the claim; wait for the claim itself.
+  for (let i = 0; i < 500 && !h.replaySetCalled; i++) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  expect(h.replaySetCalled).toBe(true);
+  await vi.advanceTimersByTimeAsync(2001);
+  return pending;
+}
+
+const flushMicrotasks = async () => {
+  for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+};
+
 describe('block token exchange — one exchange per block token', () => {
   it('claims the block token until a minute past its exp', async () => {
     const res = await exchange(await blockToken({ iat: NOW, exp: NOW + 900 }));
@@ -694,18 +766,9 @@ describe('block token exchange — one exchange per block token', () => {
   });
 
   it('answers 503 when the replay store does not answer in 2 s, and the retry then succeeds', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-    vi.setSystemTime(NOW * 1000);
     const token = await blockToken();
     h.replayHang = true;
-    const pending = exchange(token);
-    // Real async work (signature checks) runs before the claim; wait for the claim itself.
-    for (let i = 0; i < 500 && !h.replaySetCalled; i++) {
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-    expect(h.replaySetCalled).toBe(true);
-    await vi.advanceTimersByTimeAsync(2001);
-    const res = await pending;
+    const res = await exchangeWithReplayTimeout(token);
     expect(res.status).toBe(503);
     expect(res.body.error).toBe('temporarily_unavailable');
     expect(lastReason()).toBe('replay check failed: Error: replay store timed out');
@@ -713,6 +776,90 @@ describe('block token exchange — one exchange per block token', () => {
     h.replayHang = false;
     const retry = await exchange(token);
     expect(retry.status, JSON.stringify(retry.body)).toBe(200);
+  });
+
+  // The SET landed but its reply was lost to the timeout: without a release the claim would stand for the
+  // block token's whole life, and the caller's retry would be refused as a replay.
+  it('gives a timed-out claim back when its SET did land: the retry succeeds', async () => {
+    const token = await blockToken();
+    h.replayApplyThenHang = true;
+    const res = await exchangeWithReplayTimeout(token);
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('temporarily_unavailable');
+    expect(lastReason()).toBe('replay check failed: Error: replay store timed out');
+    expect(issued()).toEqual([]);
+    expect(h.cache.size).toBe(0);
+    h.replayApplyThenHang = false;
+    const retry = await exchange(token);
+    expect(retry.status, JSON.stringify(retry.body)).toBe(200);
+  });
+
+  it('gives a timed-out claim back when its SET lands only after the answer: the retry succeeds', async () => {
+    const token = await blockToken();
+    h.replayDeferred = [];
+    const res = await exchangeWithReplayTimeout(token);
+    expect(res.status).toBe(503);
+    expect(h.cache.size).toBe(0);
+    // The held SET lands now, after the 503: the claim it makes is given back as it lands.
+    const pending = h.replayDeferred;
+    h.replayDeferred = null;
+    expect(pending).toHaveLength(1);
+    pending[0]();
+    await flushMicrotasks();
+    expect(h.cache.size).toBe(0);
+    const retry = await exchange(token);
+    expect(retry.status, JSON.stringify(retry.body)).toBe(200);
+  });
+
+  // INVARIANT GUARD (the pre-fix code released nothing on a timeout, so it never violated this): a timed-out
+  // request whose claim lost to another's must not give the other's claim back, or the replay would pass.
+  it("never gives back another request's claim: a replay after a timed-out duplicate is still refused", async () => {
+    const token = await blockToken();
+    expect((await exchange(token)).status).toBe(200);
+    h.replayApplyThenHang = true; // NX: the duplicate's SET changes nothing, and its reply never comes
+    const duplicate = await exchangeWithReplayTimeout(token);
+    expect(duplicate.status).toBe(503);
+    h.replayApplyThenHang = false;
+    expect(h.cache.size).toBe(1);
+    const replay = await exchange(token);
+    expect(replay.status).toBe(400);
+    expect(replay.body.error).toBe('invalid_grant');
+    expect(lastReason()).toBe('block token already exchanged');
+    expect(issued()).toHaveLength(1);
+  });
+
+  it('answers 503 when a lookup throws, issues nothing, claims nothing, and the retry succeeds', async () => {
+    const token = await blockToken();
+    h.dbThrowsOn = 'app_blocks'; // the last lookup before the claim
+    const res = await exchange(token);
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('temporarily_unavailable');
+    expect(lastReason()).toMatch(/^lookup failed: /);
+    expect(issued()).toEqual([]);
+    expect(h.cache.size).toBe(0);
+    h.dbThrowsOn = null;
+    const retry = await exchange(token);
+    expect(retry.status, JSON.stringify(retry.body)).toBe(200);
+  });
+
+  it('answers 500 when signing fails after the claim, gives the claim back, and the retry succeeds', async () => {
+    const token = await blockToken();
+    const signer = getSigner();
+    expect(signer).not.toBeNull();
+    const sign = vi
+      .spyOn(signer!, 'mintAccessTokenJwt')
+      .mockRejectedValueOnce(new Error('signer fake: key unavailable'));
+    const res = await exchange(token);
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(h.replaySetCalled).toBe(true);
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('server_error');
+    expect(lastReason()).toBe('signing failed');
+    expect(issued()).toEqual([]);
+    expect(h.cache.size).toBe(0);
+    const retry = await exchange(token);
+    expect(retry.status, JSON.stringify(retry.body)).toBe(200);
+    sign.mockRestore();
   });
 
   it('refuses a replay', async () => {
@@ -730,6 +877,7 @@ describe('block token exchange — one exchange per block token', () => {
     h.sysSetThrows = true;
     const failed = await exchange(token);
     expect(failed.status).toBe(500);
+    expect(failed.body.error).toBe('server_error');
     expect(lastReason()).toBe('exchange record not stored');
     h.sysSetThrows = false;
     const retry = await exchange(token);
@@ -739,7 +887,9 @@ describe('block token exchange — one exchange per block token', () => {
   it('does not burn the block token on a refusal before the mint: the fixed retry succeeds', async () => {
     const token = await blockToken();
     h.tables.OauthClient[0].allowedScopes = TokenScope.AppsRead | TokenScope.UserRead;
-    expect((await exchange(token)).status).toBe(400);
+    const refused = await exchange(token);
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toBe('invalid_scope');
     expect(lastReason()).toBe('app may not hold AppDataRead');
     h.tables.OauthClient[0].allowedScopes = TokenScope.AppDataRead | TokenScope.UserRead;
     expect((await exchange(token)).status).toBe(200);
@@ -762,6 +912,7 @@ describe('block token exchange — the app and the viewer', () => {
     process.env.OAUTH_EXCHANGE_RESOURCES = registry({ apps: ['appblk-other'] });
     const res = await exchange(await blockToken());
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('unauthorized_client');
     expect(lastReason()).toBe('app not listed for resource');
   });
 
@@ -769,6 +920,7 @@ describe('block token exchange — the app and the viewer', () => {
     h.tables.OauthClient[0].allowedScopes = TokenScope.AppsRead | TokenScope.UserRead;
     const res = await exchange(await blockToken());
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_scope');
     expect(lastReason()).toBe('app may not hold AppDataRead');
   });
 
@@ -776,6 +928,7 @@ describe('block token exchange — the app and the viewer', () => {
     h.tables.OauthClient[0].accessMode = 'disabled';
     const res = await exchange(await blockToken());
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('unauthorized_client');
     expect(lastReason()).toBe('app disabled');
   });
 
@@ -792,6 +945,7 @@ describe('block token exchange — the app and the viewer', () => {
     h.tables.User[0].bannedAt = new Date(NOW * 1000);
     const res = await exchange(await blockToken());
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
     expect(lastReason()).toBe('user banned');
   });
 
@@ -799,6 +953,7 @@ describe('block token exchange — the app and the viewer', () => {
     h.tables.app_blocks[0].status = 'suspended';
     const res = await exchange(await blockToken());
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('unauthorized_client');
     expect(lastReason()).toBe('app block suspended');
     expect(issued()).toEqual([]);
   });

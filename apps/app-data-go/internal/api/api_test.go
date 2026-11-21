@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -120,29 +121,52 @@ func (f *fakeRegistry) revoke(tok, urn string) {
 // the relay client and the adapter's resource only. As the hub does, it issues exactly the scope
 // requested when that is within the ceiling, refuses one outside it (invalid_scope), and issues the
 // whole ceiling when none is requested.
+//
+// A block token (subject_token_type block-token) is exchanged as the hub's block exchange does it:
+// only AppDataRead, and ONCE: a second exchange of the same block token is refused as a replay.
 type fakeHub struct {
 	srv      *httptest.Server
 	mu       sync.Mutex
 	refuse   map[string]bool
 	subjects []string
+	blocks   map[string]int // block-token exchanges asked, by subject
+}
+
+// blockExchanges is how many times the hub was asked to exchange block token tok.
+func (h *fakeHub) blockExchanges(tok string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.blocks[tok]
 }
 
 func newFakeHub(t *testing.T) *fakeHub {
 	t.Helper()
-	h := &fakeHub{refuse: map[string]bool{}}
+	h := &fakeHub{refuse: map[string]bool{}, blocks: map[string]int{}}
 	h.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, secret, _ := r.BasicAuth()
 		_ = r.ParseForm()
 		subject := r.PostForm.Get("subject_token")
+		block := r.PostForm.Get("subject_token_type") == exchange.BlockTokenType
 		h.mu.Lock()
 		h.subjects = append(h.subjects, subject)
 		refused := h.refuse[subject]
+		replay := false
+		if block {
+			h.blocks[subject]++
+			replay = h.blocks[subject] > 1
+		}
 		h.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case id != "relay-client" || secret != "relay-secret":
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = io.WriteString(w, `{"error":"invalid_client"}`)
+		case block && (refused || replay || r.PostForm.Get("scope") != "AppDataRead"):
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
+		case block:
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "x.AppDataRead." + subject,
+				"token_type": "Bearer", "expires_in": 900, "scope": "AppDataRead"})
 		case r.PostForm.Get("grant_type") != exchange.GrantType || r.PostForm.Get("subject_token_type") != exchange.AccessTokenType ||
 			r.PostForm.Get("resource") != "https://apps.invalid" || !strings.HasPrefix(subject, HubTokenPrefix):
 			w.WriteHeader(http.StatusBadRequest)
@@ -229,6 +253,12 @@ type stack struct {
 
 func newStack(t *testing.T, registryOn bool, opts session.Options) *stack {
 	t.Helper()
+	return newStackWith(t, registryOn, false, opts)
+}
+
+// newStackWith is newStack with APP_DATA_BLOCK_EXCHANGE set to blockOn, wired as main wires it.
+func newStackWith(t *testing.T, registryOn, blockOn bool, opts session.Options) *stack {
+	t.Helper()
 	s := &stack{hub: newFakeHub(t), reg: newFakeRegistry(t), store: newFakeStore(t)}
 	if opts.MaxStreams == 0 {
 		opts.MaxStreams = 10
@@ -242,8 +272,16 @@ func newStack(t *testing.T, registryOn bool, opts session.Options) *stack {
 	}
 	opts.MaxBytes = 1 << 20
 	opts.NotPrivateCooldown, opts.ExpiryMargin = time.Hour, 30*time.Second
-	opts.Exchange = (&exchange.Exchanger{Config: exchange.Config{URL: s.hub.srv.URL, ClientID: "relay-client",
-		ClientSecret: "relay-secret", Resource: "https://apps.invalid"}}).Exchange
+	ex := &exchange.Exchanger{Config: exchange.Config{URL: s.hub.srv.URL, ClientID: "relay-client",
+		ClientSecret: "relay-secret", Resource: "https://apps.invalid"}}
+	var blocks *exchange.BlockCache
+	if blockOn {
+		blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Margin: opts.ExpiryMargin,
+			Observe: func(outcome, code string) {
+				s.m.ObserveBlockExchange(slog.New(slog.DiscardHandler))(outcome, code)
+			}}
+	}
+	opts.Exchange = exchange.Route(ex.Exchange, blocks)
 	s.mgr = session.New(session.ClientSubscriber{Client: &registry.Client{BaseURL: s.reg.srv.URL}}, opts)
 	t.Cleanup(s.mgr.Close)
 	reg := prometheus.NewRegistry()
@@ -261,6 +299,7 @@ func newStack(t *testing.T, registryOn bool, opts session.Options) *stack {
 	if registryOn {
 		s.srv.Streams = s.mgr
 	}
+	s.srv.BlockExchange = blockOn
 	s.h = s.srv.Handler()
 	return s
 }
@@ -370,6 +409,106 @@ func TestATokenTheHubCannotExchangeReadsRESTOnly(t *testing.T) {
 	}
 	if fallbacks(s, "token_not_exchangeable") != 1 {
 		t.Fatal("fallback not counted")
+	}
+	// 🔴 The block exchange is off: the block token never reaches the hub.
+	if len(s.hub.subjects) != 0 {
+		t.Fatalf("the hub was sent %d tokens with the block exchange off", len(s.hub.subjects))
+	}
+}
+
+// A token that is neither the hub's nor a block token's shape reads REST only, block exchange on or
+// off, and never reaches the hub.
+func TestAnOpaqueTokenReadsRESTOnlyEvenWithTheBlockExchangeOn(t *testing.T) {
+	s := newStackWith(t, true, true, session.Options{})
+	s.store.by["opaque-token"] = restAnswer{200, `{"items":[],"nextCursor":null}`}
+	g := s.get(t, notesPath, "opaque-token")
+	if g.status != 200 || g.ans.Source != "rest" || fallbacks(s, "token_not_exchangeable") != 1 || len(s.hub.subjects) != 0 {
+		t.Fatalf("%d %s, hub saw %d", g.status, g.body, len(s.hub.subjects))
+	}
+}
+
+// blockTok is a block token's shape (header.payload.signature); pairwise distinct from every other
+// fixture.
+const blockTok = "eyJhbGciOiJSUzI1NiJ9.eyJqdGkiOiJibGstYWxpY2UifQ.c2lnLWFsaWNl"
+
+func blockExchanges(s *stack, outcome, code string) float64 {
+	return testutil.ToFloat64(s.m.BlockExchanges.WithLabelValues(outcome, code))
+}
+
+// With the block exchange on, a block token is exchanged at the hub's block exchange and read through
+// its own stream; the adapter sees the exchanged token only (the fakes' cleanup checks it).
+func TestABlockTokenIsReadThroughItsStreamWithTheBlockExchangeOn(t *testing.T) {
+	s := newStackWith(t, true, true, session.Options{})
+	s.reg.records[blockTok] = []registry.Entity{ent("urn:apps.civitai.com:todo-app/notes/r-blk", "BLOCK-ALICE-5e1b")}
+	g := s.get(t, notesPath, blockTok)
+	if g.status != 200 || g.ans.Source != "registry" || len(g.ans.Items) != 1 || !strings.Contains(g.body, "BLOCK-ALICE-5e1b") {
+		t.Fatalf("%d %s", g.status, g.body)
+	}
+	if n := s.hub.blockExchanges(blockTok); n != 1 || s.store.calls.Load() != 0 {
+		t.Fatalf("%d block exchanges, %d REST reads; want 1 and 0", n, s.store.calls.Load())
+	}
+	if blockExchanges(s, "issued", "none") != 1 {
+		t.Fatal("the exchange was not counted")
+	}
+}
+
+// 🔴 One block token is never exchanged twice (the hub refuses a replay): reading a second
+// collection reuses the first exchange, and both are served from the registry.
+func TestABlockTokenIsExchangedOnceAcrossCollections(t *testing.T) {
+	s := newStackWith(t, true, true, session.Options{})
+	s.reg.records[blockTok] = []registry.Entity{ent("urn:apps.civitai.com:todo-app/notes/r-blk", "BLOCK-ALICE-5e1b")}
+	for _, path := range []string{notesPath, "/v1/apps/todo-app/collections/lists/records", notesPath} {
+		if g := s.get(t, path, blockTok); g.status != 200 || g.ans.Source != "registry" {
+			t.Fatalf("%s: %d %s", path, g.status, g.body)
+		}
+	}
+	if n := s.hub.blockExchanges(blockTok); n != 1 {
+		t.Fatalf("the hub was asked %d times for one block token, want 1", n)
+	}
+	if n := s.reg.subs.Load(); n != 2 {
+		t.Fatalf("%d subscriptions, want 2 (one per collection)", n)
+	}
+	if blockExchanges(s, "issued", "none") != 1 || blockExchanges(s, "reused", "none") != 1 {
+		t.Fatalf("issued %v reused %v", blockExchanges(s, "issued", "none"), blockExchanges(s, "reused", "none"))
+	}
+}
+
+// A refused block exchange falls back to REST exactly as a refused user exchange does, counted with
+// the hub's refusal code; the hub is not asked again for that block token.
+func TestARefusedBlockExchangeFallsBackToREST(t *testing.T) {
+	s := newStackWith(t, true, true, session.Options{})
+	s.hub.refuse[blockTok] = true
+	s.store.by[blockTok] = restAnswer{200, `{"items":[{"key":"k-blk","data":{"text":"BLOCK-REST-77c0"},"version":2}],"nextCursor":null}`}
+	g := s.get(t, notesPath, blockTok)
+	if g.status != 200 || g.ans.Source != "rest" || !strings.Contains(g.body, "BLOCK-REST-77c0") || s.reg.subs.Load() != 0 {
+		t.Fatalf("%d %s, subs %d", g.status, g.body, s.reg.subs.Load())
+	}
+	if fallbacks(s, "exchange_refused") != 1 || blockExchanges(s, "refused", "invalid_grant") != 1 {
+		t.Fatalf("exchange_refused %v, refused/invalid_grant %v", fallbacks(s, "exchange_refused"), blockExchanges(s, "refused", "invalid_grant"))
+	}
+	// Another collection of the same block token: REST again (the fake store answers any collection but
+	// notes with its 400, passed on), the refusal remembered, the hub not asked.
+	if g := s.get(t, "/v1/apps/todo-app/collections/lists/records", blockTok); g.status != 400 || g.body != `{"error":"bad_request"}` ||
+		fallbacks(s, "exchange_refused") != 2 {
+		t.Fatalf("%d %s, exchange_refused %v", g.status, g.body, fallbacks(s, "exchange_refused"))
+	}
+	if n := s.hub.blockExchanges(blockTok); n != 1 || blockExchanges(s, "remembered", "invalid_grant") != 1 {
+		t.Fatalf("%d block exchanges, remembered %v; want 1 and 1", n, blockExchanges(s, "remembered", "invalid_grant"))
+	}
+}
+
+// The hub unreachable: the read is answered by REST, and nothing is remembered, so a later read may
+// try again.
+func TestAFailedBlockExchangeFallsBackToREST(t *testing.T) {
+	s := newStackWith(t, true, true, session.Options{})
+	s.hub.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":"temporarily_unavailable"}`)
+	})
+	s.store.by[blockTok] = restAnswer{200, `{"items":[],"nextCursor":null}`}
+	g := s.get(t, notesPath, blockTok)
+	if g.status != 200 || g.ans.Source != "rest" || fallbacks(s, "failed") != 1 || blockExchanges(s, "failed", "none") != 1 {
+		t.Fatalf("%d %s, failed %v", g.status, g.body, fallbacks(s, "failed"))
 	}
 }
 

@@ -108,6 +108,7 @@ function blockExchangeCallers(): { callers: ReadonlySet<string>; invalid: boolea
 
 type ReplayRedis = {
   set(key: string, value: string, opts: { NX: true; EX: number }): Promise<string | null>;
+  get(key: string): Promise<string | null>;
   del(key: string): Promise<unknown>;
 };
 
@@ -116,28 +117,47 @@ const REPLAY_TIMEOUT_MS = 2000;
 const replayKey = (jti: string) =>
   `auth:block-exchange:jti:${createHash('sha256').update(jti).digest('hex')}`;
 
+/** One request's claim on a block token's `jti`: the value it SETs is its own `nonce`. */
+type JtiClaim = { jti: string; nonce: string };
+
 /**
- * Claim the block token's `jti` for one exchange. True when this request claimed it, false when an earlier
- * one did. Throws when the claim cannot be made (no Redis, an error, a timeout): the caller refuses, since an
- * unrecorded claim could be replayed.
+ * Claim the block token's `jti` for one exchange, storing `claim.nonce` as the value. True when this request
+ * claimed it, false when an earlier one did. Throws when the claim cannot be made (no Redis, an error, a
+ * timeout): the caller refuses, since an unrecorded claim could be replayed. After a timeout the SET may
+ * still land; if it does, the claim is given back then, so a retry is not refused for the token's life.
  */
-async function claimBlockTokenJti(jti: string, ttlSeconds: number): Promise<boolean> {
+async function claimBlockTokenJti(claim: JtiClaim, ttlSeconds: number): Promise<boolean> {
   const redis = getRedis() as unknown as ReplayRedis | null;
   if (!redis) throw new Error('REDIS_URL is not configured');
-  const reply = await raceTimeout(
-    redis.set(replayKey(jti), '1', { NX: true, EX: Math.max(1, ttlSeconds) }),
-    REPLAY_TIMEOUT_MS,
-    'replay store timed out'
-  );
-  return reply !== null;
+  const set = redis.set(replayKey(claim.jti), claim.nonce, {
+    NX: true,
+    EX: Math.max(1, ttlSeconds),
+  });
+  try {
+    return (await raceTimeout(set, REPLAY_TIMEOUT_MS, 'replay store timed out')) !== null;
+  } catch (err) {
+    void set
+      .then((reply) => (reply !== null ? releaseBlockTokenJti(claim) : undefined))
+      .catch(() => undefined);
+    throw err;
+  }
 }
 
-/** Give a claimed `jti` back after a failed mint, so the caller's retry is not refused as a replay. */
-async function releaseBlockTokenJti(jti: string): Promise<void> {
+/**
+ * Give a `jti` back when no token was issued for it, so the caller's retry is not refused as a replay. Only
+ * this request's own claim is deleted (its nonce is the stored value): a request whose claim lost, or whose
+ * SET never landed, must not free another request's claim. GET then DEL is safe here: while the key holds
+ * this request's nonce no other request can claim it (NX), and it cannot expire in between (its TTL is at
+ * least a minute; the release runs within seconds of the claim).
+ */
+async function releaseBlockTokenJti(claim: JtiClaim): Promise<void> {
   const redis = getRedis() as unknown as ReplayRedis | null;
   if (!redis) return;
+  const key = replayKey(claim.jti);
   await raceTimeout(
-    Promise.resolve(redis.del(replayKey(jti))),
+    (async () => {
+      if ((await redis.get(key)) === claim.nonce) await redis.del(key);
+    })(),
     REPLAY_TIMEOUT_MS,
     'replay store timed out'
   );
@@ -213,7 +233,9 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     );
   };
 
-  let claimedJti: string | undefined;
+  // Set from just before the claim until a token is issued: `finally` gives it back whenever none was, a
+  // timed-out claim included (its SET may have landed).
+  let claim: JtiClaim | undefined;
   try {
     // Dark unless a caller is listed: checked before anything else is read.
     const allow = blockExchangeCallers();
@@ -324,16 +346,20 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
 
     // Once per block token: claimed last, just before minting, and released in `finally` if no token is
     // issued, so a failure the caller may retry does not burn the block token.
+    claim = { jti: block.jti, nonce: randomUUID() };
     let claimed: boolean;
     try {
-      claimed = await claimBlockTokenJti(block.jti, block.exp - iat + 60);
+      claimed = await claimBlockTokenJti(claim, block.exp - iat + 60);
     } catch (err) {
       return refuse('temporarily_unavailable', `replay check failed: ${String(err)}`, {
         'Retry-After': '5',
       });
     }
-    if (!claimed) return refuse('invalid_grant', 'block token already exchanged');
-    claimedJti = block.jti;
+    if (!claimed) {
+      // An earlier request holds the claim: not this request's to give back.
+      claim = undefined;
+      return refuse('invalid_grant', 'block token already exchanged');
+    }
 
     const jti = randomUUID();
     const scope = scopeNames(BLOCK_EXCHANGE_SCOPE);
@@ -363,7 +389,7 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       'block-exchange'
     );
     if (!minted.ok) return refuse('server_error', minted.reason);
-    claimedJti = undefined;
+    claim = undefined;
 
     logOAuthEvent({
       type: 'block_exchange.issued',
@@ -395,9 +421,9 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       'Retry-After': '5',
     });
   } finally {
-    // A claim this request made and did not turn into a token is given back.
-    if (claimedJti !== undefined) {
-      await releaseBlockTokenJti(claimedJti).catch((err) => {
+    // A claim this request made (or may have made) and did not turn into a token is given back.
+    if (claim !== undefined) {
+      await releaseBlockTokenJti(claim).catch((err) => {
         logOAuthEvent({
           type: 'block_exchange.refused',
           userId: ctx.userId,

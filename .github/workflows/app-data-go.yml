@@ -101,7 +101,7 @@ jobs:
           # they passed. Raise the floors when tests or packages are added.
           [ "$failed" -eq 0 ]
           [ "$pkgs" -ge 9 ]
-          [ "$passed" -ge 125 ]
+          [ "$passed" -ge 150 ]
 
       # Statement coverage of the unit run (each package's own tests), per package and in total,
       # against the ratchet floors in ci/coverage-floors.txt. A second instrument prints its own total

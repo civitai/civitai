@@ -87,6 +87,13 @@ func run(log *slog.Logger) error {
 				ClientSecret: cfg.Relay.ClientSecret, Resource: cfg.Relay.Resource},
 			HTTP: &http.Client{Timeout: exchangeTimeout},
 		}
+		// Nil while APP_DATA_BLOCK_EXCHANGE is off: exchange.Route is then the user exchange itself.
+		var blocks *exchange.BlockCache
+		if cfg.BlockExchange {
+			blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Margin: expiryMargin,
+				Observe: m.ObserveBlockExchange(log.With("component", "block-exchange"))}
+			srv.BlockExchange = true
+		}
 		mgr = session.New(session.ClientSubscriber{Client: &registry.Client{
 			BaseURL: cfg.RegistryURL, UserAgent: "app-data-go", HTTP: registry.NewHTTPClient(),
 		}}, session.Options{
@@ -94,7 +101,7 @@ func run(log *slog.Logger) error {
 			IdleTTL: cfg.IdleTTL, MaxAge: cfg.MaxAge,
 			MaxRecords: cfg.MaxRecords, MaxBytes: cfg.MaxBytes,
 			Cooldown: streamCooldown, NotPrivateCooldown: notPrivateCooldown,
-			Exchange: ex.Exchange, ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
+			Exchange: exchange.Route(ex.Exchange, blocks), ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
 			Opened: m.StreamsOpened.Inc,
 			Closed: func(reason string) { m.StreamsClosed.WithLabelValues(reason).Inc() },
 		})
@@ -117,7 +124,7 @@ func run(log *slog.Logger) error {
 		WriteTimeout:      cfg.RequestDeadline + 5*time.Second,
 		IdleTimeout:       100 * time.Second,
 	}
-	log.Info("app-data-go starting", "addr", cfg.Addr, "registry", cfg.RegistryURL != "",
+	log.Info("app-data-go starting", "addr", cfg.Addr, "registry", cfg.RegistryURL != "", "block_exchange", cfg.BlockExchange,
 		"max_streams", cfg.MaxStreams, "max_streams_per_token", cfg.MaxStreamsPerToken)
 
 	served := make(chan error, 1)
