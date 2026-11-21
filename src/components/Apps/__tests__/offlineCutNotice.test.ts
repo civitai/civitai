@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as Notifications from '~/utils/notifications';
 
 /**
  * The takedown warning toast → moderation history WIRING. `appListingModerationView.test.ts` pins
@@ -16,7 +17,10 @@ const { notify, trigger, closeById } = vi.hoisted(() => ({
   trigger: vi.fn(),
   closeById: vi.fn(),
 }));
-vi.mock('~/utils/notifications', () => ({ showWarningNotification: notify }));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof Notifications>()),
+  showWarningNotification: notify,
+}));
 vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: { trigger, closeById } }));
 
 import {

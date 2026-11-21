@@ -3,6 +3,7 @@ import { IconHistory } from '@tabler/icons-react';
 
 import {
   moderationActionChip,
+  type ModerationHistoryTarget,
   retryableOfflineCutEventId,
 } from '~/components/Apps/appListingModerationView';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -51,8 +52,6 @@ function claimOwnerTransfer(e: ModEvent): { from: number | null; to: number | nu
   return { from, to };
 }
 
-/** The listing a history modal is for. `slug` is display only. */
-export type ModerationHistoryListing = { appListingId: string; slug: string };
 
 /**
  * MOD per-listing moderation history (newest-first audit trail), with "Retry cut" on the newest
@@ -65,7 +64,7 @@ export function ListingModerationHistoryModal({
   listing,
   onClose,
 }: {
-  listing: ModerationHistoryListing | null;
+  listing: ModerationHistoryTarget | null;
   onClose: () => void;
 }) {
   const features = useFeatureFlags();
@@ -195,7 +194,7 @@ export function listingModerationHistoryDialogId(appListingId: string): string {
  * blanks that page (the listing is no longer approved), which would unmount a locally owned modal
  * and leave the toast's "open history" with nothing to open.
  */
-export function openListingModerationHistory(listing: ModerationHistoryListing): void {
+export function openListingModerationHistory(listing: ModerationHistoryTarget): void {
   const id = listingModerationHistoryDialogId(listing.appListingId);
   dialogStore.trigger({
     id,

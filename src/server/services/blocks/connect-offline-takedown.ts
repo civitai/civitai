@@ -135,7 +135,7 @@ export async function recordOfflineCutEvent(opts: {
  * grants per client, so that app keeps it, and cutting would only force its users to sign in again.
  *
  * Only a moderator DELIST deletes refresh tokens. Other ways a listing stops declaring only stop
- * chains sliding (listing-offline.ts); issued tokens live until their expiry (<=30 days).
+ * chains sliding (the hub's `apps/auth/src/lib/server/oauth/listing-offline.ts`); issued tokens live until their expiry (<=30 days).
  *
  * Every Refresh key of the client goes, device-flow ones included: the hub does not gate the
  * device flow, but a delisted app loses offline access whatever flow its users signed in with.
