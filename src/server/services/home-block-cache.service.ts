@@ -317,28 +317,35 @@ type EvictTarget = { imageIds: number[] } | { userId: number } | { collectionIds
 // Only a collection anyone may read has a shared entry (see `isCollectionReadShared`); the others
 // have nothing to refresh.
 async function collectionsHolding(target: EvictTarget) {
-  let batches: Prisma.Sql[];
+  if ('collectionIds' in target)
+    return readCollectionIds(
+      chunk(target.collectionIds, EVICT_IMAGE_BATCH).map(
+        (ids) => Prisma.sql`SELECT c.id AS "collectionId" FROM "Collection" c
+          WHERE c.id = ANY(${ids}::int[]) AND c.read IN ('Public', 'Unlisted')`
+      )
+    );
+  if ('imageIds' in target && !target.imageIds.length) return [];
+  // Without that index the cover lookup would scan every collection; the items are still found.
+  const withCovers = await coverIndexExists().catch((error: unknown) => {
+    logEvictFailure(error);
+    return false;
+  });
   if ('userId' in target)
-    batches = [
-      Prisma.sql`SELECT DISTINCT ci."collectionId" FROM "CollectionItem" ci
+    return readCollectionIds([
+      Prisma.sql`SELECT ci."collectionId" FROM "CollectionItem" ci
         JOIN "Image" i ON i.id = ci."imageId"
         JOIN "Collection" c ON c.id = ci."collectionId"
         WHERE i."userId" = ${target.userId} AND c.read IN ('Public', 'Unlisted')`,
-    ];
-  else if ('collectionIds' in target)
-    batches = chunk(target.collectionIds, EVICT_IMAGE_BATCH).map(
-      (ids) => Prisma.sql`SELECT c.id AS "collectionId" FROM "Collection" c
-        WHERE c.id = ANY(${ids}::int[]) AND c.read IN ('Public', 'Unlisted')`
-    );
-  else {
-    // Without that index the cover lookup would scan every collection; the items are still found.
-    const withCovers =
-      target.imageIds.length > 0 &&
-      (await coverIndexExists().catch((error: unknown) => {
-        logEvictFailure(error);
-        return false;
-      }));
-    batches = chunk(target.imageIds, EVICT_IMAGE_BATCH).map(
+      ...(withCovers
+        ? [
+            Prisma.sql`SELECT c.id AS "collectionId" FROM "Collection" c
+              JOIN "Image" i ON i.id = c."imageId"
+              WHERE i."userId" = ${target.userId} AND c.read IN ('Public', 'Unlisted')`,
+          ]
+        : []),
+    ]);
+  return readCollectionIds(
+    chunk(target.imageIds, EVICT_IMAGE_BATCH).map(
       (ids) => Prisma.sql`SELECT ci."collectionId" FROM "CollectionItem" ci
         JOIN "Collection" c ON c.id = ci."collectionId"
         WHERE ci."imageId" = ANY(${ids}::int[]) AND c.read IN ('Public', 'Unlisted')${
@@ -349,10 +356,13 @@ async function collectionsHolding(target: EvictTarget) {
         WHERE c."imageId" = ANY(${ids}::int[]) AND c.read IN ('Public', 'Unlisted')`
           : Prisma.empty
       }`
-    );
-  }
+    )
+  );
+}
+
+async function readCollectionIds(queries: Prisma.Sql[]) {
   const collectionIds = new Set<number>();
-  for (const query of batches) {
+  for (const query of queries) {
     const rows = await dbRead.$queryRaw<{ collectionId: number }[]>(query);
     for (const { collectionId } of rows) collectionIds.add(collectionId);
   }

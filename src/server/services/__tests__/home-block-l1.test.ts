@@ -34,7 +34,7 @@ import {
   homeBlockCacheKey,
   resetHomeBlockL1ForTests,
 } from '~/server/services/home-block-cache.service';
-import { writeModeratorBlock } from '~/server/services/image.service';
+import { reportCsamImages, writeModeratorBlock } from '~/server/services/image.service';
 import { blockBannedUserImages, blockUserImagesAsCsam } from '~/server/services/user.service';
 
 type Readable = {
@@ -275,6 +275,8 @@ describe('hiding an image refreshes the home blocks holding it', () => {
   const COLLECTION = 40;
   const PRIVATE_COLLECTION = 41;
   const COVER_COLLECTION = 42;
+  const UNLISTED_COVER_COLLECTION = 43;
+  const PRIVATE_COVER_COLLECTION = 44;
   const FEATURED_BLOCK = 900;
   let lagged = false;
 
@@ -324,9 +326,16 @@ describe('hiding an image refreshes the home blocks holding it', () => {
       where,
       data,
     }: {
-      where: { userId: number };
-      data: { ingestion: string; nsfwLevel: number; blockedFor: string };
+      where: { userId: number; id?: { in: number[] } };
+      data: { ingestion: string; nsfwLevel: number; blockedFor: string; needsReview?: string };
     }) => {
+      if (data.needsReview) {
+        const flagged = await pg.db.query(
+          `UPDATE "Image" SET "needsReview" = $1 WHERE id = ANY($2::int[])`,
+          [data.needsReview, where.id?.in ?? []]
+        );
+        return { count: flagged.affectedRows ?? 0 };
+      }
       const { affectedRows } = await pg.db.query(
         `UPDATE "Image" SET ingestion = $1, "nsfwLevel" = $2, "blockedFor" = $3 WHERE "userId" = $4`,
         [data.ingestion, data.nsfwLevel, data.blockedFor, where.userId]
@@ -340,7 +349,7 @@ describe('hiding an image refreshes the home blocks holding it', () => {
     getHomeBlockData.mockImplementation(async () => {
       builds++;
       // A lagged replica does not have the block yet.
-      const visible = lagged ? '' : `AND i.ingestion = 'Scanned'`;
+      const visible = lagged ? '' : `AND i.ingestion = 'Scanned' AND i."needsReview" IS NULL`;
       const { rows: items } = await pg.db.query<{ id: number }>(
         `SELECT i.id FROM "CollectionItem" ci JOIN "Image" i ON i.id = ci."imageId"
          WHERE ci."collectionId" = $1 ${visible} ORDER BY i.id`,
@@ -354,7 +363,8 @@ describe('hiding an image refreshes the home blocks holding it', () => {
         (1, ${OWNER}, 'Scanned', 1), (2, 99, 'Scanned', 1);
       INSERT INTO "Collection" (id, read, "imageId") VALUES
         (${COLLECTION}, 'Public', NULL), (${PRIVATE_COLLECTION}, 'Private', 1),
-        (${COVER_COLLECTION}, 'Public', 1);
+        (${COVER_COLLECTION}, 'Public', 1), (${UNLISTED_COVER_COLLECTION}, 'Unlisted', 1),
+        (${PRIVATE_COVER_COLLECTION}, 'Private', 1);
       INSERT INTO "CollectionItem" ("collectionId", "imageId") VALUES
         (${COLLECTION}, 1), (${COLLECTION}, 2), (${PRIVATE_COLLECTION}, 1);
     `);
@@ -428,6 +438,33 @@ describe('hiding an image refreshes the home blocks holding it', () => {
     await writeModeratorBlock([1]);
 
     expect(bustedKeys()).toContain(homeBlockCacheKey(HomeBlockType.Collection, COVER_COLLECTION));
+  });
+
+  it("a ban's media block refreshes the collections whose cover is the owner's image", async () => {
+    await blockBannedUserImages(OWNER);
+
+    expect(bustedKeys()).toContain(homeBlockCacheKey(HomeBlockType.Collection, COVER_COLLECTION));
+    expect(bustedKeys()).toContain(
+      homeBlockCacheKey(HomeBlockType.Collection, UNLISTED_COVER_COLLECTION)
+    );
+    expect(bustedKeys().some((key) => key.includes(`:${PRIVATE_COVER_COLLECTION}:`))).toBe(false);
+  });
+
+  it('a CSAM report: the next read no longer has the image', async () => {
+    expect(await readItems()).toEqual([1, 2]);
+
+    await reportCsamImages({ imageIds: [1], user: { id: 9001, isModerator: true } } as never);
+
+    expect(await readItems()).toEqual([2]);
+  });
+
+  it('a CSAM report refreshes the collections holding that image, not those of another', async () => {
+    await reportCsamImages({ imageIds: [2], user: { id: 9001, isModerator: true } } as never);
+
+    expect(bustedKeys()).toContain(homeBlockCacheKey(HomeBlockType.Collection, COLLECTION));
+    expect(bustedKeys()).not.toContain(
+      homeBlockCacheKey(HomeBlockType.Collection, COVER_COLLECTION)
+    );
   });
 
   // The cover lookup needs that index; without it the item lookup still runs.

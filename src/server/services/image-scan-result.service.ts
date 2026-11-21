@@ -315,6 +315,9 @@ export async function processImageScanWorkflow({
     );
     // Backstop: the in-pipeline showcase bust may not have run if an earlier step threw.
     if (image.postId) await bustPostCachesLazy(image.postId);
+    // Likewise the home-block refresh, which never throws.
+    if (outcome.ingestion === ImageIngestionStatus.Blocked)
+      await evictHomeBlocksForImages({ imageIds: [image.id] });
   }
 
   // Last step, after everything is committed — throwing here would 400 a finished webhook

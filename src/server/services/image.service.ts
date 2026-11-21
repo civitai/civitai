@@ -6333,6 +6333,7 @@ export async function reportCsamImages({
       });
   });
   await refreshProfilePicturesForImages(imageIds);
+  await evictHomeBlocksForImages({ imageIds });
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: { userId: true, reports: { select: { reportId: true } } },
