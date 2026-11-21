@@ -1,11 +1,12 @@
 # tools/ts7
 
-Holds the TypeScript 7 compiler used by `pnpm run typecheck:fast` and `pnpm run typecheck:tests`.
-Nothing imports from here; `scripts/typecheck-fast.mjs` and `scripts/ci/typecheck-tests-gate.mjs`
-resolve the binary through `typescript/lib/getExePath.js`.
+Holds the TypeScript 7 compiler used by `pnpm run typecheck` and `pnpm run typecheck:tests`.
+Nothing imports from here; `scripts/lib/ts7.mjs` resolves the binary through
+`typescript/lib/getExePath.js` and installs this directory from its own lockfile on first use, so
+there is no manual step. To install it by hand:
 
 ```bash
-pnpm -C tools/ts7 install --ignore-workspace   # once — a root `pnpm install` does NOT fetch this
+pnpm -C tools/ts7 install --ignore-workspace --frozen-lockfile   # a root `pnpm install` does NOT fetch this
 ```
 
 `--ignore-workspace` is required: without it pnpm finds the root `pnpm-workspace.yaml` above this
@@ -13,25 +14,19 @@ directory, installs the root workspace instead, and leaves this one empty.
 
 ## What it is for
 
-A second compiler for the edit loop. Measured 2026-09-21 on this repo, with the spread on both
-sides because the box is shared: `pnpm run typecheck:fast` 29-98s cold and 6-56s warm over 8 runs;
-`pnpm run typecheck` 192-539s over 4. An order of magnitude, not a ratio.
+The compiler of the repo's typecheck. `scripts/typecheck.mjs` runs it single-threaded on dev
+machines (several agents typechecking at once must not exhaust memory) and with `--checkers 2` in
+CI. The root `typescript` dependency stays 5.9 because ESLint, `next build`, `svelte-check` and
+the codegen import its compiler API, which TS 7.0 does not ship. `TYPECHECK_COMPILER=5 pnpm run
+typecheck` runs 5.9 instead, for a suspected TypeScript 7 disagreement.
 
-`pnpm run typecheck` stays authoritative — it is what CI, `lint` and `svelte-check` run. The two
-compilers disagree in both directions (TS 7.0.2 reports `(a ?? null) ?? b` as TS2871 "always
-nullish" while typing that same operand `string | null` in assignment position), so a diagnostic
-from the fast lane is a lead, not a fact.
+Measured 2026-11-20 (32-core box, `origin/main`, 3 runs each): cold 5.9 134 s at 8.4 GB peak vs
+TS7 single-threaded 48 s at 7.3 GB; the first edit to a router file after a build 5.9 ~194 s vs
+~56 s. The two compilers can disagree (TS 7.0.2 reports `(a ?? null) ?? b` as TS2871 "always
+nullish" while typing that same operand `string | null` in assignment position).
 
-The one place CI runs this compiler is `pnpm run typecheck:tests`, a per-file ratchet whose baseline
-is measured by this same compiler. The root `tsconfig.json` excludes every test file, so
-`typecheck:fast`, like `typecheck`, does not check them; `typecheck:tests` is their only typecheck.
-
-It takes **no arguments**: it always checks the whole project, so that "0 diagnostics" cannot mean
-"the compiler was asked to check nothing". Narrow a check with `pnpm run typecheck` instead.
-
-⚠️ It is **not** routed through the dev-server queue that `pnpm run typecheck` uses, so N agents
-running it at once are N unserialised native compilers. The 56s end of that warm range is the
-busy-box figure — size the risk from that end, not the 6s one.
+`pnpm run typecheck:tests` is a per-file ratchet whose baseline is measured by this same compiler.
+The root `tsconfig.json` excludes every test file, so `typecheck:tests` is their only typecheck.
 
 ## Why this is not a pnpm workspace package
 

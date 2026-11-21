@@ -45,6 +45,11 @@ describe('which typechecks go through the queue', () => {
   it('stays direct when the caller overrides the heap', () => {
     expect(typecheckQueueDecision([], { ...ON, TYPECHECK_HEAP_MB: '12288' }).queue).toBe(false);
   });
+
+  // The same reason, for the 5.9 brake: a queued run would silently run TypeScript 7.
+  it('stays direct when the caller chooses the compiler', () => {
+    expect(typecheckQueueDecision([], { ...ON, TYPECHECK_COMPILER: '5' }).queue).toBe(false);
+  });
 });
 
 describe('which app typechecks go through the queue', () => {

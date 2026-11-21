@@ -24,12 +24,29 @@ const stub = (name: string, body: string) => {
   return file;
 };
 
-// The wrapper always appends --noEmit; stubs ignore argv.
-const run = (tscPath: string) =>
-  spawnSync(process.execPath, [WRAPPER], {
+// CI and TYPECHECK_COMPILER are pinned because both change what the wrapper runs, and the suite
+// itself runs in CI.
+const run = (tscPath: string, env: Record<string, string> = {}, args: string[] = []) =>
+  spawnSync(process.execPath, [WRAPPER, ...args], {
     encoding: 'utf8',
-    env: { ...process.env, TYPECHECK_TSC_PATH: tscPath, GITHUB_ACTIONS: '' },
+    env: {
+      ...process.env,
+      TYPECHECK_TSC_PATH: tscPath,
+      GITHUB_ACTIONS: '',
+      CI: '',
+      TYPECHECK_COMPILER: '',
+      ...env,
+    },
   });
+
+// Prints what the compiler process received, then exits clean.
+const ARGV_STUB =
+  'console.log(JSON.stringify({ argv: process.argv.slice(2), execArgv: process.execArgv }));\nprocess.exit(0);\n';
+const received = (stdout: string) =>
+  JSON.parse(stdout.split('\n').find((l) => l.startsWith('{"argv"')) ?? 'null') as {
+    argv: string[];
+    execArgv: string[];
+  };
 
 const CRASH_MARKER = 'TYPECHECK CRASHED';
 const OK_MARKER = 'typecheck: OK';
@@ -68,7 +85,7 @@ describe('typecheck wrapper outcome classification', () => {
     expect(res.stdout).not.toContain(OK_MARKER);
   });
 
-  it('names heap exhaustion when V8 aborts with no diagnostics', () => {
+  it('names heap exhaustion when V8 aborts with no diagnostics (TypeScript 5.9)', () => {
     const res = run(
       stub(
         'oom',
@@ -78,7 +95,8 @@ describe('typecheck wrapper outcome classification', () => {
           // Exit 134 is how a shell reports V8's abort; a real abort() dumps core and costs seconds.
           'process.exit(134);',
         ].join('\n')
-      )
+      ),
+      { TYPECHECK_COMPILER: '5' }
     );
 
     expect(res.status).not.toBe(0);
@@ -122,6 +140,25 @@ describe('typecheck wrapper outcome classification', () => {
     expect(res.stderr).not.toContain('ran out of old-space heap');
   });
 
+  it('names out-of-memory when the TypeScript 7 runtime aborts with no diagnostics', () => {
+    const res = run(
+      stub(
+        'go-oom',
+        [
+          "console.error('fatal error: runtime: out of memory');",
+          // The Go runtime exits 2 on a fatal error.
+          'process.exit(2);',
+        ].join('\n')
+      )
+    );
+
+    expect(res.status).not.toBe(0);
+    expect(res.stdout).toContain(CRASH_MARKER);
+    expect(res.stderr).toContain('ran out of memory');
+    // The heap cap is a 5.9 setting; telling a TS7 user to raise it would be the wrong fix.
+    expect(res.stderr).not.toContain('old-space heap');
+  });
+
   it('refuses to call it a pass when tsc exits 0 while printing diagnostics', () => {
     const res = run(
       stub('contradiction', `console.log(${JSON.stringify(DIAGNOSTIC_LINE)});\nprocess.exit(0);\n`)
@@ -129,6 +166,67 @@ describe('typecheck wrapper outcome classification', () => {
 
     expect(res.status).not.toBe(0);
     expect(res.stdout).toContain(CRASH_MARKER);
+    expect(res.stdout).not.toContain(OK_MARKER);
+  });
+});
+
+// The TS7 rollout's threading rule (R1): single-threaded on dev machines so several agents
+// typechecking at once cannot exhaust a machine's memory; two checkers in CI.
+describe('typecheck wrapper compiler selection', () => {
+  it('runs TypeScript 7 single-threaded outside CI, with its own .tsbuildinfo', () => {
+    const res = run(stub('argv-dev', ARGV_STUB));
+
+    expect(res.status).toBe(0);
+    const { argv, execArgv } = received(res.stdout);
+    expect(argv).toContain('--singleThreaded');
+    expect(argv).not.toContain('--checkers');
+    const buildInfo = argv[argv.indexOf('--tsBuildInfoFile') + 1];
+    expect(buildInfo).toMatch(
+      /node_modules[\\/]\.cache[\\/]typecheck[\\/]ts7-tsconfig\.tsbuildinfo$/
+    );
+    // No V8 heap flag: TS7 is a native binary.
+    expect(execArgv.some((a) => a.startsWith('--max-old-space-size'))).toBe(false);
+    expect(res.stdout).toContain('TypeScript 7');
+  });
+
+  it('runs TypeScript 7 with two checkers in CI', () => {
+    const res = run(stub('argv-ci', ARGV_STUB), { CI: 'true' });
+
+    expect(res.status).toBe(0);
+    const { argv } = received(res.stdout);
+    expect(argv.slice(argv.indexOf('--checkers'), argv.indexOf('--checkers') + 2)).toEqual([
+      '--checkers',
+      '2',
+    ]);
+    expect(argv).not.toContain('--singleThreaded');
+  });
+
+  it('keeps a per-project .tsbuildinfo for a narrowed run passed through pnpm', () => {
+    // `pnpm run typecheck -- -p x` delivers the `--`; TypeScript 7 rejects it as an option.
+    const res = run(stub('argv-scripts', ARGV_STUB), {}, ['--', '-p', 'tsconfig.scripts.json']);
+
+    const { argv } = received(res.stdout);
+    expect(argv).not.toContain('--');
+    expect(argv[argv.indexOf('--tsBuildInfoFile') + 1]).toMatch(
+      /ts7-tsconfig\.scripts\.tsbuildinfo$/
+    );
+  });
+
+  it('runs TypeScript 5.9 with the heap cap under TYPECHECK_COMPILER=5', () => {
+    const res = run(stub('argv-ts5', ARGV_STUB), { TYPECHECK_COMPILER: '5' });
+
+    expect(res.status).toBe(0);
+    const { argv, execArgv } = received(res.stdout);
+    expect(execArgv).toContain('--max-old-space-size=8192');
+    expect(argv).not.toContain('--singleThreaded');
+    expect(argv).not.toContain('--tsBuildInfoFile');
+    expect(res.stdout).toContain('TypeScript 5.9');
+  });
+
+  it('refuses an unknown TYPECHECK_COMPILER instead of guessing', () => {
+    const res = run(stub('never-runs', 'process.exit(0);\n'), { TYPECHECK_COMPILER: '6' });
+
+    expect(res.status).toBe(2);
     expect(res.stdout).not.toContain(OK_MARKER);
   });
 });

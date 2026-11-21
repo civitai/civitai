@@ -52,6 +52,9 @@ export function typecheckQueueDecision(args, env) {
   // A queued run is spawned with the DAEMON's environment, not the caller's, so an override set
   // here would silently not apply — the caller asked for a heap size and would get the default.
   if (env.TYPECHECK_HEAP_MB) return { queue: false, why: 'a heap override does not reach a queued run' };
+  if (env.TYPECHECK_COMPILER) {
+    return { queue: false, why: 'a compiler choice does not reach a queued run' };
+  }
   // Any argument at all means a narrowed run (`-p tsconfig.scripts.json`, a single project). Same
   // rule as scripts/test-component-run.mjs and for the same reason: telling a cheap narrow tsc
   // invocation from an expensive one by parsing its flags is a guess, and queueing a cheap one
