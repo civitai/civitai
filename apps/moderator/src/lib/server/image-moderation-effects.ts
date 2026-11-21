@@ -15,6 +15,7 @@ import { bustCacheTag, bustCachedObject } from './cache';
 import { getClickhouse } from './clickhouse';
 import { getNotifications } from './notifications';
 import { getSysRedis } from './redis';
+import { evictHomeBlocks } from './home-blocks';
 import { syncSearchIndex, syncSearchIndexBulk } from './search-index';
 import { parkModelSearchUpdates } from './search-index-park';
 import { logAxiomError, logToAxiom } from './axiom';
@@ -668,6 +669,7 @@ export async function applyBlockSideEffects(
         }),
     bestEffort('invalidate-existence', imageId, () => invalidateImagesExistence([imageId])),
     bestEffort('visibility', imageId, () => applyVisibilitySideEffects(imageId, img.postId)),
+    evictHomeBlocks([imageId]),
   ]);
   if (csamBlocklistFailures.length) throw csamBlocklistFailures[0];
 }

@@ -388,6 +388,7 @@ export function ModelVersionUpsertForm({
   // The stored number is a percent, not Buzz per N generations: never seed, remember or edit a Buzz
   // value onto it.
   const percentOfComputeFee = version?.licensingFeeType === LicensingFeeType.PercentOfCompute;
+  const feeLockedForMe = !!version?.licensingFeeLocked && !currentUser?.isModerator;
   // Two reasons a version can't earn anything at all — not a gate, not a per-generation fee. Every
   // control goes and the section explains itself, rather than leaving editable inputs whose values the
   // submit would drop. Private models keep their fee editor; only the gate is theirs to lose.
@@ -1547,7 +1548,11 @@ export function ModelVersionUpsertForm({
                       setChargeEnabled(checked);
                       if (!checked) clearCharges();
                     }}
-                    disabled={belowPricingFloor || (isEarlyAccessOver && !!version?.paidAccess)}
+                    disabled={
+                      belowPricingFloor ||
+                      (isEarlyAccessOver && !!version?.paidAccess) ||
+                      (feeLockedForMe && hasExistingLicensingFee)
+                    }
                   />
                 )}
                 {removingStoredCharge && !monetizationBlocked && (
@@ -1986,6 +1991,7 @@ export function ModelVersionUpsertForm({
                           <Switch
                             aria-label="Charge a fee to generate with this version"
                             checked={feeEnabled}
+                            disabled={feeLockedForMe}
                             onChange={(e) => {
                               const checked = e.target.checked;
                               setFeeEnabled(checked);
@@ -2026,6 +2032,19 @@ export function ModelVersionUpsertForm({
                                     fee; contact support to set one.
                                   </Text>
                                 )}
+                              </Stack>
+                            ) : feeLockedForMe ? (
+                              <Stack gap={2} data-testid="locked-licensing-fee">
+                                <Text fw={500} size="sm">
+                                  Fee per generation
+                                </Text>
+                                <Text size="sm">
+                                  {feeRatio.buzz} Buzz per {feeRatio.images}{' '}
+                                  {feeRatio.images === 1 ? 'generation' : 'generations'}
+                                </Text>
+                                <Text size="xs" c="dimmed">
+                                  Civitai set this fee. Contact support to change it.
+                                </Text>
                               </Stack>
                             ) : (
                               <Input.Wrapper
@@ -2187,6 +2206,7 @@ type Props = {
   // licensingFee comes off a Prisma read as a Decimal; the form coerces it to a number in defaultValues.
   version?: Omit<Partial<VersionInput>, 'licensingFee' | 'meta'> & {
     licensingFee?: number | { valueOf(): string } | null;
+    licensingFeeLocked?: boolean | null;
     flags?: number;
     meta?: unknown;
   };

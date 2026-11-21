@@ -75,6 +75,12 @@ export const PERMISSIONS = [
     id: 'user.membership.gift',
     label: 'Revoke or refund a membership gift whose payment did not clear',
   },
+  // Money: a membership gift nobody pays for, or taking one back. The id is checked by literal in the
+  // main app's membership-gift-comp.service (`ModeratorGrantId`).
+  {
+    id: 'user.membership.gift.comp',
+    label: 'Comp a membership gift (no charge), or revoke a comp',
+  },
   // Money: free days on, or a re-sync of, a member's Stripe subscription. The main app checks this
   // literal (`ModeratorGrantId`), so rename the two together.
   {

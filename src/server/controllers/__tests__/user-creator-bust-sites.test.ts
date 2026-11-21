@@ -23,23 +23,32 @@ const upload = vi.hoisted(() => ({
   done: [] as string[],
   bodies: [] as string[],
 }));
-vi.mock('@aws-sdk/lib-storage', () => {
-  const Upload = class {
-    private readonly params: { Body: NodeJS.ReadableStream; Key: string };
-    constructor({ params }: { params: { Body: NodeJS.ReadableStream; Key: string } }) {
-      this.params = params;
+// Both carry `default`: the package is pre-bundled for CJS interop, so consumers resolve through it.
+vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@aws-sdk/client-s3')>();
+  const objects = new Map<string, { body: Uint8Array; Metadata?: Record<string, string> }>();
+  const S3Client = class {
+    async send(command: unknown) {
+      if (command instanceof real.PutObjectCommand) {
+        if (upload.fail) throw upload.fail;
+        const { Key, Body, Metadata } = command.input;
+        objects.set(Key!, { body: Body as Uint8Array, Metadata });
+        upload.done.push(Key!);
+        upload.bodies.push(Buffer.from(Body as Uint8Array).toString('utf8'));
+        return {};
+      }
+      if (command instanceof real.GetObjectCommand) {
+        const found = objects.get(command.input.Key!)!;
+        return { Metadata: found.Metadata, Body: { transformToByteArray: async () => found.body } };
+      }
+      return {};
     }
-    async done() {
-      const chunks: Buffer[] = [];
-      for await (const chunk of this.params.Body)
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
-      if (upload.fail) throw upload.fail;
-      upload.done.push(this.params.Key);
-      upload.bodies.push(Buffer.concat(chunks).toString('utf8'));
-      return { ETag: '"etag"' };
+    destroy() {
+      return undefined;
     }
   };
-  return { Upload, default: { Upload } };
+  const mocked = { ...real, S3Client };
+  return { ...mocked, default: mocked };
 });
 
 /** ModActivity rows written through `trackModActivity`: [actor, entityType, activity, entityIds]. */

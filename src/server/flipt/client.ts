@@ -763,6 +763,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // Lets staff set a PercentOfCompute licence fee. Off until the orchestrator charges by the type:
   // before that, a percent is charged as that many Buzz per image.
   LICENSING_FEE_PERCENT_OF_COMPUTE = 'licensing-fee-percent-of-compute',
+  // On: page 1 of a signed-in viewer's default Hot model feed leads with models they liked,
+  // favourited or set Notify on that have a new version, then one per followed or staked creator
+  // (getPersonalLeadModelIds). EVALUATED PER VIEWER — entityId = the user
+  // id, context = `buildFliptContext(user)`. Off, unknown or Flipt down: plain Hot.
+  PERSONAL_HOT_LEAD = 'personal-hot-lead',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

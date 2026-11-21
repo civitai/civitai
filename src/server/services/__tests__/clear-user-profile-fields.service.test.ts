@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   clearUserProfileFields,
   removeUserLinkAsModerator,
+  type ProfileClearField,
   type ProfileClearSnapshot,
 } from '~/server/services/user.service';
 
@@ -28,6 +29,21 @@ const failModActivityOnce = () => {
 const reportNames = (named: boolean) =>
   dbMock.dbWrite.$queryRaw.mockImplementation((async (s: readonly string[]) =>
     s.join('?').includes('"CsamReport"') ? [{ named }] : []) as never);
+/**
+ * Runs `$transaction` on a client of its own, so a write that skips the transaction lands on `db`
+ * instead and shows. Returns that client.
+ */
+const separateTx = () => {
+  const tx = {
+    userProfile: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    userLink: { deleteMany: vi.fn(async () => ({ count: 1 })) },
+    $executeRaw: vi.fn(async () => 1),
+  };
+  db.$transaction.mockImplementation((async (fn: (client: unknown) => unknown) => fn(tx)) as never);
+  return tx;
+};
+const writesModActivity = (fn: { mock: { calls: unknown[][] } }) =>
+  fn.mock.calls.some(([s]) => (s as readonly string[]).join('?').includes('"ModActivity"'));
 const USER = 990100001;
 const MOD = 990100002;
 const stored = {
@@ -40,6 +56,7 @@ const stored = {
   showcaseSections: [{ key: 'k' }],
   showcaseItems: [{ entityType: 'Model', entityId: 1 }],
 };
+const ALL_FIELDS: ProfileClearField[] = ['location', 'bio', 'message', 'showcaseSections'];
 let archive: ReturnType<typeof vi.fn<(s: ProfileClearSnapshot) => Promise<unknown>>>;
 
 beforeEach(() => {
@@ -50,14 +67,23 @@ beforeEach(() => {
   db.$executeRaw.mockResolvedValue(0 as never);
   db.userLink.findMany.mockResolvedValue([] as never);
   archive = vi.fn(async () => ({}));
+  db.$transaction.mockImplementation((async (fn: (client: unknown) => unknown) => fn(db)) as never);
 });
 
 const clear = (args: Partial<Parameters<typeof clearUserProfileFields>[0]> = {}) =>
-  clearUserProfileFields({ userId: USER, actorId: MOD, archive, ...args });
+  clearUserProfileFields({ userId: USER, actorId: MOD, archive, fields: ALL_FIELDS, ...args });
 
 // Showcase titles and button links are profile text a moderator must be able to clear.
 describe('clearUserProfileFields', () => {
-  it('clears custom showcase sections by default', async () => {
+  it('refuses an empty or missing field list, archiving and writing nothing', async () => {
+    reportNames(true);
+    await expect(clear({ fields: [] })).rejects.toThrow('at least one field');
+    await expect(clear({ fields: undefined })).rejects.toThrow('at least one field');
+    expect(archive).not.toHaveBeenCalled();
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('clears custom showcase sections when they are named', async () => {
     await clear();
     expect(db.userProfile.updateMany).toHaveBeenCalledWith({
       where: { userId: USER },
@@ -124,9 +150,18 @@ describe('clearUserProfileFields', () => {
     expect(modActivityRows()).toEqual([]);
   });
 
-  it('returns the committed clear when its record fails to write', async () => {
-    failModActivityOnce();
+  it('clears and records on one transaction', async () => {
+    const tx = separateTx();
     await expect(clear()).resolves.toEqual({ updated: true });
+    expect(tx.userProfile.updateMany).toHaveBeenCalledTimes(1);
+    expect(writesModActivity(tx.$executeRaw)).toBe(true);
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
+    expect(modActivityRows()).toEqual([]);
+  });
+
+  it('fails the clear when its record fails to write', async () => {
+    failModActivityOnce();
+    await expect(clear()).rejects.toThrow('db blip');
   });
 
   it('records who cleared the profile, on every clear', async () => {
@@ -224,6 +259,20 @@ describe('removeUserLinkAsModerator', () => {
     await expect(remove()).resolves.toEqual({ removed: true });
     expect(archive).not.toHaveBeenCalled();
     expect(db.userLink.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes and records on one transaction', async () => {
+    const tx = separateTx();
+    await expect(remove()).resolves.toEqual({ removed: true });
+    expect(tx.userLink.deleteMany).toHaveBeenCalledWith({ where: { id: LINK, userId: USER } });
+    expect(writesModActivity(tx.$executeRaw)).toBe(true);
+    expect(db.userLink.deleteMany).not.toHaveBeenCalled();
+    expect(modActivityRows()).toEqual([]);
+  });
+
+  it('fails the removal when its record fails to write', async () => {
+    failModActivityOnce();
+    await expect(remove()).rejects.toThrow('db blip');
   });
 
   it('records nothing when the link is not that user’s', async () => {

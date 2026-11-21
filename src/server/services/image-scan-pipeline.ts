@@ -92,6 +92,7 @@ import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { decreaseDate } from '~/utils/date-helpers';
 import { getIsImageBlocked } from '~/server/services/blocked-image-hash';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import {
   FEEDBACK_CAPTURE_OWNER_ID,
   isFeedbackCaptureOwner,
@@ -1272,6 +1273,7 @@ export async function applyIngestionSideEffects({
     await refreshProfilePicturesForImages([image.id]);
     // No trigger watches a block, so the documents showing the image are queued here.
     await queueDocumentsForBlockedImages([image.id]);
+    await evictHomeBlocksForImages({ imageIds: [image.id] });
     return;
   }
 

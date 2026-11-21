@@ -18,6 +18,7 @@ import {
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { HomeBlockWithData } from '~/server/services/home-block.service';
 import { isCollectionReadShared } from '~/server/services/collection-item-access';
+import { coverIndexExists } from '~/server/services/collection-cover-index';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { colorDomainNames } from '~/shared/constants/domain.constants';
@@ -311,24 +312,57 @@ const logEvictFailure = (error: unknown) =>
     error,
   });
 
+type EvictTarget = { imageIds: number[] } | { userId: number } | { collectionIds: number[] };
+
 // Only a collection anyone may read has a shared entry (see `isCollectionReadShared`); the others
 // have nothing to refresh.
-async function collectionsHolding(target: { imageIds: number[] } | { userId: number }) {
-  const batches =
-    'userId' in target
-      ? [
-          Prisma.sql`SELECT DISTINCT ci."collectionId" FROM "CollectionItem" ci
-            JOIN "Image" i ON i.id = ci."imageId"
-            JOIN "Collection" c ON c.id = ci."collectionId"
-            WHERE i."userId" = ${target.userId} AND c.read IN ('Public', 'Unlisted')`,
-        ]
-      : chunk(target.imageIds, EVICT_IMAGE_BATCH).map(
-          (ids) => Prisma.sql`SELECT DISTINCT ci."collectionId" FROM "CollectionItem" ci
-            JOIN "Collection" c ON c.id = ci."collectionId"
-            WHERE ci."imageId" = ANY(${ids}::int[]) AND c.read IN ('Public', 'Unlisted')`
-        );
+async function collectionsHolding(target: EvictTarget) {
+  if ('collectionIds' in target)
+    return readCollectionIds(
+      chunk(target.collectionIds, EVICT_IMAGE_BATCH).map(
+        (ids) => Prisma.sql`SELECT c.id AS "collectionId" FROM "Collection" c
+          WHERE c.id = ANY(${ids}::int[]) AND c.read IN ('Public', 'Unlisted')`
+      )
+    );
+  if ('imageIds' in target && !target.imageIds.length) return [];
+  // Without that index the cover lookup would scan every collection; the items are still found.
+  const withCovers = await coverIndexExists().catch((error: unknown) => {
+    logEvictFailure(error);
+    return false;
+  });
+  if ('userId' in target)
+    return readCollectionIds([
+      Prisma.sql`SELECT DISTINCT ci."collectionId" FROM "CollectionItem" ci
+        JOIN "Image" i ON i.id = ci."imageId"
+        JOIN "Collection" c ON c.id = ci."collectionId"
+        WHERE i."userId" = ${target.userId} AND c.read IN ('Public', 'Unlisted')`,
+      ...(withCovers
+        ? [
+            Prisma.sql`SELECT c.id AS "collectionId" FROM "Collection" c
+              JOIN "Image" i ON i.id = c."imageId"
+              WHERE i."userId" = ${target.userId} AND c.read IN ('Public', 'Unlisted')`,
+          ]
+        : []),
+    ]);
+  return readCollectionIds(
+    chunk(target.imageIds, EVICT_IMAGE_BATCH).map(
+      (ids) => Prisma.sql`SELECT ci."collectionId" FROM "CollectionItem" ci
+        JOIN "Collection" c ON c.id = ci."collectionId"
+        WHERE ci."imageId" = ANY(${ids}::int[]) AND c.read IN ('Public', 'Unlisted')${
+        withCovers
+          ? Prisma.sql`
+        UNION
+        SELECT c.id FROM "Collection" c
+        WHERE c."imageId" = ANY(${ids}::int[]) AND c.read IN ('Public', 'Unlisted')`
+          : Prisma.empty
+      }`
+    )
+  );
+}
+
+async function readCollectionIds(queries: Prisma.Sql[]) {
   const collectionIds = new Set<number>();
-  for (const query of batches) {
+  for (const query of queries) {
     const rows = await dbRead.$queryRaw<{ collectionId: number }[]>(query);
     for (const { collectionId } of rows) collectionIds.add(collectionId);
   }
@@ -365,15 +399,15 @@ async function bustHomeBlocksShowing(collectionIds: number[], featuredBlockIds: 
 }
 
 /**
- * Refreshes every Collection and FeaturedCollections home block holding one of these images, now
- * and again once replicas catch up. Call it after any write that sets an image Blocked, once that
- * write has committed. Never throws: the write stands either way.
+ * Refreshes every Collection and FeaturedCollections home block holding one of these images (as an
+ * item, or as the collection's cover), now and again once replicas catch up. Call it after any
+ * write that sets an image Blocked, once that write has committed. A delete passes the
+ * `collectionIds` it resolved before the delete, since the delete takes the items with it.
+ * Never throws: the write stands either way.
  * shortcut: the second refresh is an in-process timer, so it needs the process to keep running;
  * every caller today runs in the app's server process.
  */
-export async function evictHomeBlocksForImages(
-  target: { imageIds: number[] } | { userId: number }
-) {
+export async function evictHomeBlocksForImages(target: EvictTarget) {
   let collectionIds: number[];
   let featuredBlockIds: number[];
   try {
