@@ -37,6 +37,8 @@ vi.mock('~/server/services/training.service', () => ({}));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: vi.fn() } }));
 
 import { upsertModelVersionHandler } from '~/server/controllers/model-version.controller';
+import { baseModelLicenses } from '~/server/common/constants';
+import { isHiddenBaseModel } from '~/shared/constants/basemodel.constants';
 
 const OWNER_ID = 5479411;
 /** The model named in the payload. */
@@ -438,6 +440,90 @@ describe('upsertModelVersionHandler — percent-of-compute fee, type-only write'
       licensingSourceVersionId: null,
       storedFee: { licensingFee: 35, licensingFeeType: 'PercentOfCompute' },
       extraInput: { licensingFee: 35 },
+    })) as { licensingFeeType?: string };
+    expect(written.licensingFeeType).toBe('PercentOfCompute');
+  });
+});
+
+// A staff-locked fee is the rate a licensor agreed with Civitai; the owner must not be able to change it
+// over the wire, whatever the editor shows. Policy clears (POI, private, non-commercial base model) are
+// the exception by decision: they stop charging rather than change the rate, and refusing them would
+// strand the owner's save.
+describe('upsertModelVersionHandler — a staff-locked licence fee', () => {
+  const stored = {
+    licensingFee: 0.25,
+    licensingFeeType: 'PerImageBuzz',
+    licensingFeeSettlementCurrency: 'Cash',
+  };
+  const save = (
+    extraInput: Record<string, unknown>,
+    { isModerator = false, baseModel = 'Anima' } = {}
+  ) =>
+    call({
+      ...creating('Checkpoint'),
+      id: VERSION_ID,
+      baseModel,
+      licensingSourceVersionId: null,
+      isModerator,
+      storedFee: { ...stored, licensingFeeLocked: true },
+      extraInput: { ...stored, ...extraInput },
+    }) as Promise<{ licensingFee?: number | null }>;
+
+  it.each([
+    ['raises the rate', { licensingFee: 0.5 }],
+    ['lowers the rate', { licensingFee: 0.1 }],
+    ['clears it', { licensingFee: 0 }],
+    ['moves it to Buzz settlement', { licensingFeeSettlementCurrency: 'Buzz' }],
+  ])('refuses an owner who %s', async (_label, change) => {
+    await expect(save(change)).rejects.toThrow(/set by Civitai/);
+    expect(mockUpsertModelVersion).not.toHaveBeenCalled();
+  });
+
+  it('saves an owner who re-sends the stored fee (the editor always does)', async () => {
+    expect(await save({})).toMatchObject({ licensingFee: 0.25 });
+  });
+
+  it('lets a moderator change it', async () => {
+    expect(await save({ licensingFee: 0.5 }, { isModerator: true })).toMatchObject({
+      licensingFee: 0.5,
+    });
+  });
+
+  it('lets a non-commercial base model clear it', async () => {
+    const nonCommercial = Object.keys(baseModelLicenses).find(
+      (k) =>
+        baseModelLicenses[k as keyof typeof baseModelLicenses]?.nonCommercial &&
+        !isHiddenBaseModel(k)
+    );
+    expect(nonCommercial).toBeDefined();
+    await expect(
+      save({ licensingFee: 0 }, { baseModel: nonCommercial as string })
+    ).resolves.toBeDefined();
+  });
+
+  it('does not apply to an unlocked fee (control)', async () => {
+    const written = (await call({
+      ...creating('Checkpoint'),
+      id: VERSION_ID,
+      licensingSourceVersionId: null,
+      storedFee: stored,
+      extraInput: { ...stored, licensingFee: 0.5 },
+    })) as { licensingFee?: number };
+    expect(written.licensingFee).toBe(0.5);
+  });
+});
+
+describe('upsertModelVersionHandler — the percent flag gates a change to percent, not a round-trip', () => {
+  // The editors send the stored type back on every save, so a gate on the requested type alone would
+  // make every percent version unsaveable the moment the flag is turned off again.
+  it('saves an owner re-sending a stored percent while the flag is off', async () => {
+    mockReadFliptBoolean.mockResolvedValue(false);
+    const written = (await call({
+      ...creating('Checkpoint'),
+      id: VERSION_ID,
+      licensingSourceVersionId: null,
+      storedFee: { licensingFee: 35, licensingFeeType: 'PercentOfCompute' },
+      extraInput: { licensingFee: 35, licensingFeeType: 'PercentOfCompute' },
     })) as { licensingFeeType?: string };
     expect(written.licensingFeeType).toBe('PercentOfCompute');
   });

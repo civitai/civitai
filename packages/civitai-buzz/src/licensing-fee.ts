@@ -58,6 +58,38 @@ export function percentOfComputeFeeRefusal({
   return null;
 }
 
+/**
+ * Why an owner's write to a staff-locked licence fee is refused, or null when it may proceed. While
+ * `ModelVersion.licensingFeeLocked` is set only a moderator may change the fee, its type or its
+ * settlement currency; re-sending the stored values passes, because both editors re-submit them.
+ * Callers pass undefined for a field the write leaves alone. A policy clear (POI, non-commercial base
+ * model, policyKeepsFee) is not routed through here: it stops charging rather than changing the rate,
+ * and refusing it would strand the owner's save.
+ */
+export function lockedLicensingFeeRefusal({
+  isModerator,
+  locked,
+  stored,
+  next,
+}: {
+  isModerator: boolean;
+  locked: boolean | null | undefined;
+  stored: { fee: number | null; type: string | null; currency: string | null };
+  next: {
+    fee: number | null | undefined;
+    type: string | null | undefined;
+    currency: string | null | undefined;
+  };
+}): string | null {
+  if (!locked || isModerator) return null;
+  const cents = (fee: number | null) => Math.round((fee ?? 0) * 100);
+  const changed =
+    (next.fee !== undefined && cents(next.fee) !== cents(stored.fee)) ||
+    (next.type !== undefined && next.type !== stored.type) ||
+    (next.currency !== undefined && next.currency !== stored.currency);
+  return changed ? 'This license fee is set by Civitai; contact support to change it.' : null;
+}
+
 // Video costs far more to generate than an image, so the fee ceiling is worth this much more on a video
 // model. Applied to the licensing-fee ceiling and the suggested defaults — but NOT to the monthly
 // pricing allowance, which counts prices rather than sizing them.
