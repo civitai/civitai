@@ -1,3 +1,4 @@
+import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import {
@@ -114,7 +115,12 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .query(({ input, ctx }) =>
-      getImageDetail({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator })
+      getImageDetail({
+        ...input,
+        userId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+        ownerSeesHeld: isSessionOrFullUserKey(ctx),
+      })
     ),
   /**
    * @ported-to-go feed-go · status: shadow · see ports/manifest.json (id: image.getInfinite).

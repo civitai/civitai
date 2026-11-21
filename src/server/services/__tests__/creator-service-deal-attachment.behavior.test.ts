@@ -146,6 +146,7 @@ dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => Prom
 
 const files = await import('~/server/services/creator-service-deal-file.service');
 const reviewImages = await import('~/server/services/creator-service-deal-review-images');
+const reviewDisplay = await import('~/server/services/creator-service-review-display.service');
 const deals = await import('~/server/services/creator-service-deal.service');
 const unpack = await import('~/server/services/creator-service-deal-unpack.service');
 const reviews = await import('~/server/services/creator-service-dispute-review.service');
@@ -173,6 +174,7 @@ const MIGRATIONS = [
   '20270106120000_service_offering_content_scan',
   '20271118230000_service_deal_file_purge',
   '20271119070000_service_deal_file_scanned_etag',
+  '20271120030000_service_license_presets',
   '20271120100000_service_deal_reviewed_happy',
   '20271120100100_service_deal_reviews',
 ].map((name) =>
@@ -1714,5 +1716,210 @@ describe('review images', () => {
     expect(await shown(31)).toEqual([[imageId, 8]]);
     await q(`UPDATE "ServiceOffering" SET "allowReviewWork" = false`);
     expect(await shown(31)).toEqual([]);
+  });
+});
+
+describe('reviews on the offering page', () => {
+  const COM = 1 | 2;
+  const RED = 31;
+  beforeAll(async () => {
+    // The display reads the columns an image card draws with.
+    await holder.db.exec(`
+      ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS name text, ADD COLUMN IF NOT EXISTS hash text,
+        ADD COLUMN IF NOT EXISTS width int, ADD COLUMN IF NOT EXISTS height int,
+        ADD COLUMN IF NOT EXISTS type text NOT NULL DEFAULT 'image', ADD COLUMN IF NOT EXISTS metadata jsonb;
+    `);
+  });
+
+  /** A deal with a published review by `buyerId`, the deal rated `level`. */
+  async function shownReview({
+    buyerId = BUYER,
+    level = 1,
+    minutesAgo = 0,
+    reply = '',
+    replyStatus = 'Scanned',
+  } = {}) {
+    const dealId = await accepted();
+    await q(`INSERT INTO "User" (id) VALUES ($1) ON CONFLICT DO NOTHING`, [buyerId]);
+    await q(`UPDATE "ServiceDeal" SET "buyerId" = $2, "maxNsfwLevel" = $3 WHERE id = $1`, [
+      dealId,
+      buyerId,
+      level,
+    ]);
+    const [{ id }] = await q<{ id: number }>(
+      `INSERT INTO "ServiceDealReview" ("dealId", "offeringId", "sellerId", "buyerId", verdict, comment,
+         "scanStatus", "editableUntil", "updatedAt", "publishedAt", "sellerReply", "sellerReplyAt",
+         "sellerReplyScanStatus")
+       SELECT id, "offeringId", "sellerId", "buyerId", 'Happy', 'Lovely', 'Scanned', now(), now(),
+         now() - interval '1 minute' * $2::int, NULLIF($3, ''), now(),
+         '${replyStatus}'::"ServiceOfferingIngestionStatus"
+       FROM "ServiceDeal" WHERE id = $1 RETURNING id`,
+      [dealId, minutesAgo, reply]
+    );
+    return { dealId, reviewId: id };
+  }
+  async function shownImage(reviewId: number) {
+    const [{ id }] = await q<{ id: number }>(
+      `INSERT INTO "Image" (url, ingestion, "nsfwLevel", "userId") VALUES ('u', 'Scanned', 1, $1) RETURNING id`,
+      [BUYER]
+    );
+    await q(`INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId") VALUES ($1, $2)`, [
+      reviewId,
+      id,
+    ]);
+    return id;
+  }
+  const list = async (levels: number, cursor?: number, limit?: number) =>
+    reviewDisplay.getServiceOfferingReviews({
+      offeringId: 1,
+      levels,
+      cursor,
+      limit,
+      excludedUserIds: [],
+    });
+
+  beforeEach(async () => {
+    await q(`UPDATE "ServiceOffering" SET "allowReviewWork" = true`);
+  });
+
+  it('lists published reviews newest first, paged, and leaves out unpublished ones', async () => {
+    const older = await shownReview({ minutesAgo: 10 });
+    const newer = await shownReview({ minutesAgo: 1 });
+    const hidden = await shownReview();
+    await q(`UPDATE "ServiceDealReview" SET "publishedAt" = NULL WHERE id = $1`, [hidden.reviewId]);
+
+    const first = await list(RED, undefined, 1);
+    expect(first.items.map((r) => r.id)).toEqual([newer.reviewId]);
+    const second = await list(RED, first.nextCursor, 1);
+    expect(second.items.map((r) => r.id)).toEqual([older.reviewId]);
+    expect(second.nextCursor).toBeUndefined();
+  });
+
+  it('drops a review once its buyer is banned or deleted', async () => {
+    await shownReview({ buyerId: 20 });
+    await shownReview({ buyerId: 21 });
+    const kept = await shownReview({ buyerId: 22 });
+    await q(`UPDATE "User" SET "bannedAt" = now() WHERE id = 20`);
+    await q(`UPDATE "User" SET "deletedAt" = now() WHERE id = 21`);
+    expect((await list(RED)).items.map((r) => r.id)).toEqual([kept.reviewId]);
+  });
+
+  it("shows an R deal's review on .red and not on .com, with its images", async () => {
+    const pg = await shownReview({ level: 1, minutesAgo: 5 });
+    const r = await shownReview({ level: 4 });
+    const pgImage = await shownImage(pg.reviewId);
+    const rImage = await shownImage(r.reviewId);
+
+    expect((await list(COM)).items.map((x) => x.id)).toEqual([pg.reviewId]);
+    expect((await list(RED)).items.map((x) => x.id)).toEqual([r.reviewId, pg.reviewId]);
+    // The R deal's PG-scanned image is rated R, so it never reaches .com.
+    const work = async (levels: number) =>
+      (
+        await reviewDisplay.getServiceOfferingReviewWork({
+          offeringId: 1,
+          levels,
+          excludedUserIds: [],
+        })
+      ).items.map((i) => [i.id, i.nsfwLevel]);
+    expect(await work(COM)).toEqual([[pgImage, 1]]);
+    expect(await work(RED)).toEqual([
+      [rImage, 4],
+      [pgImage, 1],
+    ]);
+    expect((await list(RED)).items[0].images.map((i) => i.id)).toEqual([rImage]);
+  });
+
+  it('leaves out reviews and work by buyers the viewer hid or has a block with', async () => {
+    const blocked = await shownReview({ buyerId: 30 });
+    const kept = await shownReview({ buyerId: 31 });
+    await shownImage(blocked.reviewId);
+    const keptImage = await shownImage(kept.reviewId);
+    const excludedUserIds = [30];
+    expect(
+      (
+        await reviewDisplay.getServiceOfferingReviews({
+          offeringId: 1,
+          levels: RED,
+          excludedUserIds,
+        })
+      ).items.map((r) => r.id)
+    ).toEqual([kept.reviewId]);
+    expect(
+      (
+        await reviewDisplay.getServiceOfferingReviewWork({
+          offeringId: 1,
+          levels: RED,
+          excludedUserIds,
+        })
+      ).items.map((i) => i.id)
+    ).toEqual([keptImage]);
+    // Without an exclusion list, both are shown: hiding is the viewer's own.
+    expect((await list(RED)).items).toHaveLength(2);
+  });
+
+  it('works out the viewer: levels held to the domain, and every buyer hidden or blocked either way', async () => {
+    await holder.db.exec(`
+      ALTER TABLE "User" ADD COLUMN IF NOT EXISTS username text;
+      ALTER TABLE "UserEngagement" ADD COLUMN IF NOT EXISTS "createdAt" timestamp NOT NULL DEFAULT now();
+    `);
+    const VIEWER = 40;
+    const [hid, blocked, blocker, other] = [41, 42, 43, 44];
+    for (const buyerId of [hid, blocked, blocker, other]) await shownReview({ buyerId });
+    await q(`INSERT INTO "User" (id) VALUES ($1) ON CONFLICT DO NOTHING`, [VIEWER]);
+    await q(
+      `INSERT INTO "UserEngagement" ("userId", "targetUserId", type) VALUES
+        ($1, $2, 'Hide'), ($1, $3, 'Block'), ($4, $1, 'Block')`,
+      [VIEWER, hid, blocked, blocker]
+    );
+
+    const viewer = await reviewDisplay.serviceReviewViewer({
+      browsingLevel: RED,
+      servable: COM,
+      viewerId: VIEWER,
+    });
+    // The domain caps what the viewer asked for.
+    expect(viewer.levels).toBe(COM);
+    const shown = await reviewDisplay.getServiceOfferingReviews({ offeringId: 1, ...viewer });
+    const [{ id: otherReview }] = await q<{ id: number }>(
+      `SELECT id FROM "ServiceDealReview" WHERE "buyerId" = $1`,
+      [other]
+    );
+    expect(shown.items.map((r) => r.id)).toEqual([otherReview]);
+
+    expect(await reviewDisplay.serviceReviewViewer({ servable: COM })).toEqual({
+      levels: COM,
+      excludedUserIds: [],
+    });
+  });
+
+  it("shows the seller's reply only once it passed its check", async () => {
+    const { reviewId } = await shownReview({ reply: 'Thanks!', replyStatus: 'Pending' });
+    expect((await list(RED)).items[0]).toMatchObject({ id: reviewId, sellerReply: null });
+    await q(`UPDATE "ServiceDealReview" SET "sellerReplyScanStatus" = 'Scanned' WHERE id = $1`, [
+      reviewId,
+    ]);
+    expect((await list(RED)).items[0]).toMatchObject({ sellerReply: 'Thanks!' });
+  });
+
+  it('pages the received work across reviews', async () => {
+    const a = await shownReview({ minutesAgo: 5 });
+    const b = await shownReview();
+    const older = await shownImage(a.reviewId);
+    const newer = await shownImage(b.reviewId);
+    const first = await reviewDisplay.getServiceOfferingReviewWork({
+      offeringId: 1,
+      levels: RED,
+      excludedUserIds: [],
+      limit: 1,
+    });
+    expect(first.items.map((i) => i.id)).toEqual([newer]);
+    const second = await reviewDisplay.getServiceOfferingReviewWork({
+      offeringId: 1,
+      levels: RED,
+      excludedUserIds: [],
+      limit: 1,
+      cursor: first.nextCursor,
+    });
+    expect(second.items.map((i) => i.id)).toEqual([older]);
   });
 });

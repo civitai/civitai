@@ -472,11 +472,12 @@ const nsfwLevelBlocked = 32
 // pendingViewerSQL is pendingViewerImageSql({ userId, browsingLevel }) (collection-review.sql.ts,
 // with pendingOthersImageConditions from common/image-visibility.ts), without a reviewCollectionId
 // (server-set, never on image.getInfinite): another creator's image must not await review, not be
-// acceptableMinor, and be reviewed if rated; the viewer's own are exempt, and shown unrated; a rated,
+// acceptableMinor, and be reviewed if rated; the viewer's own are exempt (held ones included: a feed-go
+// viewer is always a cookie session, the owner's view), and shown unrated; a rated,
 // reviewed image of a post in a collection the viewer MANAGEs shows above browsingLevel.
 func pendingViewerSQL(a *sqlArgs, viewerID, browsingLevel int) string {
 	own := func() string { return `i."userId" = ` + a.add(viewerID) }
-	return `((i."needsReview" IS NULL OR i."needsReview" NOT IN (` + a.add("csam") + `, ` + a.add("minor") + `)) AND (i."needsReview" IS NULL OR ` + own() + `) AND (i."acceptableMinor" = FALSE OR ` + own() + `) AND (` + own() +
+	return `((i."needsReview" IS NULL OR i."needsReview" NOT IN (` + a.add("csam") + `, ` + a.add("minor") + `) OR ` + own() + `) AND (i."needsReview" IS NULL OR ` + own() + `) AND (i."acceptableMinor" = FALSE OR ` + own() + `) AND (` + own() +
 		` OR i."nsfwLevel" = 0 OR ` + hydrate.ImageReviewedSQL("i") + `)
     AND ((i."nsfwLevel" & ` + a.add(browsingLevel) + `) != 0 OR (i."nsfwLevel" = 0 AND ` + own() +
 		`) OR (p."collectionId" IS NOT NULL AND i."nsfwLevel" NOT IN (0, ` + a.add(nsfwLevelBlocked) + `) AND (i."acceptableMinor" = FALSE OR ` + own() +

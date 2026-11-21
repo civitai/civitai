@@ -3,12 +3,14 @@ import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
+import { INQUISITOR_IMAGE_SCHEMA } from '../knights/__tests__/inquisitor-schema';
 
 /**
- * Which images a review batch may show on the general tier (`suspectImageSql`, `unreadableImageSql`
- * and the blockedFor allowlist, shared with the main app's mint). Every image this lets through is
- * shown outside the held route, so the misses are the point: each signal leg is a row that must route
- * held, beside a twin that differs only in that leg and must not.
+ * Which images a review batch may show on the general tier (`imageRoutesHeld`, shared with the main
+ * app's mint): the retracted-media routes' rule for a moderator without the CSAM grant. Every image
+ * this lets through is shown outside the held route, so the misses are the point: each CSAM leg is a
+ * row that must route held, beside a twin that differs only in that leg and must not. A minor signal
+ * alone stays general.
  */
 
 vi.setConfig({ hookTimeout: 60_000 });
@@ -25,50 +27,39 @@ vi.mock('../db', () => ({
   },
 }));
 vi.mock('../redis', () => ({ getSysRedis: () => ({}) }));
+const { scanner } = vi.hoisted(() => ({ scanner: { csamHit: new Set<string>() } }));
+vi.mock('../clickhouse', () => ({
+  getClickhouse: () => ({
+    query: async ({ query_params }: { query_params: { hashes: string[] } }) => ({
+      json: async () =>
+        query_params.hashes.map((contentHash) => ({
+          contentHash,
+          hit: scanner.csamHit.has(contentHash) ? 1 : 0,
+          csamHit: scanner.csamHit.has(contentHash) ? 1 : 0,
+        })),
+    }),
+  }),
+}));
 
 process.env.REVIEW_SHEET_BLOCKEDFOR_PATTERNS = '# signal\n^sig.*$\n# known-non-minor\n^benign$';
-const { getBatchMedia } = await import('../review-batch');
+const { getBatchMedia, routesHeldNow } = await import('../review-batch');
+const { imageAuditContentHash } = await import('@civitai/shared/media-signals');
 
 const CHILD_TAG = 5351;
 
-const SCHEMA = `
-CREATE TABLE "Image" (
-  "id" INTEGER PRIMARY KEY,
-  "url" TEXT NOT NULL DEFAULT 'key',
-  "type" TEXT NOT NULL DEFAULT 'image',
-  "mimeType" TEXT,
-  "needsReview" TEXT,
-  "blockedFor" TEXT,
-  "userId" INTEGER NOT NULL DEFAULT 1,
-  "minor" BOOLEAN NOT NULL DEFAULT FALSE,
-  "acceptableMinor" BOOLEAN NOT NULL DEFAULT FALSE,
-  "nsfwLevel" INTEGER NOT NULL DEFAULT 1,
-  "pHash" BIGINT,
-  "ingestion" TEXT NOT NULL DEFAULT 'Scanned'
+const SCHEMA = INQUISITOR_IMAGE_SCHEMA.replace(
+  'url TEXT NOT NULL,',
+  "url TEXT NOT NULL DEFAULT 'key',"
+).replace(
+  'CREATE TABLE "ScanLabelVote" ("itemId" INTEGER, reason TEXT);',
+  'CREATE TABLE "ScanLabelVote" ("itemId" INTEGER, "userId" INTEGER, reason TEXT);'
 );
-CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB, "images" JSONB);
-CREATE TABLE "EvidenceHold" ("userId" INTEGER);
-CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold";
-CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN NOT NULL DEFAULT FALSE);
-CREATE TABLE "BlockedImage" ("hash" BIGINT PRIMARY KEY, "reason" TEXT NOT NULL);
-CREATE TABLE "ScanLabelItem" ("id" SERIAL PRIMARY KEY, "imageId" INTEGER UNIQUE, "voidReason" TEXT);
-CREATE TABLE "ScanLabelFlag" ("itemId" INTEGER, "snapshot" JSONB);
-CREATE TABLE "ScanLabelVote" ("itemId" INTEGER, "userId" INTEGER, "reason" TEXT);
-`;
 
 // Pairs: the first id carries one leg and must route held; the second differs only there.
 const CASES: [string, number, number][] = [
   ['heldImageSql (needsReview csam)', 10, 11],
-  ['the minor flag', 20, 21],
-  ['the minor review queue', 12, 11],
-  ['an accepted minor', 22, 21],
-  ['a child-type tag on a mature image', 30, 31],
-  ['a child-type tag that is enabled', 32, 33],
-  ['a child-type tag on an unrated image', 34, 31],
   ['a CSAM hash block', 40, 41],
   ['a scan flag reporting CSAM', 50, 51],
-  ['a scan flag reporting a minor', 52, 51],
-  ['a moderator vote naming a minor', 60, 61],
   ['a CSAM-realistic vote', 62, 61],
   ['a CSAM hold on the label item', 70, 71],
   ['a scan that has not finished', 80, 81],
@@ -76,6 +67,20 @@ const CASES: [string, number, number][] = [
   ['a blockedFor signal pattern', 92, 93],
   ['an image listed on a CsamReport about another user', 100, 101],
   ['an image listed by bare id on a CsamReport', 102, 101],
+  ['an evidence hold on the image', 110, 101],
+  ['a held row sharing its url', 120, 101],
+  ['a row with a block-reason signal sharing its url', 130, 101],
+];
+
+// A minor signal alone: each stays general, as on the retracted-media routes.
+const MINOR_ONLY: [string, number][] = [
+  ['the minor flag', 20],
+  ['the minor review queue', 12],
+  ['an accepted minor', 22],
+  ['a child-type tag on a mature image', 30],
+  ['a child-type tag on an unrated image', 34],
+  ['a scan flag reporting a minor', 52],
+  ['a moderator vote naming a minor', 60],
 ];
 
 let db: PGlite;
@@ -102,7 +107,15 @@ beforeAll(async () => {
       (90, NULL, FALSE, 1, NULL, 'Blocked', 'never seen'), (91, NULL, FALSE, 1, NULL, 'Blocked', 'benign'),
       (92, NULL, FALSE, 1, NULL, 'Blocked', 'signal word'), (93, NULL, FALSE, 1, NULL, 'Blocked', 'tos'),
       (100, NULL, FALSE, 1, NULL, 'Scanned', NULL), (101, NULL, FALSE, 1, NULL, 'Scanned', NULL),
-      (102, NULL, FALSE, 1, NULL, 'Scanned', NULL);
+      (102, NULL, FALSE, 1, NULL, 'Scanned', NULL), (110, NULL, FALSE, 1, NULL, 'Scanned', NULL),
+      (120, NULL, FALSE, 1, NULL, 'Scanned', NULL), (121, 'csam', FALSE, 1, NULL, 'Scanned', NULL),
+      (130, NULL, FALSE, 1, NULL, 'Scanned', NULL), (131, NULL, FALSE, 1, NULL, 'Blocked', 'signal word');
+    -- Each image its own bytes, so no row is another's url sibling.
+    UPDATE "Image" SET url = 'key-' || id;
+    -- Except these, each a copy of the row before it.
+    UPDATE "Image" SET url = 'key-120' WHERE id = 121;
+    UPDATE "Image" SET url = 'key-130' WHERE id = 131;
+    INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (110);
     -- The report names user 999, not the images' owner (1), so only the listing can hold them.
     INSERT INTO "CsamReport" ("userId", "details", "images") VALUES
       (999, '{}', '[{"id": 100}, {"id": 7}]'), (999, '{}', '[102]');
@@ -139,12 +152,29 @@ const batchOf = (id: number) => ({
   seat: null,
   createdAt: 0,
 });
-const routesHeld = async (id: number) => (await getBatchMedia(batchOf(id), 0))?.held;
+const routesHeld = async (id: number) => {
+  const media = await getBatchMedia(batchOf(id), 0);
+  return media ? routesHeldNow(media.signals) : undefined;
+};
 
 describe('review batch routing', () => {
   it.each(CASES)('%s routes held; its twin does not', async (_leg, held, twin) => {
     expect({ id: held, held: await routesHeld(held) }).toEqual({ id: held, held: true });
     expect({ id: twin, held: await routesHeld(twin) }).toEqual({ id: twin, held: false });
+  });
+
+  it.each(MINOR_ONLY)('%s stays general', async (_leg, id) => {
+    expect({ id, held: await routesHeld(id) }).toEqual({ id, held: false });
+  });
+
+  it("a CSAM label in the scanner's rows routes held", async () => {
+    expect(await routesHeld(21)).toBe(false);
+    scanner.csamHit.add(imageAuditContentHash(21));
+    try {
+      expect(await routesHeld(21)).toBe(true);
+    } finally {
+      scanner.csamHit.clear();
+    }
   });
 
   it('an image that is gone, or an index past the batch, gives nothing to serve', async () => {

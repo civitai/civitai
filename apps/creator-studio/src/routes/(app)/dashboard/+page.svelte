@@ -25,12 +25,8 @@
   import { centsToUsd, currencyMeta, formatAmount, formatBuzz } from '$lib/earnings';
   import { MIN_WITHDRAWAL_AMOUNT } from '$lib/creator-program';
   import { buzzCurrencyState } from '$lib/state/buzz-currency.svelte';
-  import {
-    BANKABLE_CURRENCIES,
-    FILTERABLE_CURRENCIES,
-    currencySelectionKind,
-  } from '$lib/buzz-currency-filter';
-  import * as ToggleGroup from '@civitai/ui/components/ui/toggle-group/index.js';
+  import { currencySelectionKind } from '$lib/buzz-currency-filter';
+  import EarningsCurrencyToggle from '$lib/components/EarningsCurrencyToggle.svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import CurrencyDisplay from '$lib/components/CurrencyDisplay.svelte';
   import StatCard from '$lib/components/StatCard.svelte';
@@ -243,34 +239,7 @@
 
 <section class="mb-8">
   <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-    <div class="flex items-center gap-2">
-      <p class="text-xs uppercase tracking-wide text-dark-2">Earnings</p>
-      <ToggleGroup.Root
-        type="multiple"
-        variant="outline"
-        size="sm"
-        spacing={1}
-        value={[...currencies.value]}
-        onValueChange={(v: string[]) => currencies.set(v)}
-        aria-label="Which buzz types the earnings figures count"
-      >
-        {#each FILTERABLE_CURRENCIES as c (c)}
-          {@const withdrawable = (BANKABLE_CURRENCIES as readonly string[]).includes(c)}
-          <ToggleGroup.Item
-            value={c}
-            title="{currencyMeta(c).label} — {withdrawable
-              ? 'can be withdrawn'
-              : 'cannot be withdrawn'}"
-            class="gap-1.5 text-xs"
-          >
-            <span class="size-2 shrink-0 rounded-full" style="background:{currencyMeta(c).color}"
-            ></span>
-            {currencyMeta(c).label}
-          </ToggleGroup.Item>
-        {/each}
-      </ToggleGroup.Root>
-      <span class="rounded bg-dark-5 px-1.5 py-0.5 text-xs text-dark-2">{selectionLabel}</span>
-    </div>
+    <EarningsCurrencyToggle {currencies} {selectionLabel} />
     <a href="/earnings" class="text-xs text-dark-2 hover:text-white">View earnings →</a>
   </div>
   <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">

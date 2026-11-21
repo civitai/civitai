@@ -252,6 +252,15 @@ and the **convention guards** are never removed in bulk. A human signs off on ea
 - **Guarded is not untouchable.** A guarded test that cannot fail certifies a path nothing checks. Fix
   it; don't skip it, and don't delete it.
 
+### A policy pin that does not say which policy it pins
+
+A test that pins a rule's outcome (who may see or do something, a limit, a default, a gate) must cite the
+decision it pins, a PR or a doc under `docs/`, in its `describe`/`it` name or a one-line comment. When
+the rule changes, whoever changes it greps for that decision to find the tests that pinned the old one;
+an uncited pin is either rewritten to the new literal or left red with nobody knowing it was a guard. A
+new or changed policy test with no citation is a finding (`maintainability`); give the citation it
+should carry when the diff or PR names it. Never ask for an internal ticket id: this repo is public.
+
 ## Also worth a look
 
 - A diff that changes only an expectation's literal to match new code. Either the test pinned detail (it

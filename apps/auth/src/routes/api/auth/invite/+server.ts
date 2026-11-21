@@ -3,7 +3,7 @@ import { parsePlainEmailAddress } from '@civitai/auth/plain-email';
 import { addressparser, isEmailConfigured } from '@civitai/email';
 import { normalizeEmailAddress } from '$lib/server/auth/blocklist';
 import { issueInvite } from '$lib/server/auth/invite-tokens';
-import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
+import { checkRateLimit, isRateLimited, rateLimitTtl } from '$lib/server/auth/rate-limit';
 import { getClientIp } from '$lib/server/auth/request';
 import { newAccountRefusal } from '$lib/server/auth/signup-rules';
 import { userExistsByEmail } from '$lib/server/auth/users';
@@ -12,6 +12,7 @@ import { inviteEmail } from '$lib/server/email/invite.email';
 import { blockedEmailDomainSignupsTotal } from '$lib/server/metrics';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { authenticatedConfidentialClient } from '$lib/server/oauth/client-auth';
+import { rateLimitedResponse } from '$lib/server/oauth/rate-limit';
 import {
   INVITED_BY_MAX,
   INVITE_MESSAGE_MAX,
@@ -63,11 +64,22 @@ export const POST: RequestHandler = async ({ request, url }) => {
   // Lowercased so case variants of one address share a limit. Checked here, counted only once an email is
   // sent, so a refused or failed attempt never uses up a recipient's allowance.
   const recipientKey = email.toLowerCase();
+  const clientLimited = await isRateLimited('invite-client', client.id, CLIENT_LIMIT.count);
   if (
-    (await isRateLimited('invite-client', client.id, CLIENT_LIMIT.count)) ||
+    clientLimited ||
     (await isRateLimited('invite-recipient', recipientKey, RECIPIENT_LIMIT.count))
   ) {
-    return refuse(429, 'Too many invites. Try again later.');
+    let retryAfter = RECIPIENT_LIMIT.windowSeconds;
+    if (clientLimited) {
+      retryAfter =
+        (await rateLimitTtl('invite-client', client.id, CLIENT_LIMIT.windowSeconds)) ??
+        CLIENT_LIMIT.windowSeconds;
+    } else {
+      // Called only to repair a lost expiry. Never answer with this TTL: it would tell any client
+      // when someone last invited that address.
+      await rateLimitTtl('invite-recipient', recipientKey, RECIPIENT_LIMIT.windowSeconds);
+    }
+    return rateLimitedResponse(retryAfter, undefined, 'Too many invites. Try again later.');
   }
 
   const accountExists = await userExistsByEmail(email);

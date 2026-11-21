@@ -71,7 +71,6 @@ const BASELINE: Counts = {
   'src/server/services/orchestrator/orchestrator.service.ts': 2,
   'src/server/services/orchestrator/training/studio-dataset-archive.service.ts': 1,
   'src/server/services/orchestrator/workflows.ts': 2,
-  'src/server/services/review-batch/review-batch.service.ts': 1,
   'src/server/services/semantic-guard-status.ts': 1,
   'src/server/services/semantic-search-client.ts': 1,
   'src/server/services/site-search.service.ts': 1,

@@ -518,9 +518,8 @@ async function getFlippedPhaseStatus() {
 }
 
 /**
- * The keyed-charge helpers, loaded at the call site and only for a keyed request: imported at the
- * top of this file they join its import cycle (the same reason `refundTransactionOnce` is loaded
- * in `withdrawCash`).
+ * The keyed-charge helpers, loaded at the call site and only for a keyed request. Not a cycle cut:
+ * the cycle guards count dynamic imports (docs/dev/import-cycles.md).
  */
 async function loadKeyedCharge() {
   const [charge, lock] = await Promise.all([
@@ -1154,7 +1153,7 @@ export async function withdrawCash(userId: number, amount: number, idempotencyKe
 
     if (data.transactionId) {
       // We failed at creating the Tipalti payment. We should refund the user their buzz.
-      // Loaded here so the refund helper stays out of this service's import cycle.
+      // Loaded at the call site, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
       const { refundTransactionOnce } = await import('~/server/services/buzz-prefix-refund');
       await withRetries(async () => {
         await refundTransactionOnce(

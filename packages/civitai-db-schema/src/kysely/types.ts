@@ -142,6 +142,7 @@ import type {
   ServiceOfferingStatus,
   ServiceOfferingIngestionStatus,
   ServicePreviewKind,
+  ServiceLicensePreset,
   ServiceBuzzType,
   ServiceDealStatus,
   ServiceDealEventType,
@@ -5798,6 +5799,16 @@ export type ServiceDeal = {
   deliveryDays: number;
   previewKind: ServicePreviewKind;
   /**
+   * The offering's license when requested, as the buyer agreed to it; never re-read from it.
+   */
+  licensePreset: ServiceLicensePreset | null;
+  licenseCustomText: string | null;
+  licenseAllowResale: Generated<boolean>;
+  /**
+   * When the buyer ticked the license checkbox. Null on a deal whose offering had no license.
+   */
+  licenseAgreedAt: Timestamp | null;
+  /**
    * The offering's maxNsfwLevel when requested; never re-read from the offering.
    */
   maxNsfwLevel: Generated<number>;
@@ -6065,6 +6076,15 @@ export type ServiceOffering = {
   deliveryDays: number;
   revisionsIncluded: Generated<number>;
   maxOpenDeals: number | null;
+  /**
+   * Null: no license terms set. Copied onto each deal at request time.
+   */
+  licensePreset: ServiceLicensePreset | null;
+  /**
+   * The seller's own terms; set only with the Custom preset.
+   */
+  licenseCustomText: string | null;
+  licenseAllowResale: Generated<boolean>;
   status: Generated<ServiceOfferingStatus>;
   /**
    * Set only when a moderator removes the offering: a key of the moderator reason list in code.

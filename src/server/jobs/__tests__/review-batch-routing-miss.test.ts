@@ -4,7 +4,7 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as ReviewBatchService from '~/server/services/review-batch/review-batch.service';
 
 /**
- * The daily routing-miss check: a general-tier view whose image carries a signal now is recorded
+ * The daily routing-miss check: a general-tier view whose image is CSAM-restricted now is recorded
  * once, as append-only rows with no signal names, and every run writes its dated heartbeat. The
  * signal reads are faked; the SQL the job sends is captured as text.
  */
@@ -16,7 +16,7 @@ const { mockReadSignals, mockReadScanner } = vi.hoisted(() => ({
 vi.mock('~/server/services/review-batch/review-batch.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReviewBatchService>()),
   readImageSignals: mockReadSignals,
-  readScannerHits: mockReadScanner,
+  readScannerCsamVerdicts: mockReadScanner,
 }));
 
 const { checkReviewBatchRoutingMisses, ROUTING_MISS_ACTIVITY, MISS_CHECK_ACTIVITY } = await import(
@@ -48,7 +48,8 @@ let inserts: string[] = [];
 
 const row = (id: number, over: Record<string, unknown> = {}) => ({
   id,
-  suspect: false,
+  restricted: false,
+  siblings: [],
   unreadable: false,
   blockedFor: null,
   ...over,
@@ -61,7 +62,7 @@ beforeEach(() => {
   reports = [];
   inserts = [];
   mockReadSignals.mockReset();
-  mockReadScanner.mockReset().mockResolvedValue(new Set());
+  mockReadScanner.mockReset().mockResolvedValue(new Map());
   dbMock.dbWrite.$queryRaw.mockImplementation(
     async (strings: readonly string[], ...values: unknown[]) => {
       const text = sqlText({ strings, values });
@@ -98,7 +99,7 @@ describe('the routing-miss check', () => {
     ];
     mockReadSignals.mockResolvedValue(
       new Map([
-        [1, row(1, { suspect: true })],
+        [1, row(1, { restricted: true })],
         [2, row(2)],
       ])
     );
@@ -111,7 +112,7 @@ describe('the routing-miss check', () => {
   it('a miss already recorded for that image and batch is not recorded again', async () => {
     served = [{ imageId: 1, batchHash: 'h1' }];
     recorded = [{ imageId: 1, batchHash: 'h1' }];
-    mockReadSignals.mockResolvedValue(new Map([[1, row(1, { suspect: true })]]));
+    mockReadSignals.mockResolvedValue(new Map([[1, row(1, { restricted: true })]]));
     expect((await checkReviewBatchRoutingMisses()).misses).toBe(0);
     expect(missRows()).toHaveLength(0);
     expect(heartbeats()).toHaveLength(1);
@@ -121,7 +122,7 @@ describe('the routing-miss check', () => {
     served = [{ imageId: 3, batchHash: 'h3' }];
     reports = [{ id: 77 }];
     mockReadSignals.mockResolvedValue(new Map([[3, row(3)]]));
-    mockReadScanner.mockResolvedValue(new Set([3]));
+    mockReadScanner.mockResolvedValue(new Map([[3, 'hit']]));
     expect((await checkReviewBatchRoutingMisses()).misses).toBe(1);
     expect(missRows()).toEqual([
       imageMiss(3, 'h3'),
@@ -162,7 +163,36 @@ describe('what is not a miss', () => {
       ])
     );
     expect((await checkReviewBatchRoutingMisses()).misses).toBe(0);
-    expect(mockReadScanner).toHaveBeenCalledWith([4, 5], { absentHolds: false });
     expect(missRows()).toHaveLength(0);
+  });
+
+  it('a copy on the same url counts when the scanner marks it, not while its scan is pending', async () => {
+    served = [
+      { imageId: 6, batchHash: 'h6' },
+      { imageId: 9, batchHash: 'h6' },
+    ];
+    const sibling = (id: number, unreadable = false) => ({ id, blockedFor: null, unreadable });
+    mockReadSignals.mockResolvedValue(
+      new Map([
+        [6, row(6, { siblings: [sibling(7, true)] })],
+        [9, row(9, { siblings: [sibling(8)] })],
+      ])
+    );
+    mockReadScanner.mockImplementation(
+      async (ids: number[]) => new Map(ids.map((id) => [id, id === 8 ? 'hit' : 'clear']))
+    );
+    expect((await checkReviewBatchRoutingMisses()).misses).toBe(1);
+    expect(missRows()).toEqual([imageMiss(9, 'h6')]);
+  });
+
+  it('reports the scanner unread when the copies cannot be read', async () => {
+    served = [{ imageId: 6, batchHash: 'h6' }];
+    mockReadSignals.mockResolvedValue(
+      new Map([[6, row(6, { siblings: [{ id: 7, blockedFor: null, unreadable: false }] })]])
+    );
+    mockReadScanner.mockImplementation(async (ids: number[]) =>
+      ids.includes(7) ? null : new Map(ids.map((id) => [id, 'clear']))
+    );
+    expect(await checkReviewBatchRoutingMisses()).toMatchObject({ misses: 0, scannerRead: false });
   });
 });
