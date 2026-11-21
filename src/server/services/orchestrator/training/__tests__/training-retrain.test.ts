@@ -110,6 +110,7 @@ function createWorld(
   const failColours = new Set<string>();
   let allowlist: Record<string, string> = { [SOURCE]: 'retrain' };
   let allowlistDown = false;
+  let markerDown = false;
   let kohyaFlag = true;
   /** A gate that refuses: `withheld: true`, or the refusal text of the others. */
   const refuse: Partial<
@@ -152,6 +153,10 @@ function createWorld(
     readAllowlist: async (id) => {
       if (allowlistDown) throw new Error('sysRedis down');
       return allowlist[id] ?? null;
+    },
+    markRetrained: async (id, marker) => {
+      if (markerDown) throw new Error('redis down');
+      allowlist = { ...allowlist, [id]: marker };
     },
     ownerOrchestrator: async () => orchestrator,
     forceRefund: async (id) => {
@@ -199,10 +204,11 @@ function createWorld(
     refundKeys,
     setAllowlist: (a: Record<string, string>) => (allowlist = a),
     setAllowlistDown: () => (allowlistDown = true),
+    setMarkerDown: () => (markerDown = true),
+    allowlistValue: () => allowlist[SOURCE],
     setKohyaFlag: (on: boolean) => (kohyaFlag = on),
     advance: (ms: number) => (clock = new Date(clock.getTime() + ms)),
-    run: (execute: boolean, retrainWorkflowId?: string) =>
-      runRetrainSource({ sourceWorkflowId: SOURCE, execute, retrainWorkflowId }, deps),
+    run: (execute: boolean) => runRetrainSource({ sourceWorkflowId: SOURCE, execute }, deps),
   };
 }
 
@@ -256,7 +262,7 @@ describe('runRetrainSource', () => {
     });
   });
 
-  it('refunds, confirms a zero net in every colour, submits once; a repeat returns the same retrain without refunding again', async () => {
+  it('refunds, confirms a zero net in every colour, submits once; after that the source is marked and never refunded or submitted again', async () => {
     const w = createWorld(sourceRun());
     const first = await w.run(true);
     expect(first.outcome).toBe('retrained');
@@ -265,43 +271,40 @@ describe('runRetrainSource', () => {
       ['blue', 300],
       ['yellow', 200],
     ]);
+    const retrainId = first.retrain!.id;
+    expect(retrainId).toMatch(new RegExp(`^${OWNER}-`));
+    expect(w.allowlistValue()).toBe(`retrained:${retrainId}`);
 
     w.advance(10 * 60_000);
     const second = await w.run(true);
-    expect(second.outcome).toBe('already-retrained');
-    const retrainId = first.retrain!.id;
-    expect(retrainId).toMatch(new RegExp(`^${OWNER}-`));
+    expect(second).toMatchObject({ outcome: 'skipped', reason: 'already-retrained-marked' });
     expect(second.retrain).toEqual({
       id: retrainId,
       status: 'unassigned',
       chargedByColour: { blue: 480 },
     });
+
+    // The owner deleted the retrain: the externalId would no longer stop a second charge; the marker does.
+    w.runs.delete(retrainId);
+    expect(await w.run(true)).toMatchObject({
+      reason: 'already-retrained-marked',
+      retrain: { id: retrainId, status: 'deleted' },
+    });
     expect(w.calls.refund).toBe(1);
+    expect(w.calls.submit).toBe(1);
     expect(credited(w)).toHaveLength(2);
   });
 
-  it('reports a retrain’s current status by reading it, never by submitting, and only for this source’s retrain', async () => {
+  it('still reports the retrain when the marker cannot be written, and a repeat gets the same run back by its externalId', async () => {
     const w = createWorld(sourceRun());
-    const retrainId = (await w.run(true)).retrain!.id;
-    w.runs.get(retrainId)!.status = 'succeeded';
-    const submits = w.calls.submit;
-
-    expect(await w.run(false, retrainId)).toMatchObject({
-      outcome: 'retrain-status',
-      retrain: { id: retrainId, status: 'succeeded' },
-    });
-    // The source itself is a run of the owner's, but not this source's retrain.
-    expect(await w.run(false, SOURCE)).toMatchObject({
-      outcome: 'skipped',
-      reason: 'retrain-not-found',
-    });
-    // The owner deleted the retrain: reported, and nothing is submitted in its place.
-    w.runs.delete(retrainId);
-    expect(await w.run(false, retrainId)).toMatchObject({
-      outcome: 'skipped',
-      reason: 'retrain-not-found',
-    });
-    expect(w.calls.submit).toBe(submits);
+    w.setMarkerDown();
+    const first = await w.run(true);
+    expect(first).toMatchObject({ outcome: 'retrained', warnings: ['marker-not-written'] });
+    w.advance(10 * 60_000);
+    const second = await w.run(true);
+    expect(second.outcome).toBe('already-retrained');
+    expect(second.retrain?.id).toBe(first.retrain!.id);
+    expect(w.calls.refund).toBe(1);
   });
 
   it('does not take the force-refunded flag as proof: a colour left owed is refunded again before the submit, or nothing is submitted', async () => {

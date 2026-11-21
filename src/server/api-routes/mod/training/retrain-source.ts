@@ -114,6 +114,10 @@ const deps: RetrainDeps = {
     );
     return value === null ? null : value.toString();
   },
+  // HSET keeps the key's expiry, which the operator set when writing the allowlist.
+  markRetrained: async (sourceWorkflowId, marker) => {
+    await redis.hSet(REDIS_KEYS.TRAINING.RETRAIN_ALLOWLIST, sourceWorkflowId, marker);
+  },
   ownerOrchestrator,
   forceRefund,
   callbacksFor: getWorkflowCallbacks,
@@ -149,29 +153,18 @@ export default defineModeratorEndpoint('training.retrainSource', {
     'Requires the moderator app permission `training.retrain`.',
     'Dry run unless `execute=true`. The dry run runs every check and the quote, and returns the body execute would submit with its sha256.',
     'The input is the source workflow id only: the body is built from the source run, never from the request.',
-    'With `retrainWorkflowId` (no execute): reads that run with the owner’s token and reports its status (`retrain-status`) if it is this source’s retrain. This is how to learn a retrain finished: never re-call execute for that, since a retrain the owner deleted would be submitted and charged again.',
     'Only ids in the Redis allowlist hash (`REDIS_KEYS.TRAINING.RETRAIN_ALLOWLIST`) are acted on, each with its mode (`retrain` or `refund-only`). The caller cannot choose the mode. An allowlist read that fails refuses the call; deleting the allowlist refuses every call.',
     `Every call is refused from ${RETRAIN_HARD_STOP.toISOString()}.`,
     'Before any money moves: the owner must be issued a token; the source must be a one-step Kohya run in the bug window, Succeeded (or already force-refunded); and in retrain mode no moderator action may withhold the source’s outputs (`source-withheld`), and the training service, the Studio Kohya flag for the owner (Studio runs only), the trigger word, the licence, the Green-mature rule and the quote (at most what the source charged) must all pass.',
     'Execute: `/refund` (up to 3 tries), then the source is read back and must net 0 in every colour (`refund-unconfirmed` otherwise, and nothing is submitted). Then the submit (up to 3 tries) under externalId `retrain-<source>`, so a repeat returns the first retrain (`already-retrained`) instead of charging again.',
-    'Resuming is safe: a source that already nets 0 is not refunded again, and a repeat whose retrain still exists returns it (`already-retrained`). Re-call execute only to resume `refund-unconfirmed` or `refunded-not-submitted`.',
+    'After a retrain the source’s allowlist value becomes `retrained:<retrain id>`, and every later call answers `already-retrained-marked` with that retrain and its status, without a refund or a submit. Resuming `refund-unconfirmed` or `refunded-not-submitted` is safe: a source that already nets 0 is not refunded again.',
     'Audit row `affected`: the source, owner, mode, outcome, reason, the nets before and after, the quote, the body sha256 and the retrain id.',
   ],
   rateLimit: { max: 10, windowSeconds: 60 },
-  input: z
-    .object({
-      sourceWorkflowId: z.string().trim().regex(RETRAIN_SOURCE_ID, 'not a workflow id'),
-      execute: moderatorBoolean.default(false),
-      retrainWorkflowId: z
-        .string()
-        .trim()
-        .regex(RETRAIN_SOURCE_ID, 'not a workflow id')
-        .optional()
-        .describe('Read this source’s retrain and report its status. Moves nothing.'),
-    })
-    .refine((input) => !(input.execute && input.retrainWorkflowId), {
-      message: 'retrainWorkflowId is a read: send it without execute',
-    }),
+  input: z.object({
+    sourceWorkflowId: z.string().trim().regex(RETRAIN_SOURCE_ID, 'not a workflow id'),
+    execute: moderatorBoolean.default(false),
+  }),
   async handler(input, ctx) {
     if (!(await hasModeratorGrant(ctx.actor, 'training.retrain')))
       throw new TRPCError({

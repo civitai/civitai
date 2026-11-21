@@ -36,14 +36,16 @@ const MAX_ATTEMPTS = 3;
 const CLOCK_SKEW_MS = 60_000;
 const MATURE_NSFW_LEVELS = new Set(['r', 'x', 'xxx']);
 const BLOB_PROBE_CONCURRENCY = 8;
+/** The allowlist value a retrained source is left with, followed by the retrain's id. */
+export const RETRAINED_MARKER = 'retrained:';
 /** The tag Studio files a submit's idempotency key under; the source's key is not the retrain's. */
 const SUBMIT_KEY_TAG_PREFIX = 'submit:';
 
 export type SkipReason =
   | 'expired'
   | 'not-allowlisted'
+  | 'already-retrained-marked'
   | 'owner-restricted'
-  | 'retrain-not-found'
   | 'source-withheld'
   | 'source-deleted'
   | 'source-ineligible'
@@ -59,7 +61,6 @@ export type SkipReason =
 export type RetrainOutcome =
   | 'would-retrain'
   | 'would-refund'
-  | 'retrain-status'
   | 'retrained'
   | 'already-retrained'
   | 'refunded'
@@ -107,6 +108,8 @@ export type RetrainDeps = {
   now: () => Date;
   /** The allowlist value for the source, or null. Throws when the store cannot answer. */
   readAllowlist: (sourceWorkflowId: string) => Promise<string | null>;
+  /** Replaces the source's allowlist value with the retrain's marker. */
+  markRetrained: (sourceWorkflowId: string, marker: string) => Promise<void>;
   /** null when the owner cannot be issued a token (banned, muted, deleted). */
   ownerOrchestrator: (userId: number) => Promise<OwnerOrchestrator | null>;
   /** The orchestrator's manager `/refund` of a workflow: its HTTP status, 0 on a transport failure. */
@@ -167,7 +170,7 @@ function readSource(
   const createdAt = new Date(workflow.createdAt);
   if (!(createdAt >= RETRAIN_SOURCE_WINDOW.from && createdAt < RETRAIN_SOURCE_WINDOW.to))
     return { refusal: 'created outside the window' };
-  // Failed is a source this endpoint already refunded: the refund flips it from Succeeded.
+  // Failed with forceRefunded: refunded already (by an earlier call, for one), so the call can resume.
   const status = workflow.status;
   if (!(status === 'succeeded' || (status === 'failed' && workflow.forceRefunded)))
     return { refusal: `status ${status}${workflow.forceRefunded ? ', force-refunded' : ''}` };
@@ -346,11 +349,7 @@ async function submitWithRetry(orchestrator: OwnerOrchestrator, body: WorkflowTe
 }
 
 export async function runRetrainSource(
-  {
-    sourceWorkflowId,
-    execute,
-    retrainWorkflowId,
-  }: { sourceWorkflowId: string; execute: boolean; retrainWorkflowId?: string },
+  { sourceWorkflowId, execute }: { sourceWorkflowId: string; execute: boolean },
   deps: RetrainDeps
 ): Promise<RetrainResult> {
   const startedAt = deps.now();
@@ -371,24 +370,28 @@ export async function runRetrainSource(
   if (userId === null) return skip('not-allowlisted', 'not a workflow id');
   // Fails closed: a store that cannot answer throws, and nothing runs.
   const listed = await deps.readAllowlist(sourceWorkflowId);
-  const mode = RETRAIN_MODES.find((m) => m === listed);
+  const markedId = listed?.startsWith(RETRAINED_MARKER)
+    ? listed.slice(RETRAINED_MARKER.length)
+    : null;
+  const mode = markedId ? 'retrain' : RETRAIN_MODES.find((m) => m === listed);
   if (!mode) return skip('not-allowlisted');
   result.mode = mode;
 
   const orchestrator = await deps.ownerOrchestrator(userId);
-  if (!orchestrator) return skip('owner-restricted');
-
-  // A read, never a submit: how a sweep learns a retrain finished without a call that could charge
-  // again if the owner deleted the first one.
-  if (retrainWorkflowId !== undefined) {
-    const found = await orchestrator.read(retrainWorkflowId);
-    if (found.status === 404) return skip('retrain-not-found');
-    if (!found.workflow)
-      throw new RetrainUnavailableError(`retrain read failed: ${found.status || 'no response'}`);
-    if (found.workflow.externalId !== `${userId}-${retrainExternalId(sourceWorkflowId)}`)
-      return skip('retrain-not-found', 'not this source’s retrain');
-    return Object.assign(result, { outcome: 'retrain-status', retrain: retrainOf(found.workflow) });
+  // A source retrained once is never refunded or submitted again: if the owner deleted that
+  // retrain, the externalId no longer stops a second charge.
+  if (markedId) {
+    const found = orchestrator ? await orchestrator.read(markedId).catch(() => null) : null;
+    result.retrain = found?.workflow
+      ? retrainOf(found.workflow)
+      : {
+          id: markedId,
+          status: found?.status === 404 ? 'deleted' : 'unknown',
+          chargedByColour: {},
+        };
+    return skip('already-retrained-marked');
   }
+  if (!orchestrator) return skip('owner-restricted');
 
   const read = await orchestrator.read(sourceWorkflowId);
   // The owner deleted it, and is still owed: listed for a person to settle, never dropped.
@@ -474,6 +477,10 @@ export async function runRetrainSource(
   });
   if (classified.outcome === 'bad-submit-result')
     return Object.assign(result, { outcome: classified.outcome, detail: classified.detail });
+  // The run exists either way; a failed write is reported, and the externalId still covers a repeat.
+  await deps
+    .markRetrained(sourceWorkflowId, `${RETRAINED_MARKER}${submitted.workflow.id}`)
+    .catch(() => result.warnings.push('marker-not-written'));
   return Object.assign(result, {
     outcome: classified.outcome,
     retrain: retrainOf(submitted.workflow),
