@@ -2,7 +2,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import superjson from 'superjson';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { instrumentationRegistry } from '@civitai/telemetry/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as FliptClient from '~/server/flipt/client';
@@ -140,7 +140,23 @@ let fake: http.Server | undefined;
 let baseUrl = '';
 let fakeBase = '';
 
+/**
+ * Every POST the app made to the fake feed-go, as the promise the sampler itself chained its
+ * outcome count on. The sampler counts `sent` only once that promise settles, which is AFTER the
+ * fake has recorded the POST in `feedGo.received`: so a test that ends on `receivedWithin` leaves
+ * its count still to land. `afterEach` awaits these, so no test's count lands inside the next one.
+ */
+const posts: Promise<unknown>[] = [];
+const realFetch = globalThis.fetch;
+
 beforeAll(async () => {
+  vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+    const pending = realFetch(input, init);
+    const url = input instanceof Request ? input.url : String(input);
+    if (fakeBase && url.startsWith(fakeBase)) posts.push(pending);
+    return pending;
+  });
+
   fake = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (c) => (raw += c));
@@ -168,7 +184,16 @@ beforeAll(async () => {
   baseUrl = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
 });
 
+afterEach(async () => {
+  // A send is queued with setImmediate after the response: let any queued one start first.
+  await new Promise((r) => setImmediate(r));
+  // The sampler attached its outcome count to each promise before this did, so once these settle
+  // every count has landed (each is bounded by FEED_GO_SHADOW_TIMEOUT_MS).
+  await Promise.allSettled(posts.splice(0));
+});
+
 afterAll(async () => {
+  vi.restoreAllMocks();
   if (app) await new Promise((r) => app!.close(r));
   if (fake) await new Promise((r) => fake!.close(r));
   delete process.env.FEED_GO_SHADOW_URL;
