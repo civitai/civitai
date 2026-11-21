@@ -32,9 +32,6 @@ type OfflineColumns = { mintOrigin: MintOrigin | null; refreshFamilyId?: string 
 /** The ApiKey `name` prefix of an access token minted by the client_credentials grant. */
 export const CLIENT_CREDENTIALS_TOKEN_NAME_PREFIX = 'oauth-cc:';
 
-/** The ApiKey `name` prefix of an access token minted by the block token exchange (block-exchange.ts). */
-export const BLOCK_EXCHANGE_TOKEN_NAME_PREFIX = 'oauth-block:';
-
 async function insertToken(opts: {
   executor?: Kysely<DB>;
   userId: number;
@@ -43,17 +40,13 @@ async function insertToken(opts: {
   type: 'Access' | 'Refresh';
   expiresAt: Date;
   clientCredentials?: boolean;
-  /** Overrides the name prefix the type would give the row. */
-  namePrefix?: string;
   /** Only with the offline-grant flag on; absent, the row is written exactly as before the flag. */
   offline?: OfflineColumns;
 }): Promise<string> {
   const token = OAUTH_TOKEN_PREFIX + generateKey(36);
-  const prefix =
-    opts.namePrefix ??
-    (opts.clientCredentials
-      ? CLIENT_CREDENTIALS_TOKEN_NAME_PREFIX
-      : `${opts.type === 'Access' ? 'oauth' : 'oauth-refresh'}:`);
+  const prefix = opts.clientCredentials
+    ? CLIENT_CREDENTIALS_TOKEN_NAME_PREFIX
+    : `${opts.type === 'Access' ? 'oauth' : 'oauth-refresh'}:`;
   const values = {
     key: generateSecretHash(token),
     name: `${prefix}${opts.clientId}`,
@@ -217,32 +210,6 @@ export async function createAppAccessToken(
     return insert(trx);
   });
   return { accessToken, expiresAt };
-}
-
-/**
- * The access token the block token exchange mints: one Access row for (user, app) holding EXACTLY `scope`
- * (no UserRead baseline, unlike every other mint here), expiring at `expiresAt`, with no refresh token. The
- * insert runs under the app-block suspension lock, so a suspension's token delete either sees the row or the
- * mint sees the suspension and throws {@link AppBlockSuspendedError}.
- */
-export async function createBlockExchangeToken(
-  userId: number,
-  clientId: string,
-  scope: bigint,
-  expiresAt: Date
-): Promise<string> {
-  return db.transaction().execute(async (trx) => {
-    if (await lockAppBlockSuspended(trx, clientId)) throw new AppBlockSuspendedError();
-    return insertToken({
-      executor: trx,
-      userId,
-      clientId,
-      scope,
-      type: 'Access',
-      expiresAt,
-      namePrefix: BLOCK_EXCHANGE_TOKEN_NAME_PREFIX,
-    });
-  });
 }
 
 export class AppBlockSuspendedError extends Error {

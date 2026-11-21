@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, type KeyObject } from 'crypto';
 import { decodeProtectedHeader, jwtVerify } from 'jose';
 import { env } from '$env/dynamic/private';
+import { logToAxiom } from '$lib/server/axiom';
 
 // Verification of an App Block token (the RS256 JWT the site signs for a block at runtime) on the hub, for
 // the block token exchange (block-exchange.ts). It follows the site's `verifyBlockToken`
@@ -39,6 +40,7 @@ export interface VerifiedBlockToken {
 
 export type BlockTokenRefusal =
   | 'not configured'
+  | 'misconfigured'
   | 'malformed'
   | 'unknown key'
   | 'signature or claims'
@@ -58,29 +60,57 @@ function keyId(key: KeyObject): string {
     .slice(0, 32);
 }
 
-let cached: { raw: string; keys: Map<string, KeyObject> } | undefined;
+type KeySet = { keys: Map<string, KeyObject> } | { error: string };
+
+let cached: { raw: string; result: KeySet } | undefined;
+
+const KEY_ENV = ['BLOCK_TOKEN_PUBLIC_KEY', 'BLOCK_TOKEN_PUBLIC_KEY_NEXT'] as const;
+
+/** The key a configured PEM holds, or why it cannot verify block tokens. Never echoes the value. */
+function publicKeyProblem(pem: string): string | { key: KeyObject } {
+  // A private key parses as a public one (node derives it), so it is refused by its armour first: a
+  // private key in this variable means the signing key was pasted where only the public half belongs.
+  if (/PRIVATE KEY/.test(pem)) return 'is a private key';
+  let key: KeyObject;
+  try {
+    key = createPublicKey(pem);
+  } catch {
+    return 'does not parse as a public key';
+  }
+  if (key.type !== 'public' || key.asymmetricKeyType !== 'rsa') return 'is not an RSA public key';
+  return { key };
+}
 
 /**
  * The site's block-token public keys by kid, from BLOCK_TOKEN_PUBLIC_KEY and BLOCK_TOKEN_PUBLIC_KEY_NEXT (the
- * same PEMs the site verifies with). A PEM that does not parse is skipped; none set is an empty map.
+ * same PEMs the site verifies with). FAIL CLOSED: one configured value that is a private key or not an RSA
+ * public key makes the whole set an error, logged once per distinct configuration, and every token is
+ * refused until it is fixed. Neither set is an empty map.
  */
-function verificationKeys(): Map<string, KeyObject> {
-  const pems = [env.BLOCK_TOKEN_PUBLIC_KEY, env.BLOCK_TOKEN_PUBLIC_KEY_NEXT].filter(
-    (p): p is string => typeof p === 'string' && p.trim() !== ''
+function verificationKeys(): KeySet {
+  const configured = KEY_ENV.map((name) => [name, env[name]] as const).filter(
+    (e): e is readonly [(typeof KEY_ENV)[number], string] =>
+      typeof e[1] === 'string' && e[1].trim() !== ''
   );
-  const raw = pems.join('\n--\n');
-  if (cached && cached.raw === raw) return cached.keys;
+  const raw = configured.map(([name, pem]) => `${name}=${pem}`).join('\n--\n');
+  if (cached && cached.raw === raw) return cached.result;
   const keys = new Map<string, KeyObject>();
-  for (const pem of pems) {
-    try {
-      const key = createPublicKey(pem);
-      keys.set(keyId(key), key);
-    } catch {
-      // skipped: a bad PEM verifies nothing
+  let result: KeySet = { keys };
+  for (const [name, pem] of configured) {
+    const parsed = publicKeyProblem(pem);
+    if (typeof parsed === 'string') {
+      result = { error: `${name} ${parsed}` };
+      void logToAxiom({
+        type: 'error',
+        name: 'block-token-public-key-invalid',
+        message: result.error,
+      });
+      break;
     }
+    keys.set(keyId(parsed.key), parsed.key);
   }
-  cached = { raw, keys };
-  return keys;
+  cached = { raw, result };
+  return result;
 }
 
 /** The verified token, or why it is refused. Never throws. */
@@ -88,7 +118,9 @@ export async function verifyBlockTokenForExchange(
   token: string,
   nowSeconds: number = Math.floor(Date.now() / 1000)
 ): Promise<{ ok: true; token: VerifiedBlockToken } | { ok: false; reason: BlockTokenRefusal }> {
-  const keys = verificationKeys();
+  const keySet = verificationKeys();
+  if ('error' in keySet) return { ok: false, reason: 'misconfigured' };
+  const { keys } = keySet;
   if (keys.size === 0) return { ok: false, reason: 'not configured' };
 
   let header: ReturnType<typeof decodeProtectedHeader>;

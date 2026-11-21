@@ -1,66 +1,67 @@
 import { json } from '@sveltejs/kit';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { env } from '$env/dynamic/private';
 import { TokenScope } from '@civitai/auth/token-scope';
+import { db } from '$lib/server/db/db';
 import { getRedis } from '$lib/server/redis';
 import { logOAuthEvent } from './audit-log';
-import { authenticatedConfidentialClient, clientIdMismatch } from './client-auth';
-import { ACCESS_TOKEN_TYPE, BLOCK_EXCHANGE_TOKEN_MAX_TTL, SYSTEM_WORKLOAD_ROLE } from './constants';
 import { userHasRole } from './access';
-import { basicCredentials } from './http';
+import { appBlockSuspended } from './app-block-mint-lock';
+import { authenticatedConfidentialClient, clientIdMismatch } from './client-auth';
+import { ACCESS_TOKEN_TYPE, SYSTEM_WORKLOAD_ROLE } from './constants';
 import { findExchangeResource } from './exchange-resources';
+import { basicCredentials } from './http';
 import {
   chargeTokenExchangeFailure,
-  checkOAuthRateLimit,
   checkTokenExchangeRateLimit,
   oauthRetryAfter,
   rateLimitedResponse,
 } from './rate-limit';
 import { parseScopeRequest } from './scope';
-import { findExchangeClient, userRefusal } from './token-exchange';
-import { AppBlockSuspendedError, createBlockExchangeToken } from './token-helpers';
+import {
+  EXCHANGED_TOKEN_MAX_TTL,
+  findExchangeClient,
+  mintExchangedJwt,
+  scopeNames,
+  userRefusal,
+} from './token-exchange';
+import { getSigner } from './user-exchange';
 import { verifyBlockTokenForExchange } from './block-token-verify';
 
 // RFC 8693 token exchange of an App Block token (the RS256 JWT the site signs for a block acting for a
-// signed-in viewer) for a short-lived OPAQUE registry access token: an `ApiKey` row of type Access for
-// (the viewer, the block's app), so the site's bearer lookup and the registry adapter's opaque path read it
-// as that app's OAuth token for that user (`subject.type === 'oauth'`).
-//
-// The minted token:
-//   - holds EXACTLY `AppDataRead`, whatever the block token carries (no UserRead baseline);
-//   - lives at most 15 minutes and never past the block token's own `exp`;
-//   - has no refresh token.
+// signed-in viewer) for the token the registry adapter's PRIVATE FEED accepts, in one hop: an RFC 9068
+// `at+jwt` minted exactly as the user token exchange mints one (`mintExchangedJwt`):
+//   - `sub` = the viewer, `client_id` = the block's app, `act.sub` = the relay that called;
+//   - `aud` = the requested resource, `iss` = the hub;
+//   - `scope` = exactly `AppDataRead`, whatever the block token carries;
+//   - `exp` = min(the block token's `exp`, now + 15 minutes); no refresh token.
+// The private feed opens only for a listed relay in `act.sub` (`privateTokenGate`), which is why this is a
+// JWT and not an opaque token: an opaque token has no actor.
 //
 // DARK BY DEFAULT. Only a confidential client named in OAUTH_BLOCK_EXCHANGE_CALLERS may call it, and that list
-// is empty unless someone sets it: empty (or invalid) refuses every request before anything else is read.
-// An entry is added only with Justin's approval.
+// is empty unless set: empty (or invalid) refuses every request first. An entry is added only once the
+// registry owner approves it.
 //
-// Exchanged only when, all of:
-//   1. the request is a well-formed exchange: form-encoded, one `subject_token`, exactly one `resource`, no
-//      actor token, `requested_token_type` absent or an access token, `scope` absent or exactly AppDataRead;
-//   2. the caller list is non-empty, the caller authenticates as a confidential client, is on the list, is
-//      within its `token-exchange` limit and is not disabled;
-//   3. `resource` is registered (OAUTH_EXCHANGE_RESOURCES), may receive AppDataRead, and lists the caller as a
-//      relay: the same resource rules the user token exchange (user-exchange.ts) applies;
-//   4. the block token verifies as the site's (block-token-verify.ts) for a signed-in viewer, and is not a
-//      dev, review or private-run token;
-//   5. it carries the viewer's document-store grant, the `apps:storage` scope;
-//   6. it was never exchanged before (its `jti` is claimed once, fail closed);
-//   7. the block's app is a client the resource lists in `apps`, is not disabled and may hold AppDataRead;
-//   8. the viewer may hold the token through that app (user-exchange.ts `userRefusal`: app access mode,
-//      deleted, banned, moderation account) and is not a workload account;
-//   9. the (viewer, app) pair is within its `block-exchange` limit;
-//  10. no block of the app is suspended without an approved one (checked under the suspension lock).
+// WHAT DECIDES ACCESS. The block token's `apps:storage` scope is required, but it is NOT the viewer's consent:
+// `apps:storage` is consent-exempt and is signed into every signed-in viewer's token for any app that declares
+// a collection. What decides whether a token is minted is: the caller is an allowlisted relay of the resource;
+// the block's app is listed for the resource, enabled, not suspended, and holds AppDataRead in its
+// `allowedScopes`; the viewer passes the user exchange's checks. What the token then reads is decided by the
+// private feed, which re-runs `decideCollectionRead` on every poll: the app's own collections for this viewer,
+// or another app's only through a grant the viewer made.
+//
 // Every outcome is an `oauth-audit` event (`block_exchange.issued` / `block_exchange.refused`) with the
 // reason; the response carries only the standard error. No log line carries a token.
 //
-// REVOCATION: the minted token is a row like the app's own OAuth tokens, so everything that deletes those
-// deletes it at once: the user revoking the app (`revokeApp`, `revokeOauthConsentForBlock`) and a suspension
-// (`revokeAppBlockOauthTokens`). The block INSTANCE revocation the site checks per request (uninstall,
-// `BlockRevocation`, held in the site's cache Redis) is not read here; a token minted before such a revocation
-// lives out its time, at most the block token's own remaining lifetime (≤ 15 minutes). The registry's private
-// feed re-runs its grant predicate on every poll, so a revoked import grant or an unapproved app stops the
-// data whatever the token.
+// REVOCATION. Nothing is stored that a revocation could delete, and the exchange reads no revocation state:
+// the user revoking the app (`revokeApp`, `revokeOauthConsentForBlock`), withdrawing its permissions, or
+// uninstalling the block (`BlockRevocation`, held in the site's cache Redis) does not stop a block token that
+// is still valid from being exchanged, nor a token already minted. Each is bounded by `exp`: at most 15
+// minutes after the block token was signed, since the token never outlives it. No signal in the hub's
+// database means "this viewer revoked this app" for every block app: an `OauthConsent` row exists only for
+// apps that mint OAuth tokens, and `app_user_scope_grants.revoked_at` covers consent-gated scopes (which
+// `apps:storage` is not) and is also set to force a re-consent. The private feed's per-poll predicate still
+// stops a revoked import grant and an unapproved app within one poll.
 
 type ExchangeError =
   | 'invalid_request'
@@ -100,10 +101,12 @@ const NO_STORE = { 'Cache-Control': 'no-store', Pragma: 'no-cache' };
 
 /** The one scope a minted token holds. */
 export const BLOCK_EXCHANGE_SCOPE = TokenScope.AppDataRead;
-const BLOCK_EXCHANGE_SCOPE_NAME = 'AppDataRead';
 
-/** The block-token scope that is the viewer's document-store grant. */
-export const STORAGE_GRANT_SCOPE = 'apps:storage';
+/**
+ * The block-token scope required to exchange: the app declares a document-store collection. Consent-exempt,
+ * so it says nothing about the viewer's consent (see the file comment).
+ */
+export const STORAGE_SCOPE = 'apps:storage';
 
 // ─── The caller allowlist ─────────────────────────────────────
 
@@ -123,25 +126,36 @@ export function parseBlockExchangeCallers(
   return { callers: new Set(ids) };
 }
 
-function blockExchangeCallers(): ReadonlySet<string> {
+function blockExchangeCallers(): { callers: ReadonlySet<string>; invalid: boolean } {
   const parsed = parseBlockExchangeCallers(env.OAUTH_BLOCK_EXCHANGE_CALLERS);
-  if ('error' in parsed) {
-    logOAuthEvent({
-      type: 'block_exchange.refused',
-      metadata: { error: 'server_error', reason: parsed.error },
-    });
-    return new Set();
-  }
-  return parsed.callers;
+  return 'error' in parsed
+    ? { callers: new Set(), invalid: true }
+    : { callers: parsed.callers, invalid: false };
 }
 
 // ─── Replay: a block token is exchanged once ──────────────────
 
-type NxRedis = {
+type ReplayRedis = {
   set(key: string, value: string, opts: { NX: true; EX: number }): Promise<string | null>;
+  del(key: string): Promise<unknown>;
 };
 
 const REPLAY_TIMEOUT_MS = 2000;
+
+const replayKey = (jti: string) =>
+  `auth:block-exchange:jti:${createHash('sha256').update(jti).digest('hex')}`;
+
+async function withTimeout<T>(op: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('replay store timed out')), REPLAY_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([op, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * Claim the block token's `jti` for one exchange. True when this request claimed it, false when an earlier
@@ -149,22 +163,19 @@ const REPLAY_TIMEOUT_MS = 2000;
  * unrecorded claim could be replayed.
  */
 async function claimBlockTokenJti(jti: string, ttlSeconds: number): Promise<boolean> {
-  const redis = getRedis() as unknown as NxRedis | null;
+  const redis = getRedis() as unknown as ReplayRedis | null;
   if (!redis) throw new Error('REDIS_URL is not configured');
-  const key = `auth:block-exchange:jti:${createHash('sha256').update(jti).digest('hex')}`;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('replay claim timed out')), REPLAY_TIMEOUT_MS);
-  });
-  try {
-    const reply = await Promise.race([
-      redis.set(key, '1', { NX: true, EX: Math.max(1, ttlSeconds) }),
-      timeout,
-    ]);
-    return reply !== null;
-  } finally {
-    clearTimeout(timer);
-  }
+  const reply = await withTimeout(
+    redis.set(replayKey(jti), '1', { NX: true, EX: Math.max(1, ttlSeconds) })
+  );
+  return reply !== null;
+}
+
+/** Give a claimed `jti` back after a failed mint, so the caller's retry is not refused as a replay. */
+async function releaseBlockTokenJti(jti: string): Promise<void> {
+  const redis = getRedis() as unknown as ReplayRedis | null;
+  if (!redis) return;
+  await withTimeout(Promise.resolve(redis.del(replayKey(jti))));
 }
 
 // ─── The exchange ─────────────────────────────────────────────
@@ -219,55 +230,74 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     );
   };
 
+  // Before the caller has authenticated, a refusal is charged to its IP (`token-exchange-ip`, the bucket the
+  // user exchange charges failed client authentication to). Past that limit the answer is a 429 with NO
+  // audit event, so an unauthenticated flood cannot drive the audit log's volume.
+  const basicAttempted = /^basic /i.test(request.headers.get('authorization') ?? '');
+  const refuseUnauthenticated = async (error: ExchangeError, reason: string) => {
+    if (!(await chargeTokenExchangeFailure(input.clientIp))) {
+      return rateLimitedResponse(
+        oauthRetryAfter('token-exchange'),
+        new Headers(NO_STORE),
+        DESCRIPTION.rate_limited
+      );
+    }
+    return refuse(
+      error,
+      reason,
+      error === 'invalid_client' && basicAttempted
+        ? { 'WWW-Authenticate': 'Basic realm="Service"' }
+        : undefined
+    );
+  };
+
+  let claimedJti: string | undefined;
   try {
     // 0. Dark unless a caller is listed: nothing else is read.
-    const callers = blockExchangeCallers();
-    if (callers.size === 0) return refuse('unauthorized_client', 'caller allowlist empty');
+    const allow = blockExchangeCallers();
+    if (allow.callers.size === 0) {
+      return refuseUnauthenticated(
+        'unauthorized_client',
+        allow.invalid ? 'caller allowlist invalid' : 'caller allowlist empty'
+      );
+    }
 
     // 1. Parameters.
-    if (!input.formEncoded) return refuse('invalid_request', 'not form-encoded');
+    if (!input.formEncoded) return refuseUnauthenticated('invalid_request', 'not form-encoded');
     const subjectToken = body.subject_token;
     if (typeof subjectToken !== 'string' || !subjectToken) {
-      return refuse('invalid_request', 'missing subject_token');
+      return refuseUnauthenticated('invalid_request', 'missing subject_token');
     }
     if (input.resources.length !== 1 || !input.resources[0]) {
-      return refuse('invalid_request', 'exactly one resource is required');
+      return refuseUnauthenticated('invalid_request', 'exactly one resource is required');
     }
     if (
       body.requested_token_type !== undefined &&
       body.requested_token_type !== ACCESS_TOKEN_TYPE
     ) {
-      return refuse('invalid_request', 'unsupported requested_token_type');
+      return refuseUnauthenticated('invalid_request', 'unsupported requested_token_type');
     }
     if (body.actor_token !== undefined || body.actor_token_type !== undefined) {
-      return refuse('invalid_request', 'actor_token is not supported');
+      return refuseUnauthenticated('invalid_request', 'actor_token is not supported');
     }
     if (body.scope !== undefined) {
       const requested = parseScopeRequest(body.scope);
       if (!requested || requested.openid || requested.scope !== BLOCK_EXCHANGE_SCOPE) {
-        return refuse('invalid_scope', 'scope must be AppDataRead');
+        return refuseUnauthenticated('invalid_scope', 'scope must be AppDataRead');
       }
     }
     ctx.resource = input.resources[0];
 
-    // 2. Client authentication, then the allowlist. Only failed checks are charged to the caller's IP.
-    const basicAttempted = /^basic /i.test(request.headers.get('authorization') ?? '');
-    const unauthenticated = async (reason: string) => {
-      const withinLimit = await chargeTokenExchangeFailure(input.clientIp);
-      if (!withinLimit) return refuse('rate_limited', reason);
-      return refuse(
-        'invalid_client',
-        reason,
-        basicAttempted ? { 'WWW-Authenticate': 'Basic realm="Service"' } : undefined
-      );
-    };
+    // 2. Client authentication, then the allowlist.
     if (clientIdMismatch(basicCredentials(request)?.id, body)) {
-      return unauthenticated('client_id mismatch');
+      return refuseUnauthenticated('invalid_client', 'client_id mismatch');
     }
     const caller = await authenticatedConfidentialClient(request, body);
-    if (!caller) return unauthenticated('client authentication failed');
+    if (!caller) return refuseUnauthenticated('invalid_client', 'client authentication failed');
     ctx.caller = caller.id;
-    if (!callers.has(caller.id)) return refuse('unauthorized_client', 'caller not allowlisted');
+    if (!allow.callers.has(caller.id)) {
+      return refuse('unauthorized_client', 'caller not allowlisted');
+    }
     if (!(await checkTokenExchangeRateLimit(caller.id, caller.tokenRateLimit))) {
       return refuse('rate_limited', 'client limit');
     }
@@ -286,8 +316,8 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     // 4. The block token.
     const verified = await verifyBlockTokenForExchange(subjectToken);
     if (!verified.ok) {
-      if (verified.reason === 'not configured') {
-        return refuse('server_error', 'block token keys not configured');
+      if (verified.reason === 'not configured' || verified.reason === 'misconfigured') {
+        return refuse('server_error', `block token keys ${verified.reason}`);
       }
       return refuse('invalid_grant', `block token ${verified.reason}`);
     }
@@ -297,24 +327,12 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     ctx.blockJti = block.jti;
     ctx.userId = block.userId;
 
-    // 5. The viewer's storage grant.
-    if (!block.scopes.includes(STORAGE_GRANT_SCOPE)) {
-      return refuse('invalid_grant', 'block token has no storage grant');
+    // 5. The app declares a document-store collection (consent-exempt: not the viewer's consent).
+    if (!block.scopes.includes(STORAGE_SCOPE)) {
+      return refuse('invalid_grant', 'block token has no apps:storage scope');
     }
 
-    // 6. Once per block token.
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    let claimed: boolean;
-    try {
-      claimed = await claimBlockTokenJti(block.jti, block.exp - nowSeconds + 60);
-    } catch (err) {
-      return refuse('temporarily_unavailable', `replay check failed: ${String(err)}`, {
-        'Retry-After': '5',
-      });
-    }
-    if (!claimed) return refuse('invalid_grant', 'block token already exchanged');
-
-    // 7. The block's app.
+    // 6. The block's app.
     if (!resource.apps.includes(block.appId)) {
       return refuse('unauthorized_client', 'app not listed for resource');
     }
@@ -325,35 +343,70 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       return refuse('invalid_scope', 'app may not hold AppDataRead');
     }
 
-    // 8. The viewer.
+    // 7. The viewer.
     const userProblem = await userRefusal(block.userId, BLOCK_EXCHANGE_SCOPE, app);
     if (userProblem) return refuse(userProblem.refusal, userProblem.reason);
     if (await userHasRole(block.userId, SYSTEM_WORKLOAD_ROLE)) {
       return refuse('invalid_grant', 'workload account');
     }
 
-    // 9. Per (viewer, app).
-    if (!(await checkOAuthRateLimit('block-exchange', `${block.userId}:${block.appId}`))) {
-      return refuse('rate_limited', 'user-app limit');
+    // 8. The app's blocks, at mint time.
+    if (await appBlockSuspended(db, block.appId)) {
+      return refuse('unauthorized_client', 'app block suspended');
     }
 
-    // 10. Mint: at most 15 minutes, never past the block token.
-    const exp = Math.min(block.exp, nowSeconds + BLOCK_EXCHANGE_TOKEN_MAX_TTL);
-    if (exp <= nowSeconds) return refuse('invalid_grant', 'block token expiring');
-    let accessToken: string;
+    // 9. Issuer, key and lifetime: at most 15 minutes, never past the block token.
+    const issuer = env.AUTH_JWT_ISSUER;
+    const tokenSigner = getSigner();
+    if (!issuer || !tokenSigner)
+      return refuse('server_error', 'issuer or signing key not configured');
+    const iat = Math.floor(Date.now() / 1000);
+    const exp = Math.min(block.exp, iat + EXCHANGED_TOKEN_MAX_TTL);
+    if (exp <= iat) return refuse('invalid_grant', 'block token expiring');
+
+    // 10. Once per block token: claimed as the last step before minting, and given back if the mint fails,
+    // so a failure the caller is told to retry does not burn the block token.
+    let claimed: boolean;
     try {
-      accessToken = await createBlockExchangeToken(
-        block.userId,
-        block.appId,
-        BLOCK_EXCHANGE_SCOPE,
-        new Date(exp * 1000)
-      );
+      claimed = await claimBlockTokenJti(block.jti, block.exp - iat + 60);
     } catch (err) {
-      if (err instanceof AppBlockSuspendedError) {
-        return refuse('unauthorized_client', 'app block suspended');
-      }
-      throw err;
+      return refuse('temporarily_unavailable', `replay check failed: ${String(err)}`, {
+        'Retry-After': '5',
+      });
     }
+    if (!claimed) return refuse('invalid_grant', 'block token already exchanged');
+    claimedJti = block.jti;
+
+    // 11. Mint, exactly as the user exchange does.
+    const jti = randomUUID();
+    const scope = scopeNames(BLOCK_EXCHANGE_SCOPE);
+    const minted = await mintExchangedJwt(
+      tokenSigner,
+      {
+        iss: issuer,
+        sub: String(block.userId),
+        aud: resource.resource,
+        client_id: block.appId,
+        scope,
+        jti,
+        iat,
+        exp,
+        act: { sub: caller.id },
+      },
+      {
+        kind: 'block-exchange',
+        userId: block.userId,
+        clientId: block.appId,
+        actor: caller.id,
+        resource: resource.resource,
+        scopeBits: BLOCK_EXCHANGE_SCOPE,
+        exp,
+        blockJti: block.jti,
+      },
+      'block-exchange'
+    );
+    if (!minted.ok) return refuse('server_error', minted.reason);
+    claimedJti = undefined;
 
     logOAuthEvent({
       type: 'block_exchange.issued',
@@ -366,16 +419,17 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
         resource: resource.resource,
         appBlockId: block.appBlockId,
         blockJti: block.jti,
-        expiresIn: exp - nowSeconds,
+        jti,
+        expiresIn: exp - iat,
       },
     });
     return json(
       {
-        access_token: accessToken,
+        access_token: minted.accessToken,
         issued_token_type: ACCESS_TOKEN_TYPE,
         token_type: 'Bearer',
-        expires_in: exp - nowSeconds,
-        scope: BLOCK_EXCHANGE_SCOPE_NAME,
+        expires_in: exp - iat,
+        scope,
       },
       { headers: NO_STORE }
     );
@@ -383,5 +437,18 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     return refuse('temporarily_unavailable', `lookup failed: ${String(err)}`, {
       'Retry-After': '5',
     });
+  } finally {
+    // A claim this request made and did not turn into a token is given back.
+    if (claimedJti !== undefined) {
+      await releaseBlockTokenJti(claimedJti).catch((err) => {
+        logOAuthEvent({
+          type: 'block_exchange.refused',
+          userId: ctx.userId,
+          clientId: ctx.app,
+          ip,
+          metadata: { error: 'server_error', reason: `replay release failed: ${String(err)}` },
+        });
+      });
+    }
   }
 }

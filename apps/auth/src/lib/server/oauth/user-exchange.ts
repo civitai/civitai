@@ -20,10 +20,10 @@ import {
   exchangeScopeCeiling,
   findExchangeClient,
   findSubjectTokenByHash,
+  mintExchangedJwt,
   scopeNames,
   subjectTokenRefusal,
   userRefusal,
-  writeExchangeRecord,
 } from './token-exchange';
 
 // RFC 8693 token exchange of a user's OAuth access token for a short-lived RFC 9068 JWT (`typ: at+jwt`)
@@ -232,9 +232,10 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
     const jti = randomUUID();
     ctx.jti = jti;
 
-    let accessToken: string;
-    try {
-      accessToken = await tokenSigner.mintAccessTokenJwt({
+    // Introspection reads the record; a token without one would never read as active, so none is issued.
+    const minted = await mintExchangedJwt(
+      tokenSigner,
+      {
         iss: issuer,
         sub: String(subject.userId),
         aud: resource.resource,
@@ -244,39 +245,20 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
         iat,
         exp,
         ...(actor ? { act: { sub: actor } } : {}),
-      });
-    } catch (err) {
-      void logToAxiom({
-        type: 'error',
-        name: 'token-exchange-sign-failed',
-        message: String(err),
-      });
-      return refuse('server_error', 'signing failed');
-    }
-
-    // Introspection reads this record; a token without one would never read as active, so none is issued.
-    try {
-      await writeExchangeRecord(
-        jti,
-        {
-          subjectKeyId: subject.id,
-          userId: subject.userId,
-          clientId: subject.clientId,
-          actor: actor ?? null,
-          resource: resource.resource,
-          scopeBits: scope,
-          exp,
-        },
-        iat
-      );
-    } catch (err) {
-      void logToAxiom({
-        type: 'error',
-        name: 'token-exchange-record-failed',
-        message: String(err),
-      });
-      return refuse('server_error', 'exchange record not stored');
-    }
+      },
+      {
+        subjectKeyId: subject.id,
+        userId: subject.userId,
+        clientId: subject.clientId,
+        actor: actor ?? null,
+        resource: resource.resource,
+        scopeBits: scope,
+        exp,
+      },
+      'token-exchange'
+    );
+    if (!minted.ok) return refuse('server_error', minted.reason);
+    const accessToken = minted.accessToken;
 
     log('issued', ctx);
     return json(

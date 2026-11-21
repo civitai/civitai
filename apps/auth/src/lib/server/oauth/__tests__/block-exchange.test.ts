@@ -7,7 +7,8 @@ import type * as RequestModule from '$lib/server/auth/request';
 // The block token exchange (token route → block-exchange.ts), end to end through the token route. Each
 // refusal starts from the request the "issues" test proves is accepted and changes ONE thing, so a refusal
 // test fails (status 200, or a different reason) if the guard it names is removed. Expected values are
-// literals, never read back from the code under test.
+// literals, never read back from the code under test. The minted token is verified against the hub's own
+// JWKS route with the checks the registry adapter applies (`auth.jwt.ts` → `createAccessTokenJwtVerifier`).
 
 const h = await vi.hoisted(async () => {
   const { generateKeyPairSync, createHash, createPublicKey } = await import('node:crypto');
@@ -19,6 +20,11 @@ const h = await vi.hoisted(async () => {
     });
   const site = rsa();
   const forger = rsa();
+  const hub = generateKeyPairSync('ec', {
+    namedCurve: 'P-256',
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  });
   const kidOf = (pem: string) => {
     const jwk = createPublicKey(pem).export({ format: 'jwk' }) as { n?: string };
     return createHash('sha256')
@@ -27,6 +33,10 @@ const h = await vi.hoisted(async () => {
       .slice(0, 32);
   };
   process.env.NEXTAUTH_SECRET = 'block-exchange-test-secret';
+  process.env.AUTH_JWT_PRIVATE_KEY = hub.privateKey;
+  process.env.AUTH_JWT_PUBLIC_KEY = hub.publicKey;
+  process.env.AUTH_JWT_KID = 'hub-test-kid';
+  process.env.AUTH_JWT_ISSUER = 'https://auth.test';
   process.env.CIVITAI_MODERATION_USER_ID = '999';
   return {
     site,
@@ -35,11 +45,13 @@ const h = await vi.hoisted(async () => {
     forgerKid: kidOf(forger.publicKey),
     tables: {} as Record<string, Record<string, unknown>[]>,
     cache: new Map<string, string>(),
+    sys: new Map<string, { value: string; ex: number }>(),
+    sysSetThrows: false,
     redisNull: false,
     rate: new Map<string, number>(),
     clientIp: '203.0.113.7' as string | null,
     events: [] as Record<string, unknown>[],
-    suspended: false,
+    logs: [] as Record<string, unknown>[],
   };
 });
 
@@ -64,14 +76,16 @@ function matches(row: Row, [column, op, value]: [string, string, unknown]): bool
   }
 }
 
-vi.mock('$lib/server/db/db', () => {
-  const db = {
+// Read-only: the exchange writes no row, and a write would throw here.
+vi.mock('$lib/server/db/db', () => ({
+  db: {
     selectFrom(table: string) {
       const where: [string, string, unknown][] = [];
       const run = () => (h.tables[table] ?? []).filter((r) => where.every((w) => matches(r, w)));
       const qb: Record<string, unknown> = {
         select: () => qb,
         innerJoin: () => qb,
+        orderBy: () => qb,
         where: (column: string, op: string, value: unknown) => {
           if (typeof column === 'string') where.push([column, op, value]);
           return qb;
@@ -81,24 +95,7 @@ vi.mock('$lib/server/db/db', () => {
       };
       return qb;
     },
-    insertInto(table: string) {
-      return {
-        values: (values: Row) => ({
-          execute: async () => {
-            (h.tables[table] ??= []).push(values);
-          },
-        }),
-      };
-    },
-    transaction() {
-      return { execute: async <T>(fn: (trx: unknown) => Promise<T>) => fn(db) };
-    },
-  };
-  return { db };
-});
-
-vi.mock('$lib/server/oauth/app-block-mint-lock', () => ({
-  lockAppBlockSuspended: async () => h.suspended,
+  },
 }));
 
 vi.mock('$lib/server/redis', async (orig) => ({
@@ -115,8 +112,21 @@ vi.mock('$lib/server/redis', async (orig) => ({
           async get(key: string) {
             return h.cache.get(key) ?? null;
           },
+          async del(key: string) {
+            return h.cache.delete(key) ? 1 : 0;
+          },
         },
-  getSysRedis: () => null,
+  getSysRedis: () => ({
+    isReady: true,
+    async set(key: string, value: string, opts: { EX: number }) {
+      if (h.sysSetThrows) throw new Error('sys redis down');
+      h.sys.set(key, { value, ex: opts.EX });
+      return 'OK';
+    },
+    async get(key: string) {
+      return h.sys.get(key)?.value ?? null;
+    },
+  }),
 }));
 
 vi.mock('$lib/server/auth/rate-limit', () => ({
@@ -133,7 +143,9 @@ vi.mock('$lib/server/auth/rate-limit', () => ({
 }));
 
 vi.mock('$lib/server/axiom', () => ({
-  logToAxiom: async () => undefined,
+  logToAxiom: async (data: Record<string, unknown>) => {
+    h.logs.push(data);
+  },
   logAxiomError: async () => undefined,
 }));
 vi.mock('$lib/server/oauth/audit-log', () => ({
@@ -146,15 +158,24 @@ vi.mock('$lib/server/auth/request', async (orig) => ({
   getClientIp: () => h.clientIp,
 }));
 
-import { SignJWT, importPKCS8 } from 'jose';
+import {
+  SignJWT,
+  importPKCS8,
+  jwtVerify,
+  createLocalJWKSet,
+  decodeProtectedHeader,
+  type JSONWebKeySet,
+} from 'jose';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { POST as tokenPOST } from '../../../../routes/api/auth/oauth/token/+server';
+import { GET as jwksGET } from '../../../../routes/.well-known/jwks.json/+server';
 import { WorkerTokenExchangeGrant } from '../worker-grant';
 import { invalidateRoleCache } from '../access';
 import { parseBlockExchangeCallers } from '../block-exchange';
 
 const NOW = 1_800_000_000; // a fixed second, so lifetimes are exact
+const ISSUER = 'https://auth.test';
 const RESOURCE = 'https://apps.registry.test';
 const APP = 'appblk-notes';
 const RELAY = 'relay-app-data';
@@ -196,17 +217,20 @@ beforeEach(() => {
   vi.setSystemTime(NOW * 1000);
   h.tables = {
     OauthClient: [client(APP), client(RELAY), client(OTHER_RELAY)],
-    ApiKey: [],
     User: [{ id: USER_ID, username: 'alice', deletedAt: null, bannedAt: null, muted: false }],
     UserRole: [],
+    app_blocks: [{ id: 'apb_01notes', app_id: APP, status: 'approved' }],
   };
   h.cache.clear();
+  h.sys.clear();
+  h.sysSetThrows = false;
   h.redisNull = false;
   h.rate.clear();
   h.clientIp = '203.0.113.7';
   h.events = [];
-  h.suspended = false;
+  h.logs = [];
   invalidateRoleCache();
+  process.env.AUTH_JWT_ISSUER = ISSUER;
   process.env.OAUTH_EXCHANGE_RESOURCES = registry();
   process.env.OAUTH_BLOCK_EXCHANGE_CALLERS = RELAY;
   process.env.BLOCK_TOKEN_PUBLIC_KEY = h.site.publicKey;
@@ -248,7 +272,10 @@ async function blockToken(
 const basic = (id: string, secret = SECRET) =>
   `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`;
 
-async function exchange(subject: string, opts: { caller?: string; params?: Row } = {}) {
+async function exchange(
+  subject: string,
+  opts: { caller?: string; secret?: string; params?: Row } = {}
+) {
   const form = new URLSearchParams();
   const params: Row = {
     grant_type: TOKEN_EXCHANGE_GRANT,
@@ -261,16 +288,30 @@ async function exchange(subject: string, opts: { caller?: string; params?: Row }
   const request = new Request('https://auth.test/api/auth/oauth/token', {
     method: 'POST',
     body: form,
-    headers: { authorization: basic(opts.caller ?? RELAY) },
+    headers: { authorization: basic(opts.caller ?? RELAY, opts.secret) },
   });
   const res = await tokenPOST({ request } as never);
   return { status: res.status, body: (await res.json()) as Row };
 }
 
+/** Verify a minted token the way the registry adapter does, against the hub's published JWKS. */
+async function verifyLikeTheAdapter(token: string) {
+  const jwks = (await (await jwksGET({} as never)).json()) as JSONWebKeySet;
+  return jwtVerify(token, createLocalJWKSet(jwks), {
+    algorithms: ['ES256'],
+    issuer: ISSUER,
+    audience: RESOURCE,
+    typ: 'at+jwt',
+    clockTolerance: 0,
+    currentDate: new Date(NOW * 1000),
+    requiredClaims: ['exp', 'iat', 'jti', 'sub', 'aud', 'client_id'],
+  });
+}
+
 const refusals = () => h.events.filter((e) => e.type === 'block_exchange.refused');
 const lastReason = () =>
   (refusals().at(-1)?.metadata as Row | undefined)?.reason as string | undefined;
-const accessRows = () => h.tables.ApiKey.filter((r) => r.type === 'Access');
+const issued = () => h.events.filter((e) => e.type === 'block_exchange.issued');
 
 describe('block token exchange — dark by default (empty caller allowlist)', () => {
   it('refuses every request when OAUTH_BLOCK_EXCHANGE_CALLERS is unset, and mints nothing', async () => {
@@ -282,7 +323,8 @@ describe('block token exchange — dark by default (empty caller allowlist)', ()
       error_description: 'This client may not exchange this token for this resource',
     });
     expect(lastReason()).toBe('caller allowlist empty');
-    expect(h.tables.ApiKey).toEqual([]);
+    expect(issued()).toEqual([]);
+    expect(h.sys.size).toBe(0);
   });
 
   it('refuses when the list is blank', async () => {
@@ -290,15 +332,14 @@ describe('block token exchange — dark by default (empty caller allowlist)', ()
     const res = await exchange(await blockToken());
     expect(res.status).toBe(400);
     expect(lastReason()).toBe('caller allowlist empty');
-    expect(h.tables.ApiKey).toEqual([]);
   });
 
   it('refuses everyone when one listed id is malformed (the whole list is dropped)', async () => {
     process.env.OAUTH_BLOCK_EXCHANGE_CALLERS = `${RELAY}, bad/id`;
     const res = await exchange(await blockToken());
     expect(res.status).toBe(400);
-    expect(lastReason()).toBe('caller allowlist empty');
-    expect(h.tables.ApiKey).toEqual([]);
+    expect(lastReason()).toBe('caller allowlist invalid');
+    expect(issued()).toEqual([]);
   });
 
   it('parses the list literally', () => {
@@ -310,6 +351,15 @@ describe('block token exchange — dark by default (empty caller allowlist)', ()
       error: 'OAUTH_BLOCK_EXCHANGE_CALLERS has an invalid client id',
     });
   });
+
+  it('stops auditing an unauthenticated flood at the per-IP limit (120 a minute)', async () => {
+    delete process.env.OAUTH_BLOCK_EXCHANGE_CALLERS;
+    const token = await blockToken();
+    for (let i = 0; i < 120; i++) expect((await exchange(token)).status).toBe(400);
+    const res = await exchange(token);
+    expect(res.status).toBe(429);
+    expect(refusals()).toHaveLength(120);
+  });
 });
 
 describe('block token exchange — the caller', () => {
@@ -318,22 +368,11 @@ describe('block token exchange — the caller', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('unauthorized_client');
     expect(lastReason()).toBe('caller not allowlisted');
-    expect(h.tables.ApiKey).toEqual([]);
+    expect(issued()).toEqual([]);
   });
 
-  it('refuses a caller with the wrong secret before the allowlist is consulted', async () => {
-    const form = new URLSearchParams({
-      grant_type: TOKEN_EXCHANGE_GRANT,
-      subject_token: await blockToken(),
-      subject_token_type: BLOCK_TOKEN_TYPE,
-      resource: RESOURCE,
-    });
-    const request = new Request('https://auth.test/api/auth/oauth/token', {
-      method: 'POST',
-      body: form,
-      headers: { authorization: basic(RELAY, 'wrong') },
-    });
-    const res = await tokenPOST({ request } as never);
+  it('refuses a caller with the wrong secret', async () => {
+    const res = await exchange(await blockToken(), { secret: 'wrong' });
     expect(res.status).toBe(401);
     expect(lastReason()).toBe('client authentication failed');
   });
@@ -355,7 +394,7 @@ describe('block token exchange — the caller', () => {
 });
 
 describe('block token exchange — what it issues', () => {
-  it('issues an opaque AppDataRead-only token for 15 minutes, with no refresh token', async () => {
+  it('issues an at+jwt the adapter accepts: AppDataRead only, the relay in act, 15 minutes, no refresh', async () => {
     const res = await exchange(await blockToken());
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(Object.keys(res.body).sort()).toEqual([
@@ -365,33 +404,60 @@ describe('block token exchange — what it issues', () => {
       'scope',
       'token_type',
     ]);
-    expect(res.body.scope).toBe('AppDataRead');
-    expect(res.body.expires_in).toBe(900);
-    expect(res.body.token_type).toBe('Bearer');
-    expect(res.body.issued_token_type).toBe(ACCESS_TOKEN_TYPE);
-    expect(res.body).not.toHaveProperty('refresh_token');
-    // Opaque: the civitai_ prefix of every hub access token, not a JWT.
-    expect(String(res.body.access_token)).toMatch(/^civitai_[^.]+$/);
+    expect(res.body).toMatchObject({
+      scope: 'AppDataRead',
+      expires_in: 900,
+      token_type: 'Bearer',
+      issued_token_type: ACCESS_TOKEN_TYPE,
+    });
 
-    // The one row written: an Access token for (user, app) the site's bearer lookup reads as `oauth`.
-    expect(h.tables.ApiKey).toHaveLength(1);
-    const row = h.tables.ApiKey[0];
-    expect(row.type).toBe('Access');
-    expect(row.userId).toBe(42);
-    expect(row.clientId).toBe('appblk-notes');
-    expect(row.name).toBe('oauth-block:appblk-notes');
-    expect(row.key).toBe(generateSecretHash(String(res.body.access_token)));
-    // Exactly bit 32 (AppDataRead): no UserRead (bit 0), nothing the block token carried.
-    expect(row.tokenScopeWide).toBe('4294967296');
-    expect((row.expiresAt as Date).getTime()).toBe((NOW + 900) * 1000);
-    expect(h.tables.ApiKey.filter((r) => r.type === 'Refresh')).toEqual([]);
+    const token = String(res.body.access_token);
+    expect(decodeProtectedHeader(token)).toEqual({
+      alg: 'ES256',
+      kid: 'hub-test-kid',
+      typ: 'at+jwt',
+    });
+    const { payload } = await verifyLikeTheAdapter(token);
+    expect(Object.keys(payload).sort()).toEqual([
+      'act',
+      'aud',
+      'client_id',
+      'exp',
+      'iat',
+      'iss',
+      'jti',
+      'scope',
+      'sub',
+    ]);
+    expect(payload).toMatchObject({
+      iss: 'https://auth.test',
+      aud: 'https://apps.registry.test',
+      sub: '42',
+      client_id: 'appblk-notes',
+      scope: 'AppDataRead',
+      act: { sub: 'relay-app-data' },
+      iat: NOW,
+      exp: NOW + 900,
+    });
 
-    const issued = h.events.filter((e) => e.type === 'block_exchange.issued');
-    expect(issued).toHaveLength(1);
-    expect(issued[0]).toMatchObject({
+    // The hub's record of it, as every exchanged token has, under its own kind.
+    const record = JSON.parse(h.sys.get(`oauth:xchg:${payload.jti}`)!.value);
+    expect(record).toEqual({
+      kind: 'block-exchange',
       userId: 42,
       clientId: 'appblk-notes',
-      metadata: { caller: 'relay-app-data', resource: RESOURCE, blockJti: expect.any(String) },
+      actor: 'relay-app-data',
+      resource: 'https://apps.registry.test',
+      scopeBits: 4294967296,
+      exp: NOW + 900,
+      blockJti: expect.stringMatching(/^blk-/),
+    });
+
+    expect(issued()).toHaveLength(1);
+    expect(issued()[0]).toMatchObject({
+      userId: 42,
+      clientId: 'appblk-notes',
+      metadata: { caller: 'relay-app-data', resource: RESOURCE, jti: payload.jti },
     });
   });
 
@@ -402,15 +468,16 @@ describe('block token exchange — what it issues', () => {
       })
     );
     expect(res.status).toBe(200);
-    expect(res.body.scope).toBe('AppDataRead');
-    expect(accessRows()[0].tokenScopeWide).toBe('4294967296');
+    const { payload } = await verifyLikeTheAdapter(String(res.body.access_token));
+    expect(payload.scope).toBe('AppDataRead');
   });
 
   it('never outlives the block token it came from', async () => {
     const res = await exchange(await blockToken({ iat: NOW - 600, exp: NOW + 300 }));
     expect(res.status).toBe(200);
     expect(res.body.expires_in).toBe(300);
-    expect((accessRows()[0].expiresAt as Date).getTime()).toBe((NOW + 300) * 1000);
+    const { payload } = await verifyLikeTheAdapter(String(res.body.access_token));
+    expect(payload.exp).toBe(NOW + 300);
   });
 
   it('caps the token at 15 minutes even when the block token claims to live longer', async () => {
@@ -418,43 +485,45 @@ describe('block token exchange — what it issues', () => {
     const res = await exchange(await blockToken({ iat: NOW, exp: NOW + 3600 }));
     expect(res.status).toBe(200);
     expect(res.body.expires_in).toBe(900);
-    expect((accessRows()[0].expiresAt as Date).getTime()).toBe((NOW + 900) * 1000);
+    const { payload } = await verifyLikeTheAdapter(String(res.body.access_token));
+    expect(payload.exp).toBe(NOW + 900);
   });
 
   it('accepts scope=AppDataRead and refuses any other requested scope', async () => {
     const ok = await exchange(await blockToken(), { params: { scope: 'AppDataRead' } });
     expect(ok.status).toBe(200);
-    const wider = await exchange(await blockToken(), { params: { scope: 'AppDataRead UserRead' } });
+    const wider = await exchange(await blockToken(), {
+      params: { scope: 'AppDataRead UserRead' },
+    });
     expect(wider.status).toBe(400);
     expect(wider.body.error).toBe('invalid_scope');
     expect(lastReason()).toBe('scope must be AppDataRead');
-    expect(accessRows()).toHaveLength(1);
+    expect(issued()).toHaveLength(1);
   });
 });
 
 describe('block token exchange — the block token', () => {
-  it('refuses a block token without the storage grant', async () => {
+  it('refuses a block token without apps:storage', async () => {
     const res = await exchange(
       await blockToken({ scopes: ['user:read:self', 'apps:storage:read'] })
     );
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_grant');
-    expect(lastReason()).toBe('block token has no storage grant');
-    expect(h.tables.ApiKey).toEqual([]);
+    expect(lastReason()).toBe('block token has no apps:storage scope');
+    expect(issued()).toEqual([]);
   });
 
   it('refuses an expired block token', async () => {
     const res = await exchange(await blockToken({ iat: NOW - 1000, exp: NOW - 60 }));
     expect(res.status).toBe(400);
     expect(lastReason()).toBe('block token signature or claims');
-    expect(h.tables.ApiKey).toEqual([]);
   });
 
   it('refuses a block token signed by another key under the site kid (forged)', async () => {
     const res = await exchange(await blockToken({}, { key: h.forger.privateKey }));
     expect(res.status).toBe(400);
     expect(lastReason()).toBe('block token signature or claims');
-    expect(h.tables.ApiKey).toEqual([]);
+    expect(issued()).toEqual([]);
   });
 
   it('refuses a block token whose kid the hub does not hold', async () => {
@@ -482,7 +551,7 @@ describe('block token exchange — the block token', () => {
     expect(lastReason()).toBe('block token dev token');
     await exchange(await blockToken({ privateRun: true, privateRunAudience: 'owner' }));
     expect(lastReason()).toBe('block token private run');
-    expect(h.tables.ApiKey).toEqual([]);
+    expect(issued()).toEqual([]);
   });
 
   it('refuses a block token older than 15 minutes even if its exp is later', async () => {
@@ -498,22 +567,78 @@ describe('block token exchange — the block token', () => {
     expect(lastReason()).toBe('block token keys not configured');
   });
 
-  it('exchanges a block token once: a replay is refused', async () => {
+  it('refuses every token, and says so once, when the public-key variable holds a private key', async () => {
+    process.env.BLOCK_TOKEN_PUBLIC_KEY = h.site.privateKey;
+    const first = await exchange(await blockToken());
+    const second = await exchange(await blockToken());
+    expect(first.status).toBe(500);
+    expect(second.status).toBe(500);
+    expect(lastReason()).toBe('block token keys misconfigured');
+    expect(h.logs.filter((l) => l.name === 'block-token-public-key-invalid')).toEqual([
+      {
+        type: 'error',
+        name: 'block-token-public-key-invalid',
+        message: 'BLOCK_TOKEN_PUBLIC_KEY is a private key',
+      },
+    ]);
+  });
+
+  it('refuses every token when one key value does not parse, rather than skipping it', async () => {
+    process.env.BLOCK_TOKEN_PUBLIC_KEY = 'not a pem (test 1)';
+    process.env.BLOCK_TOKEN_PUBLIC_KEY_NEXT = h.site.publicKey;
+    const res = await exchange(await blockToken());
+    expect(res.status).toBe(500);
+    expect(lastReason()).toBe('block token keys misconfigured');
+    expect(h.logs.filter((l) => l.name === 'block-token-public-key-invalid')).toEqual([
+      {
+        type: 'error',
+        name: 'block-token-public-key-invalid',
+        message: 'BLOCK_TOKEN_PUBLIC_KEY does not parse as a public key',
+      },
+    ]);
+  });
+});
+
+describe('block token exchange — one exchange per block token', () => {
+  it('refuses a replay', async () => {
     const token = await blockToken();
     expect((await exchange(token)).status).toBe(200);
     const replay = await exchange(token);
     expect(replay.status).toBe(400);
     expect(replay.body.error).toBe('invalid_grant');
     expect(lastReason()).toBe('block token already exchanged');
-    expect(accessRows()).toHaveLength(1);
+    expect(issued()).toHaveLength(1);
   });
 
-  it('refuses (fail closed) when the replay claim cannot be recorded', async () => {
+  it('does not burn the block token when the mint fails: the retry succeeds', async () => {
+    const token = await blockToken();
+    h.sysSetThrows = true;
+    const failed = await exchange(token);
+    expect(failed.status).toBe(500);
+    expect(lastReason()).toBe('exchange record not stored');
+    h.sysSetThrows = false;
+    const retry = await exchange(token);
+    expect(retry.status, JSON.stringify(retry.body)).toBe(200);
+  });
+
+  it('does not burn the block token on a refusal before the mint: the fixed retry succeeds', async () => {
+    const token = await blockToken();
+    h.tables.OauthClient[0].allowedScopes = TokenScope.AppsRead | TokenScope.UserRead;
+    expect((await exchange(token)).status).toBe(400);
+    expect(lastReason()).toBe('app may not hold AppDataRead');
+    h.tables.OauthClient[0].allowedScopes = TokenScope.AppDataRead | TokenScope.UserRead;
+    expect((await exchange(token)).status).toBe(200);
+  });
+
+  it('refuses (fail closed) when the claim cannot be recorded, without burning the token', async () => {
+    const token = await blockToken();
     h.redisNull = true;
-    const res = await exchange(await blockToken());
+    const res = await exchange(token);
     expect(res.status).toBe(503);
     expect(res.body.error).toBe('temporarily_unavailable');
-    expect(h.tables.ApiKey).toEqual([]);
+    expect(issued()).toEqual([]);
+    h.redisNull = false;
+    expect((await exchange(token)).status).toBe(200);
   });
 });
 
@@ -532,6 +657,13 @@ describe('block token exchange — the app and the viewer', () => {
     expect(lastReason()).toBe('app may not hold AppDataRead');
   });
 
+  it('refuses a disabled app', async () => {
+    h.tables.OauthClient[0].accessMode = 'disabled';
+    const res = await exchange(await blockToken());
+    expect(res.status).toBe(400);
+    expect(lastReason()).toBe('app disabled');
+  });
+
   it('refuses a banned viewer', async () => {
     h.tables.User[0].bannedAt = new Date(NOW * 1000);
     const res = await exchange(await blockToken());
@@ -539,19 +671,18 @@ describe('block token exchange — the app and the viewer', () => {
     expect(lastReason()).toBe('user banned');
   });
 
-  it('refuses while the app block is suspended', async () => {
-    h.suspended = true;
+  it('refuses while the app block is suspended with no approved block', async () => {
+    h.tables.app_blocks[0].status = 'suspended';
     const res = await exchange(await blockToken());
     expect(res.status).toBe(400);
     expect(lastReason()).toBe('app block suspended');
-    expect(h.tables.ApiKey).toEqual([]);
+    expect(issued()).toEqual([]);
   });
 
-  it('limits one (viewer, app) pair to 30 exchanges a minute', async () => {
-    for (let i = 0; i < 30; i++) expect((await exchange(await blockToken())).status).toBe(200);
-    const res = await exchange(await blockToken());
-    expect(res.status).toBe(429);
-    expect(lastReason()).toBe('user-app limit');
+  it('issues while another block of the app is still approved', async () => {
+    h.tables.app_blocks[0].status = 'suspended';
+    h.tables.app_blocks.push({ id: 'apb_02notes', app_id: APP, status: 'approved' });
+    expect((await exchange(await blockToken())).status).toBe(200);
   });
 });
 

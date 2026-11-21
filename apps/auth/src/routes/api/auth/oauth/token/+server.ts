@@ -129,8 +129,8 @@ export const POST: RequestHandler = async ({ request }) => {
     }
     return handleUserTokenExchange({ request, body, resources, clientIp, formEncoded });
   }
-  // An App Block token exchanged for an opaque AppDataRead registry token (block-exchange.ts). Dark unless
-  // OAUTH_BLOCK_EXCHANGE_CALLERS lists the caller; never the worker grant.
+  // An App Block token exchanged for an AppDataRead at+jwt naming the relay (block-exchange.ts). Dark
+  // unless OAUTH_BLOCK_EXCHANGE_CALLERS lists the caller; never the worker grant.
   if (body.grant_type === TOKEN_EXCHANGE_GRANT && body.subject_token_type === BLOCK_TOKEN_TYPE) {
     const resources = await formResources();
     return handleBlockTokenExchange({ request, body, resources, clientIp, formEncoded });

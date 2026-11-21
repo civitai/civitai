@@ -58,10 +58,6 @@ import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 //                charged after client auth.
 //   - app-token: per-(userId, clientId) (60/min) — internal-only app-block mint; a block refreshes at most
 //                once per token TTL, so this only catches a runaway host loop.
-//   - block-exchange: per-(userId, appId) (30/min) — the block token exchange (block-exchange.ts), charged
-//                after client auth, the caller allowlist and the block token's signature check, on top of the
-//                caller's `token-exchange` limit. A block token is exchanged once and lives 15 minutes, so a
-//                legitimate (user, app) needs a handful a minute at most; this caps one user's fan-out.
 const OAUTH_RATE_LIMITS = {
   token: { limit: 20, windowSeconds: 60 },
   'token-overflow': { limit: 120, windowSeconds: 60 },
@@ -82,7 +78,6 @@ const OAUTH_RATE_LIMITS = {
   'token-exchange-ip': { limit: 120, windowSeconds: 60 },
   'introspect-jwt': { limit: 1200, windowSeconds: 60 },
   'token-service': { limit: 60, windowSeconds: 60 },
-  'block-exchange': { limit: 30, windowSeconds: 60 },
 } as const;
 
 export type OAuthRateLimitBucket = keyof typeof OAUTH_RATE_LIMITS;
