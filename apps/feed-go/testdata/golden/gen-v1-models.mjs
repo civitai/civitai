@@ -202,6 +202,9 @@ function baseWorld() {
     stats: { vaeLinked: [], modelMetrics: [], versionMetrics: [], versionMeta: [] },
     vaeFiles: [],
     usernames: {},
+    // The replica's Tag rows by name (the list's `tag` filter) and the blocked browsing tags.
+    tagIdsByName: {},
+    blockedTags: [],
     responseCache: {},
   };
 }
@@ -615,7 +618,73 @@ const list = (query, headers = {}) => ({
   fx('list-addon-excluded-tags', list('limit=10'), w);
 }
 
+// 13. An empty `query` is falsy: the database path (no Meilisearch), alone, with other params (the
+// lookahead's nextPage leaves the empty value out: QS.stringify's skipEmptyString), and with `page`
+// (no 400: `query && page` is false).
+{
+  const w = baseWorld();
+  addModel(w, modelRow(5701, { cursorId: '1|1|5701' }), [version(6701)], {
+    files: { 6701: [file(7701, 6701)] },
+    images: { 6701: [image(8701, 6701)] },
+  });
+  fx('list-query-empty-alone', list('query='), w);
+}
+{
+  const w = baseWorld();
+  addModel(w, modelRow(5711, { cursorId: '9|9|5711' }), [version(6711)], {
+    files: { 6711: [file(7711, 6711)] },
+  });
+  addModel(w, modelRow(5712, { cursorId: '8|8|5712' }), [version(6712)], {
+    files: { 6712: [file(7712, 6712)] },
+  });
+  fx('list-query-empty-lookahead', list('limit=1&query=&foo=bar'), w);
+}
+{
+  const w = baseWorld();
+  addModel(w, modelRow(5721, { cursorId: '1|1|5721' }), [version(6721)], {
+    files: { 6721: [file(7721, 6721)] },
+  });
+  fx('list-query-empty-paging', list('query=&page=2&limit=5'), w);
+}
+
+// 14. `tag`: a name the replica holds adds its EXISTS clause; a name it does not hold adds none; a
+// blocked name (matched lowercased) is an empty page with no statement.
+{
+  const w = baseWorld();
+  w.tagIdsByName = { character: 11 };
+  addModel(w, modelRow(5801, { cursorId: '1|1|5801' }), [version(6801)], {
+    files: { 6801: [file(7801, 6801)] },
+  });
+  fx('list-tag-filter', list('tag=character&limit=5'), w);
+}
+{
+  const w = baseWorld();
+  w.tagIdsByName = { character: 11 };
+  addModel(w, modelRow(5811, { cursorId: '1|1|5811' }), [version(6811)], {
+    files: { 6811: [file(7811, 6811)] },
+  });
+  fx('list-tag-unknown', list('tag=nosuch&limit=5'), w);
+}
+{
+  const w = baseWorld();
+  w.tagIdsByName = { 'Blocked Thing': 14 };
+  w.blockedTags = [{ id: 14, name: 'Blocked Thing' }];
+  addModel(w, modelRow(5821, { cursorId: '1|1|5821' }), [version(6821)], {
+    files: { 6821: [file(7821, 6821)] },
+  });
+  fx('list-tag-blocked', list('tag=blocked%20THING&page=2&limit=5'), w);
+}
+
 // Fallbacks before any read.
+fx('fallback-list-query-blank', list('query=%20&limit=5'), baseWorld(), {
+  expect: { fallback: 'v1-models-query' },
+});
+fx('fallback-list-query-repeated', list('query=&query='), baseWorld(), {
+  expect: { fallback: 'v1-models-query' },
+});
+fx('fallback-list-tag-nonascii', list('tag=caf%C3%A9'), baseWorld(), {
+  expect: { fallback: 'v1-models-tag' },
+});
 fx('fallback-list-query', list('query=golden&limit=5'), baseWorld(), {
   expect: { fallback: 'v1-models-query' },
 });
@@ -659,6 +728,8 @@ function redisEntries(w) {
     out[`packed:caches:creator-membership-valid:${id}`] = { value: v };
   for (const [key, v] of Object.entries(w.responseCache)) out[key] = { value: v };
   for (const e of Object.values(out)) e.packed = packMarked(e.value);
+  // getBlockedBrowsingTags' cached list: plain JSON, not packed.
+  out['system:blocked-browsing-tags'] = { raw: JSON.stringify(w.blockedTags ?? []) };
   for (const [id, raw] of Object.entries(w.gallerySettings))
     out[`model:gallery-settings:${id}`] = { raw };
   return out;

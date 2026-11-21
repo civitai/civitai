@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
@@ -479,6 +480,8 @@ type blockedList struct {
 	idsErr   error
 	names    map[string]bool
 	namesErr error
+	// namesASCII: every name is ASCII, so its strings.ToLower is JS's toLowerCase.
+	namesASCII bool
 }
 
 // IDs returns the blocked tag ids.
@@ -497,6 +500,17 @@ func (b *BlockedTags) Names(ctx context.Context) (map[string]bool, error) {
 		return nil, err
 	}
 	return l.names, l.namesErr
+}
+
+// NamesASCII returns the blocked tag names as Names does, and whether every name is ASCII: only then
+// is each lowercased name exactly JS's toLowerCase (Go's tables map a few non-ASCII letters to ASCII
+// that JS does not, U+0130 among them).
+func (b *BlockedTags) NamesASCII(ctx context.Context) (map[string]bool, bool, error) {
+	l, err := b.list(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	return l.names, l.namesASCII, l.namesErr
 }
 
 func (b *BlockedTags) list(ctx context.Context) (*blockedList, error) {
@@ -561,7 +575,7 @@ func parseBlockedList(raw []byte) (*blockedList, error) {
 	if err := dec.Decode(&list); err != nil || list == nil {
 		return nil, fallback.New("blocked-tags-stale")
 	}
-	l := &blockedList{ids: make(map[int]bool, len(list)), names: make(map[string]bool, len(list))}
+	l := &blockedList{ids: make(map[int]bool, len(list)), names: make(map[string]bool, len(list)), namesASCII: true}
 	for _, t := range list {
 		n, _ := t["id"].(json.Number)
 		f, err := n.Float64()
@@ -576,6 +590,7 @@ func parseBlockedList(raw []byte) (*blockedList, error) {
 			l.names, l.namesErr = nil, fallback.New("blocked-tags-stale")
 		} else if l.names != nil {
 			l.names[strings.ToLower(name)] = true
+			l.namesASCII = l.namesASCII && IsASCII(name)
 		}
 	}
 	return l, nil
@@ -1158,4 +1173,15 @@ func BuildInfiniteImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.
 		img.Wire = wire
 	}
 	return images
+}
+
+// IsASCII reports whether s is all ASCII: the text on which Go's case mapping (strings.ToLower,
+// case-insensitive matching) is exactly JS's. The one ASCII predicate the ports share.
+func IsASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }

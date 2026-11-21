@@ -2216,9 +2216,16 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 2. **Viewer and level.** The list reads a session or an API key; `[id]` reads neither (a block JWT
    only skips the origin cache). The level is `nsfw ? all : PG` on the list, all on `[id]`, PG/PG-13
    in a restricted region on both. No domain cap.
-3. **Text search.** A `query` asks Meilisearch for the page's ids (`resolveModelSearchIds`).
+3. **Text search.** A truthy `query` asks Meilisearch for the page's ids (`resolveModelSearchIds`).
+   `query` is `z.string().optional()` (no trim), so only the empty string (`?query=`, `?query`) is
+   falsy: the handler then takes the database path exactly as with no `query` (cursor and skip kept,
+   no `query && page` 400), and `nextPage` leaves the empty value out (QS.stringify's
+   `skipEmptyString`). A repeated `query` is an array, a 400.
 4. **The model statement.** `getModelsRaw` resolves the browsing-settings addons at the level
-   (`enforceBlockedBrowsingTagsForModels`; `[id]` keeps only `disablePoi`), then one statement on the
+   (`enforceBlockedBrowsingTagsForModels`; `[id]` keeps only `disablePoi`; a `tagname ?? tag` whose
+   lowercased name is a blocked browsing tag's answers an empty page there, before any other read),
+   looks a `tag` up by its exact name on the replica (`EXISTS` on `TagsOnModels` when found, no
+   clause when not), then one statement on the
    replica: `ModelMetric` × `Model` (or one of the three `ModelBaseModelMetric` forms when
    `baseModels` is set and `base-model-feed-metrics` is on), the filters, the sort's ORDER BY and the
    keyset cursor (`getCursorClauses`: a UNION ALL of the equality and the tuple branch for a
@@ -2249,9 +2256,9 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Query | every key above except those on the right; unknown keys ignored and kept for `nextPage` | `query` (`v1-models-query`: Meilisearch), every other schema key (`v1-models-<key>`: `tag`, `supportsGeneration`, `checkpointType`, …), a signed-out `favorites`/`hidden` (`v1-models-authed-only`), `limit=0` or over 100 (`v1-models-limit`), the 429 (`v1-models-page-limit`), a Recently Added or unknown sort (`v1-models-sort`), a value `Number()` or zod reads otherwise (`v1-models-input-*`), a cursor Node answers with a 400 or reads through JS's Date parser (`v1-models-cursor`) |
+| Query | every key above except those on the right; an empty `query` (falsy: the database path); `tag` (ASCII); unknown keys ignored and kept for `nextPage` | a truthy or repeated `query` (`v1-models-query`: Meilisearch), a non-ASCII `tag` or a blocked list holding a non-ASCII name (`v1-models-tag`: Go's lowercasing of such text is not always JS's `toLowerCase`), no cached blocked list (`blocked-tags-*`), every other schema key (`v1-models-<key>`: `tagname`, `supportsGeneration`, `checkpointType`, …), a signed-out `favorites`/`hidden` (`v1-models-authed-only`), `limit=0` or over 100 (`v1-models-limit`), the 429 (`v1-models-page-limit`), a Recently Added or unknown sort (`v1-models-sort`), a value `Number()` or zod reads otherwise (`v1-models-input-*`), a cursor Node answers with a 400 or reads through JS's Date parser (`v1-models-cursor`) |
 | Viewer | the list signed out; `[id]` always (it reads no session) | a list session (`v1-models-session`); API credentials (`bearer-token`; the sampler never sends them) |
-| Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, ids, earlyAccess, archived, the addons' POI/minor/tag clauses | a username the replica does not hold (`v1-models-username-miss`) |
+| Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, `tag` (the blocked-name empty page, the Tag lookup, its `EXISTS`), ids, earlyAccess, archived, the addons' POI/minor/tag clauses | a username the replica does not hold (`v1-models-username-miss`) |
 | Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads); a tag-name miss with `FEED_GO_COMPUTE_MISSES` (tagCache's lookup, §16.7) | a model-data, model-tags, images, files or membership miss (`v1-models-*-miss`), a tag-name miss with `FEED_GO_COMPUTE_MISSES` off, a stale images/files/tag entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level |
 | Shaping | both shapers, the file naming over ASCII model names | a Public Training Data file (`v1-models-training-data`), a name the scheme strips non-ASCII text from (`v1-models-filename`) |
 | Config | | no `NEXT_PUBLIC_IMAGE_LOCATION` or (`[id]`) `NEXTAUTH_URL` (`v1-models-unconfigured-urls`) |
@@ -2272,7 +2279,8 @@ One flag for both routes, sampled through the REST sampler of §13.4 (`beginFeed
 `captureFeedGoShadowRest`), with its own per-second bucket per route and the shared rate and
 in-flight cap. A request with an API credential is counted (`skipped_credential`) and never sent.
 The list route does not sample a text `query` or a signed-in caller: feed-go answers every one of
-them with a fallback (`v1-models-query`, `v1-models-session`). Both routes finish every sampled
+them with a fallback (`v1-models-query`, `v1-models-session`). An empty `query` is falsy to the
+sampler's `query || user` test as to the handler, so it is sampled, and answered here. Both routes finish every sampled
 request in a `finally`, so one that answers other than 200 is counted `skipped_status`.
 Outcomes are `civitai_app_feed_go_shadow_samples_total{feed_endpoint="v1-models"|"v1-models-id"}`.
 
@@ -2303,6 +2311,12 @@ the same statement (text and bound values) from Go.
 
 ### 16.7 Known divergences
 
+- the download file name of a model or version name with non-ASCII text falls back
+  (`v1-models-filename`): `resolveModelFileName` strips the model name out of the version name with
+  `new RegExp(…, 'gi')`, whose case-insensitive match (non-Unicode mode) canonicalizes each UTF-16
+  unit with the engine's `toUpperCase`. That is the running Node build's ICU case table, a newer
+  Unicode version than Go's `unicode` package carries, and a golden fixture pins it for one Node
+  build only; ASCII text, where both agree, is ported;
 - `superjson.Plain` escapes U+2028/U+2029 where `JSON.stringify` writes them raw (same decoded
   value; the comparator decodes);
 - a cursor timestamp's fraction is padded to three digits before it is read, as parseCursor's

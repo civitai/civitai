@@ -345,6 +345,8 @@
       }
     ],
     "usernames": {},
+    "tagIdsByName": {},
+    "blockedTags": [],
     "responseCache": {}
   },
   "redis": {
@@ -599,6 +601,9 @@
     "packed:caches:creator-membership-valid:1002": {
       "value": true,
       "packed": "ww=="
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[]"
     }
   },
   "sysRedis": {
