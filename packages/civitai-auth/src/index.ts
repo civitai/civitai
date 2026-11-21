@@ -127,6 +127,7 @@ export {
   readDeviceId,
   rollSlot,
   parseCookieHeader,
+  registrableDomain,
   type CookieSlot,
   type CookieRead,
   type CookieReadOptions,
