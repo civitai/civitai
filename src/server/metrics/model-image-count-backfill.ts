@@ -19,8 +19,8 @@ import {
 /**
  * One-off rebuild of ModelVersionMetric.imageCount from history, staged in the unused
  * `ModelMetricDaily` table so the frozen values keep serving until finalize swaps them in.
- * The order is enforced here, not in a runbook: finalize refuses until every image id up to
- * `j0` is staged, and the job stays inert until finalize writes the watermark, last.
+ * Finalize refuses until every image id up to `j0` is staged, and the job stays inert until
+ * finalize writes the watermark, last.
  */
 
 export const PROGRESS_KEY = 'model-image-count:backfill';
@@ -276,11 +276,25 @@ export async function revertBatch(limit: number) {
         GROUP BY 1 ORDER BY 1 LIMIT ${limit}
       `;
       if (prev.length) await tx.$executeRaw(setCountsSql(prev));
+      // Finalize visited every version with a count, so one with no rollback row was 0 before it.
+      const unvisited =
+        prev.length < limit
+          ? await tx.$queryRaw<VersionCount[]>`
+              SELECT mvm."modelVersionId", 0 AS count FROM "ModelVersionMetric" mvm
+              WHERE mvm."imageCount" > 0 AND NOT EXISTS (
+                SELECT 1 FROM "ModelMetricDaily" d
+                WHERE d."modelVersionId" = mvm."modelVersionId" AND d.type = ${PREV_TYPE}
+              )
+              ORDER BY 1 LIMIT ${limit - prev.length}
+            `
+          : [];
+      if (unvisited.length) await tx.$executeRaw(setCountsSql(unvisited));
       await writeKeyValue(tx, PROGRESS_KEY, {
         ...progress,
         revertCursor: prev.length ? prev[prev.length - 1].modelVersionId : cursor,
       });
-      return { versions: prev.length, finished: prev.length < limit };
+      const versions = prev.length + unvisited.length;
+      return { versions, finished: versions < limit };
     },
     { timeout: LOCK_WAIT_MS }
   );

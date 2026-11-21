@@ -110,6 +110,7 @@ const setWatermark = (value: object) =>
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
 
 describe('the count', () => {
+  // The anonymous branch of getImagesForModelVersion (image.service.ts), at every level (PR #9948).
   it('counts only images a signed-out gallery shows', async () => {
     await setWatermark({ hour: W });
     const at = W + 10 * 60_000;
@@ -198,6 +199,21 @@ describe('countNextHour under concurrency', () => {
     expect(await imageCount()).toBe(null);
   });
 
+  it('skips the run while the replica is more than 10 minutes behind', async () => {
+    await setWatermark({ hour: W });
+    await image(W + 5 * 60_000);
+    const read = dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>;
+    const real = read.getMockImplementation()!;
+    read.mockImplementation((...args: unknown[]) =>
+      String((args[0] as { strings?: string[] }).strings ?? args[0]).includes('pg_is_in_recovery')
+        ? Promise.resolve([{ lag: 601 }])
+        : real(...args)
+    );
+    expect(await countNextHour(W + 26 * HOUR_MS)).toEqual({ skipped: 'replica 601s behind' });
+    expect(await imageCount()).toBe(null);
+    expect((await watermark())?.hour).toBe(W);
+  });
+
   it('puts an image published exactly on the hour in that hour only', async () => {
     await setWatermark({ hour: W });
     await image(W + HOUR_MS);
@@ -276,7 +292,11 @@ describe('backfill', () => {
     expect(await countNextHour(W + 25 * HOUR_MS)).toMatchObject({ hour: W, images: 1 });
     expect(await imageCount(V)).toBe(3);
 
-    expect(await revertBatch(100)).toEqual({ versions: 2, finished: true });
+    // A version first counted by the job after finalize had no count before it.
+    await q(`INSERT INTO "ModelVersion" VALUES (12, 100);
+             INSERT INTO "ModelVersionMetric" ("modelVersionId", "imageCount") VALUES (12, 3)`);
+    expect(await revertBatch(100)).toEqual({ versions: 3, finished: true });
+    expect(await imageCount(12)).toBe(0);
     expect(await imageCount(V)).toBe(7);
     expect(await imageCount(11)).toBe(5);
     expect((await watermark())?.paused).toBe(true);

@@ -102,7 +102,7 @@ export const updateModelImageCountsJob = createJob(
       }
       hours.push(result);
     }
-    // Whatever the count did, so the gauge never keeps yesterday's value through a pause.
+    // Runs even when the count was skipped, so a pause does not stop drift sampling.
     if (new Date().getUTCHours() === DRIFT_HOUR_UTC) await sampleDrift();
     return { hours, skipped };
   },
