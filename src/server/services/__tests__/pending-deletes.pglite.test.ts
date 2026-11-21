@@ -270,6 +270,25 @@ describe("deleteImageRows' pending option", () => {
     ]);
   });
 
+  // What a moderator's CSAM hold on a service review leaves: its images flagged for CSAM review, and
+  // the report ruled on. The flag, not the report, holds the buyer's delete.
+  it('defers the delete of a review image a CSAM hold flagged, after the report is ruled on', async () => {
+    const UNFLAGGED = 3;
+    await addImage({ needsReview: 'csam' });
+    await addImage({ id: UNFLAGGED });
+    await report(1, `reason = 'CSAM', status = 'Actioned'`);
+    await pg.exec(`INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId")
+        VALUES (9, ${IMAGE}), (9, ${UNFLAGGED});
+      INSERT INTO "ServiceDealReviewReport" ("reportId", "serviceDealReviewId") VALUES (1, 9)`);
+
+    const deleted = await ownDelete([IMAGE, UNFLAGGED]);
+
+    expect(deleted.map((row) => row.id)).toEqual([UNFLAGGED]);
+    expect(await pending()).toEqual([
+      { entityId: IMAGE, entityType: 'Image', data: { ownerId: OWNER } },
+    ]);
+  });
+
   it("neither deletes nor queues someone else's image", async () => {
     await addImage({ needsReview: 'csam', userId: SOMEONE_ELSE });
 
