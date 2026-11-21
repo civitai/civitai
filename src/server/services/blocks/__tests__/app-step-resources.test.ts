@@ -2,15 +2,29 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { checkAppStepResources } from '~/server/services/blocks/app-step-resources';
 
+const VIEWER = 7;
+const OWNER = 8;
+const MODERATOR = 9;
+const published = { status: 'Published', availability: 'Public', model: { userId: OWNER } };
 const VERSIONS = [
-  { id: 10, baseModel: 'SDXL 1.0' },
-  { id: 11, baseModel: 'SDXL Turbo' },
-  { id: 100, baseModel: 'Flux.2 D' },
+  { id: 10, baseModel: 'SDXL 1.0', ...published },
+  { id: 11, baseModel: 'SDXL Turbo', ...published },
+  { id: 100, baseModel: 'Flux.2 D', ...published },
+  { id: 20, baseModel: 'SDXL 1.0', ...published, availability: 'Private' },
+  { id: 21, baseModel: 'SDXL 1.0', ...published, status: 'Draft' },
+  { id: 22, baseModel: 'SDXL 1.0', ...published, status: 'Training' },
 ];
 const civitai = (versionId: number) => `urn:air:sdxl:lora:civitai:1@${versionId}`;
+const check = (input: unknown, viewerId = VIEWER) => checkAppStepResources(input, viewerId);
 
 beforeEach(() => {
   dbMock.dbRead.modelVersion.findMany.mockClear();
+  dbMock.dbRead.user.findUnique.mockReset();
+  dbMock.dbRead.user.findUnique.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: number };
+  }) => ({ isModerator: where.id === MODERATOR })) as never);
   dbMock.dbRead.modelVersion.findMany.mockImplementation((async ({
     where,
   }: {
@@ -27,7 +41,7 @@ describe('checkAppStepResources', () => {
       { model: ' urn:air:sdxl:lora:huggingface:org/repo@main ' },
     ],
   ])('refuses a Hugging Face resource given as %s', async (_, input) => {
-    await expect(checkAppStepResources(input)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(check(input)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
   it.each([
@@ -43,19 +57,19 @@ describe('checkAppStepResources', () => {
     ['an AIR the parser cannot read', { model: 'urn:air:sdxl:checkpoint:civitai:1@2 extra' }],
     ['another source as a map key', { loras: { 'modelscope:org/repo': 1 } }],
   ])('refuses %s', async (_, input) => {
-    await expect(checkAppStepResources(input)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(check(input)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
   it.each([
     ['a Civitai AIR without a version', 'urn:air:sdxl:lora:civitai:1'],
     ['a Civitai AIR with a malformed version', 'urn:air:sdxl:lora:civitai:1@0'],
   ])('refuses %s before looking it up', async (_, model) => {
-    await expect(checkAppStepResources({ model })).rejects.toThrow(/must name a model version/);
+    await expect(check({ model })).rejects.toThrow(/must name a model version/);
     expect(dbMock.dbRead.modelVersion.findMany).not.toHaveBeenCalled();
   });
 
   it('refuses a version on a base model no app may use', async () => {
-    await expect(checkAppStepResources({ model: civitai(100) })).rejects.toMatchObject({
+    await expect(check({ model: civitai(100) })).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
   });
@@ -68,13 +82,13 @@ describe('checkAppStepResources', () => {
   ])(
     'caps a step naming a version on a base model that restricts mature generation as %s',
     async (_, input) => {
-      await expect(checkAppStepResources(input)).resolves.toEqual({ capOutput: true });
+      await expect(check(input)).resolves.toEqual({ capOutput: true });
     }
   );
 
   it('allows a training-data zip from a Hugging Face dataset repo', async () => {
     await expect(
-      checkAppStepResources({
+      check({
         sourceUrl:
           'urn:air:other:other:huggingface:datasets/Civitai/orchestration-samples@e86d02/sample-training-dataset.zip',
       })
@@ -90,12 +104,12 @@ describe('checkAppStepResources', () => {
     ['from a model repo', 'urn:air:other:other:huggingface:org/repo@main/x.zip'],
     ['with a query after .zip', 'urn:air:other:other:huggingface:datasets/org/repo@main/x?.zip'],
   ])('refuses a Hugging Face file named %s', async (_, sourceUrl) => {
-    await expect(checkAppStepResources({ sourceUrl })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(check({ sourceUrl })).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
   it('leaves prompts, timecodes, links, image URLs and orchestrator outputs alone', async () => {
     await expect(
-      checkAppStepResources({
+      check({
         prompt: 'a poster in the huggingface style',
         mood: 'mood:calm',
         start: '00:00:05:00',
@@ -106,5 +120,50 @@ describe('checkAppStepResources', () => {
         model: civitai(10),
       })
     ).resolves.toEqual({ capOutput: false });
+  });
+
+  describe('the generation access rule', () => {
+    it.each([
+      ['a Private version', 20],
+      ['a Draft version', 21],
+      ['a Training version', 22],
+    ])('refuses %s to a viewer who does not own it', async (_, id) => {
+      await expect(check({ model: civitai(id) })).rejects.toThrow(
+        `model version ${id} is not available for generation`
+      );
+    });
+
+    it('refuses a restricted version named as a LoRA map key', async () => {
+      await expect(check({ loras: { [civitai(20)]: 0.8 } })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
+    });
+
+    it.each([
+      ['its owner', OWNER],
+      ['a moderator', MODERATOR],
+    ])('allows a Private version to %s', async (_, viewerId) => {
+      await expect(check({ model: civitai(20) }, viewerId)).resolves.toEqual({
+        capOutput: false,
+      });
+    });
+
+    it('allows a public version without looking the viewer up', async () => {
+      await expect(check({ model: civitai(10) })).resolves.toEqual({ capOutput: false });
+      expect(dbMock.dbRead.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    // Coverage and base-model eligibility are deliberately NOT applied on step paths: a training
+    // step names a public base checkpoint as its input, and that checkpoint need not be covered
+    // for generation. Do not widen this check to the full canGenerate rule without that case.
+    it('allows a training step naming a public base checkpoint', async () => {
+      await expect(
+        check({
+          engine: 'ai-toolkit',
+          model: 'urn:air:sdxl:checkpoint:civitai:101055@10',
+          trainingData: 'https://orchestration.civitai.com/v2/consumer/blobs/data.zip',
+        })
+      ).resolves.toEqual({ capOutput: false });
+    });
   });
 });

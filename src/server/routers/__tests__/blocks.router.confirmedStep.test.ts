@@ -444,6 +444,9 @@ describe('the resources a pass-through step names', () => {
     }) =>
       args.where.id.in.map((id) => ({
         id,
+        status: 'Published',
+        availability: 'Public',
+        model: { userId: 1 },
         baseModel: id === 11 ? 'SDXL Turbo' : 'SDXL 1.0',
       }))) as never);
   });

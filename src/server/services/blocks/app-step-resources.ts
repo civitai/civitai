@@ -4,6 +4,7 @@ import { dbRead } from '~/server/db/client';
 import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
 import { isWeightFile } from '~/server/services/huggingface.service';
 import { capsGenerationOutput } from '~/server/services/orchestrator/form-graph/output-restrictions';
+import { canAccessGenerationResource } from '~/server/utils/resource-access';
 
 // The resource rule for an orchestrator step an app builds itself: a pass-through `kind:'step'`,
 // every step of a `kind:'workflow'`, and a customComfy graph. Apps load weights only from Civitai
@@ -22,6 +23,14 @@ const URL_RE = /^([a-z][a-z0-9+.-]*:\/\/|https?:)/i;
 // Job outputs the orchestrator itself produced (a trained LoRA, a previous step's file), and mail
 // links, which the AIR grammar also matches.
 const ALLOWED_NON_CIVITAI_SOURCES: ReadonlySet<string> = new Set(['orchestrator', 'mailto']);
+
+async function isModerator(userId: number): Promise<boolean> {
+  const user = await dbRead.user.findUnique({
+    where: { id: userId },
+    select: { isModerator: true },
+  });
+  return !!user?.isModerator;
+}
 
 function refuse(message: string): never {
   throw new TRPCError({ code: 'FORBIDDEN', message });
@@ -89,24 +98,44 @@ function collectAppStepVersionIds(input: unknown): number[] {
 }
 
 /**
- * Refuses an app-built step input that names a resource other than a Civitai model version, or a
- * version on a base model no app may use, and returns whether its output is held to PG-13.
+ * Refuses an app-built step input that names a resource other than a Civitai model version, a
+ * version the viewer may not generate with, or a version on a base model no app may use, and
+ * returns whether its output is held to PG-13.
+ *
+ * Only the generation check's access rule applies here, not its coverage or base-model rules:
+ * training steps name base checkpoints that are not covered for generation.
  *
  * A step that names no resource (a provider API, or an engine's default weights) is not capped
  * here: its `ecosystem` string is the orchestrator's spelling and does not map back to one base
  * model, so such a step relies on the provider's own refusal.
  */
-export async function checkAppStepResources(input: unknown): Promise<{ capOutput: boolean }> {
+export async function checkAppStepResources(
+  input: unknown,
+  viewerId: number
+): Promise<{ capOutput: boolean }> {
   const versionIds = collectAppStepVersionIds(input);
   const versions = versionIds.length
     ? await dbRead.modelVersion.findMany({
         where: { id: { in: versionIds } },
-        select: { id: true, baseModel: true },
+        select: {
+          id: true,
+          baseModel: true,
+          status: true,
+          availability: true,
+          model: { select: { userId: true } },
+        },
       })
     : [];
   const found = new Set(versions.map((v) => v.id));
   const missing = versionIds.find((id) => !found.has(id));
   if (missing !== undefined) refuse(`model version ${missing} is not available for generation`);
+
+  const denied = versions.filter(
+    (v) => !canAccessGenerationResource({ ...v, modelUserId: v.model.userId }, { id: viewerId })
+  );
+  // Looked up only when it decides something. Refused in the same words as a missing version.
+  if (denied.length && !(await isModerator(viewerId)))
+    refuse(`model version ${denied[0].id} is not available for generation`);
 
   const baseModels = versions.map((v) => v.baseModel);
   assertNoRestrictedBaseModels({ baseModels });

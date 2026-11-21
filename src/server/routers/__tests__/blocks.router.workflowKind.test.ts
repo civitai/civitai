@@ -412,7 +412,14 @@ beforeEach(() => {
   // Every Civitai version a step names exists, on a base model apps may use.
   dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
     where: { id: { in: number[] } };
-  }) => args.where.id.in.map((id) => ({ id, baseModel: 'SDXL 1.0' }))) as never);
+  }) =>
+    args.where.id.in.map((id) => ({
+      id,
+      status: 'Published',
+      availability: 'Public',
+      model: { userId: 1 },
+      baseModel: 'SDXL 1.0',
+    }))) as never);
 });
 afterEach(() => envMock.reset());
 
@@ -982,6 +989,9 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
       }) =>
         args.where.id.in.map((id) => ({
           id,
+          status: 'Published',
+          availability: 'Public',
+          model: { userId: 1 },
           baseModel: id === 11 ? 'SDXL Turbo' : 'SDXL 1.0',
         }))) as never);
     });

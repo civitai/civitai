@@ -979,7 +979,14 @@ beforeEach(() => {
   // Every Civitai version a customComfy step names exists, on a base model apps may use.
   dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
     where: { id: { in: number[] } };
-  }) => args.where.id.in.map((id) => ({ id, baseModel: 'ZImageTurbo' }))) as never);
+  }) =>
+    args.where.id.in.map((id) => ({
+      id,
+      status: 'Published',
+      availability: 'Public',
+      model: { userId: 1 },
+      baseModel: 'ZImageTurbo',
+    }))) as never);
 });
 
 describe('blocks.pollWorkflow', () => {
@@ -6558,7 +6565,14 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       happySubmit();
       dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
         where: { id: { in: number[] } };
-      }) => args.where.id.in.map((id) => ({ id, baseModel: 'SDXL Turbo' }))) as never);
+      }) =>
+        args.where.id.in.map((id) => ({
+          id,
+          status: 'Published',
+          availability: 'Public',
+          model: { userId: 1 },
+          baseModel: 'SDXL Turbo',
+        }))) as never);
       await caller().submitWorkflow({
         blockToken: 'tok',
         body: ccBody(),
@@ -6576,7 +6590,14 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       happySubmit();
       dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
         where: { id: { in: number[] } };
-      }) => args.where.id.in.map((id) => ({ id, baseModel: 'Flux.2 Klein 9B' }))) as never);
+      }) =>
+        args.where.id.in.map((id) => ({
+          id,
+          status: 'Published',
+          availability: 'Public',
+          model: { userId: 1 },
+          baseModel: 'Flux.2 Klein 9B',
+        }))) as never);
       await expect(
         caller().submitWorkflow({ blockToken: 'tok', body: ccBody(), idempotencyKey: 'cc-key' })
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });

@@ -11544,7 +11544,7 @@ async function submitCustomComfyWorkflow(opts: {
       }
     : buildCustomComfyWorkflowInput(recipe!, recipeBody!.params, {});
   // Every resource the graph loads must be a Civitai version; their base models decide the cap.
-  const { capOutput } = await checkAppStepResources(stepInput);
+  const { capOutput } = await checkAppStepResources(stepInput, userId);
 
   const token = await getOrchestratorToken(userId, ctx);
 
@@ -13708,7 +13708,7 @@ async function estimatePassThroughStepWorkflow(opts: {
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
   await assertBlockTrainingModelsAllowed([body]);
-  await checkAppStepResources(body.input);
+  await checkAppStepResources(body.input, userId);
   // Before the mint and the quote: a disallowed pick refuses here, as on the submit.
   const currencies = resolveBlockCurrenciesForAccount(
     resolveBlockMaturity(claims).isGreen,
@@ -13937,7 +13937,7 @@ async function submitPassThroughStepWorkflow(opts: {
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
   await assertBlockTrainingModelsAllowed([body]);
   await assertBlockTrainingLicensesAccepted(userId, [body]);
-  const { capOutput } = await checkAppStepResources(body.input);
+  const { capOutput } = await checkAppStepResources(body.input, userId);
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   await auditPassThroughPrompts({
@@ -14532,7 +14532,7 @@ async function estimateMultiStepWorkflow(opts: {
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   await assertBlockTrainingModelsAllowed(prepared.steps);
-  await checkAppStepResources(body);
+  await checkAppStepResources(body, userId);
   // Per-WORKFLOW pick: the orchestrator takes one `currencies` list per workflow.
   const currencies = resolveBlockCurrenciesForAccount(
     resolveBlockMaturity(claims).isGreen,
@@ -14624,7 +14624,7 @@ async function submitMultiStepWorkflow(opts: {
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   await assertBlockTrainingModelsAllowed(prepared.steps);
   await assertBlockTrainingLicensesAccepted(userId, prepared.steps);
-  const { capOutput } = await checkAppStepResources(body);
+  const { capOutput } = await checkAppStepResources(body, userId);
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
@@ -16344,7 +16344,7 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
           steps: [body],
         });
         await assertBlockTrainingModelsAllowed([body]);
-        capOutput = (await checkAppStepResources(body.input)).capOutput;
+        capOutput = (await checkAppStepResources(body.input, userId)).capOutput;
         const { isAppConfirmedStepWithinLimitEnabled } = await import(
           '~/server/services/app-blocks-flag'
         );
