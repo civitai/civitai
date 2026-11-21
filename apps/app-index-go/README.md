@@ -21,6 +21,9 @@ that stops calling the index for a cooldown (`APP_INDEX_BREAKER_FAILURE_THRESHOL
 | `GET /readyz`  | 200 once a generation is serving (the first `Live`), 503 before                                                                                                 |
 | `GET /metrics` | Prometheus (`app_index_*`)                                                                                                                                      |
 
+With the listings read model on, two more routes answer for the web tier: `GET /listings` and
+`GET /listings/{slug}` (below, "Listing API").
+
 `q` matches word by word: every word must be a prefix of a word of the app's name, slug, tagline or
 creator. Results are in relevance order, Postgres `ts_rank` (name above slug and tagline above
 creator), then by name; without `q` they are by name. There is one page of at most `limit` results:
@@ -109,18 +112,20 @@ once the steps are done.
 
 With `APP_INDEX_LISTINGS=on`, the process runs a second consumer beside the app one: it follows
 `urn:schema:apps.civitai.com:store-listing@v1` into tables of its own (`app_index_listing_cursors`,
-`app_index_listings`, `app_index_listing_media`), with its own generations, cursor and consumer
+`app_index_listings`), with its own generations, cursor and consumer
 lock, and the same rules as above (`internal/index`). It shares the app consumer's subscriber and
 token. Unset or `off`, nothing of it exists: its tables are not created, no `app_index_listings_*`
-series is registered and nothing subscribes to the schema. There is no read API yet, and `/search`,
-`/readyz` and the `app_index_*` series are the app index's alone. The design and its later slices:
+series is registered, nothing subscribes to the schema and the listing routes are not registered
+(404). `/search` and `/readyz` are the app index's alone. The design and its later slices:
 `LISTINGS-READ-MODEL.md`.
 
-- **Media** are stored as the stream sends them (less an item with an unknown slot, below), one row
-  per item in stream order, each
-  with its own `nsfwLevel`, `rating` and `host` (`red` for a civitai.red override). No ceiling is
-  applied at ingest. The stream's per-audience filter is coarser than the store's, so the read API
-  must apply the listing-rating ceiling and the host rule per request (`store.ListingMedia`).
+- **Media** are stored as the stream sends them, in the listing's body: the body is the one copy,
+  and every read decodes them from it with the ingest's own decoder (less an item with an unknown
+  slot, below). Each item keeps its own `nsfwLevel`, `rating` and `host` (`red` for a civitai.red
+  override). No ceiling is applied at ingest. The stream's per-audience filter is coarser than the
+  store's, so the listing API applies the listing-rating ceiling and the host rule per request
+  (`internal/listingread`). Slice 2 also kept each item as a row of `app_index_listing_media`; that
+  table is dropped at startup, since nothing read it and the bodies hold the same items.
 - **An empty snapshot is held.** A snapshot that reaches `Live` with no listing is never switched
   to: the serving generation keeps every row, the hold is logged and counted
   (`app_index_listings_empty_snapshots_total`, `app_index_listings_reconnects_total{reason="empty_snapshot"}`),
@@ -146,6 +151,68 @@ unaffected. A second consumer lock needs `APP_INDEX_DB_MAX_CONNS` of at
 least 3. A value of `APP_INDEX_LISTINGS` that is neither on nor off is read as off: the process
 starts, logs an error and exposes `app_index_listings_misconfigured` (1), rather than refusing to
 start and taking `/search` down with it.
+
+### Listing API
+
+`GET /listings` and `GET /listings/{slug}` answer the store grid and the detail page from the read
+model, for the web tier only. Nothing on the site calls them yet: the shadow diff that will is the
+next slice (`LISTINGS-READ-MODEL.md`, "Shadow diff"). Each is a port of the store's database read
+(`listAvailableListings`, `getListingDetail`), and `internal/listingread` names the site function each
+rule mirrors.
+
+**The viewer.** This service never decides who is looking. The web tier resolves the request's
+audience as it does for its own database read, and sends it in the `X-App-Index-Viewer` header as a
+token signed with a key the two share (`APP_INDEX_VIEWER_KEY`, at least 32 bytes):
+
+```
+v1.<payload>.<signature>
+payload   = base64url, unpadded, of {"host": "main"|"red", "level": <int>, "scope": "full"|"public-external"|"none", "exp": <unix seconds>}
+signature = base64url, unpadded, of HMAC-SHA256(key, "v1." + payload)
+```
+
+- `host` is `red` when the request's host is red-capable (`isRedCapableHost`); `level` is the viewer's
+  browsing level (0 to 63; 0 is the public floor); `scope` is the resolved store visibility scope
+  (`resolveStoreVisibilityScope`). The payload's keys may be in any order; any other key is refused.
+- `exp` is at most 5 minutes ahead (30 s of clock skew either way): the web tier signs one per
+  request.
+- Only an audience-floor-`public` viewer is ever sent; testers and moderators stay on the database.
+- A missing, malformed, wrongly signed or expired token is 401 `bad_viewer`, and nothing is read. An
+  unknown scope is `none`, as `narrowStoreScope` reads it. With the key unset or short, every listing
+  request is 503 `unconfigured`.
+- `internal/listingread/viewer_test.go` holds a literal token for a test key, computed outside Go, for
+  the web tier's signer to be tested against.
+
+**The gates, per request.** A listing is answered only when the scope admits its kind (`none`
+nothing, `public-external` off-site only) and the mature rule admits its rating (`r`, `x`, `xxx` only
+on a red host and only with that bit in the level). Its media are projected for the viewer
+(`projectListingMedia`): the listing-rating ceiling, lifted on a red host by the viewer's levels;
+the civitai.red overrides only on a red host, preferred over the own image of their slot; the
+cover falling back to the first visible screenshot. A listing the viewer may not see is a 404,
+exactly like a missing one.
+
+| Route                  | Parameters                                                                                                                                                      | Answer                         |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `GET /listings`        | `sort` (`top-rated` default, `popular`, `newest`, `name`), `kind` (`all`, `onsite`, `offsite`), `category`, `userId`, `cursor` (≤ 512), `limit` (1-50, 20), `q` | `{items: [card], nextCursor?}` |
+| `GET /listings/{slug}` | the slug (≤ 64 bytes)                                                                                                                                           | the detail, or 404             |
+
+- The sorts and the keyset paging are the store grid's: the same sort keys, `top-rated` with the
+  global mean pinned in the cursor for the paging session. The global mean is over the listings the
+  read model holds. Ties fall to the slug, where the database uses the listing id, which the stream
+  does not carry. A cursor this service did not mint pages from the start.
+- `q` is the store's text search, answered by the app index's `/search` ranking, narrowed to the
+  listings this viewer may see: one page in relevance order, no cursor.
+- A card is the site's `ListingCard` for the fields the stream carries: no `id` and no on-site
+  `kindData.appBlockId`; `restrictedAudience` is always null. A detail adds `description`,
+  `installCount` and `screenshots`, and leaves out the detail-only fields the stream does not carry
+  yet (`serialId`, `collaborators`, `scopes`, `connectScopes`, the links, `betaMessage`, the fork
+  fields).
+- Every response is `no-store` and carries no CORS header. A store failure is 500, never an empty
+  page; a read that races a generation switch, or a text query before the app index is ready, is 503.
+- `app_index_listings_requests_total{route, outcome}` counts them.
+
+The media rule is pinned on both sides by one fixture, `internal/listingread/testdata/media-parity.json`:
+`parity_test.go` runs it through the read model, and the site's `listing-media-parity.test.ts`
+through `projectListingMedia` and the adapter's `registryListingMedia`.
 
 ## Configuration
 

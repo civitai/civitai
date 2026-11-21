@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +64,21 @@ var wantMedia = []ListingMedia{
 	{Position: 3, Slot: "screenshot", Host: "any", URL: "https://img.invalid/s2", NsfwLevel: 8, Rating: "x", CoverURL: "https://img.invalid/s2-cover"},
 	{Position: 4, Slot: "icon", Host: "red", URL: "https://img.invalid/red-icon", NsfwLevel: 16, Rating: "xxx"},
 	{Position: 5, Slot: "cover", Host: "red", URL: "https://img.invalid/red-cover", NsfwLevel: 8, Rating: "x"},
+}
+
+// firstMedia is body with only its first n media items.
+func firstMedia(t *testing.T, body json.RawMessage, n int) json.RawMessage {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["media"] = m["media"].([]any)[:n]
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 func mustGet(t *testing.T, s Listings, gen int64, urn string) (Listing, bool) {
@@ -131,8 +147,11 @@ func runListingsContract(t *testing.T, newStore func(t *testing.T) listingsTestS
 			t.Fatal(err)
 		}
 		mustApply(t, s, g.ID, listingUpsert(mustListing("alpha", "Alpha"), ""), listingUpsert(mustListing("beta", "Beta"), ""))
-		fewer := mustListing("alpha", "Alpha Two")
-		fewer.Media = fewer.Media[:1]
+		// The media are read back from the body, so the shorter list is a body with one item.
+		fewer, _, err := ListingFromEntity(listingURN("alpha"), "rev-alpha", firstMedia(t, listingJSON("alpha", "Alpha Two"), 1))
+		if err != nil {
+			t.Fatal(err)
+		}
 		mustApply(t, s, g.ID, listingUpsert(fewer, "c1"))
 		l, _ := mustGet(t, s, g.ID, listingURN("alpha"))
 		if l.Name != "Alpha Two" || !reflect.DeepEqual(l.Media, wantMedia[:1]) {
@@ -200,6 +219,58 @@ func runListingsContract(t *testing.T, newStore func(t *testing.T) listingsTestS
 		}
 		if a, b := mustCount(t, s, g.ID), mustCount(t, s, g2.ID); a != 3 || b != 0 {
 			t.Fatalf("after reset: serving %d building %d, want 3 and 0", a, b)
+		}
+	})
+
+	t.Run("ReadsForTheAPI", func(t *testing.T) {
+		s := newStore(t)
+		if _, err := s.Keys(t.Context(), 999); !errors.Is(err, ErrNoGeneration) {
+			t.Fatalf("keys of a missing generation: %v, want ErrNoGeneration", err)
+		}
+		if _, err := s.GetMany(t.Context(), 999, []string{listingURN("alpha")}); !errors.Is(err, ErrNoGeneration) {
+			t.Fatalf("get many from a missing generation: %v, want ErrNoGeneration", err)
+		}
+		if _, _, err := s.BySlug(t.Context(), 999, "alpha"); !errors.Is(err, ErrNoGeneration) {
+			t.Fatalf("by slug from a missing generation: %v, want ErrNoGeneration", err)
+		}
+		g, err := s.NewBuilding(t.Context(), listingSchemaURN, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if keys, err := s.Keys(t.Context(), g.ID); err != nil || len(keys) != 0 {
+			t.Fatalf("keys of an empty generation: %v %v", keys, err)
+		}
+		mustApply(t, s, g.ID, listingUpsert(mustListing("alpha", "Alpha"), ""), listingUpsert(mustListing("beta", "Beta"), ""))
+
+		keys, err := s.Keys(t.Context(), g.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		slices.SortFunc(keys, func(a, b Listing) int { return strings.Compare(a.URN, b.URN) })
+		want := mustListing("alpha", "Alpha")
+		want.Body, want.Media = nil, nil
+		if len(keys) != 2 || !reflect.DeepEqual(keys[0], want) || keys[1].Slug != "beta" {
+			t.Fatalf("keys\n got %+v\nwant [%+v beta]", keys, want)
+		}
+
+		many, err := s.GetMany(t.Context(), g.ID, []string{listingURN("beta"), listingURN("gone"), listingURN("alpha"), listingURN("beta")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		slices.SortFunc(many, func(a, b Listing) int { return strings.Compare(a.URN, b.URN) })
+		if len(many) != 2 {
+			t.Fatalf("get many: %d listings, want alpha and beta once each", len(many))
+		}
+		checkListing(t, many[0], "alpha", "Alpha")
+		checkListing(t, many[1], "beta", "Beta")
+
+		l, ok, err := s.BySlug(t.Context(), g.ID, "beta")
+		if err != nil || !ok {
+			t.Fatalf("by slug: %v %v", ok, err)
+		}
+		checkListing(t, l, "beta", "Beta")
+		if _, ok, err := s.BySlug(t.Context(), g.ID, "gone"); ok || err != nil {
+			t.Fatalf("by an unknown slug: %v %v", ok, err)
 		}
 	})
 

@@ -1,0 +1,248 @@
+package api
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strconv"
+	"time"
+	"unicode/utf8"
+
+	"github.com/civitai/civitai/apps/app-index-go/internal/listingread"
+	"github.com/civitai/civitai/apps/app-index-go/internal/store"
+)
+
+// The listing routes (LISTINGS-READ-MODEL.md; README, "Listing API"), registered only while the
+// listings read model is on (Server.Listings set):
+//
+//	GET /listings?sort=&kind=&category=&userId=&q=&cursor=&limit=  → {"items":[card…], "nextCursor"?}
+//	GET /listings/{slug}                                            → detail, or 404
+//
+// Every request carries the viewer the web tier resolved, signed (listingread.ViewerHeader,
+// listingread.ParseViewer); without a valid one the answer is 401 and nothing is read. Every
+// answer is per viewer, so every response is no-store, and none carries a CORS header: these
+// routes are for the web tier, never a browser.
+
+// Bounds of the listing query parameters (listAppListingsSchema).
+const (
+	MaxCursorLen = 512
+	MaxSlugLen   = 64
+)
+
+type listingsResponse struct {
+	Items      []listingread.Card `json:"items"`
+	NextCursor string             `json:"nextCursor,omitempty"`
+}
+
+// ParseListingsQuery validates the GET /listings parameters. Defaults are the store grid's: kind
+// all, sort top-rated, limit 20. `q` is the store's text search, answered through the app index
+// (one page, in relevance order), so it takes no cursor.
+func ParseListingsQuery(v map[string][]string) (listingread.ListQuery, string, error) {
+	get := func(k string) string {
+		if xs := v[k]; len(xs) > 0 {
+			return xs[len(xs)-1]
+		}
+		return ""
+	}
+	q := listingread.ListQuery{Category: get("category"), Sort: get("sort"), Cursor: get("cursor"), Limit: DefaultLimit}
+	switch k := get("kind"); k {
+	case "", "all":
+	case "onsite", "offsite":
+		q.Kind = k
+	default:
+		return q, "", errors.New("kind must be all, onsite or offsite")
+	}
+	switch q.Sort {
+	case "":
+		q.Sort = listingread.SortTopRated
+	case listingread.SortTopRated, listingread.SortPopular, listingread.SortNewest, listingread.SortName:
+	default:
+		return q, "", errors.New("sort must be top-rated, popular, newest or name")
+	}
+	if len(q.Category) > MaxFilterLen {
+		return q, "", errors.New("category is too long")
+	}
+	if len(q.Cursor) > MaxCursorLen {
+		return q, "", errors.New("cursor is too long")
+	}
+	if l := get("limit"); l != "" {
+		n, err := strconv.Atoi(l)
+		if err != nil || n < 1 || n > MaxLimit {
+			return q, "", errors.New("limit must be 1 to 50")
+		}
+		q.Limit = n
+	}
+	if u := get("userId"); u != "" {
+		n, err := strconv.ParseInt(u, 10, 64)
+		if err != nil || n < 1 {
+			return q, "", errors.New("userId must be a positive integer")
+		}
+		q.UserID = &n
+	}
+	text := get("q")
+	if utf8.RuneCountInString(text) > MaxQueryLen || !utf8.ValidString(text) {
+		return q, "", errors.New("q is too long or not UTF-8")
+	}
+	if text != "" && q.Cursor != "" {
+		return q, "", errors.New("q answers one page and takes no cursor")
+	}
+	return q, text, nil
+}
+
+// listingRequest runs the steps every listing route shares, then fn: the configuration, the
+// viewer, and the serving generation. It counts the outcome fn's answer reports.
+func (s *Server) listingRequest(route string, fn func(ctx context.Context, w http.ResponseWriter, r *http.Request,
+	v listingread.Viewer, gen int64) string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		outcome := "ok"
+		defer func() {
+			if s.ListingReads != nil {
+				s.ListingReads.WithLabelValues(route, outcome).Inc()
+			}
+		}()
+		if len(s.ViewerKey) < listingread.MinViewerKeyLen {
+			outcome = "unconfigured"
+			writeJSON(w, http.StatusServiceUnavailable, apiError{Error: "unconfigured"})
+			return
+		}
+		now := time.Now
+		if s.Now != nil {
+			now = s.Now
+		}
+		v, err := listingread.ParseViewer(s.ViewerKey, r.Header.Get(listingread.ViewerHeader), now())
+		if err != nil {
+			outcome = "bad_viewer"
+			writeJSON(w, http.StatusUnauthorized, apiError{Error: "bad_viewer"})
+			return
+		}
+		ctx := r.Context()
+		if s.SearchTimeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, s.SearchTimeout)
+			defer cancel()
+		}
+		st, err := s.Listings.State(ctx)
+		if err != nil {
+			outcome = "error"
+			s.Log.Warn("listings state", "err", err)
+			writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal"})
+			return
+		}
+		if st.Serving == nil {
+			outcome = "not_ready"
+			writeJSON(w, http.StatusServiceUnavailable, apiError{Error: "not_ready"})
+			return
+		}
+		outcome = fn(ctx, w, r, v, st.Serving.ID)
+	}
+}
+
+// fail answers a store error: a generation dropped under the request (a switch-over) or an index
+// not ready is 503, anything else 500.
+func (s *Server) fail(w http.ResponseWriter, what string, err error) string {
+	if errors.Is(err, store.ErrNoGeneration) || errors.Is(err, store.ErrNotReady) {
+		writeJSON(w, http.StatusServiceUnavailable, apiError{Error: "not_ready"})
+		return "not_ready"
+	}
+	s.Log.Warn(what, "err", err)
+	writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal"})
+	return "error"
+}
+
+func (s *Server) listListings(ctx context.Context, w http.ResponseWriter, r *http.Request, v listingread.Viewer, gen int64) string {
+	q, text, err := ParseListingsQuery(r.URL.Query())
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, apiError{Error: "bad_request", Message: err.Error()})
+		return "bad_request"
+	}
+	keys, err := s.Listings.Keys(ctx, gen)
+	if err != nil {
+		return s.fail(w, "listing keys", err)
+	}
+	var page listingread.Page
+	if text == "" {
+		page = listingread.Rank(keys, q, v)
+	} else {
+		page, err = s.searchListings(ctx, keys, q, text, v)
+		if err != nil {
+			return s.fail(w, "listing search", err)
+		}
+	}
+	listings, err := s.Listings.GetMany(ctx, gen, page.URNs)
+	if err != nil {
+		return s.fail(w, "listing page", err)
+	}
+	byURN := make(map[string]store.Listing, len(listings))
+	for _, l := range listings {
+		byURN[l.URN] = l
+	}
+	res := listingsResponse{Items: []listingread.Card{}, NextCursor: page.NextCursor}
+	for _, urn := range page.URNs {
+		// A listing deleted between the two reads is left out, as the site's hydration drops an id
+		// with no row.
+		l, ok := byURN[urn]
+		if !ok {
+			continue
+		}
+		c, err := listingread.ProjectCard(l, v)
+		if err != nil {
+			return s.fail(w, "listing card", err)
+		}
+		res.Items = append(res.Items, c)
+	}
+	writeJSON(w, http.StatusOK, res)
+	return "ok"
+}
+
+// searchListings answers a text query: the app index's ranked search (the same one /search
+// answers, through Store.Search), narrowed to the listings v may see and the request's filters, in
+// the index's order, at most q.Limit of them, with no next page. As on the site (indexKind), the
+// index is asked for off-site apps only under the public-external scope, so its limit is not spent
+// on apps the scope drops. The search sees what the app index holds, which is the SFW audience
+// until it subscribes as itself (README, "Subscribing as itself").
+func (s *Server) searchListings(ctx context.Context, keys []store.Listing, q listingread.ListQuery, text string,
+	v listingread.Viewer) (listingread.Page, error) {
+	kind := q.Kind
+	if listingread.NarrowScope(v.Scope) == listingread.ScopePublicExternal {
+		kind = "offsite"
+	}
+	found, err := s.Store.Search(ctx, store.Query{Text: text, Kind: kind, Category: q.Category, Limit: MaxLimit})
+	if err != nil {
+		return listingread.Page{}, err
+	}
+	bySlug := map[string]store.Listing{}
+	for _, l := range listingread.Filter(keys, q.Kind, q.Category, q.UserID, v) {
+		bySlug[l.Slug] = l
+	}
+	var p listingread.Page
+	for _, res := range found.Results {
+		if l, ok := bySlug[res.Slug]; ok && len(p.URNs) < q.Limit {
+			p.URNs = append(p.URNs, l.URN)
+			delete(bySlug, res.Slug)
+		}
+	}
+	return p, nil
+}
+
+func (s *Server) listingDetail(ctx context.Context, w http.ResponseWriter, r *http.Request, v listingread.Viewer, gen int64) string {
+	slug := r.PathValue("slug")
+	if slug == "" || len(slug) > MaxSlugLen {
+		writeJSON(w, http.StatusBadRequest, apiError{Error: "bad_request", Message: "slug must be 1 to 64 bytes"})
+		return "bad_request"
+	}
+	l, ok, err := s.Listings.BySlug(ctx, gen, slug)
+	if err != nil {
+		return s.fail(w, "listing detail", err)
+	}
+	// A listing this viewer may not see is answered exactly like a missing one.
+	if !ok || !listingread.Admits(l, v) {
+		writeJSON(w, http.StatusNotFound, apiError{Error: "not_found"})
+		return "not_found"
+	}
+	d, err := listingread.ProjectDetail(l, v)
+	if err != nil {
+		return s.fail(w, "listing detail", err)
+	}
+	writeJSON(w, http.StatusOK, d)
+	return "ok"
+}

@@ -11,9 +11,10 @@ import (
 )
 
 // Listing is one store-listing@v1 entity's row in the listings read model
-// (apps/app-index-go/LISTINGS-READ-MODEL.md). Body is kept whole; the columns are the identity,
-// filter and sort keys copied out of it, and Media is every media item as the stream sent it, less
-// any whose slot is unknown (dropped, ListingFromEntity). An empty string is a null column.
+// (apps/app-index-go/LISTINGS-READ-MODEL.md). Body is kept whole and is the one stored copy of
+// the media: the columns are the identity, filter and sort keys copied out of it, and Media is
+// decoded from it (every media item as the stream sent it, less any whose slot is unknown, dropped
+// by ListingFromEntity) whenever a listing is read with its body. An empty string is a null column.
 type Listing struct {
 	URN  string
 	Rev  string
@@ -57,10 +58,11 @@ type Drop struct {
 // screenshots in order, then the civitai.red overrides (Host "red").
 //
 // Stored unfiltered, each with its own rating: the stream's per-audience filter is coarser than
-// the store's, so a reader MUST NOT show these rows as they are. The read API (slice 3) applies, per
-// request, the listing-rating ceiling and the host rule (`listingMediaCeiling` and
-// `redHostMediaCeiling` in src/server/services/blocks/listing-media-audience.ts), and shows a
-// Host "red" item only on a red-capable host.
+// the store's, so a reader MUST NOT show these items as they are. The read API projects them per
+// request through internal/listingread (ProjectMedia), which applies the listing-rating ceiling and
+// the host rule (`listingMediaCeiling` and `redHostMediaCeiling` in
+// src/server/services/blocks/listing-media-audience.ts) and shows a Host "red" item only on a
+// red-capable host.
 type ListingMedia struct {
 	Position  int
 	Slot      string // icon, cover or screenshot
@@ -272,14 +274,43 @@ func DecodeListing(urn, rev string, body json.RawMessage) (Change, error) {
 	return Change{Kind: ChangeUpsert, Listing: l, Dropped: drops}, nil
 }
 
-// Listings is the listings read model's state: the generations of the store-listing@v1 stream.
-// There is no read API yet (slice 3); Get and Count exist for the ingest's checks and tests.
+// Listings is the listings read model's state: the generations of the store-listing@v1 stream,
+// and the reads the listing API (internal/api, internal/listingread) answers from. A listing read
+// with its body is decoded from that body by ListingFromEntity, so Media are the items the ingest
+// validated, by the same rule. Every read of a generation that does not exist (any more) is
+// ErrNoGeneration.
 type Listings interface {
 	Generations
 	// Count is how many listings gen holds. The consumer holds a snapshot that ends with none.
 	Count(ctx context.Context, gen int64) (int, error)
 	// Get is one listing of gen, with its media in stream order; false when gen does not hold it.
 	Get(ctx context.Context, gen int64, urn string) (Listing, bool, error)
+	// Keys is every listing of gen with its columns only (no Body, no Media), for the grid's filter
+	// and sort. In no particular order.
+	Keys(ctx context.Context, gen int64) ([]Listing, error)
+	// GetMany is the listings of gen that urns name, each with its body and media, in no
+	// particular order. A URN gen does not hold is left out.
+	GetMany(ctx context.Context, gen int64, urns []string) ([]Listing, error)
+	// BySlug is the listing of gen whose slug is slug, with its body and media; false when there
+	// is none.
+	BySlug(ctx context.Context, gen int64, slug string) (Listing, bool, error)
+}
+
+// decodeStored is a stored listing read back from its body. The body passed ListingFromEntity at
+// ingest, so an error here means the decoding rule changed without a ListingsLayoutVersion bump.
+func decodeStored(urn, rev string, body []byte) (Listing, error) {
+	l, _, err := ListingFromEntity(urn, rev, json.RawMessage(body))
+	if err != nil {
+		return Listing{}, fmt.Errorf("stored listing %s: %w", urn, err)
+	}
+	return l, nil
+}
+
+// keyOf is l without its body and media: what Keys returns.
+func keyOf(l Listing) Listing {
+	l.Body = nil
+	l.Media = nil
+	return l
 }
 
 // ListingsMemory is the in-process Listings, with the same transaction semantics as
@@ -313,9 +344,69 @@ func (m *ListingsMemory) Get(_ context.Context, gen int64, urn string) (Listing,
 		return Listing{}, false, ErrNoGeneration
 	}
 	l, ok := g.rows[urn]
-	if ok {
-		l.Body = bytes.Clone(l.Body)
-		l.Media = slices.Clone(l.Media)
+	if !ok {
+		return Listing{}, false, nil
 	}
-	return l, ok, nil
+	d, err := decodeStored(l.URN, l.Rev, bytes.Clone(l.Body))
+	return d, err == nil, err
+}
+
+// Keys implements Listings.
+func (m *ListingsMemory) Keys(_ context.Context, gen int64) ([]Listing, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.gens[gen]
+	if !ok {
+		return nil, ErrNoGeneration
+	}
+	out := make([]Listing, 0, len(g.rows))
+	for _, l := range g.rows {
+		out = append(out, keyOf(l))
+	}
+	return out, nil
+}
+
+// GetMany implements Listings.
+func (m *ListingsMemory) GetMany(_ context.Context, gen int64, urns []string) ([]Listing, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.gens[gen]
+	if !ok {
+		return nil, ErrNoGeneration
+	}
+	var out []Listing
+	for _, urn := range slices.Compact(slices.Sorted(slices.Values(urns))) {
+		l, ok := g.rows[urn]
+		if !ok {
+			continue
+		}
+		d, err := decodeStored(l.URN, l.Rev, bytes.Clone(l.Body))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, nil
+}
+
+// BySlug implements Listings.
+func (m *ListingsMemory) BySlug(_ context.Context, gen int64, slug string) (Listing, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.gens[gen]
+	if !ok {
+		return Listing{}, false, ErrNoGeneration
+	}
+	// The lowest URN wins, as in ListingsPostgres; a slug names one URN in practice.
+	var found *Listing
+	for _, l := range g.rows {
+		if l.Slug == slug && (found == nil || l.URN < found.URN) {
+			found = &l
+		}
+	}
+	if found == nil {
+		return Listing{}, false, nil
+	}
+	d, err := decodeStored(found.URN, found.Rev, bytes.Clone(found.Body))
+	return d, err == nil, err
 }

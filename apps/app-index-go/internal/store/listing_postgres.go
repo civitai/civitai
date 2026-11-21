@@ -3,23 +3,27 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // listingsSQL creates the listings read model's tables, beside the app index's and never joined to
-// them: its own cursor table (so its generations, cursor and consumer lock are its own), one row
-// per listing, and one row per media item. Like schemaSQL it is a rebuildable cache, created at
-// startup and never migrated by hand: a change to what a row holds is a ListingsLayoutVersion bump
-// in the consumer, which rebuilds beside. Created only when APP_INDEX_LISTINGS is on.
+// them: its own cursor table (so its generations, cursor and consumer lock are its own) and one row
+// per listing. Like schemaSQL it is a rebuildable cache, created at startup and never migrated by
+// hand: a change to what a row holds is a ListingsLayoutVersion bump in the consumer, which
+// rebuilds beside. Created only when APP_INDEX_LISTINGS is on.
 //
 // The stats columns are nullable: a counter the body does not carry as a count is stored null and
 // the listing kept (store.ListingStats).
 //
-// app_index_listing_media holds every item as the stream sent it (less one with an unknown slot,
-// dropped), each with its own
-// nsfw_level, rating and host. Nothing here applies a ceiling: the read API must (ListingMedia).
+// The media live in the body only, every item as the stream sent it, each with its own nsfwLevel,
+// rating and host; a read decodes them from it (decodeStored). Nothing here applies a ceiling: the
+// read API does, per request (ListingMedia). The per-item table slice 2 also kept,
+// app_index_listing_media, held the same items a second time and nothing read it; it is dropped
+// here. Its rows were copies of the bodies, which every generation still holds, so dropping it
+// changes no row and needs no ListingsLayoutVersion bump.
 const listingsSQL = `
 CREATE TABLE IF NOT EXISTS app_index_listing_cursors (
   generation bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -55,20 +59,8 @@ CREATE TABLE IF NOT EXISTS app_index_listings (
   install_count bigint,
   PRIMARY KEY (generation, urn)
 );
-CREATE TABLE IF NOT EXISTS app_index_listing_media (
-  generation bigint NOT NULL,
-  urn text NOT NULL,
-  position integer NOT NULL,
-  slot text NOT NULL,
-  host text NOT NULL,
-  url text NOT NULL,
-  nsfw_level bigint NOT NULL,
-  rating text NOT NULL,
-  caption text,
-  cover_url text,
-  PRIMARY KEY (generation, urn, position),
-  FOREIGN KEY (generation, urn) REFERENCES app_index_listings (generation, urn) ON DELETE CASCADE
-);
+DROP TABLE IF EXISTS app_index_listing_media;
+CREATE INDEX IF NOT EXISTS app_index_listings_slug ON app_index_listings (generation, slug);
 ALTER TABLE app_index_listings
   ALTER COLUMN recommended_count DROP NOT NULL,
   ALTER COLUMN not_recommended_count DROP NOT NULL,
@@ -102,13 +94,11 @@ func NewListingsPostgres(ctx context.Context, pool *pgxpool.Pool) (*ListingsPost
 	return &ListingsPostgres{g}, nil
 }
 
-// Apply implements Generations: the listing row, its media and the cursor commit together, or
-// none does. An upsert replaces the row and all of its media.
+// Apply implements Generations: the listing row and the cursor commit together, or neither does.
+// An upsert replaces the row, body (and so media) included.
 func (p *ListingsPostgres) Apply(ctx context.Context, gen int64, c Change) error {
 	return p.apply(ctx, gen, c, func(tx pgx.Tx) error {
 		l := c.Listing
-		// Deleting first drops the old media (ON DELETE CASCADE), so a whole-row replace never
-		// leaves an item the new body no longer has.
 		if _, err := tx.Exec(ctx, `DELETE FROM app_index_listings WHERE generation = $1 AND urn = $2`, gen, l.URN); err != nil {
 			return err
 		}
@@ -119,19 +109,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), NULLIF($11, ''), $1
 			gen, l.URN, l.Rev, []byte(l.Body), l.App, l.Slug, l.Name, nameKey(l.Name), l.Kind, l.Category, l.ContentRating,
 			l.CreatorID, l.CreatedAt, l.UpdatedAt, l.Stats.RecommendedCount, l.Stats.NotRecommendedCount,
 			l.Stats.ReviewCount, l.Stats.OpenCount, l.Stats.InstallCount)
-		if err != nil {
-			return err
-		}
-		for _, m := range l.Media {
-			_, err := tx.Exec(ctx, `
-INSERT INTO app_index_listing_media (generation, urn, position, slot, host, url, nsfw_level, rating, caption, cover_url)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''))`,
-				gen, l.URN, m.Position, m.Slot, m.Host, m.URL, m.NsfwLevel, m.Rating, m.Caption, m.CoverURL)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
+		return err
 	})
 }
 
@@ -147,49 +125,94 @@ WHERE g.generation = $1 AND g.state <> 'retired' GROUP BY g.generation`, gen).Sc
 	return n, err
 }
 
+// exists is ErrNoGeneration unless gen exists and is not retired.
+func (p *ListingsPostgres) exists(ctx context.Context, gen int64) error {
+	_, err := p.Count(ctx, gen)
+	return err
+}
+
 // Get implements Listings.
 func (p *ListingsPostgres) Get(ctx context.Context, gen int64, urn string) (Listing, bool, error) {
-	var l Listing
+	return p.one(ctx, gen, `urn = $2`, urn)
+}
+
+// BySlug implements Listings. The lowest URN wins; a slug names one URN in practice.
+func (p *ListingsPostgres) BySlug(ctx context.Context, gen int64, slug string) (Listing, bool, error) {
+	return p.one(ctx, gen, `slug = $2`, slug)
+}
+
+func (p *ListingsPostgres) one(ctx context.Context, gen int64, where string, arg string) (Listing, bool, error) {
+	if err := p.exists(ctx, gen); err != nil {
+		return Listing{}, false, err
+	}
+	var urn, rev string
 	var body []byte
-	err := p.pool.QueryRow(ctx, `
-SELECT urn, rev, body, app, slug, name, kind, coalesce(category, ''), coalesce(content_rating, ''), creator_id,
-  created_at, updated_at, recommended_count, not_recommended_count, review_count, open_count, install_count
-FROM app_index_listings WHERE generation = $1 AND urn = $2`, gen, urn).Scan(
-		&l.URN, &l.Rev, &body, &l.App, &l.Slug, &l.Name, &l.Kind, &l.Category, &l.ContentRating, &l.CreatorID,
-		&l.CreatedAt, &l.UpdatedAt, &l.Stats.RecommendedCount, &l.Stats.NotRecommendedCount, &l.Stats.ReviewCount,
-		&l.Stats.OpenCount, &l.Stats.InstallCount)
+	err := p.pool.QueryRow(ctx, `SELECT urn, rev, body FROM app_index_listings WHERE generation = $1 AND `+where+
+		` ORDER BY urn LIMIT 1`, gen, arg).Scan(&urn, &rev, &body)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, err := p.Count(ctx, gen); err != nil {
-			return Listing{}, false, err
-		}
 		return Listing{}, false, nil
 	}
 	if err != nil {
 		return Listing{}, false, err
 	}
-	l.Body = body
-	if l.CreatedAt != nil {
-		t := l.CreatedAt.UTC()
-		l.CreatedAt = &t
+	l, err := decodeStored(urn, rev, body)
+	return l, err == nil, err
+}
+
+// GetMany implements Listings.
+func (p *ListingsPostgres) GetMany(ctx context.Context, gen int64, urns []string) ([]Listing, error) {
+	if err := p.exists(ctx, gen); err != nil {
+		return nil, err
 	}
-	if l.UpdatedAt != nil {
-		t := l.UpdatedAt.UTC()
-		l.UpdatedAt = &t
-	}
-	rows, err := p.pool.Query(ctx, `
-SELECT position, slot, host, url, nsfw_level, rating, coalesce(caption, ''), coalesce(cover_url, '')
-FROM app_index_listing_media WHERE generation = $1 AND urn = $2 ORDER BY position`, gen, urn)
+	rows, err := p.pool.Query(ctx, `SELECT urn, rev, body FROM app_index_listings WHERE generation = $1 AND urn = ANY($2)`, gen, urns)
 	if err != nil {
-		return Listing{}, false, err
+		return nil, err
 	}
 	defer rows.Close()
-	l.Media = []ListingMedia{}
+	var out []Listing
 	for rows.Next() {
-		var m ListingMedia
-		if err := rows.Scan(&m.Position, &m.Slot, &m.Host, &m.URL, &m.NsfwLevel, &m.Rating, &m.Caption, &m.CoverURL); err != nil {
-			return Listing{}, false, err
+		var urn, rev string
+		var body []byte
+		if err := rows.Scan(&urn, &rev, &body); err != nil {
+			return nil, err
 		}
-		l.Media = append(l.Media, m)
+		l, err := decodeStored(urn, rev, body)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, l)
 	}
-	return l, true, rows.Err()
+	return out, rows.Err()
+}
+
+// Keys implements Listings.
+func (p *ListingsPostgres) Keys(ctx context.Context, gen int64) ([]Listing, error) {
+	if err := p.exists(ctx, gen); err != nil {
+		return nil, err
+	}
+	rows, err := p.pool.Query(ctx, `
+SELECT urn, rev, app, slug, name, kind, coalesce(category, ''), coalesce(content_rating, ''), creator_id,
+  created_at, updated_at, recommended_count, not_recommended_count, review_count, open_count, install_count
+FROM app_index_listings WHERE generation = $1`, gen)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Listing
+	for rows.Next() {
+		var l Listing
+		if err := rows.Scan(&l.URN, &l.Rev, &l.App, &l.Slug, &l.Name, &l.Kind, &l.Category, &l.ContentRating, &l.CreatorID,
+			&l.CreatedAt, &l.UpdatedAt, &l.Stats.RecommendedCount, &l.Stats.NotRecommendedCount, &l.Stats.ReviewCount,
+			&l.Stats.OpenCount, &l.Stats.InstallCount); err != nil {
+			return nil, err
+		}
+		for _, t := range []**time.Time{&l.CreatedAt, &l.UpdatedAt} {
+			if *t != nil {
+				u := (*t).UTC()
+				*t = &u
+			}
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
 }

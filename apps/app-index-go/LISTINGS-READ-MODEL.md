@@ -1,10 +1,11 @@
 # App store listings read model: design
 
-**Status:** slices 1 and 2 of 8 done, both dark. Slice 1 is the adapter side of `store-listing@v1`
+**Status:** slices 1 to 3 of 8 done, all dark. Slice 1 is the adapter side of `store-listing@v1`
 (`src/server/registry-adapter/listing-stream.ts`). Slice 2 is the app-index-go ingest behind
 `APP_INDEX_LISTINGS` (`internal/index/listings.go`, `internal/store/listing*.go`; README,
-"Listings read model"). Nothing serves from it yet: the read API, shadow diff and cutover are later
-slices, listed under Rollout.
+"Listings read model"). Slice 3 is the read API, `GET /listings` and `GET /listings/{slug}`
+(`internal/listingread`, `internal/api/listings.go`; README, "Listing API"). Nothing on the site
+calls it yet: the shadow diff and the cutover are later slices, listed under Rollout.
 
 The goal: the user-facing app store reads its listings from a read model built from the registry,
 instead of from Prisma reads in `app-listing.service.ts`. The surfaces covered are the store grid
@@ -171,14 +172,22 @@ The read model ingests every rating. Its subscription uses the index's service i
 (`REGISTRY_ADAPTER_SERVICE_CLIENTS`; README, "Subscribing as itself"), so the adapter streams it the service audience,
 `r`, `x` and `xxx` included. Per request, the read model then applies:
 
-| Gate                                                                                     | Today                                             | In the read model                                                                                                                                                                                                                                                                               |
-| ---------------------------------------------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Mature ratings (`r`, `x`, `xxx`; XXX only with XXX in the level)                         | `matureRatingsAllowed(redCapable, browsingLevel)` | Decided from the viewer's token by the content-policy service, the same decision the adapter enforces for signed-in streams. The web tier forwards the viewer's token; anonymous is SFW. A host that is not red-capable is SFW whatever the token says, so the web tier also sends `redCapable` |
-| Region hold                                                                              | the SFW domain for restricted regions             | content-policy's `regionHold`: no mature rating                                                                                                                                                                                                                                                 |
-| Store scope (`none` / `public-external` / `full`, the Flipt cohorts and the kill switch) | `resolveStoreVisibilityScope`                     | Passed in by the web tier, which already resolves it. The read model applies `none` as empty and `public-external` as off-site only. Flipt stays the one judge of the cohort                                                                                                                    |
-| Audience floor (testers, moderators)                                                     | `listingLevelVisibilityFilter`                    | Not in the read model: a floor other than `public` goes to the DB (above)                                                                                                                                                                                                                       |
-| Media above the viewer's level                                                           | per image, `listingMediaCeiling`                  | Per item, from its `nsfwLevel`, with the same ceiling and the same red-override preference (Media, above)                                                                                                                                                                                       |
-| Banned or deleted owner                                                                  | `storeOwnerEligibleWhere`                         | Upstream: the listing leaves the catalog read, so the stream deletes it                                                                                                                                                                                                                         |
+| Gate                                                                                     | Today                                             | In the read model                                                                                                                                                                                                                         |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mature ratings (`r`, `x`, `xxx`; XXX only with XXX in the level)                         | `matureRatingsAllowed(redCapable, browsingLevel)` | The same rule over the same two inputs, which the web tier resolves as it does for its database read and sends signed (README, "Listing API": `host`, `level`). A host that is not red-capable admits no mature rating whatever the level |
+| Region hold                                                                              | the SFW domain for restricted regions             | Already in the web tier's inputs: a held region is served the SFW domain, which the web tier sends as `host: main`                                                                                                                        |
+| Store scope (`none` / `public-external` / `full`, the Flipt cohorts and the kill switch) | `resolveStoreVisibilityScope`                     | Passed in by the web tier, which already resolves it. The read model applies `none` as empty and `public-external` as off-site only. Flipt stays the one judge of the cohort                                                              |
+| Audience floor (testers, moderators)                                                     | `listingLevelVisibilityFilter`                    | Not in the read model: a floor other than `public` goes to the DB (above)                                                                                                                                                                 |
+| Media above the viewer's level                                                           | per image, `listingMediaCeiling`                  | Per item, from its `nsfwLevel`, with the same ceiling and the same red-override preference (Media, above; `listingread.ProjectMedia`)                                                                                                     |
+| Banned or deleted owner                                                                  | `storeOwnerEligibleWhere`                         | Upstream: the listing leaves the catalog read, so the stream deletes it                                                                                                                                                                   |
+
+**Who resolves the viewer.** Decided in slice 3: the web tier, not this service. An earlier draft had
+the read model ask the content-policy service about the viewer's forwarded token. That would make a
+second service a judge of what the web tier already decides on every request (host, browsing level,
+store scope, from the same session and Flipt reads), and a shadow diff between two deciders would
+measure their disagreement as well as the read model's. Instead the web tier sends what it resolved,
+signed with a key the two share and valid for minutes, so the read model applies exactly the
+inputs the database read applies. Nothing on the token identifies the viewer.
 
 **Red host.** Decided: the read model carries the red overrides and the above-rating media (Media,
 above), so a red-host viewer sees what the database shows them. No media difference is tolerated in
@@ -195,13 +204,24 @@ These match `listAvailableListings`.
 | `newest`           | `createdAt`, then id                                                                      | `createdAt`                                                                                       |
 | `name` (ascending) | `left(lower(name), 64)`, then id                                                          | the same                                                                                          |
 
-- **Paging:** keyset on `(sortKey, id)`, with an opaque cursor, as today. `top-rated` pins the mean in
-  the cursor for the whole session, as `decodeListingCursor` does. The limit is 1–50, default 20.
+- **Paging:** keyset on `(sortKey, slug)`, with an opaque cursor, as today on `(sortKey, id)`.
+  `top-rated` pins the mean in the cursor for the whole session, as `decodeListingCursor` does. The
+  limit is 1–50, default 20. The read model's cursors carry their own version (`rm1`), so a
+  database cursor sent to it, or one of its own sent to the database, pages from the start.
 - **Filters:** `kind`, `category`, `q` (the existing word-prefix match), and `userId` (developer
   filter). Search results are ranked by relevance; with no `q`, by the requested sort.
-- **Known divergence:** `getGlobalRecommendMean` averages over every approved listing, restricted
-  ones included. The read model sees public listings only. The shadow diff measures how much the
-  order moves. If it's material, the adapter can publish the mean as a single `service@v1` parameter.
+- **Known divergences,** each measured by the shadow diff rather than assumed small:
+  - `getGlobalRecommendMean` averages over every approved listing, restricted ones included. The
+    read model sees public listings only. If the order moves materially, the adapter can publish the
+    mean as a single `service@v1` parameter.
+  - Ties fall to the slug, where the database uses the listing id: the stream carries no id yet.
+    Most of the store ties on `top-rated` (no reviews), so this reorders ties until the id is in the
+    stream (Rollout, slice 3b).
+  - The keys compare as bytes; the database compares `sort_key` under its collation. Only the `name`
+    sort can differ (punctuation, case-folded non-ASCII).
+  - A card's `contentRating` is the app entity's (`appContentRating`: the listing's, else its
+    block's), where the database card shows the listing's own. They differ only for a listing whose
+    own rating is unknown or unset.
 - **Sub-listing cards** (`app-store-sub-listings`) are not in the stream. A grid request that asks
   for them merges them from the DB page, as index search already does.
 
@@ -212,7 +232,8 @@ This follows the `app-index-search` pattern. Behind a new Flipt flag, `app-listi
 alongside the DB read. They serve the DB answer and compare the two.
 
 - **Compared, per surface:**
-  - grid: the ordered list of `id`s on the page, plus `nextCursor` presence;
+  - grid: the ordered list of `id`s on the page (slugs until the stream carries the id, Rollout
+    slice 3b), plus `nextCursor` presence;
   - every card: `name`, `tagline`, `category`, `contentRating`, `iconUrl`, `coverUrl`, `creator`,
     `isBeta`, `isOfficial`, `kindData`, `updatedAt`, `recommend`, `reviewCount`, `openCount`;
   - detail: the same, plus `description`, `screenshots` and `installCount`. The media fields are
@@ -273,9 +294,9 @@ served for a week.
    the overrides read fails, it returns no overrides, so they silently drop out of the bodies until
    the next good read (Media, above).
 2. **Slice 2 (done): app-index-go ingest.** A second consumer for `store-listing@v1` (own
-   generations, cursor and consumer lock; own tables: `app_index_listings`, and
+   generations, cursor and consumer lock; own tables: `app_index_listings`, and, until slice 3,
    `app_index_listing_media` with one row per media item as sent), dark behind
-   `APP_INDEX_LISTINGS`. No read API yet. Unset, nothing of it exists: no tables, no series, no
+   `APP_INDEX_LISTINGS`. Unset, nothing of it exists: no tables, no series, no
    subscription. Switching it on needs the
    service-identity rollout (README, "Rollout order": hub settings, then
    `REGISTRY_ADAPTER_SERVICE_CLIENTS`, then the index client), then
@@ -288,15 +309,30 @@ served for a week.
      `unavailable` and never serves the failure as an empty set (`CatalogRead.listingsFailed`), and
      the ingest resumes from its cursor after `unavailable`, deleting nothing.
    - Media are stored unfiltered, each item with its own rating and host. The read API (slice 3)
-     must apply `listingMediaCeiling` and `redHostMediaCeiling` per request (Media, above).
-   - The media are held twice, in the listing's jsonb body and in `app_index_listing_media`. Which
-     copy the read API serves from, and whether the other is dropped, is decided in slice 3.
+     applies `listingMediaCeiling` and `redHostMediaCeiling` per request (Media, above).
+   - Slice 2 held the media twice, in the listing's jsonb body and in `app_index_listing_media`.
+     Decided in slice 3: the body is the copy, and the table is dropped. The body is the entity as the
+     stream sent it, kept whole anyway, so it cannot disagree with what was received; the read path
+     decodes the body for the card fields that have no column (tagline, creator, flags, kind data)
+     and gets the media in the same read, with no second query; each read decodes them with the
+     ingest's own validator (`ListingFromEntity`), so one rule gates both; and an upsert writes one
+     row instead of one per item. Nothing read the table, and every generation's bodies already hold
+     its items, so dropping it changes no row: no `ListingsLayoutVersion` bump.
    - Also in slice 2: a test of the live `loadListingExtras` query (`catalog-source.live.test.ts`),
      and the NsfwLevel-to-rating ladder in one place.
-3. **Slice 3: read API.** `GET /listings` (sort, paging, filters, stats, full cards) and
-   `GET /listings/{slug}` (detail), with the viewer gates. It also adds the detail fields to
-   `store-listing@v1` (additive).
-4. **Slice 4: shadow** on the grid and REST list.
+3. **Slice 3 (done): read API.** `GET /listings` (the four sorts, keyset paging, the kind, category
+   and developer filters, text search through the app index, full cards) and `GET /listings/{slug}`
+   (detail), with the viewer gates, behind `APP_INDEX_LISTINGS` and a signed viewer token (README,
+   "Listing API"). The media rule is pinned on both sides by one fixture
+   (`internal/listingread/testdata/media-parity.json`, read by `parity_test.go` and the site's
+   `listing-media-parity.test.ts`); the shadow diff relies on it.
+   - **Slice 3b (adapter, additive to `store-listing@v1`):** the listing `id` (the card key and the
+     database's tie-break), then the detail fields (`serialId`, `collaborators`, `scopes`,
+     `connectScopes`, the links, `betaMessage`, the fork fields). Until then the read API answers
+     without them, and the shadow diff compares by slug.
+4. **Slice 4: shadow** on the grid and REST list: the web tier signs the viewer token, calls
+   `GET /listings` beside its database read behind `app-listings-read-model`, serves the database
+   answer, and compares (Shadow diff, above).
 5. **Slice 5: shadow on detail, card and OG,** then serve grid and REST after the gate.
 6. **Slice 6: serve detail, card and OG.**
 7. **Slice 7: launch and install** via `app-release@v1`.
