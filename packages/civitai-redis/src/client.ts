@@ -3421,6 +3421,10 @@ const REDIS_KEYS_UNPREFIXED = {
     OVERVIEW_USERS: 'packed:caches:overview-users',
     FEATURED_MODELS: 'packed:featured-models-2',
     OFFICIAL_MODELS: 'packed:caches:official-models',
+    // Per viewer and browsing level: the model ids that lead their first page of Hot.
+    PERSONAL_HOT_LEAD: 'packed:caches:personal-hot-lead',
+    // Global: models with a new version in the last 14 days, the lead's candidates.
+    PERSONAL_HOT_LEAD_CANDIDATES: 'packed:caches:personal-hot-lead-candidates',
     HOME_BLOCKS_PERMANENT: 'packed:caches:home-blocks-permanent',
     HOME_BLOCKS_SYSTEM: 'packed:caches:home-blocks-system',
     IMAGE_META: 'packed:caches:image-meta',

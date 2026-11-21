@@ -2,16 +2,29 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as ModelService from '~/server/services/model.service';
 import type * as ResourceSelectService from '~/server/services/resource-select.service';
+import type * as FliptClient from '~/server/flipt/client';
 import { ModelSort } from '~/server/common/enums';
 
-const { getModelsWithImagesAndModelVersions, getOfficialModelIds } = vi.hoisted(() => ({
+const {
+  getModelsWithImagesAndModelVersions,
+  getOfficialModelIds,
+  getPersonalLeadModelIds,
+  isFlipt,
+} = vi.hoisted(() => ({
   getModelsWithImagesAndModelVersions: vi.fn(),
   getOfficialModelIds: vi.fn(),
+  getPersonalLeadModelIds: vi.fn(),
+  isFlipt: vi.fn(),
 }));
 
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelService>()),
   getModelsWithImagesAndModelVersions,
+  getPersonalLeadModelIds,
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt,
 }));
 vi.mock('~/server/services/resource-select.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ResourceSelectService>()),
@@ -43,8 +56,14 @@ function feed({ pinnedRows }: { pinnedRows: { id: number }[] }) {
   );
 }
 
-async function run(input: Record<string, unknown>) {
-  const ctx = { user: undefined, features: {}, req: { headers: {} }, cache: { canCache: true } };
+async function run(input: Record<string, unknown>, ctxExtra: Record<string, unknown> = {}) {
+  const ctx = {
+    user: undefined,
+    features: {},
+    req: { headers: {} },
+    cache: { canCache: true },
+    ...ctxExtra,
+  };
   const result = await getModelsInfiniteHandler({
     input: { limit: 20, browsingLevel: 1, excludedUserIds: [77], ...input },
     ctx,
@@ -54,6 +73,8 @@ async function run(input: Record<string, unknown>) {
 
 beforeEach(() => {
   getModelsWithImagesAndModelVersions.mockReset();
+  getPersonalLeadModelIds.mockReset().mockResolvedValue([]);
+  isFlipt.mockReset().mockResolvedValue(false);
   getOfficialModelIds.mockReset();
   getOfficialModelIds.mockResolvedValue([
     { id: OFFICIAL_A, type: 'Checkpoint' },
@@ -125,6 +146,79 @@ describe('model feed: official checkpoints first on Hot with a base-model filter
 
     expect(calls()).toHaveLength(1);
     expect(calls()[0].onlyModelIds).toBeUndefined();
+    expect(calls()[0].excludeModelIds ?? []).toEqual([]);
+  });
+});
+
+describe('model feed: the personal Hot lead', () => {
+  const VIEWER = { id: 5, username: 'viewer', isModerator: false };
+  const LEAD = [31, 30];
+  const signedIn = { user: VIEWER };
+
+  it('evaluates the flag per viewer, with their context', async () => {
+    feed({ pinnedRows: [] });
+    await run({ sort: ModelSort.Hot }, signedIn);
+    expect(isFlipt).toHaveBeenCalledWith('personal-hot-lead', '5', expect.any(Object));
+    const call = isFlipt.mock.calls.find(([flag]) => flag === 'personal-hot-lead')!;
+    const context = call[2] as Record<string, string>;
+    expect(Object.keys(context).length).toBeGreaterThan(0);
+  });
+
+  it('leads page 1 with the lead in its own order, ahead of the official pin and the stream', async () => {
+    isFlipt.mockResolvedValue(true);
+    getPersonalLeadModelIds.mockResolvedValue(LEAD);
+    // The feed query returns Hot order (30 before 31); the lead's own order wins.
+    getModelsWithImagesAndModelVersions.mockImplementation(async ({ onlyModelIds }: Call) =>
+      onlyModelIds?.includes(30)
+        ? { items: [{ id: 30 }, { id: 31 }], isPrivate: false }
+        : onlyModelIds
+        ? { items: [{ id: OFFICIAL_A }], isPrivate: false }
+        : { items: STREAM, isPrivate: false, nextCursor: undefined }
+    );
+
+    expect(await run({ sort: ModelSort.Hot, baseModels: ['Flux.1 D'] }, signedIn)).toEqual([
+      31,
+      30,
+      OFFICIAL_A,
+      1,
+      2,
+    ]);
+    const stream = calls().find((c) => !c.onlyModelIds)!;
+    expect(stream.excludeModelIds).toEqual([31, 30, OFFICIAL_A, OFFICIAL_B]);
+    expect(getPersonalLeadModelIds).toHaveBeenCalledWith({
+      userId: 5,
+      browsingLevel: 1,
+      firstPage: true,
+    });
+  });
+
+  it('keeps the lead out of later pages without fetching it again', async () => {
+    isFlipt.mockResolvedValue(true);
+    getPersonalLeadModelIds.mockResolvedValue(LEAD);
+    feed({ pinnedRows: [] });
+
+    expect(await run({ sort: ModelSort.Hot, cursor: '5|5' }, signedIn)).toEqual([1, 2]);
+    expect(calls()).toHaveLength(1);
+    expect(calls()[0].excludeModelIds).toEqual(LEAD);
+    expect(getPersonalLeadModelIds).toHaveBeenCalledWith(
+      expect.objectContaining({ firstPage: false })
+    );
+  });
+
+  it.each([
+    ['signed out', { sort: ModelSort.Hot }, {}],
+    ['a scoped API key', { sort: ModelSort.Hot }, { ...signedIn, apiKeyId: 9, tokenScope: 1 }],
+    ['another sort', { sort: ModelSort.HighestRated }, signedIn],
+    ['a text search', { sort: ModelSort.Hot, query: 'flux' }, signedIn],
+    ["a creator's page", { sort: ModelSort.Hot, username: 'someone' }, signedIn],
+    ['the followed filter', { sort: ModelSort.Hot, followed: true }, signedIn],
+  ])('gives no lead for %s', async (_, input, ctx) => {
+    isFlipt.mockResolvedValue(true);
+    getPersonalLeadModelIds.mockResolvedValue(LEAD);
+    feed({ pinnedRows: [] });
+
+    expect(await run(input, ctx)).toEqual([1, 2]);
+    expect(getPersonalLeadModelIds).not.toHaveBeenCalled();
     expect(calls()[0].excludeModelIds ?? []).toEqual([]);
   });
 });

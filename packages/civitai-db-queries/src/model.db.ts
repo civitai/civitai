@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { type Kysely, sql } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
 /**
@@ -27,5 +27,68 @@ export async function listModelEngagements(
     .select(['modelId', 'type'])
     .where('userId', '=', input.userId)
     .where('modelId', 'in', input.modelIds)
+    .execute();
+}
+
+/**
+ * A viewer's stake in models, for the personalised Hot lead: the models they liked (a thumbs-up
+ * review) and their Favorite / Notify / Mute engagements, newest touch first, with each model's
+ * owner. Two reads because the two tables have different shapes; each is capped at `limit`.
+ */
+export async function listModelStake(db: Kysely<DB>, input: { userId: number; limit: number }) {
+  const [likes, engagements] = await Promise.all([
+    db
+      .selectFrom('ResourceReview as rr')
+      .innerJoin('Model as m', 'm.id', 'rr.modelId')
+      .select((eb) => ['rr.modelId', 'm.userId', eb.fn.max('rr.createdAt').as('touchedAt')])
+      .where('rr.userId', '=', input.userId)
+      .where('rr.recommended', '=', true)
+      .where('rr.exclude', '=', false)
+      .groupBy(['rr.modelId', 'm.userId'])
+      .orderBy('touchedAt', 'desc')
+      .limit(input.limit)
+      .execute(),
+    db
+      .selectFrom('ModelEngagement as e')
+      .innerJoin('Model as m', 'm.id', 'e.modelId')
+      .select(['e.modelId', 'm.userId', 'e.type', 'e.createdAt as touchedAt'])
+      .where('e.userId', '=', input.userId)
+      .where('e.type', 'in', ['Favorite', 'Notify', 'Mute'])
+      .orderBy('e.createdAt', 'desc')
+      .limit(input.limit)
+      .execute(),
+  ]);
+  return { likes, engagements };
+}
+
+/**
+ * Every model with a version that counts as new since `since`: Published, Public or EarlyAccess
+ * (a paid version keeps EarlyAccess for good), and not a paid-gate re-date: a version whose
+ * publishedAt moved more than a day past its first publish is the same version, not a new one.
+ * One row per model, its newest such version. Not per viewer: the personalised Hot lead filters
+ * this list in memory.
+ */
+export async function listRecentlyVersionedModels(db: Kysely<DB>, input: { since: Date }) {
+  return db
+    .selectFrom('ModelMetric as mm')
+    .innerJoin('ModelVersion as mv', 'mv.modelId', 'mm.modelId')
+    .select([
+      'mm.modelId',
+      'mm.userId',
+      'mm.hotScore',
+      'mv.publishedAt as versionPublishedAt',
+      'mv.nsfwLevel as versionNsfwLevel',
+    ])
+    .distinctOn('mm.modelId')
+    .where('mm.status', '=', 'Published')
+    .where('mm.lastVersionAt', '>', input.since)
+    .where('mv.status', '=', 'Published')
+    .where('mv.availability', 'in', ['Public', 'EarlyAccess'])
+    .where('mv.publishedAt', '>', input.since)
+    .where(
+      sql<boolean>`mv."publishedAt" < coalesce(mv."initialPublishedAt", mv."publishedAt") + interval '1 day'`
+    )
+    .orderBy('mm.modelId')
+    .orderBy('mv.publishedAt', 'desc')
     .execute();
 }
