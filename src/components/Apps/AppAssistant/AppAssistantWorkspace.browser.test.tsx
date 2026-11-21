@@ -2603,6 +2603,23 @@ describe('AppAssistantWorkspace preview after a reload on the server runner', ()
     expect(r.restart).not.toHaveBeenCalled();
   });
 
+  // A direct preview's session host is a bearer credential (design §5.4): it is framed, and never
+  // kept in the page's preview session, which the assistant's instructions read.
+  test('🔴 a live direct preview is shown with no host kept', async () => {
+    const SESSION_HOST =
+      'sckpynuebrbgh2zm2f7vkbrk22akqcaqdaqcwv7vmqcbzawxned4cvl4enkzes.preview.example';
+    r.probe.mockResolvedValue({
+      blockId: 'app-aaaa',
+      host: SESSION_HOST,
+      iframeSrc: `https://${SESSION_HOST}/`,
+      transport: 'direct',
+    });
+    await reload();
+    await expect.element(pane()).toBeInTheDocument();
+    expect(m.previewSession).toEqual({ blockId: 'app-aaaa', host: '', sessionId: null, view: 1 });
+    expect(m.chat!.instructions()).not.toContain(SESSION_HOST);
+  });
+
   test('no live preview: the pane offers Restart preview, and shows no preview', async () => {
     r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
     await reload();

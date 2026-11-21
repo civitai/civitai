@@ -143,6 +143,54 @@ describe('storePreviewErrors', () => {
     expect(m.pipeline.exec).toHaveBeenCalledTimes(1);
   });
 
+  // A direct preview's session host is a bearer credential (design §5.4): the app's own stack
+  // traces name it, and what is kept here reaches the assistant through the app activity.
+  it('🔴 keeps no direct preview session host: it is replaced in the message and the stack', async () => {
+    const SESSION_HOST =
+      'sckpynuebrbgh2zm2f7vkbrk22akqcaqdaqcwv7vmqcbzawxned4cvl4enkzes.preview.example';
+    m.tunnel.mockResolvedValue({
+      userId: 41,
+      blockId: 'slideshow',
+      host: SESSION_HOST,
+      transport: 'direct',
+    });
+    await storePreviewErrors({
+      userId: 41,
+      blockId: 'slideshow',
+      reports: [
+        {
+          message: `Failed to fetch https://${SESSION_HOST}/src/data.json`,
+          // The second frame's URL was cut short by the SDK's stack cap, mid-domain.
+          stack: `TypeError\n    at load (https://${SESSION_HOST.toUpperCase()}/src/App.tsx:12:3)\n    at run (https://${SESSION_HOST.slice(
+            0,
+            70
+          )}`,
+          at: NOW - 1_000,
+        },
+      ],
+      now: NOW,
+    });
+    const pushed = m.pipeline.lPush.mock.calls[0] as unknown as [string, string[]];
+    const [stored] = pushed[1].map((raw) => JSON.parse(raw));
+    expect(stored.message).toBe('Failed to fetch https://[preview]/src/data.json');
+    expect(stored.stack).toBe(
+      'TypeError\n    at load (https://[preview]/src/App.tsx:12:3)\n    at run (https://[preview]'
+    );
+  });
+
+  it('NEGATIVE CONTROL: a tunnel host is kept as it was (it is not a credential)', async () => {
+    const HOST = 'dev-0123456789abcdef.apps.example';
+    m.tunnel.mockResolvedValue({ userId: 41, blockId: 'slideshow', host: HOST });
+    await storePreviewErrors({
+      userId: 41,
+      blockId: 'slideshow',
+      reports: [{ message: `Failed to fetch https://${HOST}/src/data.json`, at: NOW - 1_000 }],
+      now: NOW,
+    });
+    const pushed = m.pipeline.lPush.mock.calls[0] as unknown as [string, string[]];
+    expect(JSON.parse(pushed[1][0]!).message).toBe(`Failed to fetch https://${HOST}/src/data.json`);
+  });
+
   it('takes at most 20 reports from one call', async () => {
     m.tunnel.mockResolvedValue({ userId: 41, blockId: 'slideshow' });
     const reports = Array.from({ length: 25 }, (_, i) => ({ message: `e${i}`, at: NOW - i }));
