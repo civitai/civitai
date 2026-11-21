@@ -132,6 +132,9 @@ export interface PreviewRestarterOptions {
  * judges every gate, the sandbox dials it), then nothing more: no keep-alive, as no run is live, so
  * the tunnel idles out by civitai's own rules. A dev server that is not running (a resumed sandbox
  * runs none) is started first, as the assistant is told to start it (`RunnerPreview.startDevServer`).
+ * Where civitai serves the user's previews directly (its `preview/open`), the same start takes no
+ * tunnel step: it reuses the app's open session, or opens a new one under a fresh preview id when
+ * the old id's session ended (a resumed app), and answers its host the same way.
  *
  * Two clicks for one app share one restart (one tunnel); each user has `RESTART_LIMIT` restarts in
  * `RESTART_WINDOW_MS` here, on top of civitai's own hourly cap on unsubmitted apps.

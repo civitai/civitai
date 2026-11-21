@@ -182,6 +182,24 @@ makes, which `WORKFLOW_VERSION` protects.
        preview without asking civitai again (other scopes or auth open it again with them). In production a model
        had started the dev server, checked the app and reported it ready without ever calling
        `start_preview`.
+    6. **Direct preview** (civitai's `app-assistant-direct-preview` flag, off by default). Every start
+       first reads the app's sandbox's preview id (`GET /v1/sandboxes/<name>`) and asks civitai's
+       `POST /api/internal/app-assistant/preview/open` (the same secret, grant and gates as
+       `start`). `{ mode: "tunnel" }` (the flag off, a civitai without the endpoint, or a sandbox
+       with no preview id) is steps 1–5 unchanged. Otherwise the sandbox service serves the preview
+       and no `tunnel_*` tool is called: civitai answers the app's session for that id (an open one
+       as it is, or a new one for an id never used), or `fresh` for an id whose session ended (a
+       resumed app, a stopped preview); then the runner rotates the id
+       (`POST /v1/sandboxes/<name>/preview-id`) and asks once more, and a second `fresh` is an
+       error, never a loop. A `503` (another open of the same app in progress) is asked again, up
+       to 4 times a second apart. The run keeps its direct preview alive and `stop_preview` closes
+       it by `(user, blockId)` (`keepalive`/`stop { blockId }`), the block id it ran under, which
+       can differ from the app's key; a later reply's `stop_preview` with no tunnel running in the
+       sandbox ends it that way too. An open session keeps the scopes it was opened with: a later
+       start of it in the same run asking for scopes it may not have ends it and opens a new one.
+       **Not covered:** a reply that did not open the direct preview itself does not keep it alive
+       (nothing tells it from a tunnel the sandbox let go), and a reply's first open of a session
+       an earlier reply opened gets that session's scopes, not ones declared since.
     A later reply (or Continue after the app was paused) starts or restarts the dev server, which
     opens the preview again; civitai replaces the user's tunnel for that block. The instructions say the
     preview opens by itself, keep `start_preview` for when the user asks to reopen it, and tell

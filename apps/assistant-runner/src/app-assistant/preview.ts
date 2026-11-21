@@ -10,7 +10,7 @@ import {
 import type { ChatTool } from '@civitai/components-chat/core';
 
 import type { Logger } from '../core/interfaces';
-import { DevTunnelError, type DevTunnels } from './dev-tunnel';
+import { DevTunnelError, type DevTunnels, type PreviewOpenAnswer } from './dev-tunnel';
 
 /**
  * How often a live run stamps its app's tunnel's idle clock. civitai reaps a tunnel 30 minutes
@@ -55,6 +55,12 @@ export interface RunnerPreviewDeps {
       args: Record<string, unknown>,
       signal?: AbortSignal
     ): Promise<{ text: string; isError: boolean }>;
+    /**
+     * The open app's current preview id (`AppSandbox.previewId`), and a new one
+     * (`AppSandbox.rotatePreviewId`). Without them, or without an id, every preview is a dev tunnel.
+     */
+    previewId?(): Promise<string | null>;
+    rotatePreviewId?(): Promise<string>;
   };
   /** civitai's dev-tunnel endpoints, with this run's grant. */
   tunnels: DevTunnels;
@@ -72,8 +78,13 @@ export interface RunnerPreviewDeps {
   tunnelStartBy?: number;
 }
 
-/** The tunnel this run opened: kept in this process's memory only, never in a result. */
-interface OpenTunnel {
+/** The preview this run opened: kept in this process's memory only, never in a result. */
+interface OpenPreview {
+  /**
+   * `tunnel`: a dev tunnel the sandbox dials. `direct`: civitai's preview session, served by the
+   * sandbox service with no tunnel (civitai's `preview/open`), kept and closed by its block id.
+   */
+  transport: 'tunnel' | 'direct';
   sessionId: string;
   /** The sandbox it serves: another app opened by `create_app` is another preview. */
   app: string;
@@ -82,6 +93,14 @@ interface OpenTunnel {
   /** What it was opened with: a start asking for other scopes or auth opens it again. */
   declaredScopes: string[];
   declaredAuth: 'block-token' | 'oauth' | undefined;
+  /**
+   * Whether the preview certainly has those scopes and auth. A tunnel start always writes a new
+   * session; a direct open may answer a session already open for the app's preview id (an earlier
+   * reply's, the page's Restart preview's), which keeps the scopes it was opened with. So a direct
+   * one is known only when the open wrote it: after a rotated preview id, or after this run ended
+   * the session before it.
+   */
+  scopesKnown: boolean;
   /** What the start that opened it answered: a start of the same preview answers it again. */
   result: StartedPreview;
 }
@@ -105,15 +124,21 @@ export type AutoPreview = { shown: StartedPreview } | { error: string };
  * sandbox at a host civitai did not open. What a result says (and so what the page and the saved
  * conversation see) is the block id and the host, never the tunnel's id.
  *
+ * Direct preview (civitai's `app-assistant-direct-preview` flag): each start first asks civitai's
+ * `preview/open` with the app's sandbox's preview id. When civitai answers with a session, the
+ * sandbox service serves the preview itself and no tunnel step is taken; that preview is kept
+ * alive and closed by its block id. Otherwise (`tunnel`, the flag off) it is the dev tunnel, as
+ * before.
+ *
  * While the run lives (`keepWhileRunning`) the open app's preview is kept from idling out
- * (`PREVIEW_KEEPALIVE_MS`), whoever opened it: this run, an earlier one, or the page's Restart
- * preview, as long as the app's sandbox is connected to it. `close()`, as the run
+ * (`PREVIEW_KEEPALIVE_MS`): this run's, and a tunnel an earlier one or the page's Restart
+ * preview opened, as long as the app's sandbox is connected to it. `close()`, as the run
  * ends, stops that and leaves the tunnel to civitai's normal idle expiry, so the user can keep
  * looking at it for a while after the reply ends.
  */
 export class RunnerPreview {
   readonly #deps: RunnerPreviewDeps;
-  #open: OpenTunnel | null = null;
+  #open: OpenPreview | null = null;
   #timer: ReturnType<typeof setInterval> | undefined;
   #keeping = false;
   /** Set by `keepWhileRunning`: a run's preview (never a run-less restart's) is kept alive. */
@@ -132,12 +157,13 @@ export class RunnerPreview {
   }
 
   /**
-   * For a run: from now until `close()`, keeps the open app's preview from idling out, whoever
-   * opened it. Each tick asks the open app's sandbox which host its tunnel is connected to
-   * (`tunnel_status`) and has civitai keep the run's user's tunnel at that host: never another
-   * app's (it is not that app's sandbox), never another user's (civitai checks the owner), and
-   * never one the sandbox has let go (paused, disconnected), which civitai then lets idle out.
-   * Paused by `stop_preview` (the user asked for it to go) until the next start.
+   * For a run: from now until `close()`, keeps the open app's preview from idling out. Each tick
+   * has civitai keep this run's direct preview of the open app by its block id, else asks the open
+   * app's sandbox which host its tunnel is connected to (`tunnel_status`) and has civitai keep the
+   * run's user's tunnel at that host, whoever opened it: never another app's (it is not that app's
+   * sandbox), never another user's (civitai checks the owner), and never one the sandbox has let go
+   * (paused, disconnected), which civitai then lets idle out (`#keepTarget`). Paused by
+   * `stop_preview` (the user asked for it to go) until the next start.
    */
   keepWhileRunning(): void {
     if (this.#closed) return;
@@ -408,14 +434,16 @@ export class RunnerPreview {
         : undefined;
     // Already open for this app in this run (by itself after the dev server started, or by an
     // earlier call) and asked for again as it is: the same answer, and nothing is opened twice.
-    // Another block id, or other scopes or auth than it was opened with, is a new start.
+    // Another block id, or other scopes or auth than it was opened with (or than a direct preview
+    // may have, `scopesKnown`), is a new start.
     const open = this.#open;
     if (
       open &&
       open.app === app.name &&
       (typeof input.block_id !== 'string' || input.block_id === open.blockId) &&
-      (declaredScopes === undefined || sameScopes(declaredScopes, open.declaredScopes)) &&
-      (declaredAuth === undefined || declaredAuth === open.declaredAuth)
+      (declaredScopes === undefined ||
+        (open.scopesKnown && sameScopes(declaredScopes, open.declaredScopes))) &&
+      (declaredAuth === undefined || (open.scopesKnown && declaredAuth === open.declaredAuth))
     )
       return open.result;
     const blockId = typeof input.block_id === 'string' ? input.block_id : app.app;
@@ -423,6 +451,10 @@ export class RunnerPreview {
       throw new Error(
         'Pass block_id: 3-40 characters, lowercase letters, digits and dashes, starting with a letter.'
       );
+
+    // 0. A direct preview, when civitai opens one for this user: no tunnel at all.
+    const direct = await this.#openDirect(app.name, blockId, declaredScopes, declaredAuth, signal);
+    if (direct) return direct;
 
     // 1. A fresh single-use key, made in the sandbox: only its public half leaves it.
     const key = await sandbox.call('tunnel_key', {}, signal);
@@ -488,45 +520,184 @@ export class RunnerPreview {
 
     // A preview of another block this run opened goes; one of the same block civitai already replaced.
     const previous = this.#open;
-    if (previous && previous.blockId !== blockId) await close(previous.sessionId);
-    const result: StartedPreview = {
-      shown: true,
-      blockId,
-      host: started.host,
-      next_step:
-        'The user sees the preview now. To see what they see, call sandbox__preview_check.',
-    };
+    if (previous && previous.blockId !== blockId) await this.#closeOpen(previous);
+    const result = shownResult(blockId, started.host);
     this.#open = {
+      transport: 'tunnel',
       sessionId: started.sessionId,
       app: app.name,
       blockId,
       host: started.host,
       declaredScopes: declaredScopes ?? [],
       declaredAuth,
+      scopesKnown: true,
       result,
     };
     if (this.#keepCurrent) this.#keepAlive();
     return result;
   }
 
+  /**
+   * The direct preview of `blockId` (served by the sandbox service, with no tunnel), when civitai's
+   * `preview/open` opens one for this user; `null` when it says to open a dev tunnel, or when the
+   * app's sandbox has no preview id to open it under.
+   *
+   * civitai answers a session already open for the app's preview id as it is (scopes included),
+   * writes one for an id never used, and answers `fresh` for an id whose session has ended (a
+   * resumed app, a stopped preview): then the id is rotated once and asked again, which civitai
+   * always writes; a second `fresh` is an error, never a loop. So it takes at most two opens.
+   */
+  async #openDirect(
+    appName: string,
+    blockId: string,
+    declaredScopes: string[] | undefined,
+    declaredAuth: 'block-token' | 'oauth' | undefined,
+    signal?: AbortSignal
+  ): Promise<StartedPreview | null> {
+    const { sandbox, tunnels } = this.#deps;
+    if (!sandbox.previewId || !sandbox.rotatePreviewId) return null;
+    const previous = this.#open;
+    // This run's own direct preview of this block, asked for with other scopes or auth (or ones it
+    // may not have): opened again, civitai would answer it as it is. So it is ended first, and the
+    // open after that always writes a new session with these.
+    let ended = false;
+    if (
+      previous?.transport === 'direct' &&
+      previous.app === appName &&
+      previous.blockId === blockId
+    ) {
+      try {
+        await tunnels.stopBlock(blockId, signal);
+      } catch (error) {
+        throw new Error(refusalMessage(error), { cause: error });
+      }
+      this.#open = null;
+      ended = true;
+    }
+
+    let previewId: string | null;
+    try {
+      previewId = await sandbox.previewId();
+    } catch (error) {
+      // The sandbox service would not say: the dev tunnel, as before direct previews.
+      this.#warn(error, 'reading the preview id failed');
+      return null;
+    }
+    if (!previewId) return null;
+
+    const ask = (id: string) =>
+      tunnels.open(
+        {
+          blockId,
+          previewId: id,
+          ...(declaredScopes ? { declaredScopes } : {}),
+          ...(declaredAuth ? { declaredAuth } : {}),
+        },
+        signal
+      );
+    let answer: PreviewOpenAnswer;
+    let rotated = false;
+    try {
+      answer = await ask(previewId);
+      if (answer.mode === 'direct' && 'fresh' in answer) {
+        let next: string;
+        try {
+          next = await sandbox.rotatePreviewId();
+        } catch (error) {
+          this.#warn(error, 'rotating the preview id failed');
+          throw new DevTunnelError('The preview id could not be renewed.', 503, 'unavailable');
+        }
+        rotated = true;
+        answer = await ask(next);
+        if (answer.mode === 'direct' && 'fresh' in answer) {
+          const twice = new DevTunnelError(
+            'A new preview id was answered as used.',
+            503,
+            'unavailable'
+          );
+          this.#warn(twice, 'civitai answered a rotated preview id as used');
+          throw twice;
+        }
+      }
+    } catch (error) {
+      throw new Error(refusalMessage(error), { cause: error });
+    }
+    if (answer.mode === 'tunnel' || 'fresh' in answer) return null;
+    if (sandbox.active?.name !== appName || this.#closed)
+      throw new Error(
+        'Your app changed while the preview was starting. Start the preview again in the open app.'
+      );
+
+    if (previous && previous.blockId !== blockId) await this.#closeOpen(previous);
+    const result = shownResult(blockId, answer.host);
+    this.#open = {
+      transport: 'direct',
+      sessionId: answer.sessionId,
+      app: appName,
+      blockId,
+      host: answer.host,
+      declaredScopes: declaredScopes ?? [],
+      declaredAuth,
+      scopesKnown: rotated || ended,
+      result,
+    };
+    if (this.#keepCurrent) this.#keepAlive();
+    return result;
+  }
+
+  /** Closes a preview this run opened: a tunnel by its id, a direct one by its block. */
+  async #closeOpen(open: OpenPreview, signal?: AbortSignal): Promise<void> {
+    const { tunnels } = this.#deps;
+    await (open.transport === 'direct'
+      ? tunnels.stopBlock(open.blockId, signal)
+      : tunnels.stop(open.sessionId, signal)
+    ).catch((error) => this.#warn(error, 'closing a preview failed'));
+  }
+
   async #stop(signal?: AbortSignal) {
+    const { sandbox, tunnels } = this.#deps;
     const open = this.#open;
     this.#open = null;
     this.#stopKeeping();
-    if (open)
-      await this.#deps.tunnels
-        .stop(open.sessionId, signal)
-        .catch((error) => this.#warn(error, 'closing a preview failed'));
-    // A preview an earlier reply started is not this run's to close at civitai (its id went with that
-    // run): closing the sandbox's side ends it, and civitai's side idles out.
+    // A direct preview has no sandbox side: civitai ends it by its block (and a session already
+    // gone is stopped too).
+    if (open?.transport === 'direct') {
+      const asked = await tunnels.stopBlock(open.blockId, signal).then(
+        () => true,
+        (error) => {
+          this.#warn(error, 'closing a preview failed');
+          return false;
+        }
+      );
+      return { stopped: asked };
+    }
+    if (open) await this.#closeOpen(open, signal);
+    // A preview an earlier reply started has no id here: closing the sandbox's side ends a tunnel,
+    // and civitai's side idles out.
     let disconnected = false;
-    if (this.#deps.sandbox.active?.state === 'running') {
-      const result = await this.#deps.sandbox
+    let tunnelStopped = false;
+    if (sandbox.active?.state === 'running') {
+      const result = await sandbox
         .call('tunnel_disconnect', {}, signal)
         .catch(() => ({ text: '', isError: true }));
       disconnected = !result.isError;
+      tunnelStopped =
+        !result.isError &&
+        (parseJson(result.text) as { stopped?: unknown } | null)?.stopped === true;
     }
-    return { stopped: Boolean(open) || disconnected };
+    // No tunnel ran in the sandbox: the preview an earlier reply (or the page's Restart preview)
+    // opened may be a direct one, which only civitai can end: by the app's block, as it ran under
+    // (which can differ from the app's key), whichever run opened it.
+    let ended = false;
+    if (!open && !tunnelStopped) {
+      const blockId = await this.previewBlockId(signal);
+      if (blockId)
+        ended = await tunnels.stopBlock(blockId, signal).catch((error) => {
+          this.#warn(error, 'closing a preview failed');
+          return false;
+        });
+    }
+    return { stopped: Boolean(open) || disconnected || ended };
   }
 
   #keepAlive(): void {
@@ -546,18 +717,26 @@ export class RunnerPreview {
   async #tick(): Promise<void> {
     if (this.#closed || this.#keeping) return;
     this.#keeping = true;
-    let host: string | null = null;
+    let target: { host: string } | { blockId: string } | null = null;
     try {
-      host = await this.#connectedHost();
+      target = await this.#keepTarget();
       // Ended, or stopped (`stop_preview`), while the sandbox was asked.
-      if (!host || this.#closed || !this.#timer) return;
-      await this.#deps.tunnels.keepalive({ host });
+      if (!target || this.#closed || !this.#timer) return;
+      await this.#deps.tunnels.keepalive(target);
     } catch (error) {
       if (error instanceof DevTunnelError && error.status === 404) {
-        // civitai has no tunnel of the user's at that host (it went, at its cap or stopped): one may
+        // civitai has no preview of the user's there (it went, at its cap or stopped): one may
         // open later (the page's Restart preview), so the next tick looks again. One this run
         // opened there is gone, so a start of the same preview opens a new one.
-        if (this.#open?.host === host) this.#open = null;
+        const open = this.#open;
+        if (
+          open &&
+          target &&
+          ('host' in target
+            ? open.transport === 'tunnel' && open.host === target.host
+            : open.transport === 'direct' && open.blockId === target.blockId)
+        )
+          this.#open = null;
         return;
       }
       // Refused (a gate, the dev-tunnel flag) or the grant is no longer good: nothing to keep alive
@@ -570,15 +749,28 @@ export class RunnerPreview {
   }
 
   /**
-   * The host the open app's sandbox has a tunnel running to (`tunnel_status`), else `null`: no app
-   * open and running, no tunnel in it, or an answer that does not say.
+   * What a tick keeps alive, while the open app's sandbox runs (else `null`): this run's direct
+   * preview of that app, by its block id (which can differ from the app's key); else the host the
+   * sandbox has a tunnel running to (`tunnel_status`), or `null` when none runs or the answer does
+   * not say.
+   *
+   * A direct preview this run did not open (an earlier reply's, the page's Restart preview's) is
+   * not kept: nothing here tells it from a tunnel the sandbox has let go, which must idle out.
    */
-  async #connectedHost(): Promise<string | null> {
+  async #keepTarget(): Promise<{ host: string } | { blockId: string } | null> {
     const app = this.#deps.sandbox.active;
     if (!app || app.state !== 'running') return null;
+    const open = this.#open;
+    if (open?.transport === 'direct' && open.app === app.name) return { blockId: open.blockId };
+    const host = await this.#connectedHost(app.name);
+    return host ? { host } : null;
+  }
+
+  /** The host app `appName`'s sandbox has a tunnel running to (`tunnel_status`), else `null`. */
+  async #connectedHost(appName: string): Promise<string | null> {
     const status = await this.#deps.sandbox.call('tunnel_status', {});
     // Another app opened meanwhile: its sandbox is asked at the next tick.
-    if (status.isError || this.#deps.sandbox.active?.name !== app.name) return null;
+    if (status.isError || this.#deps.sandbox.active?.name !== appName) return null;
     const { running, host } = (parseJson(status.text) ?? {}) as {
       running?: unknown;
       host?: unknown;
@@ -700,6 +892,16 @@ export function manifestOf(text: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/** What a start answers once the preview of `blockId` is open at `host`. */
+function shownResult(blockId: string, host: string): StartedPreview {
+  return {
+    shown: true,
+    blockId,
+    host,
+    next_step: 'The user sees the preview now. To see what they see, call sandbox__preview_check.',
+  };
 }
 
 /** The same scopes, in any order. */

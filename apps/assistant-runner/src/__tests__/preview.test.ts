@@ -7,8 +7,12 @@ import {
   CivitaiDevTunnels,
   DEV_TUNNEL_PATH,
   DevTunnelError,
+  OPEN_ATTEMPTS,
+  PREVIEW_OPEN_PATH,
   type DevTunnels,
   type DevTunnelStartInput,
+  type PreviewOpenAnswer,
+  type PreviewOpenInput,
 } from '../app-assistant/dev-tunnel';
 import { PREVIEW_KEEPALIVE_MS, publicKeyOf } from '../app-assistant/preview';
 import {
@@ -31,14 +35,33 @@ const CONNECTED = { host: HOST };
 /** Another host, as the page's Restart preview (no run) may have connected the sandbox to. */
 const RESTARTED_HOST = 'dev-fedcba9876543210.civit.ai';
 
-/** civitai's dev-tunnel endpoints as one run sees them, recording what it was asked. */
+/** A direct preview session's host, as civitai mints one (TEST-ONLY: not a real label or zone). */
+const directHost = (n: number) => `s${String(n).padStart(61, '0')}.preview.example`;
+
+/**
+ * civitai's dev-tunnel endpoints as one run sees them, recording what it was asked. Its
+ * `preview/open` answers `tunnel` (direct preview off) unless `direct` is set; then it answers as
+ * civitai's does: an open session for that preview id is reused as it is (its scopes kept), an id
+ * never used gets a new session, and a used id whose session ended gets `fresh`.
+ */
 class FakeTunnels implements DevTunnels {
   readonly started: DevTunnelStartInput[] = [];
-  readonly kept: { host: string }[] = [];
+  readonly kept: ({ host: string } | { blockId: string })[] = [];
   readonly stopped: string[] = [];
+  readonly opens: PreviewOpenInput[] = [];
+  readonly blockStops: string[] = [];
   startError: unknown = null;
   keepaliveError: unknown = null;
   sessions = [SESSION];
+  direct = false;
+  /** civitai's direct sessions, by block id (one per user and block), and the ids ever used. */
+  readonly directSessions = new Map<
+    string,
+    { previewId: string; sessionId: string; host: string; declaredScopes: string[] }
+  >();
+  readonly usedIds = new Set<string>();
+  /** Every `preview/open` answers `fresh`, whatever the id: a broken civitai. */
+  alwaysFresh = false;
 
   async start(input: DevTunnelStartInput) {
     this.started.push(input);
@@ -47,13 +70,38 @@ class FakeTunnels implements DevTunnels {
     return { sessionId, host: HOST, sshHostPublicKey: HOST_KEY };
   }
 
-  async keepalive(target: { host: string }) {
+  async open(input: PreviewOpenInput): Promise<PreviewOpenAnswer> {
+    this.opens.push(input);
+    if (!this.direct) return { mode: 'tunnel' };
+    if (this.alwaysFresh) return { mode: 'direct', fresh: true };
+    const open = this.directSessions.get(input.blockId);
+    if (open?.previewId === input.previewId)
+      return { mode: 'direct', sessionId: open.sessionId, host: open.host };
+    if (this.usedIds.has(input.previewId)) return { mode: 'direct', fresh: true };
+    this.usedIds.add(input.previewId);
+    const n = this.opens.length;
+    const written = {
+      previewId: input.previewId,
+      sessionId: `bki_TEST_ONLY_direct_${n}`,
+      host: directHost(n),
+      declaredScopes: input.declaredScopes ?? [],
+    };
+    this.directSessions.set(input.blockId, written);
+    return { mode: 'direct', sessionId: written.sessionId, host: written.host };
+  }
+
+  async keepalive(target: { host: string } | { blockId: string }) {
     this.kept.push(target);
     if (this.keepaliveError) throw this.keepaliveError;
   }
 
   async stop(sessionId: string) {
     this.stopped.push(sessionId);
+  }
+
+  async stopBlock(blockId: string) {
+    this.blockStops.push(blockId);
+    return this.directSessions.delete(blockId);
   }
 }
 
@@ -386,7 +434,7 @@ describe('keeping the preview alive', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     expect(tunnels.kept).toHaveLength(keptBefore);
-    expect(tunnels.kept.every((kept) => kept.host === HOST)).toBe(true);
+    expect(tunnels.kept.every((kept) => 'host' in kept && kept.host === HOST)).toBe(true);
   });
 
   it('keeps nothing alive after stop_preview, until the next start', async () => {
@@ -1017,5 +1065,306 @@ describe('the preview opens by itself once the dev server starts', () => {
     opened.push(tools);
     expect(await startDevServer(tools.tools)).toBe(RUNNING);
     expect(tunnelCalls()).toEqual([]);
+  });
+});
+
+describe('direct preview (civitai serves it with no tunnel)', () => {
+  const OLD_ID = 'a'.repeat(32);
+  const ID = 'b'.repeat(32);
+  /** The app's sandbox, with the preview id the service reports for it. */
+  function directApp(previewId = ID) {
+    const record = fake.add('my-app');
+    record.previewId = previewId;
+    tunnels.direct = true;
+    return record;
+  }
+  /** The project runs in `web/`, whose manifest names another block id than the app's key. */
+  function manifestBlock(blockId: string, scopes?: string[]) {
+    fake.tools.set('dev_server_status', () =>
+      JSON.stringify({ running: true, pid: 41, command: 'cd web && npm run dev' })
+    );
+    fake.tools.set('read_file', (args) =>
+      args.path === 'web/block.manifest.json'
+        ? JSON.stringify({
+            path: args.path,
+            content: JSON.stringify({ blockId, ...(scopes ? { scopes } : {}) }),
+          })
+        : 'no such file'
+    );
+  }
+  /** Runs keep-alive ticks until `n` more were kept (a direct tick asks the sandbox nothing). */
+  async function keptMore(n: number) {
+    const target = tunnels.kept.length + n;
+    for (let tries = 0; tunnels.kept.length < target; tries++) {
+      if (tries > 200) throw new Error('no keep-alive tick kept anything');
+      await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
+      if (tunnels.kept.length < target) await new Promise((r) => setTimeout(r, 10));
+    }
+  }
+
+  it('opens through preview/open with the sandbox’s preview id, and takes no tunnel step', async () => {
+    directApp();
+    const { tools, reported } = await open();
+    const result = await call(tools.tools, 'start_preview', { declared_scopes: ['models:read'] });
+    expect(tunnels.opens).toEqual([
+      { blockId: 'my-app', previewId: ID, declaredScopes: ['models:read'] },
+    ]);
+    expect(result).toEqual({
+      shown: true,
+      blockId: 'my-app',
+      host: directHost(1),
+      next_step: expect.stringContaining('sandbox__preview_check'),
+    });
+    expect(tunnelCalls()).toEqual([]);
+    expect(tunnels.started).toEqual([]);
+    expect(JSON.stringify(reported)).not.toContain('bki_TEST_ONLY_direct_1');
+  });
+
+  it('civitai answering `tunnel` (the flag off) is the dev tunnel exactly as before', async () => {
+    directApp();
+    tunnels.direct = false;
+    const { tools } = await open();
+    const result = await call(tools.tools, 'start_preview');
+    expect(tunnels.opens).toHaveLength(1);
+    expect(tunnelCalls()).toEqual(['tunnel_key', 'tunnel_connect']);
+    expect(tunnels.started).toHaveLength(1);
+    expect(result).toMatchObject({ shown: true, host: HOST });
+  });
+
+  it('a resumed app whose old id is used opens a new session in exactly two preview/open calls', async () => {
+    const record = directApp(OLD_ID);
+    // The app's earlier session on that id ended (it paused, and was resumed).
+    tunnels.usedIds.add(OLD_ID);
+    const { tools } = await open();
+    const result = await call(tools.tools, 'start_preview');
+    expect(fake.rotations).toEqual([{ sandbox: record.name, previewId: record.previewId }]);
+    const rotated = fake.rotations[0]!.previewId;
+    expect(rotated).not.toBe(OLD_ID);
+    expect(tunnels.opens.map((o) => o.previewId)).toEqual([OLD_ID, rotated]);
+    expect(result).toMatchObject({ shown: true, host: directHost(2) });
+    expect(tunnelCalls()).toEqual([]);
+  });
+
+  it('a second `fresh` is an error, not a loop: one rotation, two opens', async () => {
+    directApp(OLD_ID);
+    tunnels.alwaysFresh = true;
+    const { tools, reported } = await open();
+    const result = await call(tools.tools, 'start_preview');
+    expect(String(result.error)).toMatch(/^The preview could not start just now/);
+    expect(tunnels.opens).toHaveLength(2);
+    expect(fake.rotations).toHaveLength(1);
+    expect(tunnelCalls()).toEqual([]);
+    expect(reported.find((r) => r.name === 'start_preview')).toMatchObject({ isError: true });
+  });
+
+  it('a later run’s stop_preview ends the earlier run’s session', async () => {
+    directApp();
+    const first = await open();
+    await call(first.tools.tools, 'start_preview');
+    expect(tunnels.directSessions.has('my-app')).toBe(true);
+    await first.tools.close();
+
+    // A later reply: it opened nothing, and no tunnel runs in the sandbox.
+    const later = await open();
+    expect(await call(later.tools.tools, 'stop_preview')).toEqual({ stopped: true });
+    expect(tunnels.blockStops).toEqual(['my-app']);
+    expect(tunnels.directSessions.has('my-app')).toBe(false);
+  });
+
+  // Invariant guard (green before this change too): with a tunnel running in the sandbox, a later
+  // run's stop_preview stays the tunnel's own disconnect and asks civitai nothing by block.
+  it('a later run’s stop_preview of a running tunnel only disconnects it, as before', async () => {
+    fake.add('my-app');
+    fake.tunnelHosts.set(sandboxOf('my-app'), RESTARTED_HOST);
+    const { tools } = await open();
+    expect(await call(tools.tools, 'stop_preview')).toEqual({ stopped: true });
+    expect(tunnelCalls()).toEqual(['tunnel_disconnect']);
+    expect(tunnels.blockStops).toEqual([]);
+  });
+
+  it('an app whose block id differs from its key is kept alive and stopped under the block id', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    directApp();
+    manifestBlock('my-app-block');
+    const command = 'cd web && npm run dev';
+    fake.tools.set('dev_server_start', () => JSON.stringify({ running: true, command }));
+    const { tools } = await open();
+    // The preview opens by itself, for the block id the manifest names.
+    await call(tools.tools, 'sandbox__dev_server_start', { command });
+    expect(tunnels.opens.map((o) => o.blockId)).toEqual(['my-app-block']);
+
+    await keptMore(2);
+    expect(tunnels.kept).toEqual([{ blockId: 'my-app-block' }, { blockId: 'my-app-block' }]);
+    // A direct preview has no tunnel to ask about.
+    expect(fake.callsTo('tunnel_status')).toBe(0);
+
+    expect(await call(tools.tools, 'stop_preview')).toEqual({ stopped: true });
+    expect(tunnels.blockStops).toEqual(['my-app-block']);
+    // Stopped: nothing is kept alive any more.
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 3);
+    expect(tunnels.kept).toHaveLength(2);
+  });
+
+  it('a later run stops it under the block id its manifest names, not the app’s key', async () => {
+    directApp();
+    manifestBlock('my-app-block');
+    const first = await open();
+    await call(first.tools.tools, 'start_preview', { block_id: 'my-app-block' });
+    await first.tools.close();
+    const later = await open();
+    await call(later.tools.tools, 'stop_preview');
+    expect(tunnels.blockStops).toEqual(['my-app-block']);
+    expect(tunnels.directSessions.size).toBe(0);
+  });
+
+  it('a session it may not have opened is not taken to have the scopes it was asked for', async () => {
+    directApp();
+    // An earlier reply opened the app's preview with no scopes.
+    const first = await open();
+    await call(first.tools.tools, 'start_preview');
+    await first.tools.close();
+
+    // This reply asks for a scope: civitai answers the open session as it is (no scopes), so the
+    // runner ends it and opens a new one, which civitai writes with the scope.
+    const later = await open();
+    await call(later.tools.tools, 'start_preview', { declared_scopes: ['ai:write:budgeted'] });
+    expect(tunnels.opens.map((o) => o.declaredScopes)).toEqual([undefined, ['ai:write:budgeted']]);
+    // The first ask (`reuse`) did not get the scope; it was ended, and opened again with it.
+    await call(later.tools.tools, 'start_preview', { declared_scopes: ['ai:write:budgeted'] });
+    expect(tunnels.blockStops).toEqual(['my-app']);
+    expect(tunnels.directSessions.get('my-app')?.declaredScopes).toEqual(['ai:write:budgeted']);
+    // Now known to have it: asked again, the same preview, and nothing more is asked of civitai.
+    const opens = tunnels.opens.length;
+    await call(later.tools.tools, 'start_preview', { declared_scopes: ['ai:write:budgeted'] });
+    expect(tunnels.opens).toHaveLength(opens);
+    expect(tunnels.blockStops).toEqual(['my-app']);
+  });
+
+  it('a keep-alive answered NOT_FOUND forgets the session, so the next start opens again', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    directApp();
+    const { tools } = await open();
+    await call(tools.tools, 'start_preview');
+    tunnels.keepaliveError = new DevTunnelError('gone', 404, 'NOT_FOUND');
+    await keptMore(1);
+    tunnels.keepaliveError = null;
+    await vi.waitFor(async () => {
+      await call(tools.tools, 'start_preview');
+      expect(tunnels.opens).toHaveLength(2);
+    });
+  });
+});
+
+describe('CivitaiDevTunnels: direct preview calls', () => {
+  const SECRET = 'test-only-runner-secret-0123456789abcdef';
+  const GRANT = 'test-only-grant';
+  const ID = 'c'.repeat(32);
+  function client(answer: (url: string) => Response | Promise<Response>) {
+    const sent: { url: string; body: Record<string, unknown> }[] = [];
+    const tunnels = new CivitaiDevTunnels({
+      civitaiUrl: 'https://civitai.example',
+      secret: SECRET,
+      log: quiet,
+      fetch: async (input, init) => {
+        sent.push({ url: String(input), body: JSON.parse(String(init!.body)) });
+        return answer(String(input));
+      },
+    });
+    return { sent, run: tunnels.forRun(async () => GRANT) };
+  }
+  const busy = () => Response.json({ error: 'busy', code: 'unavailable' }, { status: 503 });
+
+  it('opens at preview/open, keeps and stops by block id, with the run’s grant', async () => {
+    const { sent, run } = client((url) =>
+      url.endsWith('/open')
+        ? Response.json({ mode: 'direct', sessionId: 'bki_x', host: directHost(7) })
+        : Response.json({ stopped: true })
+    );
+    expect(await run.open({ blockId: 'my-app', previewId: ID })).toEqual({
+      mode: 'direct',
+      sessionId: 'bki_x',
+      host: directHost(7),
+    });
+    await run.keepalive({ blockId: 'my-app' });
+    expect(await run.stopBlock('my-app')).toBe(true);
+    expect(sent).toEqual([
+      {
+        url: `https://civitai.example/${PREVIEW_OPEN_PATH}`,
+        body: { grant: GRANT, blockId: 'my-app', previewId: ID },
+      },
+      {
+        url: `https://civitai.example/${DEV_TUNNEL_PATH}/keepalive`,
+        body: { grant: GRANT, blockId: 'my-app' },
+      },
+      {
+        url: `https://civitai.example/${DEV_TUNNEL_PATH}/stop`,
+        body: { grant: GRANT, blockId: 'my-app' },
+      },
+    ]);
+  });
+
+  it('reads `tunnel` and `fresh`; an odd answer is `unavailable`', async () => {
+    for (const [body, expected] of [
+      [{ mode: 'tunnel' }, { mode: 'tunnel' }],
+      [
+        { mode: 'direct', fresh: true },
+        { mode: 'direct', fresh: true },
+      ],
+    ] as const) {
+      const { run } = client(() => Response.json(body));
+      expect(await run.open({ blockId: 'my-app', previewId: ID })).toEqual(expected);
+    }
+    const { run } = client(() => Response.json({ mode: 'direct' }));
+    await expect(run.open({ blockId: 'my-app', previewId: ID })).rejects.toMatchObject({
+      code: 'unavailable',
+    });
+  });
+
+  describe('a 503 (another open of the app holds its lock)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    });
+
+    it('is asked again, and the open that follows is answered', async () => {
+      let n = 0;
+      const { sent, run } = client(() =>
+        ++n < 3
+          ? busy()
+          : Response.json({ mode: 'direct', sessionId: 'bki_y', host: directHost(8) })
+      );
+      const opened = run.open({ blockId: 'my-app', previewId: ID });
+      await vi.runAllTimersAsync();
+      expect(await opened).toMatchObject({ mode: 'direct', sessionId: 'bki_y' });
+      expect(sent).toHaveLength(3);
+    });
+
+    it(`gives up after ${OPEN_ATTEMPTS} asks, as unavailable; a refusal is never asked again`, async () => {
+      const { sent, run } = client(busy);
+      const opened = run.open({ blockId: 'my-app', previewId: ID }).catch((e: unknown) => e);
+      await vi.runAllTimersAsync();
+      expect(await opened).toMatchObject({ status: 503, code: 'unavailable' });
+      expect(sent).toHaveLength(OPEN_ATTEMPTS);
+      expect(OPEN_ATTEMPTS).toBe(4);
+
+      const refused = client(() =>
+        Response.json({ error: 'Too many', code: 'TOO_MANY_REQUESTS' }, { status: 429 })
+      );
+      await expect(refused.run.open({ blockId: 'my-app', previewId: ID })).rejects.toMatchObject({
+        status: 429,
+      });
+      expect(refused.sent).toHaveLength(1);
+    });
+  });
+
+  it('a civitai without the endpoint (a bare 404) means the tunnel; its own 404 is a refusal', async () => {
+    const bare = client(() => new Response('<html>404</html>', { status: 404 }));
+    expect(await bare.run.open({ blockId: 'my-app', previewId: ID })).toEqual({ mode: 'tunnel' });
+    const owned = client(() =>
+      Response.json({ error: 'No such app', code: 'NOT_FOUND' }, { status: 404 })
+    );
+    await expect(owned.run.open({ blockId: 'my-app', previewId: ID })).rejects.toMatchObject({
+      status: 404,
+      code: 'NOT_FOUND',
+    });
   });
 });
