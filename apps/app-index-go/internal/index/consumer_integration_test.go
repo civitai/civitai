@@ -19,3 +19,13 @@ func TestIntegrationScenariosPostgres(t *testing.T) {
 		return s
 	})
 }
+
+func TestIntegrationListingScenariosPostgres(t *testing.T) {
+	runListingScenarios(t, func(t *testing.T) store.Listings {
+		s, err := store.NewListingsPostgres(context.Background(), pgtest.Pool(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	})
+}

@@ -47,6 +47,34 @@ func TestOverrides(t *testing.T) {
 	}
 }
 
+// APP_INDEX_LISTINGS is off unless set on; any other value refuses to start, as does on with too
+// few connections for a second consumer lock.
+func TestListings(t *testing.T) {
+	for v, want := range map[string]bool{"": false, "off": false, "false": false, "0": false, "on": true, "TRUE": true, "1": true} {
+		m := base()
+		m["APP_INDEX_LISTINGS"] = v
+		c, err := FromEnv(env(m))
+		if err != nil || c.Listings != want {
+			t.Errorf("APP_INDEX_LISTINGS=%q: listings %v err %v, want %v", v, c != nil && c.Listings, err, want)
+		}
+	}
+	for over, want := range map[[2]string]string{
+		{"yes", "4"}: "APP_INDEX_LISTINGS must be on or off",
+		{"on", "2"}:  "APP_INDEX_DB_MAX_CONNS must be at least 3 with APP_INDEX_LISTINGS on",
+	} {
+		m := base()
+		m["APP_INDEX_LISTINGS"], m["APP_INDEX_DB_MAX_CONNS"] = over[0], over[1]
+		if _, err := FromEnv(env(m)); err == nil || err.Error() != want {
+			t.Errorf("%v: err %v, want %q", over, err, want)
+		}
+	}
+	m := base()
+	m["APP_INDEX_DB_MAX_CONNS"] = "2"
+	if _, err := FromEnv(env(m)); err != nil {
+		t.Errorf("listings off with 2 connections: %v", err)
+	}
+}
+
 func TestInvalid(t *testing.T) {
 	cases := map[string]map[string]string{
 		"APP_INDEX_REGISTRY_URL":    {"APP_INDEX_REGISTRY_URL": ""},

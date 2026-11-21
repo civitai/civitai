@@ -69,19 +69,22 @@ const (
 )
 
 // Change is one event's effect on a generation: replace the row (Upsert), remove it (Delete) or
-// nothing (Progress), and in every case store Cursor.
+// nothing (Progress), and in every case store Cursor. An upsert carries the row of its store's
+// stream: App for the app index, Listing for the listings read model.
 type Change struct {
-	Kind   ChangeKind
-	App    App    // ChangeUpsert
-	URN    string // ChangeDelete
-	Cursor string
+	Kind    ChangeKind
+	App     App     // ChangeUpsert, app index
+	Listing Listing // ChangeUpsert, listings read model
+	URN     string  // ChangeDelete
+	Cursor  string
 }
 
 // ErrNoGeneration is returned for a generation that does not exist (any more).
 var ErrNoGeneration = errors.New("store: no such generation")
 
-// Store is the index's state.
-type Store interface {
+// Generations is the part of a store a stream consumer writes: the generations, their cursors and
+// their rows. Store (the app index) and Listings (the listings read model) both implement it.
+type Generations interface {
 	// Lock takes the consumer lock (only its holder follows the registry and writes); ErrLocked
 	// while another process holds it. The func releases it.
 	Lock(ctx context.Context) (func(), error)
@@ -99,6 +102,11 @@ type Store interface {
 	// Live stores the cursor of a `Live` event. When gen is building, it becomes the serving
 	// generation in the same transaction and the old serving one is dropped; promoted reports it.
 	Live(ctx context.Context, gen int64, cursor string) (promoted bool, err error)
+}
+
+// Store is the app index's state.
+type Store interface {
+	Generations
 	// Search answers a query from the serving generation. With none, ErrNotReady.
 	Search(ctx context.Context, q Query) (Page, error)
 }
@@ -162,6 +170,15 @@ func AppFromEntity(urn, rev string, body json.RawMessage) (App, error) {
 		*f.dst = s
 	}
 	return a, nil
+}
+
+// DecodeApp is the upsert change of an app@v1 entity (AppFromEntity).
+func DecodeApp(urn, rev string, body json.RawMessage) (Change, error) {
+	a, err := AppFromEntity(urn, rev, body)
+	if err != nil {
+		return Change{}, err
+	}
+	return Change{Kind: ChangeUpsert, App: a}, nil
 }
 
 func nullableString(raw json.RawMessage) (string, error) {

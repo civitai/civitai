@@ -1,8 +1,10 @@
 # App store listings read model: design
 
-**Status:** slice 1 of N. This PR adds the adapter side of `store-listing@v1`, dark
-(`src/server/registry-adapter/listing-stream.ts`). Nothing reads it yet. The app-index-go ingest,
-read API, shadow diff and cutover are later slices, listed under Rollout.
+**Status:** slices 1 and 2 of 8 done, both dark. Slice 1 is the adapter side of `store-listing@v1`
+(`src/server/registry-adapter/listing-stream.ts`). Slice 2 is the app-index-go ingest behind
+`APP_INDEX_LISTINGS` (`internal/index/listings.go`, `internal/store/listing*.go`; README,
+"Listings read model"). Nothing serves from it yet: the read API, shadow diff and cutover are later
+slices, listed under Rollout.
 
 The goal: the user-facing app store reads its listings from a read model built from the registry,
 instead of from Prisma reads in `app-listing.service.ts`. The surfaces covered are the store grid
@@ -232,12 +234,12 @@ alongside the DB read. They serve the DB answer and compare the two.
 
 ## Cutover flags
 
-This PR adds only the first. The other two names are proposals.
+Slice 1 added the first and slice 2 the second. The third name is a proposal.
 
 | Flag                                            | Values                            | What                                                                                                    |
 | ----------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `REGISTRY_ADAPTER_LISTING_RELAYS` (adapter env) | relay client ids                  | the listing stream exists, for those relays only. Empty means off (this PR)                             |
-| `APP_INDEX_LISTINGS` (app-index-go env)         | on/off                            | ingest `store-listing@v1` and serve the listing API (slice 2)                                           |
+| `APP_INDEX_LISTINGS` (app-index-go env)         | on/off                            | ingest `store-listing@v1` (slice 2), and serve the listing API (slice 3). Unset means off               |
 | `app-listings-read-model` (Flipt)               | off / shadow / serve, per surface | the web tier's read path (slices 4–6), with the existing per-process breaker. Any failure serves the DB |
 
 Rollback at each step is the previous flag value. The DB read path is never removed during this
@@ -263,23 +265,32 @@ served for a week.
 
 ## Rollout
 
-1. **Slice 1 (this PR):** `store-listing@v1` in the adapter, dark. Unset, nothing changes, and no
+1. **Slice 1 (done):** `store-listing@v1` in the adapter, dark. Unset, nothing changes, and no
    extra query runs. Set, there are two extra catalog queries per poll (`loadListingExtras`: the
    listings' media and the red overrides), run beside the existing ones. The stream reaches only the
    listed relays. If the media query (`findMany`) fails, only the listing stream fails: the failure
    is logged, its subscriptions end `unavailable`, and every other stream is served as before. If
    the overrides read fails, it returns no overrides, so they silently drop out of the bodies until
    the next good read (Media, above).
-2. **Slice 2: app-index-go ingest.** A second consumer for `store-listing@v1` (own generation and cursor,
-   own table), dark behind `APP_INDEX_LISTINGS`. No read API yet. It needs the
+2. **Slice 2 (done): app-index-go ingest.** A second consumer for `store-listing@v1` (own
+   generations, cursor and consumer lock; own tables: `app_index_listings`, and
+   `app_index_listing_media` with one row per media item as sent), dark behind
+   `APP_INDEX_LISTINGS`. No read API yet. Unset, nothing of it exists: no tables, no series, no
+   subscription. Switching it on needs the
    service-identity rollout (README, "Rollout order": hub settings, then
    `REGISTRY_ADAPTER_SERVICE_CLIENTS`, then the index client), then
    `REGISTRY_ADAPTER_LISTING_RELAYS` set to `registry-exp`'s relay client id. The gateways route by
    namespace, so the new schema needs no routing of its own.
-   - The ingest must treat a snapshot with zero listings as suspect: hold the serving generation and
-     alert, rather than switch to it. A catalog read that legitimately empties is rare. A failed
-     listing read is already kept out of the stream: the adapter ends listing subscriptions
-     `unavailable` and never serves the failure as an empty set (`CatalogRead.listingsFailed`).
+   - A snapshot with zero listings is suspect: the ingest holds the serving generation, logs and
+     counts it (`app_index_listings_empty_snapshots_total`), and takes the snapshot again after the
+     longest backoff, rather than switch to it. A catalog read that legitimately empties is rare. A
+     failed listing read is already kept out of the stream: the adapter ends listing subscriptions
+     `unavailable` and never serves the failure as an empty set (`CatalogRead.listingsFailed`), and
+     the ingest resumes from its cursor after `unavailable`, deleting nothing.
+   - Media are stored unfiltered, each item with its own rating and host. The read API (slice 3)
+     must apply `listingMediaCeiling` and `redHostMediaCeiling` per request (Media, above).
+   - Also in slice 2: a test of the live `loadListingExtras` query (`catalog-source.live.test.ts`),
+     and the NsfwLevel-to-rating ladder in one place.
 3. **Slice 3: read API.** `GET /listings` (sort, paging, filters, stats, full cards) and
    `GET /listings/{slug}` (detail), with the viewer gates. It also adds the detail fields to
    `store-listing@v1` (additive).

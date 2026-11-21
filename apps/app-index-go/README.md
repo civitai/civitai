@@ -105,6 +105,40 @@ once the steps are done.
   exchanged token lasts at most that long, and each expiry ends the stream with `invalid_token`,
   which resumes from the cursor with a new token.
 
+## Listings read model (dark)
+
+With `APP_INDEX_LISTINGS=on`, the process runs a second consumer beside the app one: it follows
+`urn:schema:apps.civitai.com:store-listing@v1` into tables of its own (`app_index_listing_cursors`,
+`app_index_listings`, `app_index_listing_media`), with its own generations, cursor and consumer
+lock, and the same rules as above (`internal/index`). It shares the app consumer's subscriber and
+token. Unset or `off`, nothing of it exists: its tables are not created, no `app_index_listings_*`
+series is registered and nothing subscribes to the schema. There is no read API yet, and `/search`,
+`/readyz` and the `app_index_*` series are the app index's alone. The design and its later slices:
+`LISTINGS-READ-MODEL.md`.
+
+- **Media** are stored exactly as the stream sends them, one row per item in stream order, each
+  with its own `nsfwLevel`, `rating` and `host` (`red` for a civitai.red override). No ceiling is
+  applied at ingest. The stream's per-audience filter is coarser than the store's, so the read API
+  must apply the listing-rating ceiling and the host rule per request (`store.ListingMedia`).
+- **An empty snapshot is held.** A snapshot that reaches `Live` with no listing is never switched
+  to: the serving generation keeps every row, the hold is logged and counted
+  (`app_index_listings_empty_snapshots_total`, `app_index_listings_reconnects_total{reason="empty_snapshot"}`),
+  and the snapshot is taken again from an empty cursor after the longest backoff. With nothing
+  serving yet, the read model stays not ready. This covers snapshots only: deletes that arrive one
+  by one on a resumed stream are applied as they come.
+- **`unavailable`** (the adapter's answer when its listing read failed) deletes nothing: the
+  subscription is opened again from the stored cursor, like any other `unavailable`.
+- A body missing a field the read model relies on, or a media item with an unknown slot, host or
+  rating, is treated as deleted (`app_index_listings_events_applied_total{type="invalid"}`): an item
+  whose rating is unknown could not be gated.
+
+What has to be in place before it is switched on: the service identity (above, "Rollout order"),
+and the listing relay gate on the registry adapter (`REGISTRY_ADAPTER_LISTING_RELAYS`) naming the
+relay this service subscribes through. Without them the subscription is either refused or answered
+with an empty snapshot (which is held, as above), and retried with backoff; the app index is
+unaffected. A second consumer lock needs `APP_INDEX_DB_MAX_CONNS` of at
+least 3.
+
 ## Configuration
 
 See `.env.example`. `APP_INDEX_REGISTRY_URL` and `APP_INDEX_DATABASE_URL` are required. The service

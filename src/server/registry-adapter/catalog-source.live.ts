@@ -9,7 +9,10 @@ import { registryIconUrl, registryListingMedia } from '~/server/registry-adapter
 import { listingMediaImageSelect } from '~/server/services/blocks/listing-media-audience';
 import { readListingRedMediaManyForRender } from '~/server/services/blocks/listing-media-split.service';
 import { listAppListingsSchema } from '~/server/schema/blocks/app-listing-read.schema';
-import { listAvailableListings } from '~/server/services/blocks/app-listing.service';
+import {
+  listAvailableListings,
+  listingHydrateSelect,
+} from '~/server/services/blocks/app-listing.service';
 import { readListingForkParents } from '~/server/services/blocks/app-fork.service';
 import { readListingSourceRepoUrls } from '~/server/services/blocks/app-listing-source-repo.service';
 import { resolvePublicAppsCatalogScope } from '~/server/services/blocks/public-apps-catalog';
@@ -96,6 +99,10 @@ export function liveCatalogReadDeps({
     },
 
     // Only while the listing stream is on: one query for the whole catalog, plus the civitai.red overrides.
+    // The icon, cover and screenshots are the store's own selects (`listingHydrateSelect`), so the
+    // stream reads the same images, screenshot filter and order as the card and detail it mirrors.
+    // Only those pieces: the whole select reads columns the stream never carries (the manifest,
+    // the connect client), and its metric piece reads four counters where one is needed.
     ...(listings
       ? {
           async loadListingExtras(listingIds: string[]) {
@@ -106,13 +113,9 @@ export function liveCatalogReadDeps({
                   id: true,
                   description: true,
                   createdAt: true,
-                  icon: { select: listingMediaImageSelect },
-                  cover: { select: listingMediaImageSelect },
-                  screenshots: {
-                    where: { imageId: { not: null } },
-                    orderBy: [{ order: 'asc' }, { id: 'asc' }],
-                    select: { caption: true, image: { select: listingMediaImageSelect } },
-                  },
+                  icon: listingHydrateSelect.icon,
+                  cover: listingHydrateSelect.cover,
+                  screenshots: listingHydrateSelect.screenshots,
                   metric: { select: { installCount: true } },
                 },
               }),

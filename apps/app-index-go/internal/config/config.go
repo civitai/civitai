@@ -38,6 +38,11 @@ type Config struct {
 	BackoffBase, BackoffMax time.Duration
 	// SearchTimeout bounds one search query (APP_INDEX_SEARCH_TIMEOUT_MS, default 2000).
 	SearchTimeout time.Duration
+	// Listings switches on the second consumer, of the store listing schema into the listings read
+	// model (APP_INDEX_LISTINGS: on/true/1, or off/false/0; unset is off). Off, nothing changes: no
+	// subscription, no tables, no series. It holds a second consumer lock, so it needs
+	// APP_INDEX_DB_MAX_CONNS of at least 3.
+	Listings bool
 }
 
 // Client is the index's OAuth client for the client credentials grant.
@@ -104,6 +109,17 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 	conns, err := intEnv(getenv, "APP_INDEX_DB_MAX_CONNS", 4, 2, 64)
 	if err != nil {
 		return nil, err
+	}
+	switch strings.ToLower(strings.TrimSpace(getenv("APP_INDEX_LISTINGS"))) {
+	case "", "off", "false", "0":
+	case "on", "true", "1":
+		c.Listings = true
+	default:
+		return nil, errors.New("APP_INDEX_LISTINGS must be on or off")
+	}
+	if c.Listings && conns < 3 {
+		// Each consumer holds one connection for its lock; searches and writes need another.
+		return nil, errors.New("APP_INDEX_DB_MAX_CONNS must be at least 3 with APP_INDEX_LISTINGS on")
 	}
 	c.DBMaxConns = int32(conns) //nolint:gosec // bounded to [2, 64] above
 	return c, nil

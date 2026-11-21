@@ -36,7 +36,7 @@ func upsert(f fixture, cursor string) Change {
 	return Change{Kind: ChangeUpsert, App: f.app(), Cursor: cursor}
 }
 
-func mustApply(t *testing.T, s Store, gen int64, cs ...Change) {
+func mustApply(t *testing.T, s Generations, gen int64, cs ...Change) {
 	t.Helper()
 	for _, c := range cs {
 		if err := s.Apply(t.Context(), gen, c); err != nil {
@@ -45,7 +45,7 @@ func mustApply(t *testing.T, s Store, gen int64, cs ...Change) {
 	}
 }
 
-func mustLive(t *testing.T, s Store, gen int64, cursor string) bool {
+func mustLive(t *testing.T, s Generations, gen int64, cursor string) bool {
 	t.Helper()
 	p, err := s.Live(t.Context(), gen, cursor)
 	if err != nil {
@@ -54,7 +54,7 @@ func mustLive(t *testing.T, s Store, gen int64, cursor string) bool {
 	return p
 }
 
-func mustBuilding(t *testing.T, s Store) Generation {
+func mustBuilding(t *testing.T, s Generations) Generation {
 	t.Helper()
 	g, err := s.NewBuilding(t.Context(), schemaURN, 1)
 	if err != nil {
@@ -63,7 +63,7 @@ func mustBuilding(t *testing.T, s Store) Generation {
 	return g
 }
 
-func mustState(t *testing.T, s Store) State {
+func mustState(t *testing.T, s Generations) State {
 	t.Helper()
 	st, err := s.State(t.Context())
 	if err != nil {

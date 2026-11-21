@@ -1,4 +1,3 @@
-import { NsfwLevel } from '~/server/common/enums';
 import type { ListingMediaImage } from '~/server/services/blocks/listing-media-audience';
 import {
   gatedListingIconUrl,
@@ -13,7 +12,11 @@ import {
   listingIconUrl,
   listingMediaEdgeUrl,
 } from '~/server/services/blocks/listing-media-url';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import type { ImageRating } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  imageRatingOfNsfwLevel,
+} from '~/shared/constants/browsingLevel.constants';
 
 /**
  * The icon an app entity publishes: the listing's OWN icon, gated per image at the listing's own
@@ -29,7 +32,8 @@ export function registryIconUrl(row: {
   return gatedListingIconUrl(row.icon, listingRatingMediaCeiling(row.contentRating));
 }
 
-export type MediaRating = 'pg' | 'pg13' | 'r' | 'x' | 'xxx';
+/** A media item's own rating: the image rating ladder (`IMAGE_RATING_LADDER`), XXX distinct. */
+export type MediaRating = ImageRating;
 
 /**
  * One image of a store listing, rated on its own (`store-listing@v1` `media`). The stream carries
@@ -52,14 +56,6 @@ export type ListingMediaItem = {
   coverUrl?: string;
 };
 
-const RATING_OF_LEVEL: ReadonlyMap<number, MediaRating> = new Map([
-  [NsfwLevel.PG, 'pg'],
-  [NsfwLevel.PG13, 'pg13'],
-  [NsfwLevel.R, 'r'],
-  [NsfwLevel.X, 'x'],
-  [NsfwLevel.XXX, 'xxx'],
-]);
-
 /**
  * The image's rating, when it passes the store's per-image moderation check at every level
  * (`isListingImageVisible`: scanned, not flagged, not restricted, not Blocked); null otherwise,
@@ -67,7 +63,7 @@ const RATING_OF_LEVEL: ReadonlyMap<number, MediaRating> = new Map([
  */
 function publishableRating(image: ListingMediaImage | null | undefined): MediaRating | null {
   if (!image?.url || !isListingImageVisible(image, allBrowsingLevelsFlag)) return null;
-  return RATING_OF_LEVEL.get(image.nsfwLevel) ?? null;
+  return imageRatingOfNsfwLevel(image.nsfwLevel);
 }
 
 /**

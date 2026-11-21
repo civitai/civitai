@@ -76,7 +76,7 @@ func run(log *slog.Logger) error {
 		Schema:  cfg.Schema,
 		Layout:  index.LayoutVersion,
 		Log:     log.With("component", "consumer"),
-		Metrics: m,
+		Metrics: m.Stream,
 		Backoff: index.Backoff{Base: cfg.BackoffBase, Max: cfg.BackoffMax},
 	}
 	auth := "anonymous"
@@ -90,6 +90,13 @@ func run(log *slog.Logger) error {
 		consumer.Tokens = src
 		auth = "client_credentials"
 	}
+	// The listings read model's consumer (APP_INDEX_LISTINGS); nil while off. It shares the app
+	// consumer's subscriber and token, never its store, cursor or lock.
+	listings, err := index.ListingsConsumer(ctx, cfg.Listings, *consumer, reg,
+		func(ctx context.Context) (store.Listings, error) { return store.NewListingsPostgres(ctx, pool) })
+	if err != nil {
+		return err
+	}
 	srv := &http.Server{
 		Addr: cfg.Addr,
 		Handler: (&api.Server{Store: st, Metrics: m, Gatherer: reg, Log: log.With("component", "api"),
@@ -99,12 +106,20 @@ func run(log *slog.Logger) error {
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       100 * time.Second,
 	}
-	log.Info("app-index-go starting", "addr", cfg.Addr, "schema", cfg.Schema, "authenticated", auth != "anonymous", "auth", auth)
+	log.Info("app-index-go starting", "addr", cfg.Addr, "schema", cfg.Schema, "authenticated", auth != "anonymous", "auth", auth,
+		"listings", listings != nil)
 
 	consumed := make(chan struct{})
 	go func() {
 		defer close(consumed)
 		_ = consumer.Run(ctx)
+	}()
+	listingsDone := make(chan struct{})
+	go func() {
+		defer close(listingsDone)
+		if listings != nil {
+			_ = listings.Run(ctx)
+		}
 	}()
 	served := make(chan error, 1)
 	go func() { served <- srv.ListenAndServe() }()
@@ -118,6 +133,7 @@ func run(log *slog.Logger) error {
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
 	<-consumed
+	<-listingsDone
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
