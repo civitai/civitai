@@ -202,7 +202,7 @@ func Marked(raw []byte) bool {
 	switch {
 	case err == nil:
 		// JSON null leaves s empty: not a string, no marker.
-		return s != ""
+		return false
 	case errors.As(err, &typeErr):
 		// A JSON value that is not a string.
 		return false
