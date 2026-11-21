@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptModule from '~/server/flipt/client';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
+  findInlineGraphProblem,
   findStepPositionProblem,
   stepPositionsRefusal,
 } from '~/server/services/blocks/app-step-positions';
@@ -54,25 +55,42 @@ describe('findStepPositionProblem', () => {
       expect(findStepPositionProblem(input, VIEWER)).toBeNull();
     });
 
-    it("leaves a repeat's for clause to its template", () => {
+    it("leaves a repeat step's for clause to its template", () => {
+      const clause = { $ref: '$arguments', path: 'items', as: 'item' };
+      const repeat = (template: unknown) => ({ for: clause, template });
       expect(
-        findStepPositionProblem(
-          {
-            for: { $ref: '$arguments', path: 'items', as: 'item' },
-            template: { input: { image: ref() } },
-          },
-          VIEWER
-        )
+        findStepPositionProblem(repeat({ input: { image: ref() } }), VIEWER, undefined, 'repeat')
       ).toBeNull();
       expect(
-        findStepPositionProblem(
-          {
-            for: { $ref: '$arguments', path: 'items', as: 'item' },
-            template: { input: { model: ref() } },
-          },
-          VIEWER
-        )
+        findStepPositionProblem(repeat({ input: { model: ref() } }), VIEWER, undefined, 'repeat')
       ).toMatchObject({ form: 'reference', key: 'model' });
+      // A repeat nested in another step's template is exempt the same way.
+      expect(
+        findStepPositionProblem(
+          { template: { $type: 'repeat', input: repeat({ input: { image: ref() } }) } },
+          VIEWER,
+          undefined,
+          'repeat'
+        )
+      ).toBeNull();
+    });
+
+    it('refuses a for/as reference in any step that is not a repeat', () => {
+      expect(
+        findStepPositionProblem(
+          { for: { $ref: '$arguments', path: 'items', as: 'item' } },
+          VIEWER,
+          undefined,
+          'imageGen'
+        )
+      ).toMatchObject({ form: 'reference', key: 'for' });
+    });
+
+    it('refuses an argument that places itself instead of overflowing', () => {
+      const args: Record<string, unknown> = { a: { $ref: '$arguments', path: 'a' } };
+      expect(findStepPositionProblem({ model: ref({ path: 'a' }) }, VIEWER, args)).toMatchObject({
+        form: 'reference',
+      });
     });
   });
 
@@ -171,6 +189,19 @@ describe('findStepPositionProblem', () => {
       ).toMatchObject({ form: 'reference', key: 'content' });
     });
 
+    it("refuses another user's file named in chat text, and lets the viewer's own through", () => {
+      const say = (content: string) => ({ messages: [{ role: 'user', content }] });
+      expect(findStepPositionProblem(say(`use (${otherJob}) please`), VIEWER)).toMatchObject({
+        form: 'orchestrator-file',
+        key: 'content',
+      });
+      expect(findStepPositionProblem(say(`see "${blob}".`), VIEWER)).toMatchObject({
+        form: 'orchestrator-file',
+      });
+      expect(findStepPositionProblem(say(`use ${ownJob} please`), VIEWER)).toBeNull();
+      expect(findStepPositionProblem(say('the orchestrator: a word'), VIEWER)).toBeNull();
+    });
+
     it('leaves a sentence that contains a link alone', () => {
       expect(
         findStepPositionProblem({ prompt: 'a cat, see https://example.com for more' }, VIEWER)
@@ -227,6 +258,39 @@ describe('findStepPositionProblem', () => {
       findStepPositionProblem(
         { model: 'urn:air:sdxl:checkpoint:civitai:1@2', prompt: 'a cat', steps: 20 },
         VIEWER
+      )
+    ).toBeNull();
+  });
+});
+
+describe('findInlineGraphProblem', () => {
+  const graph = (inputs: Record<string, unknown>) => ({
+    resources: ['urn:air:sdxl:checkpoint:civitai:1@2'],
+    workflow: {
+      '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'x' } },
+      '2': { class_type: 'KSampler', inputs },
+    },
+  });
+
+  it('refuses a reference in any node input, and a fake link that carries one', () => {
+    expect(findInlineGraphProblem(graph({ seed: ref() }))).toEqual({
+      form: 'reference',
+      key: 'seed',
+    });
+    expect(findInlineGraphProblem(graph({ model: [ref()] }))).toMatchObject({ form: 'reference' });
+  });
+
+  it('refuses an orchestrator file, with or without the urn prefix', () => {
+    expect(findInlineGraphProblem(graph({ model: 'orchestrator:blob@abc' }))).toMatchObject({
+      form: 'orchestrator-file',
+      key: 'model',
+    });
+  });
+
+  it('lets a real link, a literal and a media URL through', () => {
+    expect(
+      findInlineGraphProblem(
+        graph({ model: ['1', 0], seed: 4, image: 'https://image.civitai.com/x.jpeg' })
       )
     ).toBeNull();
   });

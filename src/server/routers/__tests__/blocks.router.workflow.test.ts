@@ -7476,6 +7476,23 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 
+    // The inline graph is one step with no arguments: nothing in it is a reference to place.
+    it('refuses a reference in a node input before any spend (app-step-positions)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      const body = inlineBody();
+      (body.workflow['1'].inputs as Record<string, unknown>).width = {
+        $ref: '$arguments',
+        path: 'w',
+        default: 512,
+      };
+      await expect(caller().submitWorkflow({ blockToken: 'tok', body })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
     it('happy path: reserves the declared maxBuzz as the CEILING and stamps it as the step timeout', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       happyInline();

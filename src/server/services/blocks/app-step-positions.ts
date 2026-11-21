@@ -119,6 +119,21 @@ function argumentValue(
   return current === undefined ? { found: false } : { found: true, value: current };
 }
 
+const MAX_DEPTH = 64;
+// Quotes, brackets and trailing punctuation around a token in free text.
+const TOKEN_PUNCTUATION_RE = /^["'`(<[{]+|["'`)>\]},.;:!?]+$/g;
+
+function isRepeatStepType(stepType: string): boolean {
+  return stepType.toLowerCase() === 'repeat';
+}
+
+/** `{ $ref, path, as }`, exactly: the orchestrator's RepeatForClause. */
+function isRepeatForClause(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const keys = Object.keys(value).sort();
+  return keys.length === 3 && keys[0] === '$ref' && keys[1] === 'as' && keys[2] === 'path';
+}
+
 /**
  * The first value in `input` that sits outside a media position and is a reference, a URL, or an
  * orchestrator file the viewer does not own. Map keys count as values (LoRAs are keyed by AIR), and
@@ -127,11 +142,10 @@ function argumentValue(
 export function findStepPositionProblem(
   input: unknown,
   viewerId: number,
-  workflowArguments?: unknown
+  workflowArguments?: unknown,
+  stepType?: string
 ): StepPositionProblem | null {
-  const checkString = (raw: string, key: string): StepPositionProblem | null => {
-    const value = raw.trim();
-    if (URL_VALUE_RE.test(value)) return { form: 'url', key, host: hostOf(value) };
+  const orchestratorFileProblem = (value: string, key: string): StepPositionProblem | null => {
     if (!ORCHESTRATOR_SOURCE_RE.test(value)) return null;
     const parsed = Air.parseSafe(value);
     // A job file is `orchestrator:<jobId>@<file>`; a blob names no owner at all.
@@ -141,50 +155,115 @@ export function findStepPositionProblem(
       isWorkflowOwnedBy(parsed.id, viewerId);
     return owned ? null : { form: 'orchestrator-file', key };
   };
+  const checkString = (raw: string, key: string): StepPositionProblem | null => {
+    const value = raw.trim();
+    if (URL_VALUE_RE.test(value)) return { form: 'url', key, host: hostOf(value) };
+    return orchestratorFileProblem(value, key);
+  };
+  // Free text carries no file references either: each whitespace-separated token is held to the
+  // orchestrator-file rule.
+  const checkText = (raw: string, key: string): StepPositionProblem | null => {
+    for (const token of raw.split(/\s+/)) {
+      const problem = orchestratorFileProblem(token.replace(TOKEN_PUNCTUATION_RE, ''), key);
+      if (problem) return problem;
+    }
+    return null;
+  };
 
-  // `key` is the nearest key above the value; below a media key everything is media, and below a
-  // free-text key only references count.
-  const visit = (
-    value: unknown,
-    key: string | undefined,
-    inText = false
-  ): StepPositionProblem | null => {
+  type Where = {
+    key: string | undefined;
+    /** Below a free-text key only references count. */
+    text: boolean;
+    /** The value is a repeat step's `input`, whose `for` clause names the array it iterates. */
+    repeatInput: boolean;
+    depth: number;
+  };
+
+  // `key` is the nearest key above the value; below a media key everything is media.
+  const visit = (value: unknown, where: Where): StepPositionProblem | null => {
+    const { key, repeatInput, depth } = where;
     if (isMediaKey(key)) return null;
-    const text = inText || (key !== undefined && FREE_TEXT_KEYS.has(key.toLowerCase()));
     const at = key ?? '(input)';
-    if (typeof value === 'string') return text ? null : checkString(value, at);
+    // An argument that places itself, or input nested past any real step, is refused, not walked.
+    if (depth > MAX_DEPTH) return { form: 'reference', key: at };
+    const text = where.text || (key !== undefined && FREE_TEXT_KEYS.has(key.toLowerCase()));
+    const below = (childKey: string | undefined, isRepeatInput = false): Where => ({
+      key: childKey,
+      text,
+      repeatInput: isRepeatInput,
+      depth: depth + 1,
+    });
+    if (typeof value === 'string') return text ? checkText(value, at) : checkString(value, at);
     if (Array.isArray(value)) {
       for (const item of value) {
-        const problem = visit(item, key, text);
+        const problem = visit(item, below(key));
+        if (problem) return problem;
+      }
+      return null;
+    }
+    if (!value || typeof value !== 'object') return null;
+    const record = value as Record<string, unknown>;
+    const entries = Object.entries(record);
+    if (entries.some(([k]) => k.toLowerCase() === REF_KEY)) {
+      // A plain reference to the request's own `arguments` places a value this request carries,
+      // so that value is checked where it lands. Any other reference is a value not known yet.
+      const argument = argumentValue(record, workflowArguments);
+      return argument.found ? visit(argument.value, below(key)) : { form: 'reference', key: at };
+    }
+    // A nested step (a repeat's template) names its own `$type`.
+    const nestedRepeat = typeof record.$type === 'string' && isRepeatStepType(record.$type);
+    for (const [childKey, child] of entries) {
+      if (!text) {
+        const problem = checkString(childKey, at);
+        if (problem) return problem;
+      }
+      // The items the clause iterates are placed by references inside the template, which this
+      // walk checks where they land.
+      if (repeatInput && childKey === 'for' && isRepeatForClause(child)) continue;
+      const childWhere = below(
+        FIELD_KEY_RE.test(childKey) ? childKey : key,
+        nestedRepeat && childKey === 'input'
+      );
+      const problem = visit(child, childWhere);
+      if (problem) return problem;
+    }
+    return null;
+  };
+
+  return visit(input, {
+    key: undefined,
+    text: false,
+    repeatInput: stepType !== undefined && isRepeatStepType(stepType),
+    depth: 0,
+  });
+}
+
+/**
+ * The inline ComfyUI graph's version of the rule: it is one step with no `arguments`, so nothing
+ * there is a reference to place, and its loaders take Civitai resources only. URLs are the graph
+ * checks' business (`inline-comfy.service`).
+ */
+export function findInlineGraphProblem(input: unknown): StepPositionProblem | null {
+  const visit = (value: unknown, key: string): StepPositionProblem | null => {
+    if (typeof value === 'string')
+      return ORCHESTRATOR_SOURCE_RE.test(value.trim()) ? { form: 'orchestrator-file', key } : null;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const problem = visit(item, key);
         if (problem) return problem;
       }
       return null;
     }
     if (!value || typeof value !== 'object') return null;
     const entries = Object.entries(value);
-    const isReference = entries.some(([k]) => k.toLowerCase() === REF_KEY);
-    // A repeat's `for` clause names the array it iterates; the items are placed by references
-    // inside its template, which this walk checks where they land.
-    const isRepeatClause =
-      isReference && key?.toLowerCase() === 'for' && entries.some(([k]) => k === 'as');
-    if (isReference && !isRepeatClause) {
-      // A plain reference to the request's own `arguments` places a value this request carries,
-      // so that value is checked where it lands. Any other reference is a value not known yet.
-      const argument = argumentValue(value as Record<string, unknown>, workflowArguments);
-      return argument.found ? visit(argument.value, key, text) : { form: 'reference', key: at };
-    }
+    if (entries.some(([k]) => k.toLowerCase() === REF_KEY)) return { form: 'reference', key };
     for (const [childKey, child] of entries) {
-      if (!isRepeatClause && !text) {
-        const problem = checkString(childKey, at);
-        if (problem) return problem;
-      }
-      const problem = visit(child, FIELD_KEY_RE.test(childKey) ? childKey : key, text);
+      const problem = visit(child, FIELD_KEY_RE.test(childKey) ? childKey : key);
       if (problem) return problem;
     }
     return null;
   };
-
-  return visit(input, undefined);
+  return visit(input, '(input)');
 }
 
 export type StepPositionsMode = 'off' | 'log' | 'enforce';
@@ -204,9 +283,13 @@ export async function stepPositionsRefusal(opts: {
   viewerId: number;
   steps: ReadonlyArray<{ $type: string; input: unknown }>;
   workflowArguments?: unknown;
+  /** The step is an inline ComfyUI graph (`findInlineGraphProblem`). */
+  inlineGraph?: boolean;
 }): Promise<string | null> {
   for (const step of opts.steps) {
-    const problem = findStepPositionProblem(step.input, opts.viewerId, opts.workflowArguments);
+    const problem = opts.inlineGraph
+      ? findInlineGraphProblem(step.input)
+      : findStepPositionProblem(step.input, opts.viewerId, opts.workflowArguments, step.$type);
     if (!problem) continue;
     const mode = await getStepPositionsMode();
     if (mode === 'off') return null;

@@ -11545,6 +11545,13 @@ async function submitCustomComfyWorkflow(opts: {
         workflow: inlineBody.workflow,
       }
     : buildCustomComfyWorkflowInput(recipe!, recipeBody!.params, {});
+  await assertStepPositionsAllowed(
+    claims,
+    userId,
+    [{ $type: 'comfy', input: stepInput }],
+    undefined,
+    true
+  );
   // Every resource the graph loads must be a Civitai version; their base models decide the cap.
   const { capOutput } = await checkAppStepResources(stepInput, userId);
 
@@ -16626,7 +16633,8 @@ async function assertStepPositionsAllowed(
   claims: { appBlockId: string },
   userId: number,
   steps: ReadonlyArray<{ $type: string; input: unknown }>,
-  workflowArguments?: unknown
+  workflowArguments?: unknown,
+  inlineGraph = false
 ): Promise<void> {
   const { stepPositionsRefusal } = await import('~/server/services/blocks/app-step-positions');
   const refusal = await stepPositionsRefusal({
@@ -16634,6 +16642,7 @@ async function assertStepPositionsAllowed(
     viewerId: userId,
     steps,
     workflowArguments,
+    inlineGraph,
   });
   if (refusal) throw new TRPCError({ code: 'BAD_REQUEST', message: refusal });
 }
