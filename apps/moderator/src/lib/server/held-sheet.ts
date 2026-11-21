@@ -287,7 +287,7 @@ export async function exchangeReviewCode(
 }
 
 /** Ends a review session on the server (the sheet's Sign out): its moderator's id, or null when the
- *  token names no live session (a no-op). */
+ *  token names no live session (a no-op) or one whose record cannot be read (still ended). */
 export async function revokeReviewSession(token: string | undefined): Promise<number | null> {
   if (!token || !TOKEN.test(token)) return null;
   const redis = getRedis();
