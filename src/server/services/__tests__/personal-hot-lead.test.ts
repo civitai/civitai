@@ -321,9 +321,7 @@ describe('listModelStake', () => {
     const { likes } = await listModelStake(db, { userId: 9, limit: 10 });
     expect(likes.map((l) => [l.modelId, l.userId])).toEqual([[1, 50]]);
     const { engagements } = await listModelStake(db, { userId: 9, limit: 1 });
-    expect(engagements.map((e) => [e.modelId, e.type]).sort()).toEqual([
-      [5, 'Mute'],
-      [6, 'Favorite'],
-    ]);
+    expect(engagements).toHaveLength(2); // one capped Favorite / Notify row, plus every Mute
+    expect(engagements.filter((e) => e.type === 'Mute').map((e) => e.modelId)).toEqual([5]);
   });
 });
