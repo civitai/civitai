@@ -17,7 +17,7 @@
  * carries that token's block, install and ceiling; `auth.jwt.ts`) is held, on every poll, to what
  * the site's document store would serve the block token itself:
  *   - its ceiling: a source app whose rating the viewer's audience admits is read only when
- *     `ratingAllowedForCeiling` (`server-domain.ts`) also admits it for the token's
+ *     `ratingAllowedForCeiling` (`rating-ceiling.ts`) also admits it for the token's
  *     `civitai_max_browsing_level`. That is the store's own rule for a block token's import
  *     (`resolveImportAccess` in `doc-store-access.ts`), the same function: a mature rating (`r`,
  *     `x`, `xxx`) only under a ceiling with a mature bit, so an SFW host's token reads no mature-rated
@@ -55,7 +55,7 @@ import type { AdapterContext, Change, Entity } from '~/server/registry-adapter/p
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
 import { sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
 import { registryUrn } from '~/server/registry-adapter/urn';
-import { ratingAllowedForCeiling } from '~/server/utils/server-domain';
+import { ratingAllowedForCeiling } from '~/server/utils/rating-ceiling';
 import type {
   CollectionReadDecision,
   CollectionReadTarget,
