@@ -108,6 +108,12 @@ func v1ModelsAnswer(ans *v1models.Answer) (*computed, error) {
 	return &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial, cached: ans.Cached, notFound: ans.NotFound}, nil
 }
 
+// sampledRequest reports whether r was rebuilt from a Node sample (withSampled): `[id]` then reads the
+// origin cache as a sample does. A read of r's marker, not a context the compute runs under.
+func sampledRequest(r *http.Request) bool {
+	return isSampled(r.Context())
+}
+
 func (s *Server) regionRestricted(r *http.Request) bool {
 	return browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
 }
@@ -165,7 +171,7 @@ func (s *Server) computeV1ModelsID(ctx context.Context, r *http.Request) (*compu
 		return nil, fallback.New("v1-models-path")
 	}
 	ans, err := v1models.ServeDetail(ctx, s.V1Models.Deps, v1models.DetailRequest{
-		ID: id, RegionRestricted: s.regionRestricted(r), Serving: !isSampled(r.Context()),
+		ID: id, RegionRestricted: s.regionRestricted(r), Serving: !sampledRequest(r),
 	})
 	if err != nil {
 		return nil, err

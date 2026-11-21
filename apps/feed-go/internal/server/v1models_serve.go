@@ -93,7 +93,8 @@ func writeV1Models(w http.ResponseWriter, c *computed) {
 	h.Set("Content-Length", strconv.Itoa(len(c.payload)))
 	h.Set(ServedByHeader, ServedByGo)
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(c.payload)
+	// The JSON answer this service computed, with a JSON Content-Type, as the Node app writes it.
+	_, _ = w.Write(c.payload) //nolint:gosec // G705: a computed JSON body under application/json, not reflected input
 }
 
 // v1ModelsCompute is the compute of a model route, the shadow's and the public route's alike (serving

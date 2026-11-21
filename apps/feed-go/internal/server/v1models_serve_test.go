@@ -358,7 +358,7 @@ func TestServeV1ModelsComputeFallbacks(t *testing.T) {
 	}
 
 	s.computeV1ModelsFn = func(context.Context, *http.Request) (*computed, error) {
-		return &computed{payload: []byte(`{"id":42,"name":"a�b"}`)}, nil
+		return &computed{payload: []byte(`{"id":42,"name":"a\ufffdb"}`)}, nil
 	}
 	s.ServeV1ModelsIDHTTP(httptest.NewRecorder(), v1Request("/api/v1/models/42", nil))
 	if v1Count(t, reg, EndpointV1ModelsID, "feed_go_fallback_total", map[string]string{"reason": "v1-models-invalid-utf8"}) != 1 {
@@ -366,11 +366,11 @@ func TestServeV1ModelsComputeFallbacks(t *testing.T) {
 	}
 	// Control: an escaped U+2028 is served, written raw as JSON.stringify writes it, with its ETag.
 	s.computeV1ModelsFn = func(context.Context, *http.Request) (*computed, error) {
-		return &computed{payload: []byte(`{"id":42,"name":"a b"}`)}, nil
+		return &computed{payload: []byte(`{"id":42,"name":"a\u2028b"}`)}, nil
 	}
 	w = httptest.NewRecorder()
 	s.ServeV1ModelsIDHTTP(w, v1Request("/api/v1/models/42", nil))
-	if w.Code != http.StatusOK || w.Body.String() != "{\"id\":42,\"name\":\"a b\"}" || w.Header().Get("ETag") != `"ea5y3kfvagm"` {
+	if w.Code != http.StatusOK || w.Body.String() != "{\"id\":42,\"name\":\"a\u2028b\"}" || w.Header().Get("ETag") != `"ea5y3kfvagm"` {
 		t.Fatalf("U+2028: code=%d body=%q ETag=%s", w.Code, w.Body.String(), w.Header().Get("ETag"))
 	}
 
@@ -526,9 +526,10 @@ func postV1ModelsSample(t *testing.T, s *Server, req ShadowRequest) {
 	}
 }
 
-func responseResult(t *testing.T, reg *prometheus.Registry, endpoint, result string) float64 {
+// responseResult reads feed_go_shadow_response_total{feed_endpoint="v1-models",result}.
+func responseResult(t *testing.T, reg *prometheus.Registry, result string) float64 {
 	t.Helper()
-	v, _ := metricValue(t, reg, "feed_go_shadow_response_total", map[string]string{"feed_endpoint": endpoint, "result": result})
+	v, _ := metricValue(t, reg, "feed_go_shadow_response_total", map[string]string{"feed_endpoint": EndpointV1Models, "result": result})
 	return v
 }
 
@@ -555,13 +556,13 @@ func TestV1ModelsShadowComparesResponseHeaders(t *testing.T) {
 	}
 
 	postV1ModelsSample(t, s, sample(v1ModelsResponse(public), ResponseHeaderSetREST, nil))
-	settled("the REST match", func() bool { return responseResult(t, reg, EndpointV1Models, "match") == 1 })
+	settled("the REST match", func() bool { return responseResult(t, reg, "match") == 1 })
 
 	differing := v1ModelsResponse(public)
 	differing["etag"] = `"other"`
 	differing["x-expires"] = "2026-11-21T00:01:00.000Z"
 	postV1ModelsSample(t, s, sample(differing, ResponseHeaderSetREST, nil))
-	settled("the REST mismatch", func() bool { return responseResult(t, reg, EndpointV1Models, "mismatch") == 1 })
+	settled("the REST mismatch", func() bool { return responseResult(t, reg, "mismatch") == 1 })
 	for _, d := range []struct{ category, kind string }{{"header:etag", "value"}, {"header:x-expires", "missing-in-go"}} {
 		if v, _ := metricValue(t, reg, "feed_go_shadow_field_diffs_total", map[string]string{"feed_endpoint": EndpointV1Models, "category": d.category, "kind": d.kind}); v != 1 {
 			t.Errorf("%s/%s = %v, want 1", d.category, d.kind, v)
@@ -571,20 +572,20 @@ func TestV1ModelsShadowComparesResponseHeaders(t *testing.T) {
 	// A sampler without the REST list: only the base headers are compared, so the extra ones it never
 	// sent are not counted missing.
 	postV1ModelsSample(t, s, sample(map[string]string{"cache-control": public, "vary": "Authorization"}, "", nil))
-	settled("the base-list match", func() bool { return responseResult(t, reg, EndpointV1Models, "match") == 2 })
+	settled("the base-list match", func() bool { return responseResult(t, reg, "match") == 2 })
 
 	// A verified crawler's sample: the sample's header is the app's decision (the request is marked a
 	// sample), so Go writes the private default as Node did.
 	crawler := v1ModelsResponse("max-age=0, private, no-cache")
 	postV1ModelsSample(t, s, sample(crawler, ResponseHeaderSetREST, map[string]string{verifiedBotHeader: "googlebot"}))
-	settled("the crawler match", func() bool { return responseResult(t, reg, EndpointV1Models, "match") == 3 })
+	settled("the crawler match", func() bool { return responseResult(t, reg, "match") == 3 })
 
-	if n := responseResult(t, reg, EndpointV1Models, "uncompared"); n != 0 {
+	if n := responseResult(t, reg, "uncompared"); n != 0 {
 		t.Fatalf("uncompared = %v, want 0", n)
 	}
 	// No responseHeaders at all: uncompared.
 	postV1ModelsSample(t, s, sample(nil, "", nil))
-	settled("the uncompared sample", func() bool { return responseResult(t, reg, EndpointV1Models, "uncompared") == 1 })
+	settled("the uncompared sample", func() bool { return responseResult(t, reg, "uncompared") == 1 })
 }
 
 // `[id]` reads the origin cache as Node's handler does when serving (any entry within the TTL), and as

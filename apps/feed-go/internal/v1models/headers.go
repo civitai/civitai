@@ -190,9 +190,9 @@ func NodeBody(body []byte) (out []byte, ok bool) {
 				copied = true
 			}
 			out = append(out, body[start:i]...)
-			r := ' '
+			r := '\u2028'
 			if body[i+5] == '9' {
-				r = ' '
+				r = '\u2029'
 			}
 			out = utf8.AppendRune(out, r)
 			start = i + 6
