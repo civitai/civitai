@@ -432,7 +432,7 @@ describe("Hot gives a proven model's new version a small head start", () => {
   });
 });
 
-// Last in the file: it puts the triggers back to #9397 for everything after it.
+// Puts the shared database's triggers back to #9397: only fresh databases are used after it.
 describe('the head-start rollback', () => {
   it('returns a head-started model and its slices to the #9397 score', async () => {
     const at = daysAgo(5);

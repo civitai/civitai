@@ -1,9 +1,9 @@
 -- Rollback for migration.sql: restores the 20271117190000 (#9397) trigger functions and rescores,
--- in both directions, every model with a version published since `since`. Pass the apply date
--- minus 61 days (a qualifying version's initialPublishedAt can be a day before its publishedAt); the
--- default is 61 days before this migration was written, which covers any apply date. The pre-apply snapshot is for comparison only: restoring it would rewind real metric gains.
+-- in both directions, every model with a version since `since`. The default, 2026-09-21, covers any
+-- apply date; to narrow it, pass the apply date minus 61 days (a qualifying version's
+-- initialPublishedAt can be a day before its publishedAt).
 --
--- 🔴 APPLY WITH psql -v ON_ERROR_STOP=1 AND WITHOUT --single-transaction: the preflight must stop
+-- 🔴 APPLY WITH psql -X -v ON_ERROR_STOP=1 AND WITHOUT --single-transaction: the preflight must stop
 -- the file on refusal, and the CALL COMMITs per batch. A re-run is safe; it starts the rescore over.
 
 -- Everything up to the CALL runs as one transaction: if the preflight refuses and psql carries on anyway (no
@@ -15,7 +15,7 @@ BEGIN;
 -- The rescore below must watch replica lag. Refuse before changing anything when this role cannot
 -- see it (pg_stat_replication's replay columns need pg_monitor or superuser), unless the operator
 -- opts out for the session with SET hot_rescore.lag_watch = off; and watches lag by hand.
--- Run with psql -v ON_ERROR_STOP=1 so a refusal stops the file here.
+-- Run with psql -X -v ON_ERROR_STOP=1 so a refusal stops the file here.
 
 DO $preflight$
 BEGIN

@@ -17,7 +17,7 @@
 -- 20271117190000 on purpose: the borrowed share is 1%, capped, and only for a version with
 -- engagement of its own. Paid-access versions qualify like free ones.
 --
--- 🔴 APPLY WITH psql -v ON_ERROR_STOP=1 AND WITHOUT --single-transaction: section 0 must stop the
+-- 🔴 APPLY WITH psql -X -v ON_ERROR_STOP=1 AND WITHOUT --single-transaction: section 0 must stop the
 -- file on refusal, and section 4 is a CALL whose procedure COMMITs per batch.
 --
 -- No application change ships with this: the formula lives only in these functions.
@@ -31,7 +31,8 @@ BEGIN;
 -- The rescore below must watch replica lag. Refuse before changing anything when this role cannot
 -- see it (pg_stat_replication's replay columns need pg_monitor or superuser), unless the operator
 -- opts out for the session with SET hot_rescore.lag_watch = off; and watches lag by hand.
--- Run with psql -v ON_ERROR_STOP=1 so a refusal stops the file here.
+-- Run with psql -X -v ON_ERROR_STOP=1 so a refusal stops the file here (-X: a .psqlrc
+-- ON_ERROR_ROLLBACK would defeat the transaction wrap).
 
 DO $preflight$
 BEGIN
