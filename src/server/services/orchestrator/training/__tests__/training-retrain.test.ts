@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { TransactionInfo, Workflow, WorkflowTemplate } from '@civitai/orchestration-client';
 import {
   RETRAIN_HARD_STOP,
+  classifySubmitResult,
+  retrainFromAuditRows,
   retrainSourceHandler,
   runRetrainSource,
   type OwnerOrchestrator,
@@ -113,6 +115,8 @@ function createWorld(
   let allowlist: Record<string, string> = { [SOURCE]: 'retrain' };
   let allowlistDown = false;
   let markerDown = false;
+  /** The retrain the audit log records for the source; an Error makes the read fail. */
+  let audited: string | null | Error = null;
   let markAttempts = 0;
   let allowlistReads = 0;
   let kohyaFlag = true;
@@ -164,6 +168,10 @@ function createWorld(
       if (markerDown) throw new Error('redis down');
       allowlist = { ...allowlist, [id]: marker };
     },
+    priorRetrain: async () => {
+      if (audited instanceof Error) throw audited;
+      return audited;
+    },
     ownerOrchestrator: async () => orchestrator,
     forceRefund: async (id) => {
       calls.refund++;
@@ -210,7 +218,9 @@ function createWorld(
     refundKeys,
     setAllowlist: (a: Record<string, string>) => (allowlist = a),
     setAllowlistDown: () => (allowlistDown = true),
-    setMarkerDown: () => (markerDown = true),
+    setMarkerDown: (down = true) => (markerDown = down),
+    setAudited: (value: string | null | Error) => (audited = value),
+    submitted: () => byExternalId.size,
     markAttempts: () => markAttempts,
     allowlistReads: () => allowlistReads,
     allowlistValue: () => allowlist[SOURCE],
@@ -310,6 +320,92 @@ describe('runRetrainSource', () => {
     expect(first.outcome).toBe('retrained-unmarked');
     expect(first.retrain?.id).toMatch(new RegExp(`^${OWNER}-`));
     expect(w.markAttempts()).toBe(3);
+  });
+
+  it('after an unmarked retrain is repaired, a re-run returns the same retrain with one refund and one charge', async () => {
+    const w = createWorld(sourceRun());
+    w.setMarkerDown();
+    const first = await w.run(true);
+    expect(first.outcome).toBe('retrained-unmarked');
+
+    w.setMarkerDown(false);
+    w.advance(10 * 60_000);
+    const second = await w.run(true);
+    expect(second.outcome).toBe('already-retrained');
+    expect(second.retrain?.id).toBe(first.retrain!.id);
+    expect(w.allowlistValue()).toBe(`retrained:${first.retrain!.id}`);
+    expect(w.calls.refund).toBe(1);
+    expect(w.submitted()).toBe(1);
+  });
+
+  it('treats a source the audit log records as retrained as marked, though its marker is gone: no refund, no submit', async () => {
+    const w = createWorld(sourceRun());
+    const retrainId = (await w.run(true)).retrain!.id;
+    // The cache lost the hash and the operator rebuilt it from the id list.
+    w.setAllowlist({ [SOURCE]: 'retrain' });
+    w.setAudited(retrainId);
+    const again = await w.run(true);
+    expect(again).toMatchObject({
+      outcome: 'skipped',
+      reason: 'already-retrained-marked',
+      retrain: { id: retrainId },
+    });
+    expect(w.calls.refund).toBe(1);
+    expect(w.submitted()).toBe(1);
+
+    const down = createWorld(sourceRun());
+    down.setAudited(new Error('clickhouse down'));
+    await expect(down.run(true)).rejects.toThrow('audit log could not be read');
+    expect(down.calls.refund + down.calls.submit).toBe(0);
+  });
+
+  it('reads the retrain from this endpoint’s own audit rows for the source only', () => {
+    const row = (affected: object) => ({ affected: JSON.stringify(affected) });
+    const retrainId = `${OWNER}-20261122100000000-zz99`;
+    expect(
+      retrainFromAuditRows(SOURCE, [
+        { affected: null },
+        { affected: 'not json' },
+        row({ workflowIds: [SOURCE], outcome: 'would-retrain' }),
+        row({ workflowIds: ['other', SOURCE], outcome: 'retrained', retrainWorkflowId: 'x' }),
+        row({
+          workflowIds: [SOURCE, retrainId],
+          outcome: 'retrained-unmarked',
+          retrainWorkflowId: retrainId,
+        }),
+      ])
+    ).toBe(retrainId);
+    expect(
+      retrainFromAuditRows(SOURCE, [
+        row({
+          workflowIds: [SOURCE, retrainId],
+          outcome: 'skipped',
+          reason: 'already-retrained-marked',
+          retrainWorkflowId: retrainId,
+        }),
+      ])
+    ).toBe(retrainId);
+    expect(
+      retrainFromAuditRows(SOURCE, [
+        row({ workflowIds: [SOURCE], outcome: 'skipped', reason: 'quote-over' }),
+      ])
+    ).toBeNull();
+  });
+
+  it('classifies a submit answer created within the clock-skew margin as this call’s retrain', () => {
+    const startedAt = new Date('2026-11-22T10:00:00Z');
+    const run = (createdAt: string) =>
+      ({
+        id: `${OWNER}-20261122100000000-zz99`,
+        createdAt,
+        externalId: `${OWNER}-retrain-${SOURCE}`,
+        transactions: { list: [{ type: 'debit', amount: 480, accountType: 'blue' }] },
+      } as unknown as Workflow);
+    const opts = { userId: OWNER, externalId: `retrain-${SOURCE}`, startedAt };
+    expect(classifySubmitResult(run('2026-11-22T09:59:30Z'), opts).outcome).toBe('retrained');
+    expect(classifySubmitResult(run('2026-11-22T09:58:00Z'), opts).outcome).toBe(
+      'already-retrained'
+    );
   });
 
   it('does not take the force-refunded flag as proof: a colour left owed is refunded again before the submit, or nothing is submitted', async () => {
@@ -478,7 +574,7 @@ describe('runRetrainSource', () => {
         steps: [
           {
             ...s.steps[0],
-            input: { ...(s.steps[0] as { input: object }).input, engine: 'ai-toolkit' },
+            input: { ...(s.steps[0] as unknown as { input: object }).input, engine: 'ai-toolkit' },
           },
         ],
       }),
@@ -489,7 +585,7 @@ describe('runRetrainSource', () => {
         steps: [
           {
             ...s.steps[0],
-            input: { ...(s.steps[0] as { input: object }).input, model: undefined },
+            input: { ...(s.steps[0] as unknown as { input: object }).input, model: undefined },
           },
         ],
       }),

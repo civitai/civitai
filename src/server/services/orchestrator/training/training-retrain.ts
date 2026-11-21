@@ -36,6 +36,45 @@ const MAX_ATTEMPTS = 3;
 const CLOCK_SKEW_MS = 60_000;
 const MATURE_NSFW_LEVELS = new Set(['r', 'x', 'xxx']);
 const BLOB_PROBE_CONCURRENCY = 8;
+/** The endpoint's audit action, and so the key of its audit rows. */
+export const RETRAIN_AUDIT_ACTION = 'training.retrainSource';
+/** Outcomes whose audit row names a retrain that was charged for this source. */
+const RETRAINED_OUTCOMES = new Set([
+  'retrained',
+  'already-retrained',
+  'retrained-unmarked',
+  'already-retrained-marked',
+]);
+
+/** The retrain an audit row of this endpoint records for `sourceWorkflowId`, or null. */
+export function retrainFromAuditRows(
+  sourceWorkflowId: string,
+  rows: { affected: string | null }[]
+): string | null {
+  for (const row of rows) {
+    let affected: {
+      workflowIds?: unknown;
+      outcome?: unknown;
+      reason?: unknown;
+      retrainWorkflowId?: unknown;
+    };
+    try {
+      affected = JSON.parse(row.affected ?? '');
+    } catch {
+      continue;
+    }
+    const ids = Array.isArray(affected?.workflowIds) ? affected.workflowIds : [];
+    const outcome = affected.outcome === 'skipped' ? affected.reason : affected.outcome;
+    if (
+      ids[0] === sourceWorkflowId &&
+      RETRAINED_OUTCOMES.has(String(outcome)) &&
+      typeof affected.retrainWorkflowId === 'string'
+    )
+      return affected.retrainWorkflowId;
+  }
+  return null;
+}
+
 /** The allowlist value a retrained source is left with, followed by the retrain's id. */
 export const RETRAINED_MARKER = 'retrained:';
 /** The tag Studio files a submit's idempotency key under; the source's key is not the retrain's. */
@@ -111,6 +150,9 @@ export type RetrainDeps = {
   readAllowlist: (sourceWorkflowId: string) => Promise<string | null>;
   /** Replaces the source's allowlist value with the retrain's marker. */
   markRetrained: (sourceWorkflowId: string, marker: string) => Promise<void>;
+  /** The retrain an earlier call of this endpoint recorded for the source, or null. Throws when the
+   *  record cannot be read. */
+  priorRetrain: (sourceWorkflowId: string) => Promise<string | null>;
   /** null when the owner cannot be issued a token (banned, muted, deleted). */
   ownerOrchestrator: (userId: number) => Promise<OwnerOrchestrator | null>;
   /** The orchestrator's manager `/refund` of a workflow: its HTTP status, 0 on a transport failure. */
@@ -190,7 +232,8 @@ function readSource(
   const createdAt = new Date(workflow.createdAt);
   if (!(createdAt >= RETRAIN_SOURCE_WINDOW.from && createdAt < RETRAIN_SOURCE_WINDOW.to))
     return { refusal: 'created outside the window' };
-  // Failed with forceRefunded: refunded already (by an earlier call, for one), so the call can resume.
+  // Failed + forceRefunded is let through to resume: the flag does not prove the refund completed;
+  // refundAndConfirm checks the net.
   const status = workflow.status;
   if (!(status === 'succeeded' || (status === 'failed' && workflow.forceRefunded)))
     return { refusal: `status ${status}${workflow.forceRefunded ? ', force-refunded' : ''}` };
@@ -389,12 +432,20 @@ export async function runRetrainSource(
   if (startedAt >= RETRAIN_HARD_STOP) return skip('expired');
   if (userId === null) return skip('not-allowlisted', 'not a workflow id');
   const listed = await deps.readAllowlist(sourceWorkflowId);
-  const markedId = listed?.startsWith(RETRAINED_MARKER)
+  let markedId = listed?.startsWith(RETRAINED_MARKER)
     ? listed.slice(RETRAINED_MARKER.length)
     : null;
   const mode = markedId ? 'retrain' : RETRAIN_MODES.find((m) => m === listed);
   if (!mode) return skip('not-allowlisted');
   result.mode = mode;
+  // The marker lives on an evictable cache; the audit log outlives it.
+  if (mode === 'retrain' && !markedId) {
+    try {
+      markedId = await deps.priorRetrain(sourceWorkflowId);
+    } catch (e) {
+      throw new RetrainUnavailableError(`the audit log could not be read: ${(e as Error).message}`);
+    }
+  }
 
   const orchestrator = await deps.ownerOrchestrator(userId);
   // A source retrained once is never refunded or submitted again: if the owner deleted that

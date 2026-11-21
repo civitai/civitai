@@ -4,6 +4,7 @@ import { getWorkflow, headBlob, submitWorkflow } from '@civitai/orchestration-cl
 import { env } from '~/env/server';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflowCallbacks } from '~/server/orchestrator/orchestrator.utils';
+import { clickhouse } from '~/server/clickhouse/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { trainingStepModelRefusal } from '~/server/services/blocks/block-training-model-check';
 import { getFeatureFlagsAsync, isFliptDecisive } from '~/server/services/feature-flags.service';
@@ -13,8 +14,11 @@ import { createOrchestratorClient } from '~/server/services/orchestrator/client'
 import { blobKeyFromAir } from '~/server/services/orchestrator/training/studio-dataset-archive.service';
 import { studioWithheldWorkflowIds } from '~/server/services/orchestrator/training/studio-withheld';
 import {
+  RETRAIN_AUDIT_ACTION,
   RETRAIN_HARD_STOP,
   RETRAIN_SOURCE_ID,
+  RETRAIN_SOURCE_WINDOW,
+  retrainFromAuditRows,
   RetrainUnavailableError,
   retrainSourceHandler,
   type OrchestratorAnswer,
@@ -23,7 +27,7 @@ import {
 } from '~/server/services/orchestrator/training/training-retrain';
 import { assertTrainingTriggerWordAllowed } from '~/server/services/orchestrator/training/training-trigger-word-check';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
-import { outboundFetch } from '~/server/utils/fetch-timeout';
+import { fetchTimeoutSignal, outboundFetch } from '~/server/utils/fetch-timeout';
 import { defineModeratorEndpoint, moderatorBoolean } from '~/server/utils/moderator-endpoint';
 import { getTrainingLicenseTerms } from '~/shared/constants/generation-license.constants';
 import type { SessionUser } from '~/types/session';
@@ -104,6 +108,28 @@ async function refusalOf(code: TRPCError['code'], check: () => Promise<void>) {
   }
 }
 
+const AUDIT_READ_TIMEOUT_SECONDS = 10;
+
+/** This endpoint's own audit rows for the source: the retrain any earlier call submitted or found. */
+async function priorRetrain(sourceWorkflowId: string): Promise<string | null> {
+  if (!clickhouse) throw new Error('ClickHouse is not configured');
+  const response = await clickhouse.query({
+    query: `SELECT affected FROM default.retoolAuditLog
+      WHERE createdAt >= {from:DateTime} AND action = {action:String} AND outcome = 'ok'
+        AND position(affected, {source:String}) > 0`,
+    query_params: {
+      from: RETRAIN_SOURCE_WINDOW.from.toISOString().slice(0, 19).replace('T', ' '),
+      action: RETRAIN_AUDIT_ACTION,
+      source: sourceWorkflowId,
+    },
+    format: 'JSONEachRow',
+    clickhouse_settings: { max_execution_time: AUDIT_READ_TIMEOUT_SECONDS },
+    abort_signal: fetchTimeoutSignal((AUDIT_READ_TIMEOUT_SECONDS + 1) * 1000),
+  });
+  const rows = (await response.json()) as { affected: string | null }[];
+  return retrainFromAuditRows(sourceWorkflowId, rows);
+}
+
 const deps: RetrainDeps = {
   now: () => new Date(),
   readAllowlist: async (sourceWorkflowId) => {
@@ -117,6 +143,7 @@ const deps: RetrainDeps = {
   markRetrained: async (sourceWorkflowId, marker) => {
     await redis.hSet(REDIS_KEYS.TRAINING.RETRAIN_ALLOWLIST, sourceWorkflowId, marker);
   },
+  priorRetrain,
   ownerOrchestrator,
   forceRefund,
   callbacksFor: getWorkflowCallbacks,
@@ -143,11 +170,11 @@ const deps: RetrainDeps = {
   },
 };
 
-export default defineModeratorEndpoint('training.retrainSource', {
+export default defineModeratorEndpoint(RETRAIN_AUDIT_ACTION, {
   summary:
     'Refund one allowlisted training run and, in retrain mode, submit the same run again on its owner’s Buzz at low priority. One run per call.',
   returns:
-    "{ sourceWorkflowId, userId, mode: 'retrain' | 'refund-only' | null, execute, outcome: 'would-retrain' | 'would-refund' | 'retrained' | 'already-retrained' | 'refunded' | 'already-refunded' | 'refund-unconfirmed' | 'refunded-not-submitted' | 'bad-submit-result' | 'skipped', reason?, detail?, warnings, refundNetByColour?, confirmedNetByColour?, grossDebits?, quote?, body?, bodySha256?, retrain?: { id, status, chargedByColour } }",
+    "{ sourceWorkflowId, userId, mode: 'retrain' | 'refund-only' | null, execute, outcome: 'would-retrain' | 'would-refund' | 'retrained' | 'retrained-unmarked' | 'already-retrained' | 'refunded' | 'already-refunded' | 'refund-unconfirmed' | 'refunded-not-submitted' | 'bad-submit-result' | 'skipped', reason?, detail?, warnings, refundNetByColour?, confirmedNetByColour?, grossDebits?, quote?, body?, bodySha256?, retrain?: { id, status, chargedByColour } }",
   notes: [
     'Requires the moderator app permission `training.retrain`.',
     'Dry run unless `execute=true`. The dry run runs every check and the quote, and returns the body execute would submit with its sha256.',
@@ -156,7 +183,7 @@ export default defineModeratorEndpoint('training.retrainSource', {
     `Every call is refused from ${RETRAIN_HARD_STOP.toISOString()}.`,
     'Before any money moves: the owner must be issued a token; the source must be a one-step Kohya run in the bug window, Succeeded (or already force-refunded); and in retrain mode no moderator action may withhold the source’s outputs (`source-withheld`), and the training service, the Studio Kohya flag for the owner (Studio runs only), the trigger word, the licence, the Green-mature rule and the quote (at most what the source charged) must all pass.',
     'Execute: `/refund` (up to 3 tries), then the source is read back and must net 0 in every colour (`refund-unconfirmed` otherwise, and nothing is submitted). Then the submit (up to 3 tries) under externalId `retrain-<source>`, so a repeat returns the first retrain (`already-retrained`) instead of charging again.',
-    'After a retrain the source’s allowlist value becomes `retrained:<retrain id>`, and every later call is skipped with reason `already-retrained-marked`, reporting that retrain and its status, without a refund or a submit. If that value cannot be written (3 tries) the outcome is `retrained-unmarked`: record the retrain by hand and never execute that source again. Add fields to the allowlist; never replace the key, which would drop the markers. Resuming `refund-unconfirmed` or `refunded-not-submitted` is safe: a source that already nets 0 is not refunded again.',
+    'After a retrain the source’s allowlist value becomes `retrained:<retrain id>`, and every later call is skipped with reason `already-retrained-marked`, reporting that retrain and its status, without a refund or a submit. If that value cannot be written (3 tries) the outcome is `retrained-unmarked`: record the retrain by hand and never execute that source again. Add fields to the allowlist; never replace the key, which would drop the markers. A source with no marker is also checked against this endpoint’s audit log, so a lost marker cannot charge twice; a log that cannot be read refuses the call. Resuming `refund-unconfirmed` or `refunded-not-submitted` is safe: a source that already nets 0 is not refunded again.',
     'Audit row `affected`: the source, owner, mode, outcome, reason, the nets before and after, the quote, the body sha256 and the retrain id.',
   ],
   rateLimit: { max: 10, windowSeconds: 60 },
