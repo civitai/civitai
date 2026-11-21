@@ -59,7 +59,9 @@ export function AutoTrackButton({
     <Button
       size="xs"
       radius="xl"
-      variant="light"
+      // Solid: it sits on the video, where a tinted or text-only button disappears.
+      variant="filled"
+      className="bg-blue-6 text-white hover:bg-blue-7"
       leftSection={<IconWand size={14} />}
       loading={start.isPending}
       onClick={onStart}
