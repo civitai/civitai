@@ -27,41 +27,16 @@ import {
 } from './token-exchange';
 import { getSigner } from './user-exchange';
 import { verifyBlockTokenForExchange } from './block-token-verify';
+import { raceTimeout } from './timeout';
 
-// RFC 8693 token exchange of an App Block token (the RS256 JWT the site signs for a block acting for a
-// signed-in viewer) for the token the registry adapter's PRIVATE FEED accepts, in one hop: an RFC 9068
-// `at+jwt` minted exactly as the user token exchange mints one (`mintExchangedJwt`):
-//   - `sub` = the viewer, `client_id` = the block's app, `act.sub` = the relay that called;
-//   - `aud` = the requested resource, `iss` = the hub;
-//   - `scope` = exactly `AppDataRead`, whatever the block token carries;
-//   - `exp` = min(the block token's `exp`, now + 15 minutes); no refresh token.
-// The private feed opens only for a listed relay in `act.sub` (`privateTokenGate`), which is why this is a
-// JWT and not an opaque token: an opaque token has no actor.
-//
-// DARK BY DEFAULT. Only a confidential client named in OAUTH_BLOCK_EXCHANGE_CALLERS may call it, and that list
-// is empty unless set: empty (or invalid) refuses every request first. An entry is added only once the
-// registry owner approves it.
-//
-// WHAT DECIDES ACCESS. The block token's `apps:storage` scope is required, but it is NOT the viewer's consent:
-// `apps:storage` is consent-exempt and is signed into every signed-in viewer's token for any app that declares
-// a collection. What decides whether a token is minted is: the caller is an allowlisted relay of the resource;
-// the block's app is listed for the resource, enabled, not suspended, and holds AppDataRead in its
-// `allowedScopes`; the viewer passes the user exchange's checks. What the token then reads is decided by the
-// private feed, which re-runs `decideCollectionRead` on every poll: the app's own collections for this viewer,
-// or another app's only through a grant the viewer made.
-//
-// Every outcome is an `oauth-audit` event (`block_exchange.issued` / `block_exchange.refused`) with the
-// reason; the response carries only the standard error. No log line carries a token.
-//
-// REVOCATION. Nothing is stored that a revocation could delete, and the exchange reads no revocation state:
-// the user revoking the app (`revokeApp`, `revokeOauthConsentForBlock`), withdrawing its permissions, or
-// uninstalling the block (`BlockRevocation`, held in the site's cache Redis) does not stop a block token that
-// is still valid from being exchanged, nor a token already minted. Each is bounded by `exp`: at most 15
-// minutes after the block token was signed, since the token never outlives it. No signal in the hub's
-// database means "this viewer revoked this app" for every block app: an `OauthConsent` row exists only for
-// apps that mint OAuth tokens, and `app_user_scope_grants.revoked_at` covers consent-gated scopes (which
-// `apps:storage` is not) and is also set to force a re-consent. The private feed's per-poll predicate still
-// stops a revoked import grant and an unapproved app within one poll.
+// RFC 8693 exchange of an App Block token for an AppDataRead `at+jwt` naming the calling relay in `act`, minted
+// by `mintExchangedJwt` like the user exchange's (sub = viewer, client_id = the block's app, aud = resource,
+// exp = min(block exp, now + 15 min), no refresh), so the adapter's private feed accepts it. Dark unless the
+// caller is in OAUTH_BLOCK_EXCHANGE_CALLERS (empty by default). The required `apps:storage` scope is
+// consent-exempt, so it is not the viewer's consent: access is decided by the allowlisted relay, the app's
+// listing and `allowedScopes`, and the private feed's per-poll `decideCollectionRead`. No revocation state is
+// read (no hub signal covers every block app); a revoked or uninstalled app's token lives out its exp, at most
+// 15 minutes. Refusals are `oauth-audit` events, except the two rate-limit 429s, which are not audited.
 
 type ExchangeError =
   | 'invalid_request'
@@ -108,8 +83,6 @@ export const BLOCK_EXCHANGE_SCOPE = TokenScope.AppDataRead;
  */
 export const STORAGE_SCOPE = 'apps:storage';
 
-// ─── The caller allowlist ─────────────────────────────────────
-
 const CLIENT_ID = /^[A-Za-z0-9._-]{1,128}$/;
 
 /**
@@ -133,8 +106,6 @@ function blockExchangeCallers(): { callers: ReadonlySet<string>; invalid: boolea
     : { callers: parsed.callers, invalid: false };
 }
 
-// ─── Replay: a block token is exchanged once ──────────────────
-
 type ReplayRedis = {
   set(key: string, value: string, opts: { NX: true; EX: number }): Promise<string | null>;
   del(key: string): Promise<unknown>;
@@ -145,18 +116,6 @@ const REPLAY_TIMEOUT_MS = 2000;
 const replayKey = (jti: string) =>
   `auth:block-exchange:jti:${createHash('sha256').update(jti).digest('hex')}`;
 
-async function withTimeout<T>(op: Promise<T>): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('replay store timed out')), REPLAY_TIMEOUT_MS);
-  });
-  try {
-    return await Promise.race([op, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /**
  * Claim the block token's `jti` for one exchange. True when this request claimed it, false when an earlier
  * one did. Throws when the claim cannot be made (no Redis, an error, a timeout): the caller refuses, since an
@@ -165,8 +124,10 @@ async function withTimeout<T>(op: Promise<T>): Promise<T> {
 async function claimBlockTokenJti(jti: string, ttlSeconds: number): Promise<boolean> {
   const redis = getRedis() as unknown as ReplayRedis | null;
   if (!redis) throw new Error('REDIS_URL is not configured');
-  const reply = await withTimeout(
-    redis.set(replayKey(jti), '1', { NX: true, EX: Math.max(1, ttlSeconds) })
+  const reply = await raceTimeout(
+    redis.set(replayKey(jti), '1', { NX: true, EX: Math.max(1, ttlSeconds) }),
+    REPLAY_TIMEOUT_MS,
+    'replay store timed out'
   );
   return reply !== null;
 }
@@ -175,10 +136,12 @@ async function claimBlockTokenJti(jti: string, ttlSeconds: number): Promise<bool
 async function releaseBlockTokenJti(jti: string): Promise<void> {
   const redis = getRedis() as unknown as ReplayRedis | null;
   if (!redis) return;
-  await withTimeout(Promise.resolve(redis.del(replayKey(jti))));
+  await raceTimeout(
+    Promise.resolve(redis.del(replayKey(jti))),
+    REPLAY_TIMEOUT_MS,
+    'replay store timed out'
+  );
 }
-
-// ─── The exchange ─────────────────────────────────────────────
 
 export interface BlockExchangeInput {
   request: Request;
@@ -230,9 +193,8 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     );
   };
 
-  // Before the caller has authenticated, a refusal is charged to its IP (`token-exchange-ip`, the bucket the
-  // user exchange charges failed client authentication to). Past that limit the answer is a 429 with NO
-  // audit event, so an unauthenticated flood cannot drive the audit log's volume.
+  // A refusal before client authentication is charged to the IP (`token-exchange-ip`). This 429, like the
+  // caller-limit 429 below, is not audited, so a flood cannot drive the audit log's volume.
   const basicAttempted = /^basic /i.test(request.headers.get('authorization') ?? '');
   const refuseUnauthenticated = async (error: ExchangeError, reason: string) => {
     if (!(await chargeTokenExchangeFailure(input.clientIp))) {
@@ -253,7 +215,7 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
 
   let claimedJti: string | undefined;
   try {
-    // 0. Dark unless a caller is listed: nothing else is read.
+    // Dark unless a caller is listed: checked before anything else is read.
     const allow = blockExchangeCallers();
     if (allow.callers.size === 0) {
       return refuseUnauthenticated(
@@ -262,7 +224,6 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       );
     }
 
-    // 1. Parameters.
     if (!input.formEncoded) return refuseUnauthenticated('invalid_request', 'not form-encoded');
     const subjectToken = body.subject_token;
     if (typeof subjectToken !== 'string' || !subjectToken) {
@@ -288,16 +249,13 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     }
     ctx.resource = input.resources[0];
 
-    // 2. Client authentication, then the allowlist.
     if (clientIdMismatch(basicCredentials(request)?.id, body)) {
       return refuseUnauthenticated('invalid_client', 'client_id mismatch');
     }
     const caller = await authenticatedConfidentialClient(request, body);
     if (!caller) return refuseUnauthenticated('invalid_client', 'client authentication failed');
     ctx.caller = caller.id;
-    // The caller's own `token-exchange` limit, right after authentication as in the user exchange, and
-    // before any refusal it could repeat. Past it the answer is a 429 with NO audit event (the user exchange
-    // audits it), so no authenticated client, listed or not, can drive the audit log's volume.
+    // Unaudited 429 (see above), before any refusal a caller could repeat.
     if (!(await checkTokenExchangeRateLimit(caller.id, caller.tokenRateLimit))) {
       return rateLimitedResponse(
         oauthRetryAfter('token-exchange'),
@@ -310,7 +268,6 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     }
     if (caller.accessMode === 'disabled') return refuse('unauthorized_client', 'caller disabled');
 
-    // 3. The resource, as the user exchange judges it.
     const resource = await findExchangeResource(ctx.resource);
     if (!resource) return refuse('invalid_target', 'resource not registered');
     if ((resource.scopes & BLOCK_EXCHANGE_SCOPE) === 0n) {
@@ -320,7 +277,6 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       return refuse('unauthorized_client', 'caller not a relay of resource');
     }
 
-    // 4. The block token.
     const verified = await verifyBlockTokenForExchange(subjectToken);
     if (!verified.ok) {
       if (verified.reason === 'not configured' || verified.reason === 'misconfigured') {
@@ -334,12 +290,10 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     ctx.blockJti = block.jti;
     ctx.userId = block.userId;
 
-    // 5. The app declares a document-store collection (consent-exempt: not the viewer's consent).
     if (!block.scopes.includes(STORAGE_SCOPE)) {
       return refuse('invalid_grant', 'block token has no apps:storage scope');
     }
 
-    // 6. The block's app.
     if (!resource.apps.includes(block.appId)) {
       return refuse('unauthorized_client', 'app not listed for resource');
     }
@@ -350,19 +304,16 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       return refuse('invalid_scope', 'app may not hold AppDataRead');
     }
 
-    // 7. The viewer.
     const userProblem = await userRefusal(block.userId, BLOCK_EXCHANGE_SCOPE, app);
     if (userProblem) return refuse(userProblem.refusal, userProblem.reason);
     if (await userHasRole(block.userId, SYSTEM_WORKLOAD_ROLE)) {
       return refuse('invalid_grant', 'workload account');
     }
 
-    // 8. The app's blocks, at mint time.
     if (await appBlockSuspended(db, block.appId)) {
       return refuse('unauthorized_client', 'app block suspended');
     }
 
-    // 9. Issuer, key and lifetime: at most 15 minutes, never past the block token.
     const issuer = env.AUTH_JWT_ISSUER;
     const tokenSigner = getSigner();
     if (!issuer || !tokenSigner)
@@ -371,8 +322,8 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     const exp = Math.min(block.exp, iat + EXCHANGED_TOKEN_MAX_TTL);
     if (exp <= iat) return refuse('invalid_grant', 'block token expiring');
 
-    // 10. Once per block token: claimed as the last step before minting, and given back if the mint fails,
-    // so a failure the caller is told to retry does not burn the block token.
+    // Once per block token: claimed last, just before minting, and released in `finally` if no token is
+    // issued, so a failure the caller may retry does not burn the block token.
     let claimed: boolean;
     try {
       claimed = await claimBlockTokenJti(block.jti, block.exp - iat + 60);
@@ -384,7 +335,6 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     if (!claimed) return refuse('invalid_grant', 'block token already exchanged');
     claimedJti = block.jti;
 
-    // 11. Mint, exactly as the user exchange does.
     const jti = randomUUID();
     const scope = scopeNames(BLOCK_EXCHANGE_SCOPE);
     const minted = await mintExchangedJwt(

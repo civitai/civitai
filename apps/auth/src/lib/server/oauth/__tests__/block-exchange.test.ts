@@ -46,6 +46,9 @@ const h = await vi.hoisted(async () => {
     hubPublicKey: hub.publicKey,
     tables: {} as Record<string, Record<string, unknown>[]>,
     cache: new Map<string, string>(),
+    cacheEx: new Map<string, number | undefined>(),
+    replayHang: false,
+    replaySetCalled: false,
     sys: new Map<string, { value: string; ex: number }>(),
     sysSetThrows: false,
     redisNull: false,
@@ -105,9 +108,12 @@ vi.mock('$lib/server/redis', async (orig) => ({
     h.redisNull
       ? null
       : {
-          async set(key: string, value: string, opts?: { NX?: boolean }) {
+          async set(key: string, value: string, opts?: { NX?: boolean; EX?: number }) {
+            h.replaySetCalled = true;
+            if (h.replayHang) return new Promise<never>(() => undefined);
             if (opts?.NX && h.cache.has(key)) return null;
             h.cache.set(key, value);
+            h.cacheEx.set(key, opts?.EX);
             return 'OK';
           },
           async get(key: string) {
@@ -175,6 +181,13 @@ import { GET as jwksGET } from '../../../../routes/.well-known/jwks.json/+server
 import { WorkerTokenExchangeGrant } from '../worker-grant';
 import { invalidateRoleCache } from '../access';
 import { parseBlockExchangeCallers } from '../block-exchange';
+import {
+  BLOCK_TOKEN_AUDIENCE,
+  BLOCK_TOKEN_ISSUER,
+  BLOCK_USER_SUB_RE,
+  CLOCK_TOLERANCE_SECONDS,
+  MAX_AGE_SECONDS,
+} from '../block-token-verify';
 
 const NOW = 1_800_000_000; // a fixed second, so lifetimes are exact
 const ISSUER = 'https://auth.test';
@@ -225,6 +238,9 @@ beforeEach(() => {
     app_blocks: [{ id: 'apb_01notes', app_id: APP, status: 'approved' }],
   };
   h.cache.clear();
+  h.cacheEx.clear();
+  h.replayHang = false;
+  h.replaySetCalled = false;
   h.sys.clear();
   h.sysSetThrows = false;
   h.redisNull = false;
@@ -355,7 +371,9 @@ describe('block token exchange — dark by default (empty caller allowlist)', ()
     });
   });
 
-  it('stops auditing an unauthenticated flood at the per-IP limit (120 a minute)', async () => {
+  // WIRING-LEVEL: the limiter is the fake above, so this proves which bucket is charged and that a refusal
+  // past it is not audited, not the real limiter's window or Redis behaviour.
+  it('charges unauthenticated refusals to the per-IP bucket, and stops auditing past it (wiring-level)', async () => {
     delete process.env.OAUTH_BLOCK_EXCHANGE_CALLERS;
     const token = await blockToken();
     for (let i = 0; i < 120; i++) expect((await exchange(token)).status).toBe(400);
@@ -380,7 +398,8 @@ describe('block token exchange — the caller', () => {
     expect(lastReason()).toBe('client authentication failed');
   });
 
-  it('rate-limits an authenticated caller before the allowlist: past it, 429 with no audit event', async () => {
+  // WIRING-LEVEL, like the per-IP test: the limiter is a fake.
+  it('charges the caller limit before the allowlist; past it, 429 with no audit event (wiring-level)', async () => {
     // A staff-set limit of 3 (honoured for a system-owned client) instead of the default 600.
     const other = h.tables.OauthClient.find((c) => c.id === OTHER_RELAY)!;
     other.userId = -1;
@@ -667,6 +686,35 @@ describe('block token exchange — the block token', () => {
 });
 
 describe('block token exchange — one exchange per block token', () => {
+  it('claims the block token until a minute past its exp', async () => {
+    const res = await exchange(await blockToken({ iat: NOW, exp: NOW + 900 }));
+    expect(res.status).toBe(200);
+    // exp - now + 60: a replay is refused for as long as the block token could verify (30 s skew included).
+    expect([...h.cacheEx.values()]).toEqual([960]);
+  });
+
+  it('answers 503 when the replay store does not answer in 2 s, and the retry then succeeds', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(NOW * 1000);
+    const token = await blockToken();
+    h.replayHang = true;
+    const pending = exchange(token);
+    // Real async work (signature checks) runs before the claim; wait for the claim itself.
+    for (let i = 0; i < 500 && !h.replaySetCalled; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(h.replaySetCalled).toBe(true);
+    await vi.advanceTimersByTimeAsync(2001);
+    const res = await pending;
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('temporarily_unavailable');
+    expect(lastReason()).toBe('replay check failed: Error: replay store timed out');
+    expect(issued()).toEqual([]);
+    h.replayHang = false;
+    const retry = await exchange(token);
+    expect(retry.status, JSON.stringify(retry.body)).toBe(200);
+  });
+
   it('refuses a replay', async () => {
     const token = await blockToken();
     expect((await exchange(token)).status).toBe(200);
@@ -808,6 +856,21 @@ describe('block token verification follows the site', () => {
     expect(service).toContain("export const BLOCK_TOKEN_AUDIENCE = 'civitai-app-block';");
     const subject = read('src/server/services/block-token-subject.ts');
     expect(subject).toContain('export const USER_SUB_RE = /^user:[1-9][0-9]{0,11}$/;');
+  });
+
+  it('uses the site age cap and clock tolerance', () => {
+    expect(MAX_AGE_SECONDS).toBe(900);
+    expect(CLOCK_TOLERANCE_SECONDS).toBe(30);
+    const middleware = read('src/server/middleware/block-scope.middleware.ts');
+    expect(middleware).toContain('const MAX_TOKEN_AGE_DEFAULT_SECONDS = 15 * 60;');
+    expect(middleware).toContain('const MAX_TOKEN_AGE_CLOCK_TOLERANCE_SECONDS = 30;');
+    expect(middleware).toContain("clockTolerance: '30s',");
+  });
+
+  it('holds the same issuer, audience and subject pattern on the hub side', () => {
+    expect(BLOCK_TOKEN_ISSUER).toBe('civitai');
+    expect(BLOCK_TOKEN_AUDIENCE).toBe('civitai-app-block');
+    expect(BLOCK_USER_SUB_RE.source).toBe('^user:[1-9][0-9]{0,11}$');
   });
 
   it('computes the kid as the site does', () => {

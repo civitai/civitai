@@ -5,6 +5,7 @@ import { parseTokenScope, TokenScope, tokenScopeMaskToList } from '@civitai/auth
 import { db } from '$lib/server/db/db';
 import { getSysRedis } from '$lib/server/redis';
 import { waitForRedisReady } from '$lib/server/redis-ready';
+import { raceTimeout } from './timeout';
 import { isRefusedModerationAccount } from '$lib/server/auth/moderation-account';
 import { checkClientAccess, userHasRole } from './access';
 import { SYSTEM_USER_ID, SYSTEM_WORKLOAD_ROLE } from './constants';
@@ -256,14 +257,7 @@ async function withSysRedis<T>(op: (redis: StringRedis) => Promise<T>): Promise<
   if (!redis) throw new Error('REDIS_SYS_URL is not configured');
   if (!(await waitForRedisReady(redis, RECORD_TIMEOUT_MS)))
     throw new Error('exchange record store not ready');
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error('exchange record timed out')),
-      Math.max(0, deadline - Date.now())
-    );
-  });
-  return Promise.race([op(redis), timeout]).finally(() => clearTimeout(timer));
+  return raceTimeout(op(redis), Math.max(0, deadline - Date.now()), 'exchange record timed out');
 }
 
 /** Store the record until a minute past the JWT's expiry. Throws when it cannot be stored. */

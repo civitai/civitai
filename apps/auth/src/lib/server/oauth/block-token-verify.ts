@@ -11,8 +11,10 @@ import { logToAxiom } from '$lib/server/axiom';
 // refuses every token the exchange should never turn into a registry token (anonymous, dev, review
 // run-for-real, private run), so a looser site rule never widens what the hub mints.
 //
-// The constants below are the site's (`block-token.service.ts`, `block-token-subject.ts`). The hub cannot
-// import the site's modules, so `block-exchange.test.ts` reads those files and fails if either side moves.
+// The constants below are the site's (`block-token.service.ts`, `block-token-subject.ts`,
+// `block-scope.middleware.ts`). The hub cannot import the site's modules, so `block-exchange.test.ts` pins
+// the issuer, audience, subject pattern, kid derivation, age cap and clock tolerance on both sides, and
+// fails if either side's value moves.
 
 /** The site's `BLOCK_TOKEN_ISSUER`. */
 export const BLOCK_TOKEN_ISSUER = 'civitai';
@@ -21,8 +23,8 @@ export const BLOCK_TOKEN_AUDIENCE = 'civitai-app-block';
 /** The site's `USER_SUB_RE`: a signed-in viewer. `anon` never matches. */
 export const BLOCK_USER_SUB_RE = /^user:[1-9][0-9]{0,11}$/;
 /** The site's age cap for every non-dev block token, and its clock tolerance. */
-const MAX_AGE_SECONDS = 15 * 60;
-const CLOCK_TOLERANCE_SECONDS = 30;
+export const MAX_AGE_SECONDS = 15 * 60;
+export const CLOCK_TOLERANCE_SECONDS = 30;
 
 /** The claims of a verified block token that the exchange reads. */
 export interface VerifiedBlockToken {
@@ -85,7 +87,8 @@ function publicKeyProblem(pem: string): string | { key: KeyObject } {
  * The site's block-token public keys by kid, from BLOCK_TOKEN_PUBLIC_KEY and BLOCK_TOKEN_PUBLIC_KEY_NEXT (the
  * same PEMs the site verifies with). FAIL CLOSED: one configured value that is a private key or not an RSA
  * public key makes the whole set an error, logged once per distinct configuration, and every token is
- * refused until it is fixed. Neither set is an empty map.
+ * refused until it is fixed. With neither variable set the map is empty, and the exchange refuses every
+ * token as not configured.
  */
 function verificationKeys(): KeySet {
   const configured = KEY_ENV.map((name) => [name, env[name]] as const).filter(
@@ -164,8 +167,8 @@ export async function verifyBlockTokenForExchange(
     return { ok: false, reason: 'claim shape' };
   }
   if (!BLOCK_USER_SUB_RE.test(sub)) return { ok: false, reason: 'anonymous' };
-  // Each marker refused when present at all, whatever its value: a non-boolean is a shape the site refuses
-  // too, and `true` is a token class this exchange never serves.
+  // Each marker refused unless absent or exactly `false`: a non-boolean is a shape the site refuses too, and
+  // `true` is a token class this exchange never serves.
   if (payload.dev !== undefined && payload.dev !== false) return { ok: false, reason: 'dev token' };
   if (payload.reviewRunForReal !== undefined && payload.reviewRunForReal !== false) {
     return { ok: false, reason: 'review token' };
