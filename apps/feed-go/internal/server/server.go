@@ -92,20 +92,16 @@ func isSampled(ctx context.Context) bool {
 //
 //   - on a Node sample, the app has already decided it, so its value is read as the app parses it
 //     (parseVerifiedBotHeader: `googlebot` or `bingbot`, anything else is no crawler);
-//   - on a public request, resolveVerifiedBotHeader sets the header only for a user agent matching a
-//     crawler pattern (and an IP in that crawler's published ranges, which only the app holds), so
-//     such a request falls back (`crawler-user-agent`, as apiRequestPolicy already does on the
-//     public route); for any other user agent the app removes whatever header came in, so it is no
-//     crawler whatever it carries.
-func verifiedCrawler(r *http.Request) (bool, error) {
+//   - on a public request, a crawler's user agent never gets here: apiRequestPolicy (serve) hands it
+//     back first (`crawler-user-agent`: only the app holds the address ranges that verify it). For
+//     any other user agent the app's policy removes whatever header came in, so it is no crawler
+//     whatever it carries.
+func verifiedCrawler(r *http.Request) bool {
 	if isSampled(r.Context()) {
 		v := r.Header.Get(verifiedBotHeader)
-		return v == "googlebot" || v == "bingbot", nil
+		return v == "googlebot" || v == "bingbot"
 	}
-	if apipolicy.IsCrawlerUserAgent(r.Header.Get("User-Agent")) {
-		return false, fallback.New("crawler-user-agent")
-	}
-	return false, nil
+	return false
 }
 
 // Server wires a request to the port.
@@ -364,10 +360,7 @@ func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.Inf
 	if err != nil {
 		return feed.InfiniteRequest{}, false, err
 	}
-	crawler, err := verifiedCrawler(r)
-	if err != nil {
-		return feed.InfiniteRequest{}, false, err
-	}
+	crawler := verifiedCrawler(r)
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
 		return feed.InfiniteRequest{}, false, err

@@ -356,6 +356,58 @@ func TestServeInfiniteIDsHeldByPost(t *testing.T) {
 	}
 }
 
+// postsAsked records each post→version lookup.
+type postsAsked struct {
+	*fakeV1Sources
+	asked [][]int
+}
+
+func (p *postsAsked) PostVersions(ctx context.Context, ids []int) (map[int]int, error) {
+	p.asked = append(p.asked, append([]int(nil), ids...))
+	return p.fakeV1Sources.PostVersions(ctx, ids)
+}
+
+// An image with no post is never held and never looked up (`postId` filtered by isDefined first).
+// The fake maps post 0 to held version 60, so a lookup for it would also drop the post-less R image.
+func TestServeInfiniteIDsPostlessImage(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		rows  func() []RawImage
+		want  []float64
+		asked [][]int
+	}{
+		{"only post-less images", func() []RawImage {
+			r := infRow(35, 0)
+			r.NsfwLevel = 4
+			return []RawImage{r}
+		}, []float64{35}, nil},
+		{"beside a held post", func() []RawImage {
+			r1, r2 := infRow(35, 0), infRow(32, 700)
+			r1.NsfwLevel, r2.NsfwLevel = 4, 4
+			return []RawImage{r1, r2}
+		}, []float64{35}, [][]int{{700}}},
+	} {
+		f := newInfFixture(t)
+		f.cache.SetString("model:gallery-settings:50", []byte(`{"sfwHeld":true,"level":3,"pinnedPosts":{}}`))
+		src := &postsAsked{fakeV1Sources: f.deps.Sources.(*fakeV1Sources)}
+		src.posts[0] = 60
+		f.deps.Sources = src
+		var ownerReads, systemReads int
+		addGalleryRoutes(f, map[int]int{50: 41}, nil, &ownerReads, &systemReads)
+		f.rows = c.rows()
+		j, _, _, err := serveInf(t, f, map[string]any{"ids": []any{num("35"), num("32")}}, InfiniteRequest{Viewer: &Viewer{ID: 9}})
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got := itemIDs(j); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: ids %v, want %v", c.name, got, c.want)
+		}
+		if !reflect.DeepEqual(src.asked, c.asked) {
+			t.Errorf("%s: post lookups %v, want %v (never post 0)", c.name, src.asked, c.asked)
+		}
+	}
+}
+
 // `reactions` signed out: the Postgres page with no reaction clause; signed in: the clause.
 func TestServeInfiniteReactions(t *testing.T) {
 	f := newInfFixture(t)

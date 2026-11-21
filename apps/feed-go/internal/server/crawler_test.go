@@ -20,9 +20,9 @@ const (
 )
 
 // verifiedCrawler: on a Node sample the header is the app's own decision, read as
-// parseVerifiedBotHeader reads it (`googlebot` / `bingbot`, nothing else); on a public request a
-// crawler's user agent is handed back (only the app holds the ranges that verify it), and any other
-// user agent is no crawler whatever header it carries (the app's policy strips it).
+// parseVerifiedBotHeader reads it (`googlebot` / `bingbot`, nothing else); on a public request (a
+// crawler's user agent was handed back by apiRequestPolicy before this) no header makes a crawler: the
+// app's policy strips it.
 func TestVerifiedCrawler(t *testing.T) {
 	sampled := func(hdr map[string]string) *http.Request {
 		r, err := SyntheticInfiniteRequest(context.Background(), ShadowRequest{Input: `{"json":{}}`, Headers: hdr})
@@ -42,22 +42,18 @@ func TestVerifiedCrawler(t *testing.T) {
 		name    string
 		r       *http.Request
 		crawler bool
-		reason  string
 	}{
-		{"sample: googlebot", sampled(map[string]string{verifiedBotHeader: "googlebot"}), true, ""},
-		{"sample: bingbot", sampled(map[string]string{verifiedBotHeader: "bingbot"}), true, ""},
-		{"sample: a value the app does not name", sampled(map[string]string{verifiedBotHeader: "1"}), false, ""},
-		{"sample: another case", sampled(map[string]string{verifiedBotHeader: "Googlebot"}), false, ""},
-		{"sample: no header", sampled(nil), false, ""},
-		{"sample: a crawler's user agent the app did not verify", sampled(map[string]string{"user-agent": crawlerUA}), false, ""},
-		{"public: a spoofed header, a browser", public(map[string]string{verifiedBotHeader: "googlebot", "User-Agent": browserUA}), false, ""},
-		{"public: a spoofed header, no user agent", public(map[string]string{verifiedBotHeader: "googlebot"}), false, ""},
-		{"public: a crawler's user agent", public(map[string]string{"User-Agent": crawlerUA}), false, "crawler-user-agent"},
-		{"public: a crawler's user agent and the header", public(map[string]string{"User-Agent": crawlerUA, verifiedBotHeader: "googlebot"}), false, "crawler-user-agent"},
+		{"sample: googlebot", sampled(map[string]string{verifiedBotHeader: "googlebot"}), true},
+		{"sample: bingbot", sampled(map[string]string{verifiedBotHeader: "bingbot"}), true},
+		{"sample: a value the app does not name", sampled(map[string]string{verifiedBotHeader: "1"}), false},
+		{"sample: another case", sampled(map[string]string{verifiedBotHeader: "Googlebot"}), false},
+		{"sample: no header", sampled(nil), false},
+		{"sample: a crawler's user agent the app did not verify", sampled(map[string]string{"user-agent": crawlerUA}), false},
+		{"public: a spoofed header, a browser", public(map[string]string{verifiedBotHeader: "googlebot", "User-Agent": browserUA}), false},
+		{"public: a spoofed header, no user agent", public(map[string]string{verifiedBotHeader: "googlebot"}), false},
 	} {
-		got, err := verifiedCrawler(c.r)
-		if got != c.crawler || fallback.Reason(err) != c.reason {
-			t.Errorf("%s: crawler %v reason %q (%v), want %v %q", c.name, got, fallback.Reason(err), err, c.crawler, c.reason)
+		if got := verifiedCrawler(c.r); got != c.crawler {
+			t.Errorf("%s: crawler %v, want %v", c.name, got, c.crawler)
 		}
 	}
 }

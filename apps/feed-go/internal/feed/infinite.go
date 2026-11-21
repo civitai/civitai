@@ -1044,9 +1044,16 @@ func withoutHeldFromViewer(ctx context.Context, d *InfiniteDeps, images []Image,
 	if len(images) == 0 || viewer.IsModerator {
 		return images, nil
 	}
+	// `images.map((image) => image.postId).filter(isDefined)`: an image with no post is never held,
+	// and no lookup is made for it.
 	postIDs := make([]int, 0, len(images))
 	for _, img := range images {
-		postIDs = append(postIDs, img.PostID)
+		if img.PostID != 0 {
+			postIDs = append(postIDs, img.PostID)
+		}
+	}
+	if len(postIDs) == 0 {
+		return images, nil
 	}
 	holds, err := heldByPost(ctx, d.Sources, d.Gallery, postIDs, "held-level-unset")
 	if err != nil || len(holds) == 0 {

@@ -112,8 +112,6 @@ func TestComputeInfiniteEarlyFallbacks(t *testing.T) {
 		{"an undecodable input", mk(http.MethodGet, `not json`, nil), "input-envelope"},
 		{"a hat sort", mk(http.MethodGet, `{"json":{"hatSort":"most"}}`, nil), "infinite-hat-turf"},
 		{"a hub", mk(http.MethodGet, `{"json":{"hubId":4}}`, nil), "input-hubId"},
-		// A public request whose user agent is a crawler's: only the app can verify it (verifiedCrawler).
-		{"a crawler's user agent", mk(http.MethodGet, `{"json":{}}`, map[string]string{"User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1)"}), "crawler-user-agent"},
 	}
 	for _, c := range cases {
 		_, err := s.computeInfinite(context.Background(), c.r)
