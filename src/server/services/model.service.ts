@@ -8811,6 +8811,8 @@ async function refreshPersonalLeadCandidates() {
     since: new Date(Date.now() - PERSONAL_LEAD_WINDOW_MS),
     limit: PERSONAL_LEAD_CANDIDATES_LIMIT,
   });
+  if (data.length >= PERSONAL_LEAD_CANDIDATES_LIMIT)
+    logToAxiom({ type: 'info', name: 'personal-hot-lead-candidates-capped', count: data.length });
   await clusterCacheGuard.writeBestEffort('personal hot lead candidates set', () =>
     redis.packed.set(key, { data, cachedAt: Date.now() } satisfies CandidatesEntry, {
       EX: PERSONAL_LEAD_CANDIDATES_TTL_S,
@@ -8892,12 +8894,9 @@ export async function computePersonalLead(
 }
 
 /**
- * The viewer's lead ids for page 1 of Hot, cached per viewer and browsing level for an hour (a timeout's
- * empty entry for a minute). Only page
- * 1 computes; later pages read the same entry to exclude what page 1 showed, and a miss there excludes
- * nothing. A Redis failure, a missing candidate list or a compute error gives no lead (plain Hot).
- * Past the budget the page gets no lead and an empty entry is cached, so a
- * viewer whose reads are slow is not recomputed on every page 1, and page 2 hides nothing.
+ * Lead ids, cached per viewer and browsing level. Only page 1 computes; later pages read the same entry
+ * to exclude what page 1 showed, and a miss there excludes nothing. Any failure, or a compute past the
+ * budget, gives no lead (plain Hot).
  */
 export async function getPersonalLeadModelIds(
   {
