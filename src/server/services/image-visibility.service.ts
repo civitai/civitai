@@ -28,11 +28,15 @@ export const reviewedGalleryImageConditions = (
   imageReviewedSql(),
 ];
 
-/** What `getImagesForModelVersion` shows a signed-out viewer at some browsing level, over `"Image" i`. */
+/**
+ * What `getImagesForModelVersion` shows a signed-out viewer at some browsing level, over `"Image" i`:
+ * its viewer-dependent terms (blocked-for, minor-mature, restricted base model) with no viewer.
+ */
 export const anonymousGalleryImageConditions = (): Prisma.Sql[] => [
   ...imageBlockedForConditions({}),
   ...reviewedGalleryImageConditions(),
   minorMatureImageVisibleSql({}),
+  imageNotRestrictedSql(),
 ];
 
 /**

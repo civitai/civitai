@@ -295,10 +295,12 @@ export async function revertBatch(limit: number) {
             `
           : [];
       if (unvisited.length) await tx.$executeRaw(setCountsSql(unvisited));
-      await writeKeyValue(tx, PROGRESS_KEY, {
-        ...progress,
-        revertCursor: prev.length ? prev[prev.length - 1].modelVersionId : cursor,
-      });
+      // Only once something is undone: a revert with nothing to restore must not lock finalize out.
+      if (prev.length || unvisited.length)
+        await writeKeyValue(tx, PROGRESS_KEY, {
+          ...progress,
+          revertCursor: prev.length ? prev[prev.length - 1].modelVersionId : cursor,
+        });
       const versions = prev.length + unvisited.length;
       return { versions, finished: versions < limit };
     },
@@ -312,6 +314,8 @@ export async function setPaused(paused: boolean) {
       await lockImageCount(tx);
       const watermark = await readKeyValue<Watermark>(tx, WATERMARK_KEY);
       if (!watermark) throw new Error('No watermark');
+      if (!paused && (await readKeyValue<Progress>(tx, PROGRESS_KEY))?.revertCursor !== undefined)
+        throw new Error('A revert has started: resuming would add onto restored counts');
       const next = { ...watermark, paused: paused || undefined };
       await writeKeyValue(tx, WATERMARK_KEY, next);
       return next;

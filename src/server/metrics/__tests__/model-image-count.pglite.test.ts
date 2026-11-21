@@ -16,6 +16,7 @@ import {
   finalizeBatch,
   PROGRESS_KEY,
   revertBatch,
+  setPaused,
   stageRange,
   startBackfill,
 } from '~/server/metrics/model-image-count-backfill';
@@ -41,6 +42,7 @@ const SCHEMA = `
     "nsfwLevel" int NOT NULL DEFAULT 1, "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
     "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
     "tosViolation" boolean NOT NULL DEFAULT false, "blockedFor" text, minor boolean,
+    "modelRestricted" boolean NOT NULL DEFAULT false,
     metadata jsonb, "scanJobs" jsonb
   );
   CREATE TABLE "ImageResourceNew" ("imageId" int, "modelVersionId" int, PRIMARY KEY ("imageId", "modelVersionId"));
@@ -158,6 +160,8 @@ describe('the count', () => {
       `minor = true, "nsfwLevel" = 4`,
       `minor = true, "nsfwLevel" = 1`,
       `"nsfwLevel" = 16`,
+      `"modelRestricted" = true, "nsfwLevel" = 4`, // restricted base model, mature
+      `"modelRestricted" = true, "nsfwLevel" = 1`, // restricted base model, PG: shown
     ];
     for (const state of states) await image(at, FAN, state);
     const ids = async (where: Prisma.Sql) =>
@@ -170,7 +174,7 @@ describe('the count', () => {
     const gallery = await ids(Prisma.join(anonymousGalleryImageConditions(), ' AND '));
     const extras = await ids(Prisma.sql`(i."tosViolation" OR i."nsfwLevel" = 32)`);
     expect(await ids(countableImageSql())).toEqual(gallery.filter((id) => !extras.includes(id)));
-    expect(gallery).toEqual([1, 8, 10, 12, 13]); // the gallery itself does not check tosViolation
+    expect(gallery).toEqual([1, 8, 10, 12, 13, 15]); // the gallery itself does not check tosViolation
   });
 
   it("is the gallery's own filter: getImagesForModelVersion builds from the shared conditions", () => {
@@ -183,6 +187,7 @@ describe('the count', () => {
     expect(body).toContain('reviewedGalleryImageConditions(');
     expect(body).toContain('imageBlockedForConditions(');
     expect(body).toContain('minorMatureImageVisibleSql(');
+    expect(body).toContain('imageNotRestrictedSql(');
   });
 
   // Decided 2026-11-21 (PR #9948): the owner's own showcase images count. The writer this replaces
@@ -406,6 +411,25 @@ describe('backfill', () => {
     expect(await imageCount(V)).toBe(7);
     expect(await imageCount(11)).toBe(5); // still frozen, never visited
     await expect(finalizeBatch(100)).rejects.toThrow('A revert has started');
+  });
+
+  it('a revert with nothing to undo leaves finalize possible', async () => {
+    await image(W - HOUR_MS);
+    await startBackfill(W + 24 * HOUR_MS);
+    expect(await revertBatch(100)).toEqual({ versions: 0, finished: true });
+    await stage(1, 1);
+    expect(await finalizeBatch(100)).toEqual({ versions: 1, finished: true });
+  });
+
+  it('refuses to resume the job once a revert has started', async () => {
+    await q(`INSERT INTO "ModelVersionMetric" ("modelVersionId", "imageCount") VALUES (${V}, 7)`);
+    await image(W - HOUR_MS);
+    await startBackfill(W + 24 * HOUR_MS);
+    await stage(1, 1);
+    await finalizeBatch(100);
+    await revertBatch(100);
+    await expect(setPaused(false)).rejects.toThrow('A revert has started');
+    expect((await watermark())?.paused).toBe(true);
   });
 
   it('refuses to finalize once the job owns the counts', async () => {
