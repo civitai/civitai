@@ -82,24 +82,49 @@ describe('feed load events', () => {
     expect(sent.map((e) => e.pageIndex)).toEqual([0]);
   });
 
-  it('ignores queries that are not feeds, and starts over after a feed query is removed', () => {
+  it('ignores an infinite query that is not a feed', () => {
+    const { client, sent, tracker } = setup();
+    tracker.start();
+    client.setQueryData([['model', 'getAllOther'], { input, type: 'infinite' }], {
+      pages: [page(1)],
+      pageParams: [0],
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('starts over after a feed query is removed', () => {
     const { client, sent, tracker, setPages } = setup();
     tracker.start();
-    client.setQueryData([['model', 'getById'], { input: { id: 1 }, type: 'query' }], { id: 1 });
     setPages(page(1));
     client.removeQueries({ queryKey: key });
     setPages(page(1));
     expect(sent.map((e) => e.pageIndex)).toEqual([0, 0]);
   });
 
-  it('remembers where each item was shown', () => {
-    const { tracker, setPages } = setup();
+  it('sends facet-only search browsing with the allowlist names and a parsed sort', () => {
+    const { sent, tracker } = setup();
     tracker.start();
-    setPages(page(1, 2), page(3));
-    expect(tracker.getContext('Model', 3)).toMatchObject({
-      feed: 'models',
-      pageIndex: 1,
-      position: 2,
+    tracker.searchLoad('models_v9', {
+      sortBy: 'models_v9:metrics.thumbsUpCount:desc',
+      baseModel: ['SDXL 1.0'],
+      modelType: ['LORA'],
+      users: ['someone'],
     });
+    expect(sent).toEqual([
+      expect.objectContaining({
+        feed: 'search',
+        sort: 'metrics thumbsUpCount desc',
+        filters: { index: 'models_v9', baseModels: 'SDXL 1.0', types: 'LORA' },
+      }),
+    ]);
+  });
+
+  it('sends no search load before start or after stop', () => {
+    const { sent, tracker } = setup();
+    tracker.searchLoad('models_v9', {});
+    const stop = tracker.start();
+    stop();
+    tracker.searchLoad('models_v9', {});
+    expect(sent).toHaveLength(0);
   });
 });
