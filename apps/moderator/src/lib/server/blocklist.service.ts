@@ -279,12 +279,14 @@ export async function removeBlocklistItems({
     const count = row.data.length - filtered.length;
     if (count === 0) return { count: 0, rowId: row.id };
     // Inside the lock, so two removals cannot each pass a check made against the same pre-state.
-    // Below the floor the main app ignores the row and enforces the shipped list.
-    if (
-      type === 'ProfanityWord' &&
-      filtered.filter(isUsableBlockedEntry).length < MIN_MANAGED_PROFANITY_ENTRIES
-    )
-      throw new BlocklistBelowFloorError();
+    // Below the floor the main app ignores the row and enforces the shipped list. Removing an
+    // unusable entry changes nothing the filter uses, so it is allowed even on a short list.
+    if (type === 'ProfanityWord') {
+      const usableAfter = filtered.filter(isUsableBlockedEntry).length;
+      const usableBefore = row.data.filter(isUsableBlockedEntry).length;
+      if (usableAfter < usableBefore && usableAfter < MIN_MANAGED_PROFANITY_ENTRIES)
+        throw new BlocklistBelowFloorError();
+    }
 
     await trx
       .updateTable('Blocklist')

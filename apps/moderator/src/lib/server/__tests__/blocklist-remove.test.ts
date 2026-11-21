@@ -513,6 +513,18 @@ describe('upsertBlocklist', () => {
     expect(rows[12].data).toEqual(data);
   });
 
+  it('removes an unusable ProfanityWord entry from a list already below the floor', async () => {
+    rows[12] = { type: 'ProfanityWord', data: ['zorblat', 'ab'] };
+    const { count } = await removeBlocklistItems({
+      id: 12,
+      userId: MOD_ID,
+      type: 'ProfanityWord',
+      items: ['ab'],
+    });
+    expect(count).toBe(1);
+    expect(rows[12].data).toEqual(['zorblat']);
+  });
+
   it('does not log edits to other lists', async () => {
     await removeBlocklistItems({
       id: 1,

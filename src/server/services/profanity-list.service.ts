@@ -32,6 +32,8 @@ export interface ProfanityListReader {
   read(): Promise<ProfanityLists>;
 }
 
+const LOG_INTERVAL_MS = 60_000;
+
 /**
  * 🔴 The held copy is the list this pod ENFORCED, never the raw row: after a fallback it is the
  * shipped list (`null`). Holding a missing or tiny row as "last good" would serve it in the next
@@ -42,11 +44,26 @@ export function createProfanityListReader({
 }: { readRow?: typeof readBlocklistWithSource } = {}): ProfanityListReader {
   let held: Held | null = null;
   const metrics = () => ensureRegisterProfanityListMetrics();
+  // Every server check reads the list, so a lasting fault would log once per comment thread.
+  const loggedAt = new Map<string, number>();
+  const logThrottled = (entry: Parameters<typeof logToAxiom>[0] & { name: string }) => {
+    const now = Date.now();
+    if (now - (loggedAt.get(entry.name) ?? 0) < LOG_INTERVAL_MS) return;
+    loggedAt.set(entry.name, now);
+    logToAxiom(entry);
+  };
+  // A held list of `null` is the shipped one: reported as the fallback it is, not as stale.
+  const fromHeld = (copy: Held): ProfanityLists => {
+    metrics().fallback.set(copy.blocked === null ? 1 : 0);
+    return { ...copy, source: copy.blocked === null ? 'fallback' : 'stale' };
+  };
 
   return {
     async read() {
       if (!(await isFlipt(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST))) {
-        // Flag off restores today's lists: shipped block list and shipped allow list.
+        // Flag off restores today's lists: shipped block list and shipped allow list. That is
+        // what this pod now enforces, so it is what an outage after the flag returns falls back to.
+        held = { blocked: null, allowed: null };
         metrics().fallback.set(0);
         return { blocked: null, allowed: null, source: 'shipped' };
       }
@@ -57,9 +74,9 @@ export function createProfanityListReader({
           readRow(BlocklistType.ProfanityBenignWord),
         ]);
       } catch (error) {
-        if (held) return { ...held, source: 'stale' };
+        if (held) return fromHeld(held);
         metrics().fallback.set(1);
-        logToAxiom({
+        logThrottled({
           name: 'profanity-list-unreadable',
           type: 'error',
           message: 'Enforcing the shipped profanity list; the managed list could not be read',
@@ -77,7 +94,7 @@ export function createProfanityListReader({
         held = { blocked: null, allowed };
         metrics().fallback.set(1);
         if (blockedRow.dto.id != null) {
-          logToAxiom({
+          logThrottled({
             name: 'profanity-blocklist-below-floor',
             type: 'error',
             message: 'Managed profanity list is below the floor; enforcing the shipped list',

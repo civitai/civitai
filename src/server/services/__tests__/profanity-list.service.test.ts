@@ -6,6 +6,7 @@ import {
 } from '@civitai/mod-utils/profanity/word-rules';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProfanityFilter } from '~/libs/profanity-simple';
+import { logToAxiom } from '~/server/logging/client';
 import { BlocklistType } from '~/server/common/enums';
 import type * as FliptClient from '~/server/flipt/client';
 
@@ -13,6 +14,7 @@ const h = vi.hoisted(() => ({
   flagOn: true,
   rows: new Map<string, { id?: number; data: string[] } | Error>(),
 }));
+vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: async () => h.flagOn,
@@ -66,6 +68,7 @@ async function verdicts() {
 }
 
 beforeEach(() => {
+  vi.mocked(logToAxiom).mockClear();
   h.flagOn = true;
   h.rows.clear();
   freshReader();
@@ -118,7 +121,28 @@ describe('getServerProfanityFilter', () => {
     setBlocked({ id: 1, data: MANAGED.slice(0, 3) });
     await verdicts();
     setBlocked(new Error('redis and db down'));
-    expect(await verdicts()).toEqual({ source: 'stale', managed: false, shipped: true });
+    expect(await verdicts()).toEqual({ source: 'fallback', managed: false, shipped: true });
+  });
+
+  // A rollback: flag off, the row fixed, flag back on, then an outage. The pod enforced the
+  // shipped list in between, so that is what it falls back to, not the list from before.
+  it('a read error after the flag was off falls back to the shipped list, not the older managed one', async () => {
+    setBlocked({ id: 1, data: MANAGED });
+    await verdicts();
+    h.flagOn = false;
+    await verdicts();
+    h.flagOn = true;
+    setBlocked(new Error('redis and db down'));
+    expect(await verdicts()).toEqual({ source: 'fallback', managed: false, shipped: true });
+  });
+
+  it('logs a lasting fault once a minute, not on every read', async () => {
+    setBlocked({ id: 1, data: MANAGED.slice(0, 3) });
+    await verdicts();
+    await verdicts();
+    expect(
+      vi.mocked(logToAxiom).mock.calls.filter(([e]) => e.name === 'profanity-blocklist-below-floor')
+    ).toHaveLength(1);
   });
 
   it('a read error with nothing held falls back to the shipped list', async () => {
