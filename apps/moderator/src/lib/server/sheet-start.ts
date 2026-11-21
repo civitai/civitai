@@ -10,6 +10,8 @@ import {
   webSessionClaims,
 } from './held-sheet';
 import { getReviewBatch, TIER_PAGE } from './review-batch';
+import { isReviewBatchId, reviewBatchHash } from '@civitai/shared/review-batch';
+import { auditSheetStart } from './sheet-audit';
 
 // The page and its redirect must not be framed, cached or sent on as a referrer.
 // `form-action` names the callback's origin too: the confirmed form ends in a redirect to it.
@@ -98,28 +100,44 @@ export function sheetStartHandlers(family: {
       );
     },
     POST: async ({ locals, request }) => {
-      if (!locals.user || !canAccess(locals.user, pagePath)) return status(403);
+      if (!locals.user) return status(403);
+      const moderatorId = locals.user.id;
+      const refuse = (code: number, batch?: string) => {
+        auditSheetStart({
+          tier: family.tier,
+          moderatorId,
+          batch,
+          outcome: 'refused',
+          status: code,
+        });
+        return status(code);
+      };
+      if (!canAccess(locals.user, pagePath)) return refuse(403);
       const form = await request.formData().catch(() => null);
       const params = form && parseStartParams((name) => form.get(name) as string | null);
-      if (!params) return status(400);
+      if (!params) return refuse(400);
       const raw = form.get('batch');
-      const bound = await bindBatch(
-        typeof raw === 'string' ? raw : null,
-        family.tier,
-        family.batchRequired,
-        locals.user.id
-      );
-      if (!bound.ok) return status(bound.status);
+      const named = typeof raw === 'string' ? raw : null;
+      const bound = await bindBatch(named, family.tier, family.batchRequired, moderatorId);
+      // The tag of the batch they asked for, even when it is refused; never the id itself.
+      if (!bound.ok)
+        return refuse(
+          bound.status,
+          named && isReviewBatchId(named) ? reviewBatchHash(named) : undefined
+        );
+      const batch = bound.batch?.hash;
 
       const claims = await webSessionClaims(request.headers.get('cookie') ?? '');
-      if (!claims?.jti || Number(claims.sub) !== locals.user.id || claims.impersonatedBy != null)
-        return status(403);
+      if (!claims?.jti || Number(claims.sub) !== moderatorId || claims.impersonatedBy != null)
+        return refuse(403, batch);
 
-      const code = await issueCode(params, locals.user.id, claims, bound.batch).catch(() => null);
+      const code = await issueCode(params, moderatorId, claims, bound.batch).catch(() => null);
       if (!code) {
         console.error('[held-sheet] could not store a sign-in code');
+        auditSheetStart({ tier: family.tier, moderatorId, batch, outcome: 'error', status: 503 });
         return status(503);
       }
+      auditSheetStart({ tier: family.tier, moderatorId, batch, outcome: 'issued' });
       const location = `${params.redirect}?code=${code}&state=${encodeURIComponent(params.state)}`;
       return new Response(null, {
         status: 303,
