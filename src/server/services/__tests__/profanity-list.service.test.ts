@@ -141,7 +141,7 @@ describe('getServerProfanityFilter', () => {
     await verdicts();
     expect(
       loggingMock.logToAxiom.mock.calls.filter(
-        ([e]: [{ name: string }]) => e.name === 'profanity-blocklist-below-floor'
+        (call) => (call[0] as { name: string }).name === 'profanity-blocklist-below-floor'
       )
     ).toHaveLength(1);
   });

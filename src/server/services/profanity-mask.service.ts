@@ -63,7 +63,9 @@ export async function withMaskedChatContent<T extends { content: string }>(
 /** Chats with their messages masked, in one masking call for all of them. */
 export async function withMaskedChatPreviews<C extends { messages: { content: string }[] }>(
   chats: C[]
-): Promise<(C & { messages: (C['messages'][number] & { maskedContent?: MaskedText })[] })[]> {
+): Promise<
+  (Omit<C, 'messages'> & { messages: (C['messages'][number] & { maskedContent?: MaskedText })[] })[]
+> {
   const masked = await withMaskedChatContent(chats.flatMap((chat) => chat.messages));
   let offset = 0;
   return chats.map((chat) => {
