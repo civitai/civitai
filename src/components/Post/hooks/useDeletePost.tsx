@@ -13,7 +13,7 @@ export function useDeletePost() {
   const queryUtils = trpc.useUtils();
   const deletePostMutation = trpc.post.delete.useMutation({
     async onSuccess(result, { id }) {
-      if (isDeleteAfterReview(result)) notifyDeleteAfterReview();
+      if (isDeleteAfterReview(result)) notifyDeleteAfterReview(result);
       else showSuccessNotification({ title: 'Post deleted', message: 'Successfully deleted post' });
       await Promise.all([
         queryUtils.post.get.invalidate({ id }),

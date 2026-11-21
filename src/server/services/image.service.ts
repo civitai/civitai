@@ -950,10 +950,10 @@ export async function queueReplacedImageDeletion(ids: number[]) {
   }
 }
 
-/** Of `ids`, the images whose delete waits on a review their owner can see. */
-export async function imagesPendingDeletion(ids: number[]) {
+/** Of `ids`, the images whose delete waits with a notice their owner may see (`viewerId`'s own). */
+export async function imagesPendingDeletion(ids: number[], viewerId?: number) {
   // Primary: read straight after the delete that queued it.
-  return readImagesPendingDeletion(kyselyOver(dbWrite), ids);
+  return readImagesPendingDeletion(kyselyOver(dbWrite), ids, viewerId);
 }
 
 type ImageDeleteOptions = {

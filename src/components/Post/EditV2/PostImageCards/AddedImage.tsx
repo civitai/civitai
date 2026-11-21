@@ -281,7 +281,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const deleteImageMutation = trpc.image.delete.useMutation({
     onSuccess: (result, { id }) => {
       removeFromEditor(id);
-      if (isDeleteAfterReview(result)) notifyDeleteAfterReview();
+      if (isDeleteAfterReview(result)) notifyDeleteAfterReview(result);
     },
     onError: (error) => showErrorNotification({ error: new Error(error.message) }),
   });

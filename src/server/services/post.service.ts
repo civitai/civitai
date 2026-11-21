@@ -2,8 +2,10 @@ import { ilikeContains } from '~/server/utils/ilike';
 import {
   deletePostRows,
   ownPostDeleteBlocked,
+  postPendingForUnsentReport,
   type DeleteActor,
 } from '@civitai/db-queries/content-deletion';
+import { deleteNoticeText } from '~/shared/constants/delete-after-review.constants';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { Prisma } from '@prisma/client';
 import {
@@ -1470,7 +1472,11 @@ export const deletePost = async ({
   });
   // Only the deleter's own images: the notice is for an owner's delete.
   const ownImageIds = images.filter((image) => image.userId === deletedById).map((x) => x.id);
-  const deleteAfterReview = (await imagesPendingDeletion(ownImageIds)).size > 0;
+  const notices = [...(await imagesPendingDeletion(ownImageIds, deletedById)).values()];
+  if (!post && deletedById !== undefined)
+    if (await postPendingForUnsentReport(kyselyOver(dbWrite), id, deletedById))
+      notices.push('processing');
+  const deleteAfterReview = deleteNoticeText(notices);
 
   // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
   // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
@@ -1500,8 +1506,8 @@ export const deletePost = async ({
   await userImageVideoCountCaches.bust(imageOwnerIds);
 
   if (post) return { ...post, deletedImageIds, deleteAfterReview };
-  // Kept, with an image of theirs blocked where they can see it: the one generic notice. Otherwise it
-  // answers as if nothing was deleted.
+  // Kept, with an image of theirs blocked where they can see it or a report about them unsent: that
+  // notice. Otherwise it answers as if nothing was deleted.
   return deleteAfterReview ? { deleteAfterReview } : undefined;
 };
 

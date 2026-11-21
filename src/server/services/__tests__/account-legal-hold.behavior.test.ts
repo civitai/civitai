@@ -64,8 +64,10 @@ const BIG_IMAGE_ID = 10_000_000_019;
 const EXPIRED_MARKER = 20;
 const EXTENDED_MARKER = 21;
 const RELEASED_WITH_REPORT = 22; // a released marker, and a pending report naming them
+// Unsent but archived: held by the unsent clause alone, so self-delete stays refused (no queue).
+const UNSENT_ARCHIVED_REPORT = 23;
 const OTHER_OWNERS_MODEL = 102;
-const ALL_USERS = Array.from({ length: 22 }, (_, i) => i + 1);
+const ALL_USERS = Array.from({ length: 23 }, (_, i) => i + 1);
 
 let failQueries = false;
 let unreadable = false;
@@ -221,6 +223,7 @@ beforeEach(async () => {
     -- carry the upload's keys beside the id, as the sending job writes them.
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details, images) VALUES
       (${PENDING_REPORT}, NULL, NULL, '{}', '[]'),
+      (${UNSENT_ARCHIVED_REPORT}, NULL, now(), '{}', '[]'),
       (${RELEASED_WITH_REPORT}, NULL, NULL, '{}', '[]'),
       (${RECENTLY_SENT}, now() - interval '30 days', now(), 'null', '[]'),
       (${SENT_OVER_A_YEAR_AGO}, now() - interval '400 days', now(), '{}', '[]'),
@@ -426,13 +429,16 @@ describe('deleteUser under a legal hold', () => {
     await holder.db.exec(`UPDATE "Model" SET "userId" = ${CLEAN} WHERE id = ${CLEAN_MODEL}`);
   });
 
-  it.each([PENDING_REPORT, SECONDARY_ON_REPORT, IMAGE_IN_REVIEW, IMAGE_BLOCKED_UNREPORTED])(
-    'refuses held account %i before anything is written',
-    async (userId) => {
-      await expect(run(userId)).rejects.toBeInstanceOf(LegalHoldError);
-      expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
-    }
-  );
+  it.each([
+    PENDING_REPORT,
+    UNSENT_ARCHIVED_REPORT,
+    SECONDARY_ON_REPORT,
+    IMAGE_IN_REVIEW,
+    IMAGE_BLOCKED_UNREPORTED,
+  ])('refuses held account %i before anything is written', async (userId) => {
+    await expect(run(userId)).rejects.toBeInstanceOf(LegalHoldError);
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
 
   it('refuses the feedback capture account before anything is read or written', async () => {
     await expect(run(-2)).rejects.toThrow(/feedback page captures/);

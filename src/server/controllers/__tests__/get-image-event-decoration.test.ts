@@ -25,7 +25,7 @@ const { getImage, decorations, canSee, pendingDeletion } = vi.hoisted(() => ({
   })),
   decorations: vi.fn(),
   canSee: vi.fn(async () => true),
-  pendingDeletion: vi.fn(async (ids: number[]) => new Set(ids)),
+  pendingDeletion: vi.fn(async (ids: number[]) => new Map(ids.map((id) => [id, 'review']))),
 }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
@@ -129,8 +129,12 @@ describe('getImageHandler pending deletion', () => {
     expect(result.deleteAfterReview).toBe(false);
   });
 
-  it('tells the owner nothing when no delete of theirs waits on a review they can see', async () => {
-    pendingDeletion.mockResolvedValueOnce(new Set());
+  // The image page speaks only of a review; a delete waiting on an unsent report says nothing here.
+  it.each([
+    ['nothing pending', new Map()],
+    ['a delete waiting on an unsent report', new Map([[1, 'processing' as const]])],
+  ])('tells the owner nothing for %s', async (_, pending) => {
+    pendingDeletion.mockResolvedValueOnce(pending);
     const result = await getImageHandler({ input: { id: 1 }, ctx: ctxFor({ user: { id: 7 } }) });
     expect(result.deleteAfterReview).toBe(false);
   });

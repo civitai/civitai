@@ -30,7 +30,7 @@ export function DeletePostButton({
   const currentUser = useCurrentUser();
   const { mutate, isPending: isLoading } = trpc.post.delete.useMutation({
     async onSuccess(result, { id }) {
-      if (isDeleteAfterReview(result)) notifyDeleteAfterReview();
+      if (isDeleteAfterReview(result)) notifyDeleteAfterReview(result);
       else
         showSuccessNotification({
           title: 'Post deleted',

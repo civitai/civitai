@@ -34,6 +34,10 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 
 import { deleteImageHandler } from '../image.controller';
 import { deletePostHandler } from '../post.controller';
+import {
+  DELETE_AFTER_REVIEW_MESSAGE,
+  DELETE_PROCESSING_MESSAGE,
+} from '~/shared/constants/delete-after-review.constants';
 
 const ctx = (userId: number, isModerator = false) =>
   ({
@@ -44,7 +48,7 @@ const ctx = (userId: number, isModerator = false) =>
 beforeEach(() => {
   vi.clearAllMocks();
   closeMock.mockResolvedValue(undefined);
-  pendingDeletionMock.mockResolvedValue(new Set());
+  pendingDeletionMock.mockResolvedValue(new Map());
 });
 
 describe('deleteImageHandler', () => {
@@ -88,14 +92,18 @@ describe('deleteImageHandler', () => {
   });
 });
 
-// Only a case the owner can already see is acknowledged; any other kept delete answers like a delete.
+// Only a case the owner can already see, or an unsent report, is acknowledged; any other kept
+// delete answers like a delete.
 describe('deleteImageHandler, a delete that waits on a review', () => {
-  it('answers with the notice when the kept image waits on a review its owner can see', async () => {
+  it.each([
+    ['a review its owner can see', 'review', DELETE_AFTER_REVIEW_MESSAGE],
+    ['a report not yet sent', 'processing', DELETE_PROCESSING_MESSAGE],
+  ])('answers with the notice when the kept image waits on %s', async (_, notice, text) => {
     deleteImagesMock.mockResolvedValue([]);
-    pendingDeletionMock.mockResolvedValue(new Set([55]));
+    pendingDeletionMock.mockResolvedValue(new Map([[55, notice]]));
 
     expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) })).toEqual({
-      deleteAfterReview: true,
+      deleteAfterReview: text,
     });
     expect(closeMock).not.toHaveBeenCalled();
   });
@@ -104,12 +112,12 @@ describe('deleteImageHandler, a delete that waits on a review', () => {
     deleteImagesMock.mockResolvedValue([]);
 
     expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) })).toBeNull();
-    expect(pendingDeletionMock).toHaveBeenCalledWith([55]);
+    expect(pendingDeletionMock).toHaveBeenCalledWith([55], 7);
   });
 
   it('answers with the deleted id when the image went', async () => {
     deleteImagesMock.mockResolvedValue([{ id: 55, userId: 7, nsfwLevel: 1 }]);
-    pendingDeletionMock.mockResolvedValue(new Set([55]));
+    pendingDeletionMock.mockResolvedValue(new Map([[55, 'review']]));
 
     expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) })).toEqual({ id: 55 });
   });

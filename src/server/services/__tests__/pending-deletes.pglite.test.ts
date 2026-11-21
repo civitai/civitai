@@ -4,9 +4,11 @@ import {
   childSafetyPostCase,
   deleteImageRows,
   deletePostRows,
+  imageDeleteBlocked,
   imagesPendingDeletion,
   ownImageDeleteBlocked,
   ownPostDeleteBlocked,
+  postPendingForUnsentReport,
   queueImageDeletes,
 } from '@civitai/db-queries/content-deletion';
 import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
@@ -329,7 +331,7 @@ describe('imagesPendingDeletion', () => {
     await addImage({ blockedFor: 'CSAM' });
     await ownDelete([IMAGE]);
 
-    expect([...(await imagesPendingDeletion(db, [PLAIN, IMAGE]))]).toEqual([IMAGE]);
+    expect(await imagesPendingDeletion(db, [PLAIN, IMAGE])).toEqual(new Map([[IMAGE, 'review']]));
   });
 
   // Not a case the owner can see: no notice.
@@ -341,12 +343,110 @@ describe('imagesPendingDeletion', () => {
     await ownDelete([IMAGE]);
 
     expect(await pending()).toHaveLength(1);
-    expect(await imagesPendingDeletion(db, [IMAGE])).toEqual(new Set());
+    expect(await imagesPendingDeletion(db, [IMAGE])).toEqual(new Map());
   });
 
   it('does not name a blocked image nothing is pending for', async () => {
     await addImage({ blockedFor: 'CSAM' });
 
-    expect(await imagesPendingDeletion(db, [IMAGE])).toEqual(new Set());
+    expect(await imagesPendingDeletion(db, [IMAGE])).toEqual(new Map());
+  });
+});
+
+// Until a CSAM report is sent, the sender still reads the account and the images it lists, so an
+// owner's delete waits for it, and is told only that it is processing. Once sent, the delete runs as
+// any owner delete under a sent report does today.
+describe('a CSAM report about the owner, not yet sent', () => {
+  const unsent = (values: string) =>
+    pg.exec(`INSERT INTO "CsamReport" ("userId", details, images) VALUES ${values}`);
+  const sendReports = () => pg.exec(`UPDATE "CsamReport" SET "reportSentAt" = now()`);
+  /** Whether the drain (`pending-deletes`) would still keep each queued image delete. */
+  const drainKeeps = async () =>
+    (
+      await sql<{ id: number; blocked: boolean }>`
+        SELECT "Image".id, ${imageDeleteBlocked(sql.ref('q.data'), sql<boolean>`false`)} AS blocked
+        FROM "JobQueue" q JOIN "Image" ON "Image".id = q."entityId"
+        WHERE q.type = 'PendingDelete' AND q."entityType" = 'Image' ORDER BY "Image".id
+      `.execute(db)
+    ).rows;
+
+  it.each([
+    ['naming them as its subject', `(${OWNER}, '{}', '[]')`],
+    ['naming them as its secondary user', `(NULL, '{"secondaryUserId": ${OWNER}}', '[]')`],
+    ['listing another image of theirs', `(${SOMEONE_ELSE}, '{}', '[{"id": ${IMAGE}}]')`],
+    ['listing another image of theirs by bare id', `(NULL, '{}', '["${IMAGE}"]')`],
+  ])('keeps an unflagged image %s, and tells them it is processing', async (_, values) => {
+    await addImage();
+    await unsent(values);
+
+    expect(await ownDelete([PLAIN])).toEqual([]);
+
+    expect(await pending()).toEqual([
+      { entityId: PLAIN, entityType: 'Image', data: { ownerId: OWNER } },
+    ]);
+    expect(await imagesPendingDeletion(db, [PLAIN], OWNER)).toEqual(
+      new Map([[PLAIN, 'processing']])
+    );
+  });
+
+  // To anyone but the owner, the notice would say that a report about the owner is unsent.
+  it.each([
+    ['someone else', SOMEONE_ELSE],
+    ['no one in particular', undefined],
+  ])('names it as processing to no one but its owner: not to %s', async (_, viewer) => {
+    await unsent(`(${OWNER}, '{}', '[]')`);
+    await ownDelete([PLAIN]);
+
+    expect(await imagesPendingDeletion(db, [PLAIN], viewer)).toEqual(new Map());
+  });
+
+  it('lets the drain run it once the report is sent', async () => {
+    await unsent(`(${OWNER}, '{}', '[]')`);
+    await ownDelete([PLAIN]);
+    expect(await drainKeeps()).toEqual([{ id: PLAIN, blocked: true }]);
+
+    await sendReports();
+
+    expect(await drainKeeps()).toEqual([{ id: PLAIN, blocked: false }]);
+  });
+
+  it('deletes at once under a report already sent, as before', async () => {
+    await unsent(`(${OWNER}, '{}', '[]')`);
+    await sendReports();
+
+    expect((await ownDelete([PLAIN])).map((row) => row.id)).toEqual([PLAIN]);
+    expect(await pending()).toEqual([]);
+  });
+
+  it("does not keep an owner's image for a report about someone else", async () => {
+    await pg.exec(`INSERT INTO "Image" (id, "userId") VALUES (3, ${SOMEONE_ELSE})`);
+    await unsent(`(${SOMEONE_ELSE}, '{"secondaryUserId": 9}', '[{"id": 3}]')`);
+
+    expect((await ownDelete([PLAIN])).map((row) => row.id)).toEqual([PLAIN]);
+  });
+
+  it('keeps the review notice for a case the owner can see', async () => {
+    await addImage({ blockedFor: 'CSAM' });
+    await unsent(`(${OWNER}, '{}', '[]')`);
+    await ownDelete([IMAGE]);
+
+    expect(await imagesPendingDeletion(db, [IMAGE])).toEqual(new Map([[IMAGE, 'review']]));
+  });
+
+  it("keeps the owner's post, and names it as processing until the report is sent", async () => {
+    await pg.exec(`INSERT INTO "Post" (id, "userId") VALUES (50, ${OWNER})`);
+    await unsent(`(${OWNER}, '{}', '[]')`);
+
+    const deleted = await deletePostRows(db, {
+      ids: [50],
+      actor: owner,
+      pending: { blocked: ownPostDeleteBlocked(OWNER), data: { ownerId: OWNER } },
+    });
+
+    expect(deleted).toEqual([]);
+    expect(await postPendingForUnsentReport(db, 50, OWNER)).toBe(true);
+    expect(await postPendingForUnsentReport(db, 50, SOMEONE_ELSE)).toBe(false);
+    await sendReports();
+    expect(await postPendingForUnsentReport(db, 50, OWNER)).toBe(false);
   });
 });
