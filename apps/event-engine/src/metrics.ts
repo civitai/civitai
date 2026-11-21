@@ -131,6 +131,37 @@ export const metricBatcherMetrics = {
   }),
 };
 
+// Optional secondary ClickHouse destination for metric events (off by default).
+export const secondaryTeeMetrics = {
+  rowsSent: new Counter({
+    name: 'mew_metric_secondary_rows_sent_total',
+    help: 'Metric event rows inserted into the secondary ClickHouse destination',
+    registers: [register],
+  }),
+  batchesFailed: new Counter({
+    name: 'mew_metric_secondary_batches_failed_total',
+    help: 'Failed secondary insert attempts (each failed batch is retried with backoff until sent or dropped)',
+    registers: [register],
+  }),
+  batchesDropped: new Counter({
+    name: 'mew_metric_secondary_batches_dropped_total',
+    help: 'Batches the secondary destination never received: overflow (queue bound hit, oldest dropped) or shutdown (unsent when the drain timed out)',
+    labelNames: ['reason'],
+    registers: [register],
+  }),
+  rowsDropped: new Counter({
+    name: 'mew_metric_secondary_rows_dropped_total',
+    help: 'Rows in the dropped secondary batches, by reason',
+    labelNames: ['reason'],
+    registers: [register],
+  }),
+  queueRows: new Gauge({
+    name: 'mew_metric_secondary_queue_rows',
+    help: 'Rows waiting for the secondary destination (excluding the batch in flight)',
+    registers: [register],
+  }),
+};
+
 // Metric Signals Metrics
 export const signalsMetrics = {
   signalsSent: new Counter({

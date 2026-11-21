@@ -57,6 +57,48 @@ export const CONTENT_EXCLUDED_COLUMNS = {
   Collection: ['description', 'metadata'],
 };
 
+/** A positive integer from the environment, else the fallback (blank, malformed, zero or negative). */
+function positiveInt(raw: string | undefined, fallback: number) {
+  const n = raw?.trim() && /^\d+$/.test(raw.trim()) ? Number(raw) : NaN;
+  return n > 0 ? n : fallback;
+}
+
+export type SecondaryClickhouseConfig = {
+  /** True only when METRICS_SECONDARY_TEE_ENABLED is exactly 'true' AND a URL is set. */
+  enabled: boolean;
+  url: string;
+  username: string;
+  password: string;
+  database: string;
+  /** Rows held in memory for the secondary destination before the oldest batches are dropped. */
+  maxQueueRows: number;
+  /** A single secondary insert is abandoned (and retried later) after this long. */
+  insertTimeoutMs: number;
+  /** Upper bound on the best-effort drain at shutdown. */
+  shutdownTimeoutMs: number;
+};
+
+/**
+ * The optional secondary ClickHouse destination for metric events. Off unless BOTH the switch
+ * and the URL are set; read from the environment like every other event-engine setting, so
+ * turning it off is an env change plus a restart.
+ */
+export function secondaryClickhouseConfig(
+  env: NodeJS.ProcessEnv = process.env
+): SecondaryClickhouseConfig {
+  const url = env.CLICKHOUSE_SECONDARY_URL?.trim() ?? '';
+  return {
+    enabled: env.METRICS_SECONDARY_TEE_ENABLED === 'true' && url !== '',
+    url,
+    username: env.CLICKHOUSE_SECONDARY_USERNAME ?? 'default',
+    password: env.CLICKHOUSE_SECONDARY_PASSWORD ?? '',
+    database: env.CLICKHOUSE_SECONDARY_DATABASE?.trim() || 'metrics',
+    maxQueueRows: positiveInt(env.METRICS_SECONDARY_TEE_MAX_QUEUE_ROWS, 200_000),
+    insertTimeoutMs: positiveInt(env.METRICS_SECONDARY_TEE_INSERT_TIMEOUT_MS, 10_000),
+    shutdownTimeoutMs: positiveInt(env.METRICS_SECONDARY_TEE_SHUTDOWN_TIMEOUT_MS, 5_000),
+  };
+}
+
 export const config = {
   postgres: {
     connectionString: process.env.DATABASE_URL!,
@@ -71,6 +113,7 @@ export const config = {
   clickhouse: {
     url: process.env.CLICKHOUSE_URL!,
     metricEventsTable: process.env.CLICKHOUSE_METRIC_EVENTS_TABLE ?? 'entityMetricEvents_month',
+    secondary: secondaryClickhouseConfig(),
   },
   redis: {
     url: process.env.REDIS_URL!,

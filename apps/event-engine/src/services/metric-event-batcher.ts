@@ -3,6 +3,7 @@ import { MetricEvent, KafkaOffsetMeta } from '../types/events'
 import { logger } from '../utils/logger'
 import { config } from '../config'
 import { metricBatcherMetrics } from '@/metrics'
+import type { MetricEventRow, MetricRowSink } from './secondary-metric-tee'
 
 export type OffsetSnapshot = Map<string, string>
 
@@ -48,6 +49,10 @@ export class MetricEventBatcher {
     // ClickHouse blip but low enough to fail before OOM. ~50× the normal
     // flush size.
     private maxQueueSize: number = 500_000,
+    // Optional copy of every inserted batch to a second destination. Fire-and-forget: it is
+    // handed rows only after the primary insert succeeded and is never awaited, so it cannot
+    // delay or fail this batcher's flush or its offset commits.
+    private secondary: MetricRowSink | null = null,
   ) {}
 
   isUnderPressure(): boolean {
@@ -84,10 +89,13 @@ export class MetricEventBatcher {
         await this.flush()
       } catch (err) {
         logger.error({ err, attempt }, 'Final flush failed; bailing out')
+        await this.stopSecondary()
         // Rethrow so the caller knows offsets aren't durable.
         throw err
       }
     }
+
+    await this.stopSecondary()
 
     if (this.queue.length > 0 || this.highWater.size > 0) {
       logger.warn(
@@ -179,7 +187,7 @@ export class MetricEventBatcher {
 
     try {
       if (batch.length > 0) {
-        const rows = batch.map(event => ({
+        const rows: MetricEventRow[] = batch.map(event => ({
           entityId: event.entityId,
           entityType: event.entityType,
           metricType: event.metricType,
@@ -193,6 +201,8 @@ export class MetricEventBatcher {
           values: rows,
           format: 'JSONEachRow',
         })
+
+        this.teeToSecondary(rows)
       }
 
       endTimer()
@@ -235,6 +245,26 @@ export class MetricEventBatcher {
 
       logger.error({ err, batchSize: batch.length }, 'Failed to insert metric batch')
       throw err
+    }
+  }
+
+  /** Hand rows to the secondary destination. Synchronous and never throws. */
+  private teeToSecondary(rows: MetricEventRow[]): void {
+    if (!this.secondary) return
+    try {
+      this.secondary.enqueue(rows)
+    } catch (err) {
+      logger.error({ err }, 'Secondary metric tee threw on enqueue; primary flush unaffected')
+    }
+  }
+
+  /** Best-effort, time-bounded drain of the secondary destination. Never throws. */
+  private async stopSecondary(): Promise<void> {
+    if (!this.secondary) return
+    try {
+      await this.secondary.stop()
+    } catch (err) {
+      logger.warn({ err }, 'Secondary metric tee stop failed')
     }
   }
 
