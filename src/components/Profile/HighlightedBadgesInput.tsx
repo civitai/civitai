@@ -117,9 +117,9 @@ function SortablePin({ id, badge, position }: { id: number; badge: BadgeItem; po
 }
 
 // Owned badges as clickable tiles; clicking toggles a badge into the list.
-// - highlight: click order is the display order; selected tiles show a ring +
-//   (the pin position shows only in the strip). With two or more pins, a strip above the grid reorders
-//   them by drag (or keyboard: space to lift, arrows to move, space to drop).
+// - highlight: click order is the display order; selected tiles show a ring. With two or
+//   more pins, a strip above the grid shows the pin numbers and reorders them by drag
+//   (or keyboard: space to lift, arrows to move, space to drop).
 // - hide: selected tiles are dimmed with a red ring + eye-off marker (order is
 //   irrelevant).
 // Value is an array of cosmetic ids (ordered for highlight).
