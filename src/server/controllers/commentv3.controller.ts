@@ -1,4 +1,5 @@
 import type { Context, ProtectedContext } from '~/server/createContext';
+import { maskProfanityInHtml } from '~/server/services/profanity-mask.service';
 import { commentTrackTypes } from '~/server/clickhouse/tracker';
 import type { CommentEntityType } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
@@ -205,13 +206,15 @@ export async function getCommentThreadHandler({
 }
 
 async function asNewItem(row: StoredCommentV3) {
-  const [author, lookup] = await Promise.all([
+  const [author, lookup, [maskedContent]] = await Promise.all([
     kyselyV3Read
       .selectFrom('User')
       .select(['id', 'username', 'deletedAt', 'image'])
       .where('id', '=', row.userId)
       .executeTakeFirst(),
     getCosmeticsAndProfilePicturesForUsers([row.userId], { showcaseHat: true }),
+    // The comment is saved; a masking failure leaves the copy absent rather than failing it.
+    maskProfanityInHtml([row.content]).catch(() => [undefined]),
   ]);
   return {
     id: row.id,
@@ -220,6 +223,7 @@ async function asNewItem(row: StoredCommentV3) {
     replyToId: row.replyToId,
     depth: row.depth,
     content: row.content,
+    maskedContent,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     pinnedAt: row.pinnedAt,
@@ -354,7 +358,8 @@ export async function updateCommentV3Handler({
     content: input.content,
     track: ctx.track,
   });
-  return { id: comment.id, content: row.content, updatedAt: row.updatedAt };
+  const [maskedContent] = await maskProfanityInHtml([row.content]).catch(() => [undefined]);
+  return { id: comment.id, content: row.content, maskedContent, updatedAt: row.updatedAt };
 }
 
 /** Deletes a comment; one with replies stays as a placeholder for them (D6). */

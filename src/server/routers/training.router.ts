@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { getServerProfanityFilter } from '~/server/services/profanity-list.service';
+import { auditTrainingTriggerWord } from '~/utils/metadata/training-trigger-word';
 import { CacheTTL } from '~/server/common/constants';
 import { getModelData } from '~/server/controllers/training.controller';
 import { dbKV } from '~/server/db/db-helpers';
@@ -97,6 +99,27 @@ export const trainingRouter = router({
     .input(createTrainingRequestDryRunSchema)
     .use(isFlagProtected('imageTraining'))
     .query(({ input }) => createTrainingRequestDryRun({ ...input })),
+
+  /**
+   * The trainer's trigger-word warning, against the server's profanity list so the browser needs
+   * no copy of it. Soft: the submit check (training-trigger-word-check.ts) is unchanged. Names only
+   * words the input itself contains, never a list entry.
+   */
+  auditTriggerWord: protectedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(z.object({ triggerWord: z.string().max(200) }))
+    .use(rateLimit({ limit: 120, period: 60 }))
+    .query(async ({ input, ctx }) => {
+      const profanity = ctx.features.isGreen
+        ? (await getServerProfanityFilter()).filter
+        : undefined;
+      const audit = auditTrainingTriggerWord(input.triggerWord, profanity);
+      const typed = input.triggerWord.toLowerCase();
+      return {
+        ...audit,
+        offendingWords: audit.offendingWords.filter((word) => typed.includes(word.toLowerCase())),
+      };
+    }),
 
   moveAsset: protectedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })

@@ -213,6 +213,20 @@ describe('blocked-level tags written after the scan', () => {
     expect(reviewInserts()).toEqual([expect.stringContaining(`(7, ${URINE})`)]);
   });
 
+  it('refreshes the home blocks of the images it held for review', async () => {
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([{ imageId: 7, tagId: URINE }]);
+
+    await insertTagsOnImageNew([{ imageId: 7, tagId: URINE, source: 'User' }]);
+
+    // The refresh's collection lookup, seen at the database: the image ids bound as one array.
+    const lookedUp = vi
+      .mocked(dbMock.dbRead.$queryRaw)
+      .mock.calls.map(([query]) => query as unknown as { sql?: string; values?: unknown[] })
+      .filter((query) => !!query?.sql?.includes('"CollectionItem"'))
+      .flatMap((query) => (query.values ?? []).filter(Array.isArray));
+    expect(lookedUp).toEqual([[7]]);
+  });
+
   it('refreshes the thumbnail cache, parent videos included, for re-rated images', async () => {
     await upsertTagsOnImageNew([
       { imageId: 7, tagId: XXX },

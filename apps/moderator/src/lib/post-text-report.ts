@@ -1,4 +1,4 @@
-import { postTextReportOpensCsamHold } from '@civitai/shared/post-text-report';
+import { reportOpensCsamHold } from '@civitai/shared/post-text-report';
 
 export type PostTextAction = 'refuse' | 'restore' | 'hold';
 
@@ -28,4 +28,4 @@ export type ReportedPostText = {
 export const postTextActionAllowed = (
   action: PostTextAction,
   report: { reason: string; details: unknown }
-) => action === 'restore' || (action === 'hold') === postTextReportOpensCsamHold(report);
+) => action === 'restore' || (action === 'hold') === reportOpensCsamHold(report);

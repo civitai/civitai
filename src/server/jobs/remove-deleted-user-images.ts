@@ -12,6 +12,7 @@ import {
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { refreshProfilePicturesForUsersLazy } from '~/server/services/refresh-profile-pictures-lazy';
@@ -212,6 +213,8 @@ async function propagateBlock(touched: TouchedImage[]) {
   const ids = touched.map((x) => x.id);
   const postIds = uniq(touched.map((x) => x.postId).filter((id): id is number => id != null));
 
+  // First: it never throws, and the steps after it can.
+  await evictHomeBlocksForImages({ imageIds: ids });
   await Promise.all([
     queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
     invalidateManyImageExistence(ids),

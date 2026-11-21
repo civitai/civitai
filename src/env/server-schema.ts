@@ -483,6 +483,9 @@ export const serverSchema = z
     // fallback to WEBHOOK_TOKEN has to stay. (Named for the value, not for the direction of any one
     // caller: it is one secret, and the sibling jobs that call in already use this name.)
     MOD_INBOUND_TOKEN: z.string().optional(),
+    // The moderator app's scoped credential for the public takedown request actions only. Unset, the
+    // /requests pages say the forms are unavailable.
+    MOD_CASES_TOKEN: z.string().optional(),
     // Civitai Games (Game Frame) → /api/internal/game-frame/*. Both unset (or '') means the endpoint
     // answers 503 and Game Frame keeps reports in its outbox. '' is accepted for the same ConfigMap
     // reason as MODERATOR_APP_INTERNAL_URL above.

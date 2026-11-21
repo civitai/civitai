@@ -100,7 +100,8 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { resolveTs7 } from '../lib/ts7.mjs';
 import {
   ALLOW_EMPTY_ENV,
   checkPlausibility,
@@ -134,10 +135,9 @@ const BASE_TS_CONFIG = 'tsconfig.json';
 // from a fixture. That is the gate's own thesis — a verdict must carry its
 // provenance — applied to the gate.
 const BASELINE_PATH = process.env.TYPECHECK_TESTS_BASELINE || path.join(HERE, 'typecheck-tests-baseline.json');
-// Unset, the gate runs the TypeScript 7 binary from `tools/ts7` (see `resolveTs7` below). Set,
+// Unset, the gate runs the TypeScript 7 binary from `tools/ts7` (`scripts/lib/ts7.mjs`). Set,
 // it is a node script run in that binary's place.
 const WRAPPER = process.env.TYPECHECK_TESTS_WRAPPER;
-const TS7_DIR = path.join(REPO_ROOT, 'tools', 'ts7', 'node_modules', 'typescript');
 // Where the two tsconfigs are read from. Defaults to the repo root; the suite
 // points it at a fixture directory to exercise the config-drift control END TO
 // END, i.e. to pin that the gate ACTS on `diffExcludes`, not merely that
@@ -277,20 +277,15 @@ try {
 // measured by this same compiler, so 5.9 and 7 counts are never compared.
 // `--incremental false` keeps every run a cold measurement (tsconfig.json turns
 // incremental on).
-async function resolveTs7() {
-  const install = 'Run: pnpm -C tools/ts7 install --ignore-workspace';
-  const resolver = path.join(TS7_DIR, 'lib', 'getExePath.js');
-  if (!existsSync(resolver)) cannotMeasure(`TypeScript 7 is not installed. ${install}`);
-  // A missing platform package makes getExePath() throw; an unhandled rejection
-  // here would exit 1, which this gate reserves for a real regression.
+// An unhandled rejection here would exit 1, which this gate reserves for a real regression.
+async function ts7ExeOrCannotMeasure() {
   try {
-    const { default: getExePath } = await import(pathToFileURL(resolver).href);
-    return getExePath();
+    return (await resolveTs7()).exe;
   } catch (err) {
-    cannotMeasure(`could not resolve the TypeScript 7 binary: ${err?.message ?? err}. ${install}`);
+    cannotMeasure(err?.message ?? String(err));
   }
 }
-const ts7Exe = WRAPPER ? undefined : await resolveTs7();
+const ts7Exe = WRAPPER ? undefined : await ts7ExeOrCannotMeasure();
 
 function runWrapper(extraArgs) {
   const tscArgs = ['-p', TS_CONFIG, '--pretty', 'false', ...extraArgs];

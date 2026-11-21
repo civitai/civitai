@@ -400,6 +400,8 @@ func run(log *slog.Logger) error {
 		Deps:    deps,
 		Sources: sources,
 		Blocked: blocked,
+		// `newCreators`: the "new & upcoming" boards' cached entries, read-only.
+		NewCreators: &feed.NewCreatorBoards{Cache: cache, Prefix: cfg.CacheKeyPrefix},
 	}
 	// The model.getAll shadow shares the replica, the cache readers, the gallery settings and the
 	// addons; its own flags are mirrored by FEED_GO_* variables (DESIGN.md §15.3).
@@ -453,6 +455,7 @@ func run(log *slog.Logger) error {
 		ServeModelGetAll: cfg.ServeModelGetAll,
 		ServeInfinite:    cfg.ServeInfinite,
 		Hosts:            cfg.Hosts,
+		HostPrimaries:    cfg.HostPrimaries,
 		RegionRules:      cfg.RegionRules,
 		// REGION_BLOCK_CONFIG, else the app's default list (apipolicy.json).
 		RegionBlockRules: cfg.RegionBlockRules,

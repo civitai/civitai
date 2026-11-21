@@ -496,9 +496,14 @@ function literalLoaderInputRefusal(name: string, value: unknown): string | null 
 
 type RefusedInlineNode = { nodeId: string; classType: string; reason: string };
 
-/** ComfyUI reads every array input as a link (`[nodeId, slot]`), so this does too. */
+/** A link to another node's output: `[nodeId, slot]`. Any other array is a value, checked as one. */
 function isLinkedInput(value: unknown): boolean {
-  return Array.isArray(value);
+  return (
+    Array.isArray(value) &&
+    value.length === 2 &&
+    (typeof value[0] === 'string' || typeof value[0] === 'number') &&
+    Number.isInteger(value[1])
+  );
 }
 
 function findRefusedInlineNodes(graph: ComfyGraph): RefusedInlineNode[] {

@@ -147,6 +147,7 @@ import {
   getModelsRaw,
   getModelsWithImagesAndModelVersions,
   getModelVersionsMicro,
+  getPersonalLeadModelIds,
   getPrivateModelCount,
   getTrainingModelsByUserId,
   getVaeFiles,
@@ -169,6 +170,7 @@ import {
   holdShowcaseImages,
 } from '~/server/services/model.service';
 import { getOfficialModelIds } from '~/server/services/resource-select.service';
+import { buildFliptContext } from '~/server/services/feature-flags.service';
 import {
   closeAppealsDeletedByOwner,
   closeAppealsOnDeletedModel,
@@ -705,6 +707,43 @@ export async function modelFeedQueryOptions(ctx: Context) {
   };
 }
 
+/**
+ * The personal Hot lead applies to the default browse only: Hot, a session viewer (scoped API tokens
+ * get plain Hot), and none of the inputs that turn the feed into a search, a profile, a collection or
+ * a list. The flag is evaluated per viewer with their context, before any cache is read.
+ */
+async function getPersonalLeadIdsForFeed(input: GetAllModelsOutput, ctx: Context) {
+  const user = ctx.user;
+  const browsingLevel = input.browsingLevel;
+  if (input.sort !== ModelSort.Hot || !user || !browsingLevel || !isSessionOrFullUserKey(ctx))
+    return [];
+  if (
+    input.query ||
+    input.username ||
+    input.user ||
+    input.collectionId ||
+    input.followed ||
+    input.favorites ||
+    input.hidden ||
+    input.ids?.length ||
+    input.archived
+  )
+    return [];
+  if (
+    !(await isFlipt(
+      FLIPT_FEATURE_FLAGS.PERSONAL_HOT_LEAD,
+      String(user.id),
+      buildFliptContext(user)
+    ))
+  )
+    return [];
+  return getPersonalLeadModelIds({
+    userId: user.id,
+    browsingLevel,
+    firstPage: !input.cursor,
+  });
+}
+
 /** model.getAll's query, at whatever levels `input` already carries. */
 export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
   try {
@@ -713,24 +752,37 @@ export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
     let nextCursor: string | bigint | undefined;
     const queryOptions = await modelFeedQueryOptions(ctx);
 
-    // Hot with a base-model filter leads with the official checkpoints for that base. They are
-    // dropped from the main stream on every page, so the cursor never re-emits them, and fetched on
-    // the first page through the same query, so every other filter still applies to them.
-    const pinnedIds =
+    // Hot with a base-model filter leads with the official checkpoints for that base, and a viewer in
+    // the personal-hot-lead flag gets their own lead ahead of those. Both are excluded from the main
+    // stream on every page so the cursor never re-emits them (the lead only while its cached entry
+    // lives), and fetched on the first page through the same query so every other filter still applies.
+    const [officialIds, leadIds] = await Promise.all([
       input.sort === ModelSort.Hot && input.baseModels?.length && !input.query
-        ? ((await getOfficialModelIds()) ?? [])
-            .filter((m) => m.type === ModelType.Checkpoint)
-            .map((m) => m.id)
-        : [];
-    const pinned =
-      pinnedIds.length && !input.cursor
-        ? await getModelsWithImagesAndModelVersions({
+        ? getOfficialModelIds().then((models) =>
+            (models ?? []).filter((m) => m.type === ModelType.Checkpoint).map((m) => m.id)
+          )
+        : [],
+      getPersonalLeadIdsForFeed(input, ctx),
+    ]);
+    const pinnedIds = [...new Set([...leadIds, ...officialIds])];
+    const fetchPinned = (onlyModelIds: number[]) =>
+      onlyModelIds.length && !input.cursor
+        ? getModelsWithImagesAndModelVersions({
             ...queryOptions,
-            input: { ...input, limit: pinnedIds.length },
-            onlyModelIds: pinnedIds,
+            input: { ...input, limit: onlyModelIds.length },
+            onlyModelIds,
           })
         : undefined;
-    if (pinned?.isPrivate) isPrivate = true;
+    const [lead, pinned] = await Promise.all([
+      fetchPinned(leadIds),
+      fetchPinned(officialIds.filter((id) => !leadIds.includes(id))),
+    ]);
+    // A lead is per viewer: never let a shared cache hold this page.
+    if (leadIds.length || lead?.isPrivate || pinned?.isPrivate) isPrivate = true;
+    // The query returns Hot order; the lead keeps its own (stake arm first).
+    const leadItems = (lead?.items ?? []).sort(
+      (a, b) => leadIds.indexOf(a.id) - leadIds.indexOf(b.id)
+    );
 
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
     while (results.length < (input.limit ?? 100) && loopCount < 3) {
@@ -749,7 +801,7 @@ export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
     }
 
     if (isPrivate) ctx.cache.canCache = false;
-    return { items: [...(pinned?.items ?? []), ...results], nextCursor };
+    return { items: [...leadItems, ...(pinned?.items ?? []), ...results], nextCursor };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

@@ -22,6 +22,7 @@ import type { QdrantClient } from '@qdrant/js-client-rest';
 import { parseRateLimitHeader, parseRetryAfter, RateLimiter } from '@/vector-sync/ratelimit';
 import {
   buildEmbedInput,
+  failedStepDetail,
   takeBatch,
   Embedder,
   type EmbedderOptions,
@@ -378,6 +379,23 @@ describe('embed inputs', () => {
     expect(buildEmbedInput(imageRow(1, { type: 'video', duration: 10, url: 'v' }), opts)).toEqual({
       input: { id: '1', videoUrl: 'https://cdn.example/v/original=true/v.mp4' },
     });
+  });
+
+  test("a failed step's own account of itself is logged, without its media URL or a vector", () => {
+    const detail = failedStepDetail({
+      name: 'embed-7',
+      status: 'failed',
+      input: { videoUrl: 'https://cdn.example/v/original=true/v.mp4' },
+      reason: 'decode error at https://cdn.example/v/original=true/v.mp4',
+      output: { embedding: [0.5, 0.25], profile: 'p' } as never,
+    });
+    expect(JSON.parse(detail)).toEqual({
+      status: 'failed',
+      reason: 'decode error at <url>',
+      output: { profile: 'p' },
+    });
+    expect(failedStepDetail(undefined)).toBe('no step in the workflow');
+    expect(failedStepDetail({ status: 'failed', note: 'x'.repeat(2000) }).length).toBe(601);
   });
 
   test('a workflow takes at most its size in inputs and 8 videos', () => {

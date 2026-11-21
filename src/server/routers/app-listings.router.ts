@@ -68,6 +68,7 @@ import {
   republishOwnListingSchema,
   resetListingToPendingSchema,
   resolveReportSchema,
+  retryConnectOfflineCutSchema,
   setListingOfficialSchema,
   setListingVisibilityAsModeratorSchema,
   unpublishOwnListingSchema,
@@ -1604,6 +1605,32 @@ export const appListingsRouter = router({
       throw mapOffsiteError(err);
     }
   }),
+
+  /**
+   * MOD retry the offline-access cut of a taken-down connect listing ("Retry cut" on an
+   * `offline-cut-failed` history row). Same boundary as `delistListing`: `moderatorProcedure`
+   * plus the inner `isModerator` recheck, the actor bound to `ctx.user.id`. The service refuses
+   * unless the flag is on, the listing is still taken down, and no other approved listing on the
+   * client declares offline access (`retryConnectOfflineCut`).
+   */
+  retryConnectOfflineCut: moderatorProcedure
+    .input(retryConnectOfflineCutSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Retrying an offline access cut is restricted to moderators');
+      }
+      const { retryConnectOfflineCut } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      try {
+        return await retryConnectOfflineCut({
+          appListingId: input.appListingId,
+          moderatorUserId: ctx.user.id,
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
 
   /**
    * MOD send the app's OWNER a free-text message, delivered as a notification.

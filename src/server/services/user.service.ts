@@ -1,4 +1,6 @@
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { banNoteNamesCsamSql } from '~/server/services/ban-note-csam';
+import type { PROFILE_CLEAR_FIELDS } from '~/server/schema/moderator/user';
 import { markUserDealUploadsRemovedSql } from '~/server/services/creator-service-deal-file-retention';
 import {
   assertCollectionItemsVisibleToViewer,
@@ -482,11 +484,13 @@ export { isUsernamePermitted } from '~/server/services/username-permitted';
 
 /**
  * Before a moderator clears, edits or bans away another user's profile text or links: when the user
- * is named on a CSAM report or under an account hold, or `alwaysArchive` is set, `archive` stores the
- * current text and links, and this throws if it rejects so the change does not happen. If they change
- * during an upload they are archived again, up to three uploads, after which this refuses.
+ * is named on a CSAM report, under an account hold or banned with a note naming CSAM or
+ * NCMEC, or `alwaysArchive` is set, `archive` stores the current text and links, and this throws if it
+ * rejects so the change does not happen. If they change during an upload they are archived again, up
+ * to three uploads, after which this refuses. Returns what the last `archive` call resolved to, or
+ * undefined when nothing was archived.
  */
-export async function archiveProfileBeforeModeratorChange({
+export async function archiveProfileBeforeModeratorChange<TStored = unknown>({
   userId,
   actorId,
   fields,
@@ -496,12 +500,12 @@ export async function archiveProfileBeforeModeratorChange({
   userId: number;
   actorId: number;
   fields: ProfileClearSnapshot['clearedFields'];
-  archive: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
+  archive: (snapshot: ProfileClearSnapshot) => Promise<TStored>;
   alwaysArchive?: boolean;
-}) {
+}): Promise<TStored | undefined> {
   // Every account hold `deleteUser` refuses on (`accountHoldSql`: holding reports, CSAM-flagged or
   // blocked images, images on a holding report, evidence holds), plus any report naming the user,
-  // held or not: archiving more is the safe side here.
+  // held or not, plus ban notes naming CSAM or NCMEC: archiving more is the safe side here.
   const heldSql = accountHoldSql(Prisma.sql`${userId}::int`, await holdMarkerViewExists());
   const idText = String(userId);
   const mustArchive =
@@ -517,9 +521,15 @@ export async function archiveProfileBeforeModeratorChange({
               OR r.details ->> 'secondaryUserId' = ${idText}
           )
           OR ${heldSql}
+          OR EXISTS (
+            SELECT 1 FROM "User" u
+            WHERE u.id = ${userId}
+              AND ${banNoteNamesCsamSql(Prisma.sql`u.meta`)}
+          )
         ) AS named
       `
     )[0]?.named !== false;
+  let stored: TStored | undefined;
   if (mustArchive) {
     let archived: Pick<ProfileClearSnapshot, 'profile' | 'links'> | null = null;
     for (let attempt = 0; ; attempt++) {
@@ -539,10 +549,11 @@ export async function archiveProfileBeforeModeratorChange({
       const current = { profile, links };
       if ((!profile && !links.length) || (archived && isEqual(current, archived))) break;
       if (attempt === 3) throw new Error(`profile ${userId} kept changing while it was archived`);
-      await archive({ userId, actorId, clearedFields: fields, ...current });
+      stored = await archive({ userId, actorId, clearedFields: fields, ...current });
       archived = current;
     }
   }
+  return stored;
 }
 
 /** A user's profile text and links as stored just before a moderator clear, edit or ban changes them. */
@@ -563,7 +574,7 @@ export type ProfileClearSnapshot = {
     showcaseItems: Prisma.JsonValue;
   };
 };
-export type ProfileClearField = 'location' | 'bio' | 'message' | 'showcaseSections';
+export type ProfileClearField = (typeof PROFILE_CLEAR_FIELDS)[number];
 const PROFILE_CLEAR_SNAPSHOT_SELECT = {
   bio: true,
   message: true,
@@ -576,30 +587,31 @@ const PROFILE_CLEAR_SNAPSHOT_SELECT = {
 } as const;
 
 /**
- * Mod-driven: clear public profile fields (location/bio/message/showcaseSections) on UserProfile.
- * No-op if no UserProfile row exists yet.
+ * Mod-driven: clear the named public profile fields (location/bio/message/showcaseSections) on
+ * UserProfile. Throws on an empty list. No-op if no UserProfile row exists yet.
  *
  * Clearing bio/message also clears its SFW (civitai.com) override — otherwise the
  * copy a moderator just removed keeps rendering on the green domain.
  *
- * For a user with a CSAM report, or when `alwaysArchive` is set, `archive` stores the text first and
- * the clear does not happen if it rejects. A clear that changed a row records who ran it in
- * `ModActivity`.
+ * For a user `archiveProfileBeforeModeratorChange` holds, or when `alwaysArchive` is set, `archive`
+ * stores the text first and the clear does not happen if it rejects. A clear that changed a row
+ * records who ran it in `ModActivity` in the same transaction, so a clear whose record fails is
+ * rolled back and throws.
  */
 export async function clearUserProfileFields({
   userId,
-  fields = ['location', 'bio', 'message', 'showcaseSections'],
+  fields,
   actorId,
   archive,
   alwaysArchive = false,
 }: {
   userId: number;
-  fields?: ProfileClearField[];
+  fields: ProfileClearField[];
   actorId: number;
   archive: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
   alwaysArchive?: boolean;
 }) {
-  if (fields.length === 0) return { updated: false };
+  if (!fields?.length) throw new Error('clearUserProfileFields needs at least one field');
 
   await archiveProfileBeforeModeratorChange({ userId, actorId, fields, archive, alwaysArchive });
 
@@ -615,30 +627,22 @@ export async function clearUserProfileFields({
     data.sfwMessageAddedAt = null;
   }
   if (fields.includes('showcaseSections')) data.showcaseSections = [];
-  const result = await dbWrite.userProfile.updateMany({ where: { userId }, data });
-  // The clear has committed: a failed record must not report it as failed.
-  if (result.count > 0) {
-    try {
-      await trackModActivity(actorId, {
-        entityType: 'user',
-        activity: 'clearProfile',
-        entityId: userId,
-      });
-    } catch (error) {
-      logToAxiom({
-        type: 'error',
-        name: 'clear-user-profile-mod-activity',
-        userId,
-        message: (error as Error).message,
-      });
-    }
-  }
-  return { updated: result.count > 0 };
+  const updated = await dbWrite.$transaction(async (tx) => {
+    const { count } = await tx.userProfile.updateMany({ where: { userId }, data });
+    if (count > 0)
+      await trackModActivity(
+        actorId,
+        { entityType: 'user', activity: 'clearProfile', entityId: userId },
+        tx
+      );
+    return count > 0;
+  });
+  return { updated };
 }
 
 /**
- * Mod-driven: removes one of a user's social or sponsorship links. Archived first, and refused if the
- * archive fails, as `clearUserProfileFields` is.
+ * Mod-driven: removes one of a user's social or sponsorship links. Archived first, refused if the
+ * archive fails, and recorded in the same transaction, as `clearUserProfileFields` is.
  */
 export async function removeUserLinkAsModerator({
   userId,
@@ -653,25 +657,19 @@ export async function removeUserLinkAsModerator({
 }) {
   await archiveProfileBeforeModeratorChange({ userId, actorId, fields: ['links'], archive });
   // Scoped by owner too: an id alone could take another account's link.
-  const { count } = await dbWrite.userLink.deleteMany({ where: { id: linkId, userId } });
-  if (count > 0) {
-    try {
-      await trackModActivity(actorId, {
-        entityType: 'user',
-        activity: 'removeLink',
-        entityId: userId,
-      });
-    } catch (error) {
-      logToAxiom({
-        type: 'error',
-        name: 'remove-user-link-mod-activity',
-        userId,
-        message: (error as Error).message,
-      });
-    }
-    await bustUserCreator(userId).catch(handleLogError);
-  }
-  return { removed: count > 0 };
+  // One transaction with its record: a removal whose record fails is rolled back and throws.
+  const removed = await dbWrite.$transaction(async (tx) => {
+    const { count } = await tx.userLink.deleteMany({ where: { id: linkId, userId } });
+    if (count > 0)
+      await trackModActivity(
+        actorId,
+        { entityType: 'user', activity: 'removeLink', entityId: userId },
+        tx
+      );
+    return count > 0;
+  });
+  if (removed) await bustUserCreator(userId).catch(handleLogError);
+  return { removed };
 }
 
 /**

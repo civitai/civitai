@@ -131,6 +131,8 @@ export const RATE_LIMIT_FALLBACK_SCOPES: readonly string[] = [
   'semanticModel3DSearch',
   'semanticStorylineSearch',
   'storyline',
+  // The public takedown forms.
+  'takedownRequest',
   'user',
 ];
 

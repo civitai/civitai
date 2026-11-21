@@ -14,7 +14,7 @@ function queueFlagSet(env) {
  * Whether a `pnpm run typecheck:apps` should go through the dev-server queue.
  *
  * Deliberately NOT the rule below. The root typecheck's extra exits are about ITS env seams
- * (`TYPECHECK_TSC_PATH`, `TYPECHECK_HEAP_MB`), and honouring them here would mean a seam exported
+ * (`TYPECHECK_TSC_PATH`, `TYPECHECK_COMPILER`, `TYPECHECK_HEAP_MB`), and honouring them here would mean a seam exported
  * for a root-typecheck test silently un-queued the app typechecks too.
  */
 export function typecheckAppsQueueDecision(env) {
@@ -52,6 +52,9 @@ export function typecheckQueueDecision(args, env) {
   // A queued run is spawned with the DAEMON's environment, not the caller's, so an override set
   // here would silently not apply — the caller asked for a heap size and would get the default.
   if (env.TYPECHECK_HEAP_MB) return { queue: false, why: 'a heap override does not reach a queued run' };
+  if (env.TYPECHECK_COMPILER) {
+    return { queue: false, why: 'a compiler choice does not reach a queued run' };
+  }
   // Any argument at all means a narrowed run (`-p tsconfig.scripts.json`, a single project). Same
   // rule as scripts/test-component-run.mjs and for the same reason: telling a cheap narrow tsc
   // invocation from an expensive one by parsing its flags is a guess, and queueing a cheap one

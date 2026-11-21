@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import pLimit from 'p-limit';
 import {
   CollectionItemRejectionReason,
@@ -384,6 +385,7 @@ export async function flagForMinorReview({
     ),
     // A held image that is someone's profile picture stops being served as one now, not at the TTL.
     refreshProfilePicturesForImagesLazy([...flaggedIds]),
+    evictHomeBlocksForImages({ imageIds: [...flaggedIds] }),
   ]);
   return true;
 }

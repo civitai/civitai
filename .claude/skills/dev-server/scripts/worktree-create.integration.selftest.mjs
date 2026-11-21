@@ -83,9 +83,10 @@ const runEnv = (scratchHome, primary, ...argv) => {
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 };
 
-const run = (primary, name, branch, base) => {
+// WORKTREE_ROOT is pinned empty so a desk's skill .env cannot move where the default cases expect trees.
+const run = (primary, name, branch, base, worktreeRoot = '') => {
   const r = spawnSync(process.execPath, [SELF], {
-    env: { ...process.env, WT_NEW_ARGS: JSON.stringify([primary, name, branch, base]) },
+    env: { ...process.env, WORKTREE_ROOT: worktreeRoot, WT_NEW_ARGS: JSON.stringify([primary, name, branch, base]) },
     encoding: 'utf8',
   });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
@@ -301,6 +302,20 @@ try {
   const localBase = run(primary, 'three', 'feat/three', 'main');
   check('refuses a local --base', localBase.code, 1);
   check('creates nothing on refusal', existsSync(join(reposRoot, 'worktrees', 'three')), false);
+
+  // WORKTREE_ROOT set: new trees go there; the tree made under the old root stays listed and working.
+  const newRoot = join(scratch, 'elsewhere');
+  const moved = run(primary, 'moved', 'feat/moved', undefined, newRoot);
+  check('WORKTREE_ROOT: creates the worktree', moved.code, 0);
+  check('WORKTREE_ROOT: places it under the override', existsSync(join(newRoot, 'moved', '.git')), true);
+  check('WORKTREE_ROOT: not under the default root', existsSync(join(reposRoot, 'worktrees', 'moved')), false);
+  const { listWorktrees } = await import('./worktree.mjs');
+  const listed = listWorktrees(primary).map((t) => t.path.replace(/\\/g, '/'));
+  check('WORKTREE_ROOT: the new tree is listed', listed.includes(join(newRoot, 'moved').replace(/\\/g, '/')), true);
+  check('WORKTREE_ROOT: the old-root tree is still listed', listed.includes(tree.replace(/\\/g, '/')), true);
+  const relative = run(primary, 'rel', 'feat/rel', undefined, 'not/absolute');
+  check('WORKTREE_ROOT: a relative path refuses', relative.code, 1);
+  check('WORKTREE_ROOT: and says why', relative.out.includes('WORKTREE_ROOT must be an absolute path'), true);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
