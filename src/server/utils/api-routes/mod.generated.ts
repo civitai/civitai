@@ -42,6 +42,8 @@ export const routes: ApiRoutes = {
   'creator-services/disputes': () => import('~/server/api-routes/mod/creator-services/disputes'),
   'creator-services/resolve-dispute': () =>
     import('~/server/api-routes/mod/creator-services/resolve-dispute'),
+  'creator-services/review-report': () =>
+    import('~/server/api-routes/mod/creator-services/review-report'),
   'csam/training-data-report': () => import('~/server/api-routes/mod/csam/training-data-report'),
   'custom-challenge': () => import('~/server/api-routes/mod/custom-challenge'),
   'daily-challenge/cycle': () => import('~/server/api-routes/mod/daily-challenge/cycle'),
@@ -65,6 +67,9 @@ export const routes: ApiRoutes = {
   'knights/shop/cosmetics': () => import('~/server/api-routes/mod/knights/shop/cosmetics'),
   'knights/shop/membership': () => import('~/server/api-routes/mod/knights/shop/membership'),
   'label-store/predictions': () => import('~/server/api-routes/mod/label-store/predictions'),
+  'membership-gift/comp': () => import('~/server/api-routes/mod/membership-gift/comp'),
+  'membership-gift/comp-revoke': () =>
+    import('~/server/api-routes/mod/membership-gift/comp-revoke'),
   'membership-gift/refund-unfulfilled': () =>
     import('~/server/api-routes/mod/membership-gift/refund-unfulfilled'),
   'membership-gift/revoke-unpaid': () =>

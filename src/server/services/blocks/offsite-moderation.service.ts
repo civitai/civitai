@@ -12,7 +12,10 @@ import {
   assertListingOwnerAcceptedAppDeveloperTerms,
 } from '~/server/services/blocks/app-developer-terms.service';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
-import { listingEverLive } from '~/server/services/blocks/connect-offline-listing';
+import {
+  anotherApprovedListingDeclaresOffline,
+  listingEverLive,
+} from '~/server/services/blocks/connect-offline-listing';
 import {
   APP_LISTING_REPORT_REASONS,
   OFFSITE_MOD_REASON_MIN,
@@ -663,6 +666,13 @@ export type DelistListingResult = {
   status: 'removed';
   /** Set when the store takedown went through but the app keeps serving (the readiness app). */
   liveNote?: string;
+  /**
+   * Set only when the takedown ATTEMPTED to cut a connect app's offline access (flag on, an OAuth
+   * client, no other approved listing declaring offline access). Absent otherwise, so with the
+   * flag off the result is unchanged. `failed` means the app's refresh tokens may still be valid;
+   * the failure is in the moderation history, with a retry.
+   */
+  offlineCut?: { outcome: 'cut'; deleted: number } | { outcome: 'failed' };
 };
 
 /**
@@ -785,15 +795,104 @@ export async function delistListing(opts: {
   const live = isOnsite && listing.appBlockId ? await takeDownLiveAppAfterCommit(listing.slug) : {};
   await forgetRevokedAppTokens(revoked.value);
   // A moderator takedown of a CONNECT listing cuts the app's offline access (see that module).
+  let offlineCut: DelistListingResult['offlineCut'];
   if (!isOnsite) {
     const { cutConnectOfflineAccessAfterTakedown } = await import('./connect-offline-takedown');
-    await cutConnectOfflineAccessAfterTakedown({
+    const cut = await cutConnectOfflineAccessAfterTakedown({
       connectClientId: listing.connectClientId,
       takenDownListingId: input.appListingId,
+      slug: listing.slug,
+      actorUserId: reviewerUserId,
     });
+    // The raw error message stays in the mod-only history; the mutation result says only that it
+    // failed.
+    if (cut.outcome === 'cut') offlineCut = { outcome: 'cut', deleted: cut.deleted };
+    else if (cut.outcome === 'failed') offlineCut = { outcome: 'failed' };
   }
 
-  return { appListingId: input.appListingId, status: 'removed', ...live };
+  return {
+    appListingId: input.appListingId,
+    status: 'removed',
+    ...live,
+    ...(offlineCut ? { offlineCut } : {}),
+  };
+}
+
+export type RetryConnectOfflineCutResult =
+  | { appListingId: string; outcome: 'cut'; deleted: number }
+  | { appListingId: string; outcome: 'failed' };
+
+/**
+ * MOD retry the offline-access cut of a taken-down CONNECT listing — the action behind "Retry cut"
+ * on an `offline-cut-failed` row of the moderation history.
+ *
+ * Refuses (typed; nothing deleted, nothing recorded) unless ALL of these hold:
+ *   - `oauth-offline-grant` is on (FORBIDDEN otherwise: the feature is dark);
+ *   - the listing exists, is off-site and has an OAuth client (NOT_FOUND / NOT_TRANSITIONABLE);
+ *   - it is still TAKEN DOWN: `removed`, and its newest status-changing event is a moderator
+ *     `delist`, read on the primary. A relisted listing, or one whose removal is the owner's own
+ *     unpublish, is not a takedown, and cutting it would sign its users out for nothing;
+ *   - no OTHER approved listing on the client declares offline access (the takedown's own rule:
+ *     the hub grants per client, so that app keeps it).
+ *
+ * Then it runs the cut and records `offline-cut` (with the deleted count) or `offline-cut-failed`,
+ * attributed to the retrying moderator. A cut failure is RETURNED, not thrown, so the caller can
+ * warn. IDEMPOTENT: it deletes whatever Refresh keys the client holds now, so a retry after a
+ * success deletes 0 and records that.
+ */
+export async function retryConnectOfflineCut(opts: {
+  appListingId: string;
+  moderatorUserId: number;
+}): Promise<RetryConnectOfflineCutResult> {
+  const { appListingId, moderatorUserId } = opts;
+  const takedown = await import('./connect-offline-takedown');
+  if (!(await takedown.isOfflineGrantOn())) {
+    throw new OffsiteModerationError('FORBIDDEN', 'Offline access cuts are not enabled.');
+  }
+  // primary: this status gates deleting the client's Refresh keys; a relist the replica has not seen would read as removed.
+  const listing = await dbWrite.appListing.findUnique({
+    where: { id: appListingId },
+    select: { id: true, kind: true, status: true, slug: true, connectClientId: true },
+  });
+  if (!listing) throw new OffsiteModerationError('NOT_FOUND', 'Listing not found.');
+  const connectClientId = listing.connectClientId ?? null;
+  if (listing.kind === 'onsite' || !connectClientId) {
+    throw new OffsiteModerationError(
+      'NOT_TRANSITIONABLE',
+      'This listing has no connected app, so there is no offline access to cut.'
+    );
+  }
+  if (
+    listing.status !== 'removed' ||
+    (await readLastStatusChangingModerationEvent(dbWrite, appListingId))?.action !== 'delist'
+  ) {
+    throw new OffsiteModerationError(
+      'NOT_TRANSITIONABLE',
+      'This listing is no longer taken down by a moderator, so its offline access is not cut.'
+    );
+  }
+  if (
+    await anotherApprovedListingDeclaresOffline(dbWrite, {
+      connectClientId,
+      excludeListingIds: [appListingId],
+    })
+  ) {
+    throw new OffsiteModerationError(
+      'NOT_TRANSITIONABLE',
+      'Another approved listing of this app still declares offline access, so it is not cut.'
+    );
+  }
+  const result = await takedown.runOfflineCut(connectClientId);
+  await takedown.recordOfflineCutEvent({
+    appListingId,
+    slug: listing.slug,
+    actorUserId: moderatorUserId,
+    connectClientId,
+    result,
+  });
+  return result.outcome === 'cut'
+    ? { appListingId, outcome: 'cut', deleted: result.deleted }
+    : { appListingId, outcome: 'failed' };
 }
 
 export type RelistListingResult = { appListingId: string; status: 'approved' };
@@ -1435,6 +1534,11 @@ const OWNER_HIDDEN_MODERATION_ACTIONS = [
   'storage-doc-unhide',
   'storage-doc-delete',
   'storage-doc-dismiss',
+  // Operational records of the offline-access cut after a takedown. Not about a third party,
+  // but not the owner's to read either: the failed one's `detail` is a raw error message, and
+  // the owner is told about the takedown itself by the `delist` row.
+  'offline-cut',
+  'offline-cut-failed',
 ] as const;
 
 /**

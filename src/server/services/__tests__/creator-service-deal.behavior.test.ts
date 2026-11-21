@@ -79,7 +79,26 @@ vi.mock('~/server/utils/distributed-lock', () => ({
 type Raw = ReturnType<typeof pgliteRaw>;
 const bridge = (db: { query: PGlite['query'] }) => {
   const raw = pgliteRaw(db as PGlite);
-  return { $executeRaw: raw.executeRaw, $queryRaw: raw.queryRaw };
+  return {
+    $executeRaw: raw.executeRaw,
+    $queryRaw: raw.queryRaw,
+    // The one Prisma model write a transaction here makes: the CSAM review flag on images.
+    image: {
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { id: { in: number[] } };
+        data: { needsReview: string };
+      }) => {
+        const { affectedRows } = await db.query(
+          `UPDATE "Image" SET "needsReview" = $1 WHERE id = ANY($2::int[])`,
+          [data.needsReview, where.id.in]
+        );
+        return { count: affectedRows ?? 0 };
+      },
+    },
+  };
 };
 dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw']>) =>
   pgliteRaw(holder.db).executeRaw(...a)) as never);
@@ -119,6 +138,7 @@ const reviews = await import('~/server/services/creator-service-dispute-review.s
 const escrow = await import('~/server/services/creator-service-escrow.service');
 const dealReviews = await import('~/server/services/creator-service-deal-review.service');
 const publish = await import('~/server/services/creator-service-deal-review-publish');
+const reviewReports = await import('~/server/services/service-deal-review-report.service');
 const reconcile = await import('~/server/services/creator-service-deal-review-reconcile');
 const reviewScan = await import('~/server/services/service-deal-review-moderation.adapter');
 const { creatorServiceNotifications } = await import(
@@ -164,6 +184,7 @@ const LATER_MIGRATIONS = [
   '20271120030000_service_license_presets',
   '20271120100000_service_deal_reviewed_happy',
   '20271120100100_service_deal_reviews',
+  '20271120230000_service_deal_review_report',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -310,7 +331,8 @@ beforeAll(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false, "createdAt" timestamp(3) NOT NULL DEFAULT now() - interval '1 year');
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
-    CREATE TABLE "Report" (id serial PRIMARY KEY);
+    CREATE TABLE "Report" (id serial PRIMARY KEY, reason text, details jsonb NOT NULL DEFAULT '{}');
+    CREATE TABLE "ModActivity" ("userId" int, "entityType" text, "entityId" int, activity text, UNIQUE ("userId", "entityType", "entityId", activity));
     CREATE TABLE "KeyValue" (key text PRIMARY KEY, value jsonb NOT NULL);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
@@ -365,7 +387,7 @@ beforeEach(async () => {
   chat.createMessage.mockResolvedValue({});
   shop.assertCreatorShopVisible.mockResolvedValue([]);
   await holder.db.exec(`
-    TRUNCATE "TextScanHold", "EntityModeration", "ServiceDealReviewImage", "ServiceDealReview", "ServiceDisputeReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    TRUNCATE "TextScanHold", "ServiceDealReviewReport", "Report", "ModActivity", "EntityModeration", "ServiceDealReviewImage", "ServiceDealReview", "ServiceDisputeReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${STRANGER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
@@ -4034,6 +4056,165 @@ describe('review publishing and counters', () => {
         hidden: false,
       });
       expect(await reviewRow(id)).toMatchObject({ scanStatus: 'Pending' });
+    });
+
+    // Only a CSAM or minor-sexualization report on the review opens a moderator's csam hold, and a
+    // hold always takes the whole review down.
+    describe("a moderator's csam hold from a report", () => {
+      const reported = async (
+        reason: string,
+        details: Record<string, unknown> = {},
+        comment: string | null = 'Lovely'
+      ) => {
+        const id = await completedBy();
+        await review(id, 'Happy', BUYER, comment ?? undefined);
+        const [{ id: reviewId }] = await q<{ id: number }>(
+          `UPDATE "ServiceDealReview" SET "scanStatus" = 'Scanned' WHERE "dealId" = $1 RETURNING id`,
+          [id]
+        );
+        await publish.syncReviewPublication(reviewId);
+        const [{ id: reportId }] = await q<{ id: number }>(
+          `INSERT INTO "Report" (reason, details) VALUES ($1, $2) RETURNING id`,
+          [reason, JSON.stringify(details)]
+        );
+        await q(
+          `INSERT INTO "ServiceDealReviewReport" ("reportId", "serviceDealReviewId", "serviceOfferingId")
+           VALUES ($1, $2, 1)`,
+          [reportId, reviewId]
+        );
+        return { id, reviewId, reportId };
+      };
+      const minor = { violation: 'Child abuse and exploitation' };
+      const hold = (
+        reviewId: number,
+        reportId: number,
+        type: 'ServiceDealReview' | 'ServiceDealReviewReply' | null = 'ServiceDealReview'
+      ) =>
+        reviewReports.holdReportedServiceDealReview({
+          reviewId,
+          type,
+          moderatorId: STRANGER,
+          reportId,
+        });
+      const holds = (reviewId: number) =>
+        q<{ status: string; label: string }>(
+          `SELECT status::text, label FROM "TextScanHold"
+           WHERE "entityType" = 'ServiceDealReview' AND "entityId" = $1`,
+          [reviewId]
+        );
+      const hiddenAt = async (reviewId: number) =>
+        (
+          await q<{ hiddenAt: Date | null }>(
+            `SELECT "hiddenAt" FROM "ServiceDealReview" WHERE id = $1`,
+            [reviewId]
+          )
+        )[0].hiddenAt;
+
+      it('holds the comment of a review reported as a minor, and takes the review down', async () => {
+        const { id, reviewId, reportId } = await reported('TOSViolation', minor);
+        expect(await hold(reviewId, reportId)).toMatchObject({ changed: true });
+        expect(await holds(reviewId)).toEqual([{ status: 'Pending', label: 'csam' }]);
+        expect(await reviewRow(id)).toMatchObject({ scanStatus: 'Blocked', publishedAt: null });
+        expect(await hiddenAt(reviewId)).not.toBeNull();
+        expect(await hold(reviewId, reportId)).toMatchObject({ changed: false });
+        expect(await holds(reviewId)).toHaveLength(1);
+      });
+
+      it('takes down a review with no text on a CSAM report, with no text hold', async () => {
+        const { id, reviewId, reportId } = await reported('CSAM', {}, null);
+        expect(await hold(reviewId, reportId)).toBe('pickText');
+        expect(await hold(reviewId, reportId, null)).toEqual({ holdId: null, changed: true });
+        expect((await reviewRow(id)).publishedAt).toBeNull();
+        expect(await hiddenAt(reviewId)).not.toBeNull();
+        expect(await holds(reviewId)).toEqual([]);
+      });
+
+      it('commits neither the hold nor the takedown when the takedown fails', async () => {
+        const { id, reviewId, reportId } = await reported('CSAM');
+        await holder.db.exec(`
+          CREATE FUNCTION fail_review_update() RETURNS trigger LANGUAGE plpgsql AS
+            $$ BEGIN RAISE EXCEPTION 'takedown failed'; END $$;
+          CREATE TRIGGER fail_review_update BEFORE UPDATE ON "ServiceDealReview"
+            FOR EACH ROW EXECUTE FUNCTION fail_review_update();
+        `);
+        try {
+          await expect(hold(reviewId, reportId)).rejects.toThrow('takedown failed');
+        } finally {
+          await holder.db.exec(`
+            DROP TRIGGER fail_review_update ON "ServiceDealReview";
+            DROP FUNCTION fail_review_update();
+          `);
+        }
+        expect(await holds(reviewId)).toEqual([]);
+        expect((await reviewRow(id)).publishedAt).not.toBeNull();
+      });
+
+      it("sends the review's images to the CSAM review queue, filing no CsamReport", async () => {
+        const { reviewId, reportId } = await reported('CSAM');
+        const imageIds = (
+          await q<{ id: number }>(`INSERT INTO "Image" (url) VALUES ('a'), ('b') RETURNING id`)
+        ).map((r) => r.id);
+        for (const imageId of imageIds)
+          await q(`INSERT INTO "ServiceDealReviewImage" ("reviewId", "imageId") VALUES ($1, $2)`, [
+            reviewId,
+            imageId,
+          ]);
+        await holder.db.exec(`CREATE TABLE IF NOT EXISTS "CsamReport" (id serial PRIMARY KEY)`);
+        expect(await hold(reviewId, reportId)).toMatchObject({ changed: true });
+        expect(
+          await q<{ needsReview: string | null }>(
+            `SELECT "needsReview" FROM "Image" WHERE id = ANY($1::int[]) ORDER BY id`,
+            [imageIds]
+          )
+        ).toEqual([{ needsReview: 'csam' }, { needsReview: 'csam' }]);
+        expect(await q(`SELECT 1 FROM "CsamReport"`)).toEqual([]);
+      });
+
+      it('opens no hold from a report with another reason, or one on another review', async () => {
+        const spam = await reported('Spam');
+        expect(await hold(spam.reviewId, spam.reportId)).toBe('refused');
+        const csam = await reported('CSAM');
+        expect(await hold(spam.reviewId, csam.reportId)).toBe('refused');
+        expect(await holds(spam.reviewId)).toEqual([]);
+        expect((await reviewRow(spam.id)).publishedAt).not.toBeNull();
+      });
+
+      it('hides only on a report that is not CSAM, and restores only once the CSAM queue has decided', async () => {
+        const setHidden = (reviewId: number, hidden: boolean, reportId?: number) =>
+          reviewReports.setReportedServiceDealReviewHidden({
+            reviewId,
+            moderatorId: STRANGER,
+            hidden,
+            reportId,
+          });
+        const csam = await reported('TOSViolation', minor);
+        expect(await setHidden(csam.reviewId, true, csam.reportId)).toBe('refused');
+        expect(await hiddenAt(csam.reviewId)).toBeNull();
+        await hold(csam.reviewId, csam.reportId);
+        expect(await setHidden(csam.reviewId, false)).toBe('held');
+        // The deal page's restore takes the same refusal, for a confirmed hold too.
+        const restore = () =>
+          dealReviews.setServiceDealReviewHidden({
+            reviewId: csam.reviewId,
+            moderatorId: STRANGER,
+            hidden: false,
+          });
+        expect(await restore()).toBe('held');
+        await q(`UPDATE "TextScanHold" SET status = 'Confirmed' WHERE "entityId" = $1`, [
+          csam.reviewId,
+        ]);
+        expect(await restore()).toBe('held');
+        expect(await hiddenAt(csam.reviewId)).not.toBeNull();
+        await q(`UPDATE "TextScanHold" SET status = 'Dismissed' WHERE "entityId" = $1`, [
+          csam.reviewId,
+        ]);
+        expect(await restore()).toBe(true);
+
+        const spam = await reported('Spam');
+        expect(await setHidden(spam.reviewId, true)).toBe('refused');
+        expect(await setHidden(spam.reviewId, true, spam.reportId)).toBe(true);
+        expect(await setHidden(spam.reviewId, false)).toBe(true);
+      });
     });
 
     it('a moderator hides and restores a review, and the counters follow', async () => {

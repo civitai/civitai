@@ -6,8 +6,10 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { ReportServiceReviewButton } from '~/components/CreatorShop/Services/ReportServiceReviewButton';
 import { ServiceHappyLine } from '~/components/CreatorShop/Services/ServiceHappyLine';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { RouterOutput } from '~/types/router';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { ServiceDealReviewVerdict } from '~/shared/utils/prisma/enums';
@@ -23,9 +25,13 @@ type Review = RouterOutput['creatorService']['getReviews']['items'][number];
  */
 export function ServiceReviews({
   offering,
+  isOwner,
 }: {
   offering: { id: number; happyCount: number; reviewCount: number };
+  /** The seller, who may not report a review of their own deal. */
+  isOwner: boolean;
 }) {
+  const currentUser = useCurrentUser();
   const work = trpc.creatorService.getReviewWork.useInfiniteQuery(
     { id: offering.id },
     { getNextPageParam: (page) => page.nextCursor }
@@ -84,7 +90,10 @@ export function ServiceReviews({
           {items.map((review, index) => (
             <div key={review.id}>
               {index > 0 && <Divider mb="md" />}
-              <ReviewRow review={review} />
+              <ReviewRow
+                review={review}
+                canReport={!isOwner && currentUser?.id !== review.buyerId}
+              />
             </div>
           ))}
           {reviews.hasNextPage && (
@@ -103,7 +112,7 @@ export function ServiceReviews({
   );
 }
 
-function ReviewRow({ review }: { review: Review }) {
+function ReviewRow({ review, canReport }: { review: Review; canReport: boolean }) {
   const happy = review.verdict === ServiceDealReviewVerdict.Happy;
   return (
     <Stack gap={6}>
@@ -120,6 +129,11 @@ function ReviewRow({ review }: { review: Review }) {
         <Text c="dimmed" size="xs">
           <DaysFromNow date={review.publishedAt} />
         </Text>
+        {canReport && (
+          <div className="ml-auto">
+            <ReportServiceReviewButton reviewId={review.id} />
+          </div>
+        )}
       </Group>
       {/* Plain text: React escapes it. */}
       {review.comment && (
