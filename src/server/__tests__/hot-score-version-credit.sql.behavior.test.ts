@@ -169,8 +169,9 @@ beforeAll(async () => {
     { at: OLD, likes: 3_000 },
     { at: DAY_45, likes: 0, downloads: 192 },
   ]);
-  // The backfill walks ids in fixed batches (its default size): one row opening each later
-  // batch, the last at the max id, each with a mirrored slice and a measured one.
+  // #9397's backfill walks ids in 250k ranges: one row opening each later range, the last at the
+  // max id, each with a mirrored and a measured slice. The head-start rescore batches by position
+  // instead (2 at a time here), so these rows also land in its later batches.
   for (const id of BATCH_EDGES) {
     await model(
       OLD,
@@ -535,6 +536,13 @@ describe('the rescore lag watch', () => {
     await pg.exec(`RESET hot_rescore.lag_watch`);
     return pg;
   }
+  // PGlite reports a failed chunk by its last error ("current transaction is aborted"), not the
+  // guard's, so the guard is asserted by running the file's own preflight alone. A file broken for
+  // another reason fails every other test here, which apply it with the opt-out.
+  const preflight = (file: string) =>
+    readFileSync(path.join(MIGRATIONS, HEAD_START, file), 'utf8').match(
+      /DO \$preflight\$[\s\S]*?\$preflight\$;/
+    )?.[0] ?? 'SELECT missing_preflight()';
   const usesHeadStart = async (pg: PGlite) =>
     (
       await pg.query(
@@ -550,6 +558,7 @@ describe('the rescore lag watch', () => {
 
     await expect(apply(HEAD_START, 'migration.sql', pg)).rejects.toThrow();
     await pg.exec('ROLLBACK');
+    await expect(pg.exec(preflight('migration.sql'))).rejects.toThrow('no replica lag visible');
     expect(await functionExists(pg, 'hot_version_score')).toBe(false);
     expect(await usesHeadStart(pg)).toBe(false);
     await pg.close();
@@ -561,6 +570,7 @@ describe('the rescore lag watch', () => {
 
     await expect(apply(HEAD_START, 'rollback.sql', pg)).rejects.toThrow();
     await pg.exec('ROLLBACK');
+    await expect(pg.exec(preflight('rollback.sql'))).rejects.toThrow('no replica lag visible');
     expect(await functionExists(pg, 'hot_version_score')).toBe(true);
     expect(await usesHeadStart(pg)).toBe(true);
     await pg.close();
