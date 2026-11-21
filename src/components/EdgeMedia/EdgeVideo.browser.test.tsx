@@ -53,7 +53,7 @@ describe('EdgeVideo — keepPlaying', () => {
     renderWithProviders(<EdgeVideo src={SRC} html5Controls {...props} />);
     await vi.waitFor(() => expect(document.querySelector('video')).toBeTruthy());
     const video = document.querySelector('video')!;
-    // jsdom-free browser mode: a native control press fires 'play' without our hover timer.
+    // A native control press fires 'play' without our hover timer.
     video.dispatchEvent(new Event('play'));
     return video;
   };

@@ -122,7 +122,7 @@ describe('the full-width view of a mature item', () => {
 describe('the full-width view of a video', () => {
   beforeEach(() => (settings.browsingLevel = NsfwLevel.PG | NsfwLevel.R));
 
-  test('a video keeps playing once started, an image has no such flag', async () => {
+  test('a video embed opts in to keep playing once started', async () => {
     renderFull('video');
     await expect
       .element(page.getByTestId('edge-media'))
