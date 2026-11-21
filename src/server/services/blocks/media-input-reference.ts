@@ -7,8 +7,8 @@ import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted
 
 // An orchestrator AIR the AIR grammar cannot read is still one to the orchestrator.
 const ORCHESTRATOR_SOURCE_RE = /(^|:)orchestrator:/i;
-const AIR_PREFIX_RE = /^(urn:)?air:/i;
-const URL_VALUE_RE = /^([a-z][a-z0-9+.-]*:\/\/|https?:|data:)/i;
+// A URL only with `://` (or a data URI): `https:civitai:1` is an AIR to the AIR grammar.
+const URL_VALUE_RE = /^([a-z][a-z0-9+.-]*:\/\/|data:)/i;
 // An orchestrator blob key, with or without a file extension, and a training blob key.
 const BLOB_KEY_RE = /^([0-9a-z]{26}(\.[0-9a-z]{1,10})?|[0-9a-f]{32}(\.[0-9a-z]{1,10})?)$/i;
 // The orchestrator reads a blob from this path on any host.
@@ -61,7 +61,7 @@ export function mediaReferenceRefusal(raw: string, viewerId: number): MediaRefer
   if (BARE_ID_RE.test(value)) return 'bare-id';
   if (BLOB_KEY_RE.test(value)) return 'blob-key';
   if (URL_VALUE_RE.test(value)) return isForeignHostBlobUrl(value) ? 'blob-url' : null;
-  if (AIR_PREFIX_RE.test(value) || namesOrchestratorSource(value) || Air.parseSafe(value))
-    return isOwnOrchestratorFile(value, viewerId) ? null : 'air';
+  // Anything else naming a scheme or source (an AIR in any spelling) is refused.
+  if (value.includes(':')) return isOwnOrchestratorFile(value, viewerId) ? null : 'air';
   return null;
 }

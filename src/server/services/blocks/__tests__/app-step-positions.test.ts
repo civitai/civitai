@@ -352,6 +352,22 @@ describe('media references (#9982)', () => {
     });
   });
 
+  it.each([
+    ['a short Civitai AIR', 'https:civitai:12345'],
+    ['a Civitai image AIR', 'https:urn:air:other:image:civitai:12345'],
+    ["another user's job file", 'https:orchestrator:7001-20261121@epoch_5.safetensors'],
+  ])('refuses %s behind a scheme with no slashes', (_label, value) => {
+    expect(findStepPositionProblem({ image: value }, VIEWER)).toMatchObject({
+      form: 'media-reference',
+      key: 'image',
+    });
+  });
+
+  it("passes a real URL and the viewer's own job file", () => {
+    for (const value of ['https://image.civitai.com/x/y.png', ownJob])
+      expect(findStepPositionProblem({ image: value }, VIEWER)).toBeNull();
+  });
+
   it("leaves a blob URL on the orchestrator's own host to the source gate", () => {
     expect(
       findStepPositionProblem(
