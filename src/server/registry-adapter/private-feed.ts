@@ -58,6 +58,14 @@ export function parsePrivateRelays(raw: string | undefined): ReadonlySet<string>
   return new Set((raw ?? '').split(/[\s,]+/).filter(Boolean));
 }
 
+/** Whether the token was presented by one of `relays` (its `act.sub`). */
+export function isListedRelay(
+  relays: ReadonlySet<string>,
+  reader: AdapterContext['reader']
+): boolean {
+  return !!reader?.actor && relays.has(reader.actor);
+}
+
 /** Why gates 1–4 refuse a subscription; null when they pass. */
 export type PrivateGateRefusal = 'anonymous' | 'not_user' | 'relay_not_listed' | 'scope_missing';
 
@@ -68,7 +76,7 @@ export function privateTokenGate(
 ): PrivateGateRefusal | null {
   if (!reader) return 'anonymous';
   if (reader.userId === null) return 'not_user';
-  if (reader.actor === null || !relays.has(reader.actor)) return 'relay_not_listed';
+  if (!isListedRelay(relays, reader)) return 'relay_not_listed';
   if (!hasScope(reader, 'AppDataRead')) return 'scope_missing';
   return null;
 }

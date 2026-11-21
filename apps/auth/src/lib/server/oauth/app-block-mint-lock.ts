@@ -1,13 +1,23 @@
-import { sql, type Transaction } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
 /** How long a mint waits on a suspension's row lock before it fails (and mints nothing). */
 const APP_BLOCK_LOCK_TIMEOUT_MS = 5_000;
 
 /**
+ * The one suspension rule, the main app's revoke rule (`revokeAppBlockOauthTokens`): a client is suspended
+ * when one of its blocks is suspended and none is approved, so a client keeps its tokens while any of its
+ * blocks is approved.
+ */
+function suspendedWithoutApproved(blocks: { status: string }[]): boolean {
+  return (
+    blocks.some((b) => b.status === 'suspended') && !blocks.some((b) => b.status === 'approved')
+  );
+}
+
+/**
  * Whether the client backs a suspended app block and no approved one, read FOR SHARE so the rows stay
- * locked until `trx` ends. The rule is the main app's revoke rule (`revokeAppBlockOauthTokens`): a
- * client keeps its tokens while any of its blocks is approved.
+ * locked until `trx` ends.
  *
  * The main app suspends a block and deletes its client's tokens in one transaction, which holds the
  * block row's lock until it commits. This read waits on that lock, so a token inserted in `trx` either
@@ -22,7 +32,19 @@ export async function lockAppBlockSuspended(trx: Transaction<DB>, clientId: stri
     .orderBy('id')
     .forShare()
     .execute();
-  return (
-    blocks.some((b) => b.status === 'suspended') && !blocks.some((b) => b.status === 'approved')
-  );
+  return suspendedWithoutApproved(blocks);
+}
+
+/**
+ * The same rule, read without a lock: for a mint that writes no row (the block token exchange's JWT), so
+ * there is nothing for a suspension's delete to find and nothing to wait for. A suspension that commits
+ * after this read is not seen; the token it lets through lives at most 15 minutes.
+ */
+export async function appBlockSuspended(db: Kysely<DB>, clientId: string): Promise<boolean> {
+  const blocks = await db
+    .selectFrom('app_blocks')
+    .select('status')
+    .where('app_id', '=', clientId)
+    .execute();
+  return suspendedWithoutApproved(blocks);
 }
