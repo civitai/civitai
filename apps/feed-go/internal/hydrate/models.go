@@ -442,7 +442,7 @@ func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int]
 			c := append(make(superjson.Object, 0, len(img)+1), img...)
 			iid, _ := Int(ObjectField(img, "id"))
 			if t, ok := tagIDs[iid]; ok && t != nil {
-				c.Set("tags", t)
+				c = append(dropKey(c, "tags"), superjson.Field{Key: "tags", Val: t})
 			} else {
 				c.Set("tags", []any{})
 			}
