@@ -374,6 +374,21 @@ describe('reviewCollection: a minor-related escalation', () => {
     }
   );
 
+  it('refreshes the home blocks of the image it holds', async () => {
+    queuePending([pendingItem()]);
+    modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
+    dbMock.dbRead.$queryRaw.mockClear();
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    // The refresh's collection lookup, seen at the database: the image ids bound as one array.
+    const lookedUp = dbMock.dbRead.$queryRaw.mock.calls
+      .map(([query]) => query as unknown as { sql?: string; values?: unknown[] })
+      .filter((query) => !!query?.sql?.includes('"CollectionItem"'))
+      .flatMap((query) => (query.values ?? []).filter(Array.isArray));
+    expect(lookedUp).toEqual([[IMAGE_ID]]);
+  });
+
   it('flags the image even when escalations are configured to stamp', async () => {
     queuePending([pendingItem()]);
     modelSees({ depictsMinor: true, minorIsPhotorealistic: true });

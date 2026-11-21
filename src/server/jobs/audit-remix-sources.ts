@@ -1,4 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { extModeration } from '~/server/integrations/moderation';
@@ -139,6 +140,7 @@ export const auditRemixSourcesJob = createJob(
             select: { postId: true },
           });
           if (!updated) continue;
+          await evictHomeBlocksForImages({ imageIds: [imageId] });
           // Flagged images need to disappear from the model-version showcase.
           if (updated.postId) await bustCachesForPosts(updated.postId);
           flagged++;
