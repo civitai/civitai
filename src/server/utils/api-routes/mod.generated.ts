@@ -65,6 +65,9 @@ export const routes: ApiRoutes = {
   'knights/shop/cosmetics': () => import('~/server/api-routes/mod/knights/shop/cosmetics'),
   'knights/shop/membership': () => import('~/server/api-routes/mod/knights/shop/membership'),
   'label-store/predictions': () => import('~/server/api-routes/mod/label-store/predictions'),
+  'membership-gift/comp': () => import('~/server/api-routes/mod/membership-gift/comp'),
+  'membership-gift/comp-revoke': () =>
+    import('~/server/api-routes/mod/membership-gift/comp-revoke'),
   'membership-gift/refund-unfulfilled': () =>
     import('~/server/api-routes/mod/membership-gift/refund-unfulfilled'),
   'membership-gift/revoke-unpaid': () =>
