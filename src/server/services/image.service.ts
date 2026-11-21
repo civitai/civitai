@@ -78,9 +78,17 @@ import {
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
   minorMatureImageVisibleSql,
   reviewKeptWhenLiftedSql,
-  ownerDeletedSql,
+  liftedBlockedForSql,
+  liftedIngestionSql,
+  liftedNeedsReviewSql,
+  liftedNsfwLevelSql,
+  liftKeptBlockedSql,
   unblockedMetadataSql,
 } from '~/server/common/image-visibility';
+import {
+  BLOCKED_IMAGE_DELETE_QUEUE,
+  LIFT_KEPT_ACTIVITY,
+} from '@civitai/shared/account-deletion-grace';
 import {
   PRIOR_BLOCKED_FOR_KEY,
   PRIOR_INGESTION_KEY,
@@ -1258,6 +1266,7 @@ export async function handleUnblockImages({
   const images = found.filter(
     (image) => image.blockedFor !== BlockedReason.CSAM && !csamIds.has(image.id)
   );
+  const kept: number[] = [];
   await Limiter().process(images, async (images) => {
     const ids = images.map((x) => x.id);
     const grouped = images.reduce<Record<string, number[]>>((acc, image) => {
@@ -1272,12 +1281,12 @@ export async function handleUnblockImages({
       // Drops its blocks' deferred effects unfired.
       dbWrite.$executeRaw`DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${ids}::int[])`,
       ...Object.entries(grouped).map(
-        // While the owner is deleted the row stays blocked, recorded as Scanned for an account restore.
         ([needsReview, groupedIds]) => dbWrite.$queryRaw<{ id: number; keptBlocked: boolean }[]>`
           UPDATE "Image" SET
-            "needsReview" = CASE WHEN ${ownerDeletedSql} THEN NULL ELSE ${reviewKeptWhenLiftedSql} END,
-            "blockedFor" = CASE WHEN ${ownerDeletedSql} THEN ${BlockedReason.Moderated} END,
-            "metadata" = ${unblockedMetadataSql}, -- an unblocked row is not the account deletion's to put back
+            "needsReview" = ${liftedNeedsReviewSql},
+            "blockedFor" = ${liftedBlockedForSql},
+            "nsfwLevel" = ${liftedNsfwLevelSql},
+            "metadata" = ${unblockedMetadataSql},
             ${needsReview === 'poi' ? Prisma.sql`"poi" = false,` : Prisma.sql``}
             ${
               needsReview === 'minor'
@@ -1291,10 +1300,10 @@ export async function handleUnblockImages({
                 ? Prisma.sql`"scannedAt" = NOW(),`
                 : Prisma.sql``
             }
-            "ingestion" = (CASE WHEN ${ownerDeletedSql} THEN 'Blocked' ELSE 'Scanned' END)::"ImageIngestionStatus"
+            "ingestion" = ${liftedIngestionSql}
           WHERE id IN (${Prisma.join(groupedIds)})
             AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
-          RETURNING id, ingestion = 'Blocked' AS "keptBlocked";
+          RETURNING id, ${liftKeptBlockedSql} AS "keptBlocked";
         `
       ),
       upsertTagsOnImageNew(
@@ -1347,12 +1356,21 @@ export async function handleUnblockImages({
     if (postIds.length) await bustCachesForPosts(postIds);
 
     if (moderatorId) {
-      await trackModActivity(moderatorId, {
-        entityType: 'image',
-        entityId: ids,
-        activity: 'review',
-      });
+      // A kept row must not log 'review': that is a takedown activity, which licenses retraction.
+      if (restoredIds.length)
+        await trackModActivity(moderatorId, {
+          entityType: 'image',
+          entityId: restoredIds,
+          activity: 'review',
+        });
+      if (keptIds.size)
+        await trackModActivity(moderatorId, {
+          entityType: 'image',
+          entityId: [...keptIds],
+          activity: LIFT_KEPT_ACTIVITY,
+        });
     }
+    kept.push(...keptIds);
   });
 
   // Resolve any pending appeals for images that were in appeal review
@@ -1370,7 +1388,12 @@ export async function handleUnblockImages({
   // Prevent remix-source audit job from re-flagging accepted images
   await markRemixSourceReviewed(images);
 
-  return images;
+  // Kept apart: a row kept blocked while its owner is deleted was not restored.
+  const keptSet = new Set(kept);
+  return {
+    restored: images.filter((img) => !keptSet.has(img.id)),
+    kept: images.filter((img) => keptSet.has(img.id)),
+  };
 }
 
 /**
@@ -1722,15 +1745,15 @@ export async function dropBlockedImageDeleteQueue(ids: number[]) {
 }
 
 /**
- * Re-queues images that stay blocked with the clock starting now, as a fresh block would: an approval
- * kept blocked while the owner is deleted must not inherit the original block's time.
+ * Re-queues images that stay blocked with the clock starting now, as a fresh block would: a lift kept
+ * blocked while the owner is deleted must not inherit the original block's time. One statement, so a
+ * failure cannot leave the image with no queue row. Twin: apps/moderator/src/lib/server/blocked-image-queue.ts.
  */
 export async function restartBlockedImageDeleteClock(ids: number[]) {
   if (!ids.length) return;
-  // One statement, so a failure cannot leave the image with no queue row and never purged.
   await dbWrite.$executeRaw`
     INSERT INTO "JobQueue" ("entityId", "entityType", type)
-    SELECT id, ${EntityType.Image}::"EntityType", ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+    SELECT id, ${BLOCKED_IMAGE_DELETE_QUEUE.entityType}::"EntityType", ${BLOCKED_IMAGE_DELETE_QUEUE.type}::"JobQueueType"
     FROM unnest(${ids}::int[]) AS id
     ON CONFLICT ("entityType", "entityId", type) DO UPDATE SET "createdAt" = now()
   `;

@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { BLOCKED_IMAGE_DELETE_QUEUE } from '@civitai/shared/account-deletion-grace';
 import { dbWrite } from './db';
 
 /**
@@ -16,14 +17,14 @@ export async function dropBlockedImageDeleteQueue(imageId: number) {
 }
 
 /**
- * Re-queues an image that stays blocked with the clock starting now, as a fresh block would: an
- * approval kept blocked while its owner is deleted must not inherit the original block's time.
+ * Re-queues an image that stays blocked with the clock starting now, as a fresh block would: a lift
+ * kept blocked while its owner is deleted must not inherit the original block's time. One statement, so
+ * a failure cannot leave the image with no queue row. Twin: src/server/services/image.service.ts.
  */
 export async function restartBlockedImageDeleteClock(imageId: number) {
-  // One statement, so a failure cannot leave the image with no queue row and never purged.
   await dbWrite
     .insertInto('JobQueue')
-    .values({ type: 'BlockedImageDelete', entityType: 'Image', entityId: imageId })
+    .values({ ...BLOCKED_IMAGE_DELETE_QUEUE, entityId: imageId })
     .onConflict((oc) =>
       oc.columns(['entityType', 'entityId', 'type']).doUpdateSet({ createdAt: sql`now()` })
     )

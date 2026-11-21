@@ -1,4 +1,9 @@
 import { readFileSync } from 'fs';
+import {
+  GRACE_PRIOR_BLOCKED_FOR_KEY,
+  GRACE_PRIOR_INGESTION_KEY,
+  GRACE_PRIOR_NEEDS_REVIEW_KEY,
+} from '@civitai/shared/account-deletion-grace';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -62,16 +67,23 @@ describe('the moderator app strips the same account-deletion breadcrumbs the mai
     expect(source().length, `${MOD_BLOCK_FILE} is empty or unreadable`).toBeGreaterThan(1000);
   });
 
-  it('declares every key with the values the main app defines', () => {
+  it('takes every key from the module the main app reads them from', () => {
     const src = source();
-    for (const key of [PRIOR_INGESTION_KEY, PRIOR_BLOCKED_FOR_KEY, PRIOR_NEEDS_REVIEW_KEY]) {
-      expect(
-        src.includes(`'${key}'`),
-        `${MOD_BLOCK_FILE} does not carry the literal '${key}'. It re-declares these keys because ` +
-          'it cannot import them; renaming one in image-removal-mode.ts means renaming it here too, ' +
-          'or the moderator app silently stops clearing the breadcrumb.'
-      ).toBe(true);
-    }
+    expect(
+      src,
+      `${MOD_BLOCK_FILE} no longer imports the grace keys from the shared module`
+    ).toMatch(/from '@civitai\/shared\/account-deletion-grace'/);
+    for (const name of [
+      'GRACE_PRIOR_INGESTION_KEY',
+      'GRACE_PRIOR_BLOCKED_FOR_KEY',
+      'GRACE_PRIOR_NEEDS_REVIEW_KEY',
+    ])
+      expect(src, `${MOD_BLOCK_FILE} does not use ${name}`).toContain(name);
+    expect([PRIOR_INGESTION_KEY, PRIOR_BLOCKED_FOR_KEY, PRIOR_NEEDS_REVIEW_KEY]).toEqual([
+      GRACE_PRIOR_INGESTION_KEY,
+      GRACE_PRIOR_BLOCKED_FOR_KEY,
+      GRACE_PRIOR_NEEDS_REVIEW_KEY,
+    ]);
   });
 
   /**

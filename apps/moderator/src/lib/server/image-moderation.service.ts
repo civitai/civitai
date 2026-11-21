@@ -1,6 +1,13 @@
 import { sql } from '@civitai/db/kysely';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
+import {
+  GRACE_PRIOR_BLOCKED_FOR_KEY,
+  GRACE_PRIOR_INGESTION_KEY,
+  GRACE_PRIOR_NEEDS_REVIEW_KEY,
+  LIFT_KEPT_ACTIVITY,
+  LIFT_WHILE_OWNER_DELETED,
+} from '@civitai/shared/account-deletion-grace';
 import { dbRead, dbWrite } from './db';
 import { dropBlockedImageDeleteQueue, restartBlockedImageDeleteClock } from './blocked-image-queue';
 import { insertModActivity, insertModActivityBatch, recordModActivity } from './mod-activity';
@@ -68,9 +75,9 @@ const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM} OR ("need
  * key alone, so a row marked during a grace period and then moderated would be put back by a later
  * account restore.
  */
-const ACCOUNT_DELETION_PRIOR_INGESTION_KEY = 'accountDeletionPriorIngestion';
-const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
-const ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview';
+const ACCOUNT_DELETION_PRIOR_INGESTION_KEY = GRACE_PRIOR_INGESTION_KEY;
+const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = GRACE_PRIOR_BLOCKED_FOR_KEY;
+const ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY = GRACE_PRIOR_NEEDS_REVIEW_KEY;
 
 /** Blocked by an automated moderation rule: it carries a rule's keys, unless that rule is a Hold rule and
  *  never was a Block rule. A Hold rule's keys can stay on an image a moderator later removed; a rule since deleted, or edited away from Block, still counts as the blocker.
@@ -115,12 +122,27 @@ const withoutGraceMarkers = (metadata: RawBuilder<unknown>) =>
     THEN (${metadata}) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text
     ELSE ${metadata} END)`;
 
-/** `metadata` for a row lifted while its owner is deleted: the main app's `liftedMetadataSql`, deleted-owner branch. */
-const liftedUnderGraceMetadata = (
-  stripped: RawBuilder<unknown>
-) => sql`(COALESCE(${stripped}, '{}'::jsonb)
-  || jsonb_build_object(${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text, 'Scanned', ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text, NULL::text,
-    ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLifted}))`;
+// A lift (approved appeal, accept) while the owner is deleted keeps the row blocked and records the
+// lifted state for an account restore: LIFT_WHILE_OWNER_DELETED. Twin: ownerDeletedSql and the lifted*
+// fragments in src/server/common/image-visibility.ts.
+const { keeps: KEPT, records: RECORDED } = LIFT_WHILE_OWNER_DELETED;
+const LIFTED_NEEDS_REVIEW = sql<
+  string | null
+>`(CASE WHEN ${OWNER_DELETED} THEN NULL ELSE ${reviewKeptWhenLifted} END)`;
+const LIFTED_BLOCKED_FOR = sql<
+  string | null
+>`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.blockedFor}::text END)`;
+const LIFTED_INGESTION = sql<
+  'Blocked' | 'Scanned'
+>`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.ingestion} ELSE ${RECORDED.ingestion} END)::"ImageIngestionStatus"`;
+const LIFTED_NSFW_LEVEL = sql<number>`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.nsfwLevel}::int ELSE "nsfwLevel" END)`;
+const LIFT_KEPT_BLOCKED = sql<boolean>`(ingestion = ${KEPT.ingestion}::"ImageIngestionStatus")`;
+/** `metadata` for a lifted row: `stripped`, or while the owner is deleted, that recording the lift. */
+const liftedMetadata = (stripped: RawBuilder<unknown>) => sql`(CASE WHEN ${OWNER_DELETED}
+  THEN COALESCE(${stripped}, '{}'::jsonb) || jsonb_build_object(
+    ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text, ${RECORDED.ingestion}::text, ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text, ${RECORDED.blockedFor}::text,
+    ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLifted})
+  ELSE ${stripped} END)`;
 
 const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
@@ -275,18 +297,15 @@ export async function acceptImage({
       ? sql`(COALESCE("metadata", '{}'::jsonb) - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
       : sql`"metadata" - 'ruleId' - 'ruleReason'`
   );
-
-  // Refused in the statement itself, not off the replica read above. While the owner is deleted the
-  // row stays blocked, recorded as Scanned for an account restore.
+  // Refused in the statement itself, not off the replica read above.
   const updated = await dbWrite
     .updateTable('Image')
     .set({
-      needsReview: sql`CASE WHEN ${OWNER_DELETED} THEN NULL ELSE ${reviewKeptWhenLifted} END`,
-      blockedFor: sql`CASE WHEN ${OWNER_DELETED} THEN ${BLOCKED_REASON_MODERATED} END`,
-      ingestion: sql`(CASE WHEN ${OWNER_DELETED} THEN 'Blocked' ELSE 'Scanned' END)::"ImageIngestionStatus"`,
-      metadata: sql`CASE WHEN ${OWNER_DELETED} THEN ${liftedUnderGraceMetadata(
-        metadataExpr
-      )} ELSE ${metadataExpr} END`,
+      needsReview: LIFTED_NEEDS_REVIEW,
+      blockedFor: LIFTED_BLOCKED_FOR,
+      nsfwLevel: LIFTED_NSFW_LEVEL,
+      ingestion: LIFTED_INGESTION,
+      metadata: liftedMetadata(metadataExpr),
       ...(nr === 'poi' ? { poi: false } : {}),
       ...(nr === 'minor'
         ? {
@@ -311,7 +330,7 @@ export async function acceptImage({
     // snapshot, so `wasMinor` is the value this update replaced, from the primary, not the replica.
     .returning([
       'id',
-      sql<boolean>`ingestion = 'Blocked'`.as('keptBlocked'),
+      LIFT_KEPT_BLOCKED.as('keptBlocked'),
       sql<boolean | null>`${nr === 'minor' ? sql`"minor"` : sql`NULL`}`.as('minor'),
       sql<boolean | null>`${
         nr === 'minor'
@@ -386,7 +405,13 @@ export async function acceptImage({
   if (restored && img.ingestion === 'Blocked' && img.blockedFor === BLOCKED_REASON_MODERATED)
     await trackImageRestore({ imageId, actorUserId: userId, db: reader });
 
-  await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
+  // A kept row must not log 'review': that is a takedown activity, which licenses retraction.
+  await recordModActivity({
+    userId,
+    entityType: 'image',
+    entityId: imageId,
+    activity: restored ? 'review' : LIFT_KEPT_ACTIVITY,
+  });
   // Every accept out of the minor queue logs exactly one of these beside `review`, so the log shows
   // which queue it came from and whether it lifted the flag.
   if (nr === 'minor')
@@ -413,6 +438,18 @@ export async function acceptImage({
     if (appeal) await runAppealCascade(appeal, imageId, true, undefined, !deferAppealEmail);
     return appeal;
   }
+}
+
+/** True when a lift left the image blocked because its owner is deleted (LIFT_WHILE_OWNER_DELETED). */
+export async function isKeptForDeletedOwner(imageId: number): Promise<boolean> {
+  const row = await dbWrite
+    .selectFrom('Image')
+    .select('id')
+    .where('id', '=', imageId)
+    .where(LIFT_KEPT_BLOCKED)
+    .where(OWNER_DELETED)
+    .executeTakeFirst();
+  return !!row;
 }
 
 /**
@@ -990,20 +1027,18 @@ export async function resolveImageAppeal({
     const row = await dbWrite
       .updateTable('Image')
       // On a row an account deletion blocked, the approval settles the appeal but not a review the
-      // deletion recorded, which comes back. While the owner is deleted the row stays blocked,
-      // recorded as Scanned for an account restore.
+      // deletion recorded, which comes back.
       .set({
-        needsReview: sql`CASE WHEN ${OWNER_DELETED} THEN NULL ELSE ${reviewKeptWhenLifted} END`,
-        blockedFor: sql`CASE WHEN ${OWNER_DELETED} THEN ${BLOCKED_REASON_MODERATED} END`,
-        ingestion: sql`(CASE WHEN ${OWNER_DELETED} THEN 'Blocked' ELSE 'Scanned' END)::"ImageIngestionStatus"`,
-        metadata: sql`CASE WHEN ${OWNER_DELETED} THEN ${liftedUnderGraceMetadata(
-          withoutGraceMarkers(sql`"metadata"`)
-        )} ELSE ${withoutGraceMarkers(sql`"metadata"`)} END`,
+        needsReview: LIFTED_NEEDS_REVIEW,
+        blockedFor: LIFTED_BLOCKED_FOR,
+        nsfwLevel: LIFTED_NSFW_LEVEL,
+        ingestion: LIFTED_INGESTION,
+        metadata: liftedMetadata(withoutGraceMarkers(sql`"metadata"`)),
       })
       .where('id', '=', imageId)
       .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
       .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
-      .returning(sql<boolean>`ingestion = 'Blocked'`.as('keptBlocked'))
+      .returning(LIFT_KEPT_BLOCKED.as('keptBlocked'))
       .executeTakeFirst();
     written = !!row;
     restored = written && !row?.keptBlocked;

@@ -3,9 +3,12 @@ import { randomUUID } from 'crypto';
 import { MERGE_PERMISSION_REPORT_REASON } from '@civitai/shared/merge-permission';
 import { NO_REPORT_REWARD_KEY, reportersWithoutReward } from '@civitai/shared/report-reward';
 import {
+  liftedBlockedForSql,
+  liftedIngestionSql,
   liftedMetadataSql,
-  ownerDeletedSql,
-  reviewKeptWhenLiftedSql,
+  liftedNeedsReviewSql,
+  liftedNsfwLevelSql,
+  liftKeptBlockedSql,
 } from '~/server/common/image-visibility';
 import dayjs from '~/shared/utils/dayjs';
 import {
@@ -1976,20 +1979,20 @@ export async function settleResolvedAppeals(
         try {
           // An approval never restores a row removed for CSAM or under the review flag, and a
           // rejection leaves that flag on. On a row an account deletion blocked, an approval settles
-          // the appeal but not a review the deletion recorded, which comes back. While the owner is
-          // deleted the row stays blocked, recorded as Scanned for an account restore.
+          // the appeal but not a review the deletion recorded, which comes back.
           type Written = { postId: number | null; pHash: bigint | null; keptBlocked?: boolean };
           const [updated] = approved
             ? await dbWrite.$queryRaw<Written[]>`
                 UPDATE "Image"
-                SET "needsReview" = CASE WHEN ${ownerDeletedSql} THEN NULL ELSE ${reviewKeptWhenLiftedSql} END,
-                    "blockedFor" = CASE WHEN ${ownerDeletedSql} THEN ${BlockedReason.Moderated} END,
-                    ingestion = (CASE WHEN ${ownerDeletedSql} THEN 'Blocked' ELSE 'Scanned' END)::"ImageIngestionStatus",
+                SET "needsReview" = ${liftedNeedsReviewSql},
+                    "blockedFor" = ${liftedBlockedForSql},
+                    "nsfwLevel" = ${liftedNsfwLevelSql},
+                    ingestion = ${liftedIngestionSql},
                     "metadata" = ${liftedMetadataSql}
                 WHERE id = ${appeal.entityId}
                   AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
                   AND "needsReview" IS DISTINCT FROM 'csam'
-                RETURNING "postId", "pHash", ingestion = 'Blocked' AS "keptBlocked"
+                RETURNING "postId", "pHash", ${liftKeptBlockedSql} AS "keptBlocked"
               `
             : await dbWrite.$queryRaw<Written[]>`
                 UPDATE "Image"

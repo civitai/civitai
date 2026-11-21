@@ -242,12 +242,21 @@ describe('approving an appeal on an image an account deletion blocked', () => {
   });
 });
 
+// Policy: DESIGN GO A on the appeal task, "a deleted owner's image is never served".
 describe('approving an appeal while the image owner is deleted', () => {
   const OWNER_ID = 7;
+  const activities = async () =>
+    (
+      await db.query<{ activity: string }>(
+        `SELECT "activity" FROM "ModActivity" WHERE "entityId" = $1 AND "activity" IN ('review', 'bulkRemove', 'reviewOwnerDeleted')`,
+        [IMAGE_ID]
+      )
+    ).rows.map((r) => r.activity);
+  beforeEach(() => vi.mocked(syncSearchIndex).mockClear());
   const seed = async (deletedAt: string | null) => {
     await db.query(`INSERT INTO "User" ("id", "deletedAt") VALUES ($1, $2)`, [OWNER_ID, deletedAt]);
     await db.query(
-      `UPDATE "Image" SET "userId" = $2, "metadata" = jsonb_build_object(
+      `UPDATE "Image" SET "userId" = $2, "nsfwLevel" = 4, "metadata" = jsonb_build_object(
          'accountDeletionPriorIngestion', 'Blocked',
          'accountDeletionPriorBlockedFor', 'moderated',
          'accountDeletionPriorNeedsReview', 'minor',
@@ -327,6 +336,8 @@ describe('approving an appeal while the image owner is deleted', () => {
     const { rows } = await db.query<{ status: string }>(`SELECT "status" FROM "Appeal"`);
     expect(rows).toEqual([{ status: 'Approved' }]);
     expect(vi.mocked(syncSearchIndex).mock.calls.at(-1)?.[0]).toMatchObject({ action: 'delete' });
+    // No takedown activity ('review'), which the CDN sync and the purge read as a moderator removal.
+    expect(await activities()).toEqual(['reviewOwnerDeleted']);
   });
 
   it('an accept restores it when the owner is not deleted', async () => {
@@ -335,6 +346,7 @@ describe('approving an appeal while the image owner is deleted', () => {
     await acceptImage({ imageId: IMAGE_ID, userId: 2 });
 
     expect(await row()).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+    expect(await activities()).toEqual(['review']);
   });
 
   it('restores it when the owner is not deleted', async () => {
