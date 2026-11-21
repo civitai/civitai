@@ -13,7 +13,7 @@ import {
   type FeedGoV1ShapeClass,
 } from '~/server/prom/feed-go-shadow.metrics';
 import { pickSessionCookies } from '~/server/utils/session-cookies';
-import { trainingDataListingSqlSha256 } from '~/server/services/training-data-restricted.service';
+import { trainingDataListingRulesId } from '~/server/services/training-data-restricted.service';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler';
 
@@ -361,9 +361,11 @@ export type FeedGoShadowDeps = {
 };
 
 /**
- * The header a model sample carries the SHA-256 of this build's Training Data statement in
- * (`trainingDataListingSqlSha256`). feed-go lists Training Data files only when it equals the hash of
- * its own copy, and falls back otherwise (absent included): it never lists by rules other than these.
+ * The header a model sample carries this build's Training Data rule set in
+ * (`trainingDataListingRulesId`: the statement's SHA-256 and the decision's version). feed-go lists
+ * Training Data files only when it equals its own, and falls back otherwise (absent included): it
+ * never lists by rules other than these. The production wiring is pinned in
+ * src/server/__tests__/trpc-feed-go-shadow.test.ts.
  */
 export const FEED_GO_TRAINING_DATA_SQL_HEADER = 'x-feed-go-training-data-sql';
 
@@ -793,7 +795,7 @@ function getInstance(): FeedGoShadow {
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_GOFIRST_PROBE)
     ),
     modelSampleHeaders: () => ({
-      [FEED_GO_TRAINING_DATA_SQL_HEADER]: trainingDataListingSqlSha256(),
+      [FEED_GO_TRAINING_DATA_SQL_HEADER]: trainingDataListingRulesId(),
     }),
   });
   return instance;

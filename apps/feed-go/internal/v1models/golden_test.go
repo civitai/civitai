@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -425,8 +426,8 @@ func goldenLoad(t *testing.T, path string) *goldenFixture {
 	return fx
 }
 
-// goldenNodeSQLHash is what the Node of these fixtures sends as its statement hash
-// (trainingDataListingSqlSha256): the SHA-256 of the training data statement its route sent, as one
+// goldenNodeSQLHash is what the Node of these fixtures sends as its rule set id
+// (trainingDataListingRulesId): the SHA-256 of the training data statement its route sent, as one
 // fixture recorded it. Not derived from Go's embedded copy, so a drifted copy fails here.
 var goldenNodeSQLHash = sync.OnceValues(func() (string, error) {
 	raw, err := os.ReadFile(filepath.Join(goldenDir, "detail-training-data.json"))
@@ -441,7 +442,9 @@ var goldenNodeSQLHash = sync.OnceValues(func() (string, error) {
 		return "", errors.New("detail-training-data.json records no training data statement")
 	}
 	sum := sha256.Sum256([]byte(fx.Expect.TrainingDataSQL.Text))
-	return hex.EncodeToString(sum[:]), nil
+	// The decision version is the Go mirror's: feed-go-training-data-listing.parity.test.ts requires it
+	// to be Node's TRAINING_DATA_LISTING_RULES_VERSION.
+	return hex.EncodeToString(sum[:]) + ";rules=" + strconv.Itoa(TrainingDataRulesVersion), nil
 })
 
 // goldenServe computes the fixture's request, as a sample from the fixtures' Node (its statement

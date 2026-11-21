@@ -2333,13 +2333,19 @@ change) and runs both on Postgres (PGlite with the hold migrations), one Trainin
 refusal reason, requiring the same rows. The predicate over the rows is pinned per rule by
 `internal/v1models/trainingdata_test.go`.
 
-**Drift.** feed-go and the Node app deploy separately, so a Node change to the rules (`ownerHeldSql`,
-the restriction legs) would otherwise leave feed-go listing by the old ones. Every model sample
-carries the SHA-256 of the Node build's statement text (`trainingDataListingSqlSha256`, header
-`x-feed-go-training-data-sql`, added by the sampler); a body with a Training Data candidate is
-answered only when it equals the hash of the embedded copy (`v1models.TrainingDataSQLHash`), and
-falls back (`v1-models-training-data-drift`) when it differs or is absent, before anything is read.
-A body with no Training Data file needs no hash.
+**Drift.** feed-go and the Node app deploy separately, so a Node change to the rules would otherwise
+leave feed-go listing by the old ones. The rules are two parts: the statement (`ownerHeldSql`, the
+restriction legs) and the JS decision over its rows (`trainingDataServableOnHost`, the
+`restricted !== false` and virus-scan tests, the listed predicate). Every model sample carries the
+Node build's rule set id, `<sha256 of the statement text>;rules=<TRAINING_DATA_LISTING_RULES_VERSION>`
+(`trainingDataListingRulesId`, header `x-feed-go-training-data-sql`, added by the sampler); a body
+with a Training Data candidate is answered only when it equals this build's
+(`v1models.TrainingDataSQLHash`: the embedded copy's hash and `TrainingDataRulesVersion`), and falls
+back (`v1-models-training-data-drift`) when it differs or is absent, before anything is read. A body
+with no Training Data file needs no id. The version is held to its source by
+`feed-go-training-data-listing.parity.test.ts`: it records the SHA-256 of
+`training-data-visibility.ts` and the marked decision block of `trainingDataListing` per version,
+fails when that source changes without a bump, and requires the Go constant to equal Node's.
 
 ### 16.7 Known divergences
 

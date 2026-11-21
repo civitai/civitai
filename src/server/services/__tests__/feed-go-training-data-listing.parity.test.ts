@@ -5,7 +5,9 @@ import path from 'path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'crypto';
 import {
+  TRAINING_DATA_LISTING_RULES_VERSION,
   trainingDataListing,
+  trainingDataListingRulesId,
   trainingDataListingSql,
   trainingDataListingSqlSha256,
 } from '~/server/services/training-data-restricted.service';
@@ -18,7 +20,14 @@ import {
  * ownerHeldSql, the report legs or the content restriction fails here until the file is re-rendered),
  * and, run on Postgres (PGlite, with the restriction migrations), the same rows as Node's for one
  * Training Data file per refusal reason. The predicate over the rows is pinned in Go
- * (internal/v1models/trainingdata_test.go) and by the golden fixtures.
+ * (internal/v1models/trainingdata_test.go) and by the golden fixtures; its version, which feed-go also
+ * requires to match, is held to the Node source it versions below.
+ *
+ * The policy this pins is the dataset-sharing restriction as introduced with dataset sharing
+ * (civitai/civitai#8193: `trainingDataListing`, `trainingDataOwnerRestrictedSql`,
+ * `trainingDataContentRestrictedSql`, `trainingDataServableOnHost`) over the owner legal hold of
+ * civitai/civitai#7047 (`ownerHeldSql`); #8274 made the listing skip versions read without files.
+ * The CASES are one per leg of those builders, as they read today.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -237,6 +246,55 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await db?.close();
+});
+
+// The Node source the decision over the rows lives in: what TRAINING_DATA_LISTING_RULES_VERSION
+// versions. Each version is recorded with the SHA-256 of that source; a change to it fails here until
+// the version is bumped (here, in the service and in feed-go) and the new hash recorded, and feed-go
+// falls back for a Node that sends a version it does not have.
+const RULES_SOURCE_SHA256: Record<number, string> = {
+  1: 'c6fc9812918c12af03c660ad6d02cd1e97280658f8a5c31c4816027024f44817',
+};
+const SERVICE = path.resolve(__dirname, '../training-data-restricted.service.ts');
+const VISIBILITY = path.resolve(__dirname, '../../../shared/utils/training-data-visibility.ts');
+const GO_TRAINING_DATA = path.resolve(
+  __dirname,
+  '../../../../apps/feed-go/internal/v1models/trainingdata.go'
+);
+
+/** The marked decision block of trainingDataListing and the whole visibility module. */
+function rulesSource() {
+  const svc = readFileSync(SERVICE, 'utf8');
+  const begin = svc.indexOf('// feed-go-rules:begin');
+  const end = svc.indexOf('// feed-go-rules:end');
+  if (begin < 0 || end < begin || svc.indexOf('// feed-go-rules:begin', begin + 1) >= 0)
+    throw new Error('the feed-go-rules markers are missing or repeated');
+  return `${readFileSync(VISIBILITY, 'utf8')}\0${svc.slice(begin, end)}`;
+}
+
+describe("feed-go's training data decision version", () => {
+  it('is bumped whenever the decision source changes', () => {
+    const sha = createHash('sha256').update(rulesSource()).digest('hex');
+    expect(
+      RULES_SOURCE_SHA256[TRAINING_DATA_LISTING_RULES_VERSION],
+      `The Training Data decision (training-data-visibility.ts or the feed-go-rules block of ` +
+        `trainingDataListing) changed: bump TRAINING_DATA_LISTING_RULES_VERSION and feed-go's ` +
+        `TrainingDataRulesVersion, port the change to apps/feed-go/internal/v1models/trainingdata.go, ` +
+        `and record ${TRAINING_DATA_LISTING_RULES_VERSION + 1}: '${sha}' here.`
+    ).toBe(sha);
+  });
+
+  it("is feed-go's, and is what the sampler sends", () => {
+    const go = /^const TrainingDataRulesVersion = (\d+)$/m.exec(
+      readFileSync(GO_TRAINING_DATA, 'utf8')
+    );
+    expect(go?.[1], 'TrainingDataRulesVersion in trainingdata.go').toBe(
+      String(TRAINING_DATA_LISTING_RULES_VERSION)
+    );
+    expect(trainingDataListingRulesId()).toBe(
+      `${trainingDataListingSqlSha256()};rules=${TRAINING_DATA_LISTING_RULES_VERSION}`
+    );
+  });
 });
 
 describe("feed-go's training data statement", () => {

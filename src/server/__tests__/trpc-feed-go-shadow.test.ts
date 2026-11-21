@@ -6,7 +6,19 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { instrumentationRegistry } from '@civitai/telemetry/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as FliptClient from '~/server/flipt/client';
+import { createHash } from 'node:crypto';
 import {
+  TRAINING_DATA_LISTING_RULES_VERSION,
+  trainingDataListingRulesId,
+  trainingDataListingSql,
+} from '~/server/services/training-data-restricted.service';
+import {
+  beginFeedGoShadowV1Models,
+  captureFeedGoShadowRest,
+  finishFeedGoShadow,
+  FEED_GO_SHADOW_V1_MODELS_ID_PATH,
+  FEED_GO_SHADOW_V1_MODELS_PATH,
+  FEED_GO_TRAINING_DATA_SQL_HEADER,
   FEED_GO_PROBE_PATH,
   FEED_GO_SHADOW_INFINITE_PATH,
   FEED_GO_SHADOW_MODEL_GET_ALL_PATH,
@@ -46,6 +58,7 @@ const flag = vi.hoisted(() => ({
   shadow: null as boolean | null,
   infinite: null as boolean | null,
   models: null as boolean | null,
+  v1Models: null as boolean | null,
   probe: null as boolean | null,
 }));
 const handler = vi.hoisted(() => ({
@@ -71,6 +84,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
         ? flag.infinite
         : key === 'feed-go-shadow-model-getall'
         ? flag.models
+        : key === 'feed-go-shadow-v1-models'
+        ? flag.v1Models
         : actual.isFliptSync(key, ...rest),
   };
 });
@@ -196,6 +211,7 @@ beforeEach(() => {
   flag.probe = false;
   flag.infinite = false;
   flag.models = false;
+  flag.v1Models = false;
   handler.fail = false;
   handler.awaitProbe = false;
   handler.probeSeen = undefined;
@@ -567,5 +583,33 @@ describe('feed-go shadow, model.getAll end to end', () => {
     resetFeedGoShadowForTests();
     expect((await get(MODELS)).status).toBe(200);
     expect(await receivedWithin(1, 200)).toHaveLength(0);
+  });
+});
+
+// The module-level sampler as the model routes use it (getInstance's wiring, not a test harness):
+// every model sample carries this build's Training Data rule set, the statement's SHA-256 and the
+// decision's version, which feed-go requires before it lists a Training Data file.
+describe('feed-go shadow: /api/v1/models samples carry the Training Data rule set', () => {
+  const expected = `${createHash('sha256')
+    .update(trainingDataListingSql([]).text)
+    .digest('hex')};rules=${TRAINING_DATA_LISTING_RULES_VERSION}`;
+
+  it.each([
+    ['list', '/api/v1/models?limit=1', FEED_GO_SHADOW_V1_MODELS_PATH],
+    ['id', '/api/v1/models/42', FEED_GO_SHADOW_V1_MODELS_ID_PATH],
+  ] as const)('the %s route', async (kind, url, path) => {
+    flag.v1Models = true;
+    resetFeedGoShadowForTests();
+    const sample = beginFeedGoShadowV1Models(
+      { method: 'GET', url, headers: { host: 'site.example.test' }, query: {} },
+      kind
+    );
+    expect(sample, 'sampled').toBeDefined();
+    captureFeedGoShadowRest(sample!, kind === 'list' ? { items: [], metadata: {} } : { id: 42 });
+    finishFeedGoShadow(sample!, 200);
+    const received = await receivedWithin(1);
+    expect(received.map((r) => r.path)).toEqual([path]);
+    expect(received[0].body.headers[FEED_GO_TRAINING_DATA_SQL_HEADER]).toBe(expected);
+    expect(trainingDataListingRulesId()).toBe(expected);
   });
 });
