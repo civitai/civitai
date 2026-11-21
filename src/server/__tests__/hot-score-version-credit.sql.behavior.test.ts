@@ -459,6 +459,78 @@ describe("Hot gives a proven model's new version a small head start", () => {
   });
 });
 
+describe("an unmeasured slice follows its model's score", () => {
+  const MIRROR_DIR = '20271122120000_model_hot_score_mirror_refresh';
+  const sliceScore = async (modelId: number, baseModel: string) =>
+    (
+      await db.pg.query<{ hotScore: number }>(
+        `SELECT "hotScore" FROM "ModelBaseModelMetric" WHERE "modelId" = $1 AND "baseModel" = $2`,
+        [modelId, baseModel]
+      )
+    ).rows[0].hotScore;
+  const mirrorOf = async (modelId: number) => {
+    await db.pg.query(
+      `INSERT INTO "ModelBaseModelMetric" ("modelId", "baseModel", "thumbsUpCount") VALUES ($1, 'Mirror', 0)`,
+      [modelId]
+    );
+  };
+  const addLikes = (modelId: number, n: number) =>
+    db.pg.query(
+      `UPDATE "ModelMetric" SET "thumbsUpCount" = "thumbsUpCount" + $2 WHERE "modelId" = $1`,
+      [modelId, n]
+    );
+
+  it('when only ModelMetric is written', async () => {
+    const id = await model(OLD, 100, [{ at: OLD, likes: 100 }]);
+    await mirrorOf(id);
+    const before = await score(id);
+
+    await addLikes(id, 10_000);
+
+    expect(await score(id)).toBeGreaterThan(before);
+    expect(await sliceScore(id, 'Mirror')).toBe(await score(id));
+  });
+
+  it('when the slice was written before its ModelMetric row', async () => {
+    const id = nextModel++;
+    await mirrorOf(id);
+    expect(await sliceScore(id, 'Mirror')).toBe(0);
+
+    await model(OLD, 100, [{ at: OLD, likes: 100 }], { id });
+
+    expect(await sliceScore(id, 'Mirror')).toBe(await score(id));
+  });
+
+  // Deliberate: the mirror locks are taken at commit so a transaction never holds them while it
+  // waits on another slice (deadlock with the base-model job). Do not make the trigger immediate.
+  it('at commit, not mid-transaction', async () => {
+    const id = await model(OLD, 100, [{ at: OLD, likes: 100 }]);
+    await mirrorOf(id);
+    const before = await sliceScore(id, 'Mirror');
+
+    await db.pg.exec('BEGIN');
+    await addLikes(id, 10_000);
+    const midTransaction = await sliceScore(id, 'Mirror');
+    await db.pg.exec('COMMIT');
+
+    expect(midTransaction).toBe(before);
+    expect(await sliceScore(id, 'Mirror')).toBe(await score(id));
+  });
+
+  it('and the migration catches up mirrors already behind, and can be re-run', async () => {
+    const id = await model(OLD, 100, [{ at: OLD, likes: 100 }]);
+    await mirrorOf(id);
+    await db.pg.exec(`ALTER TABLE "ModelMetric" DISABLE TRIGGER trg_model_metric_hot_score_mirror`);
+    await addLikes(id, 10_000);
+    await db.pg.exec(`ALTER TABLE "ModelMetric" ENABLE TRIGGER trg_model_metric_hot_score_mirror`);
+    expect(await sliceScore(id, 'Mirror')).toBeLessThan(await score(id));
+
+    await apply(MIRROR_DIR);
+
+    expect(await sliceScore(id, 'Mirror')).toBe(await score(id));
+  });
+});
+
 // Puts the shared database's triggers back to #9397: only fresh databases are used after it.
 describe('the head-start rollback', () => {
   it('returns a head-started model and its slices to the #9397 score', async () => {

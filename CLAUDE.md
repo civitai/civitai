@@ -53,7 +53,7 @@ where it loads on demand:
 - **Worktrees are optional.** If you use one, create it with
   `node .claude/skills/dev-server/cli.mjs wt new <name> <branch>` and remove it with `wt stale` / `wt rm`,
   not the `EnterWorktree` tool or a hand-rolled `git worktree add`.
-- `pnpm run typecheck` (authoritative; `typecheck:fast` is edit-loop only), `pnpm run lint`.
+- `pnpm run typecheck` (TypeScript 7 from `tools/ts7`, single-threaded locally; authoritative), `pnpm run lint`.
   In SvelteKit apps use `typecheck`, never `check` or a manual `svelte-kit sync`
   (details: `.claude/rules/sveltekit.md`).
 - **Formatting:** `pnpm run prettier:write` formats uncommitted files only. Never run a repo-wide

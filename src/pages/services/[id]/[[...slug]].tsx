@@ -186,7 +186,7 @@ function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSidePro
                 </Title>
                 <Text className="whitespace-pre-wrap break-words">{offering.description}</Text>
               </Stack>
-              <ServiceReviews offering={offering} />
+              <ServiceReviews offering={offering} isOwner={isOwner} />
             </Stack>
 
             <Stack gap="md">

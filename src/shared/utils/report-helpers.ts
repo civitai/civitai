@@ -21,6 +21,8 @@ export enum ReportEntity {
   ServiceOffering = 'serviceOffering',
   /** One storyline text item. Moderated in the post report queue, with its post. */
   PostText = 'postText',
+  /** One buyer review of a service, its text and images. Moderated in the service queue. */
+  ServiceDealReview = 'serviceDealReview',
 }
 
 /**
@@ -55,4 +57,5 @@ export const reportEntityLabels: Record<ReportEntity, string> = {
   [ReportEntity.Storyline]: 'Storyline',
   [ReportEntity.ServiceOffering]: 'Service',
   [ReportEntity.PostText]: 'Text',
+  [ReportEntity.ServiceDealReview]: 'Review',
 };
