@@ -640,8 +640,8 @@ export async function clearUserProfileFields({
 }
 
 /**
- * Mod-driven: removes one of a user's social or sponsorship links. Archived first, and refused if the
- * archive fails, as `clearUserProfileFields` is.
+ * Mod-driven: removes one of a user's social or sponsorship links. Archived first, refused if the
+ * archive fails, and recorded in the same transaction, as `clearUserProfileFields` is.
  */
 export async function removeUserLinkAsModerator({
   userId,
@@ -656,25 +656,19 @@ export async function removeUserLinkAsModerator({
 }) {
   await archiveProfileBeforeModeratorChange({ userId, actorId, fields: ['links'], archive });
   // Scoped by owner too: an id alone could take another account's link.
-  const { count } = await dbWrite.userLink.deleteMany({ where: { id: linkId, userId } });
-  if (count > 0) {
-    try {
-      await trackModActivity(actorId, {
-        entityType: 'user',
-        activity: 'removeLink',
-        entityId: userId,
-      });
-    } catch (error) {
-      logToAxiom({
-        type: 'error',
-        name: 'remove-user-link-mod-activity',
-        userId,
-        message: (error as Error).message,
-      });
-    }
-    await bustUserCreator(userId).catch(handleLogError);
-  }
-  return { removed: count > 0 };
+  // One transaction with its record: a removal whose record fails is rolled back and throws.
+  const removed = await dbWrite.$transaction(async (tx) => {
+    const { count } = await tx.userLink.deleteMany({ where: { id: linkId, userId } });
+    if (count > 0)
+      await trackModActivity(
+        actorId,
+        { entityType: 'user', activity: 'removeLink', entityId: userId },
+        tx
+      );
+    return count > 0;
+  });
+  if (removed) await bustUserCreator(userId).catch(handleLogError);
+  return { removed };
 }
 
 /**

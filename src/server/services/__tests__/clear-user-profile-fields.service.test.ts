@@ -236,6 +236,11 @@ describe('removeUserLinkAsModerator', () => {
     expect(db.userLink.deleteMany).toHaveBeenCalledTimes(1);
   });
 
+  it('fails the removal when its record fails to write', async () => {
+    failModActivityOnce();
+    await expect(remove()).rejects.toThrow('db blip');
+  });
+
   it('records nothing when the link is not that user’s', async () => {
     db.userLink.deleteMany.mockResolvedValue({ count: 0 } as never);
     await expect(remove()).resolves.toEqual({ removed: false });
