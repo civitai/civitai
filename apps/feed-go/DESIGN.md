@@ -626,8 +626,14 @@ superjson unless `TRPC_WRITE_DEVALUE` is on (§5.2):
   several paths (a creator's `cosmetics` array on each of their images, the post `user` that is also
   `images[0].user`). It restores object identity after decode, never a value; nothing in the client
   compares these objects by identity.
-- Object key order is not reproduced for opaque values (cache entries are emitted with sorted keys);
-  it is for the response's own objects. The client reads values, not order.
+- Object key order is reproduced: the response's own objects are built in Node's order, and a cached
+  record the answer carries (a profile picture and its `metadata`, a cosmetic's `data`, an event
+  decoration, a model's shown version and its showcase images) is read with the key order its msgpack
+  bytes hold (`hydrate.Entry.Ordered`, JS own-key order: array-index keys first), which is the order
+  of the Node object that wrote it. The client reads values, not order; the order is what makes the
+  devalue bytes equal Node's. A record built from a replica row on a miss that is not computed into
+  the cache (`profilePicturesFrom` / `cosmeticsFrom`'s replica read) still decodes its json columns into
+  Go maps, so their nested keys are sorted.
 - One Node quirk is ported deliberately: a post's `createdAt` is
   `images.map((i) => new Date(i.sortAt)).sort()[0]`, and `Array#sort` without a comparator orders
   Dates by their **string** form (`"Fri Mar 01 2024 …"`), so it is the alphabetically first weekday,
@@ -718,10 +724,7 @@ once) and lets a client compare Go's and Node's bytes.
 
 The goldens hold Node's own devalue body for every served fixture (`testdata/golden/devalue/`, written
 by the generators from the same value as the superjson envelope); the harness requires feed-go's bytes
-to equal them. The one known difference is the one §5 already names for superjson: a cached record's
-nested objects (a profile picture's `metadata`, a frame's `data`, a showcase image) keep sorted keys
-here and their written order in Node. The value is the same, the bytes differ there; the harness lists
-those paths (`goldenDevalueKeyOrder`) and requires every other byte to match.
+to equal them, every byte, the cached records' key order included (§5).
 
 
 ## 6. How traffic reaches it
@@ -2110,7 +2113,7 @@ outcome; the encode counters carry the label too.
 plus `unsupported`, `deadline`, `go_error`. Categories are `items.*.<field>`, `items.*.version.<field>`,
 `items.*.images.*.<field>`, `items.*.user.<field>`, `items.*.rank.<count>`, `nextCursor`, truncated at
 the same opaque keys (`metadata`, cosmetic `data`, `remixOfId`). The showcase images and the version
-are cache entries, emitted with sorted keys (§5).
+are cache entries, emitted in their cached key order (§5).
 
 ### 15.6 Measurement
 
