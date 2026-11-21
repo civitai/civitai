@@ -120,7 +120,7 @@ function runScripts(job: Job): string {
 
 /** A job's steps, serialised — everything EXCEPT the job-level `if`. See the seam test. */
 function stepsBlob(job: Job): string {
-  const { if: _ignored, ...rest } = job;
+  const { if: _ignored, 'runs-on': _runsOn, ...rest } = job;
   return JSON.stringify(rest);
 }
 
@@ -349,9 +349,9 @@ describe('CI coverage for commits on main', () => {
   // unrelated to the code — which is how a permanently-red gate gets switched
   // off, taking the real coverage with it.
   //
-  // The job-level `if` is deliberately exempt: a null-safe comparison there is
-  // how a job decides not to run, which is the correct use. This scans the
-  // steps.
+  // The job-level `if` and `runs-on` are deliberately exempt: a null-safe comparison
+  // there decides whether or where a job runs, which is the correct use. This scans
+  // the steps.
   it('runs no job on the push path whose STEPS consume PR-only context', () => {
     const offenders = workflows
       .filter((w) => triggersOnPushToMain(w.doc))
