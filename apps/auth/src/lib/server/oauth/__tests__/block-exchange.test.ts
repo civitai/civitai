@@ -55,6 +55,8 @@ const h = await vi.hoisted(async () => {
     replaySetCalled: false,
     dbThrowsOn: null as string | null,
     // Runs a script on the replay store's state in real Lua (set in beforeEach from the harness).
+    // Every replay-store script run, in call order: a test awaits the one it is waiting for.
+    evals: [] as Promise<unknown>[],
     luaEval: null as
       | null
       | ((script: string, options: { keys: string[]; arguments: string[] }) => Promise<unknown>),
@@ -152,7 +154,9 @@ vi.mock('$lib/server/redis', async (orig) => ({
             return h.cache.delete(key) ? 1 : 0;
           },
           async eval(script: string, options: { keys: string[]; arguments: string[] }) {
-            return h.luaEval!(script, options);
+            const run = h.luaEval!(script, options);
+            h.evals.push(run);
+            return run;
           },
         },
   getSysRedis: () => ({
@@ -276,6 +280,7 @@ beforeEach(() => {
   h.replayHang = false;
   h.replayApplyThenHang = false;
   h.replayDeferred = null;
+  h.evals = [];
   // The release's compare-and-delete runs as real Lua over the fake store's current value of its key.
   h.luaEval = async (script, options) => {
     const lua = createLuaRedis(Date.now());
@@ -773,10 +778,6 @@ async function exchangeWithReplayTimeout(token: string) {
   return pending;
 }
 
-const flushMicrotasks = async () => {
-  for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
-};
-
 describe('block token exchange — one exchange per block token', () => {
   it('claims the block token until a minute past its exp', async () => {
     const res = await exchange(await blockToken({ iat: NOW, exp: NOW + 900 }));
@@ -824,8 +825,16 @@ describe('block token exchange — one exchange per block token', () => {
     const pending = h.replayDeferred;
     h.replayDeferred = null;
     expect(pending).toHaveLength(1);
+    const released = h.evals.length; // the 503's own release ran (and found nothing) already
     pending[0]();
-    await flushMicrotasks();
+    expect(h.cache.size).toBe(1); // landed: the claim is held
+    // The late release runs in the background: wait until it is called, then for the script itself (real
+    // Lua in a fresh wasmoon engine, which settles outside the microtask queue).
+    for (let i = 0; i < 1000 && h.evals.length === released; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(h.evals).toHaveLength(released + 1);
+    await h.evals[released];
     expect(h.cache.size).toBe(0);
     const retry = await exchange(token);
     expect(retry.status, JSON.stringify(retry.body)).toBe(200);

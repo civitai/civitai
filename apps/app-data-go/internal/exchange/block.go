@@ -166,6 +166,8 @@ type blockEntry struct {
 	tok    Token
 	err    error
 	forget time.Time // zero while the exchange runs
+	// waiters is how many calls have waited on this exchange (an observable for tests; c.mu held).
+	waiters int
 }
 
 // Exchange returns the token exchanged for subject, an App Block token, exchanging it at the hub only
@@ -198,6 +200,7 @@ func (c *BlockCache) Exchange(ctx context.Context, subject string) (Token, error
 		c.mu.Unlock()
 		return c.first(ctx, k, e, subject, now)
 	}
+	e.waiters++
 	c.mu.Unlock()
 	select {
 	case <-e.done:

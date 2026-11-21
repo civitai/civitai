@@ -2,6 +2,7 @@ package exchange
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -189,6 +190,28 @@ func TestABlockTokenIsExchangedOnceAndItsTokenReused(t *testing.T) {
 }
 
 // Concurrent streams of one block token (two collections opened at once) share one exchange.
+// waitForWaiters waits (bounded) until n calls have joined the exchange of subject in flight.
+func waitForWaiters(t *testing.T, bc *BlockCache, subject string, n int) {
+	t.Helper()
+	k := sha256.Sum256([]byte(subject))
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		bc.mu.Lock()
+		got := 0
+		if e := bc.entries[k]; e != nil {
+			got = e.waiters
+		}
+		bc.mu.Unlock()
+		if got >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d calls waiting on the exchange, want %d", got, n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestConcurrentCallsShareOneExchange(t *testing.T) {
 	bc, h, _, _ := newBlockCache()
 	h.gate = make(chan struct{})
@@ -207,7 +230,7 @@ func TestConcurrentCallsShareOneExchange(t *testing.T) {
 	for h.count(blockA) == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	time.Sleep(20 * time.Millisecond) // let the others reach the wait
+	waitForWaiters(t, bc, blockA, 7) // every other call is waiting on the one exchange
 	close(h.gate)
 	wg.Wait()
 	if n := h.count(blockA); n != 1 || ok.Load() != 8 {
@@ -284,7 +307,7 @@ func TestWaitersGetTheFailureOrTheirOwnDeadline(t *testing.T) {
 		_, err := bc.Exchange(context.Background(), blockA)
 		waiter <- err
 	}()
-	time.Sleep(20 * time.Millisecond)
+	waitForWaiters(t, bc, blockA, 2) // the timed-out waiter and this one
 	close(h.gate)
 	if err := <-firstErr; err == nil || err.Error() != "exchange: token endpoint unreachable" {
 		t.Fatalf("first: %v", err)
