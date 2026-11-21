@@ -152,26 +152,38 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
 
 let tracker: ReturnType<typeof createFeedEventsTracker> | undefined;
 let stop: (() => void) | undefined;
+let cache: QueryCache | undefined;
+let wanted = false;
 
 const onRouteChange = () => tracker?.newVisit();
 
-/** Starts or stops feed load events with the feedImpressions flag. Browser only. */
-export function setFeedEventsEnabled(enabled: boolean, cache: QueryCache) {
-  if (enabled === !!stop) return;
-  if (!enabled) {
-    stop?.();
+function apply() {
+  if (wanted && cache && !stop) {
+    tracker ??= createFeedEventsTracker({
+      cache,
+      getPage: () => Router.pathname,
+      getSessionKey: getImpressionSessionKey,
+      send: (data) => enqueueTrackEvent({ kind: 'feed', data }),
+    });
+    stop = tracker.start();
+    Router.events.on('routeChangeComplete', onRouteChange);
+  } else if (!wanted && stop) {
+    stop();
     stop = undefined;
     Router.events.off('routeChangeComplete', onRouteChange);
-    return;
   }
-  tracker ??= createFeedEventsTracker({
-    cache,
-    getPage: () => Router.pathname,
-    getSessionKey: getImpressionSessionKey,
-    send: (data) => enqueueTrackEvent({ kind: 'feed', data }),
-  });
-  stop = tracker.start();
-  Router.events.on('routeChangeComplete', onRouteChange);
+}
+
+/** Starts or stops feed load events with the feedImpressions flag. Browser only. */
+export function setFeedEventsEnabled(enabled: boolean) {
+  wanted = enabled;
+  apply();
+}
+
+/** The browser query cache to watch, handed over where the client is created. */
+export function setFeedEventsCache(queryCache: QueryCache) {
+  cache = queryCache;
+  apply();
 }
 
 export const sendSearchFeedLoad = (index: string, params: Record<string, unknown>) =>
