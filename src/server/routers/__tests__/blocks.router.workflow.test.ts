@@ -8974,6 +8974,7 @@ describe("step-type registry bridge (kind: 'step')", () => {
       happyUser();
       happyStepSubmit();
       mockSubmitWorkflow.mockClear();
+      mockReserveAppSpend.mockClear();
       const body = {
         kind: 'step' as const,
         step: POSITION_STEP_ID,
@@ -8988,6 +8989,7 @@ describe("step-type registry bridge (kind: 'step')", () => {
         message: expect.stringContaining("at 'weightsUrl'"),
       });
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
     });
 
     it('NEGATIVE CONTROL: the same url at a media input submits', async () => {
