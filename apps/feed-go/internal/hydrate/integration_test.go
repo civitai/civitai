@@ -302,7 +302,9 @@ func TestIntegrationCosmeticsAndUserCosmetics(t *testing.T) {
 	if ids := integKeys(got); !reflect.DeepEqual(ids, []int{1102001, 1102002}) {
 		t.Fatalf("ids = %v, want [1102001 1102002]", ids)
 	}
-	if s, want := integPlain(t, got[1102001]), `{"id":1102001,"name":"integ-cosmetic-hit","type":"Badge","data":{"animated":true,"url":"integ-badge"},"source":"Trophy","flags":3}`; s != want {
+	// The cached record's `data` keeps the order it was written in (Entry.Ordered); the replica row's
+	// json column below is decoded into a map, its keys sorted.
+	if s, want := integPlain(t, got[1102001]), `{"id":1102001,"name":"integ-cosmetic-hit","type":"Badge","data":{"url":"integ-badge","animated":true},"source":"Trophy","flags":3}`; s != want {
 		t.Fatalf("cache hit:\n got %s\nwant %s", s, want)
 	}
 	if s, want := integPlain(t, got[1102002]), `{"id":1102002,"name":"integ-cosmetic-db","type":"ContentDecoration","data":{"glow":2,"url":"integ-frame-db"},"source":"Purchase","flags":5}`; s != want {
@@ -323,7 +325,7 @@ func TestIntegrationCosmeticsAndUserCosmetics(t *testing.T) {
 		t.Fatalf("user ids = %v, want [1102101]", ids)
 	}
 	// The undefined `cosmetic` of the unknown record is omitted by Plain (JSON.stringify).
-	want := `[{"cosmeticId":1102001,"data":{"color":"integ-red"},"cosmetic":{"id":1102001,"name":"integ-cosmetic-hit","type":"Badge","data":{"animated":true,"url":"integ-badge"},"source":"Trophy","flags":3}},` +
+	want := `[{"cosmeticId":1102001,"data":{"color":"integ-red"},"cosmetic":{"id":1102001,"name":"integ-cosmetic-hit","type":"Badge","data":{"url":"integ-badge","animated":true},"source":"Trophy","flags":3}},` +
 		`{"cosmeticId":1102002,"data":null,"cosmetic":{"id":1102002,"name":"integ-cosmetic-db","type":"ContentDecoration","data":{"glow":2,"url":"integ-frame-db"},"source":"Purchase","flags":5}},` +
 		`{"cosmeticId":1102004,"data":null}]`
 	if s := integPlain(t, uc[1102101]); s != want {

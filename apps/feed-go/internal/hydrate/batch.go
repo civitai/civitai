@@ -58,12 +58,14 @@ type PackedRead struct {
 	ids  []int
 	ttl  time.Duration
 	cmds []*redis.StringCmd
+	// ordered is whether key is an ordered cache's (orderedCaches): its entries hold Ordered.
+	ordered bool
 }
 
 // Queue adds the `${key}:${id}` GETs of ids to b, with Get's semantics (see Get). Nothing is queued for
 // no ids or no client: every id is then a miss.
 func (p *PackedReader) Queue(b *Batch, key string, ids []int, ttl time.Duration) *PackedRead {
-	r := &PackedRead{p: p, ids: ids, ttl: ttl}
+	r := &PackedRead{p: p, ids: ids, ttl: ttl, ordered: orderedCaches[key]}
 	if len(ids) == 0 || p.Redis == nil {
 		return r
 	}
@@ -101,7 +103,7 @@ func (r *PackedRead) read() (map[int]Entry, map[int]bool) {
 		now = r.p.Now()
 	}
 	for i, cmd := range r.cmds {
-		e, st := entryState(cmd, r.ttl, now)
+		e, st := entryState(cmd, r.ttl, now, r.ordered)
 		if st == stateEntry {
 			out[r.ids[i]] = e
 			continue
