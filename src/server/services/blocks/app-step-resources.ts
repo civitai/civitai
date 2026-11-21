@@ -3,10 +3,11 @@ import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
 import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
 import {
+  argumentPathValues,
   FIELD_KEY_RE,
   FREE_TEXT_KEYS,
   isMediaKey,
-  isRepeatForClause,
+  readArgumentsRepeatClause,
 } from '~/server/services/blocks/app-step-positions';
 import { MEDIA_INPUT_NAMES as COMFY_MEDIA_INPUT_NAMES } from '~/server/services/blocks/inline-comfy.service';
 import { WORKFLOW_ARGUMENTS_REF } from '~/server/services/blocks/workflow-graph';
@@ -66,43 +67,6 @@ function asParsed(value: string): string {
   return value.replace(DROPPED_RE, '').trim().replace(EDGE_CONTROLS_RE, '');
 }
 
-function followPath(segments: string[], from: unknown, brackets: boolean): unknown[] {
-  let current: unknown[] = [from];
-  for (const segment of segments) {
-    const next: unknown[] = [];
-    for (const value of current) {
-      if (Array.isArray(value)) {
-        if (!brackets) continue;
-        if (segment === '*') next.push(...value);
-        else if (/^\d+$/.test(segment) && Number(segment) < value.length)
-          next.push(value[Number(segment)]);
-        continue;
-      }
-      if (!value || typeof value !== 'object') continue;
-      for (const [k, v] of Object.entries(value))
-        if (k.toLowerCase() === segment.toLowerCase()) next.push(v);
-    }
-    current = next;
-  }
-  return current;
-}
-
-/**
- * Every value a `$arguments` path reaches, read both as the orchestrator splits it (on dots, every
- * segment a name) and with `[n]`, `.n` and `[*]` indexing arrays. Names match ignoring case and
- * every match is followed. A segment that matches nothing places nothing. Null for a path that is
- * not a string.
- */
-function argumentValues(path: unknown, workflowArguments: unknown): unknown[] | null {
-  // JSONPath forms (quotes, recursive descent, a root) are not read here.
-  if (typeof path !== 'string' || /['"]|\.\.|^\$/.test(path)) return null;
-  const values = [
-    ...followPath(path.split('.'), workflowArguments, false),
-    ...followPath(path.split(/[.[\]]+/).filter(Boolean), workflowArguments, true),
-  ];
-  return values.filter((v) => v !== undefined);
-}
-
 /** Every scalar in `value` as a format writes it (null as empty), map keys included. */
 function scalarLeaves(value: unknown): string[] {
   const out: string[] = [];
@@ -140,7 +104,7 @@ function formatWith(format: string, value: string): string {
 function namesStoredFile(url: string): boolean {
   let parsed: URL;
   try {
-    // A base only for the scheme-relative form: `https:host/x` must not read as a relative path.
+    // Only the scheme-relative form gets a scheme: `https:host/x` must keep its host.
     parsed = url.startsWith('//') ? new URL(`https:${url}`) : new URL(url);
   } catch {
     // A parser more lenient than this one may still read the path.
@@ -207,7 +171,8 @@ function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
   const visit = (value: unknown, where: Where): void => {
     const { key, depth, comfy = false, flat = false } = where;
     if (key !== undefined) {
-      if (isMediaKey(key) || (comfy && isComfyMediaInput(key))) return;
+      // In a graph only its own media input names count: a node's `url` input may load weights.
+      if (comfy ? isComfyMediaInput(key) : isMediaKey(key)) return;
       if (!comfy && FREE_TEXT_KEYS.has(key.toLowerCase())) return;
     }
     if (depth > STORED_FILE_DEPTH_MAX) refuse('step input is nested too deeply');
@@ -219,7 +184,7 @@ function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
         refuse(
           'a stored file URL is accepted only at a media input; model weights must be a Civitai model version'
         );
-      if (key?.toLowerCase().endsWith('blobkey') && BLOB_KEY_RE.test(trimmed))
+      if (/blob(key|id)$/i.test(key ?? '') && BLOB_KEY_RE.test(trimmed))
         refuse('a blob key is accepted only at a media input');
       return;
     }
@@ -265,7 +230,7 @@ function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
       };
       let placed: unknown[] | null;
       if (name === WORKFLOW_ARGUMENTS_REF.toLowerCase())
-        placed = argumentValues(path, workflowArguments);
+        placed = argumentPathValues(path, workflowArguments, { wide: true });
       else if (loopItems.has(name)) {
         const items = loopItems.get(name);
         if (!items) return placeFlat(workflowArguments);
@@ -273,7 +238,7 @@ function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
           path === undefined || path === ''
             ? items
             : typeof path === 'string'
-            ? items.flatMap((item) => argumentValues(path, item) ?? [])
+            ? items.flatMap((item) => argumentPathValues(path, item, { wide: true }) ?? [])
             : null;
         if (!placed) return placeFlat(items);
       } else return; // Another step's output is not known yet; the position rule judges it.
@@ -307,17 +272,14 @@ function assertStoredFilesAtMediaInputs(input: unknown, workflow: boolean) {
     const repeatInput =
       isRepeat && record.input && typeof record.input === 'object' ? record.input : null;
     const clause = repeatInput ? (repeatInput as Record<string, unknown>).for : undefined;
-    const loop =
-      isRepeatForClause(clause) &&
-      typeof (clause as Record<string, unknown>).as === 'string' &&
-      (clause as Record<string, unknown>).$ref === WORKFLOW_ARGUMENTS_REF
-        ? {
-            name: ((clause as Record<string, unknown>).as as string).toLowerCase(),
-            items: loopItemsOf(
-              argumentValues((clause as Record<string, unknown>).path, workflowArguments)
-            ),
-          }
-        : null;
+    const read = readArgumentsRepeatClause(clause);
+    // Wider than the position rule on purpose: this check judges every reading of the path.
+    const loop = read
+      ? {
+          name: read.as.toLowerCase(),
+          items: loopItemsOf(argumentPathValues(read.path, workflowArguments, { wide: true })),
+        }
+      : null;
     for (const [childKey, child] of entries) {
       if (depth === 0 && workflowArguments !== undefined && childKey === 'arguments') continue;
       const isField = FIELD_KEY_RE.test(childKey);

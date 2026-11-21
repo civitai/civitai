@@ -744,4 +744,36 @@ describe('stored files and blob keys off media inputs', () => {
       ).rejects.toThrow(STORED);
     }
   );
+  it.each([['url'], ['blob'], ['sourceUrl']])(
+    'holds a graph input named %s to the rule',
+    async (input) => {
+      await expect(
+        check({
+          resources: [],
+          trace: 'binary',
+          workflow: {
+            '1': {
+              class_type: 'X',
+              inputs: { [input]: 'https://foo.r2.cloudflarestorage.com/b/w' },
+            },
+          },
+        })
+      ).rejects.toThrow(STORED);
+    }
+  );
+  it('accepts a stored image at a graph loader image input', async () => {
+    await expect(
+      check({
+        resources: [],
+        trace: 'binary',
+        workflow: {
+          '1': { class_type: 'LoadImage', inputs: { image: 'https://image.civitai.com/a.png' } },
+        },
+      })
+    ).resolves.toEqual({ capOutput: false });
+  });
+
+  it('refuses a blob key at a *BlobId field off media', async () => {
+    await expect(check({ entries: [{ blobId: KEY }] })).rejects.toThrow(BLOB_KEY);
+  });
 });
