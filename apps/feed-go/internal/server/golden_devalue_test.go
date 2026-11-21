@@ -29,9 +29,10 @@ var goldenDevalueDir = filepath.Join(goldenDir, "devalue")
 // their nested json columns: the hydrate layer decodes a cached msgpack map into a Go map and
 // hydrate.Wire writes its keys sorted, while the Node object keeps the order it was written in. The
 // value is the same (the client reads keys, not their order), so the superjson comparison passes; the
-// devalue BYTES differ there, and only there: TestGoldenDevalue* puts both answers' keys in one order
-// and then requires the same bytes, and requires the places that needed it to be exactly this list
-// (a fix that removes one, or a change that adds one, fails until the list says so).
+// devalue BYTES differ there, and only there: TestGoldenDevalue* encodes feed-go's value with Node's
+// key order at the places where only the order differs and then requires Node's exact bytes
+// (goldenDevalueMatch), and requires those places to be exactly this list (a fix that removes one, or
+// a change that adds one, fails until the list says so).
 var goldenDevalueKeyOrder = map[string][]string{
 	"as-posts": {
 		"items.N.images.N.cosmetic.data",                // the frame's cosmetic record
@@ -148,12 +149,11 @@ func goldenDevalueRun(t *testing.T, dir string, minFixtures, minBodies int, comp
 					t.Fatalf("an edge-cacheable answer must stay superjson: devalue=%v, payload %.120s", c.devalue, c.payload)
 				}
 			}
-			body := `{"result":{"data":` + string(payload) + `}}`
 			served++
-			if body == string(node) {
+			if `{"result":{"data":`+string(payload)+`}}` == string(node) {
 				exact++
 			}
-			paths, err := goldenDevalueCompare(body, string(node))
+			paths, err := goldenDevalueMatch(c.value, string(node))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -188,45 +188,37 @@ func goldenListed(list []string, s string) bool {
 	return false
 }
 
-// goldenDevalueCompare returns nil when goBody is nodeBody. Otherwise it reads both (devalue.Parse) and
-// returns the normalized paths of the objects whose keys are the same but in another order, after
-// requiring that with every object's keys in one order the two answers are the same bytes: the same
-// values, the same shared references, the same undefined members.
-func goldenDevalueCompare(goBody, nodeBody string) ([]string, error) {
-	if goBody == nodeBody {
-		return nil, nil
-	}
-	goV, err := goldenDevalueValue(goBody)
-	if err != nil {
-		return nil, fmt.Errorf("feed-go body: %w", err)
-	}
+// goldenDevalueMatch takes feed-go's answer value, puts each object's keys in the order Node's has
+// them wherever the two hold the same keys in another order (recording those normalized paths), and
+// requires feed-go's devalue body for that value to be Node's body, byte for byte. Only key order is
+// taken from Node: the values, which objects are shared (feed-go's references, kept by copying each
+// object once), the undefined members and every byte of the writer are feed-go's own, and Node's bytes
+// are the only oracle (nothing of Node's side is re-encoded here).
+func goldenDevalueMatch(goValue any, nodeBody string) ([]string, error) {
 	nodeV, err := goldenDevalueValue(nodeBody)
 	if err != nil {
 		return nil, fmt.Errorf("Node body: %w", err)
 	}
-	w := &goldenOrderWalk{paths: map[string]bool{}, seen: map[[2]uintptr]bool{}}
-	if err := w.walk("", goV, nodeV); err != nil {
-		return nil, err
-	}
-	goText, err := devalue.Stringify(goldenSortKeys(goV, map[uintptr]any{}))
+	r := &goldenReorder{paths: map[string]bool{}, memo: map[[2]uintptr]any{}, raws: map[[2]uintptr]any{}}
+	v, err := r.walk("", goValue, nodeV)
 	if err != nil {
 		return nil, err
 	}
-	nodeText, err := devalue.Stringify(goldenSortKeys(nodeV, map[uintptr]any{}))
+	payload, err := devalue.Payload(v)
 	if err != nil {
 		return nil, err
 	}
-	if goText != nodeText {
+	if body := `{"result":{"data":` + string(payload) + `}}`; body != nodeBody {
 		at := 0
-		for at < len(goText) && at < len(nodeText) && goText[at] == nodeText[at] {
+		for at < len(body) && at < len(nodeBody) && body[at] == nodeBody[at] {
 			at++
 		}
 		from := max(at-300, 0)
-		return nil, fmt.Errorf("with keys in one order the answers still differ at byte %d:\n feed-go …%s\n Node    …%s",
-			at, goText[from:min(at+300, len(goText))], nodeText[from:min(at+300, len(nodeText))])
+		return nil, fmt.Errorf("with Node's key order the bodies still differ at byte %d:\n feed-go …%s\n Node    …%s",
+			at, body[from:min(at+300, len(body))], nodeBody[from:min(at+300, len(nodeBody))])
 	}
-	out := make([]string, 0, len(w.paths))
-	for p := range w.paths {
+	out := make([]string, 0, len(r.paths))
+	for p := range r.paths {
 		out = append(out, p)
 	}
 	sort.Strings(out)
@@ -251,115 +243,123 @@ func goldenDevalueValue(body string) (any, error) {
 
 var goldenIndexSegment = regexp.MustCompile(`\.\d+`)
 
-// goldenOrderWalk walks two parsed answers together, recording where an object's keys are the same set
-// in another order, and failing where the shapes differ (a missing key, another type).
-type goldenOrderWalk struct {
+// goldenReorder copies feed-go's value with Node's key order (see goldenDevalueMatch). memo maps each
+// feed-go object or array (backing array and length) to its one copy, so a shared reference stays
+// shared and a distinct one distinct; raws holds each json.RawMessage buffer parsed once, as the writer
+// reads it.
+type goldenReorder struct {
 	paths map[string]bool
-	seen  map[[2]uintptr]bool
+	memo  map[[2]uintptr]any
+	raws  map[[2]uintptr]any
 }
 
-func goldenRef(v any) uintptr {
-	switch v.(type) {
-	case superjson.Object, []any, *time.Time:
-		return reflect.ValueOf(v).Pointer()
-	}
-	return 0
+func goldenSliceKey(v any) [2]uintptr {
+	rv := reflect.ValueOf(v)
+	return [2]uintptr{rv.Pointer(), uintptr(rv.Len())}
 }
 
-func (w *goldenOrderWalk) walk(path string, a, b any) error {
-	if ra, rb := goldenRef(a), goldenRef(b); ra != 0 && rb != 0 {
-		if w.seen[[2]uintptr{ra, rb}] {
-			return nil
+func (r *goldenReorder) walk(path string, g, n any) (any, error) {
+	switch x := g.(type) {
+	case *superjson.Object:
+		if x == nil {
+			return g, nil
 		}
-		w.seen[[2]uintptr{ra, rb}] = true
-	}
-	switch x := a.(type) {
-	case superjson.Object:
-		y, ok := b.(superjson.Object)
+		return r.walk(path, *x, n)
+	case json.RawMessage:
+		if len(x) == 0 {
+			return g, nil
+		}
+		k := goldenSliceKey(x)
+		parsed, ok := r.raws[k]
 		if !ok {
-			return fmt.Errorf("%s: feed-go has an object, Node %T", path, b)
+			var err error
+			if parsed, err = devalue.ParseJSON(x); err != nil {
+				return nil, fmt.Errorf("%s: %w", path, err)
+			}
+			r.raws[k] = parsed
 		}
-		ka, kb := make([]string, len(x)), make([]string, len(y))
+		return r.walk(path, parsed, n)
+	case superjson.Object:
+		if len(x) == 0 {
+			return g, nil
+		}
+		k := goldenSliceKey(x)
+		if c, ok := r.memo[k]; ok {
+			return c, nil
+		}
+		y, ok := n.(superjson.Object)
+		if !ok {
+			return nil, fmt.Errorf("%s: feed-go has an object, Node %T", path, n)
+		}
+		gk, nk := make([]string, len(x)), make([]string, len(y))
 		for i, f := range x {
-			ka[i] = f.Key
+			gk[i] = f.Key
 		}
 		for i, f := range y {
-			kb[i] = f.Key
+			nk[i] = f.Key
 		}
-		if strings.Join(ka, "\x00") != strings.Join(kb, "\x00") {
-			sa, sb := append([]string(nil), ka...), append([]string(nil), kb...)
-			sort.Strings(sa)
-			sort.Strings(sb)
-			if strings.Join(sa, "\x00") != strings.Join(sb, "\x00") {
-				return fmt.Errorf("%s: feed-go keys %v, Node keys %v", path, ka, kb)
+		order := gk
+		if strings.Join(gk, "\x00") != strings.Join(nk, "\x00") {
+			sg, sn := append([]string(nil), gk...), append([]string(nil), nk...)
+			sort.Strings(sg)
+			sort.Strings(sn)
+			if strings.Join(sg, "\x00") != strings.Join(sn, "\x00") {
+				return nil, fmt.Errorf("%s: feed-go keys %v, Node keys %v", path, gk, nk)
 			}
-			w.paths[strings.TrimPrefix(goldenIndexSegment.ReplaceAllString(path, ".N"), ".")] = true
+			r.paths[strings.TrimPrefix(goldenIndexSegment.ReplaceAllString(path, ".N"), ".")] = true
+			order = nk
 		}
-		for _, f := range x {
-			v, _ := y.Get(f.Key)
-			if err := w.walk(path+"."+f.Key, f.Val, v); err != nil {
-				return err
+		out := make(superjson.Object, 0, len(x))
+		r.memo[k] = out
+		for _, key := range order {
+			gv, _ := x.Get(key)
+			nv, _ := y.Get(key)
+			cv, err := r.walk(path+"."+key, gv, nv)
+			if err != nil {
+				return nil, err
 			}
+			out = append(out, superjson.Field{Key: key, Val: cv})
 		}
+		// The backing array was sized above, so the memoized header and this one share it; record the
+		// full one.
+		r.memo[k] = out
+		return out, nil
 	case []any:
-		y, ok := b.([]any)
+		if len(x) == 0 {
+			return g, nil
+		}
+		k := goldenSliceKey(x)
+		if c, ok := r.memo[k]; ok {
+			return c, nil
+		}
+		y, ok := n.([]any)
 		if !ok || len(y) != len(x) {
-			return fmt.Errorf("%s: feed-go has %d items, Node %#v", path, len(x), b)
+			return nil, fmt.Errorf("%s: feed-go has %d items, Node %T", path, len(x), n)
 		}
+		out := make([]any, len(x))
+		r.memo[k] = out
 		for i := range x {
-			if err := w.walk(fmt.Sprintf("%s.%d", path, i), x[i], y[i]); err != nil {
-				return err
+			cv, err := r.walk(fmt.Sprintf("%s.%d", path, i), x[i], y[i])
+			if err != nil {
+				return nil, err
 			}
+			out[i] = cv
 		}
+		return out, nil
 	}
-	return nil
+	return g, nil
 }
 
-// goldenSortKeys copies v with every object's keys sorted, one copy per original object, so shared
-// references stay shared.
-func goldenSortKeys(v any, memo map[uintptr]any) any {
-	switch x := v.(type) {
-	case superjson.Object:
-		p := reflect.ValueOf(x).Pointer()
-		if c, ok := memo[p]; ok {
-			return c
-		}
-		out := make(superjson.Object, len(x), max(len(x), 1))
-		memo[p] = out
-		copy(out, x)
-		sort.SliceStable(out, func(i, j int) bool { return out[i].Key < out[j].Key })
-		for i := range out {
-			out[i].Val = goldenSortKeys(out[i].Val, memo)
-		}
-		return out
-	case []any:
-		p := reflect.ValueOf(x).Pointer()
-		if c, ok := memo[p]; ok {
-			return c
-		}
-		out := make([]any, len(x), max(len(x), 1))
-		memo[p] = out
-		for i := range x {
-			out[i] = goldenSortKeys(x[i], memo)
-		}
-		return out
-	}
-	return v
-}
-
-// The comparison can fail: a changed leaf, a reference Node shares and feed-go does not, a missing
-// key and a key-order difference are each reported, and identical bodies are no difference.
-func TestGoldenDevalueCompareCanFail(t *testing.T) {
-	body := func(v any) string {
-		p, err := devalue.Payload(v)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return `{"result":{"data":` + string(p) + `}}`
-	}
+// The match can fail: a changed leaf, a reference Node shares and feed-go does not, a missing key and
+// an extra undefined member are each reported, and only a key-order difference is taken from Node.
+func TestGoldenDevalueMatchCanFail(t *testing.T) {
 	shared := superjson.Object{{Key: "id", Val: 1}, {Key: "n", Val: "a"}}
-	node := body([]any{shared, shared})
-	if paths, err := goldenDevalueCompare(node, node); err != nil || paths != nil {
+	p, err := devalue.Payload([]any{shared, shared})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := `{"result":{"data":` + string(p) + `}}`
+	if paths, err := goldenDevalueMatch([]any{shared, shared}, node); err != nil || len(paths) != 0 {
 		t.Fatalf("identical: %v %v", paths, err)
 	}
 	for name, goV := range map[string]any{
@@ -367,17 +367,18 @@ func TestGoldenDevalueCompareCanFail(t *testing.T) {
 		"not shared":    []any{superjson.Object{{Key: "id", Val: 1}, {Key: "n", Val: "a"}}, superjson.Object{{Key: "id", Val: 1}, {Key: "n", Val: "a"}}},
 		"missing key":   []any{superjson.Object{{Key: "id", Val: 1}}, superjson.Object{{Key: "id", Val: 1}}},
 		"undefined key": []any{superjson.Object{{Key: "id", Val: 1}, {Key: "n", Val: "a"}, {Key: "u", Val: superjson.Undefined{}}}, shared},
+		"date":          []any{superjson.Object{{Key: "id", Val: time.Unix(1, 0)}, {Key: "n", Val: "a"}}, shared},
 	} {
-		if _, err := goldenDevalueCompare(body(goV), node); err == nil {
+		if _, err := goldenDevalueMatch(goV, node); err == nil {
 			t.Errorf("%s: no difference reported", name)
 		}
 	}
 	reordered := superjson.Object{{Key: "n", Val: "a"}, {Key: "id", Val: 1}}
-	paths, err := goldenDevalueCompare(body([]any{reordered, reordered}), node)
+	paths, err := goldenDevalueMatch([]any{reordered, reordered}, node)
 	if err != nil || len(paths) != 1 || paths[0] != "N" {
 		t.Fatalf("key order: paths %v, err %v; want [N]", paths, err)
 	}
-	if _, err := goldenDevalueCompare(`{"result":{"data":{"json":1}}}`, node); err == nil {
+	if _, err := goldenDevalueMatch(shared, `{"result":{"data":{"json":1}}}`); err == nil {
 		t.Fatal("a superjson body read as devalue")
 	}
 }
