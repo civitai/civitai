@@ -20,7 +20,7 @@ import { QueryClient, useQuery } from '@tanstack/react-query';
 export function makeQueryClientTrpcFake(defaultOptions: DefaultOptions) {
   const client = new QueryClient({ defaultOptions });
   const calls: string[] = [];
-  const responses: Record<string, () => unknown> = {};
+  const responses: Record<string, (input: unknown) => unknown> = {};
 
   const hook = (path: string) => ({
     useQuery: (input: unknown, opts: Record<string, unknown> = {}) => {
@@ -32,7 +32,7 @@ export function makeQueryClientTrpcFake(defaultOptions: DefaultOptions) {
             calls.push(path);
             const respond = responses[path];
             if (!respond) throw new Error(`no response scripted for ${path}`);
-            return respond();
+            return respond(input);
           },
           ...rest,
         },
@@ -55,8 +55,9 @@ export function makeQueryClientTrpcFake(defaultOptions: DefaultOptions) {
     callsTo: (path: string) => calls.filter((p) => p === path).length,
     /** Every request issued so far, in order. */
     calls: () => [...calls],
-    /** Replace the scripted responses and forget the cache and the request log. */
-    reset(next: Record<string, () => unknown>) {
+    /** Replace the scripted responses (each is called with the query's input) and forget the
+     *  cache and the request log. */
+    reset(next: Record<string, (input: unknown) => unknown>) {
       calls.length = 0;
       for (const key of Object.keys(responses)) delete responses[key];
       Object.assign(responses, next);
