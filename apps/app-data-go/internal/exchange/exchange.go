@@ -9,6 +9,10 @@
 // The hub only exchanges one of its ORIGINAL access tokens (apps/auth/src/lib/server/oauth/
 // user-exchange.ts, step 5), never a token it already exchanged, and caps the result's life at 15
 // minutes (EXCHANGED_TOKEN_MAX_TTL). Errors never carry a token or the client secret.
+//
+// With APP_DATA_BLOCK_EXCHANGE on, an App Block token is exchanged too, at the same endpoint as the
+// same client, with the block-token subject type (apps/auth/src/lib/server/oauth/block-exchange.ts).
+// The hub exchanges each block token once only, so those exchanges go through a BlockCache (block.go).
 package exchange
 
 import (
@@ -27,6 +31,8 @@ import (
 const (
 	GrantType       = "urn:ietf:params:oauth:grant-type:token-exchange"
 	AccessTokenType = "urn:ietf:params:oauth:token-type:access_token" //nolint:gosec // G101: an RFC 8693 token-type name, not a credential
+	// BlockTokenType is the subject type of an App Block token (apps/auth constants.ts BLOCK_TOKEN_TYPE).
+	BlockTokenType = "urn:civitai:token-type:block-token" //nolint:gosec // G101: a token-type name, not a credential
 )
 
 // Config names the token endpoint, this service's client and the resource exchanged for.
@@ -56,6 +62,46 @@ type Token struct {
 // app or user the resource does not admit). The read then goes to REST, whose answer is the site's.
 var ErrRefused = errors.New("exchange: the hub refused the exchange")
 
+// RefusedError is a refusal with the hub's answer: its status and its OAuth error code (`none` when
+// the hub sent none a log could carry). It is ErrRefused (errors.Is).
+type RefusedError struct {
+	Status int
+	Code   string
+	// Reason is set only on a block token refused here, before the hub (blockverify.go): which check
+	// refused it, in the hub's words. Never a token or a claim value.
+	Reason string
+}
+
+func (e *RefusedError) Error() string {
+	return fmt.Sprintf("%s (HTTP %d, %s)", ErrRefused.Error(), e.Status, e.Code)
+}
+
+// Unwrap makes a RefusedError ErrRefused.
+func (e *RefusedError) Unwrap() error { return ErrRefused }
+
+// RefusalCodes are the OAuth error codes the hub refuses an exchange with (apps/auth
+// block-exchange.ts and user-exchange.ts, the 400 and 401 answers), and `local`: a block token refused
+// here, never sent (BlockVerifier). RefusalCode maps any other to `other`, so a metric label never holds
+// what the hub happened to send.
+var RefusalCodes = []string{
+	"invalid_request", "invalid_client", "invalid_target", "unauthorized_client", "invalid_grant", "invalid_scope",
+	LocalRefusalCode, "other",
+}
+
+// RefusalCode is err's refusal code, one of RefusalCodes; `none` when err is not a refusal.
+func RefusalCode(err error) string {
+	var re *RefusedError
+	if !errors.As(err, &re) {
+		return "none"
+	}
+	for _, c := range RefusalCodes {
+		if c == re.Code {
+			return c
+		}
+	}
+	return "other"
+}
+
 // Exchanger calls the hub.
 type Exchanger struct {
 	Config
@@ -67,10 +113,20 @@ type Exchanger struct {
 
 // Exchange trades subject, a user's hub access token, for a token toward Resource.
 func (e *Exchanger) Exchange(ctx context.Context, subject string) (Token, error) {
+	return e.exchange(ctx, subject, AccessTokenType)
+}
+
+// ExchangeBlock trades subject, an App Block token, for a token toward Resource. The hub refuses a
+// second exchange of the same block token: call it through a BlockCache, never directly.
+func (e *Exchanger) ExchangeBlock(ctx context.Context, subject string) (Token, error) {
+	return e.exchange(ctx, subject, BlockTokenType)
+}
+
+func (e *Exchanger) exchange(ctx context.Context, subject, subjectType string) (Token, error) {
 	form := url.Values{
 		"grant_type":         {GrantType},
 		"subject_token":      {subject},
-		"subject_token_type": {AccessTokenType},
+		"subject_token_type": {subjectType},
 		"resource":           {e.Resource},
 		"scope":              {Scope},
 	}
@@ -107,7 +163,7 @@ func (e *Exchanger) Exchange(ctx context.Context, subject string) (Token, error)
 	case res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusUnauthorized:
 		// invalid_grant, unauthorized_client, invalid_scope, invalid_client: a fact about this
 		// subject or this client, not a transient failure.
-		return Token{}, fmt.Errorf("%w (HTTP %d, %s)", ErrRefused, res.StatusCode, safeCode(body.Error))
+		return Token{}, &RefusedError{Status: res.StatusCode, Code: safeCode(body.Error)}
 	case res.StatusCode/100 != 2:
 		return Token{}, fmt.Errorf("exchange: token endpoint answered HTTP %d (%s)", res.StatusCode, safeCode(body.Error))
 	case body.AccessToken == "" || body.ExpiresIn <= 0:

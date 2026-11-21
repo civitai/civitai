@@ -61,6 +61,10 @@ const OWNER_RECORD_2 = '8a2d4e61-1c3b-4f7a-b5e9-6d0f2a8c3b17';
 const OTHER_RECORD = 'c5e8f3a1-9d2b-4e70-8f16-3a7b0d5c9e24';
 const OWNER_URN = `urn:apps.civitai.com:${SOURCE_BLOCK}/journal/${OWNER_RECORD}`;
 const OWNER_URN_2 = `urn:apps.civitai.com:${SOURCE_BLOCK}/journal/${OWNER_RECORD_2}`;
+const INSTALL_SFW = 'inst-own-sfw-3d71';
+const INSTALL_XXX = 'inst-own-xxx-58a0';
+const INSTALL_CON_SFW = 'inst-con-sfw-0b94';
+const INSTALL_CON_XXX = 'inst-con-xxx-e612';
 
 /** The source app's content rating: PG-13 unless a case sets a mature one. */
 let sourceRating: string;
@@ -139,6 +143,10 @@ const wake = () => wakers.splice(0).forEach((w) => w());
 
 /** Whether the run gate's flag reads (false: a Flipt outage, when the gate refuses everyone). */
 let runGateReadable: boolean;
+/** The installs whose revocation markers are set (uninstalled, turned off, publisher banned). */
+let revokedInstalls: Set<string>;
+/** Every install-revocation read: [blockInstanceId, userId]. */
+let revocationReads: Array<[string, number]>;
 let now: number;
 let store: ReturnType<typeof createMemorySnapshotStore>;
 
@@ -149,6 +157,10 @@ function privateFeed(relays = parsePrivateRelays(RELAY)) {
     resolve: resolvePrivateFromCatalog(async () => catalog()),
     decide,
     runGateReadable: async () => runGateReadable,
+    instanceRevoked: async (blockInstanceId, userId) => {
+      revocationReads.push([blockInstanceId, userId]);
+      return revokedInstalls.has(blockInstanceId);
+    },
     store,
     pollMs: 60_000,
     sleep,
@@ -218,6 +230,29 @@ const TOKENS: Record<string, VerifiedToken> = {
   // The owner with settings that read every rating, for the content-policy enforcement seam.
   'owner-r-only': userToken(OWNER, SOURCE_CLIENT, { user: { showNsfw: true, browsingLevel: 7 } }),
   'owner-full': userToken(OWNER, SOURCE_CLIENT, { user: { showNsfw: true, browsingLevel: 31 } }),
+  // Block-exchange tokens (`auth.jwt.ts` → `VerifiedToken.block`): the owner with settings that read
+  // every rating, holding a token minted on an SFW host (ceiling PG | PG13 = 3) or on the mature-capable
+  // host (every level = 31), through the source app's own client or the importing consumer's.
+  'owner-own-block-sfw': userToken(OWNER, SOURCE_CLIENT, {
+    user: { showNsfw: true, browsingLevel: 31 },
+    block: { appBlockId: SOURCE_ID, blockInstanceId: INSTALL_SFW, maxBrowsingLevel: 3 },
+  }),
+  'owner-own-block-xxx': userToken(OWNER, SOURCE_CLIENT, {
+    user: { showNsfw: true, browsingLevel: 31 },
+    block: { appBlockId: SOURCE_ID, blockInstanceId: INSTALL_XXX, maxBrowsingLevel: 31 },
+  }),
+  'owner-grantee-block-sfw': userToken(OWNER, CONSUMER_CLIENT, {
+    user: { showNsfw: true, browsingLevel: 31 },
+    block: { appBlockId: CONSUMER_ID, blockInstanceId: INSTALL_CON_SFW, maxBrowsingLevel: 3 },
+  }),
+  'owner-grantee-block-xxx': userToken(OWNER, CONSUMER_CLIENT, {
+    user: { showNsfw: true, browsingLevel: 31 },
+    block: { appBlockId: CONSUMER_ID, blockInstanceId: INSTALL_CON_XXX, maxBrowsingLevel: 31 },
+  }),
+  // A user-exchange token for the same user, client and settings: no block binding.
+  'owner-grantee-full': userToken(OWNER, CONSUMER_CLIENT, {
+    user: { showNsfw: true, browsingLevel: 31 },
+  }),
 };
 const verify: VerifyToken = async (t) => TOKENS[t] ?? null;
 const principalOf = (bearer: string | undefined): Promise<Principal> =>
@@ -272,6 +307,8 @@ beforeEach(() => {
   sourceRating = 'pg13';
   now = Date.UTC(2026, 10, 19, 12);
   runGateReadable = true;
+  revokedInstalls = new Set();
+  revocationReads = [];
   wakers = [];
   store = createMemorySnapshotStore();
   rows = [
@@ -669,5 +706,128 @@ describe('🔴 private cursors', () => {
     const { err } = await resumeAs(composeAdapter(entities, publicFeed()), 'owner-own', raw);
     expect((err as ProtocolError).code).toBe('cursor_expired');
     expect((err as ProtocolError).message).toBe('not a cursor this source issued');
+  });
+});
+
+describe('🔴 a block-exchange token is held to its block token, on every poll', () => {
+  /** The source app rated `rating` everywhere the feed reads it: the catalog and its DB row. */
+  const rateSource = (rating: string) => {
+    sourceRating = rating;
+    rows[0].manifest = sourceManifest();
+  };
+  const deletes = (events: StreamEvent[]) =>
+    events.flatMap((e) => (e.type === 'delete' ? [e.urn] : []));
+  /** A live stream, past its snapshot (which held the owner's record), parked in its first poll. */
+  async function liveStream(bearer: string) {
+    const run = subscribe(
+      composeAdapter(entities, publicFeed(), privateFeed()),
+      await principalOf(bearer)
+    );
+    await settle(run);
+    expect(upserts(run.events)).toEqual([OWNER_URN]);
+    return run;
+  }
+  async function poll(run: Run) {
+    wake();
+    await settle(run);
+  }
+
+  // The ceiling: `ratingAllowedForCeiling`, the document store's rule for a block token's import
+  // (`doc-store-access.ts` `resolveImportAccess`): a mature rating only under a ceiling with a mature bit.
+  it.each([
+    ['its own app', 'owner-own-block-sfw', 'owner-own-block-xxx'],
+    ['an import', 'owner-grantee-block-sfw', 'owner-grantee-block-xxx'],
+  ])(
+    '🔴 %s: an SFW-ceiling token streams no X-rated record; an XXX-ceiling token does',
+    async (_label, sfw, xxx) => {
+      rateSource('x');
+      const narrow = await snapshotOf(sfw);
+      expect(narrow.err).toBeUndefined();
+      expect(narrow.events.map((e) => e.type)).toEqual(['live']);
+      expect(JSON.stringify(narrow.events)).not.toContain(OWNER_CANARY);
+      // POSITIVE CONTROL: the same user, client and settings, minted on the mature-capable host.
+      const wide = await snapshotOf(xxx);
+      expect(upserts(wide.events)).toEqual([OWNER_URN]);
+      expect(JSON.stringify(wide.events)).toContain(OWNER_CANARY);
+    }
+  );
+
+  it('an SFW-ceiling token still streams an SFW-rated (pg13) app: the ceiling holds back mature ratings only', async () => {
+    const { events } = await snapshotOf('owner-own-block-sfw');
+    expect(upserts(events)).toEqual([OWNER_URN]);
+  });
+
+  it('every mature rating (r, x, xxx) is held back under an SFW ceiling, and none is under XXX', async () => {
+    for (const rating of ['r', 'x', 'xxx']) {
+      rateSource(rating);
+      expect(upserts((await snapshotOf('owner-own-block-sfw')).events), rating).toEqual([]);
+      expect(upserts((await snapshotOf('owner-own-block-xxx')).events), rating).toEqual([
+        OWNER_URN,
+      ]);
+    }
+  });
+
+  it("🔴 the token's block is no longer the client's approved one: the next poll sends a Delete", async () => {
+    const run = await liveStream('owner-grantee-block-xxx');
+    // The consumer's approved block switches: the token's block suspended, a successor approved.
+    rows[1].status = 'suspended';
+    rows.push({
+      id: 'apb_con_next_7406',
+      appId: CONSUMER_CLIENT,
+      blockId: 'reader-app-next-2950',
+      status: 'approved',
+      manifest: consumerManifest(),
+    });
+    await poll(run);
+    expect(deletes(run.events)).toEqual([OWNER_URN]);
+    run.stop();
+    wake();
+  });
+
+  it('POSITIVE CONTROL: a user-exchange token for the same client is not cut by the switch', async () => {
+    const run = await liveStream('owner-grantee-full');
+    rows[1].status = 'suspended';
+    rows.push({
+      id: 'apb_con_next_7406',
+      appId: CONSUMER_CLIENT,
+      blockId: 'reader-app-next-2950',
+      status: 'approved',
+      manifest: consumerManifest(),
+    });
+    await poll(run);
+    expect(deletes(run.events)).toEqual([]);
+    run.stop();
+    wake();
+  });
+
+  it("🔴 the token's install revoked (uninstalled, turned off): the next poll sends a Delete", async () => {
+    const run = await liveStream('owner-own-block-xxx');
+    // Read for the token's own install and user, and nothing else.
+    expect(revocationReads.length).toBeGreaterThan(0);
+    expect(new Set(revocationReads.map(([i, u]) => `${i}|${u}`))).toEqual(
+      new Set([`${INSTALL_XXX}|${OWNER}`])
+    );
+    revokedInstalls.add(INSTALL_XXX);
+    await poll(run);
+    expect(deletes(run.events)).toEqual([OWNER_URN]);
+    run.stop();
+    wake();
+  });
+
+  it('another install revoked cuts nothing (POSITIVE CONTROL for the case above)', async () => {
+    const run = await liveStream('owner-own-block-xxx');
+    revokedInstalls.add(INSTALL_SFW);
+    await poll(run);
+    expect(deletes(run.events)).toEqual([]);
+    run.stop();
+    wake();
+  });
+
+  // INVARIANT GUARD (green before this change too): a token with no block binding reads as before.
+  it('a user-exchange token is unchanged: the viewer’s settings alone, no install read', async () => {
+    rateSource('x');
+    const { events } = await snapshotOf('owner-full');
+    expect(upserts(events)).toEqual([OWNER_URN]);
+    expect(revocationReads).toEqual([]);
   });
 });

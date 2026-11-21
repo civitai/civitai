@@ -183,11 +183,14 @@ export class BlockRevocation {
    */
   static async isRevoked(blockInstanceId: string, subject?: string): Promise<boolean> {
     try {
-      // `subject` is the token's own `sub`. TWO production call sites pass it —
-      // `withBlockScope` (`block-scope.middleware.ts`) and `resolveBlockToken`
+      // `subject` is the token's own `sub`. THREE production call sites pass it —
+      // `withBlockScope` (`block-scope.middleware.ts`), `resolveBlockToken`
       // (`blocks/block-bridge-auth.service.ts`), the one resolver behind
       // `authorizeBlockBridgeToken`, `resolveStorageContext` (`apps/app-storage.service.ts`)
-      // and `resolveSharedContext` (`routers/apps-shared.router.ts`). Those were four separate
+      // and `resolveSharedContext` (`routers/apps-shared.router.ts`), and the registry
+      // adapter's private feed for a block-exchange token (`liveInstanceRevoked` in
+      // `registry-adapter/private-feed.live.ts`, rebuilding the `sub` from the token's user;
+      // one read per stream per poll). The first two were four separate
       // call sites until the three tRPC resolvers were consolidated, and before that two of
       // the four were passing nothing: they read only the global keys while the ephemeral
       // marker exists solely under the subject key. Latent, because

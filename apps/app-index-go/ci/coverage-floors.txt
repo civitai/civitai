@@ -10,6 +10,7 @@ total 66
 internal/api 100
 internal/config 97
 internal/index 76
+internal/listingread 99
 internal/registry 98
 internal/store 51
 internal/token 88

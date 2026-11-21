@@ -1,5 +1,10 @@
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import {
+  csamReportListedImageIdsSql,
+  csamReportNamedUserIdsSql,
+  type CsamReportFilter,
+} from '@civitai/shared/held-media';
 import { evidenceVerifiedText } from '@civitai/shared/held-url';
 import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 import { CHILD_SAFETY_VIOLATIONS } from '@civitai/shared/post-text-report';
@@ -424,13 +429,49 @@ export type PendingDelete =
   | { ownerId: number }
   | { cleanup: true; moderatorDelete?: true; ownerId?: number };
 
-/** An owner's delete of their own image waits on its child-safety case. Read against "Image". */
-export const ownImageDeleteBlocked = (ownerId: number | RawBuilder<unknown>) =>
-  sql<boolean>`("Image"."userId" = ${ownerId} AND ${childSafetyImageCase()})`;
+const unsent: CsamReportFilter = (report) => `${report}."reportSentAt" IS NULL`;
 
-/** An owner's delete of their own post waits on a child-safety report on it. Read against "Post". */
+// Each set below is uncorrelated, so Postgres builds it once per statement, and holds no NULL: a
+// miss would then read NULL rather than false, and a NULL `blocked` row is neither deleted nor queued.
+
+/**
+ * A CSAM report not yet sent names `ownerId`, as its subject or its secondary user. The sender reads
+ * that account and its content at send time, so all of it is held.
+ */
+const unsentReportNames = (ownerId: number | RawBuilder<unknown>) =>
+  sql<boolean>`((${ownerId})::text IN (${sql.raw(csamReportNamedUserIdsSql(unsent))}))`;
+
+/**
+ * The image `imageId` is listed on a CSAM report not yet sent. Its owner may be named on none, so
+ * only the image itself (and a post holding it) is held, not the rest of their content.
+ */
+const unsentReportLists = (imageId: RawBuilder<unknown>) =>
+  sql<boolean>`((${imageId})::text IN (${sql.raw(csamReportListedImageIdsSql(unsent))}))`;
+
+/**
+ * An owner's delete of their own image waits on its child-safety case, or on a CSAM report not yet
+ * sent that names them or lists the image. Read against "Image".
+ */
+export const ownImageDeleteBlocked = (ownerId: number | RawBuilder<unknown>) =>
+  sql<boolean>`("Image"."userId" = ${ownerId} AND (
+    ${childSafetyImageCase()}
+    OR ${unsentReportNames(ownerId)}
+    OR ${unsentReportLists(sql.ref('Image.id'))}
+  ))`;
+
+/**
+ * An owner's delete of their own post waits on a child-safety report on it, or on a CSAM report not
+ * yet sent that names them or lists an image in it. Read against "Post".
+ */
 export const ownPostDeleteBlocked = (ownerId: number | RawBuilder<unknown>) =>
-  sql<boolean>`("Post"."userId" = ${ownerId} AND ${childSafetyPostCase()})`;
+  sql<boolean>`("Post"."userId" = ${ownerId} AND (
+    ${childSafetyPostCase()}
+    OR ${unsentReportNames(ownerId)}
+    OR EXISTS (
+      SELECT 1 FROM "Image" pi
+      WHERE pi."postId" = "Post".id AND ${unsentReportLists(sql.ref('pi.id'))}
+    )
+  ))`;
 
 /**
  * What keeps a parent's cleanup of an image for now, read against "Image": its child-safety case, a

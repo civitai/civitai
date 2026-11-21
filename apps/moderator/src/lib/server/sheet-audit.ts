@@ -68,6 +68,7 @@ export function auditSheetSignout(event: {
     type: event.error ? 'error' : 'info',
     tier: 'general',
     moderatorId: event.moderatorId ?? undefined,
-    ended: event.ended,
+    // Not top-level: the main Axiom dataset is at its field limit and drops unlisted keys.
+    payload: { ended: event.ended },
   });
 }

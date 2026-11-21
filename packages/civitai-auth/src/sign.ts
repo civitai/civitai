@@ -100,7 +100,27 @@ export interface AccessTokenJwtClaims {
   roles?: string[];
   /** A service token's user id at the resource. */
   civitai_uid?: number;
+  /**
+   * A block-exchange token's App Block binding. Given, all four of its claims are written together
+   * (never some of them): `civitai_token_kind: 'block-exchange'` (the marker),
+   * `civitai_app_block_id`, `civitai_block_instance_id` and `civitai_max_browsing_level`
+   * ({@link BLOCK_EXCHANGE_TOKEN_KIND}). Absent, none is.
+   */
+  block?: BlockExchangeBinding;
 }
+
+/** What a block-exchange token carries of the App Block token it was exchanged from. */
+export interface BlockExchangeBinding {
+  /** The block token's `appBlockId` (AppBlock.id). */
+  appBlockId: string;
+  /** The block token's `blockInstanceId` (the install the token was minted for). */
+  blockInstanceId: string;
+  /** The block token's `maxBrowsingLevel`: its maturity ceiling, a browsing-level bit flag. */
+  maxBrowsingLevel: number;
+}
+
+/** The `civitai_token_kind` of a token the hub's block exchange minted. */
+export const BLOCK_EXCHANGE_TOKEN_KIND = 'block-exchange';
 
 export const ACCESS_TOKEN_JWT_TYP = 'at+jwt';
 
@@ -193,6 +213,14 @@ export function createSessionSigner(config: SessionSignerConfig = {}): SessionSi
       ...(claims.act ? { act: { sub: claims.act.sub } } : {}),
       ...(claims.roles ? { roles: [...claims.roles] } : {}),
       ...(claims.civitai_uid !== undefined ? { civitai_uid: claims.civitai_uid } : {}),
+      ...(claims.block
+        ? {
+            civitai_token_kind: BLOCK_EXCHANGE_TOKEN_KIND,
+            civitai_app_block_id: claims.block.appBlockId,
+            civitai_block_instance_id: claims.block.blockInstanceId,
+            civitai_max_browsing_level: claims.block.maxBrowsingLevel,
+          }
+        : {}),
     })
       .setProtectedHeader({ alg: ALG, kid: cfg.kid, typ: ACCESS_TOKEN_JWT_TYP })
       .setIssuer(claims.iss)

@@ -185,6 +185,28 @@ func NewListings(reg prometheus.Registerer) *Stream {
 	return s
 }
 
+// ListingReadOutcomes are the outcome label values of app_index_listings_requests_total.
+var ListingReadOutcomes = []string{"ok", "not_found", "bad_request", "bad_viewer", "unconfigured", "not_ready", "error"}
+
+// ListingReadRoutes are its route label values: GET /listings and GET /listings/{slug}.
+var ListingReadRoutes = []string{"list", "detail"}
+
+// NewListingReads registers app_index_listings_requests_total on reg, every route and outcome at
+// 0. Called only when APP_INDEX_LISTINGS is on, like NewListings.
+func NewListingReads(reg prometheus.Registerer) *prometheus.CounterVec {
+	c := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "app_index_listings_requests_total",
+		Help: "Listing API requests, by route (list, detail) and outcome.",
+	}, []string{"route", "outcome"})
+	for _, r := range ListingReadRoutes {
+		for _, o := range ListingReadOutcomes {
+			c.WithLabelValues(r, o)
+		}
+	}
+	reg.MustRegister(c)
+	return c
+}
+
 // TokenFetched counts one call to the token endpoint (token.Source.OnFetch).
 func (m *Metrics) TokenFetched(err error) {
 	if err != nil {

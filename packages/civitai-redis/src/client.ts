@@ -3257,6 +3257,9 @@ const REDIS_KEYS_UNPREFIXED = {
     STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
     // Training Studio dataset rating use per user per UTC day, key :<kind>:<userId>:<yyyy-mm-dd>.
     STUDIO_DATASET_RATING_DAILY: 'training:studio-dataset-rating-daily',
+    // Hash of source workflow id → 'retrain' | 'refund-only': the only runs `/api/mod/training/retrain-source`
+    // acts on, and how. Written by hand with an expiry; deleting it, or its eviction, refuses every call.
+    RETRAIN_ALLOWLIST: 'training:retrain-allowlist',
   },
   OAUTH: {
     AUTHORIZATION_CODES: 'packed:oauth:authorization-codes',

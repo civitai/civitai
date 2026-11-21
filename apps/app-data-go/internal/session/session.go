@@ -118,6 +118,8 @@ var (
 	ErrNotPrivate    = errors.New("session: the collection is not served by the private feed")
 	ErrEnded         = errors.New("session: the registry ended the stream")
 	ErrFailed        = errors.New("session: the stream failed")
+	ErrBlockSpent    = errors.New("session: the block token's one exchange is used up")
+	ErrBlockFull     = errors.New("session: the block exchange cache is full")
 	ErrClosed        = errors.New("session: closed")
 )
 
@@ -135,6 +137,10 @@ const (
 	CloseMalformed    = "malformed"
 	CloseError        = "error"
 	CloseShutdown     = "shutdown"
+	// A block token's stream that could not open: its one exchange is used up (exchange.ErrSpent),
+	// or the block cache is full (exchange.ErrBlockCacheFull). Neither is a registry error.
+	CloseBlockSpent = "block_spent"
+	CloseBlockFull  = "block_cache_full"
 )
 
 // Options bound the manager. Zero values are not defaults: main sets every field from config.
@@ -337,8 +343,13 @@ func entitySize(e registry.Entity) int {
 func (m *Manager) follow(ctx context.Context, s *session, token string) (string, error) {
 	tok, err := m.opts.Exchange(ctx, token)
 	if err != nil {
-		if errors.Is(err, exchange.ErrRefused) {
+		switch {
+		case errors.Is(err, exchange.ErrRefused):
 			return CloseRefused, ErrRefused
+		case errors.Is(err, exchange.ErrSpent):
+			return CloseBlockSpent, ErrBlockSpent
+		case errors.Is(err, exchange.ErrBlockCacheFull):
+			return CloseBlockFull, ErrBlockFull
 		}
 		return CloseError, ErrFailed
 	}
