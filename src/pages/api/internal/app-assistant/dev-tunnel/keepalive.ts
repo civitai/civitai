@@ -33,6 +33,9 @@ import { previewHostHash } from '~/server/services/blocks/preview-session-host';
  *                          host is 404 here, its own session included (keep it by `blockId`)
  *   { grant, blockId }     the grant's user's session for the app `blockId`, whichever transport
  *                          (a direct preview has no sandbox-side tunnel to name a host)
+ *   { grant, blockId, transport: "direct" }
+ *                          the same, but only a direct session: a tunnel session for the app is
+ *                          left alone and answered 404, as if there were none
  *
  * Re-judged on every call, for the grant's user: the App Assistant gates, the author capability and
  * the `app-blocks-dev-tunnel` kill switch, as `start` — so turning any of them off stops keeping
@@ -52,7 +55,11 @@ const grantField = z.string().min(1).max(4096);
 const body = z.union([
   z.object({ grant: grantField, sessionId: z.string().min(1).max(128) }),
   z.object({ grant: grantField, host: z.string().min(1).max(253) }),
-  z.object({ grant: grantField, blockId: z.string().min(1).max(64) }),
+  z.object({
+    grant: grantField,
+    blockId: z.string().min(1).max(64),
+    transport: z.literal('direct').optional(),
+  }),
 ]);
 
 export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
@@ -106,7 +113,9 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         ? await keepAliveDevTunnel(grant.userId, target.sessionId)
         : 'host' in target
         ? await keepAliveDevTunnelAtHost(grant.userId, target.host)
-        : await keepAliveDevTunnelForUserBlock(grant.userId, target.blockId);
+        : await keepAliveDevTunnelForUserBlock(grant.userId, target.blockId, {
+            transport: 'transport' in request.body ? request.body.transport : undefined,
+          });
     if (kept.status === 'not_found')
       return res.status(404).json({ error: 'No such dev tunnel', code: 'NOT_FOUND' });
     if (kept.status === 'unavailable')

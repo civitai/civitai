@@ -25,6 +25,9 @@ import {
  *   { grant, blockId }     the grant's user's session for the app `blockId`, whichever transport
  *                          and whichever run opened it (a direct preview is closed this way; its
  *                          preview id is then revoked at the sandbox service)
+ *   { grant, blockId, transport: "direct" }
+ *                          the same, but only a direct session: a tunnel session for the app is
+ *                          left alone and answered `{ stopped: false }`, as if there were none
  *
  * Only the grant's user's own tunnel is closed (`stopOwnDevTunnel` checks the owner, as
  * `stopDevTunnel` does). Unlike `start` and `keepalive`, no feature gate is re-judged: closing only
@@ -42,7 +45,11 @@ import {
 const body = z.union([
   z.object({ grant: z.string().min(1).max(4096), sessionId: z.string().min(1).max(128) }),
   z.object({ grant: z.string().min(1).max(4096), clientKey: z.string().min(1).max(128) }),
-  z.object({ grant: z.string().min(1).max(4096), blockId: z.string().min(1).max(64) }),
+  z.object({
+    grant: z.string().min(1).max(4096),
+    blockId: z.string().min(1).max(64),
+    transport: z.literal('direct').optional(),
+  }),
 ]);
 
 export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
@@ -75,7 +82,9 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         ? await stopOwnDevTunnel(grant.userId, target.sessionId)
         : 'clientKey' in target
         ? await cancelDevTunnelStart(grant.userId, target.clientKey)
-        : await stopOwnDevTunnelForUserBlock(grant.userId, target.blockId);
+        : await stopOwnDevTunnelForUserBlock(grant.userId, target.blockId, {
+            transport: 'transport' in target ? target.transport : undefined,
+          });
     if (outcome === 'unavailable')
       return res
         .status(503)

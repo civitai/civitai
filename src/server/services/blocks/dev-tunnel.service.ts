@@ -1485,14 +1485,20 @@ async function readOwnSessionForUserBlock(userId: number, blockId: string): Prom
  * stamp as `keepAliveDevTunnel`, for App Assistant's runner, which knows the app's block id but,
  * for a direct preview, holds no session id or host it could name (there is no sandbox-side
  * tunnel to ask). Never creates anything and never extends the 8 h hard cap.
+ *
+ * `transport: 'direct'` keeps only a direct session: a tunnel session for the pair is left alone
+ * and answered `not_found`, as if there were none. The runner sends it whenever it keeps an app's
+ * preview by block id, so a tunnel the sandbox has let go is never kept alive this way.
  */
 export async function keepAliveDevTunnelForUserBlock(
   userId: number,
-  blockId: string
+  blockId: string,
+  { transport }: { transport?: 'direct' } = {}
 ): Promise<DevTunnelKeepAlive> {
   const read = await readOwnSessionForUserBlock(userId, blockId);
   if (read.status === 'error') return { status: 'unavailable' };
   if (read.status === 'absent') return { status: 'not_found' };
+  if (transport === 'direct' && read.session.transport !== 'direct') return { status: 'not_found' };
   let stamped: number | null;
   try {
     stamped = await stampSessionActivity(read.session);
@@ -1506,14 +1512,18 @@ export async function keepAliveDevTunnelForUserBlock(
 /**
  * `stopOwnDevTunnel` by (user, block): for App Assistant's runner stopping a direct preview it did
  * not open in this run. `unavailable` means nothing was closed and it may still be live: ask again.
+ * `transport: 'direct'` closes only a direct session: a tunnel session is left alone and answered
+ * `not_found`, as if there were none.
  */
 export async function stopOwnDevTunnelForUserBlock(
   userId: number,
-  blockId: string
+  blockId: string,
+  { transport }: { transport?: 'direct' } = {}
 ): Promise<'stopped' | 'not_found' | 'unavailable'> {
   const read = await readOwnSessionForUserBlock(userId, blockId);
   if (read.status === 'error') return 'unavailable';
   if (read.status === 'absent') return 'not_found';
+  if (transport === 'direct' && read.session.transport !== 'direct') return 'not_found';
   await teardownSession(read.session, 'stop');
   return 'stopped';
 }

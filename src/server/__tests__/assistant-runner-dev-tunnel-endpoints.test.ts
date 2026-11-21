@@ -1069,6 +1069,55 @@ describe('POST preview/open (App Assistant direct preview)', () => {
     expect(await byBlock(keepaliveRoute, OTHER, OWNED_APP)).toMatchObject({ status: 404 });
   });
 
+  describe('by block id with transport "direct": only a direct session', () => {
+    const direct = async (route: Handler, userId: number, blockId: string) =>
+      call(route, { body: { grant: await grantFor(userId), blockId, transport: 'direct' } });
+
+    it('leaves a tunnel session alone, answered as none; without the filter it is kept and closed', async () => {
+      const { sessionId } = (await startFor(OWNER, OWNED_APP)).json as { sessionId: string };
+      ageSession(sessionId, 6000);
+      expect(await direct(keepaliveRoute, OWNER, OWNED_APP)).toMatchObject({
+        status: 404,
+        json: { code: 'NOT_FOUND' },
+      });
+      expect(sessionRecord(sessionId).lastActivityAt).toBe(6000);
+      expect(await direct(stopRoute, OWNER, OWNED_APP)).toMatchObject({
+        status: 200,
+        json: { stopped: false },
+      });
+      expect(sessionRecord(sessionId)).not.toBeNull();
+      // Control, the behaviour without the filter (unchanged): the same tunnel is kept, then closed.
+      expect(await byBlock(keepaliveRoute, OWNER, OWNED_APP)).toMatchObject({ status: 200 });
+      expect(sessionRecord(sessionId).lastActivityAt).not.toBe(6000);
+      expect(await byBlock(stopRoute, OWNER, OWNED_APP)).toMatchObject({
+        json: { stopped: true },
+      });
+      expect(sessionRecord(sessionId)).toBeNull();
+    });
+
+    // Invariant guard (green before the filter existed): a direct session passes it.
+    it('keeps and closes a direct session, answering as without the filter', async () => {
+      const { sessionId } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+      ageSession(sessionId, nowSec() - DEV_TUNNEL_IDLE_SECONDS + 60);
+      expect(await direct(keepaliveRoute, OWNER, OWNED_APP)).toMatchObject({
+        status: 200,
+        json: { blockId: OWNED_APP },
+      });
+      expect(sessionRecord(sessionId).lastActivityAt).toBeGreaterThanOrEqual(nowSec() - 5);
+      expect(await direct(stopRoute, OWNER, OWNED_APP)).toMatchObject({ json: { stopped: true } });
+      expect(sessionRecord(sessionId)).toBeNull();
+      expect(revokesSent()).toEqual([{ userId: OWNER, previewId: PID_A, reason: 'teardown:stop' }]);
+    });
+
+    it('refuses any other transport value as a bad body', async () => {
+      expect(
+        await call(stopRoute, {
+          body: { grant: await grantFor(OWNER), blockId: OWNED_APP, transport: 'tunnel' },
+        })
+      ).toMatchObject({ status: 400 });
+    });
+  });
+
   it('the DNS gate never holds a direct session host back (it has no record of its own)', async () => {
     setEnv({ APPS_DEV_TUNNEL_INGRESS_TARGET: '192.0.2.10' });
     const { host } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
