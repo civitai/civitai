@@ -1,33 +1,10 @@
 /**
  * Shadow reads of the app store's listings read model (`apps/app-index-go`, `GET /listings`),
- * behind the `app-listings-read-model` Flipt flag (LISTINGS-READ-MODEL.md, "Shadow diff"; slice 4).
- *
- * The database answer is always the one served. For a sampled fraction of store grid pages
- * (`appListings.listAvailable`) and public REST list pages (`GET /api/v1/apps`), after the database
- * has answered, the same query is asked of the read model off the response path, with the viewer
- * the database read was answered for (`app-index-viewer-token.ts`), and the two pages are
- * compared by slug (the stream carries no listing id yet, slice 3b):
- *
- *   - a slug on one page only is checked against the other side by slug, with the same filters: if
- *     that side does not show the listing to this viewer at all it is a visibility mismatch
- *     (`visibility_missing` / `visibility_extra`), else the two sides only page or order it
- *     differently (an order mismatch: the database breaks ties by id, the read model by slug);
- *   - a slug on both pages has its gated media (`iconUrl`, `coverUrl`) and its other card fields
- *     compared;
- *   - the order of the slugs left once visibility mismatches are taken out, and whether each side
- *     has a next page, are compared and reported apart, so that ordering noise can never hide a gate
- *     mismatch nor be mistaken for one.
- *
- * Bounded: only a sampled fraction is shadowed (APP_LISTINGS_READ_MODEL_SHADOW_SAMPLE), at most
- * APP_LISTINGS_READ_MODEL_SHADOW_MAX_IN_FLIGHT per process at a time (the rest are dropped, never
- * queued), each read-model call and each of the shadow's own database reads waited on for at most
- * APP_LISTINGS_READ_MODEL_SHADOW_TIMEOUT_MS (a database read is not cancelled, only no longer
- * waited on, so the in-flight slot is freed), and a run of
- * read-model failures opens a per-process breaker (`IndexBreaker`, with the store search's knobs)
- * that stops the shadow for a cooldown. No failure reaches the response: every one is an outcome.
- *
- * Logged: slugs and mismatch kinds (and field names), at most LOG_LINES_PER_MINUTE lines a minute
- * per process. Never a card's values, a query, or who the viewer is.
+ * behind the `app-listings-read-model` Flipt flag. The database answer is always the one served:
+ * for a sampled fraction of store grid pages and public REST list pages, the same query is asked
+ * of the read model off the response path, for the viewer the database read was answered for, and
+ * the two pages are compared. What is compared, how it is bounded and what is logged:
+ * `apps/app-index-go/LISTINGS-READ-MODEL.md`, "Shadow diff".
  */
 import * as z from 'zod';
 import { env } from '~/env/server';
@@ -56,9 +33,14 @@ import {
   appIndexViewerKeyUsable,
   signAppIndexViewer,
 } from '~/server/services/blocks/app-index-viewer-token';
-import { IndexBreaker } from '~/server/services/blocks/app-index-search.service';
+import {
+  AppIndexUnavailable,
+  IndexBreaker,
+  fetchAppIndexJson,
+} from '~/server/services/blocks/app-index-search.service';
 import type { ListAvailableListingsOpts } from '~/server/services/blocks/app-listing.service';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
+import { rateLimited } from '~/server/utils/shadow-sampler';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 import { isAppSubListingId, isSubListingCard } from '~/shared/constants/app-sub-listing.constants';
@@ -66,12 +48,10 @@ import { isAppSubListingId, isSubListingCard } from '~/shared/constants/app-sub-
 /** At most this many mismatch log lines per minute per process; the counters count every one. */
 export const LOG_LINES_PER_MINUTE = 30;
 
-// ---------------------------------------------------------------------------
-// The read model's answer
-// ---------------------------------------------------------------------------
-
-// `internal/listingread` Card: the site's ListingCard less `id` and `kindData.appBlockId`.
+// `internal/listingread` Card. `id` and `kindData.appBlockId` are optional: a read model of an
+// earlier layout answers without them, and is then compared by slug.
 const readModelCardSchema = z.object({
+  id: z.string().min(1).optional(),
   slug: z.string().min(1),
   kind: z.string(),
   name: z.string(),
@@ -95,6 +75,7 @@ const readModelCardSchema = z.object({
   updatedAt: z.string().optional(),
   kindData: z.object({
     kind: z.string(),
+    appBlockId: z.string().nullable().optional(),
     hasPage: z.boolean().optional(),
     liveUrl: z.string().nullable().optional(),
     externalUrl: z.string().nullable().optional(),
@@ -107,18 +88,14 @@ const readModelPageSchema = z.object({
 });
 type ReadModelPage = z.infer<typeof readModelPageSchema>;
 
-// ---------------------------------------------------------------------------
-// Pure parts: the cursor, the query, the comparison
-// ---------------------------------------------------------------------------
-
 /**
- * The read model's keyset cursor positioned where a database cursor is: after the row with sort
- * key `sortKey` and slug `slug` (the read model's tie-break), with the top-rated mean pinned when
- * the database cursor pins one, so both sides rank page 2 onward with the same mean. The format is
- * `listingread.EncodeCursor`: base64url, unpadded, of "rm1␟key␟slug[␟mean]".
+ * The read model's keyset cursor at a database cursor's position: after the row with sort key
+ * `sortKey` and listing id `id` (both sides' tie-break), with the top-rated mean pinned when the
+ * database cursor pins one, so both rank page 2 onward with the same mean. The format is
+ * `listingread.EncodeCursor`: base64url, unpadded, of "rm2␟key␟id[␟mean]".
  */
-export function readModelCursor(sortKey: string, slug: string, mean: number | null): string {
-  const fields = ['rm1', sortKey, slug];
+export function readModelCursor(sortKey: string, id: string, mean: number | null): string {
+  const fields = ['rm2', sortKey, id];
   if (mean != null) fields.push(String(mean));
   return Buffer.from(fields.join('\x1f'), 'utf8').toString('base64url');
 }
@@ -185,37 +162,46 @@ export function cardFieldDiffs(db: ListingCard, rm: ReadModelCard): ReadModelCom
     'kindData',
     kd.kind === rk.kind &&
       (kd.kind === 'onsite'
-        ? kd.hasPage === rk.hasPage && sameNullable(kd.liveUrl, rk.liveUrl)
+        ? kd.hasPage === rk.hasPage &&
+          sameNullable(kd.liveUrl, rk.liveUrl) &&
+          // Compared only when the read model carries it (an earlier layout does not).
+          (rk.appBlockId === undefined || sameNullable(kd.appBlockId, rk.appBlockId))
         : sameNullable(kd.externalUrl, rk.externalUrl))
   );
   return out;
 }
 
-/** The two pages laid side by side, before any slug on one page only is checked. */
+/**
+ * The two pages laid side by side, before any listing on one page only is checked. A listing is
+ * matched by its id when the read-model card has one, else by slug; the lists name each listing by
+ * its slug, which the by-slug check and the log use.
+ */
 export type PageDiff = {
   onlyDb: string[];
   onlyReadModel: string[];
-  /** For each slug on both pages, the fields that differ (only slugs with a difference). */
+  /** For each listing on both pages, by slug, the fields that differ (only those with one). */
   fields: Map<string, ReadModelComparedField[]>;
   slugs: number;
 };
 
 export function diffPages(db: readonly ListingCard[], rm: readonly ReadModelCard[]): PageDiff {
-  const rmBySlug = new Map(rm.map((c) => [c.slug, c] as const));
-  const dbSlugs = new Set(db.map((c) => c.slug));
+  const rmById = new Map(rm.flatMap((c) => (c.id ? [[c.id, c] as const] : [])));
+  const rmBySlug = new Map(rm.filter((c) => !c.id).map((c) => [c.slug, c] as const));
+  const matched = new Set<ReadModelCard>();
   const fields = new Map<string, ReadModelComparedField[]>();
   const onlyDb: string[] = [];
   for (const card of db) {
-    const other = rmBySlug.get(card.slug);
+    const other = rmById.get(card.id) ?? rmBySlug.get(card.slug);
     if (!other) {
       onlyDb.push(card.slug);
       continue;
     }
+    matched.add(other);
     const diffs = cardFieldDiffs(card, other);
     if (diffs.length) fields.set(card.slug, diffs);
   }
-  const onlyReadModel = rm.filter((c) => !dbSlugs.has(c.slug)).map((c) => c.slug);
-  return { onlyDb, onlyReadModel, fields, slugs: dbSlugs.size + onlyReadModel.length };
+  const onlyReadModel = rm.filter((c) => !matched.has(c)).map((c) => c.slug);
+  return { onlyDb, onlyReadModel, fields, slugs: db.length + onlyReadModel.length };
 }
 
 /**
@@ -245,18 +231,18 @@ export function comparePages(
     if (classes.has('stats')) kinds.stats_field++;
     for (const f of diffs) fields[f] = (fields[f] ?? 0) + 1;
   }
-  const dbOrder = db.items.map((c) => c.slug).filter((s) => !missing.has(s));
-  const rmOrder = rm.items.map((c) => c.slug).filter((s) => !extra.has(s));
+  // By id when the read model carries ids, as the pages were matched; else by slug.
+  const byId = rm.items.some((c) => c.id !== undefined);
+  const dbOrder = db.items.filter((c) => !missing.has(c.slug)).map((c) => (byId ? c.id : c.slug));
+  const rmOrder = rm.items
+    .filter((c) => !extra.has(c.slug))
+    .map((c) => (byId ? c.id ?? c.slug : c.slug));
   const order =
     dbOrder.length !== rmOrder.length ||
     dbOrder.some((s, i) => s !== rmOrder[i]) ||
     !!db.nextCursor !== !!rm.nextCursor;
   return { slugs: diff.slugs, kinds, fields, order };
 }
-
-// ---------------------------------------------------------------------------
-// The shadow
-// ---------------------------------------------------------------------------
 
 export type ReadModelShadowConfig = {
   url: string | undefined;
@@ -294,8 +280,6 @@ export type ListingsShadowDeps = {
   ) => Promise<Response>;
   /** `decodeListingCursor`. */
   decodeCursor: (cursor: string | undefined) => DecodedDbCursor | Promise<DecodedDbCursor>;
-  /** The slug of the listing `id`, or null when it has none. */
-  slugOfListing: (id: string) => Promise<string | null>;
   /** `listStoreListingsBySlugs`: what the database shows this viewer of `slugs`. */
   dbBySlugs: (
     slugs: string[],
@@ -313,38 +297,6 @@ export type ListingsShadowDeps = {
  */
 const TIMED_OUT = Symbol('timed out');
 
-class ReadModelUnavailable extends Error {
-  constructor(readonly outcome: ReadModelShadowOutcome) {
-    super(outcome);
-  }
-}
-
-function isTimeout(err: unknown): boolean {
-  return err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
-}
-
-/**
- * At most `perMinute` calls of `fn` in any minute (fixed one-minute windows); the rest are dropped.
- */
-export function rateLimited<T>(
-  fn: (x: T) => void,
-  perMinute: number,
-  nowMs: () => number
-): (x: T) => void {
-  let windowStart = Number.NEGATIVE_INFINITY;
-  let used = 0;
-  return (x) => {
-    const t = nowMs();
-    if (t - windowStart >= 60_000) {
-      windowStart = t;
-      used = 0;
-    }
-    if (used >= perMinute) return;
-    used++;
-    fn(x);
-  };
-}
-
 /**
  * A shadow with its own in-flight count. `shadow` decides synchronously whether to shadow this
  * page, and returns the background read's promise when it does (undefined when it does not),
@@ -355,33 +307,24 @@ export function rateLimited<T>(
 export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
   let inFlight = 0;
 
-  async function fetchPage(
+  function fetchPage(
     cfg: ReadModelShadowConfig,
     params: URLSearchParams,
     token: string
   ): Promise<ReadModelPage> {
     const base = (cfg.url as string).replace(/\/+$/, '');
-    let res: Response;
-    try {
-      res = await deps.fetch(`${base}/listings?${params}`, {
+    return fetchAppIndexJson(
+      deps.fetch,
+      `${base}/listings?${params}`,
+      {
         headers: { accept: 'application/json', [APP_INDEX_VIEWER_HEADER]: token },
         timeoutMs: cfg.timeoutMs,
-      });
-    } catch (err) {
-      throw new ReadModelUnavailable(isTimeout(err) ? 'timeout' : 'error');
-    }
-    if (res.status === 503) throw new ReadModelUnavailable('not_ready');
-    if (!res.ok) throw new ReadModelUnavailable('error');
-    let body: unknown;
-    try {
-      body = await res.json();
-    } catch (err) {
-      throw new ReadModelUnavailable(isTimeout(err) ? 'timeout' : 'bad_response');
-    }
-    const parsed = readModelPageSchema.safeParse(body);
-    if (!parsed.success) throw new ReadModelUnavailable('bad_response');
-    return parsed.data;
+      },
+      readModelPageSchema
+    );
   }
+  const failureOf = (err: unknown): ReadModelShadowOutcome =>
+    err instanceof AppIndexUnavailable ? err.reason : 'error';
 
   async function run(
     surface: ReadModelSurface,
@@ -400,28 +343,14 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       pending.push(read.catch(() => undefined));
       return withTimeoutFallback<T | typeof TIMED_OUT>(read, cfg.timeoutMs, TIMED_OUT);
     };
-    // The database cursor, moved to the same position in the read model's terms.
+    // The database cursor, at the same position in the read model's terms: both break ties by id.
     let cursor: string | undefined;
     if (input.cursor) {
       const decoded = await deps.decodeCursor(input.cursor);
       if (decoded.cursorId !== null && decoded.cursorSortKey !== null) {
         // A sub-listing id is a position the read model has no row for.
         if (isAppSubListingId(decoded.cursorId)) return 'unsupported_input';
-        let slug: string | null | typeof TIMED_OUT;
-        try {
-          slug = await dbRead(deps.slugOfListing(decoded.cursorId));
-        } catch {
-          return 'db_error';
-        }
-        if (slug === TIMED_OUT) {
-          // A slow database backs the shadow off as a slow read model does. No probe is out here
-          // (the breaker is asked below), so this only counts toward opening it.
-          deps.breaker.failure('db_timeout');
-          return 'db_timeout';
-        }
-        // The listing the cursor sits after is gone: its slug cannot be named.
-        if (!slug) return 'unsupported_input';
-        cursor = readModelCursor(decoded.cursorSortKey, slug, decoded.cursorMean);
+        cursor = readModelCursor(decoded.cursorSortKey, decoded.cursorId, decoded.cursorMean);
       }
     }
 
@@ -434,7 +363,7 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     try {
       rm = await fetchPage(cfg, readModelListParams(input, cursor), token);
     } catch (err) {
-      const outcome = err instanceof ReadModelUnavailable ? err.outcome : 'error';
+      const outcome = failureOf(err);
       deps.breaker.failure(outcome);
       return outcome;
     }
@@ -457,7 +386,7 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       try {
         found = await fetchPage(cfg, params, token);
       } catch (err) {
-        const outcome = err instanceof ReadModelUnavailable ? err.outcome : 'error';
+        const outcome = failureOf(err);
         deps.breaker.failure(outcome);
         return outcome;
       }
@@ -576,10 +505,6 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// This process's shadow
-// ---------------------------------------------------------------------------
-
 const listingService = () => import('~/server/services/blocks/app-listing.service');
 
 function readConfig(): ReadModelShadowConfig {
@@ -604,11 +529,6 @@ function getProcessShadow() {
     nowMs: Date.now,
     fetch: (url, init) => outboundFetch(url, init),
     decodeCursor: async (cursor) => (await listingService()).decodeListingCursor(cursor),
-    slugOfListing: async (id) => {
-      const { dbRead } = await import('~/server/db/client');
-      const row = await dbRead.appListing.findUnique({ where: { id }, select: { slug: true } });
-      return row?.slug ?? null;
-    },
     dbBySlugs: async (slugs, input, opts) =>
       (await listingService()).listStoreListingsBySlugs(slugs, input, opts),
     breaker: new IndexBreaker(undefined, undefined, (from, to, why) => {

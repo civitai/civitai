@@ -5,20 +5,10 @@ import {
   type AppIndexBreakerState,
 } from '~/server/prom/app-index-search.metrics';
 
-// ---------------------------------------------------------------------------
-// Listings read-model shadow (see `~/server/services/blocks/app-listings-read-model-shadow.service.ts`)
-// ---------------------------------------------------------------------------
-//
-// With the `app-listings-read-model` flag on, a sampled fraction of store grid pages and public
-// REST list pages is also asked of the app index's read model, off the response path, and the two
-// answers are compared. Every label is from a fixed set, so cardinality is bounded by
-// construction: no slug, no query, no user.
-//
-// Serving gate (LISTINGS-READ-MODEL.md, "Go / no-go for serving"): over 7 days,
-//   (mismatches{kind=~"visibility_.*|media|identity_field"}) / compared_slugs  < 0.1 %, per surface.
-// Order and stats-field mismatches are reported beside it and do not gate.
-//
-// Registered on `instrumentationRegistry`, which `/api/metrics` merges into the scrape.
+// The listings read-model shadow's counters (`app-listings-read-model-shadow.service.ts`). Every
+// label is from a fixed set: no slug, no query, no user. Which of them gate serving:
+// `apps/app-index-go/LISTINGS-READ-MODEL.md`, "Go / no-go for serving". Registered on
+// `instrumentationRegistry`, which `/api/metrics` merges into the scrape.
 
 export const READ_MODEL_SURFACES = ['grid', 'rest_list'] as const;
 export type ReadModelSurface = (typeof READ_MODEL_SURFACES)[number];
@@ -31,7 +21,7 @@ export const READ_MODEL_SHADOW_OUTCOMES = [
   // Not asked: the viewer's floor is not `public`, or their level cannot be signed exactly.
   'unsupported_viewer',
   // Not asked: a page the read model does not answer (sub-listing cards on it, a page the app
-  // index's search answered, or a cursor whose listing can no longer be named).
+  // index's search answered, or a cursor after a sub-listing card).
   'unsupported_input',
   // Not asked: the breaker is open after consecutive read-model failures.
   'breaker_open',
@@ -45,9 +35,9 @@ export const READ_MODEL_SHADOW_OUTCOMES = [
   'error',
   // The read model answered 2xx with a body that is not a listing page.
   'bad_response',
-  // One of the shadow's own database reads (the cursor's slug, or the by-slug check of a
-  // difference) failed, or outlived the shadow timeout. Not a read-model failure: neither moves
-  // the breaker.
+  // The shadow's own database read (the by-slug check of a difference) failed, or outlived the
+  // shadow timeout. Not a read-model failure: a failed read does not move the breaker; a timeout
+  // counts toward opening it, as a slow read model does.
   'db_error',
   'db_timeout',
 ] as const;

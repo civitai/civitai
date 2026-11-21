@@ -1,8 +1,9 @@
 /**
- * The viewer token the site signs for the app index's listings read model, against the literal
- * vector its verifier pins (`apps/app-index-go/internal/listingread/viewer_test.go`, computed with
- * Python's hmac, not with either signer), and the audience it is built from: the options object the
- * database read is given, read with the database read's own defaults.
+ * The viewer token the site signs for the app index's listings read model
+ * (`apps/app-index-go/LISTINGS-READ-MODEL.md`, "Shadow diff"), against the literal vector its
+ * verifier pins (`apps/app-index-go/internal/listingread/viewer_test.go`, computed with Python's
+ * hmac, not with either signer), and the audience it is built from: the options object the database
+ * read is given, read with the database read's own defaults.
  */
 import { describe, expect, it } from 'vitest';
 import {

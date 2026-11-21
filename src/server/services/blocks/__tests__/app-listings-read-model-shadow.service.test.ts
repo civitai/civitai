@@ -15,7 +15,6 @@ import type {
 } from '~/server/schema/blocks/app-listing-read.schema';
 import {
   createListingsReadModelShadow,
-  rateLimited,
   readModelCursor,
   type DecodedDbCursor,
   type ListingsShadowDeps,
@@ -59,13 +58,19 @@ function dbCard(slug: string, over: Partial<ListingCard> = {}): ListingCard {
   };
 }
 
-/** The read model's card for the same listing: no id, no appBlockId. */
+/** The read model's card for the same listing, with its id and appBlockId. */
 function rmCard(card: ListingCard, over: Partial<ReadModelCard> = {}): ReadModelCard {
   const kindData =
     card.kindData.kind === 'onsite'
-      ? { kind: 'onsite', hasPage: card.kindData.hasPage, liveUrl: card.kindData.liveUrl }
+      ? {
+          kind: 'onsite',
+          appBlockId: card.kindData.appBlockId,
+          hasPage: card.kindData.hasPage,
+          liveUrl: card.kindData.liveUrl,
+        }
       : { kind: 'offsite', externalUrl: card.kindData.externalUrl };
   return {
+    id: card.id,
     slug: card.slug,
     kind: card.kind,
     name: card.name,
@@ -84,6 +89,13 @@ function rmCard(card: ListingCard, over: Partial<ReadModelCard> = {}): ReadModel
     kindData,
     ...over,
   };
+}
+
+/** The read model's card of an earlier layout: no id, no appBlockId. */
+function legacyRmCard(card: ListingCard, over: Partial<ReadModelCard> = {}): ReadModelCard {
+  const { id: _id, kindData, ...rest } = rmCard(card, over);
+  const { appBlockId: _appBlockId, ...legacyKindData } = kindData;
+  return { ...rest, kindData: legacyKindData };
 }
 
 const INPUT: ListAppListingsInput = { kind: 'all', sort: 'top-rated', limit: 3 };
@@ -105,7 +117,6 @@ let logs: ShadowLogEntry[];
 let config: ReadModelShadowConfig;
 let flag: boolean;
 let decoded: DecodedDbCursor;
-let slugOf: Map<string, string>;
 
 function makeShadow(over: Partial<ListingsShadowDeps> = {}) {
   const deps: ListingsShadowDeps = {
@@ -119,7 +130,6 @@ function makeShadow(over: Partial<ListingsShadowDeps> = {}) {
       return reply(call);
     },
     decodeCursor: () => decoded,
-    slugOfListing: async (id) => slugOf.get(id) ?? null,
     dbBySlugs: async (slugs) => {
       dbBySlugsCalls.push(slugs);
       return slugs.flatMap((s) => {
@@ -138,7 +148,6 @@ function makeShadow(over: Partial<ListingsShadowDeps> = {}) {
   return createListingsReadModelShadow(deps);
 }
 
-/** The read model answers `list` for a page and admits `admitted` when asked by slug. */
 /**
  * The read model answers `list` for a page and, asked by slug, the `admitted` listings (a slug for
  * that listing's own card, or a card).
@@ -201,7 +210,6 @@ beforeEach(async () => {
   flag = true;
   config = { url: URL_BASE, key: KEY, sample: 1, maxInFlight: 4, timeoutMs: 1000 };
   decoded = { cursorSortKey: null, cursorId: null, cursorMean: null };
-  slugOf = new Map();
   readModelAnswers([]);
   baseline = new Map();
   for (const name of COUNTERS) baseline.set(name, await readCounter(name));
@@ -273,26 +281,34 @@ describe('what is asked', () => {
   it("page 2: the database cursor's position in the read model's terms, its mean pinned", async () => {
     decoded = {
       cursorSortKey: '00000700000000000000000000120',
-      cursorId: 'al_paint',
+      cursorId: 'apl_01J9Z3',
       cursorMean: 0.625,
     };
-    slugOf.set('al_paint', 'paint');
     readModelAnswers([rmCard(A)]);
     await makeShadow().shadow('grid', { ...INPUT, cursor: 'db-cursor' }, OPTS, { items: [A] });
-    // The literal is the read model's own EncodeCursor output (rank_test.go TestCursorVector).
+    // The literals are the read model's own EncodeCursor output (rank_test.go TestCursorVector).
     expect(calls[0].url.searchParams.get('cursor')).toBe(
-      'cm0xHzAwMDAwNzAwMDAwMDAwMDAwMDAwMDAwMDAwMTIwH3BhaW50HzAuNjI1'
+      'cm0yHzAwMDAwNzAwMDAwMDAwMDAwMDAwMDAwMDAwMTIwH2FwbF8wMUo5WjMfMC42MjU'
     );
-    expect(readModelCursor('paint', 'paint', null)).toBe('cm0xH3BhaW50H3BhaW50');
+    expect(readModelCursor('paint', 'apl_01J9Z3', null)).toBe('cm0yH3BhaW50H2FwbF8wMUo5WjM');
+    // The position is the cursor's id: no database read is needed to name it.
+    expect(dbBySlugsCalls).toEqual([]);
   });
 
-  it("a cursor whose listing is gone, or a sub-listing's, is not shadowed", async () => {
-    decoded = { cursorSortKey: 'k', cursorId: 'al_gone', cursorMean: null };
-    await makeShadow().shadow('grid', { ...INPUT, cursor: 'db-cursor' }, OPTS, { items: [A] });
+  it("a sub-listing's cursor is not shadowed; a cursor after a listing since deleted still is", async () => {
     decoded = { cursorSortKey: 'k', cursorId: 'asl_01ARZ3NDEKTSV4RRFFQ69G5FAV', cursorMean: null };
     await makeShadow().shadow('grid', { ...INPUT, cursor: 'db-cursor' }, OPTS, { items: [A] });
     expect(calls).toEqual([]);
-    expect(await moved()).toEqual(['shadow_requests_total{grid/unsupported_input}:2']);
+    // The database pages after the deleted row's (sort key, id), and so does the read model.
+    decoded = { cursorSortKey: 'k', cursorId: 'apl_gone', cursorMean: null };
+    readModelAnswers([rmCard(A)]);
+    await makeShadow().shadow('grid', { ...INPUT, cursor: 'db-cursor' }, OPTS, { items: [A] });
+    expect(calls).toHaveLength(1);
+    expect(await moved()).toEqual([
+      'compared_slugs_total{grid}:1',
+      'shadow_requests_total{grid/compared}:1',
+      'shadow_requests_total{grid/unsupported_input}:1',
+    ]);
   });
 });
 
@@ -414,6 +430,18 @@ describe('the comparison', () => {
     ['isOfficial', 'identity_field', { isOfficial: true }],
     ['kindData', 'identity_field', { kindData: { kind: 'onsite', hasPage: false, liveUrl: null } }],
     [
+      'kindData',
+      'identity_field',
+      {
+        kindData: {
+          kind: 'onsite',
+          appBlockId: 'ab_other',
+          hasPage: true,
+          liveUrl: 'https://alpha.apps.invalid',
+        },
+      },
+    ],
+    [
       'recommendedCount',
       'stats_field',
       { recommend: { recommendedCount: 9, notRecommendedCount: 1, recommendPct: 0.75 } },
@@ -451,6 +479,36 @@ describe('the comparison', () => {
     expect(calls[1].url.searchParams.get('userId')).toBeNull();
     expect(await moved()).toContain('mismatches_total{grid/visibility_missing}:1');
     expect(await moved()).not.toContain('order_mismatches_total{grid}:1');
+  });
+
+  it('matched by id: a listing renamed to a new slug is the same listing, a reused slug is not', async () => {
+    // The read model's alpha has the database's id under another slug; its bravo-slug card is
+    // another listing. Asked by slug, each side shows the other's listing (a paging difference).
+    const renamed = rmCard(A, { slug: 'alpha-renamed' });
+    const impostor = rmCard(B, { id: 'al_other' });
+    readModelAnswers([renamed, impostor], undefined, ['bravo']);
+    dbBySlugs.set('bravo', B);
+    await makeShadow().shadow('grid', INPUT, OPTS, { items: [A, B] });
+    expect(await moved()).toEqual([
+      'compared_slugs_total{grid}:3',
+      'order_mismatches_total{grid}:1',
+      'shadow_requests_total{grid/compared}:1',
+    ]);
+    expect(dbBySlugsCalls).toEqual([['bravo']]);
+    expect(logs).toEqual([
+      { surface: 'grid', visibilityMissing: [], visibilityExtra: [], fields: {}, order: true },
+    ]);
+  });
+
+  it('a read model of an earlier layout (no ids) is compared by slug', async () => {
+    readModelAnswers([legacyRmCard(A), legacyRmCard(B, { name: 'Renamed' })]);
+    await makeShadow().shadow('grid', INPUT, OPTS, { items: [A, B] });
+    expect(await moved()).toEqual([
+      'compared_slugs_total{grid}:2',
+      'field_mismatches_total{grid/name}:1',
+      'mismatches_total{grid/identity_field}:1',
+      'shadow_requests_total{grid/compared}:1',
+    ]);
   });
 
   it('values that only differ in representation are the same', async () => {
@@ -584,8 +642,8 @@ describe('failures', () => {
     reply = () => new Response('{}', { status: 500 });
     await shadow.shadow('grid', INPUT, OPTS, { items: [A] }); // opens the breaker
     t += 60_000; // the cooldown has passed: the next read-model call is the probe
-    // Page 2 whose cursor's listing is gone: returns before any read-model call.
-    decoded = { cursorSortKey: 'k', cursorId: 'al_gone', cursorMean: null };
+    // Page 2 after a sub-listing: returns before any read-model call.
+    decoded = { cursorSortKey: 'k', cursorId: 'asl_01ARZ3NDEKTSV4RRFFQ69G5FAV', cursorMean: null };
     await shadow.shadow('grid', { ...INPUT, cursor: 'db-cursor' }, OPTS, { items: [A] });
     // The next page is still the probe, not refused for another cooldown.
     readModelAnswers([rmCard(A)]);
@@ -620,21 +678,5 @@ describe('failures', () => {
       'shadow_requests_total{grid/compared}:1',
       'shadow_requests_total{grid/saturated}:1',
     ]);
-  });
-});
-
-describe('rateLimited', () => {
-  it('passes at most N a minute, then N again in the next minute', () => {
-    let t = 0;
-    const seen: number[] = [];
-    const log = rateLimited(
-      (n: number) => seen.push(n),
-      2,
-      () => t
-    );
-    for (const n of [1, 2, 3]) log(n);
-    t = 60_000;
-    for (const n of [4, 5, 6]) log(n);
-    expect(seen).toEqual([1, 2, 4, 5]);
   });
 });

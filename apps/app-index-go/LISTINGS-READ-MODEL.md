@@ -1,14 +1,15 @@
 # App store listings read model: design
 
-**Status:** slices 1 to 4 of 8 done, all dark. Slice 1 is the adapter side of `store-listing@v1`
-(`src/server/registry-adapter/listing-stream.ts`). Slice 2 is the app-index-go ingest behind
-`APP_INDEX_LISTINGS` (`internal/index/listings.go`, `internal/store/listing*.go`; README,
-"Listings read model"). Slice 3 is the read API, `GET /listings` and `GET /listings/{slug}`
-(`internal/listingread`, `internal/api/listings.go`; README, "Listing API"). Slice 4 is the site's
-shadow of the store grid and the public REST list behind the `app-listings-read-model` Flipt flag
-(`src/server/services/blocks/app-listings-read-model-shadow.service.ts`; Shadow diff, below). The
-site still serves every listing read from the database; serving from the read model is slice 5,
-after the gate below.
+**Status:** slices 1 to 4 of 8 done, and slice 3b, all dark. Slice 1 is the adapter side of
+`store-listing@v1` (`src/server/registry-adapter/listing-stream.ts`). Slice 2 is the app-index-go
+ingest behind `APP_INDEX_LISTINGS` (`internal/index/listings.go`, `internal/store/listing*.go`;
+README, "Listings read model"). Slice 3 is the read API, `GET /listings` and `GET /listings/{slug}`
+(`internal/listingread`, `internal/api/listings.go`; README, "Listing API"). Slice 3b adds the
+listing id and the public detail fields to the stream, the read model and the API (Rollout, below).
+Slice 4 is the site's shadow of the store grid and the public REST list behind the
+`app-listings-read-model` Flipt flag (`src/server/services/blocks/app-listings-read-model-shadow.service.ts`;
+Shadow diff, below). The site still serves every listing read from the database; serving from the
+read model is slice 5, after the gate below.
 
 The goal: the user-facing app store reads its listings from a read model built from the registry,
 instead of from Prisma reads in `app-listing.service.ts`. The surfaces covered are the store grid
@@ -71,13 +72,40 @@ public store card or detail page, or in `GET /api/v1/apps`.
 | `stats{recommendedCount, notRecommendedCount, recommendPct, reviewCount, openCount, installCount}` | the card's rollup, plus `install_count`. `openCount` is null off-site, as on the card                                                                           |
 | `createdAt`, `updatedAt`                                                                           | `app_listings`. `createdAt` is kept because it is the `newest` sort key (`al.created_at`), which no other field gives; `updatedAt` is the card's "Updated" line |
 
-Later, as new optional properties of `@v1` (additive, per `schemas.ts`): `serialId`,
-`collaborators`, `scopes`, `connectScopes`, `issueTrackerUrl`, `actionsRunSource`, `betaMessage`,
-`forkable`, and `forkOf{slug,name}`. Each costs another read per catalog. The card and the sort keys
-don't need them; the detail page does (slice 3).
+### Fields in slice 3b
 
-Never in the stream: `connectClientId` (the card deliberately omits it), `visibility`, and
-`restrictedAudience` (viewer-scoped). Listing media items are filtered per subscription by each
+New optional properties of `@v1` (additive, per `schemas.ts`), each exactly as `getListingDetail`
+serves it to an anonymous viewer, by the detail's own rules (`listingExtrasFromRow` in
+`catalog-source.live.ts`). Only the fork parent is viewer-scoped on the site, and the stream leaves
+that judgement to the read model.
+
+| Field                              | Source, and its rule for a viewer who is not the owner                                                                                                                            |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                               | `app_listings.id`: the card's key and the store's tie-break                                                                                                                       |
+| `appBlockId` (on-site)             | the card's `kindData.appBlockId`                                                                                                                                                  |
+| `serialId`                         | `app_listings.serial_id`, the comment thread's key                                                                                                                                |
+| `collaborators`                    | accepted and displayed seats, banned and deleted users left out (`loadDisplayedCollaboratorChipsMany`, the detail's rule)                                                         |
+| `sourceRepoUrl`, `issueTrackerUrl` | the detail's links, from the reads the detail uses (batched)                                                                                                                      |
+| `actionsRunSource` (on-site)       | the serving version's submitting run, public repositories only (`readLiveActionsRunSourcesForBlocks`)                                                                             |
+| `scopes`, `connectScopes`          | `listingDetailScopes` (on-site, approved scopes) and `listingDetailConnectScopes` (off-site, only with a connect client)                                                          |
+| `betaMessage`                      | `publicBetaMessage`: the note only while `isBeta`                                                                                                                                 |
+| `forkable`                         | `publicForkable`: the opt-in, on-site only                                                                                                                                        |
+| `forkOf{slug}`                     | null unless a fork; `slug` names the parent only when it is in the same catalog and the subscription may read it (as the app entity's `forkOf`), else null. See Fork parent below |
+
+Each detail field is one more batched read per catalog poll (byline, beta, support link, fork facts,
+submitting run), run only while the listing stream is on. They read through the detail's own
+degrade rules: a failed beta, support-link or run read publishes "none" until the next good read, as
+the detail page shows; a failed fork or collaborator read fails the listing stream only.
+
+**Fork parent.** The site's detail names the parent only to a viewer who may open the parent's store
+page, and reads a hidden, removed or deleted parent the same, `{visible: false}`
+(`resolveForkAttribution`). The read model does the same per request: it looks the named parent up
+in its own generation and applies the same viewer gate (`Admits`). A parent outside the public
+catalog is never named in the stream, so it can only read `{visible: false}`.
+
+Never in the stream: `connectClientId` (the card deliberately omits it; the detail's off-site
+`kindData` carries it, and the read model's detail does not, a known difference for slice 5's detail
+shadow), `visibility`, and `restrictedAudience` (viewer-scoped). Listing media items are filtered per subscription by each
 item's own rating under the app-rating rule (Media, below), which is coarser than the store's
 per-request ceiling. The creator chip's `image` is the user's avatar, carried as the public card
 carries it.
@@ -207,10 +235,11 @@ These match `listAvailableListings`.
 | `newest`           | `createdAt`, then id                                                                      | `createdAt`                                                                                       |
 | `name` (ascending) | `left(lower(name), 64)`, then id                                                          | the same                                                                                          |
 
-- **Paging:** keyset on `(sortKey, slug)`, with an opaque cursor, as today on `(sortKey, id)`.
+- **Paging:** keyset on `(sortKey, id)`, with an opaque cursor, as the database does.
   `top-rated` pins the mean in the cursor for the whole session, as `decodeListingCursor` does. The
-  limit is 1–50, default 20. The read model's cursors carry their own version (`rm1`), so a
-  database cursor sent to it, or one of its own sent to the database, pages from the start.
+  limit is 1–50, default 20. The read model's cursors carry their own version (`rm2`; `rm1` was the
+  slug-keyed cursor before slice 3b), so a database cursor sent to it, or one of its own sent to the
+  database, pages from the start.
 - **Filters:** `kind`, `category` and `userId` (developer filter). Text search stays the site's: it
   asks the app index (`/search`, under its `viewerNotRoutable` rule) for slugs, and hydrates them
   from the read model (`slugs`) instead of from the database.
@@ -219,11 +248,9 @@ These match `listAvailableListings`.
   - `getGlobalRecommendMean` averages over every approved listing, restricted ones included. The
     read model sees public listings only. If the order moves materially, the adapter can publish the
     mean as a single `service@v1` parameter.
-  - Ties fall to the slug, where the database uses the listing id: the stream carries no id yet.
-    Most of the store ties on `top-rated` (no reviews), so this reorders ties until the id is in the
-    stream (Rollout, slice 3b).
-  - The keys compare as bytes; the database compares `sort_key` under its collation. Only the `name`
-    sort can differ (punctuation, case-folded non-ASCII).
+  - The keys and ids compare as bytes; the database compares them under its collation. Only the
+    `name` sort can differ (punctuation, case-folded non-ASCII): ids are `apl_` and a ULID, which
+    order the same either way.
 
 - **Sub-listing cards** (`app-store-sub-listings`) are not in the stream. A grid request that asks
   for them merges them from the DB page, as index search already does.
@@ -242,31 +269,32 @@ path, asks the read model the same query and compares the two
   A floor other than `public`, or a level that is not an integer from 0 to 63, is not shadowed.
   `viewer_test.go`'s literal vector pins the signer on both sides.
 - **Not shadowed:** a page with sub-listing cards on it, a page the app index's search answered,
-  and page 2 onward when the listing the database cursor sits after no longer exists (its slug, the
-  read model's tie-break, cannot be named).
-- **Paging.** A database cursor `(sort_key, id, mean)` is sent as the read model's cursor
-  `(sort_key, slug of id, mean)`: one primary-key read of the slug, so both sides rank page 2 onward
-  with the same pinned mean. A cursor-format literal is pinned on both sides (`rank_test.go`
-  `TestCursorVector`, the shadow's test).
-- **Compared by slug** (the stream carries no listing id until slice 3b):
-  - a slug on one page only is asked of the other side by slug, with the same kind and category
+  and page 2 onward after a sub-listing card.
+- **Paging.** A database cursor `(sort_key, id, mean)` is sent as the read model's cursor with the
+  same three fields, so both sides rank page 2 onward from the same position with the same pinned
+  mean, and no database read is needed for it. A cursor-format literal is pinned on both sides
+  (`rank_test.go` `TestCursorVector`, the shadow's test).
+- **Compared by listing id,** or by slug for a read-model card with no id (a read model of an
+  earlier layout). Each listing is named by its slug in the checks and the log:
+  - a listing on one page only is asked of the other side by slug, with the same kind and category
     (`?slugs=` on the read model; `listStoreListingsBySlugs` on the database, plus the developer
     filter). Not shown to this viewer at all there: a **visibility** mismatch,
     `visibility_missing` (the read model hides a listing the database shows) or `visibility_extra`
     (the read model shows a listing the database does not; the dangerous one). Shown there: the two
     sides only page or order it differently, which is an order mismatch;
-  - a slug on both pages: its gated media (`iconUrl`, `coverUrl`) is a **media** mismatch when it
+  - a listing on both pages: its gated media (`iconUrl`, `coverUrl`) is a **media** mismatch when it
     differs; an **identity field** (`name`, `tagline`, `category`, `contentRating`, `creator`,
-    `isBeta`, `isOfficial`, `kindData` less `appBlockId`) an `identity_field` mismatch; and a
+    `isBeta`, `isOfficial`, `kindData`, its `appBlockId` when the read model carries one) an
+    `identity_field` mismatch; and a
     **stats field** (`recommendedCount`, `notRecommendedCount`, `recommendPct`, `reviewCount`,
     `openCount`, `updatedAt`) a `stats_field` mismatch. Identity fields say what the listing is, and
     a difference there is a read-model bug; stats fields can trail the database by up to an adapter
     poll (Stats freshness). The classes are `READ_MODEL_FIELD_CLASS`, pinned field by field by the
     shadow's test;
-  - **order**, reported apart: the slugs left once visibility mismatches are removed differ in
-    order, or one side has a next page and the other does not. Ties fall to the id on the database
-    and to the slug on the read model, so order mismatches are expected on `top-rated` (most of the
-    store ties there) until slice 3b; they never count as visibility.
+  - **order**, reported apart: the listings left once visibility mismatches are removed differ in
+    order, or one side has a next page and the other does not. Both sides break ties by id, so an
+    order mismatch is a paging or ranking difference (the global mean, a stats change between the
+    two reads, the name collation); it never counts as visibility.
 - **Bounded:** a sampled fraction of pages (`APP_LISTINGS_READ_MODEL_SHADOW_SAMPLE`, default 0.1),
   at most `APP_LISTINGS_READ_MODEL_SHADOW_MAX_IN_FLIGHT` per process at a time (default 4; more are
   dropped, never queued), each read-model call and each of the shadow's own database reads waited
@@ -274,8 +302,7 @@ path, asks the read model the same query and compares the two
   is not cancelled, only no longer waited on), and a per-process breaker (`IndexBreaker`, with the `APP_INDEX_BREAKER_*` knobs):
   after consecutive read-model failures the shadow stops for a cooldown. The breaker is asked only
   immediately before the first read-model call, so a page that returns earlier never spends its
-  half-open probe. The extra database reads
-  are the cursor's slug (page 2 onward) and the by-slug check, only for a page that differs.
+  half-open probe. The one extra database read is the by-slug check, only for a page that differs.
 - **Metrics** (`src/server/prom/app-listings-read-model.metrics.ts`), each by `surface` (`grid`,
   `rest_list`):
   - `app_listings_read_model_shadow_requests_total{surface, outcome}`: `compared`, or why not:
@@ -306,15 +333,18 @@ consecutive days of shadow traffic:
 - the breaker never opened, and `compared` is the large majority of the outcomes.
 
 Order and `stats_field` mismatches are reported, not gating: a stats field trails the database by
-up to an adapter poll, and ties order differently until slice 3b. A listing whose stats differ
-persistently (across more than two polls) is still read before serving.
+up to an adapter poll, and the order can move with it. A listing whose stats differ persistently
+(across more than two polls), or a surface whose order mismatches persist, is still read before
+serving.
 
 ### Turn-on order
 
 Each step is reversible by undoing it; nothing before the flag changes what any user sees.
 
-1. The adapter publishes `listingContentRating` (slice 3), so the read model holds every listing
-   at layout 2.
+1. The adapter publishes `listingContentRating` (slice 3) and the listing `id` and detail fields
+   (slice 3b), so the read model holds every listing at layout 3. This must be deployed before an
+   app-index-go of layout 3 ingests: its ingest treats a body without `id` as unusable, and would
+   hold an empty first snapshot rather than serve one.
 2. `APP_INDEX_LISTINGS=on` on app-index-go, after the service identity and the listing relay gate
    it needs (Rollout, slice 2), and its first listings generation is serving.
 3. The viewer key on both sides: the same secret of at least 32 bytes as `APP_INDEX_VIEWER_KEY` on
@@ -403,10 +433,14 @@ served for a week.
      API answers 503 from an older-layout generation until the switch). The ingest treats a body
      without it as unusable, so a read model never gates a listing on the wrong rating.
    - A second viewer key, `APP_INDEX_VIEWER_KEY_NEXT`, for rotation with no refused requests.
-   - **Slice 3b (adapter, additive to `store-listing@v1`):** the listing `id` (the card key and the
-     database's tie-break), then the detail fields (`serialId`, `collaborators`, `scopes`,
-     `connectScopes`, the links, `betaMessage`, the fork fields). Until then the read API answers
-     without them, and the shadow diff compares by slug.
+   - **Slice 3b (done):** the listing `id` (the card key and the database's tie-break) and the
+     public detail fields, additive to `store-listing@v1` (Fields in slice 3b, above). The read
+     model requires `id` (`ListingsLayoutVersion` 3: a `listing_id` column, rebuilt beside; the API
+     answers 503 from an older-layout generation until the switch), ranks ties by it, returns `id`
+     and `kindData.appBlockId` on cards and the detail fields from `GET /listings/{slug}`, and
+     resolves the fork parent per viewer. The shadow compares by id, and moves a database cursor to
+     the read model without a database read. The detail rule is pinned on both sides by the parity
+     fixture's `details` (`parity_test.go` `TestDetailParity`, the site's `listing-detail-parity.test.ts`).
 4. **Slice 4 (done): shadow** on the grid and REST list: the web tier signs the viewer token, calls
    `GET /listings` after its database read behind `app-listings-read-model`, serves the database
    answer, and compares (Shadow diff, above).

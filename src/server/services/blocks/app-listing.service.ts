@@ -806,7 +806,7 @@ export function projectListingDetail(
     // 🔴 Only carried when the flag is set. A stale note left behind by an author who
     // turned beta OFF must not reach a public DTO, and clearing it at the write site alone
     // would leave every row written before that rule existed able to leak one.
-    betaMessage: beta.isBeta ? beta.betaMessage : null,
+    betaMessage: publicBetaMessage(beta),
     isOfficial,
     collaborators: collaborators
       .map((u) => creatorChip(u))
@@ -907,10 +907,7 @@ export function projectListingDetail(
     // claims on a public store page. The population is 0 in production (measured
     // 2026-08-11: offsite 5 rows, 0 with a block), so this is PREVENTION, not a
     // live bug — and prevention is cheap here because it is one clause.
-    scopes:
-      row.kind === 'onsite' && Array.isArray(row.appBlock?.approvedScopes)
-        ? row.appBlock.approvedScopes.filter((s): s is string => typeof s === 'string')
-        : [],
+    scopes: listingDetailScopes(row),
     // The OFF-SITE analog of `scopes` above: the account permissions an
     // OAuth-connect listing will ASK the viewer to approve, decoded from the
     // `connectRequestedScopes` bitmask into TokenScope enum-keys.
@@ -959,13 +956,54 @@ export function projectListingDetail(
     // Truthiness on `connectClientId`, not `!= null` — `kindData` normalises `'' → null`
     // (`row.connectClientId || null` above), so an empty string must read as "no client"
     // on BOTH sides or the two surfaces disagree at exactly that value.
-    connectScopes:
-      row.kind === 'offsite' &&
-      Boolean(row.connectClientId) &&
-      typeof connectRequestedScopes === 'number'
-        ? tokenScopeMaskToList(BigInt(connectRequestedScopes)).map((s) => s.key)
-        : [],
+    connectScopes: listingDetailConnectScopes(row, connectRequestedScopes),
   };
+}
+
+/**
+ * The detail's beta note: carried only while the flag is set (see `betaMessage` in
+ * {@link projectListingDetail}). Shared with the registry adapter's listing stream.
+ */
+export function publicBetaMessage(beta: Pick<ListingBetaRead, 'isBeta' | 'betaMessage'>) {
+  return beta.isBeta ? beta.betaMessage : null;
+}
+
+/**
+ * The detail's `forkable`: the author's opt-in, only for an on-site app, whose source is hosted
+ * here. Shared with the registry adapter's listing stream.
+ */
+export function publicForkable(kind: string, forkable: boolean): boolean {
+  return kind === 'onsite' && forkable;
+}
+
+/**
+ * The detail's `scopes`: an on-site listing's approved scope ids, `[]` otherwise (see `scopes` in
+ * {@link projectListingDetail}). Shared with the registry adapter's listing stream.
+ */
+export function listingDetailScopes(row: {
+  kind: string;
+  appBlock: { approvedScopes: unknown } | null;
+}): string[] {
+  const approved = row.appBlock?.approvedScopes;
+  return row.kind === 'onsite' && Array.isArray(approved)
+    ? approved.filter((s): s is string => typeof s === 'string')
+    : [];
+}
+
+/**
+ * The detail's `connectScopes`: an off-site listing's requested scope keys, only while it has a
+ * connect client, `[]` otherwise (see `connectScopes` in {@link projectListingDetail}). Shared with
+ * the registry adapter's listing stream.
+ */
+export function listingDetailConnectScopes(
+  row: { kind: string; connectClientId: string | null },
+  connectRequestedScopes: number | null
+): string[] {
+  return row.kind === 'offsite' &&
+    Boolean(row.connectClientId) &&
+    typeof connectRequestedScopes === 'number'
+    ? tokenScopeMaskToList(BigInt(connectRequestedScopes)).map((s) => s.key)
+    : [];
 }
 
 // ---------------------------------------------------------------------------
@@ -1947,7 +1985,7 @@ export async function getListingDetail(
     ...detail,
     issueTrackerUrl: issueTracker.value,
     actionsRunSource,
-    forkable: row.kind === 'onsite' && forkProvenance.forkable,
+    forkable: publicForkable(row.kind, forkProvenance.forkable),
     forkOf,
   };
 }
@@ -2316,7 +2354,47 @@ async function loadDisplayedCollaboratorChips(
     '~/server/services/blocks/app-access.service'
   );
   const userIds = await listDisplayedCollaboratorUserIds(appListingId);
-  if (userIds.length === 0) return [];
+  return inSeatOrder(userIds, await collaboratorUsersById(userIds));
+}
+
+type CollaboratorChipUser = { id: number; username: string | null; image: string | null };
+
+/** One listing's chips in its seat order (`createdAt asc`), a user the read excluded left out. */
+function inSeatOrder(
+  seatOrder: readonly number[],
+  byId: ReadonlyMap<number, CollaboratorChipUser>
+): CollaboratorChipUser[] {
+  return seatOrder
+    .map((id) => byId.get(id))
+    .filter((u): u is CollaboratorChipUser => u !== undefined);
+}
+
+/**
+ * {@link loadDisplayedCollaboratorChips} for many listings, in two queries (the seats, then their
+ * users): listing id → its byline, by the same seat and user rules. A listing with none is absent.
+ * For the registry adapter's listing stream (`catalog-source.live.ts`).
+ */
+export async function loadDisplayedCollaboratorChipsMany(
+  appListingIds: readonly string[]
+): Promise<Map<string, CollaboratorChipUser[]>> {
+  const { listDisplayedCollaboratorUserIdsMany } = await import(
+    '~/server/services/blocks/app-access.service'
+  );
+  const seats = await listDisplayedCollaboratorUserIdsMany(appListingIds);
+  const byId = await collaboratorUsersById([...new Set([...seats.values()].flat())]);
+  const out = new Map<string, CollaboratorChipUser[]>();
+  for (const [listingId, userIds] of seats) {
+    const chips = inSeatOrder(userIds, byId);
+    if (chips.length) out.set(listingId, chips);
+  }
+  return out;
+}
+
+/** The users of `userIds` a public byline may name, by id. */
+async function collaboratorUsersById(
+  userIds: readonly number[]
+): Promise<Map<number, CollaboratorChipUser>> {
+  if (userIds.length === 0) return new Map();
   // 🔴 EXPLICIT ALLOWLIST at the SELECT, not only at the projection. Two independent
   // narrowings: nothing but these four columns ever leaves the DB, and `creatorChip`
   // re-shapes them. Widening either alone cannot leak.
@@ -2337,19 +2415,13 @@ async function loadDisplayedCollaboratorChips(
   // COLLABORATOR is a third party — banning them must not require touching an app that
   // may be perfectly healthy and owned by someone else entirely.
   const users = await dbRead.user.findMany({
-    where: { id: { in: userIds }, bannedAt: null, deletedAt: null },
+    where: { id: { in: [...userIds] }, bannedAt: null, deletedAt: null },
     // `deletedAt` is projected even though the `where` already excludes deleted rows: it makes
     // this chip satisfy the user-chip guard outright rather than needing a ledger exemption,
     // and it costs nothing — the column is read from the same heap tuple, no extra rows.
     select: { id: true, username: true, deletedAt: true, image: true },
   });
-  // Preserve the seat order (`createdAt asc`) rather than the DB's row order.
-  const byId = new Map(users.map((u: { id: number }) => [u.id, u]));
-  return userIds
-    .map((id) => byId.get(id))
-    .filter(
-      (u): u is { id: number; username: string | null; image: string | null } => u !== undefined
-    );
+  return new Map(users.map((u: CollaboratorChipUser) => [u.id, u]));
 }
 
 // ---------------------------------------------------------------------------
@@ -2504,7 +2576,7 @@ export function projectModerationListing(
     // projection applies, and for the same reason: a stale note from an author who turned
     // beta off is not something this table should show as current.
     isBeta: beta.isBeta,
-    betaMessage: beta.isBeta ? beta.betaMessage : null,
+    betaMessage: publicBetaMessage(beta),
     hasPendingBlockRequest: row.kind === 'onsite' && pendingBlockRequestSlugs.has(row.slug),
     id: row.id,
     slug: row.slug,

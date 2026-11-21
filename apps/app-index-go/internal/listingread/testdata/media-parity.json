@@ -47,6 +47,7 @@
   "listings": [
     {
       "slug": "pg-mixed",
+      "id": "apl_11PG-",
       "kind": "onsite",
       "contentRating": "pg",
       "stats": {
@@ -114,6 +115,7 @@
     },
     {
       "slug": "pg13-plain",
+      "id": "apl_10PG1",
       "kind": "onsite",
       "contentRating": "pg13",
       "stats": {
@@ -152,6 +154,7 @@
     },
     {
       "slug": "r-listing",
+      "id": "apl_09R-L",
       "kind": "onsite",
       "contentRating": "r",
       "stats": {
@@ -219,6 +222,7 @@
     },
     {
       "slug": "x-listing",
+      "id": "apl_08X-L",
       "kind": "onsite",
       "contentRating": "x",
       "stats": {
@@ -263,6 +267,7 @@
     },
     {
       "slug": "null-rating",
+      "id": "apl_07NUL",
       "kind": "offsite",
       "contentRating": null,
       "stats": {
@@ -300,6 +305,7 @@
     },
     {
       "slug": "no-media",
+      "id": "apl_06NO-",
       "kind": "onsite",
       "contentRating": "pg13",
       "stats": {
@@ -314,6 +320,7 @@
     },
     {
       "slug": "xxx-listing",
+      "id": "apl_05XXX",
       "kind": "onsite",
       "contentRating": "xxx",
       "stats": {
@@ -344,6 +351,7 @@
     },
     {
       "slug": "g-listing",
+      "id": "apl_04G-L",
       "kind": "offsite",
       "contentRating": "g",
       "stats": {
@@ -373,6 +381,7 @@
     },
     {
       "slug": "pg13-red-safe",
+      "id": "apl_03PG1",
       "kind": "onsite",
       "contentRating": "pg13",
       "stats": {
@@ -416,6 +425,7 @@
     },
     {
       "slug": "null-listing-pg13-block",
+      "id": "apl_02NUL",
       "kind": "onsite",
       "contentRating": null,
       "blockContentRating": "pg13",
@@ -455,6 +465,7 @@
     },
     {
       "slug": "null-listing-r-block",
+      "id": "apl_01NUL",
       "kind": "onsite",
       "contentRating": null,
       "blockContentRating": "r",
@@ -897,6 +908,410 @@
       },
       "reviewCount": 0,
       "openCount": 4
+    }
+  },
+  "details": {
+    "$comment": "The public detail fields, for the listings named. `rows` is each listing's database state as getListingDetail reads it (`fork.parent` names the listing its fork pointer holds, by slug). `stream` is the detail part of the store-listing@v1 body the adapter publishes from it to the read model (the service audience). `expected` is the detail an anonymous viewer is served: the same on both sides, `forkOf` per viewer (the parent named only when that viewer is shown the parent, by the store's gate; `name` is the parent's name, which in this fixture is its slug). The site side runs `rows` through projectListingDetail, resolveForkAttribution and the adapter (listingExtrasFromRow, listingBody); the read model runs `stream` through its ingest and ProjectDetail.",
+    "rows": {
+      "pg-mixed": {
+        "appBlockId": "ab_pgmixed_1",
+        "serialId": 311,
+        "approvedScopes": ["models:read:self", "ai:write:budgeted"],
+        "connectClientId": null,
+        "connectRequestedScopes": null,
+        "beta": {
+          "isBeta": true,
+          "betaMessage": "pg-mixed is in beta"
+        },
+        "collaborators": [
+          {
+            "id": 9101,
+            "username": "pgm-helper",
+            "image": "img/avatars/pgm-helper"
+          }
+        ],
+        "sourceRepoUrl": "https://github.com/pgm-org/pg-mixed",
+        "issueTrackerUrl": "https://pgm-support.example/issues",
+        "actionsRunSource": {
+          "repository": "pgm-org/pg-mixed",
+          "tag": "v3.1.0",
+          "sha": "3a1f00000000000000000000000000000000c0de"
+        },
+        "forkable": true,
+        "fork": {
+          "isFork": true,
+          "parent": "r-listing"
+        }
+      },
+      "g-listing": {
+        "appBlockId": null,
+        "serialId": 422,
+        "approvedScopes": null,
+        "connectClientId": "g-listing-client",
+        "connectRequestedScopes": 5,
+        "beta": {
+          "isBeta": false,
+          "betaMessage": "a stale note"
+        },
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": "https://g-listing.example/help",
+        "actionsRunSource": null,
+        "forkable": true,
+        "fork": {
+          "isFork": false,
+          "parent": null
+        }
+      },
+      "null-rating": {
+        "appBlockId": "ab_nullrating_3",
+        "serialId": 533,
+        "approvedScopes": ["models:read:self"],
+        "connectClientId": null,
+        "connectRequestedScopes": 3,
+        "beta": {
+          "isBeta": true,
+          "betaMessage": null
+        },
+        "collaborators": [
+          {
+            "id": 9302,
+            "username": null,
+            "image": null
+          },
+          {
+            "id": 9301,
+            "username": "nr-second",
+            "image": "img/avatars/nr-second"
+          }
+        ],
+        "sourceRepoUrl": "https://codeberg.org/nr-org/null-rating",
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "forkable": false,
+        "fork": {
+          "isFork": false,
+          "parent": null
+        }
+      },
+      "pg13-plain": {
+        "appBlockId": "ab_pg13plain_4",
+        "serialId": 644,
+        "approvedScopes": [],
+        "connectClientId": null,
+        "connectRequestedScopes": null,
+        "beta": {
+          "isBeta": false,
+          "betaMessage": null
+        },
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "forkable": false,
+        "fork": {
+          "isFork": true,
+          "parent": null
+        }
+      },
+      "no-media": {
+        "appBlockId": "ab_nomedia_5",
+        "serialId": 755,
+        "approvedScopes": ["ai:write:budgeted"],
+        "connectClientId": null,
+        "connectRequestedScopes": null,
+        "beta": {
+          "isBeta": false,
+          "betaMessage": null
+        },
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "forkable": true,
+        "fork": {
+          "isFork": true,
+          "parent": "pg-mixed"
+        }
+      }
+    },
+    "stream": {
+      "pg-mixed": {
+        "serialId": 311,
+        "collaborators": [
+          {
+            "id": 9101,
+            "username": "pgm-helper",
+            "image": "img/avatars/pgm-helper"
+          }
+        ],
+        "sourceRepoUrl": "https://github.com/pgm-org/pg-mixed",
+        "issueTrackerUrl": "https://pgm-support.example/issues",
+        "actionsRunSource": {
+          "repository": "pgm-org/pg-mixed",
+          "tag": "v3.1.0",
+          "sha": "3a1f00000000000000000000000000000000c0de"
+        },
+        "scopes": ["models:read:self", "ai:write:budgeted"],
+        "connectScopes": [],
+        "betaMessage": "pg-mixed is in beta",
+        "forkable": true,
+        "appBlockId": "ab_pgmixed_1",
+        "forkOf": {
+          "slug": "r-listing"
+        }
+      },
+      "g-listing": {
+        "serialId": 422,
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": "https://g-listing.example/help",
+        "actionsRunSource": null,
+        "scopes": [],
+        "connectScopes": ["UserRead", "ModelsRead"],
+        "betaMessage": null,
+        "forkable": false,
+        "forkOf": null
+      },
+      "null-rating": {
+        "serialId": 533,
+        "collaborators": [
+          {
+            "id": 9302,
+            "username": null,
+            "image": null
+          },
+          {
+            "id": 9301,
+            "username": "nr-second",
+            "image": "img/avatars/nr-second"
+          }
+        ],
+        "sourceRepoUrl": "https://codeberg.org/nr-org/null-rating",
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "scopes": [],
+        "connectScopes": [],
+        "betaMessage": null,
+        "forkable": false,
+        "forkOf": null
+      },
+      "pg13-plain": {
+        "serialId": 644,
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "scopes": [],
+        "connectScopes": [],
+        "betaMessage": null,
+        "forkable": false,
+        "appBlockId": "ab_pg13plain_4",
+        "forkOf": {
+          "slug": null
+        }
+      },
+      "no-media": {
+        "serialId": 755,
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "scopes": ["ai:write:budgeted"],
+        "connectScopes": [],
+        "betaMessage": null,
+        "forkable": true,
+        "appBlockId": "ab_nomedia_5",
+        "forkOf": {
+          "slug": "pg-mixed"
+        }
+      }
+    },
+    "expected": {
+      "pg-mixed": {
+        "serialId": 311,
+        "collaborators": [
+          {
+            "id": 9101,
+            "username": "pgm-helper",
+            "image": "img/avatars/pgm-helper"
+          }
+        ],
+        "sourceRepoUrl": "https://github.com/pgm-org/pg-mixed",
+        "issueTrackerUrl": "https://pgm-support.example/issues",
+        "actionsRunSource": {
+          "repository": "pgm-org/pg-mixed",
+          "tag": "v3.1.0",
+          "sha": "3a1f00000000000000000000000000000000c0de"
+        },
+        "scopes": ["models:read:self", "ai:write:budgeted"],
+        "connectScopes": [],
+        "betaMessage": "pg-mixed is in beta",
+        "forkable": true,
+        "id": "apl_11PG-",
+        "forkOf": {
+          "anonymous SFW": {
+            "visible": false
+          },
+          "PG13 main": {
+            "visible": false
+          },
+          "R main": {
+            "visible": false
+          },
+          "anonymous red": {
+            "visible": false
+          },
+          "X red": {
+            "visible": true,
+            "slug": "r-listing",
+            "name": "r-listing"
+          },
+          "XXX red": {
+            "visible": true,
+            "slug": "r-listing",
+            "name": "r-listing"
+          },
+          "anonymous SFW, public-external": {
+            "visible": false
+          }
+        }
+      },
+      "g-listing": {
+        "serialId": 422,
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": "https://g-listing.example/help",
+        "actionsRunSource": null,
+        "scopes": [],
+        "connectScopes": ["UserRead", "ModelsRead"],
+        "betaMessage": null,
+        "forkable": false,
+        "id": "apl_04G-L",
+        "forkOf": {
+          "anonymous SFW": null,
+          "PG13 main": null,
+          "R main": null,
+          "anonymous red": null,
+          "X red": null,
+          "XXX red": null,
+          "anonymous SFW, public-external": null
+        }
+      },
+      "null-rating": {
+        "serialId": 533,
+        "collaborators": [
+          {
+            "id": 9302,
+            "username": null,
+            "image": null
+          },
+          {
+            "id": 9301,
+            "username": "nr-second",
+            "image": "img/avatars/nr-second"
+          }
+        ],
+        "sourceRepoUrl": "https://codeberg.org/nr-org/null-rating",
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "scopes": [],
+        "connectScopes": [],
+        "betaMessage": null,
+        "forkable": false,
+        "id": "apl_07NUL",
+        "forkOf": {
+          "anonymous SFW": null,
+          "PG13 main": null,
+          "R main": null,
+          "anonymous red": null,
+          "X red": null,
+          "XXX red": null,
+          "anonymous SFW, public-external": null
+        }
+      },
+      "pg13-plain": {
+        "serialId": 644,
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "scopes": [],
+        "connectScopes": [],
+        "betaMessage": null,
+        "forkable": false,
+        "id": "apl_10PG1",
+        "forkOf": {
+          "anonymous SFW": {
+            "visible": false
+          },
+          "PG13 main": {
+            "visible": false
+          },
+          "R main": {
+            "visible": false
+          },
+          "anonymous red": {
+            "visible": false
+          },
+          "X red": {
+            "visible": false
+          },
+          "XXX red": {
+            "visible": false
+          },
+          "anonymous SFW, public-external": {
+            "visible": false
+          }
+        }
+      },
+      "no-media": {
+        "serialId": 755,
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "scopes": ["ai:write:budgeted"],
+        "connectScopes": [],
+        "betaMessage": null,
+        "forkable": true,
+        "id": "apl_06NO-",
+        "forkOf": {
+          "anonymous SFW": {
+            "visible": true,
+            "slug": "pg-mixed",
+            "name": "pg-mixed"
+          },
+          "PG13 main": {
+            "visible": true,
+            "slug": "pg-mixed",
+            "name": "pg-mixed"
+          },
+          "R main": {
+            "visible": true,
+            "slug": "pg-mixed",
+            "name": "pg-mixed"
+          },
+          "anonymous red": {
+            "visible": true,
+            "slug": "pg-mixed",
+            "name": "pg-mixed"
+          },
+          "X red": {
+            "visible": true,
+            "slug": "pg-mixed",
+            "name": "pg-mixed"
+          },
+          "XXX red": {
+            "visible": true,
+            "slug": "pg-mixed",
+            "name": "pg-mixed"
+          },
+          "anonymous SFW, public-external": {
+            "visible": false
+          }
+        }
+      }
     }
   }
 }

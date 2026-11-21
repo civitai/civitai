@@ -30,6 +30,7 @@ type parityFixture struct {
 	} `json:"viewers"`
 	Listings []struct {
 		Slug          string  `json:"slug"`
+		ID            string  `json:"id"`
 		Kind          string  `json:"kind"`
 		ContentRating *string `json:"contentRating"`
 		// AppContentRating is the app entity's rating, which the stream body carries as
@@ -47,6 +48,10 @@ type parityFixture struct {
 	} `json:"listings"`
 	Expected map[string]map[string]*parityMedia `json:"expected"`
 	Cards    map[string]parityCard              `json:"cards"`
+	Details  struct {
+		Stream   map[string]map[string]json.RawMessage `json:"stream"`
+		Expected map[string]map[string]json.RawMessage `json:"expected"`
+	} `json:"details"`
 }
 
 type parityMedia struct {
@@ -90,11 +95,16 @@ func loadParity(t *testing.T) (parityFixture, map[string]store.Listing) {
 		if l.AppContentRating != nil {
 			appRating = l.AppContentRating
 		}
-		body, err := json.Marshal(map[string]any{
-			"app": "urn:apps.civitai.com:app/" + l.Slug, "slug": l.Slug, "name": l.Slug, "kind": l.Kind,
+		fields := map[string]any{
+			"app": "urn:apps.civitai.com:app/" + l.Slug, "id": l.ID, "slug": l.Slug, "name": l.Slug, "kind": l.Kind,
 			"contentRating": appRating, "listingContentRating": l.ContentRating, "tagline": nil, "category": nil, "media": media, "creator": nil,
 			"stats": l.Stats, "createdAt": "2026-01-02T03:04:05.000Z", "updatedAt": nil,
-		})
+		}
+		// The detail part of the body, as the adapter publishes it (details.stream).
+		for k, v := range f.Details.Stream[l.Slug] {
+			fields[k] = v
+		}
+		body, err := json.Marshal(fields)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -213,6 +223,84 @@ func TestMediaParityCaptions(t *testing.T) {
 	if want := []any{"an R shot", "a PG shot", nil}; !reflect.DeepEqual(caps, want) {
 		t.Fatalf("captions %v, want %v", caps, want)
 	}
+}
+
+// TestDetailParity projects every fixture listing with detail fields for every fixture viewer and
+// compares with details.expected: the fields an anonymous viewer is served, the same for every
+// viewer, and forkOf per viewer, its parent looked up as the read API does (by the slug the stream
+// names) and named only when the viewer may see it.
+func TestDetailParity(t *testing.T) {
+	f, listings := loadParity(t)
+	if len(f.Details.Expected) < 5 {
+		t.Fatalf("the detail fixture shrank: %d listings", len(f.Details.Expected))
+	}
+	named := 0
+	for slug, want := range f.Details.Expected {
+		l, ok := listings[slug]
+		if !ok {
+			t.Fatalf("details name %s, which is not a fixture listing", slug)
+		}
+		var forkOf map[string]json.RawMessage
+		if err := json.Unmarshal(want["forkOf"], &forkOf); err != nil {
+			t.Fatal(err)
+		}
+		for _, fv := range f.Viewers {
+			v := Viewer{RedCapable: fv.RedCapable, BrowsingLevel: fv.BrowsingLevel, Scope: fv.Scope}
+			var parent *store.Listing
+			if p, ok := listings[ForkParentSlug(l)]; ok {
+				parent = &p
+			}
+			d, err := ProjectDetail(l, v, parent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got map[string]json.RawMessage
+			raw, _ := json.Marshal(d)
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatal(err)
+			}
+			for k, w := range want {
+				if k == "forkOf" {
+					w = forkOf[fv.Name]
+				}
+				if !jsonEqual(t, got[k], w) {
+					t.Errorf("%s, viewer %q, %s: got %s, want %s", slug, fv.Name, k, got[k], w)
+				}
+			}
+			if d.ForkOf != nil && d.ForkOf.Visible {
+				named++
+			}
+		}
+		// The card carries the stream's appBlockId on-site, and none off-site.
+		c, err := ProjectCard(l, Viewer{Scope: ScopeFull})
+		if err != nil {
+			t.Fatal(err)
+		}
+		kd, _ := json.Marshal(c.KindData)
+		var kindData map[string]json.RawMessage
+		_ = json.Unmarshal(kd, &kindData)
+		w, inStream := f.Details.Stream[slug]["appBlockId"]
+		got, onCard := kindData["appBlockId"]
+		if inStream != (l.Kind == "onsite") || onCard != inStream || (onCard && !jsonEqual(t, got, w)) {
+			t.Errorf("%s card appBlockId %s, want %s", slug, got, w)
+		}
+	}
+	// Positive control: some viewer is shown a fork's parent, so a rule that never named one fails.
+	if named == 0 {
+		t.Fatal("no viewer was shown a fork's parent")
+	}
+}
+
+func jsonEqual(t *testing.T, a, b json.RawMessage) bool {
+	t.Helper()
+	var x, y any
+	if err := json.Unmarshal(a, &x); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &y); err != nil {
+		t.Fatal(err)
+	}
+	return reflect.DeepEqual(x, y)
 }
 
 func show(v any) string {

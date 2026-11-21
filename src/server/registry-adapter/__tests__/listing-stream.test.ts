@@ -46,6 +46,8 @@ const APP = 'urn:schema:apps.civitai.com:app@v1';
 const BASE = { baseUrl: 'https://site.example' };
 
 const store = (over: Partial<ListingStoreFields> = {}): ListingStoreFields => ({
+  id: 'apl_orbit_61',
+  appBlockId: 'ab_orbit',
   creator: { id: 5123, username: 'maker-q7', image: 'https://img.example/avatar-q7.png' },
   recommend: { recommendedCount: 7, notRecommendedCount: 3, recommendPct: 0.7 },
   reviewCount: 10,
@@ -76,6 +78,19 @@ const store = (over: Partial<ListingStoreFields> = {}): ListingStoreFields => ({
   ],
   installCount: 29,
   createdAt: '2026-08-15T01:02:03.000Z',
+  serialId: 4471,
+  collaborators: [{ id: 7302, username: 'helper-w3', image: 'https://img.example/avatar-w3.png' }],
+  issueTrackerUrl: 'https://orbit-support.example/issues',
+  actionsRunSource: {
+    repository: 'orbit-org/orbit-ci',
+    tag: 'v2.0.0',
+    sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678',
+  },
+  scopes: ['models:read:self', 'ai:write:budgeted'],
+  connectScopes: [],
+  betaMessage: 'Orbit is still settling',
+  forkable: true,
+  forkOf: null,
   ...over,
 });
 
@@ -116,7 +131,8 @@ const ONSITE: CatalogApp = {
     externalUrl: null,
     sourceRepoUrl: 'https://git.example/orbit',
     forkOf: null,
-    store: store(),
+    // A fork of an app outside this fixture's catalog: built directly, never narrowed here.
+    store: store({ forkOf: { slug: 'parent-orbit' } }),
   },
   block: {
     id: 'ab_orbit',
@@ -149,6 +165,17 @@ const OFFSITE = app('tide-log', 'g', {
     media: [],
     installCount: 88,
     createdAt: '2026-09-30T11:12:13.000Z',
+    id: 'apl_tide_92',
+    appBlockId: null,
+    serialId: 5583,
+    collaborators: [],
+    issueTrackerUrl: null,
+    actionsRunSource: null,
+    scopes: [],
+    connectScopes: ['UserRead', 'BuzzRead'],
+    betaMessage: null,
+    forkable: false,
+    forkOf: null,
   }),
 });
 
@@ -162,6 +189,7 @@ describe('store-listing@v1 field mapping', () => {
     expect(e?.schemas).toEqual([LISTING]);
     expect(e?.body).toEqual({
       app: 'urn:apps.civitai.com:app/orbit-b',
+      id: 'apl_orbit_61',
       slug: 'orbit-b',
       name: 'Orbit Notes',
       kind: 'onsite',
@@ -193,6 +221,7 @@ describe('store-listing@v1 field mapping', () => {
       creator: { id: 5123, username: 'maker-q7', image: 'https://img.example/avatar-q7.png' },
       isBeta: true,
       isOfficial: false,
+      appBlockId: 'ab_orbit',
       hasPage: true,
       liveUrl: 'https://orbit-b.apps.example',
       stats: {
@@ -205,6 +234,22 @@ describe('store-listing@v1 field mapping', () => {
       },
       createdAt: '2026-08-15T01:02:03.000Z',
       updatedAt: '2026-11-02T09:08:07.000Z',
+      serialId: 4471,
+      collaborators: [
+        { id: 7302, username: 'helper-w3', image: 'https://img.example/avatar-w3.png' },
+      ],
+      sourceRepoUrl: 'https://git.example/orbit',
+      issueTrackerUrl: 'https://orbit-support.example/issues',
+      actionsRunSource: {
+        repository: 'orbit-org/orbit-ci',
+        tag: 'v2.0.0',
+        sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678',
+      },
+      scopes: ['models:read:self', 'ai:write:budgeted'],
+      connectScopes: [],
+      betaMessage: 'Orbit is still settling',
+      forkable: true,
+      forkOf: { slug: 'parent-orbit' },
     });
   });
 
@@ -224,6 +269,7 @@ describe('store-listing@v1 field mapping', () => {
     const e = listingSet(sets).find((x) => x.urn === 'urn:apps.civitai.com:store-listing/tide-log');
     expect(e?.body).toEqual({
       app: 'urn:apps.civitai.com:app/tide-log',
+      id: 'apl_tide_92',
       slug: 'tide-log',
       name: 'Name of tide-log',
       kind: 'offsite',
@@ -248,6 +294,16 @@ describe('store-listing@v1 field mapping', () => {
       },
       createdAt: '2026-09-30T11:12:13.000Z',
       updatedAt: null,
+      serialId: 5583,
+      collaborators: [],
+      sourceRepoUrl: null,
+      issueTrackerUrl: null,
+      actionsRunSource: null,
+      scopes: [],
+      connectScopes: ['UserRead', 'BuzzRead'],
+      betaMessage: null,
+      forkable: false,
+      forkOf: null,
     });
   });
 
@@ -427,13 +483,20 @@ describe('the listing read', () => {
     openCount: 57,
     updatedAt: '2026-10-10T10:10:10.000Z',
     restrictedAudience: null,
-    kindData: { kind: 'onsite', appBlockId: null, hasPage: false, liveUrl: 'https://c.example' },
+    kindData: {
+      kind: 'onsite',
+      appBlockId: 'ab_comet_8',
+      hasPage: false,
+      liveUrl: 'https://c.example',
+    },
   };
 
   it("keeps the card's store fields only when asked, and never the card's own media", () => {
     expect(listingFromCard(card).store).toBeUndefined();
     const out = listingFromCard(card, { store: true });
     expect(out.store).toEqual({
+      id: 'apl_card_3',
+      appBlockId: 'ab_comet_8',
       creator: { id: 6620, username: 'comet-maker', image: null },
       recommend: { recommendedCount: 9, notRecommendedCount: 2, recommendPct: 0.82 },
       reviewCount: 11,
@@ -452,6 +515,15 @@ describe('the listing read', () => {
     media: [],
     installCount: 3,
     createdAt: '2026-07-01T00:00:00.000Z',
+    serialId: 902,
+    collaborators: [],
+    scopes: [],
+    connectScopes: [],
+    issueTrackerUrl: null,
+    actionsRunSource: null,
+    betaMessage: null,
+    forkable: false,
+    fork: { isFork: false, forkOfListingId: null },
   };
   const deps = (over: Partial<CatalogReadDeps>, calls: string[] = []): CatalogReadDeps => ({
     resolveScope: async () => 'full',
@@ -521,6 +593,77 @@ describe('the listing read', () => {
     expect(apps.map((a) => [a.listing.slug, a.listing.iconUrl, a.listing.store])).toEqual([
       ['comet-sketch', 'https://img.example/icon-z9.png', undefined],
       ['no-extras', null, undefined],
+    ]);
+  });
+
+  it('🔴 a fork names its parent only when the parent is in the same catalog, never itself', async () => {
+    const forkOf = (forkOfListingId: string | null, isFork = true) => ({
+      ...extras,
+      fork: { isFork, forkOfListingId },
+    });
+    const apps = await readCatalog(
+      deps({
+        listPage: async () => ({
+          items: ['apl_k1', 'apl_k2', 'apl_k3', 'apl_k4', 'apl_k5'].map((id, i) => ({
+            ...(listingFromCard(card, { store: true }) as CatalogListing),
+            id,
+            slug: `fork-case-${i + 1}`,
+          })),
+        }),
+        loadListingExtras: async () =>
+          new Map([
+            // The parent is listed: named by its slug.
+            ['apl_k1', forkOf('apl_k5')],
+            // The parent is not in this catalog (hidden or gone): a fork, unnamed.
+            ['apl_k2', forkOf('apl_outside_9')],
+            // A fork whose parent pointer is gone (only the block remembers it): unnamed.
+            ['apl_k3', forkOf(null)],
+            // Its own parent: never named.
+            ['apl_k4', forkOf('apl_k4')],
+            // Not a fork, whatever its pointer says.
+            ['apl_k5', forkOf('apl_k1', false)],
+          ]),
+      }),
+      { listings: true }
+    );
+    expect(apps.map((a) => [a.listing.slug, a.listing.store?.forkOf])).toEqual([
+      ['fork-case-1', { slug: 'fork-case-5' }],
+      ['fork-case-2', { slug: null }],
+      ['fork-case-3', { slug: null }],
+      ['fork-case-4', { slug: null }],
+      ['fork-case-5', null],
+    ]);
+  });
+});
+
+describe('fork parent: named only to an audience that may read the parent app', () => {
+  const sets = buildEntities(
+    [
+      app('parent-r', 'r'),
+      app('fork-of-r', 'g', { store: store({ forkOf: { slug: 'parent-r' } }) }),
+      app('fork-of-g', 'g', { store: store({ forkOf: { slug: 'parent-g' } }) }),
+      app('parent-g', 'g'),
+    ],
+    { ...BASE, listings: true }
+  );
+  const forkOfIn = (audience: Audience) =>
+    Object.fromEntries(
+      readableBy(sets, LISTING, audience).map((e) => {
+        const b = e.body as { slug: string; forkOf: unknown };
+        return [b.slug, b.forkOf];
+      })
+    );
+
+  it('🔴 a PG audience reads the R parent as unnamed; the G parent stays named', () => {
+    const got = forkOfIn(withListings(ANONYMOUS_AUDIENCE));
+    expect([got['fork-of-r'], got['fork-of-g']]).toEqual([{ slug: null }, { slug: 'parent-g' }]);
+  });
+
+  it('an audience that may read R reads both parents named', () => {
+    const got = forkOfIn(withListings(SERVICE_AUDIENCE));
+    expect([got['fork-of-r'], got['fork-of-g']]).toEqual([
+      { slug: 'parent-r' },
+      { slug: 'parent-g' },
     ]);
   });
 });

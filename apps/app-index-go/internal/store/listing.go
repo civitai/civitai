@@ -19,6 +19,9 @@ type Listing struct {
 	URN  string
 	Rev  string
 	Body json.RawMessage
+	// ID is the listing's id (app_listings.id): the store card's key, and the database's tie-break
+	// in every sort.
+	ID string
 	// App is the URN of the app entity the listing presents.
 	App      string
 	Slug     string
@@ -40,6 +43,46 @@ type Listing struct {
 	UpdatedAt *time.Time
 	Stats     ListingStats
 	Media     []ListingMedia
+	// Detail is the body's public detail fields, decoded with Media (absent from Keys).
+	Detail ListingDetail
+}
+
+// ListingDetail is the public detail part of a store-listing@v1 body (STORE_LISTING_SCHEMA_DOCUMENT),
+// as the adapter takes it from the store's detail read: what GET /listings/{slug} answers beyond the
+// card. A field the body does not carry is its zero value (no link, no scopes, not a fork), never a
+// reason to drop the listing; a field of the wrong type fails the body.
+type ListingDetail struct {
+	AppBlockID       *string            `json:"appBlockId"`
+	SerialID         *int64             `json:"serialId"`
+	Collaborators    []ListingChip      `json:"collaborators"`
+	SourceRepoURL    *string            `json:"sourceRepoUrl"`
+	IssueTrackerURL  *string            `json:"issueTrackerUrl"`
+	ActionsRunSource *ListingRunSource  `json:"actionsRunSource"`
+	Scopes           []string           `json:"scopes"`
+	ConnectScopes    []string           `json:"connectScopes"`
+	BetaMessage      *string            `json:"betaMessage"`
+	Forkable         bool               `json:"forkable"`
+	ForkOf           *ListingStreamFork `json:"forkOf"`
+}
+
+// ListingChip is a creator or collaborator chip (ListingCreatorChip).
+type ListingChip struct {
+	ID       int64   `json:"id"`
+	Username *string `json:"username"`
+	Image    *string `json:"image"`
+}
+
+// ListingRunSource is the submitting GitHub Actions run (ListingActionsRunSource).
+type ListingRunSource struct {
+	Repository string `json:"repository"`
+	Tag        string `json:"tag"`
+	Sha        string `json:"sha"`
+}
+
+// ListingStreamFork is a fork's parent as the stream names it: Slug is the parent's slug when the
+// subscription may read the parent, else nil (hidden or gone). The read API resolves it per viewer.
+type ListingStreamFork struct {
+	Slug *string `json:"slug"`
 }
 
 // ListingStats is the listing's rollup. A counter the body does not carry as a count is nil (a
@@ -92,6 +135,7 @@ var (
 
 type listingBody struct {
 	App           *string         `json:"app"`
+	ID            *string         `json:"id"`
 	Slug          *string         `json:"slug"`
 	Name          *string         `json:"name"`
 	Kind          *string         `json:"kind"`
@@ -131,6 +175,9 @@ func ListingFromEntity(urn, rev string, body json.RawMessage) (Listing, []Drop, 
 	switch {
 	case b.App == nil || *b.App == "":
 		return Listing{}, nil, errors.New("app missing")
+	case b.ID == nil || *b.ID == "":
+		// The card's key and the sort tie-break: a listing without one cannot be ranked as the store ranks it.
+		return Listing{}, nil, errors.New("id missing")
 	case b.Slug == nil || *b.Slug == "":
 		return Listing{}, nil, errors.New("slug missing")
 	case b.Name == nil:
@@ -144,8 +191,11 @@ func ListingFromEntity(urn, rev string, body json.RawMessage) (Listing, []Drop, 
 	case b.Media == nil:
 		return Listing{}, nil, errors.New("media missing")
 	}
-	l := Listing{URN: urn, Rev: rev, Body: body, App: *b.App, Slug: *b.Slug, Name: *b.Name, Kind: *b.Kind}
+	l := Listing{URN: urn, Rev: rev, Body: body, ID: *b.ID, App: *b.App, Slug: *b.Slug, Name: *b.Name, Kind: *b.Kind}
 	var err error
+	if err := json.Unmarshal(body, &l.Detail); err != nil {
+		return Listing{}, nil, fmt.Errorf("detail fields: %w", err)
+	}
 	if l.ContentRating, err = nullableString(b.ContentRating); err != nil {
 		return Listing{}, nil, fmt.Errorf("contentRating: %w", err)
 	}
@@ -324,6 +374,7 @@ func decodeStored(urn, rev string, body []byte) (Listing, error) {
 func keyOf(l Listing) Listing {
 	l.Body = nil
 	l.Media = nil
+	l.Detail = ListingDetail{}
 	return l
 }
 

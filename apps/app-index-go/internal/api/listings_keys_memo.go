@@ -17,31 +17,16 @@ import (
 const maxKeysLoad = 10 * time.Second
 
 // keysMemo holds the serving generation's Keys (every listing's columns, which each GET /listings
-// ranks or filters) for the generation and cursor it was read at, so that a page costs one store
-// read of its own rows (GetMany) instead of a scan of every listing as well.
+// ranks or filters) for the (generation, cursor) it was read at, so a page costs one read of its own
+// rows (GetMany) rather than a scan of every listing too. Ranking stays in Go, the one port of the
+// store's sort, paging and viewer gate (internal/listingread), rather than a second copy in SQL.
 //
-// Why a memo rather than the sort and limit pushed into SQL: Rank and BySlugs are the one port of
-// the store's sort keys, its keyset paging and the viewer gate (internal/listingread), and they
-// compare keys as bytes, where Postgres compares under its collation. A SQL ranking would be a
-// second copy of those rules for the shadow diff to measure as well, and the in-memory store would
-// need a third. The scan this saves is the whole cost: the catalog is small enough to hold.
-//
-// The memo is keyed on (generation, cursor). Every change the consumer commits stores its cursor
-// in the same transaction (store.Generations Apply and Live), so a generation's rows cannot change
-// without its cursor moving: a new cursor or a new generation misses, and is read again. State is
-// read before the load, so the rows held are never older than the cursor they are filed under;
-// they may be newer, which a later request at that newer cursor reads again.
-//
-// Concurrent misses for one key share one load (singleflight). The load runs with the first
-// caller's values but not its cancellation, bounded by timeout: a client that gives up does not
-// fail the others waiting on the same load, and each waiter still leaves at its own deadline.
-//
-// Loads for two keys can finish out of order: a load for an older (generation, cursor) that
-// returns after the load for a newer one must not replace it, or every request at the newer key
-// would miss and load again. So the memo tracks the latest key a request asked for (a later
-// generation always wins, since generation ids only grow; within one generation, the cursor is
-// opaque, so the most recent request's key), and a finished load is stored only if its key is
-// still that one. A load that is not stored still answers the requests that waited on it.
+// Every committed change moves its generation's cursor in the same transaction, so a new cursor or
+// generation misses and is read again; State is read before the load, so held rows are never older
+// than their key. Concurrent misses share one load (singleflight), run detached from the first
+// caller's cancellation and bounded by timeout; each waiter leaves at its own deadline. A load that
+// finishes after a newer key was asked for (a later generation, or a later request's cursor within
+// one) answers its waiters but is not stored.
 //
 // The slice returned is shared by every request at that key: callers read it and never write it
 // (listingread's Rank, BySlugs and Filter build new slices).

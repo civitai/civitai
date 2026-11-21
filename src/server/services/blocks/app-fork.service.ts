@@ -246,6 +246,48 @@ export async function readListingForkParents(
 }
 
 /**
+ * {@link readListingForkProvenance} for many listings in one query: listing id → its provenance,
+ * for every listing given that has a row. Degrades to an empty map (every listing reads as
+ * {@link NO_FORK_PROVENANCE}) on a missing column only; everything else propagates.
+ */
+export async function readListingForkProvenanceMany(
+  listingIds: readonly string[],
+  db: ForkReadClient
+): Promise<Map<string, ListingForkProvenance>> {
+  if (listingIds.length === 0) return new Map();
+  try {
+    const rows = (await db.$queryRaw`SELECT
+          al."id" AS "id",
+          al."forkable" AS "forkable",
+          al."fork_of_listing_id" AS "forkOfListingId",
+          (al."fork_of_listing_id" IS NOT NULL
+            OR ab."fork_of_app_block_id" IS NOT NULL
+            OR ab."fork_of_commit_sha" IS NOT NULL) AS "isFork"
+        FROM "app_listings" al
+        LEFT JOIN "app_blocks" ab ON ab."id" = al."app_block_id"
+        WHERE al."id" = ANY(${[...listingIds]}::text[])`) as Array<{
+      id: string;
+      forkable: boolean | null;
+      forkOfListingId: string | null;
+      isFork: boolean | null;
+    }>;
+    return new Map(
+      rows.map((row) => [
+        row.id,
+        {
+          forkable: row.forkable === true,
+          forkOfListingId: row.forkOfListingId ?? null,
+          isFork: row.isFork === true,
+        },
+      ])
+    );
+  } catch (err) {
+    if (isMissingColumnError(err)) return new Map();
+    throw err;
+  }
+}
+
+/**
  * {@link readListingForkProvenance} for a RENDERING path — degrades on ANY error. A provenance
  * line is cosmetic; a statement timeout on it must not 500 a public store page.
  */

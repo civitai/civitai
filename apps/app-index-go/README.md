@@ -134,7 +134,8 @@ series is registered, nothing subscribes to the schema and the listing routes ar
   by one on a resumed stream are applied as they come.
 - **`unavailable`** (the adapter's answer when its listing read failed) deletes nothing: the
   subscription is opened again from the stored cursor, like any other `unavailable`.
-- A body missing an identity field (`app`, `slug`, `name`, `kind`, `contentRating`, `listingContentRating`), or a media item
+- A body missing an identity field (`app`, `id`, `slug`, `name`, `kind`, `contentRating`, `listingContentRating`), a
+  detail field of the wrong type, or a media item
   whose host or rating is unknown or whose `nsfwLevel` is not exactly its rating's level (pg 1, pg13
   2, r 4, x 8, xxx 16), is treated as deleted (`app_index_listings_events_applied_total{type="invalid"}`):
   such an item could not be gated.
@@ -207,20 +208,24 @@ exactly like a missing one.
 
 - The sorts and the keyset paging are the store grid's: the same sort keys, `top-rated` with the
   global mean pinned in the cursor for the paging session. The global mean is over the listings the
-  read model holds. Ties fall to the slug, where the database uses the listing id, which the stream
-  does not carry. A cursor that is not this service's format (the database path's `v2` cursors, or
-  anything that does not decode) pages from the start. Cursors are not signed: any well-formed one
+  read model holds. Ties fall to the listing id, as on the database, and a cursor carries the sort key
+  and the id (`rm2`), the database cursor's own fields. A cursor that is not this service's format
+  (the database path's `v2` cursors, an earlier layout's slug-keyed `rm1`, or anything that does not
+  decode) pages from the start. Cursors are not signed: any well-formed one
   is accepted and only positions the page, which every viewer may read from any position anyway.
 - `slugs` hydrates a search the site answered itself: the site keeps its text search where it is
   (the app index's `/search`, routed by its own `viewerNotRoutable` rule) and asks here for the cards
   of the slugs it found, as `listStoreListingsBySlugs` does from the database. They come back in the
   given order, each once, through the same gate and filters as the list; a slug the viewer could not
   find in the grid is left out. There is no text search here: `q` is refused (400).
-- A card is the site's `ListingCard` for the fields the stream carries: no `id` and no on-site
-  `kindData.appBlockId`; `restrictedAudience` is always null. A detail adds `description`,
-  `installCount` and `screenshots`, and leaves out the detail-only fields the stream does not carry
-  yet (`serialId`, `collaborators`, `scopes`, `connectScopes`, the links, `betaMessage`, the fork
-  fields).
+- A card is the site's `ListingCard`, `id` and the on-site `kindData.appBlockId` included;
+  `restrictedAudience` is always null. A detail adds `description`, `installCount`, `screenshots`
+  and the public detail fields (`serialId`, `collaborators`, `sourceRepoUrl`, `issueTrackerUrl`,
+  `actionsRunSource`, `scopes`, `connectScopes`, `betaMessage`, `forkable`, `forkOf`). `forkOf` is
+  resolved per viewer, as `resolveForkAttribution` does: the parent is read from the same generation
+  by the slug the stream names, and named only when this viewer may see it; a parent hidden from the
+  viewer, outside the stream or gone reads `{visible: false}`. The off-site
+  `kindData.connectClientId` is not in the stream, so not in the detail.
 - Every response is `no-store` and carries no CORS header. A store failure is 500, never an empty
   page. A read that races a generation switch is 503: each store read checks, after reading, that its
   generation still exists. A serving generation of an older row layout is 503 too, until the rebuild

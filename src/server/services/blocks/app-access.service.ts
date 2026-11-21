@@ -1646,6 +1646,32 @@ export async function listDisplayedCollaboratorUserIds(appListingId: string): Pr
 }
 
 /**
+ * {@link listDisplayedCollaboratorUserIds} for many listings in one query: listing id → its
+ * displayed collaborators' user ids, in seat order. A listing with none is absent.
+ */
+export async function listDisplayedCollaboratorUserIdsMany(
+  appListingIds: readonly string[]
+): Promise<Map<string, number[]>> {
+  const out = new Map<string, number[]>();
+  if (appListingIds.length === 0) return out;
+  const rows = await safeCollaboratorQuery(
+    () =>
+      dbRead.appCollaborator.findMany({
+        where: { appListingId: { in: [...appListingIds] }, status: ACCEPTED, displayed: true },
+        select: { appListingId: true, userId: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+    [] as { appListingId: string; userId: number }[]
+  );
+  for (const r of rows as { appListingId: string; userId: number }[]) {
+    const ids = out.get(r.appListingId) ?? [];
+    ids.push(r.userId);
+    out.set(r.appListingId, ids);
+  }
+  return out;
+}
+
+/**
  * The user ids that must be treated as "the app's own people" for ANTI-ABUSE
  * purposes — the owner plus every ACCEPTED collaborator, REGARDLESS of `displayed`.
  *

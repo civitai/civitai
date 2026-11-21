@@ -190,6 +190,37 @@ export async function readLiveActionsRunSourceForListing(
   }
 }
 
+/**
+ * {@link readLiveActionsRunSourceForListing} for many blocks in one query: block id → the run facts
+ * of the version it is serving, by the same join, order and public-repository filter. A block with
+ * none is absent; ANY error yields an empty map, as the single read yields null.
+ */
+export async function readLiveActionsRunSourcesForBlocks(
+  db: ActionsRunReadClient,
+  appBlockIds: readonly string[]
+): Promise<Map<string, ListingActionsRunSource>> {
+  const out = new Map<string, ListingActionsRunSource>();
+  if (appBlockIds.length === 0) return out;
+  try {
+    const rows = (await db.$queryRaw`SELECT DISTINCT ON (ab."id") ab."id" AS "id", ${SELECT_COLUMNS}
+        FROM "app_block_publish_requests" pr
+        JOIN "app_blocks" ab ON ab."id" = pr."app_block_id"
+        WHERE ab."id" IN (${Prisma.join([...appBlockIds])})
+          AND ab."current_version_sha" IS NOT NULL
+          AND pr."status" = 'approved'
+          AND pr."forgejo_commit_sha" = ab."current_version_sha"
+        ORDER BY ab."id", pr."reviewed_at" DESC NULLS LAST`) as ActionsRunRow[] | null | undefined;
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const source = publicActionsRunSource(rowToSource(row));
+      if (source && typeof row.id === 'string') out.set(row.id, source);
+    }
+    return out;
+  } catch (err) {
+    if (!isMissingColumnError(err)) noteDegradedRead(ACTIONS_RUN_SOURCE_DEGRADED_EVENT, err);
+    return new Map();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The repository pin (phase 1; repository linking replaces it)
 // ---------------------------------------------------------------------------
