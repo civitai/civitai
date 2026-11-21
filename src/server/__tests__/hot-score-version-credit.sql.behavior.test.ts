@@ -31,13 +31,39 @@ async function apply(dir: string, file = 'migration.sql', pg = db.pg) {
     if (/^CALL /.test(line)) {
       await pg.exec(chunk.join('\n'));
       // Batches of 2, so the few candidates here still span more than one batch.
-      await pg.exec(
-        line.replace('rescore_hot_version_head_start()', 'rescore_hot_version_head_start(2)')
+      const call = line.replace(
+        'rescore_hot_version_head_start()',
+        'rescore_hot_version_head_start(2)'
       );
+      if (dir === HEAD_START_DIR && file === 'migration.sql' && call === line)
+        throw new Error(`the batch-size override no longer matches the CALL line: ${line}`);
+      await pg.exec(call);
       chunk = [];
     } else chunk.push(line);
   }
   await pg.exec(chunk.join('\n'));
+}
+
+const HEAD_START_DIR = '20271121120000_model_hot_score_version_head_start';
+
+/**
+ * Runs a file the way psql does WITHOUT ON_ERROR_STOP: one top-level statement at a time,
+ * carrying on past errors. Splits on a line ending in ";" outside a dollar-quoted body.
+ */
+async function applyLikePsqlWithoutErrorStop(pg: PGlite, file: string) {
+  const sql = readFileSync(path.join(MIGRATIONS, HEAD_START_DIR, file), 'utf8');
+  const errors: string[] = [];
+  let statement: string[] = [];
+  let quote: string | null = null;
+  for (const line of sql.split('\n')) {
+    statement.push(line);
+    for (const tag of line.match(/\$[a-z_]*\$/g) ?? []) quote = quote === tag ? null : quote ?? tag;
+    if (quote === null && /;\s*$/.test(line) && !/^\s*--/.test(line)) {
+      await pg.exec(statement.join('\n')).catch((e: Error) => errors.push(e.message));
+      statement = [];
+    }
+  }
+  return errors;
 }
 
 const DAY = 86_400_000;
@@ -559,6 +585,19 @@ describe('the rescore lag watch', () => {
     await expect(apply(HEAD_START, 'migration.sql', pg)).rejects.toThrow();
     await pg.exec('ROLLBACK');
     await expect(pg.exec(preflight('migration.sql'))).rejects.toThrow('no replica lag visible');
+    expect(await functionExists(pg, 'hot_version_score')).toBe(false);
+    expect(await usesHeadStart(pg)).toBe(false);
+    await pg.close();
+  });
+
+  // The transaction wrap: without ON_ERROR_STOP psql carries on past the refusal, and only the
+  // explicit BEGIN keeps the trigger functions from being replaced.
+  it('changes nothing when run without ON_ERROR_STOP and refused', async () => {
+    const pg = await freshDb('20271117190000_model_hot_score_version_credit');
+
+    const errors = await applyLikePsqlWithoutErrorStop(pg, 'migration.sql');
+
+    expect(errors[0]).toContain('no replica lag visible');
     expect(await functionExists(pg, 'hot_version_score')).toBe(false);
     expect(await usesHeadStart(pg)).toBe(false);
     await pg.close();
