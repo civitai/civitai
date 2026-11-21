@@ -1023,8 +1023,8 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
 
 /**
  * Persists a session the caller has built: its records, then its listing (the (user, block)
- * pointer and the ban index; for a direct session also its `used` marker and its place in the
- * reaper's direct-session set). The one writer both a tunnel start and a direct preview session
+ * pointer and the ban index; for a direct session also its place in the reaper's direct-session
+ * set; its `used` marker is written earlier, by `openDirectPreviewSession`). The one writer both a tunnel start and a direct preview session
  * go through. Throws, after tearing the session down, when any write fails or the start was
  * cancelled (`DEV_TUNNEL_START_CANCELLED`).
  *
@@ -1487,8 +1487,7 @@ async function readOwnSessionForUserBlock(userId: number, blockId: string): Prom
  * tunnel to ask). Never creates anything and never extends the 8 h hard cap.
  *
  * `transport: 'direct'` keeps only a direct session: a tunnel session for the pair is left alone
- * and answered `not_found`, as if there were none. The runner sends it whenever it keeps an app's
- * preview by block id, so a tunnel the sandbox has let go is never kept alive this way.
+ * and answered `not_found`, as if there were none.
  */
 export async function keepAliveDevTunnelForUserBlock(
   userId: number,
@@ -1575,7 +1574,8 @@ export type OpenDirectPreviewResult =
  *      `claimStart` counts it;
  *   3. no such session but the id was used (its session ended): `fresh`, writing nothing.
  * A new session replaces whatever session the (user, block) pair had, as a tunnel start does.
- * Throws on a Redis error before anything is written; the caller answers "unavailable".
+ * Throws on a Redis error, and the caller answers "unavailable". Before the `used` marker is
+ * written nothing is; after it, a failed write tears the session down and the id stays used.
  */
 export async function openDirectPreviewSession(
   params: OpenDirectPreviewParams

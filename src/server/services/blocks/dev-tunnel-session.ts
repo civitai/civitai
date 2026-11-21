@@ -6,8 +6,8 @@ import { decodePreviewLabel } from '~/server/services/blocks/preview-session-hos
 export const DEV_TUNNEL_SESSION_BUZZ_CAP = 5000;
 
 /**
- * APP DEV TUNNEL — pure crypto primitives (no DB / Redis / k8s), so they are unit-testable in
- * isolation.
+ * APP DEV TUNNEL — crypto primitives with no DB / Redis / k8s access, so they are unit-testable
+ * in isolation.
  *
  * This is the direct sibling of `review-session.ts` (the mod review sandbox), with the "mod-bound"
  * binding swapped for "author-bound", and adds the tunnel-credential (sish `ssh -R` pubkey) helpers.

@@ -980,7 +980,7 @@ describe('POST preview/open (App Assistant direct preview)', () => {
     expect(startsCounted(OWNER)).toBe(1);
   });
 
-  // Review: a reuse must count as activity, or the reaper can end a preview the runner just
+  // A reuse must count as activity, or the reaper can end a preview the runner just
   // reopened.
   it('reusing a live session stamps its activity, counting no start', async () => {
     const first = (await open(OWNER, UNSUBMITTED_APP, PID_A)).json!;
@@ -1086,7 +1086,7 @@ describe('POST preview/open (App Assistant direct preview)', () => {
         json: { stopped: false },
       });
       expect(sessionRecord(sessionId)).not.toBeNull();
-      // Control, the behaviour without the filter (unchanged): the same tunnel is kept, then closed.
+      // Control, without the filter: the same tunnel is kept, then closed.
       expect(await byBlock(keepaliveRoute, OWNER, OWNED_APP)).toMatchObject({ status: 200 });
       expect(sessionRecord(sessionId).lastActivityAt).not.toBe(6000);
       expect(await byBlock(stopRoute, OWNER, OWNED_APP)).toMatchObject({
@@ -1095,7 +1095,7 @@ describe('POST preview/open (App Assistant direct preview)', () => {
       expect(sessionRecord(sessionId)).toBeNull();
     });
 
-    // Invariant guard (green before the filter existed): a direct session passes it.
+    // Invariant guard: a direct session passes the filter.
     it('keeps and closes a direct session, answering as without the filter', async () => {
       const { sessionId } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
       ageSession(sessionId, nowSec() - DEV_TUNNEL_IDLE_SECONDS + 60);
@@ -1152,7 +1152,7 @@ describe('POST preview/open (App Assistant direct preview)', () => {
     expect(revokesSent()).toEqual([]);
   });
 
-  // Review: each teardown can wait on an inline revoke, so the sweep must not take them one at a
+  // Each teardown can wait on an inline revoke, so the sweep must not take them one at a
   // time. Counted, not timed: the most revokes in flight at once.
   it('the sweep tears sessions down five at a time, not one after another', async () => {
     resolveMock.mockImplementation(async (blockId: string) => ({
@@ -1187,7 +1187,7 @@ describe('POST preview/open (App Assistant direct preview)', () => {
     expect(lua.set(DIRECT_SET) ?? []).toEqual([]);
   });
 
-  // Round-1 audit: the id is marked used BEFORE any record, so an open that fails part-way still
+  // The id is marked used BEFORE any record, so an open that fails part-way still
   // marks it (its teardown revoked the id; a later session on it would be killed by that revoke).
   it.each([
     [

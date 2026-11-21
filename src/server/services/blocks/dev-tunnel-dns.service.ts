@@ -130,9 +130,9 @@ async function serverHasName(server: string, name: string): Promise<boolean | nu
  * none could be asked: the check only narrows a race, and skipping it is the behaviour from before
  * it existed.
  *
- * Without `APPS_DEV_TUNNEL_INGRESS_TARGET` this deployment publishes no record per tunnel, so
- * there is nothing to wait for and the answer is always `true`. Nor for an App Assistant
- * direct-preview session host, which is never published one by one.
+ * Always `true` for an App Assistant direct-preview session host (never published one by one),
+ * and for any host when `APPS_DEV_TUNNEL_INGRESS_TARGET` is unset (this deployment then publishes
+ * no record per tunnel, so there is nothing to wait for).
  */
 export async function isDevTunnelHostPublished(host: string): Promise<boolean> {
   const kind = sessionHostKind(host, sessionHostDomains());
