@@ -1,0 +1,320 @@
+{
+  "name": "detail-training-data-cached",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "imageLocation": "https://image.example.test/golden",
+    "baseUrl": "https://site.example.test",
+    "coverageNext": false,
+    "baseModelFeedMetrics": false,
+    "regionRestricted": false,
+    "serverDomainRed": "red.example.test",
+    "serverDomainRedAliases": " Mirror.Red.Example.Test ,"
+  },
+  "request": {
+    "path": "/api/v1/models/5026",
+    "query": "",
+    "headers": {
+      "host": "site.example.test",
+      "cf-ipcountry": "US"
+    }
+  },
+  "world": {
+    "models": [],
+    "modelData": {},
+    "modelTags": {},
+    "tags": {
+      "11": {
+        "id": 11,
+        "name": "character",
+        "nsfwLevel": 1,
+        "type": "UserGenerated"
+      },
+      "12": {
+        "id": 12,
+        "name": "style",
+        "nsfwLevel": 1,
+        "type": "Label"
+      },
+      "13": {
+        "id": 13,
+        "name": "excluded thing",
+        "nsfwLevel": 1,
+        "type": "UserGenerated"
+      }
+    },
+    "users": {
+      "1001": {
+        "id": 1001,
+        "username": "artist_one",
+        "deletedAt": null,
+        "image": "00000000-0000-4000-8000-000000000901"
+      },
+      "1002": {
+        "id": 1002,
+        "username": "artist_two",
+        "deletedAt": null,
+        "image": null
+      }
+    },
+    "profilePictures": {
+      "1001": {
+        "id": 8901,
+        "name": null,
+        "url": "00000000-0000-4000-8000-000000008901",
+        "nsfwLevel": 1,
+        "hash": "UPROFILE8901",
+        "userId": 1001,
+        "ingestion": "Scanned",
+        "type": "image",
+        "width": 512,
+        "height": 512,
+        "metadata": {
+          "width": 512,
+          "height": 512
+        }
+      },
+      "1002": "notFound"
+    },
+    "paidAccessGates": [],
+    "paidAccess": {},
+    "images": {},
+    "imageTags": {},
+    "files": {},
+    "metricPrivacy": {},
+    "membership": {},
+    "gallerySettings": {},
+    "addons": [
+      {
+        "type": "none",
+        "nsfwLevels": [
+          8,
+          16
+        ],
+        "disablePoi": false
+      },
+      {
+        "type": "some",
+        "nsfwLevels": [
+          4,
+          8,
+          16
+        ],
+        "disableMinor": true,
+        "disablePoi": true
+      }
+    ],
+    "stats": {
+      "vaeLinked": [],
+      "modelMetrics": [],
+      "versionMetrics": [],
+      "versionMeta": []
+    },
+    "vaeFiles": [],
+    "usernames": {},
+    "trainingData": [
+      {
+        "id": 7072,
+        "modelVersionId": 6071,
+        "virusScanResult": "Success",
+        "nsfwLevel": 1,
+        "fullyRated": true,
+        "restricted": true
+      },
+      {
+        "id": 7073,
+        "modelVersionId": 6071,
+        "virusScanResult": "Success",
+        "nsfwLevel": 1,
+        "fullyRated": true,
+        "restricted": false
+      }
+    ],
+    "responseCache": {
+      "packed:caches:public-model-response:v2:5026:31": {
+        "data": {
+          "id": 5026,
+          "name": "Cached Dataset Model",
+          "modelVersions": [
+            {
+              "id": 6071,
+              "name": "v1",
+              "files": [
+                {
+                  "id": 7071,
+                  "name": "model.safetensors",
+                  "type": "Model",
+                  "sizeKB": 1.5
+                },
+                {
+                  "id": 7072,
+                  "name": "held.zip",
+                  "type": "Training Data",
+                  "sizeKB": 2,
+                  "metadata": {}
+                },
+                {
+                  "id": 7073,
+                  "name": "shared.zip",
+                  "type": "Training Data",
+                  "sizeKB": 3,
+                  "metadata": {}
+                }
+              ]
+            },
+            {
+              "id": 6072,
+              "name": "v2",
+              "images": []
+            }
+          ]
+        },
+        "cachedAt": 1781524740000
+      }
+    }
+  },
+  "redis": {
+    "packed:caches:basic-tags:11": {
+      "value": {
+        "id": 11,
+        "name": "character",
+        "nsfwLevel": 1,
+        "type": "UserGenerated",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkC6RuYW1lqWNoYXJhY3Rlcqluc2Z3TGV2ZWwBpHR5cGWtVXNlckdlbmVyYXRlZKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:basic-tags:12": {
+      "value": {
+        "id": 12,
+        "name": "style",
+        "nsfwLevel": 1,
+        "type": "Label",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkDKRuYW1lpXN0eWxlqW5zZndMZXZlbAGkdHlwZaVMYWJlbKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:basic-tags:13": {
+      "value": {
+        "id": 13,
+        "name": "excluded thing",
+        "nsfwLevel": 1,
+        "type": "UserGenerated",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkDaRuYW1lrmV4Y2x1ZGVkIHRoaW5nqW5zZndMZXZlbAGkdHlwZa1Vc2VyR2VuZXJhdGVkqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:basic-users:1001": {
+      "value": {
+        "id": 1001,
+        "username": "artist_one",
+        "deletedAt": null,
+        "image": "00000000-0000-4000-8000-000000000901",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQPpqHVzZXJuYW1lqmFydGlzdF9vbmWpZGVsZXRlZEF0wKVpbWFnZdkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwOTAxqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:basic-users:1002": {
+      "value": {
+        "id": 1002,
+        "username": "artist_two",
+        "deletedAt": null,
+        "image": null,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQPqqHVzZXJuYW1lqmFydGlzdF90d2+pZGVsZXRlZEF0wKVpbWFnZcCoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:profile-pictures:v4:1001": {
+      "value": {
+        "id": 8901,
+        "name": null,
+        "url": "00000000-0000-4000-8000-000000008901",
+        "nsfwLevel": 1,
+        "hash": "UPROFILE8901",
+        "userId": 1001,
+        "ingestion": "Scanned",
+        "type": "image",
+        "width": 512,
+        "height": 512,
+        "metadata": {
+          "width": 512,
+          "height": 512
+        },
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAMomlkzSLFpG5hbWXAo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTAxqW5zZndMZXZlbAGkaGFzaKxVUFJPRklMRTg5MDGmdXNlcklkzQPpqWluZ2VzdGlvbqdTY2FubmVkpHR5cGWlaW1hZ2Wld2lkdGjNAgCmaGVpZ2h0zQIAqG1ldGFkYXRh3gACpXdpZHRozQIApmhlaWdodM0CAKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:profile-pictures:v4:1002": {
+      "value": {
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gACqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:public-model-response:v2:5026:31": {
+      "value": {
+        "data": {
+          "id": 5026,
+          "name": "Cached Dataset Model",
+          "modelVersions": [
+            {
+              "id": 6071,
+              "name": "v1",
+              "files": [
+                {
+                  "id": 7071,
+                  "name": "model.safetensors",
+                  "type": "Model",
+                  "sizeKB": 1.5
+                },
+                {
+                  "id": 7072,
+                  "name": "held.zip",
+                  "type": "Training Data",
+                  "sizeKB": 2,
+                  "metadata": {}
+                },
+                {
+                  "id": 7073,
+                  "name": "shared.zip",
+                  "type": "Training Data",
+                  "sizeKB": 3,
+                  "metadata": {}
+                }
+              ]
+            },
+            {
+              "id": 6072,
+              "name": "v2",
+              "images": []
+            }
+          ]
+        },
+        "cachedAt": 1781524740000
+      },
+      "packed": "3gACpGRhdGHeAAOiaWTNE6KkbmFtZbRDYWNoZWQgRGF0YXNldCBNb2RlbK1tb2RlbFZlcnNpb25zkt4AA6JpZM0Xt6RuYW1lonYxpWZpbGVzk94ABKJpZM0bn6RuYW1lsW1vZGVsLnNhZmV0ZW5zb3JzpHR5cGWlTW9kZWymc2l6ZUtCyz/4AAAAAAAA3gAFomlkzRugpG5hbWWoaGVsZC56aXCkdHlwZa1UcmFpbmluZyBEYXRhpnNpemVLQgKobWV0YWRhdGHeAADeAAWiaWTNG6GkbmFtZapzaGFyZWQuemlwpHR5cGWtVHJhaW5pbmcgRGF0YaZzaXplS0IDqG1ldGFkYXRh3gAA3gADomlkzRe4pG5hbWWidjKmaW1hZ2VzkKhjYWNoZWRBdMtCeeyyY3oAAA=="
+    }
+  },
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"none\",\"nsfwLevels\":[8,16],\"disablePoi\":false},{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"disablePoi\":true}]"
+    }
+  },
+  "expect": {
+    "body": null,
+    "sql": null
+  }
+}

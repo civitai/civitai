@@ -6,7 +6,9 @@
     "baseUrl": "https://site.example.test",
     "coverageNext": false,
     "baseModelFeedMetrics": false,
-    "regionRestricted": true
+    "regionRestricted": true,
+    "serverDomainRed": "red.example.test",
+    "serverDomainRedAliases": " Mirror.Red.Example.Test ,"
   },
   "request": {
     "path": "/api/v1/models/5002",
@@ -328,6 +330,7 @@
     },
     "vaeFiles": [],
     "usernames": {},
+    "trainingData": [],
     "responseCache": {}
   },
   "redis": {

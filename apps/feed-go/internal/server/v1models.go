@@ -169,7 +169,7 @@ func (s *Server) computeV1ModelsID(ctx context.Context, r *http.Request) (*compu
 		return nil, fallback.New("v1-models-path")
 	}
 	ans, err := v1models.ServeDetail(ctx, s.V1Models.Deps, v1models.DetailRequest{
-		ID: id, RegionRestricted: s.regionRestricted(r),
+		ID: id, RegionRestricted: s.regionRestricted(r), Host: r.Host,
 	})
 	if err != nil {
 		return nil, err

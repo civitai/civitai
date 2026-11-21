@@ -39,6 +39,8 @@ type DetailRequest struct {
 	ID string
 	// RegionRestricted: the caller's region holds the level to PG/PG-13 (apiBrowsingLevel).
 	RegionRestricted bool
+	// Host is the request's Host header (isRedCapableHost, for the Training Data listing).
+	Host string
 }
 
 // ServeDetail answers `GET /api/v1/models/[id]` (the PublicEndpoint path: no session is read).
@@ -57,10 +59,13 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 	}
 	if d.Config.ResponseCacheTTL > 0 {
 		if body, age, ok := d.cachedDetail(ctx, id, level); ok && age >= NodeBuiltWindow {
-			if err := refuseTrainingData(body); err != nil {
+			// withListableTrainingData runs after the cache, which keys on neither the host nor a
+			// restriction placed since the entry was written.
+			out, err := d.withListableTrainingData(ctx, body, req.Host)
+			if err != nil {
 				return nil, err
 			}
-			return &Answer{Body: body, Cached: true}, nil
+			return &Answer{Body: out, Cached: true}, nil
 		}
 	}
 	res, err := d.getModelsWithVersions(ctx, withVersionsInput{
@@ -76,13 +81,19 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 	if len(res.items) == 0 {
 		return &Answer{Body: superjson.Object{{Key: "error", Val: "No model with id " + strconv.Itoa(id)}}, Trivial: true}, nil
 	}
+	// buildPublicModelResponse lists every Public file (Training Data too, without its metadata); the
+	// listing is applied to the built body as to a cached one.
 	body, err := shapeModel(res.items[0], shapeOptions{
 		level: level, detail: true, downloadBase: d.Config.BaseURL, imageLocation: d.Config.ImageLocation,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Answer{Body: body}, nil
+	out, err := d.withListableTrainingData(ctx, body, req.Host)
+	if err != nil {
+		return nil, err
+	}
+	return &Answer{Body: out}, nil
 }
 
 // cachedDetail is fetchModelResponseCached's read: the packed `{ data, cachedAt }` entry, served when
@@ -110,23 +121,6 @@ func (d *Deps) cachedDetail(ctx context.Context, id, level int) (superjson.Objec
 		return nil, 0, false
 	}
 	return data, time.Duration(ageMS) * time.Millisecond, true
-}
-
-// refuseTrainingData falls back on a body listing a Training Data file (withListableTrainingData
-// reads the replica's dataset rules: not ported).
-func refuseTrainingData(body superjson.Object) error {
-	versions, _ := getVal(body, "modelVersions").([]any)
-	for _, v := range versions {
-		vo, _ := v.(superjson.Object)
-		files, _ := getVal(vo, "files").([]any)
-		for _, f := range files {
-			fo, _ := f.(superjson.Object)
-			if t, _ := getVal(fo, "type").(string); t == "Training Data" {
-				return fallback.New("v1-models-training-data")
-			}
-		}
-	}
-	return nil
 }
 
 // ListRequest is one `GET /api/v1/models`.
@@ -214,9 +208,19 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 	if err != nil {
 		return nil, err
 	}
+	// runModelSearch's trainingDataListing over every item's versions (all their files, before the
+	// shaper's own filters).
+	versions := make([]superjson.Object, 0, len(res.items))
+	for _, it := range res.items {
+		versions = append(versions, it.versions...)
+	}
+	listing, err := d.trainingDataListing(ctx, versions, req.Host)
+	if err != nil {
+		return nil, err
+	}
 	opts := shapeOptions{
 		level: level, downloadBase: origin, nsfwImagePassthrough: in.Nsfw && !req.RegionRestricted,
-		primaryFileOnly: in.PrimaryFileOnly, imageLocation: d.Config.ImageLocation,
+		primaryFileOnly: in.PrimaryFileOnly, imageLocation: d.Config.ImageLocation, listing: listing,
 	}
 	items := make([]any, 0, len(res.items))
 	for _, it := range res.items {

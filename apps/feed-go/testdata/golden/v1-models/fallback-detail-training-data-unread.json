@@ -1,0 +1,1163 @@
+{
+  "name": "fallback-detail-training-data-unread",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "imageLocation": "https://image.example.test/golden",
+    "baseUrl": "https://site.example.test",
+    "coverageNext": false,
+    "baseModelFeedMetrics": false,
+    "regionRestricted": false,
+    "serverDomainRed": "red.example.test",
+    "serverDomainRedAliases": " Mirror.Red.Example.Test ,"
+  },
+  "request": {
+    "path": "/api/v1/models/5006",
+    "query": "",
+    "headers": {
+      "host": "site.example.test",
+      "cf-ipcountry": "US"
+    }
+  },
+  "world": {
+    "models": [
+      {
+        "id": 5006,
+        "name": "Model 5006",
+        "sfwName": null,
+        "coverImageId": null,
+        "sfwCoverImageId": null,
+        "description": "<p>About model 5006</p>",
+        "sfwDescription": null,
+        "allowNoCredit": true,
+        "allowCommercialUse": [
+          "Image",
+          "RentCivit"
+        ],
+        "allowDerivatives": true,
+        "allowDifferentLicense": false,
+        "type": "Checkpoint",
+        "minor": false,
+        "sfwOnly": false,
+        "poi": false,
+        "nsfw": false,
+        "nsfwLevel": 1,
+        "status": "Published",
+        "createdAt": {
+          "$date": "2026-05-01T08:00:00.000Z"
+        },
+        "lastVersionAt": {
+          "$date": "2026-06-01T10:00:00.500Z"
+        },
+        "publishedAt": {
+          "$date": "2026-05-02T08:00:00.000Z"
+        },
+        "locked": false,
+        "meta": {},
+        "mode": null,
+        "availability": "Public",
+        "rank": {
+          "downloadCount": 10,
+          "thumbsUpCount": 5,
+          "thumbsDownCount": 0,
+          "commentCount": 1,
+          "collectedCount": 2,
+          "tippedAmountCount": 0
+        },
+        "userId": 1001,
+        "cursorId": "5|10|5006"
+      }
+    ],
+    "modelData": {
+      "5006": {
+        "modelId": 5006,
+        "hashes": [
+          "H5006"
+        ],
+        "tags": [],
+        "versions": [
+          {
+            "id": 6051,
+            "index": 0,
+            "name": "v6051",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "SDXL 1.0",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-05-03T09:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-05-04T09:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>Version 6051</p>",
+            "trainedWords": [],
+            "vaeId": null,
+            "covered": false,
+            "coveredNext": false
+          }
+        ]
+      }
+    },
+    "modelTags": {
+      "5006": {
+        "modelId": 5006,
+        "tagIds": [
+          11,
+          12
+        ]
+      }
+    },
+    "tags": {
+      "11": {
+        "id": 11,
+        "name": "character",
+        "nsfwLevel": 1,
+        "type": "UserGenerated"
+      },
+      "12": {
+        "id": 12,
+        "name": "style",
+        "nsfwLevel": 1,
+        "type": "Label"
+      },
+      "13": {
+        "id": 13,
+        "name": "excluded thing",
+        "nsfwLevel": 1,
+        "type": "UserGenerated"
+      }
+    },
+    "users": {
+      "1001": {
+        "id": 1001,
+        "username": "artist_one",
+        "deletedAt": null,
+        "image": "00000000-0000-4000-8000-000000000901"
+      },
+      "1002": {
+        "id": 1002,
+        "username": "artist_two",
+        "deletedAt": null,
+        "image": null
+      }
+    },
+    "profilePictures": {
+      "1001": {
+        "id": 8901,
+        "name": null,
+        "url": "00000000-0000-4000-8000-000000008901",
+        "nsfwLevel": 1,
+        "hash": "UPROFILE8901",
+        "userId": 1001,
+        "ingestion": "Scanned",
+        "type": "image",
+        "width": 512,
+        "height": 512,
+        "metadata": {
+          "width": 512,
+          "height": 512
+        }
+      },
+      "1002": "notFound"
+    },
+    "paidAccessGates": [],
+    "paidAccess": {
+      "6051": "notFound"
+    },
+    "images": {
+      "6051": "notFound"
+    },
+    "imageTags": {},
+    "files": {
+      "6051": {
+        "modelVersionId": 6051,
+        "files": [
+          {
+            "id": 7051,
+            "url": "https://storage.example.test/models/7051.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "file_7051.safetensors",
+            "overrideName": null,
+            "type": "Model",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7051"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7051"
+              }
+            ],
+            "metadata": {
+              "format": "SafeTensor",
+              "size": "pruned",
+              "fp": "fp16"
+            }
+          },
+          {
+            "id": 7052,
+            "url": "https://storage.example.test/models/7052.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7052.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7052"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7052"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": 1,
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7053,
+            "url": "https://storage.example.test/models/7053.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7053.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7053"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7053"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": 1,
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7054,
+            "url": "https://storage.example.test/models/7054.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7054.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7054"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7054"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": 4,
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7055,
+            "url": "https://storage.example.test/models/7055.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7055.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7055"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7055"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": 1,
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7056,
+            "url": "https://storage.example.test/models/7056.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7056.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7056"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7056"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": 1,
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7057,
+            "url": "https://storage.example.test/models/7057.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7057.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7057"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7057"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": 1,
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7058,
+            "url": "https://storage.example.test/models/7058.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7058.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Private",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7058"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7058"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": 1,
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7059,
+            "url": "https://storage.example.test/models/7059.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7059.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7059"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7059"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": "4",
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7060,
+            "url": "https://storage.example.test/models/7060.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "norow.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7060"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7060"
+              }
+            ],
+            "metadata": {}
+          }
+        ]
+      }
+    },
+    "metricPrivacy": {
+      "1001": {
+        "hideModelBuzz": false,
+        "hideModelDownloads": false,
+        "hideModelGenerations": false
+      }
+    },
+    "membership": {},
+    "gallerySettings": {},
+    "addons": [
+      {
+        "type": "none",
+        "nsfwLevels": [
+          8,
+          16
+        ],
+        "disablePoi": false
+      },
+      {
+        "type": "some",
+        "nsfwLevels": [
+          4,
+          8,
+          16
+        ],
+        "disableMinor": true,
+        "disablePoi": true
+      }
+    ],
+    "stats": {
+      "vaeLinked": [],
+      "modelMetrics": [
+        {
+          "modelId": 5006,
+          "downloadCount": 1001,
+          "thumbsUpCount": 301,
+          "thumbsDownCount": 3,
+          "commentCount": 12,
+          "tippedAmountCount": 40
+        }
+      ],
+      "versionMetrics": [
+        {
+          "modelVersionId": 6051,
+          "downloadCount": 103,
+          "thumbsUpCount": 21,
+          "thumbsDownCount": 1
+        }
+      ],
+      "versionMeta": [
+        {
+          "id": 6051,
+          "meta": {}
+        }
+      ]
+    },
+    "vaeFiles": [],
+    "usernames": {},
+    "trainingData": [
+      {
+        "id": 7052,
+        "modelVersionId": 6051,
+        "virusScanResult": "Success",
+        "nsfwLevel": 1,
+        "fullyRated": true,
+        "restricted": false
+      },
+      {
+        "id": 7053,
+        "modelVersionId": 6051,
+        "virusScanResult": "Success",
+        "nsfwLevel": 1,
+        "fullyRated": true,
+        "restricted": true
+      },
+      {
+        "id": 7054,
+        "modelVersionId": 6051,
+        "virusScanResult": "Success",
+        "nsfwLevel": 4,
+        "fullyRated": true,
+        "restricted": false
+      },
+      {
+        "id": 7055,
+        "modelVersionId": 6051,
+        "virusScanResult": "Success",
+        "nsfwLevel": 1,
+        "fullyRated": false,
+        "restricted": false
+      },
+      {
+        "id": 7056,
+        "modelVersionId": 6051,
+        "virusScanResult": "Pending",
+        "nsfwLevel": 1,
+        "fullyRated": true,
+        "restricted": false
+      },
+      {
+        "id": 7057,
+        "modelVersionId": 6051,
+        "virusScanResult": "Success",
+        "nsfwLevel": 1,
+        "fullyRated": true,
+        "restricted": null
+      },
+      {
+        "id": 7058,
+        "modelVersionId": 6051,
+        "virusScanResult": "Success",
+        "nsfwLevel": 1,
+        "fullyRated": true,
+        "restricted": false
+      },
+      {
+        "id": 7059,
+        "modelVersionId": 6051,
+        "virusScanResult": "Success",
+        "nsfwLevel": "4",
+        "fullyRated": true,
+        "restricted": false
+      }
+    ],
+    "responseCache": {},
+    "trainingDataError": true
+  },
+  "redis": {
+    "packed:caches:data-for-model-2:5006": {
+      "value": {
+        "modelId": 5006,
+        "hashes": [
+          "H5006"
+        ],
+        "tags": [],
+        "versions": [
+          {
+            "id": 6051,
+            "index": 0,
+            "name": "v6051",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "SDXL 1.0",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-05-03T09:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-05-04T09:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>Version 6051</p>",
+            "trainedWords": [],
+            "vaeId": null,
+            "covered": false,
+            "coveredNext": false
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFp21vZGVsSWTNE46maGFzaGVzkaVINTAwNqR0YWdzkKh2ZXJzaW9uc5HeABKiaWTNF6OlaW5kZXgApG5hbWWldjYwNTG0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKhTRFhMIDEuMK1iYXNlTW9kZWxUeXBlqFN0YW5kYXJkqWNyZWF0ZWRBdNb/afcOkK50cmFpbmluZ1N0YXR1c8CrcHVibGlzaGVkQXTW/2n4YBCmc3RhdHVzqVB1Ymxpc2hlZKVmbGFncwCsYXZhaWxhYmlsaXR5plB1YmxpY6luc2Z3TGV2ZWwBq2Rlc2NyaXB0aW9uszxwPlZlcnNpb24gNjA1MTwvcD6sdHJhaW5lZFdvcmRzkKV2YWVJZMCnY292ZXJlZMKrY292ZXJlZE5leHTCqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:model-tags:5006": {
+      "value": {
+        "modelId": 5006,
+        "tagIds": [
+          11,
+          12
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp21vZGVsSWTNE46mdGFnSWRzkgsMqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:basic-tags:11": {
+      "value": {
+        "id": 11,
+        "name": "character",
+        "nsfwLevel": 1,
+        "type": "UserGenerated",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkC6RuYW1lqWNoYXJhY3Rlcqluc2Z3TGV2ZWwBpHR5cGWtVXNlckdlbmVyYXRlZKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:basic-tags:12": {
+      "value": {
+        "id": 12,
+        "name": "style",
+        "nsfwLevel": 1,
+        "type": "Label",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkDKRuYW1lpXN0eWxlqW5zZndMZXZlbAGkdHlwZaVMYWJlbKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:basic-tags:13": {
+      "value": {
+        "id": 13,
+        "name": "excluded thing",
+        "nsfwLevel": 1,
+        "type": "UserGenerated",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkDaRuYW1lrmV4Y2x1ZGVkIHRoaW5nqW5zZndMZXZlbAGkdHlwZa1Vc2VyR2VuZXJhdGVkqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:basic-users:1001": {
+      "value": {
+        "id": 1001,
+        "username": "artist_one",
+        "deletedAt": null,
+        "image": "00000000-0000-4000-8000-000000000901",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQPpqHVzZXJuYW1lqmFydGlzdF9vbmWpZGVsZXRlZEF0wKVpbWFnZdkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwOTAxqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:basic-users:1002": {
+      "value": {
+        "id": 1002,
+        "username": "artist_two",
+        "deletedAt": null,
+        "image": null,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQPqqHVzZXJuYW1lqmFydGlzdF90d2+pZGVsZXRlZEF0wKVpbWFnZcCoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:profile-pictures:v4:1001": {
+      "value": {
+        "id": 8901,
+        "name": null,
+        "url": "00000000-0000-4000-8000-000000008901",
+        "nsfwLevel": 1,
+        "hash": "UPROFILE8901",
+        "userId": 1001,
+        "ingestion": "Scanned",
+        "type": "image",
+        "width": 512,
+        "height": 512,
+        "metadata": {
+          "width": 512,
+          "height": 512
+        },
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAMomlkzSLFpG5hbWXAo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTAxqW5zZndMZXZlbAGkaGFzaKxVUFJPRklMRTg5MDGmdXNlcklkzQPpqWluZ2VzdGlvbqdTY2FubmVkpHR5cGWlaW1hZ2Wld2lkdGjNAgCmaGVpZ2h0zQIAqG1ldGFkYXRh3gACpXdpZHRozQIApmhlaWdodM0CAKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:profile-pictures:v4:1002": {
+      "value": {
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gACqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:paid-access:ModelVersion:6051": {
+      "value": {
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gACqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:images-for-model-version-2:6051": {
+      "value": {
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gACqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:files-for-model-version-2:6051": {
+      "value": {
+        "modelVersionId": 6051,
+        "files": [
+          {
+            "id": 7051,
+            "url": "https://storage.example.test/models/7051.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "file_7051.safetensors",
+            "overrideName": null,
+            "type": "Model",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7051"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7051"
+              }
+            ],
+            "metadata": {
+              "format": "SafeTensor",
+              "size": "pruned",
+              "fp": "fp16"
+            }
+          },
+          {
+            "id": 7052,
+            "url": "https://storage.example.test/models/7052.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7052.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7052"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7052"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": 1,
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7053,
+            "url": "https://storage.example.test/models/7053.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7053.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7053"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7053"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": 1,
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7054,
+            "url": "https://storage.example.test/models/7054.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7054.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7054"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7054"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": 4,
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7055,
+            "url": "https://storage.example.test/models/7055.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7055.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7055"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7055"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": 1,
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7056,
+            "url": "https://storage.example.test/models/7056.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7056.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7056"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7056"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": 1,
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7057,
+            "url": "https://storage.example.test/models/7057.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7057.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7057"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7057"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": 1,
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7058,
+            "url": "https://storage.example.test/models/7058.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7058.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Private",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7058"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7058"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": 1,
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7059,
+            "url": "https://storage.example.test/models/7059.safetensors",
+            "sizeKB": 2048,
+            "name": "dataset_7059.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7059"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7059"
+              }
+            ],
+            "metadata": {
+              "nsfwLevel": "4",
+              "fullyRated": true,
+              "datasetArchive": {
+                "status": "archived"
+              }
+            }
+          },
+          {
+            "id": 7060,
+            "url": "https://storage.example.test/models/7060.safetensors",
+            "sizeKB": 12345.6789,
+            "name": "norow.zip",
+            "overrideName": null,
+            "type": "Training Data",
+            "visibility": "Public",
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "No Pickle imports",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-05-04T09:30:00.000Z"
+            },
+            "modelVersionId": 6051,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "A7060"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF7060"
+              }
+            ],
+            "metadata": {}
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzRejpWZpbGVzmt4AD6JpZM0bi6N1cmzZNGh0dHBzOi8vc3RvcmFnZS5leGFtcGxlLnRlc3QvbW9kZWxzLzcwNTEuc2FmZXRlbnNvcnOmc2l6ZUtCy0DIHNbmMfihpG5hbWW1ZmlsZV83MDUxLnNhZmV0ZW5zb3JzrG92ZXJyaWRlTmFtZcCkdHlwZaVNb2RlbKp2aXNpYmlsaXR5plB1YmxpY7BwaWNrbGVTY2FuUmVzdWx0p1N1Y2Nlc3OxcGlja2xlU2Nhbk1lc3NhZ2WxTm8gUGlja2xlIGltcG9ydHOvdmlydXNTY2FuUmVzdWx0p1N1Y2Nlc3OwdmlydXNTY2FuTWVzc2FnZcCpc2Nhbm5lZEF01v9p+GcYrm1vZGVsVmVyc2lvbklkzRejpmhhc2hlc5LeAAKkdHlwZaZBdXRvVjKkaGFzaKVBNzA1Md4AAqR0eXBlplNIQTI1NqRoYXNoqkFCQ0RFRjcwNTGobWV0YWRhdGHeAAOmZm9ybWF0qlNhZmVUZW5zb3Kkc2l6ZaZwcnVuZWSiZnCkZnAxNt4AD6JpZM0bjKN1cmzZNGh0dHBzOi8vc3RvcmFnZS5leGFtcGxlLnRlc3QvbW9kZWxzLzcwNTIuc2FmZXRlbnNvcnOmc2l6ZUtCzQgApG5hbWWwZGF0YXNldF83MDUyLnppcKxvdmVycmlkZU5hbWXApHR5cGWtVHJhaW5pbmcgRGF0Yap2aXNpYmlsaXR5plB1YmxpY7BwaWNrbGVTY2FuUmVzdWx0p1N1Y2Nlc3OxcGlja2xlU2Nhbk1lc3NhZ2WxTm8gUGlja2xlIGltcG9ydHOvdmlydXNTY2FuUmVzdWx0p1N1Y2Nlc3OwdmlydXNTY2FuTWVzc2FnZcCpc2Nhbm5lZEF01v9p+GcYrm1vZGVsVmVyc2lvbklkzRejpmhhc2hlc5LeAAKkdHlwZaZBdXRvVjKkaGFzaKVBNzA1Mt4AAqR0eXBlplNIQTI1NqRoYXNoqkFCQ0RFRjcwNTKobWV0YWRhdGHeAAOpbnNmd0xldmVsAapmdWxseVJhdGVkw65kYXRhc2V0QXJjaGl2Zd4AAaZzdGF0dXOoYXJjaGl2ZWTeAA+iaWTNG42jdXJs2TRodHRwczovL3N0b3JhZ2UuZXhhbXBsZS50ZXN0L21vZGVscy83MDUzLnNhZmV0ZW5zb3JzpnNpemVLQs0IAKRuYW1lsGRhdGFzZXRfNzA1My56aXCsb3ZlcnJpZGVOYW1lwKR0eXBlrVRyYWluaW5nIERhdGGqdmlzaWJpbGl0eaZQdWJsaWOwcGlja2xlU2NhblJlc3VsdKdTdWNjZXNzsXBpY2tsZVNjYW5NZXNzYWdlsU5vIFBpY2tsZSBpbXBvcnRzr3ZpcnVzU2NhblJlc3VsdKdTdWNjZXNzsHZpcnVzU2Nhbk1lc3NhZ2XAqXNjYW5uZWRBdNb/afhnGK5tb2RlbFZlcnNpb25JZM0Xo6ZoYXNoZXOS3gACpHR5cGWmQXV0b1YypGhhc2ilQTcwNTPeAAKkdHlwZaZTSEEyNTakaGFzaKpBQkNERUY3MDUzqG1ldGFkYXRh3gADqW5zZndMZXZlbAGqZnVsbHlSYXRlZMOuZGF0YXNldEFyY2hpdmXeAAGmc3RhdHVzqGFyY2hpdmVk3gAPomlkzRuOo3VybNk0aHR0cHM6Ly9zdG9yYWdlLmV4YW1wbGUudGVzdC9tb2RlbHMvNzA1NC5zYWZldGVuc29yc6ZzaXplS0LNCACkbmFtZbBkYXRhc2V0XzcwNTQuemlwrG92ZXJyaWRlTmFtZcCkdHlwZa1UcmFpbmluZyBEYXRhqnZpc2liaWxpdHmmUHVibGljsHBpY2tsZVNjYW5SZXN1bHSnU3VjY2Vzc7FwaWNrbGVTY2FuTWVzc2FnZbFObyBQaWNrbGUgaW1wb3J0c692aXJ1c1NjYW5SZXN1bHSnU3VjY2Vzc7B2aXJ1c1NjYW5NZXNzYWdlwKlzY2FubmVkQXTW/2n4ZxiubW9kZWxWZXJzaW9uSWTNF6OmaGFzaGVzkt4AAqR0eXBlpkF1dG9WMqRoYXNopUE3MDU03gACpHR5cGWmU0hBMjU2pGhhc2iqQUJDREVGNzA1NKhtZXRhZGF0Yd4AA6luc2Z3TGV2ZWwEqmZ1bGx5UmF0ZWTDrmRhdGFzZXRBcmNoaXZl3gABpnN0YXR1c6hhcmNoaXZlZN4AD6JpZM0bj6N1cmzZNGh0dHBzOi8vc3RvcmFnZS5leGFtcGxlLnRlc3QvbW9kZWxzLzcwNTUuc2FmZXRlbnNvcnOmc2l6ZUtCzQgApG5hbWWwZGF0YXNldF83MDU1LnppcKxvdmVycmlkZU5hbWXApHR5cGWtVHJhaW5pbmcgRGF0Yap2aXNpYmlsaXR5plB1YmxpY7BwaWNrbGVTY2FuUmVzdWx0p1N1Y2Nlc3OxcGlja2xlU2Nhbk1lc3NhZ2WxTm8gUGlja2xlIGltcG9ydHOvdmlydXNTY2FuUmVzdWx0p1N1Y2Nlc3OwdmlydXNTY2FuTWVzc2FnZcCpc2Nhbm5lZEF01v9p+GcYrm1vZGVsVmVyc2lvbklkzRejpmhhc2hlc5LeAAKkdHlwZaZBdXRvVjKkaGFzaKVBNzA1Nd4AAqR0eXBlplNIQTI1NqRoYXNoqkFCQ0RFRjcwNTWobWV0YWRhdGHeAAOpbnNmd0xldmVsAapmdWxseVJhdGVkw65kYXRhc2V0QXJjaGl2Zd4AAaZzdGF0dXOoYXJjaGl2ZWTeAA+iaWTNG5CjdXJs2TRodHRwczovL3N0b3JhZ2UuZXhhbXBsZS50ZXN0L21vZGVscy83MDU2LnNhZmV0ZW5zb3JzpnNpemVLQs0IAKRuYW1lsGRhdGFzZXRfNzA1Ni56aXCsb3ZlcnJpZGVOYW1lwKR0eXBlrVRyYWluaW5nIERhdGGqdmlzaWJpbGl0eaZQdWJsaWOwcGlja2xlU2NhblJlc3VsdKdTdWNjZXNzsXBpY2tsZVNjYW5NZXNzYWdlsU5vIFBpY2tsZSBpbXBvcnRzr3ZpcnVzU2NhblJlc3VsdKdTdWNjZXNzsHZpcnVzU2Nhbk1lc3NhZ2XAqXNjYW5uZWRBdNb/afhnGK5tb2RlbFZlcnNpb25JZM0Xo6ZoYXNoZXOS3gACpHR5cGWmQXV0b1YypGhhc2ilQTcwNTbeAAKkdHlwZaZTSEEyNTakaGFzaKpBQkNERUY3MDU2qG1ldGFkYXRh3gADqW5zZndMZXZlbAGqZnVsbHlSYXRlZMOuZGF0YXNldEFyY2hpdmXeAAGmc3RhdHVzqGFyY2hpdmVk3gAPomlkzRuRo3VybNk0aHR0cHM6Ly9zdG9yYWdlLmV4YW1wbGUudGVzdC9tb2RlbHMvNzA1Ny5zYWZldGVuc29yc6ZzaXplS0LNCACkbmFtZbBkYXRhc2V0XzcwNTcuemlwrG92ZXJyaWRlTmFtZcCkdHlwZa1UcmFpbmluZyBEYXRhqnZpc2liaWxpdHmmUHVibGljsHBpY2tsZVNjYW5SZXN1bHSnU3VjY2Vzc7FwaWNrbGVTY2FuTWVzc2FnZbFObyBQaWNrbGUgaW1wb3J0c692aXJ1c1NjYW5SZXN1bHSnU3VjY2Vzc7B2aXJ1c1NjYW5NZXNzYWdlwKlzY2FubmVkQXTW/2n4ZxiubW9kZWxWZXJzaW9uSWTNF6OmaGFzaGVzkt4AAqR0eXBlpkF1dG9WMqRoYXNopUE3MDU33gACpHR5cGWmU0hBMjU2pGhhc2iqQUJDREVGNzA1N6htZXRhZGF0Yd4AA6luc2Z3TGV2ZWwBqmZ1bGx5UmF0ZWTDrmRhdGFzZXRBcmNoaXZl3gABpnN0YXR1c6hhcmNoaXZlZN4AD6JpZM0bkqN1cmzZNGh0dHBzOi8vc3RvcmFnZS5leGFtcGxlLnRlc3QvbW9kZWxzLzcwNTguc2FmZXRlbnNvcnOmc2l6ZUtCzQgApG5hbWWwZGF0YXNldF83MDU4LnppcKxvdmVycmlkZU5hbWXApHR5cGWtVHJhaW5pbmcgRGF0Yap2aXNpYmlsaXR5p1ByaXZhdGWwcGlja2xlU2NhblJlc3VsdKdTdWNjZXNzsXBpY2tsZVNjYW5NZXNzYWdlsU5vIFBpY2tsZSBpbXBvcnRzr3ZpcnVzU2NhblJlc3VsdKdTdWNjZXNzsHZpcnVzU2Nhbk1lc3NhZ2XAqXNjYW5uZWRBdNb/afhnGK5tb2RlbFZlcnNpb25JZM0Xo6ZoYXNoZXOS3gACpHR5cGWmQXV0b1YypGhhc2ilQTcwNTjeAAKkdHlwZaZTSEEyNTakaGFzaKpBQkNERUY3MDU4qG1ldGFkYXRh3gADqW5zZndMZXZlbAGqZnVsbHlSYXRlZMOuZGF0YXNldEFyY2hpdmXeAAGmc3RhdHVzqGFyY2hpdmVk3gAPomlkzRuTo3VybNk0aHR0cHM6Ly9zdG9yYWdlLmV4YW1wbGUudGVzdC9tb2RlbHMvNzA1OS5zYWZldGVuc29yc6ZzaXplS0LNCACkbmFtZbBkYXRhc2V0XzcwNTkuemlwrG92ZXJyaWRlTmFtZcCkdHlwZa1UcmFpbmluZyBEYXRhqnZpc2liaWxpdHmmUHVibGljsHBpY2tsZVNjYW5SZXN1bHSnU3VjY2Vzc7FwaWNrbGVTY2FuTWVzc2FnZbFObyBQaWNrbGUgaW1wb3J0c692aXJ1c1NjYW5SZXN1bHSnU3VjY2Vzc7B2aXJ1c1NjYW5NZXNzYWdlwKlzY2FubmVkQXTW/2n4ZxiubW9kZWxWZXJzaW9uSWTNF6OmaGFzaGVzkt4AAqR0eXBlpkF1dG9WMqRoYXNopUE3MDU53gACpHR5cGWmU0hBMjU2pGhhc2iqQUJDREVGNzA1OahtZXRhZGF0Yd4AA6luc2Z3TGV2ZWyhNKpmdWxseVJhdGVkw65kYXRhc2V0QXJjaGl2Zd4AAaZzdGF0dXOoYXJjaGl2ZWTeAA+iaWTNG5SjdXJs2TRodHRwczovL3N0b3JhZ2UuZXhhbXBsZS50ZXN0L21vZGVscy83MDYwLnNhZmV0ZW5zb3JzpnNpemVLQstAyBzW5jH4oaRuYW1lqW5vcm93LnppcKxvdmVycmlkZU5hbWXApHR5cGWtVHJhaW5pbmcgRGF0Yap2aXNpYmlsaXR5plB1YmxpY7BwaWNrbGVTY2FuUmVzdWx0p1N1Y2Nlc3OxcGlja2xlU2Nhbk1lc3NhZ2WxTm8gUGlja2xlIGltcG9ydHOvdmlydXNTY2FuUmVzdWx0p1N1Y2Nlc3OwdmlydXNTY2FuTWVzc2FnZcCpc2Nhbm5lZEF01v9p+GcYrm1vZGVsVmVyc2lvbklkzRejpmhhc2hlc5LeAAKkdHlwZaZBdXRvVjKkaGFzaKVBNzA2MN4AAqR0eXBlplNIQTI1NqRoYXNoqkFCQ0RFRjcwNjCobWV0YWRhdGHeAACoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:user-metric-privacy-defaults:1001": {
+      "value": {
+        "hideModelBuzz": false,
+        "hideModelDownloads": false,
+        "hideModelGenerations": false
+      },
+      "packed": "3gADrWhpZGVNb2RlbEJ1enrCsmhpZGVNb2RlbERvd25sb2Fkc8K0aGlkZU1vZGVsR2VuZXJhdGlvbnPC"
+    }
+  },
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"none\",\"nsfwLevels\":[8,16],\"disablePoi\":false},{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"disablePoi\":true}]"
+    }
+  },
+  "expect": {
+    "fallback": "v1-models-training-data-unread"
+  }
+}

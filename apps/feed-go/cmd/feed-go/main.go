@@ -444,6 +444,7 @@ func run(log *slog.Logger) error {
 				ComputeMisses:        cfg.ComputeMisses,
 				ResponseCacheTTL:     mc.ResponseCacheTTL,
 				Production:           true,
+				RedHosts:             v1models.RedHosts(cfg.HostPrimaries["red"], cfg.Hosts["red"]),
 			},
 		},
 		Users: sources,
