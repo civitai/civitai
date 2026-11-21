@@ -1,9 +1,11 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parse } from 'yaml';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
 import {
   MAX_LISTED_FILES,
@@ -21,7 +23,8 @@ import {
 // against the real workflow files so a filter edit there moves the answer here.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const WORKFLOW_DIR = path.resolve(HERE, '../../.github/workflows');
+const REPO = path.resolve(HERE, '../..');
+const WORKFLOW_DIR = path.join(REPO, '.github/workflows');
 const workflow = (file: string) => readFileSync(path.join(WORKFLOW_DIR, file), 'utf8');
 const DRAFT = { draft: 'true' };
 
@@ -243,6 +246,51 @@ describe('github-paths-filter', () => {
         expect(got.run).toBe(true);
         expect(got.reason).toMatch(/failing open$/);
       });
+    });
+  });
+
+  // The command line full-ci.yml runs. Its step reads column 2 of each tab-separated line with
+  // `cut -f2` and dispatches unless it is exactly `skip`, so the separator and the fail-open
+  // verdicts are the contract: pinned here as whole lines, by running the script.
+  describe('the CLI', () => {
+    const SCRIPT = path.join(REPO, 'scripts/ci/github-paths-filter.mjs');
+    const tmp = mkdtempSync(path.join(tmpdir(), 'github-paths-filter-'));
+    afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+    const APPS = '.github/workflows/apps.yml';
+    const FEED = '.github/workflows/feed-go.yml';
+    const cli = (args: string[]) =>
+      execFileSync(process.execPath, [SCRIPT, ...args], { cwd: REPO, encoding: 'utf8' });
+    const changed = (name: string, files: string[]) => {
+      const file = path.join(tmp, name);
+      writeFileSync(file, files.map((f) => `${f}\n`).join(''));
+      return file;
+    };
+
+    it('prints <workflow> TAB run|skip TAB <reason> per workflow, on a draft', () => {
+      const list = changed('draft.txt', ['apps/moderator/src/a.ts', 'docs/x.md']);
+      expect(cli(['--draft', 'true', '--changed', list, APPS, FEED])).toBe(
+        `${APPS}\trun\ta changed file passes its pull_request paths filter\n` +
+          `${FEED}\tskip\tno changed file passes its pull_request paths filter\n`
+      );
+    });
+
+    it('skips every workflow with --draft false, whatever changed', () => {
+      const list = changed('ready.txt', ['apps/moderator/src/a.ts', 'apps/feed-go/main.go']);
+      expect(cli(['--draft', 'false', '--changed', list, APPS, FEED])).toBe(
+        `${APPS}\tskip\t${NOT_DRAFT_REASON}\n${FEED}\tskip\t${NOT_DRAFT_REASON}\n`
+      );
+    });
+
+    it('runs every workflow when the changed-file list is missing or not given', () => {
+      const missing = path.join(tmp, 'missing.txt');
+      const unreadable = `changed-file list unreadable (ENOENT: no such file or directory, open '${missing}'); failing open`;
+      expect(cli(['--draft', 'true', '--changed', missing, APPS, FEED])).toBe(
+        `${APPS}\trun\t${unreadable}\n${FEED}\trun\t${unreadable}\n`
+      );
+      expect(cli(['--draft', 'true', APPS, FEED])).toBe(
+        `${APPS}\trun\tno --changed file given; failing open\n` +
+          `${FEED}\trun\tno --changed file given; failing open\n`
+      );
     });
   });
 });

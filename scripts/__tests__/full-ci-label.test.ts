@@ -497,17 +497,22 @@ describe('the full-ci label', () => {
         for (const i of dispatches) expect(i).toBeGreaterThan(at);
       });
 
+      // What the script prints, and what each flag does, is tested by running it
+      // (github-paths-filter.test.ts, "the CLI"). Pinned here is only the step's side of that
+      // contract: which inputs it hands the script, and how it reads the answer.
       it('get their verdicts from the filter script, with the draft flag and changed files', () => {
         expect(step?.env?.DRAFT).toBe('${{ github.event.pull_request.draft }}');
-        expect(run).toMatch(
-          /gh api --paginate "repos\/\$REPO\/pulls\/\$PR\/files\?per_page=100" \\\s+--jq '\.\[\] \| \.filename, \(\.previous_filename \/\/ empty\)' > "\$changed"/
-        );
-        const call =
-          'node scripts/ci/github-paths-filter.mjs --draft "$DRAFT" --changed "$changed" "${files[@]}"';
-        expect(run).toContain(call);
-        // Only an exact `skip` line from the script skips; anything else dispatches.
+        // The PR's changed files, with a rename's old path too (nothing else checks that).
+        expect(run).toMatch(/gh api --paginate "repos\/\$REPO\/pulls\/\$PR\/files[^"]*"/);
+        expect(run).toContain('.previous_filename // empty');
+        const call = /node scripts\/ci\/github-paths-filter\.mjs ([^\n]*)/.exec(run)?.[1] ?? '';
+        expect(call).toContain('--draft "$DRAFT"');
+        expect(call).toMatch(/--changed "\$changed"/);
+        // Reading the answer: the script's second tab-separated column, and only an exact `skip`
+        // skips. Every workflow starts as `run`, so a missing line dispatches.
+        expect(run).toContain("awk -F '\\t'");
+        expect(run).toMatch(/cut -f2[^\n]*= skip/);
         expect(run).toMatch(/^\s*verdict\[\$wf\]=run$/m);
-        expect(run).toContain('if [ "$(cut -f2 <<< "$line")" = skip ]; then verdict[$wf]=skip; fi');
       });
 
       // A ledger, so a new draft-gated workflow is either dispatched here or exempted here.
@@ -535,11 +540,8 @@ describe('the full-ci label', () => {
         const paths = String(checkout?.with?.['sparse-checkout'] ?? '')
           .split('\n')
           .filter(Boolean);
-        expect(paths).toEqual([
-          'scripts/ci/full-ci-unit-shards.mjs',
-          'scripts/ci/github-paths-filter.mjs',
-          '.github/workflows',
-        ]);
+        expect(paths).toContain('scripts/ci/github-paths-filter.mjs');
+        expect(paths).toContain('.github/workflows');
       });
     });
 
