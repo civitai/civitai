@@ -1195,8 +1195,9 @@ jobs:
 
   component:
     name: Component + geometry tests (${{ matrix.shard }}/3)
-    # Pinned: Playwright 1.57 cannot install chromium deps on ubuntu-latest (26.04) yet.
-    runs-on: ubuntu-24.04
+    # civitai-dc behind the same gate as the other heavy jobs (self-hosted-runner-gate.test.ts).
+    # Hosted fallback pinned: Playwright 1.57 cannot install chromium deps on ubuntu-latest (26.04) yet.
+    runs-on: ${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-24.04' }}
     # The second clause skips draft PRs unless they carry the `full-ci` label (see the header).
     # On a full-ci dispatch whose PR run passed the component suite (`passed`), only shard 1
     # runs, with geometry alone, exactly as `only: geometry` does. On `only: component` that
@@ -1406,10 +1407,17 @@ jobs:
           }; then
             echo "::warning title=Playwright system-package cache::collecting the .debs failed; the next run downloads them again"
           fi
-          echo "system-package cache: $(find "$HOME/playwright-apt-debs" -name '*.deb' 2>/dev/null | wc -l) .deb file(s) after install"
+          debs=$(find "$HOME/playwright-apt-debs" -name '*.deb' 2>/dev/null | wc -l)
+          echo "system-package cache: $debs .deb file(s) after install"
+          echo "debs=$debs" >> "$GITHUB_OUTPUT"
 
+      # Never save an EMPTY entry. civitai-dc's apt deletes every .deb after installing
+      # (0 collected on all three shards of a civitai-dc run, 13 restored and 82 MB fetched),
+      # and it reports the same ImageOS (ubuntu24) as the hosted image, so a main push there
+      # would otherwise save an empty directory under this week's key, and every hosted run
+      # that week would restore it and download all the packages again.
       - name: Save Playwright system packages
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.apt-cache.outputs.cache-hit != 'true' }}
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.apt-cache.outputs.cache-hit != 'true' && fromJSON(steps.chromium.outputs.debs || '0') > 0 }}
         continue-on-error: true
         uses: actions/cache/save@v6
         with:
