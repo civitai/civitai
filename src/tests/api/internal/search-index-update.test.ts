@@ -68,11 +68,31 @@ describe('search-index-update', () => {
     expect(metricsQueue.mock.calls[0][0]).toEqual([{ id: 42, action: 'Delete' }]);
   });
 
-  // The moderator app's single-image block sends exactly this body.
   it('queues the documents showing an image the moderator app removed', async () => {
     const res = await call({ entityType: 'image', entityIds: [42, 43], action: 'delete' });
     expect(res.statusCode).toBe(200);
     expect(documentLookups()).toEqual([[[42, 43]]]);
+  });
+
+  // The moderator app's block reads the response; a failed requeue must not turn it into an error.
+  it('answers only after the requeue, and still answers ok when the requeue fails', async () => {
+    vi.useFakeTimers();
+    try {
+      dbMock.dbWrite.$queryRaw.mockRejectedValue(new Error('db down') as never);
+      let settled = false;
+      const pending = call({ entityType: 'image', entityId: 42, action: 'delete' }).finally(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false); // waiting out the retry delay
+      await vi.advanceTimersByTimeAsync(1000);
+      const res = await pending;
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toMatchObject({ ok: true });
+      expect(documentLookups()).toEqual([[[42]], [[42]]]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('leaves the documents of an image it only updates, as on a restore (control)', async () => {
