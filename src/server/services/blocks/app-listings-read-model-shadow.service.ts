@@ -590,13 +590,28 @@ function getProcessShadow() {
       (await listingService()).listStoreListingsBySlugs(slugs, input, opts),
     breaker: new IndexBreaker(undefined, undefined, (from, to, why) => {
       recordReadModelBreakerTransition(to);
-      void logToAxiom({ name: 'app-listings-read-model-breaker', type: 'info', from, to, why });
+      void logToAxiom({
+        name: 'app-listings-read-model-breaker',
+        type: 'info',
+        message: `breaker ${from}->${to}`,
+        payload: { from, to, why },
+      });
     }),
     // Slugs, kinds and field names only: listing slugs are public, and nothing here names the
     // viewer or carries a card's values.
     log: rateLimited(
       (entry: ShadowLogEntry) => {
-        void logToAxiom({ name: 'app-listings-read-model-mismatch', type: 'info', ...entry });
+        void logToAxiom({
+          name: 'app-listings-read-model-mismatch',
+          type: 'info',
+          surface: entry.surface,
+          payload: {
+            visibilityMissing: entry.visibilityMissing,
+            visibilityExtra: entry.visibilityExtra,
+            fields: entry.fields,
+            order: entry.order,
+          },
+        });
       },
       LOG_LINES_PER_MINUTE,
       Date.now
