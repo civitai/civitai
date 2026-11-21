@@ -51,8 +51,17 @@ func TestParseList(t *testing.T) {
 	}
 
 	for raw, want := range map[string]string{
-		"query=golden":            "v1-models-query",
-		"tag=x":                   "v1-models-tag",
+		"query=golden": "v1-models-query",
+		// A blank is a truthy string (no trim); a repeated key is an array, which the schema refuses.
+		"query=%20":               "v1-models-query",
+		"query=+":                 "v1-models-query",
+		"query=&query=":           "v1-models-query",
+		"query=&query=x":          "v1-models-query",
+		"limit=5&query=a":         "v1-models-query",
+		"tag=caf%C3%A9":           "v1-models-tag",
+		"tag=a&tag=b":             "v1-models-input-duplicate",
+		"tagname=x":               "v1-models-tagname",
+		"tag=x&tagname=x":         "v1-models-tagname",
 		"favorites=false":         "v1-models-authed-only",
 		"hidden=1":                "v1-models-authed-only",
 		"supportsGeneration=true": "v1-models-supportsGeneration",
@@ -79,6 +88,31 @@ func TestParseList(t *testing.T) {
 	} {
 		if _, err := ParseList(raw); reason(err) != want {
 			t.Errorf("%s: reason %q (%v), want %q", raw, reason(err), err, want)
+		}
+	}
+	// An empty `query` is falsy: the database path, the key kept for nextPage (where QS.stringify's
+	// skipEmptyString drops it). With `page` it is no 400 (`query && page`).
+	for _, raw := range []string{"query=", "query", "limit=5&query=&foo=bar", "query=&page=2&limit=5"} {
+		in, err := ParseList(raw)
+		if err != nil {
+			t.Errorf("%s: %v (%s)", raw, err, reason(err))
+			continue
+		}
+		found := false
+		for _, p := range in.Query {
+			found = found || p.Key == "query"
+		}
+		if !found {
+			t.Errorf("%s: the query key is not kept for nextPage: %+v", raw, in.Query)
+		}
+	}
+	// `tag` is read; an empty one is no filter (`tagname ?? tag` is falsy).
+	for raw, want := range map[string]string{"tag=character": "character", "tag=Some%20Tag": "Some Tag", "tag=": ""} {
+		in, err := ParseList(raw)
+		if err != nil {
+			t.Errorf("%s: %v (%s)", raw, err, reason(err))
+		} else if in.Tag != want {
+			t.Errorf("%s: tag %q, want %q", raw, in.Tag, want)
 		}
 	}
 	// A cursor lifts the paging guard: `page && !cursor`.
