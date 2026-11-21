@@ -2269,7 +2269,7 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 | Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, ids, earlyAccess, archived, the addons' POI/minor/tag clauses | a username the replica does not hold (`v1-models-username-miss`) |
 | Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads); a tag-name miss with `FEED_GO_COMPUTE_MISSES` (tagCache's lookup, §16.7) | a model-data, model-tags, images, files or membership miss (`v1-models-*-miss`), a tag-name miss with `FEED_GO_COMPUTE_MISSES` off, a stale images/files/tag entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level |
 | Shaping | both shapers, the file naming over ASCII model names, Training Data files' empty metadata | a name the scheme strips non-ASCII text from (`v1-models-filename`) |
-| Training Data | the listing on both routes (list: in the shaper; `[id]`: after the build or the cache, a body without `modelVersions` gaining an empty one): the candidates, the statement (`internal/v1models/training_data_listing.sql`, Node's rendered text), the predicate, the red-capable host (SERVER_DOMAIN_RED and its aliases, read as Node reads them) | the statement failing (`v1-models-training-data-unread`, see §16.7), a body or row shape the Node code would throw on (`v1-models-training-data`), non-ASCII text in the Host header or the red host list (`v1-models-host`) |
+| Training Data | the listing on both routes (list: in the shaper; `[id]`: after the build or the cache, a body without `modelVersions` gaining an empty one): the candidates, the statement (`internal/v1models/training_data_listing.sql`, Node's rendered text), the predicate, the red-capable host (SERVER_DOMAIN_RED and its aliases, read as Node reads them) | a sample whose Training Data statement hash is missing or is not this build's (`v1-models-training-data-drift`, below), the statement failing (`v1-models-training-data-unread`, see §16.7), a value of a type a jsonb read does not produce, an absolute-form request line (`v1-models-host`: its host replaces the Host header Node reads), a body or row shape the Node code would throw on (`v1-models-training-data`), non-ASCII text in the Host header or the red host list (`v1-models-host`) |
 | Config | | no `NEXT_PUBLIC_IMAGE_LOCATION` or (`[id]`) `NEXTAUTH_URL` (`v1-models-unconfigured-urls`) |
 
 ### 16.3 Flags and settings
@@ -2320,10 +2320,18 @@ the same statement (text and bound values) from Go.
 The Training Data statement is held to Node in two more ways: the golden fixtures pin its text and
 candidates (`expect.trainingDataSql`), and
 `src/server/services/__tests__/feed-go-training-data-listing.parity.test.ts` requires the embedded
-file to be the text Node's builder renders (re-render it when `ownerHeldSql` or the restriction legs
+file to be, byte for byte, the text Node's builder (`trainingDataListingSql`) renders (re-render it when `ownerHeldSql` or the restriction legs
 change) and runs both on Postgres (PGlite with the hold migrations), one Training Data file per
 refusal reason, requiring the same rows. The predicate over the rows is pinned per rule by
 `internal/v1models/trainingdata_test.go`.
+
+**Drift.** feed-go and the Node app deploy separately, so a Node change to the rules (`ownerHeldSql`,
+the restriction legs) would otherwise leave feed-go listing by the old ones. Every model sample
+carries the SHA-256 of the Node build's statement text (`trainingDataListingSqlSha256`, header
+`x-feed-go-training-data-sql`, added by the sampler); a body with a Training Data candidate is
+answered only when it equals the hash of the embedded copy (`v1models.TrainingDataSQLHash`), and
+falls back (`v1-models-training-data-drift`) when it differs or is absent, before anything is read.
+A body with no Training Data file needs no hash.
 
 ### 16.7 Known divergences
 

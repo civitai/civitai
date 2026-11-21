@@ -1,4 +1,5 @@
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
+import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { logToAxiom } from '~/server/logging/client';
 import { ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
@@ -60,6 +61,35 @@ export function trainingDataShareRestricted(
 type ListedFile = { id: number; type: string; visibility: string };
 
 /**
+ * `trainingDataListing`'s statement over the candidate versions. feed-go reads the same rows with an
+ * embedded copy of this text (apps/feed-go/internal/v1models/training_data_listing.sql), held to it
+ * byte for byte by feed-go-training-data-listing.parity.test.ts.
+ */
+export function trainingDataListingSql(candidates: number[]): Prisma.Sql {
+  return Prisma.sql`
+    SELECT mf.id, mf."virusScanResult", mf.metadata -> 'nsfwLevel' AS "nsfwLevel",
+      mf.metadata -> 'fullyRated' AS "fullyRated", (${trainingDataOwnerRestrictedSql(
+        Prisma.raw('m."userId"')
+      )}
+      OR ${trainingDataContentRestrictedSql(Prisma.raw('mv.id'))}) AS restricted
+    FROM "ModelFile" mf
+    JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mf."modelVersionId" = ANY(${candidates}::int[]) AND mf.type = 'Training Data'`;
+}
+
+let listingSqlSha256: string | undefined;
+/**
+ * The SHA-256 (hex) of `trainingDataListingSql`'s text, the rule set this build applies. The feed-go
+ * shadow sends it with every model sample; feed-go answers a body with Training Data files only when
+ * it equals the hash of its own copy, so it never lists by rules other than this build's.
+ */
+export function trainingDataListingSqlSha256(): string {
+  listingSqlSha256 ??= createHash('sha256').update(trainingDataListingSql([]).text).digest('hex');
+  return listingSqlSha256;
+}
+
+/**
  * Whether a file may be listed: a `Training Data` file is left out where its download would be
  * refused, so the listing never offers one. That is a shared dataset `trainingDataShareRestricted`
  * refuses, one `trainingDataServableOnHost` refuses on this host, or one whose virus scan is not
@@ -86,25 +116,14 @@ export async function trainingDataListing(
       virusScanResult: string;
       restricted: boolean | null;
     }[]
-  >`
-    SELECT mf.id, mf."virusScanResult", mf.metadata -> 'nsfwLevel' AS "nsfwLevel",
-      mf.metadata -> 'fullyRated' AS "fullyRated", (${trainingDataOwnerRestrictedSql(
-        Prisma.raw('m."userId"')
-      )}
-      OR ${trainingDataContentRestrictedSql(Prisma.raw('mv.id'))}) AS restricted
-    FROM "ModelFile" mf
-    JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
-    JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mf."modelVersionId" = ANY(${candidates}::int[]) AND mf.type = 'Training Data'`.catch(
-    (e: unknown) => {
-      logToAxiom({
-        type: 'error',
-        name: 'training-data-share-check-failed',
-        message: (e as Error).message,
-      });
-      return null;
-    }
-  );
+  >`${trainingDataListingSql(candidates)}`.catch((e: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'training-data-share-check-failed',
+      message: (e as Error).message,
+    });
+    return null;
+  });
   if (!rows) return (file) => file.type !== 'Training Data';
   const refused = new Set(
     rows

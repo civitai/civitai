@@ -41,6 +41,9 @@ type DetailRequest struct {
 	RegionRestricted bool
 	// Host is the request's Host header (isRedCapableHost, for the Training Data listing).
 	Host string
+	// TrainingDataSQL is the hash of Node's Training Data statement the sample carried
+	// (TrainingDataSQLHeader); "" = none.
+	TrainingDataSQL string
 }
 
 // ServeDetail answers `GET /api/v1/models/[id]` (the PublicEndpoint path: no session is read).
@@ -61,7 +64,7 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 		if body, age, ok := d.cachedDetail(ctx, id, level); ok && age >= NodeBuiltWindow {
 			// withListableTrainingData runs after the cache, which keys on neither the host nor a
 			// restriction placed since the entry was written.
-			out, err := d.withListableTrainingData(ctx, body, req.Host)
+			out, err := d.withListableTrainingData(ctx, body, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL})
 			if err != nil {
 				return nil, err
 			}
@@ -89,7 +92,7 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 	if err != nil {
 		return nil, err
 	}
-	out, err := d.withListableTrainingData(ctx, body, req.Host)
+	out, err := d.withListableTrainingData(ctx, body, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL})
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +132,9 @@ type ListRequest struct {
 	Query, Path, Host string
 	// RegionRestricted: the caller's region holds the level to PG/PG-13.
 	RegionRestricted bool
+	// TrainingDataSQL is the hash of Node's Training Data statement the sample carried
+	// (TrainingDataSQLHeader); "" = none.
+	TrainingDataSQL string
 }
 
 // UsernameResolver is the `username` filter's user lookup on the replica.
@@ -214,7 +220,7 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 	for _, it := range res.items {
 		versions = append(versions, it.versions...)
 	}
-	listing, err := d.trainingDataListing(ctx, versions, req.Host)
+	listing, err := d.trainingDataListing(ctx, versions, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL})
 	if err != nil {
 		return nil, err
 	}

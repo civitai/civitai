@@ -3,7 +3,12 @@ import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { trainingDataListing } from '~/server/services/training-data-restricted.service';
+import { createHash } from 'crypto';
+import {
+  trainingDataListing,
+  trainingDataListingSql,
+  trainingDataListingSqlSha256,
+} from '~/server/services/training-data-restricted.service';
 
 /**
  * feed-go answers `/api/v1/models` and `/api/v1/models/[id]` with Training Data files listed only
@@ -27,7 +32,6 @@ const MIGRATIONS = path.resolve(
   '../../../../packages/civitai-db-schema/prisma/migrations'
 );
 const migration = (name: string) => readFileSync(`${MIGRATIONS}/${name}/migration.sql`, 'utf8');
-const normalize = (s: string) => s.split(/\s+/).filter(Boolean).join(' ');
 
 // The tables the statement reads, as training-data-share.behavior.test.ts declares them.
 const SCHEMA = `
@@ -242,8 +246,11 @@ describe("feed-go's training data statement", () => {
     await trainingDataListing(client, versions(), { redCapable: false });
     expect(queryError).toBeUndefined();
     expect(captured).toHaveLength(1);
-    expect(normalize(GO_SQL)).toBe(normalize(captured[0].text));
+    // Exact bytes: feed-go hashes its copy and compares the hash Node sends with each sample.
+    expect(GO_SQL).toBe(captured[0].text);
+    expect(captured[0].text).toBe(trainingDataListingSql([]).text);
     expect(captured[0].values).toEqual([versions().map((v) => v.id)]);
+    expect(createHash('sha256').update(GO_SQL).digest('hex')).toBe(trainingDataListingSqlSha256());
   });
 
   it('computes each refusal reason as Node does, on Postgres', async () => {

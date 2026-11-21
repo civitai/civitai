@@ -184,3 +184,30 @@ func TestInternalMuxRoutesTheModelShadows(t *testing.T) {
 		}
 	}
 }
+
+// The model routes read the Host header as Node's req.headers.host: a rebuilt sample's (origin form,
+// the forwarded header) and an origin-form request's; an absolute-form request line, whose host
+// replaces the header in net/http, falls back. The statement-hash header reaches the listing.
+func TestV1ModelsHost(t *testing.T) {
+	r, err := SyntheticV1ModelsRequest(context.Background(), ShadowRequest{
+		Path: "/api/v1/models/1", Headers: map[string]string{"host": "Red.Example:8443", v1models.TrainingDataSQLHeader: "abc"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, err := v1ModelsHost(r); err != nil || h != "Red.Example:8443" {
+		t.Errorf("sample: %q %v", h, err)
+	}
+	if got := r.Header.Get(v1models.TrainingDataSQLHeader); got != "abc" {
+		t.Errorf("hash header %q", got)
+	}
+	origin := httptest.NewRequest(http.MethodGet, "/api/v1/models", nil)
+	origin.Host = "site.example"
+	if h, err := v1ModelsHost(origin); err != nil || h != "site.example" {
+		t.Errorf("origin form: %q %v", h, err)
+	}
+	abs := httptest.NewRequest(http.MethodGet, "http://other.example/api/v1/models", nil)
+	if _, err := v1ModelsHost(abs); fallback.Reason(err) != "v1-models-host" {
+		t.Errorf("absolute form: %v", err)
+	}
+}

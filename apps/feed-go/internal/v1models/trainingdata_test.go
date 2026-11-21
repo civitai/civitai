@@ -2,6 +2,8 @@ package v1models
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -9,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
 )
@@ -34,6 +37,11 @@ const (
 	redHost   = "red.example.test"
 	greenHost = "site.example.test"
 )
+
+// nodeAt is a request on host from a Node that applies this build's rules (its statement hash).
+func nodeAt(host string) listingRequest {
+	return listingRequest{host: host, sqlHash: TrainingDataSQLHash}
+}
 
 // tdDeps answers the training-data statement with rows (or err), recording each read's candidates.
 func tdDeps(rows []map[string]any, err error, reads *[][]int) *Deps {
@@ -71,7 +79,7 @@ func listedFor(t *testing.T, row map[string]any, host string) bool {
 	d := tdDeps([]map[string]any{row}, nil, &reads)
 	f, err := d.trainingDataListing(context.Background(), []superjson.Object{
 		meta("id", int64(6001), "files", []any{tdFile(1, trainingDataType)}),
-	}, host)
+	}, nodeAt(host))
 	if err != nil {
 		t.Fatalf("listing: %v (%s)", err, reason(err))
 	}
@@ -148,7 +156,7 @@ func TestTrainingDataListingCandidatesAndFiles(t *testing.T) {
 	// Row 31 refused; 32 has no row (a cached body naming a file since gone): listed, as Node lists it.
 	// Model file 10 shares a refused row's id: only a Training Data file is ever left out.
 	d := tdDeps([]map[string]any{tdRow(31, true), tdRow(10, true), tdRow(20, false)}, nil, &reads)
-	f, err := d.trainingDataListing(ctx, versions, greenHost)
+	f, err := d.trainingDataListing(ctx, versions, nodeAt(greenHost))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,13 +175,13 @@ func TestTrainingDataListingCandidatesAndFiles(t *testing.T) {
 	}
 	// No candidate: no read, everything listed.
 	reads = nil
-	f, err = tdDeps(nil, nil, &reads).trainingDataListing(ctx, versions[:1], greenHost)
+	f, err = tdDeps(nil, nil, &reads).trainingDataListing(ctx, versions[:1], nodeAt(greenHost))
 	if err != nil || f != nil || len(reads) != 0 || !f.listed(tdFile(1, trainingDataType)) {
 		t.Errorf("no candidate: %v %v %v", f, err, reads)
 	}
 	// Fails closed: a read that fails is a fallback, never an answer.
 	reads = nil
-	if _, err := tdDeps(nil, errors.New("replica down"), &reads).trainingDataListing(ctx, versions, greenHost); reason(err) != "v1-models-training-data-unread" {
+	if _, err := tdDeps(nil, errors.New("replica down"), &reads).trainingDataListing(ctx, versions, nodeAt(greenHost)); reason(err) != "v1-models-training-data-unread" {
 		t.Errorf("read error: %v", err)
 	}
 	// Shapes the Node code would throw on fall back.
@@ -182,12 +190,12 @@ func TestTrainingDataListingCandidatesAndFiles(t *testing.T) {
 		meta("id", int64(1), "files", []any{"x"}),
 		meta("id", "x", "files", []any{tdFile(1, trainingDataType)}),
 	} {
-		if _, err := tdDeps(nil, nil, &reads).trainingDataListing(ctx, []superjson.Object{v}, greenHost); reason(err) != "v1-models-training-data" {
+		if _, err := tdDeps(nil, nil, &reads).trainingDataListing(ctx, []superjson.Object{v}, nodeAt(greenHost)); reason(err) != "v1-models-training-data" {
 			t.Errorf("%v: %v", v, err)
 		}
 	}
 	// A row id that is not a number cannot be matched.
-	if _, err := tdDeps([]map[string]any{{"id": "x", "restricted": false}}, nil, &reads).trainingDataListing(ctx, versions, greenHost); reason(err) != "v1-models-training-data" {
+	if _, err := tdDeps([]map[string]any{{"id": "x", "restricted": false}}, nil, &reads).trainingDataListing(ctx, versions, nodeAt(greenHost)); reason(err) != "v1-models-training-data" {
 		t.Errorf("row id: %v", err)
 	}
 }
@@ -231,6 +239,10 @@ func TestRedHosts(t *testing.T) {
 		{"", []string{"a.example.test"}, nil},
 		{"Red.Example.Test", []string{"Red.Example.Test", " Mirror.Example.Test ", "", "b.example.test"},
 			[]string{"red.example.test", "mirror.example.test", "b.example.test"}},
+		// The shape main.go passes: config.HostPrimaries["red"] is lowercased, config.Hosts["red"]
+		// starts with the raw primary. The primary is listed once.
+		{"red.example.test", []string{"RED.Example.Test", "Mirror.Example.Test"},
+			[]string{"red.example.test", "mirror.example.test"}},
 	} {
 		if got := RedHosts(c.primary, c.hosts); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%q %v: %v, want %v", c.primary, c.hosts, got, c.want)
@@ -249,7 +261,7 @@ func TestWithListableTrainingData(t *testing.T) {
 		// No `files` key (removeEmpty dropped an empty list): the version as it is.
 		meta("id", int64(6003), "images", []any{}),
 	}, "tail", true)
-	out, err := d.withListableTrainingData(ctx, body, greenHost)
+	out, err := d.withListableTrainingData(ctx, body, nodeAt(greenHost))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +286,7 @@ func TestWithListableTrainingData(t *testing.T) {
 		{meta("id", int64(1)), `{"id":1,"modelVersions":[]}`},
 		{meta("modelVersions", nil, "id", int64(1)), `{"modelVersions":[],"id":1}`},
 	} {
-		out, err := d.withListableTrainingData(ctx, c.body, greenHost)
+		out, err := d.withListableTrainingData(ctx, c.body, nodeAt(greenHost))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -283,7 +295,7 @@ func TestWithListableTrainingData(t *testing.T) {
 		}
 	}
 	for _, b := range []superjson.Object{meta("modelVersions", "x"), meta("modelVersions", []any{"x"})} {
-		if _, err := d.withListableTrainingData(ctx, b, greenHost); reason(err) != "v1-models-training-data" {
+		if _, err := d.withListableTrainingData(ctx, b, nodeAt(greenHost)); reason(err) != "v1-models-training-data" {
 			t.Errorf("%v: %v", b, err)
 		}
 	}
@@ -312,9 +324,9 @@ func TestServeTrainingDataNeverListsARefusedFile(t *testing.T) {
 		var ans *Answer
 		var err error
 		if list {
-			ans, err = ServeList(context.Background(), d, d.Sources, ListRequest{Query: "limit=5", Path: "/api/v1/models", Host: host})
+			ans, err = ServeList(context.Background(), d, d.Sources, ListRequest{Query: "limit=5", Path: "/api/v1/models", Host: host, TrainingDataSQL: TrainingDataSQLHash})
 		} else {
-			ans, err = ServeDetail(context.Background(), d, DetailRequest{ID: "5001", Host: host})
+			ans, err = ServeDetail(context.Background(), d, DetailRequest{ID: "5001", Host: host, TrainingDataSQL: TrainingDataSQLHash})
 		}
 		if err != nil {
 			return "", err
@@ -350,6 +362,75 @@ func TestServeTrainingDataNeverListsARefusedFile(t *testing.T) {
 		// The read fails: nothing is answered.
 		if _, err := serve(t, list, greenHost, rows, errors.New("replica down")); reason(err) != "v1-models-training-data-unread" {
 			t.Errorf("list %v, read error: %v", list, err)
+		}
+	}
+}
+
+// The drift guard: a body with a Training Data candidate is answered only for a Node whose statement
+// hash is this build's; a missing or different hash falls back before anything is read.
+func TestTrainingDataListingDrift(t *testing.T) {
+	ctx := context.Background()
+	versions := []superjson.Object{meta("id", int64(6001), "files", []any{tdFile(1, trainingDataType)})}
+	for _, hash := range []string{"", "0000", strings.ToUpper(TrainingDataSQLHash), TrainingDataSQLHash + " "} {
+		var reads [][]int
+		_, err := tdDeps([]map[string]any{tdRow(1, false)}, nil, &reads).trainingDataListing(ctx, versions,
+			listingRequest{host: greenHost, sqlHash: hash})
+		if reason(err) != "v1-models-training-data-drift" || len(reads) != 0 {
+			t.Errorf("hash %q: %v, reads %v", hash, err, reads)
+		}
+	}
+	var reads [][]int
+	if _, err := tdDeps([]map[string]any{tdRow(1, false)}, nil, &reads).trainingDataListing(ctx, versions, nodeAt(greenHost)); err != nil || len(reads) != 1 {
+		t.Errorf("this build's hash: %v, reads %v", err, reads)
+	}
+	// No candidate: nothing to decide, so no hash is needed.
+	if f, err := tdDeps(nil, nil, &reads).trainingDataListing(ctx, []superjson.Object{meta("id", int64(1), "files", []any{tdFile(2, "Model")})},
+		listingRequest{host: greenHost}); err != nil || f != nil {
+		t.Errorf("no candidate: %v %v", f, err)
+	}
+	// Through the route: a built body with a dataset, sample without the hash.
+	w := newTestWorld()
+	w.entries[KeyFilesForVersion+":6001"] = append(meta("modelVersionId", int64(6001), "files", []any{
+		meta("id", int64(7001), "name", "a.safetensors", "type", "Model", "visibility", "Public", "metadata", meta()),
+		meta("id", int64(7002), "name", "d.zip", "type", trainingDataType, "visibility", "Public", "metadata", meta()),
+	}), superjson.Field{Key: "cachedAt", Val: testNow.Add(-time.Minute)})
+	w.tdRows = []map[string]any{tdRow(7002, false)}
+	if _, err := ServeDetail(ctx, w.deps(t), DetailRequest{ID: "5001"}); reason(err) != "v1-models-training-data-drift" {
+		t.Errorf("route without the hash: %v", err)
+	}
+	if len(w.tdCandidates) != 0 {
+		t.Errorf("read before the drift check: %v", w.tdCandidates)
+	}
+	// The embedded statement is the one hashed.
+	sum := sha256.Sum256([]byte(trainingDataListingSQL))
+	if TrainingDataSQLHash != hex.EncodeToString(sum[:]) || len(TrainingDataSQLHash) != 64 {
+		t.Errorf("hash %q", TrainingDataSQLHash)
+	}
+}
+
+// A jsonb value of a Go type pgx's jsonb decoding does not produce is not read as JS would: it falls
+// back instead of deciding (fail closed).
+func TestTrainingDataUnknownLevelType(t *testing.T) {
+	for _, v := range []any{int64(4), int32(1), uint8(1), float32(4), json.Number("x")} {
+		var reads [][]int
+		r := tdRow(1, false)
+		r["nsfwLevel"] = v
+		_, err := tdDeps([]map[string]any{r}, nil, &reads).trainingDataListing(context.Background(),
+			[]superjson.Object{meta("id", int64(6001), "files", []any{tdFile(1, trainingDataType)})}, nodeAt(greenHost))
+		if reason(err) != "v1-models-training-data" {
+			t.Errorf("%T %v: %v", v, v, err)
+		}
+	}
+}
+
+// The servability mask is browsing.SFWLevels (Node's sfwBrowsingLevelsFlag, pinned to the Go constants
+// by the Node golden test): every PG/PG-13 combination servable, any other bit not.
+func TestTrainingDataSFWMask(t *testing.T) {
+	for level := 0; level < 64; level++ {
+		got, err := trainingDataServableOnHost(float64(level), nil, false)
+		want := level&^browsing.SFWLevels == 0
+		if err != nil || got != want {
+			t.Errorf("level %d: %v %v, want %v", level, got, err, want)
 		}
 	}
 }

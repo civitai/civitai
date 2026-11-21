@@ -10,7 +10,9 @@ package v1models
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -76,8 +79,12 @@ type goldenSQL struct {
 	Values []json.RawMessage `json:"values"`
 }
 
-// sameStatement is nil when the statement is the fixture's (whitespace-normalised text, values).
-func (g *goldenSQL) sameStatement(what, sql string, args []any) error {
+// sameStatement is nil when the statement is the fixture's: the text whitespace-normalised (exact
+// bytes when exact), and the values.
+func (g *goldenSQL) sameStatement(what, sql string, args []any, exact bool) error {
+	if exact && sql != g.Text {
+		return fmt.Errorf("%s is not Node's text byte for byte:\n go:   %q\n node: %q", what, sql, g.Text)
+	}
 	if got, want := NormalizeSQL(sql), NormalizeSQL(g.Text); got != want {
 		return fmt.Errorf("%s differs from Node's:\n go:   %s\n node: %s", what, got, want)
 	}
@@ -263,7 +270,7 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 			if fx.Expect.SQL == nil {
 				return nil, errors.New("a model statement was built; the fixture expects none")
 			}
-			if err := fx.Expect.SQL.sameStatement("model statement", sql, args); err != nil {
+			if err := fx.Expect.SQL.sameStatement("model statement", sql, args, false); err != nil {
 				return nil, err
 			}
 			return toRows(modelColumns, models), nil
@@ -276,7 +283,7 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 				if fx.Expect.TrainingDataSQL == nil {
 					return nil, errors.New("a training data statement was sent; the fixture expects none")
 				}
-				if err := fx.Expect.TrainingDataSQL.sameStatement("training data statement", sql, args); err != nil {
+				if err := fx.Expect.TrainingDataSQL.sameStatement("training data statement", sql, args, true); err != nil {
 					return nil, err
 				}
 			}
@@ -405,16 +412,41 @@ func goldenLoad(t *testing.T, path string) *goldenFixture {
 	return fx
 }
 
-// goldenServe computes the fixture's request.
+// goldenNodeSQLHash is what the Node of these fixtures sends as its statement hash
+// (trainingDataListingSqlSha256): the SHA-256 of the training data statement its route sent, as one
+// fixture recorded it. Not derived from Go's embedded copy, so a drifted copy fails here.
+var goldenNodeSQLHash = sync.OnceValues(func() (string, error) {
+	raw, err := os.ReadFile(filepath.Join(goldenDir, "detail-training-data.json"))
+	if err != nil {
+		return "", err
+	}
+	var fx goldenFixture
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		return "", err
+	}
+	if fx.Expect.TrainingDataSQL == nil {
+		return "", errors.New("detail-training-data.json records no training data statement")
+	}
+	sum := sha256.Sum256([]byte(fx.Expect.TrainingDataSQL.Text))
+	return hex.EncodeToString(sum[:]), nil
+})
+
+// goldenServe computes the fixture's request, as a sample from the fixtures' Node (its statement
+// hash attached).
 func goldenServe(ctx context.Context, env *goldenEnv, fx *goldenFixture) (*Answer, error) {
+	hash, err := goldenNodeSQLHash()
+	if err != nil {
+		return nil, err
+	}
 	if id, ok := strings.CutPrefix(fx.Request.Path, "/api/v1/models/"); ok {
 		return ServeDetail(ctx, env.deps, DetailRequest{
 			ID: id, RegionRestricted: fx.Config.RegionRestricted, Host: fx.Request.Headers["host"],
+			TrainingDataSQL: hash,
 		})
 	}
 	return ServeList(ctx, env.deps, env.users, ListRequest{
 		Query: fx.Request.Query, Path: fx.Request.Path, Host: fx.Request.Headers["host"],
-		RegionRestricted: fx.Config.RegionRestricted,
+		RegionRestricted: fx.Config.RegionRestricted, TrainingDataSQL: hash,
 	})
 }
 

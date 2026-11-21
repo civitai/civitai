@@ -222,7 +222,7 @@ func (w *testWorld) deps(t *testing.T) *Deps {
 
 func detailOf(t *testing.T, w *testWorld) (*Answer, error) {
 	t.Helper()
-	return ServeDetail(context.Background(), w.deps(t), DetailRequest{ID: "5001"})
+	return ServeDetail(context.Background(), w.deps(t), DetailRequest{ID: "5001", TrainingDataSQL: TrainingDataSQLHash})
 }
 
 func TestServeDetailBuilds(t *testing.T) {
@@ -328,7 +328,7 @@ func TestServeDetailFallbacks(t *testing.T) {
 			if c.name == "bad id" {
 				id = "x"
 			}
-			_, err := ServeDetail(context.Background(), d, DetailRequest{ID: id})
+			_, err := ServeDetail(context.Background(), d, DetailRequest{ID: id, TrainingDataSQL: TrainingDataSQLHash})
 			if reason(err) != c.reason {
 				t.Fatalf("reason %q (%v), want %q", reason(err), err, c.reason)
 			}

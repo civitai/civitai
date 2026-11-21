@@ -23,7 +23,7 @@
  *
  * trainingDataListing's statement (`dbRead.$queryRaw`) is captured like the model statement and
  * answered from the fixture's `trainingData` rows of the candidate versions; `expect.trainingDataSql`
- * pins it. isRedCapableHost reads SERVER_DOMAIN_RED* from the environment set below.
+ * pins it, its text byte for byte (feed-go hashes those exact bytes to detect drift). isRedCapableHost reads SERVER_DOMAIN_RED* from the environment set below.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { Prisma } from '@prisma/client';
@@ -39,6 +39,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { matureRestrictedBaseModels } from '~/shared/constants/basemodel.constants';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 // isRedCapableHost's domain map is built at import from process.env: set before any import. The
 // fixtures' `config.serverDomainRed*` must name the same values (checked per fixture).
@@ -51,6 +52,7 @@ const RED = vi.hoisted(() => {
 
 const FIXTURE_DIR = join(process.cwd(), 'apps/feed-go/testdata/golden/v1-models');
 const GO_CONSTANTS = join(process.cwd(), 'apps/feed-go/internal/v1models/constants.go');
+const GO_LEVELS = join(process.cwd(), 'apps/feed-go/internal/browsing/levels.go');
 const IMAGE_LOCATION = 'https://image.example.test/golden';
 const BASE_URL = 'https://site.example.test';
 
@@ -438,7 +440,7 @@ describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
           : null;
         const trainingDataSql = state.trainingDataSql[0]
           ? {
-              text: normalizeSql(state.trainingDataSql[0].text),
+              text: state.trainingDataSql[0].text,
               values: jsonValue(state.trainingDataSql[0].values),
             }
           : null;
@@ -456,7 +458,7 @@ describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
           status: 200,
           body: f.expect.body,
           sql: f.expect.sql ? { ...f.expect.sql, text: normalizeSql(f.expect.sql.text) } : null,
-          trainingDataSql: want ? { ...want, text: normalizeSql(want.text) } : null,
+          trainingDataSql: want ?? null,
         });
       } finally {
         vi.useRealTimers();
@@ -467,6 +469,25 @@ describe('feed-go /api/v1/models golden fixtures: the real Node answer', () => {
 });
 
 describe('feed-go v1models constants', () => {
+  it("feed-go's SFW mask (browsing.SFWLevels) is sfwBrowsingLevelsFlag", () => {
+    // The Training Data servability test masks the rating with it (trainingDataServableOnHost).
+    const src = readFileSync(GO_LEVELS, 'utf8');
+    const bits = Object.fromEntries(
+      [...src.matchAll(/^\t(PG|PG13|R|X|XXX|Blocked)\s*=\s*(\d+)$/gm)].map((m) => [
+        m[1],
+        Number(m[2]),
+      ])
+    );
+    expect(Object.keys(bits).sort()).toEqual(['Blocked', 'PG', 'PG13', 'R', 'X', 'XXX']);
+    const expr = /^\tSFWLevels\s*=\s*([A-Za-z0-9 |]+)$/m.exec(src)?.[1];
+    expect(expr, 'SFWLevels in levels.go').toBeTruthy();
+    const goSfw = expr!
+      .split('|')
+      .map((name) => bits[name.trim()])
+      .reduce((a, b) => a | b, 0);
+    expect(goSfw).toBe(sfwBrowsingLevelsFlag);
+  });
+
   it("lists exactly matureRestrictedBaseModels('models'), lowercased", () => {
     const src = readFileSync(GO_CONSTANTS, 'utf8');
     const block = src.slice(

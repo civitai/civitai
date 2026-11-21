@@ -1,3 +1,4 @@
+
     SELECT mf.id, mf."virusScanResult", mf.metadata -> 'nsfwLevel' AS "nsfwLevel",
       mf.metadata -> 'fullyRated' AS "fullyRated", ((((
     m."userId" = -1

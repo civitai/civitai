@@ -103,6 +103,17 @@ func SyntheticV1ModelsRequest(ctx context.Context, req ShadowRequest) (*http.Req
 	return r, nil
 }
 
+// v1ModelsHost is the request's Host header as Node reads it (`req.headers.host`: nextPage's origin,
+// isRedCapableHost). net/http keeps it in r.Host, except on an absolute-form request line, where
+// r.Host is the URL's host and the header is gone: such a request falls back rather than read a host
+// Node would not. (A shadow sample is rebuilt in origin form with r.Host the forwarded header.)
+func v1ModelsHost(r *http.Request) (string, error) {
+	if r.URL != nil && r.URL.Host != "" {
+		return "", fallback.New("v1-models-host")
+	}
+	return r.Host, nil
+}
+
 // v1ModelsAnswer encodes an answer as `res.json` writes it.
 func v1ModelsAnswer(ans *v1models.Answer) (*computed, error) {
 	buf, err := superjson.PlainBuffer(ans.Body)
@@ -142,8 +153,13 @@ func (s *Server) computeV1Models(ctx context.Context, r *http.Request) (*compute
 		// privacy: not ported.
 		return nil, fallback.New("v1-models-session")
 	}
+	host, err := v1ModelsHost(r)
+	if err != nil {
+		return nil, err
+	}
 	ans, err := v1models.ServeList(ctx, s.V1Models.Deps, s.V1Models.Users, v1models.ListRequest{
-		Query: r.URL.RawQuery, Path: r.URL.Path, Host: r.Host, RegionRestricted: s.regionRestricted(r),
+		Query: r.URL.RawQuery, Path: r.URL.Path, Host: host, RegionRestricted: s.regionRestricted(r),
+		TrainingDataSQL: r.Header.Get(v1models.TrainingDataSQLHeader),
 	})
 	if err != nil {
 		return nil, err
@@ -168,8 +184,13 @@ func (s *Server) computeV1ModelsID(ctx context.Context, r *http.Request) (*compu
 	if !ok || strings.Contains(id, "/") {
 		return nil, fallback.New("v1-models-path")
 	}
+	host, err := v1ModelsHost(r)
+	if err != nil {
+		return nil, err
+	}
 	ans, err := v1models.ServeDetail(ctx, s.V1Models.Deps, v1models.DetailRequest{
-		ID: id, RegionRestricted: s.regionRestricted(r), Host: r.Host,
+		ID: id, RegionRestricted: s.regionRestricted(r), Host: host,
+		TrainingDataSQL: r.Header.Get(v1models.TrainingDataSQLHeader),
 	})
 	if err != nil {
 		return nil, err

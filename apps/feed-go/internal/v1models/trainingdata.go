@@ -2,11 +2,14 @@ package v1models
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed" // the training-data statement
+	"encoding/hex"
 	"encoding/json"
 	"math"
 	"strings"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
@@ -20,14 +23,35 @@ import (
 
 const trainingDataType = "Training Data"
 
-// trainingDataListingSQL is trainingDataListing's statement, byte for byte as Node's builder renders
-// it (trainingDataOwnerRestrictedSql over ownerHeldSql, and trainingDataContentRestrictedSql), with the
-// candidate version ids as $1. The golden fixtures hold it to the statement the Node route sends, and
+// trainingDataListingSQL is trainingDataListingSql's text (training-data-restricted.service.ts), byte
+// for byte as Node renders it (trainingDataOwnerRestrictedSql over ownerHeldSql, and
+// trainingDataContentRestrictedSql), with the candidate version ids as $1. The golden fixtures hold it
+// to the statement the Node route sends, and
 // src/server/services/__tests__/feed-go-training-data-listing.parity.test.ts holds it to Node's
-// builder and runs it on Postgres, one case per refusal reason. Change it only by re-rendering it.
+// builder (exact bytes) and runs it on Postgres, one case per refusal reason. Change it only by
+// re-rendering it.
 //
 //go:embed training_data_listing.sql
 var trainingDataListingSQL string
+
+// TrainingDataSQLHash is the SHA-256 (hex) of trainingDataListingSQL: the rule set this build lists
+// Training Data files by. Node sends the hash of its own statement with every model sample
+// (trainingDataListingSqlSha256, header TrainingDataSQLHeader); a body with a Training Data candidate
+// is answered only when the two are equal, so a Node deploy that changes the rules (or a sample that
+// does not say) makes feed-go fall back rather than list by rules the Node it shadows no longer has.
+var TrainingDataSQLHash = func() string {
+	sum := sha256.Sum256([]byte(trainingDataListingSQL))
+	return hex.EncodeToString(sum[:])
+}()
+
+// TrainingDataSQLHeader carries Node's statement hash on a model sample (feed-go-shadow.ts).
+const TrainingDataSQLHeader = "x-feed-go-training-data-sql"
+
+// listingRequest is what the listing reads from the request: its Host header (isRedCapableHost) and
+// the Node statement hash the sample carried ("" = none).
+type listingRequest struct {
+	host, sqlHash string
+}
 
 // trainingDataFilter is trainingDataListing's predicate: a Training Data file whose row it refused
 // is left out; every other file is listed. A nil filter lists everything.
@@ -52,7 +76,7 @@ func (f *trainingDataFilter) listed(file superjson.Object) bool {
 // everything is listed. Node fails closed when the read fails (every Training Data file left out);
 // whether Node's own read failed is not known here, so a failed read falls back instead: no answer
 // can then list a file Node left out, nor differ from Node's.
-func (d *Deps) trainingDataListing(ctx context.Context, versions []superjson.Object, host string) (*trainingDataFilter, error) {
+func (d *Deps) trainingDataListing(ctx context.Context, versions []superjson.Object, req listingRequest) (*trainingDataFilter, error) {
 	var candidates []int
 	for _, v := range versions {
 		files, err := versionFiles(v)
@@ -78,6 +102,10 @@ func (d *Deps) trainingDataListing(ctx context.Context, versions []superjson.Obj
 	if len(candidates) == 0 {
 		return nil, nil
 	}
+	if req.sqlHash != TrainingDataSQLHash {
+		// Not the rules the Node this answers for applies (or it did not say): fail closed.
+		return nil, fallback.New("v1-models-training-data-drift")
+	}
 	rows, err := queryRows(ctx, d.DB, trainingDataListingSQL, candidates)
 	if err != nil {
 		return nil, fallback.Wrap("v1-models-training-data-unread", err)
@@ -92,12 +120,16 @@ func (d *Deps) trainingDataListing(ctx context.Context, versions []superjson.Obj
 		refused := trainingDataRowRefused(r)
 		if !refused {
 			if !redKnown {
-				if red, err = d.redCapable(host); err != nil {
+				if red, err = d.redCapable(req.host); err != nil {
 					return nil, err
 				}
 				redKnown = true
 			}
-			refused = !trainingDataServableOnHost(r["nsfwLevel"], r["fullyRated"], red)
+			servable, err := trainingDataServableOnHost(r["nsfwLevel"], r["fullyRated"], red)
+			if err != nil {
+				return nil, err
+			}
+			refused = !servable
 		}
 		if refused {
 			out.refused[id] = true
@@ -121,20 +153,21 @@ func trainingDataRowRefused(r map[string]any) bool {
 // over the row's `metadata -> 'nsfwLevel'` and `metadata -> 'fullyRated'` (jsonb, as JSON values):
 // any file on a red-capable host; elsewhere not one whose `fullyRated` is the boolean false, nor one
 // whose `nsfwLevel` is a number with a bit outside PG|PG-13 (`(level & ~sfwBrowsingLevelsFlag) === 0`,
-// JS's 32-bit `&`). A level that is not a number is servable.
-func trainingDataServableOnHost(nsfwLevel, fullyRated any, redCapable bool) bool {
+// JS's 32-bit `&`). A level that is not a number is servable. A value of a type a jsonb read does not
+// produce falls back.
+func trainingDataServableOnHost(nsfwLevel, fullyRated any, redCapable bool) (bool, error) {
 	if redCapable {
-		return true
+		return true, nil
 	}
 	if b, ok := fullyRated.(bool); ok && !b {
-		return false
+		return false, nil
 	}
-	level, ok := jsonNumber(nsfwLevel)
-	if !ok {
-		return true
+	level, isNumber, err := jsonNumber(nsfwLevel)
+	if err != nil || !isNumber {
+		return err == nil, err
 	}
-	// ToInt32(level) & ~3 is 0 exactly when ToUint32(level) is 0..3.
-	return jsToUint32(level) < 4
+	// ToInt32(level) and ToUint32(level) have the same 32 bits.
+	return uint32(jsToUint32(level))&^uint32(browsing.SFWLevels) == 0, nil
 }
 
 // jsToUint32 is ECMAScript's ToUint32, as a float64 in [0, 2^32).
@@ -149,20 +182,23 @@ func jsToUint32(f float64) float64 {
 	return m
 }
 
-// jsonNumber reads a jsonb value as JS's typeof === 'number' would: a JSON number.
-func jsonNumber(v any) (float64, bool) {
+// jsonNumber reads a jsonb value as JS's typeof === 'number' would: whether it is a JSON number, and
+// its value. pgx decodes jsonb as encoding/json does (float64, string, bool, nil, map, slice); any
+// other Go type is a decoding this port does not know, and falls back rather than guess.
+func jsonNumber(v any) (float64, bool, error) {
 	switch t := v.(type) {
 	case float64:
-		return t, true
-	case float32:
-		return float64(t), true
+		return t, true, nil
 	case json.Number:
 		f, err := t.Float64()
-		return f, err == nil
-	case int, int8, int16, int32, int64, uint8, uint16, uint32, uint64:
-		return numberOf(t)
+		if err != nil {
+			return 0, false, fallback.New("v1-models-training-data")
+		}
+		return f, true, nil
+	case nil, string, bool, map[string]any, []any:
+		return 0, false, nil
 	}
-	return 0, false
+	return 0, false, fallback.New("v1-models-training-data")
 }
 
 // textOf reads a text (or enum) column.
@@ -224,15 +260,17 @@ func (d *Deps) redCapable(host string) (bool, error) {
 
 // RedHosts is the red domain's host list as isHostForColor reads it: none unless SERVER_DOMAIN_RED is
 // set (buildConfig), else that primary lowercased (not trimmed) and each alias trimmed, lowercased
-// and non-empty. hosts is the primary followed by the aliases as the config read them
-// (config.Hosts["red"]).
+// and non-empty. primary is config.HostPrimaries["red"] (already lowercased) and hosts is
+// config.Hosts["red"]: the raw primary followed by the aliases, so the entry equal to the primary
+// once both are lowercased is the primary itself.
 func RedHosts(primary string, hosts []string) []string {
 	if primary == "" {
 		return nil
 	}
-	out := []string{strings.ToLower(primary)}
+	p := strings.ToLower(primary)
+	out := []string{p}
 	for _, h := range hosts {
-		if h == primary {
+		if strings.ToLower(h) == p {
 			continue
 		}
 		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
@@ -246,7 +284,7 @@ func RedHosts(primary string, hosts []string) []string {
 // v.files ? { ...v, files: v.files.filter(listed) } : v) }` over `body.modelVersions ?? []`: a body
 // without `modelVersions` gains an empty one, at its end. Applied to a built body and to a cached one
 // alike.
-func (d *Deps) withListableTrainingData(ctx context.Context, body superjson.Object, host string) (superjson.Object, error) {
+func (d *Deps) withListableTrainingData(ctx context.Context, body superjson.Object, req listingRequest) (superjson.Object, error) {
 	raw, _ := body.Get("modelVersions")
 	var list []any
 	switch t := raw.(type) {
@@ -265,7 +303,7 @@ func (d *Deps) withListableTrainingData(ctx context.Context, body superjson.Obje
 		}
 		versions[i] = o
 	}
-	filter, err := d.trainingDataListing(ctx, versions, host)
+	filter, err := d.trainingDataListing(ctx, versions, req)
 	if err != nil {
 		return nil, err
 	}
