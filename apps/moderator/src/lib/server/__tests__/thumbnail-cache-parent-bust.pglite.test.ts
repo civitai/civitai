@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { PGlite } from '@electric-sql/pglite';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '../../../test/ban-note-hold-tables';
 import { freshPglite } from '../../../test/pglite';
 import {
   DEFERRED_BLOCK_EFFECT_TABLE_SQL,
@@ -136,6 +137,7 @@ beforeEach(async () => {
   syncSearchIndexBulk.mockClear();
   db = await freshPglite();
   await db.exec(SCHEMA);
+  await db.exec(BAN_NOTE_HOLD_TABLES_SQL);
   await db.query(
     `INSERT INTO "Image" ("id", "type", "metadata", "nsfwLevel") VALUES
       ($1, 'video', jsonb_build_object('thumbnailId', $2::int), 1),

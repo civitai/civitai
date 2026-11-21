@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
+import { BAN_NOTE_HOLD_TABLES_SQL } from '../../../test/ban-note-hold-tables';
 import { freshPglite } from '../../../test/pglite';
 import {
   DEFERRED_BLOCK_EFFECT_TABLE_SQL,
@@ -147,6 +148,7 @@ let statements: { sql: string; params: unknown[]; connection: number }[] = [];
 beforeEach(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
+  await db.exec(BAN_NOTE_HOLD_TABLES_SQL);
   await db.exec(imageUseTablesSql);
   await db.exec(readFileSync(CDN_ACCESS_MIGRATION, 'utf8'));
   statements = [];
