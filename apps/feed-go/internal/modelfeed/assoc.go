@@ -439,7 +439,7 @@ func assocBaseCanGenerate(it *feedItem, viewer *Viewer, next bool) bool {
 	if generationOff[bm] {
 		return false
 	}
-	availability, _ := v["availability"].(string)
+	availability, _ := recField(v, "availability").(string)
 	isMod := viewer != nil && viewer.IsModerator
 	owned := viewer != nil && viewer.ID != 0 && viewer.ID == it.row.UserID
 	return availability != "Private" || owned || isMod
