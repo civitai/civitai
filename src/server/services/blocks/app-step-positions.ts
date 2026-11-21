@@ -198,10 +198,16 @@ export function findStepPositionProblem(
   // (lower-cased), while its template is walked.
   const loopItems = new Map<string, readonly unknown[]>();
 
-  // Below a media key every string is held to `mediaReferenceRefusal`. A reference to another
-  // step's output passes only when its path ends on a media field: this workflow produces that value
-  // at run time. Any other output (text the app's prompt shapes) is refused.
-  const visitMedia = (value: unknown, key: string, depth: number): StepPositionProblem | null => {
+  // A reference to another step's output passes at a media key only when its path ends on a media
+  // field: this workflow produces that value at run time. Any other output (text the app's prompt
+  // shapes) is refused.
+  // `flat`: every leaf is judged under `key` (a whole loop item placed at a media key).
+  const visitMedia = (
+    value: unknown,
+    key: string,
+    depth: number,
+    flat = false
+  ): StepPositionProblem | null => {
     if (depth > MAX_DEPTH) return { form: 'reference', key };
     if (typeof value === 'string')
       return mediaReferenceRefusal(value, viewerId) ? { form: 'media-reference', key } : null;
@@ -213,7 +219,7 @@ export function findStepPositionProblem(
         : null;
     if (Array.isArray(value)) {
       for (const item of value) {
-        const problem = visitMedia(item, key, depth + 1);
+        const problem = visitMedia(item, key, depth + 1, flat);
         if (problem) return problem;
       }
       return null;
@@ -241,10 +247,21 @@ export function findStepPositionProblem(
           ? visitMedia(argument.value, key, depth + 1)
           : { form: 'reference', key };
       }
-      const items = loopItems.get(target.toLowerCase());
-      if (items) return visitMedia(items, key, depth + 1);
       const pathKey = Object.keys(reference).find((k) => k.toLowerCase() === 'path');
       const path = pathKey === undefined ? undefined : reference[pathKey];
+      const items = loopItems.get(target.toLowerCase());
+      if (items) {
+        if (path === undefined || path === '') return visitMedia(items, key, depth + 1, true);
+        // What the path picks out of each item lands here, so it is judged here.
+        if (typeof path !== 'string') return { form: 'reference', key };
+        for (const item of items) {
+          const placed = argumentValue({ $ref: WORKFLOW_ARGUMENTS_REF, path }, item);
+          if (!placed.found) return { form: 'reference', key };
+          const problem = visitMedia(placed.value, key, depth + 1);
+          if (problem) return problem;
+        }
+        return null;
+      }
       const last =
         typeof path === 'string'
           ? path
@@ -255,6 +272,11 @@ export function findStepPositionProblem(
       return last !== undefined && isMediaLikeSegment(last) ? null : { form: 'reference', key };
     }
     for (const [childKey, child] of Object.entries(record)) {
+      if (flat) {
+        const problem = visitMedia(child, key, depth + 1, true);
+        if (problem) return problem;
+        continue;
+      }
       if (MEDIA_TEXT_KEYS.has(childKey.toLowerCase())) continue;
       const problem = visitMedia(child, FIELD_KEY_RE.test(childKey) ? childKey : key, depth + 1);
       if (problem) return problem;

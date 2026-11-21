@@ -343,6 +343,15 @@ describe('media references (#9982)', () => {
     });
   });
 
+  it.each([
+    ['an escaped backslash path', `https://example.com/v2/consumer%5Cblobs/${blobKey}`],
+    ['a malformed escape', `https://example.com/v2/consumer/blobs/%E0%A4%A`],
+  ])('refuses a blob URL on another host with %s', (_label, value) => {
+    expect(findStepPositionProblem({ image: value }, VIEWER)).toMatchObject({
+      form: 'media-reference',
+    });
+  });
+
   it("leaves a blob URL on the orchestrator's own host to the source gate", () => {
     expect(
       findStepPositionProblem(
@@ -414,6 +423,45 @@ describe('media references (#9982)', () => {
         form: 'reference',
         key: 'for',
       });
+    });
+
+    it.each([
+      ['a caption', { caption: blobKey }],
+      ['a number field', { n: 12345 }],
+    ])('refuses what the loop path picks out of %s', (_label, item) => {
+      const field = Object.keys(item)[0];
+      const input = {
+        for: { $ref: '$arguments', path: 'items', as: 'item' },
+        template: { $type: 'imageGen', input: { image: { $ref: 'item', path: field } } },
+      };
+      expect(findStepPositionProblem(input, VIEWER, { items: [item] }, 'repeat')).toMatchObject({
+        form: 'media-reference',
+        key: 'image',
+      });
+    });
+
+    it.each([
+      ['a caption', { caption: blobKey }],
+      ['a number field', { n: 12345 }],
+    ])('refuses a whole item placed at a media key with %s in it', (_label, item) => {
+      expect(findStepPositionProblem(repeat(), VIEWER, { items: [item] }, 'repeat')).toMatchObject({
+        form: 'media-reference',
+        key: 'image',
+      });
+    });
+
+    it('refuses a loop path that does not resolve on every item, and passes one that does', () => {
+      const input = {
+        for: { $ref: '$arguments', path: 'items', as: 'item' },
+        template: { $type: 'imageGen', input: { image: { $ref: 'item', path: 'src' } } },
+      };
+      const url = 'https://image.civitai.com/x/y.png';
+      expect(
+        findStepPositionProblem(input, VIEWER, { items: [{ src: url }, {}] }, 'repeat')
+      ).toMatchObject({ form: 'reference', key: 'image' });
+      expect(
+        findStepPositionProblem(input, VIEWER, { items: [{ src: url }, { src: ownJob }] }, 'repeat')
+      ).toBeNull();
     });
 
     it('refuses a clause that does not name an array in the arguments', () => {

@@ -3,9 +3,7 @@ import { ORCHESTRATOR_PROXY_HOST } from '~/server/orchestrator/region-proxy';
 import { isWorkflowOwnedBy } from '~/server/services/orchestrator/assert-workflow-owner';
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 
-// The one decision on what an app-built step may name at a media input besides a URL or a
-// reference. Blob-named media keys (`blob`, `blobKey`, `audioBlob`, `videoBlob`) are closed to
-// bare blob keys from app-built steps.
+// The one decision on what an app-built step may name at a media input besides a URL or a reference.
 
 // An orchestrator AIR the AIR grammar cannot read is still one to the orchestrator.
 const ORCHESTRATOR_SOURCE_RE = /(^|:)orchestrator:/i;
@@ -57,13 +55,7 @@ export function isOwnOrchestratorFile(value: string, viewerId: number): boolean 
   );
 }
 
-/**
- * Why a value at a media input is refused, or null. A URL, a data URI or any other value passes
- * here (the source gate judges URLs), except one naming an orchestrator blob on another host. The
- * viewer's own orchestrator job file passes. Any other AIR
- * (another user's file, a blob, a Civitai image or model), a bare blob key and a bare number are
- * refused.
- */
+/** Why a value at a media input is refused, or null. URLs are otherwise the source gate's to judge. */
 export function mediaReferenceRefusal(raw: string, viewerId: number): MediaReferenceRefusal | null {
   const value = raw.trim();
   if (BARE_ID_RE.test(value)) return 'bare-id';
