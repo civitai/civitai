@@ -199,9 +199,7 @@ export const modelVersionRouter = router({
   getLicensingRoots: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getLicensingRootsSchema)
-    .query(({ input, ctx }) =>
-      getLicensingRoots({ ...input, includeRestricted: !!ctx.user?.isModerator })
-    ),
+    .query(({ input }) => getLicensingRoots(input)),
   getExplorationPromptsById: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)

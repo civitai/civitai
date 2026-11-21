@@ -994,6 +994,49 @@ describe('ModelVersionUpsertForm — licensing lineage pre-selection', () => {
 
     expect((await save()).licensingSourceVersionId ?? null).toBeNull();
   });
+
+  // A restricted root's own version is still a root even though the picker hides restricted roots: read
+  // as a derivative, it would be stamped with the ecosystem default as its parent and charge that fee.
+  test("a restricted root's own version gets no parent stamped", async () => {
+    licensingRoots.respond = () => ({
+      roots: [
+        { id: 456, modelId: 123, versionName: 'v1.0', isDefault: false, restricted: true },
+        { ...ANIMA_CHECKPOINT_ROOT, restricted: false },
+      ],
+      defaultVersionId: ANIMA_CHECKPOINT_ROOT.id,
+    });
+    renderForm();
+
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    expect(page.getByRole('textbox', { name: 'Fine-tuned from' }).elements()).toHaveLength(0);
+    expect((await save()).licensingSourceVersionId ?? null).toBeNull();
+  });
+
+  test('a creator is not offered a restricted root', async () => {
+    licensingRoots.respond = () => ({
+      roots: [
+        { id: 777, modelId: 9, versionName: 'Restricted', isDefault: false, restricted: true },
+      ],
+      defaultVersionId: null,
+    });
+    renderNew();
+    await expect.element(page.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(page.getByRole('textbox', { name: 'Fine-tuned from' }).elements()).toHaveLength(0);
+  });
+
+  test('a moderator is offered a restricted root (control)', async () => {
+    currentUser.value = { id: 1, tier: 'free', isModerator: true, meta: {} };
+    licensingRoots.respond = () => ({
+      roots: [
+        { id: 777, modelId: 9, versionName: 'Restricted', isDefault: false, restricted: true },
+      ],
+      defaultVersionId: null,
+    });
+    renderNew();
+    await expect
+      .element(page.getByRole('textbox', { name: 'Fine-tuned from' }))
+      .toBeInTheDocument();
+  });
 });
 
 // A creator releasing model after model re-entered the same pricing every time. The last charging save
