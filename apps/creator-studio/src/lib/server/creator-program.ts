@@ -1,7 +1,7 @@
 import { getClickhouse } from '$lib/server/clickhouse';
 import { getBuzz } from '$lib/server/buzz';
 import { createCache } from '$lib/server/cache';
-import { getForecastedValue } from '@civitai/buzz';
+import { forecastPoolSize, getForecastedValue, poolNetBankedSql } from '@civitai/buzz';
 import { env } from '$env/dynamic/private';
 
 // Faithful port of the main app's creator-program compensation-pool math so the Studio's "your buzz could be worth
@@ -10,9 +10,9 @@ import { env } from '$env/dynamic/private';
 //   - the estimate:           src/server/utils/creator-program.utils.ts getForecastedValue (current-month, capped $1/1k buzz)
 // The pool figures are platform-wide (not per-user); cached in Redis for a day, matching the main app's cache
 // lifetime. Pool config comes from the CREATOR_POOL_* env (main-app runtime secrets) — set them in the Studio env to
-// match; otherwise `value` uses the documented 35000 fallback and the forecast portion defaults to 50%, exactly as
-// the main app degrades. NOTE (per Briant): as more creator-program surfaces move into the Studio, this pool math is
-// a candidate to extract into a shared `@civitai/creator-program` package rather than living per-app.
+// match; otherwise `value` uses the documented 35000 fallback, exactly as the main app degrades. NOTE (per Briant):
+// as more creator-program surfaces move into the Studio, this pool math is a candidate to extract into a shared
+// `@civitai/creator-program` package rather than living per-app.
 
 // BANKABLE_BUZZ_TYPES_STRING in the main app.
 const BANKABLE = "'yellow','green'";
@@ -22,13 +22,23 @@ const POOL_VALUE_FALLBACK = 35000;
 // fallback). We only surface a dollar estimate when it's real — a wrong money figure is worse than none.
 export type CompensationPool = { value: number; forecasted: number; valueReal: boolean };
 
+// getMonthAccount in the main app: the bank account id for a month is its UTC YYYYMM.
+function monthAccount(date: Date): number {
+  return date.getUTCFullYear() * 100 + date.getUTCMonth() + 1;
+}
+
 async function fetchPool(): Promise<CompensationPool> {
   const taxes = env.CREATOR_POOL_TAXES ? Number(env.CREATOR_POOL_TAXES) : null;
   const portion = env.CREATOR_POOL_PORTION ? Number(env.CREATOR_POOL_PORTION) : null;
-  const forecastPortion = Number(env.CREATOR_POOL_FORECAST_PORTION ?? 50);
   const ch = getClickhouse();
 
-  const [valueRows, forecastRows] = await Promise.all([
+  const now = new Date();
+  const thisMonth = monthAccount(now);
+  const lastMonth = monthAccount(
+    new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
+  );
+
+  const [valueRows, lastMonthRows, thisMonthRows] = await Promise.all([
     // Prior-month gross buzz sales into bankable accounts (÷1000 → the raw pool input).
     ch.$query<{ balance: number | string }>(
       `SELECT SUM(amount) / 1000 AS balance
@@ -41,15 +51,8 @@ async function fetchPool(): Promise<CompensationPool> {
          AND externalTransactionId NOT LIKE 'renewalBonus:%'
          AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1))`
     ),
-    // Prior-month compensation/tip + early-access buzz into bankable accounts (the forecast base).
-    ch.$query<{ balance: number | string }>(
-      `SELECT SUM(amount) AS balance
-       FROM buzzTransactions
-       WHERE toAccountType IN (${BANKABLE})
-         AND ((type IN ('compensation','tip')) OR (type = 'purchase' AND fromAccountId != 0))
-         AND toAccountId != 0
-         AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1))`
-    ),
+    ch.$query<{ balance: number | string }>(poolNetBankedSql(lastMonth, BANKABLE)),
+    ch.$query<{ balance: number | string }>(poolNetBankedSql(thisMonth, BANKABLE)),
   ]);
 
   const gross = Number(valueRows[0]?.balance ?? 0);
@@ -59,7 +62,10 @@ async function fetchPool(): Promise<CompensationPool> {
   const value = valueReal
     ? (gross - gross * (taxes! / 100)) * (portion! / 100)
     : POOL_VALUE_FALLBACK;
-  const forecasted = Number(forecastRows[0]?.balance ?? 0) * (forecastPortion / 100);
+  const forecasted = forecastPoolSize(
+    Number(lastMonthRows[0]?.balance ?? 0),
+    Number(thisMonthRows[0]?.balance ?? 0)
+  );
   return { value, forecasted, valueReal };
 }
 

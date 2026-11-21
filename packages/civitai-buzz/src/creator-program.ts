@@ -37,3 +37,28 @@ export function getCurrentValue(
   // toBank / 1000 ensures we cap at $1 per 1000 buzz
   return Math.min((toBank / pool.size.current) * pool.value, toBank / 1000);
 }
+
+/** ClickHouse SQL for the Buzz net-banked into one month's pool (banks minus extractions), the
+ *  figure the month's payout divides the pool by. `monthAccount` is the YYYYMM bank account id;
+ *  `bankableTypesSql` the quoted bankable account types, e.g. `'yellow', 'green'`. */
+export function poolNetBankedSql(monthAccount: number, bankableTypesSql: string): string {
+  const month = Math.trunc(monthAccount);
+  return `
+    SELECT SUM(if(toAccountType = 'creatorProgramBank', amount, -amount)) AS balance
+    FROM buzzTransactions
+    WHERE (
+      toAccountType = 'creatorProgramBank'
+      AND toAccountId = ${month}
+      AND fromAccountType IN (${bankableTypesSql})
+    ) OR (
+      fromAccountType = 'creatorProgramBank'
+      AND fromAccountId = ${month}
+      AND toAccountType IN (${bankableTypesSql})
+    )`;
+}
+
+/** The pool size a forecast divides by: what last month's pool ended at, or what is banked
+ *  already if this month has passed it. */
+export function forecastPoolSize(lastMonthNetBanked: number, currentBanked: number): number {
+  return Math.max(lastMonthNetBanked, currentBanked);
+}
