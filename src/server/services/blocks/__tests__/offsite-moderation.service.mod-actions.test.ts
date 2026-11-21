@@ -709,7 +709,8 @@ describe('delistListing — the offline-access cut is recorded in the moderation
     mockWrite.apiKey.deleteMany.mockRejectedValue(new Error('refresh delete exploded'));
     mockWrite.appListingModerationEvent.create.mockImplementation(
       async (a: { data: { action: string } }) => {
-        if (a.data.action.startsWith('offline-cut')) throw new Error('23514 check violation');
+        if (a.data.action.startsWith('offline-cut'))
+          throw new Error('new row violates check constraint');
         return a.data;
       }
     );
@@ -727,7 +728,11 @@ describe('delistListing — the offline-access cut is recorded in the moderation
     );
     expect(eventFailedLogs).toHaveLength(1);
     expect(eventFailedLogs[0][0]).toMatchObject({
-      payload: { appListingId: APP_ID, outcome: 'failed', message: '23514 check violation' },
+      payload: {
+        appListingId: APP_ID,
+        outcome: 'failed',
+        message: 'new row violates check constraint',
+      },
     });
   });
 });

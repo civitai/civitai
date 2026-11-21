@@ -1,9 +1,12 @@
+import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
+// After `makeTrpcProxy`: this module imports `~/utils/trpc`, whose mock factory reads it.
+import { FixedSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
@@ -59,13 +62,6 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationsModule>()),
   showSuccessNotification: vi.fn(),
   showErrorNotification: vi.fn(),
-}));
-
-// The reports queue renders on the moderator-only /apps/review page, and each row's "History"
-// entry point is drawn for a moderator (`moderationHistoryTarget`). The real hook needs a
-// session provider this harness does not mount ("missing CivitaiSessionContext").
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'mod', isModerator: true }),
 }));
 
 // Only the `trpc` client itself is overridden — the rest of `~/utils/trpc`'s real exports
@@ -134,9 +130,22 @@ beforeEach(() => {
   mocks.reportOver = {};
 });
 
+// The /apps/review page is moderator-only, and each row's "History" entry point is drawn for a
+// moderator (`moderationHistoryTarget`). The shared harness mounts no session, so each render
+// gets a fixed moderator session and the real `useCurrentUser` reads it.
+const asModerator = (ui: ReactElement) => (
+  <FixedSessionProvider user={{ id: 1, username: 'mod', isModerator: true }}>
+    {ui}
+  </FixedSessionProvider>
+);
+async function renderAsModerator(ui: ReactElement) {
+  const result = await renderWithProviders(asModerator(ui));
+  return { ...result, rerender: (next: ReactElement) => result.rerender(asModerator(next)) };
+}
+
 describe('OffsiteReportsQueue — reason-gated report actions (finding A)', () => {
   test('Relist shows the live counter + inline error, disables under the floor, then fires', async () => {
-    renderWithProviders(<OffsiteReportsQueue />);
+    renderAsModerator(<OffsiteReportsQueue />);
     await page.getByTestId('apps-report-relist-bad-app').click();
     // The gate UX now matches the reject paths.
     await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
@@ -159,7 +168,7 @@ describe('OffsiteReportsQueue — reason-gated report actions (finding A)', () =
   });
 
   test('Purge is destructive (red "Purge permanently"), counter-gated, then fires', async () => {
-    renderWithProviders(<OffsiteReportsQueue />);
+    renderAsModerator(<OffsiteReportsQueue />);
     await page.getByTestId('apps-report-purge-bad-app').click();
     await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
     const confirm = page.getByTestId('apps-report-action-confirm');
@@ -176,7 +185,7 @@ describe('OffsiteReportsQueue — reason-gated report actions (finding A)', () =
   });
 
   test('Claim is gated on BOTH a valid target and a ≥3 reason', async () => {
-    renderWithProviders(<OffsiteReportsQueue />);
+    renderAsModerator(<OffsiteReportsQueue />);
     await page.getByTestId('apps-report-claim-bad-app').click();
     const confirm = page.getByTestId('apps-report-action-confirm');
     await expect.element(confirm).toBeDisabled();
@@ -195,7 +204,7 @@ describe('OffsiteReportsQueue — reason-gated report actions (finding A)', () =
   });
 
   test('Resolve is an OPTIONAL note — enabled with no reason, no counter, fires resolveReport', async () => {
-    renderWithProviders(<OffsiteReportsQueue />);
+    renderAsModerator(<OffsiteReportsQueue />);
     await page.getByTestId('apps-report-resolve-bad-app').click();
     // No reason floor for a note → no counter, and the confirm is immediately enabled.
     expect(page.getByText('3+ characters', { exact: true }).elements()).toHaveLength(0);
@@ -212,7 +221,7 @@ describe('🔴 a DISMISSED report offers no actions, and its count is not an ala
       status: 'dismissed',
       appListing: { slug: 'bad-app', name: 'Bad App', kind: 'offsite', status: 'approved' },
     };
-    renderWithProviders(<OffsiteReportsQueue />);
+    renderAsModerator(<OffsiteReportsQueue />);
     await expect.element(page.getByRole('button', { name: 'History' })).toBeInTheDocument();
     for (const action of ['delist', 'claim', 'relist', 'purge', 'resolve', 'dismiss']) {
       expect(page.getByTestId(`apps-report-${action}-bad-app`).elements()).toHaveLength(0);
@@ -224,12 +233,12 @@ describe('🔴 a DISMISSED report offers no actions, and its count is not an ala
       status: 'pending',
       appListing: { slug: 'bad-app', name: 'Bad App', kind: 'offsite', status: 'approved' },
     };
-    renderWithProviders(<OffsiteReportsQueue />);
+    renderAsModerator(<OffsiteReportsQueue />);
     await expect.element(page.getByTestId('apps-report-delist-bad-app')).toBeInTheDocument();
   });
 
   test('the heading count is red only on the Pending view', async () => {
-    renderWithProviders(<OffsiteReportsQueue />);
+    renderAsModerator(<OffsiteReportsQueue />);
     const count = page.getByTestId('apps-reports-count');
     await expect.element(count).toBeInTheDocument();
     // Pending (the default view) with one report: the alarm colour.

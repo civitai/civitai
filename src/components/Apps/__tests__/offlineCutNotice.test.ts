@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as Notifications from '~/utils/notifications';
+import type * as MantineNotifications from '@mantine/notifications';
 
 /**
  * The takedown warning toast → moderation history WIRING. `appListingModerationView.test.ts` pins
@@ -9,20 +9,17 @@ import type * as Notifications from '~/utils/notifications';
  * and the opener puts the shared modal in the global dialog store keyed by that listing.
  *
  * Node tier, no DOM: the toast body is a function component with no hooks, so it is called
- * directly and its button's `onClick` is invoked.
+ * directly and its button's `onClick` is invoked. Only Mantine's `showNotification` is stubbed;
+ * the dialog store is the real one, read back through `useDialogStore.getState()`.
  */
 
-const { notify, trigger, closeById } = vi.hoisted(() => ({
-  notify: vi.fn(),
-  trigger: vi.fn(),
-  closeById: vi.fn(),
+const { notify } = vi.hoisted(() => ({ notify: vi.fn() }));
+vi.mock('@mantine/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof MantineNotifications>()),
+  showNotification: notify,
 }));
-vi.mock('~/utils/notifications', async (importOriginal) => ({
-  ...(await importOriginal<typeof Notifications>()),
-  showWarningNotification: notify,
-}));
-vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: { trigger, closeById } }));
 
+import { useDialogStore } from '~/components/Dialog/dialogStore';
 import {
   ListingModerationHistoryModal,
   listingModerationHistoryDialogId,
@@ -65,8 +62,16 @@ const FAILED = {
 };
 const LISTING = { appListingId: 'apl_cut_failed_3', slug: 'cut-failed-app' };
 
+type OpenedDialog = {
+  id: unknown;
+  component: unknown;
+  props: { listing: unknown; onClose: () => void };
+};
+const openDialogs = () => useDialogStore.getState().dialogs as unknown as OpenedDialog[];
+
 beforeEach(() => {
   vi.clearAllMocks();
+  useDialogStore.getState().closeAll();
 });
 
 describe('takedown warning toast → moderation history', () => {
@@ -78,14 +83,10 @@ describe('takedown warning toast → moderation history', () => {
     });
     const button = findByTestId(shownMessage(), 'apps-offline-cut-open-history');
     expect(button).not.toBeNull();
-    expect(trigger).not.toHaveBeenCalled();
+    expect(openDialogs()).toEqual([]);
     (button!.props.onClick as () => void)();
-    expect(trigger).toHaveBeenCalledTimes(1);
-    const dialog = trigger.mock.calls[0][0] as {
-      id: string;
-      component: unknown;
-      props: { listing: unknown; onClose: () => void };
-    };
+    expect(openDialogs()).toHaveLength(1);
+    const [dialog] = openDialogs();
     expect(dialog.id).toBe('listing-moderation-history-apl_cut_failed_3');
     expect(dialog.component).toBe(ListingModerationHistoryModal);
     expect(dialog.props.listing).toEqual({
@@ -98,7 +99,7 @@ describe('takedown warning toast → moderation history', () => {
     showOfflineCutFailureWarning({ ...FAILED, appListingId: 'apl_server_side_7' }, LISTING);
     const button = findByTestId(shownMessage(), 'apps-offline-cut-open-history');
     (button!.props.onClick as () => void)();
-    expect((trigger.mock.calls[0][0] as { props: { listing: unknown } }).props.listing).toEqual({
+    expect(openDialogs()[0].props.listing).toEqual({
       appListingId: 'apl_server_side_7',
       slug: '',
     });
@@ -121,16 +122,14 @@ describe('takedown warning toast → moderation history', () => {
 describe('openListingModerationHistory — the one opener every surface uses', () => {
   it('puts the shared modal in the dialog store keyed by listing, and its close removes that one', () => {
     openListingModerationHistory({ appListingId: 'apl_open_5', slug: 'open-app' });
-    const dialog = trigger.mock.calls[0][0] as {
-      id: string;
-      component: unknown;
-      props: { listing: unknown; onClose: () => void };
-    };
+    openListingModerationHistory({ appListingId: 'apl_other_6', slug: 'other-app' });
+    expect(openDialogs()).toHaveLength(2);
+    const [dialog] = openDialogs();
     expect(dialog.id).toBe(listingModerationHistoryDialogId('apl_open_5'));
     expect(dialog.id).toBe('listing-moderation-history-apl_open_5');
     expect(dialog.component).toBe(ListingModerationHistoryModal);
     expect(dialog.props.listing).toEqual({ appListingId: 'apl_open_5', slug: 'open-app' });
     dialog.props.onClose();
-    expect(closeById).toHaveBeenCalledWith('listing-moderation-history-apl_open_5');
+    expect(openDialogs().map((d) => d.id)).toEqual(['listing-moderation-history-apl_other_6']);
   });
 });

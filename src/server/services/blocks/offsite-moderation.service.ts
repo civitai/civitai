@@ -849,6 +849,7 @@ export async function retryConnectOfflineCut(opts: {
   if (!(await takedown.isOfflineGrantOn())) {
     throw new OffsiteModerationError('FORBIDDEN', 'Offline access cuts are not enabled.');
   }
+  // primary: this status gates deleting the client's Refresh keys; a relist the replica has not seen would read as removed.
   const listing = await dbWrite.appListing.findUnique({
     where: { id: appListingId },
     select: { id: true, kind: true, status: true, slug: true, connectClientId: true },
