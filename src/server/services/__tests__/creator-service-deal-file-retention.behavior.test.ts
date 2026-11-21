@@ -106,7 +106,7 @@ beforeAll(async () => {
       SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
     CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected', 'Void');
     CREATE TABLE "Appeal" (id serial PRIMARY KEY, "userId" int NOT NULL, status "AppealStatus" NOT NULL);
-    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text NOT NULL);
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text NOT NULL, "createdAt" timestamp(3) NOT NULL DEFAULT now());
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1,
@@ -326,6 +326,11 @@ describe('holds', () => {
       'ban notes naming a child-safety report',
       (p) =>
         `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "Harassment", "detailsInternal": "NCMEC report filed"}}' WHERE id = ${p}`,
+    ],
+    [
+      'an external ban note naming a child-safety report',
+      (p) =>
+        `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "Harassment", "detailsExternal": "csam"}}' WHERE id = ${p}`,
     ],
     [
       'an image held for review',

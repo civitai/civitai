@@ -21,6 +21,8 @@ const live = vi.hoisted(() => ({
   store: undefined as unknown,
   /** Legal-hold answers by user id; absent = not held, `null` = the hold could not be read. */
   holds: new Map<number, boolean | null>(),
+  /** Banned with a CSAM/NCMEC note: held for content removal, not as an account. */
+  banNote: new Set<number>(),
 }));
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
   getDocStoreMaintenance: () => live.store,
@@ -28,6 +30,10 @@ vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
 vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   isAccountUnderLegalHold: async (id: number) => (live.holds.has(id) ? live.holds.get(id) : false),
+  isContentRemovalHeld: async (id: number) => {
+    const account = live.holds.has(id) ? live.holds.get(id) : false;
+    return account !== false ? account : live.banNote.has(id);
+  },
 }));
 vi.mock('../job', () => ({
   createJob: (name: string, cron: string, fn: (ctx: unknown) => unknown) => ({ name, cron, fn }),
@@ -147,6 +153,7 @@ beforeEach(async () => {
   // case's two apps, so a wipe's namespaces are exactly those.
   for (const uid of ALL) await maint.wipeAccount(uid);
   live.holds.clear();
+  live.banNote.clear();
   keyValues.clear();
   await primary.exec('DELETE FROM "User"');
   await replica.exec('DELETE FROM "User"');
@@ -294,6 +301,16 @@ describe('removeDeletedAccountAppData', () => {
     expect(out.held).toBeGreaterThanOrEqual(1);
     expect(await docsOf(IN_GRACE)).toBe(4);
     expect(await markerOf(IN_GRACE)).toBe('requested');
+  });
+
+  it('a ban-note hold with no account hold also stops the wipe', async () => {
+    live.banNote.add(OPTED_IN);
+
+    const out = await removeDeletedAccountAppData({ store: maint, now: NOW });
+
+    expect(out).toMatchObject({ wiped: 0, held: 2, failed: 0 });
+    expect(await docsOf(OPTED_IN)).toBe(4);
+    expect(await markerOf(OPTED_IN)).toBe('requested');
   });
 
   it('a hold that cannot be read counts as held: nothing is wiped and the request is kept', async () => {

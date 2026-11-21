@@ -2,11 +2,13 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { banNoteHoldSql } from '~/server/services/ban-note-csam';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import {
   PLACEHOLDER_OWNER_ID,
   reportHolds,
+  reportListedImageOwnerIdsSql,
   userNamedOnHoldingReportSql,
   userUnderLegalHoldSql,
 } from '~/server/utils/legal-hold';
@@ -99,20 +101,11 @@ function holdLegsSql(id: Prisma.Sql) {
             AND sc.images @> jsonb_build_array(jsonb_build_object('id', bi.id))
         )
     )`,
-    // Any image of theirs listed in a report that still holds, whoever the report names. Walks the
-    // reports' image lists rather than the user's images: the lists are short, an account's images
-    // are not. Compared as bigint so an id past int range still matches rather than being skipped.
+    // Any image of theirs listed in a report that still holds, whoever the report names.
     // Uncorrelated, so Postgres builds the set once per statement rather than once per row.
-    'reported-image': Prisma.sql`${notCaptureOwner(id)} AND ((${id}) IN (
-      SELECT ri."userId"
-      FROM "CsamReport" rr
-      CROSS JOIN LATERAL jsonb_array_elements(
-        CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
-      ) re
-      JOIN "Image" ri
-        ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
-      WHERE ${reportHolds('rr')}
-    ))`,
+    'reported-image': Prisma.sql`${notCaptureOwner(
+      id
+    )} AND ((${id}) IN (${reportListedImageOwnerIdsSql(reportHolds)}))`,
   } satisfies Partial<Record<AccountHoldLeg, Prisma.Sql>>;
 }
 
@@ -478,6 +471,52 @@ export async function getAccountLegalHoldLegs(userId: number): Promise<AccountHo
 }
 
 /**
+ * Whether content owned by `id` (an int SQL expression) must not be removed: any account hold, or a
+ * ban whose note names CSAM or NCMEC that no moderator has released. For every path that deletes a
+ * user's media or content. Account deletion itself is not refused on the ban-note leg, so it is kept
+ * out of `accountHoldSql`.
+ */
+export function contentRemovalHeldSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
+  return Prisma.sql`(${accountHoldSql(id, markerView)} OR ${banNoteHoldSql(id)})`;
+}
+
+/**
+ * `assertAccountNotUnderLegalHold`, plus the ban-note leg of `contentRemovalHeldSql`: throws
+ * `LegalHoldError` when either holds, and `LegalHoldUnconfirmedError` (also a `LegalHoldError`) when
+ * either cannot be read. For an immediate removal of a user's content.
+ */
+export async function assertContentRemovalNotHeld(
+  userId: number,
+  refused = 'Content removal refused'
+): Promise<Pick<AccountLegalHold, 'markerView'>> {
+  const hold = await assertAccountNotUnderLegalHold(userId, refused);
+  let row: { banNoteHeld: boolean | null } | undefined;
+  try {
+    // primary: a ban placed a moment ago must stop this removal.
+    [row] = await dbWrite.$queryRaw<{ banNoteHeld: boolean | null }[]>`
+      SELECT ${banNoteHoldSql(Prisma.sql`${userId}::int`)} AS "banNoteHeld"
+    `;
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'account-legal-hold-check-failed',
+      message: (e as Error).message,
+      details: { userId },
+    });
+    throw new LegalHoldUnconfirmedError();
+  }
+  if (row?.banNoteHeld === false) return hold;
+  logToAxiom({
+    type: 'info',
+    name: 'account-legal-hold',
+    message: refused,
+    userId,
+    payload: { legs: ['ban-note'] },
+  });
+  throw new LegalHoldError();
+}
+
+/**
  * Throws `LegalHoldError` when the account is held, and `LegalHoldUnconfirmedError` when whether it
  * is held cannot be determined. The reason is logged here and goes no further.
  */
@@ -533,6 +572,50 @@ export async function assertOwnersNotUnderLegalHold(userIds: number[]) {
 export async function isAccountUnderLegalHold(userId: number): Promise<boolean | null> {
   const hold = await holdOrNull(userId);
   return hold ? hold.legs.length > 0 : null;
+}
+
+/**
+ * `contentRemovalHeldSql` for one user, on the primary: `null` when it cannot be read, which
+ * callers treat as held. For a job or step that keeps a held user's content and carries on.
+ */
+export async function isContentRemovalHeld(userId: number): Promise<boolean | null> {
+  const account = await isAccountUnderLegalHold(userId);
+  if (account !== false) return account;
+  const banNote = await readBanNoteHolds([userId]);
+  return banNote ? banNote.get(userId) === true : null;
+}
+
+/**
+ * `contentRemovalHeldSql` for many users, in two batched reads. Never throws: a user a read fails
+ * for or leaves out answers `true`.
+ */
+export async function areContentRemovalsHeld(userIds: number[]): Promise<Map<number, boolean>> {
+  const answer = await areAccountsUnderLegalHold(userIds);
+  const clear = userIds.filter((id) => answer.get(id) === false);
+  if (clear.length === 0) return answer;
+  const banNote = await readBanNoteHolds(clear);
+  for (const id of clear) answer.set(id, banNote?.get(id) !== false);
+  return answer;
+}
+
+/** The ban-note leg for each of `userIds`; `true` for a non-boolean answer, `null` on a failed read. */
+async function readBanNoteHolds(userIds: number[]): Promise<Map<number, boolean> | null> {
+  try {
+    const rows = await dbWrite.$queryRaw<{ userId: number; banNoteHeld: unknown }[]>`
+      SELECT u."userId", ${banNoteHoldSql(Prisma.raw('u."userId"'))} AS "banNoteHeld"
+      FROM unnest(${userIds}::int[]) AS u("userId")
+    `;
+    const answers = new Map(rows.map((r) => [Number(r.userId), r.banNoteHeld]));
+    return new Map(userIds.map((id) => [id, answers.get(id) !== false]));
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'account-legal-hold-check-failed',
+      message: (e as Error).message,
+      details: { userIds },
+    });
+    return null;
+  }
 }
 
 async function holdOrNull(userId: number): Promise<AccountLegalHold | null> {

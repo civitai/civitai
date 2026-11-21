@@ -1,6 +1,6 @@
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { banNoteNamesCsamSql } from '~/server/services/ban-note-csam';
-import type { PROFILE_CLEAR_FIELDS } from '~/server/schema/moderator/user';
+import { PROFILE_CLEAR_FIELDS } from '~/server/schema/moderator/user';
 import { markUserDealUploadsRemovedSql } from '~/server/services/creator-service-deal-file-retention';
 import {
   assertCollectionItemsVisibleToViewer,
@@ -39,8 +39,11 @@ import {
   assertAccountNotUnderLegalHold,
   guardedAccountScrubSql,
   holdMarkerViewExists,
+  isContentRemovalHeld,
   isLegalHoldAbort,
   LegalHoldError,
+  assertContentRemovalNotHeld,
+  contentRemovalHeldSql,
   LegalHoldStoppedError,
   heldModelIdsSql,
   recordCurrentModelOwnersSql,
@@ -521,6 +524,7 @@ export async function archiveProfileBeforeModeratorChange<TStored = unknown>({
               OR r.details ->> 'secondaryUserId' = ${idText}
           )
           OR ${heldSql}
+          -- The bare note, release or not: archiving more is the safe side.
           OR EXISTS (
             SELECT 1 FROM "User" u
             WHERE u.id = ${userId}
@@ -1403,7 +1407,15 @@ export const deleteUser = async ({
   removeModels,
   removeImages,
   removeAppData,
-}: DeleteUserInput) => {
+  actorId,
+  archive = async (snapshot) =>
+    (await import('~/server/services/csam.service-new')).archiveUserProfile(snapshot),
+}: DeleteUserInput & {
+  /** Who is deleting: a moderator, or the account itself (`id`) for a self-delete. */
+  actorId: number;
+  /** Server-only: stores the profile and links before they are deleted. */
+  archive?: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
+}) => {
   // Refused by name; the account scrub below also rejects a non-positive id, but only as a 500.
   if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   const user = await dbWrite.user.findFirst({
@@ -1414,6 +1426,13 @@ export const deleteUser = async ({
   // Here rather than in each caller, so every caller of `deleteUser` is held to it. The scrub below
   // checks again in the same statement as its write.
   const { markerView } = await assertAccountNotUnderLegalHold(user.id);
+  // Archived first for a user a report, hold or ban note names; a failed archive deletes nothing.
+  await archiveProfileBeforeModeratorChange({
+    userId: user.id,
+    actorId,
+    fields: [...PROFILE_CLEAR_FIELDS, 'links'],
+    archive,
+  });
   // Deal uploads go only when the rest of their content does, and only with retention on.
   const removeDealUploads =
     imageRemovalMode(removeImages) === 'immediate' &&
@@ -1537,8 +1556,20 @@ export const deleteUser = async ({
     usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
   await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
-  // A ban never reaches here, so a banned user's sleeping apps are kept.
-  await runStep('delete-sleeping-apps', () => deleteSleepingAppsOfDeletedAccount(user.id));
+  // A ban-note hold does not refuse the deletion, but it keeps the sleeping apps.
+  await runStep('delete-sleeping-apps', async () => {
+    if ((await isContentRemovalHeld(user.id)) !== false) {
+      logToAxiom({
+        name: 'delete-sleeping-apps',
+        type: 'info',
+        source: 'deleteUser',
+        userId: user.id,
+        message: 'Sleeping apps kept: content removal held',
+      });
+      return;
+    }
+    await deleteSleepingAppsOfDeletedAccount(user.id);
+  });
   await runStep('refresh-profile-picture', () => refreshProfilePicturesForUsers([user.id]));
   await runStep('close-pending-restrictions', () =>
     closeGenerationRestrictionsOfDeletedAccount(user.id)
@@ -2056,8 +2087,8 @@ export const removeAllContent = async ({
   const alertedBy = { userId: id, actorUserId: actorUserId ?? claimedModeratorId };
   // Here rather than in each caller (tRPC, the webhook, the moderator app's purge), so every one is
   // held to it. The deletes that destroy evidence check again in their own statements.
-  const { markerView } = await assertAccountNotUnderLegalHold(id);
-  const held = accountHoldSql(Prisma.sql`${id}::int`, markerView);
+  const { markerView } = await assertContentRemovalNotHeld(id);
+  const held = contentRemovalHeldSql(Prisma.sql`${id}::int`, markerView);
 
   // The primary, as the deletes below: a row the replica has not seen yet is still deleted.
   const models = await dbWrite.model.findMany({
@@ -2385,7 +2416,7 @@ export const removeAllContent = async ({
 
   // The two stores below are separate databases, so no statement there can carry the hold: check
   // again before either.
-  await assertAccountNotUnderLegalHold(id).catch(() => {
+  await assertContentRemovalNotHeld(id).catch(() => {
     logToAxiom({
       name: 'remove-all-content',
       type: 'error',

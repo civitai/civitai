@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { banReasonsAlwaysRemovingMedia } from '~/server/common/constants';
-import { banNoteNamesCsamSql } from '~/server/services/ban-note-csam';
+import { banNoteHeldUserSql } from '~/server/services/ban-note-csam';
 import { ownerHeldSql } from '~/server/services/legal-hold.service';
 import {
   SERVICE_DEAL_FILE_RETENTION_CLOSED_MS,
@@ -66,7 +66,7 @@ export const dealFilesHeld = Prisma.sql`(
       bu."meta" -> 'banDetails' ->> 'reasonCode' IN (${Prisma.join([
         ...banReasonsAlwaysRemovingMedia,
       ])})
-      OR ${banNoteNamesCsamSql(Prisma.sql`bu."meta"`)}))
+      OR ${banNoteHeldUserSql('bu')}))
   OR EXISTS (SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r."id" = ur."reportId"
     WHERE ur."userId" IN ${parties} AND r."status"::text IN ('Pending', 'Processing'))
   OR EXISTS (SELECT 1 FROM "Appeal" a

@@ -50,20 +50,44 @@ export const reportHolds = (hc: string) =>
     OR ${hc}."reportSentAt" > now() - interval '1 year'
   )`);
 
+/** The report predicate, over the `"CsamReport"` alias it is given. */
+export type ReportFilter = (alias: string) => Prisma.Sql;
+
 /**
- * The users under a legal hold through a report: named on one, as its subject or its secondary
- * user, that is still pending, not yet archived, or sent within the last year. One distinct
+ * The users a report passing `filter` names, as its subject or its secondary user. One distinct
  * `"userId"` text per row, never null, since the secondary user is read out of the report's details.
  */
-export const legalHoldUserIdsSql = Prisma.sql`
+export const reportNamedUserIdsSql = (filter: ReportFilter) => Prisma.sql`
   SELECT hc."userId"::text AS "userId"
   FROM "CsamReport" hc
-  WHERE hc."userId" IS NOT NULL AND ${reportHolds('hc')}
+  WHERE hc."userId" IS NOT NULL AND ${filter('hc')}
   UNION
   SELECT hs.details ->> 'secondaryUserId'
   FROM "CsamReport" hs
-  WHERE hs.details ->> 'secondaryUserId' IS NOT NULL AND ${reportHolds('hs')}
+  WHERE hs.details ->> 'secondaryUserId' IS NOT NULL AND ${filter('hs')}
 `;
+
+/**
+ * The owners of images a report passing `filter` lists, whoever the report names. Walks the reports'
+ * image lists rather than a user's images: the lists are short, an account's images are not. Compared
+ * as bigint so an id past int range still matches rather than being skipped.
+ */
+export const reportListedImageOwnerIdsSql = (filter: ReportFilter) => Prisma.sql`
+  SELECT ri."userId"
+  FROM "CsamReport" rr
+  CROSS JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
+  ) re
+  JOIN "Image" ri
+    ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
+  WHERE ${filter('rr')}
+`;
+
+/**
+ * The users under a legal hold through a report: named on one, as its subject or its secondary
+ * user, that is still pending, not yet archived, or sent within the last year.
+ */
+export const legalHoldUserIdsSql = reportNamedUserIdsSql(reportHolds);
 
 /**
  * Whether a user is named on a report that is still pending, not yet archived, or sent within the

@@ -47,6 +47,11 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "needsReview" text,
       "blockedFor" text, minor boolean NOT NULL DEFAULT false
     );
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb DEFAULT '{}', "bannedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (
+      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
   `);
 });
 afterAll(() => holder.db.close());
@@ -83,5 +88,53 @@ describe('delete-user-images on the feedback capture account', () => {
     expect(res.statusCode).toBe(400);
     const left = await holder.db.query<{ id: number }>(`SELECT id FROM "Image" ORDER BY id`);
     expect(left.rows.map((r) => r.id)).toEqual([1, 2, 3]);
+  });
+});
+
+describe('delete-user-images on an account banned with a CSAM/NCMEC note', () => {
+  const NOTED = 990088001;
+  const PLAIN = 990088002;
+  const call = async (userId: number) => {
+    const res = { statusCode: 200, body: undefined as unknown };
+    Object.assign(res, {
+      status: (code: number) => Object.assign(res, { statusCode: code }),
+      json: (body: unknown) => Object.assign(res, { body }),
+      setHeader: () => res,
+    });
+    await deleteUserImages({ query: { userId: String(userId) } } as never, res as never);
+    return res;
+  };
+  const imagesOf = async (userId: number) =>
+    (await holder.db.query(`SELECT 1 FROM "Image" WHERE "userId" = $1`, [userId])).rows.length;
+
+  beforeEach(async () => {
+    await holder.db.exec(`
+      TRUNCATE "Image", "User", "ModActivity";
+      INSERT INTO "User" (id, meta, "bannedAt") VALUES
+        (${NOTED}, '{"banDetails": {"detailsInternal": "NCMEC report filed"}}', now()),
+        (${PLAIN}, '{}', NULL);
+      INSERT INTO "Image" (id, "userId") VALUES (11, ${NOTED}), (12, ${NOTED}), (21, ${PLAIN});
+    `);
+    vi.mocked(dbMock.dbRead.image.findMany).mockImplementation(
+      (async ({ where }: { where: { userId: number } }) =>
+        (
+          await holder.db.query(`SELECT id, "postId" FROM "Image" WHERE "userId" = $1`, [
+            where.userId,
+          ])
+        ).rows) as never
+    );
+  });
+
+  it('refuses, deleting nothing', async () => {
+    const res = await call(NOTED);
+
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(await imagesOf(NOTED)).toBe(2);
+  });
+
+  it('deletes the images of an account with no such note (control for the above)', async () => {
+    await call(PLAIN);
+
+    expect(await imagesOf(PLAIN)).toBe(0);
   });
 });

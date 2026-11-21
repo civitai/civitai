@@ -26,9 +26,12 @@ vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
 
 import {
   areAccountsUnderLegalHold,
+  areContentRemovalsHeld,
+  assertContentRemovalNotHeld,
   getAccountLegalHoldLegs,
   guardedAccountScrubSql,
   isAccountUnderLegalHold,
+  isContentRemovalHeld,
   isLegalHoldAbort,
   LegalHoldError,
 } from '~/server/services/legal-hold.service';
@@ -65,7 +68,8 @@ const EXPIRED_MARKER = 20;
 const EXTENDED_MARKER = 21;
 const RELEASED_WITH_REPORT = 22; // a released marker, and a pending report naming them
 const OTHER_OWNERS_MODEL = 102;
-const ALL_USERS = Array.from({ length: 22 }, (_, i) => i + 1);
+const BAN_NOTE = 23; // banned with a note naming NCMEC; no account hold
+const ALL_USERS = Array.from({ length: 23 }, (_, i) => i + 1);
 
 let failQueries = false;
 let unreadable = false;
@@ -104,7 +108,8 @@ beforeAll(async () => {
       image text,
       "profilePictureId" int,
       "subscriptionId" text,
-      meta jsonb
+      meta jsonb,
+      "bannedAt" timestamp(3)
     );
     CREATE TABLE "UserReport" ("userId" int, "reportId" int);
     -- What deleteUser's deal-file statement reads; no deals, so it marks nothing.
@@ -115,7 +120,7 @@ beforeAll(async () => {
     CREATE TABLE "Report" (id int PRIMARY KEY, status text);
     CREATE TABLE "ServiceOfferingReport" ("serviceOfferingId" int, "reportId" int);
     CREATE TABLE "Appeal" ("userId" int, status text);
-    CREATE TABLE "ModActivity" ("entityType" text, "entityId" int, activity text);
+    CREATE TABLE "ModActivity" ("entityType" text, "entityId" int, activity text, "createdAt" timestamp(3));
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     INSERT INTO "Model" VALUES (${CLEAN_MODEL}, ${CLEAN}), (${OTHER_OWNERS_MODEL}, ${RECENTLY_SENT});
     CREATE TYPE "ModelStatus" AS ENUM
@@ -390,8 +395,48 @@ describe('areAccountsUnderLegalHold (one batched lookup)', () => {
   });
 });
 
+describe('content removal: an account hold or an unreleased ban-note hold', () => {
+  const banWithNote = (id: number) =>
+    holder.db.query(
+      `UPDATE "User" SET "bannedAt" = now() - interval '1 day',
+         meta = '{"banDetails": {"detailsInternal": "NCMEC report filed"}}' WHERE id = $1`,
+      [id]
+    );
+
+  it('holds a ban-note account no account hold covers, and not a clean one', async () => {
+    await holder.db.exec(`DELETE FROM "ModActivity"`);
+    await banWithNote(BAN_NOTE);
+    expect(await isAccountUnderLegalHold(BAN_NOTE)).toBe(false);
+    expect(await isContentRemovalHeld(BAN_NOTE)).toBe(true);
+    expect(await isContentRemovalHeld(CLEAN)).toBe(false);
+    expect(await areContentRemovalsHeld([CLEAN, BAN_NOTE, PENDING_REPORT])).toEqual(
+      new Map([
+        [CLEAN, false],
+        [BAN_NOTE, true],
+        [PENDING_REPORT, true],
+      ])
+    );
+  });
+
+  it('refuses with a LegalHoldError when only the ban-note read fails', async () => {
+    answer = (text, rows) => {
+      if (text.includes('"banNoteHeld"')) throw new Error('connection reset');
+      return rows;
+    };
+    await expect(assertContentRemovalNotHeld(CLEAN)).rejects.toBeInstanceOf(LegalHoldError);
+    answer = null;
+    expect(await assertContentRemovalNotHeld(CLEAN)).toEqual({ markerView: false });
+  });
+
+  it('a failed lookup is unknown for one user and held for a batch', async () => {
+    failQueries = true;
+    expect(await isContentRemovalHeld(CLEAN)).toBeNull();
+    expect(await areContentRemovalsHeld([CLEAN])).toEqual(new Map([[CLEAN, true]]));
+  });
+});
+
 describe('deleteUser under a legal hold', () => {
-  const run = (id: number) => deleteUser({ id, username: 'someone' });
+  const run = (id: number) => deleteUser({ id, username: 'someone', actorId: id });
 
   beforeEach(async () => {
     dbMock.dbWrite.user.findFirst.mockImplementation((async (args: { where: { id: number } }) => ({
@@ -502,7 +547,7 @@ describe('deleteUser under a legal hold', () => {
         .rows[0].n;
     const before = await rows();
 
-    await deleteUser({ id: CLEAN, username: 'someone', removeModels: true });
+    await deleteUser({ id: CLEAN, username: 'someone', removeModels: true, actorId: CLEAN });
 
     expect(await rows()).toBe(before);
   });
@@ -527,6 +572,27 @@ describe('deleteUser under a legal hold', () => {
       // Kept on purpose: see delete-user-pii-scrub.test.ts.
       customerId: `cus${CLEAN}`,
     });
+  });
+
+  it('archives the profile of an account named only by a ban note before deleting it', async () => {
+    dbMock.dbWrite.userProfile.findUnique.mockResolvedValueOnce({ bio: 'pay me offsite' } as never);
+    dbMock.dbWrite.userLink.findMany.mockResolvedValue([] as never);
+    await holder.db.query(
+      `UPDATE "User" SET "bannedAt" = now(),
+         meta = '{"banDetails": {"detailsExternal": "CSAM"}}' WHERE id = $1`,
+      [BAN_NOTE]
+    );
+    const archived = vi.fn(async () => ({}));
+    const notArchived = vi.fn(async () => ({}));
+
+    await deleteUser({ id: BAN_NOTE, username: 'someone', actorId: BAN_NOTE, archive: archived });
+    await deleteUser({ id: CLEAN, username: 'someone', actorId: CLEAN, archive: notArchived });
+
+    expect(archived).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: BAN_NOTE, profile: { bio: 'pay me offsite' } })
+    );
+    expect(notArchived).not.toHaveBeenCalled();
+    expect((await userRow(BAN_NOTE)).deletedAt).not.toBeNull();
   });
 
   // PGlite runs one connection, so these land the hold strictly between the check and the scrub;
@@ -624,7 +690,7 @@ describe('deleteUser under a legal hold', () => {
     });
 
     it('deletes its published and scheduled versions with the models', async () => {
-      await deleteUser({ id: CLEAN, username: 'someone', removeModels: true });
+      await deleteUser({ id: CLEAN, username: 'someone', removeModels: true, actorId: CLEAN });
 
       expect(await statuses()).toEqual({
         1: 'Deleted',
@@ -647,7 +713,7 @@ describe('deleteUser under a legal hold', () => {
     });
 
     it('leaves the versions alone when the models are kept', async () => {
-      await deleteUser({ id: CLEAN, username: 'someone', removeModels: false });
+      await deleteUser({ id: CLEAN, username: 'someone', removeModels: false, actorId: CLEAN });
 
       expect(await statuses()).toEqual({
         1: 'Published',
@@ -669,7 +735,7 @@ describe('deleteUser under a legal hold', () => {
         holder.db.exec(`INSERT INTO "CsamReport" ("userId", details) VALUES (${CLEAN}, '{}')`);
 
       await expect(
-        deleteUser({ id: CLEAN, username: 'someone', removeModels: true })
+        deleteUser({ id: CLEAN, username: 'someone', removeModels: true, actorId: CLEAN })
       ).rejects.toBeInstanceOf(LegalHoldError);
       expect((await statuses())[1]).toBe('Published');
     });
