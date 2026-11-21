@@ -232,6 +232,28 @@ describe('AppAssistantPreview — the app reloaded itself in the frame', () => {
     expect(m.frameMounts).toBe(2);
   });
 
+  // A direct preview's URL is its session host, the same on every fetch (design §5.4): the fetch
+  // alone changes no key, so without its own remount the reloaded app never gets its init.
+  test('🔴 a direct preview, whose URL does not change, still remounts the frame host', async () => {
+    const SESSION_HOST =
+      'sckpynuebrbgh2zm2f7vkbrk22akqcaqdaqcwv7vmqcbzawxned4cvl4enkzes.preview.example';
+    const DIRECT: PreviewFrame = {
+      ...FRAME,
+      host: SESSION_HOST,
+      iframeSrc: `https://${SESSION_HOST}/`,
+      transport: 'direct',
+    };
+    m.fetchFrame.mockResolvedValue(DIRECT);
+    await renderWithProviders(<AppAssistantPreview canPreview session={SESSION} />);
+    await expect.element(page.getByTestId('frame')).toHaveAttribute('data-src', DIRECT.iframeSrc);
+    expect(m.frameMounts).toBe(1);
+
+    m.onGuestReloaded!();
+    await vi.waitFor(() => expect(m.frameMounts).toBe(2));
+    expect(m.fetchFrame).toHaveBeenCalledTimes(2);
+    await expect.element(page.getByTestId('frame')).toHaveAttribute('data-src', DIRECT.iframeSrc);
+  });
+
   test('a failed fresh mint shows the existing error, mounts no frame, and does not retry', async () => {
     m.fetchFrame
       .mockResolvedValueOnce(FRAME)
