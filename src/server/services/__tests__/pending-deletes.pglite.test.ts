@@ -11,6 +11,11 @@ import {
   queueImageDeletes,
 } from '@civitai/db-queries/content-deletion';
 import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
+import {
+  CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
+  csamReportListedImageIdsSql,
+  csamReportNamedUserIdsSql,
+} from '@civitai/shared/held-media';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
@@ -518,5 +523,34 @@ describe('a CSAM report not yet sent', () => {
     expect(await pending()).toEqual([
       { entityId: 50, entityType: 'Post', data: { ownerId: OWNER } },
     ]);
+  });
+});
+
+// The delete hold and the account holds read one copy of each report predicate: a fix to how ids
+// are parsed, or to who counts as named, must reach both. Pins the any-report and unsent variants.
+describe('the shared CSAM report sets', () => {
+  const unsentOnly = (report: string) => `${report}."reportSentAt" IS NULL`;
+  const rows = async (text: string) =>
+    (
+      (await pg.query<{ id: string | null }>(text)).rows.map(
+        (row) => Object.values(row)[0]
+      ) as string[]
+    ).sort();
+
+  beforeEach(() =>
+    pg.exec(`INSERT INTO "CsamReport" ("userId", "reportSentAt", details, images) VALUES
+      (10, NULL, '{"secondaryUserId": 11}', '[{"id": 100}, "101", {}, null]'),
+      (12, now(), '{"secondaryUserId": 13}', '[{"id": 102}]'),
+      (NULL, NULL, '{}', '{"id": 103}')`)
+  );
+
+  it('lists the image ids of every report, or of the unsent ones only', async () => {
+    expect(await rows(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)).toEqual(['100', '101', '102']);
+    expect(await rows(csamReportListedImageIdsSql(unsentOnly))).toEqual(['100', '101']);
+  });
+
+  it('names the subject and secondary user of the reports the filter passes', async () => {
+    expect(await rows(csamReportNamedUserIdsSql(() => 'true'))).toEqual(['10', '11', '12', '13']);
+    expect(await rows(csamReportNamedUserIdsSql(unsentOnly))).toEqual(['10', '11']);
   });
 });

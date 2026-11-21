@@ -1,5 +1,10 @@
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import {
+  csamReportListedImageIdsSql,
+  csamReportNamedUserIdsSql,
+  type CsamReportFilter,
+} from '@civitai/shared/held-media';
 import { evidenceVerifiedText } from '@civitai/shared/held-url';
 import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 import { CHILD_SAFETY_VIOLATIONS } from '@civitai/shared/post-text-report';
@@ -424,16 +429,9 @@ export type PendingDelete =
   | { ownerId: number }
   | { cleanup: true; moderatorDelete?: true; ownerId?: number };
 
-/** Every image id a CSAM report not yet sent lists, as text; a report lists `{"id": n}` or a bare id. */
-const UNSENT_LISTED_IMAGE_IDS = sql`
-  SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END
-  FROM "CsamReport" ul
-  CROSS JOIN LATERAL jsonb_array_elements(
-    CASE WHEN jsonb_typeof(ul.images) = 'array' THEN ul.images ELSE '[]'::jsonb END
-  ) le
-  WHERE ul."reportSentAt" IS NULL`;
+const unsent: CsamReportFilter = (report) => `${report}."reportSentAt" IS NULL`;
 
-// Each set below is uncorrelated, so Postgres builds it once per statement. No NULL may enter one: a
+// Each set below is uncorrelated, so Postgres builds it once per statement, and holds no NULL: a
 // miss would then read NULL rather than false, and a NULL `blocked` row is neither deleted nor queued.
 
 /**
@@ -441,22 +439,14 @@ const UNSENT_LISTED_IMAGE_IDS = sql`
  * that account and its content at send time, so all of it is held.
  */
 const unsentReportNames = (ownerId: number | RawBuilder<unknown>) =>
-  sql<boolean>`((${ownerId})::text IN (
-    SELECT ur."userId"::text FROM "CsamReport" ur
-    WHERE ur."reportSentAt" IS NULL AND ur."userId" IS NOT NULL
-    UNION ALL
-    SELECT us.details ->> 'secondaryUserId' FROM "CsamReport" us
-    WHERE us."reportSentAt" IS NULL AND us.details ->> 'secondaryUserId' IS NOT NULL
-  ))`;
+  sql<boolean>`((${ownerId})::text IN (${sql.raw(csamReportNamedUserIdsSql(unsent))}))`;
 
 /**
  * The image `imageId` is listed on a CSAM report not yet sent. Its owner may be named on none, so
  * only the image itself (and a post holding it) is held, not the rest of their content.
  */
 const unsentReportLists = (imageId: RawBuilder<unknown>) =>
-  sql<boolean>`((${imageId})::text IN (
-    SELECT listed FROM (${UNSENT_LISTED_IMAGE_IDS}) AS u(listed) WHERE listed IS NOT NULL
-  ))`;
+  sql<boolean>`((${imageId})::text IN (${sql.raw(csamReportListedImageIdsSql(unsent))}))`;
 
 /**
  * An owner's delete of their own image waits on its child-safety case, or on a CSAM report not yet

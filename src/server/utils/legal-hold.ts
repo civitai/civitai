@@ -1,5 +1,6 @@
 import type { ModelStatus } from '@prisma/client';
 import { Prisma } from '@prisma/client';
+import { csamReportNamedUserIdsSql } from '@civitai/shared/held-media';
 
 /** The owner `deleteUser` hands a kept model to. */
 export const PLACEHOLDER_OWNER_ID = -1;
@@ -53,19 +54,9 @@ export const reportHolds = (hc: string) =>
 /** The report predicate, over the `"CsamReport"` alias it is given. */
 export type ReportFilter = (alias: string) => Prisma.Sql;
 
-/**
- * The users a report passing `filter` names, as its subject or its secondary user. One distinct
- * `"userId"` text per row, never null, since the secondary user is read out of the report's details.
- */
-export const reportNamedUserIdsSql = (filter: ReportFilter) => Prisma.sql`
-  SELECT hc."userId"::text AS "userId"
-  FROM "CsamReport" hc
-  WHERE hc."userId" IS NOT NULL AND ${filter('hc')}
-  UNION
-  SELECT hs.details ->> 'secondaryUserId'
-  FROM "CsamReport" hs
-  WHERE hs.details ->> 'secondaryUserId' IS NOT NULL AND ${filter('hs')}
-`;
+/** `csamReportNamedUserIdsSql` for a raw `ReportFilter`. */
+export const reportNamedUserIdsSql = (filter: ReportFilter) =>
+  Prisma.raw(csamReportNamedUserIdsSql((alias) => filter(alias).sql));
 
 /**
  * The owners of images a report passing `filter` lists, whoever the report names. Walks the reports'
