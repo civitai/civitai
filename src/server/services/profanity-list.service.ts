@@ -144,3 +144,43 @@ export async function getServerProfanityFilter(): Promise<ServerProfanityFilter>
   metrics.reads.inc({ source });
   return { filter, source, countHit: (surface) => metrics.hits.inc({ surface, source }) };
 }
+
+/** The typed query of each search in a site search request body, read leniently. */
+export function siteSearchQueries(body: unknown): string[] {
+  const read = (search: unknown) =>
+    search && typeof search === 'object' && typeof (search as { q?: unknown }).q === 'string'
+      ? [(search as { q: string }).q]
+      : [];
+  const queries =
+    body && typeof body === 'object' ? (body as { queries?: unknown }).queries : undefined;
+  return Array.isArray(queries) ? queries.flatMap(read) : read(body);
+}
+
+/**
+ * Whether a site search must be refused for profanity (civitai.com only; the caller decides the
+ * domain), against the same lists the browser checks. Fails OPEN (Justin, J4): a broken check must
+ * not refuse every search, and the domain's browsing-level filter still applies.
+ *
+ * With `profanity-managed-list` off it refuses nothing: the browser's own check is today's rule,
+ * and its allow list (the moderators') is not the shipped one the server reads with the flag off,
+ * so a server refusal could reject a search the page let through.
+ */
+export async function isProfaneSearch(queries: string[]): Promise<boolean> {
+  const texts = queries.filter((query) => query.trim().length > 0);
+  if (!texts.length) return false;
+  try {
+    const profanity = await getServerProfanityFilter();
+    if (profanity.source === 'shipped') return false;
+    const refused = texts.some((text) => profanity.filter.analyze(text).isProfane);
+    if (refused) profanity.countHit('search');
+    return refused;
+  } catch (error) {
+    logToAxiom({
+      name: 'profanity-search-check-failed',
+      type: 'error',
+      message: 'Site search profanity check failed; the search ran unchecked',
+      details: { error: error instanceof Error ? error.message : String(error) },
+    });
+    return false;
+  }
+}

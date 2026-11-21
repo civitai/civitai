@@ -4,6 +4,7 @@ import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import type * as RegionBlocking from '~/server/utils/region-blocking';
+import type * as ProfanityList from '~/server/services/profanity-list.service';
 import { NsfwLevel } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
@@ -20,12 +21,19 @@ const {
   mockRateLimit,
   mockRegionBlocked,
   mockPassthroughOn,
+  mockIsProfaneSearch,
 } = vi.hoisted(() => ({
   mockGetServerAuthSession: vi.fn(),
   mockGetFeatureFlagsLazy: vi.fn(),
   mockRateLimit: vi.fn(),
   mockRegionBlocked: vi.fn(),
   mockPassthroughOn: vi.fn(),
+  mockIsProfaneSearch: vi.fn(),
+}));
+
+vi.mock('~/server/services/profanity-list.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ProfanityList>()),
+  isProfaneSearch: mockIsProfaneSearch,
 }));
 
 vi.mock('~/server/services/site-search-passthrough', () => ({
@@ -128,6 +136,7 @@ beforeEach(() => {
   mockRateLimit.mockResolvedValue({ allowed: true });
   mockRegionBlocked.mockReturnValue(false);
   mockPassthroughOn.mockReturnValue(false);
+  mockIsProfaneSearch.mockResolvedValue(false);
   setEnv({ NEXT_PUBLIC_SEARCH_HOST: 'http://search.test', SEARCH_TOKEN_API_KEY: 'server-key' });
 });
 afterEach(() => {
@@ -474,5 +483,30 @@ describe('collection covers for a signed-in viewer where the site caps nothing',
     expect(
       await search({ id: 7, isModerator: true, showNsfw: true, browsingLevel: NsfwLevel.PG })
     ).toEqual(cover);
+  });
+});
+
+describe('profanity refusal', () => {
+  const multi = { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'typed words' }] };
+
+  it('refuses a profane search on civitai.com without searching or naming the words', async () => {
+    mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: true, isGreen: true });
+    mockIsProfaneSearch.mockResolvedValue(true);
+    const result = await post(['multi-search'], multi);
+    expect(mockIsProfaneSearch).toHaveBeenCalledWith(['typed words']);
+    expect(result.status).toBe(422);
+    expect(result.body).toEqual({
+      message: 'This search is not allowed.',
+      code: 'search_refused',
+      type: 'invalid_request',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('runs no profanity check off civitai.com', async () => {
+    mockIsProfaneSearch.mockResolvedValue(true);
+    const result = await post(['multi-search'], multi);
+    expect(mockIsProfaneSearch).not.toHaveBeenCalled();
+    expect(result.status).toBe(200);
   });
 });

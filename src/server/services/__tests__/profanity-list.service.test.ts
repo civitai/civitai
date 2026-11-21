@@ -27,7 +27,9 @@ vi.mock('~/server/services/blocklist.service', () => ({
 
 import {
   getServerProfanityFilter,
+  isProfaneSearch,
   setProfanityListReaderForTests,
+  siteSearchQueries,
 } from '~/server/services/profanity-list.service';
 
 // Synthetic entries, on no real list: a match on one can only come from the managed row.
@@ -134,5 +136,29 @@ describe('getServerProfanityFilter', () => {
     expect((await getServerProfanityFilter()).filter).toBe(first);
     setBlocked({ id: 1, data: [...MANAGED, 'zqvoxextra'] });
     expect((await getServerProfanityFilter()).filter).not.toBe(first);
+  });
+});
+
+describe('isProfaneSearch', () => {
+  it('refuses a search that matches the managed list', async () => {
+    setBlocked({ id: 1, data: MANAGED });
+    expect(await isProfaneSearch(['hello', `a ${MANAGED_WORD} b`])).toBe(true);
+    expect(await isProfaneSearch(['hello', SHIPPED_WORD])).toBe(false);
+  });
+
+  // The browser's check is today's rule while the flag is off; see the function's comment.
+  it('refuses nothing while profanity-managed-list is off', async () => {
+    h.flagOn = false;
+    expect(await isProfaneSearch([SHIPPED_WORD])).toBe(false);
+  });
+
+  it('reads the query of a single search and of each search in a multi-search', () => {
+    expect(siteSearchQueries({ q: 'one' })).toEqual(['one']);
+    expect(siteSearchQueries({ queries: [{ q: 'a' }, { indexUid: 'x' }, { q: 'b' }] })).toEqual([
+      'a',
+      'b',
+    ]);
+    expect(siteSearchQueries(null)).toEqual([]);
+    expect(siteSearchQueries({ q: 7 })).toEqual([]);
   });
 });
