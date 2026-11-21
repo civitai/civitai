@@ -15,7 +15,7 @@ internal/browsing 98
 internal/chread 93
 internal/config 78
 internal/dbpool 95
-internal/devalue 85
+internal/devalue 91
 internal/feed 76
 internal/fallback 91
 internal/flipt 88

@@ -976,7 +976,8 @@ func BuildInfiniteImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.
 				)
 			}
 		}
-		img.Wire = append(wire, superjson.Field{Key: "judgeScore", Val: nil})
+		wire = append(wire, superjson.Field{Key: "judgeScore", Val: nil})
+		img.Wire = wire
 	}
 	return images
 }
