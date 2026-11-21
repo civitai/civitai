@@ -2,6 +2,7 @@ import { Button, Stack } from '@mantine/core';
 import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
 import { openDealsOnOffering } from '~/components/CreatorShop/Services/deals/deal-ui';
 import { useMyServiceDeals } from '~/components/CreatorShop/Services/deals/deal.util';
+import { ServiceHappyLine } from '~/components/CreatorShop/Services/ServiceHappyLine';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
 import {
   sectionIcons,
@@ -50,6 +51,7 @@ export function ServicesSection({
         title="Services"
         subtitle="Commission this creator. Your Buzz is held in escrow and only released when the work is done."
       />
+      <ServiceHappyLine counts={offerings} />
       <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
         {offerings.map((offering) => {
           const openDeal = isOwner

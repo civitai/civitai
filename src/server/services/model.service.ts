@@ -1,5 +1,6 @@
 import { deletePostRows } from '@civitai/db-queries/content-deletion';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
+import { PLATFORM_REVENUE_SOURCES_SQL } from '@civitai/buzz';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
@@ -55,6 +56,8 @@ import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { scanRatingKeptMessage } from '~/server/services/scan-rating-kept-message';
+import { PUBLIC_MODEL_STATUSES } from '~/server/services/text-scan/public-content';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import {
   readPostModelVersionIdsViaKysely,
@@ -208,6 +211,7 @@ import {
   reassertModelPoiRestrictions,
 } from '~/server/services/text-scan/actions/model-poi-minor';
 import type { holdModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
+import type { NotifyTextScanRatingRaisedArgs } from '~/server/services/text-scan/notify';
 import { hasOpenTextScanFlag } from '~/server/services/text-scan/flag-snapshot';
 import { loadModelRulesUnpublishDetail } from '~/server/services/text-scan/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
@@ -357,8 +361,15 @@ import {
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import {
+  hasSfwFaceParts,
+  losesSfwFace,
+  sfwFaceStamp,
+} from '~/server/services/model-sfw-face-stamp';
+import {
+  faceLossNotice as heldVerdictNotice,
   queueComFaceRecheck,
   queueComFaceRestore,
+  rescanTextAfterFaceLoss,
 } from '~/server/services/model-com-face-recheck.service';
 import {
   isGenerationDisabled,
@@ -4085,9 +4096,6 @@ function locksWithScanRating(row: { meta: unknown; lockedProperties: string[] | 
   return source && SCAN_RATING_SOURCES.includes(source) ? uniq([...locks, 'nsfw']) : locks;
 }
 
-export const SCAN_RATING_KEPT_MESSAGE =
-  "This model was rated mature from its civitai.red title and description, so it stays marked mature, and a civitai.com version is what lists it on civitai.com. To change that, edit the title and description and save them first; once they're checked and pass, you can change the rating.";
-
 /**
  * Holds the text scan's mature rating, which carries no lock, against an owner's save that unticks
  * mature (face or not) or removes the face that listed a model already not mature. A text edit is no
@@ -4149,7 +4157,15 @@ async function assertScanRatingKept({
   // A row already not mature (an older one): only removing the face that listed it.
   if (!before.nsfw && (faceAfter || !hasFace(before))) return;
   if (await moderatorRuledNsfwSince(modelId, ratedAt, { db })) return;
-  throw throwBadRequestError(SCAN_RATING_KEPT_MESSAGE);
+  // The versions the scan reads, for the explanation: published ones only.
+  const versions = await (db ?? dbWrite).modelVersion.findMany({
+    where: { modelId, status: { in: PUBLIC_MODEL_STATUSES } },
+    select: { name: true, description: true, trainedWords: true },
+    orderBy: { index: 'asc' },
+  });
+  throw throwBadRequestError(
+    scanRatingKeptMessage({ name: before.name, description: before.description, versions })
+  );
 }
 
 export const upsertModel = async (
@@ -4238,7 +4254,8 @@ export const upsertModel = async (
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
   normalizeMergePermissions(data, beforeUpdate?.allowDerivatives);
   normalizeSfwFaceInput(data);
-  if (beforeUpdate && id && !isModerator)
+  // Only the owner is told about the scan's rating; anyone else gets the not-found below.
+  if (beforeUpdate && id && !isModerator && beforeUpdate.userId === userId)
     await assertScanRatingKept({ modelId: id, before: beforeUpdate, data });
   // `?? null`: on a create there is no stored row, and a null from the form is not a change.
   const sfwFaceChanged =
@@ -4253,16 +4270,34 @@ export const upsertModel = async (
   // Checked as it will be stored: a save carrying only one .com field, or only a cover (the step
   // that lists a mature model on .com), still has its whole face checked.
   const storedSfwName = data.sfwName !== undefined ? data.sfwName : beforeUpdate?.sfwName;
-  if (!isModerator && storedSfwName && (sfwFaceChanged || coverChanged))
-    await assertSfwFaceSafe({
+  if (!isModerator && storedSfwName && (sfwFaceChanged || coverChanged)) {
+    const storedSfwDescription =
+      data.sfwDescription !== undefined ? data.sfwDescription : beforeUpdate?.sfwDescription;
+    const { stamp } = await assertSfwFaceSafe({
       sfwName: storedSfwName,
-      sfwDescription:
-        data.sfwDescription !== undefined ? data.sfwDescription : beforeUpdate?.sfwDescription,
+      sfwDescription: storedSfwDescription,
       name: data.name ?? beforeUpdate?.name ?? '',
       description: data.description !== undefined ? data.description : beforeUpdate?.description,
       modelId: id,
       userId,
     });
+    if (stamp)
+      meta = {
+        ...(meta ?? {}),
+        sfwFaceCheckedAt: sfwFaceStamp(
+          {
+            sfwName: storedSfwName,
+            sfwDescription: storedSfwDescription ?? null,
+            sfwCoverImageId:
+              (data.sfwCoverImageId !== undefined
+                ? data.sfwCoverImageId
+                : beforeUpdate?.sfwCoverImageId) ?? null,
+            versionFields: stamp.versionFields,
+          },
+          stamp.promptId
+        ),
+      };
+  }
   if (coverChanged) {
     if (!beforeUpdate || !id)
       throw throwBadRequestError('Covers can be picked once the model has published images.');
@@ -4525,6 +4560,7 @@ export const upsertModel = async (
     let lockedBeforeUpdate: string[] | undefined;
 
     let heldVerdictApplied = false;
+    let faceLossNotice: NotifyTextScanRatingRaisedArgs | null = null;
     const result = await dbWrite.$transaction(
       async (tx) => {
         // Merged over the row as it is now: a wipe, a moderator or a scan may have written its meta
@@ -4816,25 +4852,38 @@ export const upsertModel = async (
           data.availability !== Availability.Private
         )
           heldVerdictApplied = await heldVerdict.applyHeldVerdictLeavingPrivate(tx, updated.id);
+        // Applied even when this save also edits the listing text, so a failed rescan never leaves
+        // the model unrated: the rescan of the new text releases the marker if it is not mature.
+        if (losesSfwFace(beforeUpdate, data)) {
+          faceLossNotice = await heldVerdict.applyComFaceHeldVerdict(tx, updated.id);
+          if (faceLossNotice) heldVerdictApplied = true;
+        }
 
         return updated;
       },
       { maxWait: 10000, timeout: 30000 }
     );
-    // First after commit, so a later post-save step that throws cannot drop it. Re-checked even when
-    // the gate ran: it read the description before blurb expansion, not the text stored.
-    const listingChanged =
-      (data.name !== undefined && data.name !== beforeUpdate.name) ||
-      (data.description !== undefined && data.description !== beforeUpdate.description);
-    const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
-    if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
-      await queueComFaceRecheck(id);
-    if (!isModerator && listingChanged) await queueComFaceRestore(id);
-    if (heldVerdictApplied) {
-      const { finishHeldVerdictApply } = await import(
-        '~/server/services/text-scan/actions/model-nsfw'
-      );
-      await finishHeldVerdictApply(id);
+    // The owner's notice goes in the finally: after the level refresh, so a slow notice cannot keep
+    // the old level listed, and even when a step before it throws.
+    try {
+      // First of the post-save steps, so a later one that throws cannot drop it. Re-checked even when
+      // the gate ran: it read the description before blurb expansion, not the text stored.
+      const listingChanged =
+        (data.name !== undefined && data.name !== beforeUpdate.name) ||
+        (data.description !== undefined && data.description !== beforeUpdate.description);
+      const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
+      if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
+        await queueComFaceRecheck(id);
+      if (!isModerator && listingChanged) await queueComFaceRestore(id);
+      if (losesSfwFace(beforeUpdate, data)) await rescanTextAfterFaceLoss(id);
+      if (heldVerdictApplied) {
+        const { finishHeldVerdictApply } = await import(
+          '~/server/services/text-scan/actions/model-nsfw'
+        );
+        await finishHeldVerdictApply(id);
+      }
+    } finally {
+      if (faceLossNotice) await heldVerdictNotice.send([faceLossNotice]);
     }
     await preventReplicationLag('model', id);
     await userModelCountCache.refresh(userId);
@@ -7306,7 +7355,7 @@ export async function migrateResourceToCollection({
   const faceMoves = remainingVersions.some((v) => v.id === coverVersionId);
   const noFace = { sfwName: null, sfwDescription: null, sfwCoverImageId: null };
 
-  const { collection, modelIds } = await dbWrite.$transaction(
+  const { collection, modelIds, faceless, faceLossNotices } = await dbWrite.$transaction(
     async (tx) => {
       // Create the collection
       const collection = await tx.collection.create({
@@ -7325,6 +7374,7 @@ export async function migrateResourceToCollection({
 
       // create a model for each remaining version
       const modelIds = [];
+      let faceModelId: number | undefined = faceMoves ? undefined : model.id;
       for (const version of remainingVersions) {
         const newModel = await tx.model.create({
           data: {
@@ -7351,6 +7401,7 @@ export async function migrateResourceToCollection({
         );
 
         modelIds.push(newModel.id);
+        if (version.id === coverVersionId) faceModelId = newModel.id;
 
         const versionReviewIds = resourceReviews
           .filter((r) => r.modelVersionId === version.id)
@@ -7392,35 +7443,49 @@ export async function migrateResourceToCollection({
         },
       });
 
-      return { collection, modelIds };
+      // A model left without the face is rated here if the text scan let it stand on that face.
+      const { applyComFaceHeldVerdict } = await import(
+        '~/server/services/text-scan/actions/model-nsfw'
+      );
+      const faceless = hasSfwFaceParts(model) ? modelIds.filter((id) => id !== faceModelId) : [];
+      const faceLossNotices = [];
+      for (const id of faceless) faceLossNotices.push(await applyComFaceHeldVerdict(tx, id));
+
+      return { collection, modelIds, faceless, faceLossNotices };
     },
     { timeout: 60000, maxWait: 10000 }
   );
+  // The owners' notices go in the finally: after the level refresh and the cache busts, so a slow
+  // notice cannot keep the old level listed, and even when one of them throws.
+  try {
+    // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
+    // each was given its version's stored level. Versions first: the model level reads them.
+    await updateModelVersionNsfwLevels(filteredVersions.map((v) => v.id));
+    await updateModelNsfwLevels(modelIds);
 
-  // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
-  // each was given its version's stored level. Versions first: the model level reads them.
-  await updateModelVersionNsfwLevels(filteredVersions.map((v) => v.id));
-  await updateModelNsfwLevels(modelIds);
+    // Set the showcase collection for the original model
+    await setModelShowcaseCollection({
+      collectionId: collection.id,
+      id: modelId,
+      userId: model.userId,
+      isModerator,
+      modelAlreadyInCollection: true,
+    });
 
-  // Set the showcase collection for the original model
-  await setModelShowcaseCollection({
-    collectionId: collection.id,
-    id: modelId,
-    userId: model.userId,
-    isModerator,
-    modelAlreadyInCollection: true,
-  });
-
-  // Bust caches
-  await Promise.all([
-    dataForModelsCache.refresh(modelIds),
-    bustMvCache(
-      filteredVersions.map((v) => v.id),
-      modelIds
-    ),
-    // The versions now belong to new models.
-    bustTwice(() => versionModelCache().bust(filteredVersions.map((v) => v.id))),
-  ]);
+    // Bust caches
+    await Promise.all([
+      dataForModelsCache.refresh(modelIds),
+      bustMvCache(
+        filteredVersions.map((v) => v.id),
+        modelIds
+      ),
+      // The versions now belong to new models.
+      bustTwice(() => versionModelCache().bust(filteredVersions.map((v) => v.id))),
+    ]);
+  } finally {
+    const notices = faceLossNotices.filter((notice) => notice !== null);
+    if (notices.length) await heldVerdictNotice.send(notices);
+  }
 
   modelMetrics
     .queueUpdate(modelIds)
@@ -7436,6 +7501,8 @@ export async function migrateResourceToCollection({
     modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
   modelIds.forEach((id) => scanModelAndRules(id, { rules: !isModerator }));
+  // Past the unchanged-text skip: a face this split took away was what let the text stand.
+  await Promise.all(faceless.map((id) => rescanTextAfterFaceLoss(id)));
 
   return { ok: true };
 }
@@ -8323,6 +8390,7 @@ export async function getTopWeeklyEarners(fresh = false) {
         cast(SUM(amount) as int) as earned
         FROM orchestration.resourceCompensations
         WHERE date >= toStartOfDay(${auctionReset}::Date)
+          AND source NOT IN (${PLATFORM_REVENUE_SOURCES_SQL})
         GROUP BY modelVersionId
         ORDER BY earned DESC
         LIMIT 100;

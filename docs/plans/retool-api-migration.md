@@ -9,8 +9,7 @@
 > The endpoints were built as designed, on a `defineRetoolEndpoint` wrapper with one endpoint per
 > resource and an `action` field selecting the operation. On 2026-08-19, with Retool switched off, that
 > whole family was deleted: every action is now its own `defineModeratorEndpoint` route under
-> `/api/mod/*`, authenticated as the acting moderator rather than by a shared API key, and self-describing
-> at `/moderator/api`.
+> `/api/mod/*`, authenticated as the acting moderator rather than by a shared API key.
 >
 > Current shape and the endpoint list: [`../moderator-endpoints.md`](../moderator-endpoints.md).
 > The reasoning in *Why* below still holds — it is the argument for having endpoints at all, and that
@@ -225,7 +224,7 @@ src/pages/api/mod/retool/
 └── homeblock.ts     # Group 14
 ```
 
-Group 2 (UserLink cleanup) is **not a new endpoint** — fold into the existing ban pipeline (`src/pages/api/mod/ban-user.ts` + underlying service).
+Group 2 (UserLink cleanup) is **not a new endpoint** — fold into the existing ban pipeline (`src/server/api-routes/mod/ban-user.ts` + underlying service).
 
 ---
 
@@ -308,7 +307,7 @@ No search index update needed (filter-based hiding, not deletion).
 | `tagVote` | no | **yes** | `{ votes: { imageId, tagId, vote: 1\|-1\|0 }[] }` |
 | `setNsfwLevel` | no | **yes** | `{ items: { imageId, nsfwLevel }[] }` — composite write in single tx per item: Image update + ModActivity upsert + research_ratings upsert |
 
-Extends/replaces existing `src/pages/api/mod/set-image-nsfw-level.ts`. Confirm `research_ratings` is still consumed (per subtask 12 note) before keeping that insert.
+Extends/replaces existing `src/server/api-routes/mod/set-image-nsfw-level.ts`. Confirm `research_ratings` is still consumed (per subtask 12 note) before keeping that insert.
 @justin: No, I think research_rating is deprecated now. It was part of a game that was replaced by knights of new order game.
 
 @ai: Dropping the `research_ratings` insert. New composite write per image: `UPDATE Image` + `INSERT/UPDATE ModActivity`. Will quick-grep `research_ratings` references during implementation to confirm zero readers; if any remain, flag back rather than silently dropping.

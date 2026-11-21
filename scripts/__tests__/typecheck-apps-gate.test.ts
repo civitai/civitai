@@ -35,7 +35,9 @@ afterAll(() => {
 function makeRepo({ apps, pnpmCode }: { apps: string[]; pnpmCode: number }) {
   const dir = join(root, `case-${seq++}`);
   mkdirSync(join(dir, 'scripts', 'ci'), { recursive: true });
+  mkdirSync(join(dir, 'scripts', 'lib'), { recursive: true });
   mkdirSync(join(dir, 'bin'), { recursive: true });
+  cpSync(join(SCRIPTS, 'lib', 'ts7.mjs'), join(dir, 'scripts', 'lib', 'ts7.mjs'));
   for (const f of ['typecheck.mjs', 'typecheck-queue.mjs', 'typecheck-apps-gate.mjs']) {
     cpSync(join(SCRIPTS, f), join(dir, 'scripts', f));
   }
@@ -44,8 +46,9 @@ function makeRepo({ apps, pnpmCode }: { apps: string[]; pnpmCode: number }) {
     join(dir, 'scripts', 'ci', 'typecheck-apps.mjs')
   );
 
-  // A clean tsc, resolved the way the wrapper resolves the real one. Keeps the root run honest
-  // (no seam) while costing milliseconds.
+  // A clean tsc, resolved the way the wrapper resolves the real 5.9 one (`run` pins
+  // TYPECHECK_COMPILER=5, so no TypeScript 7 is installed into the throwaway repo). Keeps the root
+  // run honest (no seam) while costing milliseconds.
   mkdirSync(join(dir, 'node_modules', 'typescript', 'lib'), { recursive: true });
   writeFileSync(
     join(dir, 'node_modules', 'typescript', 'package.json'),
@@ -100,6 +103,7 @@ function run(dir: string, env: Record<string, string> = {}, args: string[] = [])
       GITHUB_ACTIONS: '',
       CIVITAI_TEST_QUEUE: '',
       TYPECHECK_TSC_PATH: '',
+      TYPECHECK_COMPILER: '5',
       ...env,
     },
   });

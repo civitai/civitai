@@ -165,6 +165,11 @@ is switched on; elsewhere every authorization-code grant still gets a refresh to
   `scope` includes `offline_access` and the user approves "Stay connected while you're away, until you
   disconnect" on the consent screen. Without both, the code exchange returns an access token alone (no
   `refresh_token` field), and you send the user through authorization again when it expires.
+- **Declare it on your store listing.** If your app is listed in the App Store as a Connect app, it
+  gets offline access only when its approved listing declares it: tick "offline_access" on the
+  listing and say why your app acts while the user is away. Moderators review that reason like a
+  sensitive permission, and changing it on a live listing goes back to review. Without the
+  declaration the consent screen does not offer "Stay connected" and no refresh token is issued.
 - **Propose a Buzz cap.** Add `offline_buzz_limit` (a positive whole number of Buzz) and optionally
   `offline_buzz_period` (`day`, `week` or `month`; default `day`) to the authorization request. The
   consent screen shows it on the offline line, the user can raise, lower or clear it, and they can
@@ -238,7 +243,7 @@ Responses:
 
 > **Over-polling returns HTTP `429` with `{"error":"rate_limited"}`, not `slow_down`.** Poll no
 > faster than `interval`; on a 429, add 5 seconds to your interval and keep polling. The limit is
-> per client id, so every instance of an app shares one budget.
+> per `device_code`, so one sign-in polling too fast never slows another.
 
 ## Client Credentials Flow
 
@@ -436,7 +441,9 @@ Buckets are keyed differently per endpoint — check which one applies before si
 - Introspection endpoint: 60 requests/minute per **client id**, plus 120/minute per **IP** charged
   before client authentication
 
-The hub sends no rate-limit headers and no `Retry-After`. A throttled request is `429` with `{"error":"rate_limited"}` — back off on the 429 itself.
+A throttled request is `429` with a `Retry-After` header and the same wait, in whole seconds, in the body:
+`{"error":"rate_limited","error_description":"…","retry_after":60}`. Wait that long before retrying. The hub
+sends no other rate-limit headers.
 
 ## Token Lifetime
 

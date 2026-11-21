@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { schema as deliverPrepaidBuzzSchema } from '~/pages/api/admin/deliver-prepaid-buzz';
-import { schema as permissionSchema } from '~/pages/api/admin/permission';
+import { schema as deliverPrepaidBuzzSchema } from '~/server/api-routes/admin/deliver-prepaid-buzz';
+import { schema as permissionSchema } from '~/server/api-routes/admin/permission';
 import { schema as giftMembershipSchema } from '~/pages/api/testing/gift-membership';
 import { schema as referralsSchema } from '~/pages/api/testing/referrals';
 

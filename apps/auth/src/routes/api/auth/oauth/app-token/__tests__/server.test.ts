@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import { TokenScope } from '@civitai/auth/token-scope';
 
 // The db mock routes selectFrom by table so the client and consent lookups are controlled independently, and
@@ -59,7 +60,10 @@ vi.mock('@civitai/auth/secret-hash', () => ({
 }));
 vi.mock('$lib/server/auth/internal', () => ({ isInternalRequest: h.isInternalRequest }));
 vi.mock('$lib/server/auth/request', () => ({ getClientIp: () => '203.0.113.9' }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: h.checkOAuthRateLimit }));
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
+  checkOAuthRateLimit: h.checkOAuthRateLimit,
+}));
 vi.mock('$lib/server/auth/session-producer', () => ({
   getOrProduceSessionUser: h.getOrProduceSessionUser,
 }));

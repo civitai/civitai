@@ -174,7 +174,7 @@ name: Lint
 #
 # ADDING the label does not fire this workflow: `types` deliberately omits
 # `labeled`. full-ci.yml listens for it and DISPATCHES this workflow (`only: all`)
-# and apps.yml on the PR branch, so the full suite starts at once (not when the PR's own run on
+# on the PR branch, and apps.yml too on a draft PR, so the full suite starts at once (not when the PR's own run on
 # that commit already started the shards, e.g. a PR opened with the label); read its header
 # for why (a run started by any other label overlays the PR's real check results). That
 # dispatch sets `skip_passed`, so it skips the suites the PR run on the same commit passed (the
@@ -334,7 +334,7 @@ jobs:
 
   eslint:
     name: ESLint + Prettier (changed files)
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
     # PULL REQUESTS ONLY, and not as a matter of taste. Every step in this job
     # is defined against `FETCH_HEAD...HEAD` where FETCH_HEAD is
     # `origin/$BASE_REF`, and `github.base_ref` is EMPTY on a push event — so on
@@ -408,6 +408,10 @@ jobs:
       # main-app side is not path-filtered into apps.yml.
       - name: Moderator hold SQL matches the main app
         run: pnpm exec vitest run --project 'unit*' src/server/services/__tests__/moderator-delete-hold-parity.test.ts
+
+      # BLOCKING, on every PR including drafts. A route missing from the generated map is a 404.
+      - name: API route maps are generated
+        run: node scripts/generate-api-routes.mjs --check
 
       # BLOCKING, on every PR including drafts. The `*.schema-drift.test.ts` files pin the published
       # manifest schema (public/schemas/app-block/v1.json) against the code that enforces it (the
@@ -537,7 +541,7 @@ jobs:
 
   typecheck:
     name: Typecheck (main pushes / fork PRs / non-main base)
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
     # 🔴 NARROWED, not retired (talos-infra #855, stage 1). The in-cluster Tekton
     # `pr-check` pipeline runs `tsc --noEmit` on every PR and posts the result as
     # the `tekton / typecheck` commit status. Running this job as well typechecks
@@ -634,7 +638,7 @@ jobs:
 
   typecheck-tests:
     name: Typecheck test files (ratchet)
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
     # The root tsconfig excludes every test file, so `pnpm run typecheck` (here and
     # in Tekton) never sees them. This job is their only typecheck: it fails when a
     # change adds a test file with type errors, or raises a baselined file's count
@@ -674,7 +678,7 @@ jobs:
 
   unit:
     name: Unit tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
     # ~8,000 tests that until now only ran on whoever remembered to run them.
     # Node env, no browser — component tests (`*.browser.test.tsx`) are not here
     # on purpose: they need Chromium, which this job does not install. That is
@@ -1049,7 +1053,7 @@ jobs:
 
   packages:
     name: Package unit tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
     # Skips draft PRs unless they carry the `full-ci` label (see the header). The app typecheck that rode here moved to apps.yml with
     # the app suites, so this job is the package suites plus the install-time asserts below.
     needs: passed

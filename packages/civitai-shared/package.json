@@ -55,13 +55,15 @@
     "./held-media": "./src/held-media.ts",
     "./held-url": "./src/held-url.ts",
     "./retracted-media": "./src/retracted-media.ts",
+    "./media-signals": "./src/media-signals.ts",
     "./retracted-media-tier": "./src/retracted-media-tier.ts",
     "./review-batch": "./src/review-batch.ts",
     "./report-reward": "./src/report-reward.ts",
     "./new-order-levels": "./src/new-order-levels.ts",
     "./new-order": "./src/new-order.ts",
     "./knights-shop": "./src/knights-shop.ts",
-    "./sensitive-block-scopes": "./src/sensitive-block-scopes.ts"
+    "./sensitive-block-scopes": "./src/sensitive-block-scopes.ts",
+    "./usage-limit-view": "./src/usage-limit-view.ts"
   },
   "scripts": {
     "test": "vitest run",

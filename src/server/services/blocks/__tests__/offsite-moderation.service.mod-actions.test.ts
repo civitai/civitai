@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
+import type * as LoggingClient from '~/server/logging/client';
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import { TRPCError } from '@trpc/server';
 
@@ -16,6 +18,7 @@ import {
   republishOwnListing,
   resetListingToPending,
   resolveReport,
+  retryConnectOfflineCut,
   unpublishOwnListing,
 } from '~/server/services/blocks/offsite-moderation.service';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
@@ -48,6 +51,8 @@ type WriteMock = {
     deleteMany: ReturnType<typeof vi.fn>;
     // purge + claim + reset + owner actions re-read the snapshot on the PRIMARY in-tx.
     findUnique: ReturnType<typeof vi.fn>;
+    // retryConnectOfflineCut reads the client's other listings on the PRIMARY.
+    findMany: ReturnType<typeof vi.fn>;
   };
   // On-site delist/relist flip the backing AppBlock's status in the same tx.
   appBlock: {
@@ -74,6 +79,8 @@ type WriteMock = {
   appListingPublishRequest: {
     updateMany: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
+    // purge reads whether an approved request ever pointed at the listing.
+    findFirst: ReturnType<typeof vi.fn>;
   };
   // relist/republish now re-read attached assets on the primary for the go-live
   // scan-clean gate (assertAssetsScanClean).
@@ -87,7 +94,8 @@ type WriteMock = {
   appOwnershipEvent: { create: ReturnType<typeof vi.fn> };
 };
 type ReadMock = {
-  appListing: { findUnique: ReturnType<typeof vi.fn> };
+  // findMany: a takedown checks the client's OTHER approved listings for a declaration.
+  appListing: { findUnique: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
   appListingReport: { findUnique: ReturnType<typeof vi.fn> };
   appListingModerationEvent: { findMany: ReturnType<typeof vi.fn> };
   // The OUT-OF-TX table-presence probe. A missing-table error here means the
@@ -104,6 +112,7 @@ const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
       updateMany: vi.fn(async () => ({ count: 1 })),
       deleteMany: vi.fn(async () => ({ count: 1 })),
       findUnique: vi.fn(async () => null),
+      findMany: vi.fn(async (): Promise<unknown[]> => []),
     },
     appBlock: {
       updateMany: vi.fn(async () => ({ count: 1 })),
@@ -131,6 +140,7 @@ const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
     appListingPublishRequest: {
       updateMany: vi.fn(async () => ({ count: 1 })),
       create: vi.fn(async (a: { data: unknown }) => a.data),
+      findFirst: vi.fn(async (): Promise<unknown> => null),
     },
     // Default: no screenshots + every queried image `Scanned` → the go-live scan-clean
     // gate is a no-op for a normally-scanned listing. A scan-gate test overrides these.
@@ -153,7 +163,7 @@ const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
     cb(write)
   );
   const read: ReadMock = {
-    appListing: { findUnique: vi.fn(async () => null) },
+    appListing: { findUnique: vi.fn(async () => null), findMany: vi.fn(async () => []) },
     appListingReport: { findUnique: vi.fn(async () => null) },
     appListingModerationEvent: { findMany: vi.fn(async () => []) },
     appCollaborator: { count: vi.fn(async () => 0) },
@@ -180,6 +190,25 @@ vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) =>
 const { mockRevokeOrchestratorTokens, mockDeleteAuthSubject } = vi.hoisted(() => ({
   mockRevokeOrchestratorTokens: vi.fn(async (_a: { userId: number }) => undefined),
   mockDeleteAuthSubject: vi.fn(async (_a: unknown) => undefined),
+}));
+// Flipt (a process boundary): every flag off unless a test turns one on, as the real client reads
+// an unconfigured Flipt.
+// `failing` makes evaluating that one flag reject, as an unreachable Flipt would.
+const flipt = vi.hoisted(() => ({ on: new Set<string>(), failing: new Set<string>() }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: async (key: string) => {
+    if (flipt.failing.has(key)) throw new Error(`flipt unreachable: ${key}`);
+    return flipt.on.has(key);
+  },
+}));
+// Axiom (a process boundary): spied so a test can read which events were logged.
+const { mockLogToAxiom } = vi.hoisted(() => ({
+  mockLogToAxiom: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof LoggingClient>()),
+  logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
 }));
 vi.mock('~/server/services/orchestrator/civitai', () => ({
   revokeCivitaiUserTokens: mockRevokeOrchestratorTokens,
@@ -287,6 +316,7 @@ beforeEach(() => {
   // Default the in-tx purge primary read to a valid offsite listing (overridden
   // per-test where the snapshot status is load-bearing).
   mockWrite.appListing.findUnique.mockResolvedValue(offsiteListing('removed'));
+  mockWrite.appListing.findMany.mockResolvedValue([]);
   mockWrite.appListingModerationEvent.create.mockImplementation(
     async (a: { data: unknown }) => a.data
   );
@@ -298,6 +328,7 @@ beforeEach(() => {
   mockWrite.appListingPublishRequest.create.mockImplementation(
     async (a: { data: unknown }) => a.data
   );
+  mockWrite.appListingPublishRequest.findFirst.mockResolvedValue(null);
   mockRead.appListing.findUnique.mockResolvedValue(null);
   mockRead.appListingReport.findUnique.mockResolvedValue(null);
   mockRead.appListingModerationEvent.findMany.mockResolvedValue([]);
@@ -313,6 +344,548 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 // delistListing
 // ---------------------------------------------------------------------------
+
+describe('delistListing — a moderator takedown of a CONNECT listing cuts offline access', () => {
+  const connectListing = () => ({ ...offsiteListing('approved'), connectClientId: 'oc_connect' });
+  /** A row of the client's listings as the sibling read selects it. */
+  const clientListing = (r: {
+    id: string;
+    status: string;
+    connectScopeJustifications?: unknown;
+  }) => ({
+    kind: 'offsite',
+    revisionOfId: null,
+    connectScopeJustifications: null,
+    ...r,
+  });
+  // Through `deleteApiKeys`: its delete is `{ AND: [where, { id: { in } }] }`.
+  const refreshDeletes = () =>
+    mockWrite.apiKey.deleteMany.mock.calls.filter((c) =>
+      JSON.stringify(c[0]).includes('"type":"Refresh"')
+    );
+  beforeEach(() => {
+    flipt.on.clear();
+    flipt.failing.clear();
+    mockRead.appListing.findMany.mockResolvedValue([]);
+    mockWrite.apiKey.findMany.mockResolvedValue([
+      { id: 501, key: 'h1', userId: 11 },
+      { id: 502, key: 'h2', userId: 12 },
+      { id: 503, key: 'h3', userId: 11 },
+    ]);
+  });
+
+  it('🔴 flag on: deletes the client’s Refresh rows through deleteApiKeys, expiring each holder’s orchestrator auth once, after the commit', async () => {
+    flipt.on.add('oauth-offline-grant');
+    mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+    const order: string[] = [];
+    mockWrite.$transaction.mockImplementationOnce(
+      async (cb: (tx: WriteMock) => Promise<unknown>) => {
+        const out = await cb(mockWrite);
+        order.push('commit');
+        return out;
+      }
+    );
+    mockWrite.apiKey.deleteMany.mockImplementation(async () => {
+      order.push('delete-refresh');
+      return { count: 3 };
+    });
+    mockRevokeOrchestratorTokens.mockImplementation(async ({ userId }: { userId: number }) => {
+      order.push(`orchestrator:${userId}`);
+    });
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(refreshDeletes().map((c) => c[0])).toEqual([
+      {
+        where: {
+          AND: [{ type: 'Refresh', clientId: 'oc_connect' }, { id: { in: [501, 502, 503] } }],
+        },
+      },
+    ]);
+    // One expiry per distinct holder (11 held two tokens), after the delete.
+    expect(order[0]).toBe('commit');
+    expect(order[1]).toBe('delete-refresh');
+    expect(order.slice(2).sort()).toEqual(['orchestrator:11', 'orchestrator:12']);
+  });
+
+  it('🔴 NOT cut when another approved listing on the same client still declares offline access', async () => {
+    flipt.on.add('oauth-offline-grant');
+    mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+    mockRead.appListing.findMany.mockResolvedValue([
+      clientListing({ id: APP_ID, status: 'approved' }),
+      clientListing({
+        id: 'apl_other',
+        status: 'approved',
+        connectScopeJustifications: { offline_access: 'the other listing syncs nightly' },
+      }),
+    ]);
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(refreshDeletes()).toEqual([]);
+    expect(mockRevokeOrchestratorTokens).not.toHaveBeenCalled();
+  });
+
+  it('cut when the other approved listings do NOT declare it', async () => {
+    flipt.on.add('oauth-offline-grant');
+    mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+    mockRead.appListing.findMany.mockResolvedValue([
+      clientListing({
+        id: 'apl_other',
+        status: 'approved',
+        connectScopeJustifications: { ModelsWrite: 'uploads' },
+      }),
+    ]);
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(refreshDeletes()).toHaveLength(1);
+  });
+
+  // The cut runs after the takedown commits and must never throw: whatever fails in it, the delist
+  // stands and the failure is logged.
+  describe('🔴 a failing cut never undoes or fails the takedown', () => {
+    const delistWithCommitOrder = async () => {
+      const order: string[] = [];
+      mockWrite.$transaction.mockImplementationOnce(
+        async (cb: (tx: WriteMock) => Promise<unknown>) => {
+          const out = await cb(mockWrite);
+          order.push('commit');
+          return out;
+        }
+      );
+      mockLogToAxiom.mockImplementation(async (...a: unknown[]) => {
+        const name = (a[0] as { name?: string } | undefined)?.name;
+        if (name) order.push(name);
+      });
+      const res = await delistListing({
+        input: { appListingId: APP_ID, reason: GOOD_REASON },
+        reviewerUserId: REVIEWER,
+      });
+      return { res, order };
+    };
+
+    it.each([
+      [
+        'the sibling read rejects',
+        () => mockRead.appListing.findMany.mockRejectedValue(new Error('replica down')),
+        'replica down',
+        { offlineCut: { outcome: 'failed' } },
+      ],
+      [
+        'the refresh-key delete rejects',
+        () => mockWrite.apiKey.deleteMany.mockRejectedValue(new Error('delete failed')),
+        'delete failed',
+        { offlineCut: { outcome: 'failed' } },
+      ],
+      // An unreadable flag is NOT a failed cut: whether the feature is on is unknown, so the
+      // result carries nothing and no history row is written (see the event tests below).
+      [
+        'the flag evaluation rejects',
+        () => flipt.failing.add('oauth-offline-grant'),
+        'flipt unreachable: oauth-offline-grant',
+        {},
+      ],
+    ])(
+      '%s → the delist still resolves as removed, committed, then the failure is logged',
+      async (_l, fail, message, extra) => {
+        flipt.on.add('oauth-offline-grant');
+        mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+        fail();
+        const { res, order } = await delistWithCommitOrder();
+        expect(res).toEqual({ appListingId: APP_ID, status: 'removed', ...extra });
+        expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({ data: { status: 'removed' } })
+        );
+        const failedLogs = mockLogToAxiom.mock.calls.filter(
+          (c) => (c[0] as { name?: string }).name === 'app-listing.takedown.offline-cut-failed'
+        );
+        expect(failedLogs).toHaveLength(1);
+        expect(failedLogs[0][0]).toMatchObject({
+          payload: { clientId: 'oc_connect', message },
+        });
+        expect(order.indexOf('commit')).toBeGreaterThanOrEqual(0);
+        expect(order.indexOf('commit')).toBeLessThan(
+          order.indexOf('app-listing.takedown.offline-cut-failed')
+        );
+      }
+    );
+  });
+
+  it('flag off: a takedown is unchanged — no refresh token is touched', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(refreshDeletes()).toEqual([]);
+  });
+
+  it('an external-link listing (no OAuth client) has nothing to cut', async () => {
+    flipt.on.add('oauth-offline-grant');
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(refreshDeletes()).toEqual([]);
+  });
+
+  it('🔴 an OWNER unpublish of the same connect listing does NOT cut (its chains only stop sliding)', async () => {
+    flipt.on.add('oauth-offline-grant');
+    mockWrite.appListing.findUnique.mockResolvedValueOnce({
+      userId: OWNER,
+      status: 'approved',
+      kind: 'offsite',
+      slug: SLUG,
+      name: 'Cool App',
+      appBlockId: null,
+      externalUrl: EXTERNAL_URL,
+      connectClientId: 'oc_connect',
+    });
+    const res = await unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+    expect(refreshDeletes()).toEqual([]);
+    expect(mockRevokeOrchestratorTokens).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The offline-access cut, recorded in the moderation history, and its retry
+// ---------------------------------------------------------------------------
+
+/** The `offline-cut*` rows written, by their `data`. */
+const cutEvents = () =>
+  mockWrite.appListingModerationEvent.create.mock.calls
+    .map((c) => (c[0] as { data: Record<string, unknown> }).data)
+    .filter((d) => String(d.action).startsWith('offline-cut'));
+const refreshDeleteCalls = () =>
+  mockWrite.apiKey.deleteMany.mock.calls.filter((c) =>
+    JSON.stringify(c[0]).includes('"type":"Refresh"')
+  );
+const CLIENT = 'oc_connect_7';
+const RETRY_MOD = 2002;
+
+describe('delistListing — the offline-access cut is recorded in the moderation history', () => {
+  const connectListing = () => ({ ...offsiteListing('approved'), connectClientId: CLIENT });
+  beforeEach(() => {
+    flipt.on.clear();
+    flipt.failing.clear();
+    mockRead.appListing.findMany.mockResolvedValue([]);
+    mockWrite.apiKey.findMany.mockResolvedValue([
+      { id: 601, key: 'k1', userId: 21 },
+      { id: 602, key: 'k2', userId: 22 },
+    ]);
+    mockWrite.apiKey.deleteMany.mockResolvedValue({ count: 7 });
+  });
+
+  it('🔴 a FAILED cut writes one offline-cut-failed row AFTER the commit, with the client and the error', async () => {
+    flipt.on.add('oauth-offline-grant');
+    mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+    const order: string[] = [];
+    mockWrite.$transaction.mockImplementationOnce(
+      async (cb: (tx: WriteMock) => Promise<unknown>) => {
+        const out = await cb(mockWrite);
+        order.push('commit');
+        return out;
+      }
+    );
+    mockWrite.apiKey.deleteMany.mockRejectedValue(new Error('refresh delete exploded'));
+    mockWrite.appListingModerationEvent.create.mockImplementation(
+      async (a: { data: { action: string } }) => {
+        order.push(`event:${a.data.action}`);
+        return a.data;
+      }
+    );
+    const res = await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({
+      appListingId: APP_ID,
+      status: 'removed',
+      offlineCut: { outcome: 'failed' },
+    });
+    expect(cutEvents()).toEqual([
+      {
+        id: expect.stringMatching(/^alme_test_/),
+        appListingId: APP_ID,
+        slug: SLUG,
+        actorUserId: REVIEWER,
+        action: 'offline-cut-failed',
+        reason: null,
+        detail: 'refresh delete exploded',
+        after: { clientId: CLIENT },
+      },
+    ]);
+    expect(order).toEqual(['event:delist', 'commit', 'event:offline-cut-failed']);
+  });
+
+  it('a failed SIBLING READ is a failed cut too: one offline-cut-failed row, nothing deleted', async () => {
+    flipt.on.add('oauth-offline-grant');
+    mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+    mockRead.appListing.findMany.mockRejectedValue(new Error('sibling read down'));
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(cutEvents().map((d) => [d.action, d.detail])).toEqual([
+      ['offline-cut-failed', 'sibling read down'],
+    ]);
+    expect(refreshDeleteCalls()).toEqual([]);
+  });
+
+  it('a SUCCESSFUL cut records offline-cut with the deleted count and returns it', async () => {
+    flipt.on.add('oauth-offline-grant');
+    mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+    const res = await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({
+      appListingId: APP_ID,
+      status: 'removed',
+      offlineCut: { outcome: 'cut', deleted: 7 },
+    });
+    expect(cutEvents()).toEqual([
+      expect.objectContaining({
+        action: 'offline-cut',
+        actorUserId: REVIEWER,
+        detail: null,
+        after: { clientId: CLIENT, deleted: 7 },
+      }),
+    ]);
+  });
+
+  it('🔴 DARK: flag off → no cut row, and the result is exactly the pre-feature shape', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+    const res = await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+    expect(cutEvents()).toEqual([]);
+    // Exactly the delist row.
+    expect(mockWrite.appListingModerationEvent.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('an unreadable flag records nothing (it may be off) and returns no offlineCut', async () => {
+    flipt.failing.add('oauth-offline-grant');
+    mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+    const res = await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+    expect(cutEvents()).toEqual([]);
+  });
+
+  it('another approved listing declaring offline access → nothing attempted, nothing recorded', async () => {
+    flipt.on.add('oauth-offline-grant');
+    mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+    mockRead.appListing.findMany.mockResolvedValue([
+      {
+        id: 'apl_sibling',
+        kind: 'offsite',
+        status: 'approved',
+        revisionOfId: null,
+        connectScopeJustifications: { offline_access: 'keeps syncing' },
+      },
+    ]);
+    const res = await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+    expect(cutEvents()).toEqual([]);
+  });
+
+  it('🔴 the cut-row write failing does not break the takedown: still removed, still returns the cut result', async () => {
+    flipt.on.add('oauth-offline-grant');
+    mockRead.appListing.findUnique.mockResolvedValueOnce(connectListing());
+    mockWrite.apiKey.deleteMany.mockRejectedValue(new Error('refresh delete exploded'));
+    mockWrite.appListingModerationEvent.create.mockImplementation(
+      async (a: { data: { action: string } }) => {
+        if (a.data.action.startsWith('offline-cut')) throw new Error('23514 check violation');
+        return a.data;
+      }
+    );
+    const res = await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({
+      appListingId: APP_ID,
+      status: 'removed',
+      offlineCut: { outcome: 'failed' },
+    });
+    const eventFailedLogs = mockLogToAxiom.mock.calls.filter(
+      (c) => (c[0] as { name?: string }).name === 'app-listing.takedown.offline-cut-event-failed'
+    );
+    expect(eventFailedLogs).toHaveLength(1);
+    expect(eventFailedLogs[0][0]).toMatchObject({
+      payload: { appListingId: APP_ID, outcome: 'failed', message: '23514 check violation' },
+    });
+  });
+});
+
+describe('retryConnectOfflineCut', () => {
+  /** The listing as the retry reads it on the primary. */
+  const takenDown = (over: Record<string, unknown> = {}) => ({
+    id: APP_ID,
+    kind: 'offsite',
+    status: 'removed',
+    slug: SLUG,
+    connectClientId: CLIENT,
+    ...over,
+  });
+  beforeEach(() => {
+    flipt.on.clear();
+    flipt.failing.clear();
+    flipt.on.add('oauth-offline-grant');
+    mockWrite.appListing.findUnique.mockResolvedValue(takenDown());
+    // The newest status-changing event is the moderator's delist.
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({
+      action: 'delist',
+      before: { status: 'approved' },
+    });
+    mockWrite.appListing.findMany.mockResolvedValue([]);
+    mockWrite.apiKey.findMany.mockResolvedValue([{ id: 701, key: 'r1', userId: 31 }]);
+    mockWrite.apiKey.deleteMany.mockResolvedValue({ count: 5 });
+  });
+
+  const retry = () => retryConnectOfflineCut({ appListingId: APP_ID, moderatorUserId: RETRY_MOD });
+
+  it('🔴 success: deletes the client’s Refresh keys and records offline-cut by the RETRYING moderator', async () => {
+    await expect(retry()).resolves.toEqual({ appListingId: APP_ID, outcome: 'cut', deleted: 5 });
+    expect(refreshDeleteCalls()).toHaveLength(1);
+    expect(JSON.stringify(refreshDeleteCalls()[0][0])).toContain(`"clientId":"${CLIENT}"`);
+    expect(cutEvents()).toEqual([
+      {
+        id: expect.stringMatching(/^alme_test_/),
+        appListingId: APP_ID,
+        slug: SLUG,
+        actorUserId: RETRY_MOD,
+        action: 'offline-cut',
+        reason: null,
+        detail: null,
+        after: { clientId: CLIENT, deleted: 5 },
+      },
+    ]);
+  });
+
+  it('🔴 failure: records offline-cut-failed with the error and RETURNS failed (does not throw)', async () => {
+    mockWrite.apiKey.deleteMany.mockRejectedValue(new Error('still broken'));
+    await expect(retry()).resolves.toEqual({ appListingId: APP_ID, outcome: 'failed' });
+    expect(cutEvents()).toEqual([
+      expect.objectContaining({
+        action: 'offline-cut-failed',
+        actorUserId: RETRY_MOD,
+        detail: 'still broken',
+        after: { clientId: CLIENT },
+      }),
+    ]);
+  });
+
+  it('idempotent: a second retry after a success deletes what is left (0) and records that', async () => {
+    mockWrite.apiKey.findMany.mockResolvedValue([]);
+    mockWrite.apiKey.deleteMany.mockResolvedValue({ count: 0 });
+    await expect(retry()).resolves.toEqual({ appListingId: APP_ID, outcome: 'cut', deleted: 0 });
+    expect(cutEvents().map((d) => d.after)).toEqual([{ clientId: CLIENT, deleted: 0 }]);
+  });
+
+  it('🔴 refuses with the flag OFF: FORBIDDEN, nothing read, deleted or recorded', async () => {
+    flipt.on.clear();
+    await expect(retry()).rejects.toMatchObject({
+      name: 'OffsiteModerationError',
+      code: 'FORBIDDEN',
+    });
+    expect(mockWrite.appListing.findUnique).not.toHaveBeenCalled();
+    expect(refreshDeleteCalls()).toEqual([]);
+    expect(cutEvents()).toEqual([]);
+  });
+
+  it.each([
+    ['relisted (approved)', { status: 'approved' }, 'delist'],
+    ['back in review (pending)', { status: 'pending' }, 'reset-to-pending'],
+    // `removed`, but by the OWNER's own unpublish after the takedown was undone.
+    ['removed by the owner’s own unpublish', {}, 'owner-unpublish'],
+  ])(
+    '🔴 refuses a listing no longer taken down — %s: NOT_TRANSITIONABLE, nothing deleted or recorded',
+    async (_l, over, lastAction) => {
+      mockWrite.appListing.findUnique.mockResolvedValue(takenDown(over));
+      mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({
+        action: lastAction,
+        before: null,
+      });
+      await expect(retry()).rejects.toMatchObject({
+        name: 'OffsiteModerationError',
+        code: 'NOT_TRANSITIONABLE',
+        message: expect.stringContaining('no longer taken down'),
+      });
+      expect(refreshDeleteCalls()).toEqual([]);
+      expect(cutEvents()).toEqual([]);
+    }
+  );
+
+  it('reads the last status-changing event on the PRIMARY, filtered to the status set', async () => {
+    await retry();
+    const args = mockWrite.appListingModerationEvent.findFirst.mock.calls[0][0] as {
+      where: { appListingId: string; action: { in: string[] } };
+    };
+    expect(args.where.appListingId).toBe(APP_ID);
+    expect(args.where.action.in).toContain('delist');
+    expect(args.where.action.in).not.toContain('offline-cut-failed');
+  });
+
+  it('🔴 refuses when ANOTHER approved listing on the client declares offline access', async () => {
+    mockWrite.appListing.findMany.mockResolvedValue([
+      {
+        id: 'apl_sibling',
+        kind: 'offsite',
+        status: 'approved',
+        revisionOfId: null,
+        connectScopeJustifications: { offline_access: 'keeps syncing' },
+      },
+    ]);
+    await expect(retry()).rejects.toMatchObject({
+      code: 'NOT_TRANSITIONABLE',
+      message: expect.stringContaining('Another approved listing'),
+    });
+    expect(mockWrite.appListing.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { connectClientId: CLIENT } })
+    );
+    expect(refreshDeleteCalls()).toEqual([]);
+    expect(cutEvents()).toEqual([]);
+  });
+
+  it('the listing itself is excluded from the sibling check (its own declaration does not block)', async () => {
+    mockWrite.appListing.findMany.mockResolvedValue([
+      {
+        id: APP_ID,
+        kind: 'offsite',
+        status: 'approved',
+        revisionOfId: null,
+        connectScopeJustifications: { offline_access: 'its own' },
+      },
+    ]);
+    await expect(retry()).resolves.toMatchObject({ outcome: 'cut' });
+  });
+
+  it('NOT_FOUND on a missing listing; NOT_TRANSITIONABLE on one with no OAuth client or on-site', async () => {
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(null);
+    await expect(retry()).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(takenDown({ connectClientId: null }));
+    await expect(retry()).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(takenDown({ kind: 'onsite' }));
+    await expect(retry()).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+    expect(refreshDeleteCalls()).toEqual([]);
+    expect(cutEvents()).toEqual([]);
+  });
+});
 
 describe('delistListing', () => {
   it('flips approved → removed (status+kind-guarded) and writes exactly ONE delist event', async () => {
@@ -1453,6 +2026,8 @@ describe('purgeListing', () => {
           { kind: 'offsite' },
           { kind: 'onsite', status: 'draft', appBlockId: null, revisionOfId: null },
         ],
+        // A connect listing that went live in between is not deleted.
+        NOT: { connectClientId: { not: null }, status: { in: ['approved', 'removed'] } },
       },
     });
   });
@@ -1506,6 +2081,7 @@ describe('purgeListing', () => {
         name: true,
         appBlockId: true,
         revisionOfId: true,
+        connectClientId: true,
         // The relation term's projection. Without it `isPurgeableListing` would read
         // `undefined` for the pending-request count — which THROWS rather than defaulting
         // to "not under review", so the destructive op refuses instead of proceeding.
@@ -1557,6 +2133,74 @@ describe('purgeListing', () => {
         reviewerUserId: REVIEWER,
       })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  // The removed row is what keeps a delisted connect app "listed but undeclared" at the auth hub;
+  // with no row left the app reads as unlisted and gets offline access back.
+  describe('an off-site CONNECT listing that was ever live is refused', () => {
+    const connect = (status: string) => ({
+      ...offsiteListing(status),
+      connectClientId: 'oc_connect',
+    });
+    const purge = () =>
+      purgeListing({
+        input: { appListingId: APP_ID, reason: 'spam expunge' },
+        reviewerUserId: REVIEWER,
+      });
+    const expectNothingDeleted = () => {
+      expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
+      expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+    };
+
+    it.each(['removed', 'approved'])('status %s → refused, nothing deleted', async (status) => {
+      mockRead.appListing.findUnique.mockResolvedValueOnce(connect(status));
+      mockWrite.appListing.findUnique.mockResolvedValueOnce(connect(status));
+      await expect(purge()).rejects.toMatchObject({
+        code: 'NOT_TRANSITIONABLE',
+        message: expect.stringContaining('Delist it instead'),
+      });
+      expectNothingDeleted();
+    });
+
+    it('a pending listing an approved publish request points at → refused', async () => {
+      mockRead.appListing.findUnique.mockResolvedValueOnce(connect('pending'));
+      mockWrite.appListing.findUnique.mockResolvedValueOnce(connect('pending'));
+      mockWrite.appListingPublishRequest.findFirst.mockImplementation(
+        async (a: { where: { appListingId: string; status: string } }) =>
+          a.where.appListingId === APP_ID && a.where.status === 'approved' ? { id: 'alpr_1' } : null
+      );
+      await expect(purge()).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+      expectNothingDeleted();
+    });
+
+    it('a pending listing with a moderation event → refused', async () => {
+      mockRead.appListing.findUnique.mockResolvedValueOnce(connect('pending'));
+      mockWrite.appListing.findUnique.mockResolvedValueOnce(connect('pending'));
+      mockWrite.appListingModerationEvent.findFirst.mockImplementation(
+        async (a: { where: { appListingId?: string } }) =>
+          a.where.appListingId === APP_ID ? { id: 'alme_old' } : null
+      );
+      await expect(purge()).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+      expectNothingDeleted();
+    });
+
+    it.each(['draft', 'pending', 'rejected'])(
+      'a never-live connect listing (%s) is still purged',
+      async (status) => {
+        mockRead.appListing.findUnique.mockResolvedValueOnce(connect(status));
+        mockWrite.appListing.findUnique.mockResolvedValueOnce(connect(status));
+        await expect(purge()).resolves.toEqual({ appListingId: APP_ID, purged: true });
+        expect(mockWrite.appListing.deleteMany).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('a removed off-site listing with no connect client is still purged', async () => {
+      mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+      mockWrite.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+      mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({ id: 'alme_old' });
+      await expect(purge()).resolves.toEqual({ appListingId: APP_ID, purged: true });
+      expect(mockWrite.appListing.deleteMany).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
@@ -2154,6 +2798,8 @@ describe('listMyListingModerationEvents', () => {
           'storage-doc-unhide',
           'storage-doc-delete',
           'storage-doc-dismiss',
+          'offline-cut',
+          'offline-cut-failed',
         ],
       },
     });
@@ -2179,6 +2825,8 @@ describe('listMyListingModerationEvents', () => {
         'storage-doc-unhide',
         'storage-doc-delete',
         'storage-doc-dismiss',
+        'offline-cut',
+        'offline-cut-failed',
       ],
     });
 

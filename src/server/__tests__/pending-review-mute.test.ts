@@ -240,8 +240,8 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 
-import muteHandler from '~/pages/api/mod/mute-user-pending-review';
-import overturnHandler from '~/pages/api/mod/overturn-user-mute';
+import muteHandler from '~/server/api-routes/mod/mute-user-pending-review';
+import overturnHandler from '~/server/api-routes/mod/overturn-user-mute';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { constants } from '~/server/common/constants';
 import { env } from '~/env/server';

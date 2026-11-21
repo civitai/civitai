@@ -1258,6 +1258,7 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
         image: true,
         username: true,
         links: {
+          where: { user: { bannedAt: null } },
           select: {
             url: true,
             type: true,

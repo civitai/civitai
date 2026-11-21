@@ -1,3 +1,6 @@
+import { generateJSON } from '@tiptap/html';
+import { EditorContent, useEditor } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import type * as CurrentUser from '~/hooks/useCurrentUser';
@@ -5,6 +8,10 @@ import { box, renderAtViewport } from '../../../../test/geometry-setup';
 import articleBodyClasses from '~/components/RichTextEditor/ArticleBody.module.scss';
 import type { BodyImageGuard } from '~/components/RichTextEditor/GuardedBodyMedia';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
+import editorClasses from '~/components/RichTextEditor/RichTextEditorComponent.module.scss';
+import { SizedImageEditNode } from '~/components/RichTextEditor/SizedImageEditNode';
+import { EdgeMediaEditNode } from '~/components/TipTap/EdgeMediaNode';
+import { tiptapExtensions } from '~/shared/tiptap/extensions';
 
 // The guard reads the viewer; a signed-out one is enough to size the media.
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
@@ -236,5 +243,153 @@ describe.each([
     expect(box(small).width).toBeCloseTo(column * 0.6, 0);
     expect(box(medium).width).toBeCloseTo(column * 0.6, 0);
     expect(box(large).width).toBeCloseTo(column * 0.75, 0);
+  });
+});
+
+type Image = (url: string, align: string) => string;
+// The article stores uploads as <edge-media>. In the editor a blob: media url starts an upload,
+// so the editor gets the plain <img> node: it sits in the same frame with the same layout.
+const edgeMediaTag: Image = (url, align) =>
+  `<edge-media url="${url}" type="image" filename="x.png" data-width="40" data-align="${align}"></edge-media>`;
+const imgTag: Image = (url, align) => `<img src="${url}" data-width="40" data-align="${align}">`;
+const CAPTION = 'Caption beside the image.';
+const NEXT = 'Next paragraph after the image.';
+
+// The article editor's image nodes and image-layout class (RichTextEditorComponent, imageSize).
+function ArticleEditor({ html }: { html: string }) {
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({ heading: false }),
+      EdgeMediaEditNode.configure({ accepts: ['image', 'video'], inline: true, resizable: true }),
+      SizedImageEditNode.configure({ inline: true, resizable: true }),
+    ],
+    content: html,
+    immediatelyRender: true,
+  });
+  return (
+    <div className={editorClasses.sizedImages}>
+      <EditorContent editor={editor} />
+    </div>
+  );
+}
+
+// The article page renders the doc the server parses from the stored HTML (articleContentJson),
+// which lifts a block image out of its paragraph and leaves an empty one in front of it.
+function SavedArticle({ html, typography }: { html: string; typography: boolean }) {
+  return (
+    <RenderRichText
+      content={generateJSON(html, tiptapExtensions)}
+      className={typography ? articleBodyClasses.articleBody : undefined}
+      imageGuard={{ images: [], nsfwLevel: 1 }}
+    />
+  );
+}
+
+const FLOAT_VIEWS = [
+  ['the editor', imgTag, (html: string) => <ArticleEditor html={html} />],
+  ['the article', edgeMediaTag, (html: string) => <SavedArticle html={html} typography={false} />],
+  [
+    'the article with article-typography',
+    edgeMediaTag,
+    (html: string) => <SavedArticle html={html} typography />,
+  ],
+] as const;
+
+async function renderDoc(view: (html: string) => React.ReactElement, html: string, images = 1) {
+  await renderAtViewport(<div style={{ width: COLUMN }}>{view(html)}</div>, DESKTOP);
+  return expect
+    .poll(() => [...document.querySelectorAll('img')].filter((img) => img.naturalWidth > 0))
+    .toHaveLength(images)
+    .then(() => [...document.querySelectorAll('img')].map(box));
+}
+
+/** The box of the first character of `text`. In the editor a caption shares its paragraph with
+ * the image's node view, so this finds the text node, not the paragraph. */
+function firstTextChar(text: string) {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node && !node.textContent?.startsWith(text)) node = walker.nextNode();
+  if (!node) throw new Error(`no text starts with ${text}`);
+  const range = document.createRange();
+  range.setStart(node, 0);
+  range.setEnd(node, 1);
+  return range.getBoundingClientRect();
+}
+
+describe.each(FLOAT_VIEWS)('a floated article image in %s', (_label, image, view) => {
+  // Product decision (hq:article_editor_text_a50v): a blank line ends the wrap, in the editor and
+  // on the article alike. Without it authors stacked blank lines until the text cleared the image
+  // in the editor, and the article, where a blank line is shorter, still wrapped it.
+  it.each([
+    ['float-left', 'paragraph', `<p>${NEXT}</p>`],
+    ['float-right', 'paragraph', `<p>${NEXT}</p>`],
+    ['float-left', 'list', `<ul><li><p>${NEXT}</p></li></ul>`],
+  ])('%s: a blank line puts the next %s below the image', async (align, _block, next) => {
+    const tall = await imageUrl(600, 900);
+    const [img] = await renderDoc(view, `<p>${image(tall, align)}${CAPTION}</p><p></p>${next}`);
+
+    expect(firstTextChar(NEXT).top).toBeGreaterThanOrEqual(img.bottom);
+  });
+
+  // Top-level blank lines only: inside a spoiler block the article can't clear the outer float,
+  // so the editor must not either. A blockquote stands in for any nested block.
+  it('a blank line inside a nested block leaves the wrap alone', async () => {
+    const tall = await imageUrl(600, 900);
+    const [img] = await renderDoc(
+      view,
+      `<p>${image(
+        tall,
+        'float-left'
+      )}${CAPTION}</p><blockquote><p>Quoted.</p><p></p><p>${NEXT}</p></blockquote>`
+    );
+
+    expect(firstTextChar(NEXT).top).toBeLessThan(img.bottom);
+  });
+
+  it.each([
+    [
+      'float-left',
+      (img: DOMRect | ReturnType<typeof box>, char: DOMRect) => char.left >= img.right,
+    ],
+    [
+      'float-right',
+      (img: DOMRect | ReturnType<typeof box>, char: DOMRect) => char.right <= img.left,
+    ],
+  ])(
+    '%s: the caption and, with no blank line, the next paragraph wrap beside it',
+    async (align, beside) => {
+      const tall = await imageUrl(600, 900);
+      const [img] = await renderDoc(view, `<p>${image(tall, align)}${CAPTION}</p><p>${NEXT}</p>`);
+
+      for (const text of [CAPTION, NEXT]) {
+        expect(beside(img, firstTextChar(text))).toBe(true);
+        expect(firstTextChar(text).top).toBeLessThan(img.bottom);
+      }
+    }
+  );
+
+  // The article's parser leaves an empty paragraph in front of each image it lifts out of a
+  // paragraph, so a blank line here must not be taken for one the author typed.
+  it.each([
+    ['in one paragraph', (a: string, b: string) => `<p>${a}${b}</p>`],
+    ['in consecutive paragraphs', (a: string, b: string) => `<p>${a}</p><p>${b}</p>`],
+  ])('two floated images %s stay side by side', async (_shape, shape) => {
+    const a = image(await imageUrl(600, 400), 'float-left');
+    const b = image(await imageUrl(600, 400), 'float-left');
+    const [first, second] = await renderDoc(view, `${shape(a, b)}<p>${NEXT}</p>`, 2);
+
+    // Beside, not level: their tops differ by a few pixels already (an image row is
+    // hq:articles_side_side_qxm1), so this pins only that the second is not pushed below.
+    expect(second.left).toBeGreaterThanOrEqual(first.right);
+    expect(second.top).toBeLessThan(first.bottom);
+  });
+
+  it('an image aligned left, not floated, keeps the text below it', async () => {
+    const [img] = await renderDoc(
+      view,
+      `<p>${image(await imageUrl(600, 400), 'left')}</p><p>${NEXT}</p>`
+    );
+
+    expect(firstTextChar(NEXT).top).toBeGreaterThanOrEqual(img.bottom);
   });
 });

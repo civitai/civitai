@@ -36,6 +36,8 @@ export const watchedEntityFields = {
     'flags',
     'trainedWords',
     'licensingFee',
+    // Decides what the licensingFee number means (Buzz per image, or a percent of compute).
+    'licensingFeeType',
     // Decides who is paid per image and by whom: a derivative inherits its root's fee, charged to the
     // derivative's users and settled to the ROOT's owner. It was writable with no trail at all until
     // CU 868kwf2fd — 160 versions carried a value nobody could account for, and the one that reached

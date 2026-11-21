@@ -9,16 +9,17 @@ name: Storage hook runner image
 # The app's behaviour is covered by its own vitest suites (apps.yml). This job covers only what
 # the suites cannot see: the image. It runs the container with a read-only root filesystem, as
 # uid/gid 1001, with every capability dropped, a 2-CPU quota and no network, and requires /readyz to answer
-# 200 (a ready worker AND the built-in allow/deny/interrupt self-test hooks passing, so the
-# QuickJS WASM loads from the shipped node_modules), /healthz 200, the metrics port to serve the
-# runner's metrics, and the pool to size itself from the CPU quota (2 workers).
+# 200 (a ready worker AND the served route's built-in self-test passing, so the QuickJS WASM loads
+# from the shipped node_modules), /healthz 200, the metrics port to serve the runner's metrics,
+# and the pool to size itself from the CPU quota (2 workers). It boots once per RUNNER_MODE.
 #
 # The paths are what the image packaging reads: the Dockerfile and the app (its own tsconfig,
 # no root one), the manifests and lockfile the filtered install resolves, the patches the root
 # package.json declares, the workspace packages the Dockerfile copies, and .dockerignore.
 #
 # A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
-# dispatches this workflow when the label is added.
+# dispatches this workflow when the label is added to a draft PR (on a ready PR, the PR's own run
+# here is not draft-gated, so nothing is dispatched).
 on:
   pull_request:
     branches: [main, release]
@@ -101,41 +102,65 @@ jobs:
           [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] || exit 1
           grep -q 'STORAGE_HOOK_RUNNER_SECRET must be at least 32 chars' <<<"$out"
 
+      # A process serves one signed route, chosen by RUNNER_MODE; with none it must refuse to start.
+      - name: Refuses to start without a RUNNER_MODE
+        run: |
+          set -uo pipefail
+          rc=0
+          out=$(timeout 60 docker run --rm -e STORAGE_HOOK_RUNNER_SECRET="$(openssl rand -hex 32)" \
+            storage-hook-runner:ci 2>&1) || rc=$?
+          echo "$out" | tail -20
+          echo "exit: $rc"
+          [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] || exit 1
+          grep -q 'RUNNER_MODE must be check or remix' <<<"$out"
+
       # Run as the pod does: read-only root filesystem, uid/gid 1001, no capabilities, no
       # privilege escalation, a 2-CPU quota, and NO network (--network none: the pod's policy
       # denies all egress, and the runner must need none). The probes run inside the container
-      # over loopback with busybox wget. /readyz is 200 only once a worker is ready and the
-      # self-test hooks answer correctly.
+      # over loopback with busybox wget. /readyz is 200 only once a worker is ready and the served
+      # route's self-test answers correctly. Once per RUNNER_MODE: an unsigned call to the served
+      # route is refused 401, and the other route is not served (404).
       - name: Serves under the deployment's security context, with no network
         run: |
           set -euo pipefail
-          secret=$(openssl rand -hex 32)
-          docker run -d --name shr --read-only --user 1001:1001 --cap-drop ALL \
-            --security-opt no-new-privileges --cpus 2 --network none \
-            -e STORAGE_HOOK_RUNNER_SECRET="$secret" storage-hook-runner:ci
-          get() { docker exec shr wget -q -T 5 -O- "$@"; }
-          ready=0
-          for _ in $(seq 1 60); do
-            if get http://127.0.0.1:8080/readyz >/dev/null 2>&1; then ready=1; break; fi
-            sleep 1
+          for mode in check remix; do
+            echo "::group::RUNNER_MODE=$mode"
+            if [ "$mode" = check ]; then served=/v1/check other=/v1/remix/replay
+            else served=/v1/remix/replay other=/v1/check; fi
+            secret=$(openssl rand -hex 32)
+            docker run -d --name shr --read-only --user 1001:1001 --cap-drop ALL \
+              --security-opt no-new-privileges --cpus 2 --network none \
+              -e STORAGE_HOOK_RUNNER_SECRET="$secret" -e RUNNER_MODE="$mode" storage-hook-runner:ci
+            get() { docker exec shr wget -q -T 5 -O- "$@"; }
+            ready=0
+            for _ in $(seq 1 60); do
+              if get http://127.0.0.1:8080/readyz >/dev/null 2>&1; then ready=1; break; fi
+              sleep 1
+            done
+            docker logs shr 2>&1 | tail -20
+            docker inspect shr --format 'network={{.HostConfig.NetworkMode}} readonly={{.HostConfig.ReadonlyRootfs}} user={{.Config.User}} capdrop={{.HostConfig.CapDrop}}'
+            [ "$ready" = 1 ] || { echo "/readyz never answered 200 in mode $mode"; exit 1; }
+            get http://127.0.0.1:8080/readyz
+            echo
+            get http://127.0.0.1:8080/healthz >/dev/null
+            # Captured, never piped into `grep -q`: grep exits at the first match, the writer then
+            # dies of SIGPIPE, and with pipefail the step fails with 141 depending on timing.
+            metrics=$(get http://127.0.0.1:9091/metrics)
+            grep -q '^storage_hook_runner_pool_workers' <<<"$metrics"
+            # The pool sized itself from the cgroup CPU quota (--cpus 2), not the runner's cores.
+            logs=$(docker logs shr 2>&1)
+            grep -q "(metrics 9091), 2 workers, mode $mode" <<<"$logs"
+            # Unsigned posts (busybox wget exits non-zero on an error status and names it).
+            post() {
+              docker exec shr wget -q -T 5 -O- --header 'content-type: application/json' \
+                --post-data '{}' "http://127.0.0.1:8080$1" 2>&1 || true
+            }
+            out=$(post "$served")
+            echo "unsigned $served: $out"
+            grep -q ' 401 ' <<<"$out"
+            out=$(post "$other")
+            echo "unsigned $other: $out"
+            grep -q ' 404 ' <<<"$out"
+            docker rm -f shr >/dev/null
+            echo "::endgroup::"
           done
-          docker logs shr 2>&1 | tail -20
-          docker inspect shr --format 'network={{.HostConfig.NetworkMode}} readonly={{.HostConfig.ReadonlyRootfs}} user={{.Config.User}} capdrop={{.HostConfig.CapDrop}}'
-          [ "$ready" = 1 ] || { echo "/readyz never answered 200"; exit 1; }
-          get http://127.0.0.1:8080/readyz
-          echo
-          get http://127.0.0.1:8080/healthz >/dev/null
-          # Captured, never piped into `grep -q`: grep exits at the first match, the writer then
-          # dies of SIGPIPE, and with pipefail the step fails with 141 depending on timing.
-          metrics=$(get http://127.0.0.1:9091/metrics)
-          grep -q '^storage_hook_runner_pool_workers' <<<"$metrics"
-          # The pool sized itself from the cgroup CPU quota (--cpus 2), not the runner's cores.
-          logs=$(docker logs shr 2>&1)
-          grep -q '(metrics 9091), 2 workers' <<<"$logs"
-          # An unsigned check is refused 401 (busybox wget exits non-zero on it and names the
-          # status).
-          out=$(docker exec shr wget -q -T 5 -O- --header 'content-type: application/json' \
-            --post-data '{}' http://127.0.0.1:8080/v1/check 2>&1 || true)
-          echo "unsigned /v1/check: $out"
-          grep -q ' 401 ' <<<"$out"
-          docker rm -f shr >/dev/null

@@ -33,7 +33,7 @@ const NON_MODERATOR_REDIRECT = civitaiAppUrl();
 // framework-agnostic (@civitai/auth `createSpokeGuard`); only this hook is SvelteKit-specific. Runs on the
 // Node runtime, so the guard can resolve the rich user via redis/the hub identity endpoint.
 //
-//   login     → no valid session  → redirect to the hub login, returning here afterward
+//   login     → no valid session  → redirect to this app's /api/auth/authorize, returning here afterward
 //   forbidden → signed in, not mod → redirect to civitai.com (not a 403 — re-login can't help)
 //   ok        → authenticated moderator → populate locals.user and continue
 

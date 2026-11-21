@@ -353,6 +353,29 @@ describe('blocking an image under the review flag again', () => {
   });
 });
 
+describe('blocking an image whose blocklist write fails', () => {
+  it('still requeues the documents showing it, after the write, and still fails', async () => {
+    await tosBlock(FLAGGED_LIVE);
+    dbMock.dbWrite.$queryRaw.mockClear();
+    clickhouseInsert.mockClear();
+    clickhouseInsert.mockRejectedValueOnce(new Error('blocklist store down'));
+
+    await expect(
+      handleBlockImages({ ids: [FLAGGED_LIVE], include: ['phash-block'] })
+    ).rejects.toThrow('the blocklist call failed');
+
+    const calls = dbMock.dbWrite.$queryRaw.mock.calls;
+    const lookup = calls.findIndex(([strings]) =>
+      (strings as unknown as string[]).join('?').includes('JOIN "ModelVersion"')
+    );
+    expect(lookup).toBeGreaterThanOrEqual(0);
+    expect(calls[lookup].slice(1)).toEqual([[FLAGGED_LIVE]]);
+    expect(clickhouseInsert.mock.invocationCallOrder[0]).toBeLessThan(
+      dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[lookup]
+    );
+  });
+});
+
 describe('setTosViolationHandler on any other image', () => {
   it('notifies the owner, actions the report, pays the reward and adds a TOS blocklist entry', async () => {
     await tosBlock(OTHER_REASON);

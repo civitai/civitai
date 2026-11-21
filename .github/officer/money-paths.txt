@@ -57,12 +57,18 @@ src/server/utils/endpoint-helpers.ts
 src/pages/api/v1/blocks/tip*
 # Bounties and the model vault hold or move Buzz: their server code and API routes.
 src/server/**/*bount*
+src/server/**/*bount*/**
 src/server/**/*vault*
 src/pages/api/**/*bount*
 src/pages/api/**/*bount*/**
 src/pages/api/**/*vault*
 src/pages/api/**/*vault*/**
 packages/**/*bount*
+# The router in front of the routes under src/server/api-routes, and the maps it serves from.
+src/pages/api/mod/*...path*
+src/pages/api/admin/*...path*
+src/server/utils/api-router.ts
+src/server/utils/api-routes/**
 # CSAM handling and moderator gates and bans.
 *csam*
 *mod-gate*

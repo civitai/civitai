@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
 /**
@@ -152,9 +153,20 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 }));
 
 const showError = vi.fn();
-vi.mock('~/utils/notifications', () => ({
+// `importOriginal` SPREAD, not a hand-written object: the takedown warning toast imports
+// `showWarningNotification`, and a one-export factory failed this whole FILE at the browser's
+// ESM link step ("does not provide an export named 'showWarningNotification'").
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
   showSuccessNotification: vi.fn(),
   showErrorNotification: (...a: unknown[]) => showError(...a),
+}));
+
+// The /apps/review page is moderator-only, and the row's "History" entry point is drawn for a
+// moderator (`moderationHistoryTarget`). Without this the hook needs a session provider the
+// harness does not mount.
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => ({ id: 1, username: 'mod', isModerator: true }),
 }));
 
 // 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
@@ -166,14 +178,18 @@ vi.mock('~/utils/notifications', () => ({
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
   // A mutation mock: records (name, vars), then drives onSuccess/onError so the
-  // component's success + error paths both run.
+  // component's success + error paths both run. `onSuccess` gets `(data, variables)` like
+  // react-query's: the delist success handler reads which listing it took down from them.
   const mutation =
     (name: string) =>
-    (opts?: { onSuccess?: () => void; onError?: (e: { message: string }) => void }) => ({
+    (opts?: {
+      onSuccess?: (data: unknown, vars: unknown) => void;
+      onError?: (e: { message: string }) => void;
+    }) => ({
       mutate: (vars: unknown) => {
         mocks.mutate(name, vars);
         if (mocks.errorMode) opts?.onError?.({ message: 'boom' });
-        else void opts?.onSuccess?.();
+        else void opts?.onSuccess?.(undefined, vars);
       },
       mutateAsync: vi.fn(),
       isPending: false,

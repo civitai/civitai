@@ -1117,6 +1117,7 @@ export const upsertModelVersion = async ({
         usageControl: true,
         flags: true,
         licensingFee: true,
+        licensingFeeType: true,
         // Read for the audit diff, not for the write. `watchedEntityFields` compares before/after by
         // key, so a watched field missing from this select silently produces no row rather than an
         // error — the audit would look wired up and record nothing.
@@ -1403,7 +1404,11 @@ export const upsertModelVersion = async ({
     const feeBefore =
       existingVersion.licensingFee != null ? Number(existingVersion.licensingFee) : null;
     const feeAfter = feeProvided ? data.licensingFee ?? null : feeBefore;
-    if (feeBefore !== feeAfter)
+    // The type changes what the number means (Buzz per image or a percent), so it busts too.
+    const typeChanged =
+      data.licensingFeeType !== undefined &&
+      data.licensingFeeType !== existingVersion.licensingFeeType;
+    if (feeBefore !== feeAfter || typeChanged)
       await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
 
     if (version.description !== existingVersion.description)

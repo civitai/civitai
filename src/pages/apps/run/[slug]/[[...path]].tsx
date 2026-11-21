@@ -28,6 +28,7 @@ import {
 } from '~/server/services/blocks/app-listing-store-gate';
 import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
 import { APP_SURFACE_PARAM, resolveAppOpenSurface } from '~/shared/utils/app-store-telemetry';
+import { canOpenAppRunPages } from '~/shared/utils/app-blocks-access';
 import { Page } from '~/components/AppLayout/Page';
 import {
   APPS_RUN_FROM_PARAM,
@@ -181,8 +182,9 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     };
     // GATE FIRST, fail-closed. Both flags required. A viewer without them gets
     // a 404 — the page is invisible/un-enumerable until W10 launch widens the
-    // `app-blocks-pages-enabled` segment.
-    if (!features?.appBlocks || !features?.appBlocksPages) {
+    // `app-blocks-pages-enabled` segment. The approved-app notification asks the
+    // submitter the same question at send time, so it never links here for them.
+    if (!canOpenAppRunPages(features)) {
       return { notFound: true };
     }
     const launchOrigin = parseAppsRunOrigin(ctx.query?.[APPS_RUN_FROM_PARAM]);

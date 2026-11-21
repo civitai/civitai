@@ -38,6 +38,7 @@ export const PUSH_PROMPT_ROWS = [
       'service-deal-auto-complete-soon',
       'service-deal-due-soon',
       'service-deal-overdue',
+      'service-deal-review-due',
     ],
   },
   {

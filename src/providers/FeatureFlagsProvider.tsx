@@ -8,6 +8,7 @@ import {
   setFeedGoTransportModelGetAllEnabled,
 } from '~/utils/trpc-go-transport';
 import { setTrpcUnifiedBatchWindowEnabled } from '~/utils/trpc-batch-window';
+import { setClientShadowCompareEnabled } from '~/utils/trpc-shadow-compare';
 import { setSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
 import { setSemanticArticleSearchEnabled } from '~/components/Search/semanticArticleSearchFlag';
 import { setSemanticComicSearchEnabled } from '~/components/Search/semanticComicSearchFlag';
@@ -109,9 +110,10 @@ export const FeatureFlagsProvider = ({
   );
 
   // Bridge `siteSearchProxy` to the module-scope search clients, and `feedGoTransport` /
-  // `feedGoTransportModelGetAll` / `feedGoTransportInfinite` to the tRPC link. Written while rendering, so the searches
-  // InstantSearch starts from the first commit's effects already go the right way. Browser only: on
-  // the server this module flag would be shared across concurrent requests.
+  // `feedGoTransportModelGetAll` / `feedGoTransportInfinite` / `clientShadowCompare` to the tRPC
+  // link. Written while rendering, so the searches InstantSearch starts from the first commit's
+  // effects already go the right way. Browser only: on the server this module flag would be shared
+  // across concurrent requests.
   if (typeof window !== 'undefined') {
     setSiteSearchProxyEnabled(!!featureFlags.siteSearchProxy);
     setSemanticArticleSearchEnabled(!!featureFlags.semanticArticleSearch);
@@ -119,6 +121,7 @@ export const FeatureFlagsProvider = ({
     setFeedGoTransportEnabled(!!featureFlags.feedGoTransport);
     setFeedGoTransportModelGetAllEnabled(!!featureFlags.feedGoTransportModelGetAll);
     setFeedGoTransportInfiniteEnabled(!!featureFlags.feedGoTransportInfinite);
+    setClientShadowCompareEnabled(!!featureFlags.clientShadowCompare);
   }
 
   // Bridge `trpcBatching` to the module-scope tRPC link (see `shouldBatch` in

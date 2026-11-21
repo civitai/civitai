@@ -17,18 +17,25 @@ vi.mock('~/server/services/notification.service', () => ({
 
 const { notifyAppBlockSubmitter } = await import('~/server/services/blocks/app-block-notify');
 
+/** The details the one notification was created with. */
+const sentDetails = () =>
+  (mockCreateNotification.mock.calls[0][0] as { details: Record<string, unknown> }).details;
+
 beforeEach(() => {
   mockCreateNotification.mockReset().mockResolvedValue(undefined);
 });
 
 describe('notifyAppBlockSubmitter', () => {
   it('forwards a single-user System notification with the type, key and details', async () => {
-    await notifyAppBlockSubmitter({
-      type: 'app-block-approved',
-      userId: 77,
-      key: 'app-block-approved:req_1',
-      details: { slug: 'cool-app', name: 'Cool App', version: '1.0.0' },
-    });
+    await notifyAppBlockSubmitter(
+      {
+        type: 'app-block-approved',
+        userId: 77,
+        key: 'app-block-approved:req_1',
+        details: { slug: 'cool-app', name: 'Cool App', version: '1.0.0' },
+      },
+      async () => true
+    );
 
     expect(mockCreateNotification).toHaveBeenCalledTimes(1);
     const arg = mockCreateNotification.mock.calls[0][0];
@@ -41,15 +48,57 @@ describe('notifyAppBlockSubmitter', () => {
     });
   });
 
-  it('carries the rejection reason through in details', async () => {
-    await notifyAppBlockSubmitter({
-      type: 'app-block-rejected',
-      userId: 5,
-      key: 'app-block-rejected:req_2',
-      details: { slug: 's', reason: 'nope' },
-    });
+  it('carries the rejection reason through in details, and never asks about run pages', async () => {
+    const canOpen = vi.fn(async (_userId: number) => true);
+    await notifyAppBlockSubmitter(
+      {
+        type: 'app-block-rejected',
+        userId: 5,
+        key: 'app-block-rejected:req_2',
+        details: { slug: 's', reason: 'nope' },
+      },
+      canOpen
+    );
     const arg = mockCreateNotification.mock.calls[0][0];
     expect(arg.type).toBe('app-block-rejected');
     expect(arg.details.reason).toBe('nope');
+    expect(sentDetails()).not.toHaveProperty('canOpenRunPage');
+    expect(canOpen).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])(
+    '🔴 an approval records canOpenRunPage=%s, asked of the SUBMITTER',
+    async (answer) => {
+      const canOpen = vi.fn(async (_userId: number) => answer);
+      await notifyAppBlockSubmitter(
+        {
+          type: 'app-block-approved',
+          userId: 77,
+          key: 'app-block-approved:req_1',
+          details: { slug: 'cool-app', hasPage: true },
+        },
+        canOpen
+      );
+      expect(canOpen.mock.calls).toEqual([[77]]);
+      expect(sentDetails()).toEqual({
+        slug: 'cool-app',
+        hasPage: true,
+        canOpenRunPage: answer,
+      });
+    }
+  );
+
+  it('🔴 a failed run-page read still sends the approval, with canOpenRunPage false', async () => {
+    await notifyAppBlockSubmitter(
+      {
+        type: 'app-block-approved',
+        userId: 77,
+        key: 'app-block-approved:req_1',
+        details: { slug: 'cool-app', hasPage: true },
+      },
+      async () => Promise.reject(new Error('flags unreadable'))
+    );
+    expect(mockCreateNotification).toHaveBeenCalledTimes(1);
+    expect(sentDetails().canOpenRunPage).toBe(false);
   });
 });

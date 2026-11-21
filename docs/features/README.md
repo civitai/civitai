@@ -22,6 +22,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Buzz Accounts | [docs/features/buzz-accounts.md](buzz-accounts.md) |
 | Monetization rules (paid access / fees / donation goals) | [docs/features/monetization-rules.md](monetization-rules.md) |
 | Model gift links (free claims of gated versions) | [docs/features/model-gift-links.md](model-gift-links.md) |
+| Comped membership gifts (moderator, no charge) | [docs/features/membership-gift-comps.md](membership-gift-comps.md) |
 | Notifications | [docs/features/notifications.md](notifications.md) |
 | Message as Civitai Moderation (shared moderator chat account) | [docs/features/message-as-civitai.md](message-as-civitai.md) |
 | Web Push (browser push notifications) | [docs/features/web-push.md](web-push.md) |
@@ -39,11 +40,13 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Batch post scheduling and the post planner                   | [docs/features/batch-post-scheduling.md](batch-post-scheduling.md)           |
 | Article scheduling                                           | [docs/features/article-scheduling.md](article-scheduling.md)                 |
 | Official articles (`isOfficial`, the Civitai Official tag)   | [docs/features/official-articles.md](official-articles.md)                   |
+| Writer leaderboards (four article boards)                    | [docs/features/writer-leaderboards.md](writer-leaderboards.md)               |
 | Avatar Gen (portrait to stylised avatar workflow)            | [docs/features/avatar-gen.md](avatar-gen.md)                                 |
 | Account settings deep links (`?setting=`)                    | [docs/features/account-settings-links.md](account-settings-links.md)         |
 | Storylines (branching stories told in posts) | [docs/features/storylines.md](storylines.md) |
 | Model civitai.com face (separate .com title, description and cover) | [docs/features/model-com-face.md](model-com-face.md) |
 | Semantic image search (image vectors in Qdrant, kept in sync by CDC) | [docs/features/semantic-image-search.md](semantic-image-search.md) |
 | Semantic model search (model vectors in Qdrant for the search service) | [docs/features/semantic-model-search.md](semantic-model-search.md) |
+| Semantic video search (video vectors in Qdrant, the `video` content domain) | [docs/features/semantic-video-search.md](semantic-video-search.md) |
 | Service Requests page: link sellers to Incoming requests | [docs/features/service-requests-seller-link.md](service-requests-seller-link.md) |
 | Creator Services: deal file retention (30/90 days, holds, purge record) | [docs/features/service-deal-file-retention.md](service-deal-file-retention.md) |

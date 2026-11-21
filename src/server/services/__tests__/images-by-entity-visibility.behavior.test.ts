@@ -25,7 +25,8 @@ const OWNER = 10;
 const viewers = {
   anonymous: {},
   stranger: { userId: 20 },
-  owner: { userId: OWNER },
+  owner: { userId: OWNER, ownerSeesHeld: true },
+  ownerOnScopedKey: { userId: OWNER },
   moderator: { userId: 30, isModerator: true },
 };
 
@@ -124,13 +125,13 @@ describe('getImagesByEntity', () => {
   it.each([
     ['held for csam review', 6],
     ['held for minor review', 7],
-  ])(
-    'withholds from the owner their own image %s, and serves it to a moderator',
-    async (_l, entry) => {
-      expect(await imageOf(entry, viewers.owner)).toEqual([]);
-      expect(await imageOf(entry, viewers.moderator)).toHaveLength(1);
-    }
-  );
+  ])('serves the owner their own image %s, and a moderator; nobody else', async (_l, entry) => {
+    expect(await imageOf(entry, viewers.owner)).toHaveLength(1);
+    expect(await imageOf(entry, viewers.ownerOnScopedKey)).toEqual([]);
+    expect(await imageOf(entry, viewers.moderator)).toHaveLength(1);
+    expect(await imageOf(entry, viewers.stranger)).toEqual([]);
+    expect(await imageOf(entry, viewers.anonymous)).toEqual([]);
+  });
 
   it.each(['anonymous', 'stranger'] as const)(
     'withholds an image marked acceptable-minor from the %s',

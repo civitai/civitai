@@ -333,6 +333,12 @@ export const feedbackTriageInput = feedbackTriageRequest.extend({
    * route's input: a moderator acting is the one doing the re-stamping.
    */
   expectedHandledById: z.number().int().positive().nullable().optional(),
+  /**
+   * `true`: write only while the row carries no HQ sync hold (`context.syncHold`). The HQ sync
+   * sets it, so a row a moderator moved back to `new` after the sync read it is refused, not
+   * moved forward. Absent = not checked.
+   */
+  expectedUnheld: z.boolean().optional(),
 });
 export type FeedbackTriageInput = z.infer<typeof feedbackTriageInput>;
 

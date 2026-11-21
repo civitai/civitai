@@ -39,11 +39,11 @@ vi.mock('~/server/services/message-as-civitai.service', async (importOriginal) =
 }));
 
 const endpoints = {
-  send: (await import('~/pages/api/mod/user/message-as-civitai')).default,
-  inbox: (await import('~/pages/api/mod/messages/inbox')).default,
-  thread: (await import('~/pages/api/mod/messages/thread')).default,
-  claim: (await import('~/pages/api/mod/messages/claim')).default,
-  release: (await import('~/pages/api/mod/messages/release')).default,
+  send: (await import('~/server/api-routes/mod/user/message-as-civitai')).default,
+  inbox: (await import('~/server/api-routes/mod/messages/inbox')).default,
+  thread: (await import('~/server/api-routes/mod/messages/thread')).default,
+  claim: (await import('~/server/api-routes/mod/messages/claim')).default,
+  release: (await import('~/server/api-routes/mod/messages/release')).default,
 };
 
 const calls = {

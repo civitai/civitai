@@ -11,6 +11,7 @@ import {
 } from '~/components/Notifications/pushPrompt';
 import { usePushBrowserState } from '~/components/Notifications/usePushSubscription';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
 const PushOptInDialog = dynamic(() => import('~/components/Notifications/PushOptInDialog'));
@@ -23,6 +24,12 @@ const SHOW_AGAIN_AFTER_MS = 12 * 60 * 60 * 1000;
 // or where push is already asked about. Matched against the route pattern.
 export const EXCLUDED_ROUTE =
   /^\/(generate|purchase|pricing|payment|redeem-code|claim|train|training|training-studio|avatar-generator|comics\/project|models\/train|user\/(notifications|account|membership|stripe-connect))\b|\/(create|edit|wizard)\b/;
+
+// creatorServicesNext viewers are asked inline on a Requested deal instead.
+const DEAL_FLOW_ROUTE = /^\/services\/deals\b/;
+
+export const isPushRouteExcluded = (pathname: string, servicesNext: boolean) =>
+  EXCLUDED_ROUTE.test(pathname) || (servicesNext && DEAL_FLOW_ROUTE.test(pathname));
 
 function readShownRecently() {
   try {
@@ -70,6 +77,7 @@ function useArmed(enabled: boolean) {
  */
 export function PushOptInPrompt({ blocked }: { blocked: boolean }) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const router = useRouter();
   const { support, permission } = usePushBrowserState();
   const dialogOpen = useDialogStore((s) => s.dialogs.length > 0);
@@ -85,7 +93,7 @@ export function PushOptInPrompt({ blocked }: { blocked: boolean }) {
     armed,
     hidden: typeof document !== 'undefined' && document.visibilityState === 'hidden',
     dialogOpen,
-    routeExcluded: EXCLUDED_ROUTE.test(router.pathname),
+    routeExcluded: isPushRouteExcluded(router.pathname, !!features.creatorServicesNext),
   };
   const ready = !variant && isPushPromptMoment(moment);
   const { data: settings, isSuccess: settingsLoaded } = trpc.user.getSettings.useQuery(undefined, {

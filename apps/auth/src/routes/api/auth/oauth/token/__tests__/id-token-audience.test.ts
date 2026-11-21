@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import { TokenScope } from '@civitai/auth/token-scope';
 import type * as CivitaiAuth from '@civitai/auth';
 
@@ -35,7 +36,10 @@ vi.mock('$lib/server/db/db', () => ({
     },
   },
 }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: async () => true }));
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
+  checkOAuthRateLimit: async () => true,
+}));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: vi.fn() }));
 vi.mock('$lib/server/axiom', () => ({ logAxiomError: vi.fn() }));
 vi.mock('$lib/server/auth/request', () => ({ getClientIp: () => '203.0.113.9' }));

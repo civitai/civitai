@@ -210,7 +210,6 @@ function main() {
     sleep: abortableSleep,
     onError,
   });
-  // Authorized private streams: built only when at least one relay is listed.
   const privateRelays = parsePrivateRelays(process.env.REGISTRY_ADAPTER_PRIVATE_RELAYS);
   console.log(
     privateRelays.size > 0

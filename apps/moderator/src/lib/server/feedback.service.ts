@@ -1,5 +1,8 @@
-import { sql } from '@civitai/db/kysely';
-import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
+import { sql, type RawBuilder } from '@civitai/db/kysely';
+import {
+  APPS_PLATFORM_FEEDBACK_AREA,
+  FEEDBACK_SYNC_HOLD_KEY,
+} from '@civitai/shared/feedback.constants';
 import { feedbackCaptureView, type FeedbackCaptureView } from '@civitai/shared/feedback-capture';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity, recordModActivityBatch } from './mod-activity';
@@ -530,6 +533,26 @@ export type TriageResult =
   | { ok: false; reason: 'gone' | 'not-platform' | 'no-server-state' | 'resolution-changed' };
 
 /**
+ * `context` with the HQ sync HOLD set or removed (`FEEDBACK_SYNC_HOLD_KEY`). A moderator moving a
+ * row BACK to `new` clears its handler, which made it look never triaged, so the HQ sync's next run
+ * moved it straight back to `reviewed`. The hold is what tells the two apart: the sync skips a held
+ * row (`feedback-hq-sync.service.ts`). It is set by a move back to `new` and removed by a move to
+ * any other status, so the next human verdict hands the row back to the sync. The sync itself only
+ * ever moves rows forward and never writes a held one, so it can neither set nor clear it.
+ */
+export function withSyncHold(
+  context: RawBuilder<unknown>,
+  hold: { set: true; by: number; at: Date } | { set: false }
+): RawBuilder<unknown> {
+  return hold.set
+    ? sql`jsonb_set(${context}, ${`{${FEEDBACK_SYNC_HOLD_KEY}}`}::text[], ${JSON.stringify({
+        at: hold.at.toISOString(),
+        by: hold.by,
+      })}::jsonb, true)`
+    : sql`((${context}) - ${FEEDBACK_SYNC_HOLD_KEY}::text)`;
+}
+
+/**
  * Set a row's status and triage note in one statement.
  *
  * 🔴 SCOPED ON `expectedStatus` — the status the operator was looking at when they decided. Without
@@ -572,6 +595,8 @@ export async function triageFeedback(input: {
    * moderator's same-status save re-stamps `handledById` without moving the status.
    */
   expectedHandledById?: number | null;
+  /** `true`: write only while the row carries no HQ sync hold (see `withSyncHold`). */
+  expectedUnheld?: boolean;
   moderatorId: number;
 }): Promise<TriageResult> {
   if (input.note !== undefined && input.noteAppend !== undefined)
@@ -600,6 +625,18 @@ export async function triageFeedback(input: {
         url: input.hqTask.url,
       })}::jsonb, true)`
     : resolutionContext;
+  // The sync hold moves with the status: set by a move BACK to `new`, removed by any other move.
+  const holdContext = annotateOnly
+    ? nextContext
+    : input.status === 'new' && input.expectedStatus !== 'new'
+    ? withSyncHold(nextContext ?? sql`${sql.ref('context')}`, {
+        set: true,
+        by: input.moderatorId,
+        at: now,
+      })
+    : handled
+    ? withSyncHold(nextContext ?? sql`${sql.ref('context')}`, { set: false })
+    : nextContext;
   const triageNote = sql.ref('triageNote');
   let update = dbWrite
     .updateTable('Feedback')
@@ -621,7 +658,7 @@ export async function triageFeedback(input: {
           }
         : {}),
       // `server.changedAt`, for the moderator change feed: see `stampPlatformChange`.
-      context: stampPlatformChange(now, nextContext),
+      context: stampPlatformChange(now, holdContext),
       // 🔴 `bugId` IS DELIBERATELY NOT TOUCHED HERE — not on any status, reopening included.
       //
       // Clearing it on the way back to `new` was tried and reverted. It reads as symmetric with
@@ -644,6 +681,13 @@ export async function triageFeedback(input: {
       input.expectedHandledById === null
         ? update.where('handledById', 'is', null)
         : update.where('handledById', '=', input.expectedHandledById);
+  if (input.expectedUnheld === true)
+    // A hold counts only at `new`, as the sync reads it: one left on a moved row is stale.
+    update = update.where(
+      sql<boolean>`NOT (${sql.ref('status')} = 'new' AND ${sql.ref(
+        'context'
+      )} ? ${FEEDBACK_SYNC_HOLD_KEY})`
+    );
   /**
    * 🔴 Area, `server` and the resolution being edited are checked in the same statement, never taken
    * from the form: a resolution on another area is a stray key nothing reads, `jsonb_set` under a
@@ -804,7 +848,14 @@ export async function bulkTriageFeedback(input: {
           handledById: handled ? input.moderatorId : null,
           handledAt: handled ? now : null,
           // `server.changedAt`, for the moderator change feed: see `stampPlatformChange`.
-          context: stampPlatformChange(now),
+          // Plus the sync hold, which moves with the status (see `withSyncHold`).
+          context: stampPlatformChange(
+            now,
+            withSyncHold(
+              sql`${sql.ref('context')}`,
+              handled ? { set: false } : { set: true, by: input.moderatorId, at: now }
+            )
+          ),
           // 🔴 `bugId` UNTOUCHED, for the reason `triageFeedback` records at length — the link says
           // THIS REPORT IS ABOUT THAT ISSUE, which a status change does not make false.
         })
@@ -1093,6 +1144,8 @@ async function linkInTransaction(
       status: 'actioned',
       handledById: input.moderatorId,
       handledAt: new Date(),
+      // A move forward removes the HQ sync hold, as the triage writes do (see `withSyncHold`).
+      context: withSyncHold(sql`${sql.ref('context')}`, { set: false }),
     })
     .where('id', '=', input.id)
     .where('bugId', 'is', null)

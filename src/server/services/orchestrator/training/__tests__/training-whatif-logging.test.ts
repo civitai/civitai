@@ -73,6 +73,11 @@ describe('AI Toolkit training requests', () => {
     expect(input.samples).not.toHaveProperty('cfgScale');
   });
 
+  it('treats a zero price as spendable', async () => {
+    submitWorkflow.mockResolvedValue({ cost: { total: 0, fees: {} }, steps: [{}] });
+    expect((await quote('qwen21')).cost).toBe(0);
+  });
+
   it('rejects out-of-range YuE2 sample settings before submitting', async () => {
     await expect(quote('yue2', [{ steps: 101 }])).rejects.toThrow();
     expect(submitWorkflow).not.toHaveBeenCalled();

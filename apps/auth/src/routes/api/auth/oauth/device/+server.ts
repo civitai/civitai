@@ -5,7 +5,11 @@ import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getClientIp } from '$lib/server/auth/request';
 import { getRedis } from '$lib/server/redis';
-import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
+import {
+  checkOAuthRateLimit,
+  oauthRetryAfter,
+  rateLimitedResponse,
+} from '$lib/server/oauth/rate-limit';
 import { DEVICE_CODE_TTL, DEVICE_POLL_INTERVAL } from '$lib/server/oauth/constants';
 import { isScopeGrantable, parseScopeRequest, scopeFromColumn } from '$lib/server/oauth/scope';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
@@ -60,7 +64,11 @@ export const POST: RequestHandler = async ({ request, url }) => {
   }
 
   if (!(await checkOAuthRateLimit('device', getClientIp(request)))) {
-    return json({ error: 'rate_limited' }, { status: 429, headers });
+    return rateLimitedResponse(
+      oauthRetryAfter('device'),
+      headers,
+      'Too many device authorization requests'
+    );
   }
 
   const client = await db

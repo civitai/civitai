@@ -580,6 +580,8 @@ describe('the advisory locks have exactly one call site', () => {
   // slug), always in that order, so a resent report cannot be filed twice and mirror writes serialise.
   // support-membership-code takes one per moderator (0x4d430001) for the daily mint cap's
   // count-then-insert, never nested inside another lock.
+  // membership-gift-comp takes one per moderator (0x4d470001) for the daily comp cap's
+  // count-then-insert, never nested inside another lock.
   // creator-score-grant takes one per moderator (0x43530001) for the daily grant cap's
   // count-then-insert, then the target's User row lock; never nested inside another advisory lock.
   // platform-feedback takes one per report fingerprint so two first reports cannot both insert.
@@ -647,9 +649,11 @@ describe('the advisory locks have exactly one call site', () => {
     'services/creator-gallery-hidden-users.service.ts',
     'services/creator-mystery-pack.service.ts',
     'services/creator-score-grant.service.ts',
+    'services/creator-service-deal-review-publish.ts',
     'services/free-placement.service.ts',
     'services/game-frame-report.service.ts',
     'services/item-holder-lock.ts',
+    'services/membership-gift-comp.service.ts',
     'services/model-version-gift.service.ts',
     'services/platform-feedback.service.ts',
     'services/post-text-moderation.service.ts',

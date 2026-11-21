@@ -36,8 +36,8 @@ vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => 
 const { mockBustFeaturedModelsCache } = vi.hoisted(() => ({
   mockBustFeaturedModelsCache: vi.fn(),
 }));
-// collection.service loads model.service at the call site (it would otherwise close the image.service
-// import cycle), so this pins that the lazy call still happens.
+// collection.service loads model.service at the call site, so this pins that the lazy call still
+// happens.
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelService>()),
   bustFeaturedModelsCache: mockBustFeaturedModelsCache,

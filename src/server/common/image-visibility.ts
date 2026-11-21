@@ -114,16 +114,23 @@ export const imageReviewedSql = (alias = 'i') => {
   )`;
 };
 
-/** Not under an owner-hidden review hold. `needsReview` is nullable: `notIn` alone would drop every unflagged image. */
-export const notHeldForReviewWhere = (): Prisma.ImageWhereInput => ({
-  OR: [{ needsReview: null }, { needsReview: { notIn: OWNER_HIDDEN_REVIEWS } }],
+/**
+ * Not under an owner-hidden review hold, or uploaded by `ownerId` (the session user: never an id
+ * from input). `needsReview` is nullable: `notIn` alone would drop every unflagged image.
+ */
+export const notHeldForReviewWhere = (ownerId?: number | null): Prisma.ImageWhereInput => ({
+  OR: [
+    { needsReview: null },
+    { needsReview: { notIn: OWNER_HIDDEN_REVIEWS } },
+    ...(isUploaderId(ownerId) ? [{ userId: ownerId }] : []),
+  ],
 });
 
 /** `notHeldForReviewWhere` as SQL over `Image` aliased `i`. */
-export const notHeldForReviewSql = () =>
+export const notHeldForReviewSql = (ownerId?: number | null) =>
   Prisma.sql`(i."needsReview" IS NULL OR i."needsReview" NOT IN (${Prisma.join(
     OWNER_HIDDEN_REVIEWS
-  )}))`;
+  )})${isUploaderId(ownerId) ? Prisma.sql` OR i."userId" = ${ownerId}` : Prisma.empty})`;
 
 /** `servableLevelWhere` as SQL over `Image` aliased `i`. */
 export const servableLevelSql = (levels: number) =>
@@ -256,13 +263,18 @@ export type RestrictableImage = Pick<Selectable<DB['Image']>, keyof typeof image
 export const isImageNotRestricted = (image: RestrictableImage, viewerId?: number | null) =>
   !isRestrictedImage(image) || (isUploaderId(viewerId) && image.userId === viewerId);
 
+/** Whether `viewerId` may see `image`: not restricted, and not rated Blocked, unless they uploaded it. */
+export const isImageServable = (image: RestrictableImage, viewerId?: number | null) =>
+  isImageNotRestricted(image, viewerId) &&
+  (image.nsfwLevel !== NsfwLevel.Blocked || (isUploaderId(viewerId) && image.userId === viewerId));
+
 /** `row` with its image at `key` set to null when `viewerId` may not see it. */
 export function withServableImage<
   K extends PropertyKey,
   T extends { [P in K]: RestrictableImage | null | undefined }
 >(row: T, key: K, viewerId?: number | null): T & { [P in K]: T[P] | null } {
   const image = row[key];
-  return { ...row, [key]: image && isImageNotRestricted(image, viewerId) ? image : null };
+  return { ...row, [key]: image && isImageServable(image, viewerId) ? image : null };
 }
 
 /** The exact complement of `imageNotRestrictedSql`: a NULL flag on a mature image counts as restricted. */
@@ -272,20 +284,27 @@ export const imageRestrictedSql = (options: RestrictedImageOptions = {}) =>
 /**
  * What a signed-in non-moderator's `pending` read requires of another user's image, over `Image`
  * aliased `i`: not awaiting moderator review, not `acceptableMinor`, and reviewed if rated. The
- * viewer's own images are exempt, but for owner-hidden review holds (`notHeldForReviewSql`).
+ * viewer's own images are exempt; those under an owner-hidden review hold only with `ownerSeesHeld`.
  * Unrated images still need the read's own level check to show.
  * `acceptableMinorAlso` admits further images past the `acceptableMinor` check only.
  */
 export const pendingOthersImageConditions = (
   userId: number,
-  { acceptableMinorAlso }: { acceptableMinorAlso?: Prisma.Sql } = {}
+  {
+    acceptableMinorAlso,
+    ownerSeesHeld = false,
+  }: {
+    acceptableMinorAlso?: Prisma.Sql;
+    /** Lift the hold for `userId` too: only when the request carries the owner's view (`credentialViews`). */
+    ownerSeesHeld?: boolean;
+  } = {}
 ) => [
   Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`,
   Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId}${
     acceptableMinorAlso ? Prisma.sql` OR ${acceptableMinorAlso}` : Prisma.empty
   })`,
   Prisma.sql`(i."userId" = ${userId} OR i."nsfwLevel" = 0 OR ${imageReviewedSql()})`,
-  notHeldForReviewSql(),
+  notHeldForReviewSql(ownerSeesHeld ? userId : undefined),
 ];
 
 /**

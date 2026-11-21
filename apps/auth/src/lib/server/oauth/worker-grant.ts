@@ -19,7 +19,7 @@ import {
   OAUTH_TOKEN_PREFIX,
   WORKER_TOKEN_TTL,
 } from './constants';
-import { checkOAuthRateLimit } from './rate-limit';
+import { RATE_LIMITED_STATUS, checkOAuthRateLimit } from './rate-limit';
 import { logOAuthEvent } from './audit-log';
 import { apiKeyScopeInsert, scopeFromColumn, scopeToString, stringToScope } from './scope';
 import { SaladTokenError, saladJwtEnabled, verifySaladJwt } from './worker-salad';
@@ -32,9 +32,12 @@ export type WorkerGrantRequestContext = { clientIp: string | null };
 
 type WorkerDeviceRef = { issuer: 'self' | 'salad'; subject: string };
 
-class RateLimitedError extends OAuthError {
+export class WorkerDeviceRateLimitedError extends OAuthError {
   constructor() {
-    super('Too many token requests for this device', { code: 429, name: 'rate_limited' });
+    super('Too many token requests for this device', {
+      code: RATE_LIMITED_STATUS,
+      name: 'rate_limited',
+    });
   }
 }
 
@@ -85,7 +88,7 @@ export class WorkerTokenExchangeGrant extends AbstractGrantType {
         `${workload.clientId}:${device.issuer}:${device.subject}`
       ))
     ) {
-      throw new RateLimitedError();
+      throw new WorkerDeviceRateLimitedError();
     }
 
     const now = new Date();
