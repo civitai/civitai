@@ -141,6 +141,11 @@ export const STATE_NEUTRAL_MODERATION_ACTIONS = [
   // Writes `is_official` only — a label, never a status — so it must not displace the event
   // that explains a removal either.
   'set-official',
+  // The offline-access cut after a takedown, and its failure. They delete (or fail to delete)
+  // the OAuth client's refresh tokens and write nothing in `app_listings`; they are recorded
+  // right AFTER the `delist`, so they are routinely the newest event and must not displace it.
+  'offline-cut',
+  'offline-cut-failed',
 ] as const satisfies readonly AppListingModerationAction[];
 
 /**

@@ -850,3 +850,37 @@ describe('licensing-fee allowance boost', () => {
     expect(result).toEqual({ ok: true });
   });
 });
+
+describe('a percent-of-compute fee set by staff', () => {
+  const PERCENT = { currentFee: 35, feeType: 'PercentOfCompute' };
+
+  it('refuses setting a Buzz fee over it, and writes nothing', async () => {
+    state.rows = [version(PERCENT)];
+
+    const result = await setLicensingFee(7, GOLD, 1, 35, true);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(state.written).toEqual([]);
+  });
+
+  it('refuses a bulk edit that includes it, and writes nothing', async () => {
+    state.rows = [version(PERCENT), version({ id: 2, currentFee: 5 })];
+
+    const result = await bulkSetLicensingFee(7, GOLD, [1, 2], 5, true);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(state.written).toEqual([]);
+  });
+
+  it('lets the owner clear it', async () => {
+    state.rows = [version(PERCENT)];
+
+    expect((await setLicensingFee(7, GOLD, 1, null, true)).ok).toBe(true);
+  });
+
+  it('a per-image fee is still editable (control)', async () => {
+    state.rows = [version({ currentFee: 35, feeType: 'PerImageBuzz' })];
+
+    expect((await setLicensingFee(7, GOLD, 1, 35, true)).ok).toBe(true);
+  });
+});

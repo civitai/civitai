@@ -1367,6 +1367,10 @@ model ModelVersion {
   licensingFee                   Decimal?                        @db.Decimal(10, 2)
   licensingFeeType               LicensingFeeType?               @default(PerImageBuzz)
   licensingFeeSettlementCurrency LicensingFeeSettlementCurrency? @default(Buzz)
+  // Percent points of compute charged on top of a PercentOfCompute fee and logged apart from it, so the
+  // fee alone is what the licensor is owed. Ours, never paid out. Staff set and clear it by hand; it is
+  // read only while the type is PercentOfCompute, so clearing the fee leaves it inert.
+  licensingFeeMarkup             Decimal?                        @db.Decimal(5, 2)
 
   // Licensing lineage: the root version whose fee this version inherits (e.g. a
   // checkpoint built on Anima-Turbo points at the turbo version). Null means NO
@@ -1447,6 +1451,8 @@ model PricingSlot {
 
 enum LicensingFeeType {
   PerImageBuzz
+  // licensingFee is a percent of the generation's compute cost (35 = 35%), not Buzz.
+  PercentOfCompute
 }
 
 enum LicensingFeeSettlementCurrency {
@@ -1820,6 +1826,7 @@ model Report {
   gameFrameGame  GameFrameGameReport?
   serviceOffering ServiceOfferingReport?
   postText       PostTextReport?
+  serviceDealReview ServiceDealReviewReport?
   gameFrameReceipts GameFrameReportReceipt[]
 }
 
@@ -11681,6 +11688,7 @@ model ServiceOffering {
   deals             ServiceDeal[]
   reports           ServiceOfferingReport[]
   reviews           ServiceDealReview[]
+  reviewReports     ServiceDealReviewReport[]
 
   /// Target of the deal's composite FK that binds `ServiceDeal.sellerId` to the offering's seller.
   @@unique([id, sellerId])
@@ -11837,9 +11845,24 @@ model ServiceDealReview {
   createdAt                DateTime                       @default(now())
   updatedAt                DateTime                       @updatedAt
   images                   ServiceDealReviewImage[]
+  reports                  ServiceDealReviewReport[]
 
   @@index([offeringId, publishedAt])
   @@index([sellerId, publishedAt])
+}
+
+/// A report on one buyer review. The offering is kept so the review's reports join the service
+/// queue under it.
+model ServiceDealReviewReport {
+  reportId            Int               @id
+  report              Report            @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  serviceDealReviewId Int
+  serviceDealReview   ServiceDealReview @relation(fields: [serviceDealReviewId], references: [id], onDelete: Restrict)
+  serviceOfferingId   Int
+  serviceOffering     ServiceOffering   @relation(fields: [serviceOfferingId], references: [id], onDelete: Restrict)
+
+  @@index([serviceDealReviewId], type: Hash)
+  @@index([serviceOfferingId], type: Hash)
 }
 
 /// Delivered work a buyer attached to their review: a fresh upload, owned by the buyer and scanned

@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
-import { postTextReportOpensCsamHold } from '@civitai/shared/post-text-report';
+import { reportOpensCsamHold } from '@civitai/shared/post-text-report';
 import { hasModeratorPageAccess } from '~/server/services/moderator-grants';
 import {
   getPostTextReportReason,
@@ -40,7 +40,7 @@ export default defineModeratorEndpoint('postText.moderate', {
       const report = input.reportId
         ? await getPostTextReportReason(input.reportId, input.textId)
         : null;
-      if (!report || !postTextReportOpensCsamHold(report))
+      if (!report || !reportOpensCsamHold(report))
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'Only a CSAM or minor-sexualization report on this text opens a CSAM hold.',

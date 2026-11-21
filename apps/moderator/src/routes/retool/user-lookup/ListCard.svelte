@@ -9,6 +9,7 @@
   let {
     title,
     total,
+    count = total,
     hint,
     empty = 'None.',
     shown = 5,
@@ -20,6 +21,8 @@
   }: {
     title: string;
     total: number;
+    /** The heading's number, for a paged list whose `total` is only the loaded page. */
+    count?: number;
     hint?: string;
     empty?: string;
     shown?: number;
@@ -48,7 +51,7 @@
     class:mb-3={!hint}
   >
     <h3 class="text-sm font-semibold text-white">
-      {title} ({total}{capped ? '+' : ''})
+      {title} ({count}{capped ? '+' : ''})
     </h3>
     {@render action?.()}
   </div>

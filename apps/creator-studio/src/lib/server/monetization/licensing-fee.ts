@@ -85,6 +85,8 @@ type OwnedVersion = {
   baseModel: string;
   modelType: string;
   currentFee: number;
+  /** A percent-of-compute fee, which only staff set; this editor speaks Buzz per generation. */
+  percentFee: boolean;
   affirmed: boolean;
   poi: boolean;
 };
@@ -116,6 +118,7 @@ async function ownedVersions(userId: number, versionIds: number[]): Promise<Owne
       'ModelVersion.baseModel as baseModel',
       'Model.type as modelType',
       'ModelVersion.licensingFee as currentFee',
+      'ModelVersion.licensingFeeType as feeType',
       'ModelVersion.meta as meta',
       'Model.poi as poi',
     ])
@@ -129,10 +132,14 @@ async function ownedVersions(userId: number, versionIds: number[]): Promise<Owne
     baseModel: r.baseModel,
     modelType: r.modelType,
     currentFee: r.currentFee == null ? 0 : Number(r.currentFee),
+    percentFee: r.feeType === 'PercentOfCompute',
     affirmed: hasCurrentRightsAffirmation(r.meta, userId),
     poi: !!r.poi,
   }));
 }
+
+const PERCENT_FEE_LOCKED_ERROR =
+  'This version has a percentage license fee set by Civitai; contact support to change it.';
 
 export const RIGHTS_AFFIRMATION_REQUIRED_ERROR =
   'You must confirm you hold the rights to monetize before setting a fee.';
@@ -223,6 +230,11 @@ export async function setLicensingFee(
       status: 400,
       error: "A model depicting a real person can't be monetized.",
     };
+
+  // Stricter than the main app's percentOfComputeFeeRefusal on purpose: this editor has no fee type and
+  // writes Buzz per generation, so a "lowered" number here would silently become a percent. Clearing works.
+  if (normalized != null && owned[0].percentFee)
+    return { ok: false, status: 403, error: PERCENT_FEE_LOCKED_ERROR };
 
   // The ceiling is the same for every creator; only the media axis moves it.
   const cap = maxLicensingFeeCeiling(capMediaType(owned[0].baseModel));
@@ -361,6 +373,14 @@ export async function bulkSetLicensingFee(
         error: `${poi.length} selected version(s) depict a real person and can't be monetized: ${nameList(
           poi
         )}. Deselect them and try again.`,
+      };
+
+    const percent = owned.filter((v) => v.percentFee);
+    if (percent.length > 0)
+      return {
+        ok: false,
+        status: 403,
+        error: `${PERCENT_FEE_LOCKED_ERROR} Deselect: ${nameList(percent)}.`,
       };
 
     // Increase-only, per version: the batch is rejected only if it would RAISE some version past the

@@ -150,6 +150,7 @@ const {
   mockDropLiftedBy,
   mockHoldLead,
   mockHoldLeadAfterSfwOnlyLift,
+  mockNotifyHeld,
 } = vi.hoisted(() => ({
   mockHoldLeadAfterSfwOnlyLift: vi.fn(async (..._args: unknown[]) => undefined),
   mockDropLiftedBy: vi.fn(async (..._args: unknown[]) => undefined),
@@ -157,12 +158,14 @@ const {
   mockApplyHeldVerdict: vi.fn(async (): Promise<null> => null),
   mockLeavingPrivate: vi.fn(async (_db: unknown, _id: number) => false),
   mockFinishApply: vi.fn(async (_id: number) => undefined),
+  mockNotifyHeld: vi.fn(async (_notices: unknown[]) => undefined),
 }));
 vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelNsfw>()),
   applyHeldRestrictedVerdict: mockApplyHeldVerdict,
   applyHeldVerdictLeavingPrivate: mockLeavingPrivate,
   finishHeldVerdictApply: mockFinishApply,
+  notifyComFaceHeldVerdictApplied: mockNotifyHeld,
   dropLiftedBy: mockDropLiftedBy,
   holdLeadAfterFlagLift: mockHoldLead,
   holdLeadAfterSfwOnlyLift: mockHoldLeadAfterSfwOnlyLift,
@@ -1913,6 +1916,61 @@ describe('a .com face going away', () => {
     const flip = heldFlip();
     expect(flip).toBeDefined();
     expect(flip).toContain(MODEL_ID);
+  });
+
+  /** The held verdict as the save transaction reads it before spending it. */
+  const heldRow = () => {
+    const original = mockDbWrite.$queryRaw.getMockImplementation();
+    mockDbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      Array.isArray(strings) && strings.join('?').includes("'comFaceHeldVerdict'->>'at'")
+        ? [{ name: 'Test Model', userId: OWNER_ID, at: 'x', level: 16 }]
+        : original?.(strings, ...values)) as never);
+  };
+  it('tells the owner, after the save, when the held verdict rates the model', async () => {
+    heldRow();
+    let levelRefreshedWhenSent: boolean | undefined;
+    mockNotifyHeld.mockImplementationOnce(async () => {
+      levelRefreshedWhenSent = mockFinishApply.mock.calls.length > 0;
+    });
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
+    expect(mockFinishApply).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockNotifyHeld).toHaveBeenCalledWith([
+      expect.objectContaining({
+        entityType: 'Model',
+        entityId: MODEL_ID,
+        userId: OWNER_ID,
+        level: 16,
+        workflowId: 'com-face-held-x',
+      }),
+    ]);
+    expect(mockNotifyHeld).toHaveBeenCalledTimes(1);
+    // After the level refresh: a slow notice must not keep the old level listed.
+    expect(levelRefreshedWhenSent).toBe(true);
+  });
+
+  it('still tells the owner when a post-save step throws', async () => {
+    heldRow();
+    mockFinishApply.mockRejectedValueOnce(new Error('level refresh failed'));
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' }).catch(() => undefined);
+    expect(mockFinishApply).toHaveBeenCalled();
+    expect(mockNotifyHeld).toHaveBeenCalledTimes(1);
+  });
+
+  // The rescan is fire-and-forget: a submit that fails only logs. The save must not rely on it.
+  it('rates it in the save when the same save also edits the listing text, even if the rescan never runs', async () => {
+    heldRow();
+    mockRescanTextAfterFaceLoss.mockImplementation(async () => undefined);
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '', name: 'A Different Name' });
+    expect(heldFlip()).toBeDefined();
+    expect(mockFinishApply).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockNotifyHeld).toHaveBeenCalledWith([expect.objectContaining({ entityId: MODEL_ID })]);
+    expect(mockNotifyHeld).toHaveBeenCalledTimes(1);
   });
 
   it('does not try it when the face stays (control)', async () => {

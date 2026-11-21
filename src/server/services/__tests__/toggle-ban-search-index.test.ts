@@ -410,6 +410,12 @@ describe('toggleBan -> removeMedia', () => {
       'positive control: softDeleteUser never reached its own CSAM block'
     ).toBe(true);
     expect(refreshShowcases).toHaveBeenCalledWith(USER_ID);
+    // The block's home-block refresh (`evictHomeBlocksForImages`), looked up by this user.
+    const homeBlockLookups = dbMock.dbRead.$queryRaw.mock.calls.filter(([query]) => {
+      const { sql, values } = query as unknown as { sql?: string; values?: unknown[] };
+      return !!sql?.includes('"CollectionItem"') && !!values?.includes(USER_ID);
+    });
+    expect(homeBlockLookups, 'softDeleteUser did not refresh the home blocks').toHaveLength(1);
   });
 });
 

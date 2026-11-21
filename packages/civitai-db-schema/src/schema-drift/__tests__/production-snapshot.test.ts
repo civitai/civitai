@@ -376,6 +376,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'app_block_publish_requests.actions_run_workflow_ref',
       'app_block_publish_requests.actions_run_repository_visibility',
       'app_block_publish_requests.actions_run_id',
+      'ModelVersion.licensingFeeMarkup',
       // OAuth offline grant, migration 20271119140000_oauth_offline_grant (manual apply).
       'ApiKey.mintOrigin',
       'ApiKey.refreshFamilyId',

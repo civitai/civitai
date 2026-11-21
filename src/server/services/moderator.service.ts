@@ -220,6 +220,11 @@ type PostTextModActivity = {
   activity: 'refuse' | 'restore' | 'csamHold';
 };
 
+type ServiceDealReviewModActivity = {
+  entityType: 'serviceDealReview';
+  activity: 'csamHold';
+};
+
 type CsamReportModActivity = {
   entityType: 'csamReport';
   activity: `generatorEvidence:view:${string}` | 'csamReport:clearUnconfirmedOpen';
@@ -229,6 +234,7 @@ type ModActivity = {
   entityId?: number | number[];
 } & (
   | PublishRequestHoldModActivity
+  | ServiceDealReviewModActivity
   | CsamReportModActivity
   | ModelModActivity
   | ModelVersionModActivity

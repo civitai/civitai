@@ -4,8 +4,10 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
 import type * as KyselyDb from '~/server/db/kyselyDb';
 import { NsfwLevel } from '~/server/common/enums';
+import type { ServiceOfferingFeedSort } from '~/server/schema/creator-service.schema';
 import { getServiceOfferingFeedSchema } from '~/server/schema/creator-service.schema';
 import {
+  assertServiceOfferingViewable,
   getServiceOfferingById,
   getServiceOfferingFeed,
 } from '~/server/services/creator-service.service';
@@ -63,6 +65,7 @@ type Row = {
   sellerId: number;
   ingestion: ServiceOfferingIngestionStatus;
   coverImageId: number | null;
+  happySortKey: number;
   coverImage: {
     ingestion: ImageIngestionStatus;
     needsReview: string | null;
@@ -161,6 +164,7 @@ const row = (patch: Partial<Omit<Row, 'seller'>> & { seller?: Partial<Row['selle
     sellerId: SELLER,
     ingestion: ServiceOfferingIngestionStatus.Scanned,
     coverImageId: null,
+    happySortKey: -1,
     coverImage: null,
     ...rest,
     seller: {
@@ -176,7 +180,13 @@ const row = (patch: Partial<Omit<Row, 'seller'>> & { seller?: Partial<Row['selle
 
 let table: Row[] = [];
 const feedIds = async (
-  opts: { browsingLevel?: number; servable?: number; viewerId?: number; query?: string } = {}
+  opts: {
+    browsingLevel?: number;
+    servable?: number;
+    viewerId?: number;
+    query?: string;
+    sort?: ServiceOfferingFeedSort;
+  } = {}
 ) => {
   const { items } = await getServiceOfferingFeed({
     sort: 'newest',
@@ -330,6 +340,34 @@ describe('services feed', () => {
       if (!cursor) break;
     }
     expect(seen).toEqual(expected);
+  });
+
+  it('sorts by the happy share, unscored offerings last, ties newest first, and pages without repeats', async () => {
+    const half = row({ happySortKey: 0.5 });
+    const all = row({ happySortKey: 1 });
+    const unscored = row();
+    const allToo = row({ happySortKey: 1 });
+    table = [half, all, unscored, allToo];
+    expect(await feedIds({ sort: 'happy' })).toEqual([allToo.id, all.id, half.id, unscored.id]);
+    const first = await getServiceOfferingFeed({
+      sort: 'happy',
+      limit: 2,
+      servable: allBrowsingLevelsFlag,
+      viewerId: VISITOR,
+    });
+    const second = await getServiceOfferingFeed({
+      sort: 'happy',
+      limit: 2,
+      cursor: first.nextCursor,
+      servable: allBrowsingLevelsFlag,
+      viewerId: VISITOR,
+    });
+    expect([...first.items, ...second.items].map((o) => o.id)).toEqual([
+      allToo.id,
+      all.id,
+      half.id,
+      unscored.id,
+    ]);
   });
 
   describe('with a search query', () => {
@@ -513,6 +551,27 @@ describe('one service page', () => {
     table = [offering];
     cache().mockResolvedValue(users(SELLER));
     await expect(open(offering)).rejects.toMatchObject(notFound);
+  });
+
+  it("answers the reviews' viewer check by the same rule as the page", async () => {
+    const draft = row({ status: ServiceOfferingStatus.Draft });
+    const x = row({ maxNsfwLevel: NsfwLevel.X });
+    const listed = row();
+    table = [draft, x, listed];
+    const viewable = (offering: Row, opts: { viewerId?: number; servable?: number } = {}) =>
+      assertServiceOfferingViewable({
+        id: offering.id,
+        servable: allBrowsingLevelsFlag,
+        browsingLevel: allBrowsingLevelsFlag,
+        viewerId: VISITOR,
+        ...opts,
+      });
+    await expect(viewable(draft)).rejects.toMatchObject(notFound);
+    await expect(viewable(draft, { viewerId: SELLER })).resolves.toBeUndefined();
+    await expect(viewable(x, { servable: sfwBrowsingLevelsFlag })).rejects.toMatchObject(notFound);
+    await expect(viewable(listed)).resolves.toBeUndefined();
+    hidden.mockResolvedValue(users(SELLER));
+    await expect(viewable(listed)).rejects.toMatchObject(notFound);
   });
 
   it('shows an unlisted offering to its seller and moderators only, and a removed one to moderators only', async () => {
