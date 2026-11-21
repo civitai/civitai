@@ -20,7 +20,7 @@ import (
 // crawler), a serve slot from the one shared pool (MaxInFlight), the request budget, and the compute
 // the shadow runs (v1ModelsCompute). An answer is the shadow-compared body and headers plus
 // X-Feed-Go-Served: go; every fallback is proxied to V1Fallback, the Node app that serves `/api/v1`.
-// There is no origin check: the REST routes answer any origin (CORS `*`).
+// No origin allow-list (unlike model.getAll): the list answers any origin (CORS `*`); an `[id]` request with an Origin falls back (v1-models-origin).
 
 // errV1ModelsOff is the `v1-models-off` fallback: a public model route with ServeV1Models off.
 var errV1ModelsOff = fallback.New("v1-models-off")
