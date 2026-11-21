@@ -6,10 +6,7 @@ import { auditSheetExchange } from '$lib/server/sheet-audit';
 export const POST: RequestHandler = async ({ request }) => {
   const headers = { 'cache-control': 'no-store' };
   const type = request.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
-  if (type !== 'application/json') {
-    auditSheetExchange({ tier: 'held', outcome: 'refused', reason: 'not-json' });
-    return new Response(null, { status: 400, headers });
-  }
+  if (type !== 'application/json') return new Response(null, { status: 400, headers });
 
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   const result = await exchangeCode(body?.code, body?.code_verifier).catch(() => {

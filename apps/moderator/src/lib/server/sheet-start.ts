@@ -10,6 +10,7 @@ import {
   webSessionClaims,
 } from './held-sheet';
 import { getReviewBatch, TIER_PAGE } from './review-batch';
+import { isReviewBatchId, reviewBatchHash } from '@civitai/shared/review-batch';
 import { auditSheetStart } from './sheet-audit';
 
 // The page and its redirect must not be framed, cached or sent on as a referrer.
@@ -99,11 +100,7 @@ export function sheetStartHandlers(family: {
       );
     },
     POST: async ({ locals, request }) => {
-      if (!locals.user || !canAccess(locals.user, pagePath)) return status(403);
-      const form = await request.formData().catch(() => null);
-      const params = form && parseStartParams((name) => form.get(name) as string | null);
-      if (!params) return status(400);
-      const raw = form.get('batch');
+      if (!locals.user) return status(403);
       const moderatorId = locals.user.id;
       const refuse = (code: number, batch?: string) => {
         auditSheetStart({
@@ -115,13 +112,19 @@ export function sheetStartHandlers(family: {
         });
         return status(code);
       };
-      const bound = await bindBatch(
-        typeof raw === 'string' ? raw : null,
-        family.tier,
-        family.batchRequired,
-        moderatorId
-      );
-      if (!bound.ok) return refuse(bound.status);
+      if (!canAccess(locals.user, pagePath)) return refuse(403);
+      const form = await request.formData().catch(() => null);
+      const params = form && parseStartParams((name) => form.get(name) as string | null);
+      if (!params) return refuse(400);
+      const raw = form.get('batch');
+      const named = typeof raw === 'string' ? raw : null;
+      const bound = await bindBatch(named, family.tier, family.batchRequired, moderatorId);
+      // The tag of the batch they asked for, even when it is refused; never the id itself.
+      if (!bound.ok)
+        return refuse(
+          bound.status,
+          named && isReviewBatchId(named) ? reviewBatchHash(named) : undefined
+        );
       const batch = bound.batch?.hash;
 
       const claims = await webSessionClaims(request.headers.get('cookie') ?? '');

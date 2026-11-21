@@ -32,14 +32,19 @@ export function auditSheetStart(event: {
   });
 }
 
-/** An `auth/exchange`. `moderatorId` is unknown when the code was malformed or never found. */
+/**
+ * An `auth/exchange`. A refusal is logged only once the code was found, so it names a moderator:
+ * the route needs no sign-in, and anyone could otherwise fill this permanent stream with
+ * malformed or unknown codes that say nothing about who was let in.
+ */
 export function auditSheetExchange(event: {
   tier: ReviewTier;
   outcome: 'ok' | 'refused' | 'error';
-  reason?: ExchangeRefusal | 'not-json';
+  reason?: ExchangeRefusal;
   moderatorId?: number;
   batch?: string;
 }) {
+  if (event.outcome === 'refused' && event.moderatorId === undefined) return;
   void logToAxiom({
     name: SHEET_EXCHANGE_EVENT,
     type: 'info',
@@ -51,12 +56,14 @@ export function auditSheetExchange(event: {
   });
 }
 
-/** The general sheet's Sign out. `ended` is false when the cookie named no live session. */
+/** The general sheet's Sign out that ended a session, or failed. A cookie naming no live session is
+ *  not logged: the route needs no sign-in, so those say nothing about a moderator. */
 export function auditSheetSignout(event: {
   moderatorId: number | null;
   ended: boolean;
   error?: true;
 }) {
+  if (!event.ended && !event.error) return;
   void logToAxiom({
     name: SHEET_SIGNOUT_EVENT,
     type: event.error ? 'error' : 'info',
