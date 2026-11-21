@@ -100,7 +100,10 @@ import {
 } from '~/components/Apps/AppAssistant/previewTools';
 import { fetchPreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
 import { pingSandbox, usePreviewKeepAlive } from '~/components/Apps/AppAssistant/previewKeepAlive';
-import { fetchSandboxTunnelStatus } from '~/components/Apps/AppAssistant/previewTunnelStatus';
+import {
+  fetchSandboxDevServerStatus,
+  fetchSandboxTunnelStatus,
+} from '~/components/Apps/AppAssistant/previewTunnelStatus';
 import {
   RESTART_PREVIEW_FAILED,
   appAssistantRemoteRunnerFor,
@@ -795,6 +798,17 @@ export function AppAssistantWorkspace({
       mcpUrl && remoteRunner
         ? () =>
             fetchSandboxTunnelStatus(mcpUrl, (opts) =>
+              tokens.getToken({ ...opts, purpose: 'sandbox' })
+            )
+        : undefined,
+    [mcpUrl, remoteRunner, tokens]
+  );
+  // …and, for a direct preview (no tunnel), whether its dev server is still up.
+  const devServerStatus = useMemo(
+    () =>
+      mcpUrl && remoteRunner
+        ? () =>
+            fetchSandboxDevServerStatus(mcpUrl, (opts) =>
               tokens.getToken({ ...opts, purpose: 'sandbox' })
             )
         : undefined,
@@ -1779,6 +1793,7 @@ export function AppAssistantWorkspace({
                 session={session}
                 restart={previewRestart}
                 tunnelStatus={tunnelStatus}
+                devServerStatus={devServerStatus}
                 devServerUp={devServerUp}
               />
             </div>
