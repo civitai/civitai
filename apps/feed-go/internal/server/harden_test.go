@@ -716,8 +716,9 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	if checked != 19 {
-		t.Fatalf("checked %d per-endpoint families, want 19 (a family was renamed or lost)", checked)
+	// 20: feed_go_shadow_compare_viewer_total (model-associated's per-viewer-class results) included.
+	if checked != 20 {
+		t.Fatalf("checked %d per-endpoint families, want 20 (a family was renamed or lost)", checked)
 	}
 }
 

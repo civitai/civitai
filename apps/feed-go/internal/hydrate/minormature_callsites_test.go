@@ -49,6 +49,8 @@ var minorRuleSites = map[string]minorRuleSite{
 		"the showcase cache's miss spec: the lookup it runs is versionimages.go's"},
 	"internal/feed/pager.go": {1, 0, 0,
 		"getPostImageCounts: an upper bound before any visibility filter, as Node counts"},
+	"internal/modelfeed/assoc_images.go": {2, 0, 1,
+		"getImagesForModelVersion for model.getAssociatedResourcesCardData's cards, with minorMatureImageVisibleSql({ userId, isModerator })"},
 	"internal/modelfeed/serve.go": {1, 0, 0,
 		"getCoverImages' locate step (post, version, model of a cover id); the cover itself is read from the showcase cache"},
 	"internal/hydrate/meta.go": {1, 0, 0,

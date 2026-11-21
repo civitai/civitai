@@ -10,6 +10,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 )
 
 // EndpointLabel names the endpoint label. Not `endpoint`: that is a reserved scrape target label (the
@@ -28,6 +29,11 @@ type Metrics struct {
 	ShadowResults *prometheus.CounterVec   // endpoint, result
 	ShadowDiffs   *prometheus.CounterVec   // endpoint, category, kind
 	ShadowDropped *prometheus.CounterVec   // endpoint
+
+	// ShadowViewer counts the body comparison results of the endpoints whose answer reports a viewer
+	// class (model-associated: modelfeed.ViewerClasses), so a serve gate can require samples per class
+	// (endpoint, viewer, result: ShadowResults' values). Seeded for each class's match result.
+	ShadowViewer *prometheus.CounterVec
 
 	// ShadowResponse counts the header comparison of each compared sample, beside the body's
 	// ShadowResults (endpoint, result: match|mismatch|uncompared).
@@ -134,6 +140,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help:    "Wall time computing a response (excludes a proxied fallback).",
 			Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
 		}, []string{EndpointLabel, "mode", "outcome"}),
+		ShadowViewer: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_shadow_compare_viewer_total",
+			Help: "Shadow comparison results by the sample's viewer class (anon, user, owner, moderator), for the endpoints whose answer reports one.",
+		}, []string{EndpointLabel, "viewer", "result"}),
 		ShadowResults: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_shadow_compare_total",
 			Help: "Shadow comparisons by result: match, match_empty, match_cached, fields, order, membership, unsupported, deadline, go_error, bad_request.",
@@ -280,6 +290,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			m.CacheMisses.WithLabelValues(c, r)
 		}
 	}
+	for _, v := range modelfeed.ViewerClasses {
+		m.ShadowViewer.WithLabelValues(EndpointAssociated, v, "match")
+	}
+	reg.MustRegister(m.ShadowViewer)
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowResponse, m.ShadowDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,

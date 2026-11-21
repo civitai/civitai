@@ -55,6 +55,7 @@ export const FEED_GO_SHADOW_ENDPOINTS = [
   'model-getall',
   'v1-models',
   'v1-models-id',
+  'model-associated',
 ] as const;
 export type FeedGoShadowEndpoint = (typeof FEED_GO_SHADOW_ENDPOINTS)[number];
 
@@ -71,7 +72,8 @@ const feedGoShadowCounter = registerInstrumentationMetric(
         '/api/v1/images, flag feed-go-shadow-v1-images; infinite: image.getInfinite, flag ' +
         'feed-go-shadow-infinite; model-getall: model.getAll, flag feed-go-shadow-model-getall; ' +
         'v1-models / v1-models-id: GET /api/v1/models and /api/v1/models/[id], flag ' +
-        'feed-go-shadow-v1-models). Only sampled requests are counted ' +
+        'feed-go-shadow-v1-models; model-associated: model.getAssociatedResourcesCardData, flag ' +
+        'feed-go-shadow-model-associated). Only sampled requests are counted ' +
         '(FEED_GO_SHADOW_URL set, FEED_GO_SHADOW_SAMPLE_RATE > 0).',
       labelNames: ['outcome', 'feed_endpoint'],
       registers: [instrumentationRegistry],

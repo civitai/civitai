@@ -847,8 +847,8 @@ path as serving, and compares decoded values:
   opaque JSON (`metadata`, cosmetic `data`) so label cardinality is bounded by the schema:
   `feed_go_shadow_field_diffs_total{feed_endpoint="as-posts",category="items.*.images.*.stats.likeCountAllTime",kind="value"}`;
 - every `feed_go_*` series carries `feed_endpoint` (`as-posts` for this procedure, `v1-images` for §13,
-  `infinite` for §14, `model-getall` for §15, `v1-models` / `v1-models-id` for §16): six values, so the
-  label at most multiplies a family's cardinality by six;
+  `infinite` for §14, `model-getall` for §15, `v1-models` / `v1-models-id` for §16, `model-associated`
+  for §17): seven values, so the label at most multiplies a family's cardinality by seven;
 - differing paths (never values) are logged for a sample, so a category can be traced to a field;
 - numbers compare numerically, except that two integer literals compare **exactly** (int64, else as
   big integers). As float64, an integer above 2^53 cannot be told from its neighbour, and the
@@ -2291,3 +2291,92 @@ the same statement (text and bound values) from Go.
     metadata (`fetchModelFilesForCache`); no Go port exists;
   - creator membership (`creator-membership-valid`): falls back. Its origin parses subscription
     products with the app's tier key (as model.getAll's does).
+
+## 17. `model.getAssociatedResourcesCardData` (tRPC, shadow only)
+
+A model page's Suggested Resources cards: `src/server/routers/model.router.ts` (`publicProcedure`,
+input `getAssociatedResourcesSchema`, the `associationSourceVisible` middleware) →
+`getAssociatedResourcesCardDataHandler` (`src/server/controllers/model.controller.ts`). Ported in
+`internal/modelfeed/assoc*.go`, wired in `internal/server/associated.go`, compared at
+`POST /internal/shadow/model.getAssociatedResourcesCardData` (`feed_endpoint="model-associated"`).
+No public route and no Go-first probe: a probe needs a case in the server's golden probe harness
+(`internal/server/probe_test.go`), which these fixtures are not in yet.
+
+### 17.1 What the Node path does
+
+1. **Levels.** `applyDomainFeature` on the raw input (`stripBlockedForNonModerator`, the domain
+   clamp); then the schema's `browsingLevel` default (`allBrowsingLevelsFlag`). No saved level is
+   read. The schema keeps `fromId`, `type` (`Suggested`) and `browsingLevel`; zod strips the rest.
+2. **Source visibility.** Not for a moderator or `fromId` 0: the source model's `poi` and owner; a POI
+   model is its owner's and moderators' (`canViewPoiModel`), anyone else gets NOT_FOUND.
+3. **Targets.** The `ModelAssociations` rows of the source and type, by `index`; a falsy `toModelId`
+   is an article card (`getArticles`). With `type` Suggested, `getSponsoredModel` may put a paid run
+   in the second slot (`creator-promotions`).
+4. **Models.** `getModelsRaw` with `ids` (so Private versions are listed), the default sort, no
+   `take` (at most 101 rows, none popped), no `include` (no frames or event hats). Its addon
+   resolution mutates the handler's `modelInput`, so the image read sees the same exclusions.
+5. **Images.** `getImagesForModelVersion` over every item's shown version: one image per version,
+   viewer-specific (`blockedFor`, the minor content rule, `modelRestricted`, the excluded tags, the
+   level), no tags, no meta, rows untrimmed. Then `associatedCardImages`: the showcase hold
+   (`holdShowcaseImages`, owner exempt, moderators skip it) and `filterImagesForViewer` at every level.
+6. **Cards.** Per item: dropped with no image; `canGenerate` from `resolveCanGenerateForVersions`
+   (`getResourceCanGenerate` with the hidden gate rules, `isGenerationEligible`, a Wildcards
+   version's own gate); metric privacy as model.getAll's; a taken-down model keeps its card with
+   `images: []`.
+7. **Answer.** The association order (a repeated id repeats the card), without models the page query
+   did not return and without owners in the viewer's `HiddenUsers` / `BlockedByUsers` /
+   `BlockedUsers` caches (user `-1` signed out); each card `{ resourceType: 'model', ...model, tags,
+   hashes, hiddenMetrics, rank, images, canGenerate, version, sponsored }`.
+
+### 17.2 What is ported, and what falls back
+
+| Area | Ported | Falls back (reason) |
+|---|---|---|
+| Input | `fromId` (int4), `type`, `browsingLevel`; the client keys `authed` / `direction` | any other key (`input-unknown-key`); a value the schema refuses, a fractional or out-of-int4 `fromId`, a non-numeric or negative `browsingLevel` (`input-invalid`) |
+| Viewer | as §4 | a banned session (`model-assoc-banned-session`); a POI source for a viewer who may not see it (`model-assoc-source-hidden`: Node's 404, never sampled) |
+| Targets | model associations | an article among them (`model-assoc-articles`); more than 100 distinct models (`model-assoc-many`); with `creator-promotions` not known off for the viewer (`FEED_GO_CREATOR_PROMOTIONS`, as §8), any approved model-card run on the source resolved within 7 days, live or not (`model-assoc-sponsored`: Node picks one at random) |
+| Caches | model.getAll's (§15.2), including the misses it computes; the hidden-preferences hash | a missing hidden-preferences field (`model-assoc-hidden-prefs-miss`: Node reads the database and writes it); the gallery-settings and held-level fallbacks of §15.2 |
+| canGenerate | coverage (`generation-coverage-next` mirrored by `FEED_GO_GENERATION_COVERAGE_NEXT`, both states), the explicit-coverage versions, Private versions, `hidden` gate rules on version ids for moderators / nobody / signed out testers | a shown Wildcards card (`model-assoc-wildcards`); the gate rules unmigrated or unreadable (`gate-rules-unmigrated`, `gate-rules-unreadable`); an applicable `hidden` rule naming an ecosystem (`gate-rules-ecosystem`: the base model's ecosystem key is not held here); a `hidden` testers rule naming a shown version or an ecosystem, for a signed-in non-moderator (`gate-rules-testers`: testing access is a per-user Flipt answer) |
+
+### 17.3 Sampler, comparison, measurement
+
+The Node sampler (`src/server/trpc/feed-go-shadow.ts`) mirrors the procedure under its own flag,
+`feed-go-shadow-model-associated` (default off), with the shared URL, sample rate and in-flight cap
+and its own per-second bucket. The comparison is §7's over an array: `shadow.ClassifyArray` keys the
+cards by `id`; categories are `*.<field>`. An answer that loaded no model row is `served_empty` /
+`match_empty`.
+
+**Signed-in coverage.** A signed-in browser batches the procedure when `trpcBatching` is on for it,
+and the sampler never samples a batched call, so the shadow sees anonymous sessions and signed-in
+sessions with batching off only. Each compared sample is therefore also counted by its viewer class,
+`feed_go_shadow_compare_viewer_total{feed_endpoint="model-associated",viewer,result}`, with `viewer`
+one of `anon`, `user`, `owner` (the source model's owner) and `moderator` (`modelfeed.ViewerClasses`,
+a fixed set, each seeded at 0 for `match`). The serve gate requires a minimum number of compared
+samples in every class, not only an overall match rate.
+
+🔴 **Serving this procedure is blocked** until one of these holds: signed-in calls are sampled (a
+per-call capture inside a batch, or a signed-in cohort with batching off), or the serving transport
+takes unbatched calls only, so every call Go would serve is a shape the shadow measured.
+
+```promql
+sum by (viewer) (increase(feed_go_shadow_compare_viewer_total{feed_endpoint="model-associated"}[7d]))
+
+sum(rate(feed_go_shadow_compare_total{feed_endpoint="model-associated",result="match"}[1h]))
+  / sum(rate(feed_go_shadow_compare_total{feed_endpoint="model-associated",result=~"match|fields|order|membership"}[1h]))
+
+topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-associated",mode="shadow"}[1h])))
+```
+
+### 17.4 Parity evidence and known divergences
+
+`testdata/golden/model-assoc` (written by `gen-assoc.mjs`, README "model-assoc"), run by
+`internal/modelfeed/assoc_golden_test.go`. Divergences:
+
+- those of §15.7 that apply (timing, cache staleness, the replica-only reads);
+- `isBaseModelGenerationDisabled` is its own list in `basemodels.json` (`generationDisabled`, from the
+  Node function), read with `.some` semantics: a base model with a later disabled generation override
+  does not generate, as in Node;
+- the two explicitly covered version ids are constants transcribed from
+  `src/shared/constants/generation.constants.ts`;
+- the gate rules are read live on every call; Node answers its last good read when the read fails,
+  which falls back here.
