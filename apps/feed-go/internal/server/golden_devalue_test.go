@@ -168,10 +168,10 @@ func goldenDevalueRun(t *testing.T, dir string, minFixtures, minBodies int, comp
 	for name := range unclaimed {
 		t.Errorf("%s: a Node devalue body without a served fixture", name)
 	}
-	t.Logf("%s: %d of %d served fixtures byte-identical to Node's devalue body; the others differ only in goldenDevalueKeyOrder", dir, exact, served)
 	if t.Failed() {
 		return
 	}
+	t.Logf("%s: %d of %d served fixtures byte-identical to Node's devalue body; the others differ only in goldenDevalueKeyOrder", dir, exact, served)
 	for _, p := range goldenDevalueKeyOrder[dir] {
 		if !observed[p] {
 			t.Errorf("goldenDevalueKeyOrder[%q] lists %s, where no fixture differs any more: remove it", dir, p)
