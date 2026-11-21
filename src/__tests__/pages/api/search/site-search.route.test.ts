@@ -123,6 +123,19 @@ async function post(
 
 const sentQueries = () => JSON.parse(fetchMock.mock.calls.at(-1)[1].body).queries;
 
+const personalKey = (tokenScope: bigint) => ({
+  tokenScope,
+  apiKeyId: 1,
+  apiKeyType: ApiKeyType.User,
+  subject: { type: 'apiKey', id: 1 },
+});
+const appToken = {
+  tokenScope: TokenScope.Full,
+  apiKeyId: 2,
+  apiKeyType: ApiKeyType.Access,
+  subject: { type: 'oauth', id: 'client-abc' },
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal('fetch', fetchMock);
@@ -197,7 +210,31 @@ describe('POST /api/search/multi-search', () => {
         context
       );
       if (asMod) expect(sentQueries()[0].filter).toBeUndefined();
-      else expect(sentQueries()[0].filter).toContain('poi != true OR user.id = 7');
+      else expect(sentQueries()[0].filter).toEqual(['poi != true', 'availability != Private']);
+    }
+  );
+
+  // The caller's own poi and Private models come back only where tRPC would show them the owner view.
+  it.each([
+    ['a session', undefined, true],
+    ['a full-access key', personalKey(TokenScope.Full), true],
+    ['a scoped key', personalKey(TokenScope.ModelsRead), false],
+    ['an app token', appToken, false],
+  ])(
+    'a signed-in viewer on %s sees their own models only with the owner view',
+    async (_, context, own) => {
+      mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
+      await post(
+        ['multi-search'],
+        { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: '' }] },
+        {},
+        context
+      );
+      expect(sentQueries()[0].filter).toEqual(
+        own
+          ? ['poi != true OR user.id = 42', 'availability != Private OR user.id = 42']
+          : ['poi != true', 'availability != Private']
+      );
     }
   );
 
