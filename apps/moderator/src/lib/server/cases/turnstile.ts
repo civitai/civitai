@@ -67,4 +67,5 @@ export async function verifyTurnstile(
     !hostnames.includes(body.hostname.toLowerCase())
   )
     throw new TurnstileRefusedError();
+  return { hostname: body.hostname.toLowerCase() };
 }

@@ -36,8 +36,8 @@ describe('verifyTurnstile', () => {
     verifyTurnstile('t', 'ip', { secret: 's', fetcher: answer(body), hostnames: ['civitai.com'] });
   it("accepts only a token solved for the form's action, on the form's site", async () => {
     await expect(
-      verify({ success: true, action: 'takedown-intake', hostname: 'civitai.com' })
-    ).resolves.toBeUndefined();
+      verify({ success: true, action: 'takedown-intake', hostname: 'Civitai.com' })
+    ).resolves.toEqual({ hostname: 'civitai.com' });
     await expect(
       verify({ success: true, action: 'login', hostname: 'civitai.com' })
     ).rejects.toBeInstanceOf(TurnstileRefusedError);

@@ -34,7 +34,7 @@ export type CaseIntakeDeps = {
   /** The main database, where the party's link token lives. */
   mainDb: Kysely<DB>;
   definition: (key: string) => Promise<{ versionId: number; definition: ProcessDefinition } | null>;
-  verifyTurnstile: (token: string, ip: string) => Promise<void>;
+  verifyTurnstile: (token: string, ip: string) => Promise<{ hostname: string } | void>;
   rateLimit: (key: string) => void;
   sendDeps: () => Omit<SendDeps, 'holdsLock'>;
   appUrl: string;
@@ -74,7 +74,7 @@ export async function caseIntake(
   const { definition: def, versionId } = found;
   const fieldErrors = checkIntakeValues(def, input.values);
   if (Object.keys(fieldErrors).length) throw new IntakeRefusedError(fieldErrors);
-  await deps.verifyTurnstile(input.turnstileToken, input.ip);
+  const challenge = await deps.verifyTurnstile(input.turnstileToken, input.ip);
 
   const receivedAt = deps.now?.() ?? new Date();
   const filed = await fileIntakeCase(
@@ -86,6 +86,7 @@ export async function caseIntake(
       submitterUserId: input.submitterUserId,
       isTest: input.isTest,
       receivedAt,
+      originHost: challenge?.hostname,
     },
     { db: deps.db }
   );

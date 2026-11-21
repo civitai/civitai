@@ -62,7 +62,7 @@ type SendMail = (m: {
   text: string;
 }) => Promise<{ messageId: string }>;
 let send: Mock<SendMail>;
-let verify: Mock<(token: string, ip: string) => Promise<void>>;
+let verify: Mock<(token: string, ip: string) => Promise<{ hostname: string } | void>>;
 let mint: { fail?: boolean };
 let pending: Promise<unknown>[];
 let alerts: string[][];
@@ -85,7 +85,7 @@ beforeEach(async () => {
     "expiresAt" timestamp(3) NOT NULL, "revokedAt" timestamp(3));`);
   mainDb = new Kysely<DB>({ dialect: pgliteDialect(main) });
   send = vi.fn<SendMail>(async () => ({ messageId: 'm-1' }));
-  verify = vi.fn(async (_token: string, _ip: string) => undefined);
+  verify = vi.fn(async (_token: string, _ip: string) => ({ hostname: 'civitai.red' }));
   mint = {};
   pending = [];
   alerts = [];
@@ -170,6 +170,13 @@ describe('caseIntake', () => {
       await pg.query<{ body_snapshot: string }>('SELECT body_snapshot FROM case_notice')
     ).rows[0].body_snapshot;
     expect(snap).toContain(`/requests/case/${out.publicRef}#t=[link-token]`);
+    // The platform it was filed on, for Legal: the challenge's hostname.
+    const received = (
+      await pg.query<{ data: { origin: string } }>(
+        "SELECT data FROM case_event WHERE type = 'received'"
+      )
+    ).rows[0];
+    expect(received.data.origin).toBe('civitai.red');
     const rec = (await pg.query<{ due_at: string }>('SELECT due_at FROM case_record')).rows[0];
     expect(new Date(rec.due_at).toISOString()).toBe('2026-11-22T16:05:00.000Z');
   });

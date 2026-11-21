@@ -102,6 +102,8 @@ export async function fileIntakeCase(
     submitterUserId?: number;
     isTest?: boolean;
     receivedAt?: Date;
+    /** The site the form was filed on (Turnstile's hostname), so the case shows which platform it is for. */
+    originHost?: string;
   },
   { db = casesDb() }: { db?: CasesDb } = {}
 ) {
@@ -181,7 +183,12 @@ export async function fileIntakeCase(
       .values({
         case_id: record.id,
         type: 'received',
-        data: JSON.stringify({ source: 'form', version: input.versionId, targets: targets.length }),
+        data: JSON.stringify({
+          source: 'form',
+          version: input.versionId,
+          targets: targets.length,
+          origin: input.originHost ?? null,
+        }),
       })
       .execute();
     return {
