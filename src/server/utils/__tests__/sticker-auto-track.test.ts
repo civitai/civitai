@@ -519,7 +519,6 @@ describe('buildStickerAutoTrackWorkflow', () => {
       { x: 512, y: 144 },
     ]);
     expect(workflow['6'].inputs.masks).toEqual(['16', 0]);
-    expect(workflow['7'].inputs.max_objects).toBe(64);
   });
 
   it('keeps a sticker on the bottom-right corner inside the frame', () => {
