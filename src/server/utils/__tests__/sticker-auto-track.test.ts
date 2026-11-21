@@ -534,9 +534,15 @@ describe('despikeStickerTrack', () => {
 
 describe('buildStickerAutoTrackWorkflow', () => {
   const pose = { x: 0.5, y: 0.25, scale: 0.2, rotation: 0 };
-  const graph = (frame?: { width: number; height: number }) =>
+  const graph = (frame?: { width: number; height: number }, at = pose) =>
     (
-      buildStickerAutoTrackWorkflow({ videoAir: 'air', pose, startMs: 0, maxMs: 1000, frame }) as {
+      buildStickerAutoTrackWorkflow({
+        videoAir: 'air',
+        pose: at,
+        startMs: 0,
+        maxMs: 1000,
+        frame,
+      }) as unknown as {
         input: { workflow: Record<string, { inputs: Record<string, unknown> }> };
       }
     ).input.workflow;
@@ -551,14 +557,8 @@ describe('buildStickerAutoTrackWorkflow', () => {
   });
 
   it('keeps a sticker on the bottom-right corner inside the frame', () => {
-    const workflow = buildStickerAutoTrackWorkflow({
-      videoAir: 'air',
-      pose: { ...pose, x: 1, y: 1 },
-      startMs: 0,
-      maxMs: 1000,
-      frame: { width: 1920, height: 1080 },
-    }) as { input: { workflow: Record<string, { inputs: Record<string, unknown> }> } };
-    expect(JSON.parse(workflow.input.workflow['12'].inputs.positive_coords as string)).toEqual([
+    const workflow = graph({ width: 1920, height: 1080 }, { ...pose, x: 1, y: 1 });
+    expect(JSON.parse(workflow['12'].inputs.positive_coords as string)).toEqual([
       { x: 1023, y: 575 },
     ]);
   });
