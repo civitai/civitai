@@ -607,6 +607,8 @@
     },
     "vaeFiles": [],
     "usernames": {},
+    "tagIdsByName": {},
+    "blockedTags": [],
     "responseCache": {}
   },
   "redis": {
@@ -1196,6 +1198,9 @@
         "hideModelGenerations": false
       },
       "packed": "3gADrWhpZGVNb2RlbEJ1enrCsmhpZGVNb2RlbERvd25sb2Fkc8K0aGlkZU1vZGVsR2VuZXJhdGlvbnPC"
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[]"
     }
   },
   "sysRedis": {

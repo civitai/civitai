@@ -31,7 +31,7 @@ import {
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { isHubTokenClaims } from '~/server/services/block-token-subject';
-import { ratingAllowedForCeiling } from '~/server/utils/server-domain';
+import { ratingAllowedForCeiling } from '~/server/utils/rating-ceiling';
 import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
 import { resolveStrictAppBlockApproval } from '~/server/services/blocks/block-approval.service';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
