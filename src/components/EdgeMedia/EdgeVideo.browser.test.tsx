@@ -48,6 +48,55 @@ describe('EdgeVideo — hover to play', () => {
   });
 });
 
+describe('EdgeVideo — keepPlaying', () => {
+  const startByUser = async (props: { keepPlaying?: boolean }) => {
+    renderWithProviders(<EdgeVideo src={SRC} html5Controls {...props} />);
+    await vi.waitFor(() => expect(document.querySelector('video')).toBeTruthy());
+    const video = document.querySelector('video')!;
+    // jsdom-free browser mode: a native control press fires 'play' without our hover timer.
+    video.dispatchEvent(new Event('play'));
+    return video;
+  };
+
+  test('a video the viewer started keeps playing when the pointer leaves', async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    const video = await startByUser({ keepPlaying: true });
+    Object.defineProperty(video, 'paused', { value: false, configurable: true });
+    pause.mockClear();
+
+    video.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+
+    expect(pause).not.toHaveBeenCalled();
+    pause.mockRestore();
+  });
+
+  test('without keepPlaying the pointer leaving still pauses it', async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    const video = await startByUser({});
+    pause.mockClear();
+
+    video.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+
+    expect(pause).toHaveBeenCalled();
+    pause.mockRestore();
+  });
+
+  test('a hover preview still pauses on leave with keepPlaying', async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(<EdgeVideo src={SRC} html5Controls keepPlaying />);
+    await vi.waitFor(() => expect(document.querySelector('video')).toBeTruthy());
+    const video = document.querySelector('video')!;
+
+    hoverFor(1_100);
+    video.dispatchEvent(new Event('play'));
+    pause.mockClear();
+    video.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+
+    expect(pause).toHaveBeenCalled();
+    pause.mockRestore();
+  });
+});
+
 describe('EdgeVideo — only the frontmost layer plays', () => {
   afterEach(() => useDialogStore.getState().closeAll());
 

@@ -35,11 +35,27 @@ vi.mock('~/components/Image/Providers/ImagesProvider', async (importOriginal) =>
 }));
 vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   ...(await importOriginal<typeof RoutedDialogLinkModule>()),
-  RoutedDialogLink: ({ children }: { children: React.ReactNode }) => <a href="#">{children}</a>,
+  RoutedDialogLink: ({
+    children,
+    'aria-label': ariaLabel,
+  }: {
+    children: React.ReactNode;
+    'aria-label'?: string;
+  }) => (
+    <a href="#" aria-label={ariaLabel}>
+      {children}
+    </a>
+  ),
 }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
   ...(await importOriginal<typeof EdgeMediaModule>()),
-  EdgeMedia2: ({ src }: { src: string }) => <div data-testid="edge-media" data-src={src} />,
+  EdgeMedia2: ({ src, videoProps }: { src: string; videoProps?: { keepPlaying?: boolean } }) => (
+    <div
+      data-testid="edge-media"
+      data-src={src}
+      data-keep-playing={videoProps?.keepPlaying ? 'true' : undefined}
+    />
+  ),
 }));
 vi.mock('~/components/ImageHash/ImageHash', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageHashModule>()),
@@ -100,5 +116,29 @@ describe('the full-width view of a mature item', () => {
 
     await expect.element(page.getByTestId('edge-media')).toBeInTheDocument();
     expect(page.getByTestId('media-hash').elements()).toHaveLength(0);
+  });
+});
+
+describe('the full-width view of a video', () => {
+  beforeEach(() => (settings.browsingLevel = NsfwLevel.PG | NsfwLevel.R));
+
+  test('a video keeps playing once started, an image has no such flag', async () => {
+    renderFull('video');
+    await expect
+      .element(page.getByTestId('edge-media'))
+      .toHaveAttribute('data-keep-playing', 'true');
+  });
+
+  test('the viewer opens from a labelled icon link, not a text link', async () => {
+    renderFull('video');
+    const open = page.getByRole('link', { name: 'Open in viewer' });
+    await expect.element(open).toBeInTheDocument();
+    await expect.element(open).not.toHaveTextContent('Open');
+  });
+
+  test('an image has no corner link', async () => {
+    renderFull('image');
+    await expect.element(page.getByTestId('edge-media')).toBeInTheDocument();
+    expect(page.getByRole('link', { name: 'Open in viewer' }).elements()).toHaveLength(0);
   });
 });
