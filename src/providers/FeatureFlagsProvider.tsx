@@ -111,9 +111,9 @@ export const FeatureFlagsProvider = ({
 
   // Bridge `siteSearchProxy` to the module-scope search clients, and `feedGoTransport` /
   // `feedGoTransportModelGetAll` / `feedGoTransportInfinite` / `clientShadowCompare` to the tRPC
-  // link. Written while rendering, so the searches
-  // InstantSearch starts from the first commit's effects already go the right way. Browser only: on
-  // the server this module flag would be shared across concurrent requests.
+  // link. Written while rendering, so the searches InstantSearch starts from the first commit's
+  // effects already go the right way. Browser only: on the server this module flag would be shared
+  // across concurrent requests.
   if (typeof window !== 'undefined') {
     setSiteSearchProxyEnabled(!!featureFlags.siteSearchProxy);
     setSemanticArticleSearchEnabled(!!featureFlags.semanticArticleSearch);

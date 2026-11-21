@@ -53,9 +53,8 @@ export type ShadowCandidateRequest = {
 };
 
 /**
- * The pluggable leg. Today the only one is `goTransportCandidate`; a later candidate (one that
- * discovers its origin from a registry, say) implements the same two members and is passed to
- * `createShadowCompareFetch` instead, with no change to the compare, the gating or the beacon.
+ * The pluggable leg: `createShadowCompareFetch` takes any implementation. Today the only one is
+ * `goTransportCandidate`.
  */
 export interface ShadowCandidate {
   /** Beaconed as `candidate`. Low-cardinality and stable: it is how compares are grouped. */
