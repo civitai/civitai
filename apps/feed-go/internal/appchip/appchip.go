@@ -139,7 +139,7 @@ func Parse(m map[string]any) (*Input, error) {
 // imageMarkerSQL reads the image's owner and its marker value as JSON (NULL when the metadata is not
 // an object or has no such key). No visibility term, deliberately: the answer served from it is the
 // same for every viewer (see the package doc).
-const imageMarkerSQL = `SELECT "userId", "metadata" -> '` + MarkerKey + `' FROM "Image" WHERE "id" = $1`
+const imageMarkerSQL = `SELECT "userId", "metadata" -> 'blockUploadedAppId' FROM "Image" WHERE "id" = $1`
 
 // Serve answers one request, or returns a fallback (or a store error).
 func Serve(ctx context.Context, d *Deps, req Request) (*Answer, error) {
