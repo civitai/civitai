@@ -134,7 +134,6 @@ export function kohyaClipSkip(
   return { min: sdxl ? 2 : 1, max: KOHYA_BOUNDS.clipSkip!.max, default: sdxl ? 2 : 1 };
 }
 
-/** KOHYA_BOUNDS with the per-ecosystem clip skip floor applied. */
 export function kohyaBound(field: string, ecosystem: string): ParamBound | undefined {
   const bound = KOHYA_BOUNDS[field];
   const clip = field === 'clipSkip' ? kohyaClipSkip(ecosystem) : undefined;
