@@ -18,6 +18,42 @@ const NOW = new Date('2026-11-22T10:00:00Z');
 const BASE_AIR = 'urn:air:sdxl:checkpoint:civitai:101@202';
 const BLOB = (n: number) => `urn:air:sdxl:blob:orchestrator:${n}@blobkey${n}`;
 
+/** Every field a Kohya submit sends, each with a value, so a key dropped from the replay shows. */
+const REPLAYED_INPUT = {
+  engine: 'kohya',
+  model: BASE_AIR,
+  maxTrainEpochs: 10,
+  steps: 1200,
+  numRepeats: 4,
+  trainBatchSize: 2,
+  resolution: 1024,
+  enableBucket: true,
+  shuffleCaption: false,
+  keepTokens: 1,
+  clipSkip: 1,
+  flipAugmentation: false,
+  unetLR: 0.0005,
+  textEncoderLR: 0.00005,
+  trainTextEncoder: false,
+  lrScheduler: 'cosine_with_restarts',
+  lrSchedulerNumCycles: 3,
+  minSnrGamma: 5,
+  networkDim: 32,
+  networkAlpha: 16,
+  noiseOffset: 0.1,
+  optimizerType: 'AdamW8Bit',
+  seed: 1234,
+  fp8Base: false,
+  blocksToSwap: 0,
+  vParameterization: false,
+  zeroTerminalSnr: false,
+  trainingData: { type: 'blobs', items: [{ air: BLOB(1) }, { air: BLOB(2) }] },
+  samples: { prompts: ['a photo of mylora'] },
+  clipLModel: 'urn:air:sdxl:clip:civitai:1@1',
+  textEncoderModel: 'urn:air:sdxl:te:civitai:2@2',
+  vaeModel: 'urn:air:sdxl:vae:civitai:3@3',
+};
+
 function sourceRun(over: Partial<Workflow> & { studio?: boolean } = {}): Workflow {
   const { studio = true, ...rest } = over;
   return {
@@ -26,7 +62,16 @@ function sourceRun(over: Partial<Workflow> & { studio?: boolean } = {}): Workflo
     status: 'succeeded',
     forceRefunded: false,
     tags: studio ? ['civitai', 'training', 'name:my-lora', 'submit:00ff00ff00ff00ff'] : ['own-tag'],
-    metadata: studio ? { name: 'My LoRA', trigger: 'mylora', v: 3 } : {},
+    metadata: studio
+      ? {
+          name: 'My LoRA',
+          trigger: 'mylora',
+          v: 3,
+          published: true,
+          modelId: 77,
+          modelVersionId: 88,
+        }
+      : {},
     currencies: ['blue', 'yellow'],
     allowMatureContent: false,
     callbacks: [{ url: 'https://old.example/callback', type: ['step:*'] }],
@@ -40,14 +85,7 @@ function sourceRun(over: Partial<Workflow> & { studio?: boolean } = {}): Workflo
       {
         $type: 'training',
         input: {
-          engine: 'kohya',
-          model: BASE_AIR,
-          maxTrainEpochs: 10,
-          steps: 1200,
-          clipSkip: 1,
-          networkDim: 32,
-          trainingData: { type: 'blobs', items: [{ air: BLOB(1) }, { air: BLOB(2) }] },
-          samples: { prompts: ['a photo of mylora'] },
+          ...REPLAYED_INPUT,
           // Read-only values the orchestrator echoes back and refuses on submit.
           defaultSteps: 1000,
           storageBuzzPerEpoch: 5,
@@ -73,6 +111,10 @@ function createWorld(
   let allowlist: Record<string, string> = { [SOURCE]: 'retrain' };
   let allowlistDown = false;
   let kohyaFlag = true;
+  /** A gate that refuses: `withheld: true`, or the refusal text of the others. */
+  const refuse: Partial<
+    Record<'withheld' | 'training' | 'triggerWord' | 'license', string | boolean>
+  > = {};
   let clock = NOW;
   let seq = 0;
 
@@ -102,7 +144,7 @@ function createWorld(
       runs.set(run.id as string, run);
       return { status: 200, workflow: structuredClone(run) };
     },
-    blobNsfwLevel: async (air) => (opts.nsfw ? opts.nsfw[air] ?? '' : ''),
+    blobNsfwLevel: async (air) => (opts.nsfw && air in opts.nsfw ? opts.nsfw[air] : ''),
   };
 
   const deps: RetrainDeps = {
@@ -140,10 +182,11 @@ function createWorld(
       { url: `https://signals.example/users/${userId}`, type: ['step:*'] },
     ],
     gates: {
-      training: async () => null,
+      withheld: async () => refuse.withheld === true,
+      training: async () => (refuse.training as string) ?? null,
       studioKohya: async () => kohyaFlag,
-      triggerWord: async () => null,
-      license: async () => null,
+      triggerWord: async () => (refuse.triggerWord as string) ?? null,
+      license: async () => (refuse.license as string) ?? null,
     },
   };
 
@@ -152,12 +195,14 @@ function createWorld(
     runs,
     calls,
     failColours,
+    refuse,
     refundKeys,
     setAllowlist: (a: Record<string, string>) => (allowlist = a),
     setAllowlistDown: () => (allowlistDown = true),
     setKohyaFlag: (on: boolean) => (kohyaFlag = on),
     advance: (ms: number) => (clock = new Date(clock.getTime() + ms)),
-    run: (execute: boolean) => runRetrainSource({ sourceWorkflowId: SOURCE, execute }, deps),
+    run: (execute: boolean, retrainWorkflowId?: string) =>
+      runRetrainSource({ sourceWorkflowId: SOURCE, execute, retrainWorkflowId }, deps),
   };
 }
 
@@ -174,22 +219,21 @@ describe('runRetrainSource', () => {
     const body = result.body!;
     const step = body.steps[0] as unknown as { priority: string; input: Record<string, unknown> };
     expect(step.priority).toBe('low');
-    expect(step.input).toEqual({
-      engine: 'kohya',
-      model: BASE_AIR,
-      maxTrainEpochs: 10,
-      steps: 1200,
-      clipSkip: 1,
-      networkDim: 32,
-      trainingData: { type: 'blobs', items: [{ air: BLOB(1) }, { air: BLOB(2) }] },
-      samples: { prompts: ['a photo of mylora'] },
-    });
+    expect(step.input).toEqual(REPLAYED_INPUT);
     expect(body.externalId).toBe(`retrain-${SOURCE}`);
     expect(body.tags).toEqual(['civitai', 'training', 'name:my-lora']);
     expect(body.callbacks).toEqual([
       { url: `https://signals.example/users/${OWNER}`, type: ['step:*'] },
     ]);
-    expect(body.metadata).toMatchObject({ name: 'My LoRA (retrain)', retrainOf: SOURCE });
+    // The source's model links stay with the source.
+    expect(body.metadata).toEqual({
+      name: 'My LoRA (retrain)',
+      trigger: 'mylora',
+      v: 3,
+      sourceWorkflowId: SOURCE,
+      retrainOf: SOURCE,
+    });
+    expect(body.upgradeMode).toBe('manual');
     expect(body.currencies).toEqual(['blue', 'yellow']);
     // The quote never carries the idempotency key.
     expect(w.calls.quoteBodies[0]).not.toHaveProperty('externalId');
@@ -225,9 +269,39 @@ describe('runRetrainSource', () => {
     w.advance(10 * 60_000);
     const second = await w.run(true);
     expect(second.outcome).toBe('already-retrained');
-    expect(second.retrain?.id).toBe(first.retrain?.id);
+    const retrainId = first.retrain!.id;
+    expect(retrainId).toMatch(new RegExp(`^${OWNER}-`));
+    expect(second.retrain).toEqual({
+      id: retrainId,
+      status: 'unassigned',
+      chargedByColour: { blue: 480 },
+    });
     expect(w.calls.refund).toBe(1);
     expect(credited(w)).toHaveLength(2);
+  });
+
+  it('reports a retrain’s current status by reading it, never by submitting, and only for this source’s retrain', async () => {
+    const w = createWorld(sourceRun());
+    const retrainId = (await w.run(true)).retrain!.id;
+    w.runs.get(retrainId)!.status = 'succeeded';
+    const submits = w.calls.submit;
+
+    expect(await w.run(false, retrainId)).toMatchObject({
+      outcome: 'retrain-status',
+      retrain: { id: retrainId, status: 'succeeded' },
+    });
+    // The source itself is a run of the owner's, but not this source's retrain.
+    expect(await w.run(false, SOURCE)).toMatchObject({
+      outcome: 'skipped',
+      reason: 'retrain-not-found',
+    });
+    // The owner deleted the retrain: reported, and nothing is submitted in its place.
+    w.runs.delete(retrainId);
+    expect(await w.run(false, retrainId)).toMatchObject({
+      outcome: 'skipped',
+      reason: 'retrain-not-found',
+    });
+    expect(w.calls.submit).toBe(submits);
   });
 
   it('does not take the force-refunded flag as proof: a colour left owed is refunded again before the submit, or nothing is submitted', async () => {
@@ -262,6 +336,14 @@ describe('runRetrainSource', () => {
       ['blue', 300],
       ['yellow', 200],
     ]);
+
+    // A 5xx from /refund is tried again (each colour is keyed, so a repeat pays nothing twice).
+    const flaky = createWorld(sourceRun());
+    const refundOnce = flaky.deps.forceRefund;
+    let failures = 1;
+    flaky.deps.forceRefund = async (id) => (failures-- > 0 ? 503 : refundOnce(id));
+    expect((await flaky.run(true)).outcome).toBe('retrained');
+    expect(credited(flaky)).toHaveLength(2);
 
     const stuck = createWorld(sourceRun());
     stuck.deps.forceRefund = async (id) => {
@@ -320,19 +402,59 @@ describe('runRetrainSource', () => {
     }
   });
 
-  it('refuses a submit answer that is not a charged run under this externalId', async () => {
-    const w = createWorld(sourceRun());
-    const realSubmit = w.deps.ownerOrchestrator;
-    w.deps.ownerOrchestrator = async (userId) => {
-      const orch = (await realSubmit(userId))!;
-      return {
-        ...orch,
-        submit: async (body) => {
-          const answer = await orch.submit(body);
-          return { ...answer, workflow: { ...answer.workflow!, transactions: { list: [] } } };
-        },
-      };
-    };
-    expect(await w.run(true)).toMatchObject({ outcome: 'bad-submit-result' });
+  it.each([
+    ['source-withheld', { withheld: true }],
+    ['training-unavailable', { training: 'Training is currently disabled' }],
+    ['trigger-word-refused', { triggerWord: 'This trigger word has been blocked.' }],
+    ['license-not-accepted', { license: 'Accept the licence first.' }],
+  ] as const)(
+    'a refusing gate stops the retrain before any money moves: %s',
+    async (reason, gate) => {
+      const w = createWorld(sourceRun());
+      Object.assign(w.refuse, gate);
+      expect(await w.run(true)).toMatchObject({ outcome: 'skipped', reason });
+      expect(w.calls.refund + w.calls.quote + w.calls.submit).toBe(0);
+    }
+  );
+
+  it('applies the mature rule only to runs that may pay in Green, and refuses when it cannot read the dataset', async () => {
+    const nsfw = { [BLOB(2)]: 'X' };
+    expect((await createWorld(sourceRun(), { nsfw }).run(false)).outcome).toBe('would-retrain');
+
+    const green = { currencies: ['blue', 'green'] } as Partial<Workflow>;
+    const unreadable = createWorld(sourceRun(green), { nsfw: { [BLOB(1)]: null } });
+    expect(await unreadable.run(true)).toMatchObject({
+      outcome: 'skipped',
+      reason: 'rating-unavailable',
+    });
+
+    const stamped = createWorld(
+      sourceRun({ ...green, metadata: { name: 'My LoRA', matureCount: 3 } })
+    );
+    expect(await stamped.run(true)).toMatchObject({ outcome: 'skipped', reason: 'mature-reprice' });
+    expect(unreadable.calls.refund + stamped.calls.refund).toBe(0);
   });
+
+  it.each([
+    ['an estimate (no charge)', { transactions: { list: [] } }],
+    ['another account’s run', { id: '9999-20261122100000000-zz99' }],
+    ['another externalId', { externalId: `${OWNER}-retrain-other` }],
+  ])(
+    'refuses a submit answer that is not a charged run of the owner’s under this externalId: %s',
+    async (_, override) => {
+      const w = createWorld(sourceRun());
+      const owner = w.deps.ownerOrchestrator;
+      w.deps.ownerOrchestrator = async (userId) => {
+        const orch = (await owner(userId))!;
+        return {
+          ...orch,
+          submit: async (body) => {
+            const answer = await orch.submit(body);
+            return { ...answer, workflow: { ...answer.workflow!, ...override } as Workflow };
+          },
+        };
+      };
+      expect(await w.run(true)).toMatchObject({ outcome: 'bad-submit-result' });
+    }
+  );
 });

@@ -10,9 +10,9 @@ import {
 } from '@civitai/orchestration-client';
 import { KOHYA_REPLAY_KEYS, replayKohyaInput } from '@civitai/shared/training-kohya-replay';
 
-// One-off: refunds a training run broken by a trainer bug and, unless its owner already trained it
-// again elsewhere, submits the same run again on the owner's Buzz. Every rule is here, over injected
-// orchestrator and gate calls; the endpoint (`api-routes/mod/training/retrain-source.ts`) wires them.
+// One-off: refunds a training run broken by a trainer bug and, in `retrain` mode, submits the same run
+// again on the owner's Buzz. Every rule is here, over injected orchestrator and gate calls; the endpoint
+// (`api-routes/mod/training/retrain-source.ts`) wires them.
 
 export const RETRAIN_MODES = ['retrain', 'refund-only'] as const;
 export type RetrainMode = (typeof RETRAIN_MODES)[number];
@@ -22,7 +22,7 @@ export const RETRAIN_SOURCE_WINDOW = {
   from: new Date('2026-11-20T00:00:00Z'),
   to: new Date('2026-11-22T00:00:00Z'),
 };
-/** Every call is refused from here on; the sources' records expire soon after. */
+/** Every call is refused from here on. */
 export const RETRAIN_HARD_STOP = new Date('2026-12-18T00:00:00Z');
 
 /** An orchestrator workflow id, `<userId>-<17-digit timestamp>-<suffix>`. */
@@ -43,6 +43,8 @@ export type SkipReason =
   | 'expired'
   | 'not-allowlisted'
   | 'owner-restricted'
+  | 'retrain-not-found'
+  | 'source-withheld'
   | 'source-deleted'
   | 'source-ineligible'
   | 'training-unavailable'
@@ -57,6 +59,7 @@ export type SkipReason =
 export type RetrainOutcome =
   | 'would-retrain'
   | 'would-refund'
+  | 'retrain-status'
   | 'retrained'
   | 'already-retrained'
   | 'refunded'
@@ -111,6 +114,9 @@ export type RetrainDeps = {
   callbacksFor: (userId: number) => WorkflowCallback[] | undefined;
   /** Each answers the user-facing refusal, or null when the run may go ahead. */
   gates: {
+    /** Whether a moderator action withholds the source's outputs from its owner (a model trained
+     *  from it taken down, or deleted by someone else): a retrain would hand them back. */
+    withheld: (userId: number, sourceWorkflowId: string) => Promise<boolean>;
     training: (modelAir: string) => Promise<string | null>;
     /** Studio's Kohya flag for the owner. Throws when it cannot be decided. */
     studioKohya: (userId: number) => Promise<boolean>;
@@ -183,9 +189,11 @@ export function buildRetrainBody(
   const studio = isStudioRun(workflow);
   const meta = (workflow.metadata ?? {}) as Record<string, unknown>;
   const name = typeof meta.name === 'string' && meta.name ? `${meta.name} (retrain)` : meta.name;
+  // The source's model links stay with the source: the retrain is published as its own model.
+  const { published, modelId, modelVersionId, sourceEpoch, ...kept } = meta;
   // An API run's metadata is its own; it gets only the link back to the source.
   const metadata = studio
-    ? { ...meta, name, sourceWorkflowId, retrainOf: sourceWorkflowId }
+    ? { ...kept, name, sourceWorkflowId, retrainOf: sourceWorkflowId }
     : { retrainOf: sourceWorkflowId };
   const step = {
     $type: 'training',
@@ -200,6 +208,8 @@ export function buildRetrainBody(
     metadata,
     steps: [step],
     currencies: workflow.currencies,
+    // As every other submit path pins it: a mature sample must not re-price the run after the quote.
+    upgradeMode: 'manual',
     ...(typeof workflow.allowMatureContent === 'boolean'
       ? { allowMatureContent: workflow.allowMatureContent }
       : {}),
@@ -237,6 +247,12 @@ export function classifySubmitResult(
     outcome: createdAt < startedAt.getTime() - CLOCK_SKEW_MS ? 'already-retrained' : 'retrained',
   };
 }
+
+const retrainOf = (workflow: Workflow) => ({
+  id: workflow.id as string,
+  status: workflow.status,
+  chargedByColour: debitsByColour(workflow.transactions?.list),
+});
 
 const retryable = (status: number) => status === 0 || status >= 500;
 
@@ -330,7 +346,11 @@ async function submitWithRetry(orchestrator: OwnerOrchestrator, body: WorkflowTe
 }
 
 export async function runRetrainSource(
-  { sourceWorkflowId, execute }: { sourceWorkflowId: string; execute: boolean },
+  {
+    sourceWorkflowId,
+    execute,
+    retrainWorkflowId,
+  }: { sourceWorkflowId: string; execute: boolean; retrainWorkflowId?: string },
   deps: RetrainDeps
 ): Promise<RetrainResult> {
   const startedAt = deps.now();
@@ -357,6 +377,19 @@ export async function runRetrainSource(
 
   const orchestrator = await deps.ownerOrchestrator(userId);
   if (!orchestrator) return skip('owner-restricted');
+
+  // A read, never a submit: how a sweep learns a retrain finished without a call that could charge
+  // again if the owner deleted the first one.
+  if (retrainWorkflowId !== undefined) {
+    const found = await orchestrator.read(retrainWorkflowId);
+    if (found.status === 404) return skip('retrain-not-found');
+    if (!found.workflow)
+      throw new RetrainUnavailableError(`retrain read failed: ${found.status || 'no response'}`);
+    if (found.workflow.externalId !== `${userId}-${retrainExternalId(sourceWorkflowId)}`)
+      return skip('retrain-not-found', 'not this source’s retrain');
+    return Object.assign(result, { outcome: 'retrain-status', retrain: retrainOf(found.workflow) });
+  }
+
   const read = await orchestrator.read(sourceWorkflowId);
   // The owner deleted it, and is still owed: listed for a person to settle, never dropped.
   if (read.status === 404) return skip('source-deleted');
@@ -383,6 +416,7 @@ export async function runRetrainSource(
   }
 
   // Every gate runs before any money moves.
+  if (await deps.gates.withheld(userId, sourceWorkflowId)) return skip('source-withheld');
   const model = source.input.model as string;
   const trainingRefusal = await deps.gates.training(model);
   if (trainingRefusal) return skip('training-unavailable', trainingRefusal);
@@ -442,10 +476,6 @@ export async function runRetrainSource(
     return Object.assign(result, { outcome: classified.outcome, detail: classified.detail });
   return Object.assign(result, {
     outcome: classified.outcome,
-    retrain: {
-      id: submitted.workflow.id as string,
-      status: submitted.workflow.status,
-      chargedByColour: debitsByColour(submitted.workflow.transactions?.list),
-    },
+    retrain: retrainOf(submitted.workflow),
   });
 }
