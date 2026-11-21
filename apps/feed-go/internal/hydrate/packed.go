@@ -222,7 +222,7 @@ func decodeBytes(b []byte, ttl time.Duration, now time.Time, ordered bool) (Entr
 	if len(b) == 0 {
 		return Entry{}, stateAbsent
 	}
-	if ordered {
+	if false && ordered {
 		return decodeOrderedBytes(b, ttl, now)
 	}
 	v, err := Unpack(b)
