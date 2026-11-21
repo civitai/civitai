@@ -13,8 +13,7 @@ import {
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
-import { banNoteHoldSql } from '~/server/services/ban-note-csam';
-import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import { contentRemovalHeldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { refreshProfilePicturesForUsersLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import {
@@ -22,7 +21,12 @@ import {
   PRIOR_INGESTION_KEY,
   PRIOR_NEEDS_REVIEW_KEY,
 } from '~/server/utils/image-removal-mode';
-import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
+import type { ReportFilter } from '~/server/utils/legal-hold';
+import {
+  PLACEHOLDER_OWNER_ID,
+  reportListedImageOwnerIdsSql,
+  reportNamedUserIdsSql,
+} from '~/server/utils/legal-hold';
 import { createJob, getJobDate } from './job';
 import { postHoldsHeldTextSql } from '~/server/services/post-text-hold';
 
@@ -110,31 +114,18 @@ async function isStillMarkedForDeletion(userId: number) {
 
 /** Every hold on the account, an unreleased CSAM/NCMEC ban note, or the placeholder owner. */
 const accountHeldSql = (id: Prisma.Sql, markerView: boolean) =>
-  Prisma.sql`(${id} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(
-    id,
-    markerView
-  )} OR ${banNoteHoldSql(id)})`;
+  Prisma.sql`(${id} = ${PLACEHOLDER_OWNER_ID} OR ${contentRemovalHeldSql(id, markerView)})`;
+
+const unarchived: ReportFilter = (r) => Prisma.raw(`${r}."archivedAt" IS NULL`);
 
 /**
  * An account a CSAM report not yet archived names, as subject or secondary user, or lists images of.
  * Uncorrelated, so Postgres builds the set once per statement rather than once per candidate.
  */
-const openReportSql = (id: Prisma.Sql) => Prisma.sql`((${id})::text IN (
-  SELECT orr."userId"::text FROM "CsamReport" orr
-  WHERE orr."archivedAt" IS NULL AND orr."userId" IS NOT NULL
-  UNION
-  SELECT ors.details ->> 'secondaryUserId' FROM "CsamReport" ors
-  WHERE ors."archivedAt" IS NULL AND ors.details ->> 'secondaryUserId' IS NOT NULL
-  UNION
-  SELECT oi."userId"::text
-  FROM "CsamReport" ori
-  CROSS JOIN LATERAL jsonb_array_elements(
-    CASE WHEN jsonb_typeof(ori.images) = 'array' THEN ori.images ELSE '[]'::jsonb END
-  ) oe
-  JOIN "Image" oi
-    ON oi.id = CASE WHEN (oe ->> 'id') ~ '^[0-9]{1,18}$' THEN (oe ->> 'id')::bigint END
-  WHERE ori."archivedAt" IS NULL
-))`;
+const openReportSql = (id: Prisma.Sql) => Prisma.sql`(
+  (${id})::text IN (${reportNamedUserIdsSql(unarchived)})
+  OR (${id}) IN (${reportListedImageOwnerIdsSql(unarchived)})
+)`;
 
 /** Left out of the worklist: the placeholder owner, and an account an unarchived report names. */
 const skippedSql = (id: Prisma.Sql) =>
@@ -452,15 +443,14 @@ async function drainPage(
       break;
     }
 
-    // Dispatched on 'immediate' rather than on 'grace' so that anything the worklist failed to
-    // resolve — a mode it did not select, a value it did not normalize — blocks instead of deletes.
-    // A held account's images are hidden and kept rather than left in place: skipping it would
-    // leave them public. One an unarchived report names is skipped (see the worklist).
+    // Held: block, never delete. An unarchived report skips (see the worklist).
     const action = await primaryHoldAction(user.id, markerView);
     if (action === 'skip') {
       stalled = true;
       continue;
     }
+    // Dispatched on 'immediate' rather than on 'grace' so that anything the worklist failed to
+    // resolve — a mode it did not select, a value it did not normalize — blocks instead of deletes.
     const result =
       user.mode === 'immediate' && action === 'follow'
         ? await drainUser(user.id, remaining, isCanceled, markerView)
@@ -539,11 +529,9 @@ export const removeDeletedUserImages = createJob(
     // CleanIfEmpty — while an immediate user still matches on any image, or an account left
     // holding only blocked ones would drop out of the worklist with nothing else to sweep it.
 
-    // An account an unarchived CSAM report names is left out entirely until archive-csam-reports has
-    // built its NCMEC evidence. That job reads each stored original from the uploads bucket, which a
-    // block does not touch, but falls back to the edge copy for a passthrough url or a missing
-    // original, and a block makes the image server refuse that copy: the image would be recorded
-    // missing. Any other held account is blocked (`worklistModeSql`), never deleted.
+    // Skipped, not blocked, while an unarchived CSAM report names the account: archive-csam-reports
+    // can fall back to the edge copy of an image, and a block makes the image server refuse it.
+    // Any other held account is blocked (`worklistModeSql`), never deleted.
     const fresh = await dbRead.$queryRaw<Candidate[]>`
       SELECT u.id, u."deletedAt", m.mode
       FROM "User" u

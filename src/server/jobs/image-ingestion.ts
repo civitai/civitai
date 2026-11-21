@@ -31,6 +31,7 @@ import {
 } from '~/server/utils/legal-hold';
 import {
   accountHoldSql,
+  contentRemovalHeldSql,
   captureImageKeptSql,
   holdMarkerViewExists,
 } from '~/server/services/legal-hold.service';
@@ -759,16 +760,27 @@ export const reviewHeldBlockedImagesSql = Prisma.sql`
 `;
 
 /**
- * Queued blocked-image deletes whose owner a ban-note hold covers, by the same predicate the
- * account-deletion job and `purgeHoldGuard` read, evaluated per queued image's owner.
+ * Queued blocked-image deletes whose owner a ban-note hold covers. The hold is decided once per
+ * distinct owner (`banNoteHoldSql`, as the account-deletion job and `purgeHoldGuard` read it), then
+ * their queued ids are fetched.
  */
 export const banNoteHeldQueuedImagesSql = Prisma.sql`
+  WITH owners AS MATERIALIZED (
+    SELECT DISTINCT bi."userId"
+    FROM "JobQueue" j
+    JOIN "Image" bi ON bi.id = j."entityId"
+    WHERE j.type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+      AND j."entityType" = ${EntityType.Image}::"EntityType"
+  ),
+  held AS MATERIALIZED (
+    SELECT o."userId" FROM owners o WHERE ${banNoteHoldSql(Prisma.raw('o."userId"'))}
+  )
   SELECT j."entityId" AS id
   FROM "JobQueue" j
   JOIN "Image" bi ON bi.id = j."entityId"
+  JOIN held h ON h."userId" = bi."userId"
   WHERE j.type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
     AND j."entityType" = ${EntityType.Image}::"EntityType"
-    AND ${banNoteHoldSql(Prisma.raw('bi."userId"'))}
 `;
 
 /**
@@ -784,8 +796,7 @@ export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: b
     AND "Image"."needsReview" IS DISTINCT FROM 'csam'
     AND "Image"."blockedFor" IS DISTINCT FROM 'CSAM'
     AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
-    AND NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}
-    AND NOT ${banNoteHoldSql(Prisma.raw('"Image"."userId"'))}
+    AND NOT ${contentRemovalHeldSql(Prisma.raw('"Image"."userId"'), true)}
     AND NOT ${captureImageKeptSql('"Image"')}
     ${
       holdForTrainingCopy

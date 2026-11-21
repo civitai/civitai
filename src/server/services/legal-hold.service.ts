@@ -2,11 +2,13 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { banNoteHoldSql } from '~/server/services/ban-note-csam';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import {
   PLACEHOLDER_OWNER_ID,
   reportHolds,
+  reportListedImageOwnerIdsSql,
   userNamedOnHoldingReportSql,
   userUnderLegalHoldSql,
 } from '~/server/utils/legal-hold';
@@ -99,20 +101,11 @@ function holdLegsSql(id: Prisma.Sql) {
             AND sc.images @> jsonb_build_array(jsonb_build_object('id', bi.id))
         )
     )`,
-    // Any image of theirs listed in a report that still holds, whoever the report names. Walks the
-    // reports' image lists rather than the user's images: the lists are short, an account's images
-    // are not. Compared as bigint so an id past int range still matches rather than being skipped.
+    // Any image of theirs listed in a report that still holds, whoever the report names.
     // Uncorrelated, so Postgres builds the set once per statement rather than once per row.
-    'reported-image': Prisma.sql`${notCaptureOwner(id)} AND ((${id}) IN (
-      SELECT ri."userId"
-      FROM "CsamReport" rr
-      CROSS JOIN LATERAL jsonb_array_elements(
-        CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
-      ) re
-      JOIN "Image" ri
-        ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
-      WHERE ${reportHolds('rr')}
-    ))`,
+    'reported-image': Prisma.sql`${notCaptureOwner(
+      id
+    )} AND ((${id}) IN (${reportListedImageOwnerIdsSql(reportHolds)}))`,
   } satisfies Partial<Record<AccountHoldLeg, Prisma.Sql>>;
 }
 
@@ -475,6 +468,40 @@ export async function areAccountsUnderLegalHold(userIds: number[]): Promise<Map<
 
 export async function getAccountLegalHoldLegs(userId: number): Promise<AccountHoldLeg[]> {
   return (await getAccountLegalHold(userId)).legs;
+}
+
+/**
+ * Whether content owned by `id` (an int SQL expression) must not be removed: any account hold, or a
+ * ban whose note names CSAM or NCMEC that no moderator has released. For every path that deletes a
+ * user's media or content. Account deletion itself is not refused on the ban-note leg, so it is kept
+ * out of `accountHoldSql`.
+ */
+export function contentRemovalHeldSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
+  return Prisma.sql`(${accountHoldSql(id, markerView)} OR ${banNoteHoldSql(id)})`;
+}
+
+/**
+ * `assertAccountNotUnderLegalHold`, plus the ban-note leg of `contentRemovalHeldSql`: throws
+ * `LegalHoldError` when either holds or cannot be read. For an immediate removal of a user's content.
+ */
+export async function assertContentRemovalNotHeld(
+  userId: number,
+  refused = 'Content removal refused'
+): Promise<Pick<AccountLegalHold, 'markerView'>> {
+  const hold = await assertAccountNotUnderLegalHold(userId, refused);
+  // primary: a ban placed a moment ago must stop this removal.
+  const [row] = await dbWrite.$queryRaw<{ banNoteHeld: boolean | null }[]>`
+    SELECT ${banNoteHoldSql(Prisma.sql`${userId}::int`)} AS "banNoteHeld"
+  `;
+  if (row?.banNoteHeld === false) return hold;
+  logToAxiom({
+    type: 'info',
+    name: 'account-legal-hold',
+    message: refused,
+    userId,
+    payload: { legs: ['ban-note'] },
+  });
+  throw new LegalHoldError();
 }
 
 /**

@@ -225,7 +225,7 @@ const skippedByWorklist = (values: unknown[], fixture: Fixture) =>
   values.some(
     (v) =>
       typeof (v as { sql?: unknown })?.sql === 'string' &&
-      (v as { sql: string }).sql.includes('orr."archivedAt" IS NULL')
+      /"archivedAt" IS NULL[\s\S]*secondaryUserId/.test((v as { sql: string }).sql)
   ) && openReportOf(fixture.csamReports, fixture.openReport);
 
 /** A report not yet archived names the account. */

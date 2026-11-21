@@ -667,6 +667,12 @@ describe('removeAllContent', () => {
       expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
     });
 
+    it('keeps every piece of evidence when the ban note lands mid-wipe, and says so', async () => {
+      beforeEvidence = () => banNote('1 minute').then(() => undefined);
+      await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+      expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
+    });
+
     it('wipes once a moderator released the hold during this ban', async () => {
       await banNote('2 days');
       await release('1 day');
@@ -905,6 +911,23 @@ describe('removeAllContent', () => {
     expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
     expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
     expect(docStore.wipeAccount).not.toHaveBeenCalled();
+  });
+
+  it('stops before the App Blocks stores when a CSAM/NCMEC ban note lands after the deletes', async () => {
+    vi.mocked(refundBidsForVersions).mockImplementationOnce(async () => {
+      await holder.db.query(`INSERT INTO "User" (id, meta, "bannedAt") VALUES ($1, $2, now())`, [
+        CLEAN,
+        JSON.stringify({ banDetails: { detailsInternal: 'csam' } }),
+      ]);
+      return { bidsDeleted: [], recurringBidsDeleted: [], refundFailed: [] };
+    });
+    try {
+      await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+      expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
+      expect(docStore.wipeAccount).not.toHaveBeenCalled();
+    } finally {
+      await holder.db.exec(`DELETE FROM "User"`);
+    }
   });
 
   it('stops before the App Blocks stores when the hold cannot be checked after the deletes', async () => {

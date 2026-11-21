@@ -1,5 +1,5 @@
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { banNoteHoldSql, banNoteNamesCsamSql } from '~/server/services/ban-note-csam';
+import { banNoteNamesCsamSql } from '~/server/services/ban-note-csam';
 import { PROFILE_CLEAR_FIELDS } from '~/server/schema/moderator/user';
 import { markUserDealUploadsRemovedSql } from '~/server/services/creator-service-deal-file-retention';
 import {
@@ -41,6 +41,8 @@ import {
   holdMarkerViewExists,
   isLegalHoldAbort,
   LegalHoldError,
+  assertContentRemovalNotHeld,
+  contentRemovalHeldSql,
   LegalHoldStoppedError,
   heldModelIdsSql,
   recordCurrentModelOwnersSql,
@@ -521,6 +523,7 @@ export async function archiveProfileBeforeModeratorChange<TStored = unknown>({
               OR r.details ->> 'secondaryUserId' = ${idText}
           )
           OR ${heldSql}
+          -- The bare note, release or not: archiving more is the safe side.
           OR EXISTS (
             SELECT 1 FROM "User" u
             WHERE u.id = ${userId}
@@ -2071,26 +2074,8 @@ export const removeAllContent = async ({
   const alertedBy = { userId: id, actorUserId: actorUserId ?? claimedModeratorId };
   // Here rather than in each caller (tRPC, the webhook, the moderator app's purge), so every one is
   // held to it. The deletes that destroy evidence check again in their own statements.
-  const { markerView } = await assertAccountNotUnderLegalHold(id);
-  // A ban whose note names CSAM or NCMEC stops a content removal for Legal, unless released.
-  // primary: a ban placed a moment ago must stop this removal.
-  const [banNote] = await dbWrite.$queryRaw<{ banNoteHeld: boolean | null }[]>`
-    SELECT ${banNoteHoldSql(Prisma.sql`${id}::int`)} AS "banNoteHeld"
-  `;
-  if (banNote?.banNoteHeld !== false) {
-    logToAxiom({
-      type: 'info',
-      name: 'account-legal-hold',
-      message: 'Content removal refused',
-      userId: id,
-      payload: { legs: ['ban-note'] },
-    });
-    throw new LegalHoldError();
-  }
-  const held = Prisma.sql`(${accountHoldSql(
-    Prisma.sql`${id}::int`,
-    markerView
-  )} OR ${banNoteHoldSql(Prisma.sql`${id}::int`)})`;
+  const { markerView } = await assertContentRemovalNotHeld(id);
+  const held = contentRemovalHeldSql(Prisma.sql`${id}::int`, markerView);
 
   // The primary, as the deletes below: a row the replica has not seen yet is still deleted.
   const models = await dbWrite.model.findMany({
@@ -2418,7 +2403,7 @@ export const removeAllContent = async ({
 
   // The two stores below are separate databases, so no statement there can carry the hold: check
   // again before either.
-  await assertAccountNotUnderLegalHold(id).catch(() => {
+  await assertContentRemovalNotHeld(id).catch(() => {
     logToAxiom({
       name: 'remove-all-content',
       type: 'error',
