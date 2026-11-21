@@ -1,26 +1,52 @@
 import { maskProfanityOutsideMarkup } from '~/components/RenderHtml/mask-profanity';
-import { getServerProfanityFilter } from '~/server/services/profanity-list.service';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  getServerProfanityFilter,
+  type ServerProfanityFilter,
+} from '~/server/services/profanity-list.service';
 import { stripStickerTokens } from '~/shared/utils/sticker-token';
 
 /**
  * The masked copy of user text that a viewer with profanity masking on is shown in its place:
  * a string when masking changed it, `null` when it is clean. Computed for every text whatever the
  * viewer's settings, so a settings toggle needs no refetch, and at any length: long text is masked
- * in full, never blurred.
+ * in full, never blurred. `undefined` (or absent) when it was not computed: the flag is off, or
+ * masking failed.
  */
 export type MaskedText = string | null;
 
+/**
+ * The filter masking runs with, or `null` with `profanity-managed-list` off: then every reader
+ * returns its input untouched, without building a filter or scanning a text, so the flag-off read
+ * path costs and answers what it did before masking moved to the server.
+ */
+async function maskingFilter(): Promise<ServerProfanityFilter | null> {
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST))) return null;
+  return getServerProfanityFilter();
+}
+
+function maskHtml(html: string, profanity: ServerProfanityFilter): MaskedText {
+  if (!html) return null;
+  const masked = maskProfanityOutsideMarkup(html, profanity.filter);
+  if (masked === html) return null;
+  profanity.countHit('mask');
+  return masked;
+}
+
+function maskChat(content: string, profanity: ServerProfanityFilter): MaskedText {
+  if (!content) return null;
+  const scannable = stripStickerTokens(content);
+  const masked = profanity.filter.clean(scannable);
+  if (masked === scannable) return null;
+  profanity.countHit('mask');
+  return masked;
+}
+
 /** Rich-text HTML: only the visible text is masked; tags and mentions are left as they are. */
-export async function maskProfanityInHtml(htmls: string[]): Promise<MaskedText[]> {
+export async function maskProfanityInHtml(htmls: string[]): Promise<(MaskedText | undefined)[]> {
   if (!htmls.length) return [];
-  const profanity = await getServerProfanityFilter();
-  return htmls.map((html) => {
-    if (!html) return null;
-    const masked = maskProfanityOutsideMarkup(html, profanity.filter);
-    if (masked === html) return null;
-    profanity.countHit('mask');
-    return masked;
-  });
+  const profanity = await maskingFilter();
+  return htmls.map((html) => (profanity ? maskHtml(html, profanity) : undefined));
 }
 
 /**
@@ -28,48 +54,45 @@ export async function maskProfanityInHtml(htmls: string[]): Promise<MaskedText[]
  * the runs between stickers would let a word split by one through as two clean runs. A masked
  * message is shown as flat text without its stickers.
  */
-export async function maskProfanityInChat(contents: string[]): Promise<MaskedText[]> {
+export async function maskProfanityInChat(contents: string[]): Promise<(MaskedText | undefined)[]> {
   if (!contents.length) return [];
-  const profanity = await getServerProfanityFilter();
-  return contents.map((content) => {
-    if (!content) return null;
-    const scannable = stripStickerTokens(content);
-    const masked = profanity.filter.clean(scannable);
-    if (masked === scannable) return null;
-    profanity.countHit('mask');
-    return masked;
-  });
+  const profanity = await maskingFilter();
+  return contents.map((content) => (profanity ? maskChat(content, profanity) : undefined));
 }
 
 /**
- * Reviews, each with `maskedDetails` beside its rich-text `details`. Always set here; optional in
- * the type only because the browser writes reviews into its own cache before the server answers.
+ * Reviews, each with `maskedDetails` beside its rich-text `details`; the input itself with the
+ * flag off. Optional in the type for that, and because the browser writes reviews into its own
+ * cache before the server answers.
  */
 export async function withMaskedDetails<T extends { details?: string | null }>(
   reviews: T[]
 ): Promise<(T & { maskedDetails?: MaskedText })[]> {
-  const masked = await maskProfanityInHtml(reviews.map((review) => review.details ?? ''));
-  return reviews.map((review, i) => ({ ...review, maskedDetails: masked[i] }));
+  if (!reviews.length) return reviews;
+  const profanity = await maskingFilter();
+  if (!profanity) return reviews;
+  return reviews.map((review) => ({
+    ...review,
+    maskedDetails: maskHtml(review.details ?? '', profanity),
+  }));
 }
 
 /** Chat messages, each with `maskedContent` beside its `content`. Optional in the type as above. */
 export async function withMaskedChatContent<
   T extends { content: string; referenceMessage?: { content: string } | null }
 >(messages: T[]): Promise<(T & { maskedContent?: MaskedText })[]> {
-  // A quoted reply is shown too, so it carries its own copy: one call for messages and quotes.
-  const quotes = messages.map((message) => message.referenceMessage?.content ?? '');
-  const masked = await maskProfanityInChat([
-    ...messages.map((message) => message.content),
-    ...quotes,
-  ]);
-  return messages.map((message, i) => ({
+  if (!messages.length) return messages;
+  const profanity = await maskingFilter();
+  if (!profanity) return messages;
+  // A quoted reply is shown too, so it carries its own copy.
+  return messages.map((message) => ({
     ...message,
-    maskedContent: masked[i],
+    maskedContent: maskChat(message.content, profanity),
     ...(message.referenceMessage
       ? {
           referenceMessage: {
             ...message.referenceMessage,
-            maskedContent: masked[messages.length + i],
+            maskedContent: maskChat(message.referenceMessage.content, profanity),
           },
         }
       : {}),

@@ -505,13 +505,18 @@ type SignalledMessage = Omit<ChatAllMessages[number], 'maskedContent'> & {
   maskedContent?: MaskedText;
 };
 
-// Carries the masked copy like a `getInfiniteMessages` item, computing it when the caller has not.
+// Carries the masked copy like a `getInfiniteMessages` item, computing it unless the caller has
+// (`masked`: with the flag off a masked message carries no copy, so its absence cannot say so).
 // Never rejects: most callers do not await it, and a signal is best-effort.
-const signalNewMessage = async (chatId: number, message: SignalledMessage) => {
+const signalNewMessage = async (
+  chatId: number,
+  message: SignalledMessage,
+  { masked = false }: { masked?: boolean } = {}
+) => {
   const payload =
-    message?.maskedContent === undefined
-      ? (await withMaskedChatContent([message]).catch(() => [message]))[0]
-      : message;
+    masked || message?.maskedContent !== undefined
+      ? message
+      : (await withMaskedChatContent([message]).catch(() => [message]))[0];
   return withSignals(() =>
     fetch(
       `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
@@ -827,7 +832,7 @@ export const createMessage = async ({
   // The message is saved; a masking failure must not turn the send into an error.
   const [sent] = await withMaskedChatContent([resp]).catch(() => [resp]);
   if (joinNotice) await signalJoined({ chatId, userId, notice: joinNotice });
-  signalNewMessage(chatId, sent);
+  signalNewMessage(chatId, sent, { masked: true });
   if (joinNotice) await signalChatMembersUpdated({ chatId, userIds: [userId] });
 
   if (userId !== -1) {

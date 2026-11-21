@@ -1,15 +1,41 @@
 import { blockedWords } from '@civitai/mod-utils/profanity/lists';
 import { cleanWord, isUsableBlockedEntry } from '@civitai/mod-utils/profanity/word-rules';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as ProfanityList from '~/server/services/profanity-list.service';
+import type * as MaskModule from '~/components/RenderHtml/mask-profanity';
 
-// Flag off: the shipped lists, so a word from the shipped file is masked.
+const h = vi.hoisted(() => ({ flagOn: true, filterReads: 0, htmlScans: 0 }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
-  isFlipt: async () => false,
+  isFlipt: async () => h.flagOn,
 }));
+// Counted, so a flag-off test can show that no filter was read and no text was scanned.
+vi.mock('~/server/services/profanity-list.service', async (importOriginal) => {
+  const original = await importOriginal<typeof ProfanityList>();
+  return {
+    ...original,
+    getServerProfanityFilter: () => {
+      h.filterReads += 1;
+      return original.getServerProfanityFilter();
+    },
+  };
+});
+vi.mock('~/components/RenderHtml/mask-profanity', async (importOriginal) => {
+  const original = await importOriginal<typeof MaskModule>();
+  return {
+    ...original,
+    maskProfanityOutsideMarkup: (
+      ...args: Parameters<typeof original.maskProfanityOutsideMarkup>
+    ) => {
+      h.htmlScans += 1;
+      return original.maskProfanityOutsideMarkup(...args);
+    },
+  };
+});
 
+import { setProfanityListReaderForTests } from '~/server/services/profanity-list.service';
 import {
   maskProfanityInChat,
   maskProfanityInHtml,
@@ -28,6 +54,51 @@ const WORD = blockedWords
       createProfanityFilter().clean(word) !== word
   ) as string;
 const CLEAN = 'a perfectly ordinary sentence';
+
+// Flag on, with the shipped lists as the list read, so a word from the shipped file is masked.
+beforeEach(() => {
+  h.flagOn = true;
+  setProfanityListReaderForTests({
+    read: async () => ({ blocked: null, allowed: null, source: 'fallback' }),
+  });
+});
+afterAll(() => setProfanityListReaderForTests());
+
+// To whoever wants masking to run with the flag off: the flag-off read path must cost and answer
+// what it did before this moved to the server. The timing that would justify more is a flag-on
+// precondition.
+describe('with profanity-managed-list off', () => {
+  beforeEach(() => {
+    h.flagOn = false;
+    h.filterReads = 0;
+    h.htmlScans = 0;
+  });
+
+  it('comments: no filter is read, no text is scanned, and nothing is masked', async () => {
+    expect(await maskProfanityInHtml([`<p>${WORD}</p>`, CLEAN])).toEqual([undefined, undefined]);
+    expect([h.filterReads, h.htmlScans]).toEqual([0, 0]);
+  });
+
+  it('reviews: the input is returned as it is', async () => {
+    const reviews = [{ id: 1, details: `<p>${WORD}</p>` }];
+    const out = await withMaskedDetails(reviews);
+    expect(out).toBe(reviews);
+    expect(out[0]).not.toHaveProperty('maskedDetails');
+    expect([h.filterReads, h.htmlScans]).toEqual([0, 0]);
+  });
+
+  it('chat: the input is returned as it is, and a single message is not masked', async () => {
+    const messages = [{ content: WORD, referenceMessage: { content: WORD } }];
+    const out = await withMaskedChatContent(messages);
+    expect(out).toBe(messages);
+    expect(out[0]).not.toHaveProperty('maskedContent');
+    expect(out[0].referenceMessage).not.toHaveProperty('maskedContent');
+    expect(await maskProfanityInChat([WORD])).toEqual([undefined]);
+    const [chat] = await withMaskedChatPreviews([{ id: 1, messages: [{ content: WORD }] }]);
+    expect(chat.messages[0]).not.toHaveProperty('maskedContent');
+    expect(h.filterReads).toBe(0);
+  });
+});
 
 describe('maskProfanityInHtml', () => {
   it('masks the visible text, keeps the markup, and is null for clean text', async () => {

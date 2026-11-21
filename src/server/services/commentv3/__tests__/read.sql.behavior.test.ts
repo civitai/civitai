@@ -13,6 +13,8 @@ import { blockedWords } from '@civitai/mod-utils/profanity/lists';
 import { cleanWord, isUsableBlockedEntry } from '@civitai/mod-utils/profanity/word-rules';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { ThreadSort } from '~/server/common/enums';
+import type * as FliptClient from '~/server/flipt/client';
+import { setProfanityListReaderForTests } from '~/server/services/profanity-list.service';
 import { FIXTURE, migration } from '~/server/services/__tests__/comment-v3-fixture';
 import {
   type CommentV3Db,
@@ -28,6 +30,20 @@ import {
 
 // Against real Postgres, with CommentV3 rows as the mirror or the v3 write path stores them.
 vi.setConfig({ hookTimeout: 120_000, testTimeout: 60_000 });
+
+// `profanity-managed-list` per test; every other flag as the real client answers it.
+const profanityFlag = vi.hoisted(() => ({ on: true }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const original = await importOriginal<typeof FliptClient>();
+  return {
+    ...original,
+    isFlipt: async (flag: string, ...rest: unknown[]) =>
+      flag === original.FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST
+        ? profanityFlag.on
+        : // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (original.isFlipt as any)(flag, ...rest),
+  };
+});
 
 const dialect = (pg: PGlite): Dialect => {
   const connection: DatabaseConnection = {
@@ -244,8 +260,12 @@ describe('getCommentSection', () => {
   });
 
   it('pairs each masked copy with its own comment, and gives a deleted one none', async () => {
-    // A shipped entry read at runtime, never written down: this repository is public. The flag is
-    // off here, so the shipped list applies.
+    // A shipped entry read at runtime, never written down: this repository is public. The list
+    // read is the shipped one.
+    profanityFlag.on = true;
+    setProfanityListReaderForTests({
+      read: async () => ({ blocked: null, allowed: null, source: 'fallback' }),
+    });
     const word = blockedWords
       .map(cleanWord)
       .find(
@@ -271,6 +291,19 @@ describe('getCommentSection', () => {
     expect(item(page, 7700).maskedContent).toBeNull();
     expect(item(page, 7701)).toMatchObject({ deleted: true, content: '', maskedContent: null });
     expect(item(page, 7702).maskedContent).toMatch(/^<p>then \*+<\/p>$/);
+
+    // Flag off: no masked copy at all, and the text exactly as stored.
+    profanityFlag.on = false;
+    const off = await getCommentSection(db, { entityType: 'article', entityId: 77 }, reader, {
+      sort: ThreadSort.Oldest,
+      replyDepth: 10,
+      budget: 100,
+      repliesPerRoot: 10,
+      repliesPerParent: 5,
+    });
+    expect([7700, 7702].map((id) => item(off, id).maskedContent)).toEqual([undefined, undefined]);
+    expect(item(off, 7702).content).toBe(`<p>then ${word}</p>`);
+    setProfanityListReaderForTests();
   });
 
   it('never opens through a deleted comment what a ToS removal or an excluded author hid', async () => {

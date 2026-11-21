@@ -2,6 +2,7 @@ import { setProfanityListReaderForTests } from '~/server/services/profanity-list
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as Surfaces from '~/server/services/commentv3/surfaces';
+import type * as FliptClient from '~/server/flipt/client';
 import type * as WriteService from '~/server/services/commentv3/write.service';
 import type { StoredCommentV3 } from '~/server/services/commentv3/write.service';
 
@@ -33,6 +34,20 @@ const m = vi.hoisted(() => ({
   authors: vi.fn(async (..._a: unknown[]) => (_id: number): object => ({})),
   authorRow: vi.fn(async (): Promise<object | undefined> => undefined),
 }));
+
+// `profanity-managed-list` per test; every other flag as the real client answers it.
+const profanityFlag = vi.hoisted(() => ({ on: true }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const original = await importOriginal<typeof FliptClient>();
+  return {
+    ...original,
+    isFlipt: async (flag: string, ...rest: unknown[]) =>
+      flag === original.FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST
+        ? profanityFlag.on
+        : // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (original.isFlipt as any)(flag, ...rest),
+  };
+});
 
 vi.mock('~/server/services/commentv3/write.service', async (importOriginal) => {
   const actual = await importOriginal<typeof WriteService>();
