@@ -17,6 +17,7 @@ import {
 
 type FakeTime = PprofTime & {
   startCalls: Record<string, unknown>[];
+  contextCalls: object[];
   store: AsyncLocalStorage<object>;
   started: boolean;
 };
@@ -25,6 +26,7 @@ function fakeTime({ throwOnAsyncContext = false } = {}): FakeTime {
   const store = new AsyncLocalStorage<object>();
   const t: FakeTime = {
     startCalls: [],
+    contextCalls: [],
     store,
     started: false,
     start(options) {
@@ -35,7 +37,11 @@ function fakeTime({ throwOnAsyncContext = false } = {}): FakeTime {
       t.started = true;
     },
     isStarted: () => t.started,
-    runWithContext: vi.fn(<R>(context: object, fn: () => R) => store.run(context, fn)),
+    // A plain generic function, not vi.fn: a Mock erases the generic `R`.
+    runWithContext<R>(context: object, fn: () => R): R {
+      t.contextCalls.push(context);
+      return store.run(context, fn);
+    },
   };
   return t;
 }
@@ -73,7 +79,7 @@ describe('withProfileRoute when dark (labels never armed)', () => {
     const time = fakeTime();
     withProfileRoute('trpc:dark.call', () => 1);
     startWallProfilingWithAsyncContext(sdkStartWall(time), time);
-    expect(time.runWithContext).not.toHaveBeenCalled();
+    expect(time.contextCalls).toEqual([]);
   });
 });
 
@@ -98,7 +104,7 @@ describe('startWallProfilingWithAsyncContext', () => {
     expect(time.startCalls).toEqual([{ ...SDK_START_OPTIONS, useCPED: true }, SDK_START_OPTIONS]);
     expect(time.started).toBe(true);
     withProfileRoute('trpc:a.b', () => 1);
-    expect(time.runWithContext).not.toHaveBeenCalled();
+    expect(time.contextCalls).toEqual([]);
   });
 
   it('leaves labels off when the SDK started a DIFFERENT pprof copy', () => {
@@ -108,7 +114,7 @@ describe('startWallProfilingWithAsyncContext', () => {
     expect(startWallProfilingWithAsyncContext(sdkStartWall(sdkCopy), ours)).toBe(false);
     expect(ours.startCalls).toEqual([]);
     withProfileRoute('trpc:a.b', () => 1);
-    expect(ours.runWithContext).not.toHaveBeenCalled();
+    expect(ours.contextCalls).toEqual([]);
   });
 
   it('starts plainly, labels off, when pprof could not be loaded', () => {
@@ -191,7 +197,7 @@ describe('withProfileRoute when armed', () => {
     const time = arm();
     withProfileRoute('trpc:x.y', () => 1);
     withProfileRoute('trpc:x.y', () => 1);
-    const [first, second] = vi.mocked(time.runWithContext).mock.calls.map((call) => call[0]);
+    const [first, second] = time.contextCalls;
     expect(first).toBe(second);
   });
 
