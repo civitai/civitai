@@ -6,7 +6,6 @@ import { db } from '$lib/server/db/db';
 import { getRedis } from '$lib/server/redis';
 import { logOAuthEvent } from './audit-log';
 import { userHasRole } from './access';
-import { appBlockSuspended } from './app-block-mint-lock';
 import { authenticatedConfidentialClient, clientIdMismatch } from './client-auth';
 import { ACCESS_TOKEN_TYPE, SYSTEM_WORKLOAD_ROLE } from './constants';
 import { findExchangeResource } from './exchange-resources';
@@ -34,7 +33,9 @@ import { raceTimeout } from './timeout';
 // exp = min(block exp, now + 15 min), no refresh), so the adapter's private feed accepts it. Dark unless the
 // caller is in OAUTH_BLOCK_EXCHANGE_CALLERS (empty by default). The required `apps:storage` scope is
 // consent-exempt, so it is not the viewer's consent: access is decided by the allowlisted relay, the app's
-// listing and `allowedScopes`, and the private feed's per-poll `decideCollectionRead`. No revocation state is
+// listing and `allowedScopes`, and the private feed's per-poll `decideCollectionRead`. Two checks keep that
+// feed from reading more than the site's document store would with the block token itself: the token's block
+// must be its client's one approved block, and its maturity ceiling must admit every rating. No revocation state is
 // read (no hub signal covers every block app); a revoked or uninstalled app's token lives out its exp, at most
 // 15 minutes. Refusals are `oauth-audit` events, except the two rate-limit 429s, which are not audited.
 
@@ -74,6 +75,12 @@ const DESCRIPTION: Record<ExchangeError, string> = {
 
 const NO_STORE = { 'Cache-Control': 'no-store', Pragma: 'no-cache' };
 
+/**
+ * R, X and XXX: the site's mature browsing-level bits (`NsfwLevel` in `src/server/common/enums.ts`, pinned by
+ * `block-exchange.test.ts`).
+ */
+export const MATURE_BROWSING_LEVELS = 4 | 8 | 16;
+
 /** The one scope a minted token holds. */
 export const BLOCK_EXCHANGE_SCOPE = TokenScope.AppDataRead;
 
@@ -108,36 +115,54 @@ function blockExchangeCallers(): { callers: ReadonlySet<string>; invalid: boolea
 
 type ReplayRedis = {
   set(key: string, value: string, opts: { NX: true; EX: number }): Promise<string | null>;
-  del(key: string): Promise<unknown>;
+  eval(script: string, options: { keys: string[]; arguments: string[] }): Promise<unknown>;
 };
+
+/** Delete KEYS[1] only while it holds ARGV[1]: one atomic compare-and-delete. */
+const RELEASE_SCRIPT =
+  "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
 
 const REPLAY_TIMEOUT_MS = 2000;
 
 const replayKey = (jti: string) =>
   `auth:block-exchange:jti:${createHash('sha256').update(jti).digest('hex')}`;
 
+/** One request's claim on a block token's `jti`: the value it SETs is its own `nonce`. */
+type JtiClaim = { jti: string; nonce: string };
+
 /**
- * Claim the block token's `jti` for one exchange. True when this request claimed it, false when an earlier
- * one did. Throws when the claim cannot be made (no Redis, an error, a timeout): the caller refuses, since an
- * unrecorded claim could be replayed.
+ * Claim the block token's `jti` for one exchange, storing `claim.nonce` as the value. True when this request
+ * claimed it, false when an earlier one did. Throws when the claim cannot be made (no Redis, an error, a
+ * timeout): the caller refuses, since an unrecorded claim could be replayed. After a timeout the SET may
+ * still land; if it does, the claim is given back then, so a retry is not refused for the token's life.
  */
-async function claimBlockTokenJti(jti: string, ttlSeconds: number): Promise<boolean> {
+async function claimBlockTokenJti(claim: JtiClaim, ttlSeconds: number): Promise<boolean> {
   const redis = getRedis() as unknown as ReplayRedis | null;
   if (!redis) throw new Error('REDIS_URL is not configured');
-  const reply = await raceTimeout(
-    redis.set(replayKey(jti), '1', { NX: true, EX: Math.max(1, ttlSeconds) }),
-    REPLAY_TIMEOUT_MS,
-    'replay store timed out'
-  );
-  return reply !== null;
+  const set = redis.set(replayKey(claim.jti), claim.nonce, {
+    NX: true,
+    EX: Math.max(1, ttlSeconds),
+  });
+  try {
+    return (await raceTimeout(set, REPLAY_TIMEOUT_MS, 'replay store timed out')) !== null;
+  } catch (err) {
+    void set
+      .then((reply) => (reply !== null ? releaseBlockTokenJti(claim) : undefined))
+      .catch(() => undefined);
+    throw err;
+  }
 }
 
-/** Give a claimed `jti` back after a failed mint, so the caller's retry is not refused as a replay. */
-async function releaseBlockTokenJti(jti: string): Promise<void> {
+/**
+ * Give a `jti` back when no token was issued for it, so the caller's retry is not refused as a replay. Only
+ * this request's own claim is deleted, by an atomic compare-and-delete on its nonce (RELEASE_SCRIPT): a
+ * request whose claim lost, or whose SET never landed, never frees another request's claim.
+ */
+async function releaseBlockTokenJti(claim: JtiClaim): Promise<void> {
   const redis = getRedis() as unknown as ReplayRedis | null;
   if (!redis) return;
   await raceTimeout(
-    Promise.resolve(redis.del(replayKey(jti))),
+    redis.eval(RELEASE_SCRIPT, { keys: [replayKey(claim.jti)], arguments: [claim.nonce] }),
     REPLAY_TIMEOUT_MS,
     'replay store timed out'
   );
@@ -213,7 +238,9 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     );
   };
 
-  let claimedJti: string | undefined;
+  // Set from just before the claim until a token is issued: `finally` gives it back whenever none was, a
+  // timed-out claim included (its SET may have landed).
+  let claim: JtiClaim | undefined;
   try {
     // Dark unless a caller is listed: checked before anything else is read.
     const allow = blockExchangeCallers();
@@ -310,8 +337,32 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       return refuse('invalid_grant', 'workload account');
     }
 
-    if (await appBlockSuspended(db, block.appId)) {
-      return refuse('unauthorized_client', 'app block suspended');
+    // The registry's private feed resolves the app from the client id alone (`decideCollectionRead`
+    // without a block), while the site's document store reads the token's own block. So the exchanged token
+    // is minted only when the token's block IS the client's one approved block: a token for another block of
+    // the client (not approved itself) must not read the approved one's data through the registry. This is
+    // the site's own rule (`clientIsOnlySource` / `resolveConsumer` in data-read-grant.ts: the approved
+    // blocks of the client, at most two read), pinned by `block-exchange.test.ts`. It also refuses an app with
+    // no approved block, a suspended one included, so it replaces the mint lock's suspension check here.
+    const approved = await db
+      .selectFrom('app_blocks')
+      .select('id')
+      .where('app_id', '=', block.appId)
+      .where('status', '=', 'approved')
+      .limit(2)
+      .execute();
+    if (approved.length !== 1 || approved[0].id !== block.appBlockId) {
+      return refuse('unauthorized_client', "block is not the app's one approved block");
+    }
+    // The site reads a block token's data within the token's own maturity ceiling (set from the host it was
+    // minted on); the registry's private feed reads within the viewer's own settings, as a mature-capable
+    // surface. So only a token whose ceiling admits every mature rating is exchanged: the registry can then
+    // never admit a rating the token's own reads would not.
+    if (
+      block.maxBrowsingLevel === null ||
+      (block.maxBrowsingLevel & MATURE_BROWSING_LEVELS) !== MATURE_BROWSING_LEVELS
+    ) {
+      return refuse('invalid_grant', 'block token ceiling is not every rating');
     }
 
     const issuer = env.AUTH_JWT_ISSUER;
@@ -324,16 +375,20 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
 
     // Once per block token: claimed last, just before minting, and released in `finally` if no token is
     // issued, so a failure the caller may retry does not burn the block token.
+    claim = { jti: block.jti, nonce: randomUUID() };
     let claimed: boolean;
     try {
-      claimed = await claimBlockTokenJti(block.jti, block.exp - iat + 60);
+      claimed = await claimBlockTokenJti(claim, block.exp - iat + 60);
     } catch (err) {
       return refuse('temporarily_unavailable', `replay check failed: ${String(err)}`, {
         'Retry-After': '5',
       });
     }
-    if (!claimed) return refuse('invalid_grant', 'block token already exchanged');
-    claimedJti = block.jti;
+    if (!claimed) {
+      // An earlier request holds the claim: not this request's to give back.
+      claim = undefined;
+      return refuse('invalid_grant', 'block token already exchanged');
+    }
 
     const jti = randomUUID();
     const scope = scopeNames(BLOCK_EXCHANGE_SCOPE);
@@ -363,7 +418,7 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       'block-exchange'
     );
     if (!minted.ok) return refuse('server_error', minted.reason);
-    claimedJti = undefined;
+    claim = undefined;
 
     logOAuthEvent({
       type: 'block_exchange.issued',
@@ -395,9 +450,9 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       'Retry-After': '5',
     });
   } finally {
-    // A claim this request made and did not turn into a token is given back.
-    if (claimedJti !== undefined) {
-      await releaseBlockTokenJti(claimedJti).catch((err) => {
+    // A claim this request made (or may have made) and did not turn into a token is given back.
+    if (claim !== undefined) {
+      await releaseBlockTokenJti(claim).catch((err) => {
         logOAuthEvent({
           type: 'block_exchange.refused',
           userId: ctx.userId,

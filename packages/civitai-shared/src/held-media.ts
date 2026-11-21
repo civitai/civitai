@@ -141,15 +141,40 @@ export const CSAM_REPORT_LISTINGS_SQL = `SELECT listed.id, listed."createdAt" FR
   ) listed
   WHERE listed.id IS NOT NULL`;
 
-/** Every image id listed on any CsamReport, whatever its state, as text. */
-export const CSAM_REPORT_LISTED_IMAGE_IDS_SQL = `SELECT listed.id FROM (
+/** A predicate on the CsamReport row aliased `alias`, as SQL text with no parameters. */
+export type CsamReportFilter = (alias: string) => string;
+
+/** Every image id listed on a CsamReport passing `filter` (on any report if none is given), as text. */
+export const csamReportListedImageIdsSql = (filter?: CsamReportFilter) => `SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
     FROM "CsamReport" lr
     CROSS JOIN LATERAL jsonb_array_elements(
       CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
-    ) le
+    ) le${
+      filter
+        ? `
+    WHERE ${filter('lr')}`
+        : ''
+    }
   ) listed
   WHERE listed.id IS NOT NULL`;
+
+/** Every image id listed on any CsamReport, whatever its state, as text. */
+export const CSAM_REPORT_LISTED_IMAGE_IDS_SQL = csamReportListedImageIdsSql();
+
+/**
+ * The users a CsamReport passing `filter` names, as its subject or its secondary user. One distinct
+ * `"userId"` text per row, never null, since the secondary user is read out of the report's details.
+ */
+export const csamReportNamedUserIdsSql = (filter: CsamReportFilter) => `
+  SELECT hc."userId"::text AS "userId"
+  FROM "CsamReport" hc
+  WHERE hc."userId" IS NOT NULL AND ${filter('hc')}
+  UNION
+  SELECT hs.details ->> 'secondaryUserId'
+  FROM "CsamReport" hs
+  WHERE hs.details ->> 'secondaryUserId' IS NOT NULL AND ${filter('hs')}
+`;
 
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif']);
 /** Containers every current browser plays. The codec inside is the browser's call: one it cannot

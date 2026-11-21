@@ -1,7 +1,9 @@
 # app-data-go: design
 
-**Status:** scaffold for review (P3 slice S5). Not deployed. Not to merge before the registry
-adapter's private streams (S2, #9758) merge, and not to deploy before the prerequisites below.
+**Status:** P3 slice S5, built on the registry adapter's private streams (S2). Not to deploy before
+the prerequisites below. The App Block token path (the hub's S4 block exchange) is built and **dark**: `APP_DATA_BLOCK_EXCHANGE`
+defaults off, and the hub refuses every block exchange until its caller allowlist names this service
+("Block tokens" below).
 
 One shared service that serves app clients their users' **private** app data read through the
 registry. Browsers never subscribe to the registry themselves: an app calls this service with the
@@ -84,8 +86,10 @@ reads the adapter directly, not through `registry-exp`. Read against the hub's e
 (`apps/auth/src/lib/server/oauth/user-exchange.ts`):
 
 - **The subject token must be one of the hub's original access tokens** (step 5 looks it up among
-  them by hash). A token without the hub's access-token prefix (`civitai_`), such as a block token,
-  is therefore never sent to the hub: those reads go straight to REST (`token_not_exchangeable`).
+  them by hash). A token without the hub's access-token prefix (`civitai_`) is therefore never sent
+  to the user exchange: an App Block token goes to the hub's block exchange when
+  `APP_DATA_BLOCK_EXCHANGE` is on ("Block tokens" below), and any other token, or a block token with
+  the flag off, goes straight to REST (`token_not_exchangeable`).
 - **The caller is a relay the resource lists** (step 4 and step 7). The exchanged token names the
   user in `sub`, the app the user's token was issued to in `client_id`, and this service in
   `act.sub`. That is what the adapter's gate 3 checks, and what its predicate judges.
@@ -117,6 +121,105 @@ points.
 
 The client secret is read from a file (`APP_DATA_CLIENT_SECRET_FILE`, preferred) or the environment,
 never both, and no error, log or metric carries it or any token.
+
+## Block tokens (`APP_DATA_BLOCK_EXCHANGE`)
+
+An app running as an App Block holds a block token (the site-signed RS256 JWT), not a hub access
+token. The hub's block exchange (`apps/auth/src/lib/server/oauth/block-exchange.ts`, S4) turns one
+into the same kind of token the user exchange issues: an ES256 `at+jwt` with `sub` the viewer,
+`client_id` the block's app, `act.sub` this service, scope `AppDataRead`, and
+`exp = min(block token exp, now + 15 min)`. The adapter's private feed accepts it exactly as it does
+a user-exchange token.
+
+**The flag.** `APP_DATA_BLOCK_EXCHANGE` (`true`/`1` on; unset, `false` or `0` off; default off;
+anything else fails the start, as does turning it on without the registry path). **Off, nothing
+changes:** a block token reads REST (`token_not_exchangeable`) and is never sent to the hub, and the
+router has no block cache, so a hub token is exchanged exactly as before.
+
+**One decision.** `exchange.Router` alone decides which tokens are exchanged: the handler asks its
+`Accepts` before opening a stream and the streams call its `Exchange`, so the two cannot disagree. A
+block token never reaches the user exchange, the block exchange on or off.
+
+**On,** a token is routed by its shape (`exchange.KindOf`), never decoded or trusted here: the hub's
+prefix is a hub token; three non-empty base64url segments is a block token, sent to the block
+exchange (`subject_token_type=urn:civitai:token-type:block-token`, scope `AppDataRead`, the same relay
+client and resource as the user exchange); anything else reads REST. The hub alone decides whether a
+token is a block token it honours.
+
+**Once per block token.** The hub claims each block token's `jti` and refuses a second exchange of it
+as a replay, so `exchange.BlockCache` sits in front of the block exchange:
+
+- **Issued:** the token is handed to every stream of that block token (one per collection read)
+  until it expires; concurrent opens share one call.
+- **Refused** (`400`/`401`): remembered, apart from the issued tokens and only up to 1,000; the hub
+  is not asked again for a remembered one. Any token of a block token's shape reaches the hub, so a
+  flood of made-up tokens produces refusals: kept apart, they can never fill the issued tokens' room
+  or lock a real block token out of this cache, and past the cap a refusal is simply not remembered
+  (the hub is asked again and refuses again). They are not free, though: each distinct made-up token
+  is still sent to the hub and spends this service's one per-client exchange budget there, which
+  its user exchanges share, so a flood can push other reads (hub tokens included) to REST until the
+  budget refills. That is availability only, and true of made-up hub-prefixed tokens before this
+  path too. Follow-up: check the block token's signature locally before sending it, or give the
+  block exchange its own hub budget.
+- **Failed** (the hub unreachable, a `5xx`, a `429`, a timeout): forgotten, so a later read may try
+  again after the stream cooldown. The hub issued nothing, and gives back a claim it made (including
+  one whose replay-store write timed out). If this service timed out after the hub did issue, the
+  retry is refused as a replay and remembered: that block token reads REST.
+- Entries are keyed by SHA-256 of the whole token, never by its `jti`: a token that merely reuses
+  another's `jti` can never be handed the other's exchanged token. An entry is forgotten 16 minutes
+  after its exchange (no exchange of a block token that old could succeed), at the next sweep (at
+  most one scan a minute); at most 10,000 issued tokens are held, and past that a new block token
+  reads REST (`full`, answered without a scan).
+
+**Expiry.** The answer's life is held to 15 minutes whatever `expires_in` says. A stream closes 30 s
+before its token expires, as for a hub token, and a cached token is not handed to a new stream inside
+that margin (`spent`): the block token's one exchange is used up, so its next read goes to REST,
+where the site answers with the block token itself.
+
+**No revocation re-check.** A live stream re-checks a hub token every 2 minutes by exchanging it
+again. For a block token that would be a replay, so the re-check gets the cached token back and the
+stream keeps serving. This matches the hub, which reads no revocation state for a block exchange: a
+block token's stream lives at most until its exchanged token expires, at most 15 minutes. The
+adapter's own re-check of the user (ban, delete) still applies.
+
+**Fallback.** Every refusal or failure reads REST exactly as a hub token's does (`exchange_refused`,
+`failed`, `cooling_down`). A spent block token and a full cache have their own fallback and close
+reasons (`block_spent`, `block_cache_full`), not the registry's `error`; both still cool the key
+down for 30 s. Each block exchange is counted in
+`app_data_block_exchanges_total{outcome,error}` (`issued`, `reused`, `refused`, `remembered`,
+`failed`, `spent`, `full`; `error` is the hub's OAuth code for `refused` and `remembered`, else
+`none`), and every outcome but `issued` and `reused` is logged with that code. Neither carries a
+token, user or app.
+
+**No wider than REST.** The hub mints only what the registry's private feed would serve no wider
+than the site's document store serves the block token itself. The feed's predicate
+(`decideCollectionRead` without a block) resolves the app from the token's client id and judges
+mature ratings by the viewer's own settings; the document store reads the token's own block and
+holds mature ratings to the token's ceiling. So the hub refuses a block token whose block is not
+its client's one approved block, and one whose ceiling does not admit every mature rating (minted
+off a mature-capable host).
+
+**What that means for apps:** a block token minted on an SFW host (its ceiling without R, X and
+XXX) is refused at the hub and its reads go to REST. Only tokens minted on the mature-capable host
+use the registry path until a follow-up carries the token's ceiling into the exchanged token (the
+next PR), so the feed can hold a stream to it.
+
+**Residual windows,** each at most until the exchanged token expires (at most 15 minutes), because
+the hub checks once, at the exchange, and neither the hub nor the feed reads the app's revocation
+state:
+
+- (a) **The approved block switches.** The token's block is suspended and another block of the same
+  client becomes its one approved block: the feed, resolving the app from the client id, serves that
+  block's data to the token's streams.
+- (b) **Uninstalled or turned off.** The viewer uninstalls the app or turns it off: the site's
+  document store refuses the block token at once (`withBlockScope`), but the exchanged token and its
+  streams live on until expiry.
+
+**To turn it on** (none of it is in this repo): the hub needs the site's block-token public keys and
+this service's client id in its block-exchange caller allowlist (an approval for the registry owner),
+this service's client must already be a relay of the adapter's exchange resource, and the block's app
+must be listed for that resource and allowed `AppDataRead`; then set `APP_DATA_BLOCK_EXCHANGE=true`
+here.
 
 ## Token lifetime: a stream is reopened at its token's expiry
 
@@ -262,13 +365,14 @@ lag is the adapter's poll plus the time to the next read. REST reads see a revoc
 
 ## Before merge
 
-- S2 (#9758) merged, and this branch rebased onto it.
 - `PrivateCursorPrefix` pinned to `private-feed.ts` by a golden vector, as `internal/urn` is to
   `urn.ts`. It can only be pinned once that file is on `main`.
 
 ## Not built
 
 - Resuming a stream from its cursor (see "Token lifetime").
+- A block-token stream outliving its block token's one exchange (see "Block tokens": the next read
+  is REST's).
 - Any write path (P3b), the app SDK side (P4), overlays.
 - Deploy manifests and the image build.
 - A true per-user cap: only per token, which is per (user, app).

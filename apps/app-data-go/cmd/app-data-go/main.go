@@ -87,6 +87,14 @@ func run(log *slog.Logger) error {
 				ClientSecret: cfg.Relay.ClientSecret, Resource: cfg.Relay.Resource},
 			HTTP: &http.Client{Timeout: exchangeTimeout},
 		}
+		// One router decides which tokens are exchanged, for the handler and the streams alike. Its
+		// block cache is nil while APP_DATA_BLOCK_EXCHANGE is off: block tokens then read REST only.
+		router := &exchange.Router{User: ex.Exchange}
+		if cfg.BlockExchange {
+			router.Blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Margin: expiryMargin,
+				Observe: m.ObserveBlockExchange(log.With("component", "block-exchange"))}
+		}
+		srv.Exchangeable = router.Accepts
 		mgr = session.New(session.ClientSubscriber{Client: &registry.Client{
 			BaseURL: cfg.RegistryURL, UserAgent: "app-data-go", HTTP: registry.NewHTTPClient(),
 		}}, session.Options{
@@ -94,7 +102,7 @@ func run(log *slog.Logger) error {
 			IdleTTL: cfg.IdleTTL, MaxAge: cfg.MaxAge,
 			MaxRecords: cfg.MaxRecords, MaxBytes: cfg.MaxBytes,
 			Cooldown: streamCooldown, NotPrivateCooldown: notPrivateCooldown,
-			Exchange: ex.Exchange, ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
+			Exchange: router.Exchange, ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
 			Opened: m.StreamsOpened.Inc,
 			Closed: func(reason string) { m.StreamsClosed.WithLabelValues(reason).Inc() },
 		})
@@ -117,7 +125,7 @@ func run(log *slog.Logger) error {
 		WriteTimeout:      cfg.RequestDeadline + 5*time.Second,
 		IdleTimeout:       100 * time.Second,
 	}
-	log.Info("app-data-go starting", "addr", cfg.Addr, "registry", cfg.RegistryURL != "",
+	log.Info("app-data-go starting", "addr", cfg.Addr, "registry", cfg.RegistryURL != "", "block_exchange", cfg.BlockExchange,
 		"max_streams", cfg.MaxStreams, "max_streams_per_token", cfg.MaxStreamsPerToken)
 
 	served := make(chan error, 1)

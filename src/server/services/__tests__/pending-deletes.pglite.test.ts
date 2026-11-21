@@ -4,12 +4,18 @@ import {
   childSafetyPostCase,
   deleteImageRows,
   deletePostRows,
+  imageDeleteBlocked,
   imagesPendingDeletion,
   ownImageDeleteBlocked,
   ownPostDeleteBlocked,
   queueImageDeletes,
 } from '@civitai/db-queries/content-deletion';
 import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
+import {
+  CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
+  csamReportListedImageIdsSql,
+  csamReportNamedUserIdsSql,
+} from '@civitai/shared/held-media';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
@@ -391,5 +397,160 @@ describe('imagesPendingDeletion', () => {
     await addImage({ blockedFor: 'CSAM' });
 
     expect(await imagesPendingDeletion(db, [IMAGE])).toEqual(new Set());
+  });
+});
+
+// Until a CSAM report is sent, the sender still reads the named account and the images it lists, so
+// an owner's delete of those waits for the send. Once sent, it runs as any owner delete under a sent
+// report does today.
+describe('a CSAM report not yet sent', () => {
+  const OTHER_IMAGE = 3;
+  const unsent = (values: string) =>
+    pg.exec(`INSERT INTO "CsamReport" ("userId", details, images) VALUES ${values}`);
+  const sendReports = () => pg.exec(`UPDATE "CsamReport" SET "reportSentAt" = now()`);
+  /** Whether the drain (`pending-deletes`) would still keep each queued image delete. */
+  const drainKeeps = async () =>
+    (
+      await sql<{ id: number; blocked: boolean }>`
+        SELECT "Image".id, ${imageDeleteBlocked(sql.ref('q.data'), sql<boolean>`false`)} AS blocked
+        FROM "JobQueue" q JOIN "Image" ON "Image".id = q."entityId"
+        WHERE q.type = 'PendingDelete' AND q."entityType" = 'Image' ORDER BY "Image".id
+      `.execute(db)
+    ).rows;
+
+  // The named account is held whole: an unflagged image the report does not list waits too.
+  it.each([
+    ['naming them as its subject', `(${OWNER}, '{}', '[]')`],
+    ['naming them as its secondary user', `(NULL, '{"secondaryUserId": ${OWNER}}', '[]')`],
+  ])('keeps every image of an owner %s', async (_, values) => {
+    await unsent(values);
+
+    expect(await ownDelete([PLAIN])).toEqual([]);
+
+    expect(await pending()).toEqual([
+      { entityId: PLAIN, entityType: 'Image', data: { ownerId: OWNER } },
+    ]);
+  });
+
+  // An owner the report does not name: only what it lists is held.
+  it.each([
+    ['as an object', `(${SOMEONE_ELSE}, '{}', '[{"id": ${IMAGE}}]')`],
+    ['by bare id', `(NULL, '{}', '["${IMAGE}"]')`],
+  ])('keeps only the listed image of an owner it does not name, listed %s', async (_, values) => {
+    await addImage();
+    await unsent(values);
+
+    expect((await ownDelete([PLAIN, IMAGE])).map((row) => row.id)).toEqual([PLAIN]);
+
+    expect(await pending()).toEqual([
+      { entityId: IMAGE, entityType: 'Image', data: { ownerId: OWNER } },
+    ]);
+  });
+
+  it('lets the drain run it once the report is sent', async () => {
+    await unsent(`(${OWNER}, '{}', '[]')`);
+    await ownDelete([PLAIN]);
+    expect(await drainKeeps()).toEqual([{ id: PLAIN, blocked: true }]);
+
+    await sendReports();
+
+    expect(await drainKeeps()).toEqual([{ id: PLAIN, blocked: false }]);
+  });
+
+  it('deletes at once under a report already sent, as before', async () => {
+    await unsent(`(${OWNER}, '{}', '[{"id": ${PLAIN}}]')`);
+    await sendReports();
+
+    expect((await ownDelete([PLAIN])).map((row) => row.id)).toEqual([PLAIN]);
+    expect(await pending()).toEqual([]);
+  });
+
+  // Each must delete at once: a NULL id would make the IN-set NULL on a miss, so the row is
+  // neither deleted nor queued, and a non-array `images` would throw for every owner's delete.
+  it.each([
+    [
+      'a sent report naming them as its secondary user',
+      `(NULL, '{"secondaryUserId": ${OWNER}}', '[]')`,
+      true,
+    ],
+    [
+      'an unsent report listing an entry with no id',
+      `(${SOMEONE_ELSE}, '{}', '[{}, null]')`,
+      false,
+    ],
+    [
+      'an unsent report whose images is not an array',
+      `(${SOMEONE_ELSE}, '{}', '{"id": ${PLAIN}}')`,
+      false,
+    ],
+  ])('deletes an image at once under %s', async (_, values, sent) => {
+    await unsent(values);
+    if (sent) await sendReports();
+
+    expect((await ownDelete([PLAIN])).map((row) => row.id)).toEqual([PLAIN]);
+    expect(await pending()).toEqual([]);
+  });
+
+  it("does not keep an owner's image for a report about someone else", async () => {
+    await pg.exec(`INSERT INTO "Image" (id, "userId") VALUES (${OTHER_IMAGE}, ${SOMEONE_ELSE})`);
+    await unsent(`(${SOMEONE_ELSE}, '{"secondaryUserId": 9}', '[{"id": ${OTHER_IMAGE}}]')`);
+
+    expect((await ownDelete([PLAIN])).map((row) => row.id)).toEqual([PLAIN]);
+  });
+
+  const ownPostDelete = (ids: number[]) =>
+    deletePostRows(db, {
+      ids,
+      actor: owner,
+      pending: { blocked: ownPostDeleteBlocked(OWNER), data: { ownerId: OWNER } },
+    });
+
+  it('keeps every post of an owner it names, until it is sent', async () => {
+    await pg.exec(`INSERT INTO "Post" (id, "userId") VALUES (50, ${OWNER})`);
+    await unsent(`(${OWNER}, '{}', '[]')`);
+
+    expect(await ownPostDelete([50])).toEqual([]);
+    await sendReports();
+    expect((await ownPostDelete([50])).map((row) => row.id)).toEqual([50]);
+  });
+
+  it('keeps only the post holding a listed image of an owner it does not name', async () => {
+    await pg.exec(`INSERT INTO "Post" (id, "userId") VALUES (50, ${OWNER}), (51, ${OWNER})`);
+    await addImage({ postId: 50 });
+    await unsent(`(${SOMEONE_ELSE}, '{}', '[{"id": ${IMAGE}}]')`);
+
+    expect((await ownPostDelete([50, 51])).map((row) => row.id)).toEqual([51]);
+    expect(await pending()).toEqual([
+      { entityId: 50, entityType: 'Post', data: { ownerId: OWNER } },
+    ]);
+  });
+});
+
+// The delete hold and the account holds read one copy of each report predicate: a fix to how ids
+// are parsed, or to who counts as named, must reach both. Pins the any-report and unsent variants.
+describe('the shared CSAM report sets', () => {
+  const unsentOnly = (report: string) => `${report}."reportSentAt" IS NULL`;
+  const rows = async (text: string) =>
+    (
+      (await pg.query<{ id: string | null }>(text)).rows.map(
+        (row) => Object.values(row)[0]
+      ) as string[]
+    ).sort();
+
+  beforeEach(() =>
+    pg.exec(`INSERT INTO "CsamReport" ("userId", "reportSentAt", details, images) VALUES
+      (10, NULL, '{"secondaryUserId": 11}', '[{"id": 100}, "101", {}, null]'),
+      (12, now(), '{"secondaryUserId": 13}', '[{"id": 102}]'),
+      (NULL, NULL, '{}', '{"id": 103}')`)
+  );
+
+  it('lists the image ids of every report, or of the unsent ones only', async () => {
+    expect(await rows(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)).toEqual(['100', '101', '102']);
+    expect(await rows(csamReportListedImageIdsSql(unsentOnly))).toEqual(['100', '101']);
+  });
+
+  it('names the subject and secondary user of the reports the filter passes', async () => {
+    expect(await rows(csamReportNamedUserIdsSql(() => 'true'))).toEqual(['10', '11', '12', '13']);
+    expect(await rows(csamReportNamedUserIdsSql(unsentOnly))).toEqual(['10', '11']);
   });
 });
