@@ -22,7 +22,7 @@ const TOLERANCE = { x: 0.002, y: 0.002, s: 0.005, r: 0.5 };
 
 /**
  * A move within one tick that reads as a scene cut rather than motion: distance as a fraction of
- * the frame per 250 ms, or a scale ratio. Fast motion in tracked clips stays under 0.08 a tick.
+ * the frame per 250 ms, or a scale ratio.
  */
 const CUT = { distancePer250Ms: 0.12, scaleRatio: 1.4 };
 
@@ -32,12 +32,15 @@ const MIN_SHOWN_MS = 400;
 /** The show channel with flashes hidden: a shown span shorter than `MIN_SHOWN_MS` that ends in a hide. */
 function withoutFlashes(track: StickerTrackV1): StickerTrackV1 {
   if (!track.show) return track;
-  const show = track.show.map(([tick, value], i, pairs): [number, number] => {
+  const changes = (pairs: [number, number][]) =>
+    pairs.filter(([, value], i) => i === 0 || value !== pairs[i - 1][1]);
+  // Repeats merged first, so a span is measured from where it starts.
+  const show = changes(track.show).map(([tick, value], i, pairs): [number, number] => {
     const next = pairs[i + 1];
     const flash = value === 1 && next?.[1] === 0 && (next[0] - tick) * track.ms < MIN_SHOWN_MS;
     return [tick, flash ? 0 : value];
   });
-  return { ...track, show: show.filter(([, value], i) => i === 0 || value !== show[i - 1][1]) };
+  return { ...track, show: changes(show) };
 }
 
 /** Whether the sticker leaps from `from` to `to`, one tick apart, as it does across a cut. */

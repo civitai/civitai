@@ -124,10 +124,24 @@ describe('autoTrackRunKeys at scene cuts', () => {
     expect(autoTrackRunKeys(track, 0)[1].ease).toBe('jump');
   });
 
-  it('keeps the cut through thinning', () => {
-    const fitted = fitAutoTrackKeys(autoTrackRunKeys(leap(0.15), 0), 500);
-    expect(fitted.find((k) => k.t === 250)?.ease).toBe('jump');
-    expect(fitted.find((k) => k.t === 500)).toBeDefined();
+  it('scales the cut distance with longer ticks', () => {
+    // At 500 ms a tick, 0.15 of the frame is fast motion; 0.3 is still a cut.
+    const at500 = (dy: number) => ({ ...leap(dy), ms: 500 });
+    expect(autoTrackRunKeys(at500(0.15), 0).every((k) => k.ease === 'linear')).toBe(true);
+    expect(autoTrackRunKeys(at500(0.3), 0)[1].ease).toBe('jump');
+  });
+
+  it('glides across a leap spread over several ticks', () => {
+    // Keyed two ticks apart: the tracker reports a slide, not a cut.
+    const track: StickerTrackV1 = {
+      ...leap(0),
+      x: [
+        [0, 0.5],
+        [2, 0.7],
+      ],
+      y: [[0, 0.3]],
+    };
+    expect(autoTrackRunKeys(track, 0).every((k) => k.ease === 'linear')).toBe(true);
   });
 
   it('hides a one-tick flash between hides', () => {
@@ -144,6 +158,18 @@ describe('autoTrackRunKeys at scene cuts', () => {
     const keys = autoTrackRunKeys(track, 0);
     expect(keys.filter((k) => k.t >= 1000 && k.t < 2500).every((k) => k.o === 0)).toBe(true);
     expect(keys.find((k) => k.t === 2500)?.o).toBe(1);
+  });
+
+  it('measures a sighting from its start when the tracker repeats a shown entry', () => {
+    const track: StickerTrackV1 = {
+      ...run(6),
+      show: [
+        [0, 1],
+        [2, 1],
+        [3, 0],
+      ],
+    };
+    expect(autoTrackRunKeys(track, 0).find((k) => k.t === 500)?.o).toBe(1);
   });
 
   it('keeps a sighting long enough to see', () => {
