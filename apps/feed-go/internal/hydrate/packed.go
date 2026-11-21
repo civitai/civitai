@@ -22,6 +22,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/vmihailenco/msgpack/v5"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
 // jsUndefined absorbs msgpackr's encoding of `undefined` (fixext1, type 0).
@@ -111,12 +113,44 @@ func toKey(k any) string {
 
 // Entry is one decoded cache value.
 type Entry struct {
+	// Value is the record as Go maps (key order lost). It is nil for an entry of an ordered cache
+	// (orderedCaches), whose record is read with Ordered.
 	Value    map[string]any
 	NotFound bool
 	Stale    bool
 	// CachedAt is the entry's `cachedAt` stamp (zero when it has none): when the writer filled it.
 	// The Go-first probe reads it to tell an entry Node filled after the request began (raced).
 	CachedAt time.Time
+	// ordered is an ordered cache's record (UnpackOrdered, `cachedAt` removed); isOrdered marks it set.
+	ordered   superjson.Object
+	isOrdered bool
+}
+
+// Ordered is the entry's record with every object in the key order the Node object that wrote it
+// has (JS own-key order: array-index keys first, then the written order): the order Node's answer
+// writes the record's keys in. For an entry of an ordered cache that is the decoded record itself,
+// shared by every caller: a caller copies before it changes anything. For any other entry (another
+// cache's, or one built in code) the order is not recorded: its Value through Wire, keys sorted.
+func (e Entry) Ordered() superjson.Object {
+	if e.isOrdered {
+		return e.ordered
+	}
+	obj, _ := Wire(e.Value).(superjson.Object)
+	return obj
+}
+
+// orderedCaches are the caches whose records an answer carries with their own key order (a profile
+// picture and its `metadata`, a cosmetic's `data`, an equipped cosmetic's `data`, an event
+// decoration, a model's versions, a version's showcase images): their entries are decoded with
+// UnpackOrdered only, into Entry.Ordered (Value nil), so the order costs no second decode.
+var orderedCaches = map[string]bool{
+	KeyProfilePictures: true,
+	KeyCosmetics:       true,
+	KeyUserCosmetics:   true,
+	KeyImageEvents:     true,
+	KeyModelEvents:     true,
+	KeyDataForModel:    true,
+	KeyVersionImages:   true,
 }
 
 // PackedReader reads `${key}:${id}` msgpack entries. Prefix is CACHE_KEY_NAMESPACE + ":" outside
@@ -151,8 +185,8 @@ func (p *PackedReader) key(key string, id int) string {
 // `{debounce: true}` marker. A `{notFound: true}` marker is an entry with NotFound set; any other value
 // is data, Stale when ttl > 0 and its `cachedAt` is older than ttl before now. `cachedAt` is removed
 // from the value either way.
-func decodeEntry(cmd *redis.StringCmd, ttl time.Duration, now time.Time) (Entry, bool) {
-	e, st := entryState(cmd, ttl, now)
+func decodeEntry(cmd *redis.StringCmd, ttl time.Duration, now time.Time, ordered bool) (Entry, bool) {
+	e, st := entryState(cmd, ttl, now, ordered)
 	return e, st == stateEntry
 }
 
@@ -171,7 +205,7 @@ const (
 )
 
 // entryState is decodeEntry with the reason for a miss (readState).
-func entryState(cmd *redis.StringCmd, ttl time.Duration, now time.Time) (Entry, readState) {
+func entryState(cmd *redis.StringCmd, ttl time.Duration, now time.Time, ordered bool) (Entry, readState) {
 	b, err := cmd.Bytes()
 	if errors.Is(err, redis.Nil) {
 		return Entry{}, stateAbsent
@@ -179,13 +213,17 @@ func entryState(cmd *redis.StringCmd, ttl time.Duration, now time.Time) (Entry, 
 	if err != nil {
 		return Entry{}, stateHeld
 	}
-	return decodeBytes(b, ttl, now)
+	return decodeBytes(b, ttl, now, ordered)
 }
 
-// decodeBytes is one cached value as an Entry (see decodeEntry).
-func decodeBytes(b []byte, ttl time.Duration, now time.Time) (Entry, readState) {
+// decodeBytes is one cached value as an Entry (see decodeEntry); ordered decodes it as an ordered
+// cache's (orderedCaches: decodeOrderedBytes).
+func decodeBytes(b []byte, ttl time.Duration, now time.Time, ordered bool) (Entry, readState) {
 	if len(b) == 0 {
 		return Entry{}, stateAbsent
+	}
+	if ordered {
+		return decodeOrderedBytes(b, ttl, now)
 	}
 	v, err := Unpack(b)
 	if err != nil {
@@ -210,6 +248,36 @@ func decodeBytes(b []byte, ttl time.Duration, now time.Time) (Entry, readState) 
 		}
 	}
 	delete(m, "cachedAt")
+	return e, stateEntry
+}
+
+// decodeOrderedBytes is decodeBytes for an ordered cache: the same states from the same members
+// (`debounce`, `notFound`, `cachedAt`), the record decoded once, with UnpackOrdered, into the entry's
+// Ordered.
+func decodeOrderedBytes(b []byte, ttl time.Duration, now time.Time) (Entry, readState) {
+	v, err := UnpackOrdered(b)
+	if err != nil {
+		return Entry{}, stateAbsent
+	}
+	obj, ok := v.(superjson.Object)
+	if !ok {
+		return Entry{}, stateAbsent
+	}
+	if d, _ := obj.Get("debounce"); truthy(d) {
+		return Entry{}, stateHeld
+	}
+	e := Entry{isOrdered: true}
+	at, _ := obj.Get("cachedAt")
+	cachedAt, hasAt := at.(time.Time)
+	if hasAt {
+		e.CachedAt = cachedAt
+	}
+	if nf, _ := obj.Get("notFound"); truthy(nf) {
+		e.NotFound = true
+	} else if ttl > 0 && hasAt && cachedAt.Before(now.Add(-ttl)) {
+		e.Stale = true
+	}
+	e.ordered = dropKey(obj, "cachedAt")
 	return e, stateEntry
 }
 

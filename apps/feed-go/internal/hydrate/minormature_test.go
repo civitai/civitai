@@ -143,7 +143,7 @@ func TestVersionImagesDropsMinorMatureImages(t *testing.T) {
 	}
 	ids := make([]int, 0, len(got[6001]))
 	for _, img := range got[6001] {
-		id, _ := Int(img["id"])
+		id, _ := Int(ObjectField(img, "id"))
 		ids = append(ids, id)
 	}
 	if want := []int{8102, 8103}; !reflect.DeepEqual(ids, want) {

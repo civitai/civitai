@@ -53,7 +53,7 @@ func decodeOrdered(dec *msgpack.Decoder, depth int) (any, error) {
 		}
 		obj := make(superjson.Object, 0, max(n, 0))
 		for i := 0; i < n; i++ {
-			k, err := dec.DecodeInterfaceLoose()
+			key, err := decodeOrderedKey(dec)
 			if err != nil {
 				return nil, err
 			}
@@ -64,10 +64,10 @@ func decodeOrdered(dec *msgpack.Decoder, depth int) (any, error) {
 			if isUndef(v) {
 				// A repeated key's undefined still deletes it, as the JS assignment would leave it
 				// undefined; JSON.stringify then omits it either way.
-				obj = dropKey(obj, toKey(k))
+				obj = dropKey(obj, key)
 				continue
 			}
-			obj.Set(toKey(k), v)
+			obj.Set(key, v)
 		}
 		return jsKeyOrder(obj), nil
 	case msgpcode.IsFixedArray(c) || c == msgpcode.Array16 || c == msgpcode.Array32:
@@ -102,6 +102,24 @@ func decodeOrdered(dec *msgpack.Decoder, depth int) (any, error) {
 		return t.UTC(), nil
 	}
 	return v, nil
+}
+
+// decodeOrderedKey is one map key as its JS property name (toKey). A string key, the only kind
+// msgpackr writes for an object, is read as a string, without the interface value a loose decode
+// allocates for it.
+func decodeOrderedKey(dec *msgpack.Decoder) (string, error) {
+	c, err := dec.PeekCode()
+	if err != nil {
+		return "", err
+	}
+	if msgpcode.IsString(c) {
+		return dec.DecodeString()
+	}
+	k, err := dec.DecodeInterfaceLoose()
+	if err != nil {
+		return "", err
+	}
+	return toKey(k), nil
 }
 
 func dropKey(o superjson.Object, key string) superjson.Object {
