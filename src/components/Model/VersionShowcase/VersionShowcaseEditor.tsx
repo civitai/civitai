@@ -47,7 +47,7 @@ export default function VersionShowcaseEditor({
 }) {
   const dialog = useDialogContext();
   const utils = trpc.useUtils();
-  const { data, isLoading } = trpc.versionShowcase.getEditor.useQuery({ modelVersionId });
+  const { data, isLoading, error } = trpc.versionShowcase.getEditor.useQuery({ modelVersionId });
   // On civitai.com only the civitai.com showcase is edited, and no mature image is shown.
   const { canViewNsfw } = useFeatureFlags();
   const [site, setSite] = useState<VersionShowcaseSite>(canViewNsfw ? 'red' : 'com');
@@ -107,7 +107,11 @@ export default function VersionShowcaseEditor({
 
   return (
     <Modal {...dialog} title="Edit showcase" size="xl">
-      {isLoading || !data ? (
+      {error ? (
+        <Alert color="yellow">
+          <Text size="sm">{error.message}</Text>
+        </Alert>
+      ) : isLoading || !data ? (
         <div className="flex justify-center p-8">
           <Loader />
         </div>

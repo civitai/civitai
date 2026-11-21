@@ -2,7 +2,10 @@
 
 A model version's showcase is the carousel at the top of the model page. A creator curates it
 separately for civitai.com and civitai.red: they reorder and hide their own images, and feature
-images other people made with the version. Behind the `model-version-showcase` flag.
+images other people made with the version. Curating is behind the `model-version-showcase` flag.
+Serving is behind `model-version-showcase-serve`, a kill switch that is on until the flag is created
+off: off, every reader serves the creator's own images and cover, curating is refused, and the stored
+showcases and covers are kept for when it is back on. Removals work either way.
 
 ## How it is stored
 
@@ -60,8 +63,10 @@ the public API.
 
 The author is notified once per version and image, credited on the carousel and on cards, can
 remove their image from every showcase from its menu, and can opt out in account settings. A
-moderator removes anyone's featured image from the same menu. Either removal keeps the creator from
-featuring it again, and works with the flag off.
+moderator removes anyone's featured image from the same menu, or from the moderator app's
+Featured community images page (`/models/version-showcases`), which lists them by image, model or
+author. Either removal keeps the creator from featuring it again, and works with the flags off. A
+moderator's removal is recorded in `ModActivity` (`versionShowcaseRemove:<versionId>`).
 
 ## Caches
 

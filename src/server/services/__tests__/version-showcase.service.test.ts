@@ -1,5 +1,6 @@
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { TRPCError } from '@trpc/server';
+import type * as FliptClient from '~/server/flipt/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
@@ -20,6 +21,15 @@ const mocks = vi.hoisted(() => ({
   entityChanges: vi.fn(async () => undefined),
 }));
 
+// Flipt answers only the showcase kill switch, and only while a test pauses it.
+const flipt = vi.hoisted(() => ({ paused: false }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  ensureFliptInitialized: vi.fn(async () => undefined),
+  isFliptSync: vi.fn((key: string) =>
+    key === 'model-version-showcase-serve' && flipt.paused ? false : null
+  ),
+}));
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: {},
   Tracker: class {
@@ -28,6 +38,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 }));
 
 const showcase = await import('../version-showcase.service');
+const { resetFeatureFlagsStateVersionCacheForTests } = await import('../feature-flags.service');
 const cover = await import('../model-cover.service');
 const { pickCoverImageId } = await import('~/shared/utils/model-sfw-face');
 const { VERSION_SHOWCASE_LIMIT } = await import('~/shared/constants/version-showcase.constants');
@@ -87,6 +98,8 @@ const levelRecomputes = () =>
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  flipt.paused = false;
+  resetFeatureFlagsStateVersionCacheForTests();
   // The showcase cache keeps a local copy too: each test reads its own entry.
   await showcase.getVersionShowcaseCache().bust([VERSION]);
   dbMock.dbWrite.$queryRaw.mockReset();
@@ -718,5 +731,44 @@ describe('hasCuratedShowcase: keeping a curated response out of the shared cache
     mocks.fetchError = new Error('redis down');
     // A version no other test has read, so nothing is cached for it.
     expect(await showcase.hasCuratedShowcase([VERSION + 1])).toBe(true);
+  });
+});
+
+describe('while showcases are paused', () => {
+  beforeEach(() => {
+    flipt.paused = true;
+    resetFeatureFlagsStateVersionCacheForTests();
+    publishedVersion();
+  });
+
+  it('refuses curating, so a save cannot overwrite a curation the editor cannot see', async () => {
+    const paused = /Model showcases are paused/;
+    await expect(
+      showcase.setVersionShowcase({
+        modelVersionId: VERSION,
+        site: 'red',
+        items: [{ imageId: 77 }],
+        userId: 5,
+        isModerator: false,
+      })
+    ).rejects.toThrow(paused);
+    await expect(
+      showcase.getVersionShowcaseEditor({
+        modelVersionId: VERSION,
+        userId: 5,
+        isModerator: false,
+        safeOnly: false,
+      })
+    ).rejects.toThrow(paused);
+    expect(dbMock.dbWrite.modelVersionShowcaseItem.createMany).not.toHaveBeenCalled();
+  });
+
+  it('still lets a moderator remove an image', async () => {
+    await showcase.moderatorRemoveFromVersionShowcase({
+      modelVersionId: VERSION,
+      imageId: 77,
+      moderatorId: 3,
+    });
+    expect(tombstoneWrites()).toHaveLength(1);
   });
 });

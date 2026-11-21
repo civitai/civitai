@@ -257,6 +257,7 @@ export type ModEndpoint =
   | 'bounty-entry-file/reblock-check'
   | 'bounty-poi/resolve-appeal'
   | 'bounty-unpaid-award/resolve'
+  | 'version-showcase/remove'
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'

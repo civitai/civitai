@@ -1,3 +1,4 @@
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { Prisma } from '@prisma/client';
 import { CacheTTL, CAROUSEL_LIMIT } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
@@ -185,9 +186,24 @@ function passesGalleryRules(
   return true;
 }
 
+/**
+ * Whether curated showcases are served (`modelVersionShowcaseServe`). Off, every reader serves the
+ * creator's own images and cover, curating is refused, and the stored rows and covers are kept for
+ * when it is back on. Removals still work.
+ */
+export function showcasesServed() {
+  return getFeatureFlagsLazy({}).modelVersionShowcaseServe;
+}
+
 export async function getVersionShowcases(modelVersionIds: number[]) {
-  if (!modelVersionIds.length) return {} as Record<number, CachedVersionShowcase>;
+  if (!modelVersionIds.length || !showcasesServed())
+    return {} as Record<number, CachedVersionShowcase>;
   return getVersionShowcaseCache().fetch(modelVersionIds);
+}
+
+function assertShowcasesServed() {
+  if (!showcasesServed())
+    throw throwBadRequestError('Model showcases are paused. Try again later.');
 }
 
 /**
@@ -544,7 +560,8 @@ export async function getShowcaseVersionsForPosts(postIds: number[]) {
  */
 export async function dropInvalidCommunityCovers(modelIds: number[]) {
   const ids = [...new Set(modelIds)];
-  if (!ids.length) return;
+  // Paused, no showcase reads as valid: the covers are kept, and readers skip them meanwhile.
+  if (!ids.length || !showcasesServed()) return;
   const models = await dbWrite.$queryRaw<
     {
       id: number;
@@ -877,6 +894,7 @@ export async function setVersionShowcase({
   userId: number;
   isModerator: boolean;
 }) {
+  assertShowcasesServed();
   const version = await getVersionForWrite(modelVersionId);
   assertCanCurate(version.model, userId, isModerator);
 
@@ -979,6 +997,7 @@ export async function setVersionShowcaseCover({
   userId: number;
   isModerator: boolean;
 }) {
+  assertShowcasesServed();
   // primary: the ownership check guarding a cover write.
   const model = await dbWrite.model.findUnique({
     where: { id: modelId },
@@ -1140,6 +1159,7 @@ export async function getVersionShowcaseEditor({
   /** A viewer who can't view mature content (civitai.com) gets only PG and PG-13 images. */
   safeOnly: boolean;
 }) {
+  assertShowcasesServed();
   const version = await getVersionForWrite(modelVersionId);
   assertCanCurate(version.model, userId, isModerator);
   const [{ imagesForModelVersionsCache }, model, tombstones] = await Promise.all([

@@ -657,6 +657,10 @@ const featureFlags = createFeatureFlags({
   profileShowcases: { availability: ['mod'], fliptKey: 'profile-showcases' },
   // Creators curate a model version's showcase per site and feature community images in it.
   modelVersionShowcase: { availability: ['mod'], fliptKey: 'model-version-showcase' },
+  // Kill switch for serving curated version showcases (the flag above gates curating). Read with no
+  // user, so it is one switch for everyone. `['public']`: ON when the Flipt key is absent or Flipt
+  // is down; creating the flag off turns every showcase back into the creator's own images.
+  modelVersionShowcaseServe: { availability: ['public'], fliptKey: 'model-version-showcase-serve' },
   // Recent written reviews on the model page, between Suggested Resources and Discussion.
   modelPageReviews: { availability: ['mod'], fliptKey: 'model-page-reviews' },
   // Civitai's 4th Birthday (Team Hats). Only the Flipt key is used, by the event engine's access

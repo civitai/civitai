@@ -1,6 +1,7 @@
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
+import type * as FliptClient from '~/server/flipt/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
@@ -15,6 +16,16 @@ import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+// Flipt answers only the showcase kill switch, and only while a test pauses it.
+const flipt = vi.hoisted(() => ({ paused: false }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  ensureFliptInitialized: vi.fn(async () => undefined),
+  isFliptSync: vi.fn((key: string) =>
+    key === 'model-version-showcase-serve' && flipt.paused ? false : null
+  ),
+}));
 
 const imageTags = vi.hoisted(() => new Map<number, number[]>());
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
@@ -42,6 +53,7 @@ const {
 } = await import('../version-showcase.service');
 const { getImagesForModelVersion } = await import('../image.service');
 const { publicModelResponseKey } = await import('../model-version.service');
+const { resetFeatureFlagsStateVersionCacheForTests } = await import('../feature-flags.service');
 
 const CREATOR = 1;
 const MODEL = 10;
@@ -175,6 +187,8 @@ afterAll(() => db.close());
 beforeEach(async () => {
   installFakeCacheRedis();
   redisMock.redis.del.mockClear();
+  flipt.paused = false;
+  resetFeatureFlagsStateVersionCacheForTests();
   await db.exec(`
     DELETE FROM "ModelVersionShowcaseItem"; DELETE FROM "Image"; DELETE FROM "Post";
     DELETE FROM "ImageResourceNew";
@@ -592,5 +606,36 @@ describe('the community filter and the owner showcase drop the same images', () 
     });
     expect(owner.map((image) => image.id)).toEqual([901]);
     expect(await served()).toEqual([clean]);
+  });
+});
+
+describe('while showcases are paused (the serve kill switch is off)', () => {
+  const pause = () => {
+    flipt.paused = true;
+    resetFeatureFlagsStateVersionCacheForTests();
+  };
+
+  it("serves the creator's own list and keeps the curated rows for when it is back on", async () => {
+    const id = await featured();
+    pause();
+    expect(await getVersionShowcases([VERSION])).toEqual({});
+    const owner = { [VERSION]: { images: [{ id: 1 }] } } as never;
+    expect(await withCuratedShowcases(owner, 'red')).toEqual(owner);
+
+    flipt.paused = false;
+    resetFeatureFlagsStateVersionCacheForTests();
+    expect(await served()).toEqual([id]);
+  });
+
+  it('keeps a community cover that would otherwise be cleared, and readers skip it', async () => {
+    const banned = await featured();
+    await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [banned, MODEL]);
+    await db.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [banned]);
+    pause();
+
+    await dropInvalidCommunityCovers([MODEL]);
+
+    expect(await redCover()).toBe(banned);
+    expect((await getShowcaseCommunityCovers([{ modelId: MODEL, imageId: banned }])).size).toBe(0);
   });
 });
