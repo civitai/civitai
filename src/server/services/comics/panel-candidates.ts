@@ -34,7 +34,7 @@ export type CandidateSlotPlan =
  * carrying a block is locked before any stored key is looked at. A stored key is reused only from
  * the entry with the same output id; entries written before ids were stored match by position, and
  * only when the batch has the same length and no blocked output, else they are locked. A locked
- * entry keeps the key it held; it is never handed out while locked.
+ * entry keeps a key only when it was matched by id; it is never handed out while locked.
  */
 export function planCandidateSlots(
   outputs: (CandidateOutput | null | undefined)[],
@@ -53,7 +53,9 @@ export function planCandidateSlots(
     const nsfwLevel = stricterLevel(previous?.nsfwLevel, freshLevels[i]);
     const level = nsfwLevel != null ? { nsfwLevel } : {};
     const id = outputId ? { outputId } : {};
-    const keptKey = previous?.key ? { key: previous.key } : {};
+    // Only a key matched by id is known to be this output's, so only it stays beside a lock. A key
+    // matched by position is retained (see retainedCandidateKeys) instead, never bound to this id.
+    const keptKey = byId?.key ? { key: byId.key } : {};
 
     if (out?.blockedReason) {
       return {

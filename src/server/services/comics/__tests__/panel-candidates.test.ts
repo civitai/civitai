@@ -67,7 +67,22 @@ describe('planCandidateSlots', () => {
       [1, 1]
     );
     expect(plans.map((p) => p.kind)).toEqual(['locked', 'locked']);
-    expect(plans.map((p) => p.kind === 'locked' && p.entry.key)).toEqual(['key-0', 'key-1']);
+    expect(plans.map((p) => p.kind === 'locked' && p.entry.key)).toEqual([undefined, undefined]);
+  });
+
+  it('never hands back an older key once it has been locked, on the following run', () => {
+    const outputs = [out('a'), out('b', { blockedReason: 'canUpgrade' })];
+    const first = planCandidateSlots(outputs, ['key-0', 'key-1'], [1, 1]);
+    const stored = first.map((p) => (p.kind === 'locked' || p.kind === 'reuse' ? p.entry : null));
+    expect(
+      retainedCandidateKeys(
+        ['key-0', 'key-1'],
+        stored.filter((e) => e !== null),
+        []
+      )
+    ).toEqual(['key-0', 'key-1']);
+    const second = planCandidateSlots([out('a'), out('b')], stored, [1, 1]);
+    expect(second.map((p) => p.kind)).toEqual(['download', 'download']);
   });
 
   it('locks every older keyed entry when the batch length differs', () => {

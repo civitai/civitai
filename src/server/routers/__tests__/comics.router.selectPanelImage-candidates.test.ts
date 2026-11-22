@@ -46,9 +46,10 @@ describe('selectPanelImage candidate choice', () => {
     await expect(selectFrom([{ key: 'a', nsfwLevel: 1 }], 'b')).rejects.toThrow(NOT_AVAILABLE);
   });
 
-  it('accepts an unlocked candidate key off the green site', async () => {
-    await expect(
-      selectFrom([{ key: 'mature', nsfwLevel: NsfwLevel.R }], 'mature')
-    ).rejects.not.toThrow(NOT_AVAILABLE);
+  it('accepts an unlocked candidate key off the green site and records it as an image', async () => {
+    await selectFrom([{ key: 'mature', nsfwLevel: NsfwLevel.R }], 'mature').catch(() => undefined);
+    expect(dbMock.dbWrite.image.create.mock.calls[0]?.[0]).toMatchObject({
+      data: expect.objectContaining({ url: 'mature' }),
+    });
   });
 });
