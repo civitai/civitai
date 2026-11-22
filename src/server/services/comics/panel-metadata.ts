@@ -89,6 +89,7 @@ export function viewerPanelMetadata(
       .filter((entry): entry is ViewerCandidate => entry !== null);
   }
   const source = panelSourceImageUrl(metadata);
+  out.hasSourceImage = !!source;
   if (source && keepSourceImage(source)) out.sourceImageUrl = source;
   return out;
 }

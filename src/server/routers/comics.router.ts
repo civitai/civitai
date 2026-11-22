@@ -686,6 +686,14 @@ async function assertReferencePanelImageUnblocked(
 }
 
 // Shared helper: resolve a reference's images for generation
+async function primarySourceRows(urls: string[]) {
+  // primary: a block or re-rating must show up on the next read, not after replica lag.
+  return dbWrite.image.findMany({
+    where: { url: { in: urls } },
+    select: { url: true, ...imageRestrictionSelect },
+  });
+}
+
 async function getReferenceImages(referenceId: number) {
   const reference = await dbRead.comicReference.findUnique({
     where: { id: referenceId },
@@ -1177,7 +1185,7 @@ export const comicsRouter = router({
         stripNsfwPanelImages([chapter], true);
       }
 
-      // A stored source may match several Image rows; every one must be servable, and none drops it.
+      // A source URL can match several Image rows; keep it only if every row may be shown.
       const sources = [
         ...new Set(
           chapter.panels
@@ -1185,12 +1193,7 @@ export const comicsRouter = router({
             .filter((v): v is string => v !== null)
         ),
       ];
-      const sourceRows = sources.length
-        ? await dbRead.image.findMany({
-            where: { url: { in: sources } },
-            select: { url: true, ...imageRestrictionSelect },
-          })
-        : [];
+      const sourceRows = sources.length ? await primarySourceRows(sources) : [];
       const keepSourceImage = (value: string) => {
         const rows = sourceRows.filter((row) => row.url === value);
         return (

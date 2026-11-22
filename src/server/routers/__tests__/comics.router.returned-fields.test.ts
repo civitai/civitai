@@ -69,7 +69,7 @@ async function panelMetadataFor(
     nsfwLevel: 1,
     panels: [{ id: 1, imageUrl: null, image: null, metadata: storedMetadata(source) }],
   } as never);
-  dbMock.dbRead.image.findMany.mockResolvedValue(rows as never);
+  dbMock.dbWrite.image.findMany.mockResolvedValue(rows as never);
   const caller = comicsRouter.createCaller({
     user: { ...viewer, onboarding: OnboardingSteps.Buzz, muted: false },
     acceptableOrigin: true,
@@ -99,6 +99,7 @@ describe('getChapter returned fields', () => {
       selectedImageIds: [11, 12],
       blockedReason: 'canUpgrade',
       sourceImageUrl: 'source-key',
+      hasSourceImage: true,
       generationParams: {
         engine: 'e',
         baseModel: 'b',
@@ -124,21 +125,21 @@ describe('getChapter returned fields', () => {
     ]);
   });
 
-  it('returns the source field to a moderator (case 1)', async () => {
+  it('returns the source field to a moderator when its image may be shown', async () => {
     expect((await panelMetadataFor(moderator)).sourceImageUrl).toBe('source-key');
   });
 
-  it('follows the shared visibility rule for the source field (case 2)', async () => {
+  it('returns the source field to the uploader only, by the shared visibility rule', async () => {
     const rows = [imageRow('source-key', NsfwLevel.Blocked, OWNER)];
     expect((await panelMetadataFor(moderator, { rows })).sourceImageUrl).toBeUndefined();
     expect((await panelMetadataFor(owner, { rows })).sourceImageUrl).toBe('source-key');
   });
 
-  it('follows the shared visibility rule for the source field (case 3)', async () => {
+  it('withholds the source field when no image row matches', async () => {
     expect((await panelMetadataFor(owner, { rows: [] })).sourceImageUrl).toBeUndefined();
   });
 
-  it('follows the shared visibility rule for the source field (case 4)', async () => {
+  it('withholds the source field when any matching row may not be shown', async () => {
     const rows = [
       imageRow('source-key', NsfwLevel.PG),
       imageRow('source-key', NsfwLevel.Blocked, OTHER),
@@ -146,9 +147,19 @@ describe('getChapter returned fields', () => {
     expect((await panelMetadataFor(owner, { rows })).sourceImageUrl).toBeUndefined();
   });
 
-  it('follows the shared visibility rule for the source field (case 5)', async () => {
+  it('withholds the source field by level on the green site', async () => {
     const rows = [imageRow('source-key', NsfwLevel.R)];
     expect((await panelMetadataFor(owner, { rows, isGreen: true })).sourceImageUrl).toBeUndefined();
     expect((await panelMetadataFor(owner, { rows })).sourceImageUrl).toBe('source-key');
+  });
+
+  it('says a source exists when its url is withheld', async () => {
+    const metadata = await panelMetadataFor(owner, { rows: [] });
+    expect(metadata.hasSourceImage).toBe(true);
+    expect(metadata).not.toHaveProperty('sourceImageUrl');
+  });
+
+  it('says no source exists when none was stored', async () => {
+    expect((await panelMetadataFor(owner, { source: '' })).hasSourceImage).toBe(false);
   });
 });
