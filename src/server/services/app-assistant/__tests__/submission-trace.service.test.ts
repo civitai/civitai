@@ -19,6 +19,7 @@ const {
   buildSubmissionTrace,
   bundleSignalFiles,
   deleteAssistantTracesOfAccount,
+  sweepDeletedAccountTraces,
   MAX_TRACED_SESSIONS,
   recordSubmissionTrace,
   transcriptKey,
@@ -222,6 +223,40 @@ describe('buildSubmissionTrace', () => {
     expect(written[0]!.conversationIds).toEqual(['conv-two']);
   });
 
+  it('signals that cannot be computed still write the row, saying why', async () => {
+    // A chat whose turns cannot be read by the signals, though it stores (and freezes) fine.
+    const odd = {
+      ...CHATS['conv-one'],
+      toJSON: () => CHATS['conv-one'],
+      // Counts as one turn, but cannot be walked.
+      turns: {
+        length: 1,
+        [Symbol.iterator]() {
+          throw new Error('turns unreadable');
+        },
+      },
+    } as unknown as StoredConversationMetadata;
+    const { d, written } = deps({
+      links: async () => ['conv-one'],
+      reader: async () => ({ read: async () => odd }),
+    });
+    const result = await buildSubmissionTrace(input, d);
+    expect(written).toHaveLength(1);
+    expect(written[0]!.snapshotError).toBe('signals: turns unreadable');
+    expect(written[0]!.snapshots.map((x) => x.error ?? 'frozen')).toEqual(['frozen']);
+    expect(result!.signals).toMatchObject({ sessionCount: 0, themeCustomized: null });
+  });
+
+  it('a step nothing else catches is logged and answered null: buildSubmissionTrace never throws', async () => {
+    const { d, written } = deps({
+      now: () => {
+        throw new Error('clock gone');
+      },
+    });
+    await expect(buildSubmissionTrace(input, d)).resolves.toBeNull();
+    expect(written).toEqual([]);
+  });
+
   it('nothing it meets throws: failing links, reader, bundle and row write', async () => {
     const { d } = deps({
       links: async () => {
@@ -274,6 +309,16 @@ describe('bundleSignalFiles', () => {
     const files = await bundleSignalFiles(await zip.generateAsync({ type: 'nodebuffer' }));
     expect([...files.keys()].sort()).toEqual(['package.json', 'src/app.css']);
   });
+
+  it('vendored dependencies never use up the budget the app’s own source is read within', async () => {
+    const zip = new JSZip();
+    // 20 files of 450 KiB each (9 MiB, over the 8 MiB budget), all excluded paths, listed first.
+    const big = 'a'.repeat(450 * 1024);
+    for (let i = 0; i < 20; i++) zip.file(`node_modules/lib-${i}/index.css`, big);
+    zip.file('src/z-own.css', '.mine { color: #123456; }');
+    const files = await bundleSignalFiles(await zip.generateAsync({ type: 'nodebuffer' }));
+    expect([...files.keys()]).toEqual(['src/z-own.css']);
+  });
 });
 
 describe('deleteAssistantTracesOfAccount (retention: deleted with the account)', () => {
@@ -306,21 +351,20 @@ describe('deleteAssistantTracesOfAccount (retention: deleted with the account)',
         if (key === failKey) throw new Error('store refused');
         objects.delete(key);
       },
-      deleteRows: async (userId: number) => {
+      deleteTraceRows: async (userId: number) => {
         rowsDeleted.push(userId);
-        return { traces: 2, links: 5 };
+        return 2;
       },
     };
     return { objects, rowsDeleted, deps };
   }
 
-  it('deletes every frozen transcript under the user’s requests, then their trace and link rows', async () => {
+  it('deletes every frozen transcript under the user’s requests, then their trace rows', async () => {
     const { objects, rowsDeleted, deps } = world();
     expect(await deleteAssistantTracesOfAccount(SUBMITTER, deps)).toEqual({
       objects: 3,
       failedObjects: 0,
       traces: 2,
-      links: 5,
     });
     expect([...objects]).toEqual([`${P('pubreq_other_user')}c.json`]);
     expect(rowsDeleted).toEqual([SUBMITTER]);
@@ -332,7 +376,6 @@ describe('deleteAssistantTracesOfAccount (retention: deleted with the account)',
       objects: 2,
       failedObjects: 1,
       traces: 0,
-      links: 0,
     });
     expect(objects.has(`${P('pubreq_two')}b.json`)).toBe(true);
     expect(rowsDeleted).toEqual([]);
@@ -358,5 +401,72 @@ describe('deleteAssistantTracesOfAccount (retention: deleted with the account)',
       failedObjects: 1,
     });
     expect(rowsDeleted).toEqual([]);
+  });
+});
+
+describe('sweepDeletedAccountTraces (the retry of unfinished deletions)', () => {
+  function sweep(overrides: { held?: Record<number, boolean | null>; failFor?: number } = {}) {
+    const deleted: number[] = [];
+    const deps = {
+      deletedAccountsWithTraces: async (limit: number) => {
+        expect(limit).toBeGreaterThan(0);
+        return [7301, 7402, 7503];
+      },
+      isHeld: async (userId: number) =>
+        overrides.held && userId in overrides.held ? overrides.held[userId]! : false,
+      deletion: {
+        traces: async (userId: number) => [
+          {
+            publishRequestId: `pubreq_${userId}`,
+            snapshots: [
+              { conversationId: 'c', key: `${TRANSCRIPT_PREFIX}/pubreq_${userId}/k.json` },
+            ],
+          },
+        ],
+        listKeys: async () => [],
+        deleteObject: async (key: string) => {
+          if (overrides.failFor !== undefined && key.includes(`pubreq_${overrides.failFor}/`))
+            throw new Error('store refused');
+        },
+        deleteTraceRows: async (userId: number) => {
+          deleted.push(userId);
+          return 1;
+        },
+      },
+    };
+    return { deleted, deps };
+  }
+
+  it('finishes every deleted account that still has traces', async () => {
+    const { deleted, deps } = sweep();
+    expect(await sweepDeletedAccountTraces(deps)).toEqual({
+      accounts: 3,
+      finished: 3,
+      held: 0,
+      failed: 0,
+    });
+    expect(deleted).toEqual([7301, 7402, 7503]);
+  });
+
+  it('skips a held account, and one whose hold cannot be read', async () => {
+    const { deleted, deps } = sweep({ held: { 7402: true, 7503: null } });
+    expect(await sweepDeletedAccountTraces(deps)).toEqual({
+      accounts: 3,
+      finished: 1,
+      held: 2,
+      failed: 0,
+    });
+    expect(deleted).toEqual([7301]);
+  });
+
+  it('an account the store still refuses is counted failed, keeps its rows, and the rest go on', async () => {
+    const { deleted, deps } = sweep({ failFor: 7402 });
+    expect(await sweepDeletedAccountTraces(deps)).toEqual({
+      accounts: 3,
+      finished: 2,
+      held: 0,
+      failed: 1,
+    });
+    expect(deleted).toEqual([7301, 7503]);
   });
 });

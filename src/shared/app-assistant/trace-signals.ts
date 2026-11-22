@@ -185,7 +185,7 @@ const SOURCE_FILE = /\.(?:css|scss|sass|less|html?|[cm]?[jt]sx?|vue|svelte)$/i;
 const STYLE_FILE = /\.(?:css|scss|sass|less)$/i;
 const MARKUP_FILE = /\.(?:html?|vue|svelte)$/i;
 /** Not the app's own styling: dependencies, build output, tests, the template's dev harness. */
-const EXCLUDED_PATH =
+export const EXCLUDED_PATH =
   /(?:^|\/)(?:node_modules|dist|build|\.git|coverage|test|tests|__tests__|scratch)\/|(?:^|\/)src\/dev\/|\.(?:test|spec)\.[cm]?[jt]sx?$|\.d\.ts$/i;
 
 const TOKEN_IN_CSS = /(--civitai-[a-z0-9-]+)\s*:/gi;

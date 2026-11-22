@@ -1,12 +1,16 @@
 import { parseArgs } from 'util';
 
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { transcriptReaderFor } from '~/server/services/app-assistant/session-transcripts';
 import {
   buildSubmissionTrace,
   liveSubmissionTraceDeps,
 } from '~/server/services/app-assistant/submission-trace.service';
-import { conversationsChoosing } from '~/server/services/app-assistant/trace-backfill';
+import {
+  backfillPage,
+  runTraceBackfill,
+  writeReplacingEmptyTrace,
+} from '~/server/services/app-assistant/trace-backfill';
 import { runScriptAndExit } from './lib/run-as-script';
 
 /**
@@ -17,14 +21,23 @@ import { runScriptAndExit } from './lib/run-as-script';
  *
  *   pnpm run tsscript scripts/backfill-app-assistant-traces.ts [--apply] [--since 2026-10-01]
  *     [--slug <slug>] [--request <publishRequestId>] [--limit 50] [--max-pages 20]
+ *     [--before <publishRequestId>] [--include-empty]
  *
  * Modes:
  *   (default)  Dry run: reads requests and the submitters' chats, prints what it would trace for
  *              each, writes nothing.
  *   --apply    Also fetches each request's bundle and writes its snapshots and trace row.
  *
- * Idempotent: a request that already has a trace is skipped (and the trace's unique key on the
- * request refuses a second row). Safe to stop and re-run.
+ * Progress: requests are paged newest first with a cursor, and every run ends with a
+ * `next: --before <publishRequestId>` line. Pass it to the next run to carry on past everything this
+ * one looked at, skipped requests (chats that could not be read) included, so a bulk backfill always
+ * moves forward. A request that fails is logged and the run goes on.
+ *
+ * `--include-empty` also re-traces requests whose trace froze NO chat (an app built before the
+ * links existed, submitted while tracing was on): the empty trace is replaced, never one with chats.
+ *
+ * Idempotent: a request that already has a trace with chats is never touched. Safe to stop and
+ * re-run.
  *
  * What it cannot find, by construction:
  *   - chats the user deleted, or that are past `--max-pages` × 50 of their most recent chats;
@@ -48,34 +61,36 @@ async function main() {
       request: { type: 'string' },
       limit: { type: 'string', default: '50' },
       'max-pages': { type: 'string', default: String(LIST_PAGE_CAP) },
+      before: { type: 'string' },
+      'include-empty': { type: 'boolean', default: false },
     },
   });
-  const limit = Math.max(1, Math.min(500, Number(values.limit)));
+  const limit = Math.max(1, Math.min(5000, Number(values.limit)));
   const maxPages = Math.max(1, Math.min(200, Number(values['max-pages'])));
-
-  const requests = await dbRead.appBlockPublishRequest.findMany({
-    where: {
-      assistantTrace: null,
-      ...(values.request ? { id: values.request } : {}),
-      ...(values.slug ? { slug: values.slug } : {}),
-      ...(values.since ? { submittedAt: { gte: new Date(values.since) } } : {}),
-    },
-    orderBy: { submittedAt: 'desc' },
-    take: limit,
-    select: { id: true, slug: true, submittedByUserId: true, bundleKey: true },
-  });
-  console.log(`${values.apply ? 'APPLY' : 'DRY RUN'}: ${requests.length} requests with no trace`);
-
-  // One listing of each submitter's chats, shared by their requests.
-  const chatsByUser = new Map<number, { conversationId: string }[] | string>();
   const deps = values.apply ? await liveSubmissionTraceDeps() : null;
-  let traced = 0;
-  for (const request of requests) {
-    let chats = chatsByUser.get(request.submittedByUserId);
-    if (chats === undefined) {
-      const reader = await transcriptReaderFor(request.submittedByUserId);
-      if ('refused' in reader) chats = reader.refused;
-      else {
+
+  await runTraceBackfill(
+    {
+      apply: values.apply ?? false,
+      limit,
+      includeEmpty: values['include-empty'] ?? false,
+      ...(values.before ? { before: values.before } : {}),
+    },
+    {
+      page: ({ after, take, includeEmpty }) =>
+        backfillPage(dbRead, {
+          ...(after ? { after } : {}),
+          take,
+          includeEmpty,
+          filters: {
+            ...(values.request ? { id: values.request } : {}),
+            ...(values.slug ? { slug: values.slug } : {}),
+            ...(values.since ? { since: new Date(values.since) } : {}),
+          },
+        }),
+      chatsOf: async (userId) => {
+        const reader = await transcriptReaderFor(userId);
+        if ('refused' in reader) return reader.refused;
         const all: { conversationId: string }[] = [];
         let cursor: string | undefined;
         for (let page = 0; page < maxPages; page++) {
@@ -84,50 +99,35 @@ async function main() {
           if (!listed.next) break;
           cursor = listed.next;
         }
-        chats = all;
-      }
-      chatsByUser.set(request.submittedByUserId, chats);
-    }
-    if (typeof chats === 'string') {
-      console.log(
-        `${request.id} ${request.slug} user ${request.submittedByUserId}: skipped (${chats})`
-      );
-      continue;
-    }
-    const conversationIds = conversationsChoosing(chats, request.slug);
-    console.log(
-      `${request.id} ${request.slug} user ${request.submittedByUserId}: ${conversationIds.length} chats`
-    );
-    if (!deps) continue;
-    let bundleBuffer = Buffer.alloc(0);
-    if (request.bundleKey) {
-      const [s3, { GetObjectCommand }] = await Promise.all([
-        import('~/utils/bundle-s3'),
-        import('@aws-sdk/client-s3'),
-      ]);
-      const object = await s3
-        .getBundleS3Client()
-        .send(new GetObjectCommand({ Bucket: s3.getBundleBucket(), Key: request.bundleKey }));
-      bundleBuffer = Buffer.from((await object.Body?.transformToByteArray()) ?? []);
-    }
-    const result = await buildSubmissionTrace(
-      {
-        publishRequestId: request.id,
-        slug: request.slug,
-        submittedByUserId: request.submittedByUserId,
-        bundleBuffer,
-        conversationIds,
+        return all;
       },
-      deps
-    );
-    if (result) traced++;
-    console.log(
-      `  ${result ? 'traced' : 'NOT written'}${
-        result?.snapshotError ? `: ${result.snapshotError}` : ''
-      }`
-    );
-  }
-  if (values.apply) console.log(`traced ${traced} of ${requests.length}`);
+      trace: async (request, conversationIds) => {
+        if (!deps) return null;
+        let bundleBuffer = Buffer.alloc(0);
+        if (request.bundleKey) {
+          const [s3, { GetObjectCommand }] = await Promise.all([
+            import('~/utils/bundle-s3'),
+            import('@aws-sdk/client-s3'),
+          ]);
+          const object = await s3
+            .getBundleS3Client()
+            .send(new GetObjectCommand({ Bucket: s3.getBundleBucket(), Key: request.bundleKey }));
+          bundleBuffer = Buffer.from((await object.Body?.transformToByteArray()) ?? []);
+        }
+        return buildSubmissionTrace(
+          {
+            publishRequestId: request.id,
+            slug: request.slug,
+            submittedByUserId: request.submittedByUserId,
+            bundleBuffer,
+            conversationIds,
+          },
+          { ...deps, write: async (row) => void (await writeReplacingEmptyTrace(dbWrite, row)) }
+        );
+      },
+      log: (line) => console.log(line),
+    }
+  );
 }
 
 void runScriptAndExit(main);

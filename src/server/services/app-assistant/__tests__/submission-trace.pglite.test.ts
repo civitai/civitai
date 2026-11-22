@@ -27,6 +27,9 @@ const migration = (name: string) =>
 const { aggregateSignals, getAppTraces, getRequestTrace } = await import(
   '~/server/services/app-assistant/submission-trace.service'
 );
+const { backfillPage, writeReplacingEmptyTrace } = await import(
+  '~/server/services/app-assistant/trace-backfill'
+);
 
 let h: Awaited<ReturnType<typeof startPglitePrisma>>;
 
@@ -36,7 +39,8 @@ beforeAll(async () => {
     INSERT INTO "User" VALUES (7301), (7402);
     CREATE TABLE "app_block_publish_requests" (
       id text PRIMARY KEY, slug text NOT NULL, version text NOT NULL, status text NOT NULL,
-      submitted_at timestamptz(6) NOT NULL, submitted_by_user_id integer NOT NULL
+      submitted_at timestamptz(6) NOT NULL, submitted_by_user_id integer NOT NULL,
+      bundle_key text NOT NULL DEFAULT ''
     );
     ${migration('20271124120000_app_assistant_session_links')}
     ${migration('20271124130000_app_publish_request_traces')}
@@ -204,5 +208,53 @@ describe('getAppTraces / getRequestTrace', () => {
     });
     expect(one!.links.map((l) => l.conversationId)).toEqual(['c-mid']);
     expect(await getRequestTrace('r-missing')).toBeNull();
+  });
+});
+
+describe('the backfill’s page and write', () => {
+  async function three() {
+    await request('r-untraced', 'app-u', '2026-11-03T00:00:00Z');
+    await request('r-empty', 'app-e', '2026-11-02T00:00:00Z');
+    await request('r-chats', 'app-c', '2026-11-01T00:00:00Z');
+    await trace('r-empty', 'app-e', '2026-11-02T00:00:00Z', { themeCustomized: true });
+    await trace('r-chats', 'app-c', '2026-11-01T00:00:00Z', { themeCustomized: false }, ['c-kept']);
+  }
+
+  it('pages untraced requests newest first; with includeEmpty, zero-chat traces too; never one with chats', async () => {
+    await three();
+    const ids = async (includeEmpty: boolean, after?: string) =>
+      (await backfillPage(h.prisma, { take: 10, includeEmpty, ...(after ? { after } : {}) })).map(
+        (r) => r.id
+      );
+    expect(await ids(false)).toEqual(['r-untraced']);
+    expect(await ids(true)).toEqual(['r-untraced', 'r-empty']);
+    // The cursor resumes strictly after the request it names.
+    expect(await ids(true, 'r-untraced')).toEqual(['r-empty']);
+  });
+
+  it('replaces a zero-chat trace in place, and never overwrites a trace with chats', async () => {
+    await three();
+    const row = (publishRequestId: string) => ({
+      publishRequestId,
+      slug: 'x',
+      userId: 7301,
+      conversationIds: ['c-new'],
+      snapshots: [{ conversationId: 'c-new', key: 'k' }],
+      signals: { themeCustomized: false },
+      signalsVersion: 1,
+      snapshotError: null,
+    });
+    expect(await writeReplacingEmptyTrace(h.prisma, row('r-empty'))).toBe('replaced');
+    expect(await writeReplacingEmptyTrace(h.prisma, row('r-untraced'))).toBe('created');
+    await expect(writeReplacingEmptyTrace(h.prisma, row('r-chats'))).rejects.toThrow();
+    await h.recover();
+    const { rows } = await h.pg.query<{ publish_request_id: string; conversation_ids: string[] }>(
+      'SELECT publish_request_id, conversation_ids FROM app_publish_request_traces ORDER BY 1'
+    );
+    expect(rows).toEqual([
+      { publish_request_id: 'r-chats', conversation_ids: ['c-kept'] },
+      { publish_request_id: 'r-empty', conversation_ids: ['c-new'] },
+      { publish_request_id: 'r-untraced', conversation_ids: ['c-new'] },
+    ]);
   });
 });

@@ -327,9 +327,13 @@ describe('deleteUser — App Assistant session links', () => {
     links().mockRejectedValue(new Error('connection reset'));
     await expect(UserService.deleteUser({ id: USER_ID, actorId: USER_ID })).resolves.toBeDefined();
     expect(stepErrors()).toHaveLength(1);
+  });
+});
+
+/**
  * App Assistant session traces go with the account too (retention: "request lifetime + account
  * delete"): the REAL `deleteUser` deletes the user's frozen chat transcripts from the bundle store,
- * then their trace and link rows; a held account keeps them, and a store that refuses a delete keeps
+ * then their trace rows (the link rows are their own step); a held account keeps them, and a store that refuses a delete keeps
  * the rows (so they still name what is left).
  */
 describe('deleteUser — App Assistant session traces', () => {
@@ -382,11 +386,33 @@ describe('deleteUser — App Assistant session traces', () => {
     expect(dbMock.dbWrite.appAssistantSessionLink.deleteMany).not.toHaveBeenCalled();
   });
 
-  it('a store that refuses the deletes keeps the rows, and the account deletion still completes', async () => {
+  it('a store that refuses the deletes keeps the trace rows; the link rows go regardless', async () => {
     h.failBundleDeletes = true;
     await expect(UserService.deleteUser({ id: USER_ID, actorId: USER_ID })).resolves.toBeDefined();
     expect(h.bundles.has(MINE)).toBe(true);
     expect(dbMock.dbWrite.appPublishRequestTrace.deleteMany).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.appAssistantSessionLink.deleteMany).not.toHaveBeenCalled();
+    // The links are their own step and never wait on the transcripts.
+    expect(dbMock.dbWrite.appAssistantSessionLink.deleteMany).toHaveBeenCalledWith({
+      where: { userId: USER_ID },
+    });
+  });
+
+  it('the trace table not applied yet: no traces, no failure logged, and the link rows still go', async () => {
+    const missing = () =>
+      Object.assign(new Error('The table `app_publish_request_traces` does not exist'), {
+        code: 'P2021',
+      });
+    dbMock.dbWrite.appPublishRequestTrace.findMany.mockRejectedValue(missing());
+    dbMock.dbWrite.appPublishRequestTrace.deleteMany.mockRejectedValue(missing());
+    await expect(UserService.deleteUser({ id: USER_ID, actorId: USER_ID })).resolves.toBeDefined();
+    const errors = loggingMock.logToAxiom.mock.calls.filter(
+      ([entry]) =>
+        (entry as { type?: string }).type === 'error' &&
+        /app-assistant/.test(String((entry as { name?: string }).name))
+    );
+    expect(errors).toEqual([]);
+    expect(dbMock.dbWrite.appAssistantSessionLink.deleteMany).toHaveBeenCalledWith({
+      where: { userId: USER_ID },
+    });
   });
 });
