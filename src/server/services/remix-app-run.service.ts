@@ -487,8 +487,9 @@ async function advance({
   const currencies = getAllowedAccountTypes(caller.features, ['blue']);
   const quarantined = async (error: unknown) => {
     if (!(error instanceof RemixQuarantinedError)) return error;
-    return (await noteRunnerQuarantine({ slug: app.slug, author }, caller.user.id, error))
-      ? new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD })
+    const refusal = await noteRunnerQuarantine({ slug: app.slug, author }, caller.user.id, error);
+    return refusal
+      ? new TRPCError({ code: 'PRECONDITION_FAILED', message: refusal })
       : new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE });
   };
   const replay = () =>

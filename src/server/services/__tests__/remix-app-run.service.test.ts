@@ -407,7 +407,10 @@ import {
   REMIX_APP_UNJUDGED,
   startRemixRun,
 } from '~/server/services/remix-app-run.service';
-import { REMIX_APP_UNAVAILABLE } from '~/server/services/remix-app-registry.service';
+import {
+  REMIX_APP_UNAVAILABLE,
+  REMIX_AUTHOR_HELD,
+} from '~/server/services/remix-app-registry.service';
 import { REMIX_SYSTEM_ACTOR } from '~/shared/remix-apps/row.schema';
 import {
   listRemixApps,
@@ -2407,9 +2410,10 @@ describe('a user app', () => {
           expect(observed).toMatchObject({ action: 'held-runner-quarantine-observed' });
           expect(observed.note).toContain('1 of 3');
           expect(observed.note).not.toMatch(/[0-9a-f]{16}|101/);
-          // The author's own runs never count.
+          // The author's own trip counts against the author, never the source; a viewer's never holds the author.
           await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(unavailable);
-          expect(written()).toHaveLength(1);
+          expect(counted()).toHaveLength(1);
+          expect(written().at(-1)?.manifest).toMatchObject({ runnerTrips: [expect.any(String)] });
           // A new source starts the count again.
           stored = {
             ...stored,
@@ -2453,6 +2457,91 @@ describe('a user app', () => {
           await expect(runAs(102)).rejects.toMatchObject(unavailable);
           await expect(runAs(103)).rejects.toMatchObject(held);
           expect(stored.status).toBe('remix_disabled');
+        });
+
+        describe("the author's own trips", () => {
+          const authorHeld = { code: 'PRECONDITION_FAILED', message: REMIX_AUTHOR_HELD };
+          const withSource = async (source: string) => {
+            stored = {
+              ...stored,
+              manifest: { ...stored.manifest, remix: { ...stored.manifest.remix, source } },
+            };
+            await bumpRemixAppRegistry();
+          };
+
+          it('hold the author at the third, a new source each time; until a mod clears it, the author neither runs, prices nor saves', async () => {
+            const { submitUserRemixApp, clearRemixRunnerHold } = await import(
+              '~/server/services/remix-app-registry.service'
+            );
+            quarantine(true);
+            for (const source of [ASKING_SOURCE, SUFFIX_SOURCE]) {
+              await withSource(source);
+              await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(unavailable);
+            }
+            await withSource(TWO_SOURCE);
+            await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(authorHeld);
+            expect(stored.manifest).toMatchObject({ runnerHold: { at: expect.any(String) } });
+            expect(reviewLog().at(-1)).toMatchObject({
+              action: 'held-runner-quarantine',
+              by: REMIX_SYSTEM_ACTOR,
+              note: 'author trip 3 of 3',
+            });
+            // The app itself stays as the mod left it: only its author is held.
+            expect(stored.status).toBe('remix');
+
+            const writes = written().length;
+            await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(authorHeld);
+            expect(
+              await quoteRemixApps({
+                imageId: SOURCE_ID,
+                slug: 'u5-mine',
+                caller: flagOn({ id: OTHER_AUTHOR }),
+              })
+            ).toEqual({ prices: [{ slug: 'u5-mine', refusal: REMIX_AUTHOR_HELD }] });
+            await expect(
+              submitUserRemixApp({
+                name: 'mine',
+                title: 'Mine',
+                icon: 'sparkles',
+                source: ASKING_SOURCE,
+                authorId: OTHER_AUTHOR,
+                isGreen: false,
+              })
+            ).rejects.toMatchObject(authorHeld);
+            expect(written()).toHaveLength(writes);
+
+            await clearRemixRunnerHold({ slug: 'u5-mine', moderatorId: 88 });
+            expect(stored.manifest).not.toHaveProperty('runnerHold');
+            expect(stored.manifest).not.toHaveProperty('runnerTrips');
+            expect(reviewLog().at(-1)).toMatchObject({ action: 'cleared-runner-hold', by: 88 });
+            await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(unavailable);
+            expect(stored.manifest).toMatchObject({ runnerTrips: [expect.any(String)] });
+          });
+
+          it("count with the author's trips on their other apps, for a day", async () => {
+            const { remixBlockId } = await import('~/server/services/remix-app-registry.service');
+            const other = rowOf();
+            const sibling = {
+              ...other,
+              id: 'ab_rx_u5_other______________',
+              blockId: remixBlockId('u5-other'),
+              manifest: {
+                ...other.manifest,
+                runnerTrips: [
+                  new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+                  new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+                ],
+              },
+            };
+            dbMock.dbWrite.appBlock.findMany.mockImplementation(
+              async () => [stored, sibling] as never
+            );
+            await bumpRemixAppRegistry();
+            quarantine(true);
+            // One recent trip there and this one make two: the 25 h old one no longer counts.
+            await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(unavailable);
+            await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(authorHeld);
+          });
         });
 
         it.each([

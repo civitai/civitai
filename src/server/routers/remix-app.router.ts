@@ -33,6 +33,7 @@ import {
   submitUserRemixApp,
   reviewUserRemixApp,
   clearRemixMinorThemed,
+  clearRemixRunnerHold,
   validateUserRemixApp,
 } from '~/server/services/remix-app-registry.service';
 import {
@@ -159,6 +160,12 @@ const remixAppAdminRouter = router({
     .input(z.object({ slug: remixAppSlugSchema }))
     .mutation(({ ctx, input }) =>
       clearRemixMinorThemed({ slug: input.slug, moderatorId: ctx.user.id })
+    ),
+  /** Lifts a runner-trip hold off the app's author. */
+  clearRunnerHold: userCodeReviewProcedure
+    .input(z.object({ slug: remixAppSlugSchema }))
+    .mutation(({ ctx, input }) =>
+      clearRemixRunnerHold({ slug: input.slug, moderatorId: ctx.user.id })
     ),
   order: remixAppAdminProcedure
     .input(z.object({ slugs: remixAppSlugSchema.array().max(100) }))

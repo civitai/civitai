@@ -16,7 +16,8 @@ import {
   getRemixAppRegistry,
   isRunnableBy,
   noteRunnerQuarantine,
-  REMIX_APP_HELD,
+  REMIX_AUTHOR_HELD,
+  isRemixAuthorHeld,
   visibleRemixApps,
   type RegisteredRemixApp,
 } from '~/server/services/remix-app-registry.service';
@@ -384,26 +385,33 @@ export async function quoteRemixApps({
     (entry) =>
       entry.target === 'image.remix' && (slug === undefined ? !entry.author : entry.slug === slug)
   );
+  // Pricing a user app runs its source: an author held for runner trips prices none of theirs.
+  const ownHeld =
+    !caller.user.isModerator &&
+    apps.some((entry) => entry.author?.userId === caller.user.id) &&
+    (await isRemixAuthorHeld(caller.user.id));
   const prices = await Promise.all(
     apps.map((entry) =>
-      // One app that can't be priced refuses only itself.
-      quoteRuntimeApp(entry, image, caller, pricing).catch(async (error) => {
-        // Pricing a user app runs its source, so a quarantine here counts as a run's does.
-        if (error instanceof RemixQuarantinedError) {
-          const held = await noteRunnerQuarantine(entry, caller.user.id, error);
-          return { slug: entry.slug, refusal: held ? REMIX_APP_HELD : PRICE_UNAVAILABLE };
-        }
-        logToAxiom({
-          name: 'remix-app-quote',
-          type: 'warning',
-          message: 'Could not price a remix app',
-          payload: {
-            slug: entry.slug,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        });
-        return { slug: entry.slug, refusal: PRICE_UNAVAILABLE };
-      })
+      ownHeld && entry.author?.userId === caller.user.id
+        ? { slug: entry.slug, refusal: REMIX_AUTHOR_HELD }
+        : // One app that can't be priced refuses only itself.
+          quoteRuntimeApp(entry, image, caller, pricing).catch(async (error) => {
+            // Pricing a user app runs its source, so a quarantine here counts as a run's does.
+            if (error instanceof RemixQuarantinedError) {
+              const refusal = await noteRunnerQuarantine(entry, caller.user.id, error);
+              return { slug: entry.slug, refusal: refusal ?? PRICE_UNAVAILABLE };
+            }
+            logToAxiom({
+              name: 'remix-app-quote',
+              type: 'warning',
+              message: 'Could not price a remix app',
+              payload: {
+                slug: entry.slug,
+                error: error instanceof Error ? error.message : String(error),
+              },
+            });
+            return { slug: entry.slug, refusal: PRICE_UNAVAILABLE };
+          })
     )
   );
   return { prices };
