@@ -28,6 +28,28 @@ export async function fetchSandboxTunnelStatus(
   return body === null ? null : tunnelStatusOf(body);
 }
 
+/** What the app's sandbox says of its dev server: running or not. */
+export interface SandboxDevServerStatus {
+  running: boolean;
+}
+
+/**
+ * Asks the app's sandbox whether its dev server is up: the sandbox's own `dev_server_status`. A
+ * direct preview (no tunnel) is served straight from that dev server, so this is its sandbox side,
+ * as `tunnel_status` is a tunnel's. `null` exactly as for `fetchSandboxTunnelStatus`: no clear
+ * answer, never "down".
+ */
+export async function fetchSandboxDevServerStatus(
+  mcpUrl: string,
+  getToken: (opts?: { refresh?: boolean }) => Promise<string>,
+  fetchImpl: typeof fetch = (...args) => fetch(...args)
+): Promise<SandboxDevServerStatus | null> {
+  const body = await callSandboxTool(mcpUrl, getToken, 'dev_server_status', {}, fetchImpl);
+  if (body === null) return null;
+  const status = runningStatusOf(body);
+  return status && { running: status.running };
+}
+
 /**
  * Calls one tool of the app's sandbox (its MCP endpoint, `mcpUrl`, with the user's sandbox token) as
  * a single stateless `tools/call`, and answers the response body; `null` when the sandbox did not
@@ -88,13 +110,24 @@ export function toolResultOf(body: string): { isError: boolean; text: string | u
  * the answer is an error or does not say.
  */
 export function tunnelStatusOf(body: string): SandboxTunnelStatus | null {
+  const status = runningStatusOf(body);
+  if (!status) return null;
+  const { running, host } = status;
+  return { running, host: typeof host === 'string' && host ? host : null };
+}
+
+/**
+ * A sandbox status tool's answer (`tunnel_status`, `dev_server_status`): its JSON object, when it
+ * says `running` as a boolean; `null` when the answer is an error or does not say.
+ */
+function runningStatusOf(body: string): ({ running: boolean } & Record<string, unknown>) | null {
   const result = toolResultOf(body);
   if (!result || result.isError) return null;
   const status = result.text === undefined ? null : parseJson(result.text);
   if (!status || typeof status !== 'object') return null;
-  const { running, host } = status as { running?: unknown; host?: unknown };
+  const { running } = status as { running?: unknown };
   if (typeof running !== 'boolean') return null;
-  return { running, host: typeof host === 'string' && host ? host : null };
+  return status as { running: boolean } & Record<string, unknown>;
 }
 
 function lastEventData(body: string): string {
