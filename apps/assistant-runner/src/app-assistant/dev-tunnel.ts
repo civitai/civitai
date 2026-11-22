@@ -9,8 +9,8 @@ export const PREVIEW_OPEN_PATH = 'api/internal/app-assistant/preview/open';
 /**
  * How many times `open` asks while civitai answers `unavailable`: it does so while another open of
  * the same app holds its lock (the page's Restart preview and a run's start at once), and for a
- * moment's failure. `OPEN_RETRY_MS` apart: about 3 s of waiting between asks, on top of each ask's
- * own `REQUEST_TIMEOUT_MS` (15 s), so at most about 63 s in all.
+ * moment's failure. Each ask waits up to `REQUEST_TIMEOUT_MS`, and the asks are `OPEN_RETRY_MS`
+ * apart.
  */
 export const OPEN_ATTEMPTS = 4;
 const OPEN_RETRY_MS = 1_000;

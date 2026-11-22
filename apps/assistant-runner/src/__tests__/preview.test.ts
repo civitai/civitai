@@ -91,11 +91,6 @@ class FakeTunnels implements DevTunnels {
     return { mode: 'direct', sessionId: written.sessionId };
   }
 
-  /**
-   * civitai's tunnel records by block id (the flag-off path): a by-block keepalive or stop is for
-   * direct sessions only, so it never keeps or ends one of these.
-   */
-  readonly tunnelBlocks = new Set<string>();
   /** By-block keepalives civitai answered 404 (no direct session for the block), by block id. */
   readonly blockMisses: string[] = [];
 
@@ -112,8 +107,12 @@ class FakeTunnels implements DevTunnels {
     this.stopped.push(sessionId);
   }
 
+  /** What a by-block stop throws instead of answering (a 5xx, a timeout), when set. */
+  stopBlockError: (() => unknown) | null = null;
+
   async stopBlock(blockId: string) {
     this.blockStops.push(blockId);
+    if (this.stopBlockError) throw this.stopBlockError();
     return this.directSessions.delete(blockId);
   }
 }
@@ -1240,7 +1239,7 @@ describe('direct preview (civitai serves it with no tunnel)', () => {
     expect(tunnels.directSessions.has('my-app')).toBe(false);
   });
 
-  // Invariant guard (green before this change too): with a tunnel running in the sandbox, a later
+  // Invariant guard: with a tunnel running in the sandbox, a later
   // run's stop_preview stays the tunnel's own disconnect and asks civitai nothing by block.
   it('a later run’s stop_preview of a running tunnel only disconnects it, as before', async () => {
     fake.add('my-app');
@@ -1288,17 +1287,44 @@ describe('direct preview (civitai serves it with no tunnel)', () => {
     expect(tunnels.opens).toHaveLength(1);
   });
 
-  // Invariant guard at the fake's level (civitai's own filter is what makes it true, pinned by
-  // the request bodies in "CivitaiDevTunnels: direct preview calls"): flag off, a later run's
-  // stop_preview with no tunnel running leaves civitai's tunnel record alone, and answers as before.
+  // Through the real client, against a civitai that models its by-block stop: with
+  // `transport: "direct"` it leaves a tunnel record alone; without it, it closes whatever the
+  // (user, block) pair holds.
   it('flag off: a later run’s stop_preview with no tunnel running leaves the tunnel record alone', async () => {
     fake.add('my-app');
-    tunnels.tunnelBlocks.add('my-app');
-    const { tools } = await open();
+    const tunnelRecords = new Set(['my-app']);
+    const stops: Record<string, unknown>[] = [];
+    const civitai = new CivitaiDevTunnels({
+      civitaiUrl: 'https://civitai.example',
+      secret: 'test-only-runner-secret',
+      log: quiet,
+      fetch: async (input, init) => {
+        const body = JSON.parse(String(init!.body)) as Record<string, unknown>;
+        if (!String(input).endsWith('/stop')) return Response.json({});
+        stops.push(body);
+        const blockId = String(body.blockId);
+        const stopped = body.transport === 'direct' ? false : tunnelRecords.delete(blockId);
+        return Response.json({ stopped });
+      },
+    }).forRun(async () => 'test-only-grant');
+    const tools = await new AppAssistantTools({
+      sandboxUrl: fake.url,
+      tokens: () => async (purpose) => `test-token-${purpose}`,
+      devTunnels: () => civitai,
+      log: quiet,
+      previewKeepaliveMs: KEEPALIVE_MS,
+    }).open({
+      userId: 'u-1',
+      runId: 'run-1',
+      conversationId: 'conv-1',
+      page: { app: 'my-app' },
+      signal: new AbortController().signal,
+    });
+    opened.push(tools);
     expect(await call(tools.tools, 'stop_preview')).toEqual({ stopped: true });
     expect(tunnelCalls()).toEqual(['tunnel_disconnect']);
-    expect(tunnels.stopped).toEqual([]);
-    expect(tunnels.tunnelBlocks.has('my-app')).toBe(true);
+    expect(stops).toEqual([{ grant: 'test-only-grant', blockId: 'my-app', transport: 'direct' }]);
+    expect(tunnelRecords.has('my-app')).toBe(true);
   });
 
   it('a later run stops it under the block id its manifest names, not the app’s key', async () => {
@@ -1359,7 +1385,66 @@ describe('direct preview (civitai serves it with no tunnel)', () => {
     ]);
   });
 
-  // Invariant guard (green before this change too): with no declared scopes or auth, reuse stays.
+  describe('the stop before an open is best-effort', () => {
+    const failing = () => new DevTunnelError('later', 503, 'unavailable');
+
+    it('flag off: a failing stop never fails a tunnel start that declares scopes', async () => {
+      directApp();
+      tunnels.direct = false;
+      tunnels.stopBlockError = failing;
+      const { tools } = await open();
+      const result = await call(tools.tools, 'start_preview', { declared_scopes: ['models:read'] });
+      expect(result).toMatchObject({ shown: true, blockId: 'my-app', host: HOST });
+      expect(tunnels.blockStops).toEqual(['my-app']);
+      expect(tunnelCalls()).toEqual(['tunnel_key', 'tunnel_connect']);
+      expect(tunnels.started).toHaveLength(1);
+    });
+
+    it('direct: a failing stop still opens, but the session is not taken to hold the scopes', async () => {
+      directApp();
+      tunnels.stopBlockError = failing;
+      const { tools } = await open();
+      const first = await call(tools.tools, 'start_preview', { declared_scopes: ['models:read'] });
+      expect(first).toMatchObject({ shown: true, blockId: 'my-app' });
+      expect(tunnels.opens).toHaveLength(1);
+      // Asked again with the same scopes: not answered from memory, so the stop is tried again.
+      await call(tools.tools, 'start_preview', { declared_scopes: ['models:read'] });
+      expect(tunnels.blockStops).toEqual(['my-app', 'my-app']);
+      expect(tunnels.opens).toHaveLength(2);
+      // Once the stop works, the open after it writes the session and it is known to hold them.
+      tunnels.stopBlockError = null;
+      await call(tools.tools, 'start_preview', { declared_scopes: ['models:read'] });
+      const opens = tunnels.opens.length;
+      await call(tools.tools, 'start_preview', { declared_scopes: ['models:read'] });
+      expect(tunnels.opens).toHaveLength(opens);
+    });
+
+    // Invariant guard: an abort during the stop still ends the start, and nothing is opened.
+    it('an abort during the stop is not swallowed', async () => {
+      directApp();
+      const stop = new AbortController();
+      tunnels.stopBlockError = () => {
+        stop.abort();
+        return stop.signal.reason;
+      };
+      const { tools } = await open();
+      const tool = tools.tools['start_preview']!;
+      const result = (await Promise.resolve(
+        tool.execute!(
+          { declared_scopes: ['models:read'] } as never,
+          {
+            toolCallId: 'p-abort',
+            messages: [],
+            abortSignal: stop.signal,
+          } as never
+        )
+      ).catch((error: unknown) => ({ thrown: error }))) as Record<string, unknown>;
+      expect(result.shown).toBeUndefined();
+      expect(tunnels.opens).toEqual([]);
+    });
+  });
+
+  // Invariant guard: with no declared scopes or auth, reuse stays.
   it('a start that declares no scopes or auth reuses the open session: no stop, no new start', async () => {
     directApp();
     const first = await open();
@@ -1513,7 +1598,6 @@ describe('CivitaiDevTunnels: direct preview calls', () => {
       await vi.runAllTimersAsync();
       expect(await opened).toMatchObject({ status: 503, code: 'unavailable' });
       expect(sent).toHaveLength(OPEN_ATTEMPTS);
-      expect(OPEN_ATTEMPTS).toBe(4);
 
       const refused = client(() =>
         Response.json({ error: 'Too many', code: 'TOO_MANY_REQUESTS' }, { status: 429 })

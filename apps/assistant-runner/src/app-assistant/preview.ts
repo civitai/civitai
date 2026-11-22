@@ -128,7 +128,7 @@ export type AutoPreview = { shown: StartedPreview } | { error: string };
  * tunnel for the run grant's user; the sandbox only ever gets its own single-use key's host and sish's
  * host key, as in the browser; the assistant never gets the raw tunnel tools, so it cannot point the
  * sandbox at a host civitai did not open. What a result says (and so what the page and the saved
- * conversation see) is the block id and the host, never the tunnel's id.
+ * conversation see) is the block id (and a tunnel's host), never the tunnel's id.
  *
  * Direct preview (civitai's `app-assistant-direct-preview` flag): each start first asks civitai's
  * `preview/open` with the app's sandbox's preview id. When civitai answers with a session, the
@@ -573,12 +573,8 @@ export class RunnerPreview {
     }
     if (!previewId) return null;
 
-    // civitai answers a session already open for the app's preview id as it is, with the scopes
-    // and auth it was opened with. So a start that declares scopes or auth (an earlier reply may
-    // have opened the session with others: the manifest changed since), or that asks this run's
-    // own preview of this block for others, ends the app's direct session first: the open after
-    // that always writes a new one with these. One start, as a tunnel start is. Direct sessions
-    // only (`stopBlock`): a tunnel of the app is never touched by it.
+    // An open session keeps the scopes it was opened with, so a start that declares scopes or auth
+    // ends the app's direct session first (best-effort; `stopBlock` leaves tunnels alone).
     const sameBlock =
       previous?.transport === 'direct' && previous.app === appName && previous.blockId === blockId;
     const declares = (declaredScopes?.length ?? 0) > 0 || declaredAuth !== undefined;
@@ -586,11 +582,13 @@ export class RunnerPreview {
     if (sameBlock || declares) {
       try {
         await tunnels.stopBlock(blockId, signal);
+        if (sameBlock) this.#open = null;
+        ended = true;
       } catch (error) {
-        throw new Error(refusalMessage(error), { cause: error });
+        if (signal?.aborted) throw error;
+        // Not ended: a session reused below is not taken to hold these scopes (`scopesKnown`).
+        this.#warn(error, 'ending a direct preview before opening it failed');
       }
-      if (sameBlock) this.#open = null;
-      ended = true;
     }
 
     const ask = (id: string) =>
