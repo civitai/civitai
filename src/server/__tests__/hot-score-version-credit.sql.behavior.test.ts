@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { EARLY_ACCESS_PURCHASES } from '~/server/services/model-version-access.service';
 
 /**
  * The Hot score triggers, run as written against an in-process Postgres: the migrations that
@@ -595,6 +596,16 @@ describe('paid buyers count toward the head-start bar like likes', () => {
     const id = await model(OLD, 3_000, [old, { at: RECENT, likes: 30, access: paid(6) }]);
 
     await expectNear(id, headStart(30));
+  });
+
+  it("counts exactly the app's purchase kinds, in every copy of the buyer filter", () => {
+    const sql = readFileSync(path.join(MIGRATIONS, BUYER_BAR_DIR, 'migration.sql'), 'utf8');
+    const copies = [...sql.matchAll(/ea\.meta \?\| array\[([^\]]*)\]/g)].map((m) =>
+      [...m[1].matchAll(/'([^']+)'/g)].map((k) => k[1]).sort()
+    );
+    const keys = EARLY_ACCESS_PURCHASES.map((p) => p.transactionKey).sort();
+
+    expect(copies).toEqual([keys, keys, keys]);
   });
 
   it('scores a version with no buyers as before', async () => {
