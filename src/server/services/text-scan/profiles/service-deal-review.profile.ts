@@ -60,5 +60,6 @@ for (const entityType of Object.keys(SERVICE_DEAL_REVIEW_TEXTS) as ServiceDealRe
   registerTextScanProfile({
     entityType,
     labels: ['nsfw', 'csam'],
+    requireEveryLabel: true,
     load: (ids) => loadServiceDealReviewSubjects(entityType, ids),
   });

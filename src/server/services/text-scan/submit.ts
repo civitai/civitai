@@ -17,6 +17,7 @@ import {
 import {
   getTextScanProfile,
   resolveTextScanProfileLabels,
+  unansweredTextScanLabels,
 } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import {
@@ -71,7 +72,8 @@ export type ScanEntityResult =
         | 'too-short'
         | 'unchanged'
         | 'in-flight'
-        | 'missing-prompt';
+        | 'missing-prompt'
+        | 'incomplete';
     }
   | { status: 'submitted'; workflowId: string }
   | { status: 'failed' };
@@ -382,6 +384,25 @@ export async function scanEntity({
     labels = labels.filter((label) => label !== 'csam');
     passes = planPasses(labels);
     if (!passes.length) return { status: 'skipped', reason: 'off' };
+  }
+  // Submitting would record a check whose verdict cannot settle the entity, and the text would wait
+  // on it instead of being sent again.
+  if (mode === 'active') {
+    const unanswerable = unansweredTextScanLabels(
+      entityType,
+      Object.fromEntries(labels.map((label) => [label, true]))
+    );
+    if (unanswerable.length) {
+      logToAxiom({
+        name: 'text-scan',
+        type: 'error',
+        message: 'scan cannot ask every required label; not submitted',
+        entityType,
+        entityId,
+        payload: { labels: unanswerable },
+      });
+      return { status: 'skipped', reason: 'incomplete' };
+    }
   }
   const ctx = { entityType, entityId, subject, config, prompts, force };
 

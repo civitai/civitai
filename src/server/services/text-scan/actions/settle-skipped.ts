@@ -1,7 +1,9 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { unansweredTextScanLabels } from '~/server/services/text-scan/profiles';
 import type { ScanEntityResult } from '~/server/services/text-scan/submit';
+import type { TextScanOutput } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 export type SkipReason = Extract<ScanEntityResult, { status: 'skipped' }>['reason'];
@@ -32,8 +34,12 @@ export async function settleSkippedScan(
       where: { entityType_entityId: { entityType, entityId } },
       select: { status: true, nsfwLevel: true, result: true },
     });
-    const version = (live?.result as { version?: unknown } | null)?.version;
-    if (live?.status === EntityModerationStatus.Succeeded && version != null) {
+    const stored = live?.result as { version?: unknown; labels?: TextScanOutput } | null;
+    if (
+      live?.status === EntityModerationStatus.Succeeded &&
+      stored?.version != null &&
+      !unansweredTextScanLabels(entityType, stored.labels).length
+    ) {
       await apply(live.nsfwLevel ?? NsfwLevel.PG, { stored: true });
       return;
     }

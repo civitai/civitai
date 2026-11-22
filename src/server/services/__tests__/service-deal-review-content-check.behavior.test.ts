@@ -147,12 +147,15 @@ const textScan = ({
   type = 'ServiceDealReview',
   level = NsfwLevel.PG,
   csam = false,
+  everyLabel = true,
   workflowId = type === 'ServiceDealReview' ? 'wf-c' : 'wf-r',
   text = type === 'ServiceDealReview' ? COMMENT : REPLY,
 }: {
   type?: 'ServiceDealReview' | 'ServiceDealReviewReply';
   level?: number;
   csam?: boolean;
+  /** false: the verdict answers nsfw alone. */
+  everyLabel?: boolean;
   workflowId?: string;
   text?: string;
 } = {}) => {
@@ -166,7 +169,7 @@ const textScan = ({
     workflowId,
     outcome: {
       nsfw: { detectedLevel: level } as never,
-      csam: csam ? { detected: true, reason: 'r' } : undefined,
+      csam: everyLabel ? { detected: csam, reason: 'r' } : undefined,
       triggeredLabels: csam ? ['csam'] : [],
       nsfwLevel: level,
     },
@@ -176,6 +179,9 @@ const textScan = ({
 };
 const replyScan = (opts: Parameters<typeof textScan>[0] = {}) =>
   textScan({ ...opts, type: 'ServiceDealReviewReply' });
+
+const NSFW_ONLY = { nsfw: { level: 'none', reason: 'r' } };
+const EVERY_LABEL = { ...NSFW_ONLY, csam: { detected: false, reason: 'r' } };
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -300,9 +306,9 @@ describe('a review text check', () => {
   it('applies a result that landed before its check was recorded', async () => {
     await seed(PG13);
     await q(
-      `INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", blocked, "nsfwLevel")
-       VALUES ('ServiceDealReview', $1, 'wf-new', false, 4)`,
-      [REVIEW]
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", blocked, "nsfwLevel", result)
+       VALUES ('ServiceDealReview', $1, 'wf-new', false, 4, $2::jsonb)`,
+      [REVIEW, JSON.stringify({ version: 1, labels: EVERY_LABEL })]
     );
     await adapter.scanServiceDealReviewText('ServiceDealReview', REVIEW, submitCheck);
     expect((await statuses()).comment).toBe('Blocked');
@@ -337,7 +343,7 @@ describe('a stored verdict for unchanged text', () => {
     q(
       `INSERT INTO "EntityModeration" ("entityType", "entityId", result, "nsfwLevel", "triggeredLabels")
        VALUES ('ServiceDealReview', $1, $2::jsonb, 1, $3::text[])`,
-      [REVIEW, JSON.stringify({ version: 1, textHash }), labels]
+      [REVIEW, JSON.stringify({ version: 1, textHash, labels: EVERY_LABEL }), labels]
     );
   // The check skips text it has already judged and hands back the stored verdict.
   const unchanged = vi.fn(async (args: { onActiveSkip?: (r: 'unchanged') => Promise<void> }) => {
@@ -407,4 +413,91 @@ describe('a csam verdict on review text', () => {
     await adapter.blockServiceDealReviewText('ServiceDealReviewReply', REVIEW);
     expect(await statuses()).toEqual({ comment: 'Scanned', reply: 'Blocked' });
   });
+});
+
+describe('a verdict that does not answer every label the profile requires', () => {
+  const TYPES = ['ServiceDealReview', 'ServiceDealReviewReply'] as const;
+  const cols = {
+    ServiceDealReview: { status: 'scanStatus', workflow: 'scanWorkflowId', wf: 'wf-c' },
+    ServiceDealReviewReply: {
+      status: 'sellerReplyScanStatus',
+      workflow: 'sellerReplyScanWorkflowId',
+      wf: 'wf-r',
+    },
+  } as const;
+  /** The text's status and recorded check: Pending with none is what the reconcile resends. */
+  const state = async (type: (typeof TYPES)[number]) =>
+    (
+      await q<{ status: string; workflow: string | null }>(
+        `SELECT "${cols[type].status}"::text AS status, "${cols[type].workflow}" AS workflow
+         FROM "ServiceDealReview" WHERE id = $1`,
+        [REVIEW]
+      )
+    )[0];
+  const RESENDABLE = { status: 'Pending', workflow: null };
+
+  it.each(TYPES)('%s: its result shows nothing and the text is sent again', async (type) => {
+    await seed(R);
+    await textScan({ type, everyLabel: false });
+    expect(await state(type)).toEqual(RESENDABLE);
+    // The same result answering every label shows it.
+    await q(`UPDATE "ServiceDealReview" SET "${cols[type].workflow}" = $1`, [cols[type].wf]);
+    await textScan({ type });
+    expect((await state(type)).status).toBe('Scanned');
+  });
+
+  it.each(TYPES)(
+    '%s: a result that landed before its check was recorded shows nothing',
+    async (type) => {
+      await seed(R);
+      await q(`UPDATE "ServiceDealReview" SET "${cols[type].workflow}" = NULL`);
+      await q(
+        `INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", blocked, "nsfwLevel", result)
+         VALUES ($1, $2, 'wf-new', false, 1, $3::jsonb)`,
+        [type, REVIEW, JSON.stringify({ version: 1, labels: NSFW_ONLY })]
+      );
+      await adapter.scanServiceDealReviewText(type, REVIEW, submitCheck);
+      expect(await state(type)).toEqual(RESENDABLE);
+    }
+  );
+
+  it.each(TYPES)('%s: a stored verdict for unchanged text shows nothing', async (type) => {
+    await seed(R);
+    await q(`UPDATE "ServiceDealReview" SET "${cols[type].workflow}" = NULL`);
+    await q(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", result, "nsfwLevel")
+       VALUES ($1, $2, $3::jsonb, 1)`,
+      [
+        type,
+        REVIEW,
+        JSON.stringify({
+          version: 1,
+          textHash: textScanTextHash((await loadSubject(type))!),
+          labels: NSFW_ONLY,
+        }),
+      ]
+    );
+    const unchanged = vi.fn(async (args: { onActiveSkip?: (r: 'unchanged') => Promise<void> }) => {
+      await args.onActiveSkip?.('unchanged');
+      return null;
+    });
+    await adapter.scanServiceDealReviewText(type, REVIEW, unchanged as never);
+    expect(await state(type)).toEqual(RESENDABLE);
+  });
+
+  it.each(TYPES)(
+    '%s: a scan that could not be sent leaves failed text for the reconcile, not stranded',
+    async (type) => {
+      await seed(R);
+      await q(`UPDATE "ServiceDealReview" SET "${cols[type].status}" = 'Error'`);
+      const incomplete = vi.fn(
+        async (args: { onActiveSkip?: (r: 'incomplete') => Promise<void> }) => {
+          await args.onActiveSkip?.('incomplete');
+          return null;
+        }
+      );
+      await adapter.scanServiceDealReviewText(type, REVIEW, incomplete as never);
+      expect(await state(type)).toEqual(RESENDABLE);
+    }
+  );
 });

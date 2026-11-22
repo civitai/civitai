@@ -20,7 +20,9 @@ import {
   SERVICE_DEAL_REVIEW_TEXTS,
   type ServiceDealReviewTextType,
 } from '~/server/services/text-scan/profiles/service-deal-review.profile';
+import { unansweredTextScanLabels } from '~/server/services/text-scan/profiles';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
+import type { TextScanOutput } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 type TextType = ServiceDealReviewTextType;
@@ -63,6 +65,24 @@ async function settleReviewText(
   if (type === 'ServiceDealReview') await syncReviewPublication(reviewId);
 }
 
+/**
+ * Text whose verdict cannot settle it stays unshown and is left for the reconcile in the deals job
+ * to send again: Pending, with no check recorded.
+ */
+async function resendReviewText(
+  type: TextType,
+  reviewId: number,
+  { workflowId, text }: CurrentText
+) {
+  const cols = SERVICE_DEAL_REVIEW_TEXTS[type];
+  await dbWrite.$executeRaw`
+    UPDATE "ServiceDealReview" r
+    SET ${cols.status} = 'Pending', ${cols.workflow} = NULL
+    WHERE r."id" = ${reviewId}::int AND r.${cols.status} IN ('Pending', 'Error')
+      AND (${workflowId ?? null}::text IS NULL OR r.${cols.workflow} = ${workflowId ?? null}::text)
+      AND (${text ?? null}::text IS NULL OR r.${cols.text} = ${text ?? null}::text)`;
+}
+
 /** Settles a check, blocked instead while the csam queue holds the text. */
 async function settleUnlessHeld(
   type: TextType,
@@ -85,6 +105,8 @@ const settleSkipped = (type: TextType, reviewId: number, reason: SkipReason, tex
   // A hidden review is never shown, so its skipped scan has nothing to settle.
   reason === 'not-public'
     ? Promise.resolve()
+    : reason === 'incomplete'
+    ? resendReviewText(type, reviewId, { text })
     : settleSkippedScan(
         type,
         reviewId,
@@ -132,7 +154,11 @@ async function trackSubmit(
     },
     select: { blocked: true, nsfwLevel: true, triggeredLabels: true, result: true },
   });
-  if (early && (early.blocked || early.nsfwLevel !== null))
+  if (!early || (!early.blocked && early.nsfwLevel === null)) return workflow;
+  const answers = (early.result as { labels?: TextScanOutput } | null)?.labels;
+  if (!early.blocked && unansweredTextScanLabels(type, answers).length)
+    await resendReviewText(type, reviewId, { workflowId });
+  else
     await settleUnlessHeld(
       type,
       reviewId,
@@ -242,15 +268,18 @@ const createReviewTextAdapter = (type: TextType): ModerationAdapter => ({
 const applyVerdict =
   (type: TextType) =>
   async ({ entityId, workflowId, outcome, textHash }: ApplyTextScanArgs) => {
-    if (!outcome.nsfw) {
+    const unanswered = unansweredTextScanLabels(type, outcome);
+    if (unanswered.length || !outcome.nsfw) {
       logToAxiom({
         type: 'error',
         name: 'service-deal-review-scan',
-        message: 'verdict without an nsfw level; text left unshown',
+        message: 'verdict does not answer every label; text left unshown and sent again',
         reviewId: entityId,
         entityType: type,
         workflowId,
+        payload: { labels: unanswered },
       });
+      await resendReviewText(type, entityId, { workflowId });
       return;
     }
     await settleUnlessHeld(

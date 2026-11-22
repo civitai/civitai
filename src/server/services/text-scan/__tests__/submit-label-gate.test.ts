@@ -29,6 +29,11 @@ const { submitWorkflow } = await import('@civitai/orchestration-client');
 const { getActiveTextScanPrompts, getTextScanConfig } = await import(
   '~/server/services/text-scan/prompt'
 );
+const { settleSkippedScan } = await import('~/server/services/text-scan/actions/settle-skipped');
+const { getTextScanProfile } = await import('~/server/services/text-scan/profiles');
+// The real profiles, so each type's own setting is what is under test; only their loads are faked.
+await import('~/server/services/text-scan/profiles/service-deal-review.profile');
+await import('~/server/services/text-scan/profiles/service-offering.profile');
 
 const PROMPTS = {
   base: { id: 1, key: 'base', content: 'BASE' },
@@ -290,5 +295,144 @@ describe('resolveTextScanProfileLabels', () => {
     expect(await resolveTextScanProfileLabels(profile, subject)).toEqual(
       mode === 'review' ? ['scam', 'csam'] : ['scam']
     );
+  });
+});
+
+describe('a scan settles only on a verdict that answers every label its profile requires', () => {
+  const REQUIRING = ['ServiceDealReview', 'ServiceDealReviewReply'] as const;
+  const NOT_REQUIRING = 'ServiceOffering' as const;
+
+  const reviewLoad = async (ids: number[]) =>
+    new Map(
+      ids.map((id) => [
+        id,
+        { fields: [{ heading: 'Body', text: 'placeholder text' }], declared: { nsfwLevel: 1 } },
+      ])
+    );
+  for (const type of [...REQUIRING, NOT_REQUIRING])
+    registerTextScanProfile({ ...getTextScanProfile(type)!, load: reviewLoad });
+
+  const EVERY_PROMPT = {
+    base: { id: 1, key: 'base', content: 'BASE' },
+    'label:nsfw': { id: 2, key: 'label:nsfw', content: 'NSFW DEF' },
+    'label:csam': { id: 3, key: 'label:csam', content: 'CSAM DEF' },
+  };
+
+  const lastLabels = () =>
+    (
+      vi.mocked(submitWorkflow).mock.calls.at(-1)![0].body as unknown as {
+        metadata: { labels: string[] };
+      }
+    ).metadata.labels;
+
+  function gate(value: string | undefined) {
+    redisMock.sysRedis.hGetAll.mockResolvedValue((value ? { csam: value } : {}) as never);
+    resetTextScanRolloutCache();
+  }
+
+  /** Each way a scan can lose a label its profile asks for, everything else in place. */
+  const CAUSES: [string, () => void][] = [
+    ['a label switched off', () => gate(undefined)],
+    [
+      "a label's switch that cannot be read",
+      () => {
+        redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
+        resetTextScanRolloutCache();
+      },
+    ],
+    [
+      'a label with a blank prompt',
+      () =>
+        vi.mocked(getActiveTextScanPrompts).mockResolvedValue({
+          ...EVERY_PROMPT,
+          'label:csam': { id: 3, key: 'label:csam', content: '  ' },
+        }),
+    ],
+  ];
+
+  beforeEach(() => {
+    vi.mocked(getActiveTextScanPrompts).mockResolvedValue(EVERY_PROMPT);
+    gate('review');
+  });
+
+  describe('a profile that requires every label', () => {
+    it.each(REQUIRING)('%s submits with every label when all can be asked', async (entityType) => {
+      expect(await scanEntity({ entityType, entityId: 1 })).toEqual({
+        status: 'submitted',
+        workflowId: 'wf-1',
+      });
+      expect(lastLabels()).toEqual(['nsfw', 'csam']);
+    });
+
+    describe.each(REQUIRING)('%s', (entityType) => {
+      it.each(CAUSES)('records and submits nothing for %s', async (_, cause) => {
+        cause();
+        expect(await scanEntity({ entityType, entityId: 1 })).toEqual({
+          status: 'skipped',
+          reason: 'incomplete',
+        });
+        expect(submitWorkflow).not.toHaveBeenCalled();
+        // No Pending row: nothing waits on a check that was never sent.
+        expect(em.upsert).not.toHaveBeenCalled();
+      });
+
+      it('still submits in shadow, whose verdict settles nothing', async () => {
+        vi.mocked(getTextScanMode).mockResolvedValue('shadow');
+        expect(await scanEntity({ entityType, entityId: 1 })).toMatchObject({
+          status: 'submitted',
+        });
+      });
+    });
+  });
+
+  /**
+   * Control: only a profile that opts in changes. If this fails, the requirement has spread to a type
+   * that did not ask for it; that is a behavior change for that type, not a fix.
+   */
+  describe('a profile that does not require every label', () => {
+    it.each(CAUSES)('submits what it can ask for %s, as before', async (_, cause) => {
+      cause();
+      expect(await scanEntity({ entityType: NOT_REQUIRING, entityId: 1 })).toEqual({
+        status: 'submitted',
+        workflowId: 'wf-1',
+      });
+      expect(lastLabels()).toEqual(['nsfw']);
+    });
+
+    it('settles on a stored verdict that answers only some labels', async () => {
+      em.findUnique.mockResolvedValue({
+        status: 'Succeeded',
+        nsfwLevel: 1,
+        result: { version: 1, labels: { nsfw: { level: 'none', reason: '' } } },
+      } as never);
+      const apply = vi.fn(async () => undefined);
+      await settleSkippedScan(NOT_REQUIRING, 1, 'unchanged', apply, {});
+      expect(apply).toHaveBeenCalledWith(1, { stored: true });
+    });
+  });
+
+  describe('a stored verdict for a profile that requires every label', () => {
+    const stored = (labels: Record<string, unknown>) =>
+      em.findUnique.mockResolvedValue({
+        status: 'Succeeded',
+        nsfwLevel: 1,
+        result: { version: 1, labels },
+      } as never);
+    const nsfw = { level: 'none', reason: '' };
+    const csam = { detected: false, reason: '' };
+
+    it.each(REQUIRING)('%s settles on one that answers every label', async (entityType) => {
+      stored({ nsfw, csam });
+      const apply = vi.fn(async () => undefined);
+      await settleSkippedScan(entityType, 1, 'unchanged', apply, {});
+      expect(apply).toHaveBeenCalledWith(1, { stored: true });
+    });
+
+    it.each(REQUIRING)('%s does not settle on one that misses a label', async (entityType) => {
+      stored({ nsfw });
+      const apply = vi.fn(async () => undefined);
+      await settleSkippedScan(entityType, 1, 'unchanged', apply, {});
+      expect(apply).not.toHaveBeenCalled();
+    });
   });
 });
