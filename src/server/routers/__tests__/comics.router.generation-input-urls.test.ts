@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   assertStoredUnblocked: vi.fn(),
   getOrchestratorToken: vi.fn(async () => 'token'),
   submit: vi.fn(),
-  whatIf: vi.fn(async () => {
+  whatIf: vi.fn(async (_input: { images: { url: string }[] | null }) => {
     throw new Error('stop');
   }),
 }));
@@ -437,7 +437,10 @@ describe('stored reference images', () => {
     refImage(2, { nsfwLevel: 32 }),
     refImage(3, { ingestion: 'Blocked' }),
     refImage(4, { blockedFor: 'moderated' }),
+    // The owner gets no exception for their own marked image.
     refImage(5, { nsfwLevel: 32, userId: USER_ID }),
+    refImage(6, { blockedFor: '' }),
+    refImage(7, { blockedFor: 'AiNotVerified' }),
   ];
 
   const quotedRefIds = async () => {
@@ -476,11 +479,19 @@ describe('stored reference images', () => {
     expect(quoted[0]).toContain('ref-1');
     expect(submitted).toHaveLength(1);
     expect(submitted[0]).toContain('ref-1');
+    // What reaches generation, not only what is stored.
+    const sent = (mocks.submit.mock.calls[0]?.[0] as { images?: { url: string }[] })?.images;
+    const refId = (url: string) => url.match(/ref-\d+/)?.[0];
+    expect(sent?.map((i) => refId(i.url))).toEqual(quoted.map(refId));
   });
 
-  it('quote carries none and submit refuses before writing when none are usable', async () => {
+  it('quote and submit both refuse, before writing, when none are usable', async () => {
     stored(mixed().slice(1));
-    expect(await quotedRefIds()).toEqual([]);
+    mocks.assertInputs.mockResolvedValue(undefined);
+    await expect(caller().getGenerationCostEstimate({ referenceIds: [REF_ID] })).rejects.toThrow(
+      'References have no reference images'
+    );
+    expect(mocks.whatIf).not.toHaveBeenCalled();
     mocks.assertUsable.mockResolvedValue(undefined);
     await expect(
       caller().createPanel({
@@ -491,5 +502,254 @@ describe('stored reference images', () => {
       })
     ).rejects.toThrow('References have no reference images');
     expect(dbMock.dbWrite.comicPanel.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('reference images a generation sends', () => {
+  type Img = { id: number; marked?: boolean };
+  const refs: Record<number, { name: string; images: Img[] }> = {
+    5: { name: 'Alpha', images: [{ id: 51 }, { id: 52 }] },
+    6: { name: 'Beta', images: [{ id: 61 }] },
+  };
+  const given = (marked: number[] = []) => {
+    dbMock.dbRead.comicReference.findMany.mockResolvedValue(
+      Object.entries(refs).map(([id, r]) => ({ id: Number(id), name: r.name })) as never
+    );
+    dbMock.dbRead.comicReference.findUnique.mockImplementation((async (args: {
+      where: { id: number };
+    }) => ({
+      name: refs[args.where.id].name,
+      images: refs[args.where.id].images.map(({ id }) => ({
+        image: {
+          id,
+          url: `img-${id}`,
+          width: 1,
+          height: 1,
+          blockedFor: marked.includes(id) ? 'moderated' : null,
+          nsfwLevel: 1,
+          ingestion: 'Scanned',
+        },
+      })),
+    })) as never);
+    dbMock.dbRead.comicProjectReference.findMany.mockResolvedValue([
+      { referenceId: 5 },
+      { referenceId: 6 },
+    ] as never);
+    mocks.assertUsable.mockResolvedValue(undefined);
+    mocks.assertInputs.mockResolvedValue(undefined);
+    mocks.submit.mockResolvedValue({ id: 'wf', cost: { total: 0 } });
+    dbMock.dbWrite.comicPanel.create.mockResolvedValue({ id: 1 } as never);
+    dbMock.dbWrite.comicPanel.update.mockResolvedValue({ id: 1, status: 'Generating' } as never);
+    dbMock.dbWrite.comicChapter.create.mockResolvedValue({ projectId: 11, position: 0 } as never);
+  };
+  const source = { sourceImageUrl: SOURCE, sourceImageWidth: 512, sourceImageHeight: 512 };
+  const ids = (images: { url: string }[] | null | undefined) =>
+    (images ?? []).flatMap((i) => i.url.match(/img-(\d+)/)?.[1] ?? []).map(Number);
+  const submittedIds = () =>
+    ids((mocks.submit.mock.calls[0]?.[0] as { images?: { url: string }[] } | undefined)?.images);
+  const quotedIds = () => ids(mocks.whatIf.mock.calls[0]?.[0].images);
+
+  /** The four routes that take a reference selection, each returning the ids it sent. */
+  const selecting = [
+    [
+      'getGenerationCostEstimate',
+      async (selectedImageIds?: number[]) => {
+        await caller()
+          .getGenerationCostEstimate({ referenceIds: [5, 6], selectedImageIds })
+          .catch(() => undefined);
+        return quotedIds();
+      },
+    ],
+    [
+      'createPanel',
+      async (selectedImageIds?: number[]) => {
+        await caller()
+          .createPanel({
+            projectId: 11,
+            chapterPosition: 0,
+            prompt: 'p',
+            referenceIds: [5, 6],
+            selectedImageIds,
+          })
+          .catch(() => undefined);
+        return submittedIds();
+      },
+    ],
+    [
+      'iterateGenerate',
+      async (selectedImageIds?: number[]) => {
+        await caller()
+          .iterateGenerate({
+            projectId: 11,
+            chapterPosition: 0,
+            prompt: 'p',
+            referenceIds: [5, 6],
+            selectedImageIds,
+          })
+          .catch(() => undefined);
+        return submittedIds();
+      },
+    ],
+    [
+      'enhancePanel',
+      async (selectedImageIds?: number[]) => {
+        await caller()
+          .enhancePanel({
+            projectId: 11,
+            chapterPosition: 0,
+            prompt: 'p',
+            referenceIds: [5, 6],
+            selectedImageIds,
+            ...source,
+          })
+          .catch(() => undefined);
+        return submittedIds();
+      },
+    ],
+  ] as const;
+
+  it.each(selecting)('%s sends every image of every reference, in order', async (_, run) => {
+    given();
+    expect(await run()).toEqual([51, 52, 61]);
+  });
+
+  it.each(selecting)('%s sends the selected images in reference order', async (_, run) => {
+    given();
+    expect(await run([61, 51])).toEqual([51, 61]);
+  });
+
+  it.each(selecting)('%s leaves out a marked image and keeps the rest', async (_, run) => {
+    given([52]);
+    expect(await run()).toEqual([51, 61]);
+  });
+
+  it.each(selecting)(
+    '%s refuses before any write or charge when no selected image is left',
+    async (_, run) => {
+      given([52]);
+      expect(await run([52])).toEqual([]);
+      expect(mocks.whatIf).not.toHaveBeenCalled();
+      expect(mocks.submit).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.comicPanel.updateMany).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.comicPanel.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it('reads the fields the marker check needs', async () => {
+    given();
+    await selecting[1][1]();
+    expect(dbMock.dbRead.comicReference.findUnique.mock.calls[0][0]).toMatchObject({
+      select: {
+        images: {
+          include: { image: { select: { blockedFor: true, nsfwLevel: true, ingestion: true } } },
+        },
+      },
+    });
+  });
+
+  it('refuses a regenerate at a position before shifting any panel', async () => {
+    given([51, 52, 61]);
+    await expect(
+      caller().createPanel({
+        projectId: 11,
+        chapterPosition: 0,
+        prompt: 'p',
+        referenceIds: [5],
+        position: 2,
+      })
+    ).rejects.toThrow('References have no reference images');
+    await expect(
+      caller().enhancePanel({
+        projectId: 11,
+        chapterPosition: 0,
+        prompt: 'p',
+        referenceIds: [5],
+        position: 2,
+        ...source,
+      })
+    ).rejects.toThrow('References have no reference images');
+    expect(dbMock.dbWrite.comicPanel.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.comicPanel.create).not.toHaveBeenCalled();
+  });
+
+  describe('the skipped notice, after selection', () => {
+    const create = (selectedImageIds?: number[]) =>
+      caller().createPanel({
+        projectId: 11,
+        chapterPosition: 0,
+        prompt: 'p',
+        referenceIds: [5, 6],
+        selectedImageIds,
+      });
+
+    it('is raised when a selected image is left out', async () => {
+      given([52]);
+      expect((await create([51, 52])).referenceImagesSkipped).toBe(true);
+    });
+
+    it('is not raised when only unselected images are marked', async () => {
+      given([52]);
+      expect((await create([51])).referenceImagesSkipped).toBe(false);
+    });
+
+    it('is not raised for a partly marked reference with no selection', async () => {
+      given([52]);
+      expect((await create()).referenceImagesSkipped).toBe(false);
+    });
+  });
+
+  describe('routes that send mentioned references', () => {
+    const mentioning = [
+      [
+        'smartCreateChapter',
+        () =>
+          caller().smartCreateChapter({
+            projectId: 11,
+            referenceIds: [5, 6],
+            panels: [{ prompt: '@Beta' }, { prompt: '@Alpha' }],
+          }),
+      ],
+      [
+        'bulkCreatePanels, prompt only',
+        () =>
+          caller().bulkCreatePanels({
+            projectId: 11,
+            chapterPosition: 0,
+            panels: [{ prompt: '@Beta' }, { prompt: '@Alpha' }],
+          }),
+      ],
+      [
+        'bulkCreatePanels, source and prompt',
+        () =>
+          caller().bulkCreatePanels({
+            projectId: 11,
+            chapterPosition: 0,
+            panels: [
+              { prompt: '@Beta', ...source },
+              { prompt: '@Alpha', ...source },
+            ],
+          }),
+      ],
+    ] as const;
+
+    it.each(mentioning)(
+      '%s refuses before writing anything when a panel has no mentioned image left',
+      async (_, run) => {
+        given([51, 52]);
+        await expect(run()).rejects.toThrow('References have no reference images');
+        expect(dbMock.dbWrite.comicChapter.create).not.toHaveBeenCalled();
+        expect(dbMock.dbWrite.comicPanel.create).not.toHaveBeenCalled();
+        expect(mocks.submit).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(mentioning)('CONTROL: %s runs when every panel has an image left', async (_, run) => {
+      given([52]);
+      await run();
+      expect(
+        dbMock.dbWrite.comicChapter.create.mock.calls.length +
+          dbMock.dbWrite.comicPanel.create.mock.calls.length
+      ).toBeGreaterThan(0);
+    });
   });
 });

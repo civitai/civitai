@@ -75,7 +75,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { ComicChapterStatus, ComicPanelStatus } from '~/shared/utils/prisma/enums';
+import { ComicChapterStatus } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import styles from './ProjectWorkspace.module.scss';
 
@@ -551,11 +551,6 @@ function ProjectWorkspace() {
     onError: handleMutationError,
   });
 
-  const updatePanelMutation = trpc.comics.updatePanel.useMutation({
-    onSuccess: () => invalidateProjectQueries(),
-    onError: handleMutationError,
-  });
-
   const replacePanelImageMutation = trpc.comics.replacePanelImage.useMutation({
     onSuccess: () => invalidateProjectQueries(),
     onError: handleMutationError,
@@ -770,28 +765,26 @@ function ProjectWorkspace() {
         const oldPanel = activeChapter.panels.find((p) => p.id === regeneratingPanelId);
         if (oldPanel) targetPosition = oldPanel.position;
       }
-      if (regeneratingPanelId) {
-        // Clear the existing panel image so the UI shows a spinner immediately
-        await updatePanelMutation.mutateAsync({
-          panelId: regeneratingPanelId,
-          status: ComicPanelStatus.Generating,
-          imageUrl: null,
-        });
-        await deletePanelMutation.mutateAsync({ panelId: regeneratingPanelId });
+      // The panel being regenerated is deleted only once its replacement exists.
+      const replacedPanelId = regeneratingPanelId;
+      const created = await createPanelMutation
+        .mutateAsync({
+          projectId,
+          chapterPosition: activeChapter.position,
+          prompt: prompt.trim(),
+          useContext,
+          ...(referencePanelId ? { referencePanelId } : {}),
+          ...(layoutImagePath ? { layoutImagePath } : {}),
+          quantity,
+          aspectRatio,
+          baseModel: generationModel,
+          ...(targetPosition != null ? { position: targetPosition } : {}),
+          ...(selectedImageIds ? { selectedImageIds } : {}),
+        })
+        .catch(() => null);
+      if (created && replacedPanelId) {
+        await deletePanelMutation.mutateAsync({ panelId: replacedPanelId }).catch(() => undefined);
       }
-      createPanelMutation.mutate({
-        projectId,
-        chapterPosition: activeChapter.position,
-        prompt: prompt.trim(),
-        useContext,
-        ...(referencePanelId ? { referencePanelId } : {}),
-        ...(layoutImagePath ? { layoutImagePath } : {}),
-        quantity,
-        aspectRatio,
-        baseModel: generationModel,
-        ...(targetPosition != null ? { position: targetPosition } : {}),
-        ...(selectedImageIds ? { selectedImageIds } : {}),
-      });
     } finally {
       setIsSubmitting(false);
     }
@@ -811,30 +804,28 @@ function ProjectWorkspace() {
         const oldPanel = activeChapter.panels.find((p) => p.id === regeneratingPanelId);
         if (oldPanel) targetPosition = oldPanel.position;
       }
-      if (regeneratingPanelId) {
-        // Clear the existing panel image so the UI shows a spinner immediately
-        await updatePanelMutation.mutateAsync({
-          panelId: regeneratingPanelId,
-          status: ComicPanelStatus.Generating,
-          imageUrl: null,
-        });
-        await deletePanelMutation.mutateAsync({ panelId: regeneratingPanelId });
+      // The panel being regenerated is deleted only once its replacement exists.
+      const replacedPanelId = regeneratingPanelId;
+      const created = await enhancePanelMutation
+        .mutateAsync({
+          projectId,
+          chapterPosition: activeChapter.position,
+          sourceImageUrl: sourceImage.url,
+          sourceImageWidth: sourceImage.width,
+          sourceImageHeight: sourceImage.height,
+          prompt: prompt.trim() || undefined,
+          useContext,
+          ...(referencePanelId ? { referencePanelId } : {}),
+          aspectRatio,
+          baseModel: generationModel,
+          forceGenerate: true,
+          ...(targetPosition != null ? { position: targetPosition } : {}),
+          ...(selectedImageIds ? { selectedImageIds } : {}),
+        })
+        .catch(() => null);
+      if (created && replacedPanelId) {
+        await deletePanelMutation.mutateAsync({ panelId: replacedPanelId }).catch(() => undefined);
       }
-      enhancePanelMutation.mutate({
-        projectId,
-        chapterPosition: activeChapter.position,
-        sourceImageUrl: sourceImage.url,
-        sourceImageWidth: sourceImage.width,
-        sourceImageHeight: sourceImage.height,
-        prompt: prompt.trim() || undefined,
-        useContext,
-        ...(referencePanelId ? { referencePanelId } : {}),
-        aspectRatio,
-        baseModel: generationModel,
-        forceGenerate: true,
-        ...(targetPosition != null ? { position: targetPosition } : {}),
-        ...(selectedImageIds ? { selectedImageIds } : {}),
-      });
     } finally {
       setIsSubmitting(false);
     }
