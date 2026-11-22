@@ -107,12 +107,13 @@ class FakeTunnels implements DevTunnels {
     this.stopped.push(sessionId);
   }
 
-  /** What a by-block stop throws instead of answering (a 5xx, a timeout), when set. */
+  /** What a by-block stop throws instead of answering (a 5xx, a timeout): asked per stop; none when it returns nothing. */
   stopBlockError: (() => unknown) | null = null;
 
   async stopBlock(blockId: string) {
     this.blockStops.push(blockId);
-    if (this.stopBlockError) throw this.stopBlockError();
+    const error = this.stopBlockError?.();
+    if (error) throw error;
     return this.directSessions.delete(blockId);
   }
 }
@@ -1400,23 +1401,49 @@ describe('direct preview (civitai serves it with no tunnel)', () => {
       expect(tunnels.started).toHaveLength(1);
     });
 
-    it('direct: a failing stop still opens, but the session is not taken to hold the scopes', async () => {
+    it('direct: a failing stop fails the start, rather than show a session with old scopes', async () => {
       directApp();
+      // An earlier reply opened the app's preview with no scopes.
+      const first = await open();
+      await call(first.tools.tools, 'start_preview');
+      await first.tools.close();
+
+      const later = await open();
       tunnels.stopBlockError = failing;
-      const { tools } = await open();
-      const first = await call(tools.tools, 'start_preview', { declared_scopes: ['models:read'] });
-      expect(first).toMatchObject({ shown: true, blockId: 'my-app' });
-      expect(tunnels.opens).toHaveLength(1);
-      // Asked again with the same scopes: not answered from memory, so the stop is tried again.
-      await call(tools.tools, 'start_preview', { declared_scopes: ['models:read'] });
-      expect(tunnels.blockStops).toEqual(['my-app', 'my-app']);
-      expect(tunnels.opens).toHaveLength(2);
-      // Once the stop works, the open after it writes the session and it is known to hold them.
+      const failed = await call(later.tools.tools, 'start_preview', {
+        declared_scopes: ['models:read'],
+      });
+      expect(String(failed.error)).toMatch(/^The preview could not start just now/);
+      // civitai answered the old session (no scopes): it was not shown as the current preview.
+      expect(tunnels.directSessions.get('my-app')?.declaredScopes).toEqual([]);
+      // The next start tries the stop again; once it works, the session is written with the scope.
       tunnels.stopBlockError = null;
-      await call(tools.tools, 'start_preview', { declared_scopes: ['models:read'] });
+      const shown = await call(later.tools.tools, 'start_preview', {
+        declared_scopes: ['models:read'],
+      });
+      expect(shown).toMatchObject({ shown: true, blockId: 'my-app' });
+      expect(tunnels.blockStops).toEqual(['my-app', 'my-app']);
+      expect(tunnels.directSessions.get('my-app')?.declaredScopes).toEqual(['models:read']);
+      // Now known to hold it: the same start again opens nothing.
       const opens = tunnels.opens.length;
-      await call(tools.tools, 'start_preview', { declared_scopes: ['models:read'] });
+      await call(later.tools.tools, 'start_preview', { declared_scopes: ['models:read'] });
       expect(tunnels.opens).toHaveLength(opens);
+    });
+
+    it('the flag off mid-run: a direct preview whose stop failed is closed before the tunnel', async () => {
+      directApp();
+      const { tools } = await open();
+      await call(tools.tools, 'start_preview');
+      expect(tunnels.directSessions.has('my-app')).toBe(true);
+      // civitai now answers `tunnel`, and the first stop fails.
+      tunnels.direct = false;
+      let stops = 0;
+      tunnels.stopBlockError = () => (++stops === 1 ? failing() : null);
+      const result = await call(tools.tools, 'start_preview', { declared_scopes: ['models:read'] });
+      expect(result).toMatchObject({ shown: true, host: HOST });
+      expect(tunnels.started).toHaveLength(1);
+      expect(tunnels.blockStops).toEqual(['my-app', 'my-app']);
+      expect(tunnels.directSessions.has('my-app')).toBe(false);
     });
 
     // Invariant guard: an abort during the stop still ends the start, and nothing is opened.
@@ -1598,6 +1625,8 @@ describe('CivitaiDevTunnels: direct preview calls', () => {
       await vi.runAllTimersAsync();
       expect(await opened).toMatchObject({ status: 503, code: 'unavailable' });
       expect(sent).toHaveLength(OPEN_ATTEMPTS);
+      // Bounds the worst-case wait at about 5 × 15 s (each ask's own timeout).
+      expect(OPEN_ATTEMPTS).toBeLessThanOrEqual(5);
 
       const refused = client(() =>
         Response.json({ error: 'Too many', code: 'TOO_MANY_REQUESTS' }, { status: 429 })

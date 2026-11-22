@@ -574,11 +574,13 @@ export class RunnerPreview {
     if (!previewId) return null;
 
     // An open session keeps the scopes it was opened with, so a start that declares scopes or auth
-    // ends the app's direct session first (best-effort; `stopBlock` leaves tunnels alone).
+    // ends the app's direct session first (`stopBlock` leaves tunnels alone). A failed stop only
+    // matters if civitai then answers `direct`: with the flag off it must not fail a tunnel start.
     const sameBlock =
       previous?.transport === 'direct' && previous.app === appName && previous.blockId === blockId;
     const declares = (declaredScopes?.length ?? 0) > 0 || declaredAuth !== undefined;
     let ended = false;
+    let stopError: unknown;
     if (sameBlock || declares) {
       try {
         await tunnels.stopBlock(blockId, signal);
@@ -586,7 +588,7 @@ export class RunnerPreview {
         ended = true;
       } catch (error) {
         if (signal?.aborted) throw error;
-        // Not ended: a session reused below is not taken to hold these scopes (`scopesKnown`).
+        stopError = error;
         this.#warn(error, 'ending a direct preview before opening it failed');
       }
     }
@@ -628,7 +630,16 @@ export class RunnerPreview {
     } catch (error) {
       throw new Error(refusalMessage(error), { cause: error });
     }
-    if (answer.mode === 'tunnel' || 'fresh' in answer) return null;
+    if (answer.mode === 'tunnel' || 'fresh' in answer) {
+      // The flag went off mid-run while this run's direct preview of the block is still open (its
+      // stop failed above): close it once more before the tunnel replaces it here.
+      if (sameBlock && stopError !== undefined && previous) await this.#closeOpen(previous, signal);
+      return null;
+    }
+    // The stop failed and civitai answered a session it did not write after a fresh id: it may be
+    // the old one, with the old scopes. Fail as the stop did, rather than show it as current.
+    if (stopError !== undefined && !rotated)
+      throw new Error(refusalMessage(stopError), { cause: stopError });
     if (sandbox.active?.name !== appName || this.#closed) {
       // As a tunnel start closes what it opened: the session is the old app's, which nothing shows.
       await tunnels
