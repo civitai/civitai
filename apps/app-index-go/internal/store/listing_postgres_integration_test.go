@@ -203,6 +203,10 @@ func TestIntegrationListingsStaleColumnAddedAndKept(t *testing.T) {
 	if n, err := ls2.StaleCount(ctx, g.ID); err != nil || n != 0 {
 		t.Fatalf("stale count of rows written before the column: %d %v, want 0", n, err)
 	}
+	// The reopened store is another writer: it claims the generation, as a restarted consumer does.
+	if err := ls2.Claim(ctx, g.ID); err != nil {
+		t.Fatal(err)
+	}
 	mustApply(t, ls2, g.ID, Change{Kind: ChangeStale, URN: listingURN("alpha"), Cursor: "c1"})
 	ls3, err := NewListingsPostgres(ctx, pool)
 	if err != nil {
