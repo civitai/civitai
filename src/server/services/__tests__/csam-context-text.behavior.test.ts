@@ -994,7 +994,7 @@ describe('items the reported user wrote', () => {
     });
 
     it('does not wait on a log that never answers', async () => {
-      holder.clickhouse = { $query: () => new Promise<never>(() => {}) };
+      holder.clickhouse = { $query: () => new Promise<never>(() => undefined) };
       const started = Date.now();
       expect(await sentInfo()).toEqual({ info: [unconfirmed], refused: [] });
       expect(Date.now() - started).toBeLessThan(5_000);
