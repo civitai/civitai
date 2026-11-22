@@ -660,7 +660,11 @@ describe('user apps: submit, review and enable', () => {
     });
 
     const written = lastWrite();
-    expect(written.where).toEqual({ id: row.id, manifest: { equals: row.manifest } });
+    expect(written.where).toEqual({
+      id: row.id,
+      manifest: { equals: row.manifest },
+      status: { in: ['remix', 'remix_disabled'] },
+    });
     expect(written.data).toMatchObject({
       contentRating: 'x',
       manifest: { review: 'approved', remix: { engine: DEFAULT_ENGINE } },
@@ -853,7 +857,11 @@ describe('user apps: submit, review and enable', () => {
     });
 
     const revoke = lastWrite();
-    expect(revoke.where).toEqual({ id: sibling.id, manifest: { equals: sibling.manifest } });
+    expect(revoke.where).toEqual({
+      id: sibling.id,
+      manifest: { equals: sibling.manifest },
+      status: { in: ['remix', 'remix_disabled'] },
+    });
     expect(revoke.data.contentRating).toBe('pg');
     // Out of menus and back to review, not deleted.
     expect(revoke.data.status).toBe('remix_disabled');
@@ -954,7 +962,11 @@ describe('user apps: submit, review and enable', () => {
     expect(held.review).toBe('submitted');
     expect(held.remix.engine).toEqual({ safe: DEFAULT_ENGINE.safe });
     expect(lastWrite().data.status).toBe('remix_disabled');
-    expect(lastWrite().where).toEqual({ id: sibling.id, manifest: { equals: moved.manifest } });
+    expect(lastWrite().where).toEqual({
+      id: sibling.id,
+      manifest: { equals: moved.manifest },
+      status: { in: ['remix', 'remix_disabled'] },
+    });
   });
 
   describe('the minor-themed sweep and bar, scoped', () => {
@@ -1330,7 +1342,11 @@ describe('user apps: submit, review and enable', () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(approved as never);
     dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
     await setRemixAppEnabled({ slug: 'u7-probe', enabled: true, moderatorId: MOD });
-    expect(lastWrite().where).toEqual({ id: approved.id, manifest: { equals: approved.manifest } });
+    expect(lastWrite().where).toEqual({
+      id: approved.id,
+      manifest: { equals: approved.manifest },
+      status: { in: ['remix', 'remix_disabled'] },
+    });
     expect(lastWrite().data.status).toBe('remix');
     expect(logOf(lastWrite())).toEqual([expect.objectContaining({ by: MOD, action: 'enabled' })]);
 

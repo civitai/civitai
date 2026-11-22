@@ -9,6 +9,10 @@ import { newAppBlockId } from '~/server/utils/app-block-ids';
 import { BlockManifestValidator } from '~/server/services/block-manifest-validator.service';
 import { trimManifestStringFields } from '~/server/services/blocks/manifest-normalize';
 import { newBlockIdError } from '~/server/utils/apps-slug';
+import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
+import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
+
+const REMIX_ROW_REFUSAL = 'A remix app is edited on the remix apps page.';
 
 // B5: cap the body parser BEFORE the JSON.stringify size check. Next's
 // default is 1MB; we want to reject oversize uploads before they hit
@@ -136,6 +140,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   });
 
   if (existing) {
+    if (REMIX_STATUSES.includes(existing.status)) {
+      res.status(409).json({ error: REMIX_ROW_REFUSAL });
+      return;
+    }
     const requestedTrust = manifest.trustTier ?? 'unverified';
     const requestedRender = manifest.renderMode ?? 'iframe';
     if (existing.trustTier !== requestedTrust) {
@@ -173,52 +181,70 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     }
   }
 
-  if (!existing) {
-    const blockIdError = newBlockIdError(manifest.blockId);
-    if (blockIdError) {
-      res.status(422).json({ error: 'Invalid manifest', details: [blockIdError] });
+  if (existing) {
+    // Conditional on status, so a row that became a remix app after the read above is not written.
+    const { count } = await dbWrite.appBlock.updateMany({
+      where: { id: existing.id, status: { notIn: REMIX_STATUSES } },
+      data: {
+        version: manifest.version,
+        manifest: body.manifest as object,
+        contentRating: manifest.contentRating,
+        // H-1: re-enter moderation on every update. The publisher cannot
+        // change iframe.src, sandbox, scopes, etc. without losing approval.
+        status: 'pending',
+        updatedAt: new Date(),
+        // trustTier and renderMode intentionally omitted — they were
+        // already validated against `existing` above, so the row keeps
+        // the prior value. Admin tools update these separately.
+      },
+    });
+    if (!count) {
+      res.status(409).json({ error: REMIX_ROW_REFUSAL });
       return;
     }
+    res.status(200).json({ id: existing.id, status: 'pending', requiresReapproval: true });
+    return;
   }
 
-  const result = await dbWrite.appBlock.upsert({
-    where: {
-      appId_blockId: { appId, blockId: manifest.blockId },
-    },
-    create: {
-      id: newAppBlockId(),
-      appId,
-      blockId: manifest.blockId,
-      version: manifest.version,
-      manifest: body.manifest as object,
-      contentRating: manifest.contentRating,
-      // M1 (audit): trustTier and renderMode are admin-controlled
-      // privilege boundaries. Any publisher-supplied values are dropped
-      // on insert — even on the JOB_TOKEN path. New rows start at
-      // unverified/iframe; an admin tool (Phase 2) promotes via a
-      // separate code path that's not reachable from the manifest API.
-      // Without this, a JOB_TOKEN-holder could land trustTier='internal'
-      // (which permits the allow-same-origin + allow-scripts sandbox
-      // combo) and ship a manifest that escapes the iframe.
-      renderMode: 'iframe',
-      trustTier: 'unverified',
-      // status defaults to 'pending' from the schema; new blocks never
-      // render until a moderator approves.
-    },
-    update: {
-      version: manifest.version,
-      manifest: body.manifest as object,
-      contentRating: manifest.contentRating,
-      // H-1: re-enter moderation on every update. The publisher cannot
-      // change iframe.src, sandbox, scopes, etc. without losing approval.
-      status: 'pending',
-      updatedAt: new Date(),
-      // trustTier and renderMode intentionally omitted — they were
-      // already validated against `existing` above, so the upsert keeps
-      // the prior value. Admin tools update these separately.
-    },
-    select: { id: true, status: true },
-  });
+  const blockIdError = newBlockIdError(manifest.blockId);
+  if (blockIdError) {
+    res.status(422).json({ error: 'Invalid manifest', details: [blockIdError] });
+    return;
+  }
+
+  let result: { id: string; status: string };
+  try {
+    result = await dbWrite.appBlock.create({
+      data: {
+        id: newAppBlockId(),
+        appId,
+        blockId: manifest.blockId,
+        version: manifest.version,
+        manifest: body.manifest as object,
+        contentRating: manifest.contentRating,
+        // M1 (audit): trustTier and renderMode are admin-controlled
+        // privilege boundaries. Any publisher-supplied values are dropped
+        // on insert — even on the JOB_TOKEN path. New rows start at
+        // unverified/iframe; an admin tool (Phase 2) promotes via a
+        // separate code path that's not reachable from the manifest API.
+        // Without this, a JOB_TOKEN-holder could land trustTier='internal'
+        // (which permits the allow-same-origin + allow-scripts sandbox
+        // combo) and ship a manifest that escapes the iframe.
+        renderMode: 'iframe',
+        trustTier: 'unverified',
+        // status defaults to 'pending' from the schema; new blocks never
+        // render until a moderator approves.
+      },
+      select: { id: true, status: true },
+    });
+  } catch (error) {
+    // blockId is unique across apps: taken by another app, or created by a request since the read above.
+    if (isPrismaUniqueViolation(error)) {
+      res.status(409).json({ error: `blockId "${manifest.blockId}" already exists.` });
+      return;
+    }
+    throw error;
+  }
 
   // L3 (audit-10): every update demotes status to 'pending' (the H-1 fix).
   // Surface that fact in the response so publisher CI tooling can flag it

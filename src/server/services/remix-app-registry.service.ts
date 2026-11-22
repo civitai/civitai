@@ -688,7 +688,12 @@ async function writeUserRemixApp(
   afterWrite?: () => Promise<void>
 ) {
   const { count } = await dbWrite.appBlock.updateMany({
-    where: { id: row.id, manifest: { equals: row.manifest as Prisma.InputJsonValue } },
+    where: {
+      id: row.id,
+      manifest: { equals: row.manifest as Prisma.InputJsonValue },
+      // Never gives a store app's row a remix status, whatever its blockId.
+      status: { in: REMIX_STATUSES },
+    },
     data,
   });
   if (!count) throw userAppChanged();

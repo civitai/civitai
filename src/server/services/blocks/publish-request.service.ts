@@ -3498,8 +3498,8 @@ async function approveRequestUnderClaim(
       app: { select: { allowedScopes: true, allowedOrigins: true, userId: true } },
     },
   });
-  // A remix app is edited only at /moderator/remix-apps. A row never moves into or out of these
-  // statuses, so this read needs no lock.
+  // A remix app is edited only at /moderator/remix-apps. No lock: only the remix registry writes
+  // these statuses, and only to its own rows, so a row read here as a store app stays one.
   if (existingAppBlock && REMIX_STATUSES.includes(existingAppBlock.status))
     throw new Error(`Cannot approve: ${request.slug} is a remix app.`);
   const isFirstVersion = !existingAppBlock;
