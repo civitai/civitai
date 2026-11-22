@@ -562,7 +562,7 @@ async function queueCdnAccessSyncWhen(imageId: number, condition: Prisma.Sql, na
  * A block a scan must not lift: the owner is banned or held, or a hold kept the image. The fresh
  * read and the write's WHERE share it, since a ban or hold can land between the two.
  */
-const blockKeptByBanOrHoldSql = (alias: string) => {
+export const blockKeptByBanOrHoldSql = (alias: string) => {
   const t = Prisma.raw(`"${alias}"`);
   return Prisma.sql`(${hasBlockMarkerSql(alias)} AND (
     EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${t}."userId" AND u."bannedAt" IS NOT NULL)
@@ -622,9 +622,8 @@ async function logScanAfterReview(image: ScanImage, toUpdate: Prisma.ImageUpdate
  * post-update side effects need. Three terminal shapes:
  *  - `blocked` (legacy mediaRating hard block, already written by the caller): only
  *    stamp provenance — re-auditing would recompute nsfwLevel/ingestion and silently
- *    un-block the image. A *prior* block is deliberately not sticky, so a moderator
- *    rescan can clear it, unless the owner is banned or held, a hold kept the image, the
- *    image is under appeal, or the block is CSAM.
+ *    un-block the image. A *prior* block is decided again by the verdict, within the
+ *    conditions on the write below.
  *    imageScanning never passes `blocked`, so on that path only `audit.blockedFor` and
  *    moderation rules re-block.
  *  - `audit.blockedFor` (prompt TOS/CSAM): block.

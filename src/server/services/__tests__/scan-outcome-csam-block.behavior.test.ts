@@ -53,6 +53,8 @@ import {
   reviewKeyAfterSkipSql,
   type ScanImage,
 } from '../image-scan-pipeline';
+import { rescanImageById } from '../image-rescan.service';
+import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { scanKeepsRowSql } from '~/server/common/image-visibility';
 import { blockImageFromRating } from '../image-scan-result.service';
@@ -63,6 +65,7 @@ import { auditPostImageMeta } from '~/utils/metadata/audit';
 import {
   addImageTools,
   getImagesModRules,
+  ingestImageById,
   requeueUnverifiedImages,
 } from '~/server/services/image.service';
 import { evaluateRules } from '~/server/utils/mod-rules';
@@ -1416,6 +1419,92 @@ describe('scan result writes', () => {
           blockedFor: 'AiNotVerified',
           minor: false,
         });
+      });
+    });
+
+    describe('group 5', () => {
+      const rescan = async (id: number) => {
+        await rescanImageById({ id });
+        expect(submitted()).toContain(id);
+      };
+
+      it('case 1', async () => {
+        await rescan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Rescan',
+          blockedFor: 'moderated',
+          nsfwLevel: 32,
+        });
+        await scan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Scanned',
+          blockedFor: null,
+        });
+      });
+
+      it('case 2', async () => {
+        await toError(W_MODERATED);
+        await rescan(W_MODERATED);
+        expect((await imageRow(W_MODERATED)).ingestion).toBe('Rescan');
+      });
+
+      it.each([
+        ['1', W_CSAM, ''],
+        ['2', W_HELD_OWNER, ''],
+        ['3', W_AI_UNVERIFIED, ''],
+        ['4', W_MODERATED, 'minor = true'],
+        ['5', W_MODERATED, `"needsReview" = 'appeal'`],
+        ['6', W_MODERATED, `metadata = '{"${PRIOR_INGESTION_KEY}": "Scanned"}'`],
+        ['7', W_FLAGGED, ''],
+        ['8', W_MODERATED, `ingestion = 'Pending'`],
+        ['9', CSAM, ''],
+      ])('case 3.%s', async (_label, id, columns) => {
+        if (columns) await set(id, columns);
+        const before = await imageRow(id);
+        await rescan(id);
+        expect((await imageRow(id)).ingestion).toBe(before.ingestion);
+      });
+
+      it('case 4', async () => {
+        await ingestImageById({ id: W_MODERATED });
+        expect(submitted()).toEqual([W_MODERATED]);
+        expect((await imageRow(W_MODERATED)).ingestion).toBe('Blocked');
+      });
+
+      it('case 5', async () => {
+        await rescan(W_MODERATED);
+        await failScan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({ ingestion: 'Rescan' });
+        await scan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Scanned',
+          blockedFor: null,
+        });
+      });
+
+      it('case 6', async () => {
+        await rescan(W_MODERATED);
+        await set(W_MODERATED, `"scanJobs" = '{"retryCount": ${IMAGE_RESCAN_RETRY_LIMIT - 2}}'`);
+        await failScan(W_MODERATED);
+        expect((await imageRow(W_MODERATED)).ingestion).toBe('Rescan');
+        await holder.db.exec('TRUNCATE "JobQueue"');
+        await failScan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Error',
+          blockedFor: 'moderated',
+        });
+        expect(await queued()).toEqual([W_MODERATED]);
+        await scan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Error',
+          blockedFor: 'moderated',
+        });
+      });
+
+      it('case 7', async () => {
+        await set(W_PENDING, `ingestion = 'Rescan', "blockedFor" = 'AiNotVerified'`);
+        await failScan(W_PENDING);
+        expect((await imageRow(W_PENDING)).ingestion).toBe('Error');
       });
     });
   });
