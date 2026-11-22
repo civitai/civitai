@@ -87,7 +87,7 @@ beforeEach(() => {
     allowedScopes: 0xffffffn,
     allowedOrigins: ['https://blocks.civitai.com'],
   });
-  mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+  mockDbWrite.appBlock.findUnique.mockResolvedValue(null);
   mockDbWrite.appBlock.create.mockResolvedValue({ id: 'ab_new', status: 'pending' });
   mockDbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
 });
@@ -148,7 +148,7 @@ describe('POST /api/v1/developer/block-manifests', () => {
     });
 
     it('accepts an update to an EXISTING block whose blockId contains consecutive hyphens', async () => {
-      mockDbRead.appBlock.findUnique.mockResolvedValue({
+      mockDbWrite.appBlock.findUnique.mockResolvedValue({
         id: 'ab_legacy',
         manifest: { something: 'old' },
         status: 'approved',
@@ -164,7 +164,7 @@ describe('POST /api/v1/developer/block-manifests', () => {
   });
 
   it('H-1: update branch sets status=pending (re-enters moderation)', async () => {
-    mockDbRead.appBlock.findUnique.mockResolvedValue({
+    mockDbWrite.appBlock.findUnique.mockResolvedValue({
       id: 'ab_existing',
       manifest: { something: 'old' },
       status: 'approved',
@@ -223,7 +223,7 @@ describe('POST /api/v1/developer/block-manifests', () => {
   });
 
   it('SPEND: a manifest-declared spendTier NEVER reaches the row (UPDATE branch)', async () => {
-    mockDbRead.appBlock.findUnique.mockResolvedValue({
+    mockDbWrite.appBlock.findUnique.mockResolvedValue({
       id: 'ab_existing',
       manifest: { something: 'old' },
       status: 'approved',
@@ -279,7 +279,7 @@ describe('POST /api/v1/developer/block-manifests', () => {
     it('writes the trimmed values on both the create and update payloads', async () => {
       const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
       await handler(makeReq({ body: paddedBody() }), makeRes());
-      mockDbRead.appBlock.findUnique.mockResolvedValue({
+      mockDbWrite.appBlock.findUnique.mockResolvedValue({
         id: 'ab_existing',
         manifest: { something: 'old' },
         status: 'approved',
@@ -299,7 +299,7 @@ describe('POST /api/v1/developer/block-manifests', () => {
     });
 
     it('a padded re-upload of the stored (trimmed) manifest is unchanged, not re-moderated', async () => {
-      mockDbRead.appBlock.findUnique.mockResolvedValue({
+      mockDbWrite.appBlock.findUnique.mockResolvedValue({
         id: 'ab_existing',
         manifest: { ...VALID_BODY.manifest, tagline: TAGLINE, repository: REPO },
         status: 'approved',
@@ -328,7 +328,7 @@ describe('POST /api/v1/developer/block-manifests', () => {
     it.each(['remix', 'remix_disabled'])(
       '🔴 409s an upload onto a remix row (status %s) without writing, even when the manifest is unchanged',
       async (status) => {
-        mockDbRead.appBlock.findUnique.mockResolvedValue(row(status));
+        mockDbWrite.appBlock.findUnique.mockResolvedValue(row(status));
         const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
         const res = makeRes();
         await handler(makeReq({ body: VALID_BODY }), res);
@@ -338,8 +338,10 @@ describe('POST /api/v1/developer/block-manifests', () => {
       }
     );
 
-    it('🔴 the update is conditional on a non-remix status, and 409s when the row changed under it', async () => {
-      mockDbRead.appBlock.findUnique.mockResolvedValue(row('approved', { something: 'old' }));
+    it('🔴 the update is conditional on a non-remix status, and 409s when the row became one under it', async () => {
+      mockDbWrite.appBlock.findUnique
+        .mockResolvedValueOnce(row('approved', { something: 'old' }))
+        .mockResolvedValueOnce({ status: 'remix' });
       mockDbWrite.appBlock.updateMany.mockResolvedValue({ count: 0 });
       const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
       const res = makeRes();
@@ -352,8 +354,30 @@ describe('POST /api/v1/developer/block-manifests', () => {
       expect(res._body).toEqual(REFUSAL);
     });
 
-    it('CONTROL: an approved store row with a changed manifest still goes back to pending', async () => {
+    it('a row gone under the update is a retryable conflict, not a remix refusal', async () => {
+      mockDbWrite.appBlock.findUnique
+        .mockResolvedValueOnce(row('approved', { something: 'old' }))
+        .mockResolvedValueOnce(null);
+      mockDbWrite.appBlock.updateMany.mockResolvedValue({ count: 0 });
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: VALID_BODY }), res);
+      expect(res._status).toBe(409);
+      expect(res._body).toEqual({
+        error: 'This block changed while it was being written. Try again.',
+      });
+    });
+
+    it('reads the row from the primary, never a replica', async () => {
       mockDbRead.appBlock.findUnique.mockResolvedValue(row('approved', { something: 'old' }));
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      await handler(makeReq({ body: VALID_BODY }), makeRes());
+      expect(mockDbRead.appBlock.findUnique).not.toHaveBeenCalled();
+      expect(mockDbWrite.appBlock.findUnique).toHaveBeenCalled();
+    });
+
+    it('CONTROL: an approved store row with a changed manifest still goes back to pending', async () => {
+      mockDbWrite.appBlock.findUnique.mockResolvedValue(row('approved', { something: 'old' }));
       const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
       const res = makeRes();
       await handler(makeReq({ body: VALID_BODY }), res);

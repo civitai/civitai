@@ -133,6 +133,10 @@ describe('saveRemixApp', () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(stored(video, 2) as never);
     await saveRemixApp({ ...video, name: 'Pixels' });
     expect(dbMock.dbWrite.appBlock.update).toHaveBeenCalledTimes(1);
+    // Re-checked at the write: a row that is no longer a remix app's is not replaced.
+    expect(dbMock.dbWrite.appBlock.update.mock.calls[0][0]).toMatchObject({
+      where: { blockId: 'remix-pixel-art', status: { in: ['remix', 'remix_disabled'] } },
+    });
     expect(written().data).toMatchObject({
       manifest: { targets: [{ slotId: 'video.remix' }] },
     });

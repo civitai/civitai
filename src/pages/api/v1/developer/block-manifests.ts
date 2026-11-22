@@ -12,8 +12,6 @@ import { newBlockIdError } from '~/server/utils/apps-slug';
 import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 
-const REMIX_ROW_REFUSAL = 'A remix app is edited on the remix apps page.';
-
 // B5: cap the body parser BEFORE the JSON.stringify size check. Next's
 // default is 1MB; we want to reject oversize uploads before they hit
 // the JSON parser, not after. Especially critical once v2 drops the
@@ -134,16 +132,14 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // tier/render-mode changes from the manifest payload. Trust tier is
   // server-controlled — promoting it via manifest upload would bypass the
   // sandbox gate (verified/internal tiers can carry allow-same-origin).
-  const existing = await dbRead.appBlock.findUnique({
+  // primary: the status refused below must be the row's own, not a replica's.
+  const existing = await dbWrite.appBlock.findUnique({
     where: { appId_blockId: { appId, blockId: manifest.blockId } },
     select: { trustTier: true, renderMode: true, manifest: true, status: true, id: true },
   });
 
   if (existing) {
-    if (REMIX_STATUSES.includes(existing.status)) {
-      res.status(409).json({ error: REMIX_ROW_REFUSAL });
-      return;
-    }
+    if (REMIX_STATUSES.includes(existing.status)) return refuseRemixRow(res);
     const requestedTrust = manifest.trustTier ?? 'unverified';
     const requestedRender = manifest.renderMode ?? 'iframe';
     if (existing.trustTier !== requestedTrust) {
@@ -199,7 +195,13 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       },
     });
     if (!count) {
-      res.status(409).json({ error: REMIX_ROW_REFUSAL });
+      // primary: why the write above matched nothing, as of now.
+      const now = await dbWrite.appBlock.findUnique({
+        where: { id: existing.id },
+        select: { status: true },
+      });
+      if (now && REMIX_STATUSES.includes(now.status)) return refuseRemixRow(res);
+      res.status(409).json({ error: 'This block changed while it was being written. Try again.' });
       return;
     }
     res.status(200).json({ id: existing.id, status: 'pending', requiresReapproval: true });
@@ -253,3 +255,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // above returns `unchanged: true` instead.
   res.status(200).json({ ...result, requiresReapproval: true });
 });
+
+function refuseRemixRow(res: NextApiResponse) {
+  res.status(409).json({ error: 'A remix app is edited on the remix apps page.' });
+}

@@ -3914,8 +3914,9 @@ async function approveRequestUnderClaim(
     // Subsequent version: refresh manifest + version + approvedScopes
     // on the existing row. currentVersionSha is stamped in step (6) below,
     // right after the Forgejo commit returns the approved sha.
+    // Throws (P2025) for a row that became a remix app since the guard above.
     await dbWrite.appBlock.update({
-      where: { id: appBlockId },
+      where: { id: appBlockId, status: { notIn: REMIX_STATUSES } },
       data: {
         manifest: manifest as object,
         version: request.version,

@@ -73,7 +73,7 @@ describe('finaliseOnsiteApprove', () => {
     });
     // The held sha is not marked current, so no restore or rebuild can serve it.
     expect(tx.appBlock.update).toHaveBeenCalledWith({
-      where: { id: 'apb_1' },
+      where: { id: 'apb_1', status: { notIn: ['remix', 'remix_disabled'] } },
       data: { status: 'suspended' },
     });
     // 🔴 The held request stays pending, so the next version is reviewed against the live one.
@@ -114,7 +114,7 @@ describe('finaliseOnsiteApprove', () => {
       priorVersion: { block, oauthClientId: 'oc_1', allowedScopes: 5n },
     });
     expect(tx.appBlock.update).toHaveBeenCalledWith({
-      where: { id: 'apb_1' },
+      where: { id: 'apb_1', status: { notIn: ['remix', 'remix_disabled'] } },
       data: { status: 'suspended', ...block },
     });
     expect(tx.oauthClient.update).toHaveBeenCalledWith({

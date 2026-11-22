@@ -1059,8 +1059,12 @@ describe('approveRequest — a remix app row', () => {
 
     await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
 
+    // The write re-checks the status the guard read: a row that became a remix app is not replaced.
     expect(db.write.appBlock.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ manifest: expect.anything() }) })
+      expect.objectContaining({
+        where: { id: 'apb_1', status: { notIn: ['remix', 'remix_disabled'] } },
+        data: expect.objectContaining({ manifest: expect.anything() }),
+      })
     );
   });
 });

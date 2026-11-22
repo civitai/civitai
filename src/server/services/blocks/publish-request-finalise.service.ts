@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 import {
   lockAppBlockClientRows,
   revokeAppBlockOauthTokens,
@@ -109,8 +110,9 @@ export async function finaliseOnsiteApprove(
       },
     });
   if (late.length) await lockAppBlockClientRows(tx, input.appBlockId);
+  // Throws (P2025) for a remix app's row: never suspended or stamped as a store app.
   await tx.appBlock.update({
-    where: { id: input.appBlockId },
+    where: { id: input.appBlockId, status: { notIn: REMIX_STATUSES } },
     // A held version is never marked current, and its unreviewed manifest, scopes and tier are
     // put back to the ones the app ran under: a restore serves the current sha's build under
     // them, and a re-triggered build rebuilds only the current sha.
