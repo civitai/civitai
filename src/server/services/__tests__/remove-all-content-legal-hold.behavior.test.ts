@@ -2111,8 +2111,10 @@ describe('removeAllContent and the profile archive', () => {
       live.length = 0;
       return { count };
     }) as never);
-    const readModels = vi.mocked(dbMock.dbWrite.model.findMany).getMockImplementation()!;
-    vi.mocked(dbMock.dbWrite.model.findMany).mockImplementation((async (args: never) => {
+    const readModels = vi.mocked(dbMock.dbWrite.model.findMany).getMockImplementation() as (
+      args: unknown
+    ) => Promise<unknown>;
+    vi.mocked(dbMock.dbWrite.model.findMany).mockImplementation((async (args: unknown) => {
       live.push({ id: 42, url: 'https://example.com/added', type: 'Social' });
       return readModels(args);
     }) as never);
