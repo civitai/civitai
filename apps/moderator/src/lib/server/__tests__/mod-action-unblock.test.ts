@@ -14,7 +14,11 @@ const { acceptImage, blockImage } = vi.hoisted(() => ({
 
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('../db', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('../image-moderation.service', () => ({ acceptImage, blockImage }));
+vi.mock('../image-moderation.service', () => ({
+  acceptImage,
+  blockImage,
+  isKeptForDeletedOwner: vi.fn(async () => false),
+}));
 
 const { modActions } = await import('../mod-actions/registry');
 

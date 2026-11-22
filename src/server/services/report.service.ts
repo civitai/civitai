@@ -2,7 +2,14 @@ import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { MERGE_PERMISSION_REPORT_REASON } from '@civitai/shared/merge-permission';
 import { NO_REPORT_REWARD_KEY, reportersWithoutReward } from '@civitai/shared/report-reward';
-import { reviewKeptWhenLiftedSql, withoutGraceMarkersSql } from '~/server/common/image-visibility';
+import {
+  liftedBlockedForSql,
+  liftedIngestionSql,
+  liftedMetadataSql,
+  liftedNeedsReviewSql,
+  liftedNsfwLevelSql,
+  liftKeptBlockedSql,
+} from '~/server/common/image-visibility';
 import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
@@ -34,6 +41,7 @@ import {
   queueImageSearchIndexUpdate,
   dropBlockedImageDeleteQueue,
   resetBlockedNsfwLevel,
+  restartBlockedImageDeleteClock,
 } from '~/server/services/image.service';
 import {
   queueComicsForPanelImage,
@@ -1972,17 +1980,19 @@ export async function settleResolvedAppeals(
           // An approval never restores a row removed for CSAM or under the review flag, and a
           // rejection leaves that flag on. On a row an account deletion blocked, an approval settles
           // the appeal but not a review the deletion recorded, which comes back.
-          type Written = { postId: number | null; pHash: bigint | null };
+          type Written = { postId: number | null; pHash: bigint | null; keptBlocked?: boolean };
           const [updated] = approved
             ? await dbWrite.$queryRaw<Written[]>`
                 UPDATE "Image"
-                SET "needsReview" = ${reviewKeptWhenLiftedSql},
-                    "blockedFor" = NULL, ingestion = 'Scanned',
-                    "metadata" = ${withoutGraceMarkersSql()}
+                SET "needsReview" = ${liftedNeedsReviewSql},
+                    "blockedFor" = ${liftedBlockedForSql},
+                    "nsfwLevel" = ${liftedNsfwLevelSql},
+                    ingestion = ${liftedIngestionSql},
+                    "metadata" = ${liftedMetadataSql}
                 WHERE id = ${appeal.entityId}
                   AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
                   AND "needsReview" IS DISTINCT FROM 'csam'
-                RETURNING "postId", "pHash"
+                RETURNING "postId", "pHash", ${liftKeptBlockedSql} AS "keptBlocked"
               `
             : await dbWrite.$queryRaw<Written[]>`
                 UPDATE "Image"
@@ -1996,11 +2006,16 @@ export async function settleResolvedAppeals(
             break;
           }
 
-          if (approved) {
+          const restored = approved && !updated.keptBlocked;
+          if (approved && !restored) await restartBlockedImageDeleteClock([appeal.entityId]);
+          if (restored) {
             // Shared restore path: reset+unlock a Blocked-locked row so the recompute isn't a
             // no-op, then recompute. Same helper handleUnblockImages uses. (ClickUp 868kfwdzq)
             await resetBlockedNsfwLevel(appeal.entityId);
             await dropBlockedImageDeleteQueue([appeal.entityId]);
+          }
+          if (approved) {
+            // Even while the owner is deleted: an account restore never revisits the blocklist.
             // An approved appeal means the block was wrong — drop the pHash from the
             // blocked-hash set so re-uploads of the same image aren't auto-blocked (parity
             // with handleUnblockImages). A hash with a live CSAM entry stays blocked.
@@ -2013,7 +2028,7 @@ export async function settleResolvedAppeals(
 
           await queueImageSearchIndexUpdate({
             ids: [appeal.entityId],
-            action: approved
+            action: restored
               ? SearchIndexUpdateQueueAction.Update
               : SearchIndexUpdateQueueAction.Delete,
           });

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -371,7 +372,16 @@ func TestServeTrainingDataNeverListsARefusedFile(t *testing.T) {
 func TestTrainingDataListingDrift(t *testing.T) {
 	ctx := context.Background()
 	versions := []superjson.Object{meta("id", int64(6001), "files", []any{tdFile(1, trainingDataType)})}
-	for _, hash := range []string{"", "0000", strings.ToUpper(TrainingDataSQLHash), TrainingDataSQLHash + " "} {
+	sum := sha256.Sum256([]byte(trainingDataListingSQL))
+	sqlOnly := hex.EncodeToString(sum[:])
+	for _, hash := range []string{
+		"", "0000", strings.ToUpper(TrainingDataSQLHash), TrainingDataSQLHash + " ",
+		// The statement matches but the decision does not: a Node whose predicate changed (its rules
+		// version bumped), one that predates the version, and an older version.
+		sqlOnly, sqlOnly + ";rules=" + strconv.Itoa(TrainingDataRulesVersion+1), sqlOnly + ";rules=0",
+		// The decision matches but the statement does not.
+		strings.Repeat("0", 64) + ";rules=" + strconv.Itoa(TrainingDataRulesVersion),
+	} {
 		var reads [][]int
 		_, err := tdDeps([]map[string]any{tdRow(1, false)}, nil, &reads).trainingDataListing(ctx, versions,
 			listingRequest{host: greenHost, sqlHash: hash})
@@ -401,9 +411,8 @@ func TestTrainingDataListingDrift(t *testing.T) {
 	if len(w.tdCandidates) != 0 {
 		t.Errorf("read before the drift check: %v", w.tdCandidates)
 	}
-	// The embedded statement is the one hashed.
-	sum := sha256.Sum256([]byte(trainingDataListingSQL))
-	if TrainingDataSQLHash != hex.EncodeToString(sum[:]) || len(TrainingDataSQLHash) != 64 {
+	// The value required is the embedded statement's hash and this build's decision version.
+	if TrainingDataSQLHash != sqlOnly+";rules="+strconv.Itoa(TrainingDataRulesVersion) {
 		t.Errorf("hash %q", TrainingDataSQLHash)
 	}
 }

@@ -32,7 +32,12 @@ import type * as FliptModule from '~/server/flipt/client';
  */
 
 /** The external-host refusal flag; every other flag reads as it does unmocked. */
-const flags = vi.hoisted(() => ({ refuseExternal: false, refuseExternalApp: true }));
+const flags = vi.hoisted(() => ({
+  refuseExternal: false,
+  refuseExternalApp: true,
+  /** The step position rule's variant; null reads Flipt as unmocked. */
+  stepPositions: null as string | null,
+}));
 
 const h = vi.hoisted(() => ({
   authorize: vi.fn(),
@@ -89,7 +94,20 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
           flag,
           ...rest
         )) as typeof actual.isFliptSync;
-  return { ...actual, isFlipt, isFliptSync, ensureFliptInitialized: async () => undefined };
+  const getFliptVariant = ((flag: string, ...rest: unknown[]) =>
+    flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_STEP_POSITIONS && flags.stepPositions !== null
+      ? Promise.resolve(flags.stepPositions)
+      : (actual.getFliptVariant as (...a: unknown[]) => Promise<unknown>)(
+          flag,
+          ...rest
+        )) as typeof actual.getFliptVariant;
+  return {
+    ...actual,
+    isFlipt,
+    isFliptSync,
+    getFliptVariant,
+    ensureFliptInitialized: async () => undefined,
+  };
 });
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: () => h.getOrchestratorToken(),
@@ -666,6 +684,43 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
     ['estimate', estimate],
     ['submit', submit],
   ] as const;
+
+  describe('a stored file placed through arguments, with the step position rule backed out', () => {
+    // The external-host gate is off too, so only the stored-file rule can refuse.
+    beforeEach(() => {
+      flags.stepPositions = 'off';
+      flags.refuseExternalApp = false;
+    });
+    afterEach(() => {
+      flags.stepPositions = null;
+      flags.refuseExternalApp = true;
+    });
+    const stored = 'https://acct.r2.cloudflarestorage.com/b/weights';
+    const placedAt = (key: string) =>
+      body({
+        steps: [
+          {
+            $type: 'imageGen',
+            name: 'gen',
+            input: { ...GEN_INPUT, [key]: { $ref: '$arguments', path: 'image' } },
+          },
+        ],
+        // Under a media-named argument, so only judging it where it lands can refuse it.
+        arguments: { image: stored },
+      });
+
+    it.each(paths)('🔴 %s: refuses it at a non-media input', async (_n, run) => {
+      await expect(run(placedAt('model'))).rejects.toThrow(
+        'a stored file URL is accepted only at a media input'
+      );
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it.each(paths)('%s: accepts it at a media input', async (_n, run) => {
+      await run(placedAt('images'));
+      expect(h.submitWorkflow).toHaveBeenCalled();
+    });
+  });
 
   it.each(paths)(
     '🔴 %s: the DENYLIST runs on every step and names the step index',

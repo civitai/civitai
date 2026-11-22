@@ -53,6 +53,10 @@ const h = await vi.hoisted(async () => {
     // The SET is held until the test lands it (it lands only after the caller timed out).
     replayDeferred: null as (() => void)[] | null,
     replaySetCalled: false,
+    // Called when the replay SET is sent: what a test waits on to know the claim has been made.
+    onReplaySet: null as (() => void) | null,
+    // Called when a replay-store script is run (after it is pushed onto evals).
+    onEval: null as (() => void) | null,
     dbThrowsOn: null as string | null,
     // Runs a script on the replay store's state in real Lua (set in beforeEach from the harness).
     // Every replay-store script run, in call order: a test awaits the one it is waiting for.
@@ -128,6 +132,7 @@ vi.mock('$lib/server/redis', async (orig) => ({
       : {
           async set(key: string, value: string, opts?: { NX?: boolean; EX?: number }) {
             h.replaySetCalled = true;
+            h.onReplaySet?.();
             const apply = () => {
               if (opts?.NX && h.cache.has(key)) return null;
               h.cache.set(key, value);
@@ -156,6 +161,7 @@ vi.mock('$lib/server/redis', async (orig) => ({
           async eval(script: string, options: { keys: string[]; arguments: string[] }) {
             const run = h.luaEval!(script, options);
             h.evals.push(run);
+            h.onEval?.();
             return run;
           },
         },
@@ -292,6 +298,8 @@ beforeEach(() => {
     return result;
   };
   h.replaySetCalled = false;
+  h.onReplaySet = null;
+  h.onEval = null;
   h.dbThrowsOn = null;
   h.sys.clear();
   h.sysSetThrows = false;
@@ -789,12 +797,22 @@ async function exchangeWithReplayTimeout(token: string) {
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
   vi.setSystemTime(NOW * 1000);
   h.replaySetCalled = false;
+  const setSent = new Promise<'set'>((resolve) => {
+    h.onReplaySet = () => resolve('set');
+  });
   const pending = exchange(token);
-  // Real async work (signature checks) runs before the claim; wait for the claim itself.
-  for (let i = 0; i < 500 && !h.replaySetCalled; i++) {
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  expect(h.replaySetCalled).toBe(true);
+  // Real async work (signature checks, then the lookups) runs before the claim, for as long as the machine
+  // takes: wait for the SET itself, or for an answer given without one (a test failure, not a hang). A wait
+  // bounded by a count of event-loop turns ran out on a loaded CI runner, and the exchange it left running
+  // then claimed and issued inside the next test.
+  const first = await Promise.race([
+    setSent,
+    pending.then(
+      () => 'answered' as const,
+      () => 'answered' as const
+    ),
+  ]);
+  expect(first, 'the exchange answered before its replay claim was sent').toBe('set');
   await vi.advanceTimersByTimeAsync(2001);
   return pending;
 }
@@ -847,13 +865,15 @@ describe('block token exchange — one exchange per block token', () => {
     h.replayDeferred = null;
     expect(pending).toHaveLength(1);
     const released = h.evals.length; // the 503's own release ran (and found nothing) already
+    const lateRelease = new Promise<void>((resolve) => {
+      h.onEval = resolve;
+    });
     pending[0]();
     expect(h.cache.size).toBe(1); // landed: the claim is held
-    // The late release runs in the background: wait until it is called, then for the script itself (real
-    // Lua in a fresh wasmoon engine, which settles outside the microtask queue).
-    for (let i = 0; i < 1000 && h.evals.length === released; i++) {
-      await new Promise((resolve) => setImmediate(resolve));
-    }
+    // The late release runs in the background: wait until it is called (an observable, not a count of
+    // event-loop turns), then for the script itself (real Lua in a fresh wasmoon engine, which settles
+    // outside the microtask queue).
+    await lateRelease;
     expect(h.evals).toHaveLength(released + 1);
     await h.evals[released];
     expect(h.cache.size).toBe(0);

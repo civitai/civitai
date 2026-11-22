@@ -537,6 +537,7 @@ export const serverSchema = z
     // The least a link's fetch cap can be; large files get more (`linkFetchCap`).
     DOWNLOAD_LINK_MAX_FETCHES: z.coerce.number().int().positive().default(50),
     DOWNLOAD_LINK_MIN_REUSE_SECONDS: z.coerce.number().int().nonnegative().default(7200),
+    // Sent as expiresInSeconds, which the storage resolver ignores (see ResolveOptions).
     DOWNLOAD_LINK_FILE_URL_TTL_SECONDS: z.coerce
       .number()
       .int()
@@ -1127,6 +1128,14 @@ export const serverSchema = z
     SHOPIFY_CLIENT_ID: z.string().optional(),
     SHOPIFY_CLIENT_SECRET: z.string().optional(),
     SHOPIFY_ADMIN_TOKEN: z.string().optional(),
+
+    // Feature pages (/features/<slug>). The page 404s until all four are set; votes need only the
+    // signer URL and client id/secret. EMBED_URL must be on a registrable domain that is not one of
+    // ours, at an origin that serves only feature pages.
+    FEATURE_PAGES_EMBED_URL: z.url().optional(),
+    FEATURE_PAGES_SIGNER_URL: z.url().optional(),
+    FEATURE_PAGES_CLIENT_ID: z.string().optional(),
+    FEATURE_PAGES_CLIENT_SECRET: z.string().optional(),
 
     FLIPT_URL: z.string(),
     FLIPT_FETCHER_SECRET: z.string(),

@@ -42,7 +42,7 @@ type DetailRequest struct {
 	RegionRestricted bool
 	// Host is the request's Host header (isRedCapableHost, for the Training Data listing).
 	Host string
-	// TrainingDataSQL is the hash of Node's Training Data statement the sample carried
+	// TrainingDataSQL is Node's Training Data rule-set id the sample carried
 	// (TrainingDataSQLHeader); "" = none.
 	TrainingDataSQL string
 }
@@ -133,7 +133,7 @@ type ListRequest struct {
 	Query, Path, Host string
 	// RegionRestricted: the caller's region holds the level to PG/PG-13.
 	RegionRestricted bool
-	// TrainingDataSQL is the hash of Node's Training Data statement the sample carried
+	// TrainingDataSQL is Node's Training Data rule-set id the sample carried
 	// (TrainingDataSQLHeader); "" = none.
 	TrainingDataSQL string
 }

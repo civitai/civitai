@@ -51,11 +51,11 @@ export async function startStickerAutoTrack(input: {
       loadVideo: async () => {
         const image = await dbRead.image.findUnique({
           where: { id: imageId },
-          select: { url: true, metadata: true },
+          select: { url: true, metadata: true, width: true, height: true },
         });
         if (!image) return null;
         const durationSeconds = (image.metadata as { duration?: number } | null)?.duration;
-        return { url: image.url, durationSeconds };
+        return { url: image.url, durationSeconds, width: image.width, height: image.height };
       },
       resolveLimit: async () => (resolved = await resolveLimit()),
       limitMessage: (limit) =>
