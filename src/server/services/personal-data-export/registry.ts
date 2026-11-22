@@ -79,6 +79,8 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   AppBlockPublishRequest: { subject: ['submittedByUserId'], staff: ['reviewedByUserId'] },
   // Which of the user's App Assistant chats worked on which of their apps.
   AppAssistantSessionLink: { subject: ['userId'] },
+  // What a submission of theirs was traced to: their chats' ids, snapshot keys and the signals.
+  AppPublishRequestTrace: { subject: ['userId'] },
   AppListing: { subject: ['userId'] },
   PostIntentManifest: { subject: ['userId'] },
   AppListingReview: { subject: ['userId'] },

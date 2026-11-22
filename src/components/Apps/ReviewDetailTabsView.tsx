@@ -4,10 +4,12 @@ import {
   IconFileCode,
   IconKey,
   IconLayoutDashboard,
+  IconMessages,
   IconRobot,
   IconTerminal2,
   IconWindow,
 } from '@tabler/icons-react';
+import { ReviewAssistantSessionsPanel } from '~/components/Apps/ReviewAssistantSessionsPanel';
 import { useRouter } from 'next/router';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -92,6 +94,7 @@ export const TAB_ICONS: Record<ReviewDetailTab, typeof IconKey> = {
   manifest: IconFileCode,
   preview: IconWindow,
   console: IconTerminal2,
+  sessions: IconMessages,
 };
 
 /**
@@ -337,6 +340,15 @@ function ReviewDetailTabsViewInner({
       */}
       <Tabs.Panel value="console" pt="md">
         <ReviewConsolePanel />
+      </Tabs.Panel>
+
+      {/*
+        BUILD SESSIONS — the App Assistant chats this submission was built in, its signals and
+        their frozen transcripts. `visited`-gated: it reads the moderator trace API only once
+        opened.
+      */}
+      <Tabs.Panel value="sessions" pt="md">
+        {visited.has('sessions') && <ReviewAssistantSessionsPanel publishRequestId={request.id} />}
       </Tabs.Panel>
     </Tabs>
   );
