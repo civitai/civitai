@@ -44,8 +44,9 @@ function isShippedEntry(cleaned: string): boolean {
 
 /**
  * Whether a moderator entry would take effect in the filter and is long enough to be safe to
- * apply everywhere. Stricter than the filter on short boundary-marked entries, and refuses a
- * `|` anywhere but the ends, which the filter's pattern parser throws on.
+ * apply everywhere, or is a shipped entry (see `MIN_UNBOUNDED_LETTERS`). Stricter than the filter
+ * on short boundary-marked entries, and refuses a `|` anywhere but the ends, which the filter's
+ * pattern parser throws on.
  */
 export function isUsableBlockedEntry(entry: string): boolean {
   const cleaned = cleanWord(entry);
