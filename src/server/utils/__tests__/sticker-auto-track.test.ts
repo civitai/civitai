@@ -68,14 +68,17 @@ describe('readStickerAutoTrackWorkflow', () => {
     for (const status of ['failed', 'expired', 'canceled'])
       expect(readStickerAutoTrackWorkflow({ ...finished([]), status }, PLACER)).toEqual({
         status: 'failed',
+        reason: 'run',
+        runStatus: status,
       });
   });
 
   it('fails a run that reports success without a usable track file', () => {
     const unavailable = finished([{ id: 'a.json', url: BLOB_URL, available: false }]);
     const notJson = finished([{ id: 'a.png', url: BLOB_URL, available: true }]);
-    expect(readStickerAutoTrackWorkflow(unavailable, PLACER)).toEqual({ status: 'failed' });
-    expect(readStickerAutoTrackWorkflow(notJson, PLACER)).toEqual({ status: 'failed' });
+    const noFile = { status: 'failed', reason: 'no-file' };
+    expect(readStickerAutoTrackWorkflow(unavailable, PLACER)).toEqual(noFile);
+    expect(readStickerAutoTrackWorkflow(notJson, PLACER)).toEqual(noFile);
   });
 
   it('hands back the track file and where the run started', () => {
@@ -399,10 +402,22 @@ describe('pollAutoTrack', () => {
     });
     const withFile = (file: { ok: boolean; json: () => Promise<unknown> }) =>
       pollAutoTrack({ read: done, download: async () => file, maxScale: async () => 1 }, PLACER);
-    expect(await withFile({ ok: false, json: async () => TRACK })).toEqual({ status: 'failed' });
+    expect(await withFile({ ok: false, json: async () => TRACK })).toEqual({
+      status: 'failed',
+      reason: 'download',
+    });
     expect(await withFile({ ok: true, json: async () => ({ v: 2 }) })).toEqual({
       status: 'failed',
+      reason: 'bad-track',
     });
+  });
+
+  it('says which status a failed run ended in', async () => {
+    const ended = await poll(async () => ({
+      data: { ...finished([]), status: 'expired' },
+      status: 200,
+    }));
+    expect(ended).toEqual({ status: 'failed', reason: 'run', runStatus: 'expired' });
   });
 
   it('reports a 404 as no such run', async () => {
