@@ -3,9 +3,8 @@ import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/b
 import { trpc } from '~/utils/trpc';
 
 /**
- * The moderator benign lists, for gates that run in the browser. Search queries Meili
- * from the client, so the POI / minor / profanity checks there have no server hop to
- * strip on — see `getClientBenignLists`. Edge-cached and refetched on a finite staleTime, so
+ * The moderator benign lists, for gates that run in the browser: the POI / minor checks, and the
+ * profanity check where the server does not run one — see `getClientBenignLists`. Edge-cached and refetched on a finite staleTime, so
  * both an addition and a REMOVAL reach an open search box within minutes.
  */
 export function useBenignPhrases() {

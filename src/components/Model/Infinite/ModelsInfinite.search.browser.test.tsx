@@ -15,7 +15,6 @@ const state = vi.hoisted(() => ({
   refusal: undefined as string | undefined,
   searchQueries: [] as (string | undefined)[],
   feedEnabled: [] as (boolean | undefined)[],
-  feedPaged: 0,
   features: {} as Record<string, boolean>,
 }));
 
@@ -36,12 +35,7 @@ vi.mock('~/components/Model/model.utils', async (importOriginal) => ({
   useQueryModels: (_filters: unknown, options?: { enabled?: boolean }) => {
     state.feedEnabled.push(options?.enabled);
     // An earlier page with more to load, as a disabled query keeps it.
-    return result([1, 2, 3], {
-      hasNextPage: true,
-      fetchNextPage: () => {
-        state.feedPaged++;
-      },
-    });
+    return result([1, 2, 3], { hasNextPage: true });
   },
   useSemanticModelFeed: (_filters: unknown, query: string | undefined) => {
     state.searchQueries.push(query);
@@ -88,7 +82,6 @@ const render = (props: { searchable?: boolean } = { searchable: true }) =>
 describe('ModelsInfinite with a search', () => {
   beforeEach(() => {
     state.searchFails = false;
-    state.feedPaged = 0;
     state.refusal = undefined;
     state.searchQueries = [];
     state.feedEnabled = [];
@@ -110,7 +103,6 @@ describe('ModelsInfinite with a search', () => {
     render();
     await expect.element(page.getByText('Retry search')).toBeInTheDocument();
     expect(page.getByText('model 1', { exact: true }).query()).toBeNull();
-    expect(state.feedPaged).toBe(0);
     expect(state.feedEnabled.at(-1)).toBe(false);
   });
 

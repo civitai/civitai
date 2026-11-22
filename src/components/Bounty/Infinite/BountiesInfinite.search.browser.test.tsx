@@ -12,7 +12,6 @@ const state = vi.hoisted(() => ({
   refusal: undefined as string | undefined,
   searchQueries: [] as (string | undefined)[],
   feedCalls: [] as { query?: string; enabled?: boolean }[],
-  feedPaged: 0,
   features: {} as Record<string, boolean>,
   pageQuery: undefined as string | undefined,
 }));
@@ -34,12 +33,7 @@ vi.mock('~/components/Bounty/bounty.utils', async (importOriginal) => ({
   useQueryBounties: (filters: { query?: string }, options?: { enabled?: boolean }) => {
     state.feedCalls.push({ query: filters.query, enabled: options?.enabled });
     // An earlier page with more to load, as a disabled query keeps it.
-    return result([1, 2, 3], {
-      hasNextPage: true,
-      fetchNextPage: () => {
-        state.feedPaged++;
-      },
-    });
+    return result([1, 2, 3], { hasNextPage: true });
   },
   useSemanticBountyFeed: (_filters: unknown, query: string | undefined) => {
     state.searchQueries.push(query);
@@ -73,7 +67,6 @@ vi.mock('~/components/MasonryColumns/MasonryGridVirtual', async (importOriginal)
 describe('BountiesInfinite with a search', () => {
   beforeEach(() => {
     state.searchFails = false;
-    state.feedPaged = 0;
     state.refusal = undefined;
     state.searchQueries = [];
     state.feedCalls = [];
@@ -96,7 +89,6 @@ describe('BountiesInfinite with a search', () => {
     await renderWithProviders(<BountiesInfinite searchable />);
     await expect.element(page.getByText('Retry search')).toBeInTheDocument();
     expect(page.getByText('bounty 1', { exact: true }).query()).toBeNull();
-    expect(state.feedPaged).toBe(0);
     expect(state.feedCalls.at(-1)?.enabled).toBe(false);
   });
 

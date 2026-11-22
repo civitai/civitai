@@ -135,6 +135,24 @@ describe('createMessage response', () => {
       setProfanityListReaderForTests();
     }
   });
+
+  it('keeps the masked copy of a quoted message, which the sender did not write', async () => {
+    setProfanityListReaderForTests(maskingList);
+    const create = dbMock.dbWrite.chatMessage.create.getMockImplementation()!;
+    dbMock.dbWrite.chatMessage.create.mockImplementationOnce((async (args: never) => ({
+      ...(await (create as (a: never) => Promise<object>)(args)),
+      referenceMessage: { id: 9, userId: AGENT, content: `q ${TOKEN} q` },
+    })) as never);
+    try {
+      const result = (await send(OWNER, 'reply')) as {
+        referenceMessage?: { maskedContent?: string | null };
+      };
+      expect(typeof result.referenceMessage?.maskedContent).toBe('string');
+      expect(result.referenceMessage?.maskedContent).not.toContain(TOKEN);
+    } finally {
+      setProfanityListReaderForTests();
+    }
+  });
 });
 
 describe('createMessage from an Invited member', () => {

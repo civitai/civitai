@@ -391,9 +391,8 @@ export async function stripBenignPhrases(text = '', type: BlocklistType) {
   return stripBenignPhrasesWith(text, pattern);
 }
 /**
- * The benign lists the BROWSER needs. The search gates (`AutocompleteSearch`,
- * `SearchLayout`) run their POI / minor / profanity checks client-side against Meili
- * directly, so there is no server hop to strip on — the lists have to be shipped down.
+ * The benign lists the BROWSER needs: its POI / minor checks, and its profanity check where the
+ * server does not run one (`browserChecksProfanity`), must strip them before checking.
  * Public and edge-cached. Never carries a managed blocked word.
  */
 export type ClientBenignLists = {
