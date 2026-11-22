@@ -70,11 +70,9 @@ import {
   type RemixReplayer,
 } from '~/shared/remix-apps/replay';
 import {
-  readRemixTag,
   REMIX_APP_TAG,
   REMIX_DONE_TAG,
   REMIX_RUN_TAG_PREFIX,
-  REMIX_SEGMENT_TAG_PREFIX,
   remixRunTags,
 } from '~/shared/remix-apps/tags';
 import { RemixQuarantinedError } from '~/server/services/remix-app-runner';
@@ -117,6 +115,21 @@ export const REMIX_RUN_ID = /^r[0-9a-f]{20}$/;
 function segmentExternalId(userId: number, runId: string, segment: number) {
   // The orchestrator only accepts [A-Za-z0-9_-] in an externalId.
   return `remix-run_${digest([userId, runId, segment], 32)}`;
+}
+
+/**
+ * Which segment of `runId` a workflow is, from the externalId this server sent for it: set once at
+ * create, where the segment tag is the owner's to edit, and on its way out of the tag set.
+ */
+function segmentIndexOf(workflow: Workflow, userId: number, runId: string) {
+  const { externalId } = workflow;
+  if (!externalId) return undefined;
+  for (let segment = 0; segment < MAX_RUN_SEGMENTS; segment++) {
+    const sent = segmentExternalId(userId, runId, segment);
+    // Stored behind the submitting account's id, which in dev is not the caller's.
+    if (externalId === sent || externalId.endsWith(`-${sent}`)) return segment;
+  }
+  return undefined;
 }
 
 type Segment = {
@@ -165,9 +178,9 @@ async function readRun(runId: string, caller: RemixAppCaller): Promise<Segment[]
     hideMatureContent: false,
   });
   const segments = items.map((workflow): Segment => {
-    const index = Number(readRemixTag(workflow.tags, REMIX_SEGMENT_TAG_PREFIX));
+    const index = segmentIndexOf(workflow, caller.user.id, runId);
     const meta = readMeta(workflow);
-    if (!Number.isInteger(index) || !meta) throw damaged('a step is missing its run details');
+    if (index === undefined || !meta) throw damaged('a step is missing its run details');
     const provenance = (workflow.metadata as Record<string, unknown> | undefined)?.provenance;
     const sourceImageIds = verifyProvenance(provenance, caller.user.id) ?? [];
     return { index, workflow, meta, sourceImageIds };

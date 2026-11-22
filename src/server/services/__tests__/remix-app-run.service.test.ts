@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logToAxiom } from '~/server/logging/client';
@@ -529,7 +530,9 @@ beforeEach(() => {
         const upscale = JSON.stringify(body).includes('upscale');
         return { cost: { total: upscale ? h.upscalePrice : h.price }, steps: [] };
       }
-      const existing = h.workflows.find((w) => w.externalId && w.externalId === body.externalId);
+      // The orchestrator stores an externalId behind the submitting account's id.
+      const externalId = body.externalId ? `${USER_ID}-${body.externalId as string}` : undefined;
+      const existing = h.workflows.find((w) => w.externalId && w.externalId === externalId);
       if (existing) return existing;
       const workflow: FakeWorkflow = {
         // `<userId>-<n>`: `assertWorkflowOwner` checks the prefix against the submitter.
@@ -539,7 +542,7 @@ beforeEach(() => {
         metadata: body.metadata as Record<string, unknown>,
         callbacks: body.callbacks as unknown[],
         allowMatureContent: body.allowMatureContent as boolean | undefined,
-        externalId: body.externalId as string | undefined,
+        externalId,
         createdAt: new Date(2026, 10, 5, 0, h.workflows.length).toISOString(),
         steps: [],
         cost: { total: h.price },
@@ -832,6 +835,85 @@ describe('remix app runs', () => {
       message: expect.stringContaining('a step was deleted'),
     });
     expect(submits()).toHaveLength(1);
+  });
+
+  describe('segment order comes from the externalId, not the remix-seg tag', () => {
+    /** A two-segment run whose second segment finished: the next advance is `done`. */
+    async function finishedTwoStep(nonce: string) {
+      const runId = await runToPick(nonce);
+      await advanceRemixRun({ runId, answers: [2], quote: 30, caller: caller() });
+      finish(submits()[1].id, [blob('final')]);
+      return runId;
+    }
+    const withoutSegTag = (tags: string[]) => tags.filter((tag) => !tag.startsWith('remix-seg:'));
+
+    // remix-seg is being dropped from new segments: a run must read with or without it.
+    it('reads a run whose segments carry no remix-seg tag', async () => {
+      const runId = await finishedTwoStep('nonce-seg-01');
+      for (const w of submits()) w.tags = withoutSegTag(w.tags);
+      expect(await advanceRemixRun({ runId, caller: caller() })).toMatchObject({
+        status: 'done',
+        outputs: [{ url: blob('final') }],
+      });
+    });
+
+    it('ignores remix-seg tags that disagree with the externalId', async () => {
+      const runId = await finishedTwoStep('nonce-seg-02');
+      const [first, second] = submits();
+      first.tags = [...withoutSegTag(first.tags), 'remix-seg:1'];
+      second.tags = [...withoutSegTag(second.tags), 'remix-seg:0'];
+      expect(await advanceRemixRun({ runId, caller: caller() })).toMatchObject({
+        status: 'done',
+        outputs: [{ url: blob('final') }],
+      });
+    });
+
+    it('reads an externalId stored with no prefix, or behind another account id (dev)', async () => {
+      const runId = await finishedTwoStep('nonce-seg-03');
+      const [first, second] = submits();
+      first.externalId = first.externalId!.replace(`${USER_ID}-`, '');
+      second.externalId = second.externalId!.replace(`${USER_ID}-`, '999-');
+      expect(await advanceRemixRun({ runId, caller: caller() })).toMatchObject({ status: 'done' });
+    });
+
+    it('refuses a segment whose externalId this server never sent for the run', async () => {
+      const runId = await finishedTwoStep('nonce-seg-04');
+      submits()[1].externalId = `${USER_ID}-remix-run_${'0'.repeat(32)}`;
+      await expect(advanceRemixRun({ runId, caller: caller() })).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: expect.stringContaining('missing its run details'),
+      });
+    });
+
+    it("refuses a segment carrying another run's externalId under this run's tag", async () => {
+      const runId = await finishedTwoStep('nonce-seg-05');
+      const otherRunId = await runToPick('nonce-seg-06');
+      const foreign = submits().find((w) => w.tags.includes(`remix-run:${otherRunId}`))!;
+      // The other run's segment 0, re-tagged into this run as its second segment.
+      foreign.tags = foreign.tags.map((tag) =>
+        tag.startsWith('remix-run:') ? `remix-run:${runId}` : tag
+      );
+      await expect(advanceRemixRun({ runId, caller: caller() })).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: expect.stringContaining('missing its run details'),
+      });
+    });
+
+    it("refuses a segment whose externalId was minted for another user's run", async () => {
+      const runId = await finishedTwoStep('nonce-seg-07');
+      // segmentExternalId's digest of [userId, runId, segment], for user 2 instead of user 1.
+      const digestFor = (userId: number) =>
+        createHash('sha256')
+          .update(JSON.stringify([userId, runId, 1]))
+          .digest('hex')
+          .slice(0, 32);
+      expect(submits()[1].externalId).toBe(`${USER_ID}-remix-run_${digestFor(USER_ID)}`);
+      submits()[1].externalId = `${USER_ID}-remix-run_${digestFor(2)}`;
+      await expect(advanceRemixRun({ runId, caller: caller() })).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: expect.stringContaining('missing its run details'),
+      });
+    });
   });
 
   describe('mature outputs', () => {

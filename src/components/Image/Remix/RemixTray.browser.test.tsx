@@ -143,6 +143,24 @@ describe('RemixTray', () => {
     await expect.element(rows().getByText('Failed')).toBeVisible();
   });
 
+  // remix-seg is being dropped from new segments: the newest segment is the run's latest.
+  test('counts a run by its newest segment, with or without remix-seg tags', async () => {
+    const noSeg = (item: Item) => ({
+      ...item,
+      tags: item.tags.filter((tag) => !tag.startsWith('remix-seg:')),
+    });
+    h.items = [
+      noSeg(workflow('a', 0, 'succeeded')),
+      noSeg(workflow('a', 1, 'processing')),
+      // Tags that disagree with the order the segments were made in.
+      workflow('b', 1, 'processing'),
+      workflow('b', 0, 'succeeded'),
+    ];
+    renderWithProviders(<RemixTray />);
+
+    await expect.element(pill()).toHaveAccessibleName('Remix runs: 1 in progress, 1 ready');
+  });
+
   test('is hidden when nothing is in progress or ready', async () => {
     h.items = [
       workflow('a', 0, 'succeeded', ['remix:dismissed']),

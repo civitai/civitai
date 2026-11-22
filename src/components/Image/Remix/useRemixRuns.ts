@@ -14,7 +14,6 @@ import {
   REMIX_DISMISSED_TAG,
   REMIX_DONE_TAG,
   REMIX_RUN_TAG_PREFIX,
-  REMIX_SEGMENT_TAG_PREFIX,
   isRuntimeRun,
 } from '~/shared/remix-apps/tags';
 import { useRemixAppList } from '~/components/Image/Remix/useRemixAppList';
@@ -54,13 +53,14 @@ export function groupRemixRuns(
   apps: readonly { slug: string; name: string }[]
 ): RemixRun[] {
   const names = new Map([...apps, TEAM_REMIX_APP].map((app) => [app.slug, app.name]));
-  const latest = new Map<string, { workflow: WorkflowData; index: number }>();
+  // A run's segments are submitted one after another, so its latest is its newest.
+  const latest = new Map<string, { workflow: WorkflowData; createdAt: number }>();
   for (const workflow of workflows) {
     const runId = readRemixTag(workflow.tags, REMIX_RUN_TAG_PREFIX);
-    const index = Number(readRemixTag(workflow.tags, REMIX_SEGMENT_TAG_PREFIX));
-    if (!runId || !Number.isInteger(index)) continue;
+    if (!runId) continue;
+    const createdAt = new Date(workflow.createdAt).getTime();
     const seen = latest.get(runId);
-    if (!seen || index > seen.index) latest.set(runId, { workflow, index });
+    if (!seen || createdAt > seen.createdAt) latest.set(runId, { workflow, createdAt });
   }
 
   const runs: RemixRun[] = [];
