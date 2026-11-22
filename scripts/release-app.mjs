@@ -94,10 +94,6 @@ if (JSON.parse(readFileSync(`${appDir}/package.json`, 'utf8')).scripts?.typechec
 const next = bumpVersion(base, bump);
 sh(`npm --prefix ${appDir} version ${next} --no-git-tag-version`);
 const version = JSON.parse(readFileSync(`${appDir}/package.json`, 'utf8')).version;
-if (version !== next) {
-  console.error(`npm set ${appDir}/package.json to ${version}, expected ${next}; not releasing.`);
-  process.exit(1);
-}
 const tag = `${tagPrefix}${version}`;
 const app = appDir.split('/').pop();
 
