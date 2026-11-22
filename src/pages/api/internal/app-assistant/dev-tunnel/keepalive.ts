@@ -41,14 +41,14 @@ import { previewHostHash } from '~/server/services/blocks/preview-session-host';
  * the `app-blocks-dev-tunnel` kill switch, as `start` — so turning any of them off stops keeping
  * tunnels alive at the next call, and they idle out. The session must be the grant's user's own.
  *
- *   200 `{ sessionId | host, idleExpiresAt, expiresAt }` (as asked) unix seconds: when it idles out absent another
+ *   200 `{ sessionId | host | blockId, idleExpiresAt, expiresAt }` (as asked) unix seconds: when it idles out absent another
  *       call, and its hard cap
  *   400 `{ error }` the body is not that shape
  *   401 `{ error }` the runner's secret is missing or wrong; `invalid_grant` not a current run grant
  *   403 `refused` an App Assistant gate refuses the user; `FORBIDDEN` no author capability, or the
  *       dev-tunnel flag is off for them
- *   404 `NOT_FOUND` no such tunnel, it is not the grant's user's, or it is past its hard cap (one
- *       answer for all three)
+ *   404 `NOT_FOUND` no such session, not the grant's user's, past its hard cap, a direct session
+ *       host sent as `host`, or a tunnel skipped by `transport: "direct"` (one answer for all)
  *   503 not configured; `unavailable` could not be judged or recorded just now: retry
  */
 const grantField = z.string().min(1).max(4096);
@@ -107,7 +107,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       return res.status(403).json({ error: flagRefusal.error, code: flagRefusal.code });
     }
 
-    // Both are looked up for the grant's user only: never another author's tunnel.
+    // Each is looked up for the grant's user only: never another author's tunnel.
     const kept =
       'sessionId' in target
         ? await keepAliveDevTunnel(grant.userId, target.sessionId)

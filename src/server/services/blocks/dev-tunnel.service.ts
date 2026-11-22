@@ -1575,7 +1575,8 @@ export type OpenDirectPreviewResult =
  *   3. no such session but the id was used (its session ended): `fresh`, writing nothing.
  * A new session replaces whatever session the (user, block) pair had, as a tunnel start does.
  * Throws on a Redis error, and the caller answers "unavailable". Before the `used` marker is
- * written nothing is; after it, a failed write tears the session down and the id stays used.
+ * written no session record is; after it, a failed write tears the session down and the id stays
+ * used.
  */
 export async function openDirectPreviewSession(
   params: OpenDirectPreviewParams
@@ -1607,7 +1608,7 @@ export async function openDirectPreviewSession(
   const refusal = await params.claimStart();
   if (refusal) return { kind: 'refused', refusal };
 
-  // A failure here throws with nothing written, so the id stays openable.
+  // A failure here throws with no session record written, so the id stays openable.
   await cluster('directUsed.mark', () =>
     redis.set(directUsedKey(userId, previewId), '1', { EX: DIRECT_USED_MARKER_SECONDS })
   );

@@ -316,6 +316,9 @@ export async function revokeBlockInstancesForPublisher({
     const { global, subjectScoped } = await resolvePublisherInstanceIds(userId);
     const subject = subjectForUserId(userId);
 
+    // `limitConcurrency` keeps N continuously in flight. A hand-rolled
+    // `for (i += N) { await Promise.all(slice) }` is a BARRIER — every batch waits on
+    // its slowest member — which is not what the ceiling above says it is.
     await limitConcurrency(
       [
         ...global.map((id) => () => BlockRevocation.revokeInstanceForBan(id)),
