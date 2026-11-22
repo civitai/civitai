@@ -5,7 +5,7 @@
  *
  *   node .claude/skills/flipt/flipt.mjs list [--json] [-q]
  *   node .claude/skills/flipt/flipt.mjs get <flag-key> [--json]
- *   node .claude/skills/flipt/flipt.mjs get <flag-key> --live   (refuses, names the supported path)
+ *   node .claude/skills/flipt/flipt.mjs get <flag-key> --live   (needs FLIPT_LIVE_URL + FLIPT_API_TOKEN; otherwise refuses and names the supported path)
  *
  * Reads the DEFINITION in civitai/flipt-state (civitai-app/default/features.yaml)
  * via `gh api`, or from a local clone when FLIPT_STATE_DIR is set. It is not the

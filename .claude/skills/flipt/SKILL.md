@@ -41,7 +41,7 @@ tokens, bypasses or other URLs against the public host.
 **Writes are refused.** Flag state is reviewed material: change flags by opening a PR against
 the state repo.
 
-Tests: `node --test .claude/skills/flipt/flipt.test.mjs`.
+Tests (manual, no CI job runs them; 8 tests): `node --test .claude/skills/flipt/flipt.test.mjs`.
 
 ## What a key does to the app
 

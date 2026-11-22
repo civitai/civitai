@@ -33,7 +33,6 @@ export const LIVE_REFUSAL = [
   'Meanwhile, drop --live: get/list return the flag DEFINITION from flipt-state git, which is what the live server loads (it can lag by a sync interval, and an env override can still change app behavior).',
 ].join('\n');
 
-// Parse the features.yaml text into a flag array.
 export function flagsFromYaml(yamlText, parseYaml) {
   const doc = parseYaml(yamlText);
   if (!doc || !Array.isArray(doc.flags)) throw new Error('features.yaml has no flags: list');

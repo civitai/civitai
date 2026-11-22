@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { parse } from 'yaml';
-import { detectHtmlOrOAuth, flagsFromYaml, findFlag } from './flipt-lib.mjs';
+import { detectHtmlOrOAuth, flagsFromYaml, findFlag, formatSegments } from './flipt-lib.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const LOGIN_HTML =
@@ -80,4 +80,15 @@ test('--live without FLIPT_LIVE_URL refuses and names the supported path', async
   });
   assert.equal(r.code, 3);
   assert.match(r.err, /DevOps seat/);
+});
+
+test('formatSegments: one key, AND, and default OR', () => {
+  assert.equal(formatSegments(['a']), 'a');
+  assert.equal(formatSegments(['a', 'b'], 'AND_SEGMENT_OPERATOR'), 'a AND b');
+  assert.equal(formatSegments(['a', 'b']), 'a OR b');
+});
+
+test('write commands refuse with exit 2', async () => {
+  const r = await run(resolve(here, 'flipt.mjs'), ['enable', 'x'], {});
+  assert.equal(r.code, 2);
 });
