@@ -43,7 +43,7 @@ function call(body: Record<string, unknown>) {
     setHeader: vi.fn(),
     end: () => res,
   } as unknown as Parameters<typeof handler>[1];
-  return handler(req, res).then(() => ({ status: statusCode, payload }));
+  return Promise.resolve(handler(req, res)).then(() => ({ status: statusCode, payload }));
 }
 
 beforeEach(() => {
