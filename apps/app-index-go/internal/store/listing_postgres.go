@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS app_index_listings (
   rev text NOT NULL,
   body jsonb NOT NULL,
   app text NOT NULL,
+  listing_id text,
   slug text NOT NULL,
   name text NOT NULL,
   name_key text NOT NULL,
@@ -62,6 +63,7 @@ CREATE TABLE IF NOT EXISTS app_index_listings (
 DROP TABLE IF EXISTS app_index_listing_media;
 CREATE INDEX IF NOT EXISTS app_index_listings_slug ON app_index_listings (generation, slug);
 ALTER TABLE app_index_listings ADD COLUMN IF NOT EXISTS listing_content_rating text;
+ALTER TABLE app_index_listings ADD COLUMN IF NOT EXISTS listing_id text;
 ALTER TABLE app_index_listings
   ALTER COLUMN recommended_count DROP NOT NULL,
   ALTER COLUMN not_recommended_count DROP NOT NULL,
@@ -106,12 +108,12 @@ func (p *ListingsPostgres) Apply(ctx context.Context, gen int64, c Change) error
 		_, err := tx.Exec(ctx, `
 INSERT INTO app_index_listings (generation, urn, rev, body, app, slug, name, name_key, kind, category, content_rating,
   creator_id, created_at, updated_at, recommended_count, not_recommended_count, review_count, open_count, install_count,
-  listing_content_rating)
+  listing_content_rating, listing_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), NULLIF($11, ''), $12, $13, $14, $15, $16, $17, $18, $19,
-  NULLIF($20, ''))`,
+  NULLIF($20, ''), $21)`,
 			gen, l.URN, l.Rev, []byte(l.Body), l.App, l.Slug, l.Name, nameKey(l.Name), l.Kind, l.Category, l.ContentRating,
 			l.CreatorID, l.CreatedAt, l.UpdatedAt, l.Stats.RecommendedCount, l.Stats.NotRecommendedCount,
-			l.Stats.ReviewCount, l.Stats.OpenCount, l.Stats.InstallCount, l.ListingContentRating)
+			l.Stats.ReviewCount, l.Stats.OpenCount, l.Stats.InstallCount, l.ListingContentRating, l.ID)
 		return err
 	})
 }
@@ -206,7 +208,7 @@ func (p *ListingsPostgres) GetMany(ctx context.Context, gen int64, urns []string
 // Keys implements Listings.
 func (p *ListingsPostgres) Keys(ctx context.Context, gen int64) ([]Listing, error) {
 	rows, err := p.pool.Query(ctx, `
-SELECT urn, rev, app, slug, name, kind, coalesce(category, ''), coalesce(content_rating, ''),
+SELECT urn, rev, coalesce(listing_id, ''), app, slug, name, kind, coalesce(category, ''), coalesce(content_rating, ''),
   coalesce(listing_content_rating, ''), creator_id, created_at, updated_at, recommended_count, not_recommended_count,
   review_count, open_count, install_count
 FROM app_index_listings WHERE generation = $1`, gen)
@@ -217,7 +219,7 @@ FROM app_index_listings WHERE generation = $1`, gen)
 	var out []Listing
 	for rows.Next() {
 		var l Listing
-		if err := rows.Scan(&l.URN, &l.Rev, &l.App, &l.Slug, &l.Name, &l.Kind, &l.Category, &l.ContentRating,
+		if err := rows.Scan(&l.URN, &l.Rev, &l.ID, &l.App, &l.Slug, &l.Name, &l.Kind, &l.Category, &l.ContentRating,
 			&l.ListingContentRating, &l.CreatorID,
 			&l.CreatedAt, &l.UpdatedAt, &l.Stats.RecommendedCount, &l.Stats.NotRecommendedCount, &l.Stats.ReviewCount,
 			&l.Stats.OpenCount, &l.Stats.InstallCount); err != nil {

@@ -128,25 +128,31 @@ type Recommend struct {
 	RecommendPct        *float64 `json:"recommendPct"`
 }
 
-// OnsiteKindData is ListingCardKindData's on-site arm, less `appBlockId`, which the stream does
-// not carry.
+// OnsiteKindData is ListingCardKindData's on-site arm.
 type OnsiteKindData struct {
-	Kind    string  `json:"kind"`
-	HasPage bool    `json:"hasPage"`
-	LiveURL *string `json:"liveUrl,omitempty"`
+	Kind       string  `json:"kind"`
+	AppBlockID *string `json:"appBlockId"`
+	HasPage    bool    `json:"hasPage"`
+	LiveURL    *string `json:"liveUrl,omitempty"`
 }
 
-// OffsiteKindData is ListingCardKindData's off-site arm. The detail's `connectClientId` is never
-// in the stream (LISTINGS-READ-MODEL.md, "Never in the stream").
+// OffsiteKindData is ListingCardKindData's off-site arm: the card carries no `connectClientId`.
 type OffsiteKindData struct {
 	Kind        string  `json:"kind"`
 	ExternalURL *string `json:"externalUrl"`
 }
 
-// Card is ListingCard for the fields the stream carries. Not carried, so not here: `id` and the
-// on-site `kindData.appBlockId`. `restrictedAudience` is always null: the stream holds only
-// public listings, and a public listing has no restricted audience to show any viewer.
+// OffsiteDetailKindData is ListingDetailKindData's off-site arm: the card's, with the public OAuth
+// client id of the app's account connection (null when it has none).
+type OffsiteDetailKindData struct {
+	OffsiteKindData
+	ConnectClientID *string `json:"connectClientId"`
+}
+
+// Card is ListingCard. `restrictedAudience` is always null: the stream holds only public listings,
+// and a public listing has no restricted audience to show any viewer.
 type Card struct {
+	ID                 string    `json:"id"`
 	Slug               string    `json:"slug"`
 	Kind               string    `json:"kind"`
 	Name               string    `json:"name"`
@@ -166,15 +172,40 @@ type Card struct {
 	KindData           any       `json:"kindData"`
 }
 
-// Detail is ListingDetail for the fields the stream carries: the card's, less nothing, plus
-// `description`, `installCount` and the gallery. Not carried, so not here: `id`, `serialId`,
-// `collaborators`, `sourceRepoUrl`, `issueTrackerUrl`, `actionsRunSource`, `scopes`,
-// `connectScopes`, `betaMessage`, `forkable` and `forkOf`.
+// Detail is ListingDetail: the card's fields (off-site kindData with its `connectClientId`), the
+// description, the install count, the gallery and the public detail fields (store.ListingDetail).
 type Detail struct {
 	Card
-	Description  *string      `json:"description"`
-	InstallCount int64        `json:"installCount"`
-	Screenshots  []Screenshot `json:"screenshots"`
+	Description      *string                 `json:"description"`
+	InstallCount     int64                   `json:"installCount"`
+	Screenshots      []Screenshot            `json:"screenshots"`
+	SerialID         *int64                  `json:"serialId"`
+	Collaborators    []store.ListingChip     `json:"collaborators"`
+	SourceRepoURL    *string                 `json:"sourceRepoUrl"`
+	IssueTrackerURL  *string                 `json:"issueTrackerUrl"`
+	ActionsRunSource *store.ListingRunSource `json:"actionsRunSource"`
+	Scopes           []string                `json:"scopes"`
+	ConnectScopes    []string                `json:"connectScopes"`
+	BetaMessage      *string                 `json:"betaMessage"`
+	Forkable         bool                    `json:"forkable"`
+	ForkOf           *ForkOf                 `json:"forkOf"`
+}
+
+// ForkOf is ListingForkOf: the parent's slug and name only when the viewer may see the parent.
+type ForkOf struct {
+	Visible bool    `json:"visible"`
+	Slug    *string `json:"slug,omitempty"`
+	Name    *string `json:"name,omitempty"`
+}
+
+// ForkParentSlug is the slug of the listing l's fork parent the read API must look up for
+// ProjectDetail, or "" when there is none to look up (not a fork, or a parent the stream does not
+// name).
+func ForkParentSlug(l store.Listing) string {
+	if f := l.Detail.ForkOf; f != nil && f.Slug != nil {
+		return *f.Slug
+	}
+	return ""
 }
 
 // cardBody is the part of a store-listing@v1 body the card and detail read beyond the columns.
@@ -221,15 +252,39 @@ func ProjectCard(l store.Listing, v Viewer) (Card, error) {
 	return c.Card, err
 }
 
-// ProjectDetail is l's detail for v (projectListingDetail): the card, the description, the install
-// count (0 when absent) and the gallery.
-func ProjectDetail(l store.Listing, v Viewer) (Detail, error) {
+// ProjectDetail is l's detail for v (getListingDetail): the card, the description, the install
+// count (0 when absent), the gallery and the detail fields, each list [] when absent. parent is the
+// listing ForkParentSlug names, or nil when there is none or the generation holds none: as
+// resolveForkAttribution does, a fork's parent is named only when v may see it (Admits), and a
+// hidden parent reads exactly like a missing one, {visible: false}.
+func ProjectDetail(l store.Listing, v Viewer, parent *store.Listing) (Detail, error) {
 	c, b, err := project(l, v, true)
 	if err != nil {
 		return Detail{}, err
 	}
-	return Detail{Card: c.Card, Description: b.Description, InstallCount: orZero(l.Stats.InstallCount),
-		Screenshots: c.screenshots}, nil
+	d := l.Detail
+	out := Detail{Card: c.Card, Description: b.Description, InstallCount: orZero(l.Stats.InstallCount),
+		Screenshots: c.screenshots, SerialID: d.SerialID, Collaborators: orEmpty(d.Collaborators),
+		SourceRepoURL: d.SourceRepoURL, IssueTrackerURL: d.IssueTrackerURL, ActionsRunSource: d.ActionsRunSource,
+		Scopes: orEmpty(d.Scopes), ConnectScopes: orEmpty(d.ConnectScopes), BetaMessage: d.BetaMessage,
+		Forkable: d.Forkable}
+	if kd, ok := out.KindData.(OffsiteKindData); ok {
+		out.KindData = OffsiteDetailKindData{OffsiteKindData: kd, ConnectClientID: d.ConnectClientID}
+	}
+	if d.ForkOf != nil {
+		out.ForkOf = &ForkOf{}
+		if parent != nil && ForkParentSlug(l) == parent.Slug && Admits(*parent, v) {
+			out.ForkOf = &ForkOf{Visible: true, Slug: &parent.Slug, Name: &parent.Name}
+		}
+	}
+	return out, nil
+}
+
+func orEmpty[T any](xs []T) []T {
+	if xs == nil {
+		return []T{}
+	}
+	return xs
 }
 
 type projected struct {
@@ -244,7 +299,7 @@ func project(l store.Listing, v Viewer, gallery bool) (projected, cardBody, erro
 	}
 	media := ProjectMedia(l, v, gallery)
 	c := Card{
-		Slug: l.Slug, Kind: l.Kind, Name: l.Name,
+		ID: l.ID, Slug: l.Slug, Kind: l.Kind, Name: l.Name,
 		Tagline: b.Tagline, Category: nullable(l.Category), ContentRating: nullable(l.ListingContentRating),
 		IconURL: media.IconURL, CoverURL: media.CoverURL,
 		Recommend: Recommend{
@@ -262,7 +317,7 @@ func project(l store.Listing, v Viewer, gallery bool) (projected, cardBody, erro
 	if l.Kind == "onsite" {
 		n := orZero(l.Stats.OpenCount)
 		c.OpenCount = &n
-		c.KindData = OnsiteKindData{Kind: "onsite", HasPage: b.HasPage, LiveURL: b.LiveURL}
+		c.KindData = OnsiteKindData{Kind: "onsite", AppBlockID: l.Detail.AppBlockID, HasPage: b.HasPage, LiveURL: b.LiveURL}
 	} else {
 		c.KindData = OffsiteKindData{Kind: l.Kind, ExternalURL: b.ExternalURL}
 	}

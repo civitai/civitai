@@ -2,6 +2,7 @@ package listingread
 
 import (
 	"encoding/base64"
+	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -15,7 +16,7 @@ func n(v int64) *int64 { return &v }
 
 func key(slug, kind, rating string, up, down, open, installs int64) store.Listing {
 	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	l := store.Listing{URN: "urn:apps.civitai.com:store-listing/" + slug, Slug: slug, Name: strings.ToUpper(slug[:1]) + slug[1:],
+	l := store.Listing{URN: "urn:apps.civitai.com:store-listing/" + slug, ID: "apl_" + slug, Slug: slug, Name: strings.ToUpper(slug[:1]) + slug[1:],
 		Kind: kind, ContentRating: rating, ListingContentRating: rating, CreatedAt: &created,
 		Stats: store.ListingStats{RecommendedCount: n(up), NotRecommendedCount: n(down), ReviewCount: n(up + down),
 			OpenCount: n(open), InstallCount: n(installs)}}
@@ -96,8 +97,10 @@ func walk(t *testing.T, keys []store.Listing, q ListQuery, v Viewer) []string {
 
 var full = Viewer{Scope: ScopeFull}
 
+// catalog's ids run against its slugs (alpha has the highest id, golf the lowest), so a tie broken by
+// slug and one broken by id come out in opposite orders.
 func catalog() []store.Listing {
-	return []store.Listing{
+	ks := []store.Listing{
 		key("alpha", "onsite", "pg", 9, 1, 40, 2),
 		key("bravo", "onsite", "pg13", 0, 0, 40, 2), // ties alpha on the popular key
 		key("charlie", "offsite", "", 2, 2, 0, 41),
@@ -106,6 +109,10 @@ func catalog() []store.Listing {
 		key("foxtrot", "offsite", "pg", 1, 0, 0, 3),
 		key("golf", "onsite", "x", 0, 9, 7, 7),
 	}
+	for i := range ks {
+		ks[i].ID = fmt.Sprintf("apl_%02d", len(ks)-i)
+	}
+	return ks
 }
 
 func TestRankSortsAndPages(t *testing.T) {
@@ -115,9 +122,11 @@ func TestRankSortsAndPages(t *testing.T) {
 		limit int
 		want  []string
 	}{
-		// charlie 41 (offsite: installs), then alpha/bravo tie on 40·2 and fall to the slug, DESC.
-		{SortPopular, 2, []string{"charlie", "bravo", "alpha", "foxtrot", "echo"}},
-		{SortPopular, 50, []string{"charlie", "bravo", "alpha", "foxtrot", "echo"}},
+		// charlie 41 (offsite: installs), then alpha/bravo tie on 40·2 and fall to the id, DESC:
+		// alpha (apl_07) before bravo (apl_06), the reverse of their slugs. A page boundary on the tie
+		// (limit 2) must keep that order.
+		{SortPopular, 2, []string{"charlie", "alpha", "bravo", "foxtrot", "echo"}},
+		{SortPopular, 50, []string{"charlie", "alpha", "bravo", "foxtrot", "echo"}},
 		{SortName, 2, []string{"alpha", "bravo", "charlie", "echo", "foxtrot"}},
 		// mean over the listings HELD (delta and golf included, though this viewer sees neither):
 		// alpha .9, charlie .5, delta 1, foxtrot 1, golf 0 → 3.4/5 = 0.68.
@@ -131,13 +140,14 @@ func TestRankSortsAndPages(t *testing.T) {
 			t.Errorf("%s limit %d: %v, want %v", c.sort, c.limit, got, c.want)
 		}
 	}
-	// newest: by created time DESC, then slug DESC.
+	// newest: by created time DESC, then id DESC: charlie (apl_05) and foxtrot (apl_02) tie on day 3,
+	// bravo (apl_06) and echo (apl_03) on day 2.
 	ks = catalog()
 	for i := range ks {
 		at := time.Date(2026, 1, 1+i%3, 0, 0, 0, 0, time.UTC)
 		ks[i].CreatedAt = &at
 	}
-	if got, want := walk(t, ks, ListQuery{Sort: SortNewest, Limit: 2}, full), []string{"foxtrot", "charlie", "echo", "bravo", "alpha"}; !slices.Equal(got, want) {
+	if got, want := walk(t, ks, ListQuery{Sort: SortNewest, Limit: 2}, full), []string{"charlie", "foxtrot", "bravo", "echo", "alpha"}; !slices.Equal(got, want) {
 		t.Errorf("newest %v, want %v", got, want)
 	}
 }
@@ -166,7 +176,9 @@ func TestRankCursors(t *testing.T) {
 		"!!!",
 		// The database path's own cursor (v2): another tie-break, so the first page.
 		base64.RawURLEncoding.EncodeToString([]byte("v2\x1fcharlie\x1fapl_01")),
-		base64.RawURLEncoding.EncodeToString([]byte("rm1\x1fonly-two")),
+		base64.RawURLEncoding.EncodeToString([]byte("rm2\x1fonly-two")),
+		// A slug-keyed cursor of the earlier layout: another tie-break, so the first page.
+		base64.RawURLEncoding.EncodeToString([]byte("rm1\x1fcharlie\x1fcharlie")),
 	} {
 		if got := walk(t, ks, ListQuery{Sort: SortName, Limit: 50, Cursor: bad}, full); !slices.Equal(got, first) {
 			t.Errorf("cursor %q: %v, want the first page %v", bad, got, first)
@@ -186,17 +198,17 @@ func TestRankCursors(t *testing.T) {
 // strings, so a format change on either side fails a test.
 func TestCursorVector(t *testing.T) {
 	for _, c := range []struct {
-		key, slug string
-		mean      *float64
-		want      string
+		key, id string
+		mean    *float64
+		want    string
 	}{
-		{"00000700000000000000000000120", "paint", ptr(0.625), "cm0xHzAwMDAwNzAwMDAwMDAwMDAwMDAwMDAwMDAwMTIwH3BhaW50HzAuNjI1"},
-		{"paint", "paint", nil, "cm0xH3BhaW50H3BhaW50"},
+		{"00000700000000000000000000120", "apl_01J9Z3", ptr(0.625), "cm0yHzAwMDAwNzAwMDAwMDAwMDAwMDAwMDAwMDAwMTIwH2FwbF8wMUo5WjMfMC42MjU"},
+		{"paint", "apl_01J9Z3", nil, "cm0yH3BhaW50H2FwbF8wMUo5WjM"},
 	} {
-		if got := EncodeCursor(c.key, c.slug, c.mean); got != c.want {
-			t.Errorf("EncodeCursor(%q, %q): %s, want %s", c.key, c.slug, got, c.want)
+		if got := EncodeCursor(c.key, c.id, c.mean); got != c.want {
+			t.Errorf("EncodeCursor(%q, %q): %s, want %s", c.key, c.id, got, c.want)
 		}
-		if d := decodeCursor(c.want); !d.ok || d.key != c.key || d.slug != c.slug {
+		if d := decodeCursor(c.want); !d.ok || d.key != c.key || d.id != c.id {
 			t.Errorf("decodeCursor(%s): %+v", c.want, d)
 		}
 	}

@@ -24,7 +24,7 @@ import (
 var viewerKey = []byte("0123456789abcdef0123456789abcdef")
 
 // listingBody is a store-listing@v1 body as the adapter sends it (entities.ts listingBody).
-const paintBody = `{"app":"urn:apps.civitai.com:app/paint","slug":"paint","name":"Paint","kind":"onsite","contentRating":"pg","listingContentRating":"pg",
+const paintBody = `{"app":"urn:apps.civitai.com:app/paint","id":"apl_paint_9","slug":"paint","name":"Paint","kind":"onsite","contentRating":"pg","listingContentRating":"pg",
 "tagline":"Paint things","category":"generation","description":"Long text","iconUrl":"https://img.invalid/paint/icon",
 "media":[
  {"slot":"icon","host":"any","url":"https://img.invalid/paint/icon","nsfwLevel":1,"rating":"pg"},
@@ -32,17 +32,21 @@ const paintBody = `{"app":"urn:apps.civitai.com:app/paint","slug":"paint","name"
  {"slot":"screenshot","host":"any","url":"https://img.invalid/paint/s1","nsfwLevel":1,"rating":"pg","caption":"One","coverUrl":"https://img.invalid/paint/s1-cover"},
  {"slot":"cover","host":"red","url":"https://img.invalid/paint/red-cover","nsfwLevel":2,"rating":"pg13"}],
 "creator":{"id":42,"username":"maker","image":null},"isBeta":true,"isOfficial":false,"hasPage":true,
-"liveUrl":"https://paint.apps.invalid",
+"liveUrl":"https://paint.apps.invalid","appBlockId":"ab_paint_3",
 "stats":{"recommendedCount":7,"notRecommendedCount":3,"recommendPct":0.7,"reviewCount":10,"openCount":120,"installCount":4},
-"createdAt":"2026-03-04T05:06:07.123Z","updatedAt":"2026-03-05T00:00:00.000Z"}`
+"createdAt":"2026-03-04T05:06:07.123Z","updatedAt":"2026-03-05T00:00:00.000Z",
+"serialId":812,"collaborators":[{"id":43,"username":"helper","image":"https://img.invalid/helper"}],
+"sourceRepoUrl":"https://github.com/paint-org/paint","issueTrackerUrl":"https://paint.invalid/issues",
+"actionsRunSource":{"repository":"paint-org/paint","tag":"v1.2.0","sha":"0123456789abcdef0123456789abcdef01234567"},
+"scopes":["models:read:self"],"connectScopes":[],"betaMessage":"Paint is new","forkable":true,"forkOf":{"slug":"night"}}`
 
-const linksBody = `{"app":"urn:apps.civitai.com:app/links","slug":"links","name":"Links","kind":"offsite","contentRating":null,"listingContentRating":null,
+const linksBody = `{"app":"urn:apps.civitai.com:app/links","id":"apl_links_2","slug":"links","name":"Links","kind":"offsite","contentRating":null,"listingContentRating":null,
 "tagline":null,"category":"tools","description":null,"iconUrl":null,"media":[],"creator":null,"isBeta":false,"isOfficial":true,
-"externalUrl":"https://example.invalid/app",
+"externalUrl":"https://example.invalid/app","connectClientId":"links-client-7",
 "stats":{"recommendedCount":0,"notRecommendedCount":0,"recommendPct":null,"reviewCount":0,"openCount":null,"installCount":9},
 "createdAt":"2026-03-01T00:00:00.000Z","updatedAt":null}`
 
-const nightBody = `{"app":"urn:apps.civitai.com:app/night","slug":"night","name":"Night","kind":"onsite","contentRating":"r","listingContentRating":"r",
+const nightBody = `{"app":"urn:apps.civitai.com:app/night","id":"apl_night_5","slug":"night","name":"Night","kind":"onsite","contentRating":"r","listingContentRating":"r",
 "tagline":"After dark","category":"generation","description":"d","iconUrl":null,
 "media":[{"slot":"icon","host":"any","url":"https://img.invalid/night/icon","nsfwLevel":4,"rating":"r"}],
 "creator":{"id":7,"username":"owl","image":"https://img.invalid/owl"},"isBeta":false,"isOfficial":false,"hasPage":false,
@@ -202,16 +206,16 @@ func TestListingCardsAndDetail(t *testing.T) {
 	// The SFW host: the R listing is not there; the PG listing's PG-13 cover is above its rating,
 	// so the cover is its first screenshot's cover rendition.
 	sameJSON(t, "SFW grid", b, `{"items":[
- {"slug":"links","kind":"offsite","name":"Links","tagline":null,"category":"tools","contentRating":null,"iconUrl":null,
+ {"id":"apl_links_2","slug":"links","kind":"offsite","name":"Links","tagline":null,"category":"tools","contentRating":null,"iconUrl":null,
   "coverUrl":null,"creator":null,"recommend":{"recommendedCount":0,"notRecommendedCount":0,"recommendPct":null},
   "reviewCount":0,"isBeta":false,"isOfficial":true,"openCount":null,"restrictedAudience":null,
   "kindData":{"kind":"offsite","externalUrl":"https://example.invalid/app"}},
- {"slug":"paint","kind":"onsite","name":"Paint","tagline":"Paint things","category":"generation","contentRating":"pg",
+ {"id":"apl_paint_9","slug":"paint","kind":"onsite","name":"Paint","tagline":"Paint things","category":"generation","contentRating":"pg",
   "iconUrl":"https://img.invalid/paint/icon","coverUrl":"https://img.invalid/paint/s1-cover",
   "creator":{"id":42,"username":"maker","image":null},
   "recommend":{"recommendedCount":7,"notRecommendedCount":3,"recommendPct":0.7},"reviewCount":10,
   "isBeta":true,"isOfficial":false,"openCount":120,"updatedAt":"2026-03-05T00:00:00.000Z","restrictedAudience":null,
-  "kindData":{"kind":"onsite","hasPage":true,"liveUrl":"https://paint.apps.invalid"}}]}`)
+  "kindData":{"kind":"onsite","appBlockId":"ab_paint_3","hasPage":true,"liveUrl":"https://paint.apps.invalid"}}]}`)
 
 	// A red-host X viewer: the R listing is there too.
 	_, _, b = getAs(t, srv.URL+"/listings?sort=name&limit=2", &redXViewer)
@@ -228,19 +232,48 @@ func TestListingCardsAndDetail(t *testing.T) {
 		t.Fatalf("red page 2: %s", b)
 	}
 
-	// Detail on the red host: the red cover override (PG-13, within an X viewer's ceiling) wins.
+	// Detail on the red host: the red cover override (PG-13, within an X viewer's ceiling) wins, and
+	// the fork parent (the R listing, which this viewer may see) is named.
 	code, _, b = getAs(t, srv.URL+"/listings/paint", &redXViewer)
 	if code != http.StatusOK {
 		t.Fatalf("detail: %d %s", code, b)
 	}
-	sameJSON(t, "red detail", b, `{"slug":"paint","kind":"onsite","name":"Paint","tagline":"Paint things","category":"generation",
+	sameJSON(t, "red detail", b, `{"id":"apl_paint_9","slug":"paint","kind":"onsite","name":"Paint","tagline":"Paint things","category":"generation",
   "contentRating":"pg","iconUrl":"https://img.invalid/paint/icon","coverUrl":"https://img.invalid/paint/red-cover",
   "creator":{"id":42,"username":"maker","image":null},
   "recommend":{"recommendedCount":7,"notRecommendedCount":3,"recommendPct":0.7},"reviewCount":10,
   "isBeta":true,"isOfficial":false,"openCount":120,"updatedAt":"2026-03-05T00:00:00.000Z","restrictedAudience":null,
-  "kindData":{"kind":"onsite","hasPage":true,"liveUrl":"https://paint.apps.invalid"},
+  "kindData":{"kind":"onsite","appBlockId":"ab_paint_3","hasPage":true,"liveUrl":"https://paint.apps.invalid"},
   "description":"Long text","installCount":4,
-  "screenshots":[{"url":"https://img.invalid/paint/s1","caption":"One"}]}`)
+  "screenshots":[{"url":"https://img.invalid/paint/s1","caption":"One"}],
+  "serialId":812,"collaborators":[{"id":43,"username":"helper","image":"https://img.invalid/helper"}],
+  "sourceRepoUrl":"https://github.com/paint-org/paint","issueTrackerUrl":"https://paint.invalid/issues",
+  "actionsRunSource":{"repository":"paint-org/paint","tag":"v1.2.0","sha":"0123456789abcdef0123456789abcdef01234567"},
+  "scopes":["models:read:self"],"connectScopes":[],"betaMessage":"Paint is new","forkable":true,
+  "forkOf":{"visible":true,"slug":"night","name":"Night"}}`)
+
+	// The SFW host may not see the R parent: the same fork reads as one of a parent not available,
+	// exactly as a deleted parent does. An off-site listing with no detail fields reads them empty.
+	_, _, b = getAs(t, srv.URL+"/listings/paint", &sfwViewer)
+	var sfwDetail map[string]json.RawMessage
+	if err := json.Unmarshal(b, &sfwDetail); err != nil || string(sfwDetail["forkOf"]) != `{"visible":false}` {
+		t.Fatalf("SFW detail forkOf: %s", sfwDetail["forkOf"])
+	}
+	_, _, b = getAs(t, srv.URL+"/listings/links", &sfwViewer)
+	var links map[string]json.RawMessage
+	if err := json.Unmarshal(b, &links); err != nil {
+		t.Fatal(err)
+	}
+	// Its connect client is on the detail's kindData; the grid card above has none.
+	if string(links["kindData"]) != `{"kind":"offsite","externalUrl":"https://example.invalid/app","connectClientId":"links-client-7"}` {
+		t.Errorf("links detail kindData %s", links["kindData"])
+	}
+	for k, want := range map[string]string{"serialId": "null", "collaborators": "[]", "scopes": "[]", "connectScopes": "[]",
+		"forkable": "false", "forkOf": "null", "betaMessage": "null", "actionsRunSource": "null"} {
+		if string(links[k]) != want {
+			t.Errorf("links detail %s = %s, want %s", k, links[k], want)
+		}
+	}
 
 	// A listing the viewer may not see is a 404, exactly like a missing one.
 	for _, c := range []struct {
@@ -366,7 +399,7 @@ func (f failingListings) GetMany(ctx context.Context, gen int64, urns []string) 
 }
 
 func (f failingListings) BySlug(ctx context.Context, gen int64, slug string) (store.Listing, bool, error) {
-	if f.fail == "slug" {
+	if f.fail == "slug" || (f.fail == "parent" && slug != "paint") {
 		return store.Listing{}, false, f.err
 	}
 	return f.Listings.BySlug(ctx, gen, slug)
@@ -388,6 +421,9 @@ func TestListingStoreFailures(t *testing.T) {
 		{"many", "/listings", boom, http.StatusInternalServerError},
 		{"slug", "/listings/paint", boom, http.StatusInternalServerError},
 		{"slug", "/listings/paint", store.ErrNoGeneration, http.StatusServiceUnavailable},
+		// The fork parent's read, after the listing's own: never answered as "parent not available".
+		{"parent", "/listings/paint", boom, http.StatusInternalServerError},
+		{"parent", "/listings/paint", store.ErrNoGeneration, http.StatusServiceUnavailable},
 	} {
 		srv := newListingServer(t, readyStore(t), failingListings{ls, c.fail, c.err}, viewerKey)
 		if code, _, b := getAs(t, srv.URL+c.path, &sfwViewer); code != c.want {

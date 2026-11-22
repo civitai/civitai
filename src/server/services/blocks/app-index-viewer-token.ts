@@ -1,22 +1,11 @@
 /**
  * The viewer token the site sends with a listing request to the app index's read model
- * (`apps/app-index-go`, README "Listing API"; `internal/listingread/viewer.go` is the verifier).
- *
- * The read model never decides who is looking: the site sends the audience it resolved for its own
- * database read, signed with a key the two share. So the token is built from the very options
- * object the database read is given (`ListAvailableListingsOpts`), read with the same defaults the
- * database read applies to it:
- *   - `host` is `red` when `redCapable` is true (absent is false, as `listAvailableListings` reads
- *     it);
- *   - `level` is `viewerBrowsingLevel` (absent is 0, the public floor, as `matureRatingsAllowed`
- *     and the media ceiling read it);
- *   - `scope` is `narrowStoreScope(scope)`, so an absent or unknown scope is `none`, as the
- *     database read narrows it.
- *
- * Only a `public`-floor viewer has a token. A tester or moderator floor admits listings the read
- * model does not hold, so those viewers stay on the database (LISTINGS-READ-MODEL.md, "Visibility").
- * A level the token cannot carry exactly (not an integer from 0 to 63) has none either: such a
- * viewer is answered from the database, never from a level rounded into range.
+ * (`apps/app-index-go`; `internal/listingread/viewer.go` verifies it). The read model never decides
+ * who is looking: the token carries the audience the site resolved for its own database read, built
+ * from the same options object with the same defaults (`host` from `redCapable`, absent false;
+ * `level` from `viewerBrowsingLevel`, absent 0; `scope` narrowed by `narrowStoreScope`). Only a
+ * `public`-floor viewer with a level of 0 to 63 has one; any other is answered from the database
+ * (LISTINGS-READ-MODEL.md, "Visibility" and "Shadow diff").
  */
 import { createHmac } from 'node:crypto';
 import type { ListAvailableListingsOpts } from '~/server/services/blocks/app-listing.service';

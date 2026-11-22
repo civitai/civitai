@@ -24,7 +24,7 @@ func listingURN(slug string) string { return "urn:apps.civitai.com:store-listing
 // R listing whose media include an X screenshot above its rating and both civitai.red overrides.
 func listingJSON(slug, name string) json.RawMessage {
 	return json.RawMessage(`{
-  "app": "urn:apps.civitai.com:app/` + slug + `", "slug": "` + slug + `", "name": "` + name + `", "kind": "onsite",
+  "app": "urn:apps.civitai.com:app/` + slug + `", "id": "apl_` + slug + `", "slug": "` + slug + `", "name": "` + name + `", "kind": "onsite",
   "contentRating": "r", "listingContentRating": "r", "tagline": "t", "category": "generation", "description": "d", "iconUrl": "https://img.invalid/icon",
   "media": [
     {"slot": "icon", "host": "any", "url": "https://img.invalid/icon", "nsfwLevel": 1, "rating": "pg"},
@@ -37,7 +37,8 @@ func listingJSON(slug, name string) json.RawMessage {
   "creator": {"id": 42, "username": "maker", "image": null},
   "isBeta": false, "isOfficial": true, "hasPage": true,
   "stats": {"recommendedCount": 7, "notRecommendedCount": 3, "recommendPct": 0.7, "reviewCount": 5, "openCount": 120, "installCount": 0},
-  "createdAt": "2026-03-04T05:06:07.123456Z", "updatedAt": null
+  "createdAt": "2026-03-04T05:06:07.123456Z", "updatedAt": null,
+  "serialId": 77, "scopes": ["models:read:self"], "forkOf": {"slug": "parent-` + slug + `"}
 }`)
 }
 
@@ -54,6 +55,8 @@ func listingUpsert(l Listing, cursor string) Change {
 }
 
 func i64(v int64) *int64 { return &v }
+
+func strp(s string) *string { return &s }
 
 // wantMedia is listingJSON's media as the read model must hold it: every item, in stream order,
 // each with its own rating, level and host; no ceiling applied.
@@ -104,10 +107,11 @@ func mustCount(t *testing.T, s Listings, gen int64) int {
 func checkListing(t *testing.T, got Listing, slug, name string) {
 	t.Helper()
 	created := time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
-	want := Listing{URN: listingURN(slug), Rev: "rev-" + slug, App: "urn:apps.civitai.com:app/" + slug, Slug: slug,
+	want := Listing{URN: listingURN(slug), Rev: "rev-" + slug, ID: "apl_" + slug, App: "urn:apps.civitai.com:app/" + slug, Slug: slug,
 		Name: name, Kind: "onsite", Category: "generation", ContentRating: "r", ListingContentRating: "r", CreatorID: i64(42), CreatedAt: &created,
-		Stats: ListingStats{RecommendedCount: i64(7), NotRecommendedCount: i64(3), ReviewCount: i64(5), OpenCount: i64(120), InstallCount: i64(0)},
-		Media: wantMedia}
+		Stats:  ListingStats{RecommendedCount: i64(7), NotRecommendedCount: i64(3), ReviewCount: i64(5), OpenCount: i64(120), InstallCount: i64(0)},
+		Media:  wantMedia,
+		Detail: ListingDetail{SerialID: i64(77), Scopes: []string{"models:read:self"}, ForkOf: &ListingStreamFork{Slug: strp("parent-" + slug)}}}
 	body := got.Body
 	got.Body = nil
 	if !reflect.DeepEqual(got, want) {
@@ -248,7 +252,8 @@ func runListingsContract(t *testing.T, newStore func(t *testing.T) listingsTestS
 		}
 		slices.SortFunc(keys, func(a, b Listing) int { return strings.Compare(a.URN, b.URN) })
 		want := mustListing("alpha", "Alpha")
-		want.Body, want.Media = nil, nil
+		// Keys carries the columns only: no body, media or detail fields.
+		want.Body, want.Media, want.Detail = nil, nil, ListingDetail{}
 		if len(keys) != 2 || !reflect.DeepEqual(keys[0], want) || keys[1].Slug != "beta" {
 			t.Fatalf("keys\n got %+v\nwant [%+v beta]", keys, want)
 		}
@@ -343,12 +348,12 @@ func TestListingFromEntity(t *testing.T) {
 	if err != nil || drops != nil {
 		t.Fatalf("valid body: err %v drops %+v", err, drops)
 	}
-	checkListing(t, Listing{URN: l.URN, Rev: "rev-alpha", Body: l.Body, App: l.App, Slug: l.Slug, Name: l.Name, Kind: l.Kind,
+	checkListing(t, Listing{URN: l.URN, Rev: "rev-alpha", Body: l.Body, ID: l.ID, App: l.App, Slug: l.Slug, Name: l.Name, Kind: l.Kind,
 		Category: l.Category, ContentRating: l.ContentRating, ListingContentRating: l.ListingContentRating, CreatorID: l.CreatorID, CreatedAt: l.CreatedAt,
-		UpdatedAt: l.UpdatedAt, Stats: l.Stats, Media: l.Media}, "alpha", "Alpha")
+		UpdatedAt: l.UpdatedAt, Stats: l.Stats, Media: l.Media, Detail: l.Detail}, "alpha", "Alpha")
 
 	// Off-site: openCount null, no creator, no media, no dates.
-	off, drops, err := ListingFromEntity(listingURN("o"), "r", json.RawMessage(`{"app":"urn:apps.civitai.com:app/o","slug":"o","name":"O",
+	off, drops, err := ListingFromEntity(listingURN("o"), "r", json.RawMessage(`{"app":"urn:apps.civitai.com:app/o","id":"apl_o","slug":"o","name":"O",
 		"kind":"offsite","contentRating":null,"listingContentRating":null,"media":[],"creator":null,"stats":{"recommendedCount":0,"notRecommendedCount":0,
 		"recommendPct":null,"reviewCount":0,"openCount":null,"installCount":9}}`))
 	if err != nil || drops != nil {
@@ -371,6 +376,10 @@ func TestListingFromEntity(t *testing.T) {
 		{"no nsfwLevel", `"nsfwLevel": 2, `, ``, "media[1]: nsfwLevel missing"},
 		{"no media", `"media": [`, `"mediaX": [`, "media missing"},
 		{"no app", `"app": "urn`, `"appX": "urn`, "app missing"},
+		// The card key and the sort tie-break: without it a listing cannot be ranked as the store ranks it.
+		{"no id", `"id": "apl_alpha"`, `"idX": "apl_alpha"`, "id missing"},
+		{"empty id", `"id": "apl_alpha"`, `"id": ""`, "id missing"},
+		{"bad detail field", `"isOfficial": true,`, `"isOfficial": true, "scopes": "models:read:self",`, "detail fields: json: cannot unmarshal string into Go struct field ListingDetail.scopes of type []string"},
 		{"bad kind", `"kind": "onsite"`, `"kind": "teleport"`, "kind missing or unknown"},
 		{"bad date", `"createdAt": "2026-03-04T05:06:07.123456Z"`, `"createdAt": "yesterday"`, "createdAt: not an RFC 3339 date-time"},
 		{"bad updatedAt", `"updatedAt": null`, `"updatedAt": 5`, "updatedAt: not a string or null"},

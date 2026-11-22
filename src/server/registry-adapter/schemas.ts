@@ -89,6 +89,10 @@ export const ENTITY_SCHEMA_DOCUMENTS: ReadonlyArray<Record<string, unknown>> = [
 ];
 
 const count = { type: 'integer', minimum: 0 };
+const chip = {
+  type: 'object',
+  properties: { id: { type: 'integer' }, username: nullableString, image: nullableString },
+};
 
 /**
  * The listing schema. Not one of {@link ENTITY_SCHEMA_DOCUMENTS}: it is published only while the
@@ -102,6 +106,11 @@ export const STORE_LISTING_SCHEMA_DOCUMENT: Record<string, unknown> = {
   required: ['app', 'slug', 'name', 'kind', 'contentRating', 'media', 'stats'],
   properties: {
     app: { type: 'string', description: 'URN of the app entity this listing presents' },
+    id: {
+      type: 'string',
+      description:
+        "The listing's id: the store card's key, and the store's tie-break in every sort",
+    },
     slug: { type: 'string' },
     name: { type: 'string' },
     kind: { enum: ['onsite', 'offsite'] },
@@ -140,15 +149,21 @@ export const STORE_LISTING_SCHEMA_DOCUMENT: Record<string, unknown> = {
         },
       },
     },
-    creator: {
-      type: ['object', 'null'],
-      properties: { id: { type: 'integer' }, username: nullableString, image: nullableString },
-    },
+    creator: { ...chip, type: ['object', 'null'] },
     isBeta: { type: 'boolean' },
     isOfficial: { type: 'boolean' },
+    appBlockId: {
+      ...nullableString,
+      description: "On-site only: the id of the app's backing block, as the store card carries it",
+    },
     hasPage: { type: 'boolean', description: 'On-site only: the app declares a launch page' },
     liveUrl: { type: 'string', description: "On-site only: the app's standalone origin" },
     externalUrl: { ...nullableString, description: 'Off-site only' },
+    connectClientId: {
+      ...nullableString,
+      description:
+        "Off-site only: the public OAuth client id of the app's account connection, as the store's detail page carries it; null when it has none",
+    },
     stats: {
       type: 'object',
       description: 'Rollups refreshed by a periodic job, so they move at its cadence',
@@ -175,5 +190,47 @@ export const STORE_LISTING_SCHEMA_DOCUMENT: Record<string, unknown> = {
       description: "When the listing was created: the store's `newest` sort key",
     },
     updatedAt: { type: ['string', 'null'], format: 'date-time' },
+    serialId: {
+      type: 'integer',
+      description: "The listing's integer id, which its comment thread is keyed on",
+    },
+    collaborators: {
+      type: 'array',
+      description: "The app's public byline: accepted collaborators who chose to be shown",
+      items: chip,
+    },
+    sourceRepoUrl: { ...nullableString, description: "The app's public source repository" },
+    issueTrackerUrl: { ...nullableString, description: "The app's issue tracker or support link" },
+    actionsRunSource: {
+      type: ['object', 'null'],
+      description:
+        'On-site only: the public GitHub Actions run that submitted the serving version. A fact about the run, not about the bundle',
+      required: ['repository', 'tag', 'sha'],
+      properties: {
+        repository: { type: 'string' },
+        tag: { type: 'string' },
+        sha: { type: 'string' },
+      },
+    },
+    scopes: {
+      type: 'array',
+      items: { type: 'string' },
+      description: "On-site only: the app's approved scope ids. Empty otherwise",
+    },
+    connectScopes: {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        'Off-site only: the account permissions the app is approved to ask for, while it has a connect client. Empty otherwise',
+    },
+    betaMessage: { ...nullableString, description: "The author's beta note, only while isBeta" },
+    forkable: { type: 'boolean', description: 'On-site only: the author lets others fork it' },
+    forkOf: {
+      type: ['object', 'null'],
+      description:
+        'Null unless the app is a fork. `slug` names the parent app when this subscription may read it, and is null when the parent is hidden from it or gone: show the parent only if it is visible to the viewer, else that it came from an app that is not available',
+      required: ['slug'],
+      properties: { slug: nullableString },
+    },
   },
 };

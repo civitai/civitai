@@ -183,15 +183,32 @@ export function readableBy(sets: EntitySets, schema: string, audience: Audience)
       admitted(appUrnOf(schema, e))
   );
   if (schema === STORE_LISTING_SCHEMA) {
-    // The body, and so its rev, differ per audience.
+    // The body, and so its rev, differ per audience: its media items by their own ratings, and its
+    // fork parent's slug, like the app entity's `forkOf`, only for an audience that may read the
+    // parent (otherwise it is still a fork, of a parent this audience cannot name).
+    const parentAdmitted = (slug: string): boolean => {
+      try {
+        return admitted(registryUrn({ kind: 'app', slug }));
+      } catch {
+        return false;
+      }
+    };
     return readable.map((e) => {
-      const body = e.body as { media?: Array<{ rating?: unknown }> } & Record<string, unknown>;
+      const body = e.body as {
+        media?: Array<{ rating?: unknown }>;
+        forkOf?: { slug?: unknown } | null;
+      } & Record<string, unknown>;
       const media = (body.media ?? []).filter(
         (m) => typeof m.rating === 'string' && audienceAdmits(audience, m.rating)
       );
-      return media.length === (body.media ?? []).length
-        ? e
-        : entity(e.urn, STORE_LISTING_SCHEMA, { ...body, media });
+      const parent = body.forkOf?.slug;
+      const hideParent = typeof parent === 'string' && !parentAdmitted(parent);
+      if (media.length === (body.media ?? []).length && !hideParent) return e;
+      return entity(e.urn, STORE_LISTING_SCHEMA, {
+        ...body,
+        media,
+        ...(hideParent ? { forkOf: { slug: null } } : {}),
+      });
     });
   }
   if (schema !== APP_SCHEMA) return readable;
@@ -435,6 +452,7 @@ export function listingBody(
   const { listing } = app;
   return {
     app: appUrn,
+    id: store.id,
     slug: app.block?.blockId ?? listing.slug,
     name: listing.name,
     kind: listing.kind,
@@ -453,8 +471,12 @@ export function listingBody(
     isBeta: store.isBeta,
     isOfficial: store.isOfficial,
     ...(listing.kind === 'onsite'
-      ? { hasPage: store.hasPage, ...(store.liveUrl ? { liveUrl: store.liveUrl } : {}) }
-      : { externalUrl: listing.externalUrl }),
+      ? {
+          appBlockId: store.appBlockId,
+          hasPage: store.hasPage,
+          ...(store.liveUrl ? { liveUrl: store.liveUrl } : {}),
+        }
+      : { externalUrl: listing.externalUrl, connectClientId: store.connectClientId }),
     stats: {
       recommendedCount: store.recommend.recommendedCount,
       notRecommendedCount: store.recommend.notRecommendedCount,
@@ -465,6 +487,27 @@ export function listingBody(
     },
     createdAt: store.createdAt,
     updatedAt: store.updatedAt,
+    // The public detail's fields (`ListingDetail`), as an anonymous viewer reads them.
+    serialId: store.serialId,
+    collaborators: store.collaborators.map((c) => ({
+      id: c.id,
+      username: c.username,
+      image: c.image,
+    })),
+    sourceRepoUrl: listing.sourceRepoUrl,
+    issueTrackerUrl: store.issueTrackerUrl,
+    actionsRunSource: store.actionsRunSource
+      ? {
+          repository: store.actionsRunSource.repository,
+          tag: store.actionsRunSource.tag,
+          sha: store.actionsRunSource.sha,
+        }
+      : null,
+    scopes: [...store.scopes],
+    connectScopes: [...store.connectScopes],
+    betaMessage: store.betaMessage,
+    forkable: store.forkable,
+    forkOf: store.forkOf ? { slug: store.forkOf.slug } : null,
   };
 }
 

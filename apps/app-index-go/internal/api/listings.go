@@ -245,7 +245,18 @@ func (s *Server) listingDetail(ctx context.Context, w http.ResponseWriter, r *ht
 		writeJSON(w, http.StatusNotFound, apiError{Error: "not_found"})
 		return "not_found"
 	}
-	d, err := listingread.ProjectDetail(l, v)
+	// A fork's parent, from the same generation: ProjectDetail names it only if this viewer may see it.
+	var parent *store.Listing
+	if ps := listingread.ForkParentSlug(l); ps != "" {
+		p, ok, err := s.Listings.BySlug(ctx, gen.ID, ps)
+		if err != nil {
+			return s.fail(w, "listing fork parent", err)
+		}
+		if ok {
+			parent = &p
+		}
+	}
+	d, err := listingread.ProjectDetail(l, v, parent)
 	if err != nil {
 		return s.fail(w, "listing detail", err)
 	}

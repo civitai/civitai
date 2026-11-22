@@ -1,7 +1,7 @@
 /**
  * Pieces shared by the shadow samplers (`~/server/trpc/feed-go-shadow`,
- * `~/server/beacon/beacon-go-shadow`): reading their numeric env knobs, and the per-endpoint
- * per-second budget. Import-free.
+ * `~/server/beacon/beacon-go-shadow`, the listings read-model shadow): reading their numeric env
+ * knobs, the per-endpoint per-second budget, and a per-minute cap on their log lines. Import-free.
  */
 
 /**
@@ -44,4 +44,27 @@ export function createPerSecondBuckets<E extends string>(
   }
 
   return { take };
+}
+
+/**
+ * At most `perMinute` calls of `fn` in any minute (fixed one-minute windows, on the clock `nowMs`,
+ * milliseconds); the rest are dropped.
+ */
+export function rateLimited<T>(
+  fn: (x: T) => void,
+  perMinute: number,
+  nowMs: () => number
+): (x: T) => void {
+  let windowStart = Number.NEGATIVE_INFINITY;
+  let used = 0;
+  return (x) => {
+    const t = nowMs();
+    if (t - windowStart >= 60_000) {
+      windowStart = t;
+      used = 0;
+    }
+    if (used >= perMinute) return;
+    used++;
+    fn(x);
+  };
 }

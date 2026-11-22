@@ -83,10 +83,53 @@ const DB_READS: StoreGridReads = {
     (await listingService()).listStoreListingsBySlugs(slugs, input, opts),
 };
 
-class IndexUnavailable extends Error {
-  constructor(readonly reason: AppIndexSearchReason) {
+/** Why an app index call gave no usable answer: the outcomes every caller of it counts. */
+export type AppIndexFetchFailure = 'timeout' | 'not_ready' | 'error' | 'bad_response';
+
+/** Thrown by {@link fetchAppIndexJson}, naming why the call gave no usable answer. */
+export class AppIndexUnavailable extends Error {
+  constructor(readonly reason: AppIndexFetchFailure) {
     super(reason);
   }
+}
+
+/** Whether `err` is a fetch or body read cut off by its timeout (or aborted). */
+export function isTimeout(err: unknown): boolean {
+  return err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
+}
+
+/**
+ * One app index call (`apps/app-index-go`), classified: the body parsed by `schema`, or
+ * {@link AppIndexUnavailable} naming why not (a timeout or abort, a 503 while the index is not
+ * ready, any other failure or non-2xx status, a 2xx body that does not parse). `fetch` is the
+ * caller's (`outboundFetch` in production).
+ */
+export async function fetchAppIndexJson<T>(
+  fetch: (
+    url: string,
+    init: { headers: Record<string, string>; timeoutMs: number }
+  ) => Promise<Response>,
+  url: string,
+  init: { headers: Record<string, string>; timeoutMs: number },
+  schema: z.ZodType<T>
+): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch (err) {
+    throw new AppIndexUnavailable(isTimeout(err) ? 'timeout' : 'error');
+  }
+  if (res.status === 503) throw new AppIndexUnavailable('not_ready');
+  if (!res.ok) throw new AppIndexUnavailable('error');
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (err) {
+    throw new AppIndexUnavailable(isTimeout(err) ? 'timeout' : 'bad_response');
+  }
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) throw new AppIndexUnavailable('bad_response');
+  return parsed.data;
 }
 
 /**
@@ -308,7 +351,7 @@ async function searchThroughIndex(
   try {
     indexed = await fetchIndexResults(query, input, indexKind(input, opts));
   } catch (err) {
-    const reason = err instanceof IndexUnavailable ? err.reason : 'error';
+    const reason = err instanceof AppIndexUnavailable ? err.reason : 'error';
     breaker.failure(reason);
     return fallBack(dbPage(), query, reason);
   }
@@ -402,7 +445,7 @@ async function fallBack(
   return db;
 }
 
-/** The index's results, in its order. Throws IndexUnavailable naming why it could not. */
+/** The index's results, in its order. Throws AppIndexUnavailable naming why it could not. */
 async function fetchIndexResults(
   query: string,
   input: ListAppListingsInput,
@@ -412,26 +455,13 @@ async function fetchIndexResults(
   if (kind) params.set('kind', kind);
   if (input.category) params.set('category', input.category);
   const base = (env.APP_INDEX_URL as string).replace(/\/+$/, '');
-  let res: Response;
-  try {
-    res = await outboundFetch(`${base}/search?${params}`, {
-      headers: { accept: 'application/json' },
-      timeoutMs: APP_INDEX_SEARCH_TIMEOUT_MS,
-    });
-  } catch (err) {
-    throw new IndexUnavailable(isTimeout(err) ? 'timeout' : 'error');
-  }
-  if (res.status === 503) throw new IndexUnavailable('not_ready');
-  if (!res.ok) throw new IndexUnavailable('error');
-  let body: unknown;
-  try {
-    body = await res.json();
-  } catch (err) {
-    throw new IndexUnavailable(isTimeout(err) ? 'timeout' : 'bad_response');
-  }
-  const parsed = indexResponseSchema.safeParse(body);
-  if (!parsed.success) throw new IndexUnavailable('bad_response');
-  return parsed.data.results;
+  const { results } = await fetchAppIndexJson(
+    outboundFetch,
+    `${base}/search?${params}`,
+    { headers: { accept: 'application/json' }, timeoutMs: APP_INDEX_SEARCH_TIMEOUT_MS },
+    indexResponseSchema
+  );
+  return results;
 }
 
 type FieldCounts = Record<AppIndexComparedField, number>;
@@ -484,10 +514,6 @@ export function compareIndexFields(
 
 const formatCounts = (c: FieldCounts, fields: readonly AppIndexComparedField[]) =>
   fields.map((f) => `${f}:${c[f]}`).join(',');
-
-function isTimeout(err: unknown): boolean {
-  return err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
-}
 
 /**
  * The slugs of a page's listing cards that match the query (the client rule). Listing cards only,
