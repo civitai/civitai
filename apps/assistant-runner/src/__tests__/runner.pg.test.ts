@@ -17,7 +17,7 @@ import { AppAssistantTools } from '../app-assistant/provider';
 import { RunCredentials } from '../credentials';
 import { createPool } from '../core/pg-pool';
 import { RunGrants } from '../grants';
-import type { ModelProvider, ToolContext } from '../core/interfaces';
+import type { ModelProvider, ToolContext, TurnEnded } from '../core/interfaces';
 import { TokenMinter } from '../minter';
 import { OrchestrationClient } from '../orchestration';
 import { OrchestrationModels } from '../orchestration-model';
@@ -274,6 +274,9 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       return scripted;
     },
   };
+  /** Every finished pass `turnEnded` was told of, in order; it throws while `turnReportThrows.on`. */
+  const turnReports: TurnEnded[] = [];
+  const turnReportThrows = { on: false };
   const deps: RunnerDeps = {
     models,
     // A rebuild (`reopenTools`, with the reply's progress) waits on `rebuildGate.hold` while one is set.
@@ -313,6 +316,10 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     stopGraceMs: 20_000,
     // A start naming it follows the page's default: its chat is not saved as having picked it.
     defaultModel: 'echo',
+    turnEnded: (turn) => {
+      turnReports.push(turn);
+      if (turnReportThrows.on) throw new Error('the turn report broke');
+    },
   };
 
   beforeAll(async () => {
@@ -458,6 +465,68 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(head!.turns).toHaveLength(1);
     expect(head!.turns[0]!.assistant).toMatchObject({ status: 'done' });
     expect(head!.turns[0]!.assistant!.messages).toEqual(ended(entries).messages);
+  });
+
+  it('tells turnEnded of each finished turn once, with its run, model, end and messages', async () => {
+    const user = 'u-turn-report';
+    const before = Date.now();
+    const start = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-turn-report', model: 'tools' })
+    );
+    expect(start.status).toBe(201);
+    const runId = start.body!.runId as string;
+    const entries = await events(runId, user);
+    expect(ended(entries).status).toBe('done');
+
+    const reported = turnReports.filter((turn) => turn.runId === runId);
+    expect(reported).toHaveLength(1);
+    const [turn] = reported;
+    expect(turn).toMatchObject({
+      userId: user,
+      conversationId: 'c-turn-report',
+      seq: 1,
+      model: 'tools',
+      status: 'done',
+      earlier: [],
+    });
+    expect(turn!.messages).toEqual(ended(entries).messages);
+    expect(
+      turn!.messages.flatMap((message) =>
+        message.role === 'assistant' && Array.isArray(message.content)
+          ? message.content.flatMap((part) => (part.type === 'tool-call' ? [part.toolName] : []))
+          : []
+      )
+    ).toEqual(['record']);
+    expect(turn!.startedAt.getTime()).toBeGreaterThanOrEqual(before);
+    expect(turn!.endedAt.getTime()).toBeGreaterThanOrEqual(turn!.startedAt.getTime());
+  });
+
+  it('a turnEnded that throws changes nothing about how the reply ends or what the head keeps', async () => {
+    const user = 'u-turn-report-throws';
+    turnReportThrows.on = true;
+    try {
+      const start = await post(
+        '/runs',
+        as(user),
+        startBody({ conversationId: 'c-turn-report-throws', model: 'tools' })
+      );
+      expect(start.status).toBe(201);
+      const runId = start.body!.runId as string;
+      const entries = await events(runId, user);
+      expect(ended(entries).status).toBe('done');
+      expect(turnReports.filter((turn) => turn.runId === runId)).toHaveLength(1);
+      const head = await store.load(user, 'c-turn-report-throws');
+      expect(head!.turns[0]!.assistant).toMatchObject({ status: 'done' });
+      // The workflow itself ends SUCCESS with its output (what a later retry carries on from), not
+      // ERROR: the throw never reaches the reply's own workflow.
+      const result = await DBOS.retrieveWorkflow<{ status: string }>(runId).getResult();
+      expect(result).toMatchObject({ status: 'done' });
+      expect(await DBOS.getWorkflowStatus(runId)).toMatchObject({ status: 'SUCCESS' });
+    } finally {
+      turnReportThrows.on = false;
+    }
   });
 
   it('resumes the event stream after Last-Event-ID', async () => {

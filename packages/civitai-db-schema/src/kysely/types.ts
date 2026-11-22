@@ -343,6 +343,19 @@ export type AppAccessRequest = {
   reviewedAt: Timestamp | null;
   reviewedById: number | null;
 };
+export type AppAssistantSessionLink = {
+  id: Generated<number>;
+  user_id: number;
+  conversation_id: string;
+  app_slug: string;
+  first_seen_at: Generated<Timestamp>;
+  last_seen_at: Generated<Timestamp>;
+  turn_count: Generated<number>;
+  last_model: string | null;
+  buzz_total: Generated<number>;
+  last_run_id: string | null;
+  last_seq: number | null;
+};
 export type AppBlock = {
   id: string;
   app_id: string;
@@ -7075,6 +7088,7 @@ export type DB = {
   AnswerReaction: AnswerReaction;
   AnswerVote: AnswerVote;
   ApiKey: ApiKey;
+  app_assistant_session_links: AppAssistantSessionLink;
   app_block_build_attempts: AppBlockBuildAttempt;
   app_block_publish_requests: AppBlockPublishRequest;
   app_block_upload_batches: AppBlockUploadBatch;

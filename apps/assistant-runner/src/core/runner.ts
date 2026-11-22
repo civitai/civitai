@@ -56,6 +56,7 @@ import type {
   OpenTools,
   RunGrant,
   ToolProvider,
+  TurnEnded,
 } from './interfaces';
 import { createPool } from './pg-pool';
 import { ProgressWriter, runAfterSaved } from './progress';
@@ -174,6 +175,12 @@ export interface RunnerDeps {
    * a first start naming any other model keeps it in the new head. Unset: every first start's model is kept.
    */
   defaultModel?: string;
+  /**
+   * Told of each pass of a reply as it ends, once its end is journaled (civitai: per-turn analytics).
+   * Called synchronously and never awaited: an implementation must return at once and do its work
+   * in the background. Whatever it throws is logged and dropped; it never changes how a reply ends.
+   */
+  turnEnded?: (turn: TurnEnded) => void;
 }
 
 export interface LaunchOptions {
@@ -763,6 +770,7 @@ export class Runner implements RunService {
   async #pass(input: ReplyInput, begun: Begun, stop: AbortSignal, why: Why): Promise<ReplyOutput> {
     const { runId, userId, conversationId, seq } = input;
     const { store, log } = this.#deps;
+    const passStartedAt = new Date();
     const journal = await this.#readJournal(runId);
     const head = await store.load(userId, conversationId);
     const turn = savedTurn(head, seq);
@@ -838,6 +846,21 @@ export class Runner implements RunService {
       });
       await emitter.drain();
       emitter.close();
+      this.#reportTurn({
+        userId,
+        runId,
+        conversationId,
+        seq,
+        model: input.model,
+        status,
+        ...(progress.chargedSoFar !== undefined ? { buzz: progress.chargedSoFar } : {}),
+        startedAt: passStartedAt,
+        endedAt: new Date(),
+        messages: reply.messages,
+        earlier: (head?.turns ?? [])
+          .filter((saved) => saved.seq < seq)
+          .flatMap((saved) => turnFrom(saved).assistant.messages),
+      });
       return { status, steps, ...(outcome.resume ? { resume: outcome.resume } : {}) };
     };
 
@@ -1022,6 +1045,17 @@ export class Runner implements RunService {
       },
       outcome
     );
+  }
+
+  /** Tells the deployment's `turnEnded` of a pass that ended; nothing it does reaches the reply. */
+  #reportTurn(turn: TurnEnded): void {
+    const { turnEnded, log } = this.#deps;
+    if (!turnEnded) return;
+    try {
+      turnEnded(turn);
+    } catch (error) {
+      log.warn({ err: error, runId: turn.runId }, 'reporting a finished turn failed');
+    }
   }
 
   #model(

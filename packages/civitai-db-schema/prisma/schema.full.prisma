@@ -627,6 +627,7 @@ model User {
   blockGoodPurchasesAsAppOwner     BlockGoodPurchase[]      @relation("BlockGoodPurchaseAppOwner")
   blockGoodEntitlements            BlockGoodEntitlement[]   @relation("BlockGoodEntitlementOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
+  appAssistantSessionLinks   AppAssistantSessionLink[]
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
   appUserScopeGrants         AppUserScopeGrant[]
@@ -3585,6 +3586,35 @@ model AppBlockBuildAttempt {
   @@index([publishRequestId, mode, createdAt(sort: Desc)], map: "app_block_build_attempts_request_idx")
   @@index([mode, slug, sha, createdAt(sort: Desc)], map: "app_block_build_attempts_version_idx")
   @@map("app_block_build_attempts")
+}
+
+/// App Assistant session tracing: which App Assistant chats worked on which app, for whom. One row
+/// per (conversation, app slug), upserted by every finished server-runner turn whose chat had an app
+/// chosen (`~/server/services/app-assistant/session-tracing.service`), while the
+/// `app-assistant-tracing` Flipt flag is on. A chat that moves between apps has one row per app; an
+/// app built over several chats has one row per chat. Read by moderators only (submission tracing).
+///
+/// 🔴 APPLIED MANUALLY, AND THE APP TOLERATES IT BEING ABSENT: every write is best-effort (a failure,
+/// a missing table included, is logged and dropped), so code using it ships before the table.
+/// Migration `20271124120000_app_assistant_session_links`.
+model AppAssistantSessionLink {
+  id             Int      @id @default(autoincrement())
+  userId         Int      @map("user_id")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String   @map("conversation_id") // the chat's conversation id (orchestration tag `cvt:conv:<id>`)
+  appSlug        String   @map("app_slug") // the app's blockId, as `create_app` / `use_open_app` chose it
+  firstSeenAt    DateTime @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt     DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  turnCount      Int      @default(0) @map("turn_count")
+  lastModel      String?  @map("last_model")
+  buzzTotal      Float    @default(0) @map("buzz_total")
+  lastRunId      String?  @map("last_run_id") // the last reported run: a report delivered twice counts once
+  lastSeq        Int?     @map("last_seq")
+
+  // Per user: a conversation id is chosen by the page, so only the user's own chats share its space.
+  @@unique([userId, conversationId, appSlug], map: "app_assistant_session_links_user_conversation_app_key")
+  @@index([appSlug, userId, lastSeenAt(sort: Desc)], map: "app_assistant_session_links_app_user_idx")
+  @@map("app_assistant_session_links")
 }
 
 /// App Store Listings (W13) — the store-facing record, decoupled from runtime.
