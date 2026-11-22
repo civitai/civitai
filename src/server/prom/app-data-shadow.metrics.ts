@@ -1,6 +1,11 @@
 import client from 'prom-client';
 import { instrumentationRegistry, registerInstrumentationMetric } from '@civitai/telemetry/client';
 
+// A list the shadow cannot compare (not the app's own private collection, not the published
+// namespace, not an app or hub token, an anonymous viewer, a parameter but `limit` and `keyPrefix`,
+// or a REST answer with a next page) is dropped before the flag is read and counted nowhere: it may
+// be any app's, with the flag off (`shadowIneligibility`).
+//
 // The App Storage shadow read's counters (`app-data-shadow.service.ts`): a sampled list the site's
 // document store answered, also asked of the shared app-data service (apps/app-data-go), registry
 // only. Every label is from a fixed set: no app, collection, key, user or value. Which app a
@@ -10,13 +15,6 @@ import { instrumentationRegistry, registerInstrumentationMetric } from '@civitai
 export const APP_DATA_SHADOW_OUTCOMES = [
   // Both answers were read and compared (`app_data_shadow_compared_total` says how).
   'compared',
-  // Not asked: a list app-data-go cannot answer the same way. Not the app's own collection (an
-  // import), not a private collection, not the published namespace (dev, review), not an app or hub
-  // token, an anonymous viewer, or a list with a parameter but `limit` and `keyPrefix` (a filter, a
-  // sort, a mark, an author or a cursor).
-  'unsupported_input',
-  // Not asked: the REST answer has a next page, so it is not the whole collection.
-  'incomplete',
   // Not asked: this process already has the maximum number of shadow reads in flight. Counted
   // before the flag is read, so it can count a list of an app the flag is off for.
   'saturated',

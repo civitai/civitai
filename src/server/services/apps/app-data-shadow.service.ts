@@ -188,7 +188,9 @@ export function appDataReadUrl(
   keyPrefix?: string
 ) {
   const params = new URLSearchParams({ major: String(major) });
-  if (keyPrefix !== undefined) params.set('keyPrefix', keyPrefix);
+  // An empty prefix filters nothing (the store reads it as the whole collection) and app-data-go
+  // refuses it, so it is not sent.
+  if (keyPrefix) params.set('keyPrefix', keyPrefix);
   return `${base.replace(/\/+$/, '')}/v1/apps/${encodeURIComponent(
     blockId
   )}/collections/${encodeURIComponent(collection)}/records?${params}`;
@@ -216,8 +218,6 @@ export function createAppDataShadow(deps: AppDataShadowDeps) {
   ): Promise<AppDataShadowOutcome | undefined> {
     // Off for this app: nothing is asked and nothing is counted.
     if (!(await deps.enabled(input.appBlockId, input.blockId))) return undefined;
-    const skip = shadowIneligibility(input);
-    if (skip) return skip;
     const major =
       (await withTimeoutFallback(
         deps.major({
@@ -245,7 +245,12 @@ export function createAppDataShadow(deps: AppDataShadowDeps) {
     } catch (err) {
       return isTimeout(err) ? 'timeout' : 'error';
     }
-    if (!res.ok) return 'error';
+    if (!res.ok) {
+      // Nothing of a refusal is read: its body is cancelled, so the connection is released now
+      // rather than when the response is collected.
+      await res.body?.cancel().catch(() => undefined);
+      return 'error';
+    }
     let parsed: z.infer<typeof answerSchema>;
     try {
       const body = answerSchema.safeParse(await res.json());
@@ -278,6 +283,9 @@ export function createAppDataShadow(deps: AppDataShadowDeps) {
   function decide(input: AppDataShadowInput): Promise<void> | undefined {
     const cfg = deps.config();
     if (!cfg.url) return undefined;
+    // A list app-data-go cannot answer the same way is dropped before anything else: it never reads
+    // the flag, takes no in-flight slot and is not counted (it may be any app's, the flag off).
+    if (shadowIneligibility(input)) return undefined;
     if (!(deps.random() < cfg.sample)) return undefined;
     if (inFlight >= cfg.maxInFlight) {
       recordAppDataShadow('saturated');

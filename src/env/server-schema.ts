@@ -10,6 +10,7 @@ import {
   stringToArray,
 } from '~/utils/zod-helpers';
 import { isProd } from './other';
+import { isClusterLocalServiceUrl } from './cluster-local-url';
 
 // Strict integer env values: digits only, so '', ' 3', '2.5' and '-1' are rejected instead of being
 // coerced (z.coerce turns '' into 0). Mirrors packages/civitai-db/src/env.ts — both schemas are
@@ -681,7 +682,15 @@ export const serverSchema = z
     // The shared app-data service (apps/app-data-go): its base URL, for the shadow read of App
     // Storage lists (app-data-shadow.service.ts). Unset = no shadow read is ever made, whatever the
     // `app-data-registry-shadow` flag says. The REST answer is always the one served.
-    APP_DATA_SHADOW_URL: z.url().optional(),
+    // The shadow sends each request's own bearer token there, so only http(s) to a cluster-local
+    // service host (`*.svc`, `*.svc.cluster.local`) with no credentials, query or fragment is taken,
+    // app-data-go's own rule for the URLs it sends tokens to. Anything else reads as UNSET (the
+    // shadow stays off) rather than failing the whole env parse: a shadow knob must never stop boot.
+    APP_DATA_SHADOW_URL: z
+      .string()
+      .optional()
+      .transform((raw) => (raw !== undefined && isClusterLocalServiceUrl(raw) ? raw : undefined))
+      .catch(undefined),
     // The fraction (0-1) of eligible lists, of apps the flag is on for, also asked of app-data-go;
     // the most such reads in flight per process (more are dropped, not queued); each read's timeout.
     APP_DATA_SHADOW_SAMPLE: z.coerce.number().min(0).max(1).default(1),

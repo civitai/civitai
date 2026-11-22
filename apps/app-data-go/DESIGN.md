@@ -425,22 +425,27 @@ makes a read do less; the preflight does not allow it, so a browser cannot send 
 a `private` collection, the published namespace, an `app` or `hub` token with a signed-in viewer, and
 no list parameter but `limit` and `keyPrefix` (no filter, sort, mark, author or cursor). A
 `keyPrefix` is sent on, and this service filters the stream's records by it (below). The REST answer
-must be the whole collection, or the whole prefix: a list with a next page is counted `incomplete`
-and not asked (a paged list would need the site to read every page itself, which the shadow does not
-do). The schema major is the collection's current one (`resolveSchemaMajor`), 1 when it has none.
+must be the whole collection, or the whole prefix: a list with a next page is not asked (a paged
+list would need the site to read every page itself, which the shadow does not do). An empty
+`keyPrefix` filters nothing and is not sent. Any other list is dropped before the flag is read: it
+takes no in-flight slot and is counted nowhere, since it may be any app's with the flag off. The
+schema major is the collection's current one (`resolveSchemaMajor`), 1 when it has none.
 
 Why `keyPrefix` matters: model-benchmarking, the first app, lists its private collection only through
-a prefixed scan (the SDK kv `list({ prefix })`), so without it every one of its lists would be
-`unsupported_input`.
+a prefixed scan (the SDK kv `list({ prefix })`), so without it none of its lists would be shadowed.
 
 **The gate,** in order, each before any work of the next:
 
-1. `APP_DATA_SHADOW_URL` set (this service's base URL; unset: nothing happens);
-2. a sample: `random() < APP_DATA_SHADOW_SAMPLE` (default `1`: every eligible list of an app the
+1. `APP_DATA_SHADOW_URL` set: this service's base URL, http(s) to a cluster-local service host
+   (`*.svc`, `*.svc.cluster.local`) only, the rule this service applies to the URLs it sends tokens
+   to. Unset, or any other value (read as unset, so a bad value never stops the site booting):
+   nothing happens;
+2. the list is one the shadow can compare (above), checked synchronously;
+3. a sample: `random() < APP_DATA_SHADOW_SAMPLE` (default `1`: every eligible list of an app the
    flag is on for; the flag is the ramp, the knob stays for load);
-3. fewer than `APP_DATA_SHADOW_MAX_IN_FLIGHT` (default 4) shadow reads in flight in the process,
+4. fewer than `APP_DATA_SHADOW_MAX_IN_FLIGHT` (default 4) shadow reads in flight in the process,
    else counted `saturated` and dropped;
-4. the Flipt flag **`app-data-registry-shadow`**, a boolean evaluated **per app**: entity id the app
+5. the Flipt flag **`app-data-registry-shadow`**, a boolean evaluated **per app**: entity id the app
    block id (`apb_…`), context `{ blockId: <the app's slug> }`. Default off (absent, or Flipt
    unreachable). To start with model-benchmarking only: `enabled: false` with a rule whose segment
    matches its app block id (an `ENTITY_ID` constraint), or its slug (a `blockId` context
@@ -462,8 +467,7 @@ one.
 
 **Telemetry** (on the site's `/api/metrics`; no label carries an app, collection, key, user or value):
 
-- `app_data_shadow_requests_total{outcome}`: `compared`, `unsupported_input`, `incomplete`,
-  `saturated`, `registry_miss`, `timeout`, `error`, `bad_response` (a `rest` answer counts here: a
+- `app_data_shadow_requests_total{outcome}`: `compared`, `saturated`, `registry_miss`, `timeout`, `error`, `bad_response` (a `rest` answer counts here: a
   release of this service without registry-only);
 - `app_data_shadow_registry_misses_total{reason}`: this service's fallback reasons (`unkeyed`
   included), `other` for any it adds later;
@@ -499,13 +503,33 @@ not refused.
    can compare by key.** Until then a keyed registry answer cannot exist: model-benchmarking's
    prefixed lists read `registry_miss{reason="unkeyed"}`, and its unprefixed ones compare on
    `basis="data"`.
-3. The site on a release with the shadow, `APP_DATA_SHADOW_URL` set to this service's in-cluster
-   URL (cluster-local `http` only).
+3. **Create `app-data-registry-shadow` in Flipt with `enabled: false` and no rule, BEFORE the URL is
+   set.** With the URL set, every eligible list reads the flag, and a missing key makes each read
+   throw past the eval cache and log a `flipt-eval-error`.
 4. The network path from the site's pods to this service's HTTP port (below).
-5. Create `app-data-registry-shadow` in Flipt, on for model-benchmarking only.
-6. Until the block exchange (`APP_DATA_BLOCK_EXCHANGE`) and the adapter's private relays (S7) are on,
+5. The site on a release with the shadow, `APP_DATA_SHADOW_URL` set to this service's cluster-local
+   URL. Still off: the flag answers false for every app.
+6. The flag's rule for model-benchmarking only.
+7. Until the block exchange (`APP_DATA_BLOCK_EXCHANGE`) and the adapter's private relays (S7) are on,
    every shadow read is a `registry_miss` (`token_not_exchangeable` for a block token): that is the
    first thing it shows, and the positive control for the wiring.
+
+**The load it adds once on**, all on this service and the adapter, none on the site's response:
+
+- each new block token that reads a shadowed list opens one stream: one hub exchange, one adapter
+  private snapshot of that user's collection, then an adapter poll every 60 s while it is open
+  (about 5 queries a poll, plus the install revocation read). A block token lives at most 15
+  minutes and the app's next one is a new token, so an active user opens a new stream per token;
+- a stream closes after 5 minutes without a read (`STREAM_IDLE_TTL_MS`) and at most 14 minutes after
+  it opened (`STREAM_MAX_AGE_MS`), so it outlives the user's session by up to the idle TTL;
+- bounded per replica by `APP_DATA_MAX_STREAMS` (100) and per token by
+  `APP_DATA_MAX_STREAMS_PER_TOKEN` (4); past either, reads go without a stream
+  (`registry_miss{reason="capacity"}` / `"token_capacity"`), which is correct, only uncompared.
+
+**Watch** after each step: the adapter's database reads (its private feed's query rate and time)
+and `app_data_streams_open`; `app_data_shadow_registry_misses_total{reason="capacity"}`, the sign
+the stream cap binds; `app_data_block_exchanges_total` (the hub exchange rate); and
+`app_data_shadow_requests_total{outcome=~"timeout|error|saturated"}`.
 
 **Infra it needs** (deployment config, not in this repo):
 

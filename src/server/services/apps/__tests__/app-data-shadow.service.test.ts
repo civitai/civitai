@@ -13,6 +13,7 @@ import {
   APP_DATA_REGISTRY_ONLY_HEADER,
   compareRecords,
   createAppDataShadow,
+  shadowIneligibility,
   type AppDataShadowConfig,
   type AppDataShadowInput,
   type AppDataShadowLogEntry,
@@ -158,29 +159,35 @@ describe('which lists are shadowed', () => {
     expect(await moved()).toContain('requests_total{compared}:1');
   });
 
-  it('a list app-data-go cannot answer the same way is counted and not asked', async () => {
+  it('🔴 a list app-data-go cannot answer the same way never reads the flag, takes no slot and is not counted', async () => {
+    config.maxInFlight = 1;
     const shadow = makeShadow();
-    for (const over of [
-      { own: false },
-      { published: false },
-      { tokenKind: 'dev' as const },
-      { tokenKind: 'review' as const },
-      { signedIn: false },
-      { visibility: 'shared' as const },
-      { visibility: undefined },
-      { authorization: undefined },
-      { queryKeys: ['limit', 'sort'] },
-      { queryKeys: ['cursor'] },
-      { queryKeys: ['where[score]'] },
-    ]) {
-      await shadow.shadow(input(over));
+    const ineligible: [Partial<AppDataShadowInput>, ReturnType<typeof shadowIneligibility>][] = [
+      [{ own: false }, 'unsupported_input'],
+      [{ published: false }, 'unsupported_input'],
+      [{ tokenKind: 'dev' }, 'unsupported_input'],
+      [{ tokenKind: 'review' }, 'unsupported_input'],
+      [{ signedIn: false }, 'unsupported_input'],
+      [{ visibility: 'shared' }, 'unsupported_input'],
+      [{ visibility: undefined }, 'unsupported_input'],
+      [{ authorization: undefined }, 'unsupported_input'],
+      [{ queryKeys: ['limit', 'sort'] }, 'unsupported_input'],
+      [{ queryKeys: ['cursor'] }, 'unsupported_input'],
+      [{ queryKeys: ['where[score]'] }, 'unsupported_input'],
+      [{ served: { items: [R1], nextCursor: 'c2' } }, 'incomplete'],
+    ];
+    for (const [over, why] of ineligible) {
+      expect(shadowIneligibility(input(over))).toBe(why);
+      // Synchronously nothing: no promise, so no flag read was started.
+      expect(shadow.shadow(input(over))).toBeUndefined();
+      expect(shadow.inFlight()).toBe(0);
     }
-    await shadow.shadow(input({ served: { items: [R1], nextCursor: 'c2' } }));
+    expect(flagCalls).toEqual([]);
     expect(calls).toEqual([]);
-    expect(await moved()).toEqual([
-      'requests_total{incomplete}:1',
-      'requests_total{unsupported_input}:11',
-    ]);
+    expect(await moved()).toEqual([]);
+    // With the one slot never taken, an eligible list still runs.
+    await shadow.shadow(input());
+    expect(calls).toHaveLength(1);
   });
 
   it('a hub token, a page size and a key prefix are shadowed', async () => {
@@ -194,6 +201,14 @@ describe('which lists are shadowed', () => {
       null,
       'run:',
     ]);
+  });
+
+  it('an empty keyPrefix is not sent (app-data-go refuses it, and it filters nothing)', async () => {
+    reply = registryAnswer([R1, R2]);
+    await makeShadow().shadow(input({ queryKeys: ['keyPrefix'], keyPrefix: '' }));
+    expect(calls).toHaveLength(1);
+    expect(new URL(calls[0].url).searchParams.has('keyPrefix')).toBe(false);
+    expect(await moved()).toContain('requests_total{compared}:1');
   });
 });
 
@@ -419,6 +434,24 @@ describe('🔴 a failing shadow never touches the served answer', () => {
       'requests_total{error}:4',
       'requests_total{timeout}:1',
     ]);
+  });
+
+  it("a refusal's body is cancelled, not left holding the connection", async () => {
+    let cancelled = 0;
+    const body = () =>
+      new ReadableStream<Uint8Array>({
+        pull: () => undefined,
+        cancel: () => {
+          cancelled++;
+        },
+      });
+    const shadow = makeShadow();
+    reply = () => new Response(body(), { status: 503 });
+    await shadow.shadow(input());
+    reply = () => new Response(body(), { status: 307, headers: { location: '/elsewhere' } });
+    await shadow.shadow(input());
+    expect(cancelled).toBe(2);
+    expect(await moved()).toEqual(['requests_total{error}:2']);
   });
 
   it('a throwing config or flag never escapes', async () => {
