@@ -51,9 +51,10 @@ import (
 const LayoutVersion = 1
 
 // ListingsLayoutVersion is LayoutVersion for the listings read model's rows (store.Listing).
-// 2: the listing's own rating (listing_content_rating), which the read API gates on. A generation
-// of another layout is not served by the listing API (api.Server.ListingsLayout).
-const ListingsLayoutVersion = 2
+// 2: the listing's own rating (listing_content_rating), which the read API gates on. 3: the listing
+// id (listing_id), the store's tie-break, required in every body. A generation of another layout is
+// not served by the listing API (api.Server.ListingsLayout).
+const ListingsLayoutVersion = 3
 
 // Events is one open subscription.
 type Events interface {

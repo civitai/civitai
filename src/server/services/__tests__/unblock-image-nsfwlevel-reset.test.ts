@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 // Regression guard for the "unblock leaves nsfwLevel stuck at Blocked" bug
 // (ClickUp 868kfwdzq). Blocking force-sets nsfwLevel=Blocked(32) and leaves the
@@ -67,10 +68,21 @@ const mockFindMany = dbRead.image.findMany;
 // The three raw-SQL seams every assertion in this file reads. Declared at module scope because
 // they are the file's instrument rather than per-case behaviour; `vi.clearAllMocks()` in the
 // beforeEach blocks clears call history without dropping an implementation.
-dbWrite.$queryRaw.mockImplementation((strings: TemplateStringsArray, ..._values: unknown[]) => {
+// The unblock UPDATE's RETURNING: every id it claimed (its `Prisma.join` list) comes back restored.
+const unblockedRows = (values: unknown[]) =>
+  values.flatMap((v) => {
+    const sql = v as { text?: unknown; values?: unknown[] } | null;
+    return sql && typeof sql.text === 'string' && sql.values?.length && /^[$\d,\s]*$/.test(sql.text)
+      ? sql.values.map((id) => ({ id, keptBlocked: false }))
+      : [];
+  });
+
+dbWrite.$queryRaw.mockImplementation((strings: TemplateStringsArray, ...values: unknown[]) => {
   const sql = Array.isArray(strings) ? strings.join(' ? ') : String(strings);
   capturedQueryRaw.push(sql);
   capturedRawInOrder.push(sql);
+  if (/AS "keptBlocked"/.test(sql) && /UPDATE "Image" SET/.test(sql))
+    return Promise.resolve(unblockedRows(values));
   // The appeal ruling's image write (`settleResolvedAppeals`) reads postId+pHash back; seed a pHash
   // so the approved-path phash unblock (bulkRemoveBlockedImages) has something to remove.
   if (/RETURNING "postId", "pHash"/.test(sql))
@@ -173,7 +185,11 @@ vi.mock('~/server/services/image-models-reindex.service', () => ({
   queueDocumentsForBlockedImages: vi.fn(async () => undefined),
 }));
 
-const { handleUnblockImages, handleBlockImages } = await import('../image.service');
+const { handleUnblockImages, handleBlockImages, rescanUnratedImages } = await import(
+  '../image.service'
+);
+const { unblockAccountDeletionImages } = await import('../account-deletion-images');
+const { imagesMetricsSearchIndex } = await import('~/server/search-index');
 const { queueDocumentsForImageMinorChanges, queueDocumentsForBlockedImages } = await import(
   '~/server/services/image-models-reindex.service'
 );
@@ -340,14 +356,15 @@ describe('handleUnblockImages and a CSAM block', () => {
     const result = await handleUnblockImages({ ids: [1, 2], moderatorId: undefined } as any);
 
     const unblock = dbWrite.$queryRaw.mock.calls.filter(([strings]) =>
-      (strings as TemplateStringsArray).join('?').includes('"blockedFor" = NULL')
+      (strings as TemplateStringsArray).join('?').includes('AS "keptBlocked"')
     );
     // The ids the UPDATE claimed, then the per-row CSAM re-check it carries.
     const bound = unblock.map(([strings, ...values]) =>
-      Prisma.sql(strings as never, ...(values as never[])).values.slice(-2)
+      // (the last value is RETURNING's kept-blocked status)
+      Prisma.sql(strings as never, ...(values as never[])).values.slice(-3, -1)
     );
     expect(bound).toEqual([[2, 'CSAM']]);
-    expect(result.map((image) => image.id)).toEqual([2]);
+    expect(result.restored.map((image) => image.id)).toEqual([2]);
   });
 
   it('leaves alone an image the replica still shows unblocked but the primary has CSAM-blocked', async () => {
@@ -359,7 +376,7 @@ describe('handleUnblockImages and a CSAM block', () => {
     try {
       const result = await handleUnblockImages({ ids: [1, 2], moderatorId: undefined } as any);
 
-      expect(result).toEqual([]);
+      expect(result).toEqual({ restored: [], kept: [] });
       const drops = dbWrite.$executeRaw.mock.calls.filter(([strings]) =>
         (strings as TemplateStringsArray)
           .join('?')
@@ -618,8 +635,9 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
 describe('handleUnblockImages — minor queue Accept truth table', () => {
   it('clears the minor flag on mature images and keeps it on safe ones', async () => {
     const pg = new PGlite();
-    await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Rescan', 'Error');
-      CREATE TABLE "Image" (id int PRIMARY KEY, "nsfwLevel" int NOT NULL,
+    await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Rescan', 'Error', 'Blocked');
+      CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp);
+      CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, "nsfwLevel" int NOT NULL,
       minor boolean NOT NULL, "needsReview" text, "blockedFor" text, metadata jsonb,
       "scannedAt" timestamp, ingestion "ImageIngestionStatus", "scanJobs" jsonb);
       CREATE TABLE "TagsOnImageDetails" ("imageId" int, disabled boolean);
@@ -634,7 +652,7 @@ describe('handleUnblockImages — minor queue Accept truth table', () => {
     ];
     for (const [i, [nsfwLevel]] of levels.entries())
       await pg.query(
-        `INSERT INTO "Image" VALUES ($1, $2, true, 'minor', NULL, '{}'::jsonb, NULL, 'Pending')`,
+        `INSERT INTO "Image" VALUES ($1, NULL, $2, true, 'minor', NULL, '{}'::jsonb, NULL, 'Pending')`,
         [i + 1, nsfwLevel]
       );
     const raw = pgliteRaw(pg);
@@ -665,6 +683,153 @@ describe('handleUnblockImages — minor queue Accept truth table', () => {
         `SELECT "nsfwLevel", minor FROM "Image" ORDER BY id`
       );
       expect(rows.map((row) => [row.nsfwLevel, row.minor])).toEqual(levels);
+    } finally {
+      if (capture) dbWrite.$queryRaw.mockImplementation(capture);
+      await pg.close();
+    }
+  });
+});
+
+// Policy: LIFT_WHILE_OWNER_DELETED in @civitai/shared/account-deletion-grace: a deleted owner's image is never served.
+describe('handleUnblockImages while the owner is deleted', () => {
+  it('keeps the image Blocked, recorded as Scanned for an account restore; another owner is restored', async () => {
+    const pg = new PGlite();
+    await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Rescan', 'Error', 'Blocked');
+      CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp, "bannedAt" timestamp);
+      CREATE TYPE "EntityType" AS ENUM ('Image');
+      CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+      CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
+      CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, "postId" int, "nsfwLevel" int NOT NULL,
+      minor boolean NOT NULL DEFAULT false, "needsReview" text, "blockedFor" text, metadata jsonb,
+      "scannedAt" timestamp, ingestion "ImageIngestionStatus", "scanJobs" jsonb);
+      CREATE TABLE "TagsOnImageDetails" ("imageId" int, disabled boolean);
+      CREATE TABLE "ModActivity" ("userId" int, "entityType" text, "entityId" int, activity text);
+      CREATE DOMAIN "JobQueueType" AS text;
+      CREATE TABLE "JobQueue" ("entityId" int, "entityType" "EntityType", type "JobQueueType",
+        "createdAt" timestamp(3) NOT NULL DEFAULT now(), PRIMARY KEY ("entityType", "entityId", type));
+      INSERT INTO "JobQueue" VALUES (1, 'Image', 'BlockedImageDelete', '2026-01-01');
+      INSERT INTO "User" VALUES (1, now()), (2, NULL);
+      INSERT INTO "Image" (id, "userId", "nsfwLevel", "blockedFor", metadata, ingestion) VALUES
+        (1, 1, 4, 'moderated', '{"ruleId": 3, "keep": 1}', 'Blocked'),
+        (2, 2, 32, 'moderated', '{"ruleId": 3, "keep": 1}', 'Blocked');`);
+    const raw = pgliteRaw(pg);
+    const capture = dbWrite.$queryRaw.getMockImplementation();
+    const captureExec = dbWrite.$executeRaw.getMockImplementation();
+    dbWrite.$executeRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      /INSERT INTO "(ModActivity|JobQueue)"/.test(strings.join(''))
+        ? raw.executeRaw(strings, ...values)
+        : Promise.resolve(0)) as never);
+    vi.mocked(imagesMetricsSearchIndex.queueUpdate).mockClear();
+    dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      /AS "keptBlocked"|RETURNING "Image".id/.test(strings.join(''))
+        ? raw.queryRaw(strings, ...values)
+        : Promise.resolve([])) as never);
+    mockFindMany.mockResolvedValue(
+      [1, 2].map((id) => ({
+        id,
+        userId: id,
+        pHash: null,
+        postId: null,
+        nsfwLevel: 32,
+        blockedFor: 'moderated',
+        needsReview: null,
+      })) as never
+    );
+
+    try {
+      const result = await handleUnblockImages({ ids: [1, 2], moderatorId: 9 } as any);
+      expect({
+        restored: result.restored.map((x) => x.id),
+        kept: result.kept.map((x) => x.id),
+      }).toEqual({ restored: [2], kept: [1] });
+      const { rows } = await pg.query<{
+        id: number;
+        ingestion: string;
+        blockedFor: string | null;
+        metadata: unknown;
+      }>(
+        `SELECT id, ingestion::text AS ingestion, "blockedFor", metadata FROM "Image" ORDER BY id`
+      );
+      expect(rows).toEqual([
+        {
+          id: 1,
+          ingestion: 'Blocked',
+          blockedFor: 'moderated',
+          metadata: {
+            keep: 1,
+            accountDeletionPriorIngestion: 'Scanned',
+            accountDeletionPriorBlockedFor: null,
+            accountDeletionPriorNeedsReview: null,
+          },
+        },
+        { id: 2, ingestion: 'Scanned', blockedFor: null, metadata: { keep: 1 } },
+      ]);
+      const level = await pg.query(`SELECT "nsfwLevel" FROM "Image" WHERE id = 1`);
+      expect(level.rows).toEqual([{ nsfwLevel: 32 }]);
+      // Not a takedown activity for the kept row; 'review' only for the restored one.
+      const acts = await pg.query(`SELECT "entityId", activity FROM "ModActivity" ORDER BY 1`);
+      expect(acts.rows).toEqual([
+        { entityId: 1, activity: 'reviewOwnerDeleted' },
+        { entityId: 2, activity: 'review' },
+      ]);
+      // The kept row's purge clock starts again.
+      const clock = await pg.query(
+        `SELECT "createdAt" > now() - interval '1 hour' AS fresh FROM "JobQueue" WHERE "entityId" = 1`
+      );
+      expect(clock.rows).toEqual([{ fresh: true }]);
+      // Out of search for the kept row, updated for the restored one.
+      expect(
+        vi.mocked(imagesMetricsSearchIndex.queueUpdate).mock.calls.flatMap(([items]) => items)
+      ).toEqual(
+        expect.arrayContaining([
+          { id: 1, action: SearchIndexUpdateQueueAction.Delete },
+          { id: 2, action: SearchIndexUpdateQueueAction.Update },
+        ])
+      );
+
+      // The owner comes back: the account restore brings the kept image back Scanned.
+      await pg.query(`UPDATE "User" SET "deletedAt" = NULL WHERE id = 1`);
+      await unblockAccountDeletionImages(1);
+      const back = await pg.query(
+        `SELECT ingestion::text AS ingestion, "blockedFor", metadata FROM "Image" WHERE id = 1`
+      );
+      expect(back.rows).toEqual([
+        { ingestion: 'Scanned', blockedFor: null, metadata: { keep: 1 } },
+      ]);
+    } finally {
+      if (capture) dbWrite.$queryRaw.mockImplementation(capture);
+      if (captureExec) dbWrite.$executeRaw.mockImplementation(captureExec);
+      await pg.close();
+    }
+  });
+});
+
+// Policy: LIFT_WHILE_OWNER_DELETED in @civitai/shared/account-deletion-grace: a deleted owner's image is never served.
+describe('rescanUnratedImages after a lift kept blocked for a deleted owner', () => {
+  it('counts the kept lift as a moderator review and does not send the image back to the scanner', async () => {
+    const pg = new PGlite();
+    await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Rescan', 'Error', 'Blocked');
+      CREATE TABLE "Image" (id int PRIMARY KEY, "nsfwLevel" int NOT NULL, "blockedFor" text,
+        ingestion "ImageIngestionStatus", "scanJobs" jsonb);
+      CREATE TABLE "TagsOnImageDetails" ("imageId" int, disabled boolean);
+      CREATE TABLE "ModActivity" ("entityType" text, "entityId" int, activity text);
+      INSERT INTO "Image" VALUES (1, 0, NULL, 'Scanned', NULL), (2, 0, NULL, 'Scanned', NULL);
+      INSERT INTO "ModActivity" VALUES ('image', 1, 'reviewOwnerDeleted');`);
+    const raw = pgliteRaw(pg);
+    const capture = dbWrite.$queryRaw.getMockImplementation();
+    dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      strings.join('').includes('RETURNING i.id, i.ingestion')
+        ? raw.queryRaw(strings, ...values)
+        : Promise.resolve([])) as never);
+    try {
+      await rescanUnratedImages([1, 2]);
+      const { rows } = await pg.query<{ id: number; ingestion: string }>(
+        `SELECT id, ingestion::text AS ingestion FROM "Image" ORDER BY id`
+      );
+      expect(rows).toEqual([
+        { id: 1, ingestion: 'Scanned' },
+        { id: 2, ingestion: 'Rescan' },
+      ]);
     } finally {
       if (capture) dbWrite.$queryRaw.mockImplementation(capture);
       await pg.close();

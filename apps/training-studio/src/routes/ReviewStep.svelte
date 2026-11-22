@@ -11,7 +11,7 @@
     IconInfoCircle,
     IconPhotoPlus,
   } from '@tabler/icons-svelte';
-  import { KOHYA_BOUNDS, KOHYA_OPTIMIZERS, KOHYA_SCHEDULERS, kohyaFieldSupported } from '$lib/data/kohya';
+  import { kohyaBound, KOHYA_BOUNDS, KOHYA_OPTIMIZERS, KOHYA_SCHEDULERS, kohyaFieldSupported } from '$lib/data/kohya';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
   import { FILES_PROCESSING_MESSAGE, FilesProcessingError } from '$lib/files-processing';
@@ -446,7 +446,7 @@
     return [...groups].map(([reason, labels]) => ({ reason, labels }));
   };
   const fieldBound = (i: number, field: ParamField): ParamBound | undefined =>
-    runEngine(selection.runs[i]!) === 'kohya' ? KOHYA_BOUNDS[field]
+    runEngine(selection.runs[i]!) === 'kohya' ? kohyaBound(field, runVersion(selection.runs[i]!).ecosystem)
       : isExtra(field) ? capsAt(i)[field].bound : boundsFor(i)[field];
   const helpFor = (i: number, field: ParamField): string => {
     const run = selection.runs[i]!;

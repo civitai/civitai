@@ -187,5 +187,6 @@ export const routers = {
   scannerPolicies: () =>
     import('~/server/routers/scanner-policies.router').then((m) => m.scannerPoliciesRouter),
   crucible: () => import('./crucible.router').then((m) => m.crucibleRouter),
+  featurePages: () => import('./feature-pages.router').then((m) => m.featurePagesRouter),
   prize: () => import('./prize.router').then((m) => m.prizeRouter),
 };

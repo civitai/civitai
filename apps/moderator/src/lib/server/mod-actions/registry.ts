@@ -14,6 +14,7 @@ import {
 import { hqTaskFromUrl } from '@civitai/shared/clickup-url';
 import {
   acceptImage,
+  isKeptForDeletedOwner,
   blockImage,
   ImageNotFoundError,
   ImageNotRestoredError,
@@ -84,11 +85,13 @@ const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
     const notFound: number[] = [];
     const csamBlocklistFailed: number[] = [];
     const restored: number[] = [];
+    // Accepted but kept blocked while the owner is deleted: not restored.
+    const kept: number[] = [];
     for (const imageId of ids) {
       // Delegated accept uses the smart default (removeMinorFlag is a spoke-only, minor-page option).
       if (reviewAction === 'unblock')
         await acceptImage({ imageId, userId, restoreRemoved: true }).then(
-          () => restored.push(imageId),
+          async () => ((await isKeptForDeletedOwner(imageId)) ? kept : restored).push(imageId),
           (e) => {
             if (e instanceof ImageNotRestoredError) notRestored.push(imageId);
             else if (e instanceof ImageNotFoundError) notFound.push(imageId);
@@ -120,7 +123,7 @@ const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
       throw Object.assign(new Error(notRestoredMessage(notRestored, notFound, restored)), {
         status: 409,
       });
-    return { count: ids.length };
+    return { count: ids.length, restored: restored.length, kept: kept.length };
   },
 };
 

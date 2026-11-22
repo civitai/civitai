@@ -115,6 +115,9 @@ type Built struct {
 	CacheTags []string
 	// ThrowOnStatementTimeout: see ImagesQuery.
 	ThrowOnStatementTimeout bool
+	// PersonalizedViewerID is the viewer of a page only they see (their reactions, their own
+	// gallery), else 0: a statement timeout on it is a fallback, never an empty page (FetchRows).
+	PersonalizedViewerID int
 	// Collection: the SQL selects the collection item columns after "cursorId" (a CollectionID).
 	Collection bool
 }
@@ -466,8 +469,12 @@ func (q *ImagesQuery) Build() Built {
     ORDER BY ` + orderBy + offset + `
     LIMIT ` + a.add(q.Limit+1)
 
+	personalizedViewer := 0
+	if reactions || (q.ViewerID != 0 && q.TargetUserID == q.ViewerID) {
+		personalizedViewer = q.ViewerID
+	}
 	return Built{SQL: sql, Args: a.args, CacheTTL: cacheTTL, CacheTags: tags, ThrowOnStatementTimeout: q.ThrowOnStatementTimeout,
-		Collection: collection}
+		PersonalizedViewerID: personalizedViewer, Collection: collection}
 }
 
 // collectionCTE is getAllImagesUncaptured's `ct` CTE for a collection page outside the Random sort

@@ -20,6 +20,13 @@ import type { SessionUser } from '~/types/session';
 export type DevTunnelRefusalCode = 'FORBIDDEN' | 'NOT_FOUND' | 'TOO_MANY_REQUESTS';
 export type DevTunnelRefusal = { code: DevTunnelRefusalCode; error: string };
 
+/** The HTTP status of each refusal code, for the routes that answer a refusal over HTTP. */
+export const DEV_TUNNEL_REFUSAL_STATUS: Record<DevTunnelRefusalCode, number> = {
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  TOO_MANY_REQUESTS: 429,
+};
+
 export const DEV_TUNNELS_UNAVAILABLE = 'Dev tunnels are not available';
 
 /** The `app-blocks-dev-tunnel` kill switch, for this user. Fail-closed (see the flag's docblock). */
@@ -60,15 +67,38 @@ async function checkEphemeralDevTunnelRateLimit(userId: number): Promise<boolean
   }
 }
 
+const TOO_MANY_STARTS: DevTunnelRefusal = {
+  code: 'TOO_MANY_REQUESTS',
+  error: 'Too many dev tunnel starts for unsubmitted apps; please retry shortly',
+};
+
+/**
+ * Counts one start against the hourly limit when the app is unsubmitted (`ephemeral`, as
+ * `authorizeDevTunnelStart` reported it), refusing past the limit; an owned app never counts.
+ * For a caller that judged the gates with `countStart: false` and counts only once it knows the
+ * call really is a start (App Assistant's direct preview: reusing a session is not one).
+ */
+export async function claimDevTunnelStart(
+  userId: number,
+  ephemeral: boolean
+): Promise<DevTunnelRefusal | null> {
+  if (!ephemeral) return null;
+  return (await checkEphemeralDevTunnelRateLimit(userId)) ? null : TOO_MANY_STARTS;
+}
+
 /**
  * The dev-tunnel flag, ownership of `blockId`, and (for an unsubmitted app) the hourly start
  * limit, in that order. On success, `blockId` is the RESOLVED, canonical block id: key the tunnel
- * off it, never the raw input.
+ * off it, never the raw input. `countStart: false` judges the flag and ownership only; the caller
+ * then counts with `claimDevTunnelStart(user.id, ephemeral)` when it does start.
  */
 export async function authorizeDevTunnelStart(
   user: SessionUser,
-  blockId: string
-): Promise<{ ok: true; blockId: string } | { ok: false; refusal: DevTunnelRefusal }> {
+  blockId: string,
+  { countStart = true }: { countStart?: boolean } = {}
+): Promise<
+  { ok: true; blockId: string; ephemeral: boolean } | { ok: false; refusal: DevTunnelRefusal }
+> {
   const flagRefusal = await getDevTunnelFlagRefusal(user);
   if (flagRefusal) return { ok: false, refusal: flagRefusal };
   // Ownership gate — resolve the caller's OWN app at any status. null → the
@@ -96,14 +126,9 @@ export async function authorizeDevTunnelStart(
   // suppressed to NOT_FOUND): actionable rate-limit feedback is better UX for
   // that trusted cohort, and it exposes nothing an exhausted-budget probe
   // couldn't already infer.
-  if (app.status === 'ephemeral' && !(await checkEphemeralDevTunnelRateLimit(user.id))) {
-    return {
-      ok: false,
-      refusal: {
-        code: 'TOO_MANY_REQUESTS',
-        error: 'Too many dev tunnel starts for unsubmitted apps; please retry shortly',
-      },
-    };
+  const ephemeral = app.status === 'ephemeral';
+  if (countStart && ephemeral && !(await checkEphemeralDevTunnelRateLimit(user.id))) {
+    return { ok: false, refusal: TOO_MANY_STARTS };
   }
-  return { ok: true, blockId: app.blockId };
+  return { ok: true, blockId: app.blockId, ephemeral };
 }

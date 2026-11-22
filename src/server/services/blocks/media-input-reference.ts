@@ -10,7 +10,7 @@ const ORCHESTRATOR_SOURCE_RE = /(^|:)orchestrator:/i;
 // A URL only as http(s):// or a media data URI; any other scheme is held to the AIR rule.
 const URL_VALUE_RE = /^(https?:\/\/|data:(image|video|audio)\/[a-z0-9.+-]+(;[^,]*)?,)/i;
 // An orchestrator blob key, with or without a file extension, and a training blob key.
-const BLOB_KEY_RE = /^([0-9a-z]{26}(\.[0-9a-z]{1,10})?|[0-9a-f]{32}(\.[0-9a-z]{1,10})?)$/i;
+export const BLOB_KEY_RE = /^([0-9a-z]{26}(\.[0-9a-z]{1,10})?|[0-9a-f]{32}(\.[0-9a-z]{1,10})?)$/i;
 // The orchestrator reads a blob from this path on any host.
 const BLOB_PATH_RE = /\/consumer\/blobs\//i;
 const BARE_ID_RE = /^\d+$/;

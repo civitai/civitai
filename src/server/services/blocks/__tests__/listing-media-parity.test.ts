@@ -191,6 +191,8 @@ describe('listing media parity (media-parity.json): the site side', () => {
         approved: [],
       };
       const store: ListingStoreFields = {
+        id: `apl_${l.slug}`,
+        appBlockId: null,
         creator: null,
         recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
         reviewCount: 0,
@@ -204,6 +206,16 @@ describe('listing media parity (media-parity.json): the site side', () => {
         media: [],
         installCount: 0,
         createdAt: '2026-01-02T03:04:05.000Z',
+        serialId: 1,
+        collaborators: [],
+        scopes: [],
+        connectScopes: [],
+        issueTrackerUrl: null,
+        actionsRunSource: null,
+        betaMessage: null,
+        forkable: false,
+        connectClientId: null,
+        forkOf: null,
       };
       const body = listingBody(app, `urn:apps.civitai.com:app/${l.slug}`, store);
       expect([body.contentRating, body.listingContentRating]).toEqual([

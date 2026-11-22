@@ -8,13 +8,20 @@ import (
 // PublicMux is the public listener's routes: the gallery procedure, `model.getAll` — computed only
 // with ServeModelGetAll (FEED_GO_SERVE_MODEL_GETALL), else every request there is proxied to the Node
 // app (ServeModelGetAllHTTP) — and `image.getInfinite`, the same behind ServeInfinite
-// (FEED_GO_SERVE_INFINITE; ServeInfiniteHTTP). Nothing else. It never carries a debug route, whatever the pprof toggle
-// says.
+// (FEED_GO_SERVE_INFINITE; ServeInfiniteHTTP). With V1Fallback set (FEED_GO_V1_FALLBACK_URL), also
+// `GET /api/v1/models` and everything under `/api/v1/models/`, computed only with ServeV1Models
+// (FEED_GO_SERVE_V1_MODELS), else proxied to V1Fallback; without it those paths are not routed here.
+// Nothing else. It never carries a debug route, whatever the pprof toggle says.
 func PublicMux(s *Server) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/api/trpc/"+Procedure, s)
 	mux.HandleFunc("/api/trpc/"+ProcedureModelGetAll, s.ServeModelGetAllHTTP)
 	mux.HandleFunc("/api/trpc/"+ProcedureInfinite, s.ServeInfiniteHTTP)
+	if s.V1Fallback != nil {
+		mux.HandleFunc(V1ModelsPath, s.ServeV1ModelsHTTP)
+		// The subtree: `{id}`, and any deeper path, which the compute falls back on (`v1-models-path`).
+		mux.HandleFunc(V1ModelsPath+"/", s.ServeV1ModelsIDHTTP)
+	}
 	return mux
 }
 

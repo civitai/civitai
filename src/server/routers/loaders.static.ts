@@ -134,6 +134,7 @@ import { oauthClientRouter } from '~/server/routers/oauth-client.router';
 import { oauthConsentRouter } from '~/server/routers/oauth-consent.router';
 import { scannerPoliciesRouter } from '~/server/routers/scanner-policies.router';
 import { crucibleRouter } from './crucible.router';
+import { featurePagesRouter } from './feature-pages.router';
 import { prizeRouter } from './prize.router';
 
 // Production builds resolve ./loaders to this file (next.config.mjs, turbopack.resolveAlias).
@@ -273,5 +274,6 @@ export const routers = {
   oauthConsent: () => Promise.resolve(oauthConsentRouter),
   scannerPolicies: () => Promise.resolve(scannerPoliciesRouter),
   crucible: () => Promise.resolve(crucibleRouter),
+  featurePages: () => Promise.resolve(featurePagesRouter),
   prize: () => Promise.resolve(prizeRouter),
 } satisfies typeof lazyLoaders;

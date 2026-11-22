@@ -6,6 +6,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // Mirrors the `knightsApp` fliptKey (KNIGHTS_APP_FLIPT_FLAG) and the Knights app's own access flag.
   // Read here with no user for the server-side cutover from the old in-app game.
   KNIGHTS_APP = 'knights-of-new-order-app',
+  // App Assistant direct preview, per user (segment): on, the runner's preview opens a direct
+  // session served by the sandbox service's preview gateway; off (or missing), the dev tunnel as
+  // before. Evaluated with the user's context; fails closed.
+  APP_ASSISTANT_DIRECT_PREVIEW = 'app-assistant-direct-preview',
   // Mirrors the `articleRatingDispute` fliptKey in feature-flags.service.ts so
   // background paths (no request context) can gate on the same Flipt flag the
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
@@ -298,6 +302,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // is enabled separately; shares FEED_GO_SHADOW_URL, the sample rate and the in-flight cap with
   // FEED_GO_SHADOW, with its own per-second bucket. Default OFF. See `src/server/trpc/feed-go-shadow.ts`.
   FEED_GO_SHADOW_MODEL_GET_ALL = 'feed-go-shadow-model-getall',
+  // Shadow reads of the app store's listings read model (app-index-go `GET /listings`) beside the
+  // store grid's and the public REST list's database reads: the database answer is served, the two
+  // are compared off the response path (`app_listings_read_model_*`). DEFAULT-OFF. Global boolean,
+  // read at most once per 5s per process; also needs APP_INDEX_URL and APP_INDEX_VIEWER_KEY. See
+  // `src/server/services/blocks/app-listings-read-model-shadow.service.ts`.
+  APP_LISTINGS_READ_MODEL = 'app-listings-read-model',
   // Mirror sampled `model.getAssociatedResourcesCardData` requests (raw input, the headers the answer
   // depends on, Node's superjson envelope) to feed-go's
   // `/internal/shadow/model.getAssociatedResourcesCardData`. Its own flag; shares FEED_GO_SHADOW_URL,

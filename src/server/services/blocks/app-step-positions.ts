@@ -23,7 +23,7 @@ const MEDIA_KEYS: ReadonlySet<string> = new Set([...STEP_MEDIA_INPUT_KEYS, 'trai
 
 // Chat messages and tool schemas: text, as the generation input gate reads a chat step's, but
 // held here at any step. A URL there is text; a reference or another user's file is not.
-const FREE_TEXT_KEYS: ReadonlySet<string> = new Set(['messages', 'tools']);
+export const FREE_TEXT_KEYS: ReadonlySet<string> = new Set(['messages', 'tools']);
 // A training item's caption: text, not media.
 const MEDIA_TEXT_KEYS: ReadonlySet<string> = new Set(['caption']);
 
@@ -32,7 +32,7 @@ const REF_KEY = '$ref';
 const URL_VALUE_RE = /^([a-z][a-z0-9+.-]*:\/\/|https?:)/i;
 // A key that names a field. Anything else is a map key the app chose (LoRAs are keyed by AIR):
 // it is reported as the field that holds the map, so a log never carries it.
-const FIELD_KEY_RE = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
+export const FIELD_KEY_RE = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
 
 export type StepPositionProblem = {
   form: 'reference' | 'url' | 'orchestrator-file' | 'media-reference';
@@ -42,7 +42,7 @@ export type StepPositionProblem = {
   host?: string;
 };
 
-function isMediaKey(key: string | undefined): boolean {
+export function isMediaKey(key: string | undefined): boolean {
   return key !== undefined && MEDIA_KEYS.has(key.toLowerCase());
 }
 
@@ -52,6 +52,72 @@ function hostOf(url: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** The values a dotted path reaches; `brackets` also reads `[n]`/`.n` as indexes and `[*]`. */
+function followPath(segments: string[], from: unknown, brackets: boolean): unknown[] {
+  let current: unknown[] = [from];
+  for (const segment of segments) {
+    const next: unknown[] = [];
+    for (const value of current) {
+      if (Array.isArray(value)) {
+        if (!brackets) continue;
+        if (segment === '*') next.push(...value);
+        else if (/^\d+$/.test(segment) && Number(segment) < value.length)
+          next.push(value[Number(segment)]);
+        continue;
+      }
+      if (!value || typeof value !== 'object') continue;
+      for (const [k, v] of Object.entries(value))
+        if (k.toLowerCase() === segment.toLowerCase()) next.push(v);
+    }
+    current = next;
+  }
+  return current;
+}
+
+/**
+ * What a `$arguments` path places from `workflowArguments`. By default, as the orchestrator reads
+ * it: split on dots, each name matched ignoring case, and exactly one key may match. Null when the
+ * path does not resolve, which the position rule refuses.
+ *
+ * `wide` over-approximates for a check that judges every possible reading: every case-variant key
+ * is followed, the path is also read with indexes, a segment that matches nothing places nothing,
+ * and null means only that the path is not a string or is in a JSONPath form (quotes, `..`, a
+ * leading `$`), so every argument may land.
+ */
+export function argumentPathValues(
+  path: unknown,
+  workflowArguments: unknown,
+  opts: { wide?: boolean } = {}
+): unknown[] | null {
+  if (typeof path !== 'string') return null;
+  if (opts.wide) {
+    if (/['"]|\.\.|^\$/.test(path)) return null;
+    return [
+      ...followPath(path.split('.'), workflowArguments, false),
+      ...followPath(path.split(/[.[\]]+/).filter(Boolean), workflowArguments, true),
+    ].filter((v) => v !== undefined);
+  }
+  let current: unknown = workflowArguments;
+  // The orchestrator splits a path on dots; a segment with no matching key (an index) is not found.
+  for (const segment of path.split('.')) {
+    if (current === null || typeof current !== 'object' || Array.isArray(current)) return null;
+    // The orchestrator matches names ignoring case, so exactly one key may match.
+    const matches = Object.keys(current).filter((k) => k.toLowerCase() === segment.toLowerCase());
+    if (matches.length !== 1) return null;
+    current = (current as Record<string, unknown>)[matches[0]];
+  }
+  return current === undefined ? null : [current];
+}
+
+/** A repeat clause over the request's arguments: `{ $ref: '$arguments', path, as }`, or null. */
+export function readArgumentsRepeatClause(clause: unknown): { path: string; as: string } | null {
+  if (!isRepeatForClause(clause)) return null;
+  const { $ref, path, as } = clause as Record<string, unknown>;
+  return $ref === WORKFLOW_ARGUMENTS_REF && typeof path === 'string' && typeof as === 'string'
+    ? { path, as }
+    : null;
 }
 
 /**
@@ -65,19 +131,9 @@ function argumentValue(
 ): { found: true; value: unknown } | { found: false } {
   const keys = Object.keys(reference);
   if (keys.some((k) => k !== '$ref' && k !== 'path')) return { found: false };
-  if (reference.$ref !== WORKFLOW_ARGUMENTS_REF || typeof reference.path !== 'string')
-    return { found: false };
-  let current: unknown = workflowArguments;
-  // The orchestrator splits a path on dots; a segment with no matching key (an index) is not found.
-  for (const segment of reference.path.split('.')) {
-    if (current === null || typeof current !== 'object' || Array.isArray(current))
-      return { found: false };
-    // The orchestrator matches names ignoring case, so exactly one key may match.
-    const matches = Object.keys(current).filter((k) => k.toLowerCase() === segment.toLowerCase());
-    if (matches.length !== 1) return { found: false };
-    current = (current as Record<string, unknown>)[matches[0]];
-  }
-  return current === undefined ? { found: false } : { found: true, value: current };
+  if (reference.$ref !== WORKFLOW_ARGUMENTS_REF) return { found: false };
+  const values = argumentPathValues(reference.path, workflowArguments);
+  return values ? { found: true, value: values[0] } : { found: false };
 }
 
 const MAX_DEPTH = 64;
@@ -133,7 +189,7 @@ function areMergeSources(fields: unknown, earlierSteps: ReadonlySet<string>): bo
 }
 
 /** `{ $ref, path, as }`, exactly: the orchestrator's RepeatForClause. */
-function isRepeatForClause(value: unknown): boolean {
+export function isRepeatForClause(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const keys = Object.keys(value).sort();
   return keys.length === 3 && keys[0] === '$ref' && keys[1] === 'as' && keys[2] === 'path';
@@ -289,19 +345,18 @@ export function findStepPositionProblem(
   const repeatLoop = (
     clause: unknown
   ): { name: string; items: readonly unknown[] } | 'unresolved' => {
-    const { $ref, path, as } = clause as Record<string, unknown>;
-    if (typeof $ref !== 'string' || typeof path !== 'string' || typeof as !== 'string')
-      return 'unresolved';
+    const read = readArgumentsRepeatClause(clause);
+    if (!read) return 'unresolved';
     // A loop variable named like the arguments or a step, in any case, is ambiguous.
-    const name = as.toLowerCase();
+    const name = read.as.toLowerCase();
     if (
       name === WORKFLOW_ARGUMENTS_REF.toLowerCase() ||
       [...earlierSteps].some((step) => step.toLowerCase() === name)
     )
       return 'unresolved';
-    const argument = argumentValue({ $ref, path }, workflowArguments);
-    if (!argument.found || !Array.isArray(argument.value)) return 'unresolved';
-    return { name, items: argument.value };
+    const values = argumentPathValues(read.path, workflowArguments);
+    if (!values || !Array.isArray(values[0])) return 'unresolved';
+    return { name, items: values[0] };
   };
 
   // `key` is the nearest key above the value; below a media key everything is media.

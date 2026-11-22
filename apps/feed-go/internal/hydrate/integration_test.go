@@ -609,6 +609,30 @@ func TestIntegrationUserIDByUsername(t *testing.T) {
 	}
 }
 
+// TagIDByName is the one tag lookup by name model.getAll and /api/v1/models both read. "Tag".name is
+// citext, so a name in any case finds the tag, as getModelsRaw's findUnique does on the replica.
+func TestIntegrationTagIDByName(t *testing.T) {
+	e := integSetup(t, true)
+	integtest.Exec(t, e.pool, `DELETE FROM "Tag" WHERE id BETWEEN 1190000 AND 1190999;
+		INSERT INTO "Tag" (id, name) VALUES (1190001, 'integ-character'), (1190002, 'Integ Mixed Tag');`)
+	ctx := integtest.Ctx(t)
+	for name, want := range map[string]int{
+		"integ-character": 1190001, "Integ-Character": 1190001, "INTEG-CHARACTER": 1190001,
+		"Integ Mixed Tag": 1190002, "integ mixed tag": 1190002,
+	} {
+		id, found, err := TagIDByName(ctx, e.pool, name)
+		if err != nil || !found || id != want {
+			t.Errorf("%q = %d, %v, %v; want %d, true, nil", name, id, found, err, want)
+		}
+	}
+	// No such tag; and a near miss is no match (citext folds case, nothing else).
+	for _, name := range []string{"integ-nosuch", "integ-character ", "integ_character"} {
+		if id, found, err := TagIDByName(ctx, e.pool, name); err != nil || found || id != 0 {
+			t.Errorf("%q = %d, %v, %v; want 0, false, nil", name, id, found, err)
+		}
+	}
+}
+
 func TestIntegrationReactions(t *testing.T) {
 	e := integSetup(t, true)
 	integtest.Exec(t, e.pool, `DELETE FROM "ImageReaction" WHERE id BETWEEN 1111000 AND 1111999;

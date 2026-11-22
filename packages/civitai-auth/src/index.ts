@@ -21,6 +21,7 @@ export { createSessionTokenClient } from './session-token-client'; // rolling re
 export type { SessionTokenClient, RefreshFailure } from './session-token-client';
 export { createImpersonationClient } from './impersonation-client'; // moderator impersonate / exit
 export { probeInternalParity } from './hub'; // does the hub accept this app's service credential
+export { hubBaseUrl, hubFetch } from './hub';
 export type { ImpersonationClient, ImpersonationResult } from './impersonation-client';
 export { createSpokeGuard } from './spoke-guard'; // framework-agnostic first-party app session+role gate
 export { createSlotTally, type SlotCounts } from './slot-tally';
@@ -127,6 +128,7 @@ export {
   readDeviceId,
   rollSlot,
   parseCookieHeader,
+  registrableDomain,
   type CookieSlot,
   type CookieRead,
   type CookieReadOptions,

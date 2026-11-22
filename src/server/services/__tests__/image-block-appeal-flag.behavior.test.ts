@@ -127,6 +127,15 @@ beforeAll(async () => {
       "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY);
+    -- The stand-in keeps ingestion as text; queries cast to the enum's name.
+    CREATE DOMAIN "ImageIngestionStatus" AS text;
+    CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3), "bannedAt" timestamp(3));
+    CREATE DOMAIN "JobQueueType" AS text;
+    CREATE TABLE "JobQueue" (
+      "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL, data jsonb,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now(),
+      PRIMARY KEY ("entityType", "entityId", type)
+    );
   `);
   for (const migration of [
     '20261209120000_csam_queue_set_aside',
@@ -172,7 +181,7 @@ beforeEach(async () => {
     // Only the statements that write the review flag; the other raw writers touch columns this
     // stand-in does not have.
     if (
-      !/"Appeal"|SET "needsReview"|"CsamQueueSetAside"|"blockedFor" = CASE|"ImageDeferredBlockEffect"/.test(
+      !/"Appeal"|SET "needsReview"|"CsamQueueSetAside"|"blockedFor" = CASE|"ImageDeferredBlockEffect"|"JobQueue"/.test(
         flat.text
       )
     )
@@ -195,7 +204,7 @@ beforeEach(async () => {
     return (await run(flat)).rows;
   }) as never);
   await holder.db.exec(`
-    TRUNCATE "Image", "Appeal", "CsamQueueSetAside", "ImageDeferredBlockEffect" CASCADE;
+    TRUNCATE "Image", "Appeal", "User", "JobQueue", "CsamQueueSetAside", "ImageDeferredBlockEffect" CASCADE;
     INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview") VALUES
       (${APPEALED}, 7, 'Blocked', 'moderated', 32, 'appeal'),
       (${FLAGGED}, 8, 'Scanned', NULL, 4, 'minor'),
@@ -745,8 +754,6 @@ describe('reportCsamImages on an image a plain block already removed', () => {
 
   it('holds it and the blocked-image purge keeps it', async () => {
     const { reviewHeldBlockedImagesSql } = await import('~/server/jobs/image-ingestion');
-    // The stand-in keeps ingestion as text; the purge's query casts to the enum's name.
-    await holder.db.exec(`CREATE DOMAIN "ImageIngestionStatus" AS text`);
     const held = async () =>
       (await run(reviewHeldBlockedImagesSql)).rows.map((r) => (r as { id: number }).id);
     expect(await held()).not.toContain(DECIDED);
@@ -808,6 +815,43 @@ describe('approving an appeal on an image an account deletion blocked', () => {
       ingestion: 'Scanned',
       metadata: { keep: 1 },
     });
+  });
+
+  it('keeps it blocked while the owner is deleted, recorded as Scanned with the kept review', async () => {
+    await recorded('minor');
+    await holder.db.query(`INSERT INTO "User" (id, "deletedAt") VALUES (7, now())`);
+    // Queued when a moderator first blocked it, long before.
+    await holder.db.query(
+      `INSERT INTO "JobQueue" ("entityId", "entityType", type, "createdAt")
+       VALUES ($1, 'Image', 'BlockedImageDelete', '2026-01-01')`,
+      [APPEALED]
+    );
+
+    expect(await approved()).toEqual({
+      needsReview: null,
+      ingestion: 'Blocked',
+      metadata: {
+        keep: 1,
+        accountDeletionPriorIngestion: 'Scanned',
+        accountDeletionPriorBlockedFor: null,
+        accountDeletionPriorNeedsReview: 'minor',
+      },
+    });
+    const { rows } = await holder.db.query<{ status: string }>(
+      `SELECT status::text AS status FROM "Appeal" WHERE "entityId" = $1`,
+      [APPEALED]
+    );
+    expect(rows).toEqual([{ status: 'Approved' }]);
+    // Its purge clock starts again, as a block today would; the Blocked rating is not reset.
+    const queued = await holder.db.query<{ fresh: boolean }>(
+      `SELECT "createdAt" > now() - interval '1 hour' AS fresh FROM "JobQueue" WHERE "entityId" = $1`,
+      [APPEALED]
+    );
+    expect(queued.rows).toEqual([{ fresh: true }]);
+    const level = await holder.db.query(`SELECT "nsfwLevel" FROM "Image" WHERE id = $1`, [
+      APPEALED,
+    ]);
+    expect(level.rows).toEqual([{ nsfwLevel: 32 }]);
   });
 });
 

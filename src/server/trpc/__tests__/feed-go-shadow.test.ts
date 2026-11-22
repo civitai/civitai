@@ -14,9 +14,12 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createFeedGoShadow,
   feedGoV1ShapeClass,
+  FEED_GO_TRAINING_DATA_SQL_HEADER,
   FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH,
   FEED_GO_SHADOW_MODEL_GET_ALL_PATH,
   FEED_GO_SHADOW_PATH,
+  FEED_GO_COMPARED_RESPONSE_HEADERS,
+  FEED_GO_COMPARED_REST_RESPONSE_HEADERS,
   pickShadowHeaders,
   pickShadowResponseHeaders,
   readFeedGoShadowConfig,
@@ -89,6 +92,7 @@ function harness(
     random?: number;
     fetchImpl?: (url: string, init: RequestInit) => Promise<Response>;
     now?: () => number;
+    modelSampleHeaders?: () => Record<string, string>;
   } = {}
 ) {
   const outcomes: string[] = [];
@@ -115,6 +119,7 @@ function harness(
     recordEncode: (seconds, bytes) => void encodes.push({ seconds, bytes }),
     now: opts.now ?? (() => 0),
     schedule: (fn) => void queued.push(fn),
+    modelSampleHeaders: opts.modelSampleHeaders,
   });
   const flush = async () => {
     while (queued.length) queued.shift()!();
@@ -992,6 +997,37 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
     expect(h.endpoints).toEqual(['v1-models-id']);
   });
 
+  it("a model sample carries the Training Data statement hash; another route's does not", async () => {
+    const hash = { [FEED_GO_TRAINING_DATA_SQL_HEADER]: 'abc123' };
+    const h = harness({ modelSampleHeaders: () => hash });
+    serveModels(h, 'v1-models', modelsRequest('/api/v1/models?limit=1'));
+    serveModels(h, 'v1-models-id', modelsRequest('/api/v1/models/42'), { body: { id: 42 } });
+    const img = h.shadow.beginV1Images(restRequest());
+    if (img) {
+      h.shadow.captureV1Images(img, { items: [] });
+      h.shadow.finish(img, 200);
+    }
+    await h.flush();
+    const headers = h.fetchMock.mock.calls.map(
+      ([url, init]) => [url, JSON.parse(init.body as string).headers] as const
+    );
+    expect(headers.filter(([url]) => url === V1_MODELS_URL || url === V1_MODEL_ID_URL)).toEqual([
+      [V1_MODELS_URL, expect.objectContaining(hash)],
+      [V1_MODEL_ID_URL, expect.objectContaining(hash)],
+    ]);
+    const others = headers.filter(([url]) => url !== V1_MODELS_URL && url !== V1_MODEL_ID_URL);
+    expect(others).toHaveLength(1);
+    expect(others[0][1]).not.toHaveProperty(FEED_GO_TRAINING_DATA_SQL_HEADER);
+    // A source that throws leaves the header off (feed-go then falls back on Training Data).
+    const broken = harness({
+      modelSampleHeaders: () => {
+        throw new Error('x');
+      },
+    });
+    const s = broken.shadow.beginRest('v1-models', modelsRequest('/api/v1/models'));
+    expect(s?.headers).not.toHaveProperty(FEED_GO_TRAINING_DATA_SQL_HEADER);
+  });
+
   it('one flag covers both model routes, and neither the images nor the gallery flag does', () => {
     const off = harness({ v1Models: false });
     expect(off.shadow.beginRest('v1-models', modelsRequest('/api/v1/models'))).toBeUndefined();
@@ -1318,5 +1354,97 @@ describe('createFeedGoShadow — model.getAll', () => {
     await h.flush();
     expect(h.outcomes).toEqual(['skipped_no_capture']);
     expect(h.fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('createFeedGoShadow — REST response headers', () => {
+  // What a REST route's response holds after res.json: the wrapper's and handler's headers, Next's
+  // ETag and Content-Type, the router's config headers, the proxy's X-Handled-By.
+  const restResponse = () => ({
+    getHeaders: () => ({
+      'x-frame-options': 'DENY',
+      'x-handled-by': 'pod-a',
+      vary: 'Authorization',
+      'access-control-allow-origin': '*',
+      'access-control-allow-headers': 'Authorization, Content-Type, *',
+      'access-control-allow-methods': 'GET',
+      'cache-control': 'public, s-maxage=300, stale-while-revalidate=150',
+      etag: '"abc123"',
+      'content-type': 'application/json; charset=utf-8',
+      'content-length': 42,
+    }),
+  });
+
+  it('both lists are the ones feed-go compares (shadow.ComparedHeaders / RESTComparedHeaders)', () => {
+    // Read from the Go source, so a header added on either side without the other fails here: one
+    // Node forwards that Go never compares is dead weight, one Go compares that Node never sends
+    // reads as missing-in-node on every sample.
+    const src = readFileSync(
+      join(process.cwd(), 'apps/feed-go/internal/shadow/response.go'),
+      'utf8'
+    );
+    const names = (text: string | undefined) =>
+      [...(text ?? '').matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    const base = names(/var ComparedHeaders = \[\]string\{([^}]*)\}/.exec(src)?.[1]);
+    const extras = names(
+      /var RESTComparedHeaders = append\(slices\.Clone\(ComparedHeaders\),([^)]*)\)/.exec(src)?.[1]
+    );
+    expect(base.length).toBeGreaterThan(0);
+    expect(extras.length).toBeGreaterThan(0);
+    expect([...FEED_GO_COMPARED_RESPONSE_HEADERS]).toEqual(base);
+    expect([...FEED_GO_COMPARED_REST_RESPONSE_HEADERS]).toEqual([...base, ...extras]);
+  });
+
+  it.each([
+    ['v1-models', '/api/v1/models?limit=1', V1_MODELS_URL],
+    ['v1-models-id', '/api/v1/models/42', V1_MODEL_ID_URL],
+  ] as const)(
+    '%s posts the REST header list, marked rest, and nothing transport or per-pod',
+    async (endpoint, url, compareUrl) => {
+      const h = harness();
+      const sample = h.shadow.beginRest(endpoint, modelsRequest(url))!;
+      h.shadow.captureRest(sample, { id: 42 });
+      h.shadow.finish(sample, 200, restResponse());
+      await h.flush();
+      const [posted, init] = h.fetchMock.mock.calls[0];
+      expect(posted).toBe(compareUrl);
+      const body = JSON.parse(init.body as string);
+      expect(body.responseHeaderSet).toBe('rest');
+      expect(body.responseHeaders).toEqual({
+        'x-frame-options': 'DENY',
+        vary: 'Authorization',
+        'access-control-allow-origin': '*',
+        'access-control-allow-headers': 'Authorization, Content-Type, *',
+        'access-control-allow-methods': 'GET',
+        'cache-control': 'public, s-maxage=300, stale-while-revalidate=150',
+        etag: '"abc123"',
+      });
+    }
+  );
+
+  it('a tRPC sample keeps the base list and no set marker', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    const data = { items: [] };
+    h.shadow.run(sample, () => h.shadow.capture(data, superjson.serialize(data), false));
+    h.shadow.finish(sample, 200, restResponse());
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body).not.toHaveProperty('responseHeaderSet');
+    expect(body.responseHeaders).toEqual({
+      vary: 'Authorization',
+      'cache-control': 'public, s-maxage=300, stale-while-revalidate=150',
+    });
+  });
+
+  it('a REST sample without readable headers carries neither field', async () => {
+    const h = harness();
+    const sample = h.shadow.beginRest('v1-models', modelsRequest('/api/v1/models'))!;
+    h.shadow.captureRest(sample, { items: [], metadata: {} });
+    h.shadow.finish(sample, 200);
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body).not.toHaveProperty('responseHeaders');
+    expect(body).not.toHaveProperty('responseHeaderSet');
   });
 });

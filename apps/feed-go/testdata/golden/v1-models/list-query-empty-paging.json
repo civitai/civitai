@@ -1,16 +1,18 @@
 {
-  "name": "fallback-detail-training-data",
+  "name": "list-query-empty-paging",
   "now": "2026-06-15T12:00:00.000Z",
   "config": {
     "imageLocation": "https://image.example.test/golden",
     "baseUrl": "https://site.example.test",
     "coverageNext": false,
     "baseModelFeedMetrics": false,
-    "regionRestricted": false
+    "regionRestricted": false,
+    "serverDomainRed": "red.example.test",
+    "serverDomainRedAliases": " Mirror.Red.Example.Test ,"
   },
   "request": {
-    "path": "/api/v1/models/5006",
-    "query": "",
+    "path": "/api/v1/models",
+    "query": "query=&page=2&limit=5",
     "headers": {
       "host": "site.example.test",
       "cf-ipcountry": "US"
@@ -19,12 +21,12 @@
   "world": {
     "models": [
       {
-        "id": 5006,
-        "name": "Model 5006",
+        "id": 5721,
+        "name": "Model 5721",
         "sfwName": null,
         "coverImageId": null,
         "sfwCoverImageId": null,
-        "description": "<p>About model 5006</p>",
+        "description": "<p>About model 5721</p>",
         "sfwDescription": null,
         "allowNoCredit": true,
         "allowCommercialUse": [
@@ -62,21 +64,21 @@
           "tippedAmountCount": 0
         },
         "userId": 1001,
-        "cursorId": "5|10|5006"
+        "cursorId": "1|1|5721"
       }
     ],
     "modelData": {
-      "5006": {
-        "modelId": 5006,
+      "5721": {
+        "modelId": 5721,
         "hashes": [
-          "H5006"
+          "H5721"
         ],
         "tags": [],
         "versions": [
           {
-            "id": 6051,
+            "id": 6721,
             "index": 0,
-            "name": "v6051",
+            "name": "v6721",
             "earlyAccessTimeFrame": 0,
             "baseModel": "SDXL 1.0",
             "baseModelType": "Standard",
@@ -91,7 +93,7 @@
             "flags": 0,
             "availability": "Public",
             "nsfwLevel": 1,
-            "description": "<p>Version 6051</p>",
+            "description": "<p>Version 6721</p>",
             "trainedWords": [],
             "vaeId": null,
             "covered": false,
@@ -101,8 +103,8 @@
       }
     },
     "modelTags": {
-      "5006": {
-        "modelId": 5006,
+      "5721": {
+        "modelId": 5721,
         "tagIds": [
           11,
           12
@@ -164,21 +166,21 @@
     },
     "paidAccessGates": [],
     "paidAccess": {
-      "6051": "notFound"
+      "6721": "notFound"
     },
     "images": {
-      "6051": "notFound"
+      "6721": "notFound"
     },
     "imageTags": {},
     "files": {
-      "6051": {
-        "modelVersionId": 6051,
+      "6721": {
+        "modelVersionId": 6721,
         "files": [
           {
-            "id": 7051,
-            "url": "https://storage.example.test/models/7051.safetensors",
+            "id": 7721,
+            "url": "https://storage.example.test/models/7721.safetensors",
             "sizeKB": 12345.6789,
-            "name": "file_7051.safetensors",
+            "name": "file_7721.safetensors",
             "overrideName": null,
             "type": "Model",
             "visibility": "Public",
@@ -189,15 +191,15 @@
             "scannedAt": {
               "$date": "2026-05-04T09:30:00.000Z"
             },
-            "modelVersionId": 6051,
+            "modelVersionId": 6721,
             "hashes": [
               {
                 "type": "AutoV2",
-                "hash": "A7051"
+                "hash": "A7721"
               },
               {
                 "type": "SHA256",
-                "hash": "ABCDEF7051"
+                "hash": "ABCDEF7721"
               }
             ],
             "metadata": {
@@ -205,34 +207,6 @@
               "size": "pruned",
               "fp": "fp16"
             }
-          },
-          {
-            "id": 7052,
-            "url": "https://storage.example.test/models/7052.safetensors",
-            "sizeKB": 12345.6789,
-            "name": "data.zip",
-            "overrideName": null,
-            "type": "Training Data",
-            "visibility": "Public",
-            "pickleScanResult": "Success",
-            "pickleScanMessage": "No Pickle imports",
-            "virusScanResult": "Success",
-            "virusScanMessage": null,
-            "scannedAt": {
-              "$date": "2026-05-04T09:30:00.000Z"
-            },
-            "modelVersionId": 6051,
-            "hashes": [
-              {
-                "type": "AutoV2",
-                "hash": "A7052"
-              },
-              {
-                "type": "SHA256",
-                "hash": "ABCDEF7052"
-              }
-            ],
-            "metadata": {}
           }
         ]
       }
@@ -270,7 +244,7 @@
       "vaeLinked": [],
       "modelMetrics": [
         {
-          "modelId": 5006,
+          "modelId": 5721,
           "downloadCount": 1001,
           "thumbsUpCount": 301,
           "thumbsDownCount": 3,
@@ -280,36 +254,39 @@
       ],
       "versionMetrics": [
         {
-          "modelVersionId": 6051,
-          "downloadCount": 103,
+          "modelVersionId": 6721,
+          "downloadCount": 101,
           "thumbsUpCount": 21,
           "thumbsDownCount": 1
         }
       ],
       "versionMeta": [
         {
-          "id": 6051,
+          "id": 6721,
           "meta": {}
         }
       ]
     },
     "vaeFiles": [],
     "usernames": {},
+    "tagIdsByName": {},
+    "blockedTags": [],
+    "trainingData": [],
     "responseCache": {}
   },
   "redis": {
-    "packed:caches:data-for-model-2:5006": {
+    "packed:caches:data-for-model-2:5721": {
       "value": {
-        "modelId": 5006,
+        "modelId": 5721,
         "hashes": [
-          "H5006"
+          "H5721"
         ],
         "tags": [],
         "versions": [
           {
-            "id": 6051,
+            "id": 6721,
             "index": 0,
-            "name": "v6051",
+            "name": "v6721",
             "earlyAccessTimeFrame": 0,
             "baseModel": "SDXL 1.0",
             "baseModelType": "Standard",
@@ -324,7 +301,7 @@
             "flags": 0,
             "availability": "Public",
             "nsfwLevel": 1,
-            "description": "<p>Version 6051</p>",
+            "description": "<p>Version 6721</p>",
             "trainedWords": [],
             "vaeId": null,
             "covered": false,
@@ -335,11 +312,11 @@
           "$date": "2026-06-15T11:55:00.000Z"
         }
       },
-      "packed": "3gAFp21vZGVsSWTNE46maGFzaGVzkaVINTAwNqR0YWdzkKh2ZXJzaW9uc5HeABKiaWTNF6OlaW5kZXgApG5hbWWldjYwNTG0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKhTRFhMIDEuMK1iYXNlTW9kZWxUeXBlqFN0YW5kYXJkqWNyZWF0ZWRBdNb/afcOkK50cmFpbmluZ1N0YXR1c8CrcHVibGlzaGVkQXTW/2n4YBCmc3RhdHVzqVB1Ymxpc2hlZKVmbGFncwCsYXZhaWxhYmlsaXR5plB1YmxpY6luc2Z3TGV2ZWwBq2Rlc2NyaXB0aW9uszxwPlZlcnNpb24gNjA1MTwvcD6sdHJhaW5lZFdvcmRzkKV2YWVJZMCnY292ZXJlZMKrY292ZXJlZE5leHTCqGNhY2hlZEF01v9qL+gU"
+      "packed": "3gAFp21vZGVsSWTNFlmmaGFzaGVzkaVINTcyMaR0YWdzkKh2ZXJzaW9uc5HeABKiaWTNGkGlaW5kZXgApG5hbWWldjY3MjG0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKhTRFhMIDEuMK1iYXNlTW9kZWxUeXBlqFN0YW5kYXJkqWNyZWF0ZWRBdNb/afcOkK50cmFpbmluZ1N0YXR1c8CrcHVibGlzaGVkQXTW/2n4YBCmc3RhdHVzqVB1Ymxpc2hlZKVmbGFncwCsYXZhaWxhYmlsaXR5plB1YmxpY6luc2Z3TGV2ZWwBq2Rlc2NyaXB0aW9uszxwPlZlcnNpb24gNjcyMTwvcD6sdHJhaW5lZFdvcmRzkKV2YWVJZMCnY292ZXJlZMKrY292ZXJlZE5leHTCqGNhY2hlZEF01v9qL+gU"
     },
-    "packed:caches:model-tags:5006": {
+    "packed:caches:model-tags:5721": {
       "value": {
-        "modelId": 5006,
+        "modelId": 5721,
         "tagIds": [
           11,
           12
@@ -348,7 +325,7 @@
           "$date": "2026-06-15T11:55:00.000Z"
         }
       },
-      "packed": "3gADp21vZGVsSWTNE46mdGFnSWRzkgsMqGNhY2hlZEF01v9qL+gU"
+      "packed": "3gADp21vZGVsSWTNFlmmdGFnSWRzkgsMqGNhY2hlZEF01v9qL+gU"
     },
     "packed:caches:basic-tags:11": {
       "value": {
@@ -441,7 +418,7 @@
       },
       "packed": "3gACqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
     },
-    "packed:caches:paid-access:ModelVersion:6051": {
+    "packed:caches:paid-access:ModelVersion:6721": {
       "value": {
         "notFound": true,
         "cachedAt": {
@@ -450,7 +427,7 @@
       },
       "packed": "3gACqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
     },
-    "packed:caches:images-for-model-version-2:6051": {
+    "packed:caches:images-for-model-version-2:6721": {
       "value": {
         "notFound": true,
         "cachedAt": {
@@ -459,15 +436,15 @@
       },
       "packed": "3gACqG5vdEZvdW5kw6hjYWNoZWRBdNb/ai/oFA=="
     },
-    "packed:caches:files-for-model-version-2:6051": {
+    "packed:caches:files-for-model-version-2:6721": {
       "value": {
-        "modelVersionId": 6051,
+        "modelVersionId": 6721,
         "files": [
           {
-            "id": 7051,
-            "url": "https://storage.example.test/models/7051.safetensors",
+            "id": 7721,
+            "url": "https://storage.example.test/models/7721.safetensors",
             "sizeKB": 12345.6789,
-            "name": "file_7051.safetensors",
+            "name": "file_7721.safetensors",
             "overrideName": null,
             "type": "Model",
             "visibility": "Public",
@@ -478,15 +455,15 @@
             "scannedAt": {
               "$date": "2026-05-04T09:30:00.000Z"
             },
-            "modelVersionId": 6051,
+            "modelVersionId": 6721,
             "hashes": [
               {
                 "type": "AutoV2",
-                "hash": "A7051"
+                "hash": "A7721"
               },
               {
                 "type": "SHA256",
-                "hash": "ABCDEF7051"
+                "hash": "ABCDEF7721"
               }
             ],
             "metadata": {
@@ -494,41 +471,13 @@
               "size": "pruned",
               "fp": "fp16"
             }
-          },
-          {
-            "id": 7052,
-            "url": "https://storage.example.test/models/7052.safetensors",
-            "sizeKB": 12345.6789,
-            "name": "data.zip",
-            "overrideName": null,
-            "type": "Training Data",
-            "visibility": "Public",
-            "pickleScanResult": "Success",
-            "pickleScanMessage": "No Pickle imports",
-            "virusScanResult": "Success",
-            "virusScanMessage": null,
-            "scannedAt": {
-              "$date": "2026-05-04T09:30:00.000Z"
-            },
-            "modelVersionId": 6051,
-            "hashes": [
-              {
-                "type": "AutoV2",
-                "hash": "A7052"
-              },
-              {
-                "type": "SHA256",
-                "hash": "ABCDEF7052"
-              }
-            ],
-            "metadata": {}
           }
         ],
         "cachedAt": {
           "$date": "2026-06-15T11:55:00.000Z"
         }
       },
-      "packed": "3gADrm1vZGVsVmVyc2lvbklkzRejpWZpbGVzkt4AD6JpZM0bi6N1cmzZNGh0dHBzOi8vc3RvcmFnZS5leGFtcGxlLnRlc3QvbW9kZWxzLzcwNTEuc2FmZXRlbnNvcnOmc2l6ZUtCy0DIHNbmMfihpG5hbWW1ZmlsZV83MDUxLnNhZmV0ZW5zb3JzrG92ZXJyaWRlTmFtZcCkdHlwZaVNb2RlbKp2aXNpYmlsaXR5plB1YmxpY7BwaWNrbGVTY2FuUmVzdWx0p1N1Y2Nlc3OxcGlja2xlU2Nhbk1lc3NhZ2WxTm8gUGlja2xlIGltcG9ydHOvdmlydXNTY2FuUmVzdWx0p1N1Y2Nlc3OwdmlydXNTY2FuTWVzc2FnZcCpc2Nhbm5lZEF01v9p+GcYrm1vZGVsVmVyc2lvbklkzRejpmhhc2hlc5LeAAKkdHlwZaZBdXRvVjKkaGFzaKVBNzA1Md4AAqR0eXBlplNIQTI1NqRoYXNoqkFCQ0RFRjcwNTGobWV0YWRhdGHeAAOmZm9ybWF0qlNhZmVUZW5zb3Kkc2l6ZaZwcnVuZWSiZnCkZnAxNt4AD6JpZM0bjKN1cmzZNGh0dHBzOi8vc3RvcmFnZS5leGFtcGxlLnRlc3QvbW9kZWxzLzcwNTIuc2FmZXRlbnNvcnOmc2l6ZUtCy0DIHNbmMfihpG5hbWWoZGF0YS56aXCsb3ZlcnJpZGVOYW1lwKR0eXBlrVRyYWluaW5nIERhdGGqdmlzaWJpbGl0eaZQdWJsaWOwcGlja2xlU2NhblJlc3VsdKdTdWNjZXNzsXBpY2tsZVNjYW5NZXNzYWdlsU5vIFBpY2tsZSBpbXBvcnRzr3ZpcnVzU2NhblJlc3VsdKdTdWNjZXNzsHZpcnVzU2Nhbk1lc3NhZ2XAqXNjYW5uZWRBdNb/afhnGK5tb2RlbFZlcnNpb25JZM0Xo6ZoYXNoZXOS3gACpHR5cGWmQXV0b1YypGhhc2ilQTcwNTLeAAKkdHlwZaZTSEEyNTakaGFzaKpBQkNERUY3MDUyqG1ldGFkYXRh3gAAqGNhY2hlZEF01v9qL+gU"
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzRpBpWZpbGVzkd4AD6JpZM0eKaN1cmzZNGh0dHBzOi8vc3RvcmFnZS5leGFtcGxlLnRlc3QvbW9kZWxzLzc3MjEuc2FmZXRlbnNvcnOmc2l6ZUtCy0DIHNbmMfihpG5hbWW1ZmlsZV83NzIxLnNhZmV0ZW5zb3JzrG92ZXJyaWRlTmFtZcCkdHlwZaVNb2RlbKp2aXNpYmlsaXR5plB1YmxpY7BwaWNrbGVTY2FuUmVzdWx0p1N1Y2Nlc3OxcGlja2xlU2Nhbk1lc3NhZ2WxTm8gUGlja2xlIGltcG9ydHOvdmlydXNTY2FuUmVzdWx0p1N1Y2Nlc3OwdmlydXNTY2FuTWVzc2FnZcCpc2Nhbm5lZEF01v9p+GcYrm1vZGVsVmVyc2lvbklkzRpBpmhhc2hlc5LeAAKkdHlwZaZBdXRvVjKkaGFzaKVBNzcyMd4AAqR0eXBlplNIQTI1NqRoYXNoqkFCQ0RFRjc3MjGobWV0YWRhdGHeAAOmZm9ybWF0qlNhZmVUZW5zb3Kkc2l6ZaZwcnVuZWSiZnCkZnAxNqhjYWNoZWRBdNb/ai/oFA=="
     },
     "packed:caches:user-metric-privacy-defaults:1001": {
       "value": {
@@ -537,6 +486,9 @@
         "hideModelGenerations": false
       },
       "packed": "3gADrWhpZGVNb2RlbEJ1enrCsmhpZGVNb2RlbERvd25sb2Fkc8K0aGlkZU1vZGVsR2VuZXJhdGlvbnPC"
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[]"
     }
   },
   "sysRedis": {
@@ -545,6 +497,16 @@
     }
   },
   "expect": {
-    "fallback": "v1-models-training-data"
+    "body": "{\"items\":[{\"id\":5721,\"name\":\"Model 5721\",\"coverImageId\":null,\"sfwCoverImageId\":null,\"description\":\"<p>About model 5721</p>\",\"allowNoCredit\":true,\"allowCommercialUse\":[\"Image\",\"RentCivit\"],\"allowDerivatives\":true,\"allowDifferentLicense\":false,\"type\":\"LORA\",\"minor\":false,\"sfwOnly\":false,\"poi\":false,\"nsfw\":false,\"nsfwLevel\":1,\"availability\":\"Public\",\"userId\":1001,\"hasActivePaidAccess\":false,\"hasSfwFace\":false,\"baseModels\":[\"SDXL 1.0\"],\"cosmetic\":null,\"eventDecoration\":null,\"supportsGeneration\":false,\"stats\":{\"downloadCount\":1001,\"thumbsUpCount\":301,\"thumbsDownCount\":3,\"commentCount\":12,\"tippedAmountCount\":40},\"creator\":{\"username\":\"artist_one\",\"image\":\"https://image.example.test/golden/00000000-0000-4000-8000-000000008901/width=96/artist_one.jpeg\"},\"tags\":[\"character\",\"style\"],\"modelVersions\":[{\"id\":6721,\"index\":0,\"name\":\"v6721\",\"baseModel\":\"SDXL 1.0\",\"baseModelType\":\"Standard\",\"publishedAt\":\"2026-05-04T09:00:00.000Z\",\"flags\":0,\"availability\":\"Public\",\"nsfwLevel\":1,\"description\":\"<p>Version 6721</p>\",\"trainedWords\":[],\"vaeId\":null,\"coveredNext\":false,\"paidAccess\":null,\"stats\":{\"downloadCount\":101,\"thumbsUpCount\":21,\"thumbsDownCount\":1},\"supportsGeneration\":false,\"files\":[{\"id\":7721,\"sizeKB\":12345.6789,\"name\":\"file_7721.safetensors\",\"overrideName\":null,\"type\":\"Model\",\"pickleScanResult\":\"Success\",\"pickleScanMessage\":\"No Pickle imports\",\"virusScanResult\":\"Success\",\"virusScanMessage\":null,\"scannedAt\":\"2026-05-04T09:30:00.000Z\",\"metadata\":{\"format\":\"SafeTensor\",\"size\":\"pruned\",\"fp\":\"fp16\"},\"hashes\":{\"AutoV2\":\"A7721\",\"SHA256\":\"ABCDEF7721\"},\"downloadUrl\":\"http://localhost:3000/api/download/models/6721\",\"primary\":true}],\"images\":[],\"downloadUrl\":\"http://localhost:3000/api/download/models/6721\"}]}],\"metadata\":{\"currentPage\":2,\"pageSize\":5}}",
+    "sql": {
+      "text": "SELECT mm.\"modelId\" as \"id\", m.\"name\", m.\"sfwName\", m.\"coverImageId\", m.\"sfwCoverImageId\", m.\"description\", m.\"sfwDescription\", m.\"allowNoCredit\", m.\"allowCommercialUse\", m.\"allowDerivatives\", m.\"allowDifferentLicense\", m.\"type\", mm.\"minor\", m.\"sfwOnly\", mm.\"poi\", m.\"nsfw\", mm.\"nsfwLevel\", mm.\"status\", m.\"createdAt\", mm.\"lastVersionAt\", m.\"publishedAt\", m.\"locked\", m.\"meta\", mm.\"mode\", mm.\"availability\", jsonb_build_object( 'downloadCount', mm.\"downloadCount\", 'thumbsUpCount', mm.\"thumbsUpCount\", 'thumbsDownCount', mm.\"thumbsDownCount\", 'commentCount', mm.\"commentCount\", 'collectedCount', mm.\"collectedCount\", 'tippedAmountCount', mm.\"tippedAmountCount\" ) as \"rank\", mm.\"userId\", CONCAT(mm.\"thumbsUpCount\", '|', mm.\"downloadCount\", '|', mm.\"modelId\") as \"cursorId\" FROM \"ModelMetric\" mm JOIN \"Model\" m ON m.\"id\" = mm.\"modelId\" WHERE (mm.\"mode\" IS NULL OR mm.\"mode\" != $1::\"ModelModifier\") AND (mm.\"poi\" = false OR mm.\"userId\" = $2) AND mm.\"status\" = $3::\"ModelStatus\" AND mm.\"availability\" != 'Private'::\"Availability\" AND (mm.\"nsfwLevel\" & $4) != 0 ORDER BY mm.\"thumbsUpCount\" DESC, mm.\"downloadCount\" DESC, mm.\"modelId\" LIMIT $5",
+      "values": [
+        "Archived",
+        null,
+        "Published",
+        1,
+        6
+      ]
+    }
   }
 }

@@ -2,13 +2,15 @@ import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { rejectCrossSlot } from '~/__tests__/cluster-slots';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import type * as AppAssistantService from '~/server/services/app-assistant/app-assistant.service';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
+import type * as FliptClient from '~/server/flipt/client';
 
 /**
  * App Assistant's server runner opens, keeps alive and closes a dev tunnel for the user its run
@@ -22,13 +24,16 @@ import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
  * Flipt flag, and app ownership (`BlockRegistry.resolveDevPageBlockForAuthor`).
  */
 
-const { runnerUserMock, devTunnelFlagMock, resolveMock, k8sFetchMock, store } = vi.hoisted(() => ({
-  runnerUserMock: vi.fn(),
-  devTunnelFlagMock: vi.fn(),
-  resolveMock: vi.fn(),
-  k8sFetchMock: vi.fn(),
-  store: new Map<string, string>(),
-}));
+const { runnerUserMock, devTunnelFlagMock, resolveMock, k8sFetchMock, store, directPreviewOn } =
+  vi.hoisted(() => ({
+    runnerUserMock: vi.fn(),
+    devTunnelFlagMock: vi.fn(),
+    resolveMock: vi.fn(),
+    k8sFetchMock: vi.fn(),
+    store: new Map<string, string>(),
+    // The `app-assistant-direct-preview` Flipt flag, for the direct-preview cases below.
+    directPreviewOn: { value: false },
+  }));
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/services/app-assistant/app-assistant.service', async (importOriginal) => ({
@@ -38,6 +43,14 @@ vi.mock('~/server/services/app-assistant/app-assistant.service', async (importOr
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
   isAppBlocksDevTunnelEnabled: devTunnelFlagMock,
+}));
+// Flipt is a process boundary: only the direct-preview flag is answered here; every other key
+// evaluates as it does with no Flipt (off).
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: vi.fn(
+    async (flag: string) => flag === 'app-assistant-direct-preview' && directPreviewOn.value
+  ),
 }));
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: { resolveDevPageBlockForAuthor: resolveMock },
@@ -60,13 +73,20 @@ vi.mock('~/server/prom/dev-tunnel.metrics', () => ({
 const { signRunGrant, signRunnerViewerToken } = await import(
   '~/server/services/app-assistant/assistant-runner-tokens'
 );
-const { DEV_TUNNEL_IDLE_SECONDS, reapExpiredDevTunnels } = await import(
+const { DEV_TUNNEL_IDLE_SECONDS, reapExpiredDevTunnels, sweepDirectSessions } = await import(
   '~/server/services/blocks/dev-tunnel.service'
 );
 const startRoute = (await import('~/pages/api/internal/app-assistant/dev-tunnel/start')).default;
 const keepaliveRoute = (await import('~/pages/api/internal/app-assistant/dev-tunnel/keepalive'))
   .default;
 const stopRoute = (await import('~/pages/api/internal/app-assistant/dev-tunnel/stop')).default;
+const openRoute = (await import('~/pages/api/internal/app-assistant/preview/open')).default;
+const { getActiveDevTunnel } = await import('~/server/services/blocks/dev-tunnel.service');
+const { isDevTunnelHostPublished } = await import(
+  '~/server/services/blocks/dev-tunnel-dns.service'
+);
+const { decodePreviewLabel } = await import('~/server/services/blocks/preview-session-host');
+const { DistributedLock } = await import('~/server/utils/distributed-lock');
 
 // TEST-ONLY values: a key pair generated for this run, a placeholder secret and host key.
 const SECRET = 'test-only-runner-secret-for-tunnels';
@@ -185,6 +205,7 @@ beforeEach(() => {
     return app ? { ...app, appBlockId: `apb-${app.blockId}`, appId: `app-${app.blockId}` } : null;
   });
   k8sFetchMock.mockImplementation(async () => okRes(JSON.stringify({ items: [] })));
+  directPreviewOn.value = false;
 
   const sys = redisMock.sysRedis;
   sys.get.mockImplementation(async (k: string) => store.get(k) ?? null);
@@ -222,6 +243,11 @@ beforeEach(() => {
   cluster.del.mockImplementation(sys.del.getMockImplementation()!);
   cluster.sRem.mockImplementation(sys.sRem.getMockImplementation()!);
   cluster.sMembers.mockImplementation(async (k: string) => lua.set(k) ?? []);
+  cluster.exists.mockImplementation(async (k: string) => (lua.string(k) !== undefined ? 1 : 0));
+  cluster.hGetAll.mockImplementation(async (k: string) => lua.hash(k) ?? {});
+  cluster.hDel.mockImplementation((k: string, f: string) =>
+    lua.eval("return redis.call('HDEL', KEYS[1], ARGV[1])", { keys: [k], arguments: [f] })
+  );
   cluster.eval.mockImplementation(
     (script: string, opts: { keys: string[]; arguments: string[] }) => {
       rejectCrossSlot(opts.keys);
@@ -845,5 +871,436 @@ describe('a start the runner gave up on, closed by its client key', () => {
       runner
     )?.[1];
     expect(Number(margin?.replace(/_/g, ''))).toBeGreaterThanOrEqual(10_000);
+  });
+});
+
+/**
+ * App Assistant direct preview (`preview/open`, and keepalive / stop by block id): the SAME
+ * dev-tunnel session record a tunnel start writes, with `transport: "direct"` and a session host
+ * civitai mints, read back from the state the real service wrote.
+ */
+describe('POST preview/open (App Assistant direct preview)', () => {
+  // TEST-ONLY key (kid 1) and secret.
+  const PREVIEW_DOMAIN = 'preview.test';
+  const KEY = { kid: 1, key: Buffer.alloc(32, 9).toString('base64') };
+  const REVOKE_SECRET = 'test-only-preview-revoke-secret';
+  const PID_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1';
+  const PID_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2';
+  const DIRECT_SET = `${PREFIX}:direct-sessions`;
+  const startsCounted = (userId: number) =>
+    Number(store.get(`system:blocks:dev-tunnel-ephemeral-rate-limit:${userId}`) ?? 0);
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const revokesSent = () =>
+    fetchMock.mock.calls
+      .filter((c) => String(c[0]).endsWith('/internal/v1/previews/revoke'))
+      .map((c) => JSON.parse(String((c[1] as RequestInit).body)));
+
+  const open = async (userId: number, blockId: string, previewId: string) =>
+    call(openRoute, { body: { grant: await grantFor(userId), blockId, previewId } });
+  const byBlock = async (route: Handler, userId: number, blockId: string) =>
+    call(route, { body: { grant: await grantFor(userId), blockId } });
+
+  beforeEach(() => {
+    directPreviewOn.value = true;
+    setEnv({
+      APP_ASSISTANT_PREVIEW_DOMAIN: PREVIEW_DOMAIN,
+      APP_ASSISTANT_PREVIEW_KEYS: JSON.stringify(KEY),
+      PREVIEW_REVOKE_HMAC_SECRET: REVOKE_SECRET,
+      APP_ASSISTANT_SANDBOX_URL: 'https://sandbox.test',
+    });
+    fetchMock = vi.fn(async () => new Response('{"rotated":1}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setEnv({
+      APP_ASSISTANT_PREVIEW_DOMAIN: undefined,
+      APP_ASSISTANT_PREVIEW_KEYS: undefined,
+      PREVIEW_REVOKE_HMAC_SECRET: undefined,
+      APP_ASSISTANT_SANDBOX_URL: undefined,
+    });
+  });
+
+  it('flag off, or any piece of the configuration missing: {mode: tunnel}, writing nothing', async () => {
+    directPreviewOn.value = false;
+    expect(await open(OWNER, UNSUBMITTED_APP, PID_A)).toMatchObject({
+      status: 200,
+      json: { mode: 'tunnel' },
+    });
+    directPreviewOn.value = true;
+    for (const missing of [
+      'APP_ASSISTANT_PREVIEW_DOMAIN',
+      'APP_ASSISTANT_PREVIEW_KEYS',
+      'PREVIEW_REVOKE_HMAC_SECRET',
+    ]) {
+      setEnv({ [missing]: undefined });
+      expect((await open(OWNER, UNSUBMITTED_APP, PID_A)).json, missing).toEqual({ mode: 'tunnel' });
+      setEnv({
+        APP_ASSISTANT_PREVIEW_DOMAIN: PREVIEW_DOMAIN,
+        APP_ASSISTANT_PREVIEW_KEYS: JSON.stringify(KEY),
+        PREVIEW_REVOKE_HMAC_SECRET: REVOKE_SECRET,
+      });
+    }
+    expect(store.size).toBe(0);
+    expect(startsCounted(OWNER)).toBe(0);
+  });
+
+  it('writes the same session record for an unused id, counting one start; getActiveDevTunnel returns it', async () => {
+    const { status, json } = await open(OWNER, UNSUBMITTED_APP, PID_A);
+    expect(status).toBe(200);
+    // The answer never carries the session host (the session's credential); it lives in the record.
+    expect(json).toEqual({ mode: 'direct', sessionId: expect.any(String) });
+    expect(JSON.stringify(json)).not.toContain(PREVIEW_DOMAIN);
+    const host = sessionRecord(json!.sessionId as string).host as string;
+    expect(host).toMatch(new RegExp(`^s[a-z2-7]{61}\\.${PREVIEW_DOMAIN.replace('.', '\\.')}$`));
+    const record = sessionRecord(json!.sessionId as string);
+    expect(record).toMatchObject({
+      userId: OWNER,
+      blockId: UNSUBMITTED_APP,
+      host,
+      fingerprint: '',
+      transport: 'direct',
+      previewId: PID_A,
+      spendCapBuzz: 5000,
+      hardExpiresAt: record.createdAt + 8 * 60 * 60,
+    });
+    expect(startsCounted(OWNER)).toBe(1);
+    expect(await getActiveDevTunnel(OWNER, UNSUBMITTED_APP)).toEqual(record);
+    expect(lua.set(DIRECT_SET)).toEqual([json!.sessionId]);
+    // The ban index finds it like a tunnel.
+    expect(lua.set(`${PREFIX}:user-index:{${OWNER}}`)).toEqual([UNSUBMITTED_APP]);
+  });
+
+  it('reuses the active session for the same id: same session and host, no start counted', async () => {
+    const first = (await open(OWNER, UNSUBMITTED_APP, PID_A)).json!;
+    const hostBefore = sessionRecord(first.sessionId as string).host;
+    const again = (await open(OWNER, UNSUBMITTED_APP, PID_A)).json!;
+    expect(again).toEqual(first);
+    expect(sessionRecord(again.sessionId as string).host).toBe(hostBefore);
+    expect(startsCounted(OWNER)).toBe(1);
+  });
+
+  // A reuse must count as activity, or the reaper can end a preview the runner just
+  // reopened.
+  it('reusing a live session stamps its activity, counting no start', async () => {
+    const first = (await open(OWNER, UNSUBMITTED_APP, PID_A)).json!;
+    const sessionId = first.sessionId as string;
+    // Inside the idle window, but old enough that a missing stamp is visible.
+    const aged = nowSec() - DEV_TUNNEL_IDLE_SECONDS + 300;
+    ageSession(sessionId, aged);
+    expect((await open(OWNER, UNSUBMITTED_APP, PID_A)).json).toEqual(first);
+    expect(sessionRecord(sessionId).lastActivityAt).toBeGreaterThanOrEqual(nowSec() - 5);
+    expect(startsCounted(OWNER)).toBe(1);
+    expect(revokesSent()).toEqual([]);
+  });
+
+  it('reusing an idle-expired session tears it down and answers fresh, counting no start', async () => {
+    const first = (await open(OWNER, UNSUBMITTED_APP, PID_A)).json!;
+    const sessionId = first.sessionId as string;
+    ageSession(sessionId, nowSec() - DEV_TUNNEL_IDLE_SECONDS - 120);
+    expect((await open(OWNER, UNSUBMITTED_APP, PID_A)).json).toEqual({
+      mode: 'direct',
+      fresh: true,
+    });
+    expect(sessionRecord(sessionId)).toBeNull();
+    expect(lua.set(DIRECT_SET) ?? []).toEqual([]);
+    expect(await getActiveDevTunnel(OWNER, UNSUBMITTED_APP)).toBeNull();
+    expect(revokesSent()).toEqual([
+      { userId: OWNER, previewId: PID_A, reason: 'teardown:reap-idle' },
+    ]);
+    expect(startsCounted(OWNER)).toBe(1);
+  });
+
+  it('answers fresh for a used id without writing or counting, and writes on the rotated id', async () => {
+    const first = (await open(OWNER, UNSUBMITTED_APP, PID_A)).json!;
+    expect(await byBlock(stopRoute, OWNER, UNSUBMITTED_APP)).toMatchObject({
+      status: 200,
+      json: { stopped: true },
+    });
+    const keysBefore = [...store.keys()].sort();
+    expect((await open(OWNER, UNSUBMITTED_APP, PID_A)).json).toEqual({
+      mode: 'direct',
+      fresh: true,
+    });
+    expect([...store.keys()].sort()).toEqual(keysBefore);
+    expect(startsCounted(OWNER)).toBe(1);
+
+    const rotated = (await open(OWNER, UNSUBMITTED_APP, PID_B)).json!;
+    expect(rotated).toMatchObject({ mode: 'direct', sessionId: expect.any(String) });
+    expect(rotated.sessionId).not.toBe(first.sessionId);
+    expect(sessionRecord(rotated.sessionId as string)).toMatchObject({ previewId: PID_B });
+    expect(startsCounted(OWNER)).toBe(2);
+  });
+
+  it('stop by block id ends the session: record, host and set member go, and the id is revoked', async () => {
+    const { sessionId } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+    const host = sessionRecord(sessionId).host as string;
+    expect(await byBlock(stopRoute, OTHER, OWNED_APP)).toMatchObject({ json: { stopped: false } });
+    expect(sessionRecord(sessionId)).not.toBeNull();
+    expect(revokesSent()).toEqual([]);
+
+    expect(await byBlock(stopRoute, OWNER, OWNED_APP)).toMatchObject({ json: { stopped: true } });
+    expect(sessionRecord(sessionId)).toBeNull();
+    expect(store.has(`${PREFIX}:host:${host}`)).toBe(false);
+    expect(lua.set(DIRECT_SET) ?? []).toEqual([]);
+    expect(revokesSent()).toEqual([{ userId: OWNER, previewId: PID_A, reason: 'teardown:stop' }]);
+  });
+
+  it('keepalive by block id moves the direct session’s idle clock; by its host is refused', async () => {
+    const { sessionId } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+    const host = sessionRecord(sessionId).host as string;
+    const stale = nowSec() - DEV_TUNNEL_IDLE_SECONDS - 120;
+    // By host first: the session host is the session's credential, so the host path refuses it,
+    // even for the session's own user, and records nothing.
+    ageSession(sessionId, stale);
+    expect(
+      await call(keepaliveRoute, { body: { grant: await grantFor(OWNER), host } })
+    ).toMatchObject({ status: 404 });
+    expect(sessionRecord(sessionId).lastActivityAt).toBe(stale);
+    expect(await byBlock(keepaliveRoute, OWNER, OWNED_APP)).toMatchObject({
+      status: 200,
+      json: { blockId: OWNED_APP },
+    });
+    expect(sessionRecord(sessionId).lastActivityAt).toBeGreaterThan(stale);
+    expect(await byBlock(keepaliveRoute, OTHER, OWNED_APP)).toMatchObject({ status: 404 });
+  });
+
+  describe('by block id with transport "direct": only a direct session', () => {
+    const direct = async (route: Handler, userId: number, blockId: string) =>
+      call(route, { body: { grant: await grantFor(userId), blockId, transport: 'direct' } });
+
+    it('leaves a tunnel session alone, answered as none; without the filter it is kept and closed', async () => {
+      const { sessionId } = (await startFor(OWNER, OWNED_APP)).json as { sessionId: string };
+      ageSession(sessionId, 6000);
+      expect(await direct(keepaliveRoute, OWNER, OWNED_APP)).toMatchObject({
+        status: 404,
+        json: { code: 'NOT_FOUND' },
+      });
+      expect(sessionRecord(sessionId).lastActivityAt).toBe(6000);
+      expect(await direct(stopRoute, OWNER, OWNED_APP)).toMatchObject({
+        status: 200,
+        json: { stopped: false },
+      });
+      expect(sessionRecord(sessionId)).not.toBeNull();
+      // Control, without the filter: the same tunnel is kept, then closed.
+      expect(await byBlock(keepaliveRoute, OWNER, OWNED_APP)).toMatchObject({ status: 200 });
+      expect(sessionRecord(sessionId).lastActivityAt).not.toBe(6000);
+      expect(await byBlock(stopRoute, OWNER, OWNED_APP)).toMatchObject({
+        json: { stopped: true },
+      });
+      expect(sessionRecord(sessionId)).toBeNull();
+    });
+
+    // Invariant guard: a direct session passes the filter.
+    it('keeps and closes a direct session, answering as without the filter', async () => {
+      const { sessionId } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+      ageSession(sessionId, nowSec() - DEV_TUNNEL_IDLE_SECONDS + 60);
+      expect(await direct(keepaliveRoute, OWNER, OWNED_APP)).toMatchObject({
+        status: 200,
+        json: { blockId: OWNED_APP },
+      });
+      expect(sessionRecord(sessionId).lastActivityAt).toBeGreaterThanOrEqual(nowSec() - 5);
+      expect(await direct(stopRoute, OWNER, OWNED_APP)).toMatchObject({ json: { stopped: true } });
+      expect(sessionRecord(sessionId)).toBeNull();
+      expect(revokesSent()).toEqual([{ userId: OWNER, previewId: PID_A, reason: 'teardown:stop' }]);
+    });
+
+    it('refuses any other transport value as a bad body', async () => {
+      expect(
+        await call(stopRoute, {
+          body: { grant: await grantFor(OWNER), blockId: OWNED_APP, transport: 'tunnel' },
+        })
+      ).toMatchObject({ status: 400 });
+    });
+  });
+
+  it('the DNS gate never holds a direct session host back (it has no record of its own)', async () => {
+    setEnv({ APPS_DEV_TUNNEL_INGRESS_TARGET: '192.0.2.10' });
+    const { sessionId } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+    const host = sessionRecord(sessionId).host as string;
+    expect(await isDevTunnelHostPublished(host)).toBe(true);
+    // Control: the same gate still refuses a host of neither shape.
+    expect(await isDevTunnelHostPublished(`x${host}`)).toBe(false);
+  });
+
+  it('the reaper idle-reaps a direct session while the route LIST fails, and revokes it', async () => {
+    const { sessionId } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+    ageSession(sessionId, nowSec() - DEV_TUNNEL_IDLE_SECONDS - 120);
+    k8sFetchMock.mockImplementation(async () => ({ ok: false, status: 500, text: async () => '' }));
+    expect(await reapExpiredDevTunnels()).toMatchObject({ listOk: false, status: 500 });
+    expect(sessionRecord(sessionId)).toBeNull();
+    expect(lua.set(DIRECT_SET) ?? []).toEqual([]);
+    expect(revokesSent()).toEqual([
+      { userId: OWNER, previewId: PID_A, reason: 'teardown:reap-idle' },
+    ]);
+  });
+
+  it('the sweep drops a member whose record is gone, and keeps one it could not read', async () => {
+    const gone = (await open(OWNER, OWNED_APP, PID_A)).json!.sessionId as string;
+    const unreadable = (await open(OWNER, UNSUBMITTED_APP, PID_B)).json!.sessionId as string;
+    store.delete(`${PREFIX}:session:${gone}`); // expired
+    redisMock.sysRedis.get.mockImplementation(async (k: string) => {
+      if (k === `${PREFIX}:session:${unreadable}`) throw new Error('redis blip');
+      return store.get(k) ?? null;
+    });
+    await reapExpiredDevTunnels();
+    expect(lua.set(DIRECT_SET)).toEqual([unreadable]);
+    // Neither was torn down, so nothing was revoked: an expired record's host expired with it.
+    expect(revokesSent()).toEqual([]);
+  });
+
+  // Each teardown can wait on an inline revoke, so the sweep must not take them one at a
+  // time. Counted, not timed: the most revokes in flight at once.
+  it('the sweep tears sessions down five at a time, not one after another', async () => {
+    resolveMock.mockImplementation(async (blockId: string) => ({
+      blockId,
+      status: 'approved',
+      appBlockId: `apb-${blockId}`,
+      appId: `app-${blockId}`,
+    }));
+    const ids: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const previewId = (i + 1).toString(16).padStart(32, 'c');
+      const { sessionId } = (await open(OWNER, `sweep-app-${i}`, previewId)).json! as Record<
+        string,
+        string
+      >;
+      ageSession(sessionId, nowSec() - DEV_TUNNEL_IDLE_SECONDS - 120);
+      ids.push(sessionId);
+    }
+    let inFlight = 0;
+    let maxInFlight = 0;
+    fetchMock.mockImplementation(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 20));
+      inFlight -= 1;
+      return new Response('{"rotated":1}', { status: 200 });
+    });
+    expect(await sweepDirectSessions()).toEqual({ swept: 7, reaped: 7, skipped: 0 });
+    expect(maxInFlight).toBe(5);
+    expect(revokesSent()).toHaveLength(7);
+    for (const id of ids) expect(sessionRecord(id)).toBeNull();
+    expect(lua.set(DIRECT_SET) ?? []).toEqual([]);
+  });
+
+  // The id is marked used BEFORE any record, so an open that fails part-way still
+  // marks it (its teardown revoked the id; a later session on it would be killed by that revoke).
+  it.each([
+    [
+      'a session record write',
+      () => {
+        const set = redisMock.sysRedis.set.getMockImplementation()!;
+        redisMock.sysRedis.set.mockImplementation(async (k: string, ...rest: unknown[]) => {
+          if (k.startsWith(`${PREFIX}:session:`)) throw new Error('write failed');
+          return (set as (...a: unknown[]) => unknown)(k, ...rest);
+        });
+        return () => redisMock.sysRedis.set.mockImplementation(set);
+      },
+    ],
+    [
+      'the listing',
+      () => {
+        const evalImpl = redisMock.redis.eval.getMockImplementation()!;
+        redisMock.redis.eval.mockImplementation(
+          (script: string, opts: { keys: string[]; arguments: string[] }) => {
+            if (opts.keys.includes(`${PREFIX}:user-index:{${OWNER}}`))
+              throw new Error('list failed');
+            return (evalImpl as (...a: unknown[]) => unknown)(script, opts);
+          }
+        );
+        return () => redisMock.redis.eval.mockImplementation(evalImpl);
+      },
+    ],
+  ])(
+    'an open whose %s fails leaves the id marked: the next open answers fresh',
+    async (_, fail) => {
+      const restore = fail();
+      expect(await open(OWNER, OWNED_APP, PID_A)).toMatchObject({
+        status: 503,
+        json: { code: 'unavailable' },
+      });
+      restore();
+      // The failed open's teardown revoked the id at the gateway.
+      expect(revokesSent()).toEqual([{ userId: OWNER, previewId: PID_A, reason: 'teardown:stop' }]);
+      expect((await open(OWNER, OWNED_APP, PID_A)).json).toEqual({ mode: 'direct', fresh: true });
+    }
+  );
+
+  it('the used marker outlives the session cap plus the revoke queue’s 8 h retry window', async () => {
+    await open(OWNER, OWNED_APP, PID_A);
+    const marks = redisMock.redis.set.mock.calls.filter(
+      (c) => c[0] === `${PREFIX}:direct-used:{${OWNER}}:${PID_A}`
+    );
+    expect(marks).toHaveLength(1);
+    // 8 h session cap + 8 h queue max age, in seconds.
+    expect((marks[0][2] as { EX: number }).EX).toBeGreaterThanOrEqual(16 * 60 * 60);
+  });
+
+  it('logs a direct session host only as a hash, at start and at stop', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      const { sessionId } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+      const host = sessionRecord(sessionId).host as string;
+      await byBlock(stopRoute, OWNER, OWNED_APP);
+      const events = logSpy.mock.calls
+        .map((c) => String(c[0]))
+        .filter((line) => /app-blocks\.dev-tunnel\.(start|stop)/.test(line));
+      expect(events).toHaveLength(2);
+      for (const line of events) {
+        expect(line).not.toContain(host);
+        expect(line).not.toContain(host.split('.')[0]);
+        expect(JSON.parse(line).hostHash).toMatch(/^[0-9a-f]{12}$/);
+      }
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('another open of the same app in progress (the lock held): 503, nothing written or counted', async () => {
+    const held = new DistributedLock({ key: `app-assistant-preview-open:${OWNER}:${OWNED_APP}` });
+    expect(await held.acquire()).toBe(true);
+    try {
+      expect(await open(OWNER, OWNED_APP, PID_A)).toMatchObject({
+        status: 503,
+        json: { code: 'unavailable' },
+      });
+    } finally {
+      await held.release();
+    }
+    expect(lua.set(DIRECT_SET) ?? []).toEqual([]);
+    expect(store.has(`${PREFIX}:direct-used:{${OWNER}}:${PID_A}`)).toBe(false);
+    expect(startsCounted(OWNER)).toBe(0);
+    expect(await getActiveDevTunnel(OWNER, OWNED_APP)).toBeNull();
+    // Control: with the lock free the same open writes.
+    expect((await open(OWNER, OWNED_APP, PID_A)).json).toMatchObject({ mode: 'direct' });
+  });
+
+  it('APP_ASSISTANT_PREVIEW_KEYS in the gateway’s key-set form: mints with current', async () => {
+    const current = { kid: 4, key: Buffer.alloc(32, 5).toString('base64') };
+    setEnv({ APP_ASSISTANT_PREVIEW_KEYS: JSON.stringify({ current, previous: KEY }) });
+    const { sessionId } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+    const host = sessionRecord(sessionId).host as string;
+    expect(decodePreviewLabel(host.split('.')[0])).toMatchObject({
+      ok: true,
+      kid: 4,
+      previewId: PID_A,
+      userId: OWNER,
+    });
+  });
+
+  it('an unparseable APP_ASSISTANT_PREVIEW_KEYS: {mode: tunnel}, logged once without the key', async () => {
+    const bad = JSON.stringify({ current: KEY, previous: KEY }); // same kid twice
+    setEnv({ APP_ASSISTANT_PREVIEW_KEYS: bad });
+    loggingMock.logToAxiom.mockClear();
+    expect((await open(OWNER, OWNED_APP, PID_A)).json).toEqual({ mode: 'tunnel' });
+    expect((await open(OWNER, OWNED_APP, PID_A)).json).toEqual({ mode: 'tunnel' });
+    const reports = loggingMock.logToAxiom.mock.calls.filter(
+      (c) => (c[0] as { type: string }).type === 'app-assistant.direct-preview.bad-keys'
+    );
+    expect(reports).toHaveLength(1);
+    expect(JSON.stringify(reports)).toContain('previous.kid must differ from current.kid');
+    expect(JSON.stringify(reports)).not.toContain(KEY.key);
+    expect(store.size).toBe(0);
   });
 });

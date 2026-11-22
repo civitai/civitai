@@ -3399,6 +3399,7 @@ const REDIS_KEYS_UNPREFIXED = {
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
     PAID_ACCESS: 'packed:caches:paid-access',
     PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
+    FEATURE_PAGES_SERVICE_TOKEN: 'packed:caches:feature-pages-service-token',
     // `<prefix>:row:<surface>:<entityType>:<entityId>` (a cached space row) and
     // `<prefix>:written:<surface>:<entityType>:<entityId>` (when that row was last written) —
     // the display read of a placement space. See placement-space.service.ts.

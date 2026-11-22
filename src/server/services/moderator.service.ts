@@ -1,4 +1,5 @@
 import type { shownActivity } from '@civitai/shared/held-media';
+import type { LIFT_KEPT_ACTIVITY } from '@civitai/shared/account-deletion-grace';
 import { dbWrite } from '~/server/db/client';
 
 type TagActivities = 'moderateTag' | 'disableTag' | 'addTag' | 'deleteTag';
@@ -46,6 +47,7 @@ export type ImageModActivity = {
   activity:
     | TagActivities
     | 'review'
+    | typeof LIFT_KEPT_ACTIVITY
     | 'setNsfwLevel'
     | 'resolveAppeal'
     | 'setNsfwLevelKono'

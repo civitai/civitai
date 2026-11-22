@@ -9,6 +9,7 @@
 import type { ListingMediaItem } from '~/server/registry-adapter/catalog-media';
 import type { CatalogApp } from '~/server/registry-adapter/entities';
 import type {
+  ListingActionsRunSource,
   ListingCard,
   ListingCreatorChip,
   ListingRecommendRollup,
@@ -36,6 +37,10 @@ export type CatalogListing = {
  * read with every level, so the listing's media come from {@link ListingExtras} instead.
  */
 export type ListingStoreCard = {
+  /** The listing id: the card's key, and the store's tie-break in every sort. */
+  id: string;
+  /** On-site only: the card's `kindData.appBlockId` (null off-site). */
+  appBlockId: string | null;
   creator: ListingCreatorChip | null;
   recommend: ListingRecommendRollup;
   reviewCount: number;
@@ -48,19 +53,62 @@ export type ListingStoreCard = {
   liveUrl: string | null;
 };
 
-/** What the listing read adds per listing: its media, each rated on its own, and what no card has. */
+/**
+ * What the listing read adds per listing: its media, each rated on its own, and what no card has.
+ * The detail fields are the public detail's (`getListingDetail` → `projectListingDetail`), by the
+ * same rules (`catalog-source.live.ts`); none is viewer-scoped except the fork parent, which
+ * {@link readCatalog} resolves.
+ */
 export type ListingExtras = {
   description: string | null;
   media: ListingMediaItem[];
   installCount: number;
   createdAt: string;
+  serialId: number;
+  collaborators: ListingCreatorChip[];
+  scopes: string[];
+  connectScopes: string[];
+  issueTrackerUrl: string | null;
+  actionsRunSource: ListingActionsRunSource | null;
+  betaMessage: string | null;
+  forkable: boolean;
+  /** Off-site only: the public OAuth client id the detail's `kindData` carries (null otherwise). */
+  connectClientId: string | null;
+  /** The listing's fork facts (`readListingForkProvenance`); {@link readCatalog} names the parent. */
+  fork: { isFork: boolean; forkOfListingId: string | null };
 };
 
-export type ListingStoreFields = ListingStoreCard & ListingExtras;
+/**
+ * Where a fork came from, as the stream may say it: `slug` is the parent's app slug when the parent
+ * is in the same public catalog, else null (a parent that is hidden or gone reads the same). The
+ * read model resolves it per viewer, as `getListingDetail` does (`resolveForkAttribution`).
+ */
+export type ListingStreamForkOf = { slug: string | null };
+
+export type ListingStoreFields = ListingStoreCard &
+  Omit<ListingExtras, 'fork'> & { forkOf: ListingStreamForkOf | null };
+
+/**
+ * A listing's {@link ListingStreamForkOf}: null unless it is a fork, and its parent named by the
+ * rule the app entity's `forkOf` uses: only when the parent is in the same catalog (`slugById`, the
+ * snapshot's public slugs), never itself.
+ */
+export function streamForkOf(
+  listingId: string,
+  fork: ListingExtras['fork'],
+  slugById: ReadonlyMap<string, string>
+): ListingStreamForkOf | null {
+  if (!fork.isFork) return null;
+  const parentId = fork.forkOfListingId;
+  const slug = parentId !== null && parentId !== listingId ? slugById.get(parentId) : undefined;
+  return { slug: slug ?? null };
+}
 
 function storeCardFields(card: ListingCard): ListingStoreCard {
   const onsite = card.kindData.kind === 'onsite' ? card.kindData : null;
   return {
+    id: card.id,
+    appBlockId: onsite?.appBlockId ?? null,
     creator: card.creator ? { ...card.creator } : null,
     recommend: { ...card.recommend },
     reviewCount: card.reviewCount,
@@ -222,7 +270,9 @@ export async function readCatalog(
       ];
   const storeOf = (l: CatalogListing): ListingStoreFields | undefined => {
     const more = extras?.get(l.id);
-    return listingStream && l.store && more ? { ...l.store, ...more } : undefined;
+    if (!listingStream || !l.store || !more) return undefined;
+    const { fork, ...rest } = more;
+    return { ...l.store, ...rest, forkOf: streamForkOf(l.id, fork, publicSlugById) };
   };
 
   const apps: CatalogRead = [];

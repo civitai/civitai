@@ -102,7 +102,7 @@ func sortKey(sort string, l store.Listing, mean float64) (string, bool) {
 // GlobalMean mirrors getGlobalRecommendMean over the listings the read model holds: the mean of
 // up / (up + down) over the listings with at least one review, or 0.5 with none. The site averages
 // over every approved listing, restricted ones included, which the read model never sees
-// (LISTINGS-READ-MODEL.md, "Known divergence").
+// (LISTINGS-READ-MODEL.md, "Sort and paging", the first of its "Known divergences").
 func GlobalMean(keys []store.Listing) float64 {
 	var sum float64
 	var n int
@@ -120,16 +120,18 @@ func GlobalMean(keys []store.Listing) float64 {
 }
 
 // cursorVersion marks a cursor this package minted. The database path's cursors are `v2`; one of
-// those, or any cursor that does not decode, pages from the start (as decodeListingCursor does),
-// so a cursor never compares against a key of another shape or another store's tie-break.
-const cursorVersion = "rm1"
+// those, a slug-keyed `rm1` cursor of an earlier layout, or any cursor that does not decode, pages
+// from the start (as decodeListingCursor does), so a cursor never compares against a key of another
+// shape or another tie-break.
+const cursorVersion = "rm2"
 
 const cursorSep = "\x1f"
 
-// EncodeCursor is the keyset cursor after a row: base64url("rm1␟key␟slug[␟mean]"). The top-rated
-// sort pins the global mean in the cursor for the whole paging session (encodeListingCursor).
-func EncodeCursor(key, slug string, mean *float64) string {
-	fields := []string{cursorVersion, key, slug}
+// EncodeCursor is the keyset cursor after a row: base64url("rm2␟key␟id[␟mean]"), the database
+// cursor's fields (encodeListingCursor) under this package's version. The top-rated sort pins the
+// global mean in the cursor for the whole paging session.
+func EncodeCursor(key, id string, mean *float64) string {
+	fields := []string{cursorVersion, key, id}
 	if mean != nil {
 		fields = append(fields, strconv.FormatFloat(*mean, 'g', -1, 64))
 	}
@@ -138,9 +140,9 @@ func EncodeCursor(key, slug string, mean *float64) string {
 
 // cursor is a decoded keyset cursor; ok false is "no cursor" (the first page).
 type cursor struct {
-	ok        bool
-	key, slug string
-	mean      *float64
+	ok      bool
+	key, id string
+	mean    *float64
 }
 
 // decodeCursor mirrors decodeListingCursor: anything malformed or of another version is the first
@@ -157,7 +159,7 @@ func decodeCursor(s string) cursor {
 	if len(parts) < 3 || len(parts) > 4 || parts[0] != cursorVersion {
 		return cursor{}
 	}
-	c := cursor{ok: true, key: parts[1], slug: parts[2]}
+	c := cursor{ok: true, key: parts[1], id: parts[2]}
 	if len(parts) == 4 {
 		if m, err := strconv.ParseFloat(parts[3], 64); err == nil && m >= 0 && m <= 1 {
 			c.mean = &m
@@ -205,9 +207,9 @@ func Filter(keys []store.Listing, kind, category string, userID *int64, v Viewer
 //	WHERE <Filter> AND (no cursor OR (sort_key, id) <|> (cursor_key, cursor_id))
 //	ORDER BY sort_key DIR, id DIR LIMIT limit + 1
 //
-// with the listing's slug in place of its id, which the stream does not carry (both are unique;
-// they order ties differently, LISTINGS-READ-MODEL.md "Known divergence"). Keys compare as bytes;
-// the database compares them under its collation, which can only differ for the name sort.
+// with the same tie-break, the listing id. Keys and ids compare as bytes; the database compares
+// them under its collation, which can only differ for the name sort (ids are `apl_` and a ULID, the
+// same order either way). Listed in LISTINGS-READ-MODEL.md, "Sort and paging", "Known divergences".
 // top-rated uses the cursor's pinned mean when it has one, else GlobalMean over every listing held
 // (not only those v may see, as the site's mean is not per viewer).
 func Rank(keys []store.Listing, q ListQuery, v Viewer) Page {
@@ -221,15 +223,15 @@ func Rank(keys []store.Listing, q ListQuery, v Viewer) Page {
 		}
 		pinned = &mean
 	}
-	type row struct{ key, slug, urn string }
+	type row struct{ key, id, urn string }
 	_, desc := sortKey(q.Sort, store.Listing{}, mean)
 	rows := []row{}
 	for _, l := range Filter(keys, q.Kind, q.Category, q.UserID, v) {
 		k, _ := sortKey(q.Sort, l, mean)
-		rows = append(rows, row{k, l.Slug, l.URN})
+		rows = append(rows, row{k, l.ID, l.URN})
 	}
 	order := func(a, b row) int {
-		return cmp.Or(strings.Compare(a.key, b.key), strings.Compare(a.slug, b.slug))
+		return cmp.Or(strings.Compare(a.key, b.key), strings.Compare(a.id, b.id))
 	}
 	slices.SortFunc(rows, func(a, b row) int {
 		if desc {
@@ -238,7 +240,7 @@ func Rank(keys []store.Listing, q ListQuery, v Viewer) Page {
 		return order(a, b)
 	})
 	if c.ok {
-		at := row{key: c.key, slug: c.slug}
+		at := row{key: c.key, id: c.id}
 		rows = slices.DeleteFunc(rows, func(r row) bool {
 			o := order(r, at)
 			if desc {
@@ -252,7 +254,7 @@ func Rank(keys []store.Listing, q ListQuery, v Viewer) Page {
 	for i, r := range rows {
 		if i == limit {
 			last := rows[limit-1]
-			p.NextCursor = EncodeCursor(last.key, last.slug, pinned)
+			p.NextCursor = EncodeCursor(last.key, last.id, pinned)
 			break
 		}
 		p.URNs = append(p.URNs, r.urn)
