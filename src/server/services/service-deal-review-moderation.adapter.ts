@@ -20,6 +20,7 @@ import {
   SERVICE_DEAL_REVIEW_TEXTS,
   type ServiceDealReviewTextType,
 } from '~/server/services/text-scan/profiles/service-deal-review.profile';
+import { spendTextScanRetry } from '~/server/services/text-scan/adapter';
 import { unansweredTextScanLabels } from '~/server/services/text-scan/profiles';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import type { TextScanOutput } from '~/server/services/text-scan/types';
@@ -106,7 +107,10 @@ const settleSkipped = (type: TextType, reviewId: number, reason: SkipReason, tex
   reason === 'not-public'
     ? Promise.resolve()
     : reason === 'incomplete'
-    ? resendReviewText(type, reviewId, { text })
+    ? Promise.all([
+        resendReviewText(type, reviewId, { text }),
+        spendTextScanRetry(type, reviewId),
+      ]).then(() => undefined)
     : settleSkippedScan(
         type,
         reviewId,

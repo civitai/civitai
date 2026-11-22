@@ -498,6 +498,15 @@ describe('a verdict that does not answer every label the profile requires', () =
       );
       await adapter.scanServiceDealReviewText(type, REVIEW, incomplete as never);
       expect(await state(type)).toEqual(RESENDABLE);
+      // Its failed check row is spent toward its limit, or the retry job would reselect it forever.
+      expect(dbMock.dbWrite.entityModeration.updateMany).toHaveBeenCalledWith({
+        where: {
+          entityType: { in: [type, `${type}:shadow`] },
+          entityId: REVIEW,
+          status: { not: 'Succeeded' },
+        },
+        data: { retryCount: { increment: 1 } },
+      });
     }
   );
 });
