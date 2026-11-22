@@ -129,23 +129,42 @@ export function buildRemixAppRun({
   };
 }
 
+/** An upscale input at the size the host knows: the source row's, or the run's recorded output's. */
+function hostSized(url: string, image: RemixSourceImage, log: readonly RemixLogEntry[]) {
+  if (url === getRemixSourceUrl(image))
+    return {
+      url,
+      width: image.width || REMIX_FALLBACK_DIMENSIONS.width,
+      height: image.height || REMIX_FALLBACK_DIMENSIONS.height,
+    };
+  const made = log
+    .flatMap((entry) => (entry.type === 'workflow' ? entry.result.images : []))
+    .find((output) => output.url === url);
+  if (made?.width && made.height) return { url, width: made.width, height: made.height };
+  throw new TRPCError({
+    code: 'BAD_REQUEST',
+    message: 'This upscale names an image of unknown size',
+  });
+}
+
 /**
  * The graph input for one workflow a runtime app asks for. Throws when the source may not reach
  * the app's engines, for an upscale too: the app's mature rule covers every step it runs.
- * `log`: the run so far, whose outputs an upscale may name.
+ * `knownSizes`: set for a user app, whose claims are its author's: an upscale is then sized from the
+ * source row or these outputs of the run, never the size the app names.
  */
 export function buildRuntimeRequest({
   app,
   image,
   request,
   viewer,
-  log = [],
+  knownSizes,
 }: {
   app: Pick<RemixApp, 'name' | 'engine'>;
   image: RemixSourceImage;
   request: RemixWorkflowRequest;
   viewer: { isGreen: boolean; showNsfw: boolean };
-  log?: readonly RemixLogEntry[];
+  knownSizes?: readonly RemixLogEntry[];
 }) {
   const resolved = resolveRemixAppEngine(app, image, viewer);
   if ('refusal' in resolved) throw new TRPCError({ code: 'FORBIDDEN', message: resolved.refusal });
@@ -157,22 +176,9 @@ export function buildRuntimeRequest({
   });
 
   if (request.kind === 'upscale') {
-    // The size the host knows, never the app's claim: the upscaler is priced by it.
-    const { url } = request.image;
-    const made = log
-      .flatMap((entry) => (entry.type === 'workflow' ? entry.result.images : []))
-      .find((output) => output.url === url);
-    const input =
-      url === getRemixSourceUrl(image)
-        ? sized({ url, width: image.width ?? undefined, height: image.height ?? undefined })
-        : made?.width && made.height
-        ? { url, width: made.width, height: made.height }
-        : undefined;
-    if (!input)
-      throw new TRPCError({
-        code: 'BAD_REQUEST',
-        message: 'This upscale names an image of unknown size',
-      });
+    const input = knownSizes
+      ? hostSized(request.image.url, image, knownSizes)
+      : sized(request.image);
     return {
       tier,
       // The upscaler prices by the output size, so by the input's.
@@ -448,7 +454,12 @@ async function quoteApp(
 }
 
 async function quoteRuntimeApp(
-  { app, replay, firstRequest }: Pick<RegisteredRemixApp, 'app' | 'replay' | 'firstRequest'>,
+  {
+    app,
+    author,
+    replay,
+    firstRequest,
+  }: Pick<RegisteredRemixApp, 'app' | 'author' | 'replay' | 'firstRequest'>,
   image: RemixSourceImage,
   caller: RemixAppCaller,
   pricing: Pricing
@@ -462,6 +473,8 @@ async function quoteRuntimeApp(
     image,
     request,
     viewer: viewerOf(caller),
+    // A first workflow follows no other: only the source is known.
+    knownSizes: author ? [] : undefined,
   });
   const run = { tier, shape, submit: { graphInput } };
   return {
