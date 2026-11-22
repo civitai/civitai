@@ -63,12 +63,11 @@ async function rows() {
     buzz_total: number;
     last_model: string;
     last_run_id: string;
-    last_seq: number;
     first_seen_at: Date;
     last_seen_at: Date;
   }>(
     `SELECT user_id, conversation_id, app_slug, turn_count, buzz_total, last_model, last_run_id,
-            last_seq, first_seen_at, last_seen_at
+            first_seen_at, last_seen_at
      FROM app_assistant_session_links ORDER BY user_id, conversation_id, app_slug`
   );
   return rows;
@@ -86,7 +85,6 @@ describe('upsertSessionLink', () => {
         buzz_total: 3.25,
         last_model: 'model-alpha',
         last_run_id: 'run-first',
-        last_seq: 1,
         first_seen_at: new Date('2026-11-20T09:00:00.000Z'),
         last_seen_at: new Date('2026-11-20T09:00:05.000Z'),
       },
@@ -99,7 +97,7 @@ describe('upsertSessionLink', () => {
     expect(await rows()).toMatchObject([{ turn_count: 1, buzz_total: 3.25 }]);
   });
 
-  it('a later run adds a turn and its Buzz, and moves last-seen, the model and the seq', async () => {
+  it('a later run adds a turn and its Buzz, and moves last-seen and the model', async () => {
     await upsertSessionLink(h.prisma, base);
     await upsertSessionLink(h.prisma, {
       ...base,
@@ -116,7 +114,6 @@ describe('upsertSessionLink', () => {
         buzz_total: 13.75,
         last_model: 'model-beta',
         last_run_id: 'run-second',
-        last_seq: 2,
         first_seen_at: new Date('2026-11-20T09:00:00.000Z'),
         last_seen_at: new Date('2026-11-20T09:12:00.000Z'),
       }),

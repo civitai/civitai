@@ -30,7 +30,6 @@ CREATE TABLE IF NOT EXISTS "app_assistant_session_links" (
   "last_model"      TEXT,
   "buzz_total"      DOUBLE PRECISION NOT NULL DEFAULT 0,
   "last_run_id"     TEXT,
-  "last_seq"        INTEGER,
   CONSTRAINT "app_assistant_session_links_user_id_fkey"
     FOREIGN KEY ("user_id") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE
 );

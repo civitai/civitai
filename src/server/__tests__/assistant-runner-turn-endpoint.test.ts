@@ -163,7 +163,6 @@ describe('POST /api/internal/app-assistant/turn', () => {
       'model-x9',
       17.5,
       'run-5530',
-      4,
     ]);
     expect(m.insert).toHaveBeenCalledTimes(1);
     expect(m.insert.mock.calls[0]![0]).toEqual({

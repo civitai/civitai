@@ -2479,7 +2479,6 @@ export interface AppAssistantSessionLink {
   lastModel: string | null;
   buzzTotal: number;
   lastRunId: string | null;
-  lastSeq: number | null;
 }
 
 export interface AppListing {

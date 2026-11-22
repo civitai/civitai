@@ -354,7 +354,6 @@ export type AppAssistantSessionLink = {
   last_model: string | null;
   buzz_total: Generated<number>;
   last_run_id: string | null;
-  last_seq: number | null;
 };
 export type AppBlock = {
   id: string;

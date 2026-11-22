@@ -70,10 +70,10 @@ export async function upsertSessionLink(
   await db.$executeRaw`
     INSERT INTO "app_assistant_session_links" AS l
       ("user_id", "conversation_id", "app_slug", "first_seen_at", "last_seen_at",
-       "turn_count", "last_model", "buzz_total", "last_run_id", "last_seq")
+       "turn_count", "last_model", "buzz_total", "last_run_id")
     VALUES
       (${report.userId}, ${report.conversationId}, ${report.appSlug}, ${report.startedAt},
-       ${report.endedAt}, 1, ${report.model}, ${report.buzz}, ${report.runId}, ${report.seq})
+       ${report.endedAt}, 1, ${report.model}, ${report.buzz}, ${report.runId})
     ON CONFLICT ("user_id", "conversation_id", "app_slug") DO UPDATE SET
       "turn_count" = l."turn_count"
         + CASE WHEN l."last_run_id" IS NOT DISTINCT FROM EXCLUDED."last_run_id" THEN 0 ELSE 1 END,
@@ -83,8 +83,7 @@ export async function upsertSessionLink(
       "first_seen_at" = LEAST(l."first_seen_at", EXCLUDED."first_seen_at"),
       "last_seen_at" = GREATEST(l."last_seen_at", EXCLUDED."last_seen_at"),
       "last_model" = EXCLUDED."last_model",
-      "last_run_id" = EXCLUDED."last_run_id",
-      "last_seq" = EXCLUDED."last_seq"
+      "last_run_id" = EXCLUDED."last_run_id"
   `;
 }
 

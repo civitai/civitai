@@ -3609,7 +3609,6 @@ model AppAssistantSessionLink {
   lastModel      String?  @map("last_model")
   buzzTotal      Float    @default(0) @map("buzz_total")
   lastRunId      String?  @map("last_run_id") // the last reported run: a report delivered twice counts once
-  lastSeq        Int?     @map("last_seq")
 
   // Per user: a conversation id is chosen by the page, so only the user's own chats share its space.
   @@unique([userId, conversationId, appSlug], map: "app_assistant_session_links_user_conversation_app_key")
