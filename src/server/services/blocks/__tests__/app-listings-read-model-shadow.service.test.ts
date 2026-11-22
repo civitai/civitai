@@ -3,22 +3,32 @@
  * shadowed, what is asked of the read model, how the two answers are compared, and that every
  * failure is an outcome rather than an error.
  *
- * Driven through `createListingsReadModelShadow` with the flag, clock, randomness, the read
+ * Driven through `createListingsReadModelShadow` with the flag's mode, clock, randomness, the read
  * model's HTTP answers and the database reads passed in; nothing of this repo is module-mocked. The
  * counters are the real ones, read as deltas from the registry `/api/metrics` scrapes.
+ *
+ * The flag's mode (`readReadModelMode`) and serving (`serve`, mode `serve`) are at the end.
  */
 import { instrumentationRegistry } from '@civitai/telemetry/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   ListAppListingsInput,
   ListingCard,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import {
+  createCachedModeGate,
   createListingsReadModelShadow,
+  decodeReadModelCursor,
+  quietVariantRead,
   readModelCursor,
+  readReadModelMode,
+  servedCardOf,
   type DecodedDbCursor,
+  type ListingPage,
   type ListingsShadowDeps,
   type ReadModelCard,
+  type ReadModelFlagReads,
+  type ReadModelMode,
   type ReadModelShadowConfig,
   type ShadowLogEntry,
 } from '~/server/services/blocks/app-listings-read-model-shadow.service';
@@ -99,7 +109,7 @@ const OPTS: ListAvailableListingsOpts = {
   viewerBrowsingLevel: 15,
 };
 
-type Call = { url: URL; headers: Record<string, string> };
+type Call = { url: URL; headers: Record<string, string>; timeoutMs: number };
 type Reply = (call: Call) => Response | Promise<Response>;
 
 let calls: Call[];
@@ -108,21 +118,34 @@ let dbBySlugs: Map<string, ListingCard>;
 let dbBySlugsCalls: string[][];
 let logs: ShadowLogEntry[];
 let config: ReadModelShadowConfig;
-let flag: boolean;
+let mode: ReadModelMode;
 let decoded: DecodedDbCursor;
+let dbPage: ListingPage;
+let dbPageCalls: number;
+let encoded: Array<[string, string, number | undefined]>;
 
 function makeShadow(over: Partial<ListingsShadowDeps> = {}) {
   const deps: ListingsShadowDeps = {
-    enabled: () => flag,
+    mode: () => mode,
     config: () => config,
     random: () => 0.5,
     nowMs: () => NOW_MS,
     fetch: async (url, init) => {
-      const call = { url: new URL(url), headers: init.headers };
+      const call = { url: new URL(url), headers: init.headers, timeoutMs: init.timeoutMs };
       calls.push(call);
       return reply(call);
     },
     decodeCursor: () => decoded,
+    // Not the database's encoding: a literal shape of this test's own, so the served cursor is
+    // visibly the encoder's output.
+    encodeCursor: (sortKey, id, mean) => {
+      encoded.push([sortKey, id, mean]);
+      return `db-cursor(${sortKey}|${id}|${mean ?? 'none'})`;
+    },
+    dbPage: async () => {
+      dbPageCalls++;
+      return dbPage;
+    },
     dbBySlugs: async (slugs) => {
       dbBySlugsCalls.push(slugs);
       return slugs.flatMap((s) => {
@@ -180,6 +203,7 @@ const COUNTERS = [
   'app_listings_read_model_field_mismatches_total',
   'app_listings_read_model_order_mismatches_total',
   'app_listings_read_model_compared_slugs_total',
+  'app_listings_read_model_serve_requests_total',
 ] as const;
 let baseline: Map<string, Map<string, number>>;
 /** Every counter series that moved since the test began, as `name{labels}:delta`. */
@@ -200,9 +224,19 @@ beforeEach(async () => {
   dbBySlugs = new Map();
   dbBySlugsCalls = [];
   logs = [];
-  flag = true;
-  config = { url: URL_BASE, key: KEY, sample: 1, maxInFlight: 4, timeoutMs: 1000 };
+  mode = 'shadow';
+  config = {
+    url: URL_BASE,
+    key: KEY,
+    sample: 1,
+    maxInFlight: 4,
+    timeoutMs: 1000,
+    serveTimeoutMs: 250,
+  };
   decoded = { cursorSortKey: null, cursorId: null, cursorMean: null };
+  dbPage = { items: [] };
+  dbPageCalls = 0;
+  encoded = [];
   readModelAnswers([]);
   baseline = new Map();
   for (const name of COUNTERS) baseline.set(name, await readCounter(name));
@@ -216,10 +250,13 @@ const B = dbCard('bravo');
 const C = dbCard('charlie');
 
 describe('which pages are shadowed', () => {
-  it('flag off, or sampled out: nothing is asked and nothing is counted', async () => {
-    flag = false;
+  it('mode database or serve, or sampled out: nothing is asked and nothing is counted', async () => {
+    mode = 'database';
     expect(makeShadow().shadow('grid', INPUT, OPTS, { items: [A] })).toBeUndefined();
-    flag = true;
+    // At serve, a page the database served is one the read model could not serve: not compared.
+    mode = 'serve';
+    expect(makeShadow().shadow('grid', INPUT, OPTS, { items: [A] })).toBeUndefined();
+    mode = 'shadow';
     config.sample = 0.5; // random() is 0.5: not below the rate
     expect(makeShadow().shadow('grid', INPUT, OPTS, { items: [A] })).toBeUndefined();
     expect(calls).toEqual([]);
@@ -691,5 +728,624 @@ describe('failures', () => {
       'shadow_requests_total{grid/compared}:1',
       'shadow_requests_total{grid/saturated}:1',
     ]);
+  });
+});
+
+describe("the flag's mode", () => {
+  /** Flag reads that answer as given, recording which were made. */
+  function flagReads(answers: {
+    override?: string;
+    ready?: boolean;
+    variant?: { match: boolean; variantKey: string | null } | null;
+  }) {
+    const made: string[] = [];
+    const reads: ReadModelFlagReads = {
+      override: () => (made.push('override'), answers.override),
+      ready: () => (made.push('ready'), answers.ready ?? true),
+      variant: () => (made.push('variant'), answers.variant ?? null),
+    };
+    return { reads, made };
+  }
+
+  it.each([
+    ['serve', 'serve'],
+    ['shadow', 'shadow'],
+    // Anything else a variant flag answers is the database: an unknown key, a near miss, none.
+    ['canary', 'database'],
+    ['SERVE', 'database'],
+    ['', 'database'],
+  ] as const)('a variant flag answering %j is %s', (variantKey, want) => {
+    const { reads, made } = flagReads({ variant: { match: true, variantKey } });
+    expect(readReadModelMode(reads)).toBe(want);
+    expect(made).toEqual(['override', 'ready', 'variant']);
+  });
+
+  it('a variant flag that matched no rule (or is disabled) is the database', () => {
+    expect(
+      readReadModelMode(flagReads({ variant: { match: false, variantKey: null } }).reads)
+    ).toBe('database');
+  });
+
+  it('absent (or not a variant flag), or Flipt not ready: the database', () => {
+    expect(readReadModelMode(flagReads({}).reads)).toBe('database');
+    const notReady = flagReads({ ready: false, variant: { match: true, variantKey: 'serve' } });
+    expect(readReadModelMode(notReady.reads)).toBe('database');
+    expect(notReady.made).toEqual(['override', 'ready']);
+  });
+
+  it.each([
+    // `on` is not a variant: no boolean reading of this flag exists.
+    ['on', 'database'],
+    ['shadow', 'shadow'],
+    ['serve', 'serve'],
+    ['off', 'database'],
+    ['bogus', 'database'],
+  ] as const)('a local override %j is %s, and nothing else is read', (override, want) => {
+    const { reads, made } = flagReads({ override, variant: { match: true, variantKey: 'serve' } });
+    expect(readReadModelMode(reads)).toBe(want);
+    expect(made).toEqual(['override']);
+  });
+
+  it('🔴 a missing (or non-variant) flag reads as the database, and logs nothing', () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const requests: unknown[] = [];
+    const missing = {
+      evaluateVariant: (request: unknown) => {
+        requests.push(request);
+        throw new Error('flag not found: app-listings-read-model');
+      },
+    };
+    const reads: ReadModelFlagReads = {
+      override: () => undefined,
+      ready: () => true,
+      variant: () => quietVariantRead(missing, 'app-listings-read-model', { surface: 'grid' }),
+    };
+    expect(readReadModelMode(reads)).toBe('database');
+    // The evaluation was made (the guard is reached), for the global entity and the surface.
+    expect(requests).toEqual([
+      { flagKey: 'app-listings-read-model', entityId: 'global', context: { surface: 'grid' } },
+    ]);
+    expect(errors).not.toHaveBeenCalled();
+    expect(warnings).not.toHaveBeenCalled();
+    errors.mockRestore();
+    warnings.mockRestore();
+  });
+
+  it('positive control: a variant flag answering serve reads as serve through the same read', () => {
+    const client = {
+      evaluateVariant: () => ({ match: true, variantKey: 'serve' }),
+    };
+    expect(quietVariantRead(client, 'app-listings-read-model', { surface: 'rest_list' })).toEqual({
+      match: true,
+      variantKey: 'serve',
+    });
+    // An unmatched evaluation never names a variant, whatever key the engine carries.
+    expect(
+      quietVariantRead(
+        { evaluateVariant: () => ({ match: false, variantKey: 'serve' }) },
+        'app-listings-read-model',
+        {}
+      )
+    ).toEqual({ match: false, variantKey: null });
+    expect(quietVariantRead(null, 'app-listings-read-model', {})).toBeNull();
+  });
+
+  it('the cached gate reads at most once per window, and a throw is the database', () => {
+    let t = 1_000;
+    let reads = 0;
+    let answer: ReadModelMode | 'throw' = 'serve';
+    const gate = createCachedModeGate(
+      () => {
+        reads++;
+        if (answer === 'throw') throw new Error('flipt');
+        return answer;
+      },
+      5_000,
+      () => t
+    );
+    expect(gate()).toBe('serve');
+    answer = 'shadow';
+    t += 4_999;
+    expect(gate()).toBe('serve');
+    t += 1;
+    expect(gate()).toBe('shadow');
+    answer = 'throw';
+    t += 5_000;
+    expect(gate()).toBe('database');
+    expect(reads).toBe(3);
+  });
+});
+
+describe('serving (mode serve)', () => {
+  beforeEach(() => {
+    mode = 'serve';
+    // No served-page comparison unless a test asks for one.
+    config.sample = 0;
+  });
+
+  /** A database read that records its calls and answers `page`. */
+  function dbReadOf(page: { items: ListingCard[]; nextCursor?: string }) {
+    let n = 0;
+    const read = async () => {
+      n++;
+      return page;
+    };
+    return { read, calls: () => n };
+  }
+  const DB_SERVED = { items: [dbCard('database-only')], nextCursor: 'db-next' };
+
+  it('mode database or shadow: the database read, and nothing asked of the read model', async () => {
+    for (const m of ['database', 'shadow'] as const) {
+      mode = m;
+      const db = dbReadOf(DB_SERVED);
+      readModelAnswers([rmCard(A)]);
+      expect(await makeShadow().serve('grid', INPUT, OPTS, db.read)).toBe(DB_SERVED);
+      expect(db.calls()).toBe(1);
+    }
+    expect(calls).toEqual([]);
+    expect(await moved()).toEqual([]);
+  });
+
+  it('the mode is per surface: one can serve while the other stays on the database', async () => {
+    readModelAnswers([rmCard(A)]);
+    const asked: string[] = [];
+    const shadow = makeShadow({
+      mode: (surface) => {
+        asked.push(surface);
+        return surface === 'grid' ? 'serve' : 'database';
+      },
+    });
+    const db = dbReadOf(DB_SERVED);
+    expect(await shadow.serve('rest_list', INPUT, OPTS, db.read)).toBe(DB_SERVED);
+    const grid = await shadow.serve('grid', INPUT, OPTS, db.read);
+    expect(grid.items.map((c) => c.id)).toEqual(['al_alpha']);
+    expect(db.calls()).toBe(1);
+    expect(asked).toEqual(['rest_list', 'grid']);
+    expect(await moved()).toEqual(['serve_requests_total{grid/served}:1']);
+  });
+
+  it("the read model's page, as store cards, with its media as it gated them", async () => {
+    // The read model's own gated media, unlike anything the database would answer.
+    const card = rmCard(A, {
+      iconUrl: 'https://img.invalid/alpha/icon-gated-by-read-model',
+      coverUrl: null,
+      updatedAt: '2026-04-01T10:20:30.000Z',
+    });
+    const off = rmCard(dbCard('offsite-x'), {
+      kind: 'offsite',
+      creator: null,
+      isOfficial: true,
+      openCount: null,
+      updatedAt: undefined,
+      kindData: { kind: 'offsite' },
+    });
+    readModelAnswers([card, off]);
+    const db = dbReadOf(DB_SERVED);
+    const page = await makeShadow().serve('grid', INPUT, OPTS, db.read);
+    expect(db.calls()).toBe(0);
+    expect(page).toEqual({
+      items: [
+        {
+          id: 'al_alpha',
+          slug: 'alpha',
+          kind: 'onsite',
+          name: 'Name alpha',
+          tagline: 'Tagline alpha',
+          category: 'utility',
+          contentRating: 'pg',
+          iconUrl: 'https://img.invalid/alpha/icon-gated-by-read-model',
+          coverUrl: null,
+          creator: { id: 42, username: 'maker', image: null },
+          recommend: { recommendedCount: 3, notRecommendedCount: 1, recommendPct: 0.75 },
+          reviewCount: 4,
+          isBeta: false,
+          isOfficial: false,
+          openCount: 12,
+          updatedAt: '2026-04-01T10:20:30.000Z',
+          restrictedAudience: null,
+          kindData: {
+            kind: 'onsite',
+            appBlockId: 'ab_alpha',
+            hasPage: true,
+            liveUrl: 'https://alpha.apps.invalid',
+          },
+        },
+        {
+          id: 'al_offsite-x',
+          slug: 'offsite-x',
+          kind: 'offsite',
+          name: 'Name offsite-x',
+          tagline: 'Tagline offsite-x',
+          category: 'utility',
+          contentRating: 'pg',
+          iconUrl: 'https://img.invalid/offsite-x/icon',
+          coverUrl: 'https://img.invalid/offsite-x/cover',
+          creator: null,
+          recommend: { recommendedCount: 3, notRecommendedCount: 1, recommendPct: 0.75 },
+          reviewCount: 4,
+          isBeta: false,
+          isOfficial: true,
+          openCount: null,
+          restrictedAudience: null,
+          kindData: { kind: 'offsite', externalUrl: null },
+        },
+      ],
+    });
+    expect(await moved()).toEqual(['serve_requests_total{grid/served}:1']);
+  });
+
+  it.each([
+    // The media ceilings are the read model's (listingread.ProjectMedia), applied to the viewer
+    // the token names: it must be the viewer the database read would have gated for.
+    [
+      'a red-capable host, the viewer level',
+      { redCapable: true, viewerBrowsingLevel: 31 },
+      'red',
+      31,
+    ],
+    ['the main host, the same level', { redCapable: false, viewerBrowsingLevel: 31 }, 'main', 31],
+    [
+      'no host or level given: main, PG only',
+      { redCapable: undefined, viewerBrowsingLevel: undefined },
+      'main',
+      0,
+    ],
+  ] as const)(
+    'asked with the database read’s viewer, signed: %s',
+    async (_name, over, host, level) => {
+      readModelAnswers([rmCard(A)]);
+      await makeShadow().serve(
+        'rest_list',
+        { kind: 'offsite', category: 'utility', sort: 'popular', limit: 7, userId: 42 },
+        { ...OPTS, ...over, scope: 'public-external' },
+        dbReadOf(DB_SERVED).read
+      );
+      expect(calls).toHaveLength(1);
+      const { url, headers, timeoutMs } = calls[0];
+      expect(`${url.origin}${url.pathname}`).toBe('http://read-model.invalid/base/listings');
+      expect(Object.fromEntries(url.searchParams)).toEqual({
+        sort: 'popular',
+        limit: '7',
+        kind: 'offsite',
+        category: 'utility',
+        userId: '42',
+      });
+      const [, payload] = headers['X-App-Index-Viewer'].split('.');
+      expect(JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))).toEqual({
+        host,
+        level,
+        scope: 'public-external',
+        exp: NOW_MS / 1000 + 60,
+      });
+      // The serve timeout, not the shadow's.
+      expect(timeoutMs).toBe(250);
+    }
+  );
+
+  it("page 2: the database cursor's position is asked, and the next cursor comes back in the database's format", async () => {
+    decoded = {
+      cursorSortKey: '00000700000000000000000000120',
+      cursorId: 'apl_01J9Z3',
+      cursorMean: 0.625,
+    };
+    // The read model's own EncodeCursor output for (key2, apl_02, mean 0.5).
+    const rmNext = Buffer.from('rm2\x1fkey2\x1fapl_02\x1f0.5', 'utf8').toString('base64url');
+    readModelAnswers([rmCard(A)], rmNext);
+    const page = await makeShadow().serve(
+      'grid',
+      { ...INPUT, cursor: 'db-cursor' },
+      OPTS,
+      dbReadOf(DB_SERVED).read
+    );
+    expect(calls[0].url.searchParams.get('cursor')).toBe(
+      'cm0yHzAwMDAwNzAwMDAwMDAwMDAwMDAwMDAwMDAwMTIwH2FwbF8wMUo5WjMfMC42MjU'
+    );
+    expect(encoded).toEqual([['key2', 'apl_02', 0.5]]);
+    expect(page.nextCursor).toBe('db-cursor(key2|apl_02|0.5)');
+  });
+
+  it('the read-model cursor format, decoded (the literal is rank_test.go TestCursorVector)', () => {
+    expect(
+      decodeReadModelCursor('cm0yHzAwMDAwNzAwMDAwMDAwMDAwMDAwMDAwMDAwMTIwH2FwbF8wMUo5WjMfMC42MjU')
+    ).toEqual({ sortKey: '00000700000000000000000000120', id: 'apl_01J9Z3', mean: 0.625 });
+    expect(decodeReadModelCursor('cm0yH3BhaW50H2FwbF8wMUo5WjM')).toEqual({
+      sortKey: 'paint',
+      id: 'apl_01J9Z3',
+    });
+    const enc = (raw: string) => Buffer.from(raw, 'utf8').toString('base64url');
+    // Another version, a mean outside [0, 1], no id, too many fields: not a position.
+    expect(decodeReadModelCursor(enc('rm1\x1fk\x1fapl_1'))).toBeNull();
+    expect(decodeReadModelCursor(enc('v2\x1fk\x1fapl_1'))).toBeNull();
+    expect(decodeReadModelCursor(enc('rm2\x1fk\x1fapl_1\x1f1.5'))).toBeNull();
+    expect(decodeReadModelCursor(enc('rm2\x1fk\x1fapl_1\x1f'))).toBeNull();
+    expect(decodeReadModelCursor(enc('rm2\x1fk\x1f'))).toBeNull();
+    expect(decodeReadModelCursor(enc('rm2\x1fk\x1fapl_1\x1f0.5\x1fx'))).toBeNull();
+  });
+
+  it.each([
+    [
+      'a moderator, even at the public floor',
+      { viewer: { userId: 7, isModerator: true } },
+      'unsupported_viewer',
+    ],
+    ['a tester floor', { floor: 'testers' }, 'unsupported_viewer'],
+    ['a moderator floor', { floor: 'moderators' }, 'unsupported_viewer'],
+    ['a level that cannot be signed', { viewerBrowsingLevel: 64 }, 'unsupported_viewer'],
+    ['sub-listing cards asked for', { includeSubListings: true }, 'unsupported_input'],
+  ] as const)('user-facing only: %s is read from the database', async (_name, over, outcome) => {
+    readModelAnswers([rmCard(A)]);
+    const db = dbReadOf(DB_SERVED);
+    expect(await makeShadow().serve('grid', INPUT, { ...OPTS, ...over }, db.read)).toBe(DB_SERVED);
+    expect(db.calls()).toBe(1);
+    expect(calls).toEqual([]);
+    expect(await moved()).toEqual([`serve_requests_total{grid/${outcome}}:1`]);
+  });
+
+  it('positive control: a signed-in, non-moderator viewer at the public floor is served', async () => {
+    readModelAnswers([rmCard(A)]);
+    const db = dbReadOf(DB_SERVED);
+    const page = await makeShadow().serve(
+      'grid',
+      INPUT,
+      { ...OPTS, viewer: { userId: 7, isModerator: false } },
+      db.read
+    );
+    expect(page.items.map((c) => c.id)).toEqual(['al_alpha']);
+    expect(db.calls()).toBe(0);
+  });
+
+  it('🔴 a crafted cursor with an empty id is refused before the read model and its breaker', async () => {
+    let t = NOW_MS;
+    let transitions = 0;
+    const breaker = new IndexBreaker(
+      () => ({ threshold: 1, cooldownMs: 60_000 }),
+      () => t,
+      () => {
+        transitions++;
+      }
+    );
+    decoded = { cursorSortKey: 'k', cursorId: '', cursorMean: null };
+    const shadow = makeShadow({ breaker });
+    const db = dbReadOf(DB_SERVED);
+    for (let i = 0; i < 3; i++) {
+      await shadow.serve('grid', { ...INPUT, cursor: 'crafted' }, OPTS, db.read);
+    }
+    // Shadowed too: refused the same way.
+    config.sample = 1;
+    await shadow.shadow('grid', { ...INPUT, cursor: 'crafted' }, OPTS, { items: [A] }, 'shadow');
+    expect(calls).toEqual([]);
+    expect(db.calls()).toBe(3);
+    expect(transitions).toBe(0);
+    expect(await moved()).toEqual([
+      'serve_requests_total{grid/unsupported_input}:3',
+      'shadow_requests_total{grid/unsupported_input}:1',
+    ]);
+    // Positive control: a real position is asked of the read model.
+    config.sample = 0;
+    t += 1;
+    decoded = { cursorSortKey: 'k', cursorId: 'apl_01J9Z3', cursorMean: null };
+    readModelAnswers([rmCard(A)]);
+    await shadow.serve('grid', { ...INPUT, cursor: 'real' }, OPTS, db.read);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('the mode is resolved once per request: an explicit mode wins over the flag read', async () => {
+    readModelAnswers([rmCard(A)]);
+    let reads = 0;
+    const shadow = makeShadow({
+      mode: () => {
+        reads++;
+        return 'shadow';
+      },
+    });
+    const db = dbReadOf(DB_SERVED);
+    // The request resolved serve; the flag now says shadow (its cache expired in between).
+    const page = await shadow.serve('grid', INPUT, OPTS, db.read, 'serve');
+    expect(page.items.map((c) => c.id)).toEqual(['al_alpha']);
+    // The same request's shadow call sees serve too, so it never compares the page it served.
+    expect(shadow.shadow('grid', INPUT, OPTS, page, 'serve')).toBeUndefined();
+    expect(reads).toBe(0);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('a cursor after a sub-listing card, or no usable key: the database', async () => {
+    decoded = { cursorSortKey: 'k', cursorId: 'asl_01ARZ3NDEKTSV4RRFFQ69G5FAV', cursorMean: null };
+    const db = dbReadOf(DB_SERVED);
+    await makeShadow().serve('grid', { ...INPUT, cursor: 'db-cursor' }, OPTS, db.read);
+    config.key = KEY.slice(0, 31);
+    await makeShadow().serve('rest_list', INPUT, OPTS, db.read);
+    expect(db.calls()).toBe(2);
+    expect(calls).toEqual([]);
+    expect(await moved()).toEqual([
+      'serve_requests_total{grid/unsupported_input}:1',
+      'serve_requests_total{rest_list/unconfigured}:1',
+    ]);
+  });
+
+  it.each([
+    [
+      'a timeout',
+      () => Promise.reject(Object.assign(new Error('t'), { name: 'TimeoutError' })),
+      'timeout',
+    ],
+    ['a connection error', () => Promise.reject(new TypeError('fetch failed')), 'error'],
+    ['a 503', () => new Response('{}', { status: 503 }), 'not_ready'],
+    ['a 500', () => new Response('{}', { status: 500 }), 'error'],
+    ['a body that is not a page', () => Response.json({ results: [] }), 'bad_response'],
+    [
+      'an on-site card without its live url',
+      () =>
+        Response.json({
+          items: [
+            rmCard(A, { kindData: { kind: 'onsite', appBlockId: 'ab_alpha', hasPage: true } }),
+          ],
+        }),
+      'bad_response',
+    ],
+    [
+      'a card whose kind is not its kind data’s',
+      () => Response.json({ items: [rmCard(A, { kind: 'offsite' })] }),
+      'bad_response',
+    ],
+    [
+      'a next cursor that is not a read-model cursor',
+      () => Response.json({ items: [rmCard(A)], nextCursor: 'not-a-cursor' }),
+      'bad_response',
+    ],
+  ] as const)('%s: the database page instead, counted', async (_name, r, outcome) => {
+    reply = r;
+    const db = dbReadOf(DB_SERVED);
+    expect(await makeShadow().serve('rest_list', INPUT, OPTS, db.read)).toBe(DB_SERVED);
+    expect(db.calls()).toBe(1);
+    expect(await moved()).toEqual([`serve_requests_total{rest_list/${outcome}}:1`]);
+  });
+
+  it("the database read's own failure is the request's, as with the flag off", async () => {
+    reply = () => new Response('{}', { status: 500 });
+    await expect(
+      makeShadow().serve('grid', INPUT, OPTS, () => Promise.reject(new Error('db down')))
+    ).rejects.toThrow('db down');
+  });
+
+  it('a run of failures opens the breaker: the read model is not asked, the database answers', async () => {
+    reply = () => new Response('{}', { status: 500 });
+    const shadow = makeShadow();
+    const db = dbReadOf(DB_SERVED);
+    for (let i = 0; i < 3; i++) await shadow.serve('grid', INPUT, OPTS, db.read);
+    expect(calls).toHaveLength(2);
+    expect(db.calls()).toBe(3);
+    expect(await moved()).toEqual([
+      'serve_requests_total{grid/breaker_open}:1',
+      'serve_requests_total{grid/error}:2',
+    ]);
+  });
+
+  it('a served answer resets the failure count: failures must be consecutive to open it', async () => {
+    const shadow = makeShadow();
+    const db = dbReadOf(DB_SERVED);
+    reply = () => new Response('{}', { status: 500 });
+    await shadow.serve('grid', INPUT, OPTS, db.read);
+    readModelAnswers([rmCard(A)]);
+    await shadow.serve('grid', INPUT, OPTS, db.read);
+    reply = () => new Response('{}', { status: 500 });
+    await shadow.serve('grid', INPUT, OPTS, db.read);
+    readModelAnswers([rmCard(A)]);
+    const page = await shadow.serve('grid', INPUT, OPTS, db.read);
+    expect(page.items.map((c) => c.id)).toEqual(['al_alpha']);
+    expect(calls).toHaveLength(4);
+  });
+
+  describe('a served page compared with the database page', () => {
+    beforeEach(() => {
+      config.sample = 1;
+    });
+
+    it('the same page: compared, nothing differs', async () => {
+      readModelAnswers([rmCard(A), rmCard(B)], readModelCursor('k', 'al_bravo', null));
+      dbPage = { items: [A, B], nextCursor: 'db-next' };
+      const shadow = makeShadow();
+      await shadow.serve('grid', INPUT, OPTS, dbReadOf(DB_SERVED).read);
+      await shadow.servedComparison();
+      expect(dbPageCalls).toBe(1);
+      expect(logs).toEqual([]);
+      expect(await moved()).toEqual([
+        'compared_slugs_total{grid}:2',
+        'serve_requests_total{grid/served}:1',
+        'shadow_requests_total{grid/compared}:1',
+      ]);
+    });
+
+    it('a listing the database shows that the read model does not show this viewer: visibility_missing', async () => {
+      readModelAnswers([rmCard(A)]);
+      dbPage = { items: [A, B] };
+      const shadow = makeShadow();
+      await shadow.serve('rest_list', INPUT, OPTS, dbReadOf(DB_SERVED).read);
+      await shadow.servedComparison();
+      // Asked of the read model by slug, which does not admit bravo.
+      expect(calls.map((c) => c.url.searchParams.get('slugs'))).toEqual([null, 'bravo']);
+      expect(await moved()).toEqual([
+        'compared_slugs_total{rest_list}:2',
+        'mismatches_total{rest_list/visibility_missing}:1',
+        'serve_requests_total{rest_list/served}:1',
+        'shadow_requests_total{rest_list/compared}:1',
+      ]);
+      expect(logs).toEqual([
+        {
+          surface: 'rest_list',
+          visibilityMissing: ['bravo'],
+          visibilityExtra: [],
+          fields: {},
+          order: false,
+        },
+      ]);
+    });
+
+    it("the comparison's database read failing or stalling never touches the served answer or the breaker", async () => {
+      config.timeoutMs = 20;
+      readModelAnswers([rmCard(A)]);
+      const breaker = new IndexBreaker(
+        () => ({ threshold: 1, cooldownMs: 60_000 }),
+        () => NOW_MS,
+        () => undefined
+      );
+      const failing = makeShadow({ breaker, dbPage: () => Promise.reject(new Error('db down')) });
+      const page = await failing.serve('grid', INPUT, OPTS, dbReadOf(DB_SERVED).read);
+      expect(page.items.map((c) => c.id)).toEqual(['al_alpha']);
+      await failing.servedComparison();
+      const stalled = makeShadow({
+        breaker,
+        dbPage: () => new Promise<ListingPage>(() => undefined),
+      });
+      await stalled.serve('grid', INPUT, OPTS, dbReadOf(DB_SERVED).read);
+      await stalled.servedComparison();
+      expect(breaker.allow()).toBe(true);
+      expect(await moved()).toEqual([
+        'serve_requests_total{grid/served}:2',
+        'shadow_requests_total{grid/db_error}:1',
+        'shadow_requests_total{grid/db_timeout}:1',
+      ]);
+    });
+
+    it('sampled out: no comparison, no database read', async () => {
+      config.sample = 0;
+      readModelAnswers([rmCard(A)]);
+      const shadow = makeShadow();
+      await shadow.serve('grid', INPUT, OPTS, dbReadOf(DB_SERVED).read);
+      expect(shadow.servedComparison()).toBeUndefined();
+      expect(dbPageCalls).toBe(0);
+    });
+  });
+});
+
+describe('servedCardOf', () => {
+  it('an off-site card with no external url reads null; an on-site one needs hasPage and liveUrl', () => {
+    expect(
+      servedCardOf(rmCard(dbCard('o'), { kind: 'offsite', kindData: { kind: 'offsite' } }))
+        ?.kindData
+    ).toEqual({ kind: 'offsite', externalUrl: null });
+    expect(
+      servedCardOf(
+        rmCard(A, { kindData: { kind: 'onsite', appBlockId: null, liveUrl: 'https://x.invalid' } })
+      )
+    ).toBeNull();
+    expect(
+      servedCardOf(
+        rmCard(A, { kindData: { kind: 'onsite', appBlockId: null, hasPage: false, liveUrl: null } })
+      )
+    ).toBeNull();
+    // Positive control: with both, a native on-site card (no block) is servable.
+    expect(
+      servedCardOf(
+        rmCard(A, {
+          kindData: {
+            kind: 'onsite',
+            appBlockId: null,
+            hasPage: false,
+            liveUrl: 'https://x.invalid',
+          },
+        })
+      )?.kindData
+    ).toEqual({ kind: 'onsite', appBlockId: null, hasPage: false, liveUrl: 'https://x.invalid' });
   });
 });

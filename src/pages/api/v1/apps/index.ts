@@ -150,14 +150,21 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
         user,
       }),
     } satisfies ListAvailableListingsOpts;
-    const { items, nextCursor } = await listAvailableListings(parsed.data, listOpts);
-    // Behind `app-listings-read-model`: the same page asked of the listings read model, with the
-    // same options, off the response path. Never awaited, never throws into the request.
-    void import('~/server/services/blocks/app-listings-read-model-shadow.service')
-      .then(({ shadowListingPage }) =>
-        shadowListingPage('rest_list', parsed.data, listOpts, { items, nextCursor })
-      )
-      .catch(() => undefined);
+    // Behind `app-listings-read-model`. At `serve`, the page is read from the listings read model
+    // when it can answer this viewer, else from the database. At `shadow`, the page the database
+    // served is asked of the read model, with the same options, off the response path (never
+    // awaited, never throws into the request). A failure to load the module leaves the page on the
+    // database.
+    const readModel = await import(
+      '~/server/services/blocks/app-listings-read-model-shadow.service'
+    ).catch(() => null);
+    const dbRead = () => listAvailableListings(parsed.data, listOpts);
+    // Resolved once, so serving and shadowing cannot see two different answers.
+    const mode = readModel?.listingReadModelMode('rest_list');
+    const { items, nextCursor } = readModel
+      ? await readModel.serveListingPage('rest_list', parsed.data, listOpts, dbRead, mode)
+      : await dbRead();
+    readModel?.shadowListingPage('rest_list', parsed.data, listOpts, { items, nextCursor }, mode);
     const { nextPage } = getNextPage({ req, nextCursor });
     return res.status(200).json({
       items: items.map(withoutUndocumentedRestFields),

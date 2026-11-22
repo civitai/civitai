@@ -5,6 +5,7 @@ import { listingExtrasFromRow } from '~/server/registry-adapter/catalog-source.l
 import { streamForkOf } from '~/server/registry-adapter/catalog-source';
 import { listingBody, type CatalogApp } from '~/server/registry-adapter/entities';
 import type { ListingActionsRunSource } from '~/server/schema/blocks/app-listing-read.schema';
+import { actionsRunSourceBlockId } from '~/server/services/blocks/actions-run-source.service';
 import { resolveForkAttribution } from '~/server/services/blocks/app-fork.service';
 import {
   matureRatingAllowed,
@@ -124,6 +125,19 @@ const DETAIL_FIELDS = [
   'forkable',
 ] as const;
 
+describe('actionsRunSourceBlockId: the run is read only for an on-site listing with a block', () => {
+  it.each([
+    [{ kind: 'onsite', appBlockId: 'ab-on-7' }, 'ab-on-7'],
+    [{ kind: 'onsite', appBlockId: null }, null],
+    [{ kind: 'onsite', appBlockId: '' }, null],
+    // An off-site listing can carry a block; it has no submitted bundle, so no run is read.
+    [{ kind: 'offsite', appBlockId: 'ab-off-3' }, null],
+    [{ kind: 'offsite', appBlockId: null }, null],
+  ])('%o → %s', (listing, want) => {
+    expect(actionsRunSourceBlockId(listing)).toBe(want);
+  });
+});
+
 describe('listing detail parity (media-parity.json details): the site side', () => {
   it('the fixture covers both kinds, a fork with a gated parent, and a fork with none', () => {
     const kinds = new Set(DETAIL_SLUGS.map((s) => listingOf(s).kind));
@@ -158,10 +172,10 @@ describe('listing detail parity (media-parity.json details): the site side', () 
             return storeShows(v, parent.slug) ? { slug: parent.slug, name: parent.slug } : null;
           }
         );
-        // `getListingDetail` reads the run only for an on-site listing with a block.
+        // `getListingDetail` reads the run only for the block `actionsRunSourceBlockId` names.
         const served = withDetailReads(projected, {
           issueTrackerUrl: r.issueTrackerUrl,
-          actionsRunSource: row.appBlockId ? r.actionsRunSource : null,
+          actionsRunSource: actionsRunSourceBlockId(row) ? r.actionsRunSource : null,
           forkable: r.forkable,
           forkOf,
         });
@@ -207,7 +221,9 @@ describe('listing detail parity (media-parity.json details): the site side', () 
             isFork: r.fork.isFork,
             forkOfListingId: r.fork.parent ? listingOf(r.fork.parent).id : null,
           },
-          run: l.kind === 'onsite' && r.appBlockId ? r.actionsRunSource : null,
+          run: actionsRunSourceBlockId({ kind: l.kind, appBlockId: r.appBlockId })
+            ? r.actionsRunSource
+            : null,
         }
       );
       const { fork, ...rest } = extras;

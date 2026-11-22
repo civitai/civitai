@@ -164,12 +164,25 @@ export function publicActionsRunSource(
 }
 
 /**
+ * The block whose submitting run a listing's public detail shows, or null when none is read: the
+ * run is read only for an on-site listing with a block (an off-site listing has no submitted
+ * bundle, whatever block it carries). `getListingDetail` and the registry adapter's listing stream
+ * both decide by this.
+ */
+export function actionsRunSourceBlockId(listing: {
+  kind: string;
+  appBlockId: string | null;
+}): string | null {
+  return listing.kind === 'onsite' && listing.appBlockId ? listing.appBlockId : null;
+}
+
+/**
  * The run facts of the version an on-site app is SERVING, for its public store page: the approved
  * publish request whose platform commit is the block's current one (the link
  * `resolveLiveSourceCommit` uses), filtered to public repositories by {@link publicActionsRunSource}.
  * Null when the serving version has none, when the repository is not public, and on ANY error.
- * {@link readLiveActionsRunSourcesForBlocks} for that one block, so the store page and the registry
- * adapter's listing stream read it by one query.
+ * It calls {@link readLiveActionsRunSourcesForBlocks} for that one block, so the store page and the
+ * registry adapter's listing stream read it with the same query.
  */
 export async function readLiveActionsRunSourceForListing(
   db: ActionsRunReadClient,

@@ -678,6 +678,14 @@ export const serverSchema = z
       .min(50)
       .max(10_000)
       .default(1000),
+    // With the `app-listings-read-model` flag at its `serve` variant: how long a store grid or
+    // public REST list page waits for the read model before it is read from the database instead.
+    APP_LISTINGS_READ_MODEL_SERVE_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(50)
+      .max(5_000)
+      .default(400),
     // Debounce window (ms) for flushing model-metric-affected ids into the
     // model search-index update queue. The model metric processor runs every
     // minute and accumulates every model whose ModelVersionMetric.updatedAt
