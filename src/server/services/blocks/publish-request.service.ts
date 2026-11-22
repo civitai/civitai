@@ -3802,7 +3802,7 @@ async function approveRequestUnderClaim(
       // A1 fix — converge an already-existing app-block client to the
       // structurally-safe shape on this retry. This also self-heals any row
       // created by an earlier code version with the all-bits Full default and
-      // the inherited interactive grants. An operator-granted bit the row already holds is kept.
+      // the inherited interactive grants.
       await dbWrite.oauthClient.update({
         where: { id: oauthClientId },
         data: {
@@ -3932,12 +3932,12 @@ async function approveRequestUnderClaim(
       },
     });
     // A1 fix — keep the OauthClient ceiling in sync with the newly-approved
-    // manifest. Re-cap to the derived bitmask so the policy ceiling never
-    // exceeds what this version's manifest declares, and force grants:[] so an
+    // manifest. Re-cap to the derived bitmask (plus any operator-granted bit the
+    // client already holds, via appBlockOauthCeiling) so the ceiling does not
+    // exceed what this version's manifest declares, and force grants:[] so an
     // older row created before this fix (Full + interactive grants) is
     // self-healed on its next approve. This is byte-for-byte scoped to the
-    // app-block client (existingAppBlock.appId is the `appblk-<slug>` id). An operator-granted
-    // bit the client already holds (no manifest scope maps to it) is kept, not dropped.
+    // app-block client (existingAppBlock.appId is the `appblk-<slug>` id).
     await dbWrite.oauthClient.update({
       where: { id: existingAppBlock.appId },
       data: {
