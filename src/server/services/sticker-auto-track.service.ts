@@ -127,7 +127,7 @@ export async function getStickerAutoTrack({
       workflowId,
       userId,
       ...result,
-    }).catch(() => undefined);
+    });
     return { status: 'failed' };
   }
   return result;
