@@ -2563,7 +2563,7 @@ describe('a user app', () => {
         });
 
         // While user apps are mods-only every author is a moderator, so these authors are too.
-        describe("the author's own trips", () => {
+        describe("the author's own trips (the runner-trip hold, civitai/civitai#10060)", () => {
           const authorHeld = { code: 'PRECONDITION_FAILED', message: REMIX_AUTHOR_HELD };
           const author = flagOn({ id: OTHER_AUTHOR, isModerator: true });
           const runAsAuthor = () => runAs(OTHER_AUTHOR, { mod: true });
@@ -2635,7 +2635,9 @@ describe('a user app', () => {
               status: 'remix_disabled',
               manifest: { ...stored.manifest, runnerTrips: [aged] } as typeof stored.manifest,
             };
-            await expect(deleteRemixApp({ slug: 'u5-mine' })).rejects.toMatchObject({
+            await expect(
+              deleteRemixApp({ slug: 'u5-mine', moderatorId: 88 })
+            ).rejects.toMatchObject({
               code: 'FORBIDDEN',
               message: expect.stringContaining('runner trips'),
             });
@@ -2705,54 +2707,74 @@ describe('a user app', () => {
               [...rows.values()].flatMap(
                 (row) => (row.manifest as { runnerTrips?: string[] }).runnerTrips ?? []
               );
+            // The database as the trip sees it: its transaction holds a lock on the author's rows
+            // (FOR UPDATE), so a write outside it waits, then applies only if its read still holds.
+            let chain: Promise<unknown>;
+            const locked = <T>(fn: () => Promise<T>) => {
+              const run = chain.then(fn);
+              chain = run.catch(() => undefined);
+              return run;
+            };
+            const write = async ({
+              where,
+              data,
+            }: {
+              where: { id: string; manifest?: { equals: unknown } };
+              data: object;
+            }) => {
+              const row = [...rows.values()].find((r) => r.id === where.id);
+              if (
+                !row ||
+                (where.manifest &&
+                  JSON.stringify(row.manifest) !== JSON.stringify(where.manifest.equals))
+              )
+                return { count: 0 };
+              rows.set(row.blockId, { ...row, ...data } as typeof row);
+              return { count: 1 };
+            };
+            let onTripRead = async () => undefined;
             beforeEach(async () => {
               const { remixBlockId } = await import('~/server/services/remix-app-registry.service');
               rows = new Map(
                 names.map((name) => {
                   const row = rowOf();
-                  return [
-                    remixBlockId(`u5-${name}`),
-                    { ...row, id: `ab_${name}`, blockId: remixBlockId(`u5-${name}`) },
-                  ];
+                  const blockId = remixBlockId(`u5-${name}`);
+                  return [blockId, { ...row, id: `ab_${name}`, blockId }];
                 })
               );
-              dbMock.dbWrite.appBlock.findMany.mockImplementation(
-                async () => [...rows.values()] as never
-              );
+              chain = Promise.resolve();
+              onTripRead = async () => undefined;
+              const findMany = async () => [...rows.values()];
+              dbMock.dbWrite.appBlock.findMany.mockImplementation(findMany as never);
               dbMock.dbWrite.appBlock.findUnique.mockImplementation(
                 (async ({ where }: { where: { blockId: string } }) =>
                   rows.get(where.blockId) ?? null) as never
               );
-              // Conditional on the manifest read, as the real write is.
-              dbMock.dbWrite.appBlock.updateMany.mockImplementation((async ({
-                where,
-                data,
-              }: {
-                where: { id: string; manifest: { equals: unknown } };
-                data: object;
-              }) => {
-                const row = [...rows.values()].find((r) => r.id === where.id);
-                if (!row || JSON.stringify(row.manifest) !== JSON.stringify(where.manifest.equals))
-                  return { count: 0 };
-                rows.set(row.blockId, { ...row, ...data } as typeof row);
-                return { count: 1 };
-              }) as never);
-              // Redis as a lock needs it: SET NX refuses a held key, and the release deletes it.
-              redisMock.redis.set.mockImplementation((async (
-                key: string,
-                value: string,
-                opts?: { NX?: boolean }
-              ) => {
-                if (opts?.NX && h.sys.has(key)) return null;
-                h.sys.set(key, value);
-                return 'OK';
-              }) as never);
-              redisMock.redis.eval.mockImplementation((async (
-                _script: string,
-                { keys: [key], arguments: [value] }: { keys: string[]; arguments: string[] }
-              ) => (h.sys.get(key) === value ? Number(h.sys.delete(key)) : 0)) as never);
+              dbMock.dbWrite.appBlock.updateMany.mockImplementation(((
+                args: Parameters<typeof write>[0]
+              ) => locked(() => write(args))) as never);
+              dbMock.dbWrite.$transaction.mockImplementation(((
+                fn: (tx: unknown) => Promise<unknown>
+              ) =>
+                locked(() =>
+                  fn({
+                    $queryRaw: async () => [],
+                    appBlock: {
+                      findMany: async () => {
+                        await onTripRead();
+                        return findMany();
+                      },
+                      updateMany: write,
+                    },
+                  })
+                )) as never);
               await bumpRemixAppRegistry();
               quarantine(true);
+            });
+            afterEach(() => {
+              dbMock.dbWrite.$transaction.mockReset();
+              dbMock.dbWrite.$transaction.mockImplementation(((fn: (tx: unknown) => unknown) =>
+                fn(dbMock.dbWrite)) as never);
             });
             const runOn = (name: string) =>
               startRemixRun({
@@ -2775,29 +2797,78 @@ describe('a user app', () => {
               ).toContain(REMIX_AUTHOR_HELD);
             });
 
-            const lockKey = async (key: string) => {
-              const { REDIS_KEYS } = await import('~/server/redis/client');
-              return `${REDIS_KEYS.CACHE_LOCKS}:${key}`;
-            };
-            const tried = (key: string) =>
-              redisMock.redis.set.mock.calls.filter(([k]: unknown[]) => k === key).length;
-
-            it("count one landing while the author's save holds its lock", async () => {
-              const saveLock = await lockKey('remix-user-apps:5');
-              h.sys.set(saveLock, 'a save');
+            it("count one while the author's own write changes its row on every read", async () => {
+              const { setRemixAppEnabled } = await import(
+                '~/server/services/remix-app-registry.service'
+              );
+              const writes: Promise<unknown>[] = [];
+              onTripRead = async () => {
+                writes.push(
+                  setRemixAppEnabled({ slug: 'u5-one', enabled: false, moderatorId: OTHER_AUTHOR })
+                );
+              };
               await expect(runOn('one')).rejects.toMatchObject(unavailable);
+              await Promise.allSettled(writes);
+              expect(writes.length).toBeGreaterThan(0);
               expect(tripsOf()).toHaveLength(1);
-              expect(h.sys.get(saveLock)).toBe('a save');
             });
 
-            it('count one whose own lock cannot be had', async () => {
-              const tripLock = await lockKey('remix-author-trips:5');
-              h.sys.set(tripLock, 'someone else');
+            it('land a trip on another of their apps when the tripping one is gone', async () => {
+              onTripRead = async () => {
+                rows.delete([...rows.keys()][0]);
+              };
               await expect(runOn('one')).rejects.toMatchObject(unavailable);
               expect(tripsOf()).toHaveLength(1);
-              // It did try that lock, and never had it.
-              expect(tried(tripLock)).toBeGreaterThan(1);
-              expect(h.sys.get(tripLock)).toBe('someone else');
+            });
+
+            it('hold the author even when the registry bump after the write fails', async () => {
+              const { REDIS_KEYS } = await import('~/server/redis/client');
+              const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+              const [first] = [...rows.values()];
+              rows.set(first.blockId, {
+                ...first,
+                manifest: { ...first.manifest, runnerTrips: [recent, recent] },
+              } as typeof first);
+              onTripRead = async () => {
+                redisMock.redis.set.mockImplementation((async (key: string, value: string) => {
+                  if (key === REDIS_KEYS.REMIX_APP.REGISTRY_GENERATION)
+                    throw new Error('redis down');
+                  h.sys.set(key, value);
+                  return 'OK';
+                }) as never);
+              };
+              await expect(runOn('two')).rejects.toMatchObject(authorHeld);
+              expect(held()).toHaveLength(1);
+              expect(vi.mocked(logToAxiom)).not.toHaveBeenCalledWith(
+                expect.objectContaining({
+                  message: 'Could not record an author runner trip; refused as held',
+                })
+              );
+            });
+
+            it('refuse the call as held when the trip cannot be written, and log it', async () => {
+              dbMock.dbWrite.$transaction.mockRejectedValue(new Error('db down'));
+              await expect(runOn('one')).rejects.toMatchObject(authorHeld);
+              expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+                expect.objectContaining({
+                  type: 'error',
+                  message: 'Could not record an author runner trip; refused as held',
+                })
+              );
+            });
+
+            it('refuse the author a delete of the app whose trip is in flight, and count the trip', async () => {
+              const { deleteRemixApp } = await import(
+                '~/server/services/remix-app-registry.service'
+              );
+              let deleted: Promise<unknown> | undefined;
+              onTripRead = async () => {
+                deleted ??= deleteRemixApp({ slug: 'u5-one', moderatorId: OTHER_AUTHOR });
+              };
+              await expect(runOn('one')).rejects.toMatchObject(unavailable);
+              await expect(deleted).rejects.toMatchObject({ code: 'FORBIDDEN' });
+              expect(dbMock.dbWrite.appBlock.deleteMany).not.toHaveBeenCalled();
+              expect(tripsOf()).toHaveLength(1);
             });
           });
 
@@ -2824,6 +2895,82 @@ describe('a user app', () => {
               authorHeld
             );
             expect(calls).toBe(1);
+          });
+
+          it("are never another moderator's: their dry run of the app records no trip and no hold", async () => {
+            const { validateUserRemixApp } = await import(
+              '~/server/services/remix-app-registry.service'
+            );
+            const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+            stored = {
+              ...stored,
+              manifest: { ...stored.manifest, runnerTrips: [recent, recent] },
+            } as typeof stored;
+            quarantine(true);
+            const result = await validateUserRemixApp('u5-mine', 88);
+            expect(result.issues.length).toBeGreaterThan(0);
+            expect(stored.manifest).toMatchObject({ runnerTrips: [recent, recent] });
+            expect(stored.manifest).not.toHaveProperty('runnerHold');
+            // Nor any count at all: a mod's dry run is review, not a viewer's run.
+            expect(stored.manifest).not.toHaveProperty('runnerQuarantines');
+          });
+
+          it('end a dry run with branches at the hold, with no runner call after it', async () => {
+            const { validateUserRemixApp } = await import(
+              '~/server/services/remix-app-registry.service'
+            );
+            const TREE = `export default defineRemixApp({ async run(ctx) {
+  await ctx.ask({ kind: 'choice', prompt: 'A?', options: [{ value: 'x', label: 'X' }, { value: 'y', label: 'Y' }] });
+  await ctx.ask({ kind: 'choice', prompt: 'B?', options: [{ value: 'p', label: 'P' }, { value: 'q', label: 'Q' }] });
+  return [];
+} });`;
+            const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+            stored = {
+              ...stored,
+              manifest: {
+                ...stored.manifest,
+                remix: { ...stored.manifest.remix, source: TREE },
+                runnerTrips: [recent, recent],
+              },
+            } as typeof stored;
+            await bumpRemixAppRegistry();
+            const tree = fakeRemixRunner({
+              secret: SECRET,
+              apps: {
+                [createHash('sha256').update(TREE).digest('hex')]: {
+                  async run(ctx) {
+                    const options = (a: string, b: string) => [
+                      { value: a, label: a },
+                      { value: b, label: b },
+                    ];
+                    await ctx.ask({ kind: 'choice', prompt: 'A?', options: options('x', 'y') });
+                    await ctx.ask({ kind: 'choice', prompt: 'B?', options: options('p', 'q') });
+                    return [];
+                  },
+                },
+              },
+            });
+            const trip = fakeRemixRunner({
+              secret: SECRET,
+              apps: {},
+              quarantined: { tripped: true },
+            });
+            let calls = 0;
+            let afterHold = 0;
+            let tripped = false;
+            vi.stubGlobal('fetch', (async (url: string, init: RequestInit) => {
+              calls++;
+              // The base, then A's two options: both lead on to B, one subtree each.
+              if (calls <= 2) return tree.fetchImpl(url, init);
+              if (tripped) afterHold++;
+              tripped = true;
+              return trip.fetchImpl(url, init);
+            }) as unknown as typeof fetch);
+            await expect(validateUserRemixApp('u5-mine', OTHER_AUTHOR)).rejects.toMatchObject(
+              authorHeld
+            );
+            expect(calls).toBe(3);
+            expect(afterHold).toBe(0);
           });
 
           it("count with the author's trips on their other apps, for a day", async () => {
@@ -2857,7 +3004,9 @@ describe('a user app', () => {
             // A trip inside the day bars deleting its row, held or not.
             const { deleteRemixApp } = await import('~/server/services/remix-app-registry.service');
             stored = { ...stored, status: 'remix_disabled' };
-            await expect(deleteRemixApp({ slug: 'u5-mine' })).rejects.toMatchObject({
+            await expect(
+              deleteRemixApp({ slug: 'u5-mine', moderatorId: 88 })
+            ).rejects.toMatchObject({
               code: 'FORBIDDEN',
               message: expect.stringContaining('runner trips'),
             });

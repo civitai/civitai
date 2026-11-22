@@ -60,6 +60,11 @@ const remixAppBuilderProcedure = guardedProcedure
   .use(isFlagProtected('remixAppBuilder'));
 
 /** A user app's row is only acted on with its flag, like its review. */
+/** A user app's author check compares the session's user id, which an impersonation replaces. */
+function assertUserAppNotImpersonating(slug: string, ctx: { impersonatedBy?: number | null }) {
+  if (USER_REMIX_SLUG.test(slug)) assertNotImpersonating(ctx);
+}
+
 function assertUserCodeAccess(slug: string, features: { remixAppsUserCode?: boolean }) {
   if (USER_REMIX_SLUG.test(slug) && !features.remixAppsUserCode)
     throw new TRPCError({ code: 'FORBIDDEN', message: 'User remix apps are not enabled for you' });
@@ -129,13 +134,15 @@ const remixAppAdminRouter = router({
     .input(z.object({ slug: remixAppSlugSchema, enabled: z.boolean() }))
     .mutation(({ ctx, input }) => {
       assertUserCodeAccess(input.slug, ctx.features);
+      assertUserAppNotImpersonating(input.slug, ctx);
       return setRemixAppEnabled({ ...input, moderatorId: ctx.user.id });
     }),
   delete: remixAppAdminProcedure
     .input(z.object({ slug: remixAppSlugSchema }))
     .mutation(({ ctx, input }) => {
       assertUserCodeAccess(input.slug, ctx.features);
-      return deleteRemixApp(input);
+      assertUserAppNotImpersonating(input.slug, ctx);
+      return deleteRemixApp({ ...input, moderatorId: ctx.user.id });
     }),
   /** Approves or rejects the source whose hash the mod read. */
   review: userCodeReviewProcedure
@@ -159,7 +166,10 @@ const remixAppAdminRouter = router({
   validate: userCodeReviewProcedure
     .use(runStepRateLimit)
     .input(z.object({ slug: remixAppSlugSchema }))
-    .mutation(({ ctx, input }) => validateUserRemixApp(input.slug, ctx.user.id)),
+    .mutation(({ ctx, input }) => {
+      assertNotImpersonating(ctx);
+      return validateUserRemixApp(input.slug, ctx.user.id);
+    }),
   /** Lifts a minor-themed mark; refused to the moderator who set it. */
   clearMinorThemed: userCodeReviewProcedure
     .input(z.object({ slug: remixAppSlugSchema }))
@@ -189,8 +199,9 @@ const remixAppAdminRouter = router({
         quote: quote.optional(),
       })
     )
-    .mutation(async ({ ctx, input: { slug, imageId, nonce, answers, quote } }) =>
-      startRemixRun({
+    .mutation(async ({ ctx, input: { slug, imageId, nonce, answers, quote } }) => {
+      assertUserAppNotImpersonating(slug, ctx);
+      return startRemixRun({
         slug,
         imageId,
         nonce,
@@ -198,8 +209,8 @@ const remixAppAdminRouter = router({
         quote,
         caller: await getCaller(ctx),
         allowDisabled: true,
-      })
-    ),
+      });
+    }),
 });
 
 export const remixAppRouter = router({
