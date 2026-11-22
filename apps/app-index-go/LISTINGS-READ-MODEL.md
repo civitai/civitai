@@ -395,9 +395,9 @@ Each step is reversible by undoing it; nothing before the flag changes what any 
    it needs (Rollout, slice 2), and its first listings generation is serving.
 3. The viewer key on both sides: the same secret of at least 32 bytes as `APP_INDEX_VIEWER_KEY` on
    app-index-go and on the site. `APP_INDEX_URL` is already set on the site for search.
-4. The `app-listings-read-model` flag at `shadow`. The flag lives in the Flipt state repository
-   (not in this repo). Its shape is in Cutover flags; the boolean it first shipped as still reads
-   as `shadow` when on.
+4. The `app-listings-read-model` flag created, as a variant flag (variants `shadow` and `serve`;
+   Cutover flags), and set to `shadow`. The flag lives in the Flipt state repository, not in this
+   repo; until it exists every page is read from the database.
 5. Per surface, once the gate above passes for it: the flag at `serve` for that surface (a rule on
    the `surface` context, `grid` or `rest_list`). Back to `shadow` is the rollback.
 
@@ -415,13 +415,12 @@ The `app-listings-read-model` flag is a variant flag, evaluated per request surf
 entity with the context `surface` (`grid` or `rest_list`), at most once per 5 s per process per
 surface (`readReadModelMode`):
 
-| Answer                                                | Mode                  |
-| ----------------------------------------------------- | --------------------- |
-| variant `serve`                                       | `serve`               |
-| variant `shadow`                                      | `shadow`              |
-| any other variant, no rule matched, the flag disabled | `database`            |
-| the flag absent, or Flipt not ready                   | `database`            |
-| a boolean flag (the slice 4 shape): on / off          | `shadow` / `database` |
+| Answer                                                  | Mode       |
+| ------------------------------------------------------- | ---------- |
+| variant `serve`                                         | `serve`    |
+| variant `shadow`                                        | `shadow`   |
+| any other variant, no rule matched, the flag disabled   | `database` |
+| the flag absent, not a variant flag, or Flipt not ready | `database` |
 
 `database` reads every page from the database and asks the read model nothing. Serving has no
 switch of its own: `serve` is the one way in, and any unknown answer is the database.

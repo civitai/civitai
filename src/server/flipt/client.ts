@@ -305,8 +305,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // The store grid's and the public REST list's reads of the app store's listings read model
   // (app-index-go `GET /listings`). Variant: `shadow` (serve the database, compare off the response
   // path) | `serve` (serve the read model where it can answer, the database otherwise); any other
-  // answer, a missing flag included, is the database alone. A boolean flag, as first shipped, is
-  // still read: on is `shadow`. Global, read at most once per 5s per process; also needs
+  // answer, a missing flag included, is the database alone. Evaluated for the global entity with
+  // the context `surface` (`grid` | `rest_list`), at most once per 5s per process; also needs
   // APP_INDEX_URL and APP_INDEX_VIEWER_KEY. See `readReadModelMode` in
   // `src/server/services/blocks/app-listings-read-model-shadow.service.ts`.
   APP_LISTINGS_READ_MODEL = 'app-listings-read-model',

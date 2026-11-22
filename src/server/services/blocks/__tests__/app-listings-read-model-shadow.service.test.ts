@@ -734,14 +734,12 @@ describe("the flag's mode", () => {
   /** Flag reads that answer as given, recording which were made. */
   function flagReads(answers: {
     override?: string;
-    boolean?: boolean | null;
     ready?: boolean;
     variant?: { match: boolean; variantKey: string | null } | null;
   }) {
     const made: string[] = [];
     const reads: ReadModelFlagReads = {
       override: () => (made.push('override'), answers.override),
-      boolean: () => (made.push('boolean'), answers.boolean ?? null),
       ready: () => (made.push('ready'), answers.ready ?? true),
       variant: () => (made.push('variant'), answers.variant ?? null),
     };
@@ -758,7 +756,7 @@ describe("the flag's mode", () => {
   ] as const)('a variant flag answering %j is %s', (variantKey, want) => {
     const { reads, made } = flagReads({ variant: { match: true, variantKey } });
     expect(readReadModelMode(reads)).toBe(want);
-    expect(made).toEqual(['override', 'boolean', 'ready', 'variant']);
+    expect(made).toEqual(['override', 'ready', 'variant']);
   });
 
   it('a variant flag that matched no rule (or is disabled) is the database', () => {
@@ -767,30 +765,22 @@ describe("the flag's mode", () => {
     ).toBe('database');
   });
 
-  it('a boolean flag can only shadow: on is shadow, off is database, and the variant is never read', () => {
-    const on = flagReads({ boolean: true });
-    expect(readReadModelMode(on.reads)).toBe('shadow');
-    expect(on.made).toEqual(['override', 'boolean']);
-    const off = flagReads({ boolean: false, variant: { match: true, variantKey: 'serve' } });
-    expect(readReadModelMode(off.reads)).toBe('database');
-    expect(off.made).toEqual(['override', 'boolean']);
-  });
-
-  it('absent, or Flipt not ready: the database', () => {
+  it('absent (or not a variant flag), or Flipt not ready: the database', () => {
     expect(readReadModelMode(flagReads({}).reads)).toBe('database');
     const notReady = flagReads({ ready: false, variant: { match: true, variantKey: 'serve' } });
     expect(readReadModelMode(notReady.reads)).toBe('database');
-    expect(notReady.made).toEqual(['override', 'boolean', 'ready']);
+    expect(notReady.made).toEqual(['override', 'ready']);
   });
 
   it.each([
-    ['on', 'shadow'],
+    // `on` is not a variant: no boolean reading of this flag exists.
+    ['on', 'database'],
     ['shadow', 'shadow'],
     ['serve', 'serve'],
     ['off', 'database'],
     ['bogus', 'database'],
   ] as const)('a local override %j is %s, and nothing else is read', (override, want) => {
-    const { reads, made } = flagReads({ override, boolean: true });
+    const { reads, made } = flagReads({ override, variant: { match: true, variantKey: 'serve' } });
     expect(readReadModelMode(reads)).toBe(want);
     expect(made).toEqual(['override']);
   });

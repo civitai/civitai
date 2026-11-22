@@ -36,7 +36,6 @@ import {
   getFliptClientSync,
   getFliptLocalOverride,
   getFliptVariantDetailSync,
-  isFliptSync,
 } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import type {
@@ -78,8 +77,6 @@ export function readModelModeOfVariant(variantKey: string | null | undefined): R
 export type ReadModelFlagReads = {
   /** A `FLIPT_LOCAL_OVERRIDES` value for the flag (never set in production). */
   override: () => string | undefined;
-  /** The flag as a boolean flag; null when it is not one, absent, or Flipt is not ready. */
-  boolean: () => boolean | null;
   /** Whether the Flipt client can evaluate (starting it when it cannot). */
   ready: () => boolean;
   /** The flag as a variant flag; null when it is not one or absent. */
@@ -87,20 +84,13 @@ export type ReadModelFlagReads = {
 };
 
 /**
- * The flag's mode. A variant flag names it: `shadow` or `serve`, and anything else (no rule
- * matched, the flag disabled, an unknown variant) is `database`. A boolean flag, the shape slice 4
- * shipped with, can only shadow: on is `shadow`, off is `database`. Absent, or Flipt not ready, is
- * `database`. A boolean evaluation of a variant flag (and the reverse) fails in the Flipt engine, so
- * at most one of the two reads answers; the boolean one is asked first because it is the flag's
- * shape today, and a variant read of a boolean flag logs an evaluation error.
+ * The flag's mode. The flag is a variant flag whose variant names it: `shadow` or `serve`. Anything
+ * else (no rule matched, the flag disabled, an unknown variant, the flag absent or not a variant
+ * flag, Flipt not ready) is `database`. A local override is read as a variant key.
  */
 export function readReadModelMode(reads: ReadModelFlagReads): ReadModelMode {
   const override = reads.override();
-  if (override !== undefined) {
-    return override === 'on' ? 'shadow' : readModelModeOfVariant(override);
-  }
-  const on = reads.boolean();
-  if (on !== null) return on ? 'shadow' : 'database';
+  if (override !== undefined) return readModelModeOfVariant(override);
   if (!reads.ready()) return 'database';
   const detail = reads.variant();
   return detail?.match ? readModelModeOfVariant(detail.variantKey) : 'database';
@@ -873,7 +863,6 @@ function readFlagMode(surface: ReadModelSurface): ReadModelMode {
   const context = { surface };
   return readReadModelMode({
     override: () => getFliptLocalOverride(flag),
-    boolean: () => isFliptSync(flag, 'global', context),
     ready: () => {
       if (getFliptClientSync()) return true;
       void ensureFliptInitialized().catch(() => undefined);
