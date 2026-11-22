@@ -215,10 +215,13 @@ private ones, and `MAX_STREAMS` bounds a replica. So the board is split by who i
   `doc-store.ts:4489-4493`) and re-ratings to another bit arrive as `Delete`s (and an `Upsert` on the
   new bit's stream). It never carries an author, a viewer's marks, or an unrated document.
 - **With content levels off for the app** (the flag `app-blocks-shared-doc-levels`, read per app;
-  an unreadable flag counts as on, `doc-levels.ts:6-9`), documents carry no level, and the feed's
-  `docLevels` switch leaves the level gate out (`doc-feed.ts:103-108`). There is then **one** stream,
-  every visible document, and every viewer reads it. A flip of the flag re-reads in full, as a resume
-  across a flip already does (`doc-feed.ts:137-141`).
+  an unreadable flag counts as on, `doc-levels.ts:38-41`), the feed's `docLevels` switch leaves the
+  level gate out (`doc-feed.ts:103-108`), and there is **one** stream of every visible document: the
+  subscription that names `level: none` in `meta`. **The adapter is authoritative for the mode:** every
+  level stream names it (`levels: on|off`) in its `Live` and `Progress` `meta`, and the adapter **ends**
+  a `level: none` subscription when levels are on for the app (an unreadable flag included). On that
+  end, or a `levels: on` in any stream's `meta`, app-data-go stops serving the single stream and fails
+  closed to the per-bit shape; a per-bit stream naming `levels: off` switches it back.
 - **A per-viewer stream per (token, collection major)**, read under the viewer's exchanged token like
   the private streams. It carries only what differs for that viewer: their marks on the collection's
   documents, the keys they authored, and their own documents no level stream gives them (unrated,
@@ -226,8 +229,11 @@ private ones, and `MAX_STREAMS` bounds a replica. So the board is split by who i
   author arm, `doc-store.ts:771-777`). Its `Live` names the viewer's **level mask**, decided by the
   adapter.
 
-A read is answered by the **union** of the level streams whose bits are in the viewer's mask (disjoint,
-so no duplicates), plus the viewer's own extra documents, ordered by key, with `viewer.marks` and
+A read is answered by the **union** of the level streams whose bits are in the viewer's mask, plus the
+viewer's own extra documents, ordered by key and **deduplicated by key, keeping the higher `seq`** (a
+re-rating moves a document between bits, and the two streams may briefly both hold it). Counter
+documents (`author_kind = 'counter'`, visible at every level, `doc-store.ts:773`) are carried on one
+designated stream of their own, which every viewer reads, with `viewer.marks` and
 `author.isViewer` filled from the per-viewer stream. Signed-out viewers use the level streams alone
 ("Signed-out viewers").
 
@@ -260,20 +266,24 @@ would refuse every user (its predicate admits the app's rating against the held 
 `private-feed.ts:312-322`). **Chosen: forward the edge's region.** app-data-go copies the region
 values the edge set on the viewer's request (the edge sets them and strips any a client sent; this
 service never reads a client's) onto the subscription it opens for that viewer, as the adapter's
-region headers. A viewer's streams are keyed by token and region, so a viewer whose region changes
-opens new ones. Level streams are read as a service, which has no region; the region hold reaches a
+region headers. **Precondition:** app-data-go is reachable only through the edge, which strips
+client-sent region headers; otherwise region forwarding is off and the SFW hold applies. A viewer's
+streams are keyed by token and region, so a viewer whose region changes opens new ones. The exact mask is
+ANDed with the region hold. Level streams are read as a service, which has no region; the region hold reaches a
 viewer through the mask the per-viewer stream names.
 
 **Authorization stays the origin's.** The level streams hold content only; the per-viewer stream is
 the gate. A signed-in viewer is served level streams only while their per-viewer stream is open and
 its latest `Live` or `Progress` named a mask. **A refusal is explicit:** when the adapter stops
 admitting the viewer (a revoked install, a withdrawn grant, a refused predicate), the per-viewer stream
-sends a `Progress` whose `meta` names no mask, or ends; it never just goes quiet or sends `Delete`s
-only. This is an adapter change: the private feed today answers a refusal with `nothing()`, deletes on
+sends a `Progress` whose `meta` names no mask; it never just goes quiet or sends `Delete`s only. This is an adapter change: the private feed today answers a refusal with `nothing()`, deletes on
 the next poll and keeps the stream open (`private-feed.ts:303-310`, `:404-420`), so a level-stream read would
 otherwise outlive a revoked install by up to the exchanged token's 15 minutes. On that signal
 app-data-go drops the viewer from every level stream at once and answers their reads `401 refused`,
-as REST refuses them. app-data-go never decides a signed-in viewer's level itself.
+as REST refuses them; a later `Progress` naming a mask re-admits them on the same token. Anything else
+is not a refusal: a stream that **ends**, and a resolution failure (a schema that does not resolve, an
+app or collection that no longer matches, `private-feed.ts:306-307`, `:333-334`), stop serving and
+answer `503` while the stream is reopened. app-data-go never decides a signed-in viewer's level itself.
 
 **Feed routing.** The adapter routes by schema and token:
 
@@ -300,14 +310,18 @@ stream re-snapshots. A level stream's state binds its bit.
 **Size, count and alert.** The level streams partition the board, so together they hold it once.
 Before cutover, the board's size in records and bytes, read from the store, per level bit and in
 total, must fit the level-stream bound with headroom, and the per-viewer streams' count per replica must
-fit `MAX_STREAMS` with the private streams beside them. An alert fires when any level stream passes 75%
+fit `MAX_STREAMS` with the private streams beside them, and (the level-stream bound × the streams per
+major × the collection's majors) plus (`MAX_STREAMS` × the raised private bound) fits the pod's memory
+limit with headroom. An alert fires when any level stream passes 75%
 of its bound, or the open-stream gauge passes 75% of `MAX_STREAMS`.
 
 **The bound is at least the app's own read.** The app reads at most 2,000 board rows (100 per page, 20
 pages, `src/App.tsx:415-420`), and decides "truncated" only by running out of pages with a cursor left
 (`:4276-4300`); its store layer drops any server-side flag (`src/lib/records-store.ts:233-239`). So the
-level-stream bound is set **at or above 2,000 records** per stream (and the measured bytes). A board
-past the bound keeps each level stream's newest documents by key up to the bound; since the app's own
+level-stream bound is set **strictly above 2,000 records** per stream (and the measured bytes), so a
+truncated stream always holds the app's last page and a next cursor past it. A board past the bound
+keeps each level stream's newest documents by key up to the bound, and a delete or re-rating inside the
+window backfills the next-newest document from beyond it; since the app's own
 read is the newest 2,000 of the union, and the newest 2,000 of a union lie within the newest 2,000 of
 each part, the app's list answers are unchanged. A keyed `get` of a document outside the window, and so
 an `update` of one (a `get` then a `put`, `records-store.ts:248-262`), answers `503 too_large`. There is
@@ -333,7 +347,9 @@ anonymous viewer, and serves signed-out viewers from them. Registry-only.
   refusal. It then requires that the path's slug is the token's `blockId` (the slug the token was
   minted for; `appId` is the OAuth client's id, `block-scope.middleware.ts:83-90`), and that the
   token's `appBlockId` is the slug's approved production block, which each level stream's `Live` names
-  (`meta`, from the adapter's own resolution). It is **never sent to the hub**: there is no user to
+  (`meta`, from the adapter's own resolution). No install revocation is checked on this path: a
+signed-out view is the public view, and the approved-block check covers an unpublished or switched
+block. It is **never sent to the hub**: there is no user to
   exchange for.
 - **What a signed-out viewer gets:** the level bits in `resolveViewerBrowsingLevel` of that token's own
   claims, which is the public levels within the host's ceiling. It is never wider than the request's
@@ -367,8 +383,9 @@ fail as "changed". Instead:
   mark-sequence row, (2) `usage_app`, (3) the caller's `usage_user`. A mark or unmark, and an increment
   of an existing document, take (1) `KEY SHARE`, (1b), (1c) and nothing after. An increment that
   creates its counter document takes (1), (1b), (1c), then (2) and (3) for the create's accounting
-  (`doc-store.ts:2530-2552`). A document write takes (1), (1b) where it has tallies, (2), (3), and
-  never (1c). Every transaction takes them in that order, so no cycle can form;
+  (`doc-store.ts:2530-2552`), so it holds (1c) while it waits on `usage_app`. A document write takes
+  (1), (1b) where it has tallies, (2), (3), and never (1c). Every transaction takes them in that order,
+  so no cycle can form. The cost: one (1c) row per app serializes every vote of the app;
 - `doc.seq`, moderation's revision and the rater's binding are untouched.
 
 **The heads.** Every stream, private, level and per-viewer, carries two heads on `Live` and on each
@@ -384,7 +401,8 @@ counts `report` marks too, so it discloses report volume, which the tallies them
 (`doc-store.ts:691-700`) selects neither, and `delete` returns only `{deleted}` (`doc-store.ts:2440-2480`).
 So: `create` and `put` return `seq` and `record_id`; `delete` returns `{deleted: true, seq}`
 (`{deleted: false}` has no `seq`, wrote no tombstone, and the cache applies nothing); `mark`, `unmark`
-and `increment` take and return the mark sequence; `publishCopies` and `unpublishCopies` return each
+and `increment` take and return the mark sequence (an increment that creates its counter document
+returns its `seq` as well); `publishCopies` and `unpublishCopies` return each
 key's `seq` (they already number them, `SQL_CHARGE_APP_SEQS`, `doc-store.ts:1434-1446`). The public
 route's `presentDocs` exposes none of these.
 
@@ -399,8 +417,10 @@ level and per-viewer streams carry their sequences from the start; every stream 
 - a **record overlay** per key: the record a create or put answered (with `version`, `createdAt`,
   `updatedAt`, `seq`), or a **delete marker** at the tombstone's `seq`;
 - a **count overlay** per (key, counted mark or counter): the `count` a mark, unmark or increment
-  answered, at its `markSeq` M. It comes from the level stream, so it is dropped once that level
-  stream's mark head is ≥ M;
+  answered, at its `markSeq` M, dropped once the mark head of the stream carrying that document is
+  ≥ M. Heads are app-wide, so for the viewer's own pending document that is the per-viewer stream,
+  whose poll also reads the mark-sequence range for its own extra documents (a keyset diff by
+  `version` would not see their tallies);
 - a **held overlay** per (key, mark): whether the viewer holds the mark, at M. It comes from the
   per-viewer stream, so it is dropped once that stream's mark head is ≥ M. A `report` mark sets only a
   held overlay (`report` in `viewer.marks`); its count is never exposed.
@@ -416,7 +436,7 @@ again, never a vanished record.
 | Acknowledged mark, unmark or increment at `markSeq` M | count overlay := the count (not for `report`), held overlay := held or not, each only if M ≥ its own current `markSeq` |
 | Stream upsert of a record at `seq` T | replaces the base; drops the record overlay once T ≥ its `seq` |
 | Stream upsert with no `seq` (an adapter before `k2`) | replaces the base only; never drops or outranks an overlay |
-| A level stream's mark head reaches ≥ M | drops count overlays at or below it |
+| The carrying stream's mark head reaches ≥ M | drops count overlays at or below it |
 | The per-viewer stream's mark head reaches ≥ M | drops held overlays at or below it |
 | Stream `Delete` of a URN | removes the base for that URN, and drops a record overlay or delete marker for that URN (a moderator hide after the write is a `Delete`, and wins). A `Delete` of another URN, the old row of a re-created key, is ignored |
 | An overlay its stream has not caught up with | dropped one poll interval plus 30 s after it was set, showing the base |
@@ -435,21 +455,23 @@ Answer: **no, not without routing**. The fix:
   address cannot do it. Two replicas can each hold streams for the same user while routing moves; that
   extra adapter stream budget is accepted;
 - **a block token is served by one replica only.** A block token can be exchanged once
-  (`DESIGN.md:169-184`), so only the replica that exchanged it can open its streams. Its writes are held
-  to the same replica: a replica forwards a block token's write only if it holds that token's
-  exchange, or obtains it (a write with no exchange yet makes one); a block token already exchanged
-  elsewhere answers `401 block_token_spent`, and the SDK gets a fresh block token. So every call of a
-  block token, read or write, goes through one replica;
+  (`DESIGN.md:169-184`), so only the replica that exchanged it can open its streams; elsewhere its reads
+  answer `401 block_token_spent` and the SDK gets a fresh block token. **A write needs no exchange**: the
+  site verifies the user's token itself, so a hub outage fails reads, not writes. A block token's writes
+  follow the same sticky route as its reads;
 - **floors on reads, for when routing moves.** Each acknowledgement carries its `seq` or `markSeq`;
   the SDK sends the highest of each it has been acknowledged for the app (`?minSeq=S&minMarkSeq=M`), both
   app-wide like the heads they are compared with. **Only acknowledgements raise a floor; reads never
   do.** A floor is met when:
-  - for a **block token**: max(the stream's head, the highest sequence this replica acknowledged for
-    this token) ≥ the floor. Sound because every write of that token went through this replica (the
-    point above), so this replica's overlays hold every acknowledged write the head does not;
+  - for a **block token**: max(the stream's head, the highest sequence of an acknowledgement this
+    replica made **for this token** whose overlay it still holds) ≥ the floor. Its reads are served only
+    here, so its writes normally are too. The residual: if routing moves away and back within one poll
+    and a write lands on the other replica, a read here can miss that write until the next poll;
+    accepted (rare, bounded by one poll);
   - for a **hub token**: the stream's head alone ≥ the floor. A hub token is exchanged again on any
-    replica, so its writes can land on several; this replica's own acknowledgements do not prove it
-    holds the others', and a write another replica acknowledged at a lower sequence could be missing.
+    replica, so its writes can land on several, and a write another replica acknowledged at a lower
+    sequence could be missing here. The cost: a hub token's write-read-write-read inside one poll spends
+    the reopen and answers `503`. Accepted: model-benchmarking reads with block tokens.
 
   When a floor is not met, the replica reopens the stream (a new snapshot, with fresh heads), at most
   once per (token, collection) per poll interval, within `LIVE_WAIT_MS`. If the reopened stream still
@@ -565,8 +587,10 @@ A cut-over app's reads and writes go through this service or fail; there is no R
 the cutover window or after it. Availability comes from this service's own redundancy: two replicas
 spread across nodes, a disruption budget that keeps one serving through a rollout, readiness that
 turns false before a replica stops taking requests, and the sticky routing above re-hashing a lost
-replica's tokens to the other. A write in flight on a replica that dies answers `504
-outcome=unknown` (or the connection drops); the client follows "Retries".
+replica's tokens to the other. A write refused before it was forwarded (a replica shutting down
+answers `503`) was never sent and is safe to resend. A write in flight on a replica that dies answers
+`504 outcome=unknown` (or the connection drops): it may or may not have been forwarded, and the client
+follows "Retries".
 
 ## Migration plan
 
@@ -623,8 +647,9 @@ catalog), not this path: app-data-go reads the adapter directly, not through `re
    level streams' union holds each document once; with levels off, one stream serves every viewer; a write on token A never changes a read on token B; a read whose floor is
    above the head reopens once, then answers `503`; for a block token, a read whose floor this replica
    acknowledged itself is answered without a reopen, and for a hub token it is not; a `kv` read after a
-   vote meets the mark floor against the app-wide mark head; a block token's write on a replica that
-   does not hold its exchange is `401 block_token_spent`; a dev, review or
+   vote meets the mark floor against the app-wide mark head; a block token's write is forwarded with the hub
+   unreachable; a levels-off stream ended by the adapter fails closed to the per-bit shape; a stream end
+   answers `503`, never `401`; a dev, review or
    private-run token is never given the service URL; a vote leaves the document's `seq` unchanged, and
    a moderator hide pinned to the pre-vote revision still applies.
 2. **Cutover: model-benchmarking, all of its storage, directly.** No shadow step.
@@ -726,14 +751,16 @@ request counter (end state, item 7).
 6. **Level streams are content shared across viewers.** The per-viewer stream gates who is served
    them, and a refusal is an explicit signal that drops the viewer from every level stream at once.
    Until the fifth claim is required, PG-13 reaches a viewer who turned it off.
-7. **A board past its bound** keeps its newest documents per level stream, at or above the app's own
+7. **A board past its bound** keeps its newest documents per level stream, strictly above the app's own
    2,000-row read, so the app's lists are unchanged; a get or update outside the window is `503`.
    A private collection past its bound is `503`, never served in part.
 8. **Sticky routing lost** (replica churn). Reads reopen once or answer `503`; a spent block token is
-   refreshed by the SDK. Never a stale list, never REST.
-9. **No fallback means this service's outage is the apps' outage** for every cut-over app, taken
-   knowingly; redundancy is the mitigation.
-10. **Read-your-writes across tokens.** Two tabs of one user are two tokens and two streams; the second
+   refreshed by the SDK. Never REST; a stale read only in the accepted away-and-back residual.
+9. **Reads depend on the hub exchange**: a hub outage stops new streams opening (writes need no
+   exchange and keep working).
+10. **No fallback means this service's outage is the apps' outage** for every cut-over app, taken
+    knowingly; redundancy is the mitigation.
+11. **Read-your-writes across tokens.** Two tabs of one user are two tokens and two streams; the second
     sees the first's write after one poll. Stated in the contract.
 
 ## Decided
