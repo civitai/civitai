@@ -258,7 +258,7 @@ export function buildStickerAutoTrackWorkflow({
             points_per_side: 16,
             cut_threshold: 30.0,
             reid_threshold: 0.4,
-            // Off for a sticker not on a head, so after a cut it hides rather than jump onto a person.
+            // Off when no head holds the sticker, so after a cut it hides instead of jumping onto a person.
             reid: ['6', 1],
             eyes: ['11', 0],
           },
