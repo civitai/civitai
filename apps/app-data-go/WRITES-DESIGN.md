@@ -199,105 +199,146 @@ the same floor rule. The app's `kv.get` calls are therefore stream reads, never 
   at the viewer's level, the viewer's own unrated documents, each item's tallies (report counts
   excluded, `doc-store.ts:1470-1480`), the viewer's own marks, and whether the viewer wrote it.
 
-### The shape: one shared stream per level class, one small stream per viewer
+### The shape: one stream per level bit, one small stream per viewer
 
 One stream per viewer holding the whole board does not scale: a stream's bounds are 1,000 records and
 2 MiB (`DESIGN.md:336-337`) while a shared collection may hold up to 50 MiB and 1M documents
 (`doc-store.types.ts:144-149`), every viewer would hold one per shared collection on top of their
 private ones, and `MAX_STREAMS` bounds a replica. So the board is split by who it differs for:
 
-- **A class stream per (collection major, level class)**, read by app-data-go under its own service
-  identity and shared by every viewer of that class. It carries every visible shared document whose
-  level is in the class, each with `key`, `data`, `version`, `createdAt`, `updatedAt`, `tallies`
+- **A level stream per (collection major, level bit)**, read by app-data-go under its own service
+  identity and shared by every viewer. A rated shared document has exactly one level bit (a document
+  is within a viewer level when its one bit is in the set, `doc-levels.ts:17-18`), so the five
+  selectable bits (PG, PG-13, R, X, XXX) **partition** the visible board: each document is in exactly
+  one level stream. Each entity carries `key`, `data`, `version`, `createdAt`, `updatedAt`, `tallies`
   (counters and mark counts, report excluded) and `seq`; deletes, moderator hides (tombstones,
-  `doc-store.ts:4489-4493`) and re-ratings out of the class arrive as `Delete`s. It never carries an
-  author, a viewer's marks, or an unrated document.
+  `doc-store.ts:4489-4493`) and re-ratings to another bit arrive as `Delete`s (and an `Upsert` on the
+  new bit's stream). It never carries an author, a viewer's marks, or an unrated document.
+- **With content levels off for the app** (the flag `app-blocks-shared-doc-levels`, read per app;
+  an unreadable flag counts as on, `doc-levels.ts:6-9`), documents carry no level, and the feed's
+  `docLevels` switch leaves the level gate out (`doc-feed.ts:103-108`). There is then **one** stream,
+  every visible document, and every viewer reads it. A flip of the flag re-reads in full, as a resume
+  across a flip already does (`doc-feed.ts:137-141`).
 - **A per-viewer stream per (token, collection major)**, read under the viewer's exchanged token like
   the private streams. It carries only what differs for that viewer: their marks on the collection's
-  documents, the keys they authored, and their own documents the class leaves out (unrated, pending,
-  or rated outside the class but inside their own domain ceiling, `sharedDocLevelVisible`'s author
-  arm). Its `Live` names the viewer's **level class**, decided by the adapter.
+  documents, the keys they authored, and their own documents no level stream gives them (unrated,
+  pending, or rated outside their level but inside their own domain ceiling, `sharedDocLevelVisible`'s
+  author arm, `doc-store.ts:771-777`). Its `Live` names the viewer's **level mask**, decided by the
+  adapter.
 
-A read is answered by merging: the class stream's documents, plus the viewer's own extra documents,
-with `viewer.marks` and `author.isViewer` filled from the per-viewer stream. Signed-out viewers use
-the class stream alone ("Signed-out viewers").
+A read is answered by the **union** of the level streams whose bits are in the viewer's mask (disjoint,
+so no duplicates), plus the viewer's own extra documents, ordered by key, with `viewer.marks` and
+`author.isViewer` filled from the per-viewer stream. Signed-out viewers use the level streams alone
+("Signed-out viewers").
 
-**The level class.** For others' documents REST uses the token's viewer level,
+**The level mask.** For others' documents REST uses the token's viewer level,
 `resolveViewerBrowsingLevel(maxBrowsingLevel, viewerBrowsingLevel)`
 (`src/server/services/blocks/block-viewer-ceiling.ts:20-29`, via `viewerDocLevel`, `doc-levels.ts:60-64`).
 The registry today has only the audience and, for an exchanged block token, the ceiling
-(`civitai_max_browsing_level`; `src/server/registry-adapter/auth.jwt.ts:120-155`). Gated at
+(`civitai_max_browsing_level`; the four binding claims, `blockBindingOf`,
+`src/server/registry-adapter/auth.jwt.ts:121-156`). Masked at
 `audienceDocLevel(audience) & onlySelectableLevels(maxBrowsingLevel)`, **PG-13 is always admitted**
 (`audienceDocLevel` sets PG and PG13 for everyone, `doc-levels.ts:83-91`), unlike REST, which leaves
 it out for a viewer whose level does. **Chosen: add the viewer's level to the exchange** as a fifth
-binding claim, `civitai_viewer_browsing_level`, written by the block exchange with the other four and
-required with them by `blockBindingOf`; the class is then exactly `resolveViewerBrowsingLevel` of the
-two claims, REST's own level. Until the hub writes it, the class is the audience-and-ceiling mask
-above, and that one divergence (PG-13 shown to a viewer who turned it off) is recorded here.
+claim, `civitai_viewer_browsing_level`; the mask is then exactly `resolveViewerBrowsingLevel` of the
+two claims, REST's own level. The deploy order, so no release refuses a token another still mints:
 
-The class is a bitmask of the selectable levels, so a collection has at most a handful of class
-streams (one per distinct mask in use), not one per viewer.
+1. the hub writes `civitai_viewer_browsing_level` on every block-exchange token;
+2. the adapter accepts both a four-claim token (interim mask: the audience-and-ceiling mask above) and
+   a five-claim token (exact mask). `blockBindingOf`'s all-or-nothing rule then covers the four
+   binding claims, and the fifth is checked on its own: absent means the interim mask, present and not
+   a non-negative integer means `invalid`;
+3. once no four-claim token can still be live (the exchanged token's 15-minute cap after step 1 is
+   everywhere), the adapter requires all five.
 
-**Authorization stays the origin's.** The class stream holds content only; the per-viewer stream is
-the gate. A signed-in viewer is served a class only while their per-viewer stream is open and its
-`Live` named that class; a viewer the adapter refuses (the empty stream, below) names no class and is
-served as a signed-out viewer, which is what REST would show anyone without an account. app-data-go
-therefore never decides a signed-in viewer's level itself.
+Until step 3, the one divergence (PG-13 shown to a viewer who turned it off) is recorded here.
+
+**Region.** The adapter holds a subscription whose region it cannot tell to SFW content, and judges a
+relay by the relay's own request (`audience.ts:36-42`; `request-origin.ts`). app-data-go would send
+no region, so every viewer behind it would be held to SFW, and an R- or X-rated app's private feed
+would refuse every user (its predicate admits the app's rating against the held audience,
+`private-feed.ts:312-322`). **Chosen: forward the edge's region.** app-data-go copies the region
+values the edge set on the viewer's request (the edge sets them and strips any a client sent; this
+service never reads a client's) onto the subscription it opens for that viewer, as the adapter's
+region headers. A viewer's streams are keyed by token and region, so a viewer whose region changes
+opens new ones. Level streams are read as a service, which has no region; the region hold reaches a
+viewer through the mask the per-viewer stream names.
+
+**Authorization stays the origin's.** The level streams hold content only; the per-viewer stream is
+the gate. A signed-in viewer is served level streams only while their per-viewer stream is open and
+its latest `Live` or `Progress` named a mask. **A refusal is explicit:** when the adapter stops
+admitting the viewer (a revoked install, a withdrawn grant, a refused predicate), the per-viewer stream
+sends a `Progress` whose `meta` names no mask, or ends; it never just goes quiet or sends `Delete`s
+only. This is an adapter change: the private feed today answers a refusal with `nothing()`, deletes on
+the next poll and keeps the stream open (`private-feed.ts:303-310`, `:404-420`), so a level-stream read would
+otherwise outlive a revoked install by up to the exchanged token's 15 minutes. On that signal
+app-data-go drops the viewer from every level stream at once and answers their reads `401 refused`,
+as REST refuses them. app-data-go never decides a signed-in viewer's level itself.
 
 **Feed routing.** The adapter routes by schema and token:
 
-- a subscription by a client on its shared-class allowlist (a short list, as the registry owner asked
-  on civitai-registry#49), naming a class in `meta`, to a shared collection's documents URN: the class
-  stream, for any shared collection, exported or not;
+- a subscription by a client on its shared-level allowlist (a short list, as the registry owner asked
+  on civitai-registry#49), naming a level bit in `meta`, to a shared collection's documents URN: that
+  level stream, for any shared collection, exported or not;
 - a listed relay's user token to the per-viewer URN of a shared collection
   (`urn:schema:apps.civitai.com:<slug>/<c>.viewer@v<N>`): the per-viewer stream;
 - anything else, including a token-bearing listed relay subscribing to an **exported** collection's
   documents URN: the public document feed, per audience, exactly as today. app-data-go never uses it.
 
-**Bindings.** A per-viewer stream's stored state binds the subject, the audience, the ceiling and the
-viewer level (the private feed binds only schema, subject and audience today,
+**Bindings.** A per-viewer stream's stored state binds the subject, the audience, the ceiling, the
+viewer level and the region (the private feed binds only schema, subject and audience today,
 `private-feed.ts:238`); a cursor resumed under a different binding is refused as expired and the
-stream re-snapshots. A class stream's state binds the class.
+stream re-snapshots. A level stream's state binds its bit.
 
 **Poll shapes and cost.**
 
 | Stream | Poll | Cost per poll |
 |---|---|---|
-| Class | `seq` range on `doc` and `doc_tomb` (the shared feed's shape, `doc-store.ts:976-1026`), plus a mark-sequence range on the collection's tally rows | proportional to the changes since the last poll |
+| Level | `seq` range on `doc` and `doc_tomb` (the shared feed's shape, `doc-store.ts:976-1026`), plus a mark-sequence range on the collection's tally rows | proportional to the changes since the last poll |
 | Per-viewer | keyset diff of the viewer's mark rows, authored keys and own extra documents for the collection (the private feed's shape) | proportional to that viewer's own rows, usually a few |
 
-**Size, count, alert, and the bound.** Before cutover, the board's size per class, read from the
-store, must fit a class-stream bound set with headroom above it (class streams are few, so their
-bound is larger than a per-user stream's); the per-viewer streams' count per replica must fit
-`MAX_STREAMS` with the private streams beside them. An alert fires when a class stream passes 75% of
-its bound, or the open-stream gauge passes 75% of `MAX_STREAMS`. **A board that crosses the bound**
-keeps streaming its newest documents by key up to the bound and marks every list answer `truncated:
-true`; the app already renders a truncated board (`truncated`, `src/App.tsx:4280-4285`; its
-board-truncated notice, `:735`). A keyed `get` of a document outside the window answers `503
-too_large`. There is no fallback to read it elsewhere; the fix is raising the bound or paging the
-class stream.
+**Size, count and alert.** The level streams partition the board, so together they hold it once.
+Before cutover, the board's size in records and bytes, read from the store, per level bit and in
+total, must fit the level-stream bound with headroom, and the per-viewer streams' count per replica must
+fit `MAX_STREAMS` with the private streams beside them. An alert fires when any level stream passes 75%
+of its bound, or the open-stream gauge passes 75% of `MAX_STREAMS`.
+
+**The bound is at least the app's own read.** The app reads at most 2,000 board rows (100 per page, 20
+pages, `src/App.tsx:415-420`), and decides "truncated" only by running out of pages with a cursor left
+(`:4276-4300`); its store layer drops any server-side flag (`src/lib/records-store.ts:233-239`). So the
+level-stream bound is set **at or above 2,000 records** per stream (and the measured bytes). A board
+past the bound keeps each level stream's newest documents by key up to the bound; since the app's own
+read is the newest 2,000 of the union, and the newest 2,000 of a union lie within the newest 2,000 of
+each part, the app's list answers are unchanged. A keyed `get` of a document outside the window, and so
+an `update` of one (a `get` then a `put`, `records-store.ts:248-262`), answers `503 too_large`. There is
+no fallback to read it elsewhere; the fix is raising the bound.
 
 ### Signed-out viewers
 
-**Decided by the operator:** app-data-go reads the class stream under its own service identity, as an
-anonymous viewer, and serves signed-out viewers from it. Registry-only.
+**Decided by the operator:** app-data-go reads the level streams under its own service identity, as an
+anonymous viewer, and serves signed-out viewers from them. Registry-only.
 
 - **How app-data-go authenticates to the adapter:** a hub service token for its own client
   (client credentials, `AppsRead`), accepted because the adapter's service-client list names it, as
   the app index's is (`auth.jwt.ts:15-25`, `:197-212`; `REGISTRY_ADAPTER_SERVICE_CLIENTS`,
-  `auth.live.ts:47-57`), and on the shared-class allowlist above. A service subscription otherwise reads
-  every rating (`SERVICE_AUDIENCE`, `audience.ts`), so for a class stream it names the class and the
-  adapter serves exactly that class, never wider.
-- **What a signed-out viewer gets:** the anonymous class, `resolveViewerBrowsingLevel` of the signed-out
-  token's own claims, which is the public levels within the host's ceiling. It is never wider than the
-  request's host: a red-capable host's ceiling cannot widen an anonymous level, and the main (SFW) host's
-  narrows it. No marks, no authorship: `viewer.marks` is empty and `author.isViewer` false, as on REST.
-- **How the SDK reaches it without an exchangeable token:** a signed-out viewer's block holds a block
-  token whose subject is the anonymous one (`sub: 'anon'`, `src/server/services/block-token-subject.ts:56`).
-  The SDK sends it as for any read. app-data-go verifies it locally, as it verifies every block token
+  `auth.live.ts:47-57`), and on the shared-level allowlist above. A service subscription otherwise
+  reads every rating (`SERVICE_AUDIENCE`, `audience.ts`), so it names one level bit and the adapter
+  serves exactly that bit.
+- **Which token is served:** a signed-out viewer's block holds a block token whose subject is the
+  anonymous one (`sub: 'anon'`, `src/server/services/block-token-subject.ts:56`). The SDK sends it as
+  for any read. app-data-go verifies it locally as it verifies every block token
   (`apps/app-data-go/internal/exchange/blockverify.go`), where today an anonymous subject is refused
-  (`:178-180`); an anonymous token instead takes the signed-out read path. It is **never sent to the
-  hub**: there is no user to exchange for. It names the app and block, and carries the host ceiling.
+  (`:178-180`). The anonymous branch keeps **every other check**: signature, issuer, audience, expiry,
+  claim shapes, the 15-minute age cap, and the dev, review and private-run markers (`:181-189`), each a
+  refusal. It then requires that the path's slug is the token's `blockId` (the slug the token was
+  minted for; `appId` is the OAuth client's id, `block-scope.middleware.ts:83-90`), and that the
+  token's `appBlockId` is the slug's approved production block, which each level stream's `Live` names
+  (`meta`, from the adapter's own resolution). It is **never sent to the hub**: there is no user to
+  exchange for.
+- **What a signed-out viewer gets:** the level bits in `resolveViewerBrowsingLevel` of that token's own
+  claims, which is the public levels within the host's ceiling. It is never wider than the request's
+  host: a red-capable host's ceiling cannot widen an anonymous level, and the main (SFW) host's narrows
+  it. No marks, no authorship: `viewer.marks` is empty and `author.isViewer` false, as on REST.
 - **Writes** stay impossible for a signed-out viewer, as on REST (`requireViewer`).
 
 The level formula is the site's, ported to Go and pinned by golden vectors, as `internal/urn` is.
@@ -317,21 +358,27 @@ writing token's caches at once.
 moderation and the rater check (fixed point 3), so a vote would make a moderator's hide or a rating
 fail as "changed". Instead:
 
-- a **mark sequence** per (app, namespace, collection), a row in a new table, taken by `mark`,
-  `unmark` and `increment` after the document's `KEY SHARE` and the tally row (lock (1c), after (1b)),
-  and stamped on the tally row it changed. Document writes never take it; nothing takes a document or
-  tally lock after it; it is never held with (2) or (3). The lock order becomes (1) → (1b) → (1c) for
-  tally writes and (1) → (1b) → (2) → (3) for document writes, so no cycle can form;
-- `doc.seq`, moderation's revision and the rater's binding are untouched;
-- the class stream polls tallies by mark-sequence range; the per-viewer stream sees the viewer's own
-  mark rows by keyset diff.
+- a **mark sequence** per (app, namespace), exactly like `seq`: one counter row per app namespace in a
+  new table, taken by `mark`, `unmark` and `increment` after the document's lock and the tally row
+  (lock (1c)), and stamped on the tally row and the viewer's mark row it changed. It is shared by every
+  collection of the app, so every stream's mark head advances with every tally write of the app, and a
+  collection with no marks (such as `kv`) still has a mark head to meet a floor against;
+- **the lock order** becomes (1) the document row, (1b) its tally and mark rows, (1c) the app's
+  mark-sequence row, (2) `usage_app`, (3) the caller's `usage_user`. A mark or unmark, and an increment
+  of an existing document, take (1) `KEY SHARE`, (1b), (1c) and nothing after. An increment that
+  creates its counter document takes (1), (1b), (1c), then (2) and (3) for the create's accounting
+  (`doc-store.ts:2530-2552`). A document write takes (1), (1b) where it has tallies, (2), (3), and
+  never (1c). Every transaction takes them in that order, so no cycle can form;
+- `doc.seq`, moderation's revision and the rater's binding are untouched.
 
-**The heads.** The document head, `usage_app.last_seq` (`SQL_FEED_HEAD`, `doc-store.ts:981`), is per
-app namespace, shared by `kv` and `records`: a stream's document head says every document write of
-the app at or below it is in what the poll read. The mark head is per collection. Each poll reads its
-heads in the same transaction as its rows, or before them, never after, and carries them on `Live`
-and on each change batch's `Progress` (in `meta`). **Accepted:** the document head, and a write's
-`seq`, tell their holder the app's whole write volume between two reads, every user's included.
+**The heads.** Every stream, private, level and per-viewer, carries two heads on `Live` and on each
+change batch's `Progress` (in `meta`): the document head, `usage_app.last_seq` (`SQL_FEED_HEAD`,
+`doc-store.ts:981`), and the mark head, both per app namespace. A head says every write of that kind
+at or below it is in what the poll read. Each poll reads its heads in the same transaction as its
+rows, or before them, never after. **Accepted:** the heads, and a write's `seq` or `markSeq`, tell their
+holder the app's whole write and mark volume between two reads, every user's included; the mark head
+counts `report` marks too, so it discloses report volume, which the tallies themselves never expose
+(`doc-store.ts:1470-1480`).
 
 **Store changes.** `DocRecord` (`doc-store.types.ts:90-103`) has no `seq` or `recordId`, `docColumns`
 (`doc-store.ts:691-700`) selects neither, and `delete` returns only `{deleted}` (`doc-store.ts:2440-2480`).
@@ -344,16 +391,19 @@ route's `presentDocs` exposes none of these.
 **Adapter changes.** The private feed's queries select `d.seq` (`doc-store.ts:1033-1045`) and each
 entity carries it (`Entity.seq`, HTTP binding only, as `key` is); `PRIVATE_BODY_FORMAT` goes from `k1`
 to `k2` (`private-feed.ts:176-182`), so a resumed cursor re-sends every record with its `seq`; the
-class and per-viewer streams carry their sequences from the start; the heads as above.
+level and per-viewer streams carry their sequences from the start; every stream carries both heads.
 
-**The caches: a base and overlays, never merged.** The **base** is what the stream last said. The
-**overlays** are what this token's acknowledged writes said since, and there are two kinds:
+**The caches: a base and overlays, never merged.** The **base** is what the streams last said. The
+**overlays** are what this token's acknowledged writes said since:
 
 - a **record overlay** per key: the record a create or put answered (with `version`, `createdAt`,
   `updatedAt`, `seq`), or a **delete marker** at the tombstone's `seq`;
-- a **marks overlay** per (key, mark): the viewer holds the mark or not, and, for a counted mark, the
-  `count` the answer gave, at the answer's `markSeq`. A `report` mark adds `report` to `viewer.marks`
-  and carries no count.
+- a **count overlay** per (key, counted mark or counter): the `count` a mark, unmark or increment
+  answered, at its `markSeq` M. It comes from the level stream, so it is dropped once that level
+  stream's mark head is ≥ M;
+- a **held overlay** per (key, mark): whether the viewer holds the mark, at M. It comes from the
+  per-viewer stream, so it is dropped once that stream's mark head is ≥ M. A `report` mark sets only a
+  held overlay (`report` in `viewer.marks`); its count is never exposed.
 
 A read answers each overlay where one exists, else the base. Dropping an overlay shows the base
 again, never a vanished record.
@@ -363,17 +413,18 @@ again, never a vanished record.
 | Acknowledged create or put at `seq` S | record overlay := the answer, only if S ≥ the overlay's and the base's `seq` |
 | Acknowledged delete at `seq` S | record overlay := delete marker at S, same rule |
 | `deleted: false` | nothing |
-| Acknowledged mark or unmark at `markSeq` M | marks overlay for (key, mark) := held or not, with the count, only if M ≥ its current `markSeq` |
+| Acknowledged mark, unmark or increment at `markSeq` M | count overlay := the count (not for `report`), held overlay := held or not, each only if M ≥ its own current `markSeq` |
 | Stream upsert of a record at `seq` T | replaces the base; drops the record overlay once T ≥ its `seq` |
 | Stream upsert with no `seq` (an adapter before `k2`) | replaces the base only; never drops or outranks an overlay |
-| Stream tally or viewer-mark change at mark sequence N | replaces the base's tally or mark; drops the marks overlay once N ≥ its `markSeq` |
+| A level stream's mark head reaches ≥ M | drops count overlays at or below it |
+| The per-viewer stream's mark head reaches ≥ M | drops held overlays at or below it |
 | Stream `Delete` of a URN | removes the base for that URN, and drops a record overlay or delete marker for that URN (a moderator hide after the write is a `Delete`, and wins). A `Delete` of another URN, the old row of a re-created key, is ignored |
-| An overlay the stream has not caught up with | dropped one poll interval plus 30 s after it was set, showing the base |
+| An overlay its stream has not caught up with | dropped one poll interval plus 30 s after it was set, showing the base |
 
-The last row bounds the case the stream cannot correct: a refusal arrives as a `Delete` for every
-record the stream held (`DESIGN.md:229-230`), and a record written since the last poll was never held.
-Overlays are per token: another viewer of `records` sees a write only when the store shows it to their
-class and their class stream says so.
+The last row bounds the case the stream cannot correct: a private-feed refusal arrives as a `Delete` for
+every record the stream held (`DESIGN.md:229-230`), and a record written since the last poll was never
+held. Overlays are per token: another viewer of `records` sees a write only when the store shows it to
+their level and their streams say so.
 
 **Several replicas.** v1 runs two replicas with a disruption budget. A write acknowledged by replica A
 is in A's caches only; a read of the same token on replica B sees it only after B's next poll.
@@ -381,20 +432,30 @@ Answer: **no, not without routing**. The fix:
 
 - **Sticky routing by token:** consistent hashing on a digest of the `Authorization` header, which
   needs a proxy in front of the replicas that hashes on a request header; a plain round-robin service
-  address cannot do it. It is required anyway: a block token can be exchanged once
-  (`DESIGN.md:169-184`), so only the replica that exchanged it can open its streams. Two replicas can
-  each hold streams for the same user while routing moves; that extra adapter stream budget is
-  accepted;
+  address cannot do it. Two replicas can each hold streams for the same user while routing moves; that
+  extra adapter stream budget is accepted;
+- **a block token is served by one replica only.** A block token can be exchanged once
+  (`DESIGN.md:169-184`), so only the replica that exchanged it can open its streams. Its writes are held
+  to the same replica: a replica forwards a block token's write only if it holds that token's
+  exchange, or obtains it (a write with no exchange yet makes one); a block token already exchanged
+  elsewhere answers `401 block_token_spent`, and the SDK gets a fresh block token. So every call of a
+  block token, read or write, goes through one replica;
 - **floors on reads, for when routing moves.** Each acknowledgement carries its `seq` or `markSeq`;
-  the SDK sends the highest of each it has been acknowledged for the app (`?minSeq=S&minMarkSeq=M`).
-  **Only acknowledgements raise a floor; reads never do.** The document floor is met when
-  max(the stream's document head, the highest `seq` this replica acknowledged for this token) ≥ S, and
-  the mark floor likewise with the collection's mark head and `markSeq`. When a floor is not met, the
-  replica reopens the stream (a new snapshot, with fresh heads), at most once per (token, collection)
-  per poll interval, within `LIVE_WAIT_MS`. If the reopened stream still does not meet it, or a reopen
-  was already spent in this interval, it answers `503` with `Retry-After` and does not reopen again.
-  A floor covers acknowledged writes only: a write still in flight when a read starts may or may not
-  be in that read's answer, as on REST.
+  the SDK sends the highest of each it has been acknowledged for the app (`?minSeq=S&minMarkSeq=M`), both
+  app-wide like the heads they are compared with. **Only acknowledgements raise a floor; reads never
+  do.** A floor is met when:
+  - for a **block token**: max(the stream's head, the highest sequence this replica acknowledged for
+    this token) ≥ the floor. Sound because every write of that token went through this replica (the
+    point above), so this replica's overlays hold every acknowledged write the head does not;
+  - for a **hub token**: the stream's head alone ≥ the floor. A hub token is exchanged again on any
+    replica, so its writes can land on several; this replica's own acknowledgements do not prove it
+    holds the others', and a write another replica acknowledged at a lower sequence could be missing.
+
+  When a floor is not met, the replica reopens the stream (a new snapshot, with fresh heads), at most
+  once per (token, collection) per poll interval, within `LIVE_WAIT_MS`. If the reopened stream still
+  does not meet it, or a reopen was already spent in this interval, it answers `503` with
+  `Retry-After` and does not reopen again. A floor covers acknowledged writes only: a write still in
+  flight when a read starts may or may not be in that read's answer, as on REST.
 
 **A restart.** Caches are in memory and are lost. The first read opens new streams, whose first `Live`
 is a snapshot read from the store at that moment (`DESIGN.md:30-36`), holding every committed write and
@@ -516,14 +577,15 @@ catalog), not this path: app-data-go reads the adapter directly, not through `re
 0. **Prerequisite: the reads are promoted.** The P4 shadow's gate (7 days of real-user comparisons
    under 0.1% mismatched, at least one non-empty compared list) is met, and S7 is promoted.
 1. **Build, dark.** Behind `APP_DATA_WRITES` (default off: every write and shared-read route is `404`):
-   - here: the write routes, `info`, the shared and keyed-get read routes, the class and per-viewer
-     streams and their merge, the signed-out read path, the base and overlay caches, the floors and the
-     bounded reopen, sticky routing and the second replica;
+   - here: the write routes, `info`, the shared and keyed-get read routes, the level and per-viewer
+     streams and their union, the signed-out read path, region forwarding, the base and overlay caches, the floors and the
+     bounded reopen, block tokens held to one replica, sticky routing and the second replica;
    - the site: the internal route (signature, buffered body, the public `req.url`, the import refusal);
-     the store changes; the mark sequence; the counter below;
-   - the adapter: `Entity.seq` and `k2`, the heads, the class stream and the per-viewer stream, their
-     routing and bindings, the shared-class allowlist;
-   - the hub: the fifth block-exchange claim, `civitai_viewer_browsing_level`;
+     the store changes; the app-wide mark sequence and its lock order; the counter below;
+   - the adapter: `Entity.seq` and `k2`, both heads on every stream, the level streams and the per-viewer
+     stream, the explicit refusal signal, their routing and bindings, the shared-level allowlist;
+   - the hub: the fifth block-exchange claim, `civitai_viewer_browsing_level`, in the deploy order of
+     "The level mask";
    - **a cut-over app's reads never fall back**: each of today's fallback reasons
      (`apps/app-data-go/internal/metrics/metrics.go:24-26`) gets its answer, behind the app's flag:
 
@@ -535,10 +597,11 @@ catalog), not this path: app-data-go reads the adapter directly, not through `re
      | `block_cache_full`, `capacity`, `token_capacity`, `cooling_down` | `503` with `Retry-After` |
      | `exchange_refused` (including a `local` verifier refusal), `unverifiable` | `401` with the hub's code or `local`; `503` with `Retry-After` for `unverifiable` (a key-set outage) |
      | `not_live`, `stalled`, `ended`, `failed`, `closed` | `503` with `Retry-After` |
-     | revoked (a stream closed as `revoked`) | `401 revoked` |
+     | revoked (a stream closed as `revoked`), or a per-viewer refusal signal | `401 revoked` / `401 refused` |
      | `empty` | an empty answer ("The empty stream") |
-     | `not_private` | not a fallback: shared collections are served by the class and per-viewer streams |
-     | `too_large` | the truncated window, or `503 too_large` for a keyed get outside it |
+     | `not_private` | not a fallback: shared collections are served by the level and per-viewer streams |
+     | `too_large`, private stream | `503 too_large` for every read of that collection on that token. A private stream over its bound is closed (`DESIGN.md:336-337`), and a private collection is the user's own, so it is never served in part |
+     | `too_large`, level stream | the window: list answers are unchanged for the app ("The bound is at least the app's own read"); a keyed `get` or `update` outside it is `503 too_large` |
      | `unkeyed` | `503`: an adapter without keys cannot serve a cut-over app, so the adapter release is a prerequisite |
 
    - **the site's counter**, which does not exist on `main`: `app_storage_requests_total{app, op, via,
@@ -554,15 +617,24 @@ catalog), not this path: app-data-go reads the adapter directly, not through `re
    base, never nothing; a `Delete` of the overlay's URN drops it; `deleted: false` changes nothing; a
    re-created key wins over the old row's late upsert; a vote changes the tally and `viewer.marks` for
    the voter only; another viewer never sees the writer's pending record; a signed-out viewer never
-   sees marks, authorship or a level above the anonymous class; a refused signed-in viewer is served
-   the anonymous class only; a write on token A never changes a read on token B; a read whose floor is
-   above both the head and this replica's acknowledgements reopens once, then answers `503`; a read
-   whose floor this replica acknowledged itself is answered without a reopen; a dev, review or
+   sees marks, authorship or a level bit outside its own; an anonymous token whose slug or approved
+   block does not match, or that carries a dev, review or private-run marker, is refused; a refused
+   signed-in viewer (the explicit signal) is answered `401 refused` from every level stream at once; the
+   level streams' union holds each document once; with levels off, one stream serves every viewer; a write on token A never changes a read on token B; a read whose floor is
+   above the head reopens once, then answers `503`; for a block token, a read whose floor this replica
+   acknowledged itself is answered without a reopen, and for a hub token it is not; a `kv` read after a
+   vote meets the mark floor against the app-wide mark head; a block token's write on a replica that
+   does not hold its exchange is `401 block_token_spent`; a dev, review or
    private-run token is never given the service URL; a vote leaves the document's `seq` unchanged, and
    a moderator hide pinned to the pre-vote revision still applies.
 2. **Cutover: model-benchmarking, all of its storage, directly.** No shadow step.
    - **Before the flag:** the app's run claims (and any default seeding) use a conditional put ("The
-     empty stream"); the `records` board fits the class-stream bound per class; and a positive control
+     empty stream"); the live value of `app-blocks-shared-doc-levels` for the app is read and the
+     streams are sized for that mode; the `records` board fits the level-stream bound per bit and in
+     total ("Size, count and alert"); every user's `kv` fits the private stream bounds, which are raised
+     for the app to at least the largest tier's storage ceiling a user can hold (the default ceiling,
+     2 MiB and 1,000 documents, `doc-store.types.ts:144-149`, equals the bounds today; a larger tier
+     ceiling would exceed them); and a positive control
      on the direct series: the app's `via="direct"` count is non-zero in the days before cutover, so a
      zero after it means the traffic moved, not that the counter is dead.
    - **The flag:** `app-data-writes-via-service` in Flipt, per app (entity the app block id, as the read
@@ -627,7 +699,7 @@ On this service (no label carries a token, user, app, collection or key, as the 
 - `app_data_cache_overlays_total{kind}` (`record`, `delete_marker`, `marks`) and
   `app_data_cache_stream_events_total{result}` (`applied`, `caught_up`, `older_kept`, `unordered`);
 - `app_data_floor_reopens_total{outcome}` (`met`, `still_behind`, `spent`);
-- `app_data_class_stream_records{class}` against its bound, and `app_data_streams_open` against
+- `app_data_level_stream_records{bit}` against its bound, and `app_data_streams_open` against
   `MAX_STREAMS` (the alerts above);
 - `app_data_signed_out_reads_total{outcome}`;
 - **write-to-stream lag**, observed after cutover: the time from a write's acknowledgement to the first
@@ -651,10 +723,12 @@ request counter (end state, item 7).
    floors.
 5. **The empty stream**: an integrity risk for apps that act on "empty", reduced by conditional claims,
    fixed by civitai/civitai-registry#56.
-6. **A class stream is content shared across viewers.** The per-viewer stream gates who is served it,
-   and a refused viewer falls to the anonymous class, so the worst case is what a signed-out viewer
-   sees. Until the fifth claim ships, PG-13 reaches a viewer who turned it off.
-7. **A board past its bound** is truncated to its newest documents, never served elsewhere.
+6. **Level streams are content shared across viewers.** The per-viewer stream gates who is served
+   them, and a refusal is an explicit signal that drops the viewer from every level stream at once.
+   Until the fifth claim is required, PG-13 reaches a viewer who turned it off.
+7. **A board past its bound** keeps its newest documents per level stream, at or above the app's own
+   2,000-row read, so the app's lists are unchanged; a get or update outside the window is `503`.
+   A private collection past its bound is `503`, never served in part.
 8. **Sticky routing lost** (replica churn). Reads reopen once or answer `503`; a spent block token is
    refreshed by the SDK. Never a stale list, never REST.
 9. **No fallback means this service's outage is the apps' outage** for every cut-over app, taken
@@ -690,7 +764,7 @@ Operator, 2026-11-22:
     path in app-data-go, so the whole app moves at once. This supersedes the "private only" default in 6.
 11. **The empty stream is accepted for v1,** with the integrity risk stated and the conditional-claim
     precondition; civitai/civitai-registry#56 must land before REST sunsets.
-12. **Signed-out viewers:** app-data-go reads the shared class stream under its own service identity,
+12. **Signed-out viewers:** app-data-go reads the shared level streams under its own service identity,
     as an anonymous viewer (public levels only, no marks), and serves signed-out viewers from it.
 
 Session, 2026-11-22:
@@ -710,7 +784,7 @@ Session, 2026-11-22:
   block tokens, unsigned. Raised as J2 against JustMaier/portable-data#2.
 - **Private data in the registry under auth** (the registry spec owner): answered in favor on
   civitai-registry#49; the per-user stream design the reads use is the answer to its Q2, and its
-  answer asked for a short list of services allowed to hold such data, which the shared-class
+  answer asked for a short list of services allowed to hold such data, which the shared-level
   allowlist follows.
 - **The relay stall** (the registry spec owner): civitai-registry#50. Not on the write path, which has
   no relay, but it bounds what the read-after-write contract can promise through a gateway.
