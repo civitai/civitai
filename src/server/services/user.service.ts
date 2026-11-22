@@ -499,7 +499,7 @@ export async function archiveProfileBeforeModeratorChange<TStored = unknown>({
   alwaysArchive = false,
 }: {
   userId: number;
-  actorId: number;
+  actorId: ProfileClearSnapshot['actorId'];
   fields: ProfileClearSnapshot['clearedFields'];
   archive: (snapshot: ProfileClearSnapshot) => Promise<TStored>;
   alwaysArchive?: boolean;
@@ -555,7 +555,8 @@ export async function archiveProfileBeforeModeratorChange<TStored = unknown>({
 /** A user's profile text and links as stored just before a moderator clear, edit or ban changes them. */
 export type ProfileClearSnapshot = {
   userId: number;
-  actorId: number;
+  /** null: a content wipe ordered through the secret-authed webhook, which names no user. */
+  actorId: number | null;
   clearedFields: (ProfileClearField | 'links')[];
   /** Social and sponsorship links: offsite contact and payment details. */
   links: { id: number; url: string; type: string }[];
@@ -2069,11 +2070,15 @@ export const removeAllContent = async ({
   id,
   actorUserId = null,
   claimedModeratorId = null,
+  archive = async (snapshot) =>
+    (await import('~/server/services/csam.service-new')).archiveUserProfile(snapshot),
 }: {
   id: number;
   actorUserId?: number | null;
   /** The webhook caller's unverified say-so; named on alerts only, never written as an actor. */
   claimedModeratorId?: number | null;
+  /** Server-only: stores the profile and links before they are deleted. */
+  archive?: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
 }) => {
   if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   const alertedBy = { userId: id, actorUserId: actorUserId ?? claimedModeratorId };
@@ -2081,6 +2086,13 @@ export const removeAllContent = async ({
   // held to it. The deletes that destroy evidence check again in their own statements.
   const { markerView } = await assertContentRemovalNotHeld(id);
   const held = contentRemovalHeldSql(Prisma.sql`${id}::int`, markerView);
+  // Before any delete, as in `deleteUser`: a failed archive deletes nothing.
+  await archiveProfileBeforeModeratorChange({
+    userId: id,
+    actorId: actorUserId,
+    fields: [...PROFILE_CLEAR_FIELDS, 'links'],
+    archive,
+  });
 
   // The primary, as the deletes below: a row the replica has not seen yet is still deleted.
   const models = await dbWrite.model.findMany({

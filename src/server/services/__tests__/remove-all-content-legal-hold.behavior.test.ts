@@ -2052,3 +2052,69 @@ describe('an open bounty with supporters, in a content wipe', () => {
     expect((await remaining(CLEAN)).Bounty).toBe(1);
   });
 });
+
+// Task 1a1f810917cac202a: a content wipe archives the profile and links of an account any CSAM
+// report names, held or not, before it deletes anything; a failed archive deletes nothing (the
+// 11/20 fail-closed ruling).
+describe('removeAllContent and the profile archive', () => {
+  const OLD_REPORT = 4; // named only on a report sent over a year ago and archived: no hold
+  const PROFILE = { bio: 'zzbio', message: null };
+  const LINKS = [{ id: 41, url: 'https://example.com/zz', type: 'Social' }];
+
+  beforeEach(async () => {
+    await holder.db.exec(`
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt")
+        VALUES (${OLD_REPORT}, now() - interval '400 days', now());
+      INSERT INTO "Image" (id, "userId", "postId") VALUES (${
+        OLD_REPORT * 100
+      }, ${OLD_REPORT}, NULL);
+      ${SEEDED_TABLES.map((t) => `INSERT INTO "${t}" ("userId") VALUES (${OLD_REPORT});`).join(
+        '\n'
+      )}
+    `);
+    vi.mocked(dbMock.dbWrite.userProfile.findUnique).mockResolvedValue(PROFILE as never);
+    vi.mocked(dbMock.dbWrite.userLink.findMany).mockResolvedValue(LINKS as never);
+  });
+
+  it('archives the profile and links of an account an unheld report names, before any delete', async () => {
+    const archive = vi.fn(async () => undefined);
+
+    await removeAllContent({ id: OLD_REPORT, actorUserId: 9, archive });
+
+    expect(archive).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: OLD_REPORT, actorId: 9, profile: PROFILE, links: LINKS })
+    );
+    expect(await remaining(OLD_REPORT)).toEqual(all(0));
+    const archivedAt = archive.mock.invocationCallOrder[0];
+    for (const del of [
+      dbMock.dbWrite.imageReaction.deleteMany,
+      dbMock.dbWrite.userLink.deleteMany,
+      dbMock.dbWrite.userProfile.deleteMany,
+    ])
+      expect(vi.mocked(del).mock.invocationCallOrder[0]).toBeGreaterThan(archivedAt);
+  });
+
+  it('deletes nothing when the archive fails', async () => {
+    const archive = vi.fn(async () => {
+      throw new Error('bucket down');
+    });
+
+    await expect(removeAllContent({ id: OLD_REPORT, actorUserId: 9, archive })).rejects.toThrow(
+      'bucket down'
+    );
+
+    expect(await remaining(OLD_REPORT)).toEqual(all(1));
+    expect(dbMock.dbWrite.imageReaction.deleteMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.userLink.deleteMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.userProfile.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('wipes an account no report names without archiving it', async () => {
+    const archive = vi.fn(async () => undefined);
+
+    await removeAllContent({ id: CLEAN, archive });
+
+    expect(archive).not.toHaveBeenCalled();
+    expect(await remaining(CLEAN)).toEqual(all(0));
+  });
+});
