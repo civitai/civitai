@@ -467,6 +467,32 @@ describe('image report: file view flags', () => {
     );
   });
 
+  it('is sent as not viewed, with the sentence, when the file sent is not the one first read', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501), imageRow(502)]);
+    const missing = Object.assign(new Error('gone'), { name: 'NoSuchKey' });
+    // Read in full before the CyberTip opens, then gone when it is sent.
+    let opened = false;
+    submitReport.mockImplementation(async () => {
+      opened = true;
+      return { data: { reportId: 99 } };
+    });
+    getObject.mockImplementation(async (key: string) => {
+      if (key.includes('501') && opened) throw missing;
+      return {
+        Body: { transformToByteArray: async () => new Uint8Array(stored) },
+        ContentType: 'image/png',
+        ContentLength: stored.length,
+      };
+    });
+    await view(501);
+    await view(502);
+
+    await processCsamReport(imageReport([501, 502]));
+
+    expect(viewedByName()).toEqual({ 'upload-501.png': false, 'upload-502.png': true });
+    expect(note('upload-501.png')).toEqual([NOTE]);
+  });
+
   it('still refuses a supplemental whose file has no record', async () => {
     await view(502);
 
@@ -486,7 +512,7 @@ describe('image report: file view flags', () => {
     expect(viewedByName()).toEqual({ 'upload-501.png': true, 'upload-502.png': true });
     expect(note('upload-501.png')).toEqual([]);
     expect(submitReport.mock.calls[0][0].additionalInfo).toBe(
-      'A Civitai reviewer confirmed the attached image(s).'
+      "A Civitai reviewer confirmed the reported image(s). Where a file is reported as not viewed, Civitai can't confirm that it is identical to the copy the reviewer saw."
     );
   });
 });

@@ -1435,8 +1435,6 @@ async function reportImages(claim: SendClaim) {
     });
     if (isFeedbackCaptureOwner(image.userId))
       prompts.additionalInfo.unshift(xmlText(FEEDBACK_CAPTURE_FILE_NOTE));
-    if (viewed.has(image.id) && !viewedAsSent.has(image.id))
-      prompts.additionalInfo.push(xmlText(VIEWED_COPY_UNCONFIRMED_FILE_NOTE));
     fileDetailsOf.set(image.id, {
       fileDetails: {
         originalFileName: originalFileName ? xmlText(originalFileName) : undefined,
@@ -1498,9 +1496,20 @@ async function reportImages(claim: SendClaim) {
         data: { fileId, hash },
       } = await uploadToCyberTip(claim, file);
 
-      const viewRendition = viewedAsSent.get(image.id);
-      const viewedByEsp = !!viewRendition;
-      await cybertipClient.submitFileDetails({ reportId: ncmecReportId, fileId, ...fileDetails });
+      const viewedByEsp = viewedAsSent.has(image.id) && original.source === 'original';
+      const viewRendition = viewedByEsp ? viewedAsSent.get(image.id) : undefined;
+      const sentDetails = {
+        ...fileDetails,
+        fileViewedByEsp: viewedByEsp,
+        ...(viewed.has(image.id) &&
+          !viewedByEsp && {
+            additionalInfo: [
+              ...(fileDetails.additionalInfo ?? []),
+              xmlText(VIEWED_COPY_UNCONFIRMED_FILE_NOTE),
+            ],
+          }),
+      };
+      await cybertipClient.submitFileDetails({ reportId: ncmecReportId, fileId, ...sentDetails });
 
       uploaded++;
       return {
@@ -1556,10 +1565,7 @@ async function reportImages(claim: SendClaim) {
       }),
       ...((supplemental || omitted.length > 0) && {
         additionalInfo: [
-          supplemental &&
-            supplementalReportText(supplemental.unreviewedImageIds.length, {
-              viewedSentAsNotViewed: [...viewed.keys()].some((id) => !viewedAsSent.has(id)),
-            }),
+          supplemental && supplementalReportText(supplemental.unreviewedImageIds.length),
           ...omitted,
         ]
           .filter(Boolean)
