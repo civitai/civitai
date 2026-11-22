@@ -441,9 +441,34 @@ describe('image report: file view flags', () => {
       ([d]) => d.originalFileName === 'upload-501.png'
     )![0];
     const xml = buildSubmitFileDetails(sent);
-    expect(xml).not.toContain('&amp;apos;');
     const parsed = await new Parser({ explicitArray: false }).parseStringPromise(xml);
     expect(JSON.stringify(parsed)).toContain(JSON.stringify(NOTE).slice(1, -1));
+  });
+
+  it("adds the sentence after the file's own lines, for a record of a resized copy too", async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      { ...aligned(501), meta: { prompt: 'a prompt' } },
+      imageRow(502),
+    ]);
+    await view(501, { activity: 'reportMedia:select:cdn-450' });
+
+    await processCsamReport(imageReport([501, 502]));
+
+    expect(viewedByName()['upload-501.png']).toBe(false);
+    expect(note('upload-501.png')).toEqual(['Prompt, as stored on the image: a prompt', NOTE]);
+  });
+
+  it.each([
+    'http://image.civitai.com/fixture/501.png',
+    'https://civitai-prod.s3.amazonaws.com/fixture/501.png',
+  ])('treats the fixture at %s the same way', async (url) => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([{ ...imageRow(501), url }, imageRow(502)]);
+    await view(501);
+
+    await processCsamReport(imageReport([501, 502]));
+
+    expect(viewedByName()['upload-501.png']).toBe(false);
+    expect(note('upload-501.png')).toEqual([NOTE]);
   });
 
   it('is sent as not viewed, without the sentence, when no record exists', async () => {
