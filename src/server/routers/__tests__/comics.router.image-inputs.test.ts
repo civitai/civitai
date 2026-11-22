@@ -146,7 +146,7 @@ describe('comics.replacePanelImage', () => {
 
     await expect(
       caller().replacePanelImage({ panelId: PANEL_ID, imageUrl: INPUT_A })
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     noImageWritten();
   });
 
