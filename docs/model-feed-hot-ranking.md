@@ -1,6 +1,6 @@
 # Model Feed: A "Hot" Sort Instead of a Default Period
 
-A proposal to replace the model feed's default time window with a Reddit-style _hot_ ranking: popular
+A proposal to replace the model feed's default time window with a Reddit-style *hot* ranking: popular
 models first, with newer ones favoured, and no hard cutoff that can empty a page. `period` stays as an
 optional narrowing the user applies on purpose.
 
@@ -10,13 +10,13 @@ their columns in an INSERT list unconditionally — `bulkInsertMetrics` for `Mod
 `basemodel.metrics.ts` for `ModelBaseModelMetric` — so a missing column takes down the whole metrics
 job, not just the new signal. The fourth and fifth need no deploy at all:
 
-| Migration                                              | What it adds                      | Backfill                                        | Applied to prod |
-| ------------------------------------------------------ | --------------------------------- | ----------------------------------------------- | --------------- |
-| `20261010120000_model_hot_score` (§11)                 | the score, its index, the mirror  | in-file `CALL`                                  | 2026-10-08      |
-| `20261011120000_model_hot_score_generator_cap` (§14)   | `uniqueGeneratorCount`, the cap   | `/api/admin/temp/backfill-unique-generators`    | 2026-10-08      |
-| `20261012120000_base_model_metric_hot_score` (§15)     | per-base-model scoring            | `/api/admin/temp/backfill-base-model-hot-score` | 2026-10-12      |
-| `20261013120000_model_hot_score_generator_floor` (§16) | the first generator earns nothing | in-file `CALL`                                  | 2026-10-12      |
-| `20271117190000_model_hot_score_version_credit` (§18)  | a version's own, capped credit    | in-file `CALL`                                  | not yet         |
+| Migration | What it adds | Backfill | Applied to prod |
+| --- | --- | --- | --- |
+| `20261010120000_model_hot_score` (§11) | the score, its index, the mirror | in-file `CALL` | 2026-10-08 |
+| `20261011120000_model_hot_score_generator_cap` (§14) | `uniqueGeneratorCount`, the cap | `/api/admin/temp/backfill-unique-generators` | 2026-10-08 |
+| `20261012120000_base_model_metric_hot_score` (§15) | per-base-model scoring | `/api/admin/temp/backfill-base-model-hot-score` | 2026-10-12 |
+| `20261013120000_model_hot_score_generator_floor` (§16) | the first generator earns nothing | in-file `CALL` | 2026-10-12 |
+| `20271117190000_model_hot_score_version_credit` (§18) | a version's own, capped credit | in-file `CALL` | not yet |
 
 The last one carries an ordering constraint in the opposite direction from the others: it must go
 **after** both generator backfills, because it makes `uniqueGeneratorCount = 0` mean "no generation
@@ -63,7 +63,7 @@ advertise the full count. Google files those pages as soft 404s, and a visitor s
 
 `periodFallback` (`e60d745f97`) retries at `AllTime` when the first page is empty. It only fires at
 exactly zero results, so a tag showing 3 of its 255 models is still wrong. The underlying problem is
-that the default _filters_ for recency. This proposal moves recency into the _sort_, and a sort can
+that the default *filters* for recency. This proposal moves recency into the *sort*, and a sort can
 never remove rows.
 
 ---
@@ -71,13 +71,13 @@ never remove rows.
 ## Summary
 
 - **Today's `period` doesn't mean what its label says.** `ModelMetric` stores all-time counters only.
-  `period: Month` keeps models that got a _new version_ in the last 30 days and ranks them by
+  `period: Month` keeps models that got a *new version* in the last 30 days and ranks them by
   all-time likes. The current default's top 50 has a median age of **555 days**, and 44 of the 50
   were published more than 90 days ago.
 - **Use Reddit's formula, stored as a column:**
   `hot = log10(1 + engagement) + publishedAt_seconds / T`, where engagement blends likes, downloads
   and generations.
-  The time term is the _publish time_, not the age, so a model's score only changes when its
+  The time term is the *publish time*, not the age, so a model's score only changes when its
   engagement changes. Nothing has to recompute on a timer.
 - **It rides along on writes that already happen.** The metrics job already rewrites a model's
   `ModelMetric` row when its counts change (17,262 rows in a measured hour). The score changes in
@@ -105,15 +105,15 @@ never remove rows.
 - **There are no per-period metric columns.** `ModelMetric` (`schema.full.prisma:1444`) has one row
   per model. The `downloadCount${period}` keys at `:1217` relabel the all-time columns.
 
-So "Highest Rated · Month" means _"all-time best among models updated in the last 30 days."_ Measured
+So "Highest Rated · Month" means *"all-time best among models updated in the last 30 days."* Measured
 top 50 on the green feed:
 
-|                         | Current default |
-| ----------------------- | --------------: |
-| Median age              |        555 days |
-| Oldest                  |      1,363 days |
-| Published > 90 days ago |        44 of 50 |
-| Median likes            |           2,022 |
+| | Current default |
+| --- | ---: |
+| Median age | 555 days |
+| Oldest | 1,363 days |
+| Published > 90 days ago | 44 of 50 |
+| Median likes | 2,022 |
 
 The top of the feed is the same long-established models, surfaced again whenever they ship a
 version.
@@ -143,7 +143,7 @@ likes, 371 downloads, 231 generations — generations contributed **2%** of enga
 - **Why it's cheap:** `publishedAt` never changes, so the passage of time adds the same amount to
   nobody's score. The relative order of two models only changes when one of them gains likes. The
   score is written when likes change and read from an index. This is the property that makes
-  Reddit's _hot_ practical at scale.
+  Reddit's *hot* practical at scale.
 - **Why `publishedAt`, not `lastVersionAt`:** `lastVersionAt` resets when an old model ships a new
   version, which is exactly what fills today's feed with old models. An age-decay expression over
   `lastVersionAt` was also measured at query time: 2,465 ms against 14.5 ms, and 39 of its top 50 were
@@ -154,22 +154,22 @@ likes, 371 downloads, 231 generations — generations contributed **2%** of enga
 
 Top 50 on the green feed at different values of `T`, first with likes only:
 
-| 10× likes is worth…       |   Median age |       Oldest | Median likes |
-| ------------------------- | -----------: | -----------: | -----------: |
-| 12 hours (Reddit's value) |     0.1 days |        1 day |            8 |
-| 1 day                     |     0.3 days |        1 day |           15 |
-| 1 week                    |     1.3 days |       4 days |           35 |
-| **1 month**               | **5.9 days** |  **45 days** |       **84** |
-| **3 months**              |  **43 days** | **154 days** |      **543** |
-| 6 months                  |      79 days |     294 days |        1,006 |
-| 1 year                    |     100 days |     602 days |        1,195 |
+| 10× likes is worth… | Median age | Oldest | Median likes |
+| --- | ---: | ---: | ---: |
+| 12 hours (Reddit's value) | 0.1 days | 1 day | 8 |
+| 1 day | 0.3 days | 1 day | 15 |
+| 1 week | 1.3 days | 4 days | 35 |
+| **1 month** | **5.9 days** | **45 days** | **84** |
+| **3 months** | **43 days** | **154 days** | **543** |
+| 6 months | 79 days | 294 days | 1,006 |
+| 1 year | 100 days | 602 days | 1,195 |
 
 With the blended engagement (likes + downloads + generations) at the two useful settings:
 
-| 10× engagement is worth… | Median age |   Oldest | Median likes | Median downloads | Median generations |
-| ------------------------ | ---------: | -------: | -----------: | ---------------: | -----------------: |
-| 1 month                  |   7.0 days |  44 days |          100 |            1,354 |                  2 |
-| 3 months                 |  53.5 days | 189 days |          552 |           13,967 |                 29 |
+| 10× engagement is worth… | Median age | Oldest | Median likes | Median downloads | Median generations |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 month | 7.0 days | 44 days | 100 | 1,354 | 2 |
+| 3 months | 53.5 days | 189 days | 552 | 13,967 | 29 |
 
 The blend shifts the lists only slightly toward established downloads; the same releases lead
 either way. Generations barely move the top: most newly popular models aren't generatable on-site
@@ -179,9 +179,9 @@ generator-supported models.
 Publication volume is high enough that Reddit's value only surfaces models a few hours old with a
 handful of likes. The useful range is **1–3 months**:
 
-- **1 month** reads as _"new and taking off"_: the current checkpoint wave plus LoRAs from the last
+- **1 month** reads as *"new and taking off"*: the current checkpoint wave plus LoRAs from the last
   few days with 65–145 likes.
-- **3 months** reads as _"best of the season"_: the leading checkpoints from the last three months,
+- **3 months** reads as *"best of the season"*: the leading checkpoints from the last three months,
   575–2,877 likes each.
 
 Both surface the current base-model wave, which the current default's top 12 doesn't show at all.
@@ -217,19 +217,19 @@ already be a `ModelMetric` column, or the score stops riding on the existing met
 
 ### Overhead, measured
 
-|                 | Cost                                                                                                                                                                                    |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Writes          | Rides on existing writes. The metrics upsert already skips unchanged rows. 17,262 rows changed in a measured hour (159,300 in a day, of 951,190). About 5 extra index updates a second. |
-| Background jobs | None new.                                                                                                                                                                               |
-| Reads           | **1.0 ms** for the default feed on dev, against 15.4 ms for today's default. Full results in [§6](#6-dev-experiment-2026-09-16).                                                        |
-| Paging          | Stable. The order doesn't change with time, so pages don't skip or repeat rows between loads.                                                                                           |
-| Storage         | **Superseded by §10:** covering indexes shipped — `feed_hot` 45 MB plus `mbmm_feed_hot` 55 MB, against 318 MB for `feed_highest_rated` alone.                                           |
+| | Cost |
+| --- | --- |
+| Writes | Rides on existing writes. The metrics upsert already skips unchanged rows. 17,262 rows changed in a measured hour (159,300 in a day, of 951,190). About 5 extra index updates a second. |
+| Background jobs | None new. |
+| Reads | **1.0 ms** for the default feed on dev, against 15.4 ms for today's default. Full results in [§6](#6-dev-experiment-2026-09-16). |
+| Paging | Stable. The order doesn't change with time, so pages don't skip or repeat rows between loads. |
+| Storage | **Superseded by §10:** covering indexes shipped — `feed_hot` 45 MB plus `mbmm_feed_hot` 55 MB, against 318 MB for `feed_highest_rated` alone. |
 
 ### Why the index was tested on dev, not prod
 
 The prod read replica uses every existing index, but it can't **create** one. It's a hot standby that
 replays the primary's changes and accepts none of its own. Every index is built on the primary and
-reaches the replica through replication, so building this one on prod _is_ the migration.
+reaches the replica through replication, so building this one on prod *is* the migration.
 
 Before building anything, the replica's `hypopg` extension was used as a design check. It lets the
 planner assume an index exists for one session, without writing anything, and reports plan shapes but
@@ -322,11 +322,11 @@ rows on dev against ~951k on prod.
 
 ### What was run
 
-| Step       | SQL                                                                                               | Result                                       |
-| ---------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| Add column | `ALTER TABLE "ModelMetric" ADD COLUMN IF NOT EXISTS "hotScore" real`                              | **92 ms**, no table rewrite                  |
-| Backfill   | `UPDATE … SET "hotScore" = <formula> FROM "Model" m …`, 12 batches of 250k model ids              | **949,065 rows in ~65 s** (3–13 s per batch) |
-| Index      | `CREATE INDEX CONCURRENTLY "ModelMetric_hot_score" ON "ModelMetric" ("hotScore" DESC, "modelId")` | **716 ms**, valid, **20 MB**                 |
+| Step | SQL | Result |
+| --- | --- | --- |
+| Add column | `ALTER TABLE "ModelMetric" ADD COLUMN IF NOT EXISTS "hotScore" real` | **92 ms**, no table rewrite |
+| Backfill | `UPDATE … SET "hotScore" = <formula> FROM "Model" m …`, 12 batches of 250k model ids | **949,065 rows in ~65 s** (3–13 s per batch) |
+| Index | `CREATE INDEX CONCURRENTLY "ModelMetric_hot_score" ON "ModelMetric" ("hotScore" DESC, "modelId")` | **716 ms**, valid, **20 MB** |
 
 - **The formula used:** blended engagement (§2), `T` = 1 month.
 - **No `publishedAt` column on dev.** The backfill joined `Model` for it, which is fine for a
@@ -344,17 +344,17 @@ rows on dev against ~951k on prod.
 `EXPLAIN ANALYZE`, green-feed visibility filters, first 101 rows, each query run twice with the second
 (warm) run reported:
 
-| Scenario                             | Query                                   |       Time |    Rows | Plan                                                           |
-| ------------------------------------ | --------------------------------------- | ---------: | ------: | -------------------------------------------------------------- |
-| Default feed                         | **Hot · all time**                      | **1.0 ms** |     101 | index scan, `ModelMetric_hot_score`                            |
-|                                      | Highest Rated · all time                |     0.6 ms |     101 | index-only scan, `feed_highest_rated`                          |
-|                                      | Highest Rated · Month (today's default) |    15.4 ms |     101 | index scan, filtering by date as it goes                       |
-| Small tag (`openpose`)               | **Hot · all time**                      | **4.3 ms** | **101** | tag index → metrics row → sort                                 |
-|                                      | Today's default                         |     1.4 ms |   **0** | same shape; the page is empty                                  |
-| Large tag (`character`, 554k models) | **Hot · all time**                      | **3.6 ms** |     101 | index scan, `ModelMetric_hot_score`, tag checked per row       |
-|                                      | Today's default                         |    62.7 ms |     101 | index scan, `feed_highest_rated`, date and tag checked per row |
-| Deep paging (row 5,000)              | **Hot · all time**                      | **9.6 ms** |     101 | index scan, `ModelMetric_hot_score`, keyset cursor             |
-|                                      | Highest Rated · all time                |     0.8 ms |     101 | index-only scan, `feed_highest_rated`                          |
+| Scenario | Query | Time | Rows | Plan |
+| --- | --- | ---: | ---: | --- |
+| Default feed | **Hot · all time** | **1.0 ms** | 101 | index scan, `ModelMetric_hot_score` |
+| | Highest Rated · all time | 0.6 ms | 101 | index-only scan, `feed_highest_rated` |
+| | Highest Rated · Month (today's default) | 15.4 ms | 101 | index scan, filtering by date as it goes |
+| Small tag (`openpose`) | **Hot · all time** | **4.3 ms** | **101** | tag index → metrics row → sort |
+| | Today's default | 1.4 ms | **0** | same shape; the page is empty |
+| Large tag (`character`, 554k models) | **Hot · all time** | **3.6 ms** | 101 | index scan, `ModelMetric_hot_score`, tag checked per row |
+| | Today's default | 62.7 ms | 101 | index scan, `feed_highest_rated`, date and tag checked per row |
+| Deep paging (row 5,000) | **Hot · all time** | **9.6 ms** | 101 | index scan, `ModelMetric_hot_score`, keyset cursor |
+| | Highest Rated · all time | 0.8 ms | 101 | index-only scan, `feed_highest_rated` |
 
 - **Hot is faster than today's default where it matters:** 15× on the default feed and 17× on a
   large tag, because it has no date filter to discard rows against.
@@ -400,25 +400,25 @@ revision to the index recommendation.
 `getModelsRaw` picks between four FROM shapes (`:980–1013`). What decides them is **where the sort
 key lives**:
 
-| Path | When                                                             | Drives from                                                                         | Sort key                       |
-| ---- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------ |
-| 1    | no base-model filter (or the `base-model-feed-metrics` flag off) | `ModelMetric`                                                                       | `mm.*`                         |
-| 2    | one base model                                                   | `ModelBaseModelMetric`                                                              | `mbm.*` (per-base-model stats) |
-| 3    | many base models, **Newest/Oldest**                              | **`ModelMetric`**, semi-join `mbm` via `EXISTS`, per-base-model stats via `LATERAL` | `mm."lastVersionAt"`           |
-| 4    | many base models, per-base-model-stat sort                       | aggregate subquery over `ModelBaseModelMetric`                                      | summed `mbm.*`                 |
+| Path | When | Drives from | Sort key |
+| --- | --- | --- | --- |
+| 1 | no base-model filter (or the `base-model-feed-metrics` flag off) | `ModelMetric` | `mm.*` |
+| 2 | one base model | `ModelBaseModelMetric` | `mbm.*` (per-base-model stats) |
+| 3 | many base models, **Newest/Oldest** | **`ModelMetric`**, semi-join `mbm` via `EXISTS`, per-base-model stats via `LATERAL` | `mm."lastVersionAt"` |
+| 4 | many base models, per-base-model-stat sort | aggregate subquery over `ModelBaseModelMetric` | summed `mbm.*` |
 
 **Hot is a per-model score, exactly like `lastVersionAt`** — not a per-base-model statistic. So it
 belongs in **path 3's shape**, which already exists and was built for this problem: the comment at
 `:519–526` records that the aggregate path cost ~2.8 s per query at deep cursors, because it scanned
 every matching `ModelBaseModelMetric` row before the cursor predicate could apply.
 
-So the change is to make the path condition depend on the sort's _home table_ rather than on the sort's
+So the change is to make the path condition depend on the sort's *home table* rather than on the sort's
 name:
 
 - `useNewestOldestMultiBmPath` becomes something like `useModelMetricDrivenPath`, true for
   Newest, Oldest **and Hot**.
 - ~~It must apply for **one** base model too, not just many. Hot should never drive from `mbm`.~~
-  **Reversed by §10:** one base model _does_ drive from `mbm`, via a `hotScore` mirrored onto
+  **Reversed by §10:** one base model *does* drive from `mbm`, via a `hotScore` mirrored onto
   `ModelBaseModelMetric` and the `mbmm_feed_hot` index — 81 ms down to 1.1 ms for a mid-sized base
   model. Only the several-base-models case needed path 3's condition extended.
 - Keep path 3's `LATERAL` sum, or the cards show whole-model download counts where the feed promises
@@ -499,23 +499,23 @@ index, and the bare-vs-covering decision is recorded here with both numbers.
 Audited 2026-10-06. `ModelSort` is a shared enum, and several places enumerate it rather than listing
 sorts explicitly, so **adding `Hot` changes more than the model feed** whether we want it to or not.
 
-| Surface                                  | What happens when `ModelSort.Hot` exists                                                                                                                          | Action         |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| Models feed dropdown                     | Appears automatically — `sortOptions.models` is `Object.values(ModelSort)` minus `ModelSortHidden` (`SortFilter.tsx:37`)                                          | intended       |
-| **Collection sort menus**                | **Appears automatically** in every model collection: `modelCollectionSortOptions` spreads all visible values (`collection-sort.ts`)                               | **decide**     |
-| **Contest collections**                  | **Enters the random re-roll pool** — `contestModelSorts` is the same spread, and contest feeds re-roll each render to spread entry visibility                     | **decide**     |
-| App Blocks API (`/api/v1/blocks/models`) | Accepts `sort: z.enum(ModelSort)` and forwards to `getModelsRaw` (`:78`, `:152`); works once the column exists                                                    | no work        |
-| Public API (`/api/v1/models`)            | Same schema, so `sort=Hot` becomes a documented value                                                                                                             | changelog only |
-| Home-page blocks                         | Unaffected — `modelFeedDefaults` pins `HighestRated` explicitly (`home-block.service.ts:320`)                                                                     | none           |
-| Profile / storefront sections            | Unaffected — each passes its own sort                                                                                                                             | none           |
-| 3D models feed                           | Unaffected — `Model3DSort` is a separate enum, deliberately "limited to keys we can actually compute against Model3D + Model3DMetric" (`model3d.schema.ts:11–14`) | none           |
-| Generator resource picker                | Unaffected — its own `ResourceSort`, served from Meilisearch via `meiliSortFor` (`resource-select.service.ts:56`)                                                 | see below      |
-| `sort-availability.ts`                   | No change needed. It withholds only `Newest`/`Oldest` by name, and `resolveFeedSort` rewrites image feeds only                                                    | none           |
+| Surface | What happens when `ModelSort.Hot` exists | Action |
+| --- | --- | --- |
+| Models feed dropdown | Appears automatically — `sortOptions.models` is `Object.values(ModelSort)` minus `ModelSortHidden` (`SortFilter.tsx:37`) | intended |
+| **Collection sort menus** | **Appears automatically** in every model collection: `modelCollectionSortOptions` spreads all visible values (`collection-sort.ts`) | **decide** |
+| **Contest collections** | **Enters the random re-roll pool** — `contestModelSorts` is the same spread, and contest feeds re-roll each render to spread entry visibility | **decide** |
+| App Blocks API (`/api/v1/blocks/models`) | Accepts `sort: z.enum(ModelSort)` and forwards to `getModelsRaw` (`:78`, `:152`); works once the column exists | no work |
+| Public API (`/api/v1/models`) | Same schema, so `sort=Hot` becomes a documented value | changelog only |
+| Home-page blocks | Unaffected — `modelFeedDefaults` pins `HighestRated` explicitly (`home-block.service.ts:320`) | none |
+| Profile / storefront sections | Unaffected — each passes its own sort | none |
+| 3D models feed | Unaffected — `Model3DSort` is a separate enum, deliberately "limited to keys we can actually compute against Model3D + Model3DMetric" (`model3d.schema.ts:11–14`) | none |
+| Generator resource picker | Unaffected — its own `ResourceSort`, served from Meilisearch via `meiliSortFor` (`resource-select.service.ts:56`) | see below |
+| `sort-availability.ts` | No change needed. It withholds only `Newest`/`Oldest` by name, and `resolveFeedSort` rewrites image feeds only | none |
 
 ### Collections and contests are the decision
 
 Both menus are built by spreading the enum, so Hot arrives in them with no code change — including
-the random sort re-roll on contest feeds. It would _work_ (collections pass `ids` and go through the
+the random sort re-roll on contest feeds. It would *work* (collections pass `ids` and go through the
 `mm` path), but nobody asked for it.
 
 Decided and implemented: `modelCollectionSortOptions` and the contest pool are listed explicitly in
@@ -639,7 +639,7 @@ today's list at all.
    instead of spreading `Object.values(ModelSort)`, so the two menus stop being coupled.
    `ModelSortHidden` is the wrong tool — it would also remove Hot from the feed dropdown.
 9. **Signal weights stay equal — but the first divisors were wrong.** Likes + downloads/6.4 +
-   generations/4.1, normalized so each contributes equally to a _median_ model. The original
+   generations/4.1, normalized so each contributes equally to a *median* model. The original
    reading here ("the top lists barely differ") was measured over a sample too small to show it and
    is **false**: the divisors move the feed more than any other parameter. §13 has the correction.
 10. **Filtering semantics — superseded by §10.** This read "Hot filters on whole-model ratings,
@@ -661,12 +661,12 @@ today's list at all.
 Build the stored hot score, make `Hot` + `AllTime` the client default, migrate the saved default
 pair, then delete `periodFallback`.
 
-| Step                                                                                                 | Size       |
-| ---------------------------------------------------------------------------------------------------- | ---------- |
+| Step | Size |
+| --- | --- |
 | Staged migration: columns, trigger update, batched backfill, concurrent index (**applied manually**) | ~0.5–1 day |
-| `ModelSort.Hot` across the four `getModelsRaw` paths, keyset cursor, EXPLAIN per path                | ~1 day     |
-| Client default, one-time localStorage migration, dropdown check                                      | ~0.5 day   |
-| Delete `periodFallback`, `periodFallbackApplied` and the retry block                                 | small      |
+| `ModelSort.Hot` across the four `getModelsRaw` paths, keyset cursor, EXPLAIN per path | ~1 day |
+| Client default, one-time localStorage migration, dropdown check | ~0.5 day |
+| Delete `periodFallback`, `periodFallbackApplied` and the retry block | small |
 
 **About 2–3 days**, with most of the risk in the per-base-model query paths.
 
@@ -696,16 +696,16 @@ pair, then delete `periodFallback`.
 ## 10. Base-model measurements (2026-10-07)
 
 Run on dev with an `int` `hotScore`, a `publishedAt` column, a BEFORE trigger, and three candidate
-indexes. **This overturns part of §7: Hot needs the score on _both_ metric tables, and then it needs
+indexes. **This overturns part of §7: Hot needs the score on *both* metric tables, and then it needs
 almost no new query path.**
 
 ### The indexes
 
-| Index                                                                                                     |      Size |
-| --------------------------------------------------------------------------------------------------------- | --------: |
-| `ModelMetric_hot_bare` — `(hotScore DESC, modelId)`                                                       |     21 MB |
+| Index | Size |
+| --- | ---: |
+| `ModelMetric_hot_bare` — `(hotScore DESC, modelId)` | 21 MB |
 | `ModelMetric_hot_covering` — same + `INCLUDE (status, availability, mode, nsfwLevel, poi, minor, userId)` | **45 MB** |
-| `mbmm_feed_hot` — `(baseModel, hotScore DESC, modelId) INCLUDE (…)` on `ModelBaseModelMetric`             | **54 MB** |
+| `mbmm_feed_hot` — `(baseModel, hotScore DESC, modelId) INCLUDE (…)` on `ModelBaseModelMetric` | **54 MB** |
 
 Shipped names: the covering `ModelMetric` index is **`feed_hot`** in the migration, matching the
 existing `feed_*` family. The `ModelMetric_hot_*` names in this section were dev-only.
@@ -715,15 +715,15 @@ concurrently in about a second on dev.
 
 ### Covering beats bare everywhere, for 24 MB
 
-| Scenario                               |     bare |     covering |
-| -------------------------------------- | -------: | -----------: |
-| default feed                           |  0.93 ms |  **0.68 ms** |
-| deep page (row 5,000)                  |  9.31 ms |  **2.44 ms** |
-| one base model (Illustrious)           |  3.34 ms |  **1.77 ms** |
-| one base model (Flux.1 D)              | 39.96 ms | **23.22 ms** |
-| three base models                      |  2.79 ms |  **2.10 ms** |
-| one base model + deep page             | 10.77 ms |  **3.47 ms** |
-| flag-off shape (`ModelVersion EXISTS`) |  4.11 ms |  **3.09 ms** |
+| Scenario | bare | covering |
+| --- | ---: | ---: |
+| default feed | 0.93 ms | **0.68 ms** |
+| deep page (row 5,000) | 9.31 ms | **2.44 ms** |
+| one base model (Illustrious) | 3.34 ms | **1.77 ms** |
+| one base model (Flux.1 D) | 39.96 ms | **23.22 ms** |
+| three base models | 2.79 ms | **2.10 ms** |
+| one base model + deep page | 10.77 ms | **3.47 ms** |
+| flag-off shape (`ModelVersion EXISTS`) | 4.11 ms | **3.09 ms** |
 
 **Decision: covering.** 24 MB for 2–4× on every row, and it makes deep paging a non-issue.
 
@@ -732,15 +732,15 @@ concurrently in about a second on dev.
 With only `ModelMetric_hot_covering`, a base-model filter makes the planner walk the hot index looking
 for matches. For mid-sized base models it walks a long way:
 
-| Base model                            |     models |        time |
-| ------------------------------------- | ---------: | ----------: |
-| Illustrious                           |    345,630 |      1.8 ms |
-| Anima                                 |     52,208 |      2.3 ms |
-| SDXL 1.0                              |     59,179 |     15.8 ms |
-| Flux.1 D                              |     51,398 |     26.7 ms |
-| Krea 2                                |     13,309 |     56.0 ms |
-| **NoobAI**                            | **11,505** | **80.9 ms** |
-| Hunyuan 1 / Stable Cascade / PixArt E |      63–70 |  0.7–1.2 ms |
+| Base model | models | time |
+| --- | ---: | ---: |
+| Illustrious | 345,630 | 1.8 ms |
+| Anima | 52,208 | 2.3 ms |
+| SDXL 1.0 | 59,179 | 15.8 ms |
+| Flux.1 D | 51,398 | 26.7 ms |
+| Krea 2 | 13,309 | 56.0 ms |
+| **NoobAI** | **11,505** | **80.9 ms** |
+| Hunyuan 1 / Stable Cascade / PixArt E | 63–70 | 0.7–1.2 ms |
 
 Both ends are fine: a huge base model matches quickly, and a rare one makes the planner drive from
 `mbmm_feed_*` and sort a handful of rows. The **middle** is the problem. `ANALYZE` on both tables
@@ -749,28 +749,28 @@ sort was worse (115.7 ms).
 
 ### The fix: copy the score onto `ModelBaseModelMetric` too
 
-Exactly how the existing sorts work — `feed_highest_rated` on `ModelMetric` _and_
+Exactly how the existing sorts work — `feed_highest_rated` on `ModelMetric` *and*
 `mbmm_feed_highest_rated` on `ModelBaseModelMetric`. The copied value is the model's score, not a
 per-base-model one, so the ordering is identical.
 
-| Base model  |  before |      after |
-| ----------- | ------: | ---------: |
-| NoobAI      | 80.9 ms | **1.1 ms** |
-| Krea 2      | 56.0 ms | **1.4 ms** |
-| Flux.1 D    | 26.7 ms | **1.9 ms** |
-| SDXL 1.0    | 15.8 ms | **3.0 ms** |
-| Illustrious |  1.8 ms | **4.3 ms** |
+| Base model | before | after |
+| --- | ---: | ---: |
+| NoobAI | 80.9 ms | **1.1 ms** |
+| Krea 2 | 56.0 ms | **1.4 ms** |
+| Flux.1 D | 26.7 ms | **1.9 ms** |
+| SDXL 1.0 | 15.8 ms | **3.0 ms** |
+| Illustrious | 1.8 ms | **4.3 ms** |
 
 Worst case across every base model tested: **4.3 ms**.
 
 ### Which means Hot fits the paths that already exist
 
-| Case                 | Path                                                    |   Measured |
-| -------------------- | ------------------------------------------------------- | ---------: |
-| no base-model filter | existing path 1, `mm."hotScore"`                        |    0.68 ms |
-| one base model       | existing path 2, `mbm."hotScore"` via `mbmm_feed_hot`   | 1.1–4.3 ms |
-| several base models  | **path 3's shape** (`mm`-driven + `EXISTS`), not path 4 |    2.10 ms |
-| flag off             | existing path 1 + `ModelVersion EXISTS`                 |    3.09 ms |
+| Case | Path | Measured |
+| --- | --- | ---: |
+| no base-model filter | existing path 1, `mm."hotScore"` | 0.68 ms |
+| one base model | existing path 2, `mbm."hotScore"` via `mbmm_feed_hot` | 1.1–4.3 ms |
+| several base models | **path 3's shape** (`mm`-driven + `EXISTS`), not path 4 | 2.10 ms |
+| flag off | existing path 1 + `ModelVersion EXISTS` | 3.09 ms |
 
 Only the third needs a code change: extending path 3's condition to cover Hot. That is far less work
 than §7 estimated.
@@ -880,25 +880,25 @@ undo, and the localStorage rewrite is bounded to one exact sort/period pair.
 
 Applied by hand, then checked on the replica.
 
-| Check              | Result                                                                                                                 |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| `hotScore` NULL    | **0** of 961,119 `ModelMetric`, **0** of 899,716 `ModelBaseModelMetric`                                                |
-| `publishedAt` NULL | **6**, all orphan metric rows with no `Model`, none published, top score 3,010                                         |
-| Future-date clamp  | 213 future rows, **none** scored above a `now()`-clamped recompute; `max_future` 6,914,848 < `max_published` 6,942,365 |
-| Triggers           | all 3 attached                                                                                                         |
-| Indexes            | `feed_hot` 45 MB, `mbmm_feed_hot` 55 MB, both `indisvalid` — against 318 MB for `feed_highest_rated` alone             |
-| Backfill procedure | dropped                                                                                                                |
+| Check | Result |
+| --- | --- |
+| `hotScore` NULL | **0** of 961,119 `ModelMetric`, **0** of 899,716 `ModelBaseModelMetric` |
+| `publishedAt` NULL | **6**, all orphan metric rows with no `Model`, none published, top score 3,010 |
+| Future-date clamp | 213 future rows, **none** scored above a `now()`-clamped recompute; `max_future` 6,914,848 < `max_published` 6,942,365 |
+| Triggers | all 3 attached |
+| Indexes | `feed_hot` 45 MB, `mbmm_feed_hot` 55 MB, both `indisvalid` — against 318 MB for `feed_highest_rated` alone |
+| Backfill procedure | dropped |
 
 `EXPLAIN ANALYZE` on the replica, green-site filters, first 101 rows, second of two runs:
 
-| Scenario                   | Index                       |        Dev |         **Prod** |
-| -------------------------- | --------------------------- | ---------: | ---------------: |
-| default feed (path 1)      | `feed_hot`                  |    0.68 ms |      **0.75 ms** |
-| deep page (row 5,000)      | `feed_hot`                  |     2.4 ms |       **5.6 ms** |
-| one base model (6 tested)  | `mbmm_feed_hot`             | 1.1–4.3 ms | **0.50–0.82 ms** |
-| three base models (path 3) | `feed_hot` + pkey           |     2.1 ms |       **2.2 ms** |
-| flag-off shape             | `feed_hot` + `ModelVersion` |     3.1 ms |       **4.2 ms** |
-| control: today's default   | `feed_highest_rated`        |    15.4 ms |      **12.6 ms** |
+| Scenario | Index | Dev | **Prod** |
+| --- | --- | ---: | ---: |
+| default feed (path 1) | `feed_hot` | 0.68 ms | **0.75 ms** |
+| deep page (row 5,000) | `feed_hot` | 2.4 ms | **5.6 ms** |
+| one base model (6 tested) | `mbmm_feed_hot` | 1.1–4.3 ms | **0.50–0.82 ms** |
+| three base models (path 3) | `feed_hot` + pkey | 2.1 ms | **2.2 ms** |
+| flag-off shape | `feed_hot` + `ModelVersion` | 3.1 ms | **4.2 ms** |
+| control: today's default | `feed_highest_rated` | 15.4 ms | **12.6 ms** |
 
 Every path is an index-only scan on the intended index, no sort node, no seq scan, and every buffer a
 cache hit. Mid-sized base models — the 81 ms case that justified the mirror index (§10) — come in
@@ -924,7 +924,7 @@ all found and fixed on dev, plus the tag-page numbers that started this whole th
 `ORDER BY "hotScore" DESC` puts NULLs **first** in Postgres. Proven on dev: seven rows had a NULL
 score, and they were the first seven rows the query returned.
 
-The NULLs came from rows created _after_ the backfill — the prod `sync_model_to_metric` trigger
+The NULLs came from rows created *after* the backfill — the prod `sync_model_to_metric` trigger
 doesn't set `publishedAt`, so new rows had none, and `extract(epoch FROM NULL)` is NULL. On dev all
 seven happened to be `Draft`, so the feed's `status = 'Published'` filter hid them. **That is luck,
 not design**: one published model with a NULL `publishedAt` would sit above every other model on the
@@ -974,10 +974,10 @@ lose this race.
 
 The reason this proposal exists. Hot vs today's default, on dev:
 
-| Tag         |  models | today's default   | Hot                  |
-| ----------- | ------: | ----------------- | -------------------- |
-| `openpose`  |     305 | 1.4 ms, **1 row** | 3.7 ms, **101 rows** |
-| `concept`   |  70,306 | 50.0 ms, 101 rows | **4.0 ms**, 101 rows |
+| Tag | models | today's default | Hot |
+| --- | ---: | --- | --- |
+| `openpose` | 305 | 1.4 ms, **1 row** | 3.7 ms, **101 rows** |
+| `concept` | 70,306 | 50.0 ms, 101 rows | **4.0 ms**, 101 rows |
 | `character` | 560,573 | 80.0 ms, 101 rows | **2.7 ms**, 101 rows |
 
 `openpose` is the case in one line: today it returns **one model out of 305**. The `periodFallback`
@@ -1002,20 +1002,20 @@ can no longer be NULL.
 
 Testers saw the feed on a preview build before PR #5523 merged. Nobody hit a correctness or
 performance problem — "seems to play nicely when combined with other filters" — but three people
-independently said the _mix_ was wrong: too many Qwen and MiniMax H3 models, and you had to scroll a
+independently said the *mix* was wrong: too many Qwen and MiniMax H3 models, and you had to scroll a
 long way to reach an Illustrious one. They were right, and the cause was not the one that looked
 obvious.
 
 ### What it was not: the recency weight
 
 The first hypothesis was that `T` = 30 days is too steep. Widening it makes Illustrious **worse**,
-because it admits _older_ models from the same over-scored ecosystems:
+because it admits *older* models from the same over-scored ecosystems:
 
-|               `T` | Illustrious in top 100 | First Illustrious-only | Qwen/H3/Krea 2 |
-| ----------------: | ---------------------: | ---------------------: | -------------: |
-| 30 days (shipped) |                     14 |                rank 11 |             83 |
-|           60 days |                      8 |                rank 33 |             92 |
-|           90 days |                      3 |                rank 69 |             92 |
+| `T` | Illustrious in top 100 | First Illustrious-only | Qwen/H3/Krea 2 |
+| ---: | ---: | ---: | ---: |
+| 30 days (shipped) | 14 | rank 11 | 83 |
+| 60 days | 8 | rank 33 | 92 |
+| 90 days | 3 | rank 69 | 92 |
 
 Measuring this first is what stopped a wrong fix shipping. The damage was in the engagement term.
 
@@ -1025,14 +1025,14 @@ The divisors were set from site-wide **sum** ratios — total downloads ÷ total
 generations ÷ total likes. For downloads that is nearly right. For generations it is off by 28x,
 because the sums are dominated by a few checkpoints with billions of generations apiece:
 
-|                      | sum ratio (used at first) | median per-model ratio |
-| -------------------- | ------------------------: | ---------------------: |
-| downloads per like   |                       8.5 |                **6.4** |
-| generations per like |                       117 |                **4.1** |
+| | sum ratio (used at first) | median per-model ratio |
+| --- | ---: | ---: |
+| downloads per like | 8.5 | **6.4** |
+| generations per like | 117 | **4.1** |
 
 On the median published model — 56 likes, 371 downloads, 231 generations — `generations/114`
 contributed **2%** of engagement. The signal was effectively switched off, which is exactly what one
-tester said: _"Not sure I agree with downloads having so much weight compared to generations."_
+tester said: *"Not sure I agree with downloads having so much weight compared to generations."*
 
 ### Why it looked like a base-model problem
 
@@ -1053,19 +1053,19 @@ is why its backfill grew a `force` parameter defaulting to true. Done on product
 Two constants. Nothing else changed — no schema, no index, no application code, because the score
 lives in a trigger.
 
-|                   | Illustrious /100 | First Illustrious-only | Qwen/H3/Krea 2 | 500+ generations | Oldest in top 100 |
-| ----------------- | ---------------: | ---------------------: | -------------: | ---------------: | ----------------- |
-| sum ratios        |               15 |                rank 11 |             82 |               16 | 47 days           |
-| **median ratios** |           **33** |             **rank 4** |         **55** |           **56** | **100 days**      |
+| | Illustrious /100 | First Illustrious-only | Qwen/H3/Krea 2 | 500+ generations | Oldest in top 100 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| sum ratios | 15 | rank 11 | 82 | 16 | 47 days |
+| **median ratios** | **33** | **rank 4** | **55** | **56** | **100 days** |
 
 All three complaints answered by one change, including the "freshness curve is too steep" one:
 correcting the divisors widened the engagement term's range from 5.15 to 6.31 log units, and that
-range _is_ how far back the feed can reach. Widening `T` was the wrong lever for it.
+range *is* how far back the feed can reach. Widening `T` was the wrong lever for it.
 
 ### Two findings that settled other questions
 
 **Version spam.** A tester expected Hot to reward creators who republish a "new version" every two
-weeks. It is the opposite — the _old_ default was the vulnerable one. For the 10,107 models with 5+
+weeks. It is the opposite — the *old* default was the vulnerable one. For the 10,107 models with 5+
 published versions, `lastVersionAt` (what `period: Month` filtered on) tracks the newest version in
 **10,079** cases; `Model.publishedAt` (what Hot uses) in **724**, sitting on average 290 days
 earlier. Republishing reset the old window and moves a Hot score by zero. A new version still earns
@@ -1091,12 +1091,12 @@ one account can supply all of it.
 
 ### How much of the feed it was
 
-| Top 100                               |                                Count |
-| ------------------------------------- | -----------------------------------: |
-| models with 100+ generations          |                                   68 |
-| models with a single generating user  |                                **7** |
-| of those, generated only by the owner |                                **4** |
-| worst case                            | 25,444 generations, 14 likes, 1 user |
+| Top 100 | Count |
+| --- | ---: |
+| models with 100+ generations | 68 |
+| models with a single generating user | **7** |
+| of those, generated only by the owner | **4** |
+| worst case | 25,444 generations, 14 likes, 1 user |
 
 ### The data already existed
 
@@ -1122,12 +1122,12 @@ Generations per unique generator, over models with 100+ generations, merged prop
 p90 **460**, max **25,444**. Simulated over the 400 strongest candidates:
 
 | Cap (like-equivalents per generator) | Single-generator models left | Zero-like models left | Illustrious /100 | 500+ gens | Legit models clipped |
-| -----------------------------------: | ---------------------------: | --------------------: | ---------------: | --------: | -------------------: |
-|                   none (live before) |                            7 |                     3 |               34 |        57 |                    0 |
-|                              **100** |                        **0** |                 **0** |           **34** |    **53** |                **1** |
-|                                   50 |                            0 |                     0 |               36 |        52 |                    6 |
-|                                   25 |                            0 |                     0 |               33 |        47 |                    9 |
-|                                   10 |                            0 |                     0 |               30 |        41 |                   14 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| none (live before) | 7 | 3 | 34 | 57 | 0 |
+| **100** | **0** | **0** | **34** | **53** | **1** |
+| 50 | 0 | 0 | 36 | 52 | 6 |
+| 25 | 0 | 0 | 33 | 47 | 9 |
+| 10 | 0 | 0 | 30 | 41 | 14 |
 
 100 is the gentlest cap that fully removes the exploit — the models it targets sit two orders of
 magnitude above p90, so nothing is gained by squeezing legitimate generation-heavy models. 50 buys
@@ -1178,16 +1178,16 @@ penalises ecosystems that are not generated on-site. The mechanism is real. The 
 median score change from the §13 divisor fix, for models published in the last 120 days with 10+
 likes, expressed as days of recency gained.
 
-| Base model  | Models | Days of recency gained |
-| ----------- | -----: | ---------------------: |
-| SDXL 1.0    |    383 |                   +4.2 |
-| Pony        |    749 |                   +4.1 |
-| Illustrious | 24,448 |                   +3.8 |
-| NoobAI      |    393 |                   +3.0 |
-| MiniMax H3  |    843 |                   +2.8 |
-| Krea 2      |  7,901 |                   +2.8 |
-| Qwen 2.1    |    147 |                   +2.7 |
-| Anima       | 25,464 |                   +2.4 |
+| Base model | Models | Days of recency gained |
+| --- | ---: | ---: |
+| SDXL 1.0 | 383 | +4.2 |
+| Pony | 749 | +4.1 |
+| Illustrious | 24,448 | +3.8 |
+| NoobAI | 393 | +3.0 |
+| MiniMax H3 | 843 | +2.8 |
+| Krea 2 | 7,901 | +2.8 |
+| Qwen 2.1 | 147 | +2.7 |
+| Anima | 25,464 | +2.4 |
 
 Every ecosystem **gained**, because the download divisor also moved. The relative disadvantage for
 MiniMax H3 against Illustrious is about **one day** of recency, against a feed that reaches back 69
@@ -1200,7 +1200,7 @@ weighed against the fact that the per-model effect is a single day.
 
 ## 15. Per-base-model scoring (2026-10-12)
 
-Migration `20261012120000`. A moderator reported that a model's position in a _filtered_ feed did not
+Migration `20261012120000`. A moderator reported that a model's position in a *filtered* feed did not
 match its presence in that ecosystem: filter to Anima and models whose Anima slice was small
 outranked models whose every download was Anima. One of them led the feed.
 
@@ -1213,11 +1213,11 @@ somewhere else, and the more ecosystems a model spanned the more it borrowed.
 `thumbsUpCount` and `downloadCount` were already per base model on that table. Three columns were
 not, and all three are needed before a row can leave the mirror:
 
-| Column                 | Source                                                 | Why it could not already be there                  |
-| ---------------------- | ------------------------------------------------------ | -------------------------------------------------- |
-| `generationCount`      | `SUM(ModelVersionMetric)`                              | plain SQL aggregate, just never selected per slice |
-| `publishedAt`          | `MIN(ModelVersion."publishedAt")` for the slice        | the model's own date is the wrong date (below)     |
-| `uniqueGeneratorCount` | ClickHouse `uniqMerge`, grouped by (model, base model) | Postgres cannot read the view                      |
+| Column | Source | Why it could not already be there |
+| --- | --- | --- |
+| `generationCount` | `SUM(ModelVersionMetric)` | plain SQL aggregate, just never selected per slice |
+| `publishedAt` | `MIN(ModelVersion."publishedAt")` for the slice | the model's own date is the wrong date (below) |
+| `uniqueGeneratorCount` | ClickHouse `uniqMerge`, grouped by (model, base model) | Postgres cannot read the view |
 
 **The time term is the earliest published version FOR THAT BASE MODEL.** The model's first publish
 date would make a brand-new Anima version on a two-year-old model read as two years old in the Anima
@@ -1247,13 +1247,13 @@ The first backfill pass left `uniqueGeneratorCount` NULL wherever ClickHouse ret
 is what it does for a slice **nobody has generated with**. That is a known zero, not an unknown, and
 NULL pinned those slices on the mirror for good.
 
-It concentrated the bug exactly where it was visible. Measured slices get corrected _downward_ to
+It concentrated the bug exactly where it was visible. Measured slices get corrected *downward* to
 their own engagement, so unmeasured ones float up:
 
-|                                    | Measured |
-| ---------------------------------- | -------: |
-| whole table                        |      79% |
-| rows at the top of a filtered feed |  **28%** |
+| | Measured |
+| --- | ---: |
+| whole table | 79% |
+| rows at the top of a filtered feed | **28%** |
 
 Both writers now default to 0 for every slice their ClickHouse lookup covered, before the real counts
 overwrite it. NULL survives only where the lookup never ran. 165,328 slices changed meaning.
@@ -1264,11 +1264,11 @@ overwrite it. NULL survives only where the lookup never ran. 165,328 slices chan
 seen, 244,583 rows written, no failed page. Throughput ~830 models/sec, so a 30,000-model page is a
 ~36s request — the endpoint is paged because the ingress cuts long ones, not because the work is slow.
 
-| Check                                         |                         Result |
-| --------------------------------------------- | -----------------------------: |
-| slice rows measured                           | 815,818 of 820,075 (**99.5%**) |
-| rows now diverging from the whole-model score |                    **211,708** |
-| measured at the top of a filtered feed        |                28% → **93.8%** |
+| Check | Result |
+| --- | ---: |
+| slice rows measured | 815,818 of 820,075 (**99.5%**) |
+| rows now diverging from the whole-model score | **211,708** |
+| measured at the top of a filtered feed | 28% → **93.8%** |
 
 The 4,279 still unmeasured are unmeasur*able* by this path and stay mirrored, correctly: 3,597 have
 no published version for that slice at all, 681 have one with no `ModelVersionMetric` row to
@@ -1297,17 +1297,17 @@ a much smaller field. The cap was now being compared against the wrong bar.
 Engagement (`thumbsUp + downloads/6.4 + capped generation term`) actually needed to reach the top of
 each filtered feed:
 
-| Feed        | top-10 median | to reach #10 |
-| ----------- | ------------: | -----------: |
-| Illustrious |           212 |          584 |
-| Krea 2      |           298 |          450 |
-| Qwen 2.1    |           223 |          249 |
-| Anima       |           174 |          248 |
-| MiniMax H3  |           203 |          199 |
-| SDXL 1.0    |            18 |       **47** |
-| Pony        |            21 |       **39** |
-| NoobAI      |            14 |       **22** |
-| Flux.1 D    |             9 |        **9** |
+| Feed | top-10 median | to reach #10 |
+| --- | ---: | ---: |
+| Illustrious | 212 | 584 |
+| Krea 2 | 298 | 450 |
+| Qwen 2.1 | 223 | 249 |
+| Anima | 174 | 248 |
+| MiniMax H3 | 203 | 199 |
+| SDXL 1.0 | 18 | **47** |
+| Pony | 21 | **39** |
+| NoobAI | 14 | **22** |
+| Flux.1 D | 9 | **9** |
 
 In the quiet ecosystems one generator's allowance is 2–11× the entire bar. The §14 check
 (`uniqueGeneratorCount <= 1` with 500+ generations in a top 100) read **0** on the whole-model feed —
@@ -1319,7 +1319,7 @@ them a single generator with 800–2,100 generations and 0–7 likes.
 `generation term = least(generationCount / 4.1, greatest(uniqueGeneratorCount - 1, 0) * 100)`
 
 The `greatest` is load-bearing, not defensive: without it a count of 0 gives -100 and the generation
-term would _subtract_ from engagement.
+term would *subtract* from engagement.
 
 A gate ("ignore generations until N people have generated") has a cliff at N where one extra
 generator is a step change. Discounting the first is monotonic and continuous, identical to a gate at
@@ -1329,15 +1329,15 @@ a model whose generations are spread across real users is nowhere near its cap a
 The cost is nearly zero because single-generator models are almost all tiny. Models with generations,
 by distinct generators:
 
-| `uniqueGeneratorCount` |  Models | Median generations |
-| ---------------------- | ------: | -----------------: |
-| 0                      |   1,461 |                  4 |
-| 1                      |  58,803 |                  6 |
-| 2                      |  45,929 |                 16 |
-| 3–4                    |  67,761 |                 34 |
-| 5–9                    |  99,868 |                 89 |
-| 10–49                  | 187,649 |                422 |
-| 50+                    | 114,113 |              4,345 |
+| `uniqueGeneratorCount` | Models | Median generations |
+| --- | ---: | ---: |
+| 0 | 1,461 | 4 |
+| 1 | 58,803 | 6 |
+| 2 | 45,929 | 16 |
+| 3–4 | 67,761 | 34 |
+| 5–9 | 99,868 | 89 |
+| 10–49 | 187,649 | 422 |
+| 50+ | 114,113 | 4,345 |
 
 The 58,803 single-generator models lose a term worth ~1.5 like-equivalents at the median. What the
 floor actually removes is the 1,614 of them running 410+ generations on one account.
@@ -1350,17 +1350,17 @@ Whole-model top 100: **97 of 100 unchanged**. The three that leave have two gene
 
 The filtered feeds show the effect landing exactly where the problem was:
 
-| Feed        | top 100 kept | top 10 changed |
-| ----------- | -----------: | -------------: |
-| Anima       |          100 |              0 |
-| Qwen 2.1    |          100 |              0 |
-| MiniMax H3  |          100 |              2 |
-| Krea 2      |           99 |              0 |
-| Illustrious |           95 |              0 |
-| NoobAI      |           94 |              8 |
-| Flux.1 D    |           93 |              4 |
-| Pony        |           83 |              6 |
-| SDXL 1.0    |       **80** |         **10** |
+| Feed | top 100 kept | top 10 changed |
+| --- | ---: | ---: |
+| Anima | 100 | 0 |
+| Qwen 2.1 | 100 | 0 |
+| MiniMax H3 | 100 | 2 |
+| Krea 2 | 99 | 0 |
+| Illustrious | 95 | 0 |
+| NoobAI | 94 | 8 |
+| Flux.1 D | 93 | 4 |
+| Pony | 83 | 6 |
+| SDXL 1.0 | **80** | **10** |
 
 The busy feeds barely move; the thin ones turn over. The new SDXL 1.0 top 10 is led by models with 9,
 13, 23 and 29 distinct generators, and no single-generator model survives in it — so the slots were
@@ -1370,7 +1370,7 @@ refilled, not emptied.
 
 §14 made 0 deliberately inert, because 0 meant "not computed yet" while its backfill ran. That left
 the signal uncapped for every model the backfill had not reached — including every model published
-_after_ it, since nothing maintained the column until the deploy. That is why the whole-model check
+*after* it, since nothing maintained the column until the deploy. That is why the whole-model check
 read 5 again before this work: all five were published after the 8 October backfill. A re-run of
 `/api/admin/temp/backfill-unique-generators` over the recent tail (21,509 models, 1s) returned it
 to 0.
@@ -1387,7 +1387,7 @@ to 0 rather than NULL — and that ships with the branch. Apply without `--singl
 CALLs a procedure that COMMITs per batch.
 
 Replacing a function does not touch a stored score, so the file rescores. The predicate is exact
-rather than conservative: only rows where the _new_ cap binds can change, because where it does not
+rather than conservative: only rows where the *new* cap binds can change, because where it does not
 bind the term is `generationCount / 4.1` under both formulas. That is **103,882** of 960,714
 `ModelMetric` rows and **81,219** of 904,604 `ModelBaseModelMetric` rows — a tenth of each table, not
 a rewrite. A third pass refreshes the unmeasured slices still mirroring a score the first pass
@@ -1422,10 +1422,10 @@ The ClickHouse coverage gap — models with a generation count but no row in the
 earns no generation credit at all, where before it was uncapped. Re-measured after the 2026-10-13
 release and its backfills:
 
-|                                                                 | 2026-10-12 | 2026-10-13 | With 500+ generations |
-| --------------------------------------------------------------- | ---------: | ---------: | --------------------: |
-| `ModelMetric` rows, `uniqueGeneratorCount = 0` with generations |      1,472 |      1,768 |          77 → **141** |
-| `ModelBaseModelMetric` slices, same                             |      1,275 |      1,352 |           85 → **95** |
+| | 2026-10-12 | 2026-10-13 | With 500+ generations |
+| --- | ---: | ---: | ---: |
+| `ModelMetric` rows, `uniqueGeneratorCount = 0` with generations | 1,472 | 1,768 | 77 → **141** |
+| `ModelBaseModelMetric` slices, same | 1,275 | 1,352 | 85 → **95** |
 
 The error runs toward under-crediting, which is the safe direction for a ranking signal, and the
 affected rows keep their likes and downloads — one of them still leads its filtered feed on those
@@ -1473,12 +1473,12 @@ All of them published July–September 2024.
 ### Capping the age term fails in both directions
 
 | Clamp the age term at | Best World Morph | Of the old top 100, displaced | New top 100 older than the clamp |
-| --------------------- | ---------------: | ----------------------------: | -------------------------------: |
-| 12 months             |        541 → 533 |                             0 |                                0 |
-| 6 months              |    541 → **572** |                             3 |                                3 |
-| 3 months              |        541 → 424 |                       **100** |                          **100** |
+| --- | ---: | ---: | ---: |
+| 12 months | 541 → 533 | 0 | 0 |
+| 6 months | 541 → **572** | 3 | 3 |
+| 3 months | 541 → 424 | **100** | **100** |
 
-A loose clamp does nothing, because it lifts _every_ old model by the same amount: their order among
+A loose clamp does nothing, because it lifts *every* old model by the same amount: their order among
 themselves is unchanged and they are all still behind the recent cohort. Six months makes this one
 **worse**, because other old models gain more than it does. Three months replaces the entire top 100
 with pre-clamp models and the challenge LoRA still only reaches 424.
@@ -1511,12 +1511,12 @@ Checked, because it bounds every design:
 **Measured 2026-10-13, and it is worse than "generations only".** There are three copies of the
 generation counts across two databases, and the generator view has lost its dates entirely:
 
-| Table                                            |       Rows | Date range                      | Future-dated rows | Readers in this repo |
-| ------------------------------------------------ | ---------: | ------------------------------- | ----------------: | -------------------: |
-| `orchestration.daily_resource_generation_counts` | 36,368,452 | 1970-01-01 → **2120-07-26**     |            24,968 |               **14** |
-| `default.daily_resource_generation_counts`       | 12,249,501 | 2025-11-15 → 2036-02-07         |            86,897 |       2, unqualified |
-| `default.daily_resource_generation_counts_all`   | 41,055,168 | 1970-01-01 → 2036-02-07         |            86,897 |                **0** |
-| `default.daily_resource_generation_user_counts`  |  4,992,125 | 1970-01-01, and 2023–2024-05-08 |                 — |        4 (hot score) |
+| Table | Rows | Date range | Future-dated rows | Readers in this repo |
+| --- | ---: | --- | ---: | ---: |
+| `orchestration.daily_resource_generation_counts` | 36,368,452 | 1970-01-01 → **2120-07-26** | 24,968 | **14** |
+| `default.daily_resource_generation_counts` | 12,249,501 | 2025-11-15 → 2036-02-07 | 86,897 | 2, unqualified |
+| `default.daily_resource_generation_counts_all` | 41,055,168 | 1970-01-01 → 2036-02-07 | 86,897 | **0** |
+| `default.daily_resource_generation_user_counts` | 4,992,125 | 1970-01-01, and 2023–2024-05-08 | — | 4 (hot score) |
 
 Three copies of the generation counts, with different contents, and none of them safely dated: the
 orchestration copy reaches to 2120, the `default` copy starts at 2025-11-15, and `_all` has no reader
@@ -1609,13 +1609,13 @@ newest, so a weak release after a hit does not cost the hit's credit.
 Top 100 of the whole-model feed (Published, SFW browsing level, no POI or minor), recomputed per
 option against the stored scores:
 
-| Option               | Version term      | New in top 100 | Lifted in top 100 | Of those, model older than 1 year |
-| -------------------- | ----------------- | -------------: | ----------------: | --------------------------------: |
-| Undamped             | `l`               |             52 |                57 |                                25 |
-| **C = 2.0 (chosen)** | `least(l, 2.0)`   |          **0** |             **0** |                             **0** |
-| C = 2.5              | `least(l, 2.5)`   |             22 |                23 |                                10 |
-| P1 / P2              | `l - 1` / `l - 2` |              0 |                 0 |                                 0 |
-| W5                   | `0.5 * l`         |              0 |                 0 |                                 0 |
+| Option | Version term | New in top 100 | Lifted in top 100 | Of those, model older than 1 year |
+| --- | --- | ---: | ---: | ---: |
+| Undamped | `l` | 52 | 57 | 25 |
+| **C = 2.0 (chosen)** | `least(l, 2.0)` | **0** | **0** | **0** |
+| C = 2.5 | `least(l, 2.5)` | 22 | 23 | 10 |
+| P1 / P2 | `l - 1` / `l - 2` | 0 | 0 | 0 |
+| W5 | `0.5 * l` | 0 | 0 | 0 |
 
 Undamped is the failure §2 recorded, back at half strength. C = 2.0 means a version can rank a model
 at most like a brand-new model with 100 engagement published the same day, which sits below the top
@@ -1680,10 +1680,10 @@ Paid-access versions qualify like free ones, and since §20 their buyers count t
 
 ### Measured before choosing (replica snapshot, 2026-11-20)
 
-| Feed       | Top-50 churn | Top-100 churn | Old model, new version in top 1,000 |
-| ---------- | -----------: | ------------: | ----------------------------------: |
-| All levels |            0 |             0 |                            31 → 128 |
-| SFW        |            0 |             1 |                            48 → 110 |
+| Feed | Top-50 churn | Top-100 churn | Old model, new version in top 1,000 |
+| --- | ---: | ---: | ---: |
+| All levels | 0 | 0 | 31 → 128 |
+| SFW | 0 | 1 | 48 → 110 |
 
 A hypothetical new version with 100 engagement on a proven model ranks about 175 on day 0 and 590
 by day 14 on the all-levels feed, against about 414 and 1,315 under §18. A bigger setting (0.003

@@ -568,7 +568,6 @@ describe("an unmeasured slice follows its model's score", () => {
   });
 });
 
-// Puts the shared database's triggers back to #9397: only fresh databases are used after it.
 const BUYER_BAR_DIR = '20271123120000_model_hot_score_buyer_bar';
 
 describe('paid buyers count toward the head-start bar like likes', () => {
@@ -681,6 +680,7 @@ describe('paid buyers count toward the head-start bar like likes', () => {
   });
 });
 
+// Puts the shared database's triggers back to #9397: only fresh databases are used after it.
 describe('the head-start rollback', () => {
   it('returns a head-started model and its slices to the #9397 score', async () => {
     const at = daysAgo(5);
