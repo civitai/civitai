@@ -144,9 +144,12 @@ describe('an image report with no image that still exists', () => {
     expect(softDeleteUser).not.toHaveBeenCalled();
   });
 
-  it('never tells the moderator to file it', () => {
-    expect(CSAM_IMAGE_FILING_NO_IMAGE_REFUSAL).toMatch(/^Nothing was filed\./);
-    expect(CSAM_IMAGE_FILING_NO_IMAGE_REFUSAL).not.toMatch(/file (now|it|without|the report)/i);
+  it('is the cleared refusal text, word for word', () => {
+    expect(CSAM_IMAGE_FILING_NO_IMAGE_REFUSAL).toBe(
+      "Nothing was filed. An image report needs at least one image that still exists. Select only the images you are reporting; don't add one just to file. If there is no image to report, or it no longer exists, don't file here: " +
+        CSAM_PRIVATE_ROUTE +
+        ' now. It may still need to be reported.'
+    );
   });
 
   // Fails until the private route names who to tell: the PR stays a draft until then.
