@@ -678,6 +678,15 @@ export const serverSchema = z
       .min(50)
       .max(10_000)
       .default(1000),
+    // The shared app-data service (apps/app-data-go): its base URL, for the shadow read of App
+    // Storage lists (app-data-shadow.service.ts). Unset = no shadow read is ever made, whatever the
+    // `app-data-registry-shadow` flag says. The REST answer is always the one served.
+    APP_DATA_SHADOW_URL: z.url().optional(),
+    // The fraction (0-1) of eligible lists, of apps the flag is on for, also asked of app-data-go;
+    // the most such reads in flight per process (more are dropped, not queued); each read's timeout.
+    APP_DATA_SHADOW_SAMPLE: z.coerce.number().min(0).max(1).default(0.1),
+    APP_DATA_SHADOW_MAX_IN_FLIGHT: z.coerce.number().int().min(1).max(64).default(4),
+    APP_DATA_SHADOW_TIMEOUT_MS: z.coerce.number().int().min(50).max(10_000).default(2000),
     // Debounce window (ms) for flushing model-metric-affected ids into the
     // model search-index update queue. The model metric processor runs every
     // minute and accumulates every model whose ModelVersionMetric.updatedAt

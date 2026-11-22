@@ -12,7 +12,8 @@ import (
 )
 
 // Sources are the `source` values of app_data_reads_total: where a read's answer came from.
-// `none` is a read refused before either was asked (bad request, no token, overloaded).
+// `none` is a read refused before either was asked (bad request, no token, overloaded), or a
+// registry-only read the registry did not answer (outcome `registry_only`).
 var Sources = []string{"registry", "rest", "none"}
 
 // FallbackReasons are the `reason` values of app_data_fallbacks_total: why a read went to REST.
@@ -26,8 +27,10 @@ var FallbackReasons = []string{
 // CloseReasons are the `reason` values of app_data_streams_closed_total (session.Close*).
 var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "revoked", "too_large", "end", "malformed", "error", "shutdown", "block_spent", "block_cache_full"}
 
-// Outcomes are the `outcome` values of app_data_reads_total.
-var Outcomes = []string{"ok", "refused", "bad_request", "unauthenticated", "busy", "error"}
+// Outcomes are the `outcome` values of app_data_reads_total. `registry_only` is a read that asked for
+// the registry's answer only (api.RegistryOnlyHeader) and that the registry could not answer: REST
+// was not read, and the read is not counted in app_data_fallbacks_total.
+var Outcomes = []string{"ok", "refused", "bad_request", "unauthenticated", "busy", "error", "registry_only"}
 
 // BlockOutcomes are the `outcome` values of app_data_block_exchanges_total (exchange.Block*). Only
 // `refused` and `remembered` carry a refusal code in `error` (exchange.RefusalCodes); the rest `none`.

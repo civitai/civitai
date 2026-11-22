@@ -870,3 +870,89 @@ func TestWithoutARouterOnlyHubTokensReachAStream(t *testing.T) {
 
 // otherBlockTok is a second block token, distinct from blockTok.
 const otherBlockTok = "eyJhbGciOiJSUzI1NiJ9.eyJqdGkiOiJibGstbmlsIn0.c2lnLW5pbA"
+
+// getRegistryOnly is get with RegistryOnlyHeader set to value.
+func (s *stack) getRegistryOnly(t *testing.T, path, token, value string) got {
+	t.Helper()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, http.NoBody)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set(RegistryOnlyHeader, value)
+	rec := httptest.NewRecorder()
+	s.h.ServeHTTP(rec, req)
+	g := got{status: rec.Code, header: rec.Header(), body: rec.Body.String()}
+	_ = json.Unmarshal(rec.Body.Bytes(), &g.ans)
+	return g
+}
+
+// A registry-only read the registry answers is answered exactly as any read is.
+func TestARegistryOnlyReadIsAnsweredFromTheStream(t *testing.T) {
+	s := newStack(t, true, session.Options{})
+	s.reg.records["civitai_alice"] = []registry.Entity{ent("urn:apps.civitai.com:todo-app/notes/r-ro", "RO-ALICE-51e2")}
+	g := s.getRegistryOnly(t, notesPath, "civitai_alice", "1")
+	if g.status != 200 || g.ans.Source != "registry" || len(g.ans.Items) != 1 ||
+		string(g.ans.Items[0].Data) != `{"text":"RO-ALICE-51e2"}` || strings.Contains(g.body, `"reason"`) {
+		t.Fatalf("%d %s", g.status, g.body)
+	}
+	if s.store.calls.Load() != 0 {
+		t.Fatal("a registry answer also read REST")
+	}
+}
+
+// 🔴 A registry-only read the registry cannot answer never reads REST: it answers source "none" with
+// the fallback reason, and is not counted as a fallback.
+func TestARegistryOnlyReadTheRegistryCannotAnswerNeverReadsREST(t *testing.T) {
+	cases := []struct {
+		name, token, reason string
+		registryOn          bool
+	}{
+		{"the registry path off", "civitai_alice", "registry_off", false},
+		{"a token the hub cannot exchange", "eyJro.block.token", "token_not_exchangeable", true},
+		{"a stream that holds nothing", "civitai_carol", "empty", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStack(t, tc.registryOn, session.Options{})
+			// REST would answer, so a read that followed the fallback would show it.
+			s.store.by[tc.token] = restAnswer{200, `{"items":[{"key":"k1","data":{"text":"REST-RO-9c1d"},"version":1}],"nextCursor":null}`}
+			g := s.getRegistryOnly(t, notesPath, tc.token, "1")
+			if g.status != 200 || g.ans.Source != "none" || g.ans.Reason != tc.reason ||
+				!strings.Contains(g.body, `"items":[]`) || strings.Contains(g.body, "REST-RO-9c1d") {
+				t.Fatalf("%d %s", g.status, g.body)
+			}
+			if n := s.store.calls.Load(); n != 0 {
+				t.Fatalf("REST read %d times", n)
+			}
+			if fallbacks(s, tc.reason) != 0 {
+				t.Fatal("a registry-only miss was counted as a fallback")
+			}
+			if v := testutil.ToFloat64(s.m.Reads.WithLabelValues("none", "registry_only")); v != 1 {
+				t.Fatalf("registry_only reads counted %v", v)
+			}
+			if g.header.Get("Cache-Control") != "private, no-store" {
+				t.Fatalf("Cache-Control %q", g.header.Get("Cache-Control"))
+			}
+		})
+	}
+}
+
+// Only the value "1" asks for registry-only: any other value reads as an ordinary read.
+func TestARegistryOnlyHeaderOtherThanOneIsAnOrdinaryRead(t *testing.T) {
+	s := newStack(t, false, session.Options{})
+	s.store.by["civitai_alice"] = restAnswer{200, `{"items":[{"key":"k1","data":{"text":"REST-ORD-4b7e"},"version":2}],"nextCursor":null}`}
+	g := s.getRegistryOnly(t, notesPath, "civitai_alice", "true")
+	if g.status != 200 || g.ans.Source != "rest" || len(g.ans.Items) != 1 || s.store.calls.Load() != 1 ||
+		fallbacks(s, "registry_off") != 1 {
+		t.Fatalf("%d %s", g.status, g.body)
+	}
+}
+
+// The preflight does not allow the header, so a browser can never send it.
+func TestThePreflightDoesNotAllowTheRegistryOnlyHeader(t *testing.T) {
+	s := newStack(t, false, session.Options{})
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, notesPath, http.NoBody)
+	rec := httptest.NewRecorder()
+	s.h.ServeHTTP(rec, req)
+	if strings.Contains(strings.ToLower(rec.Header().Get("Access-Control-Allow-Headers")), strings.ToLower(RegistryOnlyHeader)) {
+		t.Fatalf("preflight allows %s", RegistryOnlyHeader)
+	}
+}

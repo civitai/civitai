@@ -15,6 +15,10 @@
 // `urn:apps.civitai.com:<slug>/<collection>/<record_id>`); `source: rest` items from the
 // document store's list (named by key). See DESIGN.md, "Depends on site changes", on the two names.
 //
+// With `X-App-Data-Registry-Only: 1` (RegistryOnlyHeader) a read that the registry cannot answer is
+// not read from REST: the answer is `{"source":"none","reason":<the fallback reason>,"items":[]}`.
+// The site's shadow caller sends it (DESIGN.md, "P4: the site's shadow read").
+//
 // Also /healthz, /readyz and /metrics.
 package api
 
@@ -38,6 +42,13 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/session"
 	"github.com/civitai/civitai/apps/app-data-go/internal/urn"
 )
+
+// RegistryOnlyHeader, set to "1", asks for the registry's answer only. The site sends it from its
+// storage route, which is itself the REST read this service would fall back to: following the
+// fallback would read the site again from inside its own read, for an answer it already holds. It
+// can only make a read do less, so it needs no trust. Browsers never send it: the preflight does not
+// allow it.
+const RegistryOnlyHeader = "X-App-Data-Registry-Only"
 
 // Streams answers a read from a per-user stream (session.Manager).
 type Streams interface {
@@ -110,6 +121,8 @@ type item struct {
 
 type answer struct {
 	Source string `json:"source"`
+	// Reason is why the registry did not answer, on a registry-only read (source "none") only.
+	Reason string `json:"reason,omitempty"`
 	Items  []item `json:"items"`
 }
 
@@ -167,6 +180,10 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reason = fallbackReason(err)
+	}
+	if r.Header.Get(RegistryOnlyHeader) == "1" {
+		s.write(w, start, http.StatusOK, answer{Source: "none", Reason: reason, Items: []item{}}, "none", "registry_only")
+		return
 	}
 	s.Metrics.Fallbacks.WithLabelValues(reason).Inc()
 

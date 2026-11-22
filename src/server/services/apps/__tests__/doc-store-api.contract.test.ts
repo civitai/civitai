@@ -190,7 +190,9 @@ import {
   STORAGE_ERROR_STATUS,
   STORAGE_RESERVED_SEGMENTS,
   storageRefusalBody,
+  type StorageApiDeps,
 } from '~/server/services/apps/doc-store-api';
+import type { AppDataShadowInput } from '~/server/services/apps/app-data-shadow.service';
 import type { BlockScopeRefusalKind } from '~/server/middleware/block-scope.middleware';
 import {
   clampDevScopes,
@@ -446,6 +448,8 @@ async function call(opts: {
    * carry): the storage handler runs directly with them, past the middleware.
    */
   claims?: BlockTokenClaims;
+  /** With `claims`: the handler's dependencies (the store and the app-data shadow). */
+  deps?: StorageApiDeps;
 }): Promise<Reply> {
   const segments = opts.path.split('/').filter(Boolean);
   // The route reads its own body (Next's parser is off), so the request is a real stream of
@@ -506,7 +510,7 @@ async function call(opts: {
   };
   if (opts.claims) {
     (req as unknown as { blockClaims: BlockTokenClaims }).blockClaims = opts.claims;
-    await createStorageHandler()(req, res as unknown as NextApiResponse);
+    await createStorageHandler(opts.deps)(req, res as unknown as NextApiResponse);
   } else {
     await storageRoute(req, res as unknown as NextApiResponse);
   }
@@ -4873,5 +4877,107 @@ describe('orchestrator media links in shared data are refused in every moderatio
   it('plain text saves', async () => {
     h.moderationMode = 'off';
     expect((await put({ caption: 'a cat on a windowsill' })).status).toBe(200);
+  });
+});
+
+describe('the app-data shadow read: handed each list after the response, never able to change it', () => {
+  /** An App Block token's claims, as `withBlockScope` resolves them (no hub jti, no `dev`). */
+  const blockClaims = (app: AppRow, uid: number): BlockTokenClaims => {
+    const iat = Math.floor(Date.now() / 1000);
+    return {
+      iss: 'civitai',
+      aud: 'civitai-app-block',
+      sub: `user:${uid}`,
+      iat,
+      exp: iat + 900,
+      jti: 'shadow-read-jti-5150',
+      blockId: app.blockId,
+      appId: app.appId,
+      appBlockId: app.id,
+      blockInstanceId: `bki_${app.id}`,
+      ctx: {},
+      scopes: contract.defaultScopes,
+      maxBrowsingLevel: 1,
+    };
+  };
+
+  async function twoPrivateDocs() {
+    const { A } = freshApps();
+    const token = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    for (const [key, n] of [
+      ['k1', 'shadow-doc-3a1'],
+      ['k2', 'shadow-doc-7f9'],
+    ]) {
+      const put = await call({
+        token,
+        method: 'PUT',
+        path: `/prefs/${key}`,
+        body: { data: { n } },
+      });
+      expect(put.status).toBe(200);
+    }
+    return { A, token, claims: blockClaims(A, VIEWER_IDS.v1) };
+  }
+
+  it('a list hands the shadow the served answer and what it decides on; a document read does not', async () => {
+    const { A, token, claims } = await twoPrivateDocs();
+    const seen: AppDataShadowInput[] = [];
+    const deps: StorageApiDeps = { store: () => h.store, shadow: (input) => seen.push(input) };
+    const list = await call({
+      token,
+      claims,
+      deps,
+      method: 'GET',
+      path: '/prefs',
+      query: { limit: '50' },
+    });
+    expect(list.status).toBe(200);
+    expect((list.body as { items: unknown[] }).items).toHaveLength(2);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      authorization: `Bearer ${token}`,
+      own: true,
+      published: true,
+      tokenKind: 'app',
+      signedIn: true,
+      visibility: 'private',
+      queryKeys: ['limit'],
+      appBlockId: A.id,
+      blockId: A.blockId,
+      collection: 'prefs',
+    });
+    expect(seen[0].served).toEqual(list.body);
+    // `from` naming the app itself is its own read too.
+    await call({ token, claims, deps, method: 'GET', path: '/prefs', query: { from: A.blockId } });
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toMatchObject({ own: true, queryKeys: [] });
+    const doc = await call({ token, claims, deps, method: 'GET', path: '/prefs/k1' });
+    expect(doc.status).toBe(200);
+    expect(seen).toHaveLength(2);
+  });
+
+  it('🔴 a shadow that throws, or never settles, leaves the list exactly as it is without one', async () => {
+    const { token, claims } = await twoPrivateDocs();
+    const list = (shadow: StorageApiDeps['shadow']) =>
+      call({
+        token,
+        claims,
+        deps: { store: () => h.store, shadow },
+        method: 'GET',
+        path: '/prefs',
+      });
+    const plain = await list(() => undefined);
+    expect(plain.status).toBe(200);
+    expect((plain.body as { items: unknown[] }).items).toHaveLength(2);
+    const throwing = await list(() => {
+      throw new Error('shadow exploded');
+    });
+    expect(throwing.status).toBe(200);
+    expect(throwing.body).toEqual(plain.body);
+    const hanging = await list(() => {
+      void new Promise<never>(() => undefined);
+    });
+    expect(hanging.status).toBe(200);
+    expect(hanging.body).toEqual(plain.body);
   });
 });

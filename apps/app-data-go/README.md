@@ -20,6 +20,10 @@ App Block token is exchanged at the hub's block exchange, once per block token, 
 `APP_DATA_BLOCK_EXCHANGE` on (default off: it reads REST), after its signature and claims are checked
 here against the site's block-token JWKS (`APP_DATA_BLOCK_JWKS_URL`); DESIGN.md, "Block tokens".
 
+With `X-App-Data-Registry-Only: 1` a read the registry cannot answer is not read from REST: it
+answers `{"source":"none","reason":<why>,"items":[]}`. The site's shadow read of App Storage lists
+sends it, since the REST fallback is the site's own route (DESIGN.md, "P4: the site's shadow read").
+
 ## Layout
 
 | Package             | What                                                                                      |
