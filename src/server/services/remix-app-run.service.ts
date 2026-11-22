@@ -122,12 +122,11 @@ function segmentExternalId(userId: number, runId: string, segment: number) {
  * create, where the segment tag is the owner's to edit, and on its way out of the tag set.
  */
 function segmentIndexOf(workflow: Workflow, userId: number, runId: string) {
-  const { externalId } = workflow;
-  if (!externalId) return undefined;
+  // Stored as `<submitting account id>-<sent value>`; in dev that account is not the caller's.
+  const sent = /^\d+-(.+)$/.exec(workflow.externalId ?? '')?.[1];
+  if (!sent) return undefined;
   for (let segment = 0; segment < MAX_RUN_SEGMENTS; segment++) {
-    const sent = segmentExternalId(userId, runId, segment);
-    // Stored behind the submitting account's id, which in dev is not the caller's.
-    if (externalId === sent || externalId.endsWith(`-${sent}`)) return segment;
+    if (sent === segmentExternalId(userId, runId, segment)) return segment;
   }
   return undefined;
 }

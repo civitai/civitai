@@ -868,12 +868,21 @@ describe('remix app runs', () => {
       });
     });
 
-    it('reads an externalId stored with no prefix, or behind another account id (dev)', async () => {
+    it('reads an externalId stored behind another account id (dev)', async () => {
       const runId = await finishedTwoStep('nonce-seg-03');
-      const [first, second] = submits();
-      first.externalId = first.externalId!.replace(`${USER_ID}-`, '');
-      second.externalId = second.externalId!.replace(`${USER_ID}-`, '999-');
+      submits()[1].externalId = submits()[1].externalId!.replace(`${USER_ID}-`, '999-');
       expect(await advanceRemixRun({ runId, caller: caller() })).toMatchObject({ status: 'done' });
+    });
+
+    // The owner picks what follows the account id: `x-<sent>` must not pass as `<sent>`, or a
+    // second workflow could claim a segment around the orchestrator's (user, externalId) dedupe.
+    it('refuses an externalId with anything between the account id and the sent value', async () => {
+      const runId = await finishedTwoStep('nonce-seg-08');
+      submits()[1].externalId = submits()[1].externalId!.replace(`${USER_ID}-`, `${USER_ID}-x-`);
+      await expect(advanceRemixRun({ runId, caller: caller() })).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: expect.stringContaining('missing its run details'),
+      });
     });
 
     it('refuses a segment whose externalId this server never sent for the run', async () => {
