@@ -15,6 +15,7 @@ export default defineModeratorEndpoint('model.resolveRestrictedNsfwVerdict', {
     "`keep` leaves the owner's rating; on a model an earlier scan had locked NSFW it also turns nsfw off and lifts that system lock.",
     '`dismiss` closes the lead and changes nothing else. On a minor lead it needs a `reason`.',
     '`rateNsfw` unsets SFW-only, sets nsfw and locks it. Refused on a model marked minor or a real person.',
+    'Refuses when `leadAt` is sent and the pending lead is a different one (the screen was stale).',
     'Refuses when the model has no pending lead. Every ruling logs a ModActivity row and records the values it replaced on the model.',
   ],
   rateLimit: minorFlagRateLimit,
@@ -27,6 +28,11 @@ export default defineModeratorEndpoint('model.resolveRestrictedNsfwVerdict', {
       .max(RESOLUTION_NOTE_MAX_LENGTH)
       .optional()
       .describe('Why, or where the lead was escalated. Required to dismiss a minor lead.'),
+    leadAt: z
+      .string()
+      .max(64)
+      .optional()
+      .describe('The `at` of the lead the moderator was shown; refused if the lead has changed.'),
   }),
   async handler(input, ctx) {
     const result = await resolveRestrictedNsfwVerdict({
@@ -34,6 +40,7 @@ export default defineModeratorEndpoint('model.resolveRestrictedNsfwVerdict', {
       ruling: input.ruling,
       reason: input.reason,
       userId: ctx.actor.id,
+      leadAt: input.leadAt,
     });
     return { ...result, affected: { modelIds: [input.modelId] } };
   },

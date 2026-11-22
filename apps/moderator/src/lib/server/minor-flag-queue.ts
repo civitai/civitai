@@ -634,10 +634,17 @@ export const needsReviewActions: Actions = {
       modelId: form.get('modelId'),
       ruling: form.get('ruling'),
       reason: form.get('reason') ?? undefined,
+      leadAt: form.get('leadAt') ?? undefined,
     });
     if (!parsed.success) return fail(400, { error: 'Missing model or ruling.' });
-    const { modelId, ruling, reason } = parsed.data;
-    const result = await ruleRestrictedVerdict(modelId, ruling, reason || undefined);
+    const { modelId, ruling, reason, leadAt } = parsed.data;
+    // The lead on screen, so the main app refuses a ruling meant for one since replaced.
+    const result = await ruleRestrictedVerdict(
+      modelId,
+      ruling,
+      reason || undefined,
+      leadAt || undefined
+    );
     if (!result.ok)
       return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
     await bustMinorQueueCounts();
@@ -649,6 +656,7 @@ const restrictedVerdictForm = z.object({
   modelId: z.coerce.number().int().positive().max(MAX_INT4),
   ruling: z.enum(RESTRICTED_VERDICT_RULINGS),
   reason: z.string().trim().max(1000).optional(),
+  leadAt: z.string().max(64).optional(),
 });
 
 const reasonFields = z.object(resolutionReasonFields);

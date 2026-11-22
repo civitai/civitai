@@ -438,8 +438,14 @@ describe('restricted-verdict leads', () => {
       success: true,
       modelId: 42,
     });
-    expect(ruleRestrictedVerdict).toHaveBeenCalledWith(42, 'dismiss', 'escalated');
+    expect(ruleRestrictedVerdict).toHaveBeenCalledWith(42, 'dismiss', 'escalated', undefined);
     expect(bustMinorQueueCounts).toHaveBeenCalled();
+  });
+
+  it('forwards the time of the lead on screen, so a replaced lead is refused', async () => {
+    const leadAt = '2026-11-04T00:00:00.000Z';
+    await rule({ modelId: '42', ruling: 'keep', leadAt });
+    expect(ruleRestrictedVerdict).toHaveBeenCalledWith(42, 'keep', undefined, leadAt);
   });
 
   it('is refused without the detections permission, before anything is sent', async () => {

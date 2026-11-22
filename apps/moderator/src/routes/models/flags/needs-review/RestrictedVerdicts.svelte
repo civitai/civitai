@@ -187,6 +187,7 @@
               </dl>
               <form method="POST" action="?/ruleRestrictedVerdict" use:enhance={submit(row.modelId)}>
                 <input type="hidden" name="modelId" value={row.modelId} />
+                <input type="hidden" name="leadAt" value={row.heldAt ?? ''} />
                 <label class="flex flex-col gap-1 text-xs">
                   <span class="text-dark-2">
                     Reason {row.restriction === 'minor'
@@ -251,6 +252,7 @@
                   use:enhance={submit(row.modelId)}
                 >
                   <input type="hidden" name="modelId" value={row.modelId} />
+                  <input type="hidden" name="leadAt" value={row.heldAt ?? ''} />
                   <input type="hidden" name="ruling" value="rateNsfw" />
                   <input type="hidden" name="reason" value={reasons[row.modelId] ?? ''} />
                 </form>
