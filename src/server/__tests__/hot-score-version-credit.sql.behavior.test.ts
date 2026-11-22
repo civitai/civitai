@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { EARLY_ACCESS_PURCHASES } from '~/server/services/model-version-access.service';
 
 /**
  * The Hot score triggers, run as written against an in-process Postgres: the migrations that
@@ -83,7 +84,18 @@ type Version = {
   downloads?: number;
   generations?: number;
   status?: string;
+  /** "EntityAccess" rows for the version, written before the metrics. */
+  access?: Access[];
 };
+
+type Access = { user: number; meta: Record<string, unknown> };
+const OWNER = 1;
+const DOWNLOAD_KEY = 'download-buzzTransactionId';
+const GENERATION_KEY = 'generation-buzzTransactionId';
+let nextBuyer = 10_000;
+/** `n` paid buyers of a version, each a different user. */
+const paid = (n: number, key = DOWNLOAD_KEY): Access[] =>
+  Array.from({ length: n }, () => ({ user: nextBuyer++, meta: { [key]: 'tx' } }));
 
 let nextModel = 1;
 /** Writes versions first, as the metrics job does, then the ModelMetric row the trigger scores. */
@@ -94,6 +106,7 @@ async function model(
   opts: { id?: number; uniqueGenerators?: number } = {}
 ) {
   const modelId = opts.id ?? nextModel++;
+  await db.pg.query(`INSERT INTO "Model" (id, "userId") VALUES ($1, $2)`, [modelId, OWNER]);
   for (const [i, v] of versions.entries()) {
     const id = modelId * 100 + i;
     await db.pg.query(
@@ -113,6 +126,12 @@ async function model(
        VALUES ($1, $2, $3, $4)`,
       [id, v.likes, v.downloads ?? 0, v.generations ?? 0]
     );
+    for (const a of v.access ?? [])
+      await db.pg.query(
+        `INSERT INTO "EntityAccess" ("accessToId", "accessToType", "accessorId", "accessorType", meta)
+         VALUES ($1, 'ModelVersion', $2, 'User', $3)`,
+        [id, a.user, JSON.stringify(a.meta)]
+      );
   }
   await db.pg.query(
     `INSERT INTO "ModelMetric" ("modelId", "thumbsUpCount", "publishedAt", "uniqueGeneratorCount")
@@ -152,6 +171,8 @@ let preexisting: number;
 // the full 60-day window, which every other backfill fixture (3 days, likes) would not notice.
 let preexistingByDownloads: number;
 const DAY_45 = daysAgo(45);
+// Under the bar on likes + downloads, over it with its buyers: only the buyer-bar rescore lifts it.
+let preexistingByBuyers: number;
 
 const SCHEMA = `
     CREATE TABLE "ModelMetric" (
@@ -171,6 +192,12 @@ const SCHEMA = `
       "modelId" int NOT NULL, "baseModel" text NOT NULL,
       "thumbsUpCount" int NOT NULL DEFAULT 0, "downloadCount" int NOT NULL DEFAULT 0,
       "hotScore" int, PRIMARY KEY ("modelId", "baseModel")
+    );
+    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "EntityAccess" (
+      "accessToId" int NOT NULL, "accessToType" text NOT NULL,
+      "accessorId" int NOT NULL, "accessorType" text NOT NULL, meta jsonb DEFAULT '{}',
+      PRIMARY KEY ("accessToId", "accessToType", "accessorId", "accessorType")
     );
 `;
 
@@ -195,6 +222,17 @@ beforeAll(async () => {
     { at: OLD, likes: 3_000 },
     { at: DAY_45, likes: 0, downloads: 192 },
   ]);
+  // A generation purchase too, so the rescore's candidate scan must count both keys.
+  preexistingByBuyers = await model(OLD, 3_000, [
+    { at: OLD, likes: 2_970 },
+    { at: RECENT, likes: 19, access: [...paid(5), ...paid(1, GENERATION_KEY)] },
+  ]);
+  // A measured slice the rescore must rewrite, and a mirror that follows ModelMetric.
+  await db.pg.query(
+    `INSERT INTO "ModelBaseModelMetric" ("modelId", "baseModel", "thumbsUpCount", "generationCount", "uniqueGeneratorCount")
+     VALUES ($1, 'SDXL 1.0', 3000, 0, 0), ($1, 'Mirror', 0, NULL, NULL)`,
+    [preexistingByBuyers]
+  );
   // #9397's backfill walks ids in 250k ranges: one row opening each later range, the last at the
   // max id, each with a mirrored and a measured slice. The head-start rescore batches by position
   // instead (2 at a time here), so these rows also land in its later batches.
@@ -531,6 +569,134 @@ describe("an unmeasured slice follows its model's score", () => {
   });
 });
 
+const BUYER_BAR_DIR = '20271123120000_model_hot_score_buyer_bar';
+
+describe('paid buyers count toward the head-start bar like likes', () => {
+  // The rule is docs/model-feed-hot-ranking.md §20 (civitai/civitai#10034): change it there first.
+  // As the head-start fixtures: model 3,000 likes, so a qualifying version of engagement e scores
+  // term(e + 0.01 * (3,000 - e)). The buyers move the bar only, never e.
+  const old = { at: OLD, likes: 2_970 };
+  const headStart = (ev: number) => term(ev + 0.01 * (3_000 - ev), RECENT);
+  const noHeadStart = (ev: number) => term(ev, RECENT);
+  const expectNear = async (id: number, want: number) =>
+    expect(Math.abs((await score(id)) - want)).toBeLessThanOrEqual(1);
+
+  it('lifts a version over the bar on its buyers, download and generation purchases alike', async () => {
+    // 19 likes + 6 buyers = 25. Without either kind of purchase it stays under.
+    const id = await model(OLD, 3_000, [
+      old,
+      { at: RECENT, likes: 19, access: [...paid(5), ...paid(1, GENERATION_KEY)] },
+    ]);
+
+    await expectNear(id, headStart(19));
+    expect(Math.abs((await slice(id, 'SDXL 1.0', 3_000)) - headStart(19))).toBeLessThanOrEqual(1);
+  });
+
+  it('keeps the head start of a version over the bar on its own', async () => {
+    const id = await model(OLD, 3_000, [old, { at: RECENT, likes: 30, access: paid(6) }]);
+
+    await expectNear(id, headStart(30));
+  });
+
+  it("counts exactly the app's purchase kinds, in every copy of the buyer filter", () => {
+    const sql = readFileSync(path.join(MIGRATIONS, BUYER_BAR_DIR, 'migration.sql'), 'utf8');
+    const copies = [...sql.matchAll(/ea\.meta \?\| array\[([^\]]*)\]/g)].map((m) =>
+      [...m[1].matchAll(/'([^']+)'/g)].map((k) => k[1]).sort()
+    );
+    const keys = EARLY_ACCESS_PURCHASES.map((p) => p.transactionKey).sort();
+
+    expect(copies).toEqual([keys, keys, keys]);
+  });
+
+  it('scores a version with no buyers as before', async () => {
+    const id = await model(OLD, 3_000, [old, { at: RECENT, likes: 19 }]);
+
+    await expectNear(id, noHeadStart(19));
+  });
+
+  it("does not count the owner's own purchase", async () => {
+    const id = await model(OLD, 3_000, [
+      old,
+      {
+        at: RECENT,
+        likes: 19,
+        access: [...paid(5), { user: OWNER, meta: { [DOWNLOAD_KEY]: 'tx' } }],
+      },
+    ]);
+
+    await expectNear(id, noHeadStart(19));
+    expect(Math.abs((await slice(id, 'SDXL 1.0', 3_000)) - noHeadStart(19))).toBeLessThanOrEqual(1);
+  });
+
+  it('does not count a gift or a revoked purchase, which hold no purchase key', async () => {
+    const id = await model(OLD, 3_000, [
+      old,
+      {
+        at: RECENT,
+        likes: 19,
+        access: [
+          ...paid(5),
+          { user: nextBuyer++, meta: { giftLinkId: 'gift' } },
+          // A moderator revoke moves the purchase keys into an archived entry.
+          { user: nextBuyer++, meta: { revocations: [{ [DOWNLOAD_KEY]: 'tx', revokedById: 2 }] } },
+        ],
+      },
+    ]);
+
+    await expectNear(id, noHeadStart(19));
+    expect(Math.abs((await slice(id, 'SDXL 1.0', 3_000)) - noHeadStart(19))).toBeLessThanOrEqual(1);
+  });
+
+  it('counts a buyer in place of a download, not on top of one', async () => {
+    // 18 likes + (7 - 6) / 6.4 + 6 buyers = 24.16. Counting the buyers' downloads too: 25.09.
+    const id = await model(OLD, 3_000, [
+      old,
+      { at: RECENT, likes: 18, downloads: 7, access: paid(6) },
+    ]);
+
+    await expectNear(id, noHeadStart(18 + 7 / 6.4));
+  });
+
+  const slicesOf = async (id: number) =>
+    Object.fromEntries(
+      (
+        await db.pg.query<{ baseModel: string; hotScore: number }>(
+          `SELECT "baseModel", "hotScore" FROM "ModelBaseModelMetric" WHERE "modelId" = $1`,
+          [id]
+        )
+      ).rows.map((r) => [r.baseModel, r.hotScore])
+    );
+
+  it('backfills a model scored before the migration, and its slices', async () => {
+    await expectNear(preexistingByBuyers, headStart(19));
+    const slices = await slicesOf(preexistingByBuyers);
+    expect(Math.abs(slices['SDXL 1.0'] - headStart(19))).toBeLessThanOrEqual(1);
+    expect(slices['Mirror']).toBe(await score(preexistingByBuyers));
+  });
+
+  it('can be re-run, which is how a stopped rescore resumes', async () => {
+    await expect(apply(BUYER_BAR_DIR)).resolves.toBeUndefined();
+    await expectNear(preexistingByBuyers, headStart(19));
+  });
+
+  it('the rollback returns a buyer-lifted model to the #9928 score, and can be re-run', async () => {
+    const id = await model(OLD, 3_000, [old, { at: RECENT, likes: 19, access: paid(6) }]);
+    await expectNear(id, headStart(19));
+
+    await apply(BUYER_BAR_DIR, 'rollback.sql');
+
+    await expectNear(id, noHeadStart(19));
+    await expectNear(preexistingByBuyers, noHeadStart(19));
+    const slices = await slicesOf(preexistingByBuyers);
+    expect(Math.abs(slices['SDXL 1.0'] - noHeadStart(19))).toBeLessThanOrEqual(1);
+    expect(slices['Mirror']).toBe(await score(preexistingByBuyers));
+    await expect(apply(BUYER_BAR_DIR, 'rollback.sql')).resolves.toBeUndefined();
+    // Back on #9928: a version over the bar on its own still gets its head start.
+    const own = await model(OLD, 3_000, [old, { at: RECENT, likes: 30 }]);
+    await expectNear(own, headStart(30));
+  });
+});
+
 // Puts the shared database's triggers back to #9397: only fresh databases are used after it.
 describe('the head-start rollback', () => {
   it('returns a head-started model and its slices to the #9397 score', async () => {
@@ -585,21 +751,27 @@ describe('the rescore lag watch', () => {
   // file and called without it.
   it.each([
     [
+      HEAD_START_DIR,
       'migration.sql',
       /CREATE OR REPLACE PROCEDURE public\.rescore_hot_version_head_start\([\s\S]*?\$procedure\$;/,
       'rescore_hot_version_head_start',
     ],
     [
+      HEAD_START_DIR,
       'rollback.sql',
       /CREATE OR REPLACE PROCEDURE public\.rescore_hot_version_head_start_rollback\([\s\S]*?\$procedure\$;/,
       'rescore_hot_version_head_start_rollback',
     ],
+    [
+      BUYER_BAR_DIR,
+      'rollback.sql',
+      /CREATE OR REPLACE PROCEDURE public\.rescore_hot_version_buyer_bar_rollback\([\s\S]*?\$procedure\$;/,
+      'rescore_hot_version_buyer_bar_rollback',
+    ],
   ])(
-    'the %s procedure refuses before writing when it cannot see replica lag',
-    async (file, re, proc) => {
-      const procedure = readFileSync(path.join(MIGRATIONS, HEAD_START, file), 'utf8').match(
-        re
-      )?.[0];
+    'the %s %s procedure refuses before writing when it cannot see replica lag',
+    async (dir, file, re, proc) => {
+      const procedure = readFileSync(path.join(MIGRATIONS, dir, file), 'utf8').match(re)?.[0];
       const id = await model(OLD, 3_000, [
         { at: OLD, likes: 2_970 },
         { at: RECENT, likes: 30 },
@@ -637,10 +809,11 @@ describe('the rescore lag watch', () => {
   // PGlite reports a failed chunk by its last error ("current transaction is aborted"), not the
   // guard's, so the guard is asserted by running the file's own preflight alone. A file broken for
   // another reason fails every other test here, which apply it with the opt-out.
-  const preflight = (file: string) =>
-    readFileSync(path.join(MIGRATIONS, HEAD_START, file), 'utf8').match(
+  const preflightOf = (dir: string, file: string) =>
+    readFileSync(path.join(MIGRATIONS, dir, file), 'utf8').match(
       /DO \$preflight\$[\s\S]*?\$preflight\$;/
     )?.[0] ?? 'SELECT missing_preflight()';
+  const preflight = (file: string) => preflightOf(HEAD_START, file);
   const usesHeadStart = async (pg: PGlite) =>
     (
       await pg.query(
@@ -672,6 +845,26 @@ describe('the rescore lag watch', () => {
     expect(errors[0]).toContain('no replica lag visible');
     expect(await functionExists(pg, 'hot_version_score')).toBe(false);
     expect(await usesHeadStart(pg)).toBe(false);
+    await pg.close();
+  });
+
+  it('refuses to apply the buyer bar, changing nothing, when it cannot see replica lag', async () => {
+    const pg = await freshDb('20271122120000_model_hot_score_mirror_refresh');
+    const countsBuyers = async () =>
+      (
+        await pg.query(
+          `SELECT 1 FROM pg_proc WHERE proname = 'model_metric_hot_score' AND prosrc LIKE '%EntityAccess%'`
+        )
+      ).rows.length > 0;
+
+    await expect(apply(BUYER_BAR_DIR, 'migration.sql', pg)).rejects.toThrow();
+    await pg.exec('ROLLBACK');
+    expect(await countsBuyers()).toBe(false);
+    for (const file of ['migration.sql', 'rollback.sql'])
+      await expect(pg.exec(preflightOf(BUYER_BAR_DIR, file))).rejects.toThrow(
+        'no replica lag visible'
+      );
+    expect(await usesHeadStart(pg)).toBe(true);
     await pg.close();
   });
 

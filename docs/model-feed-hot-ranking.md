@@ -1676,7 +1676,7 @@ qualifies while all three hold:
   ends gets no second head start. As a consequence, a version whose first scheduled date slipped by
   more than a day gets none at all.
 
-Paid-access versions qualify like free ones.
+Paid-access versions qualify like free ones, and since §20 their buyers count toward the bar.
 
 ### Measured before choosing (replica snapshot, 2026-11-20)
 
@@ -1699,3 +1699,28 @@ share, cap 2.5) moved 13 of the all-levels top 100 and was rejected for that.
   `rollback.sql` restores §18 and rescores in both directions. Both refuse to run unless replica
   lag is visible, and both are run with `psql -X -v ON_ERROR_STOP=1`.
 
+## 20. A paid version's buyers count toward the head-start bar (2026-11-22)
+
+A paid early-access version sells to few people, so §19's bar of 25 likes + downloads / 6.4 rarely
+counts what a sale says about it. Each buyer now counts like a like, in place of one download:
+
+```
+bar = likes + max(downloads - buyers, 0) / 6.4 + buyers >= 25
+```
+
+- A buyer is a user with a live paid purchase of the version: an `EntityAccess` row for it whose
+  `meta` holds a download- or generation-purchase transaction key. The model's owner, gifts and
+  moderator grants (no purchase key) do not count; a refund or a moderator revoke removes the key.
+- Subtracting buyers from downloads keeps a buyer who also downloaded from counting twice. When
+  buyers outnumber downloads (generation-only purchases), the download share is 0.
+- The bar never falls, so a version with no buyers is scored exactly as before. Only the bar
+  changes: a qualifying version earns §19's term, and a buyer adds nothing to `e_v`. A buyer who
+  also liked the version counts twice toward the bar, once as each.
+- A purchase, refund or revoke does not rescore on its own: the bar moves on the model's next
+  metrics write, as it does for a like.
+- `hot_version_score()` takes the buyer count as a tenth argument; the triggers count it per
+  version through the `EntityAccess` primary key, only for a version inside the 60-day window and
+  still under the bar without them.
+- The migration (`20271123120000_model_hot_score_buyer_bar`) is applied by hand like §19's and
+  rescores only the models whose versions its buyers lift over the bar. Its `rollback.sql`
+  restores §19's functions and rescores every model with an access row on a version published since 2026-09-22.
