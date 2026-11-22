@@ -4220,8 +4220,10 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     await switcher().click();
     await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
     await page.getByRole('menuitem', { name: 'Delete app' }).click();
+    // Click Delete only once the confirmation is on screen, and wait for the remove it triggers.
+    await expect.element(page.getByText('Delete app-bbbb?')).toBeVisible();
     await page.getByRole('button', { name: 'Delete app' }).click();
-    expect(m.remove).toHaveBeenCalledWith('sbx-bbbbbbbbbbbb');
+    await vi.waitFor(() => expect(m.remove).toHaveBeenCalledWith('sbx-bbbbbbbbbbbb'));
     await settle(200);
     expect(hib.deleteMine).not.toHaveBeenCalled();
   });
