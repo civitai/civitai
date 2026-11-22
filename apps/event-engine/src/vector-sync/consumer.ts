@@ -31,7 +31,7 @@ export const VECTOR_SYNC_TOPICS = ['postgres.TagsOnImageNew', 'postgres.ImageRes
 const IMAGE_TOPIC = 'postgres.Image';
 /** Above this many pending ids, consumption waits for a flush. */
 const MAX_PENDING = 5_000;
-const WEDGED_AFTER_MS = 40 * 60_000;
+const WEDGED_AFTER_MS = 45 * 60_000;
 /** Deferred ids beyond this are dropped (logged); the reconciler finds them. */
 const MAX_DEFERRED = 100_000;
 /**
@@ -205,22 +205,31 @@ export class VectorSyncQueue {
    * failing without progress. 45 minutes outlasts a batch's rate-limit backoff plus the
    * 30-minute workflow timeout.
    */
+  isHealthy(now = Date.now()) {
+    if (now - this.lastFlushOk < 10 * 60_000) return true;
+    return this.consecutiveFailures < 3 && now - this.lastProgress < 45 * 60_000;
+  }
+
   /**
-   * One flush has run for WEDGED_AFTER_MS and stored nothing in that time. Every later flush waits
-   * on it, so the consumer has stopped. Not a failing flush: that one ends, and retries. Longer than a
-   * workflow's 30-minute step timeout plus its backoff, so a flush still waiting on paid work is not
-   * killed. The liveness route, unlike readiness, restarts the pod for this alone.
+   * A flush has run WEDGED_AFTER_MS with no progress: no workflow returned vectors, nothing stored.
+   * Every later flush waits on it. A failing flush ends and retries, so it does not count. The same
+   * allowance as isHealthy's, so a flush still waiting on paid work is not killed; /live, unlike
+   * readiness, restarts the pod for this alone.
    */
   isWedged(now = Date.now()) {
     if (this.flushStartedAt === null) return false;
     const since = Math.max(this.flushStartedAt, this.lastProgress);
     return now - since >= WEDGED_AFTER_MS;
   }
+}
 
-  isHealthy(now = Date.now()) {
-    if (now - this.lastFlushOk < 10 * 60_000) return true;
-    return this.consecutiveFailures < 3 && now - this.lastProgress < 45 * 60_000;
-  }
+/** The /live answer: 503 only for a wedged flush, which a restart clears. */
+export function liveness(
+  queue: Pick<VectorSyncQueue, 'isWedged' | 'flushStartedAt'>,
+  now = Date.now()
+) {
+  const wedged = queue.isWedged(now);
+  return { status: wedged ? 503 : 200, body: { wedged, flushStartedAt: queue.flushStartedAt } };
 }
 
 /**
@@ -283,10 +292,10 @@ async function main() {
     .createServer(async (req, res) => {
       if (req.url === '/metrics') return serveMetrics(res);
       if (req.url === '/live') {
-        const wedged = queue.isWedged();
-        if (wedged) logger.error({ since: queue.flushStartedAt }, 'vector-sync: flush wedged');
-        res.writeHead(wedged ? 503 : 200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ wedged, flushStartedAt: queue.flushStartedAt }));
+        const live = liveness(queue);
+        if (live.status !== 200) logger.error(live.body, 'vector-sync: flush wedged');
+        res.writeHead(live.status, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(live.body));
       }
       const healthy = queue.isHealthy();
       res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
