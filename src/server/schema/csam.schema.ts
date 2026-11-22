@@ -57,6 +57,8 @@ export const csamContextSourcesSchema = z.object({
   serviceOfferingIds: rowId.array().max(100).default([]),
   /** The report's user's own profile. */
   profile: z.boolean().default(false),
+  /** The items above in the order the moderator picked them, as `source:id` or `profile`. */
+  order: z.string().max(40).array().max(500).default([]),
 });
 
 export type GetCsamItemCandidatesSchema = z.infer<typeof getCsamItemCandidatesSchema>;

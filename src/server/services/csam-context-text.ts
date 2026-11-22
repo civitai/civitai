@@ -9,7 +9,10 @@ import type {
 import { xmlSafe } from '~/server/services/ncmec-xml';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
-import { CSAM_CONTEXT_TEXT_MAX_CHARS } from '~/shared/constants/csam-context.constants';
+import {
+  CSAM_CONTEXT_ITEM_SEND_BUDGET,
+  CSAM_CONTEXT_TEXT_MAX_CHARS,
+} from '~/shared/constants/csam-context.constants';
 
 export { CSAM_CONTEXT_TEXT_MAX_CHARS };
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -770,22 +773,31 @@ async function snapshotItems({
     ...(sources.profile ? [await readProfile(ownerId)].filter((p): p is ItemRead => !!p) : []),
   ].filter((item) => item.fields.length);
 
+  // In the moderator's order, so a send that can't carry every item keeps the ones picked first.
+  const picks = wanted.flatMap(([source, ids]) => ids.map((id) => ({ source, id })));
+  const place = (p: { source: CsamItemContextSource; id: number }) => {
+    const at = (sources.order ?? []).indexOf(
+      p.source === 'profile' ? 'profile' : `${p.source}:${p.id}`
+    );
+    return at < 0 ? Infinity : at;
+  };
+  picks.sort((a, b) => place(a) - place(b));
+
   const items: CsamItemContextText[] = [];
-  for (const [source, ids] of wanted)
-    for (const id of ids) {
-      const item = read.find((r) => r.source === source && r.id === id);
-      if (!item) {
-        notAttached.push(itemLabel(source, id));
-        continue;
-      }
-      items.push({
-        ...item,
-        authorIsReportedUser: true,
-        text: joinFields(item.fields),
-        capturedAt: capturedAt.toISOString(),
-        capturedById,
-      });
+  for (const { source, id } of picks) {
+    const item = read.find((r) => r.source === source && r.id === id);
+    if (!item) {
+      notAttached.push(itemLabel(source, id));
+      continue;
     }
+    items.push({
+      ...item,
+      authorIsReportedUser: true,
+      text: joinFields(item.fields),
+      capturedAt: capturedAt.toISOString(),
+      capturedById,
+    });
+  }
   return { items, notAttached };
 }
 
@@ -1051,7 +1063,9 @@ const capturedLine = (c: CsamItemContextText, noun: string) =>
 export function contextIncidents(contextText: CsamContextText[] | undefined) {
   const webPageIncidents: { url?: string; additionalInfo: string }[] = [];
   const chatImIncidents: { chatClient: string; content: string; additionalInfo: string }[] = [];
-  if (!contextText?.length) return { webPageIncidents, chatImIncidents };
+  /** Item captures past `CSAM_CONTEXT_ITEM_SEND_BUDGET`, left out of the send but kept. */
+  let overBudget = 0;
+  if (!contextText?.length) return { webPageIncidents, chatImIncidents, overBudget };
   const base = getBaseUrl('red');
   const groups = new Map<
     string,
@@ -1088,8 +1102,16 @@ export function contextIncidents(contextText: CsamContextText[] | undefined) {
       ),
     });
   }
+  // Post and comment text is never counted against it. Items go in stored order: the moderator's.
+  let budget = CSAM_CONTEXT_ITEM_SEND_BUDGET;
   for (const c of contextText) {
     if (!isItemContextText(c)) continue;
+    const cost = Math.min(Array.from(c.text).length, CSAM_CONTEXT_TEXT_MAX_CHARS);
+    if (cost > budget) {
+      overBudget++;
+      continue;
+    }
+    budget -= cost;
     const { noun, url, heading } = describeItem(c, base);
     if (c.source === 'chatMessage') {
       chatImIncidents.push({
@@ -1106,5 +1128,5 @@ export function contextIncidents(contextText: CsamContextText[] | undefined) {
       ),
     });
   }
-  return { webPageIncidents, chatImIncidents };
+  return { webPageIncidents, chatImIncidents, overBudget };
 }

@@ -50,6 +50,9 @@ const {
   getCsamItemCandidates,
   CSAM_CONTEXT_TEXT_MAX_CHARS,
 } = await import('~/server/services/csam-context-text');
+const { CSAM_CONTEXT_ITEM_SELECT_LIMIT } = await import(
+  '~/shared/constants/csam-context.constants'
+);
 const RED = 'https://red.example.invalid';
 const webPages = (c: CsamContextText[] | undefined) => contextIncidents(c).webPageIncidents;
 
@@ -901,6 +904,16 @@ describe('items the reported user wrote', () => {
     expect(refiled).toHaveLength(4);
   });
 
+  it('stores items in the order the moderator picked them', async () => {
+    const rows = await capture({
+      chatMessageIds: [901],
+      modelIds: [701],
+      profile: true,
+      order: ['profile', 'model:701', 'chatMessage:901'],
+    });
+    expect(rows.map((r) => r.source)).toEqual(['profile', 'model', 'chatMessage']);
+  });
+
   it("lists the user's own items newest first, capped, and still files an id past the cap", async () => {
     const ids = Array.from({ length: 101 }, (_, i) => 2000 + i);
     await db.pg.exec(
@@ -996,6 +1009,45 @@ describe('items the reported user wrote', () => {
       expect(incident.additionalInfo).toContain(
         `Profile of the account reported in this CyberTip (user id ${OWNER}; username at capture none).`
       );
+    });
+
+    it('sends items in stored order up to the send budget, so a profile picked first survives an overflow', async () => {
+      const big = 'x'.repeat(CSAM_CONTEXT_TEXT_MAX_CHARS);
+      const entry = (source: CsamItemContextText['source'], id: number): CsamItemContextText => ({
+        source,
+        id,
+        authorId: OWNER,
+        authorIsReportedUser: true,
+        fields: [{ label: 'Name', text: big }],
+        text: big,
+        capturedAt: at(8).toISOString(),
+        capturedById: MOD,
+      });
+      const models = Array.from({ length: CSAM_CONTEXT_ITEM_SELECT_LIMIT }, (_, i) =>
+        entry('model', 3000 + i)
+      );
+      const post = {
+        source: 'postDescription',
+        id: 100,
+        postId: 100,
+        authorId: OWNER,
+        authorIsReportedUser: true,
+        postedAt: at(2).toISOString(),
+        text: big,
+        capturedAt: at(8).toISOString(),
+        capturedById: MOD,
+      } satisfies CsamPostContextText;
+
+      const sent = contextIncidents([entry('profile', OWNER), ...models, post]);
+      expect(sent.overBudget).toBe(1);
+      const urls = sent.webPageIncidents.map((i) => i.url);
+      // Post text is not counted against the item budget.
+      expect(urls).toContain(`${RED}/posts/100`);
+      expect(
+        sent.webPageIncidents.some((i) => i.additionalInfo.includes("reported user's profile"))
+      ).toBe(true);
+      expect(urls).not.toContain(`${RED}/models/${3000 + CSAM_CONTEXT_ITEM_SELECT_LIMIT - 1}`);
+      expect(urls).toContain(`${RED}/models/3000`);
     });
 
     it('sends at most the cap per item, across its fields', async () => {

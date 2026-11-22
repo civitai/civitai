@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { csamPickerState, csamUntick } from '~/components/Csam/csam-item-picker';
-import { CSAM_CONTEXT_ITEM_SELECT_LIMIT } from '~/shared/constants/csam-context.constants';
+import { csamPickerState, csamPickOrder, csamUntick } from '~/components/Csam/csam-item-picker';
+import {
+  CSAM_CONTEXT_ITEM_SELECT_LIMIT,
+  CSAM_CONTEXT_NO_IMAGES_REFUSAL,
+  CSAM_PRIVATE_ROUTE,
+  csamOutsideFieldsHelp,
+} from '~/shared/constants/csam-context.constants';
 
 const noTyped = { chatMessageIds: '', modelIds: '', articleIds: '', serviceOfferingIds: '' };
 const noTicked = { model: [], article: [], serviceOffering: [] };
@@ -53,5 +58,33 @@ describe('the CSAM report item picker', () => {
       false
     );
     expect(lists.modelIds).toEqual([12, 123]);
+  });
+
+  it('keeps the order the moderator picked in, with new picks last and dropped ones gone', () => {
+    const lists = { chatMessageIds: [901], modelIds: [7], articleIds: [], serviceOfferingIds: [] };
+    expect(csamPickOrder(['profile', 'model:7'], lists, true)).toEqual([
+      'profile',
+      'model:7',
+      'chatMessage:901',
+    ]);
+    expect(csamPickOrder(['profile', 'model:7', 'chatMessage:901'], lists, false)).toEqual([
+      'model:7',
+      'chatMessage:901',
+    ]);
+  });
+
+  // Filing a report with no image removes the account and can never be sent.
+  it('never tells a moderator to file a report with no images', () => {
+    for (const text of [CSAM_CONTEXT_NO_IMAGES_REFUSAL, csamOutsideFieldsHelp(false)]) {
+      expect(text).not.toMatch(/file (now|it|without|the report)/i);
+      expect(text).toContain("don't file here");
+    }
+    expect(CSAM_CONTEXT_NO_IMAGES_REFUSAL.startsWith('Nothing was filed.')).toBe(true);
+    expect(csamOutsideFieldsHelp(true)).toContain('file now');
+  });
+
+  // Fails until the private route names who to tell: the PR stays a draft until then.
+  it('names who a moderator tells privately', () => {
+    expect(CSAM_PRIVATE_ROUTE).not.toContain('[WHO');
   });
 });

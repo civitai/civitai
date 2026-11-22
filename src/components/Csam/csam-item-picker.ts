@@ -47,3 +47,27 @@ export function csamUntick(ticked: number[], typed: string, id: number) {
       .join(', '),
   };
 }
+
+type PickedLists = {
+  chatMessageIds: number[];
+  modelIds: number[];
+  articleIds: number[];
+  serviceOfferingIds: number[];
+};
+
+/**
+ * The picked items in the order the moderator picked them, as `source:id` or `profile`: what is still
+ * picked keeps its place, and anything new goes last. The send keeps this order when it can't carry
+ * everything.
+ */
+export function csamPickOrder(previous: string[], lists: PickedLists, profile: boolean) {
+  const keys = [
+    ...lists.chatMessageIds.map((id) => `chatMessage:${id}`),
+    ...lists.modelIds.map((id) => `model:${id}`),
+    ...lists.articleIds.map((id) => `article:${id}`),
+    ...lists.serviceOfferingIds.map((id) => `serviceOffering:${id}`),
+    ...(profile ? ['profile'] : []),
+  ];
+  const kept = previous.filter((key) => keys.includes(key));
+  return [...kept, ...keys.filter((key) => !kept.includes(key))];
+}

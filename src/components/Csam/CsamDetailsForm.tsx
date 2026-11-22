@@ -27,7 +27,8 @@ import {
   hasContextSources,
   noContextSources,
 } from '~/components/Csam/CsamContextTextSelect';
-import { CsamItemTextSelect, csamNotAttachedNotice } from '~/components/Csam/CsamItemTextSelect';
+import { CsamItemTextSelect } from '~/components/Csam/CsamItemTextSelect';
+import { csamNotAttachedNotice } from '~/shared/constants/csam-context.constants';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { settleShown } from '~/components/Csam/csam-shown';
@@ -190,6 +191,7 @@ export function CsamDetailsForm({
               {type === 'Image' && userId > 0 && (
                 <CsamItemTextSelect
                   userId={userId}
+                  hasImages={imageIds.length > 0}
                   value={contextSources}
                   onChange={(value, problem) => {
                     setContextSources(value);

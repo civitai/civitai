@@ -13,9 +13,10 @@ export const noContextSources: CsamContextSources = {
   articleIds: [],
   serviceOfferingIds: [],
   profile: false,
+  order: [],
 };
 
-export const hasContextSources = ({ profile, ...lists }: CsamContextSources) =>
+export const hasContextSources = ({ profile, order: _order, ...lists }: CsamContextSources) =>
   profile || Object.values(lists).some((ids) => ids.length > 0);
 
 export function CsamContextTextSelect({

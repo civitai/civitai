@@ -15,30 +15,26 @@ import type { ItemSource, Ticked, Typed } from '~/components/Csam/csam-item-pick
 import {
   badTokens,
   csamPickerState,
+  csamPickOrder,
   csamUntick,
   ITEMS,
   parseIds,
 } from '~/components/Csam/csam-item-picker';
 import {
   CSAM_CONTEXT_ITEM_SELECT_LIMIT,
-  CSAM_PRIVATE_ROUTE,
+  csamOutsideFieldsHelp,
 } from '~/shared/constants/csam-context.constants';
 import { trpc } from '~/utils/trpc';
-
-export const CSAM_OUTSIDE_FIELDS_HELP = `Facts outside these fields are not captured and are not sent. If one is the reason for this report, file now, then ${CSAM_PRIVATE_ROUTE}.`;
-
-export const csamNotAttachedNotice = (items: string[]) =>
-  `Not attached: ${items.join(
-    ', '
-  )}. The report was filed without them. If one is the reason for this report, ${CSAM_PRIVATE_ROUTE}.`;
 
 /** The reported user's own chat messages, models, articles, service offerings and profile. */
 export function CsamItemTextSelect({
   userId,
+  hasImages,
   value,
   onChange,
 }: {
   userId: number;
+  hasImages: boolean;
   value: CsamContextSources;
   /** `problem` is set while the selection can't be filed. */
   onChange: (value: CsamContextSources, problem?: string) => void;
@@ -55,7 +51,10 @@ export function CsamItemTextSelect({
     setTyped(nextTyped);
     setTicked(nextTicked);
     const { lists, problem } = csamPickerState(nextTyped, nextTicked, profile);
-    onChange({ ...value, ...lists, profile }, problem);
+    onChange(
+      { ...value, ...lists, profile, order: csamPickOrder(value.order, lists, profile) },
+      problem
+    );
   };
   const { count, problem } = csamPickerState(typed, ticked, value.profile);
   const full = count >= CSAM_CONTEXT_ITEM_SELECT_LIMIT;
@@ -67,7 +66,7 @@ export function CsamItemTextSelect({
     >
       <Stack gap="sm" mt="xs">
         <Text size="xs" c="dimmed">
-          {CSAM_OUTSIDE_FIELDS_HELP}
+          {csamOutsideFieldsHelp(hasImages)}
         </Text>
         <Checkbox
           checked={value.profile}
