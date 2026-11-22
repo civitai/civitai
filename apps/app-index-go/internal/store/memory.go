@@ -206,6 +206,9 @@ func (m *Memory) Search(_ context.Context, q Query) (Page, error) {
 		if q.Category != "" && a.Category != q.Category {
 			continue
 		}
+		if !q.Mature.Admits(a.Rating) {
+			continue
+		}
 		rank, ok := memRank(a.App, tokens)
 		if !ok {
 			continue
