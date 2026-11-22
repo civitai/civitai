@@ -1188,7 +1188,7 @@ async function sendCyberTip(
     onFinished,
     failureSubType = 'archive-data',
   }: {
-    /** The details each file will be sent with, but for its fileId. */
+    /** Every details variant a file may be sent with, but for its fileId. */
     fileDetails: FileDetailsXml[];
     /** Resolves to the details keys the report is marked sent with. */
     sendFiles: (ncmecReportId: number) => Promise<Record<string, unknown> | void>;
@@ -1382,7 +1382,7 @@ async function reportImages(claim: SendClaim) {
       'supplemental-unviewed'
     );
 
-  // What is sent and stored as viewed. The supplemental refusal above reads the records themselves.
+  // Files that may count as viewed, decided at the read. The supplemental refusal above reads the records.
   const viewedAsSent = new Map(
     [...viewed].filter(([id]) => {
       const image = images.find((i) => i.id === id);
@@ -1405,7 +1405,12 @@ async function reportImages(claim: SendClaim) {
 
   const fileDetailsOf = new Map<
     number,
-    { fileDetails: FileDetailsXml; fileAnnotations: Ncmec.FileAnnotationsSchema }
+    {
+      fileDetails: FileDetailsXml;
+      fileAnnotations: Ncmec.FileAnnotationsSchema;
+      /** Sent instead when a file with a view record goes as not viewed. */
+      notedDetails?: FileDetailsXml;
+    }
   >();
   for (const image of images) {
     const imageReportInfo = report.images.find((x) => x.id === image.id);
@@ -1435,16 +1440,27 @@ async function reportImages(claim: SendClaim) {
     });
     if (isFeedbackCaptureOwner(image.userId))
       prompts.additionalInfo.unshift(xmlText(FEEDBACK_CAPTURE_FILE_NOTE));
-    fileDetailsOf.set(image.id, {
-      fileDetails: {
-        originalFileName: originalFileName ? xmlText(originalFileName) : undefined,
-        locationOfFile: xmlText(getEdgeUrl(image.url, { type: image.type })),
-        fileViewedByEsp: viewedAsSent.has(image.id),
-        fileAnnotations,
-        ...(prompts.details && { details: prompts.details }),
-        ...(prompts.additionalInfo.length && { additionalInfo: prompts.additionalInfo }),
-      },
+    const details: FileDetailsXml = {
+      originalFileName: originalFileName ? xmlText(originalFileName) : undefined,
+      locationOfFile: xmlText(getEdgeUrl(image.url, { type: image.type })),
+      fileViewedByEsp: viewedAsSent.has(image.id),
       fileAnnotations,
+      ...(prompts.details && { details: prompts.details }),
+      ...(prompts.additionalInfo.length && { additionalInfo: prompts.additionalInfo }),
+    };
+    fileDetailsOf.set(image.id, {
+      fileDetails: details,
+      fileAnnotations,
+      notedDetails: viewed.has(image.id)
+        ? {
+            ...details,
+            fileViewedByEsp: false,
+            additionalInfo: [
+              ...(details.additionalInfo ?? []),
+              xmlText(VIEWED_COPY_UNCONFIRMED_FILE_NOTE),
+            ],
+          }
+        : undefined,
     });
   }
 
@@ -1458,7 +1474,7 @@ async function reportImages(claim: SendClaim) {
       const imageReportInfo = report.images.find((x) => x.id === image.id);
       const described = fileDetailsOf.get(image.id);
       if (!imageReportInfo || !described) return;
-      const { fileDetails, fileAnnotations } = described;
+      const { fileDetails, fileAnnotations, notedDetails } = described;
 
       const check = checks.get(image.id);
       if (check && 'failed' in check)
@@ -1498,17 +1514,9 @@ async function reportImages(claim: SendClaim) {
 
       const viewedByEsp = viewedAsSent.has(image.id) && original.source === 'original';
       const viewRendition = viewedByEsp ? viewedAsSent.get(image.id) : undefined;
-      const sentDetails = {
-        ...fileDetails,
-        fileViewedByEsp: viewedByEsp,
-        ...(viewed.has(image.id) &&
-          !viewedByEsp && {
-            additionalInfo: [
-              ...(fileDetails.additionalInfo ?? []),
-              xmlText(VIEWED_COPY_UNCONFIRMED_FILE_NOTE),
-            ],
-          }),
-      };
+      const sentDetails = viewedByEsp
+        ? fileDetails
+        : notedDetails ?? { ...fileDetails, fileViewedByEsp: false };
       await cybertipClient.submitFileDetails({ reportId: ncmecReportId, fileId, ...sentDetails });
 
       uploaded++;
@@ -1573,7 +1581,10 @@ async function reportImages(claim: SendClaim) {
       }),
     },
     {
-      fileDetails: [...fileDetailsOf.values()].map(({ fileDetails }) => fileDetails),
+      // Every variant a file may be sent with is checked before the CyberTip opens.
+      fileDetails: [...fileDetailsOf.values()].flatMap(({ fileDetails, notedDetails }) =>
+        notedDetails ? [fileDetails, notedDetails] : [fileDetails]
+      ),
       // Marked with the send, so the record of what went without it can't be lost between two writes.
       sendFiles: async (ncmecReportId) => ({
         ...(await sendFiles(ncmecReportId)),

@@ -7,6 +7,7 @@ import type * as CybertiplineTools from '@civitai/cybertipline-tools';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { Parser } from 'xml2js';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { buildSubmitFileDetails } from '@civitai/cybertipline-tools';
 
 /**
@@ -90,7 +91,10 @@ vi.mock('~/server/services/file.service', async (importOriginal) => ({
 }));
 
 import type { CsamReportProps } from '~/server/services/csam.service-new';
-import { processCsamReport as processClaimedReport } from '~/server/services/csam.service-new';
+import {
+  FEEDBACK_CAPTURE_FILE_NOTE,
+  processCsamReport as processClaimedReport,
+} from '~/server/services/csam.service-new';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -492,32 +496,69 @@ describe('image report: file view flags', () => {
     );
   });
 
-  it('is sent as not viewed, with the sentence, when the file sent is not the one first read', async () => {
-    dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501), imageRow(502)]);
-    const missing = Object.assign(new Error('gone'), { name: 'NoSuchKey' });
-    // Read in full before the CyberTip opens, then gone when it is sent.
-    let opened = false;
-    submitReport.mockImplementation(async () => {
-      opened = true;
-      return { data: { reportId: 99 } };
-    });
-    getObject.mockImplementation(async (key: string) => {
-      if (key.includes('501') && opened) throw missing;
-      return {
-        Body: { transformToByteArray: async () => new Uint8Array(stored) },
-        ContentType: 'image/png',
-        ContentLength: stored.length,
-      };
-    });
-    await view(501);
-    await view(502);
+  describe('when the file sent is not the one first read', () => {
+    const goneAtSend = () => {
+      const missing = Object.assign(new Error('gone'), { name: 'NoSuchKey' });
+      // Present when probed before the CyberTip opens, then gone when it is sent.
+      let opened = false;
+      submitReport.mockImplementation(async () => {
+        opened = true;
+        return { data: { reportId: 99 } };
+      });
+      getObject.mockImplementation(async (key: string) => {
+        if (key.includes('501') && opened) throw missing;
+        return {
+          Body: { transformToByteArray: async () => new Uint8Array(stored) },
+          ContentType: 'image/png',
+          ContentLength: stored.length,
+        };
+      });
+    };
 
-    await processCsamReport(imageReport([501, 502]));
+    it.each(['reportMedia:select:original', 'reportMedia:select:cdn-450'])(
+      'is sent and stored as not viewed, with the sentence, for a %s record',
+      async (activity) => {
+        dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501), imageRow(502)]);
+        goneAtSend();
+        await view(501, { activity });
+        await view(502);
 
-    expect(viewedByName()).toEqual({ 'upload-501.png': false, 'upload-502.png': true });
-    expect(note('upload-501.png')).toEqual([NOTE]);
+        await processCsamReport(imageReport([501, 502]));
+
+        expect(finishReport).toHaveBeenCalledTimes(1);
+        expect(viewedByName()).toEqual({ 'upload-501.png': false, 'upload-502.png': true });
+        expect(note('upload-501.png')).toEqual([NOTE]);
+        const images = sentImages() as {
+          id: number;
+          viewedByEsp?: boolean;
+          viewRendition?: string;
+          source?: string;
+        }[];
+        expect(images.find((i) => i.id === 501)).toMatchObject({
+          viewedByEsp: false,
+          viewRendition: undefined,
+          source: 'edge-fallback',
+        });
+      }
+    );
+
+    it("keeps the file's own lines first, with the sentence last", async () => {
+      dbMock.dbRead.image.findMany.mockResolvedValue([
+        { ...imageRow(501), userId: FEEDBACK_CAPTURE_OWNER_ID, meta: { prompt: 'a prompt' } },
+        imageRow(502),
+      ]);
+      goneAtSend();
+      await view(501);
+
+      await processCsamReport(imageReport([501, 502]));
+
+      expect(note('upload-501.png')).toEqual([
+        FEEDBACK_CAPTURE_FILE_NOTE,
+        'Prompt, as stored on the image: a prompt',
+        NOTE,
+      ]);
+    });
   });
-
   it('still refuses a supplemental whose file has no record', async () => {
     await view(502);
 
