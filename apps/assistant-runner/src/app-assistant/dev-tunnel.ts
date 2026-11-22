@@ -71,8 +71,8 @@ export interface PreviewOpenInput {
  * - `tunnel`: direct preview is off for this user (or not deployed): open a dev tunnel as before;
  * - `direct` with a session: the preview's session, written now or one already open for that
  *   preview id. A session already open keeps the scopes and auth it was opened with, whatever
- *   this open declared. Only its id is kept: civitai's answer also names the session host, which
- *   is the preview's credential and is dropped as it is read;
+ *   this open declared. civitai answers only `{ mode, sessionId }`: never the session host, which
+ *   is the preview's credential;
  * - `fresh`: that preview id's session has ended, and nothing was opened: rotate the id and ask
  *   once more.
  */
@@ -238,7 +238,7 @@ export class CivitaiDevTunnels {
         await sleep(OPEN_RETRY_MS, signal);
         continue;
       }
-      // The session host is never read: it is the preview's credential (`PreviewOpenAnswer`).
+      // Only `mode` and `sessionId` (or `fresh`): civitai never sends the session host (`PreviewOpenAnswer`).
       const { mode, fresh, sessionId } = (answer ?? {}) as Record<string, unknown>;
       if (mode === 'tunnel') return { mode: 'tunnel' };
       if (mode === 'direct' && fresh === true) return { mode: 'direct', fresh: true };
