@@ -77,6 +77,7 @@ const {
   contextIncidents,
   htmlToPlainText,
   getCsamItemCandidates,
+  csamProfileHasText,
   CSAM_CONTEXT_TEXT_MAX_CHARS,
 } = await import('~/server/services/csam-context-text');
 const { CSAM_CONTEXT_ITEM_SELECT_LIMIT } = await import(
@@ -882,7 +883,10 @@ describe('items the reported user wrote', () => {
       `INSERT INTO "Model" VALUES (706, ${OWNER}, 'Handed over', NULL, 'Published', '2026-10-01', NULL, NULL, NULL);
        INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES (706, -1, 'account-delete'), (706, ${OWNER}, 'transfer');`
     );
-    expect(await filing({ modelIds: [706] })).toEqual({ contextText: [], notAttached: ['model 706'] });
+    expect(await filing({ modelIds: [706] })).toEqual({
+      contextText: [],
+      notAttached: ['model 706'],
+    });
   });
 
   it('judges a model split out of another by the original too', async () => {
@@ -998,9 +1002,12 @@ describe('items the reported user wrote', () => {
   });
 
   it('names a selected item with no text as not attached, and leaves an empty field out', async () => {
+    expect(await csamProfileHasText({ userId: OWNER })).toBe(true);
     await db.pg.exec(
       `UPDATE "UserProfile" SET bio = NULL, message = '  ', "sfwBio" = NULL, "sfwMessage" = NULL`
     );
+    // The picker shows it as having no profile text.
+    expect(await csamProfileHasText({ userId: OWNER })).toBe(false);
     expect(await filing({ profile: true })).toEqual({ contextText: [], notAttached: ['profile'] });
     await db.pg.exec(
       `INSERT INTO "ChatMessage" VALUES (907, ${OWNER}, '   ', 'Markdown', '2026-10-02', NULL, NULL)`

@@ -390,7 +390,7 @@ export async function createCsamReport({
 function omitEvidence(details: Prisma.JsonValue) {
   if (!details || typeof details !== 'object' || Array.isArray(details)) return details;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { userActivity, contextText, ...rest } = details;
+  const { userActivity, contextText, identicalRefiles, ...rest } = details;
   return rest;
 }
 

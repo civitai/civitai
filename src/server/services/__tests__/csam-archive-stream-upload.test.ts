@@ -957,10 +957,13 @@ describe("a report's attached text", () => {
     await archiveCsamDataForReport({ ...report, details: { contextText } } as never);
 
     const data = JSON.parse(storedObjects.get('data.json')!.body.toString('utf8'));
-    expect(data.reportContext).toEqual({
-      ...contextIncidents(contextText),
-      contextText,
-    });
+    // Post and comment text alone archives exactly as before item text existed.
+    expect(JSON.stringify(data.reportContext)).toBe(
+      JSON.stringify({
+        webPageIncidents: contextIncidents(contextText).webPageIncidents,
+        contextText,
+      })
+    );
     expect(data.reportContext.webPageIncidents[0].additionalInfo).toContain('a & b <c> nul\uFFFD');
   });
 

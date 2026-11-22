@@ -58,6 +58,8 @@ export function CsamItemTextSelect({
     );
   };
   const { count, problem } = csamPickerState(typed, ticked, value.profile);
+  const { data: profileAvailable } = trpc.csam.getProfileContextAvailable.useQuery({ userId });
+  const profileEmpty = profileAvailable === false;
   const full = count >= CSAM_CONTEXT_ITEM_SELECT_LIMIT;
 
   return (
@@ -71,9 +73,21 @@ export function CsamItemTextSelect({
         </Text>
         <Checkbox
           checked={value.profile}
-          disabled={full && !value.profile}
+          disabled={(full || profileEmpty) && !value.profile}
           onChange={(e) => update(typed, ticked, e.currentTarget.checked)}
-          label="Profile text (bio and message, on both sites). Profile links and images are not included."
+          label={
+            <Group gap="xs">
+              <Text size="sm">
+                Profile text (bio and message, on both sites). Profile links and images are not
+                included.
+              </Text>
+              {profileEmpty && (
+                <Badge size="xs" color="gray">
+                  no profile text
+                </Badge>
+              )}
+            </Group>
+          }
         />
         <TextInput
           label="Chat message ids"

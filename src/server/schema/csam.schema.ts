@@ -67,6 +67,8 @@ export const getCsamItemCandidatesSchema = z.object({
   source: z.enum(['model', 'article', 'serviceOffering']),
 });
 
+export const getCsamProfileContextSchema = z.object({ userId: z.number().int().positive() });
+
 export type CreateCsamReportSchema = z.infer<typeof createCsamReportSchema>;
 export const createCsamReportSchema = z.object({
   userId: z.number(),

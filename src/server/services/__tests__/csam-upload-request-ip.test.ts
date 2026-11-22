@@ -137,13 +137,18 @@ describe.each([
 });
 
 describe('getCsamReportsPaged', () => {
-  it('lists reports without the IP events kept on them', async () => {
+  it('lists reports without the IP events, captured text or re-file records kept on them', async () => {
     dbMock.dbRead.csamReport.findMany.mockResolvedValue([
       {
         id: 1,
         userId: 42,
         reportedById: 10,
-        details: { userActivity: [login], minorDepiction: 'real' },
+        details: {
+          userActivity: [login],
+          minorDepiction: 'real',
+          contextText: [{ source: 'chatMessage', id: 901, text: 'captured' }],
+          identicalRefiles: [{ source: 'chatMessage', id: 901, by: 10 }],
+        },
       },
     ] as never);
     dbMock.dbRead.user.findMany.mockResolvedValue([] as never);

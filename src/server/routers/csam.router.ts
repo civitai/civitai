@@ -8,6 +8,7 @@ import {
   createExternalCsamReportSchema,
   getCsamContextCandidatesSchema,
   getCsamItemCandidatesSchema,
+  getCsamProfileContextSchema,
   readHeldCsamContextTextSchema,
   getCsamSupplementalPreviewSchema,
   getImageResourcesSchema,
@@ -31,6 +32,7 @@ import {
 import { getCsamSupplementalPreview } from '~/server/services/csam-supplemental.service';
 import {
   getCsamContextCandidates,
+  csamProfileHasText,
   getCsamItemCandidates,
   readHeldCsamContextText,
 } from '~/server/services/csam-context-text';
@@ -56,6 +58,9 @@ export const csamRouter = router({
   getItemContextCandidates: moderatorProcedure
     .input(getCsamItemCandidatesSchema)
     .query(({ input }) => getCsamItemCandidates(input)),
+  getProfileContextAvailable: moderatorProcedure
+    .input(getCsamProfileContextSchema)
+    .query(({ input }) => csamProfileHasText(input)),
   readHeldContextText: moderatorProcedure
     .input(readHeldCsamContextTextSchema)
     .mutation(({ input, ctx }) => {

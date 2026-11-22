@@ -32,8 +32,6 @@ import stream, { Readable } from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
 import * as z from 'zod';
 import plimit from 'p-limit';
-import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import type { PaginationInput } from '~/server/schema/base.schema';
 import type { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 import { isDev, isProd } from '~/env/other';
 import { getFileForModelVersion } from '~/server/services/file.service';
@@ -80,7 +78,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { CsamSupplementalDetails } from '~/server/services/csam-supplemental-text';
 import { supplementalReportText } from '~/server/services/csam-supplemental-text';
 import type { CsamContextText } from '~/server/services/csam-context-text';
-import { contextIncidents } from '~/server/services/csam-context-text';
+import { archivedContext, contextIncidents } from '~/server/services/csam-context-text';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
@@ -301,26 +299,6 @@ export async function createExternalCsamReport({
       images: [],
     },
   });
-}
-
-export async function getCsamReportsPaged({ limit, page }: PaginationInput) {
-  const { take, skip } = getPagination(limit, page);
-
-  const reports = await dbRead.csamReport.findMany({ take, skip, orderBy: { createdAt: 'desc' } });
-  const usersIds = [
-    ...new Set(reports.flatMap((x) => [x.reportedById, x.userId]).filter(isDefined)),
-  ];
-  const users = await dbRead.user.findMany({
-    where: { id: { in: usersIds } },
-    select: { id: true, username: true },
-  });
-  const items = reports.map((report) => ({
-    ...report,
-    user: users.find((x) => x.id === report.userId),
-    reportedBy: users.find((x) => x.id === report.reportedById),
-  }));
-  const count = await dbRead.csamReport.count();
-  return getPagingData({ items, count }, take, page);
 }
 
 export async function getCsamReportStats() {
@@ -2923,10 +2901,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
               [
                 'reportContext',
                 {
-                  value: {
-                    ...contextIncidents(report.details.contextText),
-                    contextText: report.details.contextText,
-                  },
+                  value: archivedContext(report.details.contextText),
                 },
               ],
             ] as const)

@@ -772,6 +772,11 @@ async function readProfile(userId: number): Promise<ItemRead | undefined> {
   };
 }
 
+/** Whether filing could attach the user's profile: it has text in at least one field. */
+export async function csamProfileHasText({ userId }: { userId: number }) {
+  return !!(await readProfile(userId))?.fields.length;
+}
+
 export type CsamItemCandidate = {
   source: 'model' | 'article' | 'serviceOffering';
   id: number;
@@ -1204,6 +1209,16 @@ function splitBySendBudget(contextText: CsamContextText[]) {
     }
   }
   return { within, over };
+}
+
+/** A report's captured text in its archive. Post and comment text alone keeps the original shape. */
+export function archivedContext(contextText: CsamContextText[]) {
+  const { webPageIncidents, chatImIncidents } = contextIncidents(contextText);
+  return {
+    webPageIncidents,
+    ...(chatImIncidents.length && { chatImIncidents }),
+    contextText,
+  };
 }
 
 /** A report's stored items, folds included, that its send will leave out. */
