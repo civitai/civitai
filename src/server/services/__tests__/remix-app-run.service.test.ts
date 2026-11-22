@@ -1759,6 +1759,11 @@ describe('a user app', () => {
         'const out',
         "if (who === '___') return []; const out"
       );
+      // Shows a choice, then claims that step was a text ask on every later replay.
+      const RELABEL_SOURCE =
+        ASKING_SOURCE.replace('Who is it?', 'Which one?') +
+        " const option = { value: 'the-option', label: 'The option' };";
+      let shown = false;
       // Adds words of its own after a real answer.
       const SUFFIX_SOURCE = DIVERGING_SOURCE.replace('return []', "return ['suffix']");
       const AUTHOR_PART = 'a portrait of ___';
@@ -1844,6 +1849,27 @@ describe('a user app', () => {
           apps: {
             [sha(ASKING_SOURCE)]: appOf(false),
             [sha(DIVERGING_SOURCE)]: appOf(true),
+            [sha(RELABEL_SOURCE)]: {
+              async run(ctx) {
+                const asked = shown
+                  ? { kind: 'text' as const, prompt: 'Which one?', maxLength: 40 }
+                  : {
+                      kind: 'choice' as const,
+                      prompt: 'Which one?',
+                      options: [{ value: 'the-option', label: 'The option' }],
+                    };
+                shown = true;
+                const which = await ctx.ask(asked);
+                const out = await ctx.workflow({
+                  kind: 'image',
+                  prompt: 'a portrait of ' + which,
+                  images: [ctx.source],
+                  aspectRatio: 'source',
+                  quantity: 1,
+                });
+                return out.images;
+              },
+            },
             [sha(SUFFIX_SOURCE)]: {
               async run(ctx) {
                 const who = await ctx.ask({ kind: 'text', prompt: 'Who is it?', maxLength: 40 });
@@ -1874,6 +1900,7 @@ describe('a user app', () => {
           },
         });
         vi.stubGlobal('fetch', runner.fetchImpl);
+        shown = false;
         stored = rowOf();
         dbMock.dbWrite.appBlock.findMany.mockImplementation(async () => [stored] as never);
         dbMock.dbWrite.appBlock.findUnique.mockImplementation(async () => stored as never);
@@ -1996,22 +2023,30 @@ describe('a user app', () => {
         });
       });
 
-      it("C: the viewer's words that block on their own go on to the viewer's audit, and count against nobody else", async () => {
+      it("C: the viewer's own words that block are refused before the viewer's audit too, and count against the app", async () => {
         vi.mocked(auditPromptServer).mockRejectedValue(refusal());
         classify(blocked('nsfw_blocklist'), { alone: blocked('nsfw_blocklist') });
-        await expect(runAs(101)).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
-        expect(vi.mocked(auditPromptServer)).toHaveBeenCalledWith(
-          expect.objectContaining({ userId: 101 })
-        );
-        expect(written()).toHaveLength(0);
-      });
-
-      it("C: a viewer's words that only soft-block alone never carry the app's hard block to the viewer", async () => {
-        classify(blocked('nsfw_blocklist'), {
-          alone: { ...blocked('nsfw_blocklist'), outcome: 'soft' },
-        });
         await expect(runAs(101)).rejects.toMatchObject({ message: REMIX_APP_PROMPT_REFUSED });
         expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(blocks()).toHaveLength(1);
+      });
+
+      it('C: an app that calls a step it showed as a choice a text ask is refused, never recorded against the viewer', async () => {
+        stored = rowOf(RELABEL_SOURCE);
+        await bumpRemixAppRegistry();
+        // What the viewer's audit would do with the real prompt: refuse it, and record the viewer.
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        vi.mocked(classifyPromptServer).mockImplementation((async ({
+          prompt,
+        }: {
+          prompt: string;
+        }) => (prompt.includes('the-option') ? blocked('minor_age') : pass)) as never);
+        await expect(runAs(101, { who: 'the-option' })).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message: REMIX_APP_PROMPT_REFUSED,
+        });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(submits()).toHaveLength(0);
         expect(blocks()).toHaveLength(1);
       });
 
@@ -2064,44 +2099,6 @@ describe('a user app', () => {
         await expect(runAs(101)).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
         expect(written()).toHaveLength(0);
       });
-
-      it("C: two answers that block once the app joins them are the viewer's own", async () => {
-        stored = rowOf(TWO_SOURCE);
-        await bumpRemixAppRegistry();
-        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
-        vi.mocked(classifyPromptServer).mockImplementation((async ({
-          prompt,
-        }: {
-          prompt: string;
-        }) =>
-          prompt === 'AdaLovelace' || prompt.startsWith('a portrait of Ada')
-            ? blocked('minor_age')
-            : pass) as never);
-        await expect(
-          startRemixRun({
-            slug: 'u5-mine',
-            imageId: SOURCE_ID,
-            nonce: `nonce-two-${nonce++}`,
-            answers: ['Ada', 'Lovelace'],
-            quote: 30,
-            caller: flagOn({ id: 101 }),
-          })
-        ).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
-        expect(written()).toHaveLength(0);
-      });
-
-      it.each([
-        ['a soft block', { ...blocked('nsfw_blocklist'), outcome: 'soft' }],
-        ['an over-length refusal', blocked('over_length')],
-      ])(
-        "C: %s is refused before the viewer's audit, and counts against nobody, the app included",
-        async (_, verdict) => {
-          classify(verdict);
-          await expect(runAs(101)).rejects.toMatchObject({ message: REMIX_APP_PROMPT_REFUSED });
-          expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
-          expect(written()).toHaveLength(0);
-        }
-      );
 
       it('C: a whole prompt the classifier cannot judge refuses the run as unavailable, and holds nothing', async () => {
         classify(null);

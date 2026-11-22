@@ -348,7 +348,7 @@ async function assertAuthorPartPasses(slug: string, part: AuthorPart) {
     // Unjudged, it could still block in the viewer's audit a moment later.
     if (verdict.externalError)
       throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNCHECKED });
-    return part;
+    return;
   }
   await holdUserRemixApp(slug, { action: 'held-author-prompt' }).catch((error: unknown) =>
     logToAxiom({
@@ -366,33 +366,17 @@ export const REMIX_APP_PROMPT_REFUSED =
 
 /**
  * Another's user app's whole prompt, judged before the viewer's audit, which records what it
- * refuses against the viewer. Only words of the viewer's that block alone go on to it as theirs;
- * any other refusal stops the run here, recorded against nobody but the app.
+ * refuses against the viewer: any refusal stops the run here, recorded against nobody but the app.
  */
-async function assertWholePromptPasses(
-  slug: string,
-  prompt: string,
-  { answers }: NonNullable<AuthorPart>,
-  caller: RemixAppCaller
-) {
+async function assertWholePromptPasses(slug: string, prompt: string, caller: RemixAppCaller) {
   const isGreen = !!caller.features.isGreen;
-  const judge = (text: string) =>
-    classifyPromptServer({ prompt: text, isGreen }).then(
-      (verdict) => verdict,
-      () => null
-    );
-  const whole = await judge(prompt);
+  const whole = await classifyPromptServer({ prompt, isGreen }).catch(() => null);
   if (whole?.outcome === 'pass' && !whole.externalError) return;
   if (!whole || whole.outcome === 'pass')
     throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNCHECKED });
-  // The viewer's words alone, joined as an app may join them.
-  const joins = [...new Set(['\n', '', ' '].map((glue) => answers.join(glue)))];
-  const alone = answers.length ? await Promise.all(joins.map(judge)) : [];
-  if (alone.some((verdict) => verdict?.outcome === whole.outcome)) return;
   // Green's own list strikes nobody, and holds no app back from the other domains.
-  if (!isGreen) await recordCombinationBlock(slug, whole, alone, caller.user.id);
-  // shortcut: the viewer's only trail, an event and never an audit row, which would feed their
-  // blocked-prompt count; a typed audit row replaces it.
+  if (!isGreen) await recordCombinationBlock(slug, whole, caller.user.id);
+  // An event, not an audit row: a row would feed the viewer's blocked-prompt count.
   logToAxiom({
     name: 'remix-combination-refusal',
     type: 'info',
@@ -408,21 +392,14 @@ async function assertWholePromptPasses(
 }
 
 /**
- * The combination count: a user app's whole prompt blocked where its author part and the viewer's
- * words alone did not. One block per distinct viewer, and only the threshold pulls the app: no one
- * viewer can. A soft block or an over-length refusal counts against nobody, so not against the app either.
+ * The combination count: a user app's whole prompt blocked where its author part alone did not.
+ * One block per distinct viewer, and only the threshold pulls the app: no one viewer can. A soft
+ * block or an over-length refusal counts against nobody, so not against the app either.
  */
-async function recordCombinationBlock(
-  slug: string,
-  whole: PromptClassification,
-  alone: (PromptClassification | null)[],
-  viewerId: number
-) {
+async function recordCombinationBlock(slug: string, whole: PromptClassification, viewerId: number) {
   if (whole.outcome === 'soft' || isOverLengthRefusal(whole.triggers)) return;
-  const unjudged =
-    !!whole.externalError || alone.some((verdict) => !verdict || verdict.externalError);
   await holdUserRemixApp(slug, {
-    action: unjudged ? 'held-classifier-error' : 'held-combination-blocks',
+    action: whole.externalError ? 'held-classifier-error' : 'held-combination-blocks',
     viewerId,
   }).catch((error: unknown) =>
     logToAxiom({
@@ -606,9 +583,9 @@ async function advance({
         })
       : null;
   if (othersApp) {
-    const judged = await assertAuthorPartPasses(app.slug, part);
+    await assertAuthorPartPasses(app.slug, part);
     // Trimmed, as the graph hands it to the viewer's audit.
-    await assertWholePromptPasses(app.slug, request.prompt.trim(), judged, caller);
+    await assertWholePromptPasses(app.slug, request.prompt.trim(), caller);
   }
 
   const tags = remixRunTags({ slug: app.slug, runId, segment: index, runtime: true });

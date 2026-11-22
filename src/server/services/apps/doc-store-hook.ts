@@ -195,7 +195,7 @@ export function hookRunnerConfig(): HookRunnerConfig | null {
   return { url: url.replace(/\/+$/, ''), secret };
 }
 
-const sha256Hex = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
+export const sha256Hex = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
 const hmacHex = (secret: string, body: string | Buffer) =>
   createHmac('sha256', secret).update(body).digest('hex');
 

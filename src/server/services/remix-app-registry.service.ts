@@ -882,9 +882,8 @@ async function holdMatureApp(first: RemixAppRow, moderatorId: number) {
 }
 
 /**
- * The run-time audit sending an approved user app back to review, out of menus: its author's own
- * part of a prompt blocked, or viewers' audits refused runs of it, counted once per
- * distinct viewer and pulled on the {@link REMIX_COMBINATION_BLOCKS_MAX}th. Re-read and retried when another write lands first. `true` when this pulled it.
+ * Sends an approved user app back to review when its author part blocks, or when refused runs
+ * reach {@link REMIX_COMBINATION_BLOCKS_MAX} distinct viewers. `true` when this pulled it.
  */
 export async function holdUserRemixApp(
   slug: string,
@@ -1005,7 +1004,8 @@ async function recordRunnerQuarantine(
       sha256: remixReviewHash({ ...manifest, remix }),
       note: `viewer ${viewers.length} of ${REMIX_COMBINATION_BLOCKS_MAX}`,
     };
-    // At most two observed rows at a time: a run of trips cannot flush mod decisions from the log.
+    // At most REMIX_COMBINATION_BLOCKS_MAX - 1 observed rows: a run of trips cannot flush mod
+    // decisions from the log.
     const observed = (manifest.reviewLog ?? []).filter(
       ({ action }) => action === QUARANTINE_OBSERVED
     );

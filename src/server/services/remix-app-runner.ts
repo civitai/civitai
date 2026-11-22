@@ -1,9 +1,9 @@
 import { TRPCError } from '@trpc/server';
-import { createHash } from 'crypto';
 import { env } from '~/env/server';
 import {
   normalizeHookRunnerSecret,
   postToHookRunner,
+  sha256Hex,
   type HookRunnerConfig,
 } from '~/server/services/apps/doc-store-hook';
 import { logToAxiom } from '~/server/logging/client';
@@ -74,8 +74,7 @@ export class RemixQuarantinedError extends Error {
 }
 
 /** The hex sha256 of an app's source: the runner's quarantine key and the stored source ref. */
-export const remixSourceDigest = (source: string) =>
-  createHash('sha256').update(source).digest('hex');
+export const remixSourceDigest = sha256Hex;
 
 /** The runner's signed refusal of a quarantined app. */
 const QUARANTINED_STATUS = 423;
@@ -222,7 +221,7 @@ export const REMIX_ANSWER_PLACEHOLDER = '___';
 /**
  * The author's part of the workflow `log` stops at, assembled by running the app with
  * every text answer replaced by a placeholder, never by cutting the viewer's words out of the
- * prompt (an app may change them: uppercase, quote, repeat). With it, the text answers it masked.
+ * prompt (an app may change them: uppercase, quote, repeat).
  * `null` when the app, so run, does not reach an image workflow at the same step.
  */
 export function userRemixAuthorPrompt(
@@ -234,7 +233,7 @@ export function userRemixAuthorPrompt(
   return async (
     source: RemixAppSource,
     log: readonly RemixLogEntry[]
-  ): Promise<{ prompt: string; answers: string[] } | null> => {
+  ): Promise<{ prompt: string } | null> => {
     const code = await loadSource();
     // Which asks are text asks: their specs, from the log as recorded.
     const [recorded] = await callRemixRunner(
@@ -247,11 +246,9 @@ export function userRemixAuthorPrompt(
         ?.spec;
       return spec?.kind === 'text' ? spec : undefined;
     };
-    const answers: string[] = [];
     const masked = log.map((entry, index) => {
       const spec = textSpec(index);
       if (entry.type !== 'ask' || !spec || entry.answer === '') return entry;
-      answers.push(String(entry.answer));
       // Within the ask's own limit, or the masked run is refused on it.
       const max = typeof spec.maxLength === 'number' ? spec.maxLength : undefined;
       return { type: 'ask' as const, answer: REMIX_ANSWER_PLACEHOLDER.slice(0, max) };
@@ -271,7 +268,7 @@ export function userRemixAuthorPrompt(
       outcome.index === log.length &&
       outcome.effect.type === 'workflow' &&
       outcome.effect.request.kind === 'image'
-      ? { prompt: outcome.effect.request.prompt, answers }
+      ? { prompt: outcome.effect.request.prompt }
       : null;
   };
 }

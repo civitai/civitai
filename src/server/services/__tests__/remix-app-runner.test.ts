@@ -411,7 +411,6 @@ describe("condition D: the author's part of a prompt", () => {
   it("assembles it with a placeholder for the viewer's words, keeping the author's choices", async () => {
     expect(await authorPrompt()(image, log)).toEqual({
       prompt: `a portrait of ${REMIX_ANSWER_PLACEHOLDER} in ink`,
-      answers: ['bob'],
     });
   });
 
@@ -432,7 +431,6 @@ describe("condition D: the author's part of a prompt", () => {
     };
     expect(await authorPrompt(short)(image, [{ type: 'ask', answer: 'bo' }])).toEqual({
       prompt: 'a portrait of __',
-      answers: ['bo'],
     });
   });
 

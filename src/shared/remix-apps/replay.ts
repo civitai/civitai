@@ -216,7 +216,11 @@ export function checkRemixReplay(
     }
     try {
       checks.step(effect as RemixEffect);
-      if (answer !== undefined && answer !== autoAnswer!((effect as { spec: RemixAsk }).spec))
+      // Against the checked spec: the step parsed above, never the runner's raw copy.
+      if (
+        answer !== undefined &&
+        answer !== autoAnswer!((effectSchema.parse(effect) as { spec: RemixAsk }).spec)
+      )
         throw new RemixReplayError(
           `${slug} answered step ${index} with an answer the host would not`
         );
