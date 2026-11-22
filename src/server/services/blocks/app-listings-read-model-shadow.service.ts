@@ -1,10 +1,19 @@
 /**
- * Shadow reads of the app store's listings read model (`apps/app-index-go`, `GET /listings`),
- * behind the `app-listings-read-model` Flipt flag. The database answer is always the one served:
- * for a sampled fraction of store grid pages and public REST list pages, the same query is asked
- * of the read model off the response path, for the viewer the database read was answered for, and
- * the two pages are compared. What is compared, how it is bounded and what is logged:
- * `apps/app-index-go/LISTINGS-READ-MODEL.md`, "Shadow diff".
+ * The store grid's and the public REST list's reads of the app store's listings read model
+ * (`apps/app-index-go`, `GET /listings`), behind the `app-listings-read-model` Flipt flag, whose
+ * answer is one of three modes (`readReadModelMode`):
+ *
+ *   - `database` (the flag absent, off, or any answer not named below): every page is read from
+ *     the database, and nothing is asked of the read model;
+ *   - `shadow`: every page is read from the database, and for a sampled fraction the same query is
+ *     asked of the read model off the response path and the two pages are compared;
+ *   - `serve`: a page the read model can answer for this viewer is read from it
+ *     (`serveListingPage`), and from the database when it cannot, fails, times out or the breaker
+ *     is open. A sampled fraction of served pages is compared with the database page, off the
+ *     response path.
+ *
+ * What is compared, how it is bounded and what is logged: `apps/app-index-go/LISTINGS-READ-MODEL.md`,
+ * "Shadow diff" and "Serving".
  */
 import * as z from 'zod';
 import { env } from '~/env/server';
@@ -12,18 +21,28 @@ import {
   READ_MODEL_FIELD_CLASS,
   recordReadModelBreakerTransition,
   recordReadModelComparison,
+  recordReadModelServe,
   recordReadModelShadow,
   type ReadModelComparedField,
   type ReadModelComparison,
   type ReadModelMismatchKind,
+  type ReadModelServeOutcome,
   type ReadModelShadowOutcome,
   type ReadModelSurface,
 } from '~/server/prom/app-listings-read-model.metrics';
-import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
+import {
+  FLIPT_FEATURE_FLAGS,
+  ensureFliptInitialized,
+  getFliptClientSync,
+  getFliptLocalOverride,
+  getFliptVariantDetailSync,
+  isFliptSync,
+} from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import type {
   ListAppListingsInput,
   ListingCard,
+  ListingCardKindData,
   StoreGridItem,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import {
@@ -42,8 +61,75 @@ import type { ListAvailableListingsOpts } from '~/server/services/blocks/app-lis
 import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { rateLimited } from '~/server/utils/shadow-sampler';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
-import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
+import { CACHED_FLAG_GATE_REFRESH_MS } from '~/server/utils/cached-flag-gate';
 import { isAppSubListingId, isSubListingCard } from '~/shared/constants/app-sub-listing.constants';
+
+/** What the `app-listings-read-model` flag says to do with a store grid or REST list page. */
+export type ReadModelMode = 'database' | 'shadow' | 'serve';
+
+/** The mode a variant key names: `shadow` or `serve`; any other key, or none, is `database`. */
+export function readModelModeOfVariant(variantKey: string | null | undefined): ReadModelMode {
+  if (variantKey === 'serve') return 'serve';
+  if (variantKey === 'shadow') return 'shadow';
+  return 'database';
+}
+
+/** The Flipt reads `readReadModelMode` makes, passed in so the rule is testable alone. */
+export type ReadModelFlagReads = {
+  /** A `FLIPT_LOCAL_OVERRIDES` value for the flag (never set in production). */
+  override: () => string | undefined;
+  /** The flag as a boolean flag; null when it is not one, absent, or Flipt is not ready. */
+  boolean: () => boolean | null;
+  /** Whether the Flipt client can evaluate (starting it when it cannot). */
+  ready: () => boolean;
+  /** The flag as a variant flag; null when it is not one or absent. */
+  variant: () => { match: boolean; variantKey: string | null } | null;
+};
+
+/**
+ * The flag's mode. A variant flag names it: `shadow` or `serve`, and anything else (no rule
+ * matched, the flag disabled, an unknown variant) is `database`. A boolean flag, the shape slice 4
+ * shipped with, can only shadow: on is `shadow`, off is `database`. Absent, or Flipt not ready, is
+ * `database`. A boolean evaluation of a variant flag (and the reverse) fails in the Flipt engine, so
+ * at most one of the two reads answers; the boolean one is asked first because it is the flag's
+ * shape today, and a variant read of a boolean flag logs an evaluation error.
+ */
+export function readReadModelMode(reads: ReadModelFlagReads): ReadModelMode {
+  const override = reads.override();
+  if (override !== undefined) {
+    return override === 'on' ? 'shadow' : readModelModeOfVariant(override);
+  }
+  const on = reads.boolean();
+  if (on !== null) return on ? 'shadow' : 'database';
+  if (!reads.ready()) return 'database';
+  const detail = reads.variant();
+  return detail?.match ? readModelModeOfVariant(detail.variantKey) : 'database';
+}
+
+/**
+ * `read`, run at most once per `refreshMs`, as `createCachedFlagGate` does for a boolean flag: a
+ * flip takes effect within the window, and a throw reads as `database`.
+ */
+export function createCachedModeGate(
+  read: () => ReadModelMode,
+  refreshMs: number = CACHED_FLAG_GATE_REFRESH_MS,
+  now: () => number = Date.now
+): () => ReadModelMode {
+  let value: ReadModelMode = 'database';
+  let expiresAt = Number.NEGATIVE_INFINITY;
+  return () => {
+    const t = now();
+    if (t >= expiresAt) {
+      try {
+        value = read();
+      } catch {
+        value = 'database';
+      }
+      expiresAt = t + refreshMs;
+    }
+    return value;
+  };
+}
 
 /** At most this many mismatch log lines per minute per process; the counters count every one. */
 export const LOG_LINES_PER_MINUTE = 30;
@@ -102,6 +188,26 @@ export function readModelCursor(sortKey: string, id: string, mean: number | null
   return Buffer.from(fields.join('\x1f'), 'utf8').toString('base64url');
 }
 
+/**
+ * A read-model cursor's position: the inverse of {@link readModelCursor}. A served page's next
+ * cursor is handed to the client re-encoded in the database's format (`encodeListingCursor`), so
+ * the next page can be read from either side (the flag flipped, or the read model failed in between)
+ * from the same position with the same pinned mean. Null when `cursor` is not a read-model cursor
+ * of this version, or pins a mean outside [0, 1].
+ */
+export function decodeReadModelCursor(
+  cursor: string
+): { sortKey: string; id: string; mean?: number } | null {
+  const parts = Buffer.from(cursor, 'base64url').toString('utf8').split('\x1f');
+  if (parts.length < 3 || parts.length > 4 || parts[0] !== 'rm2') return null;
+  const [, sortKey, id, meanField] = parts;
+  if (!id) return null;
+  if (meanField === undefined) return { sortKey, id };
+  const mean = meanField === '' ? NaN : Number(meanField);
+  if (!Number.isFinite(mean) || mean < 0 || mean > 1) return null;
+  return { sortKey, id, mean };
+}
+
 /** `GET /listings` parameters for the database query `input` (no text query: never sent). */
 export function readModelListParams(
   input: Pick<ListAppListingsInput, 'kind' | 'category' | 'sort' | 'limit' | 'userId'>,
@@ -123,6 +229,56 @@ function sameTime(a: string | undefined, b: string | undefined): boolean {
   const ta = Date.parse(a);
   const tb = Date.parse(b);
   return Number.isFinite(ta) && Number.isFinite(tb) ? ta === tb : a === b;
+}
+
+/**
+ * A read-model card as the store card it stands in for, or null when it cannot be one: an on-site
+ * card needs `hasPage` and a `liveUrl`, and its `kind` must be its kind data's. The media are the
+ * read model's own, already gated for the signed viewer by the store's rule (`listingMediaCeiling`
+ * and `redHostMediaCeiling`, ported as `listingread.ProjectMedia`), and are served as they are.
+ * `restrictedAudience` is null: the read model answers only `public`-floor viewers, whom no
+ * restricted level is shown.
+ */
+export function servedCardOf(card: ReadModelCard): ListingCard | null {
+  const kd = card.kindData;
+  if (card.kind !== kd.kind) return null;
+  let kindData: ListingCardKindData;
+  if (kd.kind === 'onsite') {
+    if (typeof kd.hasPage !== 'boolean' || typeof kd.liveUrl !== 'string') return null;
+    kindData = {
+      kind: 'onsite',
+      appBlockId: kd.appBlockId,
+      hasPage: kd.hasPage,
+      liveUrl: kd.liveUrl,
+    };
+  } else {
+    kindData = { kind: 'offsite', externalUrl: kd.externalUrl ?? null };
+  }
+  const creator = card.creator;
+  return {
+    id: card.id,
+    slug: card.slug,
+    kind: kd.kind,
+    name: card.name,
+    tagline: card.tagline,
+    category: card.category,
+    contentRating: card.contentRating,
+    iconUrl: card.iconUrl,
+    coverUrl: card.coverUrl,
+    creator: creator ? { id: creator.id, username: creator.username, image: creator.image } : null,
+    recommend: {
+      recommendedCount: card.recommend.recommendedCount,
+      notRecommendedCount: card.recommend.notRecommendedCount,
+      recommendPct: card.recommend.recommendPct,
+    },
+    reviewCount: card.reviewCount,
+    isBeta: card.isBeta,
+    isOfficial: card.isOfficial,
+    openCount: card.openCount,
+    ...(card.updatedAt !== undefined ? { updatedAt: card.updatedAt } : {}),
+    restrictedAudience: null,
+    kindData,
+  };
 }
 
 /** Which compared fields of one listing differ between its database card and its read-model card. */
@@ -255,7 +411,12 @@ export type ReadModelShadowConfig = {
   sample: number;
   maxInFlight: number;
   timeoutMs: number;
+  /** How long a served page waits for the read model before reading the database instead. */
+  serveTimeoutMs: number;
 };
+
+/** A page as the database read answers it, and as a served page stands in for it. */
+export type ListingPage = { items: readonly StoreGridItem[]; nextCursor?: string };
 
 /** A database cursor, decoded (`decodeListingCursor`). */
 export type DecodedDbCursor = {
@@ -274,8 +435,8 @@ export type ShadowLogEntry = {
 };
 
 export type ListingsShadowDeps = {
-  /** The `app-listings-read-model` flag. */
-  enabled: () => boolean;
+  /** The `app-listings-read-model` flag's mode for a surface. */
+  mode: (surface: ReadModelSurface) => ReadModelMode;
   config: () => ReadModelShadowConfig;
   random: () => number;
   nowMs: () => number;
@@ -285,6 +446,10 @@ export type ListingsShadowDeps = {
   ) => Promise<Response>;
   /** `decodeListingCursor`. */
   decodeCursor: (cursor: string | undefined) => DecodedDbCursor | Promise<DecodedDbCursor>;
+  /** `encodeListingCursor`. */
+  encodeCursor: (sortKey: string, id: string, mean?: number) => string | Promise<string>;
+  /** `listAvailableListings`: the database page a served page is compared with. */
+  dbPage: (input: ListAppListingsInput, opts: ListAvailableListingsOpts) => Promise<ListingPage>;
   /** `listStoreListingsBySlugs`: what the database shows this viewer of `slugs`. */
   dbBySlugs: (
     slugs: string[],
@@ -303,19 +468,37 @@ export type ListingsShadowDeps = {
 const TIMED_OUT = Symbol('timed out');
 
 /**
- * A shadow with its own in-flight count. `shadow` decides synchronously whether to shadow this
- * page, and returns the background read's promise when it does (undefined when it does not),
- * which settles once the page's outcome is recorded; the page keeps its in-flight slot until every
+ * The served page, or why the database is read instead. `served` keeps the read model's own page
+ * for the comparison beside it.
+ */
+type ServeAttempt =
+  | { served: { items: ListingCard[]; nextCursor?: string }; rm: ReadModelPage; token: string }
+  | { fallback: ReadModelServeOutcome };
+
+/**
+ * Serving and shadowing with one in-flight count and one breaker.
+ *
+ * `shadow` (mode `shadow`) decides synchronously whether to compare a page the database served,
+ * and returns the background read's promise when it does (undefined when it does not), which
+ * settles once the page's outcome is recorded; the page keeps its in-flight slot until every
  * database read it started has settled, which can be later. It never throws and its promise never
  * rejects, so a caller only `void`s it.
+ *
+ * `serve` (mode `serve`) answers a page from the read model when it can, and from `dbRead`
+ * otherwise; `dbRead` is called at most once, and its own failure is the request's, exactly as with
+ * the flag off. Outside mode `serve` it is `dbRead` and nothing else. A served page is compared with
+ * the database page like a shadowed one (same sample, in-flight cap and breaker), off the response
+ * path: `servedComparison` returns that background read's promise, for tests.
  */
 export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
   let inFlight = 0;
+  let servedComparison: Promise<void> | undefined;
 
   function fetchPage(
     cfg: ReadModelShadowConfig,
     params: URLSearchParams,
-    token: string
+    token: string,
+    timeoutMs: number = cfg.timeoutMs
   ): Promise<ReadModelPage> {
     const base = (cfg.url as string).replace(/\/+$/, '');
     return fetchAppIndexJson(
@@ -323,21 +506,50 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       `${base}/listings?${params}`,
       {
         headers: { accept: 'application/json', [APP_INDEX_VIEWER_HEADER]: token },
-        timeoutMs: cfg.timeoutMs,
+        timeoutMs,
       },
       readModelPageSchema
     );
   }
-  const failureOf = (err: unknown): ReadModelShadowOutcome =>
+  const failureOf = (err: unknown): ReadModelShadowOutcome & ReadModelServeOutcome =>
     err instanceof AppIndexUnavailable ? err.reason : 'error';
 
+  const mode = (surface: ReadModelSurface): ReadModelMode => {
+    try {
+      return deps.mode(surface);
+    } catch {
+      return 'database';
+    }
+  };
+
+  /**
+   * The read model's cursor at the database cursor `cursor`'s position: undefined for the first
+   * page (no cursor, or one the database also reads as the first page), null for a position the
+   * read model has no row for (after a sub-listing card).
+   */
+  async function readModelCursorOf(cursor: string | undefined): Promise<string | undefined | null> {
+    if (!cursor) return undefined;
+    const decoded = await deps.decodeCursor(cursor);
+    if (decoded.cursorId === null || decoded.cursorSortKey === null) return undefined;
+    if (isAppSubListingId(decoded.cursorId)) return null;
+    return readModelCursor(decoded.cursorSortKey, decoded.cursorId, decoded.cursorMean);
+  }
+
+  /**
+   * One page's comparison. With `sides.db` (a shadowed page) the read model is asked for the same
+   * page; with `sides.rm` (a served page) the database is. Every read-model call goes through the
+   * breaker: it is asked immediately before the first one, and from there every return answers it
+   * exactly once (failure for a read-model failure or a database timeout, success otherwise), so a
+   * half-open probe it admits is always answered and consecutive failures are never reset by the
+   * same page. A page that makes no read-model call never touches it.
+   */
   async function run(
     surface: ReadModelSurface,
     cfg: ReadModelShadowConfig,
     token: string,
     input: ListAppListingsInput,
     opts: ListAvailableListingsOpts,
-    served: { items: ListingCard[]; nextCursor?: string },
+    sides: { db: { items: ListingCard[]; nextCursor?: string } } | { rm: ReadModelPage },
     pending: Promise<unknown>[]
   ): Promise<ReadModelShadowOutcome> {
     // One of the shadow's own database reads, waited on for at most the shadow timeout. The read
@@ -348,32 +560,56 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       pending.push(read.catch(() => undefined));
       return withTimeoutFallback<T | typeof TIMED_OUT>(read, cfg.timeoutMs, TIMED_OUT);
     };
-    // The database cursor, at the same position in the read model's terms: both break ties by id.
-    let cursor: string | undefined;
-    if (input.cursor) {
-      const decoded = await deps.decodeCursor(input.cursor);
-      if (decoded.cursorId !== null && decoded.cursorSortKey !== null) {
-        // A sub-listing id is a position the read model has no row for.
-        if (isAppSubListingId(decoded.cursorId)) return 'unsupported_input';
-        cursor = readModelCursor(decoded.cursorSortKey, decoded.cursorId, decoded.cursorMean);
+    // Whether a read-model call was admitted that the breaker has not been answered for.
+    let owed = false;
+    const answer = (failure?: string) => {
+      if (!owed) return;
+      owed = false;
+      if (failure === undefined) deps.breaker.success();
+      else deps.breaker.failure(failure);
+    };
+    const askReadModel = async (
+      params: URLSearchParams
+    ): Promise<ReadModelPage | ReadModelShadowOutcome> => {
+      if (!owed) {
+        if (!deps.breaker.allow()) return 'breaker_open';
+        owed = true;
       }
-    }
+      try {
+        return await fetchPage(cfg, params, token);
+      } catch (err) {
+        const outcome = failureOf(err);
+        answer(outcome);
+        return outcome;
+      }
+    };
 
-    // The breaker is asked here, immediately before the first read-model call and after every step
-    // that can return without one. From here on every return reports exactly once: failure for a
-    // read-model failure or a database timeout, success otherwise, so a half-open probe it admits is
-    // always answered and consecutive failures are never reset by the same page.
-    if (!deps.breaker.allow()) return 'breaker_open';
+    let db: { items: ListingCard[]; nextCursor?: string };
     let rm: ReadModelPage;
-    try {
-      rm = await fetchPage(cfg, readModelListParams(input, cursor), token);
-    } catch (err) {
-      const outcome = failureOf(err);
-      deps.breaker.failure(outcome);
-      return outcome;
+    if ('db' in sides) {
+      db = sides.db;
+      // The database cursor, at the same position in the read model's terms: both break ties by id.
+      const cursor = await readModelCursorOf(input.cursor);
+      // A sub-listing id is a position the read model has no row for.
+      if (cursor === null) return 'unsupported_input';
+      const page = await askReadModel(readModelListParams(input, cursor));
+      if (typeof page === 'string') return page;
+      rm = page;
+    } else {
+      rm = sides.rm;
+      let page: ListingPage | typeof TIMED_OUT;
+      try {
+        page = await dbRead(deps.dbPage(input, opts));
+      } catch {
+        return 'db_error';
+      }
+      if (page === TIMED_OUT) return 'db_timeout';
+      // A served page never asks for sub-listing cards, so the database page has none.
+      if (page.items.some((item) => isSubListingCard(item))) return 'unsupported_input';
+      db = { items: page.items as ListingCard[], nextCursor: page.nextCursor };
     }
 
-    const diff = diffPages(served.items, rm.items);
+    const diff = diffPages(db.items, rm.items);
 
     // Each slug on one page only, asked of the other side by slug, with the same filters.
     const missing = new Set<string>();
@@ -387,14 +623,8 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       params.delete('sort');
       params.delete('limit');
       params.set('slugs', diff.onlyDb.join(','));
-      let found: ReadModelPage;
-      try {
-        found = await fetchPage(cfg, params, token);
-      } catch (err) {
-        const outcome = failureOf(err);
-        deps.breaker.failure(outcome);
-        return outcome;
-      }
+      const found = await askReadModel(params);
+      if (typeof found === 'string') return found;
       const admitted = new Set(
         found.items
           .filter((c) => input.userId == null || c.creator?.id === input.userId)
@@ -408,11 +638,11 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
         cards = await dbRead(deps.dbBySlugs(diff.onlyReadModel, input, opts));
       } catch {
         // The read model answered; a database failure is not its failure.
-        deps.breaker.success();
+        answer();
         return 'db_error';
       }
       if (cards === TIMED_OUT) {
-        deps.breaker.failure('db_timeout');
+        answer('db_timeout');
         return 'db_timeout';
       }
       // The slug path takes no developer filter: with one, the listing must also be that
@@ -425,8 +655,8 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       for (const s of diff.onlyReadModel) if (!admitted.has(s)) extra.add(s);
     }
 
-    deps.breaker.success();
-    const comparison = comparePages(served, rm, diff, missing, extra);
+    answer();
+    const comparison = comparePages(db, rm, diff, missing, extra);
     recordReadModelComparison(surface, comparison);
     if (missing.size || extra.size || diff.fields.size || comparison.order) {
       deps.log({
@@ -440,13 +670,50 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     return 'compared';
   }
 
+  /** Runs one comparison in the background, holding an in-flight slot until it is done. */
+  function start(
+    surface: ReadModelSurface,
+    cfg: ReadModelShadowConfig,
+    token: string,
+    input: ListAppListingsInput,
+    opts: ListAvailableListingsOpts,
+    sides: Parameters<typeof run>[5]
+  ): Promise<void> {
+    inFlight++;
+    const pending: Promise<unknown>[] = [];
+    const done = run(surface, cfg, token, input, opts, sides, pending)
+      .catch((): ReadModelShadowOutcome => 'error')
+      .then((outcome) => {
+        recordReadModelShadow(surface, outcome);
+      })
+      .catch(() => undefined);
+    // The slot is freed once the page is done AND every database read it started has settled,
+    // including one it stopped waiting for at the timeout.
+    void done
+      .then(() => Promise.allSettled(pending))
+      .finally(() => {
+        inFlight--;
+      });
+    return done;
+  }
+
+  /** The sample and the in-flight cap, shared by both comparisons; recorded when it refuses. */
+  function admit(surface: ReadModelSurface, cfg: ReadModelShadowConfig): boolean | undefined {
+    if (!(deps.random() < cfg.sample)) return undefined;
+    if (inFlight >= cfg.maxInFlight) {
+      recordReadModelShadow(surface, 'saturated');
+      return false;
+    }
+    return true;
+  }
+
   function decide(
     surface: ReadModelSurface,
     input: ListAppListingsInput,
     opts: ListAvailableListingsOpts,
     served: { items: readonly StoreGridItem[]; nextCursor?: string; search?: 'index' }
   ): Promise<void> | undefined {
-    if (!deps.enabled()) return undefined;
+    if (mode(surface) !== 'shadow') return undefined;
     const cfg = deps.config();
     if (!(deps.random() < cfg.sample)) return undefined;
     const record = (outcome: ReadModelShadowOutcome) => {
@@ -474,23 +741,93 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       viewer,
       Math.floor(deps.nowMs() / 1000) + APP_INDEX_VIEWER_TTL_SECONDS
     );
-    inFlight++;
     const page = { items: served.items as ListingCard[], nextCursor: served.nextCursor };
-    const pending: Promise<unknown>[] = [];
-    const done = run(surface, cfg, token, input, opts, page, pending)
-      .catch((): ReadModelShadowOutcome => 'error')
-      .then((outcome) => {
-        recordReadModelShadow(surface, outcome);
-      })
-      .catch(() => undefined);
-    // The slot is freed once the page is done AND every database read it started has settled,
-    // including one it stopped waiting for at the timeout.
-    void done
-      .then(() => Promise.allSettled(pending))
-      .finally(() => {
-        inFlight--;
-      });
-    return done;
+    return start(surface, cfg, token, input, opts, { db: page });
+  }
+
+  async function attemptServe(
+    input: ListAppListingsInput,
+    opts: ListAvailableListingsOpts
+  ): Promise<ServeAttempt> {
+    const cfg = deps.config();
+    if (!cfg.url || !appIndexViewerKeyUsable(cfg.key)) return { fallback: 'unconfigured' };
+    // Moderator screens stay on the database, whatever floor they read the store at.
+    if (opts.viewer?.isModerator === true) return { fallback: 'unsupported_viewer' };
+    const viewer = appIndexViewerFor(opts);
+    if (!viewer) return { fallback: 'unsupported_viewer' };
+    if (opts.includeSubListings === true) return { fallback: 'unsupported_input' };
+    const cursor = await readModelCursorOf(input.cursor);
+    if (cursor === null) return { fallback: 'unsupported_input' };
+    const token = signAppIndexViewer(
+      cfg.key,
+      viewer,
+      Math.floor(deps.nowMs() / 1000) + APP_INDEX_VIEWER_TTL_SECONDS
+    );
+    // From here every return answers the breaker exactly once.
+    if (!deps.breaker.allow()) return { fallback: 'breaker_open' };
+    let rm: ReadModelPage;
+    try {
+      rm = await fetchPage(cfg, readModelListParams(input, cursor), token, cfg.serveTimeoutMs);
+    } catch (err) {
+      const outcome = failureOf(err);
+      deps.breaker.failure(outcome);
+      return { fallback: outcome };
+    }
+    const items: ListingCard[] = [];
+    for (const card of rm.items) {
+      const servedCard = servedCardOf(card);
+      if (!servedCard) {
+        deps.breaker.failure('bad_response');
+        return { fallback: 'bad_response' };
+      }
+      items.push(servedCard);
+    }
+    let nextCursor: string | undefined;
+    if (rm.nextCursor) {
+      const position = decodeReadModelCursor(rm.nextCursor);
+      if (position === null) {
+        deps.breaker.failure('bad_response');
+        return { fallback: 'bad_response' };
+      }
+      try {
+        nextCursor = await deps.encodeCursor(position.sortKey, position.id, position.mean);
+      } catch {
+        // Not the read model's failure: it answered a servable page.
+        deps.breaker.success();
+        return { fallback: 'error' };
+      }
+    }
+    deps.breaker.success();
+    return { served: nextCursor ? { items, nextCursor } : { items }, rm, token };
+  }
+
+  async function serve<P extends ListingPage>(
+    surface: ReadModelSurface,
+    input: ListAppListingsInput,
+    opts: ListAvailableListingsOpts,
+    dbRead: () => Promise<P>
+  ): Promise<P | { items: ListingCard[]; nextCursor?: string }> {
+    if (mode(surface) !== 'serve') return dbRead();
+    let attempt: ServeAttempt;
+    try {
+      attempt = await attemptServe(input, opts);
+    } catch {
+      attempt = { fallback: 'error' };
+    }
+    if ('fallback' in attempt) {
+      recordReadModelServe(surface, attempt.fallback);
+      return dbRead();
+    }
+    recordReadModelServe(surface, 'served');
+    try {
+      const cfg = deps.config();
+      if (admit(surface, cfg)) {
+        servedComparison = start(surface, cfg, attempt.token, input, opts, { rm: attempt.rm });
+      }
+    } catch {
+      // The comparison never affects the response.
+    }
+    return attempt.served;
   }
 
   return {
@@ -506,6 +843,8 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
         return undefined;
       }
     },
+    serve,
+    servedComparison: () => servedComparison,
     inFlight: () => inFlight,
   };
 }
@@ -519,21 +858,52 @@ function readConfig(): ReadModelShadowConfig {
     sample: env.APP_LISTINGS_READ_MODEL_SHADOW_SAMPLE,
     maxInFlight: env.APP_LISTINGS_READ_MODEL_SHADOW_MAX_IN_FLIGHT,
     timeoutMs: env.APP_LISTINGS_READ_MODEL_SHADOW_TIMEOUT_MS,
+    serveTimeoutMs: env.APP_LISTINGS_READ_MODEL_SERVE_TIMEOUT_MS,
   };
+}
+
+/**
+ * The flag's mode for `surface`, from the live Flipt client (`readReadModelMode`). Evaluated for
+ * the global entity with the surface as context (`surface`: `grid` or `rest_list`), so a rule can
+ * serve one surface before the other: the go/no-go gate is per surface.
+ */
+function readFlagMode(surface: ReadModelSurface): ReadModelMode {
+  const flag = FLIPT_FEATURE_FLAGS.APP_LISTINGS_READ_MODEL;
+  const context = { surface };
+  return readReadModelMode({
+    override: () => getFliptLocalOverride(flag),
+    boolean: () => isFliptSync(flag, 'global', context),
+    ready: () => {
+      if (getFliptClientSync()) return true;
+      void ensureFliptInitialized().catch(() => undefined);
+      return false;
+    },
+    variant: () => getFliptVariantDetailSync(flag, 'global', context),
+  });
+}
+
+/** One cached mode gate per surface. */
+function surfaceModeGates(): (surface: ReadModelSurface) => ReadModelMode {
+  const gates = {
+    grid: createCachedModeGate(() => readFlagMode('grid')),
+    rest_list: createCachedModeGate(() => readFlagMode('rest_list')),
+  } satisfies Record<ReadModelSurface, () => ReadModelMode>;
+  return (surface) => gates[surface]();
 }
 
 let processShadow: ReturnType<typeof createListingsReadModelShadow> | undefined;
 
 function getProcessShadow() {
   processShadow ??= createListingsReadModelShadow({
-    enabled: createCachedFlagGate(
-      readFliptSwitch(() => FLIPT_FEATURE_FLAGS.APP_LISTINGS_READ_MODEL)
-    ),
+    mode: surfaceModeGates(),
     config: readConfig,
     random: Math.random,
     nowMs: Date.now,
     fetch: (url, init) => outboundFetch(url, init),
     decodeCursor: async (cursor) => (await listingService()).decodeListingCursor(cursor),
+    encodeCursor: async (sortKey, id, mean) =>
+      (await listingService()).encodeListingCursor(sortKey, id, mean),
+    dbPage: async (input, opts) => (await listingService()).listAvailableListings(input, opts),
     dbBySlugs: async (slugs, input, opts) =>
       (await listingService()).listStoreListingsBySlugs(slugs, input, opts),
     breaker: new IndexBreaker(undefined, undefined, (from, to, why) => {
@@ -569,8 +939,9 @@ function getProcessShadow() {
 }
 
 /**
- * Shadow one served page (see the module doc). `opts` must be the options object the database read
- * was given, and `served` its answer. Returns at once; never throws.
+ * Shadow one page the database served (mode `shadow`; see the module doc). `opts` must be the
+ * options object the database read was given, and `served` its answer. Returns at once; never
+ * throws. In any other mode it does nothing: a served page is compared by `serveListingPage`.
  */
 export function shadowListingPage(
   surface: ReadModelSurface,
@@ -583,4 +954,25 @@ export function shadowListingPage(
   } catch {
     // A shadow never affects the request.
   }
+}
+
+/**
+ * One store grid or public REST list page (see the module doc): from the read model when the flag
+ * is at `serve` and it can answer this viewer and page, else `dbRead()` (the database read, with
+ * `opts`). A served page's cards are the store's `ListingCard`, with the read model's media, gated
+ * for the viewer `opts` describes, and its `nextCursor` in the database's format.
+ */
+export function serveListingPage<P extends ListingPage>(
+  surface: ReadModelSurface,
+  input: ListAppListingsInput,
+  opts: ListAvailableListingsOpts,
+  dbRead: () => Promise<P>
+): Promise<P | { items: ListingCard[]; nextCursor?: string }> {
+  let processServe: ReturnType<typeof createListingsReadModelShadow>;
+  try {
+    processServe = getProcessShadow();
+  } catch {
+    return dbRead();
+  }
+  return processServe.serve(surface, input, opts, dbRead);
 }

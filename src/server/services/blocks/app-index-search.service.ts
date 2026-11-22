@@ -72,11 +72,20 @@ export type StoreGridReads = {
     input: ListAppListingsInput,
     opts: ListAvailableListingsOpts
   ) => Promise<ListingCard[]>;
+  /**
+   * The page of a request the index does not search (no text query, or the index switch off):
+   * `listAvailableListings` when absent. The store grid passes the listings read model's serving
+   * read (`serveListingPage`). A search's own database reads, its fallbacks included, never use it.
+   */
+  gridPage?: (
+    input: ListAppListingsInput,
+    opts: ListAvailableListingsOpts
+  ) => Promise<StoreGridPage>;
 };
 
 // Imported on use: the listing service is a large module the routing does not need until it reads.
 const listingService = () => import('~/server/services/blocks/app-listing.service');
-const DB_READS: StoreGridReads = {
+export const DB_READS: StoreGridReads = {
   listAvailableListings: async (input, opts) =>
     (await listingService()).listAvailableListings(input, opts),
   listStoreListingsBySlugs: async (slugs, input, opts) =>
@@ -230,7 +239,7 @@ const indexBreaker = new IndexBreaker();
 
 /**
  * The `/apps` store grid page: through the index when `indexSearch` (the viewer's flag) is on and
- * the request carries a text query, else `listAvailableListings` exactly as before.
+ * the request carries a text query, else `reads.gridPage` (`listAvailableListings` when absent).
  */
 export async function listStoreGrid(
   input: ListAppListingsInput,
@@ -239,12 +248,13 @@ export async function listStoreGrid(
   reads: StoreGridReads = DB_READS,
   breaker: IndexBreaker = indexBreaker
 ): Promise<StoreGridPage> {
-  if (!indexSearch) return reads.listAvailableListings(input, opts);
+  const gridPage = reads.gridPage ?? reads.listAvailableListings;
+  if (!indexSearch) return gridPage(input, opts);
   const indexSearchRoutable = viewerNotRoutable(opts) === null;
   const query = input.query?.trim() ?? '';
   const page =
     query === ''
-      ? await reads.listAvailableListings(input, opts)
+      ? await gridPage(input, opts)
       : await searchThroughIndex(input, query, opts, reads, breaker);
   return { ...page, indexSearchRoutable };
 }

@@ -1,6 +1,6 @@
 # App store listings read model: design
 
-**Status:** slices 1 to 4 of 8 done, and slice 3b, all dark. Slice 1 is the adapter side of
+**Status:** slices 1 to 5 of 8 done, and slice 3b, all dark. Slice 1 is the adapter side of
 `store-listing@v1` (`src/server/registry-adapter/listing-stream.ts`). Slice 2 is the app-index-go
 ingest behind `APP_INDEX_LISTINGS` (`internal/index/listings.go`, `internal/store/listing*.go`;
 README, "Listings read model"). Slice 3 is the read API, `GET /listings` and `GET /listings/{slug}`
@@ -8,8 +8,9 @@ README, "Listings read model"). Slice 3 is the read API, `GET /listings` and `GE
 listing id and the public detail fields to the stream, the read model and the API (Rollout, below).
 Slice 4 is the site's shadow of the store grid and the public REST list behind the
 `app-listings-read-model` Flipt flag (`src/server/services/blocks/app-listings-read-model-shadow.service.ts`;
-Shadow diff, below). The site still serves every listing read from the database; serving from the
-read model is slice 5, after the gate below.
+Shadow diff, below). Slice 5 serves the store grid and the public REST list from the read model at
+the flag's `serve` variant (`serveListingPage`, same module; Serving, below), to be set per surface
+only after the gate below. Until then every listing read is served from the database.
 
 The goal: the user-facing app store reads its listings from a read model built from the registry,
 instead of from Prisma reads in `app-listing.service.ts`. The surfaces covered are the store grid
@@ -259,10 +260,11 @@ These match `listAvailableListings`.
 ## Shadow diff
 
 Slice 4 shadows the store grid (`appListings.listAvailable`, every page) and the public REST list
-(`GET /api/v1/apps`). Detail, card and OG are slice 5. With the `app-listings-read-model` Flipt
-flag on, the site serves the database answer exactly as before, and afterwards, off the response
-path, asks the read model the same query and compares the two
-(`app-listings-read-model-shadow.service.ts`).
+(`GET /api/v1/apps`). Detail, card and OG are slice 6. With the `app-listings-read-model` Flipt
+flag at `shadow` (Cutover flags), the site serves the database answer exactly as before, and
+afterwards, off the response path, asks the read model the same query and compares the two
+(`app-listings-read-model-shadow.service.ts`). At `serve`, a page served from the read model is
+compared the other way round (Serving, below).
 
 - **The viewer.** The token is signed from the options object the database read was given
   (`app-index-viewer-token.ts`): `host` from `redCapable`, `level` from `viewerBrowsingLevel`
@@ -340,6 +342,47 @@ up to an adapter poll, and the order can move with it. A listing whose stats dif
 (across more than two polls), or a surface whose order mismatches persist, is still read before
 serving.
 
+### Serving (slice 5)
+
+At the flag's `serve` variant, `serveListingPage` reads a store grid page, or a public REST list
+page, from `GET /listings` instead of from the database, when the read model can answer it:
+
+- **User-facing only.** The database answers, and the read model is not asked, for a moderator
+  (whatever floor they read the store at), a floor other than `public` (testers, moderators), a
+  level that cannot be signed, a request for sub-listing cards, and a cursor after a sub-listing
+  card. A grid request the app index searches (`app-index-search` on, with a text query) is a
+  search, not a grid page: it, and every database read it makes, its fallbacks included, stays as
+  it was (`StoreGridReads.gridPage`). Owner, creator and moderator screens, detail, card, OG and
+  testers-only or private listings never call it (What stays on the database). Every served
+  card's `restrictedAudience` is null: a `public`-floor viewer is told no restricted level.
+- **Fallback.** A timeout (`APP_LISTINGS_READ_MODEL_SERVE_TIMEOUT_MS`, default 400), a 503, any
+  other failure, a body that does not parse, a card that cannot be a store card (an on-site card
+  without `hasPage` and `liveUrl`, or a `kind` that is not its kind data's), or a next cursor that is
+  not a read-model cursor: the page is read from the database, once, and that read's own failure
+  is the request's, as with the flag off. A fallback costs the read model's failure plus the
+  database read.
+- **Breaker.** The shadow's per-process breaker (`IndexBreaker`, `APP_INDEX_BREAKER_*`), shared by
+  serving and the comparison: each serve attempt asks it, and answers it with the read model's
+  outcome. While it is open every page is read from the database without asking the read model.
+- **Media ceilings.** The viewer token is signed from the options the database read would have
+  been given (`host` from `redCapable`, `level` from `viewerBrowsingLevel`, `scope`), and the read
+  model gates each item by `listingMediaCeiling` and `redHostMediaCeiling` (`listingread.ProjectMedia`,
+  pinned to the site's rule by `media-parity.json`). The site serves its `iconUrl` and `coverUrl`
+  as they are; it holds no media of its own for a served page.
+- **Paging.** The client's cursor is always the database's format: a database cursor is moved to
+  the read model's terms as the shadow does, and a served page's next cursor (`rm2`) is re-encoded
+  as a database cursor at the same `(sort key, id, mean)` (`decodeReadModelCursor`,
+  `encodeListingCursor`). So page 2 can be read from either side, if the flag flips or the read
+  model fails between two pages, from the same position with the same pinned mean.
+- **Comparison.** A sampled fraction of served pages (the shadow's sample, in-flight cap and
+  timeout) reads the database page off the response path and is compared exactly as a shadowed
+  page is, with the same counters and log line. A database read failing or outliving the timeout
+  there is `db_error` or `db_timeout`, and never moves the breaker. At `serve` the shadow of
+  database-served pages stops: those are the pages the read model could not serve.
+- **Metrics.** `app_listings_read_model_serve_requests_total{surface, outcome}`: `served`, or why
+  the database answered: `unconfigured`, `unsupported_viewer`, `unsupported_input`,
+  `breaker_open`, `timeout`, `not_ready`, `error`, `bad_response`.
+
 ### Turn-on order
 
 Each step is reversible by undoing it; nothing before the flag changes what any user sees.
@@ -352,18 +395,36 @@ Each step is reversible by undoing it; nothing before the flag changes what any 
    it needs (Rollout, slice 2), and its first listings generation is serving.
 3. The viewer key on both sides: the same secret of at least 32 bytes as `APP_INDEX_VIEWER_KEY` on
    app-index-go and on the site. `APP_INDEX_URL` is already set on the site for search.
-4. The `app-listings-read-model` flag on, for shadow. The flag is created in the Flipt state
-   repository (not in this repo); this code reads it as a global boolean, off when it is absent.
+4. The `app-listings-read-model` flag at `shadow`. The flag lives in the Flipt state repository
+   (not in this repo). Its shape is in Cutover flags; the boolean it first shipped as still reads
+   as `shadow` when on.
+5. Per surface, once the gate above passes for it: the flag at `serve` for that surface (a rule on
+   the `surface` context, `grid` or `rest_list`). Back to `shadow` is the rollback.
 
 ## Cutover flags
 
-Slice 1 added the first, slice 2 the second and slice 4 the third.
+Slice 1 added the first, slice 2 the second and slice 4 the third, which slice 5 widened.
 
-| Flag                                            | Values           | What                                                                                                    |
-| ----------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------- |
-| `REGISTRY_ADAPTER_LISTING_RELAYS` (adapter env) | relay client ids | the listing stream exists, for those relays only. Empty means off (this PR)                             |
-| `APP_INDEX_LISTINGS` (app-index-go env)         | on/off           | ingest `store-listing@v1` (slice 2), and serve the listing API (slice 3). Unset means off               |
-| `app-listings-read-model` (Flipt)               | boolean          | slice 4: on = shadow the grid and REST list (Shadow diff). Serving (slices 5–6) will add its own switch |
+| Flag                                            | Values           | What                                                                                      |
+| ----------------------------------------------- | ---------------- | ----------------------------------------------------------------------------------------- |
+| `REGISTRY_ADAPTER_LISTING_RELAYS` (adapter env) | relay client ids | the listing stream exists, for those relays only. Empty means off (this PR)               |
+| `APP_INDEX_LISTINGS` (app-index-go env)         | on/off           | ingest `store-listing@v1` (slice 2), and serve the listing API (slice 3). Unset means off |
+| `app-listings-read-model` (Flipt)               | variant          | the grid and REST list: `shadow` (Shadow diff) or `serve` (Serving); see below            |
+
+The `app-listings-read-model` flag is a variant flag, evaluated per request surface for the global
+entity with the context `surface` (`grid` or `rest_list`), at most once per 5 s per process per
+surface (`readReadModelMode`):
+
+| Answer                                                | Mode                  |
+| ----------------------------------------------------- | --------------------- |
+| variant `serve`                                       | `serve`               |
+| variant `shadow`                                      | `shadow`              |
+| any other variant, no rule matched, the flag disabled | `database`            |
+| the flag absent, or Flipt not ready                   | `database`            |
+| a boolean flag (the slice 4 shape): on / off          | `shadow` / `database` |
+
+`database` reads every page from the database and asks the read model nothing. Serving has no
+switch of its own: `serve` is the one way in, and any unknown answer is the database.
 
 Rollback at each step is the previous flag value. The DB read path is never removed during this
 work.
@@ -450,8 +511,9 @@ served for a week.
    - Also in slice 4: `GET /listings` ranks from a per-process memo of the serving generation's
      keys, read once per (generation, cursor) and shared by concurrent requests, instead of a scan
      of every listing per request (README, "Listing API").
-5. **Slice 5: shadow on detail, card and OG,** then serve grid and REST after the gate.
-6. **Slice 6: serve detail, card and OG.**
+5. **Slice 5 (done): serve grid and REST** at the flag's `serve` variant, per surface and after
+   the gate (Serving, above), with the flag reshaped as a variant (Cutover flags).
+6. **Slice 6: shadow, then serve, detail, card and OG.**
 7. **Slice 7: launch and install** via `app-release@v1`.
 8. **Promotion** to the official registry: drop the relay gate, once the registry owner agrees.
 

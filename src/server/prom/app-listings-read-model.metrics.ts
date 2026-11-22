@@ -5,7 +5,7 @@ import {
   type AppIndexBreakerState,
 } from '~/server/prom/app-index-search.metrics';
 
-// The listings read-model shadow's counters (`app-listings-read-model-shadow.service.ts`). Every
+// The listings read model's serve and shadow counters (`app-listings-read-model-shadow.service.ts`). Every
 // label is from a fixed set: no slug, no query, no user. Which of them gate serving:
 // `apps/app-index-go/LISTINGS-READ-MODEL.md`, "Go / no-go for serving". Registered on
 // `instrumentationRegistry`, which `/api/metrics` merges into the scrape.
@@ -168,6 +168,43 @@ export function recordReadModelShadow(surface: ReadModelSurface, outcome: ReadMo
   shadowRequests.inc({ surface, outcome });
 }
 
+/**
+ * With the flag at `serve`, where each store grid or public REST list page was read from. `served`
+ * is the read model; every other outcome is the database, and says why.
+ */
+export const READ_MODEL_SERVE_OUTCOMES = [
+  // The read model answered and its page was served.
+  'served',
+  // Not asked: APP_INDEX_URL is unset, or APP_INDEX_VIEWER_KEY is unset or shorter than 32 bytes.
+  'unconfigured',
+  // Not asked: the viewer is a moderator, their floor is not `public`, or their level cannot be
+  // signed exactly.
+  'unsupported_viewer',
+  // Not asked: a page the read model does not answer (sub-listing cards requested, or a cursor
+  // after a sub-listing card).
+  'unsupported_input',
+  // Not asked: the breaker is open after consecutive read-model failures.
+  'breaker_open',
+  // Asked, and the read model gave no usable answer: no answer within the serve timeout, a 503,
+  // another failure, or a body that is not a servable page.
+  'timeout',
+  'not_ready',
+  'error',
+  'bad_response',
+] as const;
+export type ReadModelServeOutcome = (typeof READ_MODEL_SERVE_OUTCOMES)[number];
+
+const serveRequests = counter(
+  'app_listings_read_model_serve_requests_total',
+  'Store pages with the app-listings-read-model flag at serve, by surface and where they were ' +
+    'read from (served = the read model; any other outcome = the database, and why).',
+  ['surface', 'outcome']
+);
+
+export function recordReadModelServe(surface: ReadModelSurface, outcome: ReadModelServeOutcome) {
+  serveRequests.inc({ surface, outcome });
+}
+
 export type ReadModelComparison = {
   slugs: number;
   kinds: Record<ReadModelMismatchKind, number>;
@@ -194,13 +231,13 @@ const breakerState = registerInstrumentationMetric(
   () =>
     new client.Gauge({
       name: BREAKER_STATE,
-      help: 'Listings read-model shadow breaker state in this process: 0 closed, 1 half-open, 2 open.',
+      help: 'Listings read-model breaker state (serve and shadow) in this process: 0 closed, 1 half-open, 2 open.',
       registers: [instrumentationRegistry],
     })
 );
 const breakerTransitions = counter(
   'app_listings_read_model_breaker_transitions_total',
-  'Listings read-model shadow breaker state changes, by the state entered.',
+  'Listings read-model breaker (serve and shadow) state changes, by the state entered.',
   ['to']
 );
 

@@ -503,6 +503,67 @@ describe('listStoreGrid', () => {
 });
 
 // The `/apps` store grid always asks for sub-listing cards; the index holds none.
+/**
+ * The store grid passes the listings read model's serving read as `reads.gridPage`
+ * (`serveListingPage`): it answers only a page the index does not search. A search, and every
+ * database read it makes (its fallbacks included), stays on the reads it had before.
+ */
+describe('listStoreGrid with a gridPage read', () => {
+  const SERVED_PAGE = { items: [card(DELTA)], nextCursor: 'served-cursor' };
+  const gridPage = vi.fn();
+  const withGridPage = (...args: Parameters<typeof listStoreGridWith>) =>
+    listStoreGridWith(
+      args[0],
+      args[1],
+      args[2],
+      {
+        listAvailableListings: h.listAvailableListings,
+        listStoreListingsBySlugs: h.listStoreListingsBySlugs,
+        gridPage,
+      },
+      breaker
+    );
+  beforeEach(() => {
+    gridPage.mockReset().mockResolvedValue(SERVED_PAGE);
+  });
+
+  it('index switch off: the gridPage answer, and no database page', async () => {
+    const opts = { ...SFW_OPTS };
+    const res = await withGridPage(INPUT, opts, { indexSearch: false });
+    expect(res).toBe(SERVED_PAGE);
+    expect(gridPage).toHaveBeenCalledTimes(1);
+    expect(gridPage.mock.calls[0][0]).toBe(INPUT);
+    expect(gridPage.mock.calls[0][1]).toBe(opts);
+    expect(h.listAvailableListings).not.toHaveBeenCalled();
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it('index switch on without a query: the gridPage answer, with the routability', async () => {
+    const res = await withGridPage({ ...INPUT, query: '  ' }, SFW_OPTS, { indexSearch: true });
+    expect(res).toEqual({ ...SERVED_PAGE, indexSearchRoutable: true });
+    expect(h.listAvailableListings).not.toHaveBeenCalled();
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it('a search the index answers never reads the gridPage', async () => {
+    setEnv({ APP_INDEX_URL: INDEX_URL, APP_INDEX_SEARCH_COMPARE_SAMPLE: 0 });
+    const res = await withGridPage({ ...INPUT, includeSubListings: false }, SFW_OPTS, {
+      indexSearch: true,
+    });
+    expect(res.search).toBe('index');
+    expect(res.items.map((c) => (c as ListingCard).slug)).toEqual(['delta', 'beta', 'alpha']);
+    expect(gridPage).not.toHaveBeenCalled();
+  });
+
+  it("a search's fallback is the database page, not the gridPage", async () => {
+    stubIndex(() => new Response('{}', { status: 500 }));
+    const res = await withGridPage(INPUT, SFW_OPTS, { indexSearch: true });
+    expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: true });
+    expect(gridPage).not.toHaveBeenCalled();
+    expect(h.listAvailableListings).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('listStoreGrid with sub-listing cards on the page', () => {
   const subCard = (id: string, name: string, tagline: string | null): StoreGridItem =>
     ({ id, cardType: 'sub-listing', name, tagline } as unknown as StoreGridItem);
