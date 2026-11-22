@@ -20,8 +20,15 @@ const listingSchemaURN = "urn:schema:apps.civitai.com:store-listing@v1"
 
 func listingURN(slug string) string { return "urn:apps.civitai.com:store-listing/" + slug }
 
+// Two sub-listing ids (asl_ and a 26-character ULID).
+const (
+	subA = "asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A"
+	subB = "asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2B"
+)
+
 // listingJSON is a store-listing@v1 body as the adapter sends it (entities.ts listingBody): an
-// R listing whose media include an X screenshot above its rating and both civitai.red overrides.
+// R listing whose media include an X screenshot above its rating and both civitai.red overrides,
+// with two sub-listings: an on-site item rated X with its own X image, and an unrated external one.
 func listingJSON(slug, name string) json.RawMessage {
 	return json.RawMessage(`{
   "app": "urn:apps.civitai.com:app/` + slug + `", "id": "apl_` + slug + `", "slug": "` + slug + `", "name": "` + name + `", "kind": "onsite",
@@ -38,7 +45,17 @@ func listingJSON(slug, name string) json.RawMessage {
   "isBeta": false, "isOfficial": true, "hasPage": true,
   "stats": {"recommendedCount": 7, "notRecommendedCount": 3, "recommendPct": 0.7, "reviewCount": 5, "openCount": 120, "installCount": 0},
   "createdAt": "2026-03-04T05:06:07.123456Z", "updatedAt": null,
-  "serialId": 77, "scopes": ["models:read:self"], "forkOf": {"slug": "parent-` + slug + `"}
+  "serialId": 77, "scopes": ["models:read:self"], "forkOf": {"slug": "parent-` + slug + `"},
+  "subListings": [
+    {"id": "` + subA + `", "title": "Gen Alpha", "tagline": "first item", "contentRating": "x", "cardContentRating": "x",
+     "author": {"id": 51, "username": "author-a", "image": "https://img.invalid/author-a"}, "sortTime": "2026-03-05T01:02:03.654321Z",
+     "runHref": "/apps/run/` + slug + `/g/A?sl=` + subA + `", "external": false,
+     "image": {"url": "https://img.invalid/item-a", "nsfwLevel": 8, "rating": "x"}},
+    {"id": "` + subB + `", "title": "Gen Beta", "tagline": null, "contentRating": null, "cardContentRating": "r",
+     "author": {"id": 52, "username": null, "image": null}, "sortTime": "2026-03-06T00:00:00Z",
+     "runHref": "https://games.invalid/?game=b", "external": true, "image": null}
+  ],
+  "subListingsOmitted": 3
 }`)
 }
 
@@ -67,6 +84,20 @@ var wantMedia = []ListingMedia{
 	{Position: 3, Slot: "screenshot", Host: "any", URL: "https://img.invalid/s2", NsfwLevel: 8, Rating: "x", CoverURL: "https://img.invalid/s2-cover"},
 	{Position: 4, Slot: "icon", Host: "red", URL: "https://img.invalid/red-icon", NsfwLevel: 16, Rating: "xxx"},
 	{Position: 5, Slot: "cover", Host: "red", URL: "https://img.invalid/red-cover", NsfwLevel: 8, Rating: "x"},
+}
+
+// wantSubListings is listingJSON's sub-listings as the read model must hold them, for slug.
+func wantSubListings(slug string) []SubListing {
+	ta := time.Date(2026, 3, 5, 1, 2, 3, 654321000, time.UTC)
+	tb := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
+	return []SubListing{
+		{ID: subA, Title: "Gen Alpha", ContentRating: "x", SortTime: &ta, Tagline: strp("first item"), CardContentRating: "x",
+			Author:  ListingChip{ID: 51, Username: strp("author-a"), Image: strp("https://img.invalid/author-a")},
+			RunHref: "/apps/run/" + slug + "/g/A?sl=" + subA,
+			Image:   &SubListingImage{URL: "https://img.invalid/item-a", NsfwLevel: 8, Rating: "x"}},
+		{ID: subB, Title: "Gen Beta", SortTime: &tb, CardContentRating: "r", Author: ListingChip{ID: 52},
+			RunHref: "https://games.invalid/?game=b", External: true},
+	}
 }
 
 // firstMedia is body with only its first n media items.
@@ -109,9 +140,10 @@ func checkListing(t *testing.T, got Listing, slug, name string) {
 	created := time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
 	want := Listing{URN: listingURN(slug), Rev: "rev-" + slug, ID: "apl_" + slug, App: "urn:apps.civitai.com:app/" + slug, Slug: slug,
 		Name: name, Kind: "onsite", Category: "generation", ContentRating: "r", ListingContentRating: "r", CreatorID: i64(42), CreatedAt: &created,
-		Stats:  ListingStats{RecommendedCount: i64(7), NotRecommendedCount: i64(3), ReviewCount: i64(5), OpenCount: i64(120), InstallCount: i64(0)},
-		Media:  wantMedia,
-		Detail: ListingDetail{SerialID: i64(77), Scopes: []string{"models:read:self"}, ForkOf: &ListingStreamFork{Slug: strp("parent-" + slug)}}}
+		Stats:       ListingStats{RecommendedCount: i64(7), NotRecommendedCount: i64(3), ReviewCount: i64(5), OpenCount: i64(120), InstallCount: i64(0)},
+		Media:       wantMedia,
+		Detail:      ListingDetail{SerialID: i64(77), Scopes: []string{"models:read:self"}, ForkOf: &ListingStreamFork{Slug: strp("parent-" + slug)}},
+		SubListings: wantSubListings(slug), SubListingsOmitted: 3}
 	body := got.Body
 	got.Body = nil
 	if !reflect.DeepEqual(got, want) {
@@ -252,8 +284,17 @@ func runListingsContract(t *testing.T, newStore func(t *testing.T) listingsTestS
 		}
 		slices.SortFunc(keys, func(a, b Listing) int { return strings.Compare(a.URN, b.URN) })
 		want := mustListing("alpha", "Alpha")
-		// Keys carries the columns only: no body, media or detail fields.
+		// Keys carries the columns only: no body, media or detail fields, and each sub-listing's key
+		// fields (id, title, own rating, sort time) and nothing else of it.
 		want.Body, want.Media, want.Detail = nil, nil, ListingDetail{}
+		ta := time.Date(2026, 3, 5, 1, 2, 3, 654321000, time.UTC)
+		tb := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
+		// The count left out by the adapter's cap is a column too.
+		if want.SubListingsOmitted != 3 {
+			t.Fatalf("fixture omitted %d, want 3", want.SubListingsOmitted)
+		}
+		want.SubListings = []SubListing{{ID: subA, Title: "Gen Alpha", ContentRating: "x", SortTime: &ta},
+			{ID: subB, Title: "Gen Beta", SortTime: &tb}}
 		if len(keys) != 2 || !reflect.DeepEqual(keys[0], want) || keys[1].Slug != "beta" {
 			t.Fatalf("keys\n got %+v\nwant [%+v beta]", keys, want)
 		}
@@ -350,17 +391,19 @@ func TestListingFromEntity(t *testing.T) {
 	}
 	checkListing(t, Listing{URN: l.URN, Rev: "rev-alpha", Body: l.Body, ID: l.ID, App: l.App, Slug: l.Slug, Name: l.Name, Kind: l.Kind,
 		Category: l.Category, ContentRating: l.ContentRating, ListingContentRating: l.ListingContentRating, CreatorID: l.CreatorID, CreatedAt: l.CreatedAt,
-		UpdatedAt: l.UpdatedAt, Stats: l.Stats, Media: l.Media, Detail: l.Detail}, "alpha", "Alpha")
+		UpdatedAt: l.UpdatedAt, Stats: l.Stats, Media: l.Media, Detail: l.Detail, SubListings: l.SubListings,
+		SubListingsOmitted: l.SubListingsOmitted}, "alpha", "Alpha")
 
 	// Off-site: openCount null, no creator, no media, no dates.
 	off, drops, err := ListingFromEntity(listingURN("o"), "r", json.RawMessage(`{"app":"urn:apps.civitai.com:app/o","id":"apl_o","slug":"o","name":"O",
 		"kind":"offsite","contentRating":null,"listingContentRating":null,"media":[],"creator":null,"stats":{"recommendedCount":0,"notRecommendedCount":0,
-		"recommendPct":null,"reviewCount":0,"openCount":null,"installCount":9}}`))
+		"recommendPct":null,"reviewCount":0,"openCount":null,"installCount":9},"subListings":[]}`))
 	if err != nil || drops != nil {
 		t.Fatalf("off-site body: err %v drops %+v (a null openCount is not a drop)", err, drops)
 	}
 	if off.Stats.OpenCount != nil || off.CreatorID != nil || off.CreatedAt != nil || off.ContentRating != "" ||
-		*off.Stats.InstallCount != 9 || off.Media == nil || len(off.Media) != 0 {
+		*off.Stats.InstallCount != 9 || off.Media == nil || len(off.Media) != 0 || off.SubListings == nil || len(off.SubListings) != 0 ||
+		off.SubListingsOmitted != 0 {
 		t.Fatalf("off-site listing %+v", off)
 	}
 
@@ -396,6 +439,31 @@ func TestListingFromEntity(t *testing.T) {
 		{"no url", `"url": "https://img.invalid/cover", `, ``, "media[1]: url missing"},
 		{"bad caption", `"caption": "first"`, `"caption": 1`, "media[2]: caption: not a string or null"},
 		{"bad coverUrl", `"coverUrl": "https://img.invalid/s1-cover"`, `"coverUrl": {}`, "media[2]: coverUrl: not a string or null"},
+		// A body without subListings is from an adapter that does not publish them: its listing would
+		// read as having none, so it is unusable rather than a listing with no items.
+		{"no subListings", `"subListings": [`, `"subListingsX": [`, "subListings missing"},
+		{"negative subListingsOmitted", `"subListingsOmitted": 3`, `"subListingsOmitted": -1`, "subListingsOmitted is negative"},
+		{"sub-listing not an object", `"subListings": [`, `"subListings": [7, `, "subListings[0]: not an object"},
+		{"sub-listing id not a sub-listing id", `"id": "` + subA + `"`, `"id": "apl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A"`, "subListings[0]: id missing or not a sub-listing id"},
+		{"sub-listing id too short", `"id": "` + subB + `"`, `"id": "asl_01J9"`, "subListings[1]: id missing or not a sub-listing id"},
+		{"sub-listing id twice", `"id": "` + subB + `"`, `"id": "` + subA + `"`, "subListings[1]: id " + subA + " twice"},
+		{"no title", `"title": "Gen Beta"`, `"titleX": "Gen Beta"`, "subListings[1]: title missing"},
+		{"no own rating", `"contentRating": null, "cardContentRating"`, `"cardContentRating"`, "subListings[1]: contentRating missing"},
+		{"bad own rating", `"contentRating": "x"`, `"contentRating": 8`, "subListings[0]: contentRating: not a string or null"},
+		{"no card rating", `"cardContentRating": "r"`, `"cardContentRatingX": "r"`, "subListings[1]: cardContentRating missing"},
+		{"no author", `"author": {"id": 52`, `"authorX": {"id": 52`, "subListings[1]: author missing"},
+		{"author without id", `"author": {"id": 52, `, `"author": {`, "subListings[1]: author missing"},
+		{"no runHref", `"runHref": "https://games.invalid/?game=b"`, `"runHref": ""`, "subListings[1]: runHref missing"},
+		{"no external", `"external": true`, `"externalX": true`, "subListings[1]: external missing"},
+		{"no image", `"external": true, "image": null`, `"external": true`, "subListings[1]: image missing"},
+		{"bad sortTime", `"sortTime": "2026-03-06T00:00:00Z"`, `"sortTime": "tomorrow"`, "subListings[1]: sortTime missing or not an RFC 3339 date-time"},
+		{"null sortTime", `"sortTime": "2026-03-06T00:00:00Z"`, `"sortTime": null`, "subListings[1]: sortTime missing or not an RFC 3339 date-time"},
+		{"bad tagline", `"tagline": "first item"`, `"tagline": 3`, "subListings[0]: tagline: not a string or null"},
+		// An item image is gated per request like a media item: its level must be its rating's.
+		{"image level not its rating's", `"nsfwLevel": 8, "rating": "x"}}`, `"nsfwLevel": 4, "rating": "x"}}`, "subListings[0]: image: nsfwLevel 4 is not rating x's level"},
+		{"image rating unknown", `"nsfwLevel": 8, "rating": "x"}}`, `"nsfwLevel": 8, "rating": "nc17"}}`, "subListings[0]: image: rating missing or unknown"},
+		{"image without url", `"image": {"url": "https://img.invalid/item-a", `, `"image": {`, "subListings[0]: image: url missing"},
+		{"image not an object", `"image": {"url": "https://img.invalid/item-a", "nsfwLevel": 8, "rating": "x"}`, `"image": 5`, "subListings[0]: image: not an object or null"},
 	} {
 		body := strings.Replace(valid, c.from, c.to, 1)
 		if body == valid {

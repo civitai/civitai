@@ -20,8 +20,8 @@ export const READ_MODEL_SHADOW_OUTCOMES = [
   'unconfigured',
   // Not asked: the viewer's floor is not `public`, or their level cannot be signed exactly.
   'unsupported_viewer',
-  // Not asked: a page the read model does not answer (sub-listing cards on it, a page the app
-  // index's search answered, or a cursor after a sub-listing card).
+  // Not asked: a page the read model does not answer (a page the app index's search answered, or
+  // a cursor that names no card).
   'unsupported_input',
   // Not asked: the breaker is open after consecutive read-model failures.
   'breaker_open',
@@ -64,12 +64,18 @@ export const READ_MODEL_MISMATCH_KINDS = [
   'media',
   'identity_field',
   'stats_field',
+  // A sub-listing card on the database page only, of a listing whose stream left items out past
+  // the adapter's per-listing cap (MAX_STREAM_SUB_LISTINGS): a known difference. Reported, not
+  // gating; a listing over the cap is served without its oldest items.
+  'sub_listing_cap',
 ] as const;
 export type ReadModelMismatchKind = (typeof READ_MODEL_MISMATCH_KINDS)[number];
 
 /**
- * The card fields compared for a listing on both pages. `iconUrl` and `coverUrl` are media; `id` is
- * a slug that names a different listing on each side.
+ * The card fields compared for a card on both pages. `iconUrl` and `coverUrl` are media; `id` is
+ * a slug that names a different listing on each side (or an id that names a listing on one side and
+ * a sub-listing on the other). `kind`, `parent`, `parentIconUrl` and `runHref` are a sub-listing
+ * card's own (`SubListingCard`); the rest it shares with a listing card where it has them.
  */
 export const READ_MODEL_COMPARED_FIELDS = [
   'id',
@@ -89,6 +95,10 @@ export const READ_MODEL_COMPARED_FIELDS = [
   'openCount',
   'updatedAt',
   'kindData',
+  'kind',
+  'parent',
+  'parentIconUrl',
+  'runHref',
 ] as const;
 export type ReadModelComparedField = (typeof READ_MODEL_COMPARED_FIELDS)[number];
 
@@ -106,6 +116,8 @@ export const READ_MODEL_FIELD_CLASS: Readonly<
 > = {
   iconUrl: 'media',
   coverUrl: 'media',
+  // A sub-listing card's parent icon, gated at the card's ceiling.
+  parentIconUrl: 'media',
   // One slug naming a different listing id on each side.
   id: 'identity',
   name: 'identity',
@@ -116,6 +128,10 @@ export const READ_MODEL_FIELD_CLASS: Readonly<
   isBeta: 'identity',
   isOfficial: 'identity',
   kindData: 'identity',
+  // A sub-listing card's kind (its parent's), parent (id, slug, name) and link.
+  kind: 'identity',
+  parent: 'identity',
+  runHref: 'identity',
   recommendedCount: 'stats',
   notRecommendedCount: 'stats',
   recommendPct: 'stats',
@@ -143,18 +159,18 @@ const comparedPages = counter(
 );
 const comparedSlugs = counter(
   'app_listings_read_model_compared_slugs_total',
-  'Listings compared (on either page), by surface: the denominator of the mismatch rates.',
+  'Cards compared (listings and sub-listings, on either page), by surface: the denominator of the mismatch rates.',
   ['surface']
 );
 const mismatches = counter(
   'app_listings_read_model_mismatches_total',
-  'Compared listings whose answers differed, by surface and kind (visibility_missing, ' +
+  'Compared cards whose answers differed, by surface and kind (visibility_missing, ' +
     'visibility_extra, media, identity_field, stats_field).',
   ['surface', 'kind']
 );
 const fieldMismatches = counter(
   'app_listings_read_model_field_mismatches_total',
-  'Card fields that differed for a listing on both pages, by surface and field.',
+  'Card fields that differed for a card on both pages, by surface and field.',
   ['surface', 'field']
 );
 const orderMismatches = counter(
@@ -180,8 +196,7 @@ export const READ_MODEL_SERVE_OUTCOMES = [
   // Not asked: the viewer is a moderator, their floor is not `public`, or their level cannot be
   // signed exactly.
   'unsupported_viewer',
-  // Not asked: a page the read model does not answer (sub-listing cards requested, or a cursor
-  // after a sub-listing card).
+  // Not asked: a cursor that names no card.
   'unsupported_input',
   // Not asked: the breaker is open after consecutive read-model failures.
   'breaker_open',

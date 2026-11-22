@@ -38,13 +38,13 @@ const paintBody = `{"app":"urn:apps.civitai.com:app/paint","id":"apl_paint_9","s
 "serialId":812,"collaborators":[{"id":43,"username":"helper","image":"https://img.invalid/helper"}],
 "sourceRepoUrl":"https://github.com/paint-org/paint","issueTrackerUrl":"https://paint.invalid/issues",
 "actionsRunSource":{"repository":"paint-org/paint","tag":"v1.2.0","sha":"0123456789abcdef0123456789abcdef01234567"},
-"scopes":["models:read:self"],"connectScopes":[],"betaMessage":"Paint is new","forkable":true,"forkOf":{"slug":"night"}}`
+"scopes":["models:read:self"],"connectScopes":[],"betaMessage":"Paint is new","forkable":true,"forkOf":{"slug":"night"},"subListings":[]}`
 
 const linksBody = `{"app":"urn:apps.civitai.com:app/links","id":"apl_links_2","slug":"links","name":"Links","kind":"offsite","contentRating":null,"listingContentRating":null,
 "tagline":null,"category":"tools","description":null,"iconUrl":null,"media":[],"creator":null,"isBeta":false,"isOfficial":true,
 "externalUrl":"https://example.invalid/app","connectClientId":"links-client-7",
 "stats":{"recommendedCount":0,"notRecommendedCount":0,"recommendPct":null,"reviewCount":0,"openCount":null,"installCount":9},
-"createdAt":"2026-03-01T00:00:00.000Z","updatedAt":null}`
+"createdAt":"2026-03-01T00:00:00.000Z","updatedAt":null,"subListings":[]}`
 
 const nightBody = `{"app":"urn:apps.civitai.com:app/night","id":"apl_night_5","slug":"night","name":"Night","kind":"onsite","contentRating":"r","listingContentRating":"r",
 "tagline":"After dark","category":"generation","description":"d","iconUrl":null,
@@ -52,7 +52,7 @@ const nightBody = `{"app":"urn:apps.civitai.com:app/night","id":"apl_night_5","s
 "creator":{"id":7,"username":"owl","image":"https://img.invalid/owl"},"isBeta":false,"isOfficial":false,"hasPage":false,
 "liveUrl":"https://night.apps.invalid",
 "stats":{"recommendedCount":1,"notRecommendedCount":0,"recommendPct":null,"reviewCount":1,"openCount":3,"installCount":0},
-"createdAt":"2026-03-02T00:00:00.000Z","updatedAt":"2026-03-02T00:00:00.000Z"}`
+"createdAt":"2026-03-02T00:00:00.000Z","updatedAt":"2026-03-02T00:00:00.000Z","subListings":[]}`
 
 func readyListings(t *testing.T, bodies ...string) *store.ListingsMemory {
 	t.Helper()

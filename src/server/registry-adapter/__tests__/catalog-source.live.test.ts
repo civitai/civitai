@@ -82,6 +82,39 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
     model_restricted: false,
   };
 
+  const SUB_ID = 'asl_01J9ZK3Q4R5S6T7V8W9X0YG007';
+  // One `readStoreSubListingsOfParents` row: an approved item of lst-a1 with a public R image.
+  const subListingRow = {
+    id: SUB_ID,
+    title: 'Item g7',
+    tagline: null,
+    sub_path: 'items/g7',
+    content_rating: 'r',
+    author_user_id: 8807,
+    author_username: 'author-g7',
+    author_image: null,
+    parent_id: 'lst-a1',
+    parent_slug: 'slug-a1',
+    parent_name: 'Name a1',
+    parent_kind: 'onsite',
+    parent_category: null,
+    parent_content_rating: 'pg',
+    parent_link_template: null,
+    image_url: 'items/g7',
+    image_nsfw_level: NsfwLevel.R,
+    image_ingestion: 'Scanned',
+    image_needs_review: null,
+    image_poi: false,
+    image_minor: false,
+    image_tos_violation: false,
+    image_acceptable_minor: false,
+    image_blocked_for: null,
+    image_model_restricted: false,
+    image_public: true,
+    parent_listing_id: 'lst-a1',
+    sort_time: '2026-05-06T07:08:09.123456Z',
+  };
+
   it('reads each listing’s media, override and metric, and defaults a missing metric', async () => {
     let query: { where: unknown; select: Record<string, unknown> } | undefined;
     dbMock.dbRead.appListing.findMany.mockImplementation((async (args: {
@@ -135,8 +168,13 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
         },
       ];
     }) as never);
-    dbMock.dbRead.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
-      const sql = strings.join('?');
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray | { strings: readonly string[] }
+    ) => {
+      // A tagged-template call passes the strings; a `Prisma.sql` one passes the statement.
+      const sql = (
+        Array.isArray(strings) ? strings : (strings as { strings: readonly string[] }).strings
+      ).join('?');
       if (sql.includes('to_regclass')) {
         return [
           {
@@ -161,6 +199,11 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
           { id: 'lst-f6', forkable: true, forkOfListingId: null, isFork: false },
         ];
       }
+      if (sql.includes('FROM app_sub_listings s')) {
+        subListingQueries.push(sql);
+        // As the database answers the stream's read: the rows the grid could show, by parent.
+        return [subListingRow];
+      }
       if (sql.includes('DISTINCT ON')) {
         runBlocks.push(sql);
         return [
@@ -180,6 +223,7 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
       return [];
     }) as never);
     const runBlocks: string[] = [];
+    const subListingQueries: string[] = [];
     dbMock.dbRead.appCollaborator.findMany.mockResolvedValue([
       { appListingId: 'lst-a1', userId: 8802 },
       { appListingId: 'lst-a1', userId: 8801 },
@@ -270,7 +314,31 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
       // On-site: no connect client is published.
       connectClientId: null,
       fork: { isFork: true, forkOfListingId: 'lst-parent-p9' },
+      // Its sub-listing row, as the stream item the card's own rules build from it.
+      subListings: [
+        {
+          id: SUB_ID,
+          title: 'Item g7',
+          tagline: null,
+          contentRating: 'r',
+          cardContentRating: 'r',
+          author: { id: 8807, username: 'author-g7', image: null },
+          sortTime: '2026-05-06T07:08:09.123456Z',
+          runHref: `/apps/run/slug-a1/items/g7?sl=${SUB_ID}`,
+          external: false,
+          image: {
+            url: listingMediaEdgeUrl('items/g7', LISTING_COVER_WIDTH),
+            nsfwLevel: NsfwLevel.R,
+            rating: 'r',
+          },
+        },
+      ],
+      subListingsOmitted: 0,
     });
+    // One read of the sub-listings for every listing, through the grid's child arm.
+    expect(subListingQueries).toHaveLength(1);
+    expect(subListingQueries[0]).toContain('sp.enabled');
+    expect(subListingQueries[0]).toContain("s.status = 'approved'");
     // Positive control for the default: a metric row's count is carried.
     expect(extras.get('lst-f6')).toEqual({
       media: [],
@@ -288,8 +356,117 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
       forkable: false,
       connectClientId: 'client-f6',
       fork: { isFork: false, forkOfListingId: null },
+      subListings: [],
+      subListingsOmitted: 0,
     });
     // The run read asks only for the on-site listing's block.
     expect(runBlocks).toHaveLength(1);
+  });
+
+  it('🔴 a listing over the sub-listing cap carries the newest 200 items, and the excess is reported', async () => {
+    dbMock.dbRead.appListing.findMany.mockImplementation((async (args: {
+      select: Record<string, unknown>;
+    }) =>
+      args.select.isBeta
+        ? []
+        : [
+            {
+              id: 'lst-a1',
+              serialId: 7101,
+              kind: 'onsite',
+              appBlockId: null,
+              connectClientId: null,
+              connectRequestedScopes: null,
+              appBlock: null,
+              description: null,
+              createdAt: new Date('2026-01-01T00:00:00.000Z'),
+              icon: null,
+              cover: null,
+              screenshots: [],
+              metric: null,
+            },
+          ]) as never);
+    const rows = Array.from({ length: 203 }, (_, i) => ({
+      ...subListingRow,
+      id: `asl_01J9ZK3Q4R5S6T7V8W9X${String(i).padStart(6, '0')}`,
+      sort_time: `2026-05-06T07:08:09.${String(i).padStart(6, '0')}Z`,
+    }));
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray | { strings: readonly string[] }
+    ) => {
+      const sql = (
+        Array.isArray(strings) ? strings : (strings as { strings: readonly string[] }).strings
+      ).join('?');
+      return sql.includes('FROM app_sub_listings s') ? rows : [];
+    }) as never);
+    dbMock.dbRead.appCollaborator.findMany.mockResolvedValue([] as never);
+    const capped: Array<[string, number]> = [];
+    const { loadListingExtras } = liveCatalogReadDeps({
+      listings: true,
+      onSubListingsCapped: (id, omitted) => capped.push([id, omitted]),
+    });
+    if (!loadListingExtras) throw new Error('listings on, but no loadListingExtras');
+    const extras = (await loadListingExtras(['lst-a1'])).get('lst-a1');
+    expect(extras?.subListings).toHaveLength(200);
+    expect(extras?.subListingsOmitted).toBe(3);
+    // The three oldest (the first three rows) are the ones left out.
+    expect(extras?.subListings[0].id).toBe(rows[3].id);
+    expect(capped).toEqual([['lst-a1', 3]]);
+  });
+
+  /**
+   * The sub-listing tables are manual-apply: absent, the grid serves parents only, so the stream
+   * carries no item and the listing read still succeeds. Any other failure of that read fails the
+   * listing read (so the listing stream ends `unavailable`), never reads as "no items".
+   */
+  it.each([
+    [
+      'absent (42P01)',
+      Object.assign(new Error('relation "app_sub_listings" does not exist'), { code: '42P01' }),
+      'empty',
+    ],
+    ['down', new Error('connection reset'), 'rejects'],
+  ] as const)('🔴 the sub-listing read %s', async (_name, err, outcome) => {
+    dbMock.dbRead.appListing.findMany.mockImplementation((async (args: {
+      select: Record<string, unknown>;
+    }) =>
+      args.select.isBeta
+        ? []
+        : [
+            {
+              id: 'lst-z9',
+              serialId: 7909,
+              kind: 'offsite',
+              appBlockId: null,
+              connectClientId: null,
+              connectRequestedScopes: null,
+              appBlock: null,
+              description: null,
+              createdAt: new Date('2026-01-01T00:00:00.000Z'),
+              icon: null,
+              cover: null,
+              screenshots: [],
+              metric: null,
+            },
+          ]) as never);
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray | { strings: readonly string[] }
+    ) => {
+      const sql = (
+        Array.isArray(strings) ? strings : (strings as { strings: readonly string[] }).strings
+      ).join('?');
+      if (sql.includes('FROM app_sub_listings s')) throw err;
+      return [];
+    }) as never);
+    dbMock.dbRead.appCollaborator.findMany.mockResolvedValue([] as never);
+    const { loadListingExtras } = liveCatalogReadDeps({ listings: true });
+    if (!loadListingExtras) throw new Error('listings on, but no loadListingExtras');
+    if (outcome === 'rejects') {
+      await expect(loadListingExtras(['lst-z9'])).rejects.toThrow('connection reset');
+      return;
+    }
+    const extras = await loadListingExtras(['lst-z9']);
+    expect(extras.get('lst-z9')?.subListings).toEqual([]);
+    expect(extras.get('lst-z9')?.serialId).toBe(7909);
   });
 });

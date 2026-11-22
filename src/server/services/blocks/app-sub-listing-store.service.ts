@@ -227,20 +227,13 @@ export function projectSubListingCard(
 }
 
 /**
- * Sub-listing rows for the store grid, hydrated live below the catalog cache.
- *
- * Only `approved` rows by authors who are not banned or deleted, and, for an off-site parent, with
- * a usable link template, are returned, so a child that changed after its id was cached drops out
- * on the next render rather than waiting for the cache to expire.
+ * The columns of a {@link SubListingHydrateRow}, over the aliases its FROM clause gives
+ * ({@link subListingHydrateFrom}). One list, so the store grid's hydration and the listing
+ * stream's read (`readStoreSubListingsOfParents`) project a card from the same columns. Built on
+ * use, not at import: a module that mocks `@prisma/client` partially can still import this one.
  */
-export async function hydrateSubListingCards(
-  db: Pick<PrismaClient, '$queryRaw'>,
-  ids: string[],
-  viewer: SubListingViewer
-): Promise<Map<string, SubListingCard>> {
-  if (ids.length === 0) return new Map();
-  const rows = await db.$queryRaw<SubListingHydrateRow[]>(Prisma.sql`
-    SELECT s.id, s.title, s.tagline, s.sub_path, s.content_rating, s.author_user_id,
+const subListingHydrateColumns = () => Prisma.sql`
+    s.id, s.title, s.tagline, s.sub_path, s.content_rating, s.author_user_id,
            u.username AS author_username, ${Prisma.raw(fallbackUserImageColumn)} AS author_image,
            al.id AS parent_id, al.slug AS parent_slug, al.name AS parent_name,
            al.kind AS parent_kind, al.category AS parent_category,
@@ -267,7 +260,10 @@ export async function hydrateSubListingCards(
            i."acceptableMinor" AS image_acceptable_minor,
            i."blockedFor" AS image_blocked_for,
            i."modelRestricted" AS image_model_restricted,
-           ${IMAGE_POST_PUBLIC_SQL} AS image_public
+           ${IMAGE_POST_PUBLIC_SQL} AS image_public`;
+
+/** The joins {@link subListingHydrateColumns} reads, `sp` left-joined. */
+const subListingHydrateFrom = () => Prisma.sql`
     FROM app_sub_listings s
     JOIN app_listings al ON al.id = s.parent_listing_id
     JOIN "User" u ON u.id = s.author_user_id
@@ -275,11 +271,31 @@ export async function hydrateSubListingCards(
     LEFT JOIN "Image" i ON i.id = s.image_id
     LEFT JOIN "Post" p ON p.id = i."postId"
     LEFT JOIN "Image" pc ON pc.id = al.cover_id
-    LEFT JOIN "Image" pi ON pi.id = al.icon_id
-    WHERE s.id IN (${Prisma.join(ids)})
-      AND s.status = 'approved'
+    LEFT JOIN "Image" pi ON pi.id = al.icon_id`;
+
+/** An approved row by an author who is not banned or deleted: what every store read requires. */
+const subListingLiveWhere = () => Prisma.sql`s.status = 'approved'
       AND u."bannedAt" IS NULL
-      AND u."deletedAt" IS NULL
+      AND u."deletedAt" IS NULL`;
+
+/**
+ * Sub-listing rows for the store grid, hydrated live below the catalog cache.
+ *
+ * Only `approved` rows by authors who are not banned or deleted, and, for an off-site parent, with
+ * a usable link template, are returned, so a child that changed after its id was cached drops out
+ * on the next render rather than waiting for the cache to expire.
+ */
+export async function hydrateSubListingCards(
+  db: Pick<PrismaClient, '$queryRaw'>,
+  ids: string[],
+  viewer: SubListingViewer
+): Promise<Map<string, SubListingCard>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db.$queryRaw<SubListingHydrateRow[]>(Prisma.sql`
+    SELECT ${subListingHydrateColumns()}
+    ${subListingHydrateFrom()}
+    WHERE s.id IN (${Prisma.join(ids)})
+      AND ${subListingLiveWhere()}
   `);
   const cards = new Map<string, SubListingCard>();
   for (const row of rows) {
@@ -287,4 +303,66 @@ export async function hydrateSubListingCards(
     if (card) cards.set(row.id, card);
   }
   return cards;
+}
+
+/**
+ * The conditions a sub-listing needs, beyond its parent's own store eligibility, to be in the
+ * store grid: the store catalog's child arm (`listAvailableListings` with `includeSubListings`)
+ * and the listing stream's read ({@link readStoreSubListingsOfParents}) both apply exactly this,
+ * over the aliases `s` (the item), `al` (its parent), `ab` (the parent's block), `sp` (the parent's
+ * sub-listing switch) and an author check, so the stream can never carry an item the grid would not
+ * show, or leave one out that it would.
+ */
+export function subListingStoreArmWhere(
+  authorEligible: Prisma.Sql,
+  parentLinkTemplate: Prisma.Sql = PARENT_LINK_TEMPLATE_SQL
+): Prisma.Sql {
+  return Prisma.sql`-- A banned or deleted author's items leave the store with them.
+        ${authorEligible}
+        AND sp.enabled
+        AND s.status = 'approved'
+        -- An on-site child opens under the parent's run route, which serves only an approved
+        -- block (a suspended or re-submitted block would make every child link a 404). An
+        -- off-site child opens the parent's link template instead.
+        AND CASE WHEN al.kind = 'offsite'
+              THEN ${parentLinkTemplate} IS NOT NULL
+              ELSE ab.status = 'approved' END`;
+}
+
+/** A {@link SubListingHydrateRow} as the listing stream reads it: with its parent and sort time. */
+export type StoreSubListingRow = SubListingHydrateRow & {
+  parent_listing_id: string;
+  /**
+   * `COALESCE(s.approved_at, s.created_at)`, the store's `newest` key for an item, as an RFC 3339
+   * UTC string to the microsecond: the key the grid sorts on is that precise
+   * (`subListingSortKeyExpr`), and a JS `Date` would cut it to the millisecond.
+   */
+  sort_time: string;
+};
+
+/**
+ * Every sub-listing of the listings `parentIds` that the store grid could show, whatever the
+ * viewer (no mature filter: each item carries its rating), with the columns the grid's card is
+ * projected from. The listing stream's read (`store-listing@v1` `subListings`,
+ * `catalog-source.live.ts`): the parents are the public catalog's listings, so their own
+ * eligibility is already applied, and this applies the child arm's ({@link subListingStoreArmWhere})
+ * plus the hydration's re-check ({@link subListingLiveWhere}). In id order.
+ */
+export async function readStoreSubListingsOfParents(
+  db: Pick<PrismaClient, '$queryRaw'>,
+  parentIds: string[]
+): Promise<StoreSubListingRow[]> {
+  if (parentIds.length === 0) return [];
+  return db.$queryRaw<StoreSubListingRow[]>(Prisma.sql`
+    SELECT ${subListingHydrateColumns()},
+           s.parent_listing_id,
+           to_char(COALESCE(s.approved_at, s.created_at) AT TIME ZONE 'UTC',
+                   'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS sort_time
+    ${subListingHydrateFrom()}
+    LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
+    WHERE s.parent_listing_id IN (${Prisma.join(parentIds)})
+      AND ${subListingLiveWhere()}
+      AND ${subListingStoreArmWhere(Prisma.sql`u."bannedAt" IS NULL AND u."deletedAt" IS NULL`)}
+    ORDER BY s.id
+  `);
 }

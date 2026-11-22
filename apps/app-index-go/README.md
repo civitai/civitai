@@ -161,11 +161,17 @@ series is registered, nothing subscribes to the schema and the listing routes ar
   by one on a resumed stream are applied as they come.
 - **`unavailable`** (the adapter's answer when its listing read failed) deletes nothing: the
   subscription is opened again from the stored cursor, like any other `unavailable`.
-- A body missing an identity field (`app`, `id`, `slug`, `name`, `kind`, `contentRating`, `listingContentRating`), a
-  detail field of the wrong type, or a media item
+- A body missing an identity field (`app`, `id`, `slug`, `name`, `kind`, `contentRating`, `listingContentRating`), or
+  `subListings` (an empty array when the listing has none), a
+  detail field of the wrong type, a media item
   whose host or rating is unknown or whose `nsfwLevel` is not exactly its rating's level (pg 1, pg13
-  2, r 4, x 8, xxx 16), is treated as deleted (`app_index_listings_events_applied_total{type="invalid"}`):
-  such an item could not be gated.
+  2, r 4, x 8, xxx 16), or a sub-listing item that cannot be read whole (an `asl_` id, its title, own
+  and card ratings, author, sort time, link, and an image whose level is its rating's), is treated as
+  deleted (`app_index_listings_events_applied_total{type="invalid"}`): such an item could not be
+  gated, or a listing without `subListings` would read as having no sub-listing cards. That is in a
+  building generation; in a serving one the stored row is kept and only the cursor moves (still
+  counted `invalid`), so an adapter rolled back below this layout leaves the last good listings
+  serving instead of emptying the generation.
 - What can be left out without misgating is dropped and the listing kept, each drop logged and
   counted (`app_index_listings_dropped_total{what}`): a media item with an unknown slot
   (`media_item`), and a stats counter that is missing, negative or not an integer (`stat`), stored
@@ -183,9 +189,9 @@ start and taking `/search` down with it.
 ### Listing API
 
 `GET /listings` and `GET /listings/{slug}` answer the store grid and the detail page from the read
-model, for the web tier only. The site calls `GET /listings` only in shadow, behind the
-`app-listings-read-model` flag, and serves its own database answer (`LISTINGS-READ-MODEL.md`,
-"Shadow diff"). Each is a port of the store's database read
+model, for the web tier only. The site calls `GET /listings` behind the `app-listings-read-model`
+flag, to shadow its database answer or to serve from it (`LISTINGS-READ-MODEL.md`, "Shadow diff"
+and "Serving"). Each is a port of the store's database read
 (`listAvailableListings`, `getListingDetail`), and `internal/listingread` names the site function each
 rule mirrors.
 
@@ -227,11 +233,12 @@ the civitai.red overrides only on a red host, preferred over the own image of th
 cover falling back to the first visible screenshot. A listing the viewer may not see is a 404,
 exactly like a missing one.
 
-| Route                       | Parameters                                                                                                                                                 | Answer                         |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| `GET /listings`             | `sort` (`top-rated` default, `popular`, `newest`, `name`), `kind` (`all`, `onsite`, `offsite`), `category`, `userId`, `cursor` (≤ 512), `limit` (1-50, 20) | `{items: [card], nextCursor?}` |
-| `GET /listings?slugs=a,b,c` | up to 50 slugs (each ≤ 64 bytes), `kind`, `category`; no `cursor`, no `userId`                                                                             | `{items: [card]}`              |
-| `GET /listings/{slug}`      | the slug (≤ 64 bytes)                                                                                                                                      | the detail, or 404             |
+| Route                               | Parameters                                                                                                                                                                      | Answer                                       |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `GET /listings`                     | `sort` (`top-rated` default, `popular`, `newest`, `name`), `kind` (`all`, `onsite`, `offsite`), `category`, `userId`, `cursor` (≤ 512), `limit` (1-50, 20), `subListings` (`1`) | `{items: [card], nextCursor?, subListings?}` |
+| `GET /listings?slugs=a,b,c`         | up to 50 slugs (each ≤ 64 bytes), `kind`, `category`; no `cursor`, no `userId`, no `subListings`                                                                                | `{items: [card]}`                            |
+| `GET /listings?subListingIds=a,b,c` | up to 50 sub-listing ids (each ≤ 64 bytes), `kind`, `category`, `userId`; no `cursor`                                                                                           | `{items: [sub-listing card], subListings}`   |
+| `GET /listings/{slug}`              | the slug (≤ 64 bytes)                                                                                                                                                           | the detail, or 404                           |
 
 - The sorts and the keyset paging are the store grid's: the same sort keys, `top-rated` with the
   global mean pinned in the cursor for the paging session. The global mean is over the listings the
@@ -240,6 +247,22 @@ exactly like a missing one.
   (the database path's `v2` cursors, an earlier layout's slug-keyed `rm1`, or anything that does not
   decode) pages from the start. Cursors are not signed: any well-formed one
   is accepted and only positions the page, which every viewer may read from any position anyway.
+- **Sub-listing cards.** With `subListings=1` the page mixes in each admitted listing's sub-listing
+  cards, as `listAvailableListings` does with `includeSubListings`: an item is gated by its parent
+  (the scope, the mature rule, the kind, category and developer filters, `userId` naming the parent's
+  creator) and by the mature rule over its own rating; it ranks on its parent's key for `top-rated`
+  and `popular` and on its own sort time or title for `newest` and `name`; and the order is (key,
+  tb, id), tb 0 for a listing and 1 for an item, ascending in every sort, so a listing comes before
+  its items on one key. A cursor on an item carries its key and `asl_` id, and its tb is read from
+  the id, as the database reads it; without `subListings` such a cursor resumes after its key. The
+  answer says `"subListings": true`, so the web tier can tell it from that of a service that would
+  have ignored the parameter. A card is the site's `SubListingCard`, its images (its own, else its
+  parent's own cover; its parent's own icon) gated at `subListingImageCeiling` (the card rating, the
+  viewer's levels on any host, lifted on a red host), never a civitai.red override or a screenshot.
+  `subListingIds` hydrates items by id, as `listStoreSubListingsByIds` does: the web tier's shadow
+  checks an item one page shows and the other does not. Its answer also names, in
+  `cappedListings`, every listing the viewer could find with those filters whose stream left items
+  out past the adapter's per-listing cap (`subListingsOmitted` in the body).
 - `slugs` hydrates a search the site answered itself: the site keeps its text search where it is
   (the app index's `/search`, routed by its own `viewerNotRoutable` rule) and asks here for the cards
   of the slugs it found, as `listStoreListingsBySlugs` does from the database. They come back in the

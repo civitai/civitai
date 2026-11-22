@@ -54,9 +54,10 @@ const LayoutVersion = 2
 
 // ListingsLayoutVersion is LayoutVersion for the listings read model's rows (store.Listing).
 // 2: the listing's own rating (listing_content_rating), which the read API gates on. 3: the listing
-// id (listing_id), the store's tie-break, required in every body. A generation of another layout is
+// id (listing_id), the store's tie-break, required in every body. 4: the listing's sub-listings
+// (sub_listing_keys, and subListings required in every body). A generation of another layout is
 // not served by the listing API (api.Server.ListingsLayout).
-const ListingsLayoutVersion = 3
+const ListingsLayoutVersion = 4
 
 // Events is one open subscription.
 type Events interface {
@@ -123,6 +124,13 @@ type Consumer struct {
 	// Decode turns an upsert's entity into its change, or says why the body is unusable (the
 	// entity is then treated as deleted). Nil is the app entity's (store.DecodeApp).
 	Decode func(urn, rev string, body json.RawMessage) (store.Change, error)
+	// KeepInvalidWhileServing, when set, keeps the stored row of an upsert whose body is unusable
+	// while the generation is serving (the cursor still advances, and the event is counted
+	// `invalid`), instead of deleting it. A building generation still treats such a body as deleted.
+	// The listings read model sets it: an adapter rolled back below the layout this index requires
+	// would otherwise turn every listing invalid and empty the serving generation one delete at a
+	// time, so the API would answer 200 with empty pages; with it, the last good rows keep serving.
+	KeepInvalidWhileServing bool
 	// Count, when set, is how many rows a generation holds, and switches on the empty-snapshot
 	// hold: a building generation that reaches Live with none is never promoted (package doc).
 	// Metrics.EmptySnapshots must be set with it.
@@ -368,7 +376,12 @@ func (c *Consumer) follow(ctx context.Context, gen *store.Generation) (live bool
 				decode = store.DecodeApp
 			}
 			ch, verr := decode(ev.Entity.URN, ev.Entity.Rev, ev.Entity.Body)
-			if verr != nil {
+			if verr != nil && c.KeepInvalidWhileServing && gen.State == store.StateServing {
+				// Serving: the last good row stays; only the cursor moves.
+				c.Log.Warn("unusable body; keeping the stored row", "schema", c.Schema, "urn", ev.Entity.URN, "reason", verr.Error())
+				ch = store.Change{Kind: store.ChangeProgress}
+				typ = "invalid"
+			} else if verr != nil {
 				// A body this index cannot use is treated as deleted (spec "Validity" rule 2).
 				c.Log.Warn("unusable body; treating it as deleted", "schema", c.Schema, "urn", ev.Entity.URN, "reason", verr.Error())
 				ch = store.Change{Kind: store.ChangeDelete, URN: ev.Entity.URN}

@@ -36,6 +36,7 @@ func ListingsConsumer(ctx context.Context, on bool, base Consumer, reg prometheu
 	c.Metrics = metrics.NewListings(reg)
 	c.Decode = store.DecodeListing
 	c.Count = st.Count
+	c.KeepInvalidWhileServing = true
 	if c.Log != nil {
 		c.Log = c.Log.With("stream", "listings")
 	}

@@ -14,7 +14,13 @@ import {
   audienceOf,
   withListings,
 } from '~/server/registry-adapter/audience';
-import { registryListingMedia } from '~/server/registry-adapter/catalog-media';
+import type { ListingSubListingItem } from '~/server/registry-adapter/catalog-media';
+import {
+  MAX_STREAM_SUB_LISTINGS,
+  capSubListings,
+  registryListingMedia,
+  registrySubListing,
+} from '~/server/registry-adapter/catalog-media';
 import type {
   CatalogListing,
   CatalogReadDeps,
@@ -25,12 +31,23 @@ import { listingFromCard, readCatalog } from '~/server/registry-adapter/catalog-
 import { JSON_SCHEMA_DIALECT } from '~/server/registry-adapter/collection-schema';
 import { createPollingAdapter } from '~/server/registry-adapter/cursor';
 import type { CatalogApp } from '~/server/registry-adapter/entities';
-import { buildEntities, readableBy, servedSchemas } from '~/server/registry-adapter/entities';
+import {
+  buildEntities,
+  listingBody,
+  readableBy,
+  servedSchemas,
+} from '~/server/registry-adapter/entities';
 import { newValidator } from '~/server/registry-adapter/json-schema';
-import { gateListings } from '~/server/registry-adapter/listing-stream';
+import { Registry } from 'prom-client';
+import {
+  createListingStreamMetrics,
+  gateListings,
+  reportSubListingsCapped,
+} from '~/server/registry-adapter/listing-stream';
 import type { AdapterContext, Change, Entity } from '~/server/registry-adapter/protocol';
 import { STORE_LISTING_SCHEMA_DOCUMENT } from '~/server/registry-adapter/schemas';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
+import type { StoreSubListingRow } from '~/server/services/blocks/app-sub-listing-store.service';
 import type { ListingMediaImage } from '~/server/services/blocks/listing-media-audience';
 import {
   LISTING_COVER_WIDTH,
@@ -92,6 +109,8 @@ const store = (over: Partial<ListingStoreFields> = {}): ListingStoreFields => ({
   forkable: true,
   connectClientId: null,
   forkOf: null,
+  subListings: [],
+  subListingsOmitted: 0,
   ...over,
 });
 
@@ -252,6 +271,8 @@ describe('store-listing@v1 field mapping', () => {
       betaMessage: 'Orbit is still settling',
       forkable: true,
       forkOf: { slug: 'parent-orbit' },
+      subListings: [],
+      subListingsOmitted: 0,
     });
   });
 
@@ -307,6 +328,8 @@ describe('store-listing@v1 field mapping', () => {
       betaMessage: null,
       forkable: false,
       forkOf: null,
+      subListings: [],
+      subListingsOmitted: 0,
     });
   });
 
@@ -528,6 +551,8 @@ describe('the listing read', () => {
     forkable: false,
     connectClientId: null,
     fork: { isFork: false, forkOfListingId: null },
+    subListings: [],
+    subListingsOmitted: 0,
   };
   const deps = (over: Partial<CatalogReadDeps>, calls: string[] = []): CatalogReadDeps => ({
     resolveScope: async () => 'full',
@@ -823,5 +848,311 @@ describe('a failed listing read fails only the listing stream', () => {
     const apps = [...((await adapter.snapshot(APP, ctx())).entities as Entity[])];
     expect(apps.map((e) => e.urn)).toEqual(['urn:apps.civitai.com:app/orbit-b']);
     await expect(adapter.snapshot(LISTING, ctx())).rejects.toMatchObject({ code: 'unavailable' });
+  });
+});
+
+/**
+ * Sub-listings (`subListings`, LISTINGS-READ-MODEL.md slice 6): each row the store grid could show
+ * becomes an item with its card's own values, built with the card's own rules (`registrySubListing`),
+ * carried in its parent's body, and narrowed per audience like the media.
+ */
+describe('sub-listings: the card fields of every item the grid could show', () => {
+  const ITEM = 'asl_01J9ZK3Q4R5S6T7V8W9X0YQ001';
+  const row = (over: Partial<StoreSubListingRow> = {}): StoreSubListingRow => ({
+    id: ITEM,
+    title: 'Neon Drift',
+    tagline: 'A racing preset',
+    sub_path: 'presets/neon-drift',
+    content_rating: 'r',
+    author_user_id: 6411,
+    author_username: 'drifter-k4',
+    author_image: 'https://img.example/drifter-k4.png',
+    parent_id: 'apl_gen_hub',
+    parent_slug: 'gen-hub',
+    parent_name: 'Gen Hub',
+    parent_kind: 'onsite',
+    parent_category: 'generation',
+    parent_content_rating: 'pg13',
+    parent_cover_url: null,
+    parent_cover_nsfw_level: null,
+    parent_cover_ingestion: null,
+    parent_cover_needs_review: null,
+    parent_cover_poi: null,
+    parent_cover_minor: null,
+    parent_cover_tos_violation: null,
+    parent_cover_acceptable_minor: null,
+    parent_cover_blocked_for: null,
+    parent_cover_model_restricted: null,
+    parent_icon_url: null,
+    parent_icon_nsfw_level: null,
+    parent_icon_ingestion: null,
+    parent_icon_needs_review: null,
+    parent_icon_poi: null,
+    parent_icon_minor: null,
+    parent_icon_tos_violation: null,
+    parent_icon_acceptable_minor: null,
+    parent_icon_blocked_for: null,
+    parent_icon_model_restricted: null,
+    parent_link_template: null,
+    image_url: 'items/neon-r',
+    image_nsfw_level: NsfwLevel.R,
+    image_ingestion: 'Scanned',
+    image_needs_review: null,
+    image_poi: false,
+    image_minor: false,
+    image_tos_violation: false,
+    image_acceptable_minor: false,
+    image_blocked_for: null,
+    image_model_restricted: false,
+    image_public: true,
+    parent_listing_id: 'apl_gen_hub',
+    sort_time: '2026-10-11T12:13:14.567891Z',
+    ...over,
+  });
+
+  it('an on-site item: its link under the parent run route, its rated image at cover width', () => {
+    expect(registrySubListing(row())).toEqual({
+      id: ITEM,
+      title: 'Neon Drift',
+      tagline: 'A racing preset',
+      contentRating: 'r',
+      // The stricter of the parent's PG-13 and the item's R.
+      cardContentRating: 'r',
+      author: { id: 6411, username: 'drifter-k4', image: 'https://img.example/drifter-k4.png' },
+      // To the microsecond, as the grid's newest key reads it.
+      sortTime: '2026-10-11T12:13:14.567891Z',
+      runHref: `/apps/run/gen-hub/presets/neon-drift?sl=${ITEM}`,
+      external: false,
+      image: {
+        url: listingMediaEdgeUrl('items/neon-r', LISTING_COVER_WIDTH),
+        nsfwLevel: NsfwLevel.R,
+        rating: 'r',
+      },
+    });
+  });
+
+  it('an unrated item under a stricter parent shows the parent rating; both unrated, none', () => {
+    expect(registrySubListing(row({ content_rating: null }))?.cardContentRating).toBe('pg13');
+    expect(
+      registrySubListing(row({ content_rating: null, parent_content_rating: null }))
+        ?.cardContentRating
+    ).toBeNull();
+  });
+
+  it.each<[string, Partial<StoreSubListingRow>]>([
+    ['not in a public post', { image_public: false }],
+    [
+      'still being scanned',
+      { image_ingestion: 'Pending' as StoreSubListingRow['image_ingestion'] },
+    ],
+    ['flagged', { image_poi: true }],
+    ['Blocked', { image_nsfw_level: NsfwLevel.Blocked }],
+    ['absent', { image_url: null, image_ingestion: null }],
+  ])('🔴 an item image %s is never published: the card falls back to the parent', (_n, over) => {
+    const item = registrySubListing(row(over));
+    expect(item?.image).toBeNull();
+    // The item itself is still carried.
+    expect(item?.id).toBe(ITEM);
+  });
+
+  it('an off-site item: its link is the parent link template filled in, external', () => {
+    const offsite = row({
+      parent_kind: 'offsite',
+      sub_path: 'neon-drift',
+      parent_link_template: 'https://games.example.com/play?game={id}',
+    });
+    expect(registrySubListing(offsite)).toMatchObject({
+      runHref: 'https://games.example.com/play?game=neon-drift',
+      external: true,
+    });
+  });
+
+  it.each([
+    null,
+    'http://games.example.com/?game={id}',
+    'https://games.example.com/no-placeholder',
+  ])('🔴 an off-site item with link template %s has nowhere to link: not published', (template) => {
+    expect(
+      registrySubListing(row({ parent_kind: 'offsite', parent_link_template: template }))
+    ).toBeNull();
+  });
+
+  const item = (over: Partial<ListingSubListingItem>): ListingSubListingItem => ({
+    id: ITEM,
+    title: 'Neon Drift',
+    tagline: null,
+    contentRating: null,
+    cardContentRating: 'pg',
+    author: { id: 6411, username: 'drifter-k4', image: null },
+    sortTime: '2026-10-11T12:13:14.567891Z',
+    runHref: `/apps/run/gen-hub/presets/neon-drift?sl=${ITEM}`,
+    external: false,
+    image: null,
+    ...over,
+  });
+  const PG_R_IMAGE = item({
+    id: 'asl_01J9ZK3Q4R5S6T7V8W9X0YQ011',
+    image: { url: 'https://img.example/item-r.png', nsfwLevel: NsfwLevel.R, rating: 'r' },
+  });
+  const X_ITEM = item({
+    id: 'asl_01J9ZK3Q4R5S6T7V8W9X0YQ012',
+    contentRating: 'x',
+    cardContentRating: 'x',
+  });
+  const XXX_ITEM = item({
+    id: 'asl_01J9ZK3Q4R5S6T7V8W9X0YQ013',
+    contentRating: 'xxx',
+    cardContentRating: 'xxx',
+  });
+  const UNRATED = item({ id: 'asl_01J9ZK3Q4R5S6T7V8W9X0YQ014', cardContentRating: null });
+  const sets = buildEntities(
+    [
+      app('hub-l5', 'pg', {
+        store: store({ subListings: [PG_R_IMAGE, X_ITEM, XXX_ITEM, UNRATED] }),
+      }),
+    ],
+    { ...BASE, listings: true }
+  );
+  const served = (audience: Audience) =>
+    readableBy(sets, LISTING, audience).map(
+      (e) => (e.body as { subListings: ListingSubListingItem[] }).subListings
+    );
+
+  it('the body carries every item as built, and validates against the published schema', () => {
+    const body = listingSet(sets)[0].body as Record<string, unknown>;
+    expect(body.subListings).toEqual([PG_R_IMAGE, X_ITEM, XXX_ITEM, UNRATED]);
+    const validate = newValidator().compile(STORE_LISTING_SCHEMA_DOCUMENT);
+    expect(validate(body)).toBe(true);
+    // The schema can refuse one: an item without its link.
+    const { runHref: _runHref, ...noLink } = PG_R_IMAGE;
+    expect(validate({ ...body, subListings: [noLink] })).toBe(false);
+  });
+
+  it('🔴 a PG-only audience gets the PG item without its R image, and no mature or unrated item', () => {
+    expect(served(withListings(ANONYMOUS_AUDIENCE))).toEqual([[{ ...PG_R_IMAGE, image: null }]]);
+  });
+
+  it('🔴 an R audience gets the R image, and still no X, XXX or unrated item', () => {
+    expect(served(withListings(audienceOf({ r: true, x: false, xxx: false })))).toEqual([
+      [PG_R_IMAGE],
+    ]);
+  });
+
+  it('a service (every rating) gets every item whole, in the body as built', () => {
+    expect(served(withListings(SERVICE_AUDIENCE))).toEqual([
+      [PG_R_IMAGE, X_ITEM, XXX_ITEM, UNRATED],
+    ]);
+    const rev = (a: Audience) => readableBy(sets, LISTING, a)[0]?.rev;
+    expect(rev(withListings(SERVICE_AUDIENCE))).toBe(listingSet(sets)[0].rev);
+    // A narrowed body is a body of its own.
+    expect(rev(withListings(ANONYMOUS_AUDIENCE))).not.toBe(rev(withListings(SERVICE_AUDIENCE)));
+  });
+});
+
+/**
+ * The per-listing cap on sub-listing items (`MAX_STREAM_SUB_LISTINGS`): a body travels as one
+ * registry stream line, which app-index-go reads up to 1 MiB, so the items it embeds are bounded.
+ */
+describe('the sub-listing cap', () => {
+  const id = (n: number) => `asl_01J9ZK3Q4R5S6T7V8W9X${String(n).padStart(6, '0')}`;
+  const at = (n: number) => `2026-01-01T00:00:00.${String(n).padStart(6, '0')}Z`;
+  const item = (n: number, sortTime = at(n)): ListingSubListingItem => ({
+    id: id(n),
+    title: `Item ${n}`,
+    tagline: null,
+    contentRating: null,
+    cardContentRating: 'pg',
+    author: { id: n, username: null, image: null },
+    sortTime,
+    runHref: `/apps/run/hub/i/${n}?sl=${id(n)}`,
+    external: false,
+    image: null,
+  });
+
+  it('is 200', () => {
+    expect(MAX_STREAM_SUB_LISTINGS).toBe(200);
+  });
+
+  it('at or under the cap: every item, none left out', () => {
+    const items = Array.from({ length: 200 }, (_, i) => item(i));
+    expect(capSubListings(items)).toEqual({ items, omitted: 0 });
+  });
+
+  it('🔴 over it: the most recently approved are kept, in id order; the oldest left out and counted', () => {
+    // In id order, with sort times running against it: item 0 is the newest.
+    const items = Array.from({ length: 205 }, (_, i) => item(i, at(1000 - i)));
+    const { items: kept, omitted } = capSubListings(items);
+    expect(omitted).toBe(5);
+    expect(kept.map((k) => k.id)).toEqual(items.slice(0, 200).map((k) => k.id));
+  });
+
+  it('a tie on the sort time keeps the higher id, so the same catalog keeps the same items', () => {
+    const items = [item(1, at(5)), item(2, at(5)), item(3, at(5))];
+    expect(capSubListings(items, 2).items.map((k) => k.id)).toEqual([id(2), id(3)]);
+    expect(capSubListings([...items].reverse(), 2).items.map((k) => k.id)).toEqual([id(3), id(2)]);
+  });
+
+  it('🔴 a body at the cap with every item at its largest stays well under the 1 MiB stream line', () => {
+    // Three UTF-8 bytes per UTF-16 unit, at every bound the store checks; a 300-character link
+    // template; long avatar and image URLs.
+    const big = (n: number): ListingSubListingItem => ({
+      id: id(n),
+      title: '€'.repeat(80),
+      tagline: '€'.repeat(140),
+      contentRating: 'pg13',
+      cardContentRating: 'pg13',
+      author: {
+        id: 1_000_000_000 + n,
+        username: 'u'.repeat(64),
+        image: `https://image.example/${'a'.repeat(280)}`,
+      },
+      sortTime: at(n),
+      runHref: `https://${'h'.repeat(290)}/${'i'.repeat(64)}`,
+      external: true,
+      image: {
+        url: `https://image.example/${'b'.repeat(200)}/width=1200`,
+        nsfwLevel: NsfwLevel.PG13,
+        rating: 'pg13',
+      },
+    });
+    const items = capSubListings(Array.from({ length: 250 }, (_, i) => big(i))).items;
+    const body = listingBody(app('cap-probe', 'pg13'), 'urn:apps.civitai.com:app/cap-probe', {
+      ...store(),
+      subListings: items,
+      subListingsOmitted: 50,
+    });
+    const bytes = Buffer.byteLength(JSON.stringify(body), 'utf8');
+    expect(items).toHaveLength(200);
+    // About 1.9 KB an item, 0.36 MiB for 200: under half the line, so the rest of the body has room.
+    expect(bytes).toBeLessThan(512 * 1024);
+    // Positive control: the uncapped items would not fit that bound.
+    const uncapped = Array.from({ length: 1000 }, (_, i) => big(i));
+    expect(Buffer.byteLength(JSON.stringify(uncapped), 'utf8')).toBeGreaterThan(1024 * 1024);
+  });
+
+  it('the body says how many it left out, and the schema accepts it', () => {
+    const body = listingBody(app('cap-probe', 'pg'), 'urn:apps.civitai.com:app/cap-probe', {
+      ...store(),
+      subListingsOmitted: 7,
+    });
+    expect(body.subListingsOmitted).toBe(7);
+    const validate = newValidator().compile(STORE_LISTING_SCHEMA_DOCUMENT);
+    expect(validate(body)).toBe(true);
+    expect(validate({ ...body, subListingsOmitted: -1 })).toBe(false);
+  });
+
+  it('each capped listing is counted and logged', async () => {
+    const { dropped, registry } = createListingStreamMetrics(new Registry());
+    const lines: string[] = [];
+    const report = reportSubListingsCapped(dropped, (l) => lines.push(l), 200);
+    report('apl_hub_1', 5);
+    report('apl_hub_2', 3);
+    expect(
+      await registry.getSingleMetricAsString('registry_adapter_listing_sub_listings_dropped_total')
+    ).toContain('registry_adapter_listing_sub_listings_dropped_total 8');
+    expect(lines).toEqual([
+      'registry-adapter: listing apl_hub_1: 5 sub-listing item(s) past the cap of 200 left out of its body',
+      'registry-adapter: listing apl_hub_2: 3 sub-listing item(s) past the cap of 200 left out of its body',
+    ]);
   });
 });

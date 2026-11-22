@@ -193,20 +193,41 @@ export function readableBy(sets: EntitySets, schema: string, audience: Audience)
         return false;
       }
     };
+    // Its sub-listings, like its media, by their own ratings: an item whose card rating the
+    // audience may not read is left out, and an item image rated above what it may read is dropped
+    // from the item (the item stays, as the store shows it with its parent's cover instead).
+    const ratingAdmitted = (rating: unknown) =>
+      (typeof rating === 'string' || rating === null) && audienceAdmits(audience, rating);
     return readable.map((e) => {
       const body = e.body as {
         media?: Array<{ rating?: unknown }>;
+        subListings?: Array<{ cardContentRating?: unknown; image?: { rating?: unknown } | null }>;
         forkOf?: { slug?: unknown } | null;
       } & Record<string, unknown>;
       const media = (body.media ?? []).filter(
         (m) => typeof m.rating === 'string' && audienceAdmits(audience, m.rating)
       );
+      const allSubListings = body.subListings ?? [];
+      const subListings = allSubListings
+        .filter((item) => ratingAdmitted(item.cardContentRating ?? null))
+        .map((item) =>
+          item.image &&
+          !(typeof item.image.rating === 'string' && ratingAdmitted(item.image.rating))
+            ? { ...item, image: null }
+            : item
+        );
+      const subListingsNarrowed =
+        subListings.length !== allSubListings.length ||
+        subListings.some((item, i) => item !== allSubListings[i]);
       const parent = body.forkOf?.slug;
       const hideParent = typeof parent === 'string' && !parentAdmitted(parent);
-      if (media.length === (body.media ?? []).length && !hideParent) return e;
+      if (media.length === (body.media ?? []).length && !subListingsNarrowed && !hideParent) {
+        return e;
+      }
       return entity(e.urn, STORE_LISTING_SCHEMA, {
         ...body,
         media,
+        ...(body.subListings ? { subListings } : {}),
         ...(hideParent ? { forkOf: { slug: null } } : {}),
       });
     });
@@ -512,6 +533,23 @@ export function listingBody(
     betaMessage: store.betaMessage,
     forkable: store.forkable,
     forkOf: store.forkOf ? { slug: store.forkOf.slug } : null,
+    // The sub-listing cards the store grid shows beside this listing (`ListingSubListingItem`).
+    subListings: store.subListings.map((item) => ({
+      id: item.id,
+      title: item.title,
+      tagline: item.tagline,
+      contentRating: item.contentRating,
+      cardContentRating: item.cardContentRating,
+      author: { id: item.author.id, username: item.author.username, image: item.author.image },
+      sortTime: item.sortTime,
+      runHref: item.runHref,
+      external: item.external,
+      image: item.image
+        ? { url: item.image.url, nsfwLevel: item.image.nsfwLevel, rating: item.image.rating }
+        : null,
+    })),
+    // How many more items the grid shows than `subListings` carries (the cap, `capSubListings`).
+    subListingsOmitted: store.subListingsOmitted,
   };
 }
 

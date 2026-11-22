@@ -191,6 +191,86 @@ type Detail struct {
 	ForkOf           *ForkOf                 `json:"forkOf"`
 }
 
+// SubListingParent is a sub-listing card's parent (SubListingCard.parent).
+type SubListingParent struct {
+	ID      string  `json:"id"`
+	Slug    string  `json:"slug"`
+	Name    string  `json:"name"`
+	IconURL *string `json:"iconUrl"`
+}
+
+// SubListingCard is SubListingCard (app-listing-read.schema.ts): a store card for an item a listing
+// placed in the store.
+type SubListingCard struct {
+	CardType      string           `json:"cardType"`
+	ID            string           `json:"id"`
+	Name          string           `json:"name"`
+	Tagline       *string          `json:"tagline"`
+	Kind          string           `json:"kind"`
+	Category      *string          `json:"category"`
+	ContentRating *string          `json:"contentRating"`
+	CoverURL      *string          `json:"coverUrl"`
+	Creator       Creator          `json:"creator"`
+	Parent        SubListingParent `json:"parent"`
+	RunHref       string           `json:"runHref"`
+	// External is true, or absent: the card's `external?: true`.
+	External *bool `json:"external,omitempty"`
+}
+
+// ProjectSubListingCard is the card of parent's sub-listing s for v (projectSubListingCard). parent
+// must carry its body and media (store.Listings GetMany), and s be one of its SubListings. Its kind,
+// category and parent fields are the parent's; its rating, title, tagline, author and link the
+// item's, as the stream carries them. One ceiling gates every image on it
+// (subListingImageCeiling, over the card's rating): the cover is the item's own image when it is
+// visible, else the parent's own cover when that is, else none; the parent icon is the parent's own
+// icon when visible. Never the civitai.red overrides, and never a screenshot as the cover, as the
+// card reads only the parent's cover_id and icon_id.
+func ProjectSubListingCard(parent store.Listing, s store.SubListing, v Viewer) SubListingCard {
+	ceiling := subListingImageCeiling(v, s.CardContentRating)
+	var ownIcon, ownCover *store.ListingMedia
+	for i := range parent.Media {
+		m := &parent.Media[i]
+		switch {
+		case m.Host == "any" && m.Slot == "icon" && ownIcon == nil:
+			ownIcon = m
+		case m.Host == "any" && m.Slot == "cover" && ownCover == nil:
+			ownCover = m
+		}
+	}
+	var cover, icon *string
+	if ownCover != nil && visibleAt(ownCover.NsfwLevel, ceiling) {
+		cover = &ownCover.URL
+	}
+	if s.Image != nil && visibleAt(s.Image.NsfwLevel, ceiling) {
+		cover = &s.Image.URL
+	}
+	if ownIcon != nil && visibleAt(ownIcon.NsfwLevel, ceiling) {
+		icon = &ownIcon.URL
+	}
+	c := SubListingCard{
+		CardType: "sub-listing", ID: s.ID, Name: s.Title, Tagline: s.Tagline, Kind: parent.Kind,
+		Category: nullable(parent.Category), ContentRating: nullable(s.CardContentRating), CoverURL: cover,
+		Creator: Creator{ID: s.Author.ID, Username: s.Author.Username, Image: s.Author.Image},
+		Parent:  SubListingParent{ID: parent.ID, Slug: parent.Slug, Name: parent.Name, IconURL: icon},
+		RunHref: s.RunHref,
+	}
+	if s.External {
+		t := true
+		c.External = &t
+	}
+	return c
+}
+
+// SubListingOf is the sub-listing of l whose id is id, with every field (l read with its body).
+func SubListingOf(l store.Listing, id string) (store.SubListing, bool) {
+	for _, s := range l.SubListings {
+		if s.ID == id {
+			return s, true
+		}
+	}
+	return store.SubListing{}, false
+}
+
 // ForkOf is ListingForkOf: the parent's slug and name only when the viewer may see the parent.
 type ForkOf struct {
 	Visible bool    `json:"visible"`
