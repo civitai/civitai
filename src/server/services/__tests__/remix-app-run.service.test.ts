@@ -348,8 +348,32 @@ vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) =
       return images;
     },
   });
+  /** Upscales the source, then its own output, each time claiming a smaller size than it has. */
+  const shrinks = defineRemixApp({
+    slug: 'shrinks',
+    name: 'Shrinks',
+    icon: 'sparkles',
+    version: 1,
+    engine: DEFAULT_ENGINE,
+    async run(ctx) {
+      const claim = { width: 64, height: 48 };
+      const first = await ctx.workflow({
+        kind: 'upscale',
+        image: { url: ctx.source.url, ...claim },
+        scale: 2,
+      });
+      return (
+        await ctx.workflow({
+          kind: 'upscale',
+          image: { url: first.images[0].url, ...claim },
+          scale: 2,
+        })
+      ).images;
+    },
+  });
   const apps = new Map(
     [
+      shrinks,
       pickThenEdit,
       endless,
       asksFirst,
@@ -456,10 +480,19 @@ const whatIfs = () =>
   h.submitWorkflow.mock.calls.filter(([args]) => (args as { query?: object }).query);
 
 /** Lands a workflow's outputs in the shape the orchestrator returns for its graph. */
+/** The size every fake output reports, as the orchestrator's normalised blobs carry one. */
+const OUTPUT_SIZE = { width: 1536, height: 1152 };
+
 function finish(workflowId: string, urls: string[], nsfwLevel: Record<string, string> = {}) {
   const workflow = h.workflows.find((w) => w.id === workflowId)!;
   workflow.status = 'succeeded';
-  const blobs = urls.map((url) => ({ url, available: true, nsfwLevel: nsfwLevel[url] }));
+  const blobs = urls.map((url) => ({
+    url,
+    available: true,
+    nsfwLevel: nsfwLevel[url],
+    width: OUTPUT_SIZE.width,
+    height: OUTPUT_SIZE.height,
+  }));
   workflow.steps = [
     // img2img:upscale runs as a comfy step, whose output is `blobs`, not `images`.
     workflow.tags.includes('img2img:upscale')
@@ -1144,6 +1177,58 @@ describe('Pick of four', () => {
     const priced = JSON.stringify(body);
     expect(priced).toContain('ImageUpscaleWithModel');
     expect(priced).toContain(takes[2]);
+    expect(submits()).toHaveLength(1);
+  });
+
+  it('prices and runs an upscale at the size the host knows, never the size the app claims', async () => {
+    addImage(SOURCE_ID);
+    const sizesOf = (call: unknown) =>
+      [...JSON.stringify(call).matchAll(/"width":(\d+),"height":(\d+)/g)].map(
+        ([, w, h]) => `${w}x${h}`
+      );
+    const { runId } = await startRemixRun({
+      slug: 'shrinks',
+      imageId: SOURCE_ID,
+      nonce: 'nonce-shrinks',
+      quote: 30,
+      caller: caller(),
+    });
+    // What it is priced at is what it runs as, both sized from the input the host knows.
+    const upscaled = (input: string) => {
+      const submitted = sizesOf(h.submitWorkflow.mock.calls.at(-1));
+      expect(submitted).toContain(input);
+      expect(submitted).not.toContain('64x48');
+      expect(submitted).toEqual(expect.arrayContaining(sizesOf(whatIfs().at(-1))));
+    };
+    // The source, at its row's size.
+    upscaled('1200x800');
+    finish(submits()[0].id, [blob('upscaled')]);
+    await advanceRemixRun({ runId, quote: 30, caller: caller() });
+    // Its own output, at the size the run recorded for it.
+    upscaled('1536x1152');
+    expect(submits()).toHaveLength(2);
+  });
+
+  it('refuses an upscale of an output whose size the run never recorded', async () => {
+    addImage(SOURCE_ID);
+    const { runId } = await startRemixRun({
+      slug: 'shrinks',
+      imageId: SOURCE_ID,
+      nonce: 'nonce-shrinks-unsized',
+      quote: 30,
+      caller: caller(),
+    });
+    const [workflow] = submits();
+    finish(workflow.id, [blob('unsized')]);
+    for (const step of workflow.steps!)
+      for (const out of (step.output as { blobs: Record<string, unknown>[] }).blobs) {
+        delete out.width;
+        delete out.height;
+      }
+    await expect(advanceRemixRun({ runId, quote: 30, caller: caller() })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'This upscale names an image of unknown size',
+    });
     expect(submits()).toHaveLength(1);
   });
 

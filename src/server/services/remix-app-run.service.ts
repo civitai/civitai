@@ -285,6 +285,7 @@ async function optionPrices({
           image,
           request: next.request,
           viewer: viewerOf(caller),
+          log,
         });
         const { cost } = await whatIfPresetImageGen({
           graphInput: run.graphInput,
@@ -561,6 +562,7 @@ async function advance({
     image,
     request: outcome.effect.request,
     viewer: viewerOf(caller),
+    log,
   });
   // The graph submit skips its own input gate ('checked-by-caller').
   await assertInputsUsable(run.inputUrls, caller, 'remixAppRun');
