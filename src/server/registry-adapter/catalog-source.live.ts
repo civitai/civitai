@@ -22,7 +22,10 @@ import {
   publicConnectClientId,
   publicForkable,
 } from '~/server/services/blocks/app-listing.service';
-import { readLiveActionsRunSourcesForBlocks } from '~/server/services/blocks/actions-run-source.service';
+import {
+  actionsRunSourceBlockId,
+  readLiveActionsRunSourcesForBlocks,
+} from '~/server/services/blocks/actions-run-source.service';
 import type { ListingForkProvenance } from '~/server/services/blocks/app-fork.service';
 import {
   NO_FORK_PROVENANCE,
@@ -170,13 +173,9 @@ export function liveCatalogReadDeps({
       return new Map(rows.map((r) => [r.id, registryIconUrl(r)]));
     },
 
-    // Only while the listing stream is on: one query per field for the whole catalog, never one per
-    // listing. The icon, cover and screenshots are the store's own selects (`listingHydrateSelect`),
-    // so the stream reads the same images, screenshot filter and order as the card and detail it
-    // mirrors. Only those pieces: the whole select reads columns the stream never carries (the
-    // manifest), and its metric piece reads four counters where one is needed. The detail fields
-    // go through the detail's own rules (`listingDetailScopes`, `listingDetailConnectScopes`,
-    // `publicBetaMessage`, `publicConnectClientId`) and the batched forms of its reads.
+    // Batched (one query per field for the whole catalog) and only while the stream is on. Reuses
+    // the store's media selects, not listingHydrateSelect whole: that reads columns the stream
+    // never carries.
     ...(listings
       ? {
           async loadListingExtras(listingIds: string[]) {
@@ -205,23 +204,29 @@ export function liveCatalogReadDeps({
               readListingIssueTrackerUrlsForRender(listingIds, dbRead),
               readListingForkProvenanceMany(listingIds, dbRead),
             ]);
-            // On-site apps only, as the detail reads it: an off-site listing has no submitted bundle.
+            // The run is read as the detail reads it (`actionsRunSourceBlockId`).
             const runs = await readLiveActionsRunSourcesForBlocks(
               dbRead,
-              rows.flatMap((r) => (r.kind === 'onsite' && r.appBlockId ? [r.appBlockId] : []))
+              rows.flatMap((r) => {
+                const blockId = actionsRunSourceBlockId(r);
+                return blockId ? [blockId] : [];
+              })
             );
             return new Map(
-              rows.map((r) => [
-                r.id,
-                listingExtrasFromRow(r, {
-                  red: red.get(r.id) ?? null,
-                  collaborators: collaborators.get(r.id) ?? [],
-                  beta: beta.get(r.id) ?? null,
-                  issueTrackerUrl: issueTrackers.get(r.id) ?? null,
-                  fork: forks.get(r.id) ?? NO_FORK_PROVENANCE,
-                  run: (r.kind === 'onsite' && r.appBlockId && runs.get(r.appBlockId)) || null,
-                }),
-              ])
+              rows.map((r) => {
+                const blockId = actionsRunSourceBlockId(r);
+                return [
+                  r.id,
+                  listingExtrasFromRow(r, {
+                    red: red.get(r.id) ?? null,
+                    collaborators: collaborators.get(r.id) ?? [],
+                    beta: beta.get(r.id) ?? null,
+                    issueTrackerUrl: issueTrackers.get(r.id) ?? null,
+                    fork: forks.get(r.id) ?? NO_FORK_PROVENANCE,
+                    run: (blockId && runs.get(blockId)) || null,
+                  }),
+                ];
+              })
             );
           },
         }
