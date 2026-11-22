@@ -173,7 +173,8 @@ series is registered, nothing subscribes to the schema and the listing routes ar
   (still counted `invalid`), so an adapter rolled back below this layout does not empty the
   generation. A stale row may lack what its upsert changed (a stricter gate included), so while the
   serving generation holds one the listing API answers 503 `not_ready` and the site reads the
-  database; `app_index_listings_stale_rows` counts them. The mark is stored with the row, so a
+  database; `app_index_listings_stale_rows` counts them (set only on the replica holding the
+  consumer lock, so read it with `max()`). The mark is stored with the row, so a
   restart keeps it; a later valid upsert or a delete of the listing ends it.
 - What can be left out without misgating is dropped and the listing kept, each drop logged and
   counted (`app_index_listings_dropped_total{what}`): a media item with an unknown slot

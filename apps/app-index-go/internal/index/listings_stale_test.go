@@ -115,3 +115,32 @@ func testInvalidWhileServingFailsClosed(t *testing.T, st store.Listings) {
 	h.servingCursorIs(t, "c5")
 	wantListingsStatus(t, st, "after an invalid upsert of a listing never held", http.StatusOK)
 }
+
+// Two stale rows: a valid upsert of one ends only its own mark, so the API still answers 503 with
+// one left; a valid upsert of the second brings it back.
+func testOneValidUpsertClearsOnlyItsOwnMark(t *testing.T, st store.Listings) {
+	h := startListings(t, st)
+	c := h.reg.next(t)
+	c.listing(t, "alpha", "Alpha")
+	c.listing(t, "beta", "Beta")
+	c.live(t, "L1")
+	h.servingCursorIs(t, "L1")
+	gen := h.state(t).Serving.ID
+	c.invalidListing(t, "alpha", "c1")
+	c.invalidListing(t, "beta", "c2")
+	h.servingCursorIs(t, "c2")
+	h.staleGaugeIs(t, 2)
+
+	c.send(t, "upsert", map[string]any{"entity": listingEntity("alpha", "Alpha Two"), "cursor": "c3"})
+	h.servingCursorIs(t, "c3")
+	if n, err := st.StaleCount(t.Context(), gen); err != nil || n != 1 {
+		t.Fatalf("stale count after a valid upsert of one of two = %d %v, want 1", n, err)
+	}
+	h.staleGaugeIs(t, 1)
+	wantListingsStatus(t, st, "with one of two stale rows cleared", http.StatusServiceUnavailable)
+
+	c.send(t, "upsert", map[string]any{"entity": listingEntity("beta", "Beta Two"), "cursor": "c4"})
+	h.servingCursorIs(t, "c4")
+	h.staleGaugeIs(t, 0)
+	wantListingsStatus(t, st, "with both stale rows cleared", http.StatusOK)
+}

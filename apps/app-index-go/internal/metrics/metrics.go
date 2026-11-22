@@ -57,7 +57,8 @@ type Stream struct {
 	// what (DroppedWhat). Nil for the app stream.
 	Dropped *prometheus.CounterVec
 	// Stale is how many rows of the serving generation are marked stale, as the consumer last
-	// read it (index.Consumer.StaleCount). Nil for the app stream.
+	// read it (index.Consumer.StaleCount): non-zero only on the replica holding the consumer lock,
+	// so it is read with max(). Nil for the app stream.
 	Stale prometheus.Gauge
 
 	lastEvent atomic.Int64 // unix nanos of the last applied event; 0 = none yet
@@ -184,7 +185,7 @@ func NewListings(reg prometheus.Registerer) *Stream {
 	}, []string{"what"})
 	s.Stale = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "app_index_listings_stale_rows",
-		Help: "Rows of the serving listings generation kept from before an upsert it could not use, which may lack what that upsert changed. While it is above 0 the listing API answers 503 not_ready and the site reads the database. Set by the process holding the consumer lock.",
+		Help: "Rows of the serving listings generation kept from before an upsert it could not use, which may lack what that upsert changed. While it is above 0 the listing API answers 503 not_ready and the site reads the database. Set only by the replica holding the consumer lock (0 on every other one): read it with max().",
 	})
 	for _, v := range DroppedWhat {
 		s.Dropped.WithLabelValues(v)

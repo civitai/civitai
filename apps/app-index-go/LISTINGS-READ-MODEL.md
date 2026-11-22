@@ -429,7 +429,13 @@ consecutive days of shadow traffic:
   `sum by (surface) (increase(app_listings_read_model_mismatches_total{kind=~"visibility_missing|visibility_extra|media|identity_field"}[7d])) / sum by (surface) (increase(app_listings_read_model_compared_slugs_total[7d])) < 0.001`;
 - every `visibility_extra` that did occur is explained (the log names the slugs; a listing
   delisted within the adapter's poll is the expected one);
-- the breaker never opened, and `compared` is the large majority of the outcomes.
+- some slugs were compared, so the ratio above is not 0/0:
+  `sum by (surface) (increase(app_listings_read_model_compared_slugs_total[7d])) > 0`;
+- `compared` is more than 90% of the shadow outcomes:
+  `sum by (surface) (increase(app_listings_read_model_shadow_requests_total{outcome="compared"}[7d])) / sum by (surface) (increase(app_listings_read_model_shadow_requests_total[7d])) > 0.9`;
+- the breaker never opened. It is one per process, shared by serve and shadow, with no `surface`
+  label:
+  `sum(increase(app_listings_read_model_breaker_transitions_total{to="open"}[7d])) == 0`.
 
 Order and `stats_field` mismatches are reported, not gating: a stats field trails the database by
 up to an adapter poll, and the order can move with it. A listing whose stats differ persistently
@@ -498,7 +504,7 @@ rejected sub-listing, a banned author. While the serving generation holds any st
 listing request is answered 503 `not_ready` (counted `app_index_listings_requests_total{outcome="stale"}`;
 the count is `app_index_listings_stale_rows`), and the site reads the database (Fallback). A later
 valid upsert or a delete of that listing ends its mark; the index rolled back too, rebuilding at the
-older layout, ends them all.
+older layout, ends them all (Operating a stale row, below).
 
 1. The adapter publishes `listingContentRating` (slice 3) and the listing `id` and detail fields
    (slice 3b), so the read model holds every listing at layout 3. This must be deployed before an
@@ -524,6 +530,32 @@ older layout, ends them all.
    serve: it ignores `subListings=1` (its answer lacks the mark, so the web tier reads the database
    instead), but a cursor after a sub-listing card, from a page the database served, is read there
    as a listing position and can serve again the listings on that card's sort key.
+
+### Operating a stale row
+
+- **Alert condition:** `max(app_index_listings_stale_rows) > 0`. The gauge is set only by the
+  replica holding the listings consumer lock (it reads 0 on every other one), hence `max()`. While
+  it holds, every listing request is 503 and the site serves the database: nothing wrong is shown,
+  but the read model serves nothing.
+- **Which listing:** the consumer logs each one at warn, with `stream=listings`, `urn` (the store
+  listing's URN) and `reason` (what `ListingFromEntity` refused). The message is
+  `unusable body; keeping the stored row, marked stale`. The same event counts
+  `app_index_listings_events_applied_total{type="invalid"}`.
+- **Way out 1, a valid upsert of that listing.** Fix what made the body unusable (most often an
+  adapter older than this index's layout: roll the adapter forward). The adapter sends an upsert
+  whenever a listing's body, and so its `rev` (a digest of the body), changes, so an adapter that
+  now builds that body differently sends it again, and so does any edit to the listing. A delete of
+  the listing (it left the catalog) also ends the mark.
+- **Way out 2, a rebuild.** The index has no rebuild switch. A new building generation is started
+  from an empty cursor only by a `ListingsLayoutVersion` bump (a release), a `cursor_expired` from
+  the registry, or a serving generation whose stored cursor is empty. By hand, that last one: with
+  every app-index-go process stopped (a running consumer writes its cursor back on every event,
+  and any replica takes the consumer lock when it is free), set
+  `cursor = ''` on the `serving` row of `app_index_listing_cursors`, then start them. It builds a new
+  generation beside the serving one (which keeps answering, 503 while it holds a stale row) and
+  switches at its `Live`; in a building generation an unusable body is treated as deleted, so that
+  listing is absent until it is valid again, and the new generation holds no stale row. If every
+  body is unusable the snapshot ends empty and is held, so fix the adapter first.
 
 ## Cutover flags
 
