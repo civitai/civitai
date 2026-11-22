@@ -7,7 +7,6 @@ import type { CatalogReadDeps, ListingExtras } from '~/server/registry-adapter/c
 import { listingFromCard } from '~/server/registry-adapter/catalog-source';
 import {
   capSubListings,
-  MAX_STREAM_SUB_LISTINGS,
   registryIconUrl,
   registryListingMedia,
   registrySubListing,
@@ -106,25 +105,17 @@ export function listingExtrasFromRow(
   };
 }
 
-/**
- * A listing's stream items from its rows, capped (`capSubListings`). Left out: the items the cap
- * drops, and the rows the read's per-parent bound never returned (`parent_item_count`), counted
- * only when every returned row is an item: a row with no valid link (an off-site parent's unusable
- * template) is not one, and the unread rows may not be either.
- */
+/** A listing's stream items from its rows, capped (`capSubListings`). */
 function subListingsOf(
   rows: readonly StoreSubListingRow[]
 ): Pick<ListingExtras, 'subListings' | 'subListingsOmitted'> {
-  const projected = rows.flatMap((row) => {
-    const item = registrySubListing(row);
-    return item ? [item] : [];
-  });
-  const { items, omitted } = capSubListings(projected);
-  const unread =
-    rows.length > 0 && projected.length === rows.length
-      ? Math.max(0, rows[0].parent_item_count - rows.length)
-      : 0;
-  return { subListings: items, subListingsOmitted: omitted + unread };
+  const { items, omitted } = capSubListings(
+    rows.flatMap((row) => {
+      const item = registrySubListing(row);
+      return item ? [item] : [];
+    })
+  );
+  return { subListings: items, subListingsOmitted: omitted };
 }
 
 /**
@@ -136,15 +127,13 @@ function subListingsOf(
 async function readSubListingsByParent(
   listingIds: string[]
 ): Promise<Map<string, StoreSubListingRow[]>> {
-  const rows = await readStoreSubListingsOfParents(
-    dbRead,
-    listingIds,
-    MAX_STREAM_SUB_LISTINGS
-  ).catch(async (err: unknown) => {
-    const { isMissingTableError } = await import('~/server/services/blocks/app-access.service');
-    if (isMissingTableError(err)) return [] as StoreSubListingRow[];
-    throw err;
-  });
+  const rows = await readStoreSubListingsOfParents(dbRead, listingIds).catch(
+    async (err: unknown) => {
+      const { isMissingTableError } = await import('~/server/services/blocks/app-access.service');
+      if (isMissingTableError(err)) return [] as StoreSubListingRow[];
+      throw err;
+    }
+  );
   const out = new Map<string, StoreSubListingRow[]>();
   for (const row of rows) {
     const list = out.get(row.parent_listing_id) ?? [];

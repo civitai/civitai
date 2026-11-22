@@ -329,17 +329,9 @@ export function subListingStoreArmWhere(
               ELSE ab.status = 'approved' END`;
 }
 
-/**
- * A {@link SubListingHydrateRow} as the listing stream reads it: with its parent, its sort time, and
- * how many eligible items its parent has (`parent_item_count`).
- */
+/** A {@link SubListingHydrateRow} as the listing stream reads it: with its parent and sort time. */
 export type StoreSubListingRow = SubListingHydrateRow & {
   parent_listing_id: string;
-  /**
-   * How many rows the read found for this row's parent, before its per-parent bound: more than the
-   * rows returned for the parent when the bound left some out.
-   */
-  parent_item_count: number;
   /**
    * `COALESCE(s.approved_at, s.created_at)`, the store's `newest` key for an item, as an RFC 3339
    * UTC string to the microsecond: the key the grid sorts on is that precise
@@ -349,37 +341,26 @@ export type StoreSubListingRow = SubListingHydrateRow & {
 };
 
 /**
- * The sub-listings of the listings `parentIds` that the store grid could show, whatever the viewer
+ * Every sub-listing of the listings `parentIds` that the store grid could show, whatever the viewer
  * (no mature filter: each item carries its rating), with the columns its card is projected from:
  * the listing stream's read (`catalog-source.live.ts`). The parents are assumed already eligible,
- * so only the child arm and the live re-check apply here. At most `perParent` rows per parent, its
- * newest in the order `capSubListings` keeps (sort time, then id, both descending), each carrying
- * its parent's count before that bound (`parent_item_count`). In id order.
+ * so only the child arm and the live re-check apply here. In id order.
  */
 export async function readStoreSubListingsOfParents(
   db: Pick<PrismaClient, '$queryRaw'>,
-  parentIds: string[],
-  perParent: number
+  parentIds: string[]
 ): Promise<StoreSubListingRow[]> {
   if (parentIds.length === 0) return [];
   return db.$queryRaw<StoreSubListingRow[]>(Prisma.sql`
-    SELECT * FROM (
-      SELECT ${subListingHydrateColumns()},
-             s.parent_listing_id,
-             to_char(COALESCE(s.approved_at, s.created_at) AT TIME ZONE 'UTC',
-                     'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS sort_time,
-             (ROW_NUMBER() OVER (
-               PARTITION BY s.parent_listing_id
-               ORDER BY COALESCE(s.approved_at, s.created_at) DESC, s.id COLLATE "C" DESC
-             ))::int AS parent_rank,
-             (COUNT(*) OVER (PARTITION BY s.parent_listing_id))::int AS parent_item_count
-      ${subListingHydrateFrom()}
-      LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
-      WHERE s.parent_listing_id IN (${Prisma.join(parentIds)})
-        AND ${subListingLiveWhere()}
-        AND ${subListingStoreArmWhere(Prisma.sql`u."bannedAt" IS NULL AND u."deletedAt" IS NULL`)}
-    ) ranked
-    WHERE parent_rank <= ${perParent}
-    ORDER BY id
+    SELECT ${subListingHydrateColumns()},
+           s.parent_listing_id,
+           to_char(COALESCE(s.approved_at, s.created_at) AT TIME ZONE 'UTC',
+                   'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS sort_time
+    ${subListingHydrateFrom()}
+    LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
+    WHERE s.parent_listing_id IN (${Prisma.join(parentIds)})
+      AND ${subListingLiveWhere()}
+      AND ${subListingStoreArmWhere(Prisma.sql`u."bannedAt" IS NULL AND u."deletedAt" IS NULL`)}
+    ORDER BY s.id
   `);
 }
