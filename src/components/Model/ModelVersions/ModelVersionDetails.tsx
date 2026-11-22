@@ -86,6 +86,10 @@ import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import {
+  DetailsAccordion,
+  DetailsAccordionItem,
+} from '~/components/DetailsAccordion/DetailsAccordion';
+import {
   ModelBadge,
   PageGroup,
   PageStack,
@@ -1202,25 +1206,7 @@ function ModelVersionDetailsContent({
           />
           <BaseModelWarningAlert baseModel={version.baseModel} />
 
-          <Accordion
-            variant="separated"
-            multiple
-            onChange={setDetailAccordions}
-            value={detailAccordions}
-            styles={(theme) => ({
-              content: { padding: 0 },
-              label: { padding: 0 },
-              item: {
-                overflow: 'hidden',
-                borderColor: colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
-                boxShadow: theme.shadows.sm,
-              },
-              control: {
-                padding: theme.spacing.sm,
-                gap: theme.spacing.md,
-              },
-            })}
-          >
+          <DetailsAccordion multiple onChange={setDetailAccordions} value={detailAccordions}>
             {model.meta?.showcaseCollectionId && collection && (
               <Accordion.Item value="collection-showcase" className="group">
                 {/* The follow/edit action sits BESIDE the control, not inside it: the control is a
@@ -1484,8 +1470,9 @@ function ModelVersionDetailsContent({
                   </Accordion.Panel>
                 </Accordion.Item>
               )}
-            <Accordion.Item value="version-details">
-              <Accordion.Control>
+            <DetailsAccordionItem
+              value="version-details"
+              title={
                 <Group justify="space-between">
                   Details
                   {showEditButton && (
@@ -1516,242 +1503,238 @@ function ModelVersionDetailsContent({
                     </Menu>
                   )}
                 </Group>
-              </Accordion.Control>
-              <Accordion.Panel p={0}>
-                <PageStack ds={ds} gap={0} className={classes.detailsPanel}>
-                  {/* Type */}
-                  <div className={classes.detailRow}>
-                    <span className={classes.detailLabel}>Type</span>
-                    <PageGroup ds={ds} gap={6}>
-                      <ModelBadge ds={ds} size="sm" radius="xl" variant="filled" color="gray">
-                        {getDisplayName(model.type)} {model.checkpointType}
+              }
+            >
+              <PageStack ds={ds} gap={0} className={classes.detailsPanel}>
+                {/* Type */}
+                <div className={classes.detailRow}>
+                  <span className={classes.detailLabel}>Type</span>
+                  <PageGroup ds={ds} gap={6}>
+                    <ModelBadge ds={ds} size="sm" radius="xl" variant="filled" color="gray">
+                      {getDisplayName(model.type)} {model.checkpointType}
+                    </ModelBadge>
+                    {version.status !== ModelStatus.Published ? (
+                      <ModelBadge ds={ds} size="sm" radius="xl" color="yellow" variant="light">
+                        {version.status}
                       </ModelBadge>
-                      {version.status !== ModelStatus.Published ? (
-                        <ModelBadge ds={ds} size="sm" radius="xl" color="yellow" variant="light">
-                          {version.status}
-                        </ModelBadge>
-                      ) : (
-                        <HowToUseModel type={model.type} />
-                      )}
-                    </PageGroup>
-                  </div>
-                  {/* Stats */}
-                  <div className={classes.detailRow}>
-                    <span className={classes.detailLabel}>Stats</span>
-                    <PageGroup ds={ds} gap={12}>
-                      {!downloadsDisabled && (
-                        <PageGroup ds={ds} gap={4}>
-                          <IconDownload size={16} style={styleIconOpacity} />
-                          <PageText ds={ds} size="sm">
-                            {version.hiddenMetrics?.downloads ? (
-                              <HiddenMetricNotice size={16} />
-                            ) : (
-                              <AnimatedCount
-                                value={liveMetrics.downloadCount}
-                                abbreviate={false}
-                                resetKey={version.id}
-                              />
-                            )}
-                          </PageText>
-                        </PageGroup>
-                      )}
-                      {(canGenerate || version.hiddenMetrics?.generations) && (
-                        <PageGroup ds={ds} gap={4}>
-                          <IconBrush size={16} style={styleIconOpacity} />
-                          <PageText ds={ds} size="sm">
-                            {version.hiddenMetrics?.generations ? (
-                              <HiddenMetricNotice size={16} />
-                            ) : (
-                              <AnimatedCount
-                                value={liveMetrics.generationCount}
-                                resetKey={version.id}
-                              />
-                            )}
-                          </PageText>
-                        </PageGroup>
-                      )}
-                      {(!!liveMetrics.earnedAmount || version.hiddenMetrics?.buzz) && (
-                        <PageGroup ds={ds} gap={4}>
-                          <IconBolt size={16} style={styleIconOpacity} />
-                          <PageText ds={ds} size="sm">
-                            {version.hiddenMetrics?.buzz ? (
-                              <HiddenMetricNotice size={16} />
-                            ) : (
-                              <AnimatedCount
-                                value={liveMetrics.earnedAmount}
-                                resetKey={version.id}
-                              />
-                            )}
-                          </PageText>
-                        </PageGroup>
-                      )}
-                    </PageGroup>
-                  </div>
-                  {/* A percent fee is not Buzz per image, so this row would misstate it. */}
-                  {!isNonCommercial &&
-                    version.licensingFeeType !== LicensingFeeType.PercentOfCompute &&
-                    Number(version.licensingFee ?? 0) > 0 && (
-                      <div className={classes.detailRow}>
-                        <span className={classes.detailLabel}>Generation License Fee</span>
-                        <Group gap={4} wrap="nowrap">
-                          <CurrencyIcon currency="BUZZ" size={16} />
-                          <Text size="sm">
-                            {formatLicensingFee(Number(version.licensingFee), version.baseModel)}
-                          </Text>
-                          <Popover
-                            width={260}
-                            shadow="md"
-                            withArrow
-                            position="top"
-                            opened={feeInfoOpened}
-                            onChange={feeInfoHandlers.close}
-                          >
-                            <Popover.Target>
-                              <ActionIcon
-                                size="xs"
-                                variant="subtle"
-                                color="gray"
-                                onClick={feeInfoHandlers.toggle}
-                                aria-label="License fee info"
-                              >
-                                <IconInfoSquareRounded size={18} />
-                              </ActionIcon>
-                            </Popover.Target>
-                            <Popover.Dropdown>
-                              <Text size="xs">
-                                The creator has issued a license fee. This amount is added on top of
-                                the standard generation cost for each image generated on Civitai
-                                with this resource.
-                              </Text>
-                            </Popover.Dropdown>
-                          </Popover>
-                        </Group>
-                      </div>
+                    ) : (
+                      <HowToUseModel type={model.type} />
                     )}
-                  {/* Reviews */}
+                  </PageGroup>
+                </div>
+                {/* Stats */}
+                <div className={classes.detailRow}>
+                  <span className={classes.detailLabel}>Stats</span>
+                  <PageGroup ds={ds} gap={12}>
+                    {!downloadsDisabled && (
+                      <PageGroup ds={ds} gap={4}>
+                        <IconDownload size={16} style={styleIconOpacity} />
+                        <PageText ds={ds} size="sm">
+                          {version.hiddenMetrics?.downloads ? (
+                            <HiddenMetricNotice size={16} />
+                          ) : (
+                            <AnimatedCount
+                              value={liveMetrics.downloadCount}
+                              abbreviate={false}
+                              resetKey={version.id}
+                            />
+                          )}
+                        </PageText>
+                      </PageGroup>
+                    )}
+                    {(canGenerate || version.hiddenMetrics?.generations) && (
+                      <PageGroup ds={ds} gap={4}>
+                        <IconBrush size={16} style={styleIconOpacity} />
+                        <PageText ds={ds} size="sm">
+                          {version.hiddenMetrics?.generations ? (
+                            <HiddenMetricNotice size={16} />
+                          ) : (
+                            <AnimatedCount
+                              value={liveMetrics.generationCount}
+                              resetKey={version.id}
+                            />
+                          )}
+                        </PageText>
+                      </PageGroup>
+                    )}
+                    {(!!liveMetrics.earnedAmount || version.hiddenMetrics?.buzz) && (
+                      <PageGroup ds={ds} gap={4}>
+                        <IconBolt size={16} style={styleIconOpacity} />
+                        <PageText ds={ds} size="sm">
+                          {version.hiddenMetrics?.buzz ? (
+                            <HiddenMetricNotice size={16} />
+                          ) : (
+                            <AnimatedCount value={liveMetrics.earnedAmount} resetKey={version.id} />
+                          )}
+                        </PageText>
+                      </PageGroup>
+                    )}
+                  </PageGroup>
+                </div>
+                {/* A percent fee is not Buzz per image, so this row would misstate it. */}
+                {!isNonCommercial &&
+                  version.licensingFeeType !== LicensingFeeType.PercentOfCompute &&
+                  Number(version.licensingFee ?? 0) > 0 && (
+                    <div className={classes.detailRow}>
+                      <span className={classes.detailLabel}>Generation License Fee</span>
+                      <Group gap={4} wrap="nowrap">
+                        <CurrencyIcon currency="BUZZ" size={16} />
+                        <Text size="sm">
+                          {formatLicensingFee(Number(version.licensingFee), version.baseModel)}
+                        </Text>
+                        <Popover
+                          width={260}
+                          shadow="md"
+                          withArrow
+                          position="top"
+                          opened={feeInfoOpened}
+                          onChange={feeInfoHandlers.close}
+                        >
+                          <Popover.Target>
+                            <ActionIcon
+                              size="xs"
+                              variant="subtle"
+                              color="gray"
+                              onClick={feeInfoHandlers.toggle}
+                              aria-label="License fee info"
+                            >
+                              <IconInfoSquareRounded size={18} />
+                            </ActionIcon>
+                          </Popover.Target>
+                          <Popover.Dropdown>
+                            <Text size="xs">
+                              The creator has issued a license fee. This amount is added on top of
+                              the standard generation cost for each image generated on Civitai with
+                              this resource.
+                            </Text>
+                          </Popover.Dropdown>
+                        </Popover>
+                      </Group>
+                    </div>
+                  )}
+                {/* Reviews */}
+                <div className={classes.detailRow}>
+                  <span className={classes.detailLabel}>Reviews</span>
+                  <ModelVersionReview
+                    modelId={model.id}
+                    versionId={version.id}
+                    thumbsUpCount={liveMetrics.thumbsUpCount}
+                    thumbsDownCount={liveMetrics.thumbsDownCount}
+                  />
+                </div>
+                {/* Published */}
+                <div className={classes.detailRow}>
+                  <span className={classes.detailLabel}>
+                    {version.status === 'Published' && version.publishedAt
+                      ? 'Published'
+                      : 'Uploaded'}
+                  </span>
+                  <PageText ds={ds} size="sm">
+                    {formatDate(
+                      version.status === 'Published' && version.publishedAt
+                        ? version.publishedAt
+                        : version.createdAt
+                    )}
+                  </PageText>
+                </div>
+                {/* Base Model */}
+                <div className={classes.detailRow}>
+                  <span className={classes.detailLabel}>Base Model</span>
+                  <PageGroup ds={ds} gap={6} nowrap>
+                    <PageText ds={ds} size="sm">
+                      {ecosystemSeoPage ? (
+                        <Anchor
+                          component={Link}
+                          href={`/ecosystems/${ecosystemSeoPage.slug}`}
+                          inherit
+                        >
+                          {version.baseModel}
+                        </Anchor>
+                      ) : (
+                        version.baseModel
+                      )}{' '}
+                      {version.baseModelType && version.baseModelType !== 'Standard'
+                        ? version.baseModelType
+                        : ''}
+                    </PageText>
+                    <SfwOnlyBadge baseModel={version.baseModel} />
+                  </PageGroup>
+                </div>
+                {/* Training */}
+                {(!!version.steps || !!version.epochs) && (
                   <div className={classes.detailRow}>
-                    <span className={classes.detailLabel}>Reviews</span>
-                    <ModelVersionReview
-                      modelId={model.id}
-                      versionId={version.id}
-                      thumbsUpCount={liveMetrics.thumbsUpCount}
-                      thumbsDownCount={liveMetrics.thumbsDownCount}
+                    <span className={classes.detailLabel}>Training</span>
+                    <PageGroup ds={ds} gap={4}>
+                      {!!version.steps && (
+                        <ModelBadge ds={ds} size="sm" radius="sm" color="teal">
+                          Steps: {version.steps.toLocaleString()}
+                        </ModelBadge>
+                      )}
+                      {!!version.epochs && (
+                        <ModelBadge ds={ds} size="sm" radius="sm" color="teal">
+                          Epochs: {version.epochs.toLocaleString()}
+                        </ModelBadge>
+                      )}
+                    </PageGroup>
+                  </div>
+                )}
+                {/* Usage Tips */}
+                {(isDefined(version.clipSkip) || isDefined(version.settings?.strength)) && (
+                  <div className={classes.detailRow}>
+                    <span className={classes.detailLabel}>Usage Tips</span>
+                    <PageGroup ds={ds} gap={4}>
+                      {isDefined(version.clipSkip) && (
+                        <ModelBadge ds={ds} size="sm" radius="sm" color="cyan">
+                          Clip Skip: {version.clipSkip}
+                        </ModelBadge>
+                      )}
+                      {isDefined(version.settings?.strength) && (
+                        <ModelBadge ds={ds} size="sm" radius="sm" color="cyan">
+                          {`Strength: ${version.settings.strength}`}
+                        </ModelBadge>
+                      )}
+                    </PageGroup>
+                  </div>
+                )}
+                {/* Hash */}
+                {!!hashes.length && (
+                  <div className={classes.detailRowPlain}>
+                    <span className={classes.detailLabel}>Hash</span>
+                    <ModelHash hashes={hashes} ds={ds} />
+                  </div>
+                )}
+                {/* Trigger Words */}
+                {!!version.trainedWords?.length && (
+                  <div className={classes.detailRowTop}>
+                    <span className={classes.detailLabel}>Trigger Words</span>
+                    <TrainedWords
+                      trainedWords={version.trainedWords}
+                      files={version.files}
+                      type={model.type}
+                      ds={ds}
                     />
                   </div>
-                  {/* Published */}
-                  <div className={classes.detailRow}>
-                    <span className={classes.detailLabel}>
-                      {version.status === 'Published' && version.publishedAt
-                        ? 'Published'
-                        : 'Uploaded'}
-                    </span>
-                    <PageText ds={ds} size="sm">
-                      {formatDate(
-                        version.status === 'Published' && version.publishedAt
-                          ? version.publishedAt
-                          : version.createdAt
-                      )}
-                    </PageText>
-                  </div>
-                  {/* Base Model */}
-                  <div className={classes.detailRow}>
-                    <span className={classes.detailLabel}>Base Model</span>
-                    <PageGroup ds={ds} gap={6} nowrap>
-                      <PageText ds={ds} size="sm">
-                        {ecosystemSeoPage ? (
-                          <Anchor
-                            component={Link}
-                            href={`/ecosystems/${ecosystemSeoPage.slug}`}
-                            inherit
-                          >
-                            {version.baseModel}
-                          </Anchor>
-                        ) : (
-                          version.baseModel
-                        )}{' '}
-                        {version.baseModelType && version.baseModelType !== 'Standard'
-                          ? version.baseModelType
-                          : ''}
-                      </PageText>
-                      <SfwOnlyBadge baseModel={version.baseModel} />
+                )}
+                {/* AIR */}
+                {features.air && (
+                  <div className={classes.detailRowTop}>
+                    <PageGroup ds={ds} gap="xs">
+                      <span className={classes.detailLabel}>AIR</span>
+                      <URNExplanation size={16} />
                     </PageGroup>
+                    <ModelURN
+                      baseModel={version.baseModel}
+                      type={model.type}
+                      modelId={model.id}
+                      modelVersionId={version.id}
+                      fileId={activeFile?.id}
+                      fileType={activeFile?.type}
+                      ds={ds}
+                    />
                   </div>
-                  {/* Training */}
-                  {(!!version.steps || !!version.epochs) && (
-                    <div className={classes.detailRow}>
-                      <span className={classes.detailLabel}>Training</span>
-                      <PageGroup ds={ds} gap={4}>
-                        {!!version.steps && (
-                          <ModelBadge ds={ds} size="sm" radius="sm" color="teal">
-                            Steps: {version.steps.toLocaleString()}
-                          </ModelBadge>
-                        )}
-                        {!!version.epochs && (
-                          <ModelBadge ds={ds} size="sm" radius="sm" color="teal">
-                            Epochs: {version.epochs.toLocaleString()}
-                          </ModelBadge>
-                        )}
-                      </PageGroup>
-                    </div>
-                  )}
-                  {/* Usage Tips */}
-                  {(isDefined(version.clipSkip) || isDefined(version.settings?.strength)) && (
-                    <div className={classes.detailRow}>
-                      <span className={classes.detailLabel}>Usage Tips</span>
-                      <PageGroup ds={ds} gap={4}>
-                        {isDefined(version.clipSkip) && (
-                          <ModelBadge ds={ds} size="sm" radius="sm" color="cyan">
-                            Clip Skip: {version.clipSkip}
-                          </ModelBadge>
-                        )}
-                        {isDefined(version.settings?.strength) && (
-                          <ModelBadge ds={ds} size="sm" radius="sm" color="cyan">
-                            {`Strength: ${version.settings.strength}`}
-                          </ModelBadge>
-                        )}
-                      </PageGroup>
-                    </div>
-                  )}
-                  {/* Hash */}
-                  {!!hashes.length && (
-                    <div className={classes.detailRowPlain}>
-                      <span className={classes.detailLabel}>Hash</span>
-                      <ModelHash hashes={hashes} ds={ds} />
-                    </div>
-                  )}
-                  {/* Trigger Words */}
-                  {!!version.trainedWords?.length && (
-                    <div className={classes.detailRowTop}>
-                      <span className={classes.detailLabel}>Trigger Words</span>
-                      <TrainedWords
-                        trainedWords={version.trainedWords}
-                        files={version.files}
-                        type={model.type}
-                        ds={ds}
-                      />
-                    </div>
-                  )}
-                  {/* AIR */}
-                  {features.air && (
-                    <div className={classes.detailRowTop}>
-                      <PageGroup ds={ds} gap="xs">
-                        <span className={classes.detailLabel}>AIR</span>
-                        <URNExplanation size={16} />
-                      </PageGroup>
-                      <ModelURN
-                        baseModel={version.baseModel}
-                        type={model.type}
-                        modelId={model.id}
-                        modelVersionId={version.id}
-                        fileId={activeFile?.id}
-                        fileType={activeFile?.type}
-                        ds={ds}
-                      />
-                    </div>
-                  )}
-                </PageStack>
-              </Accordion.Panel>
-            </Accordion.Item>
+                )}
+              </PageStack>
+            </DetailsAccordionItem>
             {isDownloadable && modelFilesVisible.length > 0 && (
               <ModelTensorMetadata
                 files={modelFilesVisible}
@@ -1836,7 +1819,7 @@ function ModelVersionDetailsContent({
                 </Accordion.Panel>
               </Accordion.Item>
             )}
-          </Accordion>
+          </DetailsAccordion>
 
           {/* Resource Review - shown after model details for users who downloaded */}
           {!model.locked && alreadyDownloaded && (

@@ -1,6 +1,6 @@
 import { ActionIcon, Button, Group, Select, Stack, Text, Textarea } from '@mantine/core';
 import { closeAllModals, openModal } from '@mantine/modals';
-import { IconCopy, IconDots, IconFlag, IconTrash } from '@tabler/icons-react';
+import { IconCopy, IconDots, IconDotsVertical, IconFlag, IconTrash } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -8,6 +8,7 @@ import { useMutateMyServices } from '~/components/CreatorShop/Services/creator-s
 import { confirmRemoveService } from '~/components/CreatorShop/Services/service-remove-confirm';
 import { Menu } from '~/components/MantineOverlays';
 import { openReportModal } from '~/components/Dialog/triggers/report';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { serviceOfferingTakedownReasons } from '~/server/common/moderation-helpers';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -84,10 +85,13 @@ export function ServiceOfferingMenu({
   offering,
   isOwner,
   isModerator,
+  placement = 'card',
 }: {
   offering: { id: number; title: string };
   isOwner: boolean;
   isModerator: boolean;
+  /** `card` floats over a cover image; `title` sits in a page's title row. */
+  placement?: 'card' | 'title';
 }) {
   const { remove } = useMutateMyServices();
   const utils = trpc.useUtils();
@@ -111,16 +115,23 @@ export function ServiceOfferingMenu({
   return (
     <Menu position="bottom-end" withinPortal>
       <Menu.Target>
-        <ActionIcon
-          variant="filled"
-          color="dark"
-          radius="xl"
-          size="md"
-          aria-label="Service options"
-          className="pointer-events-auto bg-black/60 backdrop-blur-sm"
-        >
-          <IconDots size={16} />
-        </ActionIcon>
+        {placement === 'title' ? (
+          // The model page's title buttons: 32px, light, vertical dots.
+          <LegacyActionIcon variant="light" w={32} h={32} aria-label="Service options">
+            <IconDotsVertical size={16} />
+          </LegacyActionIcon>
+        ) : (
+          <ActionIcon
+            variant="filled"
+            color="dark"
+            radius="xl"
+            size="md"
+            aria-label="Service options"
+            className="pointer-events-auto bg-black/60 backdrop-blur-sm"
+          >
+            <IconDots size={16} />
+          </ActionIcon>
+        )}
       </Menu.Target>
       <Menu.Dropdown>
         {!isOwner && (

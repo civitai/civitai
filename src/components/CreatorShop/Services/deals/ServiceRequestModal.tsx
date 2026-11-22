@@ -13,7 +13,9 @@ import {
 import { useRouter } from 'next/router';
 import type { ReactNode } from 'react';
 import { useRef, useState } from 'react';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { useServiceBuzzType } from '~/components/CreatorShop/Services/useServiceBuzzType';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { serviceTermsLine } from '~/components/CreatorShop/Services/creator-service.util';
 import {
@@ -61,6 +63,8 @@ export function ServiceRequestModal({
   sellerUsername: string;
 }) {
   const dialog = useDialogContext();
+  const features = useOptionalFeatureFlags();
+  const buzzType = useServiceBuzzType();
   const router = useRouter();
   const utils = trpc.useUtils();
   const [text, setText] = useState('');
@@ -106,6 +110,25 @@ export function ServiceRequestModal({
   });
 
   const trimmed = text.trim();
+  const disabled = !trimmed || (licensed && !licenseAgreed);
+  const sendRequest = () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    request.mutate({
+      offeringId: offering.id,
+      expectedPrice: offering.price,
+      expectedRevisionsIncluded: offering.revisionsIncluded,
+      expectedDeliveryDays: offering.deliveryDays,
+      expectedLicense: {
+        licensePreset: offering.licensePreset,
+        licenseCustomText: offering.licenseCustomText,
+        licenseAllowResale: offering.licenseAllowResale,
+      },
+      licenseAgreed: licensed && licenseAgreed,
+      requestText: trimmed,
+      disclosureVersion: SERVICES_TERMS_VERSION,
+    });
+  };
 
   return (
     <Modal {...dialog} size="lg" title={`Request: ${offering.title}`}>
@@ -132,31 +155,25 @@ export function ServiceRequestModal({
           <Button variant="default" onClick={dialog.onClose}>
             Cancel
           </Button>
-          <Button
-            color="yellow"
-            disabled={!trimmed || (licensed && !licenseAgreed)}
-            loading={request.isPending}
-            onClick={() => {
-              if (inFlight.current) return;
-              inFlight.current = true;
-              request.mutate({
-                offeringId: offering.id,
-                expectedPrice: offering.price,
-                expectedRevisionsIncluded: offering.revisionsIncluded,
-                expectedDeliveryDays: offering.deliveryDays,
-                expectedLicense: {
-                  licensePreset: offering.licensePreset,
-                  licenseCustomText: offering.licenseCustomText,
-                  licenseAllowResale: offering.licenseAllowResale,
-                },
-                licenseAgreed: licensed && licenseAgreed,
-                requestText: trimmed,
-                disclosureVersion: SERVICES_TERMS_VERSION,
-              });
-            }}
-          >
-            {buyerHoldButtonLabel(offering.price)}
-          </Button>
+          {features?.creatorServicesNext ? (
+            <BuzzTransactionButton
+              buzzAmount={offering.price}
+              colorType={buzzType}
+              label={buyerHoldButtonLabel(offering.price)}
+              disabled={disabled}
+              loading={request.isPending}
+              onPerformTransaction={sendRequest}
+            />
+          ) : (
+            <Button
+              color="yellow"
+              disabled={disabled}
+              loading={request.isPending}
+              onClick={sendRequest}
+            >
+              {buyerHoldButtonLabel(offering.price)}
+            </Button>
+          )}
         </Group>
       </Stack>
     </Modal>

@@ -53,6 +53,7 @@ const CreatorCardSimpleContent = ({
   statDisplayOverwrite,
   subText,
   actions,
+  footer,
   ...cardProps
 }: CreatorCardSimpleProps) => {
   const theme = useMantineTheme();
@@ -273,6 +274,18 @@ const CreatorCardSimpleContent = ({
           </Group>
         </Card.Section>
       ) : null}
+      {footer ? (
+        <Card.Section
+          withBorder
+          inheritPadding
+          style={{
+            background: colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+          }}
+          py="xs"
+        >
+          {footer}
+        </Card.Section>
+      ) : null}
     </ElementInView>
   );
 };
@@ -284,6 +297,8 @@ export type CreatorCardSimpleProps = {
   useEquippedCosmetics?: boolean;
   statDisplayOverwrite?: string[];
   actions?: (creator: UserCreator) => React.ReactElement;
+  /** Extra content in its own section under a divider, below the links. Nothing renders without it. */
+  footer?: React.ReactNode;
 } & Omit<CardProps, 'children'>;
 
 type CreatorStats = NonNullable<UserCreator['stats']>;

@@ -27,6 +27,7 @@ export function CreatorCard({
   withActions = true,
   tipsEnabled = true,
   subText,
+  footer,
   ...cardProps
 }: Props) {
   const { data } = trpc.user.getCreator.useQuery(
@@ -127,6 +128,18 @@ export function CreatorCard({
           </Group>
         </Card.Section>
       ) : null}
+      {footer ? (
+        <Card.Section
+          withBorder
+          inheritPadding
+          style={{
+            background: colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+          }}
+          py="xs"
+        >
+          {footer}
+        </Card.Section>
+      ) : null}
     </Card>
   );
 }
@@ -212,6 +225,7 @@ type Props = {
   withActions?: boolean;
   tipsEnabled?: boolean;
   subText?: React.ReactNode;
+  footer?: React.ReactNode;
 } & Omit<CardProps, 'children'>;
 
 export type CreatorCardPropsV2 = Omit<CreatorCardSimpleProps, 'actions'> & {
