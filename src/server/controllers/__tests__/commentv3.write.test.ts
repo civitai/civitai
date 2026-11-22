@@ -741,6 +741,14 @@ describe('commentv3 delete on an article', () => {
     expect(m.deleteComments3).not.toHaveBeenCalled();
     expect(m.updateCommentContent).not.toHaveBeenCalled();
   });
+
+  it.each([['Public'], ['Unsearchable']])('case 3 %s', async (availability) => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({ availability } as never);
+    await expect(deleteCommentV3Handler({ ctx: ctx(AUTHOR), input: { id: 101 } })).rejects.toThrow(
+      'hidden'
+    );
+    expect(m.deleteComments3).not.toHaveBeenCalled();
+  });
 });
 
 describe('commentv3 section lock', () => {
