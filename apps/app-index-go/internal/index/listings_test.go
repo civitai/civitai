@@ -154,6 +154,7 @@ func runListingScenarios(t *testing.T, newStore func(t *testing.T) store.Listing
 	t.Run("DropsKeepTheListing", func(t *testing.T) { testDropsKeepTheListing(t, newStore(t)) })
 	t.Run("BodyWithoutSubListingsIsInvalid", func(t *testing.T) { testBodyWithoutSubListingsIsInvalid(t, newStore(t)) })
 	t.Run("InvalidWhileServingKeepsTheRow", func(t *testing.T) { testInvalidWhileServingKeepsTheRow(t, newStore(t)) })
+	t.Run("InvalidWhileServingFailsClosed", func(t *testing.T) { testInvalidWhileServingFailsClosed(t, newStore(t)) })
 }
 
 // An adapter rolled back below this layout sends bodies the serving generation cannot use. Each
