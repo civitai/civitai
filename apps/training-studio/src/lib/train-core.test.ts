@@ -1576,7 +1576,7 @@ describe('Kohya training', () => {
   });
 
   it('accepts clip skip 1 for SD1 but not for SDXL, whose trainer would raise it to 2', () => {
-    const data = { type: 'blobs', items: [] } as const;
+    const data: Parameters<typeof buildKohyaInput>[1] = { type: 'blobs', items: [] };
     const sd1 = {
       ...run(),
       ecosystem: 'sd1',
