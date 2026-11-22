@@ -948,12 +948,10 @@ describe('POST preview/open (App Assistant direct preview)', () => {
   it('writes the same session record for an unused id, counting one start; getActiveDevTunnel returns it', async () => {
     const { status, json } = await open(OWNER, UNSUBMITTED_APP, PID_A);
     expect(status).toBe(200);
-    expect(json).toEqual({
-      mode: 'direct',
-      sessionId: expect.any(String),
-      host: expect.any(String),
-    });
-    const host = json!.host as string;
+    // The answer never carries the session host (the session's credential); it lives in the record.
+    expect(json).toEqual({ mode: 'direct', sessionId: expect.any(String) });
+    expect(JSON.stringify(json)).not.toContain(PREVIEW_DOMAIN);
+    const host = sessionRecord(json!.sessionId as string).host as string;
     expect(host).toMatch(new RegExp(`^s[a-z2-7]{61}\\.${PREVIEW_DOMAIN.replace('.', '\\.')}$`));
     const record = sessionRecord(json!.sessionId as string);
     expect(record).toMatchObject({
@@ -975,8 +973,10 @@ describe('POST preview/open (App Assistant direct preview)', () => {
 
   it('reuses the active session for the same id: same session and host, no start counted', async () => {
     const first = (await open(OWNER, UNSUBMITTED_APP, PID_A)).json!;
+    const hostBefore = sessionRecord(first.sessionId as string).host;
     const again = (await open(OWNER, UNSUBMITTED_APP, PID_A)).json!;
     expect(again).toEqual(first);
+    expect(sessionRecord(again.sessionId as string).host).toBe(hostBefore);
     expect(startsCounted(OWNER)).toBe(1);
   });
 
