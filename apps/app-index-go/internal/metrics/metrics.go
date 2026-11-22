@@ -11,7 +11,8 @@ import (
 )
 
 // EventTypes are the `type` values of app_index_events_applied_total. `invalid` is an upsert
-// whose body this index cannot use, applied as a delete.
+// whose body this index cannot use, applied as a delete (in a serving listings generation, as a
+// stale mark on the row it keeps: index.Consumer.KeepInvalidWhileServing).
 var EventTypes = []string{"upsert", "delete", "live", "progress", "end", "invalid"}
 
 // ReconnectReasons are the `reason` values of app_index_reconnects_total.
@@ -55,6 +56,10 @@ type Stream struct {
 	// Dropped counts the parts of upserted bodies left out rather than rejecting the entity, by
 	// what (DroppedWhat). Nil for the app stream.
 	Dropped *prometheus.CounterVec
+	// Stale is how many rows of the serving generation are marked stale, as the consumer last
+	// read it (index.Consumer.StaleCount): non-zero only on the replica holding the consumer lock,
+	// so it is read with max(). Nil for the app stream.
+	Stale prometheus.Gauge
 
 	lastEvent atomic.Int64 // unix nanos of the last applied event; 0 = none yet
 	now       func() time.Time
@@ -75,7 +80,7 @@ func newStream(prefix, what string, reconnectReasons []string) (*Stream, []prome
 	s := &Stream{
 		Applied: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_events_applied_total",
-			Help: "Registry events applied to " + what + ", by event type (invalid: an upsert whose body the index cannot use, applied as a delete).",
+			Help: "Registry events applied to " + what + ", by event type (invalid: an upsert whose body the index cannot use, applied as a delete, or in a serving listings generation as a stale mark on the row it keeps).",
 		}, []string{"type"}),
 		Malformed: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_malformed_events_total",
@@ -178,15 +183,21 @@ func NewListings(reg prometheus.Registerer) *Stream {
 		Name: "app_index_listings_dropped_total",
 		Help: "Parts of listing bodies left out while the listing was kept, by what: media_item (an unknown slot), stat (a counter that is not a count, stored null).",
 	}, []string{"what"})
+	s.Stale = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "app_index_listings_stale_rows",
+		Help: "Rows of the serving listings generation kept from before an upsert it could not use, which may lack what that upsert changed. While it is above 0 the listing API answers 503 not_ready and the site reads the database. Set only by the replica holding the consumer lock (0 on every other one): read it with max().",
+	})
 	for _, v := range DroppedWhat {
 		s.Dropped.WithLabelValues(v)
 	}
-	reg.MustRegister(append(cs, s.EmptySnapshots, s.Dropped)...)
+	reg.MustRegister(append(cs, s.EmptySnapshots, s.Dropped, s.Stale)...)
 	return s
 }
 
 // ListingReadOutcomes are the outcome label values of app_index_listings_requests_total.
-var ListingReadOutcomes = []string{"ok", "not_found", "bad_request", "bad_viewer", "unconfigured", "not_ready", "error"}
+// `stale` is answered 503 not_ready, as `not_ready` is: the serving generation holds a stale row
+// (store.Listings.StaleCount).
+var ListingReadOutcomes = []string{"ok", "not_found", "bad_request", "bad_viewer", "unconfigured", "not_ready", "stale", "error"}
 
 // ListingReadRoutes are its route label values: GET /listings and GET /listings/{slug}.
 var ListingReadRoutes = []string{"list", "detail"}

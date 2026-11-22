@@ -166,7 +166,8 @@ func ParseListingsQuery(v map[string][]string) (listingsParams, error) {
 }
 
 // listingRequest runs the steps every listing route shares, then fn: the configuration, the
-// viewer, and the serving generation. It counts the outcome fn's answer reports.
+// viewer, the serving generation, and that it holds no stale row. It counts the outcome fn's
+// answer reports.
 func (s *Server) listingRequest(route string, fn func(ctx context.Context, w http.ResponseWriter, r *http.Request,
 	v listingread.Viewer, gen store.Generation) string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +208,19 @@ func (s *Server) listingRequest(route string, fn func(ctx context.Context, w htt
 		}
 		if st.Serving == nil || (s.ListingsLayout != 0 && st.Serving.Layout != s.ListingsLayout) {
 			outcome = "not_ready"
+			writeJSON(w, http.StatusServiceUnavailable, apiError{Error: "not_ready"})
+			return
+		}
+		// A stale row (store.ChangeStale) may lack a change its unusable upsert carried, a stricter
+		// gate included, so while the serving generation holds one nothing is answered from it: the
+		// same 503 not_ready as before Live, which the web tier reads the database on.
+		stale, err := s.Listings.StaleCount(ctx, st.Serving.ID)
+		if err != nil {
+			outcome = s.fail(w, "listings stale rows", err)
+			return
+		}
+		if stale > 0 {
+			outcome = "stale"
 			writeJSON(w, http.StatusServiceUnavailable, apiError{Error: "not_ready"})
 			return
 		}

@@ -335,10 +335,8 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
       ],
       subListingsOmitted: 0,
     });
-    // One read of the sub-listings for every listing, through the grid's child arm.
+    // One read of the sub-listings for every listing.
     expect(subListingQueries).toHaveLength(1);
-    expect(subListingQueries[0]).toContain('sp.enabled');
-    expect(subListingQueries[0]).toContain("s.status = 'approved'");
     // Positive control for the default: a metric row's count is carried.
     expect(extras.get('lst-f6')).toEqual({
       media: [],

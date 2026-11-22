@@ -154,12 +154,14 @@ func runListingScenarios(t *testing.T, newStore func(t *testing.T) store.Listing
 	t.Run("DropsKeepTheListing", func(t *testing.T) { testDropsKeepTheListing(t, newStore(t)) })
 	t.Run("BodyWithoutSubListingsIsInvalid", func(t *testing.T) { testBodyWithoutSubListingsIsInvalid(t, newStore(t)) })
 	t.Run("InvalidWhileServingKeepsTheRow", func(t *testing.T) { testInvalidWhileServingKeepsTheRow(t, newStore(t)) })
+	t.Run("InvalidWhileServingFailsClosed", func(t *testing.T) { testInvalidWhileServingFailsClosed(t, newStore(t)) })
+	t.Run("OneValidUpsertClearsOnlyItsOwnMark", func(t *testing.T) { testOneValidUpsertClearsOnlyItsOwnMark(t, newStore(t)) })
 }
 
 // An adapter rolled back below this layout sends bodies the serving generation cannot use. Each
-// such upsert keeps the stored row (the cursor still advances, counted invalid), so the API keeps
-// serving the last good listings rather than emptying one delete at a time. A valid upsert and a
-// delete still apply.
+// such upsert keeps the stored row (the cursor still advances, counted invalid) rather than
+// emptying the generation one delete at a time; the row is marked stale, and the API fails closed
+// meanwhile (testInvalidWhileServingFailsClosed). A valid upsert and a delete still apply.
 func testInvalidWhileServingKeepsTheRow(t *testing.T, st store.Listings) {
 	h := startListings(t, st)
 	c := h.reg.next(t)
@@ -465,11 +467,14 @@ func TestListingsConsumerOnlyWhenOn(t *testing.T) {
 			}
 			continue
 		}
-		if c == nil || opened != 1 || series != 9 {
-			t.Fatalf("on: consumer %v, store opened %d times, %d listing series; want one, 1, 9", c, opened, series)
+		// 10: the stream's 7, empty snapshots, dropped, and stale rows.
+		if c == nil || opened != 1 || series != 10 {
+			t.Fatalf("on: consumer %v, store opened %d times, %d listing series; want one, 1, 10", c, opened, series)
 		}
-		if c.Schema != "urn:schema:apps.civitai.com:store-listing@v1" || c.Layout != 4 || c.Count == nil || c.Decode == nil {
-			t.Fatalf("on: schema %q layout %d count %v decode %v", c.Schema, c.Layout, c.Count != nil, c.Decode != nil)
+		if c.Schema != "urn:schema:apps.civitai.com:store-listing@v1" || c.Layout != 4 || c.Count == nil || c.Decode == nil ||
+			c.StaleCount == nil || !c.KeepInvalidWhileServing {
+			t.Fatalf("on: schema %q layout %d count %v decode %v stale count %v keep invalid %v", c.Schema, c.Layout,
+				c.Count != nil, c.Decode != nil, c.StaleCount != nil, c.KeepInvalidWhileServing)
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})

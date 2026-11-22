@@ -82,16 +82,21 @@ const (
 	ChangeUpsert ChangeKind = iota + 1
 	ChangeDelete
 	ChangeProgress
+	// ChangeStale marks the row of URN stale and leaves it as it is: the listings read model's
+	// answer to an upsert of URN its serving generation cannot use (Listings.StaleCount). Nothing
+	// changes when the generation holds no row of URN. The next upsert of URN writes its row
+	// unmarked; a delete removes it, mark and all.
+	ChangeStale
 )
 
-// Change is one event's effect on a generation: replace the row (Upsert), remove it (Delete) or
-// nothing (Progress), and in every case store Cursor. An upsert carries the row of its store's
-// stream: App for the app index, Listing for the listings read model.
+// Change is one event's effect on a generation: replace the row (Upsert), remove it (Delete), mark
+// it stale (Stale) or nothing (Progress), and in every case store Cursor. An upsert carries the row
+// of its store's stream: App for the app index, Listing for the listings read model.
 type Change struct {
 	Kind    ChangeKind
 	App     App     // ChangeUpsert, app index
 	Listing Listing // ChangeUpsert, listings read model
-	URN     string  // ChangeDelete
+	URN     string  // ChangeDelete, ChangeStale
 	Cursor  string
 	// Dropped is what decoding an upsert left out of the row (a Listing's Drops); the consumer logs
 	// and counts it. Never stored.

@@ -156,12 +156,7 @@ export type ListingSubListingItem = {
  * nothing here. The bound is the registry stream: a body travels as one stream line, and
  * app-index-go's registry client reads lines of at most 1 MiB (`MaxLine`, `internal/registry`); a
  * longer line ends the stream `unavailable` and replays it from the same cursor forever.
- *
- * Measured from the item's bounds (`APP_SUB_LISTING_*_MAX`, the link template's 300, the id, the
- * URLs): one item is about 0.6 KB of JSON with short ASCII text and at most about 1.9 KB (a title
- * and tagline at their bounds in three-byte characters, a 300-character link template, long avatar
- * and image URLs). 200 items are then at most about 0.36 MiB (pinned by `listing-stream.test.ts`),
- * which leaves more than half of the line for the rest of the body and the event around it.
+ * `listing-stream.test.ts` pins that a body at this cap, every item at its bounds, fits the line.
  */
 export const MAX_STREAM_SUB_LISTINGS = 200;
 

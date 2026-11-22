@@ -23,6 +23,11 @@ import (
 // sub_listing_keys is the key fields of the body's sub-listings (store.SubListing: id, title, own
 // rating, sort time), so Keys can rank and gate them without decoding any body.
 //
+// stale marks a row kept from before an upsert the serving generation could not use (ChangeStale,
+// Listings.StaleCount). Added by ALTER, not a layout bump: older rows are correctly not stale. The
+// partial index, over the stale rows only, is for StaleCount, which every listing request that
+// reaches the serving generation runs.
+//
 // The media live in the body only, every item as the stream sent it, each with its own nsfwLevel,
 // rating and host; a read decodes them from it (decodeStored). Nothing here applies a ceiling: the
 // read API does, per request (listingread.ProjectMedia). The DROP below removes
@@ -65,6 +70,7 @@ CREATE TABLE IF NOT EXISTS app_index_listings (
   install_count bigint,
   sub_listing_keys jsonb NOT NULL DEFAULT '[]'::jsonb,
   sub_listings_omitted bigint NOT NULL DEFAULT 0,
+  stale boolean NOT NULL DEFAULT false,
   PRIMARY KEY (generation, urn)
 );
 DROP TABLE IF EXISTS app_index_listing_media;
@@ -73,6 +79,8 @@ ALTER TABLE app_index_listings ADD COLUMN IF NOT EXISTS listing_content_rating t
 ALTER TABLE app_index_listings ADD COLUMN IF NOT EXISTS listing_id text;
 ALTER TABLE app_index_listings ADD COLUMN IF NOT EXISTS sub_listing_keys jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE app_index_listings ADD COLUMN IF NOT EXISTS sub_listings_omitted bigint NOT NULL DEFAULT 0;
+ALTER TABLE app_index_listings ADD COLUMN IF NOT EXISTS stale boolean NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS app_index_listings_stale ON app_index_listings (generation) WHERE stale;
 ALTER TABLE app_index_listings
   ALTER COLUMN recommended_count DROP NOT NULL,
   ALTER COLUMN not_recommended_count DROP NOT NULL,
@@ -107,8 +115,15 @@ func NewListingsPostgres(ctx context.Context, pool *pgxpool.Pool) (*ListingsPost
 }
 
 // Apply implements Generations: the listing row and the cursor commit together, or neither does.
-// An upsert replaces the row, body (and so media) included.
+// An upsert replaces the row, body (and so media) included, unmarked; a stale change marks the row
+// of its URN, if any, and changes nothing else.
 func (p *ListingsPostgres) Apply(ctx context.Context, gen int64, c Change) error {
+	if c.Kind == ChangeStale {
+		return p.write(ctx, "apply", gen, c.Cursor, func(tx pgx.Tx, _ string) error {
+			_, err := tx.Exec(ctx, `UPDATE app_index_listings SET stale = true WHERE generation = $1 AND urn = $2`, gen, c.URN)
+			return err
+		})
+	}
 	return p.apply(ctx, gen, c, func(tx pgx.Tx) error {
 		l := c.Listing
 		subKeys, err := json.Marshal(subListingKeys(l.SubListings))
@@ -136,6 +151,19 @@ func (p *ListingsPostgres) Count(ctx context.Context, gen int64) (int, error) {
 	var n int
 	err := p.pool.QueryRow(ctx, `
 SELECT count(l.urn) FROM app_index_listing_cursors g LEFT JOIN app_index_listings l ON l.generation = g.generation
+WHERE g.generation = $1 AND g.state <> 'retired' GROUP BY g.generation`, gen).Scan(&n)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrNoGeneration
+	}
+	return n, err
+}
+
+// StaleCount implements Listings. One statement, as Count: the generation and its rows are read
+// from one snapshot.
+func (p *ListingsPostgres) StaleCount(ctx context.Context, gen int64) (int, error) {
+	var n int
+	err := p.pool.QueryRow(ctx, `
+SELECT count(l.urn) FROM app_index_listing_cursors g LEFT JOIN app_index_listings l ON l.generation = g.generation AND l.stale
 WHERE g.generation = $1 AND g.state <> 'retired' GROUP BY g.generation`, gen).Scan(&n)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, ErrNoGeneration

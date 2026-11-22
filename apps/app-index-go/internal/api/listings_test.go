@@ -380,6 +380,13 @@ func (f failingListings) State(ctx context.Context) (store.State, error) {
 	return f.Listings.State(ctx)
 }
 
+func (f failingListings) StaleCount(ctx context.Context, gen int64) (int, error) {
+	if f.fail == "stale" {
+		return 0, f.err
+	}
+	return f.Listings.StaleCount(ctx, gen)
+}
+
 func (f failingListings) Keys(ctx context.Context, gen int64) ([]store.Listing, error) {
 	if f.fail == "keys" {
 		return nil, f.err
@@ -416,6 +423,8 @@ func TestListingStoreFailures(t *testing.T) {
 		want       int
 	}{
 		{"state", "/listings", boom, http.StatusInternalServerError},
+		{"stale", "/listings", boom, http.StatusInternalServerError},
+		{"stale", "/listings/paint", store.ErrNoGeneration, http.StatusServiceUnavailable},
 		{"keys", "/listings", boom, http.StatusInternalServerError},
 		{"keys", "/listings", store.ErrNoGeneration, http.StatusServiceUnavailable},
 		{"many", "/listings", boom, http.StatusInternalServerError},
@@ -442,6 +451,30 @@ func TestListingStoreFailures(t *testing.T) {
 		if code, _, b := getAs(t, srv.URL+p, &sfwViewer); code != http.StatusInternalServerError {
 			t.Errorf("%s with an unreadable body: %d %s", p, code, b)
 		}
+	}
+}
+
+// While the serving generation holds a stale row (an upsert it could not use kept the row as it
+// was), both routes answer 503 not_ready, counted `stale`, and read nothing else; a valid upsert of
+// that listing ends it.
+func TestListingStaleRowIsNotReady(t *testing.T) {
+	ls := readyListings(t, paintBody, linksBody)
+	srv := newListingServer(t, readyStore(t), ls, viewerKey)
+	gen := servingGen(t, ls)
+	if err := ls.Apply(t.Context(), gen, store.Change{Kind: store.ChangeStale, URN: "urn:apps.civitai.com:store-listing/links", Cursor: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"/listings", "/listings/paint"} {
+		if code, _, b := getAs(t, srv.URL+p, &sfwViewer); code != http.StatusServiceUnavailable || string(b) != "{\"error\":\"not_ready\"}\n" {
+			t.Errorf("%s with a stale row: %d %q, want 503 not_ready", p, code, b)
+		}
+	}
+	if got := testutilCount(t, srv, "list", "stale") + testutilCount(t, srv, "detail", "stale"); got != 2 {
+		t.Errorf("stale outcomes = %v, want 2", got)
+	}
+	upsert(t, ls, gen, "links", linksBody, "c2")
+	if code, _, b := getAs(t, srv.URL+"/listings/paint", &sfwViewer); code != http.StatusOK {
+		t.Errorf("after a valid upsert of the stale listing: %d %s", code, b)
 	}
 }
 

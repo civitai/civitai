@@ -169,9 +169,13 @@ series is registered, nothing subscribes to the schema and the listing routes ar
   and card ratings, author, sort time, link, and an image whose level is its rating's), is treated as
   deleted (`app_index_listings_events_applied_total{type="invalid"}`): such an item could not be
   gated, or a listing without `subListings` would read as having no sub-listing cards. That is in a
-  building generation; in a serving one the stored row is kept and only the cursor moves (still
-  counted `invalid`), so an adapter rolled back below this layout leaves the last good listings
-  serving instead of emptying the generation.
+  building generation; in a serving one the stored row is kept, marked stale, and the cursor moves
+  (still counted `invalid`), so an adapter rolled back below this layout does not empty the
+  generation. A stale row may lack what its upsert changed (a stricter gate included), so while the
+  serving generation holds one the listing API answers 503 `not_ready` and the site reads the
+  database; `app_index_listings_stale_rows` counts them (set only on the replica holding the
+  consumer lock, so read it with `max()`). The mark is stored with the row, so a
+  restart keeps it; a later valid upsert or a delete of the listing ends it.
 - What can be left out without misgating is dropped and the listing kept, each drop logged and
   counted (`app_index_listings_dropped_total{what}`): a media item with an unknown slot
   (`media_item`), and a stats counter that is missing, negative or not an integer (`stat`), stored
@@ -279,7 +283,7 @@ exactly like a missing one.
 - Every response is `no-store` and carries no CORS header. A store failure is 500, never an empty
   page. A read that races a generation switch is 503: each store read checks, after reading, that its
   generation still exists. A serving generation of an older row layout is 503 too, until the rebuild
-  beside it switches over.
+  beside it switches over, and so is one that holds a stale row (above; outcome `stale`).
 - The gate and the filters run twice: on the rows a page is ranked from, and again on the rows its
   cards are projected from, since the consumer keeps writing the serving generation between the two
   reads. A listing re-rated or re-kinded in between is left out, so a page can be short by it; it is
