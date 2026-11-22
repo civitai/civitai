@@ -27,6 +27,9 @@ export const csamOutsideFieldsHelp = (hasImages: boolean) =>
     ? `Facts outside these fields are not captured and are not sent. If one is the reason for this report, file now, then ${CSAM_PRIVATE_ROUTE}.`
     : `Facts outside these fields are not captured and are not sent. If there is no image to report, don't file here: ${CSAM_PRIVATE_ROUTE} now. It may still need to be reported.`;
 
+/** Under the model picker. Ownership on record can miss an earlier owner. */
+export const CSAM_MODEL_EARLIER_OWNER_HELP = `If you know this model, or the model it was split from, had an earlier owner, leave it unticked and ${CSAM_PRIVATE_ROUTE}.`;
+
 export const csamNotAttachedNotice = (items: string[]) =>
   `Not attached: ${items.join(
     ', '

@@ -153,8 +153,9 @@ CREATE TABLE "ChatMessage" (
 CREATE TABLE "Model" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "name" TEXT NOT NULL, "description" TEXT,
   "status" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL, "deletedAt" TIMESTAMP(3),
-  "sfwName" TEXT, "sfwDescription" TEXT
+  "sfwName" TEXT, "sfwDescription" TEXT, "meta" JSONB
 );
+CREATE TABLE "Collection" ("id" INTEGER PRIMARY KEY, "metadata" JSONB);
 CREATE TABLE "ChatMessageEdit" (
   "id" SERIAL PRIMARY KEY, "messageId" INTEGER NOT NULL, "editorId" INTEGER NOT NULL,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -716,7 +717,7 @@ describe('items the reported user wrote', () => {
   beforeEach(async () => {
     auditLog([]);
     await db.pg.exec(
-      `TRUNCATE "User", "UserProfile", "ChatMessage", "ChatMessageEdit", "Model", "ModelOwnership", "Article", "ServiceOffering";
+      `TRUNCATE "User", "UserProfile", "ChatMessage", "ChatMessageEdit", "Model", "ModelOwnership", "Article", "ServiceOffering", "Collection";
        INSERT INTO "User" VALUES (${OWNER}, 'owner_name'), (${OTHER}, 'other'), (${SECONDARY}, 'second');
        INSERT INTO "UserProfile" VALUES
          (${OWNER}, 'red bio & <stuff>', 'hello there', '2026-10-03 14:05', 'clean bio', NULL, NULL);
@@ -874,6 +875,41 @@ describe('items the reported user wrote', () => {
     const { contextText, notAttached: refused } = await filing({ modelIds: [701, 704, 705] });
     expect(contextText.map((c) => c.id)).toEqual([701, 705]);
     expect(refused).toEqual(['model 704']);
+  });
+
+  it('does not attach a model transferred to its owner, even from the placeholder', async () => {
+    await db.pg.exec(
+      `INSERT INTO "Model" VALUES (706, ${OWNER}, 'Handed over', NULL, 'Published', '2026-10-01', NULL, NULL, NULL);
+       INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES (706, -1, 'account-delete'), (706, ${OWNER}, 'transfer');`
+    );
+    expect(await filing({ modelIds: [706] })).toEqual({ contextText: [], notAttached: ['model 706'] });
+  });
+
+  it('judges a model split out of another by the original too', async () => {
+    const copy = (id: number, collectionId: number) =>
+      `(${id}, ${OWNER}, 'Copy ${id}', NULL, 'Published', '2026-10-01', NULL, NULL, NULL, '{"showcaseCollectionId": ${collectionId}}')`;
+    await db.pg.exec(
+      `INSERT INTO "Model" VALUES
+         (704, ${OWNER}, 'Moved model', NULL, 'Published', '2026-10-01', NULL, NULL, NULL, NULL),
+         ${copy(711, 51)}, ${copy(712, 52)}, ${copy(713, 53)}, ${copy(714, 54)}, ${copy(715, 55)};
+       INSERT INTO "Collection" VALUES
+         (51, '{"originalModelId": 701}'), (52, '{"originalModelId": 704}'),
+         (53, '{"originalModelId": 9999}'), (54, '{"originalModelId": 702}'),
+         (55, '{"originalModelId": 715}');
+       INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
+         (701, ${OWNER}, 'create'), (704, ${OTHER}, 'create'), (704, ${OWNER}, 'transfer'),
+         (9999, ${OWNER}, 'create'), (711, ${OWNER}, 'create'), (712, ${OWNER}, 'create'), (713, ${OWNER}, 'create'),
+         (714, ${OWNER}, 'create'), (715, ${OWNER}, 'create');`
+    );
+    const { contextText, notAttached: refused } = await filing({
+      modelIds: [711, 712, 713, 714, 715],
+    });
+    // Split from a model never transferred, and a collection naming the model itself.
+    expect(contextText.map((c) => c.id)).toEqual([711, 715]);
+    // The original was transferred to this owner, is gone, or has no ownership record.
+    expect(refused).toEqual(['model 712', 'model 713', 'model 714']);
+    const { candidates } = await getCsamItemCandidates({ userId: OWNER, source: 'model' });
+    expect(candidates.filter((c) => c.unavailable).map((c) => c.id)).toEqual([714, 713, 712, 704]);
   });
 
   it('keeps a deleted, edited message, saying both and that its text may differ from what was sent', async () => {

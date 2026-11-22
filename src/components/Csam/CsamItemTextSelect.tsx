@@ -23,6 +23,7 @@ import {
 import {
   CSAM_CONTEXT_ITEM_SELECT_LIMIT,
   csamOutsideFieldsHelp,
+  CSAM_MODEL_EARLIER_OWNER_HELP,
 } from '~/shared/constants/csam-context.constants';
 import { trpc } from '~/utils/trpc';
 
@@ -191,6 +192,11 @@ function ItemList({
             );
           })
         ))}
+      {source === 'model' && (
+        <Text size="xs" c="dimmed">
+          {CSAM_MODEL_EARLIER_OWNER_HELP}
+        </Text>
+      )}
       {data?.more && (
         <Text size="xs" c="dimmed">
           Only the newest 100 are listed. Give any other id below.

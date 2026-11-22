@@ -318,6 +318,24 @@ export function recordModelOwnershipSql({
 }
 
 /**
+ * Gives a model made from another (a split into a collection) the original's ownership history, so its
+ * copied text keeps every owner the original had. Run in the same transaction as the copy.
+ */
+export function copyModelOwnershipSql({
+  fromModelId,
+  toModelId,
+}: {
+  fromModelId: number;
+  toModelId: number;
+}): Prisma.Sql {
+  return Prisma.sql`
+    INSERT INTO "ModelOwnership" ("modelId", "userId", "reason", "actorId", "createdAt")
+    SELECT ${toModelId}::int, o."userId", o."reason", o."actorId", o."createdAt"
+    FROM "ModelOwnership" o WHERE o."modelId" = ${fromModelId}::int
+  `;
+}
+
+/**
  * Records the current owner of every model `where` matches (over `"Model" m`) that has no row for that
  * owner yet, as a baseline: a model created before its history began, or before the backfill reached
  * it, still keeps its owner on record when it moves. Run before the owner write.

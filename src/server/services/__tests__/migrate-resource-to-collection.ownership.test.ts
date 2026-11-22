@@ -6,11 +6,12 @@ import { getHeldGalleryLevel, migrateResourceToCollection } from '~/server/servi
 import { recordedOwnership } from './model-ownership-db';
 
 /**
- * Splitting a model into a collection creates one model per extra version. Each new model records its
- * owner as its first, in the same transaction, so a hold on that owner follows it after a transfer.
+ * Splitting a model into a collection creates one model per extra version. Each new model gets the
+ * original's ownership history in the same transaction, so its copied text keeps every earlier owner.
  */
 
 const OWNER = 7;
+const OTHER = 8;
 
 const published = (id: number) => ({ id, name: `v${id}`, status: 'Published', nsfwLevel: 1 });
 
@@ -141,17 +142,31 @@ describe('migrateResourceToCollection', () => {
     const statements = (txExecuteRaw.mock.calls as unknown as [Prisma.Sql][])
       .map(([sql]) => sql)
       .filter((sql) => sql.text.includes('"ModelOwnership"'));
-    const rows = await recordedOwnership(
-      [
-        [1, OWNER],
-        [101, OWNER],
-        [102, OWNER],
-      ],
-      statements
-    );
-    expect(rows).toEqual([
-      { modelId: 101, userId: OWNER, reason: 'create', actorId: null },
-      { modelId: 102, userId: OWNER, reason: 'create', actorId: null },
+    const models: [number, number][] = [
+      [1, OWNER],
+      [101, OWNER],
+      [102, OWNER],
+    ];
+    const newModelRows = (rows: { modelId: number }[]) => rows.filter((r) => r.modelId !== 1);
+
+    // A model transferred to its owner keeps its earlier owner on each copy.
+    const transferred = await recordedOwnership(models, [
+      (db) =>
+        db.exec(`INSERT INTO "ModelOwnership" ("modelId", "userId", reason, "actorId") VALUES
+          (1, ${OTHER}, 'create', NULL), (1, ${OWNER}, 'transfer', 3)`),
+      ...statements,
+    ]);
+    expect(newModelRows(transferred)).toEqual([
+      { modelId: 101, userId: OTHER, reason: 'create', actorId: null },
+      { modelId: 101, userId: OWNER, reason: 'transfer', actorId: 3 },
+      { modelId: 102, userId: OTHER, reason: 'create', actorId: null },
+      { modelId: 102, userId: OWNER, reason: 'transfer', actorId: 3 },
+    ]);
+
+    // One with no history yet records its owner as a baseline, never as the creator.
+    expect(newModelRows(await recordedOwnership(models, statements))).toEqual([
+      { modelId: 101, userId: OWNER, reason: 'baseline', actorId: null },
+      { modelId: 102, userId: OWNER, reason: 'baseline', actorId: null },
     ]);
   });
 

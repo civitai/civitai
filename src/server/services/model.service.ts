@@ -26,6 +26,7 @@ import {
   HOLD_UNCONFIRMED,
   LegalHoldError,
   legalHoldMessage,
+  copyModelOwnershipSql,
   modelDataHeldSql,
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
@@ -7423,12 +7424,9 @@ export async function migrateResourceToCollection({
           select: { id: true },
         });
         await tx.$executeRaw(
-          recordModelOwnershipSql({
-            where: Prisma.sql`m.id = ${newModel.id}`,
-            userId: modelData.userId,
-            reason: 'create',
-          })
+          copyModelOwnershipSql({ fromModelId: model.id, toModelId: newModel.id })
         );
+        await tx.$executeRaw(recordCurrentModelOwnersSql(Prisma.sql`m.id = ${newModel.id}`));
 
         modelIds.push(newModel.id);
         if (version.id === coverVersionId) faceModelId = newModel.id;

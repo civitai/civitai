@@ -654,18 +654,72 @@ async function readChatMessages(ids: number[], ownerId: number) {
 }
 
 /**
- * Models another owner held before: their text would be sent as the reported user's. Only moves on
- * record are seen; one from before "ModelOwnership" existed, or made by hand, can't be told.
+ * Models whose text may not be the owner's: another account held it, or it was transferred to them.
+ * A model split out of another (its showcase collection names the original) is judged by the original
+ * too, and refused when the original is gone or has no ownership record. Only what is on record is
+ * seen: a move from before "ModelOwnership" existed, or a showcase link the owner removed, can't be told.
  */
 async function modelsOwnedByOthers(ids: number[], ownerId: number) {
   if (!ids.length) return new Set<number>();
-  const rows = await kyselyWrite
-    .selectFrom('ModelOwnership')
-    .select('modelId')
-    .where('modelId', 'in', ids)
-    .where('userId', 'not in', [ownerId, PLACEHOLDER_OWNER_ID])
+  const models = await kyselyWrite
+    .selectFrom('Model')
+    .select(['id', 'meta'])
+    .where('id', 'in', ids)
     .execute();
-  return new Set(rows.map((r) => r.modelId));
+  const showcaseOf = new Map<number, number>();
+  for (const m of models) {
+    const collectionId = (m.meta as { showcaseCollectionId?: unknown } | null)?.showcaseCollectionId;
+    if (typeof collectionId === 'number') showcaseOf.set(m.id, collectionId);
+  }
+  const collections = showcaseOf.size
+    ? await kyselyWrite
+        .selectFrom('Collection')
+        .select(['id', 'metadata'])
+        .where('id', 'in', [...new Set(showcaseOf.values())])
+        .execute()
+    : [];
+  const originalOf = new Map<number, number>();
+  for (const [modelId, collectionId] of showcaseOf) {
+    const metadata = collections.find((c) => c.id === collectionId)?.metadata as {
+      originalModelId?: unknown;
+    } | null;
+    const original = metadata?.originalModelId;
+    if (typeof original === 'number') originalOf.set(modelId, original);
+  }
+  const judged = [...new Set([...ids, ...originalOf.values()])];
+  const [rows, existing] = await Promise.all([
+    kyselyWrite
+      .selectFrom('ModelOwnership')
+      .select(['modelId', 'userId', 'reason'])
+      .where('modelId', 'in', judged)
+      .execute(),
+    originalOf.size
+      ? kyselyWrite
+          .selectFrom('Model')
+          .select('id')
+          .where('id', 'in', [...new Set(originalOf.values())])
+          .execute()
+      : Promise.resolve([]),
+  ]);
+  const notTheOwners = (modelId: number) =>
+    rows.some(
+      (r) =>
+        r.modelId === modelId &&
+        (r.reason === 'transfer'
+          ? r.userId !== PLACEHOLDER_OWNER_ID
+          : r.userId !== ownerId && r.userId !== PLACEHOLDER_OWNER_ID)
+    );
+  const unrecorded = (modelId: number) =>
+    !existing.some((m) => m.id === modelId) || !rows.some((r) => r.modelId === modelId);
+  return new Set(
+    ids.filter((id) => {
+      const original = originalOf.get(id);
+      return (
+        notTheOwners(id) ||
+        (original !== undefined && (unrecorded(original) || notTheOwners(original)))
+      );
+    })
+  );
 }
 
 /** Each field labeled with the site that shows it: the civitai.com value replaces the other there. */
