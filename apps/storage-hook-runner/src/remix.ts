@@ -72,7 +72,8 @@ globalThis.defineRemixApp = (app) => app;
   const freeze = Object.freeze;
   const apply = Reflect.apply;
   const then = Promise.prototype.then;
-  // An own property, so no accessor the app put on Array.prototype sees the write.
+  // An own property, so no accessor the app put on Array.prototype sees the write; a descriptor with
+  // no prototype, so no get or set the app put on Object.prototype turns it into an accessor.
   const put = (list, value) =>
     defineProperty(list, list.length, {
       __proto__: null,
@@ -329,7 +330,7 @@ export function validateRemixReturn(json: string | undefined): RemixReplayResult
       `result is nested past ${MAX_REMIX_RESULT_DEPTH} or longer than ${MAX_REMIX_RESULT_CHARS}`
     );
   if (v.broken === true)
-    return fault('invalid_result', 'the app ran out of stack while a step was recorded');
+    return fault('invalid_result', 'the app ran out of stack or memory while a step was recorded');
   if (v.badAnswer === true)
     return fault(
       'invalid_result',

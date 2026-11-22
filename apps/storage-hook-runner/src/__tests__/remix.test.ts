@@ -219,26 +219,49 @@ export default defineRemixApp({
   );
 
   it('ends as the invalid result, never a short record, when a step runs the stack out', async () => {
-    // Steps taken at every depth near the stack's end: at some, the loop's own calls overflow.
+    // The depth to step from comes from the log, so one call replays the same app at many depths
+    // from the stack's end; at some, the loop's own calls overflow while the step is recorded.
     const deep = `
 export default defineRemixApp({
   async run(ctx) {
+    const d = Number(await ctx.ask({ kind: 'text', prompt: 'depth', maxLength: 5 }));
     let max = 0;
     const probe = (n) => { max = n; probe(n + 1); };
     try { probe(0); } catch {}
-    const at = (n, d) => (n > 0 ? at(n - 1, d) : ctx.ask({ kind: 'text', prompt: 'p' + d, maxLength: 5 }));
-    for (let d = 0; d < 300; d++) {
-      try { await at(max - d, d); break; } catch (e) { if (!(e instanceof RangeError)) break; }
-    }
+    const at = (n) => (n > 0 ? at(n - 1) : ctx.ask({ kind: 'text', prompt: 'deep', maxLength: 5 }));
+    try { await at(max - d); } catch {}
+    await ctx.ask({ kind: 'text', prompt: 'last', maxLength: 5 });
     return [];
   },
 });`;
-    const [result] = await results(deep);
-    // Without the guard a lost step leaves a stopped run with no effect: { effects: [] }.
-    expect(result).not.toEqual({ effects: [] });
-    if (!('cause' in result))
-      expect(result.effects).toEqual([expect.objectContaining({ type: 'ask' })]);
-    else expect(result).toMatchObject({ cause: 'invalid_result' });
+    const outcomes: Record<string, unknown>[] = [];
+    for (let from = 0; from < 96; from += 12) {
+      const branches = Array.from({ length: 12 }, (_, i) => [
+        { type: 'ask', answer: String(from + i) },
+      ]);
+      outcomes.push(...(await results(deep, { branches })).slice(1));
+    }
+    const broken = outcomes.filter((o) => o.cause === 'invalid_result');
+    // POSITIVE CONTROL: some depth reached the guard, so the rest prove nothing was lost.
+    expect(broken.length).toBeGreaterThan(0);
+    for (const o of broken) expect(o.detail).toContain('while a step was recorded');
+    // Every other depth recorded both its asks: the depth, then the one with no log entry.
+    for (const o of outcomes.filter((x) => !('cause' in x)))
+      expect((o.effects as unknown[]).length).toBe(2);
+  });
+
+  it('records its steps whatever accessor the app put on Object.prototype', async () => {
+    const asker = `Object.defineProperty(Object.prototype, 'get', { configurable: true, get() { throw 1; } });
+export default defineRemixApp({
+  async run(ctx) {
+    await ctx.ask({ kind: 'text', prompt: 'Who?', maxLength: 40 });
+    return [];
+  },
+});`;
+    const [result] = await results(asker);
+    expect(result.effects).toEqual([
+      { type: 'ask', spec: expect.objectContaining({ kind: 'text' }) },
+    ]);
   });
 
   it('auto-answers only when the caller asks, whatever Object.prototype claims', async () => {
