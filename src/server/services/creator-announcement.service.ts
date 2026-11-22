@@ -26,7 +26,8 @@ import { createKeyedTtlMemo } from '~/server/utils/ttl-memoize';
 import { isDefined } from '~/utils/type-guards';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { DomainColor, UserEngagementType } from '~/shared/utils/prisma/enums';
-import { isImageServable } from '~/server/common/image-visibility';
+import { isImageServable, isUploaderId } from '~/server/common/image-visibility';
+import { hasBlockMarker } from '~/server/common/image-block-marker';
 
 // Two-arg classed form, as free-placement uses: the one-arg form shares an int4 keyspace
 // with `article.service.ts`, which locks on a bare articleId, so a hashed key could collide
@@ -62,6 +63,8 @@ const creatorAnnouncementSelect = {
       hash: true,
       userId: true,
       modelRestricted: true,
+      ingestion: true,
+      blockedFor: true,
     },
   },
   user: { select: { id: true, username: true, image: true, deletedAt: true } },
@@ -72,8 +75,26 @@ const creatorAnnouncementSelect = {
 
 type RawCreatorAnnouncement = {
   metadata: unknown;
-  cover: { nsfwLevel: number; userId: number; modelRestricted: boolean } | null;
+  cover: {
+    nsfwLevel: number;
+    userId: number;
+    modelRestricted: boolean;
+    ingestion: string;
+    blockedFor: string | null;
+  } | null;
 };
+
+/** The cover a viewer may see, without the fields only this check reads; its uploader always may. */
+function servableCover<C extends NonNullable<RawCreatorAnnouncement['cover']>>(
+  cover: C | null,
+  viewerId: number | undefined
+) {
+  if (!cover) return null;
+  const own = isUploaderId(viewerId) && cover.userId === viewerId;
+  if (!isImageServable(cover, viewerId) || (hasBlockMarker(cover) && !own)) return null;
+  const { ingestion: _ingestion, blockedFor: _blockedFor, ...rest } = cover;
+  return rest;
+}
 
 /**
  * `Announcement` has no nsfwLevel of its own, so the cover's level IS the announcement's —
@@ -83,10 +104,7 @@ type RawCreatorAnnouncement = {
 const toCreatorAnnouncementDTO =
   (viewerId: number | undefined) =>
   <T extends RawCreatorAnnouncement>(announcement: T) => {
-    const cover =
-      announcement.cover && isImageServable(announcement.cover, viewerId)
-        ? announcement.cover
-        : null;
+    const cover = servableCover(announcement.cover, viewerId);
     return {
       ...announcement,
       cover,
