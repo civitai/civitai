@@ -22,7 +22,14 @@ import { uniqBy } from 'lodash-es';
 import { useEffect, useMemo, useState } from 'react';
 import * as z from 'zod';
 import { useCsamImageSelectStore } from '~/components/Csam/useCsamImageSelect.store';
-import { CsamContextTextSelect, noContextSources } from '~/components/Csam/CsamContextTextSelect';
+import {
+  CsamContextTextSelect,
+  hasContextSources,
+  noContextSources,
+} from '~/components/Csam/CsamContextTextSelect';
+import { CsamItemTextSelect, csamNotAttachedNotice } from '~/components/Csam/CsamItemTextSelect';
+import AlertDialog from '~/components/Dialog/Common/AlertDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { settleShown } from '~/components/Csam/csam-shown';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { Form, InputCheckboxGroup, InputRadioGroup, useForm } from '~/libs/form';
@@ -65,14 +72,25 @@ export function CsamDetailsForm({
 
   const imageIds = useCsamImageSelectStore.getState().getSelected(userId);
   const [contextSources, setContextSources] = useState(noContextSources);
+  const [itemProblem, setItemProblem] = useState<string>();
   const supplemental = trpc.csam.getSupplementalPreview.useQuery(
     { userId, imageIds, supplementalOf: supplementalOf ?? 0 },
     { enabled: !!supplementalOf, retry: false, refetchOnMount: 'always' }
   );
 
   const { mutate: createReport, isPending: isLoading } = trpc.csam.createReport.useMutation({
-    onSuccess: () => {
+    onSuccess: ({ contextNotAttached }) => {
       closeModal('csam-confirm');
+      // Stays until dismissed: the moderator has to see what the report went without.
+      if (contextNotAttached.length)
+        dialogStore.trigger({
+          component: AlertDialog,
+          props: {
+            type: 'info',
+            title: 'Some text was not attached',
+            children: <Text>{csamNotAttachedNotice(contextNotAttached)}</Text>,
+          },
+        });
       onSuccess?.();
     },
     onError: (error) => {
@@ -100,10 +118,7 @@ export function CsamDetailsForm({
           userId,
           details: data,
           supplementalOf,
-          ...(type === 'Image' &&
-            (contextSources.postIds.length > 0 || contextSources.commentIds.length > 0) && {
-              contextSources,
-            }),
+          ...(type === 'Image' && hasContextSources(contextSources) && { contextSources }),
         });
       },
     });
@@ -172,6 +187,16 @@ export function CsamDetailsForm({
                   onChange={setContextSources}
                 />
               )}
+              {type === 'Image' && userId > 0 && (
+                <CsamItemTextSelect
+                  userId={userId}
+                  value={contextSources}
+                  onChange={(value, problem) => {
+                    setContextSources(value);
+                    setItemProblem(problem);
+                  }}
+                />
+              )}
               <Group justify="flex-end">
                 {onPrevious && (
                   <Button variant="default" onClick={onPrevious} disabled={isLoading}>
@@ -181,7 +206,7 @@ export function CsamDetailsForm({
                 <Button
                   type="submit"
                   loading={isLoading}
-                  disabled={!!supplementalOf && !supplemental.data}
+                  disabled={(!!supplementalOf && !supplemental.data) || !!itemProblem}
                 >
                   Submit
                 </Button>

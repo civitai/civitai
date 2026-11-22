@@ -1334,6 +1334,11 @@ describe('the report-not-filed view matches a report to the held item', () => {
     expect(await listed()).toEqual([21, 22, 23, 24]);
   });
 
+  it("keeps listing a held chat message when a later report captured that message's text", async () => {
+    await report([{ source: 'chatMessage', id: 240, capturedAt: after }]);
+    expect(await listed()).toEqual([21, 22, 23, 24]);
+  });
+
   it.each([
     [21, 'postText', 210],
     [22, 'comment', 220],

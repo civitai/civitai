@@ -86,9 +86,12 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
 import { buildReport } from '@civitai/cybertipline-tools';
 import type { CsamReportProps } from '~/server/services/csam.service-new';
 import { processCsamReport } from '~/server/services/csam.service-new';
-import type { CsamContextText } from '~/server/services/csam-context-text';
-import { contextWebPageIncidents, foldContextText } from '~/server/services/csam-context-text';
+import type { CsamContextText, CsamItemContextText } from '~/server/services/csam-context-text';
+import { contextIncidents, foldContextText } from '~/server/services/csam-context-text';
+
+const webPages = (c: CsamContextText[] | undefined) => contextIncidents(c).webPageIncidents;
 import { logToAxiom } from '~/server/logging/client';
+import { xmlProblem } from '~/server/services/ncmec-xml';
 
 const stored = Buffer.from('the bytes the user uploaded');
 const db = { pg: null as unknown as PGlite };
@@ -227,7 +230,7 @@ describe('attached text on an image report', () => {
     }[];
 
     const received = incidents.map((i) => ({ url: i.url[0], additionalInfo: i.additionalInfo[0] }));
-    expect(received).toEqual(contextWebPageIncidents(contextText));
+    expect(received).toEqual(webPages(contextText));
     expect(received[0].additionalInfo).toContain('R&D <b>bold</b> > less');
     expect(received[0].additionalInfo).toContain(
       'Text item 7 of this post, posted 10/02/2026 08:31 UTC by the reported account. Not reviewed by Civitai:\n"held <i>words</i> & more"'
@@ -284,6 +287,130 @@ describe('attached text on an image report', () => {
     expect(JSON.stringify(sent)).not.toContain('identicalRefiles');
     expect(xml).not.toContain(marker);
     expect(xml).toContain('held &lt;i&gt;words');
+  });
+
+  it('sends a chat message as a chat incident and the other item types and post text as page incidents, one per internetDetails', async () => {
+    const item = (over: Partial<CsamItemContextText>): CsamItemContextText => ({
+      source: 'model',
+      id: 1,
+      authorId: 20,
+      authorIsReportedUser: true,
+      fields: [{ label: 'Name', text: HOSTILE }],
+      text: `Name:\n${HOSTILE}`,
+      capturedAt: '2026-10-08T14:05:00.000Z',
+      capturedById: 10,
+      ...over,
+    });
+    const items = [
+      item({ source: 'chatMessage', id: 901, fields: [{ label: 'Message', text: HOSTILE }] }),
+      item({ source: 'model', id: 701, status: 'Draft' }),
+      item({ source: 'article', id: 801, status: 'Published' }),
+      item({ source: 'serviceOffering', id: 1001, status: 'Paused' }),
+      item({
+        source: 'profile',
+        id: 20,
+        username: 'user',
+        fields: [{ label: 'Bio', text: HOSTILE }],
+      }),
+    ];
+    const post = contextText[0];
+    await send({ contextText: [post, ...items] });
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    const xml = buildReport(submitReport.mock.calls[0][0]);
+    expect(xmlProblem(xml)).toBeNull();
+    const doc = await parsed(xml);
+    const details = doc.report.internetDetails as {
+      webPageIncident?: { url: string[]; additionalInfo: string[] }[];
+      chatImIncident?: { chatClient: string[]; content: string[]; additionalInfo: string[] }[];
+    }[];
+    const pages = details.flatMap((d) => d.webPageIncident ?? []);
+    const chats = details.flatMap((d) => d.chatImIncident ?? []);
+    const expected = contextIncidents([post, ...items]);
+    expect(
+      details.map((d) => (d.webPageIncident?.length ?? 0) + (d.chatImIncident?.length ?? 0))
+    ).toEqual([1, 1, 1, 1, 1, 1]);
+
+    expect(pages.map((p) => ({ url: p.url[0], additionalInfo: p.additionalInfo[0] }))).toEqual(
+      expected.webPageIncidents
+    );
+    expect(
+      chats.map((c) => ({
+        chatClient: c.chatClient[0],
+        content: c.content[0],
+        additionalInfo: c.additionalInfo[0],
+      }))
+    ).toEqual(expected.chatImIncidents);
+    expect(pages.map((p) => new URL(p.url[0]).pathname)).toEqual([
+      '/posts/100',
+      '/models/701',
+      '/articles/801',
+      '/services/1001',
+      '/user/user',
+    ]);
+    expect(chats).toHaveLength(1);
+    expect(chats[0].content[0]).toContain('R&D <b>bold</b> > less');
+    expect(chats[0].content[0]).toContain('nul\uFFFD bell\uFFFD lone\uFFFD surrogate');
+    expect(
+      vi
+        .mocked(logToAxiom)
+        .mock.calls.find(
+          ([line]) => (line as { subType?: string }).subType === 'send-incidents'
+        )?.[0]
+    ).toEqual({
+      name: 'csam-report',
+      type: 'info',
+      subType: 'send-incidents',
+      payload: { webPageIncidents: 5, chatImIncidents: 1 },
+    });
+  });
+
+  it('sends a profile with no username as a page incident with no url', async () => {
+    const profile: CsamItemContextText = {
+      source: 'profile',
+      id: 20,
+      authorId: 20,
+      authorIsReportedUser: true,
+      fields: [{ label: 'Bio (civitai.red and civitai.com)', text: 'bio words' }],
+      text: 'Bio (civitai.red and civitai.com):\nbio words',
+      capturedAt: '2026-10-08T14:05:00.000Z',
+      capturedById: 10,
+    };
+    await send({ contextText: [profile] });
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    const xml = buildReport(submitReport.mock.calls[0][0]);
+    expect(xmlProblem(xml)).toBeNull();
+    const doc = await parsed(xml);
+    const [page] = doc.report.internetDetails[0].webPageIncident;
+    expect(page.url).toBeUndefined();
+    expect(page.additionalInfo[0]).toContain('"bio words"');
+    // The profile line names the same account as the reported-person block.
+    const espIdentifier =
+      doc.report.reportedPerson?.[0]?.espIdentifier?.[0] ??
+      doc.report.personOrUserReported[0].espIdentifier[0];
+    expect(page.additionalInfo[0]).toContain(
+      `Profile of the account reported in this CyberTip (user id ${espIdentifier}; username at capture none).`
+    );
+    expect(espIdentifier).toBe('20');
+  });
+
+  // Why filing refuses item text on a report with no images: such a report never sends.
+  it('sends nothing for a report with text and no images', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([]);
+    filed = {
+      id: 1,
+      userId: 20,
+      reportedById: 10,
+      type: 'Image',
+      createdAt: new Date(Date.now() - 3_600_000),
+      reportSentAt: null,
+      images: [],
+      details: { contextText },
+    } as unknown as CsamReportProps;
+    await processCsamReport(filed);
+
+    expect(submitReport).not.toHaveBeenCalled();
   });
 
   it('adds no page incident to a report with no attached text', async () => {

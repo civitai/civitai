@@ -7,6 +7,7 @@ import {
   createCsamReportSchema,
   createExternalCsamReportSchema,
   getCsamContextCandidatesSchema,
+  getCsamItemCandidatesSchema,
   readHeldCsamContextTextSchema,
   getCsamSupplementalPreviewSchema,
   getImageResourcesSchema,
@@ -30,6 +31,7 @@ import {
 import { getCsamSupplementalPreview } from '~/server/services/csam-supplemental.service';
 import {
   getCsamContextCandidates,
+  getCsamItemCandidates,
   readHeldCsamContextText,
 } from '~/server/services/csam-context-text';
 import { assertSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
@@ -51,6 +53,9 @@ export const csamRouter = router({
   getContextCandidates: moderatorProcedure
     .input(getCsamContextCandidatesSchema)
     .query(({ input }) => getCsamContextCandidates(input)),
+  getItemContextCandidates: moderatorProcedure
+    .input(getCsamItemCandidatesSchema)
+    .query(({ input }) => getCsamItemCandidates(input)),
   readHeldContextText: moderatorProcedure
     .input(readHeldCsamContextTextSchema)
     .mutation(({ input, ctx }) => {

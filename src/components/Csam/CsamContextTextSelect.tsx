@@ -5,7 +5,18 @@ import type { CsamContextPreview } from '~/server/services/csam-context-text';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
-export const noContextSources: CsamContextSources = { postIds: [], commentIds: [] };
+export const noContextSources: CsamContextSources = {
+  postIds: [],
+  commentIds: [],
+  chatMessageIds: [],
+  modelIds: [],
+  articleIds: [],
+  serviceOfferingIds: [],
+  profile: false,
+};
+
+export const hasContextSources = ({ profile, ...lists }: CsamContextSources) =>
+  profile || Object.values(lists).some((ids) => ids.length > 0);
 
 export function CsamContextTextSelect({
   userId,

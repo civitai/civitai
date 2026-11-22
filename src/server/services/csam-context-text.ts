@@ -1,11 +1,17 @@
+import type { FormatCallback } from 'html-to-text';
 import { convert } from 'html-to-text';
 import { kyselyRead, kyselyV3Read, kyselyWrite } from '~/server/db/kyselyDb';
 import type {
-  CsamContextSources,
+  CsamContextSourcesInput,
   GetCsamContextCandidatesSchema,
+  GetCsamItemCandidatesSchema,
 } from '~/server/schema/csam.schema';
 import { xmlSafe } from '~/server/services/ncmec-xml';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
+import { CSAM_CONTEXT_TEXT_MAX_CHARS } from '~/shared/constants/csam-context.constants';
+
+export { CSAM_CONTEXT_TEXT_MAX_CHARS };
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
 /** How a held text came to be reviewed: the filing moderator's recorded read, or its hold decided on its own. */
@@ -21,7 +27,7 @@ export type CsamContextReview = {
 };
 
 /** Text posted with a report's images, copied when the report is filed. */
-export type CsamContextText = {
+export type CsamPostContextText = {
   /** `postText`: a held text item, captured with its post's text but on its own. */
   source: 'postDescription' | 'comment' | 'postText';
   /** The post's id for a description, the item's for a text item, the comment's otherwise. */
@@ -41,8 +47,52 @@ export type CsamContextText = {
   reviewed?: CsamContextReview;
 };
 
+export const CSAM_CONTEXT_ITEM_SOURCES = [
+  'chatMessage',
+  'model',
+  'article',
+  'serviceOffering',
+  'profile',
+] as const;
+export type CsamItemContextSource = (typeof CSAM_CONTEXT_ITEM_SOURCES)[number];
+
+/** One labeled field of an item, e.g. a model's name. `at` only where a column records its time. */
+export type CsamItemField = { label: string; text: string; at?: string };
+
+/**
+ * A chat message, model, article, service offering or profile of the report's own user, copied when
+ * the report is filed. Never give it a post or image id: database readers match entries by `postId`.
+ */
+export type CsamItemContextText = {
+  source: CsamItemContextSource;
+  /** The user's id for a profile. */
+  id: number;
+  postId?: never;
+  imageId?: never;
+  reviewed?: never;
+  /** Moderators and Legal only: never sent. Always the report's own user, never its secondary user. */
+  authorId: number;
+  authorIsReportedUser: true;
+  fields: CsamItemField[];
+  /** The fields labeled and joined: what a re-file is compared on. */
+  text: string;
+  createdAt?: string;
+  status?: string;
+  deletedAt?: string;
+  editedAt?: string;
+  /** A profile's address at capture. */
+  username?: string;
+  capturedAt: string;
+  capturedById: number;
+};
+
+export type CsamContextText = CsamPostContextText | CsamItemContextText;
+
+export const isItemContextText = (c: CsamContextText): c is CsamItemContextText =>
+  (CSAM_CONTEXT_ITEM_SOURCES as readonly string[]).includes(c.source);
+
 export type CsamContextCandidate = Omit<
-  CsamContextText,
+  CsamPostContextText,
   'authorIsReportedUser' | 'capturedAt' | 'capturedById'
 > & {
   deleted?: boolean;
@@ -57,16 +107,44 @@ export type CsamContextPreview = CsamContextCandidate & {
   fullLength?: number;
 };
 
-export const CSAM_CONTEXT_TEXT_MAX_CHARS = 50_000;
 const CANDIDATE_COMMENT_LIMIT = 500;
 const CANDIDATE_PREVIEW_CHARS = 2_000;
 
-export const htmlToPlainText = (html: string) =>
+// Writes a target as inert text, never fetched, after the element's own text.
+const targetAs =
+  (name: string, attribute: string): FormatCallback =>
+  (elem, walk, builder) => {
+    walk(elem.children, builder);
+    const target = elem.attribs?.[attribute];
+    // Kept as written: a heading's uppercase transform would change a target's case.
+    if (target) builder.addInline(` [${name}: ${target}] `, { noWordTransform: true });
+  };
+
+/**
+ * `keepTargets` writes image, frame, media and embed targets as text, which the default drops. Post and
+ * comment text never sets it: its output is what re-file folding and the holds queue compare.
+ */
+export const htmlToPlainText = (html: string, { keepTargets = false } = {}) =>
   convert(html, {
     wordwrap: false,
+    ...(keepTargets && {
+      formatters: {
+        csamImage: targetAs('image', 'src'),
+        csamFrame: targetAs('frame', 'src'),
+        csamMedia: targetAs('media', 'url'),
+        csamEmbed: targetAs('embed id', 'data-id'),
+      },
+    }),
     selectors: [
       { selector: 'a', options: { hideLinkHrefIfSameAsText: true } },
-      { selector: 'img', format: 'skip' },
+      ...(keepTargets
+        ? [
+            { selector: 'img', format: 'csamImage' },
+            { selector: 'iframe', format: 'csamFrame' },
+            { selector: 'edge-media', format: 'csamMedia' },
+            { selector: 'div[data-id]', format: 'csamEmbed' },
+          ]
+        : [{ selector: 'img', format: 'skip' }]),
     ],
   }).trim();
 
@@ -361,7 +439,360 @@ async function readsBy(
   return reads;
 }
 
-/** Copies the chosen text, refusing any source outside the report's images. */
+const CANDIDATE_ITEM_LIMIT = 100;
+
+const iso = (d: Date | null | undefined) => (d ? new Date(d).toISOString() : undefined);
+const joinFields = (fields: CsamItemField[]) =>
+  fields.map((f) => `${f.label}:\n${f.text}`).join('\n\n');
+const present = (fields: { label: string; text: string | null | undefined; at?: string }[]) =>
+  fields
+    .filter((f): f is CsamItemField => !!f.text?.trim())
+    .map((f) => ({
+      label: f.label,
+      text: f.text,
+      ...(f.at && { at: f.at }),
+    }));
+
+type ItemRead = Omit<
+  CsamItemContextText,
+  'authorIsReportedUser' | 'text' | 'capturedAt' | 'capturedById'
+>;
+
+// primary, in all three readers: the capture is the item as it stands when the report is filed.
+/** The models, articles or service offerings with these ids. */
+type WebItemSource = 'model' | 'article' | 'serviceOffering';
+
+async function readWebItems(source: WebItemSource, ids: number[], ownerId: number) {
+  if (!ids.length) return [];
+  if (source === 'model') {
+    const rows = await kyselyWrite
+      .selectFrom('Model')
+      .select([
+        'id',
+        'userId',
+        'name',
+        'description',
+        'sfwName',
+        'sfwDescription',
+        'status',
+        'createdAt',
+        'deletedAt',
+      ])
+      .where('id', 'in', ids)
+      .where('userId', '=', ownerId)
+      .execute();
+    const rich = (html: string | null) => html && htmlToPlainText(html, { keepTargets: true });
+    return rows.map((r): ItemRead => {
+      // A set sfwName turns the civitai.com face on: that site then shows sfwName and sfwDescription.
+      const red = r.sfwName !== null ? 'civitai.red' : 'civitai.red and civitai.com';
+      return {
+        source,
+        id: r.id,
+        authorId: r.userId,
+        fields: present([
+          { label: `Name (${red})`, text: r.name },
+          { label: `Description (${red})`, text: rich(r.description) },
+          ...(r.sfwName !== null
+            ? [
+                { label: 'Name (civitai.com)', text: r.sfwName },
+                { label: 'Description (civitai.com)', text: rich(r.sfwDescription) },
+              ]
+            : []),
+        ]),
+        createdAt: iso(r.createdAt),
+        status: r.status,
+        ...(r.deletedAt && { deletedAt: iso(r.deletedAt) }),
+      };
+    });
+  }
+  if (source === 'article') {
+    const rows = await kyselyWrite
+      .selectFrom('Article')
+      .select(['id', 'userId', 'title', 'content', 'status', 'createdAt'])
+      .where('id', 'in', ids)
+      .where('userId', '=', ownerId)
+      .execute();
+    return rows.map(
+      (r): ItemRead => ({
+        source,
+        id: r.id,
+        authorId: r.userId,
+        fields: present([
+          { label: 'Title', text: r.title },
+          { label: 'Content', text: htmlToPlainText(r.content, { keepTargets: true }) },
+        ]),
+        ...(r.createdAt && { createdAt: iso(r.createdAt) }),
+        status: r.status,
+      })
+    );
+  }
+  const rows = await kyselyWrite
+    .selectFrom('ServiceOffering')
+    .select(['id', 'sellerId', 'title', 'description', 'status', 'createdAt'])
+    .where('id', 'in', ids)
+    .where('sellerId', '=', ownerId)
+    .execute();
+  return rows.map(
+    (r): ItemRead => ({
+      source,
+      id: r.id,
+      authorId: r.sellerId,
+      // Plain text as the seller typed it, not HTML.
+      fields: present([
+        { label: 'Title', text: r.title },
+        { label: 'Description', text: r.description },
+      ]),
+      createdAt: iso(r.createdAt),
+      status: r.status,
+    })
+  );
+}
+
+async function readChatMessages(ids: number[], ownerId: number) {
+  if (!ids.length) return [];
+  const rows = await kyselyWrite
+    .selectFrom('ChatMessage')
+    .select(['id', 'userId', 'content', 'contentType', 'createdAt', 'editedAt', 'deletedAt'])
+    .where('id', 'in', ids)
+    .where('userId', '=', ownerId)
+    .execute();
+  const editedByOthers = new Set(
+    rows.length
+      ? (
+          await kyselyWrite
+            .selectFrom('ChatMessageEdit')
+            .select('messageId')
+            .where(
+              'messageId',
+              'in',
+              rows.map((r) => r.id)
+            )
+            .where('editorId', '<>', ownerId)
+            .execute()
+        ).map((e) => e.messageId)
+      : []
+  );
+  return rows.map((r): { attachable: boolean; item: ItemRead } => ({
+    // A moderator's edit would be sent as the user's words.
+    attachable: r.contentType === 'Markdown' && !editedByOthers.has(r.id),
+    item: {
+      source: 'chatMessage',
+      id: r.id,
+      authorId: r.userId,
+      fields: present([{ label: 'Message', text: r.content }]),
+      createdAt: iso(r.createdAt),
+      ...(r.editedAt && { editedAt: iso(r.editedAt) }),
+      ...(r.deletedAt && { deletedAt: iso(r.deletedAt) }),
+    },
+  }));
+}
+
+/**
+ * Models another owner held before: their text would be sent as the reported user's. Only moves on
+ * record are seen; one from before "ModelOwnership" existed, or made by hand, can't be told.
+ */
+async function modelsOwnedByOthers(ids: number[], ownerId: number) {
+  if (!ids.length) return new Set<number>();
+  const rows = await kyselyWrite
+    .selectFrom('ModelOwnership')
+    .select('modelId')
+    .where('modelId', 'in', ids)
+    .where('userId', 'not in', [ownerId, PLACEHOLDER_OWNER_ID])
+    .execute();
+  return new Set(rows.map((r) => r.modelId));
+}
+
+/** Each field labeled with the site that shows it: the civitai.com value replaces the other there. */
+async function readProfile(userId: number): Promise<ItemRead | undefined> {
+  const [row] = await kyselyWrite
+    .selectFrom('User')
+    .leftJoin('UserProfile', 'UserProfile.userId', 'User.id')
+    .select([
+      'User.id',
+      'User.username',
+      'UserProfile.bio',
+      'UserProfile.message',
+      'UserProfile.messageAddedAt',
+      'UserProfile.sfwBio',
+      'UserProfile.sfwMessage',
+      'UserProfile.sfwMessageAddedAt',
+    ])
+    .where('User.id', '=', userId)
+    .execute();
+  if (!row) return;
+  // An empty override still replaces the field on civitai.com.
+  const sites = (override: string | null) =>
+    override !== null ? 'civitai.red' : 'civitai.red and civitai.com';
+  return {
+    source: 'profile',
+    id: row.id,
+    authorId: row.id,
+    fields: present([
+      { label: `Bio (${sites(row.sfwBio)})`, text: row.bio },
+      {
+        label: `Message (${sites(row.sfwMessage)})`,
+        text: row.message,
+        at: iso(row.messageAddedAt),
+      },
+      { label: 'Bio (civitai.com)', text: row.sfwBio },
+      { label: 'Message (civitai.com)', text: row.sfwMessage, at: iso(row.sfwMessageAddedAt) },
+    ]),
+    ...(row.username && { username: row.username }),
+  };
+}
+
+export type CsamItemCandidate = {
+  source: 'model' | 'article' | 'serviceOffering';
+  id: number;
+  title: string;
+  status: string;
+  deleted?: boolean;
+  /** Filing would not attach it. */
+  unavailable?: boolean;
+};
+
+/**
+ * The report's own user's models, articles or service offerings, newest first. Past the cap a
+ * moderator gives the id, which filing checks the same way.
+ */
+export async function getCsamItemCandidates({
+  userId,
+  source,
+}: GetCsamItemCandidatesSchema): Promise<{ candidates: CsamItemCandidate[]; more: boolean }> {
+  const limit = CANDIDATE_ITEM_LIMIT + 1;
+  const rows: CsamItemCandidate[] =
+    source === 'model'
+      ? (
+          await kyselyRead
+            .selectFrom('Model')
+            .select(['id', 'name', 'status', 'deletedAt'])
+            .where('userId', '=', userId)
+            .orderBy('id', 'desc')
+            .limit(limit)
+            .execute()
+        ).map((r) => ({
+          source,
+          id: r.id,
+          title: r.name,
+          status: r.status,
+          ...(r.deletedAt && { deleted: true }),
+        }))
+      : source === 'article'
+      ? (
+          await kyselyRead
+            .selectFrom('Article')
+            .select(['id', 'title', 'status'])
+            .where('userId', '=', userId)
+            .orderBy('id', 'desc')
+            .limit(limit)
+            .execute()
+        ).map((r) => ({ source, id: r.id, title: r.title, status: r.status }))
+      : (
+          await kyselyRead
+            .selectFrom('ServiceOffering')
+            .select(['id', 'title', 'status'])
+            .where('sellerId', '=', userId)
+            .orderBy('id', 'desc')
+            .limit(limit)
+            .execute()
+        ).map((r) => ({ source, id: r.id, title: r.title, status: r.status }));
+  const candidates = rows.slice(0, CANDIDATE_ITEM_LIMIT);
+  const moved =
+    source === 'model'
+      ? await modelsOwnedByOthers(
+          candidates.map((c) => c.id),
+          userId
+        )
+      : new Set<number>();
+  return {
+    candidates: candidates.map((c) => (moved.has(c.id) ? { ...c, unavailable: true } : c)),
+    more: rows.length > CANDIDATE_ITEM_LIMIT,
+  };
+}
+
+const itemLabel = (source: CsamItemContextSource, id: number) =>
+  source === 'profile'
+    ? 'profile'
+    : `${
+        {
+          chatMessage: 'chat message',
+          model: 'model',
+          article: 'article',
+          serviceOffering: 'service offering',
+        }[source]
+      } ${id}`;
+
+/**
+ * Copies the chosen chat message, model, article, service offering and profile text of the report's own
+ * user. An item that can't be attached never stops the filing: it is named in `notAttached`, with no
+ * reason, so a missing chat message reads the same as another account's.
+ */
+async function snapshotItems({
+  sources,
+  ownerId,
+  capturedById,
+  capturedAt,
+}: {
+  sources: CsamContextSourcesInput;
+  ownerId?: number;
+  capturedById: number;
+  capturedAt: Date;
+}): Promise<{ items: CsamItemContextText[]; notAttached: string[] }> {
+  const unique = (ids: number[] | undefined) => [...new Set(ids ?? [])];
+  const wanted: [CsamItemContextSource, number[]][] = [
+    ['chatMessage', unique(sources.chatMessageIds)],
+    ['model', unique(sources.modelIds)],
+    ['article', unique(sources.articleIds)],
+    ['serviceOffering', unique(sources.serviceOfferingIds)],
+    ...(sources.profile && ownerId !== undefined
+      ? ([['profile', [ownerId]]] as [CsamItemContextSource, number[]][])
+      : []),
+  ];
+  const notAttached = sources.profile && ownerId === undefined ? ['profile'] : [];
+  if (wanted.every(([, ids]) => !ids.length)) return { items: [], notAttached };
+  if (ownerId === undefined) {
+    for (const [source, ids] of wanted) notAttached.push(...ids.map((id) => itemLabel(source, id)));
+    return { items: [], notAttached };
+  }
+
+  const [chatIds, modelIds, articleIds, offeringIds] = wanted.map(([, ids]) => ids);
+  const chats = await readChatMessages(chatIds, ownerId);
+  const models = await readWebItems('model', modelIds, ownerId);
+  const movedModels = await modelsOwnedByOthers(
+    models.map((m) => m.id),
+    ownerId
+  );
+  const read: ItemRead[] = [
+    ...chats.filter((c) => c.attachable).map((c) => c.item),
+    ...models.filter((m) => !movedModels.has(m.id)),
+    ...(await readWebItems('article', articleIds, ownerId)),
+    ...(await readWebItems('serviceOffering', offeringIds, ownerId)),
+    ...(sources.profile ? [await readProfile(ownerId)].filter((p): p is ItemRead => !!p) : []),
+  ].filter((item) => item.fields.length);
+
+  const items: CsamItemContextText[] = [];
+  for (const [source, ids] of wanted)
+    for (const id of ids) {
+      const item = read.find((r) => r.source === source && r.id === id);
+      if (!item) {
+        notAttached.push(itemLabel(source, id));
+        continue;
+      }
+      items.push({
+        ...item,
+        authorIsReportedUser: true,
+        text: joinFields(item.fields),
+        capturedAt: capturedAt.toISOString(),
+        capturedById,
+      });
+    }
+  return { items, notAttached };
+}
+
+/**
+ * Copies the chosen text. Post and comment text outside the report's images refuses the filing; an
+ * item that can't be attached is only named in `notAttached`.
+ */
 export async function snapshotCsamContextText({
   imageIds,
   ownerId,
@@ -373,13 +804,48 @@ export async function snapshotCsamContextText({
   imageIds: number[];
   /** The report's user: text on anyone else's images is refused. */
   ownerId?: number;
-  sources: CsamContextSources;
+  sources: CsamContextSourcesInput;
   reportedUserIds: number[];
   capturedById: number;
   capturedAt?: Date;
-}): Promise<CsamContextText[]> {
+}): Promise<{ contextText: CsamContextText[]; notAttached: string[] }> {
   const postIds = [...new Set(sources.postIds)];
   const commentIds = [...new Set(sources.commentIds)];
+  const posts = await snapshotPostText({
+    imageIds,
+    ownerId,
+    postIds,
+    commentIds,
+    reportedUserIds,
+    capturedById,
+    capturedAt,
+  });
+  const { items, notAttached } = await snapshotItems({
+    sources,
+    ownerId,
+    capturedById,
+    capturedAt,
+  });
+  return { contextText: [...posts, ...items], notAttached };
+}
+
+async function snapshotPostText({
+  imageIds,
+  ownerId,
+  postIds,
+  commentIds,
+  reportedUserIds,
+  capturedById,
+  capturedAt,
+}: {
+  imageIds: number[];
+  ownerId?: number;
+  postIds: number[];
+  commentIds: number[];
+  reportedUserIds: number[];
+  capturedById: number;
+  capturedAt: Date;
+}): Promise<CsamPostContextText[]> {
   if (!postIds.length && !commentIds.length) return [];
 
   const { candidates: found } = await readCandidates({ imageIds, ownerId, postIds, commentIds });
@@ -455,8 +921,8 @@ export function foldContextText(
           (CSAM_REVIEW_ORIGINS as readonly string[]).includes(review.origin)
             ? review
             : undefined;
-        if (upgrade) {
-          const reviewed = { ...current.capture, reviewed: upgrade };
+        if (upgrade && !isItemContextText(current.capture)) {
+          const reviewed: CsamContextText = { ...current.capture, reviewed: upgrade };
           merged[merged.indexOf(current.capture)] = reviewed;
           latest.set(item(c), { capture: reviewed, stored: true });
         }
@@ -479,24 +945,24 @@ export const formatUtc = (iso: string) => {
 };
 
 // The truncation line sits outside the quotes so it cannot be read as part of the posted text.
-function quotedCapped(text: string) {
+function quotedCapped(text: string, max = CSAM_CONTEXT_TEXT_MAX_CHARS) {
   const chars = Array.from(text);
-  if (chars.length <= CSAM_CONTEXT_TEXT_MAX_CHARS) return `"${text}"`;
-  const rest = chars.length - CSAM_CONTEXT_TEXT_MAX_CHARS;
+  if (chars.length <= max) return `"${text}"`;
+  const rest = chars.length - max;
   return `"${chars
-    .slice(0, CSAM_CONTEXT_TEXT_MAX_CHARS)
+    .slice(0, max)
     .join(
       ''
     )}"\n[Truncated: ${rest} further characters are preserved by Civitai with this report.]`;
 }
 
-const author = (c: CsamContextText) =>
+const author = (c: CsamPostContextText) =>
   c.authorIsReportedUser ? 'the reported account' : 'another account';
 
 /** Sent with a held text item no moderator read or decided on its own (`CsamContextText.reviewed`). */
 export const NOT_REVIEWED = 'Not reviewed by Civitai';
 
-function itemText(c: CsamContextText) {
+function itemText(c: CsamPostContextText) {
   const posted = `posted ${formatUtc(c.postedAt)} by ${author(c)}`;
   const heading =
     c.source === 'postDescription'
@@ -507,21 +973,101 @@ function itemText(c: CsamContextText) {
   return `${heading}\n${quotedCapped(c.text)}`;
 }
 
-/** The page incidents as NCMEC reads them once parsed: one per page and capture time. */
-export function contextWebPageIncidents(contextText: CsamContextText[] | undefined) {
-  if (!contextText?.length) return [];
+/** Shared by an item's fields, in order: the whole item sends at most the cap. */
+function quotedFields(fields: CsamItemField[]) {
+  let budget = CSAM_CONTEXT_TEXT_MAX_CHARS;
+  return fields.map((f) => {
+    const quoted = quotedCapped(f.text, budget);
+    budget = Math.max(0, budget - Array.from(f.text).length);
+    return `${f.label}${f.at ? `, added ${formatUtc(f.at)}` : ''}:\n${quoted}`;
+  });
+}
+
+const EDITED_NOTE = 'text as of capture; may differ from what was sent';
+
+/** Where an item lives and what it was when captured. Never calls an item public or posted. */
+function describeItem(c: CsamItemContextText, base: string) {
+  const state = [
+    c.status && `status ${c.status} at capture`,
+    c.createdAt && `created ${formatUtc(c.createdAt)}`,
+    c.deletedAt && `deleted ${formatUtc(c.deletedAt)}`,
+  ]
+    .filter(Boolean)
+    .join(', ');
+  const of = (label: string) => `${label}${state ? `, ${state}` : ''}`;
+  switch (c.source) {
+    case 'model':
+      return { noun: 'model', url: `${base}/models/${c.id}`, heading: of(`Model ${c.id}`) };
+    case 'article':
+      return { noun: 'article', url: `${base}/articles/${c.id}`, heading: of(`Article ${c.id}`) };
+    case 'serviceOffering':
+      return {
+        noun: 'service offering',
+        url: `${base}/services/${c.id}`,
+        heading: of(`Service offering ${c.id}`),
+      };
+    case 'profile':
+      return {
+        noun: 'profile',
+        url: c.username ? `${base}/user/${encodeURIComponent(c.username)}` : undefined,
+        heading: `Profile of the account reported in this CyberTip (user id ${
+          c.id
+        }; username at capture ${c.username ?? 'none'}). Profile links and images are not included`,
+      };
+    case 'chatMessage':
+      return {
+        noun: 'chat message',
+        url: undefined,
+        heading: [
+          `Chat message ${c.id}`,
+          c.createdAt && `sent ${formatUtc(c.createdAt)}`,
+          c.deletedAt && `deleted ${formatUtc(c.deletedAt)}`,
+          c.editedAt && `edited ${formatUtc(c.editedAt)}: ${EDITED_NOTE}`,
+        ]
+          .filter(Boolean)
+          .join(', '),
+      };
+    default: {
+      const unhandled: never = c.source;
+      throw new Error(`No CyberTip incident for ${unhandled}`);
+    }
+  }
+}
+
+// Only a chat message is worded as written by the reported user; the others say whose item it is.
+const capturedLine = (c: CsamItemContextText, noun: string) =>
+  c.source === 'chatMessage'
+    ? `Text the reported user wrote in this ${noun}, captured by Civitai on ${formatUtc(
+        c.capturedAt
+      )}.`
+    : `Text on the reported user's ${noun} as of capture, captured by Civitai on ${formatUtc(
+        c.capturedAt
+      )}.`;
+
+/**
+ * The incidents as NCMEC reads them once parsed: a page incident per post or image page and capture
+ * time, one per model, article, service offering or profile capture, and a chat incident per message.
+ */
+export function contextIncidents(contextText: CsamContextText[] | undefined) {
+  const webPageIncidents: { url?: string; additionalInfo: string }[] = [];
+  const chatImIncidents: { chatClient: string; content: string; additionalInfo: string }[] = [];
+  if (!contextText?.length) return { webPageIncidents, chatImIncidents };
   const base = getBaseUrl('red');
-  const groups = new Map<string, { url: string; capturedAt: string; items: CsamContextText[] }>();
+  const groups = new Map<
+    string,
+    { url: string; capturedAt: string; items: CsamPostContextText[] }
+  >();
   for (const c of contextText) {
+    if (isItemContextText(c)) continue;
     const url = c.postId ? `${base}/posts/${c.postId}` : `${base}/images/${c.imageId}`;
     const key = `${url} ${c.capturedAt}`;
     const group = groups.get(key) ?? { url, capturedAt: c.capturedAt, items: [] };
     group.items.push(c);
     groups.set(key, group);
   }
-  return [...groups.values()].map(({ url, capturedAt, items }) => {
+  for (const { url, capturedAt, items } of groups.values()) {
     // The description, then the post's held text items in reading order, then comments.
-    const rank = (c: CsamContextText) =>
+    const rank = (c: CsamPostContextText) =>
       c.source === 'postDescription' ? 0 : c.source === 'postText' ? 1 : 2;
     const ordered = [...items].sort(
       (a, b) =>
@@ -530,7 +1076,7 @@ export function contextWebPageIncidents(contextText: CsamContextText[] | undefin
         a.postedAt.localeCompare(b.postedAt) ||
         a.id - b.id
     );
-    return {
+    webPageIncidents.push({
       url,
       additionalInfo: xmlSafe(
         [
@@ -540,6 +1086,25 @@ export function contextWebPageIncidents(contextText: CsamContextText[] | undefin
           ...ordered.map(itemText),
         ].join('\n\n')
       ),
-    };
-  });
+    });
+  }
+  for (const c of contextText) {
+    if (!isItemContextText(c)) continue;
+    const { noun, url, heading } = describeItem(c, base);
+    if (c.source === 'chatMessage') {
+      chatImIncidents.push({
+        chatClient: 'Civitai chat',
+        content: xmlSafe(quotedFields(c.fields).join('\n\n')),
+        additionalInfo: xmlSafe(`${capturedLine(c, noun)}\n${heading}.`),
+      });
+      continue;
+    }
+    webPageIncidents.push({
+      ...(url && { url }),
+      additionalInfo: xmlSafe(
+        [`${capturedLine(c, noun)}\n${heading}.`, ...quotedFields(c.fields)].join('\n\n')
+      ),
+    });
+  }
+  return { webPageIncidents, chatImIncidents };
 }

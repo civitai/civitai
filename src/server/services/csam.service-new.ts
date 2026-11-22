@@ -80,7 +80,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { CsamSupplementalDetails } from '~/server/services/csam-supplemental-text';
 import { supplementalReportText } from '~/server/services/csam-supplemental-text';
 import type { CsamContextText } from '~/server/services/csam-context-text';
-import { contextWebPageIncidents } from '~/server/services/csam-context-text';
+import { contextIncidents } from '~/server/services/csam-context-text';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
@@ -1505,18 +1505,27 @@ async function reportImages(claim: SendClaim) {
     };
   };
 
-  const webPageIncidents = contextWebPageIncidents(report.details?.contextText).map(
-    ({ url, additionalInfo }) => ({
-      url: [xmlText(url)],
-      additionalInfo: xmlText(additionalInfo),
-      thirdPartyHostedContent: false,
-    })
-  );
+  const incidents = contextIncidents(report.details?.contextText);
+  const webPageIncidents = incidents.webPageIncidents.map(({ url, additionalInfo }) => ({
+    ...(url && { url: [xmlText(url)] }),
+    additionalInfo: xmlText(additionalInfo),
+    thirdPartyHostedContent: false,
+  }));
+  const chatImIncidents = incidents.chatImIncidents.map((incident) => ({
+    chatClient: xmlText(incident.chatClient),
+    content: xmlText(incident.content),
+    additionalInfo: xmlText(incident.additionalInfo),
+  }));
   const sent = await sendCyberTip(
     claim,
     {
       ...initialReport,
-      ...(webPageIncidents.length && { incidentDetails: { webPageIncidents } }),
+      ...((webPageIncidents.length || chatImIncidents.length) && {
+        incidentDetails: {
+          ...(webPageIncidents.length && { webPageIncidents }),
+          ...(chatImIncidents.length && { chatImIncidents }),
+        },
+      }),
       ...(supplemental && {
         personOrUserReported: {
           ...initialReport.personOrUserReported,
@@ -1543,6 +1552,17 @@ async function reportImages(claim: SendClaim) {
     }
   );
   if (!sent) return;
+  // Counts only: no ids, no text.
+  if (webPageIncidents.length || chatImIncidents.length)
+    logToAxiom({
+      name: 'csam-report',
+      type: 'info',
+      subType: 'send-incidents',
+      payload: {
+        webPageIncidents: webPageIncidents.length,
+        chatImIncidents: chatImIncidents.length,
+      },
+    });
 
   const filesMissing = uploadResult.filter((entry) => entry?.source === 'missing').length;
   if (filesMissing > 0)
@@ -2904,7 +2924,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
                 'reportContext',
                 {
                   value: {
-                    webPageIncidents: contextWebPageIncidents(report.details.contextText),
+                    ...contextIncidents(report.details.contextText),
                     contextText: report.details.contextText,
                   },
                 },

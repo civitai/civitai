@@ -43,10 +43,26 @@ export const csamReportDetails = z.object({
   // userActivity: userActivitySchema.array().optional(),
 });
 
+/** An int4 id: a longer one would fail in the database instead of being refused here. */
+const rowId = z.number().int().positive().max(2147483647);
+
 export type CsamContextSources = z.infer<typeof csamContextSourcesSchema>;
+export type CsamContextSourcesInput = z.input<typeof csamContextSourcesSchema>;
 export const csamContextSourcesSchema = z.object({
   postIds: z.number().int().positive().array().max(100),
   commentIds: z.number().int().positive().array().max(500),
+  chatMessageIds: rowId.array().max(100).default([]),
+  modelIds: rowId.array().max(100).default([]),
+  articleIds: rowId.array().max(100).default([]),
+  serviceOfferingIds: rowId.array().max(100).default([]),
+  /** The report's user's own profile. */
+  profile: z.boolean().default(false),
+});
+
+export type GetCsamItemCandidatesSchema = z.infer<typeof getCsamItemCandidatesSchema>;
+export const getCsamItemCandidatesSchema = z.object({
+  userId: z.number().int().positive(),
+  source: z.enum(['model', 'article', 'serviceOffering']),
 });
 
 export type CreateCsamReportSchema = z.infer<typeof createCsamReportSchema>;

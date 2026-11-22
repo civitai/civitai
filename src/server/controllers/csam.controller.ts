@@ -21,6 +21,7 @@ import { throwBadRequestError, throwServiceUnavailableError } from '~/server/uti
 import { createCsamReport } from '~/server/services/csam.service';
 import type { CsamContextText } from '~/server/services/csam-context-text';
 import { reportedUserIdsOf, snapshotCsamContextText } from '~/server/services/csam-context-text';
+import { CSAM_CONTEXT_NO_IMAGES_REFUSAL } from '~/shared/constants/csam-context.constants';
 import { createSupplementalCsamReport } from '~/server/services/csam-supplemental.service';
 import { createExternalCsamReport } from '~/server/services/csam.service-new';
 import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-flag';
@@ -70,7 +71,9 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   if (contextSources && type !== 'Image')
     throwBadRequestError('Text can be attached to an image report only');
-  const contextText = contextSources
+  // A report with no image cannot be sent, while filing still removes the account.
+  if (contextSources && !imageIds.length) throwBadRequestError(CSAM_CONTEXT_NO_IMAGES_REFUSAL);
+  const { contextText, notAttached: contextNotAttached } = contextSources
     ? await snapshotCsamContextText({
         imageIds,
         ...(userId > 0 && { ownerId: userId }),
@@ -78,12 +81,17 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
         reportedUserIds: reportedUserIdsOf(userId, details),
         capturedById: reportedById,
       })
-    : [];
-  const withContext: CsamReportFormOutput & { contextText?: CsamContextText[] } = {
+    : { contextText: [], notAttached: [] };
+  const withContext: CsamReportFormOutput & {
+    contextText?: CsamContextText[];
+    contextNotAttachedCount?: number;
+  } = {
     ...details,
     contextText,
+    ...(contextNotAttached.length && { contextNotAttachedCount: contextNotAttached.length }),
   };
-  const filed = contextText.length ? { ...filing, details: withContext } : filing;
+  const filed =
+    contextText.length || contextNotAttached.length ? { ...filing, details: withContext } : filing;
   const report = supplementalOf
     ? await createSupplementalCsamReport({ ...filed, supplementalOf })
     : await createCsamReport({ ...filed, writeBlocklist: false });
@@ -261,7 +269,7 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     );
 
   // Reported and removed either way; the caller decides how loudly to say the run is still open.
-  return { denyFailed, denyBookkeepingFailed, strikesReviewFailed };
+  return { denyFailed, denyBookkeepingFailed, strikesReviewFailed, contextNotAttached };
 }
 
 export async function createExternalCsamReportHandler({

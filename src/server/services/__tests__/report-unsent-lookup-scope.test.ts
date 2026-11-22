@@ -238,6 +238,26 @@ describe('unsent-report lookup', () => {
     });
   });
 
+  it('adds up the items each filing could not attach', async () => {
+    const first = seed({
+      userId: 101,
+      images: [{ id: 1 }],
+      details: { contextNotAttachedCount: 2 },
+    });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'Image',
+      imageIds: [2],
+      details: { contextNotAttachedCount: 3 } as never,
+    });
+
+    expect(rows.find((r) => r.id === first.id)!.details).toMatchObject({
+      contextNotAttachedCount: 5,
+    });
+  });
+
   it('marks a stored capture reviewed from an identical reviewed re-file, and records it', async () => {
     vi.mocked(logToAxiom).mockClear();
     const held = {
