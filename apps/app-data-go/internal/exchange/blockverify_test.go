@@ -371,7 +371,9 @@ func TestAJWKSOutageFailsClosedWithoutCallingTheHub(t *testing.T) {
 	}
 }
 
-// A held key set outlives a failing refetch for JWKSMaxStale, then fails closed.
+// A held key set outlives a failing refetch for JWKSMaxStale, then fails closed. The refresh runs in the
+// background, so the test waits for it to finish (and fail) before checking again: a failed refresh must
+// neither wipe the held set nor extend its life.
 func TestAStaleKeySetIsUsedForAnHourThenFailsClosed(t *testing.T) {
 	testKeys(t)
 	s := newJWKS(t, jwk(&siteKey.PublicKey, siteKid))
@@ -387,6 +389,15 @@ func TestAStaleKeySetIsUsedForAnHourThenFailsClosed(t *testing.T) {
 	c.add(JWKSMaxStale - time.Second)
 	if err := v.Check(context.Background(), fresh()); err != nil {
 		t.Fatalf("inside the stale window: %v", err)
+	}
+	if !settle(t, v) {
+		t.Fatal("no refresh was started inside the stale window")
+	}
+	if s.fetches.Load() != 2 {
+		t.Fatalf("fetches %d; want 2 (the warm-up and the failed refresh)", s.fetches.Load())
+	}
+	if err := v.Check(context.Background(), fresh()); err != nil {
+		t.Fatalf("inside the stale window, after the failed refresh: %v", err)
 	}
 	c.add(time.Second)
 	if err := v.Check(context.Background(), fresh()); !errors.Is(err, ErrBlockUnverifiable) {
