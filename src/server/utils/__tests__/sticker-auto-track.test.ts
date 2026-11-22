@@ -557,8 +557,7 @@ describe('buildStickerAutoTrackWorkflow', () => {
   });
 
   it('turns re-id off for a sticker that is not on a head', () => {
-    // Wired to a constant true, a lantern sticker jumps onto a person after a cut. The node pack's
-    // own tests cover what reid does; this graph is the only place the app can get the wiring wrong.
+    // Wired to a constant true, a lantern sticker jumps onto a person after a cut.
     expect(graph({ width: 1920, height: 1080 })['9'].inputs.reid).toEqual(['6', 1]);
   });
 
