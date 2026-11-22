@@ -903,6 +903,7 @@ export const createMessage = async ({
 
   // No masked copy of the sender's own text in the write response; viewers get theirs from the
   // signal and reads. A quoted message keeps its copy: the sender's client renders it from this.
+  if (!sent) return sent;
   const { maskedContent: _ownCopy, ...reply } = sent as typeof sent & { maskedContent?: unknown };
   return reply;
 };

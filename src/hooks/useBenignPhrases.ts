@@ -3,9 +3,9 @@ import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/b
 import { trpc } from '~/utils/trpc';
 
 /**
- * The moderator benign lists, for gates that run in the browser: the POI / minor checks, and the
- * profanity check where the server does not run one — see `getClientBenignLists`. Edge-cached and refetched on a finite staleTime, so
- * both an addition and a REMOVAL reach an open search box within minutes.
+ * The moderator benign lists for gates that run in the browser: the POI / minor checks, and the
+ * profanity check where the server runs none (see `getClientBenignLists`). Edge-cached and
+ * refetched, so an addition and a removal both reach an open search box within minutes.
  */
 export function useBenignPhrases() {
   // Finite staleTime, deliberately. The reason a moderator DELETES a benign phrase is that it
