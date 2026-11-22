@@ -1579,19 +1579,29 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
 
 /** The thumbnail rows `thumbnailCache` hands out. */
 export const thumbnailRowsSql = (thumbnailIds: (number | string)[]) => Prisma.sql`
-  SELECT id, url, width, height, "nsfwLevel", cast(metadata->'parentId' as int) as "parentId"
+  SELECT id, url, width, height, "nsfwLevel", cast(metadata->'parentId' as int) as "parentId",
+    ${hasBlockMarkerSql('Image')} AS "blockMarked"
   FROM "Image"
-  WHERE id IN (${Prisma.join(thumbnailIds)}) AND NOT ${hasBlockMarkerSql('Image')}
+  WHERE id IN (${Prisma.join(thumbnailIds)})
 `;
 
-export const thumbnailCache = createCachedObject<{
+export type ThumbnailCacheItem = {
   id: number;
   url: string;
   width: number | null;
   height: number | null;
   nsfwLevel: NsfwLevel;
+  blockMarked: boolean;
   parentId?: number;
-}>({
+};
+
+/** Thumbnails for list readers. */
+export const servableThumbnails = <T extends { blockMarked?: boolean }>(
+  thumbnails: Record<number, T>
+): Record<number, T> =>
+  Object.fromEntries(Object.entries(thumbnails).filter(([, t]) => t.blockMarked === false));
+
+export const thumbnailCache = createCachedObject<ThumbnailCacheItem>({
   key: REDIS_KEYS.CACHES.THUMBNAILS,
   idKey: 'parentId',
   lookupFn: async (ids, fromWrite) => {
@@ -1616,6 +1626,7 @@ export const thumbnailCache = createCachedObject<{
         width: number | null;
         height: number | null;
         nsfwLevel: NsfwLevel;
+        blockMarked: boolean;
         parentId: number;
       }[]
     >(thumbnailRowsSql(thumbnailIds));

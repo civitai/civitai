@@ -84,6 +84,13 @@ export const hasBlockMarkerSql = (alias = 'i') => {
   )`;
 };
 
+/** `NOT hasBlockMarkerSql` as a Prisma `Image` filter. */
+export const noBlockMarkerWhere = (): Prisma.ImageWhereInput => ({
+  ingestion: { not: ImageIngestionStatus.Blocked },
+  nsfwLevel: { not: NsfwLevel.Blocked },
+  blockedFor: null,
+});
+
 /** The second arm of `scanKeepsRowSql`, never NULL. */
 export const scanKeepsByMarkerSql = (alias = 'i') => {
   const t = Prisma.raw(`"${alias}"`);

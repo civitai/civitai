@@ -65,6 +65,8 @@ import { auditPostImageMeta } from '~/utils/metadata/audit';
 import {
   addImageTools,
   getImagesModRules,
+  feedThumbnailFields,
+  feedViewer,
   ingestImageById,
   requeueUnverifiedImages,
 } from '~/server/services/image.service';
@@ -1501,11 +1503,87 @@ describe('scan result writes', () => {
         });
       });
 
+      it('case 8', async () => {
+        await set(
+          W_MODERATED,
+          `"scanJobs" = '{"retryCount": ${IMAGE_RESCAN_RETRY_LIMIT}, "workflowId": "w0"}'`
+        );
+        await rescan(W_MODERATED);
+        expect((await imageRow(W_MODERATED)).scanJobs).toEqual({ retryCount: 0, workflowId: 'w0' });
+        await scan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Scanned',
+          blockedFor: null,
+        });
+      });
+
+      it('case 9', async () => {
+        await set(W_MODERATED, `"scanJobs" = '{"retryCount": ${IMAGE_RESCAN_RETRY_LIMIT}}'`);
+        await rescan(W_MODERATED);
+        await failScan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({ ingestion: 'Rescan' });
+      });
+
+      it('case 10', async () => {
+        await set(
+          W_MODERATED,
+          `minor = true, "scanJobs" = '{"retryCount": ${IMAGE_RESCAN_RETRY_LIMIT}}'`
+        );
+        await rescan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Blocked',
+          scanJobs: { retryCount: IMAGE_RESCAN_RETRY_LIMIT },
+        });
+      });
+
       it('case 7', async () => {
         await set(W_PENDING, `ingestion = 'Rescan', "blockedFor" = 'AiNotVerified'`);
         await failScan(W_PENDING);
         expect((await imageRow(W_PENDING)).ingestion).toBe('Error');
       });
+    });
+  });
+});
+
+describe('feed thumbnail fields', () => {
+  const CREATOR = 5;
+  const marked = { url: 't', nsfwLevel: 16, blockMarked: true };
+  const viewers = {
+    signedOut: {},
+    other: { user: { id: 6 }, asOwner: true },
+    owner: { user: { id: CREATOR }, asOwner: true },
+    moderator: { user: { id: 7, isModerator: true }, asModerator: true },
+    ownerNarrow: { user: { id: CREATOR }, asOwner: false },
+  };
+  const fields = (
+    viewer: Parameters<typeof feedViewer>[0],
+    thumbnail = marked as typeof marked | object
+  ) => {
+    const v = feedViewer(viewer);
+    return feedThumbnailFields(thumbnail as typeof marked, 1, CREATOR, {
+      ownerId: v.id,
+      isModerator: v.isModerator,
+    });
+  };
+
+  it.each([
+    ['1', viewers.signedOut, undefined],
+    ['2', viewers.other, undefined],
+    ['3', viewers.owner, 't'],
+    ['4', viewers.moderator, 't'],
+    ['5', viewers.ownerNarrow, undefined],
+  ])('case %s', (_label, viewer, url) => {
+    expect(fields(viewer)).toEqual({ nsfwLevel: 16, thumbnailUrl: url });
+  });
+
+  it('case 6', () => {
+    expect(fields(viewers.signedOut, { url: 't', nsfwLevel: 16 })).toEqual({
+      nsfwLevel: 16,
+      thumbnailUrl: undefined,
+    });
+    expect(fields(viewers.signedOut, { url: 't', nsfwLevel: 16, blockMarked: false })).toEqual({
+      nsfwLevel: 16,
+      thumbnailUrl: 't',
     });
   });
 });

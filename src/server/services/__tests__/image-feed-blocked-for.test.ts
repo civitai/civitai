@@ -31,6 +31,7 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 }));
 
 import { getAllImages } from '../image.service';
+import { thumbnailCache } from '~/server/redis/caches';
 
 const OWNER = 3300;
 const STRANGER = 4400;
@@ -138,5 +139,60 @@ describe('getAllImages requiringMeta', () => {
     expect(blockedForAiNotVerified(stmt)).toBe(false);
     expect(stmt.text).toContain(LEVEL_GATE);
     expect(stmt.text).toMatch(INGESTION_GATE);
+  });
+});
+
+describe('getAllImages thumbnails', () => {
+  const VIDEO = 9100;
+  const run = async (user: { id: number } | undefined, asOwner: boolean) => {
+    queryWithTimeoutMock.mockResolvedValue({
+      rows: [
+        {
+          id: VIDEO,
+          userId: OWNER,
+          type: 'video',
+          nsfwLevel: 1,
+          url: 'video-url',
+          postId: 1,
+          publishedAt: new Date('2026-01-01T00:00:00Z'),
+          sortAt: new Date('2026-01-01T00:00:00Z'),
+          cursorId: VIDEO,
+          ingestion: 'Scanned',
+          metadata: {},
+        },
+      ],
+    });
+    const fetch = vi.spyOn(thumbnailCache, 'fetch').mockResolvedValue({
+      [VIDEO]: { id: 1, url: 'thumb-url', width: 1, height: 1, nsfwLevel: 16, blockMarked: true },
+    } as never);
+    try {
+      const { items } = await getAllImages({
+        asModerator: true,
+        asOwner,
+        limit: 20,
+        period: 'AllTime',
+        periodMode: 'published',
+        sort: 'Newest',
+        browsingLevel: 31,
+        include: [],
+        user: user ? { isModerator: false, ...user } : undefined,
+      } as unknown as Parameters<typeof getAllImages>[0]);
+      const item = items.find((i) => i.id === VIDEO);
+      return { url: item?.thumbnailUrl, level: item?.nsfwLevel };
+    } finally {
+      fetch.mockRestore();
+    }
+  };
+
+  it('case 1', async () => {
+    expect(await run(undefined, true)).toEqual({ url: undefined, level: 16 });
+  });
+
+  it('case 2', async () => {
+    expect(await run({ id: OWNER }, true)).toEqual({ url: 'thumb-url', level: 16 });
+  });
+
+  it('case 3', async () => {
+    expect(await run({ id: OWNER }, false)).toEqual({ url: undefined, level: 16 });
   });
 });

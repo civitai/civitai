@@ -11,7 +11,9 @@ import { ingestImageById } from '~/server/services/image.service';
  */
 export async function rescanImageById({ id }: GetByIdInput) {
   await dbWrite.$executeRaw`
-    UPDATE "Image" SET ingestion = 'Rescan'::"ImageIngestionStatus"
+    UPDATE "Image" SET ingestion = 'Rescan'::"ImageIngestionStatus",
+      "scanJobs" = CASE WHEN jsonb_typeof("scanJobs") = 'object'
+        THEN jsonb_set("scanJobs", '{retryCount}', '0'::jsonb) ELSE "scanJobs" END
     WHERE id = ${id}
       AND ingestion IN ('Blocked'::"ImageIngestionStatus", 'Error'::"ImageIngestionStatus")
       AND "blockedFor" IS NOT NULL

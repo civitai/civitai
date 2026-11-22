@@ -60,10 +60,15 @@ describe('thumbnail rows', () => {
         (4, 'd', 1, 1, 1, '{"parentId": 13}', 'Blocked', NULL);
     `);
     const flat = thumbnailRowsSql([1, 2, 3, 4]);
-    const { rows } = await db.query<{ id: number; parentId: number }>(
+    const { rows } = await db.query<{ id: number; parentId: number; blockMarked: boolean }>(
       flat.text,
       flat.values as unknown[]
     );
-    expect(rows.map((r) => [r.id, r.parentId])).toEqual([[1, 10]]);
+    expect(rows.map((r) => [r.id, r.parentId, r.blockMarked])).toEqual([
+      [1, 10, false],
+      [2, 11, true],
+      [3, 12, true],
+      [4, 13, true],
+    ]);
   });
 });
