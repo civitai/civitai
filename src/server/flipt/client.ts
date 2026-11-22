@@ -6,6 +6,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // Mirrors the `knightsApp` fliptKey (KNIGHTS_APP_FLIPT_FLAG) and the Knights app's own access flag.
   // Read here with no user for the server-side cutover from the old in-app game.
   KNIGHTS_APP = 'knights-of-new-order-app',
+  // App Assistant direct preview, per user (segment): on, the runner's preview opens a direct
+  // session served by the sandbox service's preview gateway; off (or missing), the dev tunnel as
+  // before. Evaluated with the user's context; fails closed.
+  APP_ASSISTANT_DIRECT_PREVIEW = 'app-assistant-direct-preview',
   // Mirrors the `articleRatingDispute` fliptKey in feature-flags.service.ts so
   // background paths (no request context) can gate on the same Flipt flag the
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
