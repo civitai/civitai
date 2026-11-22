@@ -1716,6 +1716,8 @@ bar = likes + max(downloads - buyers, 0) / 6.4 + buyers >= 25
 - The bar never falls, so a version with no buyers is scored exactly as before. Only the bar
   changes: a qualifying version earns §19's term, and a buyer adds nothing to `e_v`. A buyer who
   also liked the version counts twice toward the bar, once as each.
+- A purchase, refund or revoke does not rescore on its own: the bar moves on the model's next
+  metrics write, as it does for a like.
 - `hot_version_score()` takes the buyer count as a tenth argument; the triggers count it per
   version through the `EntityAccess` primary key, only for a version inside the 60-day window.
 - The migration (`20271123120000_model_hot_score_buyer_bar`) is applied by hand like §19's and

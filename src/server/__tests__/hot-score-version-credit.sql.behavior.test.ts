@@ -87,7 +87,7 @@ type Version = {
   access?: Access[];
 };
 
-type Access = { user: number; meta: Record<string, string> };
+type Access = { user: number; meta: Record<string, unknown> };
 const OWNER = 1;
 const DOWNLOAD_KEY = 'download-buzzTransactionId';
 const GENERATION_KEY = 'generation-buzzTransactionId';
@@ -221,10 +221,17 @@ beforeAll(async () => {
     { at: OLD, likes: 3_000 },
     { at: DAY_45, likes: 0, downloads: 192 },
   ]);
+  // A generation purchase too, so the rescore's candidate scan must count both keys.
   preexistingByBuyers = await model(OLD, 3_000, [
     { at: OLD, likes: 2_970 },
-    { at: RECENT, likes: 19, access: paid(6) },
+    { at: RECENT, likes: 19, access: [...paid(5), ...paid(1, GENERATION_KEY)] },
   ]);
+  // A measured slice the rescore must rewrite, and a mirror that follows ModelMetric.
+  await db.pg.query(
+    `INSERT INTO "ModelBaseModelMetric" ("modelId", "baseModel", "thumbsUpCount", "generationCount", "uniqueGeneratorCount")
+     VALUES ($1, 'SDXL 1.0', 3000, 0, 0), ($1, 'Mirror', 0, NULL, NULL)`,
+    [preexistingByBuyers]
+  );
   // #9397's backfill walks ids in 250k ranges: one row opening each later range, the last at the
   // max id, each with a mirrored and a measured slice. The head-start rescore batches by position
   // instead (2 at a time here), so these rows also land in its later batches.
@@ -601,6 +608,7 @@ describe('paid buyers count toward the head-start bar like likes', () => {
     ]);
 
     await expectNear(id, noHeadStart(19));
+    expect(Math.abs((await slice(id, 'SDXL 1.0', 3_000)) - noHeadStart(19))).toBeLessThanOrEqual(1);
   });
 
   it('does not count a gift or a revoked purchase, which hold no purchase key', async () => {
@@ -612,12 +620,14 @@ describe('paid buyers count toward the head-start bar like likes', () => {
         access: [
           ...paid(5),
           { user: nextBuyer++, meta: { giftLinkId: 'gift' } },
-          { user: nextBuyer++, meta: { revocations: 'archived' } },
+          // A moderator revoke moves the purchase keys into an archived entry.
+          { user: nextBuyer++, meta: { revocations: [{ [DOWNLOAD_KEY]: 'tx', revokedById: 2 }] } },
         ],
       },
     ]);
 
     await expectNear(id, noHeadStart(19));
+    expect(Math.abs((await slice(id, 'SDXL 1.0', 3_000)) - noHeadStart(19))).toBeLessThanOrEqual(1);
   });
 
   it('counts a buyer in place of a download, not on top of one', async () => {
@@ -630,7 +640,25 @@ describe('paid buyers count toward the head-start bar like likes', () => {
     await expectNear(id, noHeadStart(18 + 7 / 6.4));
   });
 
-  it('backfills a model scored before the migration', async () => {
+  const slicesOf = async (id: number) =>
+    Object.fromEntries(
+      (
+        await db.pg.query<{ baseModel: string; hotScore: number }>(
+          `SELECT "baseModel", "hotScore" FROM "ModelBaseModelMetric" WHERE "modelId" = $1`,
+          [id]
+        )
+      ).rows.map((r) => [r.baseModel, r.hotScore])
+    );
+
+  it('backfills a model scored before the migration, and its slices', async () => {
+    await expectNear(preexistingByBuyers, headStart(19));
+    const slices = await slicesOf(preexistingByBuyers);
+    expect(Math.abs(slices['SDXL 1.0'] - headStart(19))).toBeLessThanOrEqual(1);
+    expect(slices['Mirror']).toBe(await score(preexistingByBuyers));
+  });
+
+  it('can be re-run, which is how a stopped rescore resumes', async () => {
+    await expect(apply(BUYER_BAR_DIR)).resolves.toBeUndefined();
     await expectNear(preexistingByBuyers, headStart(19));
   });
 
@@ -642,7 +670,9 @@ describe('paid buyers count toward the head-start bar like likes', () => {
 
     await expectNear(id, noHeadStart(19));
     await expectNear(preexistingByBuyers, noHeadStart(19));
-    expect(await slice(id, 'SDXL 1.0', 3_000)).toBe(await score(id));
+    const slices = await slicesOf(preexistingByBuyers);
+    expect(Math.abs(slices['SDXL 1.0'] - noHeadStart(19))).toBeLessThanOrEqual(1);
+    expect(slices['Mirror']).toBe(await score(preexistingByBuyers));
     await expect(apply(BUYER_BAR_DIR, 'rollback.sql')).resolves.toBeUndefined();
     // Back on #9928: a version over the bar on its own still gets its head start.
     const own = await model(OLD, 3_000, [old, { at: RECENT, likes: 30 }]);

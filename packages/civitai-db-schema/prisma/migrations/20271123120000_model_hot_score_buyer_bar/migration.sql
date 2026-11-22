@@ -204,7 +204,8 @@ END
 $function$;
 
 -- Nothing calls the 9-argument overload now. Kept, a 9-argument call would score without buyers.
-DROP FUNCTION public.hot_version_score(
+-- IF EXISTS: re-running this file is how a stopped rescore resumes.
+DROP FUNCTION IF EXISTS public.hot_version_score(
     numeric, numeric, numeric, int, timestamp, timestamp, numeric, numeric, numeric);
 
 -- 4. Rescore the models buyers lift over the bar ------------------------------
