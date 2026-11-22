@@ -7,71 +7,78 @@ registry, and writes go through a registered write service, as a follow-up after
 
 **The overriding principle (operator, 2026-11-22):** the public REST App Storage API
 (`/api/v1/blocks/storage`) is to be sunset, leaving the platform registry-only, so nothing may fall
-back to it. No part of this design does: not for read-your-writes, not when this service is down.
-app-data-go's existing read fallback to that API (`DESIGN.md:41-44`) is **transitional** and is
-removed before REST is turned off ("End state" below). The exceptions that stay on REST for now are
-named, each with what ends it ("Who stays on REST").
+back to it. No part of this design does: not for read-your-writes, not when this service is down,
+not for signed-out viewers. app-data-go's existing read fallback to that API (`DESIGN.md:41-44`) is
+**transitional** and is removed before REST is turned off ("End state"). The tokens that stay on REST
+for now are named, with what ends it ("Who stays on REST").
 
 **Scope of v1 (operator, 2026-11-22):** the first app, model-benchmarking, moves **all** of its
 storage at once: its private `kv` collection and its shared `records` collection (`visibility:
 shared`, `write: own`, `marks: [vote]`, scope `apps:storage:publish`; its `block.manifest.json`),
-reads and writes. Code citations below are to civitai `main` at `1b3884df`; the app's to its `main`
-at `65ce42f`.
+reads and writes, signed-in and signed-out. Code citations are to civitai `main` at `1d4f7a0f`; the
+app's to its `main` at `65ce42f`.
 
 ## What is fixed before we start
 
 1. **The registry protocol has no write.** It has one call, `Subscribe`, and only an entity's
    origin changes it (civitai-registry `spec/registry.md:3`, `:50-51`). Its design article puts writes
-   at the source: "An entity never changes through a registry" (`docs/articles/design.md:311`); the
-   app-with-forks scenario has a user write to app storage and the change reach the registry through
-   the adapter (`docs/examples/scenarios/app-with-forks.md:45`). So "writes through the registry"
-   means a write **service discovered through the registry**, never a write carried by one.
+   at the source: "An entity never changes through a registry" (`docs/articles/design.md:311`). So
+   "writes through the registry" means a write **service discovered through the registry**, never a
+   write carried by one.
 2. **The App Storage document store is the one writer.** Every document write is one transaction in
    `doc-store.ts` (`src/server/services/apps/doc-store.ts:2211-2294`): lock the row, write, sync the
    index rows, charge `usage_app` (which hands out the next `seq`), charge `usage_user`, stamp the
    `seq`. `usage_app` is keyed per (app, namespace) (`SQL_CHARGE_APP`, `doc-store.ts:893-900`), so
-   the `seq` is one counter for every collection of the app, private and shared, and its order is
-   commit order (`doc-store.ts:104-106`).
-3. **The registry adapter learns about writes only by polling the store.** No outbox, trigger or
+   the `seq` is one counter for every collection of the app, private and shared, in commit order
+   (`doc-store.ts:104-106`). The lock order is (1) the document row, (1b) its tally and mark rows,
+   (2) `usage_app`, (3) the caller's `usage_user`; marking takes only a `KEY SHARE` lock on the
+   document and the tally row, and no usage lock (`doc-store.ts:97-102`, `SQL_SHARE_LOCK_DOC`
+   `:942-949`).
+3. **The `seq` is also a revision others depend on.** Moderation's hide and unhide check it as the
+   document's revision (`assertModRevision`, `doc-store.ts:4298-4305`), and the rater applies a
+   rating only to the `seq` it rated (`doc-store.ts:4718-4720`). A change that moves a document's
+   `seq` without changing its content would make both refuse work that is still valid.
+4. **The registry adapter learns about writes only by polling the store.** No outbox, trigger or
    `NOTIFY`. The private feed re-reads one user's keyset of `(key, version, record_id)` and diffs it
    (`doc-store.ts:1033-1045`); the shared feed reads `doc` and `doc_tomb` rows by `seq` range
    (`doc-store.ts:976-1026`). Both run every `REGISTRY_ADAPTER_POLL_SECONDS`, default 60 s
    (`src/server/registry-adapter/main.ts:144`).
-4. **The write path's gates.** The route is `withBlockScope(withAxiom(createStorageHandler()))`
+5. **The write path's gates.** The route is `withBlockScope(withAxiom(createStorageHandler()))`
    (`src/pages/api/v1/blocks/storage/[[...path]].ts:29-36`). `withBlockScope`
    (`src/server/middleware/block-scope.middleware.ts:1593`) verifies the block JWT, its revocation and
    its consent, strips unconsented scopes, enforces `requiredScope: 'apps:storage'`, and sets
    `req.blockClaims`. The handler then runs, in this order (`src/server/services/apps/doc-store-api.ts:1215-1300`):
    a signed-in viewer, the collection's write policy, the publish scope for a shared create or put,
-   the body parse, the collection schema (`validateDocAgainstCollectionSchema`, again inside the
-   store), owned model versions; then, for a private write or any delete, the `write` rate bucket
-   (`doc-store-api.ts:1297-1299`; `src/server/utils/shared-storage-rate-limit.ts:161-167`), or, for a
-   shared create or put, the trust gate (`assertTrusted`, `doc-store-api.ts:884`) and the shared-write
-   budget reservation (`reserveSharedWrite`, `:1111`; `shared-storage-rate-limit.ts:277`); then the
-   permission hook (`gateHook`, `doc-store-hook.ts`), the moderation scan for a shared write
-   (`moderate`, `doc-store-api.ts:978`), and the store, which for a shared write with content levels on
-   marks the document pending (`SQL_RATING_PENDING`, `doc-store.ts:855`). A delete of a published
-   shared item syncs its App Store card (`syncStoreItem`, `doc-store-api.ts:1288`).
-5. **The hub has no app-data write scope.** `AppDataRead` is bit 32
+   the body parse, the collection schema, owned model versions; then, for a private write or any
+   delete, the `write` rate bucket (`doc-store-api.ts:1297-1299`), or, for a shared create or put, the
+   trust gate (`assertTrusted`, `:884`) and the shared-write budget (`reserveSharedWrite`, defined at
+   `src/server/utils/shared-storage-rate-limit.ts:366`, called at `doc-store-api.ts:1111`); then the
+   permission hook (`gateHook`), the moderation scan for a shared write (`moderate`, `:978`), and the
+   store, which for a shared write with content levels on marks the document pending
+   (`SQL_RATING_PENDING`, `doc-store.ts:855`). A delete of a published shared item syncs its App Store
+   card (`syncStoreItem`, `doc-store-api.ts:1288`).
+6. **The hub has no app-data write scope.** `AppDataRead` is bit 32
    (`packages/civitai-auth/src/token-scope.ts:115`); the block exchange issues exactly that
-   (`apps/auth/src/lib/server/oauth/block-exchange.ts:97`), and the private feed requires it
-   (`src/server/registry-adapter/private-feed.ts:103`).
+   (`apps/auth/src/lib/server/oauth/block-exchange.ts:97`).
 
 ## What the app does with its storage
 
-| App call (`src/lib/records-store.ts`, `src/lib/sdk-runtime.ts:533-535`) | Store op | Collection |
+| App call | Store op | Collection |
 |---|---|---|
-| `kv` `set`, `delete`, `list({prefix})`, `get` | put, delete, list by `keyPrefix`, get | `kv` (private) |
-| `append` (`:240-246`) | create, server-minted key | `records` (shared) |
-| `update` (`:248-262`) | get, then put with `ifVersion` | `records` |
+| `kv.get` (`src/lib/kv-store.ts:120-126`; used at `src/App.tsx:1003`, `:1306`, `:2577`) | get by key | `kv` (private) |
+| `kv.set` (`kv-store.ts:127-130`) | **unconditional** put | `kv` |
+| `kv.delete`, `kv.list({prefix, limit, cursor})` (`kv-store.ts:131-150`) | delete; list by `keyPrefix`, paged | `kv` |
+| `getQuota` (`kv-store.ts:151-159`) | `info`: the viewer's usage and limits | the store |
+| `append` (`src/lib/records-store.ts:240-246`) | create, server-minted ULID key (`:51-57`) | `records` (shared) |
+| `update` (`records-store.ts:248-262`) | get, then put with `ifVersion: current.version` | `records` |
 | `withdraw` (`:265-267`) | delete | `records` |
-| `vote` / `unvote` (`:269-273`) | `$mark` / `$unmark` `vote` | `records` |
-| `report` (`:275-277`) | `$mark` `report` (built-in, never withdrawn) | `records` |
-| `list` (`:224-236`, `src/App.tsx:4285`) | list, `sort: -key`, `limit` ≤ 100, `cursor` | `records` |
+| `vote` / `unvote` (`:269-273`) | `$mark` / `$unmark` `vote`, answering the new count | `records` |
+| `report` (`:275-277`) | `$mark` `report` (built-in, never withdrawn, its count never exposed) | `records` |
+| `list` (`:224-236`; `src/App.tsx:4285`) | list, `sort: -key`, `limit` ≤ 100, `cursor` | `records` |
 
-Each `records` item it reads uses `key`, `data`, `version`, `updatedAt`, `marks.vote` (the tally)
-and `viewer.marks` ("did I vote"), and the author's identity only as "the reader wrote this"
-(`records-store.ts:24-26`, `:72-78`). It does not call `_publish` or `_unpublish`, nor counters.
+Each `records` item it reads uses `key`, `data`, `version`, `updatedAt`, `marks.vote` and
+`viewer.marks`, and the author only as "the reader wrote this" (`records-store.ts:24-26`, `:72-78`).
+It does not call `_publish`, `_unpublish` or counters.
 
 ## The write path
 
@@ -80,8 +87,8 @@ app ──► app-data-go (public)  ──►  the site's INTERNAL storage route
                                        (not reachable by apps)              (the one writer)
 ```
 
-**The API.** Every write the public storage route has, under this service's path, with the same
-bodies, so an SDK swaps the base URL and nothing else:
+**The API.** Every write the public storage route has, plus `info`, under this service's path, with
+the same bodies, so an SDK swaps the base URL and nothing else:
 
 ```
 POST   /v1/apps/{slug}/collections/{c}/records                 {data}              create (append)
@@ -90,9 +97,14 @@ DELETE /v1/apps/{slug}/collections/{c}/records/{key}[?ifVersion=N]              
 PATCH  /v1/apps/{slug}/collections/{c}/records/{key}           one of {$inc}, {$mark}, {$unmark}
 POST   /v1/apps/{slug}/publish/{to}                            {from, keys, prune?}
 POST   /v1/apps/{slug}/unpublish/{to}                          {keys}
+GET    /v1/apps/{slug}/info                                    the viewer's usage and limits
 Authorization: Bearer <the app's token for the user>
 → the store's answer, status and error code as the store produced them, plus `seq` (see below)
 ```
+
+`info` is forwarded, not served from a stream: usage and limits are the store's accounting
+(`usage_user`, the viewer's tier ceilings) and no stream carries them. It goes through the same signed
+internal route, which is the store's own front door, not the public REST API.
 
 Concurrency is the store's: an integer `ifVersion` (`0` = must not exist), `409 version_conflict`
 with `currentVersion` (`doc-store.ts:2221-2237`); 64 KiB documents; the grammars of
@@ -100,14 +112,12 @@ with `currentVersion` (`doc-store.ts:2221-2237`); 64 KiB documents; the grammars
 major other than the collection's current one is `409 stale_major`; none named means current. The
 current major is the newest major of the collection's schema family, which this service knows from
 the collection schema URNs it streams (`urn:schema:apps.civitai.com:<slug>/<c>@v<N>`); the site
-stamps its own major on every write anyway (`withSchemaMajor`, `doc-store-api.ts:825-833`), so a
-stale view here can only refuse a write, never mis-stamp one. **Imports are not v1:** a write to
-another app's collection answers `501 not_supported_here` (below).
+stamps its own major on every write (`withSchemaMajor`, `doc-store-api.ts:825-833`), so a stale view
+here can only refuse a write, never mis-stamp one. **Imports are not v1** (below).
 
-**The internal route.** The forward does not call the public REST API. It calls an internal-only
-route on the site, the public route's path under an `internal` prefix, that runs **the same middleware
-chain as the public route**, `withBlockScope(withAxiom(createStorageHandler()))` with the same options
-(`requiredScope: 'apps:storage'`), for the write verbs only. In order:
+**The internal route.** The public route's path under an `internal` prefix, on the site, running
+**the same middleware chain as the public route**, `withBlockScope(withAxiom(createStorageHandler()))`
+with the same options (`requiredScope: 'apps:storage'`), for the write verbs and `info` only. In order:
 
 1. **Signature, before anything else.** The route lives on the same public-facing site processes as
    every other route, so a network policy cannot single it out; this signature is what keeps apps off
@@ -119,30 +129,31 @@ chain as the public route**, `withBlockScope(withAxiom(createStorageHandler()))`
    (`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`). A timestamp more than 60 s
    from the site's clock, or a mismatch, is a `401` and nothing else runs.
 2. **The body, buffered once.** The route disables Next's body parser as the public one does
-   (`[[...path]].ts:22`), reads the raw body itself up to `STORAGE_BODY_LIMIT_BYTES`
+   (`[[...path]].ts:23`), reads the raw body itself up to `STORAGE_BODY_LIMIT_BYTES`
    (`doc-store-api.ts:483`; over it a `413` in the storage envelope), hashes it for the signature, and
    hands the same bytes to the handler as the request stream, so `readJsonBody` (`:489`) reads what was
    signed.
-3. **`withBlockScope`, unchanged.** The signature authenticates the **caller** (this service) only and
+3. **The path the chain sees is the public one.** After the signature is checked, the route sets
+   `req.url` to the public route's path and query, so the handler's routing and `withBlockScope`'s
+   audit row see the same request: the audit row's endpoint column is `normalizeEndpoint(req.url)`
+   (`block-scope.middleware.ts:2234`, `:2447`), so a forwarded call reads as the same endpoint as a
+   direct one, and the route also passes the public route's `endpoint` label. The `via` is the
+   counter's, not the endpoint's.
+4. **`withBlockScope`, unchanged.** The signature authenticates the **caller** (this service) only and
    confers no user or app authority: that is still the user's token, verified by `withBlockScope` and
    judged by the handler (`resolveStorageAccess`, `doc-store-access.ts:141-215`) exactly as on the
    public route. The route must never set `req.blockClaims` itself; only `withBlockScope`, after
    verifying the token, does.
-4. **The target app.** This service forwards `from=<slug>` on every call. The handler treats a `from`
+5. **The target app.** This service forwards `from=<slug>` on every call. The handler treats a `from`
    naming the token's own app as an own call, identical to omitting it (`otherAppSource`,
-   `doc-store-api.ts:1600-1611`), so the slug in the path can never name an app the token is not for
-   without becoming an import. **The internal route refuses every import** (`otherAppSource` not null)
-   with `501 not_supported_here`. The site must do this, not this service: only the site resolves which
-   app the token was issued for, and this service never decodes a token.
-5. **Its answer adds what the rev guard needs:** a create or put returns the record's `seq` and
-   `record_id`; a delete returns its tombstone's `seq`; a mark or unmark returns its `seq` beside the
-   count; a publish or unpublish returns each changed key's `seq`. The store returns none of these
-   today ("Store changes").
-6. **Audit rows stay comparable.** `withBlockScope` logs each authenticated call's endpoint through
-   `normalizeEndpoint` (`block-scope.middleware.ts:2234`, `:2447`), which maps any segment it does not
-   know to `:seg`. `internal` joins `KNOWN_STATIC_ENDPOINT_SEGMENTS` (`:2314`), and the route passes the
-   public route's `endpoint` label (`storageEndpointLabel`), so a forwarded write reads as the same
-   endpoint with a different `via`.
+   `doc-store-api.ts:1600-1611`), so the slug can never name an app the token is not for without
+   becoming an import. **The internal route refuses every import** (`otherAppSource` not null) with
+   `501 not_supported_here`. The site must do this, not this service: only the site resolves which app
+   the token was issued for, and this service never decodes a token.
+6. **Its answer adds what the overlay needs:** a create or put returns the record's `seq`,
+   `record_id`, `createdAt` and `updatedAt`; a delete returns its tombstone's `seq`; a mark or unmark
+   returns `{marked, count}` (as today) plus the mark's own sequence, `markSeq`; a publish or unpublish
+   returns each changed key's `seq` ("Store changes").
 
 A test lists the `withBlockScope(… createStorageHandler …)` entries (the public route, this one) and
 fails if the set grows or shrinks.
@@ -153,176 +164,248 @@ the read, and a create with a server-minted key cannot even be looked for. The o
 keyed `put` with `ifVersion` (`0` for a create, the version last read for an update), which the store
 refuses with `409 version_conflict` if the first attempt landed. A mark or unmark is idempotent and
 safe to resend. A server-minted create (the app's `append`) has no safe retry: the SDK surfaces the
-unknown outcome, and the app's guidance is to mint its own key and `put` with `ifVersion: 0`, which a
-`write: own` collection accepts (`records-store.ts:251`).
+unknown outcome. The guidance is to mint the key in the app and `put` with `ifVersion: 0`, which a
+`write: own` collection accepts (`records-store.ts:251`); an app-minted key must be a ULID, so the
+board's `-key` order stays creation order (`records-store.ts:51-57`).
 
 ## Source of truth and consistency
 
 **Single writer.** Every write commits through `doc-store.ts`; this service holds no data but its
-stream caches. There is no dual-write: the registry is not a store (fixed point 1), and a second
-store would have no reconciler. A client sees the store's model: a write is acknowledged after
-commit; writes to one key are ordered by `version` and refused by `ifVersion`. Rollback needs no data
-movement, because nothing was ever written anywhere else.
+stream caches. There is no dual-write: the registry is not a store (fixed point 1). A client sees the
+store's model: a write is acknowledged after commit; writes to one key are ordered by `version` and
+refused by `ifVersion`. Rollback needs no data movement, because nothing was written anywhere else.
 
-## The shared read path
+## The read path
 
-**How shared collections stream today, and why app-data-go cannot serve `records` from it.**
+### Private collections (`kv`)
 
-- The adapter's shared document feed (`src/server/registry-adapter/doc-feed.ts`) streams a shared
-  collection only when its app is listed and approved and its manifest opts the collection into the
-  registry (`registry: "public"`, `doc-streams.ts:1-4`, `:30-36`). `records` does not opt in, so it
-  has no stream at all.
-- Where a collection is exported, its stream is everyone's: one per collection major and audience,
-  narrowed by the app's rating and, with content levels on, by each document's level at the
-  audience's level (`doc-feed.ts:34-40`, `:103-107`). It carries the document body only
-  (`FeedDocument`, `:53-58`): no tallies, no viewer marks, no author. It never sends a `seq`, because
-  private writes share the counter and a raw `seq` would tell their volume (`doc-feed.ts:9-11`,
-  `:30-32`).
-- A mark or unmark changes neither the document's `version` nor its `seq` (`mark`, `unmark`,
-  `doc-store.ts:2565-2625`), so even an exported collection's stream would never carry a vote.
+Unchanged from DESIGN.md: one stream per token on the private feed. A list (`keyPrefix`, `limit`,
+`cursor`) and a **keyed get** are answered from that stream's cache (base plus overlay, below), under
+the same floor rule. The app's `kv.get` calls are therefore stream reads, never a REST get.
 
-That is why `DESIGN.md:65-79` keeps app-data-go to private collections: the public feed is not the
-REST list. The REST list is per viewer: each item's tallies, the viewer's own marks, whether the
-viewer wrote it, and, with levels on, the viewer's own unrated documents, which only their author sees
-(`sharedDocLevelVisible`, `doc-store.ts:771-777`).
+### Shared collections (`records`): why the existing feeds cannot serve them
 
-**What is added: a per-viewer shared feed in the adapter.** An authorized stream, like the private
-feed and beside it, serving one shared collection as the REST list would show it to one viewer:
+- The shared document feed (`src/server/registry-adapter/doc-feed.ts`) streams a collection only when
+  its app is listed and approved and its manifest opts it into the registry (`registry: "public"`,
+  `doc-streams.ts:1-4`, `:30-36`). `records` does not, so it has no stream.
+- An exported collection's stream is per collection major and audience, narrowed by the app's rating
+  and, with levels on, each document's level at `audienceDocLevel(audience)`
+  (`doc-feed.ts:34-40`, `:103-107`; `src/server/services/apps/doc-levels.ts:83-91`). It carries the
+  body only (`FeedDocument`, `doc-feed.ts:53-58`): no tallies, no viewer marks, no author, no
+  `version` timestamps, and never a `seq` (`:9-11`, `:30-32`).
+- A mark changes neither the document's `version` nor its `seq` (`doc-store.ts:2565-2625`), so no
+  stream would carry a vote.
+- The REST list is per viewer (`sharedDocLevelVisible`, `doc-store.ts:771-777`): others' documents
+  at the viewer's level, the viewer's own unrated documents, each item's tallies (report counts
+  excluded, `doc-store.ts:1470-1480`), the viewer's own marks, and whether the viewer wrote it.
 
-- **auth** as the private feed's (`private-feed.ts`): a listed relay (`act.sub`), `AppDataRead`, the
-  block token's binding claims (block, install, ceiling), and the app's read rule for that viewer
-  (approved app, run gate); a shared collection is read by any eligible viewer of the app, not only
-  its owner, so the collection-read predicate gains its shared branch. A refused viewer gets the
-  private feed's answer (see "The empty stream");
-- **content** as the store's list for that viewer: visible (`hidden_at` null), the level gate with
-  the viewer's level for others' documents and the token's ceiling for the viewer's own
-  (`sharedDocLevelVisible`), the app's rating against the viewer's audience and the token's ceiling.
-  A moderator's hide is a tombstone with a `seq` (`doc-store.ts:4489-4493`), so it leaves the stream
-  as a `Delete`; a re-rating that leaves the viewer's level likewise;
-- **each entity** carries the body (the document, unchanged) and, beside it as `key` is today:
-  `key`, `tallies` (counters and mark counts, the REST item's `counters` and `marks`), `viewer`
-  (`{marks}`), `author` (`{isViewer}`, plus the username when the collection declares `showAuthor`),
-  `level` and `ratingStatus` when levels are on, and `seq`;
-- **isolation**: one stream per token, like the private streams, so one viewer's marks, authorship
-  and unrated documents can never reach another (`DESIGN.md:316-320`).
+### The shape: one shared stream per level class, one small stream per viewer
 
-It needs no `registry: "public"`: it is an authorized stream to a listed relay, not the public
-catalog, and the public feed is unchanged.
+One stream per viewer holding the whole board does not scale: a stream's bounds are 1,000 records and
+2 MiB (`DESIGN.md:336-337`) while a shared collection may hold up to 50 MiB and 1M documents
+(`doc-store.types.ts:144-149`), every viewer would hold one per shared collection on top of their
+private ones, and `MAX_STREAMS` bounds a replica. So the board is split by who it differs for:
 
-**What app-data-go adds.** `GET …/records` and `GET …/records/{key}` for shared collections, answered
-from that stream's cache: `sort: key` or `-key`, `limit` (at most 100, the store's), and a key-based
-`cursor`; the item shape is the REST item's, so the app's `toSharedRecord` reads it unchanged. Other
-list parameters (filters, `author`, `mark`, other sorts) are not v1 and answer `501
-not_supported_here`; the app uses none of them.
+- **A class stream per (collection major, level class)**, read by app-data-go under its own service
+  identity and shared by every viewer of that class. It carries every visible shared document whose
+  level is in the class, each with `key`, `data`, `version`, `createdAt`, `updatedAt`, `tallies`
+  (counters and mark counts, report excluded) and `seq`; deletes, moderator hides (tombstones,
+  `doc-store.ts:4489-4493`) and re-ratings out of the class arrive as `Delete`s. It never carries an
+  author, a viewer's marks, or an unrated document.
+- **A per-viewer stream per (token, collection major)**, read under the viewer's exchanged token like
+  the private streams. It carries only what differs for that viewer: their marks on the collection's
+  documents, the keys they authored, and their own documents the class leaves out (unrated, pending,
+  or rated outside the class but inside their own domain ceiling, `sharedDocLevelVisible`'s author
+  arm). Its `Live` names the viewer's **level class**, decided by the adapter.
 
-**Load.** A board is read whole by every viewer's stream, so a stream holds the whole collection as
-that viewer sees it. Before cutover, the collection's size, read from the store, must fit the stream
-bounds (`MAX_RECORDS_PER_STREAM`, `MAX_BYTES_PER_STREAM`), or the bounds are raised for it: a stream
-that outgrows them can no longer send the read to REST. Sharing one base stream per (collection,
-audience) across viewers, with per-viewer facts layered on, is the lever if this binds; it is not v1,
-because it makes this service the judge of which viewer may see the base.
+A read is answered by merging: the class stream's documents, plus the viewer's own extra documents,
+with `viewer.marks` and `author.isViewer` filled from the per-viewer stream. Signed-out viewers use
+the class stream alone ("Signed-out viewers").
 
-## Read-your-writes: the store's `seq`, base and overlay
+**The level class.** For others' documents REST uses the token's viewer level,
+`resolveViewerBrowsingLevel(maxBrowsingLevel, viewerBrowsingLevel)`
+(`src/server/services/blocks/block-viewer-ceiling.ts:20-29`, via `viewerDocLevel`, `doc-levels.ts:60-64`).
+The registry today has only the audience and, for an exchanged block token, the ceiling
+(`civitai_max_browsing_level`; `src/server/registry-adapter/auth.jwt.ts:120-155`). Gated at
+`audienceDocLevel(audience) & onlySelectableLevels(maxBrowsingLevel)`, **PG-13 is always admitted**
+(`audienceDocLevel` sets PG and PG13 for everyone, `doc-levels.ts:83-91`), unlike REST, which leaves
+it out for a viewer whose level does. **Chosen: add the viewer's level to the exchange** as a fifth
+binding claim, `civitai_viewer_browsing_level`, written by the block exchange with the other four and
+required with them by `blockBindingOf`; the class is then exactly `resolveViewerBrowsingLevel` of the
+two claims, REST's own level. Until the hub writes it, the class is the audience-and-ceiling mask
+above, and that one divergence (PG-13 shown to a viewer who turned it off) is recorded here.
+
+The class is a bitmask of the selectable levels, so a collection has at most a handful of class
+streams (one per distinct mask in use), not one per viewer.
+
+**Authorization stays the origin's.** The class stream holds content only; the per-viewer stream is
+the gate. A signed-in viewer is served a class only while their per-viewer stream is open and its
+`Live` named that class; a viewer the adapter refuses (the empty stream, below) names no class and is
+served as a signed-out viewer, which is what REST would show anyone without an account. app-data-go
+therefore never decides a signed-in viewer's level itself.
+
+**Feed routing.** The adapter routes by schema and token:
+
+- a subscription by a client on its shared-class allowlist (a short list, as the registry owner asked
+  on civitai-registry#49), naming a class in `meta`, to a shared collection's documents URN: the class
+  stream, for any shared collection, exported or not;
+- a listed relay's user token to the per-viewer URN of a shared collection
+  (`urn:schema:apps.civitai.com:<slug>/<c>.viewer@v<N>`): the per-viewer stream;
+- anything else, including a token-bearing listed relay subscribing to an **exported** collection's
+  documents URN: the public document feed, per audience, exactly as today. app-data-go never uses it.
+
+**Bindings.** A per-viewer stream's stored state binds the subject, the audience, the ceiling and the
+viewer level (the private feed binds only schema, subject and audience today,
+`private-feed.ts:238`); a cursor resumed under a different binding is refused as expired and the
+stream re-snapshots. A class stream's state binds the class.
+
+**Poll shapes and cost.**
+
+| Stream | Poll | Cost per poll |
+|---|---|---|
+| Class | `seq` range on `doc` and `doc_tomb` (the shared feed's shape, `doc-store.ts:976-1026`), plus a mark-sequence range on the collection's tally rows | proportional to the changes since the last poll |
+| Per-viewer | keyset diff of the viewer's mark rows, authored keys and own extra documents for the collection (the private feed's shape) | proportional to that viewer's own rows, usually a few |
+
+**Size, count, alert, and the bound.** Before cutover, the board's size per class, read from the
+store, must fit a class-stream bound set with headroom above it (class streams are few, so their
+bound is larger than a per-user stream's); the per-viewer streams' count per replica must fit
+`MAX_STREAMS` with the private streams beside them. An alert fires when a class stream passes 75% of
+its bound, or the open-stream gauge passes 75% of `MAX_STREAMS`. **A board that crosses the bound**
+keeps streaming its newest documents by key up to the bound and marks every list answer `truncated:
+true`; the app already renders a truncated board (`truncated`, `src/App.tsx:4280-4285`; its
+board-truncated notice, `:735`). A keyed `get` of a document outside the window answers `503
+too_large`. There is no fallback to read it elsewhere; the fix is raising the bound or paging the
+class stream.
+
+### Signed-out viewers
+
+**Decided by the operator:** app-data-go reads the class stream under its own service identity, as an
+anonymous viewer, and serves signed-out viewers from it. Registry-only.
+
+- **How app-data-go authenticates to the adapter:** a hub service token for its own client
+  (client credentials, `AppsRead`), accepted because the adapter's service-client list names it, as
+  the app index's is (`auth.jwt.ts:15-25`, `:197-212`; `REGISTRY_ADAPTER_SERVICE_CLIENTS`,
+  `auth.live.ts:47-57`), and on the shared-class allowlist above. A service subscription otherwise reads
+  every rating (`SERVICE_AUDIENCE`, `audience.ts`), so for a class stream it names the class and the
+  adapter serves exactly that class, never wider.
+- **What a signed-out viewer gets:** the anonymous class, `resolveViewerBrowsingLevel` of the signed-out
+  token's own claims, which is the public levels within the host's ceiling. It is never wider than the
+  request's host: a red-capable host's ceiling cannot widen an anonymous level, and the main (SFW) host's
+  narrows it. No marks, no authorship: `viewer.marks` is empty and `author.isViewer` false, as on REST.
+- **How the SDK reaches it without an exchangeable token:** a signed-out viewer's block holds a block
+  token whose subject is the anonymous one (`sub: 'anon'`, `src/server/services/block-token-subject.ts:56`).
+  The SDK sends it as for any read. app-data-go verifies it locally, as it verifies every block token
+  (`apps/app-data-go/internal/exchange/blockverify.go`), where today an anonymous subject is refused
+  (`:178-180`); an anonymous token instead takes the signed-out read path. It is **never sent to the
+  hub**: there is no user to exchange for. It names the app and block, and carries the host ceiling.
+- **Writes** stay impossible for a signed-out viewer, as on REST (`requireViewer`).
+
+The level formula is the site's, ported to Go and pinned by golden vectors, as `internal/urn` is.
+
+## Read-your-writes: two sequences, base and overlay
 
 The adapter can lag a write by up to one poll. So this service applies each acknowledged write to the
-writing token's stream cache at once, ordered by the store's `seq`.
+writing token's caches at once.
 
-**Why `rev` cannot be the guard.** A private entity's `rev` is a 16-hex digest (`privateRev`,
-`private-feed.ts:184-192`, over `docRev`, `doc-feed.ts:147-148`): it says "changed", never "newer".
-`doc.version` restarts at 1 when a key is deleted and created again (`SQL_INSERT_DOC`,
+**Why `rev` and `version` cannot order writes.** A private entity's `rev` is a digest (`privateRev`,
+`private-feed.ts:184-192`); `doc.version` restarts at 1 when a key is re-created (`SQL_INSERT_DOC`,
 `SQL_DELETE_DOC`, around `doc-store.ts:834-862`), and a re-created key is a new row with a new
-`record_id` and so a new URN. `doc.seq` is strictly increasing per (app, namespace) across every
-write, deletes included (stamped on the row, `SQL_STAMP_SEQ`, `:914`, and on a tombstone,
-`SQL_TOMBSTONE`, `:937`). **The guard is `seq`, per key.**
+`record_id` and URN. **Documents are ordered by `doc.seq`, per key.**
 
-**Whose `seq`, and the head.** One counter per app namespace, shared by `kv` and `records`, private
-and shared writes alike (fixed point 2). The **head**, `usage_app.last_seq` (`SQL_FEED_HEAD`,
-`doc-store.ts:981`), is therefore per app namespace too, not per collection: a stream's head says
-"every write of this app at or below it is in what this poll read", for every collection. A
-collection with no write past a reader's floor is satisfied by any head at or above the floor.
+**Marks get their own sequence, and leave `doc.seq` alone.** Giving a mark a `doc.seq` would take
+`usage_app` (lock 2) inside a transaction that today takes none, and would move the revision that
+moderation and the rater check (fixed point 3), so a vote would make a moderator's hide or a rating
+fail as "changed". Instead:
 
-**Store changes.** The column exists but the store's API does not return it: `DocRecord`
-(`doc-store.types.ts:90-103`) has no `seq` or `recordId`, `docColumns` (`doc-store.ts:691-700`)
-selects neither, and `delete` returns only `{deleted}` (`doc-store.ts:2440-2480`). So:
+- a **mark sequence** per (app, namespace, collection), a row in a new table, taken by `mark`,
+  `unmark` and `increment` after the document's `KEY SHARE` and the tally row (lock (1c), after (1b)),
+  and stamped on the tally row it changed. Document writes never take it; nothing takes a document or
+  tally lock after it; it is never held with (2) or (3). The lock order becomes (1) → (1b) → (1c) for
+  tally writes and (1) → (1b) → (2) → (3) for document writes, so no cycle can form;
+- `doc.seq`, moderation's revision and the rater's binding are untouched;
+- the class stream polls tallies by mark-sequence range; the per-viewer stream sees the viewer's own
+  mark rows by keyset diff.
 
-- `create` and `put` return `seq` and `record_id`; `delete` returns `{deleted: true, seq}`. A delete
-  that finds nothing (`{deleted: false}`) has no `seq` and wrote no tombstone: the cache applies
-  nothing;
-- `mark`, `unmark` and `increment` take a `seq` (the no-charge `charge` the moderator hide uses,
-  `doc-store.ts:4489-4493`) and stamp it on the document, so the feeds see a tally change; the
-  document's `version` is unchanged, so `ifVersion` keeps its meaning. The shared feed's `rev`
-  includes the tallies, so a vote re-sends the record;
-- `publishCopies` and `unpublishCopies` already number their documents (`SQL_CHARGE_APP_SEQS`,
-  `doc-store.ts:1434-1446`); they return each key's `seq`;
-- the public route's `presentDocs` keeps exposing none of these.
+**The heads.** The document head, `usage_app.last_seq` (`SQL_FEED_HEAD`, `doc-store.ts:981`), is per
+app namespace, shared by `kv` and `records`: a stream's document head says every document write of
+the app at or below it is in what the poll read. The mark head is per collection. Each poll reads its
+heads in the same transaction as its rows, or before them, never after, and carries them on `Live`
+and on each change batch's `Progress` (in `meta`). **Accepted:** the document head, and a write's
+`seq`, tell their holder the app's whole write volume between two reads, every user's included.
 
-**Adapter changes.**
+**Store changes.** `DocRecord` (`doc-store.types.ts:90-103`) has no `seq` or `recordId`, `docColumns`
+(`doc-store.ts:691-700`) selects neither, and `delete` returns only `{deleted}` (`doc-store.ts:2440-2480`).
+So: `create` and `put` return `seq` and `record_id`; `delete` returns `{deleted: true, seq}`
+(`{deleted: false}` has no `seq`, wrote no tombstone, and the cache applies nothing); `mark`, `unmark`
+and `increment` take and return the mark sequence; `publishCopies` and `unpublishCopies` return each
+key's `seq` (they already number them, `SQL_CHARGE_APP_SEQS`, `doc-store.ts:1434-1446`). The public
+route's `presentDocs` exposes none of these.
 
-- The private feed's queries also select `d.seq` (`SQL_PRIVATE_FEED_VERSIONS`,
-  `SQL_PRIVATE_FEED_DOCS`, `doc-store.ts:1033-1045`), and each entity carries it beside `key`
-  (`Entity.seq`, HTTP binding only, as `key` is). The per-viewer shared feed carries it from the
-  start.
-- `PRIVATE_BODY_FORMAT` goes from `k1` to `k2` (`private-feed.ts:176-182`): it is folded into every
-  private `rev` and the read digest, so a cursor saved before the change resumes as a change and every
-  record is sent again with its `seq`. No cursor is expired.
-- Each poll reads the head in the same transaction as the keyset read, or before it, never after (a
-  head read after could name a write the keyset missed), and carries it on `Live` and on each change
-  batch's `Progress` (in `meta`).
-- `seq` and the head are sent only on these authorized streams, to a listed relay, and this service
-  passes neither to apps except a write's own `seq` in its answer. **Accepted:** the head (and a
-  write's `seq`) tells its holder the app's whole write volume between two reads, every user's
-  included.
+**Adapter changes.** The private feed's queries select `d.seq` (`doc-store.ts:1033-1045`) and each
+entity carries it (`Entity.seq`, HTTP binding only, as `key` is); `PRIVATE_BODY_FORMAT` goes from `k1`
+to `k2` (`private-feed.ts:176-182`), so a resumed cursor re-sends every record with its `seq`; the
+class and per-viewer streams carry their sequences from the start; the heads as above.
 
-**The cache: a base and an overlay per key.** The **base** is what the stream last said; the
-**overlay** is what this token's acknowledged writes said since. A read answers the overlay where one
-exists, else the base. They are never merged into one value, so dropping an overlay shows the base
+**The caches: a base and overlays, never merged.** The **base** is what the stream last said. The
+**overlays** are what this token's acknowledged writes said since, and there are two kinds:
+
+- a **record overlay** per key: the record a create or put answered (with `version`, `createdAt`,
+  `updatedAt`, `seq`), or a **delete marker** at the tombstone's `seq`;
+- a **marks overlay** per (key, mark): the viewer holds the mark or not, and, for a counted mark, the
+  `count` the answer gave, at the answer's `markSeq`. A `report` mark adds `report` to `viewer.marks`
+  and carries no count.
+
+A read answers each overlay where one exists, else the base. Dropping an overlay shows the base
 again, never a vanished record.
 
 | Event | Effect |
 |---|---|
-| Acknowledged write (create, put, mark, unmark) at `seq` S | the overlay for the key becomes the answer's record at S, only if S ≥ the overlay's `seq` and S ≥ the base's `seq` (an answer can arrive after a later write's) |
-| Acknowledged delete at tombstone `seq` S | the overlay becomes a **delete marker** at S, under the same rule (read as absent) |
+| Acknowledged create or put at `seq` S | record overlay := the answer, only if S ≥ the overlay's and the base's `seq` |
+| Acknowledged delete at `seq` S | record overlay := delete marker at S, same rule |
 | `deleted: false` | nothing |
-| Stream `Upsert` for the key at `seq` T | replaces the base; the overlay is dropped once T ≥ its `seq` (the stream has caught up) |
-| Stream `Upsert` with no `seq` (an adapter before `k2`) | replaces the base only; it never drops or outranks an overlay |
-| Stream `Delete` of the base's URN | removes the base; drops a delete-marker overlay. A `Delete` of another URN (the old row of a re-created key) is ignored |
+| Acknowledged mark or unmark at `markSeq` M | marks overlay for (key, mark) := held or not, with the count, only if M ≥ its current `markSeq` |
+| Stream upsert of a record at `seq` T | replaces the base; drops the record overlay once T ≥ its `seq` |
+| Stream upsert with no `seq` (an adapter before `k2`) | replaces the base only; never drops or outranks an overlay |
+| Stream tally or viewer-mark change at mark sequence N | replaces the base's tally or mark; drops the marks overlay once N ≥ its `markSeq` |
+| Stream `Delete` of a URN | removes the base for that URN, and drops a record overlay or delete marker for that URN (a moderator hide after the write is a `Delete`, and wins). A `Delete` of another URN, the old row of a re-created key, is ignored |
 | An overlay the stream has not caught up with | dropped one poll interval plus 30 s after it was set, showing the base |
 
 The last row bounds the case the stream cannot correct: a refusal arrives as a `Delete` for every
 record the stream held (`DESIGN.md:229-230`), and a record written since the last poll was never held.
-An overlay is per token: another viewer of a shared collection sees a write only when the store does
-show it to them (rated, not hidden) and their own stream says so.
+Overlays are per token: another viewer of `records` sees a write only when the store shows it to their
+class and their class stream says so.
 
-**Several replicas.** v1 runs two replicas with a disruption budget. Each holds its own streams and
-caches. A write acknowledged by replica A is in A's cache only; a read of the same token on replica B,
-through B's own stream opened before the write, sees it only after B's next poll. Answer: **no, not
-without routing**. The fix:
+**Several replicas.** v1 runs two replicas with a disruption budget. A write acknowledged by replica A
+is in A's caches only; a read of the same token on replica B sees it only after B's next poll.
+Answer: **no, not without routing**. The fix:
 
-- **Sticky routing by token:** consistent hashing on a digest of the `Authorization` header. That
+- **Sticky routing by token:** consistent hashing on a digest of the `Authorization` header, which
   needs a proxy in front of the replicas that hashes on a request header; a plain round-robin service
   address cannot do it. It is required anyway: a block token can be exchanged once
-  (`DESIGN.md:169-184`), so only the replica that exchanged it can open a stream for it. Two replicas
-  can each hold a stream for the same user while routing moves; that extra adapter stream budget is
+  (`DESIGN.md:169-184`), so only the replica that exchanged it can open its streams. Two replicas can
+  each hold streams for the same user while routing moves; that extra adapter stream budget is
   accepted;
-- **a floor on reads, for when routing moves:** each answer carries `seq`; the SDK sends the highest
-  it has seen for the app on its next reads (`?minSeq=S`). A replica answers from a stream **only when
-  that stream's last head is ≥ S**. Otherwise it reopens the stream (a new snapshot, whose `Live`
-  carries a fresh head), at most once per (token, collection) per poll interval, within
-  `LIVE_WAIT_MS`. If the reopened stream's head is still below S, or a reopen was already spent in
-  this interval, it answers `503` with `Retry-After` and does not reopen again. The floor covers
-  acknowledged writes only: a write still in flight when a read starts may or may not be in that
-  read's answer, as on REST.
+- **floors on reads, for when routing moves.** Each acknowledgement carries its `seq` or `markSeq`;
+  the SDK sends the highest of each it has been acknowledged for the app (`?minSeq=S&minMarkSeq=M`).
+  **Only acknowledgements raise a floor; reads never do.** The document floor is met when
+  max(the stream's document head, the highest `seq` this replica acknowledged for this token) ≥ S, and
+  the mark floor likewise with the collection's mark head and `markSeq`. When a floor is not met, the
+  replica reopens the stream (a new snapshot, with fresh heads), at most once per (token, collection)
+  per poll interval, within `LIVE_WAIT_MS`. If the reopened stream still does not meet it, or a reopen
+  was already spent in this interval, it answers `503` with `Retry-After` and does not reopen again.
+  A floor covers acknowledged writes only: a write still in flight when a read starts may or may not
+  be in that read's answer, as on REST.
 
-**A restart.** Caches are in memory and are lost. Nothing is rebuilt from disk: the first read opens a
-new stream, whose first `Live` is a snapshot the adapter reads from the store at that moment
-(`DESIGN.md:30-36`), holding every committed write and carrying a head that satisfies any earlier
-floor. A block token whose one exchange was spent on the dead replica cannot open a stream: the read
-answers `401 block_token_spent`, and the SDK gets a fresh block token from its host and retries once.
+**A restart.** Caches are in memory and are lost. The first read opens new streams, whose first `Live`
+is a snapshot read from the store at that moment (`DESIGN.md:30-36`), holding every committed write and
+carrying heads that meet any earlier floor. A block token whose one exchange was spent on the dead
+replica cannot open a stream: the read answers `401 block_token_spent`, and the SDK gets a fresh block
+token from its host and retries once.
 
 **The contract a client may rely on:** a write acknowledged by this service is in the store; a read
-through this service on the same token afterwards returns it (with `minSeq`, also after routing
-moved); any other token, or another viewer of a shared collection, sees it within one adapter poll of
-the store showing it to them.
+through this service on the same token afterwards returns it (with the floors, also after routing
+moved); any other token, or another viewer, sees it within one adapter poll of the store showing it to
+them.
 
 ## The empty stream (accepted for v1)
 
@@ -336,47 +419,44 @@ itself.
 So the risk is **integrity, not only confidentiality**. A refused token sees less, never more; but an
 app that treats "empty" as "nothing exists" can act on it wrongly while its writes keep landing.
 Model-benchmarking keeps in-flight run claims in `kv`: an empty read there could start a second paid
-run for a claim that exists, spending Buzz twice. An app that seeds defaults when a collection is
-empty can overwrite data that exists.
+run for a claim that exists, spending Buzz twice. An app that seeds defaults when a collection is empty
+can overwrite data that exists. A keyed `get` does not help: it reads the same stream.
 
-**SDK guidance, shipped with the cutover:**
-
-- never treat an empty **first** snapshot after cutover (or after a reopen) as authoritative for a
-  destructive or charging decision: confirm with a keyed `get`, which returns the record or a
-  `not_found` the app can act on;
-- write state that must not be duplicated with a keyed `put` and `ifVersion: 0` (a claim), so a
-  wrong "empty" makes the write fail with `version_conflict` instead of doing the work twice;
-- seed defaults the same way, never with an unconditional `put`.
+**The guidance, and a cutover precondition:** state that must not be done twice is claimed with a
+keyed `put` and `ifVersion: 0` (or the version last read), so a wrong "empty" makes the claim fail
+with `version_conflict` instead of doing the work twice; defaults are seeded the same way. The app's
+`kv.set` is an unconditional put today (`kv-store.ts:127-130`), and its run claims use it
+(`src/App.tsx:2185`, `:2206`, `:2352`), so **moving the run claims to a conditional put is a
+precondition of the cutover** (step 2).
 
 The tracked fix is civitai/civitai-registry#56 (refuse a subscriber with an explicit error instead of
 an empty snapshot). It must land, and the adapter adopt it, before REST sunsets.
 
 ## Who stays on REST
 
+Ordinary `app` tokens and `hub` tokens (a hub-issued bearer of an approved app,
+`doc-store-access.ts:89`, `:210`) of a cut-over app move: both are exchangeable (DESIGN.md "Tokens"),
+and signed-out viewers move too ("Signed-out viewers"). What stays:
+
 - **Dev, moderator-review and private-run tokens.** None has a registry read path: this service's
   verifier refuses a token with a dev, review or private-run marker (`DESIGN.md:151-157`), a review
   token stores in its own namespace (`doc-store-access.ts:152-185`), a dev token in the developer's
   (`:195-200`), and a private-run token gets no storage at all (`:12-15`). The cutover flag is
-  evaluated only for an ordinary production token: the site hands the service URL to the block only
-  then, and every other token keeps its current path. Test: a dev, review or private-run token for a
-  cut-over app is never given the service URL, and its storage calls are answered as before.
-- **Anonymous viewers** of a shared collection. The block exchange needs a signed-in subject, so an
-  anonymous viewer has no token this service can exchange, and no registry read path. They keep
-  reading REST until a public path exists (see "Still open").
+  evaluated only for a production token: the site hands the service URL to the block only then, and
+  every other token keeps its current path. Test: a dev, review or private-run token for a cut-over
+  app is never given the service URL, and its storage calls are answered as before.
 
-Each is counted (`viewer` and `token_kind` on the site's counter, below), so the end state can see
-them go to zero.
+They are counted (`token_kind` on the site's counter, below), so the end state can see them go to zero.
 
 ## Authn and authz
 
 **v1 forwards the user's token** to the site's internal route. The site is already that token's
 audience, and the read fallback already sends it there (`DESIGN.md:98-101`). This service checks
 shape only (slug, collection, key grammar, body size, op in scope), routes by token shape as reads do
-(`exchange.KindOf`), and decides no access of its own (`DESIGN.md:17-18`). The rate buckets and
-budgets stay per (app, principal) (`shared-storage-rate-limit.ts:139-190`), because the principal is
-still the user's token. The site sees this service's address, not the client's; nothing in the write
-path keys on the client address, a test pins that, and the forward never passes a client-supplied
-`X-Forwarded-For` on.
+(`exchange.KindOf`), and decides no write access of its own (`DESIGN.md:17-18`). The rate buckets and
+budgets stay per (app, principal) (`shared-storage-rate-limit.ts:139-190`). The site sees this
+service's address, not the client's; nothing in the write path keys on the client address, a test pins
+that, and the forward never passes a client-supplied `X-Forwarded-For` on.
 
 An exchanged write token (`AppDataWrite`) is needed only if the writer ever leaves the site; it is
 not v1.
@@ -388,18 +468,18 @@ The internal route runs the same chain, so each gate runs in the same order on t
 | Gate | Where | Applies to | What to watch |
 |---|---|---|---|
 | Token, revocation, consent, `apps:storage` | `withBlockScope` (`block-scope.middleware.ts:1593`) | every call | the signature check runs before it and adds nothing to it |
-| Publish scope | `assertPublishScope` (`doc-store-api.ts:1224`) | shared create, put | consent prompt flows unchanged (`consent_required`) |
+| Publish scope | `assertPublishScope` (`doc-store-api.ts:847`, called `:1224`) | shared create, put | `consent_required` flows unchanged |
 | Collection schema | `doc-store-api.ts:1236`, again in the store | create, put | none |
 | `write` bucket | `doc-store-api.ts:1297-1299`; `shared-storage-rate-limit.ts:161-167` | private writes, every delete | same principal, same bucket |
 | Trust gate | `assertTrusted` (`doc-store-api.ts:884`) | shared create, put | none |
-| Shared-write budget | `reserveSharedWrite` (`doc-store-api.ts:1111`; `shared-storage-rate-limit.ts:277`) | shared create, put | refunds on a write that does not land pass through |
+| Shared-write budget | `reserveSharedWrite` (`shared-storage-rate-limit.ts:366`; called `doc-store-api.ts:1111`) | shared create, put | refunds pass through |
 | Change-only charging | flag `app-blocks-storage-unchanged-writes-free` (`doc-store-api.ts:1302-1321`; #9166) | shared put | same code |
 | Tally and report buckets | `shared-storage-rate-limit.ts:163-167` | marks | same principal |
 | Permission hooks | `gateHook`, `doc-store-hook.ts` (#8126) | every write | the forward's timeout exceeds the hook client timeout (hook timeout + 450 ms, `doc-store-hook.ts:82-86`, `:106-113`) |
 | Moderation | `moderate` (`doc-store-api.ts:978`; `:958-1064`) | shared create, put | an enforce refusal is `422 content_rejected`, passed through |
-| Content levels | `SQL_RATING_PENDING` (`doc-store.ts:855`); `doc-levels.ts` | shared create, put | the writer's own pending record reaches only their own stream |
+| Content levels | `SQL_RATING_PENDING` (`doc-store.ts:855`); `doc-levels.ts` | shared create, put | the writer's own pending record reaches only their per-viewer stream |
 | Store-card sync | `syncStoreItem` (`doc-store-api.ts:1288`, `:1571`) | shared delete, unpublish | runs in the site, after the store |
-| Publish | `_publish` / `_unpublish`, per-app flag, refused on hooked collections (`doc-store-api.ts:1427-1432`, `:1495`, `:1552`) | publish | the flag still gates it; the app does not call it today |
+| Publish | `_publish` / `_unpublish`, per-app flag, refused on hooked collections (`doc-store-api.ts:1427-1432`, `:1495`, `:1552`) | publish | the flag still gates it |
 | Quotas | `usage_app` / `usage_user`, `413 quota_exceeded` (`doc-store.ts:2120-2161`) | every write | none |
 | Buzz | none: the store charges no Buzz on writes (no Buzz call in `doc-store-api.ts` or `doc-store.ts`) | — | a future charge lands in the store, so in both |
 
@@ -414,10 +494,9 @@ D2 is open question 2 of the registry's migrations proposal: how a stream at maj
 document written at N+1 ("Defaults and renames reverse cleanly; removals don't",
 civitai-registry `proposals/migrations.md:62`). The proposal today keeps one body per entity and
 drops a migrated body from the old major's stream as a `Delete` (`proposals/migrations.md:53`). It
-decides what the adapter's **streams** serve, not what a write stores, and it is the spec's to
-decide. Writes change one thing: every document a new-version client writes leaves the old-major
-stream, so the cutover app should not ship a breaking major during its 7-day window, and the window's
-metrics should show it did not.
+decides what the adapter's streams serve, not what a write stores, and it is the spec's to decide.
+The cutover app should not ship a breaking major during its 7-day window, and the window's metrics
+should show it did not.
 
 ## Availability without a fallback
 
@@ -436,51 +515,74 @@ catalog), not this path: app-data-go reads the adapter directly, not through `re
 
 0. **Prerequisite: the reads are promoted.** The P4 shadow's gate (7 days of real-user comparisons
    under 0.1% mismatched, at least one non-empty compared list) is met, and S7 is promoted.
-1. **Build, dark.** Behind `APP_DATA_WRITES` (default off: every write route is `404`):
-   - the write routes and the shared read routes here; the forward client; the base/overlay cache;
-     `minSeq` and the bounded reopen; sticky routing and the second replica;
-   - the site's internal route (signature, buffered body, the import refusal, the endpoint label);
-   - the store changes (`seq` and `record_id` returned; marks take a `seq`);
-   - the adapter's `Entity.seq`, `k2`, the head, and the per-viewer shared feed;
-   - **the site's counter**, which does not exist on `main`: `app_storage_requests_total{app, op,
-     via, viewer, token_kind}`, `via` in `direct|service`, counted on both routes for reads and
-     writes. A series that does not exist reads as 0 in every query, so the cut-over app's
-     `via="direct"` series are created at 0 when the flag is first evaluated for it.
+1. **Build, dark.** Behind `APP_DATA_WRITES` (default off: every write and shared-read route is `404`):
+   - here: the write routes, `info`, the shared and keyed-get read routes, the class and per-viewer
+     streams and their merge, the signed-out read path, the base and overlay caches, the floors and the
+     bounded reopen, sticky routing and the second replica;
+   - the site: the internal route (signature, buffered body, the public `req.url`, the import refusal);
+     the store changes; the mark sequence; the counter below;
+   - the adapter: `Entity.seq` and `k2`, the heads, the class stream and the per-viewer stream, their
+     routing and bindings, the shared-class allowlist;
+   - the hub: the fifth block-exchange claim, `civitai_viewer_browsing_level`;
+   - **a cut-over app's reads never fall back**: each of today's fallback reasons
+     (`apps/app-data-go/internal/metrics/metrics.go:24-26`) gets its answer, behind the app's flag:
+
+     | Reason | Answer for a cut-over app |
+     |---|---|
+     | `registry_off` | not possible: the flag requires the registry path; a misconfiguration is `503` |
+     | `token_not_exchangeable`, `invalid_token` | `401` with the code, or the signed-out path for an anonymous block token |
+     | `block_spent` | `401 block_token_spent`: the SDK refreshes the block token |
+     | `block_cache_full`, `capacity`, `token_capacity`, `cooling_down` | `503` with `Retry-After` |
+     | `exchange_refused` (including a `local` verifier refusal), `unverifiable` | `401` with the hub's code or `local`; `503` with `Retry-After` for `unverifiable` (a key-set outage) |
+     | `not_live`, `stalled`, `ended`, `failed`, `closed` | `503` with `Retry-After` |
+     | revoked (a stream closed as `revoked`) | `401 revoked` |
+     | `empty` | an empty answer ("The empty stream") |
+     | `not_private` | not a fallback: shared collections are served by the class and per-viewer streams |
+     | `too_large` | the truncated window, or `503 too_large` for a keyed get outside it |
+     | `unkeyed` | `503`: an adapter without keys cannot serve a cut-over app, so the adapter release is a prerequisite |
+
+   - **the site's counter**, which does not exist on `main`: `app_storage_requests_total{app, op, via,
+     viewer, token_kind}`, `via` in `direct|service`, counted on both routes for every op. A series that
+     does not exist reads as 0 in every query, so the cut-over app's `via="direct"` series are created
+     at 0 when the flag is first evaluated for it.
 
    Tests, with pairwise-distinct fixtures: the forward sends the token and body unchanged and never
    retries; a request without a valid signature, or with a body that differs from the signed one,
-   never reaches `withBlockScope`; an import through the internal route is `501`; a lost create
-   answer is `504 outcome=unknown`; an acknowledged write is read back before any poll; an
-   acknowledgement older than the overlay or the base is ignored; a stream upsert older than an
-   overlay keeps the overlay, a caught-up one drops it; an expired overlay shows the base, never
-   nothing; `deleted: false` changes nothing; a re-created key wins over the old row's late upsert; a
-   vote's overlay changes the tally and `viewer.marks` for the voter only; another viewer never sees
-   the writer's pending record; a write on token A never changes a read on token B; a read with
-   `minSeq` above the head reopens once, then answers `503`; a dev, review or private-run token is
-   never given the service URL.
+   never reaches `withBlockScope`; an import through the internal route is `501`; a lost create answer
+   is `504 outcome=unknown`; an acknowledged write and an acknowledged vote are read back before any
+   poll; an acknowledgement older than the overlay or the base is ignored; an expired overlay shows the
+   base, never nothing; a `Delete` of the overlay's URN drops it; `deleted: false` changes nothing; a
+   re-created key wins over the old row's late upsert; a vote changes the tally and `viewer.marks` for
+   the voter only; another viewer never sees the writer's pending record; a signed-out viewer never
+   sees marks, authorship or a level above the anonymous class; a refused signed-in viewer is served
+   the anonymous class only; a write on token A never changes a read on token B; a read whose floor is
+   above both the head and this replica's acknowledgements reopens once, then answers `503`; a read
+   whose floor this replica acknowledged itself is answered without a reopen; a dev, review or
+   private-run token is never given the service URL; a vote leaves the document's `seq` unchanged, and
+   a moderator hide pinned to the pre-vote revision still applies.
 2. **Cutover: model-benchmarking, all of its storage, directly.** No shadow step.
-   - **Before the flag:** the `records` collection's size fits the stream bounds; and a positive
-     control on the direct series: the app's `via="direct"` count is non-zero in the days before
-     cutover, so a zero after it means the traffic moved, not that the counter is dead.
-   - **The flag:** `app-data-writes-via-service` in Flipt, per app (entity the app block id, as the
-     read shadow's flag). It moves the app's **reads and writes, private and shared**, to this
-     service, through its public route, with CORS for the app's origin, for ordinary signed-in tokens
-     ("Who stays on REST").
-   - **What the SDK changes at cutover:** every storage call targets this service; every read sends
-     `minSeq`; a read the registry cannot answer is an error (`503` with `Retry-After`, retried with
-     backoff; `401 block_token_spent`, a fresh block token and one retry), never a REST read; an empty
-     stream is an empty answer, under "The empty stream" guidance; `504 outcome=unknown` follows
-     "Retries".
-   - **Rollback:** the flag off; the SDK reads and writes the REST route again, and nothing moves,
-     since the store is the only writer. This rollback is itself transitional: it exists only while
-     the REST route does.
+   - **Before the flag:** the app's run claims (and any default seeding) use a conditional put ("The
+     empty stream"); the `records` board fits the class-stream bound per class; and a positive control
+     on the direct series: the app's `via="direct"` count is non-zero in the days before cutover, so a
+     zero after it means the traffic moved, not that the counter is dead.
+   - **The flag:** `app-data-writes-via-service` in Flipt, per app (entity the app block id, as the read
+     shadow's flag). It moves the app's **reads, writes and `info`, private and shared, signed-in and
+     signed-out**, to this service, through its public route, with CORS for the app's origin, for
+     production tokens ("Who stays on REST").
+   - **What the SDK changes at cutover:** every storage call targets this service; every read sends the
+     floors; a read the registry cannot answer is an error (the table in step 1), retried with backoff
+     on `503` and after a fresh block token on `401 block_token_spent`, never a REST read; an empty
+     stream is an empty answer; `504 outcome=unknown` follows "Retries".
+   - **Rollback:** the flag off; the SDK reads and writes the REST route again, and nothing moves, since
+     the store is the only writer. This rollback is itself transitional: it exists only while the REST
+     route does.
    - **Closing: model-benchmarking's storage goes only through the service for 7 days:**
-     `app_storage_requests_total{app=<its block id>, via="direct", viewer="signed_in",
-     token_kind="app"}` is 0 every day, for reads and writes, private and shared; and `via="service"`
-     is non-zero over the same days, for reads and writes. The excluded viewers are reported beside
-     it, not inside it.
-3. **General.** Per app, the same flag, the same 7-day closing. Imports are a later turn-on with
-   their own closing, by lifting the internal route's refusal.
+     `app_storage_requests_total{app=<its block id>, via="direct", token_kind=~"app|hub"}` is 0 every
+     day, for every op (reads, writes and `info`; private and shared; signed-in and signed-out); and
+     `via="service"` is non-zero over the same days for reads, writes and `info`. The token kinds that
+     stay on REST are reported beside it, not inside it.
+3. **General.** Per app, the same flag, the same 7-day closing. Imports are a later turn-on with their
+   own closing, by lifting the internal route's refusal.
 4. **Remove app-data-go's read fallback.** See "End state". Not optional: REST cannot sunset while
    it exists.
 5. **Sunset REST.** See "End state".
@@ -497,72 +599,68 @@ the store's internal route. The public REST App Storage API (`/api/v1/blocks/sto
 **What must be true before REST is turned off:**
 
 1. **Every app is cut over** (migration step 3 closed for every app with storage, imports included).
-2. **The exceptions are gone:** dev and review tokens have a path that is not the public route
-   (their own namespaces, served by the same internal chain or by this service), and anonymous
-   viewers have a public read path ("Still open").
-3. **app-data-go's read fallback is removed** (`internal/rest`; `DESIGN.md:41-44`). Each fallback
-   reason (`internal/metrics`) needs a registry-only answer first:
-   - `empty`: civitai/civitai-registry#56 lands, so a refused subscriber gets an error, not an empty
-     snapshot (`DESIGN.md:60-63`);
-   - `capacity`, `token_capacity`, `not_live`, `stalled`, `cooling_down`: `503` with `Retry-After`,
-     with the stream caps and the adapter's subscription caps (`DESIGN.md:345-371`) sized so they do
-     not bind in normal load;
-   - `token_not_exchangeable`, `block_spent`, `block_cache_full`, `exchange_refused`: `401` with a
-     code the SDK acts on, or the hub refusal as is;
-   - `not_private`: answered by the per-viewer shared feed;
-   - stream size: `MAX_RECORDS_PER_STREAM` and `MAX_BYTES_PER_STREAM` sized per app, or paging;
-   - the read features REST has and streams do not (filters, `author`, `mark`, other sorts): served
-     from the stream, or by an index over the registry.
-4. **The P4 shadow is retired** (it compares against REST, `DESIGN.md:405-415`).
-5. **The SDK** has no REST code path, discovers this service from the registry or the flag's URL,
-   keeps the highest `seq` and sends `minSeq`, refreshes a spent block token, follows "Retries" and
-   "The empty stream".
-6. **Measured:** zero public REST App Storage requests, every verb, every app, every viewer and token
-   kind, for 7 days, with this service's reads and writes non-zero over the same days as the positive
-   control. The per-app counter alone cannot show this: a request with no bearer token goes straight
-   to the handler, and a `401` for an invalid one is not attributed to any app
-   (`block-scope.middleware.ts:1608-1662`). So this step adds a route-level counter in front of
-   `withBlockScope`, by method only, which counts every request the public route receives. Then the
-   route answers `410` for a further window before it is deleted.
+2. **Dev and review tokens have a path that is not the public route** (their own namespaces, served by
+   the same internal chain or by this service).
+3. **app-data-go's read fallback is removed** (`internal/rest`; `DESIGN.md:41-44`): the per-reason
+   answers of step 1 apply to every app, and civitai/civitai-registry#56 has landed, so `empty` means
+   empty.
+4. **The read features REST has and streams do not** (filters, `author`, `mark`, other sorts) are
+   served from the stream, or by an index over the registry.
+5. **The P4 shadow is retired** (it compares against REST, `DESIGN.md:405-415`).
+6. **The SDK** has no REST code path, discovers this service from the registry or the flag's URL,
+   sends the floors, refreshes a spent block token, follows "Retries" and "The empty stream".
+7. **Measured:** zero public REST App Storage requests, every verb, every app, every token kind, for 7
+   days, with this service's reads and writes non-zero over the same days as the positive control. The
+   per-app counter alone cannot show this: a request with no bearer token goes straight to the handler,
+   and a `401` for an invalid one is not attributed to any app (`block-scope.middleware.ts:1608-1662`).
+   So this step adds a route-level counter in front of `withBlockScope`, by method only, which counts
+   every request the public route receives. Then the route answers `410` for a further window before
+   it is deleted.
 
 ## Metrics
 
 On this service (no label carries a token, user, app, collection or key, as the reads'):
 
-- `app_data_writes_total{op,outcome}`: `op` in `create|put|delete|mark|unmark|increment|publish|unpublish`;
+- `app_data_writes_total{op,outcome}`: `op` in `create|put|delete|mark|unmark|increment|publish|unpublish|info`;
   `outcome` the store's status class, `refused_here`, `unknown`, `unavailable`;
 - `app_data_write_forward_seconds{op}`;
-- `app_data_cache_overlays_total{kind}` (`write`, `delete_marker`) and
+- `app_data_cache_overlays_total{kind}` (`record`, `delete_marker`, `marks`) and
   `app_data_cache_stream_events_total{result}` (`applied`, `caught_up`, `older_kept`, `unordered`);
-- `app_data_min_seq_reopens_total{outcome}` (`caught_up`, `still_behind`, `spent`);
-- **write-to-stream lag**, observed after cutover: the time from a write's acknowledgement to the
-  first stream event for that key at `seq` ≥ the write's, as a histogram. It sizes nothing; it
-  measures how stale every other reader is.
+- `app_data_floor_reopens_total{outcome}` (`met`, `still_behind`, `spent`);
+- `app_data_class_stream_records{class}` against its bound, and `app_data_streams_open` against
+  `MAX_STREAMS` (the alerts above);
+- `app_data_signed_out_reads_total{outcome}`;
+- **write-to-stream lag**, observed after cutover: the time from a write's acknowledgement to the first
+  stream event at a sequence ≥ the write's, as a histogram. It sizes nothing; it measures how stale
+  every other reader is.
 
 On the site: `app_storage_requests_total{app,op,via,viewer,token_kind}` (step 1); the route-level
-request counter (end state, step 6).
+request counter (end state, item 7).
 
 ## Risks
 
 1. **A second entry into the write chain that a later change makes asymmetric.** Mitigated by the
-   internal route being the same `withBlockScope(… createStorageHandler …)` chain, and by the test
-   that lists those entries and every writer of `appdata.doc` (today `doc-store.ts` only).
+   internal route being the same chain, and by the test that lists those entries and every writer of
+   `appdata.doc` (today `doc-store.ts` only).
 2. **The internal route reached by something other than this service.** Refused without the
    signature; even then it grants no authority the user's token does not.
 3. **A lost answer.** No retries; a keyed `put` with `ifVersion` is the only safe retry; a
    server-minted create's outcome stays unknown.
 4. **A cache that serves a write the store does not hold.** Impossible by construction: an overlay is
-   set only after the store's `2xx`. A stale answer is bounded by the overlay, the head and `minSeq`.
-5. **The empty stream** ("The empty stream"): an integrity risk for apps that act on "empty",
-   reduced by the SDK guidance, fixed by civitai/civitai-registry#56.
-6. **Shared streams' size and count.** Every viewer of a shared collection holds a stream of the
-   whole collection; bounded by the stream caps, measured before cutover.
-7. **Sticky routing lost** (replica churn). Reads with `minSeq` reopen once or answer `503`; a spent
-   block token is refreshed by the SDK. Never a stale list, never REST.
-8. **No fallback means this service's outage is the apps' outage** for every cut-over app, taken
+   set only after the store's `2xx`. A stale answer is bounded by the overlays, the heads and the
+   floors.
+5. **The empty stream**: an integrity risk for apps that act on "empty", reduced by conditional claims,
+   fixed by civitai/civitai-registry#56.
+6. **A class stream is content shared across viewers.** The per-viewer stream gates who is served it,
+   and a refused viewer falls to the anonymous class, so the worst case is what a signed-out viewer
+   sees. Until the fifth claim ships, PG-13 reaches a viewer who turned it off.
+7. **A board past its bound** is truncated to its newest documents, never served elsewhere.
+8. **Sticky routing lost** (replica churn). Reads reopen once or answer `503`; a spent block token is
+   refreshed by the SDK. Never a stale list, never REST.
+9. **No fallback means this service's outage is the apps' outage** for every cut-over app, taken
    knowingly; redundancy is the mitigation.
-9. **Read-your-writes across tokens.** Two tabs of one user are two tokens and two streams; the
-   second sees the first's write after one poll. Stated in the contract.
+10. **Read-your-writes across tokens.** Two tabs of one user are two tokens and two streams; the second
+    sees the first's write after one poll. Stated in the contract.
 
 ## Decided
 
@@ -573,35 +671,34 @@ Operator, 2026-11-22:
    one service for reads and writes; the cutover is measured by the site's count of requests by path.
 2. **No REST fallback, ever:** REST is to be sunset and the platform made registry-only, so nothing
    falls back to it. The read fallback is transitional and is removed before REST sunsets.
-3. **Read-your-writes:** apply each acknowledged write to the stream cache, guarded by the store's
-   `seq`; a stream event replaces it only if not older. Needs the store to return `seq` and the
-   adapter to carry it.
+3. **Read-your-writes:** apply each acknowledged write to the stream cache, ordered by the store's
+   sequences; a stream event replaces it only if not older.
 4. **Service down:** a cut-over app's calls fail, during the cutover window and after it.
    Availability comes from the service's own redundancy.
 5. **No shadow step:** model-benchmarking is cut over directly, with its Flipt flag as the rollback.
    The write-to-stream lag is a metric observed after cutover.
 6. **Defaults taken:** v1 forwards the user's token (no new write scope yet); the current schema major
    only, else `409 stale_major`; no retries on forwarded writes (`504 outcome=unknown`); the site
-   counts requests by path with a signed label, a count and the internal route's caller check, never
-   a grant of user or app authority. (The default "v1 is private create, put and delete only" is
+   counts requests by path with a signed label, a count and the internal route's caller check, never a
+   grant of user or app authority. (The default "v1 is private create, put and delete only" is
    superseded by 10.)
 7. **Reads move too:** at the cutover the app's reads move with its writes, registry-only end to end.
 8. **The experimental-gateway-first rule** covers registry-served reads and the catalog, not writes.
-9. **Two replicas** with a disruption budget, and sticky routing by a header hash through a proxy
-   that can hash on a header. The extra adapter stream budget is accepted.
-10. **Shared collections are in v1:** append, update, withdraw, vote marks, publish, and the shared
-    read path in app-data-go, so the whole app moves at once. This supersedes the "private only"
-    default in 6.
-11. **The empty stream is accepted for v1,** with the integrity risk stated and the SDK guidance
-    above; civitai/civitai-registry#56 must land before REST sunsets.
+9. **Two replicas** with a disruption budget, and sticky routing by a header hash through a proxy that
+   can hash on a header. The extra adapter stream budget is accepted.
+10. **Shared collections are in v1:** append, update, withdraw, vote marks, publish, and the shared read
+    path in app-data-go, so the whole app moves at once. This supersedes the "private only" default in 6.
+11. **The empty stream is accepted for v1,** with the integrity risk stated and the conditional-claim
+    precondition; civitai/civitai-registry#56 must land before REST sunsets.
+12. **Signed-out viewers:** app-data-go reads the shared class stream under its own service identity,
+    as an anonymous viewer (public levels only, no marks), and serves signed-out viewers from it.
 
-## Still open
+Session, 2026-11-22:
 
-- **Anonymous viewers' shared reads** (operator): they have no registry read path. Options: keep them
-  on REST until the end state (recommended for v1, counted, so the closing excludes them openly); or
-  have the app opt `records` into `registry: "public"` and serve anonymous reads from the public feed
-  through this service, which needs tallies on the public feed and exposes the board to every
-  registry reader, not only the app's viewers.
+13. **Private keyed get** is served from app-data-go's stream cache (base plus overlay), under the same
+    floor rule.
+14. **`info`** cannot come from a stream, so app-data-go forwards it through the same signed internal
+    route to the store; the internal route carries the write verbs plus `info`.
 
 ## Open questions owned elsewhere
 
@@ -612,8 +709,10 @@ Operator, 2026-11-22:
   signed ops posted to the namespace's node (`POST <node>/write`, its README); Civitai writes with
   block tokens, unsigned. Raised as J2 against JustMaier/portable-data#2.
 - **Private data in the registry under auth** (the registry spec owner): answered in favor on
-  civitai-registry#49; the per-user stream design the reads use is the answer to its Q2.
-- **The relay stall** (the registry spec owner): civitai-registry#50. Not on the write path, which
-  has no relay, but it bounds what the read-after-write contract can promise through a gateway.
+  civitai-registry#49; the per-user stream design the reads use is the answer to its Q2, and its
+  answer asked for a short list of services allowed to hold such data, which the shared-class
+  allowlist follows.
+- **The relay stall** (the registry spec owner): civitai-registry#50. Not on the write path, which has
+  no relay, but it bounds what the read-after-write contract can promise through a gateway.
 - **Refusing a subscriber with an explicit error instead of an empty snapshot** (the registry spec
   owner): civitai/civitai-registry#56. Needed before the read fallback can be removed.
