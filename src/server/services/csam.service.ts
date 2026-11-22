@@ -35,6 +35,7 @@ import { csamSendClaimCutoff } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 import type { CsamContextReview, CsamContextText } from '~/server/services/csam-context-text';
+import { isItemContextText } from '~/server/services/csam-context-text';
 import { foldContextText } from '~/server/services/csam-context-text';
 
 type CsamReportImage = {
@@ -162,6 +163,12 @@ function foldDetails(
   ) as CsamReportFormOutput;
   const folded: Record<string, unknown> = { ...prior, ...next };
   if (prior.minorDepiction === 'real') folded.minorDepiction = 'real';
+  const notAttached =
+    (typeof prior.contextNotAttachedCount === 'number' ? prior.contextNotAttachedCount : 0) +
+    (typeof (next as Record<string, unknown>).contextNotAttachedCount === 'number'
+      ? ((next as Record<string, unknown>).contextNotAttachedCount as number)
+      : 0);
+  if (notAttached) folded.contextNotAttachedCount = notAttached;
   for (const key of ['modelVersionIds', 'capabilities', 'contents'] as const) {
     const list = unionLists<unknown>(prior[key], next[key], (item) => item);
     if (list) folded[key] = list;
@@ -344,7 +351,8 @@ export async function createCsamReport({
       payload: {
         filedById: reportedById,
         capturedAt: capture.capturedAt,
-        item: `${capture.source}:${capture.id}`,
+        // An item's id can name a private chat message or a user: its source alone.
+        item: isItemContextText(capture) ? capture.source : `${capture.source}:${capture.id}`,
         outcome: reviewUpgrade
           ? 'identical text, not added; reviewed flag upgraded from unreviewed'
           : 'identical text, not added',
@@ -379,10 +387,10 @@ export async function createCsamReport({
   return report;
 }
 
-function omitUserActivity(details: Prisma.JsonValue) {
+function omitEvidence(details: Prisma.JsonValue) {
   if (!details || typeof details !== 'object' || Array.isArray(details)) return details;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { userActivity, ...rest } = details;
+  const { userActivity, contextText, ...rest } = details;
   return rest;
 }
 
@@ -399,8 +407,8 @@ export async function getCsamReportsPaged({ limit, page }: PaginationInput) {
   });
   const items = reports.map((report) => ({
     ...report,
-    // The report's stored IP events are evidence for the report, not for this list.
-    details: omitUserActivity(report.details),
+    // The report's stored IP events and captured text are evidence for the report, not for this list.
+    details: omitEvidence(report.details),
     user: users.find((x) => x.id === report.userId),
     reportedBy: users.find((x) => x.id === report.reportedById),
   }));

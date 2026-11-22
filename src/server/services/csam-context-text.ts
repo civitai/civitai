@@ -8,6 +8,10 @@ import type {
 } from '~/server/schema/csam.schema';
 import { xmlSafe } from '~/server/services/ncmec-xml';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
+import { CSAM_CONTEXT_TEXT_MAX_CHARS } from '~/shared/constants/csam-context.constants';
+
+export { CSAM_CONTEXT_TEXT_MAX_CHARS };
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
 /** How a held text came to be reviewed: the filing moderator's recorded read, or its hold decided on its own. */
@@ -103,7 +107,6 @@ export type CsamContextPreview = CsamContextCandidate & {
   fullLength?: number;
 };
 
-export const CSAM_CONTEXT_TEXT_MAX_CHARS = 50_000;
 const CANDIDATE_COMMENT_LIMIT = 500;
 const CANDIDATE_PREVIEW_CHARS = 2_000;
 
@@ -113,7 +116,8 @@ const targetAs =
   (elem, walk, builder) => {
     walk(elem.children, builder);
     const target = elem.attribs?.[attribute];
-    if (target) builder.addInline(` [${name}: ${target}] `);
+    // Kept as written: a heading's uppercase transform would change a target's case.
+    if (target) builder.addInline(` [${name}: ${target}] `, { noWordTransform: true });
   };
 
 /**
@@ -435,12 +439,6 @@ async function readsBy(
   return reads;
 }
 
-/** Ids and text stay out of it, and a missing item reads the same as another account's. */
-export const CSAM_CONTEXT_ITEM_REFUSAL =
-  "Some selected items do not exist or are not the reported user's own";
-export const CSAM_CONTEXT_CHAT_TYPE_REFUSAL = 'Only text chat messages can be attached';
-export const CSAM_CONTEXT_ITEM_EMPTY_REFUSAL =
-  'Some selected items have no text to attach. Untick them and file again';
 const CANDIDATE_ITEM_LIMIT = 100;
 
 const iso = (d: Date | null | undefined) => (d ? new Date(d).toISOString() : undefined);
@@ -464,7 +462,7 @@ type ItemRead = Omit<
 /** The models, articles or service offerings with these ids. */
 type WebItemSource = 'model' | 'article' | 'serviceOffering';
 
-async function readWebItems(source: WebItemSource, ids: number[]) {
+async function readWebItems(source: WebItemSource, ids: number[], ownerId: number) {
   if (!ids.length) return [];
   if (source === 'model') {
     const rows = await kyselyWrite
@@ -481,11 +479,12 @@ async function readWebItems(source: WebItemSource, ids: number[]) {
         'deletedAt',
       ])
       .where('id', 'in', ids)
+      .where('userId', '=', ownerId)
       .execute();
     const rich = (html: string | null) => html && htmlToPlainText(html, { keepTargets: true });
     return rows.map((r): ItemRead => {
       // A set sfwName turns the civitai.com face on: that site then shows sfwName and sfwDescription.
-      const red = r.sfwName ? 'civitai.red' : 'civitai.red and civitai.com';
+      const red = r.sfwName !== null ? 'civitai.red' : 'civitai.red and civitai.com';
       return {
         source,
         id: r.id,
@@ -493,7 +492,7 @@ async function readWebItems(source: WebItemSource, ids: number[]) {
         fields: present([
           { label: `Name (${red})`, text: r.name },
           { label: `Description (${red})`, text: rich(r.description) },
-          ...(r.sfwName
+          ...(r.sfwName !== null
             ? [
                 { label: 'Name (civitai.com)', text: r.sfwName },
                 { label: 'Description (civitai.com)', text: rich(r.sfwDescription) },
@@ -511,6 +510,7 @@ async function readWebItems(source: WebItemSource, ids: number[]) {
       .selectFrom('Article')
       .select(['id', 'userId', 'title', 'content', 'status', 'createdAt'])
       .where('id', 'in', ids)
+      .where('userId', '=', ownerId)
       .execute();
     return rows.map(
       (r): ItemRead => ({
@@ -530,6 +530,7 @@ async function readWebItems(source: WebItemSource, ids: number[]) {
     .selectFrom('ServiceOffering')
     .select(['id', 'sellerId', 'title', 'description', 'status', 'createdAt'])
     .where('id', 'in', ids)
+    .where('sellerId', '=', ownerId)
     .execute();
   return rows.map(
     (r): ItemRead => ({
@@ -547,15 +548,33 @@ async function readWebItems(source: WebItemSource, ids: number[]) {
   );
 }
 
-async function readChatMessages(ids: number[]) {
+async function readChatMessages(ids: number[], ownerId: number) {
   if (!ids.length) return [];
   const rows = await kyselyWrite
     .selectFrom('ChatMessage')
     .select(['id', 'userId', 'content', 'contentType', 'createdAt', 'editedAt', 'deletedAt'])
     .where('id', 'in', ids)
+    .where('userId', '=', ownerId)
     .execute();
-  return rows.map((r): { contentType: string; item: ItemRead } => ({
-    contentType: r.contentType,
+  const editedByOthers = new Set(
+    rows.length
+      ? (
+          await kyselyWrite
+            .selectFrom('ChatMessageEdit')
+            .select('messageId')
+            .where(
+              'messageId',
+              'in',
+              rows.map((r) => r.id)
+            )
+            .where('editorId', '<>', ownerId)
+            .execute()
+        ).map((e) => e.messageId)
+      : []
+  );
+  return rows.map((r): { attachable: boolean; item: ItemRead } => ({
+    // A moderator's edit would be sent as the user's words.
+    attachable: r.contentType === 'Markdown' && !editedByOthers.has(r.id),
     item: {
       source: 'chatMessage',
       id: r.id,
@@ -566,6 +585,21 @@ async function readChatMessages(ids: number[]) {
       ...(r.deletedAt && { deletedAt: iso(r.deletedAt) }),
     },
   }));
+}
+
+/**
+ * Models another owner held before: their text would be sent as the reported user's. Only moves on
+ * record are seen; one from before "ModelOwnership" existed, or made by hand, can't be told.
+ */
+async function modelsOwnedByOthers(ids: number[], ownerId: number) {
+  if (!ids.length) return new Set<number>();
+  const rows = await kyselyWrite
+    .selectFrom('ModelOwnership')
+    .select('modelId')
+    .where('modelId', 'in', ids)
+    .where('userId', 'not in', [ownerId, PLACEHOLDER_OWNER_ID])
+    .execute();
+  return new Set(rows.map((r) => r.modelId));
 }
 
 /** Each field labeled with the site that shows it: the civitai.com value replaces the other there. */
@@ -586,8 +620,9 @@ async function readProfile(userId: number): Promise<ItemRead | undefined> {
     .where('User.id', '=', userId)
     .execute();
   if (!row) return;
+  // An empty override still replaces the field on civitai.com.
   const sites = (override: string | null) =>
-    override ? 'civitai.red' : 'civitai.red and civitai.com';
+    override !== null ? 'civitai.red' : 'civitai.red and civitai.com';
   return {
     source: 'profile',
     id: row.id,
@@ -612,6 +647,8 @@ export type CsamItemCandidate = {
   title: string;
   status: string;
   deleted?: boolean;
+  /** Filing would not attach it. */
+  unavailable?: boolean;
 };
 
 /**
@@ -659,15 +696,36 @@ export async function getCsamItemCandidates({
             .limit(limit)
             .execute()
         ).map((r) => ({ source, id: r.id, title: r.title, status: r.status }));
+  const candidates = rows.slice(0, CANDIDATE_ITEM_LIMIT);
+  const moved =
+    source === 'model'
+      ? await modelsOwnedByOthers(
+          candidates.map((c) => c.id),
+          userId
+        )
+      : new Set<number>();
   return {
-    candidates: rows.slice(0, CANDIDATE_ITEM_LIMIT),
+    candidates: candidates.map((c) => (moved.has(c.id) ? { ...c, unavailable: true } : c)),
     more: rows.length > CANDIDATE_ITEM_LIMIT,
   };
 }
 
+const itemLabel = (source: CsamItemContextSource, id: number) =>
+  source === 'profile'
+    ? 'profile'
+    : `${
+        {
+          chatMessage: 'chat message',
+          model: 'model',
+          article: 'article',
+          serviceOffering: 'service offering',
+        }[source]
+      } ${id}`;
+
 /**
- * Copies the chosen chat message, model, article, service offering and profile text. Only the report's
- * own user's items are accepted: a secondary user's are refused like anyone else's.
+ * Copies the chosen chat message, model, article, service offering and profile text of the report's own
+ * user. An item that can't be attached never stops the filing: it is named in `notAttached`, with no
+ * reason, so a missing chat message reads the same as another account's.
  */
 async function snapshotItems({
   sources,
@@ -679,45 +737,62 @@ async function snapshotItems({
   ownerId?: number;
   capturedById: number;
   capturedAt: Date;
-}): Promise<CsamItemContextText[]> {
+}): Promise<{ items: CsamItemContextText[]; notAttached: string[] }> {
   const unique = (ids: number[] | undefined) => [...new Set(ids ?? [])];
-  const chatIds = unique(sources.chatMessageIds);
-  const wanted: [WebItemSource, number[]][] = [
+  const wanted: [CsamItemContextSource, number[]][] = [
+    ['chatMessage', unique(sources.chatMessageIds)],
     ['model', unique(sources.modelIds)],
     ['article', unique(sources.articleIds)],
     ['serviceOffering', unique(sources.serviceOfferingIds)],
+    ...(sources.profile && ownerId !== undefined
+      ? ([['profile', [ownerId]]] as [CsamItemContextSource, number[]][])
+      : []),
   ];
-  if (!chatIds.length && !sources.profile && wanted.every(([, ids]) => !ids.length)) return [];
+  const notAttached = sources.profile && ownerId === undefined ? ['profile'] : [];
+  if (wanted.every(([, ids]) => !ids.length)) return { items: [], notAttached };
+  if (ownerId === undefined) {
+    for (const [source, ids] of wanted) notAttached.push(...ids.map((id) => itemLabel(source, id)));
+    return { items: [], notAttached };
+  }
 
-  const chats = await readChatMessages(chatIds);
-  const web = await Promise.all(wanted.map(([source, ids]) => readWebItems(source, ids)));
-  const profile = sources.profile && ownerId ? await readProfile(ownerId) : undefined;
+  const [chatIds, modelIds, articleIds, offeringIds] = wanted.map(([, ids]) => ids);
+  const chats = await readChatMessages(chatIds, ownerId);
+  const models = await readWebItems('model', modelIds, ownerId);
+  const movedModels = await modelsOwnedByOthers(
+    models.map((m) => m.id),
+    ownerId
+  );
+  const read: ItemRead[] = [
+    ...chats.filter((c) => c.attachable).map((c) => c.item),
+    ...models.filter((m) => !movedModels.has(m.id)),
+    ...(await readWebItems('article', articleIds, ownerId)),
+    ...(await readWebItems('serviceOffering', offeringIds, ownerId)),
+    ...(sources.profile ? [await readProfile(ownerId)].filter((p): p is ItemRead => !!p) : []),
+  ].filter((item) => item.fields.length);
 
-  const byReported = (item: ItemRead | undefined) =>
-    !!item && ownerId !== undefined && item.authorId === ownerId;
-  const allFound =
-    chatIds.every((id) => byReported(chats.find((c) => c.item.id === id)?.item)) &&
-    wanted.every(([source, ids], i) =>
-      ids.every((id) => byReported(web[i].find((r) => r.source === source && r.id === id)))
-    ) &&
-    (!sources.profile || byReported(profile));
-  if (!allFound) throwBadRequestError(CSAM_CONTEXT_ITEM_REFUSAL);
-  if (chats.some((c) => c.contentType !== 'Markdown'))
-    throwBadRequestError(CSAM_CONTEXT_CHAT_TYPE_REFUSAL);
-
-  const items = [...chats.map((c) => c.item), ...web.flat(), ...(profile ? [profile] : [])];
-  if (items.some((item) => !item.fields.length))
-    throwBadRequestError(CSAM_CONTEXT_ITEM_EMPTY_REFUSAL);
-  return items.map((item) => ({
-    ...item,
-    authorIsReportedUser: true as const,
-    text: joinFields(item.fields),
-    capturedAt: capturedAt.toISOString(),
-    capturedById,
-  }));
+  const items: CsamItemContextText[] = [];
+  for (const [source, ids] of wanted)
+    for (const id of ids) {
+      const item = read.find((r) => r.source === source && r.id === id);
+      if (!item) {
+        notAttached.push(itemLabel(source, id));
+        continue;
+      }
+      items.push({
+        ...item,
+        authorIsReportedUser: true,
+        text: joinFields(item.fields),
+        capturedAt: capturedAt.toISOString(),
+        capturedById,
+      });
+    }
+  return { items, notAttached };
 }
 
-/** Copies the chosen text, refusing any source outside the report's images. */
+/**
+ * Copies the chosen text. Post and comment text outside the report's images refuses the filing; an
+ * item that can't be attached is only named in `notAttached`.
+ */
 export async function snapshotCsamContextText({
   imageIds,
   ownerId,
@@ -733,7 +808,7 @@ export async function snapshotCsamContextText({
   reportedUserIds: number[];
   capturedById: number;
   capturedAt?: Date;
-}): Promise<CsamContextText[]> {
+}): Promise<{ contextText: CsamContextText[]; notAttached: string[] }> {
   const postIds = [...new Set(sources.postIds)];
   const commentIds = [...new Set(sources.commentIds)];
   const posts = await snapshotPostText({
@@ -745,8 +820,13 @@ export async function snapshotCsamContextText({
     capturedById,
     capturedAt,
   });
-  const items = await snapshotItems({ sources, ownerId, capturedById, capturedAt });
-  return [...posts, ...items];
+  const { items, notAttached } = await snapshotItems({
+    sources,
+    ownerId,
+    capturedById,
+    capturedAt,
+  });
+  return { contextText: [...posts, ...items], notAttached };
 }
 
 async function snapshotPostText({

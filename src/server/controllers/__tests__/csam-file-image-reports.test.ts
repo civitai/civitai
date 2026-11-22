@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CSAM_CONTEXT_NO_IMAGES_REFUSAL } from '~/shared/constants/csam-context.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as CsamContextTextService from '~/server/services/csam-context-text';
 import type * as CsamService from '~/server/services/csam.service';
@@ -248,6 +249,7 @@ describe('fileCsamReport', () => {
       denyFailed: false,
       denyBookkeepingFailed: false,
       strikesReviewFailed: false,
+      contextNotAttached: [],
     });
 
     expect(logToAxiom).not.toHaveBeenCalledWith(
@@ -355,7 +357,7 @@ describe('fileCsamReport with attached text', () => {
 
   it('files the text copied for the images, judged against the reported account', async () => {
     const copied = [{ source: 'comment', id: 11, text: 'copied' }];
-    snapshotCsamContextText.mockResolvedValueOnce(copied);
+    snapshotCsamContextText.mockResolvedValueOnce({ contextText: copied, notAttached: [] });
 
     await fileCsamReport({
       userId: OWNER,
@@ -376,6 +378,40 @@ describe('fileCsamReport with attached text', () => {
     const [filed] = createCsamReport.mock.calls[0] as [Record<string, unknown>];
     expect(filed.details).toEqual({ minorDepiction: 'real', contextText: copied });
     expect(filed).not.toHaveProperty('contextSources');
+  });
+
+  it('files without the items that could not be attached, storing only their count and naming them back', async () => {
+    const copied = [{ source: 'model', id: 701, text: 'copied' }];
+    snapshotCsamContextText.mockResolvedValueOnce({
+      contextText: copied,
+      notAttached: ['chat message 902', 'profile'],
+    });
+
+    const result = await fileCsamReport({
+      userId: OWNER,
+      imageIds: [IMAGE],
+      type: 'Image',
+      reportedById: MOD,
+      contextSources: sources,
+    });
+
+    expect(result.contextNotAttached).toEqual(['chat message 902', 'profile']);
+    const [filed] = createCsamReport.mock.calls[0] as [Record<string, unknown>];
+    expect(filed.details).toEqual({ contextText: copied, contextNotAttachedCount: 2 });
+  });
+
+  it('refuses text on an image report with no images, before filing anything', async () => {
+    await expect(
+      fileCsamReport({
+        userId: OWNER,
+        imageIds: [],
+        type: 'Image',
+        reportedById: MOD,
+        contextSources: { ...sources, postIds: [], commentIds: [], profile: true },
+      })
+    ).rejects.toThrow(CSAM_CONTEXT_NO_IMAGES_REFUSAL);
+    expect(snapshotCsamContextText).not.toHaveBeenCalled();
+    expect(createCsamReport).not.toHaveBeenCalled();
   });
 
   it('refuses text on a report that is not an image report, filing nothing', async () => {
@@ -427,7 +463,7 @@ describe('fileCsamReport with attached text', () => {
 
   it('files a supplemental report with the copied text', async () => {
     const copied = [{ source: 'comment', id: 11, text: 'copied' }];
-    snapshotCsamContextText.mockResolvedValueOnce(copied);
+    snapshotCsamContextText.mockResolvedValueOnce({ contextText: copied, notAttached: [] });
 
     await fileCsamReport({
       userId: OWNER,

@@ -47,9 +47,6 @@ const {
   foldContextText,
   contextIncidents,
   htmlToPlainText,
-  CSAM_CONTEXT_ITEM_REFUSAL,
-  CSAM_CONTEXT_CHAT_TYPE_REFUSAL,
-  CSAM_CONTEXT_ITEM_EMPTY_REFUSAL,
   getCsamItemCandidates,
   CSAM_CONTEXT_TEXT_MAX_CHARS,
 } = await import('~/server/services/csam-context-text');
@@ -125,6 +122,10 @@ CREATE TABLE "Model" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "name" TEXT NOT NULL, "description" TEXT,
   "status" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL, "deletedAt" TIMESTAMP(3),
   "sfwName" TEXT, "sfwDescription" TEXT
+);
+CREATE TABLE "ChatMessageEdit" ("id" SERIAL PRIMARY KEY, "messageId" INTEGER NOT NULL, "editorId" INTEGER NOT NULL);
+CREATE TABLE "ModelOwnership" (
+  "id" SERIAL PRIMARY KEY, "modelId" INTEGER NOT NULL, "userId" INTEGER NOT NULL, "reason" TEXT NOT NULL
 );
 CREATE TABLE "Article" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "title" TEXT NOT NULL, "content" TEXT NOT NULL,
@@ -250,7 +251,7 @@ describe('snapshot', () => {
       reportedUserIds: userIds,
       capturedById: MOD,
       capturedAt: at(8),
-    });
+    }).then((r) => r.contextText);
 
   it('copies only what was ticked, with who wrote it', async () => {
     const rows = await snapshot({ postIds: [100], commentIds: [11, 22] });
@@ -560,7 +561,7 @@ describe('held text items', () => {
       reportedUserIds: [OWNER],
       capturedById,
       capturedAt,
-    });
+    }).then((r) => r.contextText);
   const read = (postTextId: number, moderatorId = MOD) =>
     readHeldCsamContextText({ userId: OWNER, imageIds: [501], postTextId, moderatorId });
   const readAt = (postTextId: number, moderatorId: number, when: string) =>
@@ -679,7 +680,7 @@ describe('items the reported user wrote', () => {
   const SYSTEM = -1;
   beforeEach(async () => {
     await db.pg.exec(
-      `TRUNCATE "User", "UserProfile", "ChatMessage", "Model", "Article", "ServiceOffering";
+      `TRUNCATE "User", "UserProfile", "ChatMessage", "ChatMessageEdit", "Model", "ModelOwnership", "Article", "ServiceOffering";
        INSERT INTO "User" VALUES (${OWNER}, 'owner_name'), (${OTHER}, 'other'), (${SECONDARY}, 'second');
        INSERT INTO "UserProfile" VALUES
          (${OWNER}, 'red bio & <stuff>', 'hello there', '2026-10-03 14:05', 'clean bio', NULL, NULL);
@@ -703,7 +704,7 @@ describe('items the reported user wrote', () => {
     );
   });
 
-  const capture = (sources: Partial<CsamContextSources>, details?: unknown) =>
+  const filing = (sources: Partial<CsamContextSources>, details?: unknown) =>
     snapshotCsamContextText({
       imageIds: [],
       ownerId: OWNER,
@@ -712,11 +713,10 @@ describe('items the reported user wrote', () => {
       capturedById: MOD,
       capturedAt: at(8),
     });
-  const refusal = (sources: Partial<CsamContextSources>, details?: unknown) =>
-    capture(sources, details).then(
-      () => 'filed',
-      (e: Error) => e.message
-    );
+  const capture = (sources: Partial<CsamContextSources>, details?: unknown) =>
+    filing(sources, details).then((r) => r.contextText);
+  const notAttached = (sources: Partial<CsamContextSources>, details?: unknown) =>
+    filing(sources, details).then((r) => r.notAttached);
 
   it('copies each type as one entry of labeled fields, with no post or image id', async () => {
     const rows = await capture({
@@ -783,25 +783,61 @@ describe('items the reported user wrote', () => {
     expect(await capture({})).toEqual([]);
   });
 
-  it("refuses a missing item and another account's in the same words, naming neither", async () => {
-    const missing = await refusal({ chatMessageIds: [999] });
-    expect(missing).toBe(CSAM_CONTEXT_ITEM_REFUSAL);
-    expect(await refusal({ chatMessageIds: [902] })).toBe(missing);
-    expect(await refusal({ modelIds: [702] })).toBe(missing);
-    expect(await refusal({ modelIds: [9999] })).toBe(missing);
-    expect(missing).not.toMatch(/\d/);
+  it("files without a missing item or another account's, naming each the same way and copying neither", async () => {
+    expect(await filing({ chatMessageIds: [999] })).toEqual({
+      contextText: [],
+      notAttached: ['chat message 999'],
+    });
+    expect(await filing({ chatMessageIds: [902] })).toEqual({
+      contextText: [],
+      notAttached: ['chat message 902'],
+    });
+    const mixed = await filing({ chatMessageIds: [901], modelIds: [702, 9999, 701] });
+    expect(mixed.contextText.map((c) => `${c.source}:${c.id}`)).toEqual([
+      'chatMessage:901',
+      'model:701',
+    ]);
+    expect(mixed.notAttached).toEqual(['model 702', 'model 9999']);
   });
 
-  it("refuses the secondary user's items even when the report names one", async () => {
+  it("does not attach the secondary user's items even when the report names one", async () => {
     const details = { secondaryUserId: SECONDARY };
     expect(reportedUserIdsOf(OWNER, details)).toContain(SECONDARY);
-    expect(await refusal({ chatMessageIds: [906] }, details)).toBe(CSAM_CONTEXT_ITEM_REFUSAL);
-    expect(await refusal({ modelIds: [703] }, details)).toBe(CSAM_CONTEXT_ITEM_REFUSAL);
+    expect(await filing({ chatMessageIds: [906], modelIds: [703] }, details)).toEqual({
+      contextText: [],
+      notAttached: ['chat message 906', 'model 703'],
+    });
   });
 
-  it('refuses a system message, and a message that is not text', async () => {
-    expect(await refusal({ chatMessageIds: [904] })).toBe(CSAM_CONTEXT_ITEM_REFUSAL);
-    expect(await refusal({ chatMessageIds: [903] })).toBe(CSAM_CONTEXT_CHAT_TYPE_REFUSAL);
+  it('does not attach a system message, or a message that is not text', async () => {
+    expect(await notAttached({ chatMessageIds: [904, 903] })).toEqual([
+      'chat message 904',
+      'chat message 903',
+    ]);
+  });
+
+  it('does not attach a message anyone but its sender edited', async () => {
+    await db.pg.exec(
+      `INSERT INTO "ChatMessageEdit" ("messageId", "editorId") VALUES (905, ${OWNER}), (901, ${MOD})`
+    );
+    const { contextText, notAttached: refused } = await filing({ chatMessageIds: [901, 905] });
+    expect(contextText.map((c) => c.id)).toEqual([905]);
+    expect(refused).toEqual(['chat message 901']);
+  });
+
+  it('does not attach a model another account owned before, but does one only the placeholder held', async () => {
+    await db.pg.exec(
+      `INSERT INTO "Model" VALUES
+         (704, ${OWNER}, 'Moved model', NULL, 'Published', '2026-10-01', NULL, NULL, NULL),
+         (705, ${OWNER}, 'Restored model', NULL, 'Published', '2026-10-01', NULL, NULL, NULL);
+       INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
+         (701, ${OWNER}, 'create'),
+         (704, ${OTHER}, 'create'), (704, ${OWNER}, 'transfer'),
+         (705, ${OWNER}, 'create'), (705, -1, 'account-delete'), (705, ${OWNER}, 'restore');`
+    );
+    const { contextText, notAttached: refused } = await filing({ modelIds: [701, 704, 705] });
+    expect(contextText.map((c) => c.id)).toEqual([701, 705]);
+    expect(refused).toEqual(['model 704']);
   });
 
   it('keeps a deleted, edited message, saying both and that its text may differ from what was sent', async () => {
@@ -822,15 +858,17 @@ describe('items the reported user wrote', () => {
     });
   });
 
-  it('refuses a selected item with no text, so nothing is filed as attached that is not, and leaves an empty field out', async () => {
+  it('names a selected item with no text as not attached, and leaves an empty field out', async () => {
     await db.pg.exec(
       `UPDATE "UserProfile" SET bio = NULL, message = '  ', "sfwBio" = NULL, "sfwMessage" = NULL`
     );
-    expect(await refusal({ profile: true })).toBe(CSAM_CONTEXT_ITEM_EMPTY_REFUSAL);
+    expect(await filing({ profile: true })).toEqual({ contextText: [], notAttached: ['profile'] });
     await db.pg.exec(
       `INSERT INTO "ChatMessage" VALUES (907, ${OWNER}, '   ', 'Markdown', '2026-10-02', NULL, NULL)`
     );
-    expect(await refusal({ chatMessageIds: [901, 907] })).toBe(CSAM_CONTEXT_ITEM_EMPTY_REFUSAL);
+    const both = await filing({ chatMessageIds: [901, 907] });
+    expect(both.contextText.map((c) => c.id)).toEqual([901]);
+    expect(both.notAttached).toEqual(['chat message 907']);
 
     const [article] = (await capture({ articleIds: [801] })) as CsamItemContextText[];
     expect(article.fields).toEqual([{ label: 'Title', text: 'Untitled draft' }]);
@@ -840,7 +878,7 @@ describe('items the reported user wrote', () => {
   it('adds nothing when an unchanged item is filed again, a four-field model and profile included', async () => {
     const sources = { chatMessageIds: [901], modelIds: [701], profile: true };
     const first = await capture(sources);
-    const again = await snapshotCsamContextText({
+    const { contextText: again } = await snapshotCsamContextText({
       imageIds: [],
       ownerId: OWNER,
       sources: { postIds: [], commentIds: [], ...sources },
@@ -923,6 +961,15 @@ describe('items the reported user wrote', () => {
         expect(additionalInfo).not.toMatch(/posted|public/i);
     });
 
+    it('treats an empty civitai.com override as an override', async () => {
+      await db.pg.exec(`UPDATE "UserProfile" SET "sfwBio" = ''`);
+      const [profile] = (await capture({ profile: true })) as CsamItemContextText[];
+      expect(profile.fields.map((f) => f.label)).toEqual([
+        'Bio (civitai.red)',
+        'Message (civitai.red and civitai.com)',
+      ]);
+    });
+
     it('labels profile fields by site, with a time only where one is recorded', async () => {
       const {
         webPageIncidents: [incident],
@@ -981,6 +1028,17 @@ describe('link targets in rich text', () => {
     expect(text).toContain('[frame: https://www.youtube.com/embed/abc]');
     expect(text).toContain('[media: abc-uuid]');
     expect(text).toContain('blurb words [embed id: 77]');
+  });
+
+  it('keeps a target as written inside a heading, which converts its own text to upper case', () => {
+    const text = htmlToPlainText(
+      '<h1>title <img src="https://img.example/AbC.png"><edge-media url="MiXed"></edge-media></h1>' +
+        '<h2><iframe src="https://v.example/XyZ"></iframe></h2>',
+      { keepTargets: true }
+    );
+    expect(text).toContain('[image: https://img.example/AbC.png]');
+    expect(text).toContain('[media: MiXed]');
+    expect(text).toContain('[frame: https://v.example/XyZ]');
   });
 
   // Re-file folding and the holds queue compare this text with what earlier filings stored.

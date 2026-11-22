@@ -11,30 +11,26 @@ import {
 } from '@mantine/core';
 import { useState } from 'react';
 import type { CsamContextSources } from '~/server/schema/csam.schema';
+import type { ItemSource, Ticked, Typed } from '~/components/Csam/csam-item-picker';
+import {
+  badTokens,
+  csamPickerState,
+  csamUntick,
+  ITEMS,
+  parseIds,
+} from '~/components/Csam/csam-item-picker';
+import {
+  CSAM_CONTEXT_ITEM_SELECT_LIMIT,
+  CSAM_PRIVATE_ROUTE,
+} from '~/shared/constants/csam-context.constants';
 import { trpc } from '~/utils/trpc';
 
-/**
- * Facts the fields below do not hold are not captured. What a moderator does with one is a policy
- * decision kept here so it is said the same way everywhere.
- */
-export const CSAM_OUTSIDE_FIELDS_HELP =
-  'Facts outside these fields are not captured and are not sent. If one is the reason for this report, file now, then tell [WHO: pending] privately.';
+export const CSAM_OUTSIDE_FIELDS_HELP = `Facts outside these fields are not captured and are not sent. If one is the reason for this report, file now, then ${CSAM_PRIVATE_ROUTE}.`;
 
-type ItemSource = 'model' | 'article' | 'serviceOffering';
-const ITEMS: { source: ItemSource; field: keyof CsamContextSources; label: string }[] = [
-  { source: 'model', field: 'modelIds', label: 'Models' },
-  { source: 'article', field: 'articleIds', label: 'Articles' },
-  { source: 'serviceOffering', field: 'serviceOfferingIds', label: 'Service offerings' },
-];
-
-const parseIds = (raw: string) => [
-  ...new Set(
-    raw
-      .split(/[\s,]+/)
-      .map(Number)
-      .filter((n) => Number.isInteger(n) && n > 0)
-  ),
-];
+export const csamNotAttachedNotice = (items: string[]) =>
+  `Not attached: ${items.join(
+    ', '
+  )}. The report was filed without them. If one is the reason for this report, ${CSAM_PRIVATE_ROUTE}.`;
 
 /** The reported user's own chat messages, models, articles, service offerings and profile. */
 export function CsamItemTextSelect({
@@ -44,12 +40,30 @@ export function CsamItemTextSelect({
 }: {
   userId: number;
   value: CsamContextSources;
-  onChange: (value: CsamContextSources) => void;
+  /** `problem` is set while the selection can't be filed. */
+  onChange: (value: CsamContextSources, problem?: string) => void;
 }) {
+  const [typed, setTyped] = useState<Typed>({
+    chatMessageIds: '',
+    modelIds: '',
+    articleIds: '',
+    serviceOfferingIds: '',
+  });
+  const [ticked, setTicked] = useState<Ticked>({ model: [], article: [], serviceOffering: [] });
+
+  const update = (nextTyped: Typed, nextTicked: Ticked, profile = value.profile) => {
+    setTyped(nextTyped);
+    setTicked(nextTicked);
+    const { lists, problem } = csamPickerState(nextTyped, nextTicked, profile);
+    onChange({ ...value, ...lists, profile }, problem);
+  };
+  const { count, problem } = csamPickerState(typed, ticked, value.profile);
+  const full = count >= CSAM_CONTEXT_ITEM_SELECT_LIMIT;
+
   return (
     <Input.Wrapper
       label="Text on the reported user's chat messages, items and profile"
-      description="Only the reported user's own chat messages and items can be attached. Their text is copied when you submit, and links in the text are kept as text."
+      description={`Only the reported user's own chat messages and items can be attached, at most ${CSAM_CONTEXT_ITEM_SELECT_LIMIT} per report. Their text is copied when you submit, and links in the text are kept as text.`}
     >
       <Stack gap="sm" mt="xs">
         <Text size="xs" c="dimmed">
@@ -57,24 +71,36 @@ export function CsamItemTextSelect({
         </Text>
         <Checkbox
           checked={value.profile}
-          onChange={(e) => onChange({ ...value, profile: e.currentTarget.checked })}
+          disabled={full && !value.profile}
+          onChange={(e) => update(typed, ticked, e.currentTarget.checked)}
           label="Profile text (bio and message, on both sites). Profile links and images are not included."
         />
         <TextInput
           label="Chat message ids"
           description="Paste the ids of the reported user's text messages, separated by commas or spaces."
-          defaultValue={value.chatMessageIds.join(', ')}
-          onChange={(e) => onChange({ ...value, chatMessageIds: parseIds(e.currentTarget.value) })}
+          value={typed.chatMessageIds}
+          error={badTokens(typed.chatMessageIds).length > 0}
+          onChange={(e) => update({ ...typed, chatMessageIds: e.currentTarget.value }, ticked)}
         />
         {ITEMS.map((item) => (
           <ItemList
             key={item.source}
             userId={userId}
-            {...item}
-            ids={value[item.field] as number[]}
-            onIds={(ids) => onChange({ ...value, [item.field]: ids })}
+            source={item.source}
+            label={item.label}
+            full={full}
+            ticked={ticked[item.source]}
+            typed={typed[item.field]}
+            onChange={(nextTicked, nextText) =>
+              update({ ...typed, [item.field]: nextText }, { ...ticked, [item.source]: nextTicked })
+            }
           />
         ))}
+        {problem && (
+          <Text size="sm" c="red">
+            {problem}
+          </Text>
+        )}
       </Stack>
     </Input.Wrapper>
   );
@@ -84,40 +110,25 @@ function ItemList({
   userId,
   source,
   label,
-  ids,
-  onIds,
+  full,
+  ticked,
+  typed,
+  onChange,
 }: {
   userId: number;
   source: ItemSource;
   label: string;
-  ids: number[];
-  onIds: (ids: number[]) => void;
+  full: boolean;
+  ticked: number[];
+  typed: string;
+  onChange: (ticked: number[], typed: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [ticked, setTicked] = useState(ids);
-  const [typedText, setTypedText] = useState('');
   const { data, isLoading, error } = trpc.csam.getItemContextCandidates.useQuery(
     { userId, source },
     { enabled: open && userId > 0 }
   );
-  const update = (nextTicked: number[], nextText: string) => {
-    setTicked(nextTicked);
-    setTypedText(nextText);
-    onIds([...new Set([...nextTicked, ...parseIds(nextText)])]);
-  };
-  // Unticking also removes the id from the typed box, so nothing unticked is still sent.
-  const toggle = (id: number, checked: boolean) => {
-    const rest = ticked.filter((x) => x !== id);
-    update(
-      checked ? [...rest, id] : rest,
-      checked
-        ? typedText
-        : typedText
-            .split(/[\s,]+/)
-            .filter((token) => token && Number(token) !== id)
-            .join(', ')
-    );
-  };
+  const typedIds = parseIds(typed);
 
   return (
     <Stack gap={4}>
@@ -143,28 +154,43 @@ function ItemList({
             None.
           </Text>
         ) : (
-          data.candidates.map((c) => (
-            <Checkbox
-              key={c.id}
-              checked={ids.includes(c.id)}
-              onChange={(e) => toggle(c.id, e.currentTarget.checked)}
-              label={
-                <Group gap="xs">
-                  <Text size="sm">
-                    {c.id}: {c.title}
-                  </Text>
-                  <Badge size="xs" variant="light">
-                    {c.status}
-                  </Badge>
-                  {c.deleted && (
-                    <Badge size="xs" color="gray">
-                      deleted
+          data.candidates.map((c) => {
+            const checked = ticked.includes(c.id) || typedIds.includes(c.id);
+            return (
+              <Checkbox
+                key={c.id}
+                checked={checked}
+                disabled={c.unavailable || (full && !checked)}
+                onChange={(e) => {
+                  if (e.currentTarget.checked) onChange([...ticked, c.id], typed);
+                  else {
+                    const next = csamUntick(ticked, typed, c.id);
+                    onChange(next.ticked, next.typed);
+                  }
+                }}
+                label={
+                  <Group gap="xs">
+                    <Text size="sm">
+                      {c.id}: {c.title}
+                    </Text>
+                    <Badge size="xs" variant="light">
+                      {c.status}
                     </Badge>
-                  )}
-                </Group>
-              }
-            />
-          ))
+                    {c.deleted && (
+                      <Badge size="xs" color="gray">
+                        deleted
+                      </Badge>
+                    )}
+                    {c.unavailable && (
+                      <Badge size="xs" color="gray">
+                        can&apos;t be attached
+                      </Badge>
+                    )}
+                  </Group>
+                }
+              />
+            );
+          })
         ))}
       {data?.more && (
         <Text size="xs" c="dimmed">
@@ -174,8 +200,9 @@ function ItemList({
       <TextInput
         size="xs"
         placeholder={`Other ${label.toLowerCase()} ids, separated by commas or spaces`}
-        value={typedText}
-        onChange={(e) => update(ticked, e.currentTarget.value)}
+        value={typed}
+        error={badTokens(typed).length > 0}
+        onChange={(e) => onChange(ticked, e.currentTarget.value)}
       />
     </Stack>
   );

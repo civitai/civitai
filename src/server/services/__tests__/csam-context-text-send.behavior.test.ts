@@ -395,6 +395,24 @@ describe('attached text on an image report', () => {
     expect(espIdentifier).toBe('20');
   });
 
+  // Why filing refuses item text on a report with no images: such a report never sends.
+  it('sends nothing for a report with text and no images', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([]);
+    filed = {
+      id: 1,
+      userId: 20,
+      reportedById: 10,
+      type: 'Image',
+      createdAt: new Date(Date.now() - 3_600_000),
+      reportSentAt: null,
+      images: [],
+      details: { contextText },
+    } as unknown as CsamReportProps;
+    await processCsamReport(filed);
+
+    expect(submitReport).not.toHaveBeenCalled();
+  });
+
   it('adds no page incident to a report with no attached text', async () => {
     await send({});
 
