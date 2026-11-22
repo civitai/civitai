@@ -3,6 +3,7 @@ import { comicsRouter } from '../comics.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
 import { submitWorkflow } from '@civitai/orchestration-client';
 
@@ -42,6 +43,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   // An account in good standing, so generation procedures reach their input.
   dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: false, bannedAt: null } as never);
+  // Every key here was issued to this caller.
+  redisMock.redis.mGet.mockResolvedValue([String(USER_ID)] as never);
 });
 
 describe('comics inputs', () => {
@@ -90,6 +93,31 @@ const scanAccepted = () =>
     data: { id: 'wf' },
     response: new Response(null, { status: 200 }),
   } as never);
+
+describe('comics.createProject', () => {
+  it('refuses before creating either image', async () => {
+    await refused(caller().createProject({ name: 'c', coverUrl: KEY, heroUrl: INPUT_B }));
+    expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.comicProject.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('comics.addReferenceImages', () => {
+  it('stores an accepted value', async () => {
+    dbMock.dbRead.comicReference.findUnique.mockResolvedValue({ id: 3, userId: USER_ID } as never);
+    dbMock.dbWrite.image.create.mockResolvedValue({ id: 901 } as never);
+    dbMock.dbWrite.comicReference.update.mockResolvedValue({ id: 3 } as never);
+    scanAccepted();
+
+    await caller().addReferenceImages({
+      referenceId: 3,
+      images: [{ url: KEY, width: 10, height: 10 }],
+    } as never);
+
+    expect(dbMock.dbWrite.image.create.mock.calls[0][0].data.url).toBe(KEY);
+    expect(dbMock.dbWrite.comicReferenceImage.create.mock.calls[0][0].data.imageId).toBe(901);
+  });
+});
 
 describe('comics.replacePanelImage', () => {
   const NEXT = KEY.replace(/0$/, '1');
@@ -151,6 +179,9 @@ describe('comics.replacePanelImage', () => {
     expect(panel).not.toHaveProperty('chapter');
     expect(panel).not.toHaveProperty('image');
     noImageWritten();
+    // A lagging replica would see an older value here.
+    expect(dbMock.dbWrite.comicPanel.findUnique).toHaveBeenCalled();
+    expect(dbMock.dbRead.comicPanel.findUnique).not.toHaveBeenCalled();
   });
 
   it('returns the panel untouched for a stored value its image matches', async () => {

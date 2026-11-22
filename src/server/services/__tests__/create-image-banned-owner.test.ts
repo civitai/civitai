@@ -10,6 +10,7 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { createImage } from '~/server/services/image.service';
 import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
@@ -75,6 +76,7 @@ describe('createImage from a client', () => {
     ['case 4', KEY.toUpperCase()],
     ['case 5', ` ${KEY}`],
     ['case 6', ''],
+    ['case 7', KEY.replace(/-/g, '%2D')],
   ])('refuses case %# before any read or write', async (_, url) => {
     await expect(create({ url, clientUrl: true })).rejects.toThrow(COVER_IMAGE_UNAVAILABLE_MESSAGE);
 
@@ -93,6 +95,8 @@ describe('createImage from a client', () => {
 
   it('stores an accepted value', async () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue({ bannedAt: null } as never);
+    // The key was issued to this uploader.
+    redisMock.redis.mGet.mockResolvedValue(['7'] as never);
 
     await create({ clientUrl: true });
 
