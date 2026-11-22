@@ -3,29 +3,18 @@ import { browserChecksProfanity, isSearchRefusedError } from '~/components/Searc
 import { SEARCH_REFUSED_CODE } from '~/shared/constants/search-refusal.constants';
 
 describe('browserChecksProfanity', () => {
-  const checks = (
-    serverProfanity: boolean,
-    via: 'semantic' | 'siteSearch',
-    proxyEnabled: boolean
-  ) => browserChecksProfanity({ serverProfanity, via, proxyEnabled });
-
-  it('flag off: the browser checks on every path, as before', () => {
-    expect([checks(false, 'semantic', true), checks(false, 'siteSearch', true)]).toEqual([
-      true,
-      true,
-    ]);
-  });
-
-  it('flag on: the browser leaves semantic search and proxied site search to the server', () => {
-    expect([checks(true, 'semantic', false), checks(true, 'siteSearch', true)]).toEqual([
-      false,
-      false,
-    ]);
+  // The server always checks these, flag on or off, so the browser never needs to.
+  it('leaves semantic search, and site search through the proxy, to the server', () => {
+    expect([
+      browserChecksProfanity({ via: 'semantic', proxyEnabled: false }),
+      browserChecksProfanity({ via: 'semantic', proxyEnabled: true }),
+      browserChecksProfanity({ via: 'siteSearch', proxyEnabled: true }),
+    ]).toEqual([false, false, false]);
   });
 
   // Without the proxy the browser may query Meilisearch directly, where no server check runs.
-  it('flag on, proxy off: the browser still checks site search', () => {
-    expect(checks(true, 'siteSearch', false)).toBe(true);
+  it('checks site search itself when the proxy is off', () => {
+    expect(browserChecksProfanity({ via: 'siteSearch', proxyEnabled: false })).toBe(true);
   });
 });
 

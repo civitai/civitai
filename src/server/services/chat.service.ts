@@ -901,7 +901,8 @@ export const createMessage = async ({
     }
   }
 
-  return sent;
+  // The sender gets their text without the masked copy, which would say which words matched.
+  return resp;
 };
 
 /**

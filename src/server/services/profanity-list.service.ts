@@ -2,7 +2,11 @@ import {
   managedProfanityEntries,
   MIN_MANAGED_PROFANITY_ENTRIES,
 } from '@civitai/mod-utils/profanity/word-rules';
-import { createProfanityFilter, type SimpleProfanityFilter } from '~/libs/profanity-simple';
+import {
+  createProfanityFilter,
+  getProfanityFilter,
+  type SimpleProfanityFilter,
+} from '~/libs/profanity-simple';
 import { BlocklistType } from '~/server/common/enums';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -10,7 +14,7 @@ import {
   ensureRegisterProfanityListMetrics,
   type ProfanityHitSurface,
 } from '~/server/metrics/profanity-list.metrics';
-import { readBlocklistWithSource } from '~/server/services/blocklist.service';
+import { getBlocklistDTO, readBlocklistWithSource } from '~/server/services/blocklist.service';
 
 /**
  * Which list a server profanity check enforced: `managed` the moderator row; `stale` this pod's
@@ -221,23 +225,35 @@ export async function isProfaneSearch(queries: string[]): Promise<boolean> {
   return (await profaneSearchCheck(queries)) === 'profane';
 }
 
-/** `isProfaneSearch`, telling `off` (flag off: nothing checked) apart from `clean`. */
-export async function profaneSearchCheck(queries: string[]): Promise<'off' | 'clean' | 'profane'> {
+/**
+ * `isProfaneSearch`'s verdict. It always checks: with `profanity-managed-list` on, against the
+ * managed list; off (or Flipt unreachable), against what the browser checks (the shipped list and
+ * the moderators' benign words); and when a check throws, against the shipped list. The browser
+ * leaves these searches to the server, so there is no state where neither checks.
+ */
+export async function profaneSearchCheck(queries: string[]): Promise<'clean' | 'profane'> {
   const texts = queries.filter((query) => query.trim().length > 0);
   if (!texts.length) return 'clean';
+  const verdict = (filter: { analyze(text: string): { isProfane: boolean } }) =>
+    texts.some((text) => filter.analyze(text).isProfane)
+      ? ('profane' as const)
+      : ('clean' as const);
   try {
     const profanity = await getServerProfanityFilter();
-    if (profanity.source === 'shipped') return 'off';
-    const refused = texts.some((text) => profanity.filter.analyze(text).isProfane);
-    if (refused) profanity.countHit('search');
-    return refused ? 'profane' : 'clean';
+    if (profanity.source === 'shipped') {
+      const benign = await getBlocklistDTO({ type: BlocklistType.ProfanityBenignWord });
+      return verdict(getProfanityFilter(benign.id == null ? null : benign.data));
+    }
+    const result = verdict(profanity.filter);
+    if (result === 'profane') profanity.countHit('search');
+    return result;
   } catch (error) {
     logToAxiom({
       name: 'profanity-search-check-failed',
       type: 'error',
-      message: 'Site search profanity check failed; the search ran unchecked',
+      message: 'Site search profanity check failed; checked against the shipped list',
       details: { error: error instanceof Error ? error.message : String(error) },
     });
-    return 'clean';
+    return verdict(getProfanityFilter());
   }
 }

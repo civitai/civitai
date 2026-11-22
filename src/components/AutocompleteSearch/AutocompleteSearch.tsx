@@ -395,7 +395,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   // browser's own check with the shipped list.
   const refusedQuery = useAutocompleteAvailabilityStore((state) => state.refusedQuery);
   const serverChecksProfanity = !browserChecksProfanity({
-    serverProfanity: !!features.profanityManagedList,
     via: 'siteSearch',
     proxyEnabled: isSiteSearchProxyEnabled(),
   });

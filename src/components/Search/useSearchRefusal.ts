@@ -7,7 +7,6 @@ import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 /**
  * Why a search text that did not come through the search bar (a link, a bookmark, a redirect) must
@@ -20,18 +19,8 @@ export function useSearchRefusal(
   text: string | undefined,
   index: string | undefined,
   via: 'semantic' | 'siteSearch'
-): {
-  refusal?: SearchRefusal;
-  profanityMatches: string[];
-  /**
-   * The browser's own verdict with the shipped list, computed even where the server checks: the
-   * gate for a fallback search the server does not check (a feed's keyword search after a failed
-   * semantic one).
-   */
-  browserProfane: boolean;
-} {
+): { refusal?: SearchRefusal; profanityMatches: string[] } {
   const benignPhrases = useBenignPhrases();
-  const { profanityManagedList } = useFeatureFlags();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const domainColor = useDomainColor();
   const { trackAction } = useTrackEvent();
@@ -47,20 +36,11 @@ export function useSearchRefusal(
         : undefined,
     [text, benignPhrases, browsingSettingsAddons.settings.disablePoi]
   );
-  const browserChecks = browserChecksProfanity({
-    serverProfanity: !!profanityManagedList,
-    via,
-    proxyEnabled: isSiteSearchProxyEnabled(),
-  });
+  const browserChecks = browserChecksProfanity({ via, proxyEnabled: isSiteSearchProxyEnabled() });
   const profanity = useCheckProfanity(text ?? '', {
-    enabled: domainColor === 'green' && !!text && checked !== 'illegal',
+    enabled: domainColor === 'green' && !!text && checked !== 'illegal' && browserChecks,
   });
-  const refusal =
-    checked === 'illegal'
-      ? checked
-      : browserChecks && profanity.hasProfanity
-      ? 'profanity'
-      : checked;
+  const refusal = checked === 'illegal' ? checked : profanity.hasProfanity ? 'profanity' : checked;
 
   useEffect(() => {
     // Not before the benign phrases arrive: until then a whitelisted query still reads as illegal.
@@ -80,9 +60,5 @@ export function useSearchRefusal(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text, refusal]);
 
-  return {
-    refusal,
-    profanityMatches: browserChecks ? profanity.matches : [],
-    browserProfane: profanity.hasProfanity,
-  };
+  return { refusal, profanityMatches: profanity.matches };
 }

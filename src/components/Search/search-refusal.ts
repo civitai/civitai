@@ -5,21 +5,18 @@ import { SEARCH_REFUSED_CODE } from '~/shared/constants/search-refusal.constants
 export type SearchRefusal = 'illegal' | 'profanity' | 'poi' | 'blocked-words';
 
 /**
- * Whether the browser runs its own profanity check on a search. Not where every request on the
- * path reaches the server's check (`profanity-managed-list` on): the semantic search procedures
- * always, /api/search only with the search proxy on, since without it the browser can query
- * Meilisearch directly.
+ * Whether the browser runs its own profanity check on a search: not where every request reaches
+ * the server, which always checks. That is the semantic search procedures, and /api/search only
+ * with the search proxy on, since without it the browser can query Meilisearch directly.
  */
 export function browserChecksProfanity({
-  serverProfanity,
   via,
   proxyEnabled,
 }: {
-  serverProfanity: boolean;
   via: 'semantic' | 'siteSearch';
   proxyEnabled: boolean;
 }): boolean {
-  return !(serverProfanity && (via === 'semantic' || proxyEnabled));
+  return via === 'siteSearch' && !proxyEnabled;
 }
 
 /**

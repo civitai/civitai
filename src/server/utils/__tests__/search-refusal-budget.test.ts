@@ -1,4 +1,7 @@
+import { blockedWords } from '@civitai/mod-utils/profanity/lists';
+import { cleanWord, isUsableBlockedEntry } from '@civitai/mod-utils/profanity/word-rules';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getProfanityFilter } from '~/libs/profanity-simple';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { semanticArticleSearchRouter } from '~/server/routers/semantic-article-search.router';
 import { semanticBountySearchRouter } from '~/server/routers/semantic-bounty-search.router';
@@ -18,6 +21,15 @@ import { z } from 'zod';
 
 // A synthetic token on no real list: this file is public.
 const PROFANE = 'zqvoxprofanitytoken';
+// A shipped entry read at runtime, never written down.
+const SHIPPED = blockedWords
+  .map(cleanWord)
+  .find(
+    (word) =>
+      isUsableBlockedEntry(word) &&
+      /^[a-z]+$/.test(word) &&
+      getProfanityFilter().clean(word) !== word
+  ) as string;
 const listFrom = (source: 'managed' | 'shipped') => ({
   read: async () => ({ blocked: [PROFANE], allowed: null, source }),
 });
@@ -95,11 +107,6 @@ describe('semantic search, flag on, civitai.com', () => {
 });
 
 describe('profaneSearchVerdict', () => {
-  it('flag off (the shipped list): refuses nothing, leaving the browser its own check', async () => {
-    setProfanityListReaderForTests(listFrom('shipped'));
-    expect(await profaneSearchVerdict([`a ${PROFANE} b`], 'ip:1')).toBeNull();
-  });
-
   it('runs a clean query and refuses a profane one', async () => {
     expect([
       await profaneSearchVerdict(['ordinary words'], 'ip:1'),
@@ -108,18 +115,28 @@ describe('profaneSearchVerdict', () => {
   });
 
   // Otherwise refusals test words against the list for free.
-  it("once a caller is refused enough distinct queries, refuses its clean ones too, and no one else's", async () => {
+  it("once a caller is refused enough distinct queries, refuses everything it sends, and no one else's", async () => {
     for (const query of distinct(TEN_MINUTES.max))
       expect(await profaneSearchVerdict([query], 'ip:1')).toBe('refused');
     expect([
       await profaneSearchVerdict(['ordinary words'], 'ip:1'),
+      await profaneSearchVerdict([`another ${PROFANE}`], 'ip:1'),
       await profaneSearchVerdict(['ordinary words'], 'ip:2'),
-    ]).toEqual(['limited', null]);
+    ]).toEqual(['limited', 'limited', null]);
   });
 
-  it('spends nothing on a repeat, so retyping one query cannot lock a person out', async () => {
+  it('cannot be raced past the cap by a parallel burst of distinct queries', async () => {
+    const verdicts = await Promise.all(
+      distinct(TEN_MINUTES.max * 3).map((query) => profaneSearchVerdict([query], 'ip:1'))
+    );
+    expect(verdicts.filter((v) => v === 'refused').length).toBeLessThanOrEqual(TEN_MINUTES.max);
+    expect(verdicts.every((v) => v === 'refused' || v === 'limited')).toBe(true);
+  });
+
+  it('spends nothing on a repeat, however it is cased or spaced', async () => {
+    const forms = [`a ${PROFANE} b`, `A ${PROFANE.toUpperCase()} B`, `  a ${PROFANE} b `];
     for (let i = 0; i < TEN_MINUTES.max * 2; i++)
-      expect(await profaneSearchVerdict([`a ${PROFANE} b`], 'ip:1')).toBe('refused');
+      expect(await profaneSearchVerdict([forms[i % forms.length]], 'ip:1')).toBe('refused');
     expect(await profaneSearchVerdict(['ordinary words'], 'ip:1')).toBeNull();
   });
 
@@ -131,17 +148,40 @@ describe('profaneSearchVerdict', () => {
     expect(await profaneSearchVerdict(['ordinary words'], 'ip:1')).toBe('limited');
   });
 
-  it('flag off: reads no budget at all', async () => {
-    setProfanityListReaderForTests(listFrom('shipped'));
-    const sCard = vi.mocked(redisMock.redis.sCard);
-    sCard.mockClear();
-    expect(await profaneSearchVerdict(['ordinary words'], 'ip:1')).toBeNull();
-    expect(sCard).not.toHaveBeenCalled();
+  // A window that never expired would lock the caller out for good.
+  it('gives each window its expiry on the first refusal, and leaves a live one alone', async () => {
+    const expire = vi.spyOn(redisMock.redis, 'expire').mockResolvedValue(true as never);
+    vi.mocked(redisMock.redis.ttl)
+      .mockResolvedValueOnce(-1 as never)
+      .mockResolvedValueOnce(-1 as never);
+    await profaneSearchVerdict([PROFANE], 'ip:1');
+    expect(expire.mock.calls.map(([, seconds]) => seconds).sort()).toEqual(
+      SEARCH_REFUSAL_LIMITS.map(({ windowSeconds }) => windowSeconds).sort()
+    );
+    expire.mockClear();
+    await profaneSearchVerdict([`more ${PROFANE}`], 'ip:1');
+    expect(expire).not.toHaveBeenCalled();
   });
 
   it('fails open when the budget cannot be read', async () => {
     vi.mocked(redisMock.redis.sCard).mockRejectedValue(new Error('redis down') as never);
     expect(await profaneSearchVerdict(['ordinary words'], 'ip:1')).toBeNull();
+  });
+});
+
+// The browser leaves these searches to the server whatever the flag says, so the server must check
+// them whatever the flag says.
+describe('semantic search with the flag off, or the list unreadable', () => {
+  it.each(Object.entries(procedures))('%s still refuses a shipped word', async (_, procedure) => {
+    const call = procedure() as (input: { query: string }) => Promise<unknown>;
+    setProfanityListReaderForTests(listFrom('shipped'));
+    await expect(call({ query: `a ${SHIPPED} b` })).rejects.toMatchObject({
+      message: 'search_refused',
+    });
+    setProfanityListReaderForTests({ read: () => Promise.reject(new Error('list down')) });
+    await expect(call({ query: `a ${SHIPPED} c` })).rejects.toMatchObject({
+      message: 'search_refused',
+    });
   });
 });
 

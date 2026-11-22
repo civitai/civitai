@@ -222,10 +222,11 @@ describe('isProfaneSearch', () => {
     expect(await isProfaneSearch(['hello', SHIPPED_WORD])).toBe(false);
   });
 
-  // The browser's check is today's rule while the flag is off; see the function's comment.
-  it('refuses nothing while profanity-managed-list is off', async () => {
+  // The browser leaves these searches to the server whatever the flag says.
+  it('checks against what the browser checks while profanity-managed-list is off', async () => {
     h.flagOn = false;
-    expect(await isProfaneSearch([SHIPPED_WORD])).toBe(false);
+    expect(await isProfaneSearch([SHIPPED_WORD])).toBe(true);
+    expect(await isProfaneSearch(['hello'])).toBe(false);
   });
 
   it('reads the query of a single search and of each search in a multi-search', () => {

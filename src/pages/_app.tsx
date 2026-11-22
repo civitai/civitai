@@ -409,7 +409,6 @@ function MyApp(props: CustomAppProps) {
                                                         {isProd && <TrackPageView />}
                                                         <CustomModalsProvider>
                                                           {getLayout(<Component {...pageProps} />)}
-                                                          {/* <StripeSetupSuccessProvider /> */}
                                                           <DialogProvider />
                                                           <RoutedDialogProvider />
                                                         </CustomModalsProvider>

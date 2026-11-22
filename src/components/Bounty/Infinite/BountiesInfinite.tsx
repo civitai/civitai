@@ -41,19 +41,14 @@ function SearchableBountiesFeed(props: Props) {
   const filters = useInfiniteBountyFilters(props);
   const searchText = useFeedSearchQuery();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
-  const { refusal, profanityMatches, browserProfane } = useSearchRefusal(
+  const { refusal, profanityMatches } = useSearchRefusal(
     searchText,
     'bounties_semantic',
     'semantic'
   );
   const search = useSemanticBountyFeed(filters, refusal ? undefined : searchText);
   useScrollToTopOnChange(search.searchKey);
-  // A failed semantic search falls back to a keyword search the server does not check.
-  const shownRefusal =
-    refusal ??
-    (isSearchRefusedError(search.error) || (search.isError && browserProfane)
-      ? 'profanity'
-      : undefined);
+  const shownRefusal = refusal ?? (isSearchRefusedError(search.error) ? 'profanity' : undefined);
   if (shownRefusal)
     return <SearchRefusalNotice refusal={shownRefusal} profanityMatches={profanityMatches} />;
   return searchText ? (
@@ -67,12 +62,14 @@ type FeedSearch = ReturnType<typeof useSemanticBountyFeed> & { text: string };
 
 function BountiesFeed({ showEof = true, search, ...props }: Props & { search?: FeedSearch }) {
   const filters = useInfiniteBountyFilters(props);
+  // A failed search shows its banner over no results, never the keyword feed with the query:
+  // that feed has no server profanity check.
   const searchFailed = !!search?.isError;
   const searching = !!search && !searchFailed;
   const feed = useQueryBounties(
     // The feed's own query is a keyword match, used only as the fallback.
     { ...filters, query: search?.text },
-    { keepPreviousData: true, enabled: !searching }
+    { keepPreviousData: true, enabled: !search }
   );
   const { bounties, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     search && searching ? search : feed;
