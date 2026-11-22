@@ -462,6 +462,9 @@ describe('image report: file view flags', () => {
     expect(submitReport).toHaveBeenCalledTimes(1);
     expect(viewedByName()).toEqual({ 'upload-501.png': false, 'upload-502.png': true });
     expect(note('upload-501.png')).toEqual([NOTE]);
+    expect(submitReport.mock.calls[0][0].additionalInfo).toBe(
+      "A Civitai reviewer confirmed the reported image(s). Where a file is reported as not viewed, Civitai can't confirm that it is identical to the copy the reviewer saw."
+    );
   });
 
   it('still refuses a supplemental whose file has no record', async () => {
@@ -482,6 +485,9 @@ describe('image report: file view flags', () => {
 
     expect(viewedByName()).toEqual({ 'upload-501.png': true, 'upload-502.png': true });
     expect(note('upload-501.png')).toEqual([]);
+    expect(submitReport.mock.calls[0][0].additionalInfo).toBe(
+      'A Civitai reviewer confirmed the attached image(s).'
+    );
   });
 });
 

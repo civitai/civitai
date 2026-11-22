@@ -1556,7 +1556,10 @@ async function reportImages(claim: SendClaim) {
       }),
       ...((supplemental || omitted.length > 0) && {
         additionalInfo: [
-          supplemental && supplementalReportText(supplemental.unreviewedImageIds.length),
+          supplemental &&
+            supplementalReportText(supplemental.unreviewedImageIds.length, {
+              viewedSentAsNotViewed: [...viewed.keys()].some((id) => !viewedAsSent.has(id)),
+            }),
           ...omitted,
         ]
           .filter(Boolean)
