@@ -31,6 +31,7 @@ import flagClasses from '~/components/HatTurf/FlagRace/FlagRacePanel.module.scss
 import partyClasses from '~/components/HomeBlocks/ScoredEventHomeBlock.module.scss';
 import { FlagEnterButton } from '~/components/HatTurf/FlagRace/FlagEnterButton';
 import { HiddenFlagCard } from '~/components/HatTurf/FlagRace/HiddenFlagCard';
+import { useFlagReveal } from '~/components/HatTurf/FlagRace/useFlagReveal';
 import { FlagRaceHomeRow } from '~/components/HatTurf/FlagRace/FlagRaceCollapsedBar';
 import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
@@ -98,13 +99,30 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
     data: shuffledData,
   });
 
+  // A flag the viewer's hidden preferences took out stands as a hidden card; one only their own
+  // preferences hid can be shown anyway, and then goes through the same pipeline as the rest.
+  const hiddenFlagItems = useMemo(() => {
+    if (!flagRow || loadingPreferences) return [];
+    const visibleIds = new Set(filtered.map((item) => item.id));
+    return shuffledData.filter((item) => !visibleIds.has(item.id));
+  }, [flagRow, loadingPreferences, filtered, shuffledData]);
+  const flagReveal = useFlagReveal(hiddenFlagItems as { id: number; nsfwLevel?: number }[]);
+  const shown = useMemo(() => {
+    if (!flagReveal.revealed.length) return filtered;
+    const revealedIds = new Set(flagReveal.revealed.map((item) => item.id));
+    const visibleIds = new Set(filtered.map((item) => item.id));
+    return shuffledData.filter(
+      (item) => visibleIds.has(item.id) || revealedIds.has(item.id)
+    ) as typeof filtered;
+  }, [filtered, shuffledData, flagReveal.revealed]);
+
   const maxPerUser = metadata.collection?.maxPerUser;
   // Served from the same shared, viewer-agnostic entry the feed block is, so image items arrive
   // with `reactions: []` for every viewer. Passed straight into the cap rather than held in a
   // binding of its own, which removes the INVITED mistake of rendering the un-hydrated list —
   // not every one: `filtered` is still in scope, and so is what `ImagesProvider` is handed below.
   const items = useDedupedCappedItems(
-    useHydratedImageReactions(useViewerEventDecorations(filtered, { entity: type }), {
+    useHydratedImageReactions(useViewerEventDecorations(shown, { entity: type }), {
       entity: type,
     }) as {
       id: number;
@@ -113,7 +131,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
     {
       order: dedupeOrder(blockIndex),
       entity: type,
-      rows: flagEvent ? Math.max(1, Math.ceil(filtered.length / ITEMS_PER_ROW)) : rows,
+      rows: flagEvent ? Math.max(1, Math.ceil(shown.length / ITEMS_PER_ROW)) : rows,
       maxPerUser,
     }
   ) as typeof filtered;
@@ -137,8 +155,6 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
 
   if (flagRow) {
     const loading = isLoading || loadingPreferences;
-    const visibleIds = new Set(filtered.map((item) => item.id));
-    const hiddenFlags = shuffledData.filter((item) => !visibleIds.has(item.id));
     return (
       <FlagRaceHomeRow event={flagRow.event} summary={flagRow.summary}>
         <div className={flagClasses.flags}>
@@ -159,8 +175,13 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
                     type === 'image' ? <ImageCard key={item.id} data={item as any} /> : null
                   )}
                 </ImagesProvider>
-                {hiddenFlags.map((item) => (
-                  <HiddenFlagCard key={item.id} imageId={item.id} />
+                {flagReveal.stillHidden.map((item) => (
+                  <HiddenFlagCard
+                    key={item.id}
+                    imageId={item.id}
+                    reason={flagReveal.reasons.get(item.id)}
+                    onShow={() => flagReveal.reveal(item.id)}
+                  />
                 ))}
               </RemixFlyoutLayoutProvider>
             </FlagRowProviders>

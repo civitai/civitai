@@ -12,6 +12,8 @@ const h = vi.hoisted(() => ({
   // The image request failed: no data at all.
   failed: false,
   asked: [] as (number[] | undefined)[],
+  // Served flags only the viewer's own hidden users, images or tags took out.
+  ownHidden: new Set<number>(),
 }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
@@ -31,6 +33,14 @@ vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
       isLoading: h.loading,
     };
   },
+}));
+// Only the hidden flags reach the real filter here (useQueryImages is stubbed): with the viewer's
+// own preferences set aside, what passes is what they hid themselves.
+vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', () => ({
+  useApplyHiddenPreferences: ({ data }: { data: { id: number }[] }) => ({
+    items: data.filter((image) => h.ownHidden.has(image.id)),
+    loadingPreferences: false,
+  }),
 }));
 vi.mock('~/components/HatTurf/FlagRace/FlagRacePanel', () => ({
   FlagRacePanel: () => <div data-testid="panel" />,
@@ -68,6 +78,7 @@ beforeEach(() => {
   h.served = null;
   h.loading = false;
   h.failed = false;
+  h.ownHidden = new Set();
 });
 afterEach(async () => {
   await cleanup();
@@ -88,6 +99,26 @@ describe('Flag Race on the event page', () => {
     h.images = [{ id: 20 }, { id: 30 }];
     await renderWithProviders(<FlagRaceEventSection event="birthday2026" />);
     expect(cards()).toEqual(['30', 'hidden', '20']);
+  });
+
+  test('lets the viewer show anyway, in its place, a flag only their own settings hid', async () => {
+    h.served = [{ id: 30 }, { id: 10 }, { id: 20 }];
+    h.images = [{ id: 20 }, { id: 30 }];
+    h.ownHidden = new Set([10]);
+    await renderWithProviders(<FlagRaceEventSection event="birthday2026" />);
+    const hidden = document.querySelector('[data-testid="flag-hidden-for-you"]')!;
+    expect(hidden.textContent).toContain('Hidden by your content settings');
+    [...hidden.querySelectorAll('button')].find((b) => b.textContent === 'Show anyway')!.click();
+    await vi.waitFor(() => expect(cards()).toEqual(['30', '10', '20']));
+  });
+
+  test("offers no Show anyway on a flag a creator's block hides", async () => {
+    h.served = [{ id: 30 }, { id: 10 }, { id: 20 }];
+    h.images = [{ id: 20 }, { id: 30 }];
+    await renderWithProviders(<FlagRaceEventSection event="birthday2026" />);
+    const hidden = document.querySelector('[data-testid="flag-hidden-for-you"]')!;
+    expect(hidden.textContent).toContain('Hidden for you');
+    expect(hidden.querySelector('button')).toBeNull();
   });
 
   test('keeps the panel and race so far when the viewer may see none of the flags', async () => {

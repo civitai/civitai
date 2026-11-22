@@ -10,6 +10,8 @@ export type HiddenPreferencesState = {
   hiddenUsers: Map<number, boolean>;
   /** Blocks in either direction; also merged into `hiddenUsers`. Empty for moderators. */
   blockRelations: Map<number, boolean>;
+  /** Creators who blocked the viewer, a subset of `blockRelations`. Empty for moderators. */
+  blockedByUsers?: Map<number, boolean>;
   hiddenTags: Map<number, boolean>;
   hiddenModels: Map<number, boolean>;
   hiddenModel3Ds: Map<number, boolean>;
@@ -30,6 +32,7 @@ export function deriveHiddenUsers(
   return {
     hiddenUsers: toMap([...data.hiddenUsers, ...blocked]),
     blockRelations: toMap(blocked),
+    blockedByUsers: toMap(isModerator ? [] : data.blockedByUsers),
   };
 }
 
@@ -57,11 +60,15 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
       data.hiddenImages.filter((x) => !x.tagId || tags.get(x.tagId)).map((x) => [x.id, true])
     );
 
-    const { hiddenUsers, blockRelations } = deriveHiddenUsers(data, !!currentUser?.isModerator);
+    const { hiddenUsers, blockRelations, blockedByUsers } = deriveHiddenUsers(
+      data,
+      !!currentUser?.isModerator
+    );
 
     return {
       hiddenUsers,
       blockRelations,
+      blockedByUsers,
       hiddenModels: new Map(data.hiddenModels.map((x) => [x.id, true])),
       hiddenModel3Ds: new Map(data.hiddenModel3Ds.map((x) => [x.id, true])),
       hiddenTags: tags,

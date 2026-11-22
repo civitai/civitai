@@ -1,0 +1,82 @@
+import { describe, expect, it } from 'vitest';
+import type { HiddenPreferencesState } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
+import {
+  filterPreferences,
+  withoutViewerHidden,
+} from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+
+// What the Flag Race's "Show anyway" may reveal: an image only the viewer's own hidden users,
+// images or tags took out. A creator who blocked the viewer, and the browsing level, still hide it.
+
+const SFW = 1;
+const HID = 10; // a user the viewer hid
+const BLOCKED = 11; // a user the viewer blocked
+const BLOCKER = 12; // a creator who blocked the viewer
+const TAG = 500;
+
+const prefs: HiddenPreferencesState = {
+  hiddenUsers: new Map([
+    [HID, true],
+    [BLOCKED, true],
+    [BLOCKER, true],
+  ]),
+  blockRelations: new Map([
+    [BLOCKED, true],
+    [BLOCKER, true],
+  ]),
+  blockedByUsers: new Map([[BLOCKER, true]]),
+  hiddenTags: new Map([[TAG, true]]),
+  hiddenModels: new Map(),
+  hiddenModel3Ds: new Map(),
+  hiddenImages: new Map([[4, true]]),
+  hiddenLoading: false,
+  moderatedTags: [],
+  systemHiddenTags: new Map(),
+};
+
+const image = (
+  id: number,
+  over: { userId?: number; tagIds?: number[]; nsfwLevel?: number } = {}
+) => ({
+  id,
+  userId: over.userId ?? 1,
+  nsfwLevel: over.nsfwLevel ?? SFW,
+  tagIds: over.tagIds ?? [],
+  prompt: '',
+});
+
+const images = [
+  image(1, { userId: HID }),
+  image(2, { userId: BLOCKED }),
+  image(3, { tagIds: [TAG] }),
+  image(4),
+  image(5, { userId: BLOCKER }),
+  image(6, { userId: HID, nsfwLevel: 4 }),
+];
+
+const kept = (hiddenPreferences: HiddenPreferencesState) =>
+  filterPreferences({
+    type: 'images',
+    data: images as never,
+    hiddenPreferences,
+    browsingLevel: SFW,
+    currentUser: null as never,
+    canViewNsfw: true,
+  }).items.map((x) => (x as { id: number }).id);
+
+describe('withoutViewerHidden', () => {
+  it("lets through what only the viewer's own hidden users, blocks, images and tags hid", () => {
+    expect(kept(prefs)).toEqual([]);
+    expect(kept(withoutViewerHidden(prefs))).toEqual([1, 2, 3, 4]);
+  });
+
+  it('keeps a creator who blocked the viewer, and the browsing level, in force', () => {
+    const shown = kept(withoutViewerHidden(prefs));
+    expect(shown).not.toContain(5);
+    expect(shown).not.toContain(6);
+  });
+
+  it('keeps every block, either way, when it cannot tell who blocked whom', () => {
+    expect(kept(withoutViewerHidden({ ...prefs, blockedByUsers: undefined }))).toEqual([1, 3, 4]);
+  });
+});

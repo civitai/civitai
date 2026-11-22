@@ -29,6 +29,7 @@ export function useApplyHiddenPreferences<
   hiddenTags = [],
   browsingLevel: browsingLevelOverride,
   allowLowerLevels,
+  ignoreViewerHidden,
 }: {
   type: T;
   data?: TData;
@@ -41,6 +42,8 @@ export function useApplyHiddenPreferences<
   hiddenTags?: number[];
   browsingLevel?: number;
   allowLowerLevels?: boolean;
+  /** Set aside the users, images and tags the viewer hid; see `withoutViewerHidden`. */
+  ignoreViewerHidden?: boolean;
 }) {
   const currentUser = useCurrentUser();
   const previousItemsRef = useRef<any[]>([]);
@@ -54,7 +57,9 @@ export function useApplyHiddenPreferences<
   // We need to stringify the hidden preferences to trigger a re-render when they change.
   const stringified = JSON.stringify([...hiddenImages, ...hiddenUsers, ...hiddenTags]);
   const { items, hidden, feedDrop } = useMemo(() => {
-    const preferences = { ...hiddenPreferences };
+    const preferences = ignoreViewerHidden
+      ? withoutViewerHidden(hiddenPreferences)
+      : { ...hiddenPreferences };
     if (hiddenImages.length > 0)
       preferences.hiddenImages = new Map([
         ...preferences.hiddenImages,
@@ -97,7 +102,15 @@ export function useApplyHiddenPreferences<
       feedDrop: 'feedDrop' in result ? result.feedDrop : undefined,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, hiddenPreferences, stringified, showHidden, disabled, browsingLevel]);
+  }, [
+    data,
+    hiddenPreferences,
+    stringified,
+    showHidden,
+    disabled,
+    browsingLevel,
+    ignoreViewerHidden,
+  ]);
 
   // Emit the SILENT browsing-level feed-drop telemetry from a COMMIT effect, not from the
   // render-phase memo above — emitting during render violates React purity (double-fires under
@@ -134,6 +147,20 @@ export function useApplyHiddenPreferences<
     loadingPreferences: hiddenPreferences.hiddenLoading,
     items: (isRefetching ? previousItemsRef.current : items) as TData,
     hiddenCount,
+  };
+}
+
+/**
+ * The preferences left once the users, images and tags the viewer chose to hide are set aside: what
+ * still hides an item anyway (a creator who blocked the viewer, the browsing level, site filters).
+ * Without `blockedByUsers` every block, either way, stays in force.
+ */
+export function withoutViewerHidden(preferences: HiddenPreferencesState): HiddenPreferencesState {
+  return {
+    ...preferences,
+    hiddenUsers: new Map(preferences.blockedByUsers ?? preferences.blockRelations),
+    hiddenImages: new Map(),
+    hiddenTags: new Map(),
   };
 }
 
