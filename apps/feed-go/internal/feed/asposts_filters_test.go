@@ -234,3 +234,24 @@ func TestServeGalleryTagsAndTechniques(t *testing.T) {
 		t.Fatalf("no tags, no reader: err %v, feed queries %v", err, feed.queries)
 	}
 }
+
+// The gallery's level is held to the viewer before the feed is asked.
+func TestServeGalleryLevelForViewer(t *testing.T) {
+	listed := testkit.NewRedis()
+	listed.SetString(BlockedTagsKey, []byte(`[{"id":5161,"name":"a"}]`))
+	for _, c := range []struct {
+		viewer *Viewer
+		want   string
+	}{{&Viewer{ID: 9}, "levels=1&"}, {&Viewer{ID: 9, IsModerator: true}, "levels=1%2C32&"}} {
+		feed := &fakeFeed{answers: map[string]feedsvc.Answer{}}
+		d := &Deps{Feed: feed, Blocked: &BlockedTags{Cache: listed}, Config: Config{ImageIndexFeed: true, LazyPostImages: true}, Now: func() time.Time { return time.Unix(0, 0) }}
+		in, err := Parse(parseObj(t, `{"model3dId":5,"limit":10,"browsingLevel":33}`))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		_, _ = Serve(context.Background(), d, Request{Input: in, Viewer: c.viewer})
+		if len(feed.queries) != 1 || !strings.HasPrefix(feed.queries[0], c.want) {
+			t.Errorf("viewer %+v: feed queries %v, want one starting %s", c.viewer, feed.queries, c.want)
+		}
+	}
+}

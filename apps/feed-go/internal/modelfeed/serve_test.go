@@ -486,6 +486,16 @@ func TestResolveLevel(t *testing.T) {
 	if got, _ := resolveLevel(&Input{BrowsingLevel: &disjoint}, Request{Cap: 3}); got != 3 {
 		t.Errorf("disjoint level: %d, want the cap", got)
 	}
+	// A sent level is held to the selectable levels before the cap, unless a moderator sent it.
+	mixed := 1 | 32
+	for _, c := range []struct {
+		v         *Viewer
+		cap, want int
+	}{{&Viewer{ID: 5}, 0, 1}, {nil, 0, 1}, {&Viewer{ID: 5}, 3, 1}, {&Viewer{ID: 5, IsModerator: true}, 0, 1 | 32}} {
+		if got, err := resolveLevel(&Input{BrowsingLevel: &mixed}, Request{Viewer: c.v, Cap: c.cap}); err != nil || got != c.want {
+			t.Errorf("viewer %+v cap %d: %d %v, want %d", c.v, c.cap, got, err, c.want)
+		}
+	}
 }
 
 // A blocked tag name is an empty page with no query; a known tag adds its filter; an unknown name
@@ -864,6 +874,14 @@ func TestFilterImagesForViewer(t *testing.T) {
 	// A model marked nsfw keeps every image up to the highest level selected.
 	if got := ids(filterImagesForViewer(imgs, 1|8, true, false, false, &Viewer{ID: 1, IsModerator: true})); !reflect.DeepEqual(got, []int{1, 2, 3, 4, 5}) {
 		t.Fatalf("nsfw model, moderator: %v", got)
+	}
+	// The level is held to the selectable levels here too.
+	if got := ids(filterImagesForViewer(imgs, 1|32, true, false, false, &Viewer{ID: 1, IsModerator: true})); !reflect.DeepEqual(got, []int{1, 2, 4}) {
+		t.Fatalf("nsfw model, level 33: %v", got)
+	}
+	other := []superjson.Object{image(6, 5, 32, nil), image(7, 5, 1, nil)}
+	if got := ids(filterImagesForViewer(other, 1|32, false, false, false, &Viewer{ID: 1, IsModerator: true})); !reflect.DeepEqual(got, []int{7}) {
+		t.Fatalf("level 33: %v", got)
 	}
 }
 

@@ -704,7 +704,7 @@ func TestVersionImagesLagFlagReadsPrimary(t *testing.T) {
 // under the revalidation lock, its value replaced (a plain SET) and the lock released; with the lock
 // held elsewhere the stale entry is served and nothing is queried.
 func TestVersionImagesStaleRevalidated(t *testing.T) {
-	stale := jspack.Pack(jspack.O("modelVersionId", 6003, "images", []any{jspack.O("id", 8399)}, "cachedAt", pageNow.Add(-25*time.Hour)))
+	stale := jspack.Pack(jspack.O("modelVersionId", 6003, "images", []any{jspack.O("id", 8399, "nsfwLevel", 1)}, "cachedAt", pageNow.Add(-25*time.Hour)))
 	lock := pageNS + "cache-lock:" + pageNS + missKey(KeyVersionImages, 6003)
 	t.Run("lock taken", func(t *testing.T) {
 		f := showcaseFixture(t)

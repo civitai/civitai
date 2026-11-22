@@ -44,3 +44,30 @@ func TestServeDetailLeavesOutMinorMatureShowcaseImages(t *testing.T) {
 		t.Errorf("the minor-flagged R image 8002 is served:\n%s", body)
 	}
 }
+
+// The same read keeps only the showcase images at a selectable level.
+func TestServeDetailShowcaseLevels(t *testing.T) {
+	w := newTestWorld()
+	cached := superjson.Field{Key: "cachedAt", Val: testNow.Add(-time.Minute)}
+	w.entries[KeyImagesForVersion+":6001"] = append(meta("modelVersionId", int64(6001), "images", []any{
+		meta("id", int64(8001), "url", "u1", "nsfwLevel", int64(1), "type", "image", "poi", false, "minor", false),
+		meta("id", int64(8005), "url", "u5", "nsfwLevel", int64(32), "type", "image", "poi", false, "minor", false),
+	}), cached)
+	w.entries[KeyTagIDsForImages+":8005"] = append(meta("imageId", int64(0), "tags", []any{int64(1)}), cached)
+	d := w.deps(t)
+	w.sys.SetString("system:browsing-setting-addons", []byte(`[{"type":"some","nsfwLevels":[1,2,4,8,16],"disablePoi":true,"excludedTagIds":[9901]}]`))
+	ans, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001"})
+	if err != nil {
+		t.Fatalf("serve: %v (%s)", err, reason(err))
+	}
+	body, err := superjson.Plain(ans.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `/u1/original=true/8001.jpeg`) {
+		t.Errorf("body lacks 8001:\n%s", body)
+	}
+	if strings.Contains(string(body), `/u5/`) {
+		t.Errorf("8005 is served:\n%s", body)
+	}
+}

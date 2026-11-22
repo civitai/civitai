@@ -4809,7 +4809,10 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
     return records;
   },
   appendFn: async (records, { bypassLocal }) => {
-    for (const entry of records) entry.images = entry.images.filter((i) => !isMinorMatureImage(i));
+    for (const entry of records)
+      entry.images = entry.images.filter(
+        (i) => !isMinorMatureImage(i) && onlySelectableLevels(i.nsfwLevel) !== 0
+      );
     const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
     // Passed on so the models search index, which fetches with bypassLocal, writes Redis-fresh tag
     // ids into its documents instead of ones this process's L1 may hold from before a tag edit.

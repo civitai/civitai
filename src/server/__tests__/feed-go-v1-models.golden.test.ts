@@ -171,22 +171,27 @@ vi.mock('~/server/services/model-file.service', async (importOriginal) => ({
   deleteFilesForModelVersionCache: vi.fn(),
 }));
 
-vi.mock('~/server/services/image.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  getImagesForModelVersion: vi.fn(),
-  // imagesForModelVersionsCache with its appendFn: each image's `tags` from tagIdsForImagesCache.
-  getImagesForModelVersionCache: vi.fn(async (ids: number[]) => {
-    const out = records(state.world.images, ids);
-    for (const entry of Object.values(out)) {
-      for (const image of entry.images) {
-        const t = state.world.imageTags?.[image.id];
-        image.tags = t && t !== 'notFound' ? t.tags : [];
+vi.mock('~/server/services/image.service', async (importOriginal) => {
+  const { onlySelectableLevels } = await import('~/shared/constants/browsingLevel.constants');
+  return {
+    ...(await importOriginal<Record<string, unknown>>()),
+    getImagesForModelVersion: vi.fn(),
+    // imagesForModelVersionsCache with its appendFn: the images at a selectable level, each image's
+    // `tags` from tagIdsForImagesCache.
+    getImagesForModelVersionCache: vi.fn(async (ids: number[]) => {
+      const out = records(state.world.images, ids);
+      for (const entry of Object.values(out)) {
+        entry.images = entry.images.filter((image) => onlySelectableLevels(image.nsfwLevel) !== 0);
+        for (const image of entry.images) {
+          const t = state.world.imageTags?.[image.id];
+          image.tags = t && t !== 'notFound' ? t.tags : [];
+        }
       }
-    }
-    return out;
-  }),
-  queueImageSearchIndexUpdate: vi.fn(),
-}));
+      return out;
+    }),
+    queueImageSearchIndexUpdate: vi.fn(),
+  };
+});
 
 vi.mock('~/server/services/hot-reads-11.reads', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
