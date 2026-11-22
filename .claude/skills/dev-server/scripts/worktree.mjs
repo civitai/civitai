@@ -633,6 +633,14 @@ export function parseNewArgs(tail) {
 export async function cmdCreate(primaryArg, name, branch, opts = {}) {
   const base = opts.base ?? 'origin/main';
   if (!name || !branch) fail('Usage: wt new <name> <branch> [--base origin/<branch>] [--no-install]');
+  // The second positional is the NEW branch name. `wt new x origin/main` would create refs/heads/origin/main,
+  // which then shadows the remote-tracking ref for every bare `origin/main` in the clone.
+  if (branch.startsWith('origin/') || branch.startsWith('refs/')) {
+    fail(
+      `<branch> is the NEW branch to create, not the base: ${branch}\n` +
+        `To fork from a remote branch: wt new ${name} <new-branch> --base ${branch.startsWith('origin/') ? branch : 'origin/<branch>'}`
+    );
+  }
   if (!/^[\w.-]+$/.test(name)) fail(`worktree name must be a plain directory name: ${name}`);
   if (!base.startsWith('origin/')) fail(`--base must be a remote ref (origin/<branch>), got: ${base}`);
 
@@ -649,7 +657,8 @@ export async function cmdCreate(primaryArg, name, branch, opts = {}) {
   }
 
   git(['fetch', 'origin', base.slice('origin/'.length)], primary);
-  git(['worktree', 'add', target, '-b', branch, '--no-track', base], primary);
+  // Fully qualified: a stray local branch named like the remote ref wins over the bare `origin/<b>`.
+  git(['worktree', 'add', target, '-b', branch, '--no-track', `refs/remotes/${base}`], primary);
   console.log(`created ${target} on ${branch} from ${base}`);
 
   if (existsSync(resolve(primary, '.gitmodules')) && gitQuiet(['config', '-f', '.gitmodules', `submodule.${SUBMODULE}.path`], primary)) {
