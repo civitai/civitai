@@ -109,8 +109,8 @@ const ALWAYS_NON_MINOR = new Set(['moderated', 'tos', 'ainotverified']);
 /**
  * The private `Image.blockedFor` patterns: regex lines under a `# signal`, `# known-non-minor` or
  * `# minor` header; other `#` lines are comments. Null when absent, when a pattern sits
- * under no header, or when one does not compile: the caller then reads every non-trivial value as
- * a signal.
+ * under no header, when one does not compile, or when it has no signal patterns:
+ * the caller then reads every non-trivial value as a signal.
  */
 export function parseBlockedForPatterns(raw: string | null | undefined): BlockedForPatterns | null {
   if (!raw?.trim()) return null;
@@ -131,9 +131,8 @@ export function parseBlockedForPatterns(raw: string | null | undefined): Blocked
         return null;
       }
   }
-  return patterns.signal.length || patterns.nonMinor.length || patterns.minor.length
-    ? patterns
-    : null;
+  // A list without its signals is damaged, whatever else it names.
+  return patterns.signal.length ? patterns : null;
 }
 
 /** The private patterns read through `getRaw`, parsed once per value it returns. */

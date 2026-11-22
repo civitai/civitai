@@ -89,6 +89,13 @@ describe('blockedForSignal', () => {
     expect(parseBlockedForPatterns('^no header$')).toBeNull();
     expect(parseBlockedForPatterns('# signal\n(unclosed')).toBeNull();
   });
+
+  it('refuses a list with no signal patterns, so every reason stays a signal', () => {
+    expect(parseBlockedForPatterns('# minor\n^minor-.*$')).toBeNull();
+    expect(parseBlockedForPatterns('# known-non-minor\n^benign$')).toBeNull();
+    expect(parseBlockedForPatterns('# known-non-minor\n^benign$\n# minor\n^minor-.*$')).toBeNull();
+    expect(blockedForSignal('minor-a', parseBlockedForPatterns('# minor\n^minor-.*$'))).toBe(true);
+  });
 });
 
 describe('review batch ids and records', () => {
