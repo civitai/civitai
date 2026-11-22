@@ -21,11 +21,10 @@
 //     while the registry keeps refusing. A token that cannot be fetched is retried the same way,
 //     without opening a subscription. Without one, the static token (or none) is sent and
 //     `invalid_token` waits the longest backoff, as before.
-//   - An upsert whose body is unusable is treated as deleted; with Consumer.KeepInvalidWhileServing
-//     (the listings read model), a serving generation keeps the row and marks it stale instead. An
-//     event that cannot be decoded at all
-//     (no usable urn, unreadable data) is skipped and counted, advancing the cursor only when it
-//     carried one, so one bad event never wedges the stream.
+//   - An upsert whose body is unusable is treated as deleted; a serving listings generation
+//     (Consumer.KeepInvalidWhileServing) keeps the row and marks it stale instead. An event that
+//     cannot be decoded at all (no usable urn, unreadable data) is skipped and counted, advancing
+//     the cursor only when it carried one, so one bad event never wedges the stream.
 //   - With Consumer.Count set (the listings read model), a snapshot that reaches Live holding no
 //     entity is suspect: it is never promoted. The serving generation keeps every row it holds, the
 //     hold is logged and counted, and the snapshot is taken again from an empty cursor after the
@@ -126,16 +125,11 @@ type Consumer struct {
 	// Decode turns an upsert's entity into its change, or says why the body is unusable (the
 	// entity is then treated as deleted). Nil is the app entity's (store.DecodeApp).
 	Decode func(urn, rev string, body json.RawMessage) (store.Change, error)
-	// KeepInvalidWhileServing, when set, keeps the stored row of an upsert whose body is unusable
-	// while the generation is serving and marks it stale (store.ChangeStale; the cursor still
-	// advances, and the event is counted `invalid`), instead of deleting it. A building generation
-	// still treats such a body as deleted. The listings read model sets it: an adapter rolled back
-	// below the layout this index requires would otherwise turn every listing invalid and empty the
-	// serving generation one delete at a time, so the API would answer 200 with empty pages. The kept
-	// row may lack what the upsert changed (a stricter rating, a rejected sub-listing, a banned
-	// author), so the listing API answers 503 not_ready while the serving generation holds any stale
-	// row (store.Listings.StaleCount), and the site reads the database. A later valid upsert or a
-	// delete of that URN ends its mark.
+	// KeepInvalidWhileServing keeps the row of an unusable upsert while serving, marked stale
+	// (store.ChangeStale), instead of deleting it; a building generation still deletes. Without it, an
+	// adapter rolled back below the required layout would empty the serving generation one delete at
+	// a time while the API answers 200. The listing API fails closed while any row is stale
+	// (store.Listings.StaleCount).
 	KeepInvalidWhileServing bool
 	// StaleCount, when set, is how many rows of a generation are marked stale; the consumer reads it
 	// into Metrics.Stale, which must be set with it, for the serving generation.

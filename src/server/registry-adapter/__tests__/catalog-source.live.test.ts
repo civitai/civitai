@@ -364,12 +364,23 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
 
   // The read returns every row (a read without its per-parent bound), or only the newest 200 with
   // the parent's full count (the bounded read): either way 200 are carried and 3 reported left out.
-  it.each<[string, number]>([
-    ['every row', 0],
-    ['the bounded read', 3],
+  // An off-site parent whose link template is unusable has no showable item at all: the bounded read
+  // carries none and reports none left out, since the rows past the bound would not link either.
+  it.each<
+    [string, number, { parent_kind?: string; parent_link_template?: string | null }, number, number]
+  >([
+    ['every row', 0, {}, 200, 3],
+    ['the bounded read', 3, {}, 200, 3],
+    [
+      'the bounded read, under an unusable link template',
+      3,
+      { parent_kind: 'offsite', parent_link_template: 'not-a-link-template' },
+      0,
+      0,
+    ],
   ])(
-    '🔴 a listing over the sub-listing cap carries the newest 200 items, and the excess is reported (%s)',
-    async (_name, unread) => {
+    '🔴 a listing over the sub-listing cap carries the newest showable items, and the excess is reported (%s)',
+    async (_name, unread, over, carried, omitted) => {
       dbMock.dbRead.appListing.findMany.mockImplementation((async (args: {
         select: Record<string, unknown>;
       }) =>
@@ -397,6 +408,7 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
         id: `asl_01J9ZK3Q4R5S6T7V8W9X${String(i).padStart(6, '0')}`,
         sort_time: `2026-05-06T07:08:09.${String(i).padStart(6, '0')}Z`,
         parent_item_count: 203,
+        ...over,
       }));
       const rows = all.slice(unread);
       dbMock.dbRead.$queryRaw.mockImplementation((async (
@@ -415,11 +427,11 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
       });
       if (!loadListingExtras) throw new Error('listings on, but no loadListingExtras');
       const extras = (await loadListingExtras(['lst-a1'])).get('lst-a1');
-      expect(extras?.subListings).toHaveLength(200);
-      expect(extras?.subListingsOmitted).toBe(3);
+      expect(extras?.subListings).toHaveLength(carried);
+      expect(extras?.subListingsOmitted).toBe(omitted);
       // The three oldest (the first three rows) are the ones left out.
-      expect(extras?.subListings[0].id).toBe(all[3].id);
-      expect(capped).toEqual([['lst-a1', 3]]);
+      if (carried > 0) expect(extras?.subListings[0].id).toBe(all[3].id);
+      expect(capped).toEqual(omitted > 0 ? [['lst-a1', omitted]] : []);
     }
   );
 

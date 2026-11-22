@@ -24,10 +24,9 @@ import (
 // rating, sort time), so Keys can rank and gate them without decoding any body.
 //
 // stale marks a row kept from before an upsert the serving generation could not use (ChangeStale,
-// Listings.StaleCount); an upsert writes the row with it false. Like the other added columns it is
-// added in place by its ALTER, not by a layout bump: a row written before it is not stale, so
-// nothing has to be rebuilt. The partial index keeps StaleCount, which the read API runs on every
-// request, to the stale rows only.
+// Listings.StaleCount). Added by ALTER, not a layout bump: older rows are correctly not stale. The
+// partial index, over the stale rows only, is for StaleCount, which every listing request that
+// reaches the serving generation runs.
 //
 // The media live in the body only, every item as the stream sent it, each with its own nsfwLevel,
 // rating and host; a read decodes them from it (decodeStored). Nothing here applies a ceiling: the

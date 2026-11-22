@@ -108,18 +108,22 @@ export function listingExtrasFromRow(
 
 /**
  * A listing's stream items from its rows, capped (`capSubListings`). Left out: the items the cap
- * drops, and the rows the read's per-parent bound never returned (`parent_item_count`).
+ * drops, and the rows the read's per-parent bound never returned (`parent_item_count`), counted
+ * only when every returned row is an item: a row with no valid link (an off-site parent's unusable
+ * template) is not one, and the unread rows may not be either.
  */
 function subListingsOf(
   rows: readonly StoreSubListingRow[]
 ): Pick<ListingExtras, 'subListings' | 'subListingsOmitted'> {
-  const { items, omitted } = capSubListings(
-    rows.flatMap((row) => {
-      const item = registrySubListing(row);
-      return item ? [item] : [];
-    })
-  );
-  const unread = rows.length > 0 ? Math.max(0, rows[0].parent_item_count - rows.length) : 0;
+  const projected = rows.flatMap((row) => {
+    const item = registrySubListing(row);
+    return item ? [item] : [];
+  });
+  const { items, omitted } = capSubListings(projected);
+  const unread =
+    rows.length > 0 && projected.length === rows.length
+      ? Math.max(0, rows[0].parent_item_count - rows.length)
+      : 0;
   return { subListings: items, subListingsOmitted: omitted + unread };
 }
 

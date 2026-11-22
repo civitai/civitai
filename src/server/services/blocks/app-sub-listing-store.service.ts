@@ -331,7 +331,7 @@ export function subListingStoreArmWhere(
 
 /**
  * A {@link SubListingHydrateRow} as the listing stream reads it: with its parent, its sort time, and
- * how many items its parent has in all.
+ * how many eligible items its parent has (`parent_item_count`).
  */
 export type StoreSubListingRow = SubListingHydrateRow & {
   parent_listing_id: string;
