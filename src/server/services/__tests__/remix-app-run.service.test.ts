@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { logToAxiom } from '~/server/logging/client';
 import type * as ImageVisibility from '~/server/services/image-visibility.service';
 import type * as InputUrls from '~/server/services/generation-input-urls';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
@@ -2041,9 +2042,20 @@ describe('a user app', () => {
           code: 'BAD_REQUEST',
           message: REMIX_APP_PROMPT_REFUSED,
         });
+        // auditPromptServer is the one writer of prohibitedRequests and the blocked-prompt count
+        // the auto-mute reseeds from: the viewer's only trail is this event, without the prompt.
         expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
         expect(submits()).toHaveLength(0);
         expect(blocks()).toHaveLength(1);
+        const events = vi
+          .mocked(logToAxiom)
+          .mock.calls.filter(([event]) => event.name === 'remix-combination-refusal');
+        expect(events.map(([event]) => event)).toEqual([
+          expect.objectContaining({
+            payload: { slug: 'u5-mine', viewerId: 101, outcome: 'hard', categories: ['minor_age'] },
+          }),
+        ]);
+        expect(JSON.stringify(events)).not.toContain('at dusk');
       });
 
       it('C: a refusal the prompt, judged again, does not repeat never counts', async () => {

@@ -391,6 +391,19 @@ async function assertWholePromptPasses(
   if (alone.some((verdict) => verdict?.outcome === whole.outcome)) return;
   // Green's own list strikes nobody, and holds no app back from the other domains.
   if (!isGreen) await recordCombinationBlock(slug, whole, alone, caller.user.id);
+  // shortcut: the viewer's only trail, an event and never an audit row, which would feed their
+  // blocked-prompt count; a typed audit row replaces it.
+  logToAxiom({
+    name: 'remix-combination-refusal',
+    type: 'info',
+    message: "A combination refusal on another creator's remix app",
+    payload: {
+      slug,
+      viewerId: caller.user.id,
+      outcome: whole.outcome,
+      categories: [...new Set(whole.triggers.map(({ category }) => category))],
+    },
+  });
   throw new TRPCError({ code: 'BAD_REQUEST', message: REMIX_APP_PROMPT_REFUSED });
 }
 
