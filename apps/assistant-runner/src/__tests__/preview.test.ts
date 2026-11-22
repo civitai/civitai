@@ -72,8 +72,13 @@ class FakeTunnels implements DevTunnels {
     return { sessionId, host: HOST, sshHostPublicKey: HOST_KEY };
   }
 
+  /** What `preview/open` throws instead of answering, when set (asked per open). */
+  openError: (() => unknown) | null = null;
+
   async open(input: PreviewOpenInput): Promise<PreviewOpenAnswer> {
     this.opens.push(input);
+    const error = this.openError?.();
+    if (error) throw error;
     if (!this.direct) return { mode: 'tunnel' };
     if (this.alwaysFresh) return { mode: 'direct', fresh: true };
     const open = this.directSessions.get(input.blockId);
@@ -1386,6 +1391,66 @@ describe('direct preview (civitai serves it with no tunnel)', () => {
     ]);
   });
 
+  describe('preview/open failing without refusing falls back to the dev tunnel', () => {
+    it('civitai out of reach (a network error): the tunnel start proceeds', async () => {
+      directApp();
+      tunnels.openError = () => new TypeError('fetch failed');
+      const { tools } = await open();
+      const result = await call(tools.tools, 'start_preview');
+      expect(result).toMatchObject({ shown: true, blockId: 'my-app', host: HOST });
+      expect(tunnels.opens).toHaveLength(1);
+      expect(tunnelCalls()).toEqual(['tunnel_key', 'tunnel_connect']);
+      expect(tunnels.started).toHaveLength(1);
+    });
+
+    it('`unavailable` after all its asks: the tunnel start proceeds', async () => {
+      directApp();
+      tunnels.openError = () => new DevTunnelError('later', 503, 'unavailable');
+      const { tools } = await open();
+      const result = await call(tools.tools, 'start_preview', { declared_scopes: ['models:read'] });
+      expect(result).toMatchObject({ shown: true, host: HOST });
+      expect(tunnels.started).toEqual([
+        expect.objectContaining({ blockId: 'my-app', declaredScopes: ['models:read'] }),
+      ]);
+    });
+
+    // Invariant guard: a refusal from civitai's gates is still the start's answer.
+    it('a refusal (403 refused) fails the start with it, and no tunnel is started', async () => {
+      directApp();
+      tunnels.openError = () => new DevTunnelError('banned', 403, 'refused');
+      const { tools } = await open();
+      const result = await call(tools.tools, 'start_preview');
+      expect(String(result.error)).toMatch(/^The preview was refused for this account/);
+      expect(tunnels.started).toEqual([]);
+      expect(tunnelCalls()).toEqual([]);
+    });
+
+    // Invariant guard: an abort during the open still ends the start, and no tunnel is started.
+    it('an abort during the open is not taken for a hiccup', async () => {
+      directApp();
+      const stop = new AbortController();
+      tunnels.openError = () => {
+        stop.abort();
+        return stop.signal.reason;
+      };
+      const { tools } = await open();
+      const tool = tools.tools['start_preview']!;
+      const result = (await Promise.resolve(
+        tool.execute!(
+          {} as never,
+          {
+            toolCallId: 'p-abort-open',
+            messages: [],
+            abortSignal: stop.signal,
+          } as never
+        )
+      ).catch((error: unknown) => ({ thrown: error }))) as Record<string, unknown>;
+      expect(result.shown).toBeUndefined();
+      expect(tunnels.started).toEqual([]);
+      expect(tunnelCalls()).toEqual([]);
+    });
+  });
+
   describe('the stop before an open is best-effort', () => {
     const failing = () => new DevTunnelError('later', 503, 'unavailable');
 
@@ -1625,7 +1690,7 @@ describe('CivitaiDevTunnels: direct preview calls', () => {
       await vi.runAllTimersAsync();
       expect(await opened).toMatchObject({ status: 503, code: 'unavailable' });
       expect(sent).toHaveLength(OPEN_ATTEMPTS);
-      // Bounds the worst-case wait at about 5 × 15 s (each ask's own timeout).
+      // The worst-case wait is OPEN_ATTEMPTS × the per-ask timeout: keep it bounded.
       expect(OPEN_ATTEMPTS).toBeLessThanOrEqual(5);
 
       const refused = client(() =>

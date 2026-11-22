@@ -603,11 +603,11 @@ export class RunnerPreview {
         },
         signal
       );
-    let answer: PreviewOpenAnswer;
+    let answer: PreviewOpenAnswer | null;
     let rotated = false;
     try {
-      answer = await ask(previewId);
-      if (answer.mode === 'direct' && 'fresh' in answer) {
+      answer = await this.#askOrFallBack(() => ask(previewId), signal);
+      if (answer?.mode === 'direct' && 'fresh' in answer) {
         let next: string;
         try {
           next = await sandbox.rotatePreviewId();
@@ -616,8 +616,8 @@ export class RunnerPreview {
           throw new DevTunnelError('The preview id could not be renewed.', 503, 'unavailable');
         }
         rotated = true;
-        answer = await ask(next);
-        if (answer.mode === 'direct' && 'fresh' in answer) {
+        answer = await this.#askOrFallBack(() => ask(next), signal);
+        if (answer?.mode === 'direct' && 'fresh' in answer) {
           const twice = new DevTunnelError(
             'A new preview id was answered as used.',
             503,
@@ -630,9 +630,10 @@ export class RunnerPreview {
     } catch (error) {
       throw new Error(refusalMessage(error), { cause: error });
     }
-    if (answer.mode === 'tunnel' || 'fresh' in answer) {
-      // The flag went off mid-run while this run's direct preview of the block is still open (its
-      // stop failed above): close it once more before the tunnel replaces it here.
+    if (!answer || answer.mode === 'tunnel' || 'fresh' in answer) {
+      // The dev tunnel (the flag went off mid-run, or civitai could not be asked) while this run's
+      // direct preview of the block is still open (its stop failed above): close it once more
+      // before the tunnel replaces it here.
       if (sameBlock && stopError !== undefined && previous) await this.#closeOpen(previous, signal);
       return null;
     }
@@ -666,6 +667,27 @@ export class RunnerPreview {
     };
     if (this.#keepCurrent) this.#keepAlive();
     return result;
+  }
+
+  /**
+   * One `preview/open`, or `null` (the dev tunnel) when it failed without refusing: every start
+   * asks it first, so with the flag off a civitai hiccup on it (out of reach, a 5xx, `unavailable`
+   * after its retries, an odd answer) must not cost the tunnel start. A refusal from civitai's
+   * gates (a 4xx with a code) is thrown: the tunnel start would refuse the same. So is an abort.
+   */
+  async #askOrFallBack(
+    ask: () => Promise<PreviewOpenAnswer>,
+    signal?: AbortSignal
+  ): Promise<PreviewOpenAnswer | null> {
+    try {
+      return await ask();
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      if (error instanceof DevTunnelError && error.status < 500 && error.code !== undefined)
+        throw error;
+      this.#warn(error, 'asking civitai how to open the preview failed; opening a tunnel');
+      return null;
+    }
   }
 
   /** Closes a preview this run opened: a tunnel by its id, a direct one by its block. */
