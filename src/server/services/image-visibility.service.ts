@@ -157,6 +157,7 @@ export function imageVisibilityConditions({
           AND a.status = 'Published'
           AND a."publishedAt" IS NOT NULL
           AND a.ingestion = 'Scanned'
+          AND a.availability != 'Private'
       ))
       OR (i."postId" IS NULL AND (
         EXISTS (

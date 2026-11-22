@@ -33,13 +33,16 @@ export const modelPageId = (alias: string) => `COALESCE(${alias}."legacyV1Id", $
 export const isModelComment = (alias: string) => `(${alias}."entityType" = 'model')`;
 
 /**
- * A comment on an unpublished article is shared only with its owner and link holders; a notification
- * can reach someone who never held the link. `ownerMay` is the recipient, when the owner may still hear.
+ * A comment on an unpublished article is shared only with its owner and link holders, and one on an
+ * article under the availability rule only with its owner; a notification can reach someone who
+ * never held the link. `ownerMay` is the recipient, when the owner may still hear.
  */
 export const notOnUnpublishedArticle = (alias: string, ownerMay?: string) => `NOT EXISTS (
             SELECT 1 FROM "Article" da
             WHERE ${alias}."entityType" = 'article' AND da.id = ${alias}."entityId"
-              AND da.status <> 'Published'${ownerMay ? ` AND da."userId" <> ${ownerMay}` : ''}
+              AND (da.status <> 'Published' OR da.availability = 'Private')${
+                ownerMay ? ` AND da."userId" <> ${ownerMay}` : ''
+              }
           )`;
 
 /**

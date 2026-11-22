@@ -169,6 +169,19 @@ describe('getArticleByShareToken', () => {
     expect(await read()).toEqual({ status: 'unavailable' });
   });
 
+  it.each([
+    ['a draft', ArticleStatus.Draft],
+    ['a published article', ArticleStatus.Published],
+  ])('follows the article availability rule for %s', async (_, status) => {
+    articles({ status, availability: 'Private' });
+    expect(await read()).toEqual({ status: 'unavailable' });
+  });
+
+  it('keeps the link for a draft with the default availability', async () => {
+    articles({ availability: 'Public' });
+    expect((await read()).status).toBe('ok');
+  });
+
   it('sends a published article to its public page instead of serving the draft view', async () => {
     articles({ status: ArticleStatus.Published });
     expect(await read()).toEqual({ status: 'published', url: `/articles/${ARTICLE}/article-1` });
@@ -768,6 +781,22 @@ describe('comments on a shared draft', () => {
     await expect(
       gate(as(MODERATOR, { cookie: false, isModerator: true }))
     ).resolves.toBeUndefined();
+  });
+
+  it('follows the article availability rule for comments: owner and moderator, no link', async () => {
+    dbMock.dbRead.article.findUnique.mockResolvedValue({
+      userId: AUTHOR,
+      status: ArticleStatus.Published,
+      availability: 'Private',
+    } as never);
+    await expect(gate(as(STRANGER))).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(gate(as(undefined))).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    const owner = as(AUTHOR, { cookie: false });
+    await expect(gate(owner)).resolves.toBeUndefined();
+    expect(owner.cache).toMatchObject({ edgeTTL: 0, browserTTL: 0, canCache: false });
+    const moderator = as(MODERATOR, { cookie: false, isModerator: true });
+    await expect(gate(moderator)).resolves.toBeUndefined();
+    expect(moderator.cache).toMatchObject({ edgeTTL: 0, browserTTL: 0, canCache: false });
   });
 
   it('leaves a published article open to everyone', async () => {

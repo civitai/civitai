@@ -503,6 +503,52 @@ describe('notification queries on CommentV3', () => {
     );
   });
 
+  it('replies on an article under the availability rule reach only its owner', async () => {
+    const ours = (out: Emitted[]) => pairs(out).filter(([commentId]) => commentId >= 401);
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "replyToId", "userId", content, "createdAt") VALUES
+         (401, 'article', 10, NULL, NULL, 2, 'a', now()), (402, 'article', 10, 106, NULL, 3, 'b', now()),
+         (403, 'article', 10, 401, NULL, 1, 'c', now()), (404, 'article', 10, 401, 403, 3, 'd', now())`,
+      `DELETE FROM "CommentV3" WHERE id BETWEEN 401 AND 404`,
+      async () => {
+        expect(ours(await emitted('new-comment-reply'))).toEqual([
+          [402, 10],
+          [403, 2],
+          [404, 1],
+        ]);
+        await temporarily(
+          `UPDATE "Article" SET availability = 'Private' WHERE id = 10`,
+          `UPDATE "Article" SET availability = 'Public' WHERE id = 10`,
+          async () => {
+            // The owner (1) still hears the reply to their own comment.
+            expect(ours(await emitted('new-comment-reply'))).toEqual([[404, 1]]);
+            expect(ours(await emitted('new-thread-response'))).toEqual([]);
+          }
+        );
+      }
+    );
+  });
+
+  it('new-mention follows the article availability rule', async () => {
+    const mentioned = async () =>
+      pairs(await run(mentionNotifications['new-mention'].prepareQuery)).filter(
+        ([commentId]) => commentId === 400
+      );
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "createdAt")
+         VALUES (400, 'article', 10, 2, 'see "mention:9"', now())`,
+      `DELETE FROM "CommentV3" WHERE id = 400`,
+      async () => {
+        expect(await mentioned()).toEqual([[400, 9]]);
+        await temporarily(
+          `UPDATE "Article" SET availability = 'Private' WHERE id = 10`,
+          `UPDATE "Article" SET availability = 'Public' WHERE id = 10`,
+          async () => expect(await mentioned()).toEqual([])
+        );
+      }
+    );
+  });
+
   it.each([
     ['unpublished', `UPDATE "Model" SET status = 'Unpublished' WHERE id = 1`],
     ['POI', `UPDATE "Model" SET poi = true WHERE id = 1`],

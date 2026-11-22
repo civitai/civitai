@@ -484,7 +484,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND NOT EXISTS (
       SELECT 1 FROM "Article" da
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
-      AND da.status <> 'Published' AND da."userId" <> pc."userId"
+      AND (da.status <> 'Published' OR da.availability = 'Private') AND da."userId" <> pc."userId"
       )
       AND NOT EXISTS (
       SELECT 1 FROM "PostText" ht JOIN "Post" hp ON hp.id = ht."postId"
@@ -630,7 +630,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND NOT EXISTS (
       SELECT 1 FROM "Article" da
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
-      AND da.status <> 'Published'
+      AND (da.status <> 'Published' OR da.availability = 'Private')
       )
       AND NOT EXISTS (
       SELECT 1 FROM "Model" hm
@@ -731,7 +731,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND NOT EXISTS (
       SELECT 1 FROM "Article" da
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
-      AND da.status <> 'Published'
+      AND (da.status <> 'Published' OR da.availability = 'Private')
       )
       AND NOT EXISTS (
       SELECT 1 FROM "Model" hm

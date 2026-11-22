@@ -46,7 +46,7 @@ const SCHEMA = `
   );
   CREATE TABLE "Article" (
     id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text,
-      "bannerId" int
+      "bannerId" int, availability "Availability" DEFAULT 'Public'
   );
   CREATE TABLE "CollectionContributor" (
     "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
@@ -215,6 +215,21 @@ describe('a postless article banner', () => {
     expect([...(await getImageIdsVisibleToViewer({ ids: [301, 302], userId: VIEWER }))]).toEqual([
       301,
     ]);
+
+    const cleanup = `TRUNCATE "Article";`;
+    await Promise.all([replica.exec(cleanup), primary.exec(cleanup)]);
+  });
+
+  it('follows the article availability rule for a cover: owner only', async () => {
+    const seed = `
+      INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel", ingestion, "needsReview", "nsfwLevelLocked") VALUES
+        (303, ${OWNER}, NULL, 1, 'Scanned', NULL, false);
+      INSERT INTO "Article" (id, status, "publishedAt", ingestion, "bannerId", availability) VALUES
+        (5, 'Published', now() - interval '1 day', 'Scanned', 303, 'Private');`;
+    await Promise.all([replica.exec(seed), primary.exec(seed)]);
+
+    expect([...(await getImageIdsVisibleToViewer({ ids: [303], userId: VIEWER }))]).toEqual([]);
+    expect([...(await getImageIdsVisibleToViewer({ ids: [303], userId: OWNER }))]).toEqual([303]);
 
     const cleanup = `TRUNCATE "Article";`;
     await Promise.all([replica.exec(cleanup), primary.exec(cleanup)]);
