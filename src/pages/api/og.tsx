@@ -343,6 +343,7 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
         status: ArticleStatus.Published,
         tosViolation: false,
         ingestion: ArticleIngestionStatus.Scanned,
+        availability: { not: Availability.Private },
       },
       select: {
         title: true,

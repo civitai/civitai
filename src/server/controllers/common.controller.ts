@@ -99,7 +99,7 @@ export const updateEntityAvailabilityHandler = async ({
             {
               id: entityId,
               action:
-                availability === Availability.Unsearchable
+                availability === Availability.Unsearchable || availability === Availability.Private
                   ? SearchIndexUpdateQueueAction.Delete
                   : SearchIndexUpdateQueueAction.Update,
             },

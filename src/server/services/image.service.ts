@@ -5961,7 +5961,8 @@ export const getEntityCoverImage = async ({
               AND ${baseModelAllowed}
               AND ${coverNotBlocked}
           AND (
-            (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned')
+            (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned'
+              AND a.availability != 'Private')
             OR (${signedIn}::boolean AND a."userId" = ${viewerId}) OR ${isModerator}::boolean
           )
               AND i."ingestion" = 'Scanned'
@@ -6072,7 +6073,8 @@ export const getEntityCoverImage = async ({
               OR (
                 e."entityType" = 'Article'
                 AND (
-                  (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned')
+                  (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned'
+                    AND a.availability != 'Private')
                   OR (${signedIn}::boolean AND a."userId" = ${viewerId})
                 )
               )

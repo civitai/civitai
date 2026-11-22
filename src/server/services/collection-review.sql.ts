@@ -76,6 +76,7 @@ export const reviewQueueVisibleTargetSql = (levels: number) => Prisma.sql`(CASE
       AND rv_a."status" = ${ArticleStatus.Published}::"ArticleStatus"
       AND rv_a."publishedAt" IS NOT NULL
       AND rv_a."ingestion" = 'Scanned'::"ArticleIngestionStatus"
+      AND rv_a."availability" != 'Private'::"Availability"
       AND (rv_a."nsfwLevel" & ${levels}) != 0
   )
   ELSE false
