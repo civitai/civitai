@@ -7,6 +7,8 @@ import {
 } from '@civitai/shared/feedback-capture';
 import { BanReasonCode } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import type { CsamReportType } from '~/shared/utils/prisma/enums';
+import { CSAM_IMAGE_FILING_NO_IMAGE_REFUSAL } from '~/shared/constants/csam-context.constants';
 import { logToAxiom } from '~/server/logging/client';
 import {
   FlaggedConsumerFetchError,
@@ -55,6 +57,18 @@ export const CSAM_BLOCKLIST_FAILED_MESSAGE =
 export const CSAM_HELD_MEDIA_COPY_FAILED_MESSAGE =
   'The report was filed and the account removed. The blocklist entry was written, but its review copy failed and has been logged for repair. Do not file the report again.';
 
+/**
+ * Refuses an image report that names no image that still exists: it could never be sent, while filing
+ * it removes the account. Read on the primary, before anything is written.
+ */
+export async function refuseImageFilingWithoutImages(type: CsamReportType, imageIds: number[]) {
+  if (type !== 'Image') return;
+  if (!imageIds.length) throwBadRequestError(CSAM_IMAGE_FILING_NO_IMAGE_REFUSAL);
+  // primary: a replica may lag an image's removal, and this gates removing the account
+  const existing = await dbWrite.image.count({ where: { id: { in: imageIds } } });
+  if (!existing) throwBadRequestError(CSAM_IMAGE_FILING_NO_IMAGE_REFUSAL);
+}
+
 /** The report plus everything it triggers. Split from the tRPC handler so `/api/mod/csam/*` can reach
  *  it with the acting moderator's id rather than a fabricated tRPC context. */
 export async function fileCsamReport(input: CreateCsamReportSchema & { reportedById: number }) {
@@ -68,6 +82,7 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     isFeedbackCaptureOwner((details as { secondaryUserId?: unknown } | undefined)?.secondaryUserId)
   )
     throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
+  await refuseImageFilingWithoutImages(type, imageIds);
   if (contextSources && type !== 'Image')
     throwBadRequestError('Text can be attached to an image report only');
   const contextText = contextSources

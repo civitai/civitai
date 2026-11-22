@@ -128,6 +128,7 @@ beforeEach(async () => {
       (${PAST_MARGIN_OWNER}, now() - interval '23 days 1 hour');
   `);
   dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
+  dbMock.dbWrite.image.count.mockResolvedValue(1 as never);
   dbMock.dbWrite.$executeRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...v: unknown[]
