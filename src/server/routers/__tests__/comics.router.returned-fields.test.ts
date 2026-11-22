@@ -88,8 +88,8 @@ async function panelMetadataFor(
 const owner = { id: OWNER, isModerator: false };
 const moderator = { id: MODERATOR, isModerator: true };
 
-describe('getChapter panel metadata', () => {
-  it('returns only the listed fields to the owner', async () => {
+describe('getChapter returned fields', () => {
+  it('returns the listed fields to the owner', async () => {
     expect(await panelMetadataFor(owner)).toEqual({
       enhanceEnabled: true,
       useContext: false,
@@ -116,7 +116,7 @@ describe('getChapter panel metadata', () => {
     });
   });
 
-  it('gives candidates no key for anyone but the owner', async () => {
+  it('returns the listed candidate fields to another viewer', async () => {
     expect((await panelMetadataFor(moderator)).candidateImages).toEqual([
       { nsfwLevel: null },
       { nsfwLevel: 1 },
@@ -124,21 +124,21 @@ describe('getChapter panel metadata', () => {
     ]);
   });
 
-  it('keeps the source of a clean image for a moderator', async () => {
+  it('returns the source field to a moderator (case 1)', async () => {
     expect((await panelMetadataFor(moderator)).sourceImageUrl).toBe('source-key');
   });
 
-  it('drops the source rated Blocked for anyone but its uploader', async () => {
+  it('follows the shared visibility rule for the source field (case 2)', async () => {
     const rows = [imageRow('source-key', NsfwLevel.Blocked, OWNER)];
     expect((await panelMetadataFor(moderator, { rows })).sourceImageUrl).toBeUndefined();
     expect((await panelMetadataFor(owner, { rows })).sourceImageUrl).toBe('source-key');
   });
 
-  it('drops the source with no image row', async () => {
+  it('follows the shared visibility rule for the source field (case 3)', async () => {
     expect((await panelMetadataFor(owner, { rows: [] })).sourceImageUrl).toBeUndefined();
   });
 
-  it('drops the source when any of its image rows may not be shown', async () => {
+  it('follows the shared visibility rule for the source field (case 4)', async () => {
     const rows = [
       imageRow('source-key', NsfwLevel.PG),
       imageRow('source-key', NsfwLevel.Blocked, OTHER),
@@ -146,7 +146,7 @@ describe('getChapter panel metadata', () => {
     expect((await panelMetadataFor(owner, { rows })).sourceImageUrl).toBeUndefined();
   });
 
-  it('drops a mature source on the green site', async () => {
+  it('follows the shared visibility rule for the source field (case 5)', async () => {
     const rows = [imageRow('source-key', NsfwLevel.R)];
     expect((await panelMetadataFor(owner, { rows, isGreen: true })).sourceImageUrl).toBeUndefined();
     expect((await panelMetadataFor(owner, { rows })).sourceImageUrl).toBe('source-key');

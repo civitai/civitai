@@ -69,17 +69,17 @@ const viewers = [
   ['the project owner who did not upload them', { id: OWNER, isModerator: false }],
 ] as const;
 
-describe.each(viewers)('getProjectShell reference images for %s', (_, viewer) => {
+describe.each(viewers)('getProjectShell for %s', (_, viewer) => {
   it.each([null, BlockedReason.CSAM, BlockedReason.Moderated])(
-    'leave out one rated Blocked (blockedFor %s) and keep a clean one',
+    'follows the shared visibility rule (blockedFor %s)',
     async (blockedFor) => {
       expect(await referenceImageIds(viewer, blockedFor)).toEqual([1]);
     }
   );
 });
 
-describe('getProjectShell reference images for the project owner who uploaded them', () => {
-  it('keep their own image rated Blocked', async () => {
+describe('getProjectShell for the project owner who uploaded them', () => {
+  it('follows the shared visibility rule', async () => {
     expect(await referenceImageIds({ id: OWNER, isModerator: false }, null, OWNER)).toEqual([1, 2]);
   });
 });
