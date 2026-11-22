@@ -718,19 +718,29 @@ describe('a blocked or ToS-violating bounty image', () => {
   });
 });
 
-describe('a blocked cover at the Blocked level, as the block sets it', () => {
+describe('a cover at the Blocked level', () => {
   beforeAll(async () => {
     await db.exec(`
-      INSERT INTO "Image" (id, "blockedFor", "nsfwLevel") VALUES (3021, 'tos', ${NsfwLevel.Blocked});
-      INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (3031, 3021, 'Published', now());
+      INSERT INTO "Image" (id, "blockedFor", "nsfwLevel") VALUES
+        (3021, 'tos', ${NsfwLevel.Blocked}), (3022, NULL, ${NsfwLevel.Blocked});
+      INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES
+        (3031, 3021, 'Published', now()), (3032, 3022, 'Published', now());
     `);
   });
 
-  it.each(['anonymous', 'stranger', 'owner'] as const)('is no cover for the %s', async (who) => {
-    expect(await coverOf('Article', 3031, viewers[who])).toBeNull();
-  });
+  // [label, article, its cover]
+  const cases: [string, number, number][] = [
+    ['blocked, as the block sets it', 3031, 3021],
+    ['with no block recorded', 3032, 3022],
+  ];
 
-  it('is kept for a moderator', async () => {
-    expect(await coverOf('Article', 3031, viewers.moderator)).toBe(3021);
+  describe.each(cases)('%s', (_, articleId, coverId) => {
+    it.each(['anonymous', 'stranger', 'owner'] as const)('is no cover for the %s', async (who) => {
+      expect(await coverOf('Article', articleId, viewers[who])).toBeNull();
+    });
+
+    it('is kept for a moderator', async () => {
+      expect(await coverOf('Article', articleId, viewers.moderator)).toBe(coverId);
+    });
   });
 });
