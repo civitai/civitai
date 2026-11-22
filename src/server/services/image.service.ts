@@ -5754,7 +5754,7 @@ export const getEntityCoverImage = async ({
     isModerator,
   })}`;
 
-  // An unrated or Blocked-level image is never a cover for anyone but moderators, owner included.
+  // An unrated image is never a cover for anyone but moderators, owner included.
   const coverRated = Prisma.sql`(i."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) OR ${isModerator}::boolean)`;
 
   // A minor or SFW-only model's image above its gallery level is its owner's and moderators'
