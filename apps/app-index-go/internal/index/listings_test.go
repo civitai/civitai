@@ -466,11 +466,14 @@ func TestListingsConsumerOnlyWhenOn(t *testing.T) {
 			}
 			continue
 		}
-		if c == nil || opened != 1 || series != 9 {
-			t.Fatalf("on: consumer %v, store opened %d times, %d listing series; want one, 1, 9", c, opened, series)
+		// 10: the stream's 7, empty snapshots, dropped, and stale rows.
+		if c == nil || opened != 1 || series != 10 {
+			t.Fatalf("on: consumer %v, store opened %d times, %d listing series; want one, 1, 10", c, opened, series)
 		}
-		if c.Schema != "urn:schema:apps.civitai.com:store-listing@v1" || c.Layout != 4 || c.Count == nil || c.Decode == nil {
-			t.Fatalf("on: schema %q layout %d count %v decode %v", c.Schema, c.Layout, c.Count != nil, c.Decode != nil)
+		if c.Schema != "urn:schema:apps.civitai.com:store-listing@v1" || c.Layout != 4 || c.Count == nil || c.Decode == nil ||
+			c.StaleCount == nil || !c.KeepInvalidWhileServing {
+			t.Fatalf("on: schema %q layout %d count %v decode %v stale count %v keep invalid %v", c.Schema, c.Layout,
+				c.Count != nil, c.Decode != nil, c.StaleCount != nil, c.KeepInvalidWhileServing)
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
