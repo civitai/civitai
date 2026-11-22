@@ -28,7 +28,7 @@ export function isTrustedSessionCaller(request: Request, url: URL): boolean {
   return source === null || source === url.origin || allowedCorsOrigin(source) !== null;
 }
 
-/** Response headers for a page whose buttons act on the session: no other origin may frame it. */
+/** Headers that stop other origins framing a response; the server hook adds them to every hub response. */
 export const NO_FRAMING = {
   'content-security-policy': "frame-ancestors 'none'",
   'x-frame-options': 'DENY',
