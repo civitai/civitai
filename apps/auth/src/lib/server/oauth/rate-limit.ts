@@ -1,4 +1,5 @@
 import { json } from '@sveltejs/kit';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 
 // OAuth endpoint rate limits, ported from the main app's src/server/oauth/rate-limit.ts RATE_LIMITS.
@@ -99,9 +100,6 @@ const waitText = (seconds: number) => {
   const minutes = Math.ceil(seconds / 60);
   return minutes === 1 ? '1 minute' : `${minutes} minutes`;
 };
-
-const escapeHtml = (text: string) =>
-  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /**
  * A 429 with `Retry-After` and `retry_after` (whole seconds, at least 1). Pass `request` on a route a
