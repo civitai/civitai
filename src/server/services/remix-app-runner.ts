@@ -73,6 +73,10 @@ export class RemixQuarantinedError extends Error {
   }
 }
 
+/** The hex sha256 of an app's source: the runner's quarantine key and the stored source ref. */
+export const remixSourceDigest = (source: string) =>
+  createHash('sha256').update(source).digest('hex');
+
 /** The runner's signed refusal of a quarantined app. */
 const QUARANTINED_STATUS = 423;
 
@@ -82,7 +86,7 @@ export async function callRemixRunner(
   opts: { config?: HookRunnerConfig | null; fetchImpl?: typeof fetch; nowSec?: () => number } = {}
 ): Promise<RunnerResult[]> {
   const branches = call.branches ?? [];
-  const sha256 = createHash('sha256').update(call.source).digest('hex');
+  const sha256 = remixSourceDigest(call.source);
   const answer = await postToHookRunner(
     opts.config === undefined ? remixRunnerConfig() : opts.config,
     '/v1/remix/replay',

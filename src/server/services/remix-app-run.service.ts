@@ -12,7 +12,6 @@ import {
 import {
   classifyPromptServer,
   type PromptClassification,
-  type PromptRefusalCause,
 } from '~/server/services/orchestrator/promptAuditing';
 import { env } from '~/env/server';
 import { isOverLengthRefusal, type PromptTriggerCategory } from '~/utils/metadata/audit';
@@ -67,6 +66,7 @@ import {
   remixAnswerRefusal,
   remixLogSize,
   RemixReplayError,
+  REMIX_RUN_LIMITS,
   type RemixLogEntry,
   type RemixReplayer,
 } from '~/shared/remix-apps/replay';
@@ -147,9 +147,15 @@ function readMeta(workflow: Workflow): RemixRunMetadata | undefined {
   };
 }
 
+/** Recorded answers live in workflow metadata, which its owner can patch: any that do not fit damage the run. */
 function readAnswers(raw: unknown): RemixAnswer[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  return raw.filter((a): a is RemixAnswer => typeof a === 'string' || typeof a === 'number');
+  if (raw == null) return undefined;
+  const fits = (a: unknown) =>
+    (typeof a === 'string' && a.length <= REMIX_RUN_LIMITS.answerLength) ||
+    (Number.isSafeInteger(a) && (a as number) >= 0);
+  if (!Array.isArray(raw) || raw.length > REMIX_RUN_LIMITS.effects || !raw.every(fits))
+    throw damaged('a step has answers that do not fit');
+  return raw as RemixAnswer[];
 }
 
 async function readRun(runId: string, caller: RemixAppCaller): Promise<Segment[]> {
@@ -343,7 +349,7 @@ async function assertAuthorPartPasses(slug: string, part: AuthorPart) {
     // Unjudged, it could still block in the viewer's audit a moment later.
     if (verdict.externalError)
       throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNCHECKED });
-    return;
+    return part;
   }
   await holdUserRemixApp(slug, { action: 'held-author-prompt' }).catch((error: unknown) =>
     logToAxiom({
@@ -355,13 +361,6 @@ async function assertAuthorPartPasses(slug: string, part: AuthorPart) {
   );
   throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD });
 }
-
-/** The refusal `auditPromptServer` throws on a block it counts: never a soft one. */
-const isCountedRefusal = (error: unknown) => {
-  if (!(error instanceof TRPCError) || error.code !== 'BAD_REQUEST') return false;
-  const cause = error.cause as Partial<PromptRefusalCause> | undefined;
-  return Array.isArray(cause?.blockedFor) && !cause?.softBlock;
-};
 
 const MINOR_TRIGGERS: PromptTriggerCategory[] = ['minor_age', 'inappropriate_minor'];
 
@@ -378,35 +377,54 @@ function firstStrikeOf({ triggers, externalError }: PromptClassification) {
   return strikes ? 'listed' : 'none';
 }
 
+export const REMIX_APP_PROMPT_REFUSED =
+  "This app's prompt was refused with these answers. Try other ones.";
+
 /**
- * The combination count: the viewer's own audit refused a run of a user app whose author part passed. It counts against
- * the app only as a combination: words of the viewer's that block alone are theirs. One block per
- * distinct viewer; a first strike takes the app out of menus at once. Never masks the refusal.
+ * Another's user app's whole prompt, judged before the viewer's audit, which records what it
+ * refuses against the viewer. Only words of the viewer's that block alone go on to it as theirs;
+ * any other refusal stops the run here, recorded against nobody but the app.
  */
-async function recordCombinationBlock(
+async function assertWholePromptPasses(
   slug: string,
   prompt: string,
   { answers }: NonNullable<AuthorPart>,
-  viewerId: number
+  caller: RemixAppCaller
 ) {
+  const isGreen = !!caller.features.isGreen;
   const judge = (text: string) =>
-    classifyPromptServer({ prompt: text, isGreen: false }).then(
+    classifyPromptServer({ prompt: text, isGreen }).then(
       (verdict) => verdict,
       () => null
     );
+  const whole = await judge(prompt);
+  if (whole?.outcome === 'pass' && !whole.externalError) return;
+  if (!whole || whole.outcome === 'pass')
+    throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNCHECKED });
   // The viewer's words alone, joined as an app may join them.
   const joins = [...new Set(['\n', '', ' '].map((glue) => answers.join(glue)))];
   const alone = answers.length ? await Promise.all(joins.map(judge)) : [];
-  if (alone.some((verdict) => verdict && verdict.outcome !== 'pass')) return;
-  const whole = await judge(prompt);
-  // Judged again it passes: nothing here says the app had a part in the refusal. A soft block or
-  // an over-length refusal counts against nobody, so not against the app either.
-  if (whole?.outcome === 'pass' && !whole.externalError) return;
-  if (whole?.outcome === 'soft' || (whole && isOverLengthRefusal(whole.triggers))) return;
-  const strike =
-    !whole || alone.some((verdict) => !verdict || verdict.externalError)
-      ? 'error'
-      : firstStrikeOf(whole);
+  if (alone.some((verdict) => verdict?.outcome === whole.outcome)) return;
+  // Green's own list strikes nobody, and holds no app back from the other domains.
+  if (!isGreen) await recordCombinationBlock(slug, whole, alone, caller.user.id);
+  throw new TRPCError({ code: 'BAD_REQUEST', message: REMIX_APP_PROMPT_REFUSED });
+}
+
+/**
+ * The combination count: a user app's whole prompt blocked where its author part and the viewer's
+ * words alone did not. One block per distinct viewer; a first strike takes the app out of menus at
+ * once. A soft block or an over-length refusal counts against nobody, so not against the app either.
+ */
+async function recordCombinationBlock(
+  slug: string,
+  whole: PromptClassification,
+  alone: (PromptClassification | null)[],
+  viewerId: number
+) {
+  if (whole.outcome === 'soft' || isOverLengthRefusal(whole.triggers)) return;
+  const strike = alone.some((verdict) => !verdict || verdict.externalError)
+    ? 'error'
+    : firstStrikeOf(whole);
   await holdUserRemixApp(slug, {
     action: strike === 'error' ? 'held-classifier-error' : 'held-combination-blocks',
     viewerId,
@@ -592,7 +610,10 @@ async function advance({
           throw await quarantined(error);
         })
       : null;
-  if (othersApp) await assertAuthorPartPasses(app.slug, part);
+  if (othersApp) {
+    const judged = await assertAuthorPartPasses(app.slug, part);
+    await assertWholePromptPasses(app.slug, request.prompt, judged, caller);
+  }
 
   const tags = remixRunTags({ slug: app.slug, runId, segment: index, runtime: true });
   const remixRun: RemixRunMetadata = { app: app.slug, version: app.version, shape, answers };
@@ -606,11 +627,6 @@ async function advance({
     externalId: segmentExternalId(caller.user.id, runId, index),
     sourceProvenance: mint ? [mint] : undefined,
     remixRun,
-  }).catch(async (error: unknown) => {
-    // Green's own list strikes nobody, and holds no app back from the other domains.
-    if (part && request.kind === 'image' && !caller.features.isGreen && isCountedRefusal(error))
-      await recordCombinationBlock(app.slug, request.prompt, part, caller.user.id);
-    throw error;
   });
   bustQueriedWorkflowsCache(caller.user.id).catch(() => null);
   return { status: 'running', runId, workflowId: result.id as string };

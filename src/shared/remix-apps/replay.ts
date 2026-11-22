@@ -166,9 +166,11 @@ export function remixReplayChecks(
         throw new RemixReplayError(
           `${slug} finished after ${next} steps, but the run recorded ${log.length}`
         );
-      if (!z.array(image).safeParse(outputs).success || outputs.some(({ url }) => !made.has(url)))
+      // Parsed, so only an image's known keys reach the client.
+      const parsed = z.array(image).safeParse(outputs);
+      if (!parsed.success || parsed.data.some(({ url }) => !made.has(url)))
         throw new RemixReplayError(`${slug} returned an image this run did not make`);
-      return outputs;
+      return parsed.data;
     },
   };
 }

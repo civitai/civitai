@@ -386,6 +386,7 @@ import {
   MAX_RUN_SEGMENTS,
   postRemixResult,
   REMIX_APP_HELD,
+  REMIX_APP_PROMPT_REFUSED,
   REMIX_APP_UNCHECKED,
   REMIX_APP_UNJUDGED,
   startRemixRun,
@@ -1659,9 +1660,10 @@ describe('a user app', () => {
       blockId: 'remix-u5-other',
       manifest: { ...userRow().manifest, review: 'rejected', minorThemed: { by: 88, at: 'x' } },
     };
+    let runner: ReturnType<typeof fakeRemixRunner>;
     beforeEach(() => {
       const source = userRow().manifest.remix.source;
-      const runner = fakeRemixRunner({
+      runner = fakeRemixRunner({
         secret: SECRET,
         apps: {
           [createHash('sha256').update(source).digest('hex')]: {
@@ -1710,6 +1712,26 @@ describe('a user app', () => {
       expect(submits()).toHaveLength(1);
     });
 
+    it.each([
+      ['an over-long text answer', ['x'.repeat(1001)]],
+      ['a negative number', [-1]],
+      ['a fraction', [0.5]],
+      ['more answers than a run has steps', Array.from({ length: 17 }, () => 'a')],
+      ['something that is not an answer', [{}]],
+    ])('never sends the runner a recorded answer that is %s', async (_, answers) => {
+      serve(userRow());
+      addImage(SOURCE_ID);
+      const { runId } = await startOn(SOURCE_ID);
+      const workflow = h.workflows[h.workflows.length - 1];
+      finish(workflow.id, [blob('made')]);
+      const sent = runner.calls.length;
+      (workflow.metadata!.remixRun as { answers: unknown[] }).answers = answers;
+      await expect(advanceRemixRun({ runId, caller: flagOn() })).rejects.toMatchObject({
+        code: 'CONFLICT',
+      });
+      expect(runner.calls).toHaveLength(sent);
+    });
+
     it('replays a finished step whose size the runner would refuse, with that size left out', async () => {
       serve(userRow());
       addImage(SOURCE_ID);
@@ -1736,6 +1758,8 @@ describe('a user app', () => {
         'const out',
         "if (who === '___') return []; const out"
       );
+      // Adds words of its own after a real answer.
+      const SUFFIX_SOURCE = DIVERGING_SOURCE.replace('return []', "return ['suffix']");
       const AUTHOR_PART = 'a portrait of ___';
       const pass = {
         outcome: 'pass',
@@ -1819,6 +1843,19 @@ describe('a user app', () => {
           apps: {
             [sha(ASKING_SOURCE)]: appOf(false),
             [sha(DIVERGING_SOURCE)]: appOf(true),
+            [sha(SUFFIX_SOURCE)]: {
+              async run(ctx) {
+                const who = await ctx.ask({ kind: 'text', prompt: 'Who is it?', maxLength: 40 });
+                const out = await ctx.workflow({
+                  kind: 'image',
+                  prompt: who === '___' ? 'a portrait of ___' : 'a portrait of ' + who + ' at dusk',
+                  images: [ctx.source],
+                  aspectRatio: 'source',
+                  quantity: 1,
+                });
+                return out.images;
+              },
+            },
             [sha(TWO_SOURCE)]: {
               async run(ctx) {
                 const who = await ctx.ask({ kind: 'text', prompt: 'Who is it?', maxLength: 40 });
@@ -1863,11 +1900,11 @@ describe('a user app', () => {
 
       it("B: judges the author's part alone, and the viewer's audit stays the generator's own on the whole prompt", async () => {
         await expect(runAs(USER_ID)).resolves.toMatchObject({ status: 'running' });
-        expect(vi.mocked(classifyPromptServer)).toHaveBeenCalledTimes(1);
-        expect(vi.mocked(classifyPromptServer)).toHaveBeenCalledWith({
-          prompt: AUTHOR_PART,
-          isGreen: false,
-        });
+        // The author's part, then the whole prompt before the viewer's audit.
+        expect(vi.mocked(classifyPromptServer).mock.calls.map(([args]) => args)).toEqual([
+          { prompt: AUTHOR_PART, isGreen: false },
+          { prompt: 'a portrait of Ada', isGreen: false },
+        ]);
         // The viewer's audit: once, on the prompt with their words, as the viewer.
         expect(vi.mocked(auditPromptServer)).toHaveBeenCalledTimes(1);
         expect(vi.mocked(auditPromptServer)).toHaveBeenCalledWith(
@@ -1934,10 +1971,14 @@ describe('a user app', () => {
       });
 
       it('C: a combination refusal counts once per distinct viewer, and the third takes the app out of menus', async () => {
-        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
         classify(blocked('external', 'synthetic-other'));
-        // The viewer sees their own refusal, unchanged.
-        await expect(runAs(101)).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
+        // Refused before the viewer's audit, so nothing is recorded against the viewer.
+        await expect(runAs(101)).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message: REMIX_APP_PROMPT_REFUSED,
+        });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(submits()).toHaveLength(0);
         await expect(runAs(101)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
         await expect(runAs(102)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
         expect(stored.status).toBe('remix');
@@ -1956,20 +1997,57 @@ describe('a user app', () => {
         });
       });
 
-      it.each([
-        [
-          "the viewer's words block on their own",
-          () => classify(blocked('nsfw_blocklist'), { alone: blocked('nsfw_blocklist') }),
-          false,
-        ],
-        ['the refusal is on green', () => classify(blocked('minor_age')), true],
-      ])('C: nothing counts when %s', async (_, setUp, green) => {
+      it("C: the viewer's words that block on their own go on to the viewer's audit, and count against nobody else", async () => {
         vi.mocked(auditPromptServer).mockRejectedValue(refusal());
-        setUp();
-        await expect(runAs(101, { green })).rejects.toMatchObject({
-          message: 'Your prompt was flagged: x',
-        });
+        classify(blocked('nsfw_blocklist'), { alone: blocked('nsfw_blocklist') });
+        await expect(runAs(101)).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
+        expect(vi.mocked(auditPromptServer)).toHaveBeenCalledWith(
+          expect.objectContaining({ userId: 101 })
+        );
         expect(written()).toHaveLength(0);
+      });
+
+      it("C: a viewer's words that only soft-block alone never carry the app's hard block to the viewer", async () => {
+        classify(blocked('nsfw_blocklist'), {
+          alone: { ...blocked('nsfw_blocklist'), outcome: 'soft' },
+        });
+        await expect(runAs(101)).rejects.toMatchObject({ message: REMIX_APP_PROMPT_REFUSED });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(blocks()).toHaveLength(1);
+      });
+
+      it("C: a refusal on green is refused before the viewer's audit, and counts against nobody", async () => {
+        classify(blocked('minor_age'));
+        await expect(runAs(101, { green: true })).rejects.toMatchObject({
+          message: REMIX_APP_PROMPT_REFUSED,
+        });
+        expect(vi.mocked(classifyPromptServer)).toHaveBeenCalledWith({
+          prompt: 'a portrait of Ada',
+          isGreen: true,
+        });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(written()).toHaveLength(0);
+      });
+
+      it("C: a whole prompt that blocks where the author's part and the viewer's words pass is refused, and counted against the app, not the viewer", async () => {
+        stored = rowOf(SUFFIX_SOURCE);
+        await bumpRemixAppRegistry();
+        // What the viewer's audit would do with the real prompt: refuse it, and record the viewer.
+        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+        vi.mocked(classifyPromptServer).mockImplementation((async ({
+          prompt,
+        }: {
+          prompt: string;
+        }) => (prompt.endsWith('at dusk') ? blocked('minor_age') : pass)) as never);
+        await expect(runAs(101)).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message: REMIX_APP_PROMPT_REFUSED,
+        });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+        expect(submits()).toHaveLength(0);
+        expect(stored.manifest).toMatchObject({
+          reviewLog: [expect.objectContaining({ action: 'held-combination-blocks' })],
+        });
       });
 
       it('C: a refusal the prompt, judged again, does not repeat never counts', async () => {
@@ -2005,27 +2083,25 @@ describe('a user app', () => {
       });
 
       it.each([
-        [
-          'a soft block the viewer could click through',
-          () => classify(blocked('nsfw_blocklist')),
-          true,
-        ],
-        [
-          'a prompt judged again as a soft block',
-          () => classify({ ...blocked('nsfw_blocklist'), outcome: 'soft' }),
-          false,
-        ],
-        ['an over-length refusal', () => classify(blocked('over_length')), false],
-      ])('C: %s counts against nobody, the app included', async (_, setUp, soft) => {
-        vi.mocked(auditPromptServer).mockRejectedValue(
-          new TRPCError({
-            code: 'BAD_REQUEST',
-            message: 'Your prompt was flagged: x',
-            cause: { blockedFor: ['x'], ...(soft ? { softBlock: true } : {}) },
-          })
-        );
-        setUp();
-        await expect(runAs(101)).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
+        ['a soft block', { ...blocked('nsfw_blocklist'), outcome: 'soft' }],
+        ['an over-length refusal', blocked('over_length')],
+      ])(
+        "C: %s is refused before the viewer's audit, and counts against nobody, the app included",
+        async (_, verdict) => {
+          classify(verdict);
+          await expect(runAs(101)).rejects.toMatchObject({ message: REMIX_APP_PROMPT_REFUSED });
+          expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
+          expect(written()).toHaveLength(0);
+        }
+      );
+
+      it('C: a whole prompt the classifier cannot judge refuses the run as unavailable, and holds nothing', async () => {
+        classify(null);
+        await expect(runAs(101)).rejects.toMatchObject({
+          code: 'SERVICE_UNAVAILABLE',
+          message: REMIX_APP_UNCHECKED,
+        });
+        expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
         expect(written()).toHaveLength(0);
       });
 
@@ -2036,15 +2112,6 @@ describe('a user app', () => {
           message: REMIX_APP_UNCHECKED,
         });
         expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
-        expect(written()).toHaveLength(0);
-      });
-
-      it('C: a bad request that is not a prompt refusal never counts', async () => {
-        vi.mocked(auditPromptServer).mockRejectedValue(
-          new TRPCError({ code: 'BAD_REQUEST', message: 'Something else' })
-        );
-        classify(blocked('minor_age'));
-        await expect(runAs(101)).rejects.toMatchObject({ message: 'Something else' });
         expect(written()).toHaveLength(0);
       });
 
@@ -2069,12 +2136,6 @@ describe('a user app', () => {
           'held-combination-blocks',
         ],
         [
-          'a refusal the classifier cannot judge again',
-          null,
-          ['synthetic-minor'],
-          'held-classifier-error',
-        ],
-        [
           'a verdict the classifier could not finish',
           { ...blocked('external', 'synthetic-other'), externalError: { message: 'down' } },
           ['synthetic-minor'],
@@ -2082,9 +2143,8 @@ describe('a user app', () => {
         ],
       ])('C: %s takes the app out on the first refusal', async (_, verdict, listed, action) => {
         setEnv({ REMIX_FIRST_STRIKE_CATEGORIES: listed as string[] | undefined });
-        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
         classify(verdict);
-        await expect(runAs(101)).rejects.toMatchObject({ message: 'Your prompt was flagged: x' });
+        await expect(runAs(101)).rejects.toMatchObject({ message: REMIX_APP_PROMPT_REFUSED });
         expect(stored.status).toBe('remix_disabled');
         expect(stored.manifest).toMatchObject({
           review: 'submitted',
@@ -2096,20 +2156,18 @@ describe('a user app', () => {
         ['an unlisted external category', blocked('external', 'synthetic-other')],
         ['an unlisted regex category', blocked('nsfw_blocklist')],
       ])('C: %s needs three viewers while the list is set', async (_, verdict) => {
-        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
         classify(verdict);
         await expect(runAs(101)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
         expect(stored.status).toBe('remix');
         expect(blocks()).toHaveLength(1);
       });
 
-      it("C: a count that fails to save leaves the viewer's refusal as it was", async () => {
-        vi.mocked(auditPromptServer).mockRejectedValue(refusal());
+      it('C: a count that fails to save still refuses the run', async () => {
         classify(blocked('minor_age'));
         dbMock.dbWrite.appBlock.updateMany.mockRejectedValue(new Error('db down'));
         await expect(runAs(101)).rejects.toMatchObject({
           code: 'BAD_REQUEST',
-          message: 'Your prompt was flagged: x',
+          message: REMIX_APP_PROMPT_REFUSED,
         });
       });
 

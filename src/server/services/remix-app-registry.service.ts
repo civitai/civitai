@@ -94,17 +94,13 @@ export type RegisteredRemixApp = {
 };
 
 export { REMIX_APP_UNAVAILABLE } from '~/server/services/remix-app-runner';
-import { REMIX_APP_UNAVAILABLE } from '~/server/services/remix-app-runner';
+import { REMIX_APP_UNAVAILABLE, remixSourceDigest } from '~/server/services/remix-app-runner';
 
 // shortcut: until the sandbox runner ships, a user app refuses every replay.
 const unavailable = async (): Promise<never> => {
   throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE });
 };
 
-/**
- * The apps `caller` may see: user apps only behind their flag, and until approved only to their
- * author and moderators, since nobody has reviewed their listing text yet.
- */
 /** Runnable by `caller`: enabled, or their own app while it waits on review (submitted or held). */
 export const isRunnableBy = (
   entry: Pick<RegisteredRemixApp, 'enabled' | 'author' | 'review'>,
@@ -113,6 +109,10 @@ export const isRunnableBy = (
   entry.enabled ||
   (!!entry.author && entry.author.userId === caller.user?.id && entry.review === 'submitted');
 
+/**
+ * The apps `caller` may see: user apps only behind their flag, and until approved only to their
+ * author and moderators, since nobody has reviewed their listing text yet.
+ */
 export function visibleRemixApps<T extends Pick<RegisteredRemixApp, 'author' | 'review'>>(
   apps: T[],
   caller: {
@@ -281,7 +281,6 @@ export async function readRemixAppRows(): Promise<RemixAppRow[]> {
 }
 
 const SOURCE_REF = 'sha256:';
-const sha256Of = (text: string) => createHash('sha256').update(text).digest('hex');
 
 /**
  * The rows the registry caches. A user app's source stays out of the cached value, named by its
@@ -294,7 +293,10 @@ async function readRegistryRows(): Promise<RemixAppRow[]> {
     if (!manifest || !remix || typeof remix.source !== 'string') return row;
     return {
       ...row,
-      manifest: { ...manifest, remix: { ...remix, source: SOURCE_REF + sha256Of(remix.source) } },
+      manifest: {
+        ...manifest,
+        remix: { ...remix, source: SOURCE_REF + remixSourceDigest(remix.source) },
+      },
     };
   });
 }
@@ -304,7 +306,9 @@ const USER_SOURCES_MAX = 64;
 
 /** The source the registry named for a user app, read when a run needs it. */
 export async function loadUserRemixSource(slug: string, named: string): Promise<string> {
-  const sha256 = named.startsWith(SOURCE_REF) ? named.slice(SOURCE_REF.length) : sha256Of(named);
+  const sha256 = named.startsWith(SOURCE_REF)
+    ? named.slice(SOURCE_REF.length)
+    : remixSourceDigest(named);
   const cached = userSources.get(sha256);
   if (cached !== undefined) return cached;
   // primary: an approval a moment ago bumped the registry; a replica may still hold the old row.
@@ -314,7 +318,7 @@ export async function loadUserRemixSource(slug: string, named: string): Promise<
   });
   const source = (row?.manifest as { remix?: { source?: unknown } } | null)?.remix?.source;
   // Changed since the registry read it: the run waits for the registry to catch up.
-  if (typeof source !== 'string' || sha256Of(source) !== sha256)
+  if (typeof source !== 'string' || remixSourceDigest(source) !== sha256)
     throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE });
   if (userSources.size >= USER_SOURCES_MAX) userSources.delete(userSources.keys().next().value!);
   userSources.set(sha256, source);
