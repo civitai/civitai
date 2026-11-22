@@ -507,6 +507,25 @@ func runContract(t *testing.T, newStore func(t *testing.T) testStore) {
 		}
 	})
 
+	// An upsert of a URN the generation already holds replaces its listing rating too: a row
+	// written from a body without the field (an older adapter) is filtered on the app's rating
+	// until the same app arrives with the field, which is how an index deployed before the adapter
+	// converges.
+	t.Run("UpsertReplacesTheListingRating", func(t *testing.T) {
+		s := newStore(t)
+		g := mustBuilding(t, s)
+		const slug = "b1-listing-null-block-x"
+		mustApply(t, s, g.ID, Change{Kind: ChangeUpsert, App: listedApp(slug, "x", noField), Cursor: "c1"})
+		mustLive(t, s, g.ID, "L1")
+		if got := slugs(t, s, Query{}); len(got) != 0 {
+			t.Fatalf("SFW before the field = %v, want none", got)
+		}
+		mustApply(t, s, g.ID, Change{Kind: ChangeUpsert, App: listedApp(slug, "x", nil), Cursor: "c2"})
+		if got := slugs(t, s, Query{}); !slices.Equal(got, []string{slug}) {
+			t.Fatalf("SFW after the field = %v, want [%s]", got, slug)
+		}
+	})
+
 	t.Run("UnknownGeneration", func(t *testing.T) {
 		s := newStore(t)
 		if err := s.Apply(t.Context(), 999, Change{Kind: ChangeProgress}); !errors.Is(err, ErrNoGeneration) {
