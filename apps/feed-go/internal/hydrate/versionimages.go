@@ -42,7 +42,7 @@ var sqlVersionImages = `WITH targets AS (
       AND i."tosViolation" = FALSE
       AND (i."blockedFor" IS NULL)
       AND i."needsReview" IS NULL AND i."acceptableMinor" = FALSE
-      AND i."nsfwLevel" != 0
+      AND (i."nsfwLevel" & ` + strconv.Itoa(browsing.AllLevels) + `) != 0
       AND ` + ImageReviewedSQL("i") + `
       AND ` + MinorMatureImageHiddenSQL("i") + `
       AND (
