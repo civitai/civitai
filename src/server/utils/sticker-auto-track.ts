@@ -265,7 +265,7 @@ export function buildStickerAutoTrackWorkflow({
             reid_threshold: 0.4,
             // Off when no head holds the sticker, so after a cut it hides instead of jumping onto a person.
             reid: ['6', 1],
-            // The pack can't tell a shut eye from one turned away, so on, it hides glasses when eyes close.
+            // Keep false: true hides glasses while eyes are shut, as the pack can't tell shut from turned away.
             hide_when_eye_lost: false,
             eyes: ['11', 0],
           },
