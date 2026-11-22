@@ -1,7 +1,7 @@
 import type { Pool } from 'pg';
-import { assertVectorSyncConfig, config, domainEmbedEnabled } from '@/config';
+import { assertVectorSyncConfig, domainEmbedEnabled } from '@/config';
 import { logger } from '@/utils/logger';
-import { createGuardedPgPool } from '@/utils/pg-pool-guard';
+import { vectorPgPool } from '../pg';
 import { Embedder } from '../embedder';
 import type { VectorStore } from '../qdrant';
 import { andWhere } from './refresh';
@@ -143,11 +143,7 @@ export async function runBackfill<P extends DomainPayload>(
         'embedding is a paid call'
     );
 
-  const pg = createGuardedPgPool(
-    { connectionString: config.postgres.connectionString, max: config.vectorSync.pgPoolMax },
-    log,
-    (m, err) => logger.error({ err }, m)
-  );
+  const pg = vectorPgPool(log, { batch: true });
   const store = domain.store();
   const rejected = args.dryRun ? undefined : await domain.rejected?.();
   try {
