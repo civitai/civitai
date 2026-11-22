@@ -2,7 +2,11 @@ import {
   managedProfanityEntries,
   MIN_MANAGED_PROFANITY_ENTRIES,
 } from '@civitai/mod-utils/profanity/word-rules';
-import { createProfanityFilter, type SimpleProfanityFilter } from '~/libs/profanity-simple';
+import {
+  createProfanityFilter,
+  getProfanityFilter,
+  type SimpleProfanityFilter,
+} from '~/libs/profanity-simple';
 import { BlocklistType } from '~/server/common/enums';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -23,6 +27,8 @@ export type ProfanityListSource = 'managed' | 'stale' | 'fallback' | 'shipped';
 export type ProfanityLists = {
   blocked: string[] | null;
   allowed: string[] | null;
+  /** Flag off only: the moderators' benign words, which a search check allows as the browser does. */
+  benign?: string[] | null;
   source: ProfanityListSource;
 };
 
@@ -67,7 +73,14 @@ export function createProfanityListReader({
         // after the flag returns falls back to them.
         held = { blocked: null, allowed: null };
         metrics().fallback.set(0);
-        return { blocked: null, allowed: null, source: 'shipped' };
+        // Read here so it is shared like the rest; unreadable means the shipped allow list.
+        const benign = await Promise.resolve()
+          .then(() => read(BlocklistType.ProfanityBenignWord))
+          .then(
+            (row) => (row.dto.id == null ? null : row.dto.data),
+            () => null
+          );
+        return { blocked: null, allowed: null, benign, source: 'shipped' };
       }
       let blockedRow, allowedRow;
       try {
@@ -144,19 +157,28 @@ export function setProfanityListReaderForTests(next?: ProfanityListReader, share
 export type ServerProfanityFilter = {
   filter: SimpleProfanityFilter;
   source: ProfanityListSource;
+  /** Flag off only: the moderators' benign words a search check allows. */
+  benign?: string[] | null;
   /** Counts a match against this filter's list source. */
   countHit(surface: ProfanityHitSurface): void;
 };
 
-// One slot, keyed on the lists' CONTENT: every read parses fresh arrays, so an identity key would
-// rebuild (several ms) on every call. Not `getProfanityFilter`'s shared two-entry map, which SSR
+// One slot, keyed on the lists' CONTENT, since a read can parse fresh arrays; the same arrays skip
+// building the key. Not `getProfanityFilter`'s shared two-entry map, which SSR
 // masking also fills and would evict this between calls.
-let slot: { key: string; filter: SimpleProfanityFilter; buildFailed: boolean } | null = null;
+let slot: {
+  key: string;
+  blocked: string[] | null;
+  allowed: string[] | null;
+  filter: SimpleProfanityFilter;
+  buildFailed: boolean;
+} | null = null;
 
 function filterFor({ blocked, allowed }: ProfanityLists) {
+  if (slot && slot.blocked === blocked && slot.allowed === allowed) return slot;
   const part = (list: string[] | null) => (list === null ? 'shipped' : `list:${list.join('\n')}`);
   const key = `${part(allowed)}|${part(blocked)}`;
-  if (slot?.key === key) return slot;
+  if (slot?.key === key) return (slot = { ...slot, blocked, allowed });
   let filter: SimpleProfanityFilter;
   let buildFailed = false;
   try {
@@ -173,13 +195,13 @@ function filterFor({ blocked, allowed }: ProfanityLists) {
     filter = createProfanityFilter({ moderatorWhitelist: allowed });
     buildFailed = true;
   }
-  slot = { key, filter, buildFailed };
+  slot = { key, blocked, allowed, filter, buildFailed };
   return slot;
 }
 
 /**
- * The one profanity filter every server check uses: one list, and the moderators' allow list
- * everywhere. Flag off: the shipped block and allow lists.
+ * The filter for the server's managed-list checks (masking, search, the trainer, app data), with
+ * the moderators' allow list. Flag off: the shipped block and allow lists.
  */
 export async function getServerProfanityFilter(): Promise<ServerProfanityFilter> {
   const lists = await readShared();
@@ -187,7 +209,19 @@ export async function getServerProfanityFilter(): Promise<ServerProfanityFilter>
   const source = buildFailed ? 'fallback' : lists.source;
   const metrics = ensureRegisterProfanityListMetrics();
   metrics.reads.inc({ source });
-  return { filter, source, countHit: (surface) => metrics.hits.inc({ surface, source }) };
+  return {
+    filter,
+    source,
+    benign: lists.benign ?? null,
+    countHit: (surface) => metrics.hits.inc({ surface, source }),
+  };
+}
+
+// Keyed on the shared read's array, so a search reuses the filter rather than rebuilding its key.
+let benignSlot: { list: string[] | null; filter: SimpleProfanityFilter } | null = null;
+function benignFilter(list: string[] | null) {
+  if (benignSlot?.list !== list) benignSlot = { list, filter: getProfanityFilter(list) };
+  return benignSlot.filter;
 }
 
 /** The typed query of each search in a site search request body, read leniently. */
@@ -203,29 +237,46 @@ export function siteSearchQueries(body: unknown): string[] {
 
 /**
  * Whether a site search must be refused for profanity (civitai.com only; the caller decides the
- * domain), against the same lists the browser checks. Fails OPEN: a broken check must
- * not refuse every search, and the domain's browsing-level filter still applies.
- *
- * With `profanity-managed-list` off it refuses nothing: the browser's own check is today's rule,
- * and its allow list (the moderators') is not the shipped one the server reads with the flag off,
- * so a server refusal could reject a search the page let through.
+ * domain). See `profaneSearchCheck` for which list applies.
  */
 export async function isProfaneSearch(queries: string[]): Promise<boolean> {
+  return (await profaneSearchCheck(queries)) === 'profane';
+}
+
+/**
+ * `isProfaneSearch`'s verdict. It always checks: with `profanity-managed-list` on, against the
+ * managed list; off (or Flipt unreachable), against what the browser checks (the shipped list and
+ * the moderators' benign words); and when a check throws, against the shipped list. The browser
+ * leaves these searches to the server, so there is no state where neither checks.
+ */
+export async function profaneSearchCheck(queries: string[]): Promise<'clean' | 'profane'> {
   const texts = queries.filter((query) => query.trim().length > 0);
-  if (!texts.length) return false;
+  if (!texts.length) return 'clean';
+  const verdict = (filter: { analyze(text: string): { isProfane: boolean } }) =>
+    texts.some((text) => filter.analyze(text).isProfane)
+      ? ('profane' as const)
+      : ('clean' as const);
   try {
     const profanity = await getServerProfanityFilter();
-    if (profanity.source === 'shipped') return false;
-    const refused = texts.some((text) => profanity.filter.analyze(text).isProfane);
-    if (refused) profanity.countHit('search');
-    return refused;
+    if (profanity.source === 'shipped') {
+      // Counted too: with the flag off, this is the refusal rate the flip is measured against.
+      const shipped = verdict(benignFilter(profanity.benign ?? null));
+      if (shipped === 'profane') profanity.countHit('search');
+      return shipped;
+    }
+    const result = verdict(profanity.filter);
+    if (result === 'profane') profanity.countHit('search');
+    return result;
   } catch (error) {
     logToAxiom({
       name: 'profanity-search-check-failed',
       type: 'error',
-      message: 'Site search profanity check failed; the search ran unchecked',
+      message: 'Site search profanity check failed; checked against the shipped list',
       details: { error: error instanceof Error ? error.message : String(error) },
     });
-    return false;
+    const fallback = verdict(getProfanityFilter());
+    if (fallback === 'profane')
+      ensureRegisterProfanityListMetrics().hits.inc({ surface: 'search', source: 'fallback' });
+    return fallback;
   }
 }

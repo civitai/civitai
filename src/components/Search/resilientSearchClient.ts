@@ -1,5 +1,6 @@
 import { faro } from '@grafana/faro-web-sdk';
 import type { InstantSearchProps } from 'react-instantsearch';
+import { isSearchRefusedError } from '~/components/Search/search-refusal';
 
 /**
  * Resilient wrapper around a react-instantsearch `searchClient`.
@@ -129,6 +130,15 @@ export function isMeiliApiError(err: unknown): boolean {
   );
 }
 
+/** The first typed query among the requests. */
+function queryOf(requests: readonly unknown[] | undefined): string | undefined {
+  for (const request of requests ?? []) {
+    const query = (request as { params?: { query?: unknown } })?.params?.query;
+    if (typeof query === 'string' && query) return query;
+  }
+  return undefined;
+}
+
 function errorSignature(error: unknown): string {
   const name = toLowerString((error as { name?: unknown })?.name);
   const code = toLowerString((error as { code?: unknown })?.code);
@@ -221,6 +231,8 @@ export type ResilientSearchClientOptions = {
   onError?: (error: unknown) => void;
   /** Invoked on every successful search — lets callers clear a prior "unavailable" state. */
   onSuccess?: () => void;
+  /** Invoked with the query when the server refused it for profanity, instead of `onError`. */
+  onRefused?: (query: string | undefined) => void;
 };
 
 /**
@@ -231,10 +243,14 @@ export function createResilientSearchClient<T extends SearchClient>(
   client: T,
   options: ResilientSearchClientOptions = {}
 ): T {
-  const { retries = 1, retryDelayMs = 250, onError, onSuccess } = options;
+  const { retries = 1, retryDelayMs = 250, onError, onSuccess, onRefused } = options;
   const reportedSignatures = new Set<string>();
 
   const handleFailure = (error: unknown, requests: readonly unknown[] | undefined) => {
+    if (isSearchRefusedError(error)) {
+      onRefused?.(queryOf(requests));
+      return;
+    }
     if (!isMeiliApiError(error)) {
       onError?.(error);
       return;

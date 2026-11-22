@@ -262,7 +262,9 @@ describe('classifyPromptServer — the verdict', () => {
   it('audits with the green-only list exactly when isGreen', async () => {
     await classifyPromptServer({ prompt: PROMPT, isGreen: true });
     await classifyPromptServer({ prompt: PROMPT, isGreen: false });
-    expect(mockAuditPromptEnriched.mock.calls.map((c) => c[2])).toEqual([SHIPPED, undefined]);
+    const [green, other] = mockAuditPromptEnriched.mock.calls.map((c) => c[2]);
+    expect(green).toBe(SHIPPED);
+    expect(other).toBeUndefined();
   });
 
   // With the managed list on, the gate leaves profanity to the orchestrator's rating.
@@ -471,7 +473,9 @@ describe('auditPromptServer — still produces today’s side effects', () => {
   it('passes isGreen through to the regex audit', async () => {
     await auditPromptServer({ ...base, isGreen: true });
     await auditPromptServer({ ...base, isGreen: false });
-    expect(mockAuditPromptEnriched.mock.calls.map((c) => c[2])).toEqual([SHIPPED, undefined]);
+    const [green, other] = mockAuditPromptEnriched.mock.calls.map((c) => c[2]);
+    expect(green).toBe(SHIPPED);
+    expect(other).toBeUndefined();
   });
 
   it('logs an external-moderation failure even when a soft block then throws', async () => {

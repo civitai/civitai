@@ -102,23 +102,24 @@ export const trainingRouter = router({
 
   /**
    * The trainer's trigger-word warning, against the server's profanity list so the browser needs
-   * no copy of it. Soft: the submit check (training-trigger-word-check.ts) is unchanged. Names only
-   * words the input itself contains, never a list entry.
+   * no copy of it. Advisory only: the submit check (training-trigger-word-check.ts) is what enforces.
    */
   auditTriggerWord: protectedProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(z.object({ triggerWord: z.string().max(200) }))
-    .use(rateLimit({ limit: 120, period: 60 }))
+    // Each answer tests a word against the list, so a person typing needs few and a script gets few.
+    .use(
+      rateLimit([
+        { limit: 10, period: 60 },
+        { limit: 100, period: 24 * 60 * 60 },
+      ])
+    )
     .query(async ({ input, ctx }) => {
       const profanity = ctx.features.isGreen
         ? (await getServerProfanityFilter()).filter
         : undefined;
-      const audit = auditTrainingTriggerWord(input.triggerWord, profanity);
-      const typed = input.triggerWord.toLowerCase();
-      return {
-        ...audit,
-        offendingWords: audit.offendingWords.filter((word) => typed.includes(word.toLowerCase())),
-      };
+      // Severity only: naming the matched words would let one call test many against the list.
+      return { severity: auditTrainingTriggerWord(input.triggerWord, profanity).severity };
     }),
 
   moveAsset: protectedProcedure

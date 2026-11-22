@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react';
-import { getSearchRefusal } from '~/components/Search/search-refusal';
+import { browserChecksProfanity, getSearchRefusal } from '~/components/Search/search-refusal';
+import { isSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
 import type { SearchRefusal } from '~/components/Search/search-refusal';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useBenignPhrases } from '~/hooks/useBenignPhrases';
@@ -10,10 +11,14 @@ import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsPro
 /**
  * Why a search text that did not come through the search bar (a link, a bookmark, a redirect) must
  * not be searched, with the same checks and tracking the search pages apply.
+ *
+ * Profanity is left to the server where every request on `via` reaches its check
+ * (`browserChecksProfanity`); its refusal arrives as the search's error (`isSearchRefusedError`).
  */
 export function useSearchRefusal(
   text: string | undefined,
-  index?: string
+  index: string | undefined,
+  via: 'semantic' | 'siteSearch'
 ): { refusal?: SearchRefusal; profanityMatches: string[] } {
   const benignPhrases = useBenignPhrases();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
@@ -31,8 +36,9 @@ export function useSearchRefusal(
         : undefined,
     [text, benignPhrases, browsingSettingsAddons.settings.disablePoi]
   );
+  const browserChecks = browserChecksProfanity({ via, proxyEnabled: isSiteSearchProxyEnabled() });
   const profanity = useCheckProfanity(text ?? '', {
-    enabled: domainColor === 'green' && !!text && checked !== 'illegal',
+    enabled: domainColor === 'green' && !!text && checked !== 'illegal' && browserChecks,
   });
   const refusal = checked === 'illegal' ? checked : profanity.hasProfanity ? 'profanity' : checked;
 

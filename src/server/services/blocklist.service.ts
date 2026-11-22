@@ -11,10 +11,9 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createLruCache } from '~/server/utils/lru-cache';
 import { logToAxiom } from '~/server/logging/client';
 import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/benign-phrases';
-import { hashify, removeTags, removeTagsCompact } from '~/utils/string-helpers';
-import { managedProfanityEntries } from '@civitai/mod-utils/profanity/word-rules';
+import { removeTags, removeTagsCompact } from '~/utils/string-helpers';
 import { foldConfusables } from '~/server/utils/confusable-fold';
-import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '~/server/flipt/client';
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { domainAcceptsMail } from '~/server/utils/email-domain';
 
 export type BlocklistDTO = {
@@ -392,20 +391,14 @@ export async function stripBenignPhrases(text = '', type: BlocklistType) {
   return stripBenignPhrasesWith(text, pattern);
 }
 /**
- * The benign lists the BROWSER needs. The search gates (`AutocompleteSearch`,
- * `SearchLayout`) run their POI / minor / profanity checks client-side against Meili
- * directly, so there is no server hop to strip on — the lists have to be shipped down.
- * Public and edge-cached. With `profanity-managed-list` on it also carries the managed
- * blocked words.
+ * The benign lists the BROWSER needs: its POI / minor checks, and its profanity check where the
+ * server does not run one (`browserChecksProfanity`), must strip them before checking.
+ * Public and edge-cached. Never carries a managed blocked word.
  */
 export type ClientBenignLists = {
   prompt: string[];
   /** `null` means "no moderator row", which is NOT the same as an empty one — see the filter. */
   profanityWords: string[] | null;
-  /** The moderator-managed blocked words, or `null` for the list shipped in the bundle. */
-  profanityBlockedWords: string[] | null;
-  /** Set with `profanityBlockedWords`; changes whenever either profanity list does. */
-  profanityListVersion: string | null;
   /** False when any list could not be read. The caller MUST NOT let the edge cache this. */
   available: boolean;
 };
@@ -420,18 +413,7 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
     // strongest possible "do not whitelist" intent. Only a MISSING row means "not migrated",
     // which is the case that falls back to the list shipped in the bundle.
     const profanityWords = profanityRow.id == null ? null : profanityRow.data;
-    const blocked = await getManagedProfanityWords();
-    const managed = blocked === 'unavailable' ? null : blocked;
-    return {
-      prompt,
-      profanityWords,
-      profanityBlockedWords: managed?.data ?? null,
-      profanityListVersion: managed
-        ? `${managed.id}:${hashify(`${profanityWords}|${managed.data}`)}`
-        : null,
-      // The benign lists are intact; this only keeps a shipped-list fallback out of the edge cache.
-      available: blocked !== 'unavailable',
-    };
+    return { prompt, profanityWords, available: true };
   } catch (error) {
     // Fails OPEN, and empty is the safe direction: nothing is stripped, so the gates flag
     // more rather than less. `available: false` exists because the caller must then skip the
@@ -444,39 +426,7 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
       message: 'Serving empty benign lists to the client; search gates will not strip',
       details: { error: error instanceof Error ? error.message : String(error) },
     });
-    return {
-      prompt: [],
-      profanityWords: null,
-      profanityBlockedWords: null,
-      profanityListVersion: null,
-      available: false,
-    };
-  }
-}
-
-/**
- * Its own try/catch: a failure here falls back to the shipped list instead of emptying the
- * benign lists above. Unlike ProfanityBenignWord, a row below the floor falls back too:
- * `managedProfanityEntries` decides it here and in the server's filter, so the browser and the
- * server enforce the same list whenever both can read the row.
- */
-async function getManagedProfanityWords(): Promise<
-  { id: number; data: string[] } | null | 'unavailable'
-> {
-  try {
-    if (!(await isFlipt(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST))) return null;
-    const row = await getBlocklistDTO({ type: BlocklistType.ProfanityWord });
-    const { usable, enforced } = managedProfanityEntries(row.data);
-    if (row.id == null || !enforced) return null;
-    return { id: row.id, data: usable };
-  } catch (error) {
-    logToAxiom({
-      name: 'profanity-managed-list-unavailable',
-      type: 'warning',
-      message: 'Serving the shipped profanity list; the managed list could not be read',
-      details: { error: error instanceof Error ? error.message : String(error) },
-    });
-    return 'unavailable';
+    return { prompt: [], profanityWords: null, available: false };
   }
 }
 // #endregion

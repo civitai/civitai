@@ -44,6 +44,11 @@ beforeEach(() => {
 });
 afterAll(() => setProfanityListReaderForTests());
 
+// Every masking assertion below needs a word the shipped list masks.
+it('has a shipped word to mask', () => {
+  expect(!!WORD && createProfanityFilter().clean(WORD) !== WORD).toBe(true);
+});
+
 // To whoever wants masking to run with the flag off: the flag-off read path must cost and answer
 // what it did before this moved to the server. The timing that would justify more is a flag-on
 // precondition.

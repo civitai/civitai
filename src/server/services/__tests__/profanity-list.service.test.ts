@@ -33,6 +33,7 @@ vi.mock('@civitai/mod-utils/profanity/word-rules', async (importOriginal) => {
     },
   };
 });
+import { ensureRegisterProfanityListMetrics } from '~/server/metrics/profanity-list.metrics';
 import {
   createProfanityListReader,
   getServerProfanityFilter,
@@ -222,10 +223,52 @@ describe('isProfaneSearch', () => {
     expect(await isProfaneSearch(['hello', SHIPPED_WORD])).toBe(false);
   });
 
-  // The browser's check is today's rule while the flag is off; see the function's comment.
-  it('refuses nothing while profanity-managed-list is off', async () => {
+  // The browser leaves these searches to the server whatever the flag says.
+  it('checks against what the browser checks while profanity-managed-list is off', async () => {
     h.flagOn = false;
-    expect(await isProfaneSearch([SHIPPED_WORD])).toBe(false);
+    expect(await isProfaneSearch([SHIPPED_WORD])).toBe(true);
+    expect(await isProfaneSearch(['hello'])).toBe(false);
+  });
+
+  it("flag off: allows the moderators' benign words, from the shared read, not a read per search", async () => {
+    h.flagOn = false;
+    // A word that contains a shipped entry and is profane until the moderators allow it.
+    const benignWord = `zq${SHIPPED_WORD}zq`;
+    expect(await isProfaneSearch([benignWord])).toBe(true);
+    h.rows.set(BlocklistType.ProfanityBenignWord, { id: 2, data: [benignWord] });
+    const readRow = vi.fn(async (type: string) => {
+      const row = h.rows.get(type) ?? { data: [] };
+      if (row instanceof Error) throw row;
+      return { dto: { type, ...row }, source: 'cache' as const };
+    });
+    setProfanityListReaderForTests(createProfanityListReader({ readRow: readRow as never }), 5_000);
+    expect([
+      await isProfaneSearch([benignWord]),
+      await isProfaneSearch([benignWord]),
+      await isProfaneSearch([SHIPPED_WORD]),
+    ]).toEqual([false, false, true]);
+    expect(readRow).toHaveBeenCalledTimes(1);
+  });
+
+  // The flip is measured against the refusal rate with the flag off; uncounted, there is none.
+  it('counts a refusal with the flag off, or with the list unreadable, by source only', async () => {
+    const { hits } = ensureRegisterProfanityListMetrics();
+    const count = async (source: string) =>
+      (await hits.get()).values.find(
+        (v) => v.labels.surface === 'search' && v.labels.source === source
+      )?.value ?? 0;
+    h.flagOn = false;
+    const shipped = await count('shipped');
+    expect([await isProfaneSearch([SHIPPED_WORD]), await isProfaneSearch(['hello'])]).toEqual([
+      true,
+      false,
+    ]);
+    expect(await count('shipped')).toBe(shipped + 1);
+
+    setProfanityListReaderForTests({ read: () => Promise.reject(new Error('list down')) });
+    const fallback = await count('fallback');
+    expect(await isProfaneSearch([SHIPPED_WORD])).toBe(true);
+    expect(await count('fallback')).toBe(fallback + 1);
   });
 
   it('reads the query of a single search and of each search in a multi-search', () => {

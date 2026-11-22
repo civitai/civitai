@@ -1167,7 +1167,8 @@ export const updateMessageHandler = async ({
       )
     ).catch(() => undefined);
 
-    return { messageId: existing.id, chatId: existing.chatId, content: trimmed, maskedContent };
+    // No masked copy in the write response; viewers get theirs from the chat signal and reads.
+    return { messageId: existing.id, chatId: existing.chatId, content: trimmed };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

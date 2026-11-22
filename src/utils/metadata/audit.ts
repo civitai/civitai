@@ -422,7 +422,7 @@ const auditFirstBlock = (
     };
   }
 
-  // 5. Profanity check (green domain only)
+  // 5. Profanity, with the filter the caller passes; none skips it.
   if (profanity) {
     const profanityResults = timer.time('profanity', () => {
       // Strip Danbooru rating/score/source tags first, for the same reason
