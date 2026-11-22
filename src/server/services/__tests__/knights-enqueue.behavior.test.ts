@@ -78,7 +78,7 @@ const items = async () =>
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(
-    `CREATE TABLE "Post" (id integer PRIMARY KEY, "publishedAt" timestamp);
+    `CREATE TABLE "Post" (id integer PRIMARY KEY, "publishedAt" timestamp, availability text NOT NULL DEFAULT 'Public');
      CREATE TABLE "Image" (
        id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
        type text NOT NULL DEFAULT 'image', "nsfwLevel" integer NOT NULL DEFAULT 1,
@@ -371,6 +371,60 @@ describe('enqueueKnightsItems', () => {
       { imageId: 99, outcome: 'refused', reason: 'image-not-found' },
     ]);
     expect((await items()).map((i) => i.imageId)).toEqual([1, 4]);
+  });
+
+  it('refuses an image on a Private post when the caller requires a published post, and queues Unsearchable and EarlyAccess ones', async () => {
+    await pg.exec(`
+      INSERT INTO "Post" (id, "publishedAt", availability) VALUES
+        (10, '2026-12-11 09:00:00', 'Private'), (20, '2026-12-11 09:00:00', 'Unsearchable'),
+        (30, '2026-12-11 09:00:00', 'EarlyAccess');
+      UPDATE "Image" SET "postId" = 10 WHERE id = 1;
+      UPDATE "Image" SET "postId" = 20 WHERE id = 2;
+      UPDATE "Image" SET "postId" = 30 WHERE id = 3;
+    `);
+
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'owner-rating',
+        questionKey: Q,
+        items: [1, 2, 3].map((imageId) => ({ imageId, priority: 1 as const })),
+      },
+      NOW,
+      { requirePublished: true }
+    );
+
+    expect(outcomes).toMatchObject([
+      { imageId: 1, outcome: 'refused', reason: 'private-post' },
+      { imageId: 2, outcome: 'enqueued' },
+      { imageId: 3, outcome: 'enqueued' },
+    ]);
+  });
+
+  it('refuses an image on a Private post as not-servable when the caller asks for servable images only', async () => {
+    // servableImage compares publishedAt with the database clock, not NOW.
+    await pg.exec(`
+      INSERT INTO "Post" (id, "publishedAt", availability) VALUES
+        (10, '2026-01-01', 'Private'), (20, '2026-01-01', 'Public');
+      UPDATE "Image" SET "postId" = 10 WHERE id = 1;
+      UPDATE "Image" SET "postId" = 20 WHERE id = 2;
+    `);
+
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'dataset-import',
+        questionKey: Q,
+        items: [1, 2].map((imageId) => ({ imageId, priority: 1 as const })),
+      },
+      NOW,
+      { servableOnly: true }
+    );
+
+    expect(outcomes).toMatchObject([
+      { imageId: 1, outcome: 'refused', reason: 'not-servable' },
+      { imageId: 2, outcome: 'enqueued' },
+    ]);
   });
 
   it.each(['Closed', 'Resolved', 'Open'])(

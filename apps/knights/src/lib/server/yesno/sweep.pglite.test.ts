@@ -81,6 +81,16 @@ describe("a held player's answers", () => {
 });
 
 describe('closing stranded questions', () => {
+  it('leaves open an answered question on a Private post, keeping its gold', async () => {
+    const ids = await seed([row('a', 10)]);
+    await answer(1, ids.a);
+    await pg.exec(`UPDATE "Post" SET availability = 'Private' WHERE id = 10`);
+
+    expect(await sweep()).toEqual({ unplayable: 0, stale: 0, failed: 0 });
+    expect(await item(ids.a)).toMatchObject({ status: 'Open' });
+    expect(await player(1)).toMatchObject({ goldPending: 100 });
+  });
+
   it('closes an answered question whose image is no longer shown, dropping the gold of its answers but keeping the XP', async () => {
     const ids = await seed([row('a', 10), row('b', 11)]);
     await answer(1, ids.a);

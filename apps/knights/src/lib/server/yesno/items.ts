@@ -1,12 +1,15 @@
 import type { Kysely, Transaction } from 'kysely';
-import { servableImage } from '@civitai/db/knights';
+import { servableImage, servableImageForSweeps } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { YESNO_AUDIENCE, YESNO_CONSENSUS_VOTES, YESNO_KEY_PREFIX } from './keys';
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
-/** Open yes/no questions for players whose image the public feeds would show. Both the feed and the vote start from here, so they cannot disagree. */
-export function playableItems(db: Executor) {
+/**
+ * Open yes/no questions for players whose image the public feeds would show. Both the feed and the vote start from here, so
+ * they cannot disagree. `forSweeps` uses `servableImageForSweeps`, for the sweep, which must not close over a rule that only hides.
+ */
+export function playableItems(db: Executor, { forSweeps = false } = {}) {
   return db
     .selectFrom('KnightsQueueItem as i')
     .innerJoin('KnightsQuestion as q', 'q.key', 'i.questionKey')
@@ -15,7 +18,7 @@ export function playableItems(db: Executor) {
     .where('i.status', '=', 'Open')
     .where('i.audience', '=', YESNO_AUDIENCE.players)
     .where('q.active', '=', true)
-    .where(servableImage);
+    .where(forSweeps ? servableImageForSweeps : servableImage);
 }
 
 /** How many answers a yes/no question waits for, as the axis questions say now (the fewest, when they differ). */

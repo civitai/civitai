@@ -32,7 +32,8 @@ export type EnqueueRefusal =
   | 'not-servable'
   | 'not-still-image'
   | 'no-post'
-  | 'unpublished';
+  | 'unpublished'
+  | 'private-post';
 
 export type EnqueueOptions = {
   /**
@@ -41,9 +42,9 @@ export type EnqueueOptions = {
    */
   servableOnly?: boolean;
   /**
-   * Refuse images with no post (`no-post`) or whose post is not live at `now`: a draft or a later
-   * date (`unpublished`). Scan sampling and owner ratings pass it; the publish sweep samples the
-   * post once it goes live.
+   * Refuse images with no post (`no-post`), whose post is not live at `now`: a draft or a later
+   * date (`unpublished`), or whose post is Private (`private-post`). Scan sampling and owner
+   * ratings pass it; the publish sweep samples the post once it goes live.
    */
   requirePublished?: boolean;
   /**
@@ -103,6 +104,7 @@ export async function enqueueKnightsItems(
       servable: boolean;
       hasPost: boolean;
       publishesAt: Date | null;
+      privatePost: boolean;
     }
   >(
     input.items.length === 0
@@ -117,6 +119,7 @@ export async function enqueueKnightsItems(
               'img.acceptableMinor',
               'img.type',
               'p.id as postRowId',
+              'p.availability',
               // Epoch seconds of the UTC timestamp, so the comparison does not depend on how the driver parses it.
               sql<string | null>`extract(epoch from ${eb.ref('p.publishedAt')})`.as(
                 'publishedEpoch'
@@ -132,6 +135,7 @@ export async function enqueueKnightsItems(
             still: row.type === 'image',
             servable: Boolean(row.servable),
             hasPost: row.postRowId !== null,
+            privatePost: row.availability === 'Private',
             publishesAt:
               row.publishedEpoch === null ? null : new Date(Number(row.publishedEpoch) * 1000),
           },
@@ -169,6 +173,7 @@ export async function enqueueKnightsItems(
       (image.publishesAt === null || image.publishesAt.getTime() > now.getTime())
     )
       return refuse('unpublished');
+    if (requirePublished && image.privatePost) return refuse('private-post');
     if (seen.has(item.imageId)) {
       outcomes[index] = { imageId: item.imageId, outcome: 'duplicate' };
       return;

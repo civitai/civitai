@@ -53,7 +53,7 @@ const range = (from: number, count: number) => Array.from({ length: count }, (_,
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(
-    `CREATE TABLE "Post" (id integer PRIMARY KEY, "publishedAt" timestamp);
+    `CREATE TABLE "Post" (id integer PRIMARY KEY, "publishedAt" timestamp, availability text NOT NULL DEFAULT 'Public');
      CREATE TABLE "Image" (
        id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
        type text NOT NULL DEFAULT 'image', "nsfwLevel" integer NOT NULL DEFAULT 1,
@@ -130,6 +130,23 @@ describe('sampleNewlyLivePostsForKnights', () => {
     expect(result).toMatchObject({ posts: 1, enqueued: 2, capped: false });
     // Nothing more was due, so the next run starts where this window ended, a minute behind the clock.
     expect(result.cursor).toEqual(at(minutesAgo(1)));
+  });
+
+  it('skips the images of a Private post without spending queue room on them, and queues those of an Unsearchable one', async () => {
+    await post(1, minutesAgo(5));
+    await post(2, minutesAgo(5));
+    await images(1, [11]);
+    await images(2, [21]);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 1`);
+    await pg.query(`UPDATE "Post" SET availability = 'Unsearchable' WHERE id = 2`);
+
+    // One slot of room: only 21 may take it.
+    const result = await sweep(minutesAgo(10), { sfwRate: 1, nsfwRate: 1, maxOpen: 1 });
+
+    expect(await queued()).toEqual([
+      { imageId: 21, source: 'scan-sample', priority: 1, status: 'Open' },
+    ]);
+    expect(result).toMatchObject({ posts: 2, enqueued: 1, capped: false });
   });
 
   it('leaves a post published within the last minute to the next run', async () => {

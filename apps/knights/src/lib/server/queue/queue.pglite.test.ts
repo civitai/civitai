@@ -1136,6 +1136,7 @@ describe('what the feed serves', () => {
       () => pg.query(`UPDATE "Post" SET "publishedAt"='2099-01-01' WHERE id=10`),
     ],
     ['an image with no post', () => pg.query(`UPDATE "Image" SET "postId"=NULL WHERE id=10`)],
+    ['a Private post', () => pg.query(`UPDATE "Post" SET availability='Private' WHERE id=10`)],
     [
       'an image held for review',
       () => pg.query(`UPDATE "Image" SET "needsReview"='minor' WHERE id=10`),
@@ -1382,6 +1383,52 @@ describe('escalateExpired', () => {
     });
     expect(await itemRow(voted)).toMatchObject({ status: 'Open', minRank: 'Templar' });
     expect(await itemRow(idle)).toMatchObject({ status: 'Closed', reason: 'expired' });
+  });
+});
+
+describe('an expired item on a Private post', () => {
+  const PAST = new Date('2026-12-15T11:00:00Z');
+  const makePrivate = () => pg.query(`UPDATE "Post" SET availability='Private' WHERE id=10`);
+  async function knightItem(answer: string) {
+    await fiveKnights();
+    await active(20, 'Templar');
+    await image(10, 4);
+    const id = await item(10, { expires: PAST });
+    await vote(1, id, answer);
+    await makePrivate();
+    return id;
+  }
+
+  it('goes to the Inquisitors as blocked from a stage below the last, never to the next player stage', async () => {
+    const id = await knightItem('32');
+    expect((await escalateExpired(db, { now: NOW })).toInquisitor).toBe(1);
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      minRank: 'Inquisitor',
+      escalationReason: 'blocked',
+    });
+  });
+
+  it('escalates the same Blocked votes on a Public post from a stage below the last, as before', async () => {
+    await fiveKnights();
+    await active(20, 'Templar');
+    await image(10, 4);
+    const id = await item(10, { expires: PAST });
+    await vote(1, id, '32');
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({
+      escalated: 1,
+      toInquisitor: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+  });
+
+  it('runs as any other item when the pick is not Blocked', async () => {
+    const id = await knightItem('4');
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({
+      escalated: 1,
+      toInquisitor: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
   });
 });
 
@@ -2102,6 +2149,20 @@ describe('closeUnservableItems', () => {
     expect((await sweep()).imageUnservable).toBe(0);
     expect(await statusOf([ownerRating])).toEqual([['Open', null]]);
     expect(await countOpenServableKnightItems(db, 10)).toBe(1);
+  });
+
+  it('leaves open an item on a Private post: it is only hidden', async () => {
+    const id = await queued(96);
+    await pg.query(`UPDATE "Post" SET availability='Private' WHERE id=96`);
+
+    expect(await sweep()).toEqual({
+      unservable: 0,
+      publishesAfterExpiry: 0,
+      unpublishedDrafts: 0,
+      imageUnservable: 0,
+    });
+    expect(await statusOf([id])).toEqual([['Open', null]]);
+    expect(await countOpenServableKnightItems(db, 10)).toBe(0);
   });
 
   it('closes an Inquisitor item whose image is gone, votes set aside, and leaves blocked images, held evidence and rulings in progress', async () => {

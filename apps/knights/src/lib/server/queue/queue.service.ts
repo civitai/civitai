@@ -15,6 +15,7 @@ import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp
 import { settleAndMirror, settleItemVotes } from '../progression/progression';
 import {
   ESCALATED_FROM_LEVEL_META_KEY,
+  postNotPrivate,
   servableImage,
   servableImageContent,
 } from '@civitai/db/knights';
@@ -1129,6 +1130,23 @@ export async function escalateExpired(
     const counts = { escalated: 0, toInquisitor: 0, extended: 0, expired: 0, rerated: 0 };
     if (due.length === 0) return counts;
 
+    // Due items whose post is Private.
+    const hidden = new Set(
+      (
+        await trx
+          .selectFrom('Image as img')
+          .innerJoin('Post as p', 'p.id', 'img.postId')
+          .select('img.id')
+          .where(
+            'img.id',
+            'in',
+            due.map((item) => item.imageId)
+          )
+          .where((eb) => eb.not(postNotPrivate(eb)))
+          .execute()
+      ).map((row) => row.id)
+    );
+
     // Counted votes at each item's stage. A held player's vote (weight 0) decides nothing, so an item with only those had no vote.
     const counted = new Map<number, WeightedAnswer[]>();
     const stageVotes = await trx
@@ -1149,6 +1167,18 @@ export async function escalateExpired(
     }
     const staffed = await staffedRanks(trx, now);
 
+    // Their Blocked plurality (ties go high) goes to the Inquisitors. Every other item routes as below.
+    const hiddenBlocked = due.filter((item) => {
+      if (!hidden.has(item.imageId)) return false;
+      const votes = counted.get(item.id) ?? [];
+      return votes.length > 0 && isBlockedLevel(Number(mostVotedLevel(votes)));
+    });
+    for (const item of hiddenBlocked) {
+      await toInquisitor(trx, item.id, now, 'blocked');
+      counts.toInquisitor++;
+    }
+    const live = due.filter((item) => !hiddenBlocked.includes(item));
+
     // An item extends only until two stage windows after it entered the stage (a custom shorter first `expiresAt` can extend
     // twice within that): one that sat that long with no vote is not coming back, and must not wait here forever (the one
     // player who could serve it may have judged it already).
@@ -1158,7 +1188,7 @@ export async function escalateExpired(
       staffed.has(item.minRank) &&
       (item.escalatedAt ?? item.createdAt) > enteredSince;
 
-    const idle = due.filter(extend);
+    const idle = live.filter(extend);
     if (idle.length > 0) {
       await trx
         .updateTable('KnightsQueueItem')
@@ -1191,7 +1221,7 @@ export async function escalateExpired(
       }
       return staffed.has(item.minRank) || leavesPlayers(item);
     };
-    const lapsed = due.filter(expire);
+    const lapsed = live.filter(expire);
     if (lapsed.length > 0) {
       // Votes are only graded here: `settleFinalItems`, next in the tick, pays them one item at a time, so one bad settlement
       // cannot roll back this batch, and player rows are not locked while every item lock is held.
@@ -1207,7 +1237,7 @@ export async function escalateExpired(
     left = due
       .filter((item) => !extend(item))
       .map((item) => ({ id: item.id, status: 'Open', minRank: item.minRank }));
-    for (const item of due) {
+    for (const item of live) {
       if (extend(item) || expire(item)) continue;
       const outcome = await escalate(trx, item, now, staffed);
       if (outcome === 'escalated') counts.escalated++;
