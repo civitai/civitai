@@ -71,6 +71,7 @@ import {
   ingestionAfterScanErrorSql,
   keepPermanentScanFailureSql,
   ingestionAfterVerdictSql,
+  scanKeepsRowSql,
   ingestionKeptAfterVerdict,
   withoutGraceMarkersSql,
 } from '~/server/common/image-visibility';
@@ -761,6 +762,9 @@ export async function resolveScanOutcome({
   const metadataSet = Prisma.sql`CASE WHEN ${metadataJson}::jsonb IS NULL OR ${csamBlocked} THEN "metadata"
         ELSE COALESCE("metadata", '{}'::jsonb) || ${metadataJson}::jsonb END`;
   const lifting = toUpdate.ingestion !== ImageIngestionStatus.Blocked;
+  // Rows the SET above already re-blocks are left to it.
+  const keptFromScan = Prisma.sql`(COALESCE("ingestion" IN ('Blocked'::"ImageIngestionStatus", 'Error'::"ImageIngestionStatus"), false)
+    AND ${scanKeepsRowSql('Image')} AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM})`;
   let rowsWritten: number | undefined;
   await writeWithNsfwAxes(
     async (axesTerm) =>
@@ -790,14 +794,16 @@ export async function resolveScanOutcome({
         workflowId
       )}::jsonb)${axesTerm}
     WHERE id = ${image.id}${blocking ? Prisma.empty : Prisma.sql` AND NOT ${graceBlockedSql}`}${
-        lifting ? Prisma.sql` AND NOT ${blockKeptByBanOrHoldSql('Image')}` : Prisma.empty
+        lifting
+          ? Prisma.sql` AND NOT ${blockKeptByBanOrHoldSql('Image')} AND NOT ${keptFromScan}`
+          : Prisma.empty
       }
   `),
     axesSet,
     axesTarget
   );
   if (!blocking && rowsWritten === 0) {
-    // Skipped as grace-blocked, or blocked by a ban or hold since the read: the hash is still kept (a later block reads it), and the outcome is
+    // Skipped as grace-blocked, kept from the scan, or blocked by a ban or hold since the read: the hash is still kept (a later block reads it), and the outcome is
     // the row as it stands, so no Scanned effects run.
     await dbWrite.$executeRaw`
       UPDATE "Image" SET "pHash" = COALESCE(${pHash ?? null}, "pHash") WHERE id = ${image.id}
@@ -810,13 +816,29 @@ export async function resolveScanOutcome({
       });
       return 0;
     });
+    // A skipped row still takes what the scan adds; nothing is cleared.
+    await dbWrite.$executeRaw`
+      UPDATE "Image" SET
+        "minor" = "minor" OR ${(toUpdate.minor as boolean) ?? false},
+        "poi" = "poi" OR ${(toUpdate.poi as boolean) ?? false},
+        "needsReview" = COALESCE("needsReview", ${reviewKey})
+      WHERE id = ${image.id} AND ${keptFromScan} AND NOT ${graceBlockedSql}
+    `.catch((error: Error) => {
+      logToAxiom({
+        type: 'error',
+        name: 'scan-skipped-flags',
+        imageId: image.id,
+        message: error.message,
+      });
+      return 0;
+    });
     const rows = await dbWrite.$queryRaw<
       { ingestion: ImageIngestionStatus; blockedFor: string | null; nsfwLevel: number }[]
     >`
       SELECT ingestion, "blockedFor", "nsfwLevel" FROM "Image" WHERE id = ${image.id}
     `.catch(() => null);
-    // A failed read is reported blocked, since the skip only matches a blocked row; no row at all
-    // means the image is gone, and the verdict is reported as before.
+    // A failed read is reported blocked, the stricter outcome; no row at all means the image is
+    // gone, and the verdict is reported as before.
     const kept =
       rows === null
         ? {

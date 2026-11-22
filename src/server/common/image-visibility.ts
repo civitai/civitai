@@ -1,7 +1,8 @@
 import type { DB } from '@civitai/db-schema/kysely';
 import type { Selectable } from 'kysely';
 import { Prisma } from '@prisma/client';
-import { NsfwLevel } from '~/server/common/enums';
+import { BlockedReason, NsfwLevel } from '~/server/common/enums';
+import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedown-activities';
 import { ImageScanFailureClass } from '~/server/services/image-scan-failure';
 import {
   allBrowsingLevelsFlag,
@@ -77,6 +78,25 @@ export const hasBlockMarkerSql = (alias = 'i') => {
     ${t}."ingestion" = ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
     OR ${t}."nsfwLevel" = ${NsfwLevel.Blocked}
     OR ${t}."blockedFor" IS NOT NULL
+  )`;
+};
+
+/** Shared by the scan write and the CDN decision: change them together. */
+export const scanKeepsRowSql = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`COALESCE(
+    (${t}."blockedFor" IS NOT NULL AND ${t}."blockedFor" <> ${BlockedReason.AiNotVerified})
+    OR (${hasBlockMarkerSql(alias)} AND (
+      ${t}."needsReview" IN ('csam', 'minor', 'appeal')
+      OR ${t}."minor"
+      OR (${t}."nsfwLevelLocked" AND ${t}."nsfwLevel" = ${NsfwLevel.Blocked})
+      OR EXISTS (
+        SELECT 1 FROM "ModActivity" ma
+        WHERE ma."entityType" = 'image' AND ma."entityId" = ${t}.id
+          AND ma.activity = ANY(${[...MODERATOR_TAKEDOWN_ACTIVITIES]}::text[])
+      )
+    )),
+    false
   )`;
 };
 
@@ -454,8 +474,9 @@ export const unblockedMetadataSql = liftedUnderGraceSql(
   Prisma.sql`"metadata" - 'ruleId' - 'ruleReason' - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text`
 );
 
+/** The `ingestion` a scan error writes. */
 export const ingestionAfterScanErrorSql = () => Prisma.sql`(CASE
-  WHEN "ingestion" = 'NotFound'::"ImageIngestionStatus" OR ${graceBlockedSql} THEN "ingestion"
+  WHEN "ingestion" = 'NotFound'::"ImageIngestionStatus" OR "ingestion" = 'Blocked'::"ImageIngestionStatus" THEN "ingestion"
   ELSE ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
 END)`;
 

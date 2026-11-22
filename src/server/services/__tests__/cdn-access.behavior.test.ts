@@ -214,6 +214,8 @@ beforeAll(async () => {
       "blockedFor" text,
       "needsReview" text,
       minor boolean NOT NULL DEFAULT false,
+      "nsfwLevel" int NOT NULL DEFAULT 0,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       name text,
       type text NOT NULL DEFAULT 'image'
     );

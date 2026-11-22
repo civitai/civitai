@@ -40,6 +40,7 @@ vi.mock('~/server/search-index', () => ({
 import * as imageService from '~/server/services/image.service';
 import {
   accountHeldBlockedImagesSql,
+  legalHeldImagesSql,
   blockedQueueBatchSql,
   reviewHeldBlockedImagesSql,
   blockedQueueExpiredAmongSql,
@@ -360,6 +361,22 @@ describe('purgeHoldGuard on the delete', () => {
       .mocked(imagesMetricsSearchIndex.queueUpdate)
       .mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
     expect(sorted(deindexed)).toEqual(DELETED);
+  });
+
+  it('leaves rows outside the delete selection', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES
+        (140, ${PLAIN_USER}, 'Error', 'moderated', 32),
+        (141, ${PLAIN_USER}, 'Error', NULL, 0);
+    `);
+
+    const deleted = await imageService.deleteImages([140, 141], {
+      actor: { system: 'test' },
+      onlyWhere: purgeHoldGuard(NO_COPY),
+    });
+
+    expect(deleted).toEqual([]);
+    expect((await remaining()).filter((id) => id === 140 || id === 141)).toEqual([140, 141]);
   });
 
   it('applies the guard to every batch, not only the first', async () => {
@@ -1307,6 +1324,34 @@ describe('accountHeldBlockedImagesSql, the batch exclusion', () => {
     // FLAGGED (12) is the base fixture's flagged image; its owner is held the same way.
     expect(await read()).toEqual([FLAGGED, 91, 93, 94, 98]);
   });
+
+  it('matches the shared hold selection', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES
+        (120, ${BLOCK_OWNER}, 'Blocked', 'CSAM', 32),
+        (121, ${BLOCK_OWNER}, 'Error', 'moderated', 32),
+        (122, ${BLOCK_OWNER}, 'Error', NULL, 32),
+        (123, ${BLOCK_OWNER}, 'Error', NULL, 0);
+    `);
+
+    expect(await read()).toEqual([FLAGGED, 120, 121, 122]);
+  });
+});
+
+describe('legalHeldImagesSql, the batch exclusion', () => {
+  it('returns the held owner’s rows the shared hold selection keeps, and nothing else', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES
+        (150, 71, 'Blocked', 'moderated', 32),
+        (151, 71, 'Error', 'moderated', 32),
+        (152, 71, 'Error', NULL, 0),
+        (153, 71, 'Scanned', NULL, 0),
+        (154, 72, 'Error', 'moderated', 32);
+    `);
+    const flat = legalHeldImagesSql([71]);
+    const { rows } = await holder.db.query<{ id: number }>(flat.text, flat.values as unknown[]);
+    expect(sorted(rows.map((r) => r.id))).toEqual([150, 151]);
+  });
 });
 
 describe('reviewHeldBlockedImagesSql, the batch exclusion', () => {
@@ -1324,6 +1369,22 @@ describe('reviewHeldBlockedImagesSql, the batch exclusion', () => {
     );
 
     expect(sorted(rows.map((r) => r.id))).toEqual(sorted([APPEALED, FLAGGED, 110]));
+  });
+
+  it('matches the shared hold selection', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "needsReview", "blockedFor", "nsfwLevel") VALUES
+        (130, ${PLAIN_USER}, 'Error', NULL, 'CSAM', 32),
+        (131, ${PLAIN_USER}, 'Error', 'appeal', NULL, 32),
+        (132, ${PLAIN_USER}, 'Error', 'appeal', NULL, 0);
+    `);
+
+    const { rows } = await holder.db.query<{ id: number }>(
+      reviewHeldBlockedImagesSql.text,
+      reviewHeldBlockedImagesSql.values as unknown[]
+    );
+
+    expect(sorted(rows.map((r) => r.id))).toEqual(sorted([APPEALED, FLAGGED, 130, 131]));
   });
 });
 

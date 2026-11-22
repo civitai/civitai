@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
 // `remove-blocked-images` hard-deletes blocked media (row + S3) after a retention window.
 // The window used to be clocked off the Image row: `updatedAt` for blockedFor='moderated',
@@ -62,11 +63,18 @@ const IMAGES = [
   { id: 10, userId: HELD_USER, blockedFor: 'CSAM' },
 ];
 // Added by the test that needs it, so the placeholder owner's image is not in every batch.
-const extraImages: { id: number; userId: number; blockedFor: string }[] = [];
+const extraImages: {
+  id: number;
+  userId: number;
+  blockedFor: string;
+  ingestion?: string;
+  nsfwLevel?: number;
+}[] = [];
 const extraQueue: { entityId: number; createdAt: Date }[] = [];
 const allImages = () => [...IMAGES, ...extraImages];
 
 const {
+  heldLookup,
   execLog,
   sqlLog,
   queueWhereLog,
@@ -105,6 +113,10 @@ const {
   const withoutModActivity: number[] = [];
   // Images deleted by someone else between the batch read and this job's delete.
   const goneIds: number[] = [];
+  // Runs the held-owner image lookup against real rows, so its predicate decides what it returns.
+  const heldLookup = {
+    run: null as null | ((sql: string, values: unknown[]) => Promise<{ id: number }[]>),
+  };
   const mockEnv = {
     IMAGE_SCANNING_MAX_PER_RUN: 100,
     IMAGE_SCANNING_RETRY_DELAY: 5,
@@ -231,16 +243,26 @@ const {
     }
     // Blocked images belonging to the still-held users.
     if (sql.includes('"userId" = ANY')) {
+      if (heldLookup.run) {
+        let n = 0;
+        return heldLookup.run(
+          sql.replace(/\?/g, () => `$${++n}`),
+          values
+        );
+      }
       const ids = (values.find(Array.isArray) as number[]) ?? [];
       return allImages()
         .filter((i) => ids.includes(i.userId))
         .map((i) => ({ id: i.id }));
     }
-    // The batch SELECT, scoped to whatever ids survived the queue exclusion.
+    // The batch SELECT, scoped to whatever ids survived the queue exclusion. It reads Blocked rows only.
     const ids = (values.find(Array.isArray) as number[]) ?? [];
-    return allImages().filter((i) => ids.includes(i.id));
+    return allImages().filter(
+      (i) => ids.includes(i.id) && (i.ingestion ?? 'Blocked') === 'Blocked'
+    );
   };
   return {
+    heldLookup,
     execLog,
     sqlLog,
     queueWhereLog,
@@ -398,6 +420,37 @@ function batchWhere() {
   return queueWhereLog[queueWhereLog.length - 1];
 }
 
+beforeAll(async () => {
+  const db = new PGlite();
+  await db.exec(`
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY,
+      "userId" int NOT NULL,
+      ingestion "ImageIngestionStatus" NOT NULL,
+      "blockedFor" text,
+      "nsfwLevel" int NOT NULL
+    );
+  `);
+  heldLookup.run = async (sql, values) => {
+    const rows = allImages();
+    await db.query('DELETE FROM "Image"');
+    await db.query(
+      `INSERT INTO "Image"
+        SELECT a, b, c::"ImageIngestionStatus", d, e
+        FROM unnest($1::int[], $2::int[], $3::text[], $4::text[], $5::int[]) AS t(a, b, c, d, e)`,
+      [
+        rows.map((i) => i.id),
+        rows.map((i) => i.userId),
+        rows.map((i) => i.ingestion ?? 'Blocked'),
+        rows.map((i) => i.blockedFor),
+        rows.map((i) => i.nsfwLevel ?? 32),
+      ]
+    );
+    return (await db.query<{ id: number }>(sql, values)).rows;
+  };
+});
+
 beforeEach(() => {
   execLog.length = 0;
   sqlLog.length = 0;
@@ -508,7 +561,11 @@ describe('remove-blocked-images retention clock', () => {
     const heldImageLookup = mockDbRead.$queryRaw.mock.calls.find((c) =>
       sqlText(c[0]).includes('"userId" = ANY')
     );
-    expect(heldImageLookup?.[1]).toEqual([PLACEHOLDER_OWNER, HELD_USER, LONG_HELD_USER]);
+    expect((heldImageLookup?.[0] as { values: unknown[] }).values[0]).toEqual([
+      PLACEHOLDER_OWNER,
+      HELD_USER,
+      LONG_HELD_USER,
+    ]);
     expect(deletedIds()).toContain(1);
   });
 
@@ -521,6 +578,28 @@ describe('remove-blocked-images retention clock', () => {
     // The batch must stay scoped to this queue type — a widened where would delete
     // unrelated entities.
     expect(batchWhere()).toMatchObject({ type: 'BlockedImageDelete', entityType: 'Image' });
+  });
+
+  it('reads the held owners’ images over the whole shared hold selection', async () => {
+    await runJob();
+
+    const lookups = mockDbRead.$queryRaw.mock.calls
+      .map((c) => sqlText(c[0]))
+      .filter((s) => s.includes('"userId" = ANY'));
+    expect(lookups).toHaveLength(1);
+    expect(lookups[0]).toMatch(
+      /^\s*SELECT id FROM "Image"\s+WHERE "userId" = ANY\(\?\)\s+AND \("Image"\.ingestion = 'Blocked'::"ImageIngestionStatus"\s+OR \("Image"\.ingestion = 'Error'::"ImageIngestionStatus" AND \(\s*"Image"\."ingestion" = \?::"ImageIngestionStatus"\s+OR "Image"\."nsfwLevel" = \?\s+OR "Image"\."blockedFor" IS NOT NULL\s*\)\)\)\s*$/
+    );
+  });
+
+  it('keeps a held owner’s row in the shared hold selection out of the batch', async () => {
+    extraImages.push({ id: 11, userId: HELD_USER, blockedFor: 'moderated', ingestion: 'Error' });
+    extraQueue.push({ entityId: 11, createdAt: EXPIRED });
+    await runJob();
+
+    expect(batchWhere()?.entityId?.notIn).toContain(11);
+    expect(queuePruneIds()).not.toContain(11);
+    expect(deletedIds()).not.toContain(11);
   });
 
   it('holds however long ago the report was filed', async () => {
@@ -751,7 +830,7 @@ describe('remove-blocked-images retention clock', () => {
   // Neither mock evaluates these, so they are pinned here. Dropping the ingestion predicate puts
   // every flagged image on the site, blocked or not, into the batch's notIn list; reading from
   // the replica misses a flag set inside the lag window.
-  it('reads the review hold from the primary, Blocked images only', async () => {
+  it('reads the review hold from the primary, over the shared hold selection', async () => {
     await runJob();
 
     const isHoldSql = (s: string) => s.includes('"needsReview" IN');
@@ -762,7 +841,7 @@ describe('remove-blocked-images retention clock', () => {
     expect(onRead).toEqual([]);
     expect(onWrite).toHaveLength(1);
     expect(onWrite[0]).toMatch(
-      /WHERE \("needsReview" IN \('appeal', 'csam'\) OR "blockedFor" = 'CSAM'\)\s+AND ingestion = 'Blocked'::"ImageIngestionStatus"\s*$/
+      /WHERE \("needsReview" IN \('appeal', 'csam'\) OR "blockedFor" = 'CSAM'\)\s+AND \("Image"\.ingestion = 'Blocked'::"ImageIngestionStatus"\s+OR \("Image"\.ingestion = 'Error'::"ImageIngestionStatus" AND \(\s*"Image"\."ingestion" = \?::"ImageIngestionStatus"\s+OR "Image"\."nsfwLevel" = \?\s+OR "Image"\."blockedFor" IS NOT NULL\s*\)\)\)\s*$/
     );
   });
 
