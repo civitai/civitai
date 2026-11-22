@@ -120,10 +120,6 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { getImageUploadBackend } from '~/utils/s3-utils';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
-import {
-  assertClientImageUrlsUsable,
-  assertClientKeysIssuedToCaller,
-} from '~/server/services/image-url-ownership';
 import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
 import {
   assertGenerationInputsUsable,
@@ -2435,7 +2431,8 @@ export const comicsRouter = router({
     .input(updatePanelSchema)
     .mutation(async ({ ctx, input }) => {
       // Verify ownership via chapter -> project
-      const panel = await dbRead.comicPanel.findUnique({
+      // primary: the image url check below compares against the value about to be overwritten.
+      const panel = await dbWrite.comicPanel.findUnique({
         where: { id: input.panelId },
         include: { chapter: { include: { project: { select: { userId: true } } } } },
       });
@@ -2443,9 +2440,9 @@ export const comicsRouter = router({
       if (!panel || panel.chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
-      if (input.imageUrl && input.imageUrl !== panel.imageUrl) {
-        await assertClientImageUrlsUsable({ urls: [input.imageUrl], userId: ctx.user.id });
-        await assertClientKeysIssuedToCaller({ urls: [input.imageUrl], userId: ctx.user.id });
+      // A new image goes through replacePanelImage, which records and scans it.
+      if (input.imageUrl != null && input.imageUrl !== panel.imageUrl) {
+        throw throwBadRequestError('A panel image is changed through replacePanelImage');
       }
 
       const updated = await dbWrite.comicPanel.update({
