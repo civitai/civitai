@@ -23,6 +23,7 @@ import type {
   MembershipResyncPreview,
   MembershipResyncResult,
 } from '$lib/membership-extend';
+import type { CompGiftPreview, CompGiftResult, CompGiftTier } from '$lib/membership-gift-comp';
 import { civitaiAppUrl } from './civitai-url';
 import { getRequestEvent } from '$app/server';
 import type { Transaction } from 'kysely';
@@ -59,8 +60,8 @@ import type { HeldSummary } from './removal-hold';
 //   - ban / unban delegates to the main app's /api/mod/ban-user, which also purges media and models,
 //     sends notifications and busts caches. Reimplementing that here would be a second source of truth.
 //
-// Actions log to ModActivity with the REAL moderator id, except `deleteAccount` and
-// `removePlacement`, whose endpoints write their own row, and `voteOnImageTags`, which only the
+// Actions log to ModActivity with the REAL moderator id, except `deleteAccount`,
+// `removePlacement` and `compGift`, whose endpoints write their own row, and `voteOnImageTags`, which only the
 // endpoint's ClickHouse audit records. The ban endpoint records itself as
 // `userId: -1` internally, so without this log a ban would have no attribution at all.
 
@@ -266,9 +267,11 @@ export type ModEndpoint =
   | 'messages/claim'
   | 'messages/release'
   | 'creator-services/resolve-dispute'
+  | 'creator-services/review-report'
   | 'csam/training-data-report'
   | 'image/report-csam'
   | 'image/tag-vote'
+  | 'membership-gift/comp'
   | 'model/resolve-restricted-nsfw-verdict'
   | 'minor-flag/confirm'
   | 'minor-flag/dismiss'
@@ -292,6 +295,7 @@ export type ModEndpoint =
   | 'restriction/resolve'
   | 'review/delete'
   | 'review/set-exclude'
+  | 'profanity-dry-run'
   | 'search-query-rule-dry-run'
   | 'storyline/lift-title-takedown'
   | 'storyline/resolve-title-appeal'
@@ -304,6 +308,7 @@ export type ModEndpoint =
   | 'text-scan/csam-hold/resolve'
   | 'text-scan/model-rules-hold/resolve'
   | 'training-data/resolve'
+  | 'user/clear-profile'
   | 'user/creator-score-grant'
   | 'user/creator-score-grant-revoke'
   | 'user/delete'
@@ -314,6 +319,7 @@ export type ModEndpoint =
   | 'user/membership-resync'
   | 'user/message-as-civitai'
   | 'user/personal-data-export-release'
+  | 'user/remove-link'
   | 'user/remove-reactions'
   | 'user/toggle-moderator'
   | 'user/unmute'
@@ -1896,6 +1902,49 @@ function writeFailureError(
   return mayHaveCompleted;
 }
 
+// COMP GIFT (a membership gift nobody pays for). The endpoint writes the ModActivity row in the same
+// transaction as the gift, and its daily cap counts those rows, so no `logAction` here.
+export const COMP_GIFT_OUTCOME_UNKNOWN =
+  "Outcome unknown: the gift may have been created. Check the user's gifts before trying again.";
+
+type CompGiftForm = {
+  userId: number;
+  tier: CompGiftTier;
+  months: number;
+  reason: string;
+  message?: string;
+  anonymous: boolean;
+};
+
+export async function previewCompGift(
+  input: CompGiftForm
+): Promise<{ ok: true; preview: CompGiftPreview } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'membership-gift/comp',
+    { ...input, execute: false },
+    'Preview comp gift'
+  );
+  if (!result.ok) return { ok: false, error: result.error };
+  const body = result.body as unknown as CompGiftPreview;
+  if (body.outcome !== 'would-comp') return { ok: false, error: 'Unexpected preview answer.' };
+  return { ok: true, preview: body };
+}
+
+export async function compGift(
+  input: CompGiftForm
+): Promise<{ ok: true; result: CompGiftResult } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'membership-gift/comp',
+    { ...input, execute: true },
+    'Comp gift'
+  );
+  if (!result.ok) return { ok: false, error: writeFailureError(result, COMP_GIFT_OUTCOME_UNKNOWN) };
+  const body = result.body as unknown as CompGiftResult;
+  if (body.outcome !== 'comped' || typeof body.giftId !== 'string')
+    return { ok: false, error: COMP_GIFT_OUTCOME_UNKNOWN };
+  return { ok: true, result: body };
+}
+
 // MEMBERSHIP CODE (support make-good). The endpoint records the ModActivity row inside the same
 // transaction as the code, and its daily cap counts those rows — so no `logAction` here.
 export async function mintMembershipCode(input: {
@@ -2248,6 +2297,12 @@ export async function removeReactions(input: {
 // Only the three free-text fields are writable. Retool's GUI write pointed at the whole `User` row,
 // which put username and email one mis-click from being overwritten.
 
+// The archive the endpoints take first can be slow, so a lost response may follow a change that landed.
+const CLEAR_PROFILE_MAY_HAVE_COMPLETED =
+  'Could not confirm the clear. Reload the profile to see whether it went through.';
+const REMOVE_LINK_MAY_HAVE_COMPLETED =
+  'Could not confirm the removal. Reload the links to see whether it went through.';
+
 export async function clearProfileText(input: {
   userId: number;
   fields: ProfileField[];
@@ -2256,16 +2311,18 @@ export async function clearProfileText(input: {
   const fields = input.fields.filter((f) => PROFILE_FIELD_KEYS.includes(f));
   if (!fields.length) return { ok: false, error: 'Nothing selected to clear.' };
 
-  const result = await dbWrite
-    .updateTable('UserProfile')
-    .set(Object.fromEntries(fields.map((f) => [f, null])))
-    .where('userId', '=', input.userId)
-    .executeTakeFirst();
-
-  if (Number(result.numUpdatedRows ?? 0) === 0)
+  // Through the main app, which archives the profile first where a CSAM report or hold names the
+  // user, and records the clear itself: a `logAction` here would be a second ModActivity row.
+  const result = await callModEndpoint(
+    'user/clear-profile',
+    { userId: input.userId, fields },
+    'Profile clear',
+    60_000
+  );
+  if (!result.ok)
+    return { ok: false, error: writeFailureError(result, CLEAR_PROFILE_MAY_HAVE_COMPLETED) };
+  if (result.body.updated === false)
     return { ok: false, error: 'This account has no profile row to edit.' };
-
-  await logAction(`clearProfile:${fields.join('+')}`, input.userId, input.moderatorId);
   return { ok: true };
 }
 
@@ -2279,18 +2336,18 @@ export async function removeSocial(input: {
   userId: number;
   moderatorId: number;
 }): Promise<ActionResult> {
-  // Scoped by userId as well as id: filtering on id alone would let a stale or forged value delete
-  // another account's link and log it against this one.
-  const result = await dbWrite
-    .deleteFrom('UserLink')
-    .where('id', '=', input.id)
-    .where('userId', '=', input.userId)
-    .executeTakeFirst();
-
-  if (Number(result.numDeletedRows ?? 0) === 0)
+  // Through the main app, as `clearProfileText` is: it archives first, deletes only a link of this
+  // user, and records the removal.
+  const result = await callModEndpoint(
+    'user/remove-link',
+    { userId: input.userId, linkId: input.id },
+    'Link removal',
+    60_000
+  );
+  if (!result.ok)
+    return { ok: false, error: writeFailureError(result, REMOVE_LINK_MAY_HAVE_COMPLETED) };
+  if (result.body.removed === false)
     return { ok: false, error: 'That link does not belong to this user.' };
-
-  await logAction('removeSocial', input.userId, input.moderatorId);
   return { ok: true };
 }
 

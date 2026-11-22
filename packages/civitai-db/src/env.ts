@@ -57,6 +57,14 @@ export const dbEnvSchema = z.object({
   IS_DATAPACKET: booleanString.default(false),
   PODNAME: z.string().optional(),
   LOGGING: commaDelimitedStringArray,
+  // The Prisma read retry (read-retry.ts). On unless set to off, false or 0, so it can be turned off
+  // with an env change and a restart instead of a release. The numbers override its defaults.
+  DB_READ_RETRY: z.preprocess(
+    (val) => !(typeof val === 'string' && /^(?:off|false|0)$/i.test(val.trim())),
+    z.boolean()
+  ),
+  DB_READ_RETRY_BUDGET_MS: intString(0, 60_000).optional(),
+  DB_READ_RETRY_MAX_CONCURRENT: intString(0).optional(),
 });
 
 // Normalized, env-derived defaults. Factories accept a Partial<DbConfig> to override.
@@ -90,6 +98,9 @@ function buildEnv() {
     isDatapacket: parsed.data.IS_DATAPACKET,
     podName: parsed.data.PODNAME,
     logging: parsed.data.LOGGING,
+    readRetryEnabled: parsed.data.DB_READ_RETRY,
+    readRetryBudgetMs: parsed.data.DB_READ_RETRY_BUDGET_MS,
+    readRetryMaxConcurrent: parsed.data.DB_READ_RETRY_MAX_CONCURRENT,
     // NODE_ENV is a universal Node convention; the Next build guard lives in the app shim.
     isProd: process.env.NODE_ENV === 'production',
   };

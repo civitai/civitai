@@ -4,6 +4,7 @@ import type { IconProps } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { useEffect, useReducer, useRef, useState } from 'react';
+import { Tooltip } from '~/components/MantineOverlays';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 import classes from './HomeStyleSegmentedControl.module.css';
@@ -22,6 +23,10 @@ export function HomeStyleSegmentedControl({ data, value: activePath, loading, ke
   const rootRef = useRef<HTMLDivElement>(null);
   const lastWidthRef = useRef(0);
   const [density, setDensity] = useState(0);
+  // The row stays `visibility: hidden` until the walk below settles. The server can't measure, so
+  // the SSR/hydration paint is always comfy; shown, it collapsed under the cursor the moment
+  // hydration (or the counts) landed and the click hit a different tab.
+  const [measured, setMeasured] = useState(false);
   const [measureNonce, bumpMeasure] = useReducer((x: number) => x + 1, 0);
 
   const compact = density >= 2;
@@ -36,6 +41,9 @@ export function HomeStyleSegmentedControl({ data, value: activePath, loading, ke
   useEffect(() => {
     const el = containerRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
+    // Seed with the mount width: the observer's initial callback would otherwise reset to comfy
+    // after the walk has settled, and that update lands after paint.
+    lastWidthRef.current = el.getBoundingClientRect().width;
     const ro = new ResizeObserver((roEntries) => {
       const width = roEntries[0]?.contentRect.width ?? 0;
       if (width === lastWidthRef.current) return;
@@ -53,19 +61,28 @@ export function HomeStyleSegmentedControl({ data, value: activePath, loading, ke
   useIsomorphicEffect(() => {
     const root = rootRef.current;
     if (!root) return;
+    // First load: the counts' final width decides the density, so wait for them.
+    if (loading && !measured) return;
     if (density < maxDensity && root.scrollWidth > root.clientWidth + 1) {
       setDensity((d) => d + 1);
+    } else if (!measured) {
+      setMeasured(true);
     }
-  }, [density, maxDensity, measureNonce, loading, entries.length]);
+  }, [density, maxDensity, measureNonce, loading, entries.length, measured]);
 
   return (
-    <div ref={containerRef} className={classes.container} data-density={density}>
+    <div
+      ref={containerRef}
+      className={classes.container}
+      data-density={density}
+      data-measured={measured || undefined}
+    >
       <div ref={rootRef} className={clsx(classes.root, 'text-black dark:text-white')}>
         {entries.map(([key, value]) => {
           const active = activePath === key;
-          return (
+          const label = value.label ?? key;
+          const button = (
             <Button
-              key={key}
               component={Link}
               href={value.url}
               variant="default"
@@ -86,7 +103,7 @@ export function HomeStyleSegmentedControl({ data, value: activePath, loading, ke
             >
               {value.icon({ size: 16 })}
               <span className={clsx('text-base font-medium capitalize', classes.tabLabel)}>
-                <span className={classes.tabLabelInner}>{value.label ?? key}</span>
+                <span className={classes.tabLabelInner}>{label}</span>
               </span>
               {value.count != null && (
                 <Badge
@@ -99,6 +116,20 @@ export function HomeStyleSegmentedControl({ data, value: activePath, loading, ke
                 </Badge>
               )}
             </Button>
+          );
+
+          // A collapsed label is named by a tooltip, not by widening the pill on hover: that
+          // reflow slid the neighbouring tabs out from under the cursor mid-click. Always wrapped
+          // (disabled when not needed) so a pill turning active doesn't remount and drop focus.
+          return (
+            <Tooltip
+              key={key}
+              label={<span className="capitalize">{label}</span>}
+              disabled={!compact || active}
+              withinPortal
+            >
+              {button}
+            </Tooltip>
           );
         })}
       </div>
@@ -116,6 +147,7 @@ export type DataItem = {
 };
 type Props = {
   value: string;
+  /** Also holds the row hidden on first load until false, so it must settle for every caller. */
   loading?: boolean;
   keepLabels?: boolean;
   data: Record<string, DataItem>;

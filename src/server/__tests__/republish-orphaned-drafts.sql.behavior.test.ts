@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { publishOrphanedDraftSql } from '~/pages/api/admin/temp/republish-orphaned-drafts';
+import { publishOrphanedDraftSql } from '~/server/api-routes/admin/temp/republish-orphaned-drafts';
 
 /**
  * The endpoint picks its candidates on the replica, so its publish re-checks each on the primary: a

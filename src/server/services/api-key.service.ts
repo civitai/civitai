@@ -20,6 +20,7 @@ import {
 } from '~/shared/constants/token-scope.constants';
 import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrator/api-key-spend';
 import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { evictCachedApiKeys } from '~/server/auth/api-key-principal-cache';
 import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
@@ -234,6 +235,9 @@ const revokeLinksOfRevokedApiKeys = async (ids: number[]) => {
   await revokeReviewBatchesOfKeys(ids);
 };
 
+/** At most this many orchestrator token-cache expiries in flight per `deleteApiKeys` call. */
+export const ORCHESTRATOR_REVOKE_CONCURRENCY = 10;
+
 /**
  * Delete the API keys matching `where` and evict them from the bearer-path cache, which is keyed by
  * the stored hash — so the hashes are read first. Use this, not `apiKey.deleteMany`, for any delete
@@ -252,8 +256,12 @@ export async function deleteApiKeys(where: Prisma.ApiKeyWhereInput) {
   await evictCachedApiKeys(rows.map((row) => row.key));
   await revokeLinksOfRevokedApiKeys(rows.map((row) => row.id));
   // The orchestrator caches keys for auth too. revokeCivitaiUserTokens swallows its own errors.
+  // Bounded: a client-wide delete (a connect app's takedown) can reach many users at once.
   const userIds = [...new Set(rows.map((row) => row.userId))];
-  await Promise.all(userIds.map((userId) => revokeCivitaiUserTokens({ userId })));
+  await limitConcurrency(
+    userIds.map((userId) => () => revokeCivitaiUserTokens({ userId })),
+    ORCHESTRATOR_REVOKE_CONCURRENCY
+  );
   return result;
 }
 

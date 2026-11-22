@@ -529,8 +529,9 @@ describe('what HQ gets of the session and the failed requests', () => {
       { moderatorUrl: 'https://moderator.example.test/feedback/7', screenshotAttached: false }
     );
 
-  it('leaves out the session id', () => {
-    expect(body()).not.toContain('faro-session-abc123');
+  // The session id is how a report is joined to its Faro telemetry; dropping it breaks that join.
+  it('carries the Faro session id', () => {
+    expect(body()).toContain('- Faro session: `faro-session-abc123`');
   });
 
   it('lists a failed request as status and path only', () => {

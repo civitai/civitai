@@ -1,6 +1,7 @@
 import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
+import { lazyProxy } from '~/shared/utils/lazy';
 import type { Coinbase } from '~/server/http/coinbase/coinbase.schema';
 import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
 
@@ -84,6 +85,6 @@ class CoinbaseCaller extends HttpCaller {
   }
 }
 
-export default CoinbaseCaller.getInstance();
+export default lazyProxy(() => CoinbaseCaller.getInstance());
 
 export { CoinbaseCaller };

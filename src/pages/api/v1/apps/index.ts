@@ -4,7 +4,10 @@ import {
   withoutUndocumentedRestFields,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
-import { listAvailableListings } from '~/server/services/blocks/app-listing.service';
+import {
+  listAvailableListings,
+  type ListAvailableListingsOpts,
+} from '~/server/services/blocks/app-listing.service';
 import { recordStoreScopeApplied } from '~/server/prom/store-scope.metrics';
 import { resolvePublicAppsCatalogScope } from '~/server/services/blocks/public-apps-catalog';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
@@ -125,7 +128,7 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
         .json({ items: [], metadata: { nextCursor: undefined, nextPage: undefined } });
     }
 
-    const { items, nextCursor } = await listAvailableListings(parsed.data, {
+    const listOpts = {
       redCapable: isRedCapableHost(req.headers.host),
       scope,
       // 🔴 THE AUDIENCE FLOOR IS NOT LIFTED THE WAY THE SCOPE IS, AND PASSING IT
@@ -146,7 +149,15 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
         features: getFeatureFlagsLazy({ user, req }),
         user,
       }),
-    });
+    } satisfies ListAvailableListingsOpts;
+    const { items, nextCursor } = await listAvailableListings(parsed.data, listOpts);
+    // Behind `app-listings-read-model`: the same page asked of the listings read model, with the
+    // same options, off the response path. Never awaited, never throws into the request.
+    void import('~/server/services/blocks/app-listings-read-model-shadow.service')
+      .then(({ shadowListingPage }) =>
+        shadowListingPage('rest_list', parsed.data, listOpts, { items, nextCursor })
+      )
+      .catch(() => undefined);
     const { nextPage } = getNextPage({ req, nextCursor });
     return res.status(200).json({
       items: items.map(withoutUndocumentedRestFields),

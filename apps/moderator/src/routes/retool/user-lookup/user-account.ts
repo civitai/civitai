@@ -140,17 +140,26 @@ export type CommentPage = {
   items: Comment[];
   truncated: boolean;
   next: CommentCursor | null;
+  /** Every live comment on the account. */
   total: number;
+  /** Those matching the search; `total` without one. */
+  matched: number;
 };
 
-/** One page of the account's comments, newest first, starting at `before`. */
+/** One page of the account's comments matching `q`, newest first, starting at `before`. */
 export async function fetchComments(
   userId: number,
   before: CommentCursor | null,
+  q: string,
   version: number
 ): Promise<CommentPage> {
-  const cursor = before ? `&before=${encodeURIComponent(before.at)}&beforeId=${before.id}` : '';
-  const r = await fetch(`/api/user-comments/${userId}?v=${version}${cursor}`);
+  const params = new URLSearchParams({ v: String(version) });
+  if (before) {
+    params.set('before', before.at);
+    params.set('beforeId', String(before.id));
+  }
+  if (q) params.set('q', q);
+  const r = await fetch(`/api/user-comments/${userId}?${params}`);
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
+	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
 )
 
 // Config is the parsed environment.
@@ -42,6 +43,7 @@ type Config struct {
 	SysReadTimeout   time.Duration
 	FallbackURL      string // FEED_GO_FALLBACK_URL: the Node app, for everything not served here
 	Hosts            browsing.HostColors
+	HostPrimaries    map[string]string // each color's SERVER_DOMAIN_<COLOR> (unset colors absent)
 	RegionRules      []browsing.RegionRule
 	RegionBlockRules []browsing.RegionRule
 	CreatorPromotion string          // FEED_GO_CREATOR_PROMOTIONS: the `creator-promotions` flag's audience (feed.ParsePromotionAudience)
@@ -74,6 +76,21 @@ type Config struct {
 	// route (`/api/trpc/image.getInfinite`). Off, every request there is the `infinite-off` fallback,
 	// proxied to the Node app unchanged.
 	ServeInfinite bool
+	// WriteDevalue is TRPC_WRITE_DEVALUE, the main app's own switch, read as the app reads it (exactly
+	// "true" is on; default off): write a public tRPC answer as devalue where the app would
+	// (server.Server.WriteDevalue). Off, every answer is superjson.
+	WriteDevalue bool
+
+	// BearerAuth is FEED_GO_BEARER_AUTH (default off): resolve API keys (an `Authorization` header) as
+	// the app does, from its principal cache (DESIGN.md §4.2). Off, every API credential is the
+	// `bearer-token` fallback.
+	BearerAuth bool
+	// APIKeySecret is NEXTAUTH_SECRET (same var as the Node app): the salt of the API-key hash. Read
+	// only with BearerAuth; unset, every key falls back (`bearer-unconfigured`).
+	APIKeySecret string
+	// OrchestratorServiceToken is ORCHESTRATOR_SERVICE_TOKEN (same var as the Node app), which the app
+	// answers as an unknown key without a lookup. Read only with BearerAuth.
+	OrchestratorServiceToken string
 
 	// RevocationMarkerCache is SESSION_REVOCATION_CACHE (default on; off|0|false turns it off, as
 	// isEnvSwitchOn): a failed revocation read still denies a revocation this process has already read.
@@ -219,6 +236,7 @@ func Load() (*Config, error) {
 		Pprof:                boolEnv("FEED_GO_PPROF", false),
 		ServeModelGetAll:     boolEnv("FEED_GO_SERVE_MODEL_GETALL", false),
 		ServeInfinite:        boolEnv("FEED_GO_SERVE_INFINITE", false),
+		WriteDevalue:         trpc.WriteDevalueOn(os.Getenv(trpc.WriteDevalueEnv)),
 		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
@@ -231,12 +249,18 @@ func Load() (*Config, error) {
 	ms := intEnv("REDIS_SYS_READ_TIMEOUT_MS", 1000)
 	c.SysReadTimeout = time.Duration(ms) * time.Millisecond
 	c.RevocationMarkerCache = envSwitchOn(os.Getenv("SESSION_REVOCATION_CACHE"))
+	if c.BearerAuth = boolEnv("FEED_GO_BEARER_AUTH", false); c.BearerAuth {
+		c.APIKeySecret = os.Getenv("NEXTAUTH_SECRET")
+		c.OrchestratorServiceToken = os.Getenv("ORCHESTRATOR_SERVICE_TOKEN")
+	}
 	c.Hosts = browsing.HostColors{}
+	c.HostPrimaries = map[string]string{}
 	for _, color := range []string{"green", "blue", "red"} {
 		up := strings.ToUpper(color)
 		var hosts []string
 		if h := os.Getenv("SERVER_DOMAIN_" + up); h != "" {
 			hosts = append(hosts, h)
+			c.HostPrimaries[color] = strings.ToLower(h)
 		}
 		hosts = append(hosts, list(os.Getenv("SERVER_DOMAIN_"+up+"_ALIASES"))...)
 		c.Hosts[color] = hosts

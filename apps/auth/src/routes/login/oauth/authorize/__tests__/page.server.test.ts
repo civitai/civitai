@@ -6,6 +6,12 @@ import { TokenScope } from '@civitai/auth/token-scope';
 const consentRow = vi.hoisted(() => ({
   current: undefined as Record<string, unknown> | undefined,
 }));
+// The client's App Store connect listings (listing-offline.ts reads them); none by default, so the
+// client is unlisted and the offline line behaves as it did before listings counted.
+const listingRows = vi.hoisted(() => ({
+  current: [] as Record<string, unknown>[],
+  fail: false,
+}));
 vi.mock('$lib/server/db/db', () => ({
   db: {
     selectFrom(table: string) {
@@ -14,6 +20,18 @@ vi.mock('$lib/server/db/db', () => ({
       qb.where = () => qb;
       if (table === 'OauthConsent') {
         qb.executeTakeFirst = () => Promise.resolve(consentRow.current);
+        return qb;
+      }
+      // The ever-live markers (listing-offline.ts): none on record in these cases.
+      if (table === 'app_listing_publish_requests' || table === 'app_listing_moderation_events') {
+        qb.executeTakeFirst = () => Promise.resolve(undefined);
+        return qb;
+      }
+      if (table === 'app_listings') {
+        qb.execute = () =>
+          listingRows.fail
+            ? Promise.reject(new Error('db down'))
+            : Promise.resolve(listingRows.current);
         return qb;
       }
       qb.executeTakeFirst = () =>
@@ -166,6 +184,57 @@ describe('consent screen load — the offline line', () => {
   const ask = { offline_buzz_limit: '500', offline_buzz_period: 'week' };
   beforeEach(() => {
     consentRow.current = undefined;
+    listingRows.current = [];
+    listingRows.fail = false;
+  });
+
+  const listing = (status: string, justifications: unknown) => ({
+    status,
+    connect_scope_justifications: justifications,
+  });
+
+  it('🔴 a listed connect client whose approved listing does NOT declare offline access gets no line', async () => {
+    flags.offlineGrant = true;
+    listingRows.current = [listing('approved', { ModelsWrite: 'uploads' })];
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline ?? null).toBeNull();
+    // …and the form does not carry offline_access on to /authorize.
+    expect((page.params as Record<string, string>).scope).toBe(String(TokenScope.UserRead));
+  });
+
+  // This fake returns `listingRows` as the query's result, so the rows are what the REAL query
+  // returns: only ever-live listings (approved / removed). The status filter itself is proven end
+  // to end in the token route's offline-grant suite, over a fake that applies `where`.
+  it('🔴 a declaration on a delisted (removed) listing does not count: no line', async () => {
+    flags.offlineGrant = true;
+    listingRows.current = [listing('removed', { offline_access: 'nightly sync' })];
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline ?? null).toBeNull();
+  });
+
+  it('no ever-live listing (the read returns none) → the unlisted rule: the line is shown', async () => {
+    flags.offlineGrant = true;
+    listingRows.current = [];
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline).not.toBeNull();
+  });
+
+  it('a listed client whose APPROVED listing declares offline access gets the line', async () => {
+    flags.offlineGrant = true;
+    listingRows.current = [listing('approved', { offline_access: 'nightly sync' })];
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline).toEqual({
+      cap: { limit: 500, period: 'week' },
+      custom: false,
+      granted: false,
+    });
+  });
+
+  it('🔴 fail-closed: listings that cannot be read → no line', async () => {
+    flags.offlineGrant = true;
+    listingRows.fail = true;
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline ?? null).toBeNull();
   });
 
   it('with the offline-grant flag off, is not shown and the Approve form is unchanged', async () => {

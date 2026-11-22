@@ -1,0 +1,19 @@
+{
+  "name": "detail-legacy-session-cookie",
+  "fixture": "detail-all-levels.json",
+  "request": {
+    "headers": {
+      "cookie": "__Secure-civitai-token=t"
+    }
+  },
+  "expect": {
+    "headers": {
+      "vary": "Authorization, Cookie",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "GET",
+      "cache-control": "private, no-store",
+      "etag": "\"bcl1n4ldx13uh\""
+    }
+  }
+}

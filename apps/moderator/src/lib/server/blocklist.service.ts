@@ -6,6 +6,10 @@ import { dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
 import { getRedis } from './redis';
+import {
+  managedProfanityEntries,
+  MIN_MANAGED_PROFANITY_ENTRIES,
+} from '@civitai/mod-utils/profanity/word-rules';
 
 // Owns the Blocklist table AND the shared Redis key the main app reads. Writers BUST that key rather
 // than rewriting it, so a main-app validator repopulates from the table on its next read.
@@ -127,13 +131,37 @@ export class BlocklistRowMismatchError extends Error {
   }
 }
 
+/** Types whose row is created only by a hand-applied seed, never by a moderator's first add. */
+const SEEDED_TYPES: readonly string[] = ['ProfanityWord'];
+
+export class BlocklistNotSeededError extends Error {
+  constructor() {
+    super('This list has not been seeded yet.');
+    this.name = 'BlocklistNotSeededError';
+  }
+}
+
+/** A removal that would leave the profanity list below the floor the main app enforces. */
+export class BlocklistBelowFloorError extends Error {
+  constructor() {
+    super(`The list must keep at least ${MIN_MANAGED_PROFANITY_ENTRIES} usable entries.`);
+    this.name = 'BlocklistBelowFloorError';
+  }
+}
+
+// The list replaces a shipped one site-wide, so each edit is logged with its entries.
+function logListChange(type: string, change: Record<string, unknown>) {
+  if (type !== 'ProfanityWord') return;
+  void logToAxiom({ name: 'profanity-word-list-change', type: 'info', payload: change });
+}
+
 /** What a write did, and whether readers will see it before the cache TTL expires. */
 export type BlocklistWriteResult = { count: number; cacheStale: boolean };
 
 /** What the transaction changed, and which row it changed — `recordModActivity` needs the row id.
  *  Absent when a submitted id matched no row of the type: the id names no row there, so it must not
  *  be reached for as a stand-in. */
-type Written = { count: number; rowId: number };
+type Written = { count: number; rowId: number; entries?: string[] };
 
 /**
  * Adds entries, returning how many the row actually GAINED — not how many were submitted. Since
@@ -170,6 +198,9 @@ export async function upsertBlocklist({
       // An `id` that names no row of this type is a stale tab or a hand-crafted post. Refuse; do
       // NOT fall through to an insert, which would add a second row for the type.
       if (id !== undefined) return undefined;
+      // A first add would create a row holding only that entry, which the seed then skips and
+      // which replaces the whole shipped list.
+      if (SEEDED_TYPES.includes(type)) throw new BlocklistNotSeededError();
       const inserted = await trx
         .insertInto('Blocklist')
         .values({ type, data: items, updatedAt: new Date() })
@@ -190,7 +221,8 @@ export async function upsertBlocklist({
       .where('id', '=', existing.id)
       .where('type', '=', type)
       .executeTakeFirstOrThrow();
-    return { count: gained, rowId: existing.id };
+    const entries = items.filter((item) => !existing.data.includes(item));
+    return { count: gained, rowId: existing.id, entries };
   });
 
   if (added === undefined) throw new BlocklistRowMismatchError();
@@ -202,6 +234,13 @@ export async function upsertBlocklist({
     entityType: 'blocklist',
     entityId: added.rowId,
     activity: 'add',
+  });
+  logListChange(type, {
+    userId,
+    rowId: added.rowId,
+    activity: 'add',
+    entries: added.entries,
+    countDelta: added.count,
   });
   return { count: added.count, cacheStale };
 }
@@ -239,6 +278,15 @@ export async function removeBlocklistItems({
     const filtered = row.data.filter((item) => !lower.includes(item));
     const count = row.data.length - filtered.length;
     if (count === 0) return { count: 0, rowId: row.id };
+    // Inside the lock, so two removals cannot each pass a check made against the same pre-state.
+    // Below the floor the main app ignores the row and enforces the shipped list. Removing an
+    // unusable entry changes nothing the filter uses, so it is allowed even on a short list.
+    if (type === 'ProfanityWord') {
+      const before = managedProfanityEntries(row.data);
+      const after = managedProfanityEntries(filtered);
+      if (!after.enforced && after.usable.length < before.usable.length)
+        throw new BlocklistBelowFloorError();
+    }
 
     await trx
       .updateTable('Blocklist')
@@ -246,7 +294,7 @@ export async function removeBlocklistItems({
       .where('id', '=', row.id)
       .where('type', '=', type)
       .executeTakeFirstOrThrow();
-    return { count, rowId: row.id };
+    return { count, rowId: row.id, entries: row.data.filter((item) => lower.includes(item)) };
   });
 
   if (!removed || removed.count === 0) return { count: 0, cacheStale: false };
@@ -257,6 +305,13 @@ export async function removeBlocklistItems({
     entityType: 'blocklist',
     entityId: removed.rowId,
     activity: 'remove',
+  });
+  logListChange(type, {
+    userId,
+    rowId: removed.rowId,
+    activity: 'remove',
+    entries: removed.entries,
+    countDelta: -removed.count,
   });
   return { count: removed.count, cacheStale };
 }

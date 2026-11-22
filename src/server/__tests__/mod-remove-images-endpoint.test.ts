@@ -29,7 +29,7 @@ function mockRes() {
 }
 
 const call = async (body: unknown) => {
-  const { default: handler } = await import('~/pages/api/mod/remove-images');
+  const { default: handler } = await import('~/server/api-routes/mod/remove-images');
   const res = mockRes();
   await handler({ method: 'POST', body } as never, res as never);
   return res;

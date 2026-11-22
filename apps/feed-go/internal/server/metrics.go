@@ -10,6 +10,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 )
 
 // EndpointLabel names the endpoint label. Not `endpoint`: that is a reserved scrape target label (the
@@ -28,6 +29,11 @@ type Metrics struct {
 	ShadowResults *prometheus.CounterVec   // endpoint, result
 	ShadowDiffs   *prometheus.CounterVec   // endpoint, category, kind
 	ShadowDropped *prometheus.CounterVec   // endpoint
+
+	// ShadowViewer counts the body comparison results of the endpoints whose answer reports a viewer
+	// class (model-associated: modelfeed.ViewerClasses), so a serve gate can require samples per class
+	// (endpoint, viewer, result: ShadowResults' values). Seeded for each class's match result.
+	ShadowViewer *prometheus.CounterVec
 
 	// ShadowResponse counts the header comparison of each compared sample, beside the body's
 	// ShadowResults (endpoint, result: match|mismatch|uncompared).
@@ -66,6 +72,11 @@ type Metrics struct {
 	JWKSStale prometheus.Counter
 	// SessionCookieSlot counts resolved sessions by the cookie slot they were read from (auth.CookieSlot).
 	SessionCookieSlot *prometheus.CounterVec
+	// DevalueWrites counts the answers a public tRPC route computed and wrote, by write format
+	// (endpoint, result: devalue | superjson_fallback | superjson). superjson_fallback is a request
+	// that would have been devalue whose value devalue refused (computed.encode), so it was written as
+	// superjson: the app's devalueFallbackObserver case, also logged once per answer.
+	DevalueWrites *prometheus.CounterVec
 	// FallbackProxyErrors counts fallback requests the proxy answered 502 because the Node app failed
 	// before a response started, by reason (upstream | canceled). A failure mid-body aborts the
 	// response with http.ErrAbortHandler and is not counted. Not per endpoint.
@@ -134,6 +145,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help:    "Wall time computing a response (excludes a proxied fallback).",
 			Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
 		}, []string{EndpointLabel, "mode", "outcome"}),
+		ShadowViewer: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_shadow_compare_viewer_total",
+			Help: "Shadow comparison results by the sample's viewer class (anon, user, owner, moderator), for the endpoints whose answer reports one.",
+		}, []string{EndpointLabel, "viewer", "result"}),
 		ShadowResults: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_shadow_compare_total",
 			Help: "Shadow comparisons by result: match, match_empty, match_cached, fields, order, membership, unsupported, deadline, go_error, bad_request.",
@@ -224,6 +239,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_jwks_stale_total",
 			Help: "Times the JWKS key set was dropped (sessions verify as signed out) because no fetch had succeeded for FEED_GO_JWKS_MAX_STALENESS_MS.",
 		}),
+		DevalueWrites: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_devalue_write_total",
+			Help: "Answers written on a public tRPC route, by format: devalue (TRPC_WRITE_DEVALUE on, a capable web bundle, not edge-cacheable), superjson_fallback (would have been devalue, but devalue refused the value), superjson (every other answer).",
+		}, []string{EndpointLabel, "result"}),
 		SessionCookieSlot: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_session_cookie_slot_total",
 			Help: "Sessions resolved from a session cookie, by the cookie slot they were read from (host | shared).",
@@ -239,9 +258,14 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}, []string{EndpointLabel})
 	// A pod that never shed reads 0 rather than an absent series, on each served endpoint.
 	m.ServeInFlight = map[string]prometheus.Gauge{}
-	for _, e := range []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite} {
+	for _, e := range ServedEndpoints {
 		m.ServeInFlight[e] = serveInFlight.WithLabelValues(e)
 		m.Fallbacks.WithLabelValues(e, "serve", "bulkhead")
+	}
+	for _, e := range []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite} {
+		for _, r := range []string{DevalueWriteDevalue, DevalueWriteFallback, DevalueWriteSuperjson} {
+			m.DevalueWrites.WithLabelValues(e, r)
+		}
 	}
 	// Seed the dropped counter per endpoint, and the panic and refresh counters, so "none" reads 0
 	// rather than an absent series.
@@ -280,16 +304,24 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			m.CacheMisses.WithLabelValues(c, r)
 		}
 	}
+	for _, v := range modelfeed.ViewerClasses {
+		m.ShadowViewer.WithLabelValues(EndpointAssociated, v, "match")
+	}
+	reg.MustRegister(m.ShadowViewer)
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowResponse, m.ShadowDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
 		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight,
-		m.SessionCookieSlot)
+		m.SessionCookieSlot, m.DevalueWrites)
 	for _, s := range []string{"host", "shared"} {
 		m.SessionCookieSlot.WithLabelValues(s)
 	}
 	return m
 }
+
+// ServedEndpoints are the endpoints with a public route (each takes its serve slot from the one
+// shared pool): the three tRPC procedures and the two REST model routes.
+var ServedEndpoints = []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite, EndpointV1Models, EndpointV1ModelsID}
 
 // ErrorModes are the `mode` values of feed_go_errors_total: a compute error on the public route, in a
 // shadow sample or in a Go-first probe, and a fallback-proxy error.

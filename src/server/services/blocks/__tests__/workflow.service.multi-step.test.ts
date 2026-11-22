@@ -21,6 +21,7 @@ const blob = (url: string, over: Record<string, unknown> = {}) => ({
   url,
   available: true,
   type: 'image',
+  nsfwLevel: 'pg',
   ...over,
 });
 
@@ -84,14 +85,17 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
         $type: 'imageGen',
         status: 'succeeded',
         imageUrls: ['https://img/gen-0.png', 'https://img/gen-1.png'],
-        outputs: [{ url: 'https://img/gen-0.png' }, { url: 'https://img/gen-1.png' }],
+        outputs: [
+          { url: 'https://img/gen-0.png', nsfwLevel: 'pg' },
+          { url: 'https://img/gen-1.png', nsfwLevel: 'pg' },
+        ],
       },
       {
         name: '$1',
         $type: 'imageUpscaler',
         status: 'succeeded',
         imageUrls: ['https://img/up.png'],
-        outputs: [{ url: 'https://img/up.png' }],
+        outputs: [{ url: 'https://img/up.png', nsfwLevel: 'pg' }],
         // Blobs removed; the rest forwarded.
         output: { scale: 2 },
       },
@@ -238,7 +242,7 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
         $type: 'imageUpscaler',
         status: 'succeeded',
         imageUrls: ['https://img/child-0.png'],
-        outputs: [{ url: 'https://img/child-0.png' }],
+        outputs: [{ url: 'https://img/child-0.png', nsfwLevel: 'pg' }],
         output: {},
       },
       {
@@ -246,7 +250,7 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
         $type: 'imageUpscaler',
         status: 'succeeded',
         imageUrls: ['https://img/child-1.png'],
-        outputs: [{ url: 'https://img/child-1.png' }],
+        outputs: [{ url: 'https://img/child-1.png', nsfwLevel: 'pg' }],
         output: {},
       },
     ]);
@@ -354,7 +358,7 @@ describe('snapshotFromWorkflow — kind:workflow', () => {
       status: 'succeeded',
       cost: { total: 64 },
       imageUrls: ['https://img/up.png'],
-      outputs: [{ url: 'https://img/up.png' }],
+      outputs: [{ url: 'https://img/up.png', nsfwLevel: 'pg' }],
       stepOutputs: [{ $type: 'imageUpscaler', output: { scale: 2 } }],
     });
   });

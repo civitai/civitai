@@ -9,7 +9,7 @@ import {
   isAllowedPlayerUrl,
   isEmbedPlayerHost,
 } from '~/shared/utils/embed-providers';
-import { getProfanityFilter } from '~/libs/profanity-simple';
+import { getProfanityFilter, type ManagedProfanityList } from '~/libs/profanity-simple';
 import { maskProfanityOutsideMarkup } from './mask-profanity';
 
 /**
@@ -21,6 +21,8 @@ import { maskProfanityOutsideMarkup } from './mask-profanity';
 export type RenderHtmlSanitizeOptions = {
   /** `withProfanityFilter && blurNsfw` at the call site. */
   maskProfanity: boolean;
+  /** The managed blocked list, or `null` for the shipped one. */
+  profanityBlocklist: ManagedProfanityList | null;
   allowStickers: boolean;
   allowCustomStyles: boolean;
   colorScheme: 'light' | 'dark';
@@ -49,7 +51,10 @@ export function sanitizeRenderHtml(html: string, options: RenderHtmlSanitizeOpti
   if (maskProfanity) {
     // Shared cache, not a fresh filter: this runs per COMPONENT INSTANCE, so a 20-comment
     // thread was building 20 full obscenity datasets (~6ms each).
-    processedHtml = maskProfanityOutsideMarkup(processedHtml, getProfanityFilter());
+    processedHtml = maskProfanityOutsideMarkup(
+      processedHtml,
+      getProfanityFilter(null, options.profanityBlocklist)
+    );
   }
 
   return sanitizeHtml(processedHtml, {
@@ -200,6 +205,7 @@ function embedKindFromUrl(url: string | undefined): string {
 export function optionsKey(options: RenderHtmlSanitizeOptions): string {
   const parts: { [K in keyof RenderHtmlSanitizeOptions]: string } = {
     maskProfanity: options.maskProfanity ? '1' : '0',
+    profanityBlocklist: options.profanityBlocklist?.version ?? '',
     allowStickers: options.allowStickers ? '1' : '0',
     allowCustomStyles: options.allowCustomStyles ? '1' : '0',
     colorScheme: options.colorScheme,

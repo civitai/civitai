@@ -47,7 +47,10 @@ vi.mock('../thumbnail-cache', async (importOriginal) => ({
   invalidateThumbnails: vi.fn(async () => undefined),
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
-vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
+vi.mock('../mod-activity', () => ({
+  insertModActivity: vi.fn(async () => 1),
+  recordModActivity: vi.fn(async () => undefined),
+}));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 
 const { blockImage } = await import('../image-moderation.service');

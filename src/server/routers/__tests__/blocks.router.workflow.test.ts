@@ -320,6 +320,11 @@ const { SPLIT_FLOOR_STEP_ID } = vi.hoisted(() => ({
 const { HIGH_ESTIMATE_STEP_ID } = vi.hoisted(() => ({
   HIGH_ESTIMATE_STEP_ID: 'fixture-high-estimate-step',
 }));
+// A registry entry that forwards an OPTIONAL url param into its built input, at a key
+// the request picks. Its canonical params omit it, so it registers cleanly.
+const { POSITION_STEP_ID } = vi.hoisted(() => ({
+  POSITION_STEP_ID: 'fixture-position-step',
+}));
 vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
   const actual = await importOriginal<typeof BlockStepsModule>();
   const z = await import('zod');
@@ -424,6 +429,22 @@ vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
     }),
   };
   actual.assertStepInvariants(HIGH_ESTIMATE_STEP_ID, highEstimateFixtureStep as never);
+  const positionFixtureStep = {
+    ...splitFloorFixtureStep,
+    id: POSITION_STEP_ID,
+    orchestratorType: 'fixturePositionType',
+    paramSchema: z
+      .object({ url: z.string().optional(), at: z.enum(['weightsUrl', 'image']).optional() })
+      .strict(),
+    canonicalParamsFor: () => ({}),
+    priceForVariant: () => 5,
+    estimateBuzz: () => 5,
+    buildStep: (p: { url?: string; at?: 'weightsUrl' | 'image' }) => ({
+      $type: 'fixturePositionType',
+      input: p.url ? { [p.at ?? 'weightsUrl']: p.url } : {},
+    }),
+  };
+  actual.assertStepInvariants(POSITION_STEP_ID, positionFixtureStep as never);
   return {
     ...actual,
     // The wire `step` enum is DERIVED from this, so widening it is what lets the
@@ -434,6 +455,7 @@ vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
       DIVERGENT_STEP_ID,
       SPLIT_FLOOR_STEP_ID,
       HIGH_ESTIMATE_STEP_ID,
+      POSITION_STEP_ID,
     ],
     getStep: (id: string) =>
       id === AUDITED_STEP_ID
@@ -444,6 +466,8 @@ vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
         ? (splitFloorFixtureStep as never)
         : id === HIGH_ESTIMATE_STEP_ID
         ? (highEstimateFixtureStep as never)
+        : id === POSITION_STEP_ID
+        ? (positionFixtureStep as never)
         : actual.getStep(id),
   };
 });
@@ -633,6 +657,7 @@ import {
   starterComfyTxt2imgRecipe,
 } from '~/server/services/blocks/recipes/starter-comfy-txt2img.recipe';
 import { resolveDevBuzzBudget } from '~/server/services/blocks/dev-scoped-mint.service';
+import { canAccessGenerationResource } from '~/server/utils/resource-access';
 import { BLOCK_STEP_NAME } from '~/server/services/blocks/workflow.service';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import {
@@ -979,7 +1004,14 @@ beforeEach(() => {
   // Every Civitai version a customComfy step names exists, on a base model apps may use.
   dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
     where: { id: { in: number[] } };
-  }) => args.where.id.in.map((id) => ({ id, baseModel: 'ZImageTurbo' }))) as never);
+  }) =>
+    args.where.id.in.map((id) => ({
+      id,
+      status: 'Published',
+      availability: 'Public',
+      model: { userId: 1 },
+      baseModel: 'ZImageTurbo',
+    }))) as never);
 });
 
 describe('blocks.pollWorkflow', () => {
@@ -4084,14 +4116,90 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
       expect(result.snapshot.cost).toEqual({ total: 12, authorFee: 0 });
       // The entitlement gate ran against the picked version (99) with the REAL
-      // viewer (id 42, mod true) — NOT an elevated/hardcoded context.
+      // viewer id, without the viewer's moderator rights (the viewer here is a moderator).
       expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
       const [versions, gateCtx] = mockResolveCanGenerateForVersions.mock.calls[0];
       expect(versions[0]).toMatchObject({ id: 99 });
-      expect(gateCtx.user).toEqual({ id: 42, isModerator: true });
+      expect(gateCtx.user).toEqual({ id: 42, isModerator: false });
       expect(mockSubmitWorkflow).toHaveBeenCalledWith(
         expect.objectContaining({ query: { whatif: true } })
       );
+    });
+
+    // The page arm uses the same resource rule as the step arms (civitai/civitai#9935): a resource
+    // an app names is checked without the viewer's moderator rights. The gate below runs the real
+    // access predicate over what the router passes it, so a moderator flag reaching it shows up.
+    describe('page resources use the step-arm access rule', () => {
+      type Gate = Parameters<typeof canAccessGenerationResource>[0] & { id: number };
+      type GateUser = Parameters<typeof canAccessGenerationResource>[1];
+      function versionOwnedBy(
+        userId: number,
+        over: { availability?: string; usageControl?: string; status?: string } = {}
+      ) {
+        mockDbRead.modelVersion.findUnique.mockResolvedValue({
+          id: 99,
+          baseModel: 'SDXL 1.0',
+          modelId: 7,
+          status: over.status ?? 'Published',
+          availability: over.availability ?? 'Public',
+          usageControl: over.usageControl ?? 'Download',
+          flags: 0,
+          meta: null,
+          generationCoverage: { covered: true, coveredNext: true },
+          model: { id: 7, type: 'Checkpoint', userId },
+        });
+      }
+      function realAccessGate() {
+        mockResolveCanGenerateForVersions.mockImplementation(
+          async (versions: Gate[], gateCtx: { user: GateUser }) =>
+            new Map(
+              versions.map((v) => [
+                v.id,
+                { canGenerate: canAccessGenerationResource(v, gateCtx.user) },
+              ])
+            )
+        );
+      }
+      function estimate() {
+        mockVerifyBlockToken.mockResolvedValue(pageClaims());
+        happyUser(); // viewer 42 is a moderator
+        mockSubmitWorkflow.mockResolvedValue({
+          id: '',
+          status: 'succeeded',
+          cost: { total: 12 },
+          steps: [],
+        });
+        const caller = blocksRouter.createCaller(fakeCtx() as never);
+        return caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      }
+
+      it.each([
+        ['Private', { availability: 'Private' }],
+        ['InternalGeneration', { usageControl: 'InternalGeneration' }],
+      ])("a moderator viewer is refused another user's %s version", async (_label, over) => {
+        versionOwnedBy(7001, over);
+        realAccessGate();
+        await expect(estimate()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      });
+
+      // Already refused before this gate (the page resolver serves Published versions only);
+      // pinned so the rule holds if that resolver widens.
+      it("a moderator viewer is refused another user's Draft version", async () => {
+        versionOwnedBy(7001, { status: 'Draft' });
+        realAccessGate();
+        await expect(estimate()).rejects.toBeInstanceOf(TRPCError);
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      });
+
+      it('the owner still passes with their own Private version', async () => {
+        versionOwnedBy(42, { availability: 'Private' });
+        realAccessGate();
+        await expect(estimate()).resolves.toBeDefined();
+        expect(mockSubmitWorkflow).toHaveBeenCalledWith(
+          expect.objectContaining({ query: { whatif: true } })
+        );
+      });
     });
 
     it('derives sfwOnly:true from a SFW token maturity claim (not the request domain)', async () => {
@@ -6558,7 +6666,14 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       happySubmit();
       dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
         where: { id: { in: number[] } };
-      }) => args.where.id.in.map((id) => ({ id, baseModel: 'SDXL Turbo' }))) as never);
+      }) =>
+        args.where.id.in.map((id) => ({
+          id,
+          status: 'Published',
+          availability: 'Public',
+          model: { userId: 1 },
+          baseModel: 'SDXL Turbo',
+        }))) as never);
       await caller().submitWorkflow({
         blockToken: 'tok',
         body: ccBody(),
@@ -6570,13 +6685,53 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       });
     });
 
+    // The check runs as the viewer (`user:42`): version rows are Private, owned by `ownerId`.
+    it.each([
+      ['refuses', 43],
+      ['allows', 42],
+    ])('%s a pinned file on a Private version owned by user %d', async (verdict, ownerId) => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+        where: { id: { in: number[] } };
+      }) =>
+        args.where.id.in.map((id) => ({
+          id,
+          status: 'Published',
+          availability: 'Private',
+          model: { userId: ownerId },
+          baseModel: 'ZImageTurbo',
+        }))) as never);
+      const run = caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ccBody(),
+        idempotencyKey: 'cc-key',
+      });
+      if (verdict === 'refuses') {
+        await expect(run).rejects.toThrow(/is not available for generation/);
+        expect(mockReserveAppSpend).not.toHaveBeenCalled();
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      } else {
+        await run;
+        expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      }
+    });
+
     it('refuses a pinned file on a base model no app may use, before any spend', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       happyCcResources();
       happySubmit();
       dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
         where: { id: { in: number[] } };
-      }) => args.where.id.in.map((id) => ({ id, baseModel: 'Flux.2 Klein 9B' }))) as never);
+      }) =>
+        args.where.id.in.map((id) => ({
+          id,
+          status: 'Published',
+          availability: 'Public',
+          model: { userId: 1 },
+          baseModel: 'Flux.2 Klein 9B',
+        }))) as never);
       await expect(
         caller().submitWorkflow({ blockToken: 'tok', body: ccBody(), idempotencyKey: 'cc-key' })
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
@@ -7342,6 +7497,24 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         body: inlineBody({ maxBuzz: 77 }),
       });
       expect(result.snapshot).toMatchObject({ status: 'pending', cost: { total: 77 } });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    // The inline graph is one step with no arguments: nothing in it is a reference to place.
+    it('refuses a reference in a node input before any spend (app-step-positions)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      const body = inlineBody();
+      (body.workflow['1'].inputs as Record<string, unknown>).width = {
+        $ref: '$arguments',
+        path: 'w',
+        default: 512,
+      };
+      await expect(caller().submitWorkflow({ blockToken: 'tok', body })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining("cannot take this value at 'width'"),
+      });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 
@@ -8794,6 +8967,45 @@ describe("step-type registry bridge (kind: 'step')", () => {
         })
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('REFUSES a registry step whose built input puts a url outside a media input', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      mockSubmitWorkflow.mockClear();
+      mockReserveAppSpend.mockClear();
+      const body = {
+        kind: 'step' as const,
+        step: POSITION_STEP_ID,
+        params: { url: 'https://files.example/a' },
+      };
+      await expect(caller().estimateWorkflow({ blockToken: 'tok', body })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining("at 'weightsUrl'"),
+      });
+      await expect(caller().submitWorkflow({ blockToken: 'tok', body })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining("at 'weightsUrl'"),
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('NEGATIVE CONTROL: the same url at a media input submits', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit(5);
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: {
+            kind: 'step',
+            step: POSITION_STEP_ID,
+            params: { url: 'https://files.example/a', at: 'image' },
+          },
+        })
+      ).resolves.toBeDefined();
     });
 
     it('NEGATIVE CONTROL: the SAME fixture submits fine when the types agree', async () => {

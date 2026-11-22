@@ -10,6 +10,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/inputschema"
+	"github.com/civitai/civitai/apps/feed-go/internal/jskeys"
 )
 
 // QueryParam is one key of Next's `req.query`: its values in order (a repeated key collects them).
@@ -161,40 +162,9 @@ func isHex(c byte) bool {
 	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
-// objectKeyOrder is Object.keys order: array-index keys ("0", "17", …, no leading zero, below 2^32-1)
-// first in ascending numeric order, then every other key in insertion order.
+// objectKeyOrder is Object.keys order (jskeys.Order).
 func objectKeyOrder(params []QueryParam) []QueryParam {
-	var idx, rest []QueryParam
-	for _, p := range params {
-		if isArrayIndex(p.Key) {
-			idx = append(idx, p)
-		} else {
-			rest = append(rest, p)
-		}
-	}
-	if len(idx) == 0 {
-		return params
-	}
-	// Insertion sort: a handful of keys at most.
-	for i := 1; i < len(idx); i++ {
-		for j := i; j > 0; j-- {
-			a, _ := strconv.ParseUint(idx[j-1].Key, 10, 64)
-			b, _ := strconv.ParseUint(idx[j].Key, 10, 64)
-			if a <= b {
-				break
-			}
-			idx[j-1], idx[j] = idx[j], idx[j-1]
-		}
-	}
-	return append(idx, rest...)
-}
-
-func isArrayIndex(k string) bool {
-	if k == "" || len(k) > 10 || (len(k) > 1 && k[0] == '0') {
-		return false
-	}
-	n, err := strconv.ParseUint(k, 10, 64)
-	return err == nil && n < 1<<32-1
+	return jskeys.Order(params, func(p QueryParam) string { return p.Key })
 }
 
 // ParseV1 is imagesEndpointSchema.safeParse(req.query) plus the routing runImageSearch does, for the

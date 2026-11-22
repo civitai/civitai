@@ -210,8 +210,12 @@ const unconfiguredTunnels: DevTunnels = {
   start: async () => {
     throw new DevTunnelError('The live preview is not set up here.', 503, 'not_configured');
   },
+  open: async () => {
+    throw new DevTunnelError('The live preview is not set up here.', 503, 'not_configured');
+  },
   keepalive: async () => undefined,
   stop: async () => undefined,
+  stopBlock: async () => false,
 };
 
 /**

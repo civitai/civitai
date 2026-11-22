@@ -880,7 +880,7 @@ export const deleteUserHandler = async ({
     throw new TRPCError({ code: 'FORBIDDEN', message: SELF_DELETE_RESTRICTED_MESSAGE });
 
   try {
-    const user = await deleteUser(input);
+    const user = await deleteUser({ ...input, actorId: currentUser.id });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
     await ctx.track.userActivity({
@@ -1258,6 +1258,7 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
         image: true,
         username: true,
         links: {
+          where: { user: { bannedAt: null } },
           select: {
             url: true,
             type: true,

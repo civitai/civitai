@@ -21,6 +21,9 @@ describe('apps/feed-go basemodels.json', () => {
     expect(table.modelTypes).toContain('Checkpoint');
     expect(table.generation['SDXL 1.0']).toEqual(expect.arrayContaining(['Checkpoint', 'LORA']));
     expect(table.matureRestrictedModels).toContain('sd 3.5');
+    // isBaseModelGenerationDisabled's answers (getResourceCanGenerate); SD 3 is disabled today.
+    expect(table.generationDisabled).toContain('SD 3');
+    expect(table.generationDisabled).not.toContain('SDXL 1.0');
     expect(table.levels).toEqual({ minorContent: 3, sfw: 3, nsfw: 60, public: 1, all: 31 });
     expect(table.versionFlags).toEqual({
       generationDisabled: 2,

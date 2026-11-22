@@ -47,7 +47,7 @@ func TestParseNoLongerFallsBackOnTagsAndTechniques(t *testing.T) {
 			`{"techniques":[3,2147483648]}`: "input-techniques",
 			`{"techniques":[-2147483649]}`:  "input-techniques",
 			// Another unported key still names the fallback.
-			`{"tags":[501],"techniques":[3],"reactions":["Like"]}`: "input-reactions",
+			`{"tags":[501],"techniques":[3],"hidden":true}`: "input-hidden",
 		} {
 			if err := parse(parseObj(t, input)); fallback.Reason(err) != want {
 				t.Errorf("%s %s: reason %q (err %v), want %q", name, input, fallback.Reason(err), err, want)

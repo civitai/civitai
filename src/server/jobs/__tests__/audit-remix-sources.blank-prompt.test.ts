@@ -124,3 +124,25 @@ describe('audit-remix-sources — empty prompt with a non-empty negative prompt'
     expect(moderatePrompt).not.toHaveBeenCalled();
   });
 });
+
+describe('audit-remix-sources — home blocks', () => {
+  // The refresh's collection lookup, seen at the database: the image ids bound as one array.
+  const lookedUp = () =>
+    dbMock.dbRead.$queryRaw.mock.calls
+      .map(([query]) => query as unknown as { sql?: string; values?: unknown[] })
+      .filter((query) => !!query?.sql?.includes('"CollectionItem"'))
+      .flatMap((query) => (query.values ?? []).filter(Array.isArray));
+
+  it('refreshes the home blocks of an image it holds for review', async () => {
+    findUnique.mockResolvedValue(imageWith({ prompt: '', negativePrompt: 'tom cruise portrait' }));
+    await runJob();
+    expect(lookedUp()).toEqual([[101]]);
+  });
+
+  it('refreshes nothing when the hold did not land', async () => {
+    findUnique.mockResolvedValue(imageWith({ prompt: '', negativePrompt: 'tom cruise portrait' }));
+    update.mockResolvedValue([] as never);
+    await runJob();
+    expect(lookedUp()).toEqual([]);
+  });
+});

@@ -62,6 +62,8 @@ import {
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
 import { writeJsonObject } from '~/server/utils/json-stream-helpers';
+import type { ProfileClearSnapshot } from '~/server/services/user.service';
+import { storeVerifiedProfileArchive } from '~/server/services/profile-archive';
 import {
   authorPassPool,
   flattenPages,
@@ -2350,6 +2352,22 @@ export async function archiveUserComments(userId: number) {
     uploadStream({ stream: sink, userId, filename: 'comments.json' }),
   ]);
   return { userId, ...stored, comments };
+}
+
+/**
+ * Writes a profile's text to `profile.json` in the CSAM bucket, beside the user's report archives,
+ * before a moderator clears it or a ban deletes the links. Each call writes its own object.
+ */
+export async function archiveUserProfile(snapshot: ProfileClearSnapshot) {
+  const stored = await storeVerifiedProfileArchive({ ...getCsamBucket(), snapshot });
+  // The audit trail's pointer to the evidence object: ids and hash only, never the profile text.
+  logToAxiom({
+    name: 'profile-archive-stored',
+    type: 'info',
+    userId: snapshot.userId,
+    payload: { actorId: snapshot.actorId, key: stored.key, sha256: stored.sha256 },
+  });
+  return stored;
 }
 
 /**

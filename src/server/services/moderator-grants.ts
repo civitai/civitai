@@ -16,6 +16,7 @@ export type ModeratorGrantId =
   | 'user.removeReactions'
   | 'user.membership.code'
   | 'user.membership.gift'
+  | 'user.membership.gift.comp'
   | 'user.membership.extend'
   | 'user.membership.cancel'
   | 'user.creatorScore.grant'
@@ -31,6 +32,7 @@ export type ModeratorGrantId =
   | 'labelStore.submitPrediction'
   | 'apps.buzz.refund'
   | 'apps.buzz.refund.large'
+  | 'training.retrain'
   | 'feedback.status.set'
   | 'tickets.escalate';
 

@@ -26,6 +26,15 @@ type Config struct {
 	// Relay is this service's own hub client, which exchanges each user's token for one toward the
 	// adapter. Required with RegistryURL, refused without it. Nil when the registry path is off.
 	Relay *Relay
+	// BlockExchange turns on the exchange of App Block tokens (APP_DATA_BLOCK_EXCHANGE: `true`/`1` on,
+	// unset/`false`/`0` off; default off). On, a block token is exchanged at the hub's block exchange
+	// with the relay client and read through a stream like a hub token; off, it reads REST only and is
+	// never sent to the hub. Needs the registry path.
+	BlockExchange bool
+	// BlockJWKSURL is the site's block-token JWKS (APP_DATA_BLOCK_JWKS_URL, the site's
+	// `/api/v1/block-tokens/jwks`): every block token is verified against it here before it is sent to
+	// the hub (exchange.BlockVerifier). Required with BlockExchange, refused without it.
+	BlockJWKSURL string
 
 	// MaxStreams caps the streams open at once in this process (APP_DATA_MAX_STREAMS, default 100).
 	MaxStreams int
@@ -102,6 +111,25 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 		return nil, errors.New("the relay client is set without APP_DATA_REGISTRY_URL; set both or neither")
 	}
 	c.Relay = relay
+	switch v := getenv("APP_DATA_BLOCK_EXCHANGE"); v {
+	case "", "false", "0":
+	case "true", "1":
+		if c.RegistryURL == "" {
+			return nil, errors.New("APP_DATA_BLOCK_EXCHANGE needs the registry path (APP_DATA_REGISTRY_URL and the relay client)")
+		}
+		c.BlockExchange = true
+	default:
+		return nil, errors.New("APP_DATA_BLOCK_EXCHANGE must be true, 1, false or 0")
+	}
+	c.BlockJWKSURL = getenv("APP_DATA_BLOCK_JWKS_URL")
+	switch {
+	case c.BlockExchange && c.BlockJWKSURL == "":
+		return nil, errors.New("APP_DATA_BLOCK_EXCHANGE needs APP_DATA_BLOCK_JWKS_URL: block tokens are verified here before they are sent to the hub")
+	case !c.BlockExchange && c.BlockJWKSURL != "":
+		return nil, errors.New("APP_DATA_BLOCK_JWKS_URL is set without APP_DATA_BLOCK_EXCHANGE; set both or neither")
+	case c.BlockJWKSURL != "" && !secureURL(c.BlockJWKSURL):
+		return nil, errors.New("APP_DATA_BLOCK_JWKS_URL must be an https URL (http only to a cluster-local *.svc host)")
+	}
 
 	num := func(name string, def, lo, hi int) int {
 		if err != nil {

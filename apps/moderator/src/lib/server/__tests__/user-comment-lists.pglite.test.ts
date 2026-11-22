@@ -16,7 +16,7 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { getComments } = await import('../user-account.service');
+const { countComments, getComments } = await import('../user-account.service');
 
 let db: PGlite;
 
@@ -73,6 +73,26 @@ describe("a user's comment list, which moderators bulk-delete and flag by id", (
     const first = await getComments(10, 2);
     const rest = await getComments(10, 50, first.next!);
     expect([...first.items, ...rest.items].map((r) => r.id)).toEqual([2, 7, 6, 3, 1]);
+  });
+
+  it('searches every page, not just the first, and counts the matches with the same rule', async () => {
+    const first = await getComments(10, 1);
+    expect(first.items.map((r) => r.id)).toEqual([2]);
+    const found = await getComments(10, 50, undefined, 'old');
+    expect(found.items.map((r) => r.id)).toEqual([1]);
+    expect(await countComments(10, 'old')).toBe(1);
+    expect(await countComments(10)).toBe(3);
+  });
+
+  it('searches the shown text, not the markup or the escapes, and takes % literally', async () => {
+    await db.exec(`INSERT INTO "CommentV3" VALUES
+      (8, 10, 'image', 83, '<p>Tom &amp; Jerry</p>', false, NULL, NULL, '2026-11-09'),
+      (9, 10, 'image', 84, 'half off 50% today', false, NULL, NULL, '2026-11-09')`);
+    const ids = async (q: string) =>
+      (await getComments(10, 50, undefined, q)).items.map((r) => r.id);
+    expect(await ids('Tom & Jerry')).toEqual([8]);
+    expect(await ids('p')).not.toContain(8);
+    expect(await ids('50%')).toEqual([9]);
   });
 
   it('still finds the next page when the comment it ended on has since been deleted', async () => {

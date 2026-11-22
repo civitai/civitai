@@ -1526,7 +1526,7 @@ describe('Kohya training', () => {
     expect(config.items[0]!.caption).toBe('1girl');
   });
 
-  it.each(['sd1', 'sdxl', 'pony', 'illustrious', 'noobai', 'flux1', 'chroma'])(
+  it.each(['sd1', 'sdxl', 'pony', 'illustrious', 'noobai', 'flux1', 'chroma', 'anima'])(
     'accepts an arbitrary compatible %s checkpoint',
     async (family) => {
       const ecosystem = ['pony', 'illustrious', 'noobai'].includes(family) ? 'sdxl' : family;
@@ -1540,16 +1540,16 @@ describe('Kohya training', () => {
       });
       const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
       expect(input.model).toBe(customModel);
-      if (family === 'flux1' || family === 'chroma') {
-        expect(input).toMatchObject({
-          noiseOffset: 0,
-          minSnrGamma: 0,
-          clipSkip: 1,
-          fp8Base: true,
-          blocksToSwap: 18,
-        });
+      if (['sdxl', 'pony', 'illustrious', 'noobai'].includes(family))
+        expect(input).toMatchObject({ clipSkip: 2 });
+      if (family === 'sd1') expect(input).toMatchObject({ clipSkip: 1 });
+      if (family === 'flux1' || family === 'chroma' || family === 'anima') {
+        expect(input).toMatchObject({ noiseOffset: 0, minSnrGamma: 0, clipSkip: 1 });
         expect(input).not.toHaveProperty('vParameterization');
       }
+      if (family === 'flux1' || family === 'chroma')
+        expect(input).toMatchObject({ fp8Base: true, blocksToSwap: 18 });
+      if (family === 'anima') expect(input).not.toHaveProperty('fp8Base');
       if (family === 'chroma')
         expect(input).toMatchObject({ textEncoderLR: 0, trainTextEncoder: false });
     }
@@ -1562,6 +1562,7 @@ describe('Kohya training', () => {
     { resolution: 1000 },
     { kohya: { numRepeats: 0 } },
     { kohya: { seed: -1 } },
+    { kohya: { clipSkip: 1 } },
     { minSnrGamma: 2.5 },
     { optimizer: 'Automagic' },
     { customModel: 'urn:air:flux1:checkpoint:civitai:1@2' },
@@ -1572,6 +1573,20 @@ describe('Kohya training', () => {
       submitTrainingBatch(client, [{ ...run(), ...invalid }], { checkText, kohyaAllowed: true })
     ).rejects.toThrow();
     expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('accepts clip skip 1 for SD1 but not for SDXL, whose trainer would raise it to 2', () => {
+    const data: Parameters<typeof buildKohyaInput>[1] = { type: 'blobs', items: [] };
+    const sd1 = {
+      ...run(),
+      ecosystem: 'sd1',
+      customModel: 'urn:air:sd1:checkpoint:civitai:1@2',
+      kohya: { clipSkip: 1 },
+    };
+    expect(buildKohyaInput(sd1, data, 'none')).toMatchObject({ clipSkip: 1 });
+    expect(() => buildKohyaInput({ ...run(), kohya: { clipSkip: 1 } }, data, 'none')).toThrow(
+      /clipSkip must be an integer between 2 and 4/
+    );
   });
 
   it('leaves SDXL prediction mode to checkpoint metadata by default', () => {

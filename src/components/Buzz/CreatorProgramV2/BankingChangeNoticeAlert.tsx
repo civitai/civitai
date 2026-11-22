@@ -1,7 +1,6 @@
 import { Button } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { dialogs } from '~/components/Dialog/dialog-registry2';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openBankingChangeNotice } from '~/components/Dialog/triggers/banking-change-notice';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   BANKING_CHANGE_NOTICE_SHOW_UNTIL,
@@ -24,12 +23,7 @@ export function BankingChangeNoticeAlert() {
         variant="light"
         color="yellow"
         className="self-start"
-        onClick={() =>
-          dialogStore.trigger({
-            component: dialogs['banking-change-notice'].component,
-            id: 'banking-change-notice',
-          })
-        }
+        onClick={openBankingChangeNotice}
       >
         Read the notice
       </Button>

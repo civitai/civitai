@@ -11,7 +11,7 @@ import {
   getReviewBatch,
   type LoadedBatch,
   mintingKeyLive,
-  scannerHoldsImage,
+  routesHeldNow,
   TIER_PAGE,
 } from './review-batch';
 
@@ -81,8 +81,7 @@ export function batchItemHandler(tier: ReviewTier): RequestHandler {
       });
     }
 
-    // The mint read the scanner rows; a label written since then must still stop the bytes.
-    if (media.held || (await scannerHoldsImage(media.imageId))) {
+    if (await routesHeldNow(media.signals)) {
       void logToAxiom({
         name: ROUTING_MISS_EVENT,
         type: 'warning',

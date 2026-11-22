@@ -714,10 +714,15 @@ func TestBuildInfiniteImagesAddsTheInfiniteWireFields(t *testing.T) {
 	if len(images) != 1 {
 		t.Fatalf("images = %d", len(images))
 	}
-	keys := wireKeys(images[0].Wire)
-	tail := keys[len(keys)-4:]
-	if !reflect.DeepEqual(tail, []string{"availability", "meta", "baseModel", "judgeScore"}) {
-		t.Fatalf("appended keys = %v", tail)
+	// The Node object's key order (an image.getInfinite item of the Node goldens): the devalue body
+	// writes keys in this order, so it is part of the bytes.
+	want := []string{"id", "name", "url", "nsfwLevel", "width", "height", "hash", "hasMeta", "hasPositivePrompt",
+		"onSite", "remixOfId", "createdAt", "sortAt", "type", "metadata", "ingestion", "blockedFor", "needsReview",
+		"postId", "index", "publishedAt", "modelVersionId", "model3dId", "availability", "minor", "poi", "restricted",
+		"meta", "modelVersionIds", "modelVersionIdsManual", "baseModel", "user", "stats", "reactions", "tags", "tagIds",
+		"cosmetic", "eventDecoration", "thumbnailUrl", "judgeScore"}
+	if keys := wireKeys(images[0].Wire); !reflect.DeepEqual(keys, want) {
+		t.Fatalf("keys = %v\nwant   %v", keys, want)
 	}
 	if v, _ := images[0].Wire.Get("availability"); v != "Public" {
 		t.Fatalf("availability = %v", v)

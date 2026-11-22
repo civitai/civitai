@@ -20,7 +20,7 @@
   import { visibleBlocklistItems } from './filter';
   import { chipFocusTarget, confirmDismissTarget, type RemovalFocusGuards } from './focus';
   import type { ActionData, PageData } from './$types';
-  import type { DryRunState } from './+page.server';
+  import type { DryRunState, ProfanityDryRunState } from './+page.server';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -32,6 +32,21 @@
   const dryRunError = $derived(
     form && 'dryRunError' in form ? String(form.dryRunError) : undefined
   );
+
+  const profanityDryRun = $derived(
+    form && 'profanityDryRun' in form
+      ? (form.profanityDryRun as ProfanityDryRunState)
+      : undefined
+  );
+  const profanityDryRunError = $derived(
+    form && 'profanityDryRunError' in form ? String(form.profanityDryRunError) : undefined
+  );
+  const LIST_SOURCE_LABELS = {
+    managed: 'this list',
+    stale: 'the last copy of this list the server could read',
+    fallback: 'the built-in list (this one is missing, too short or unreadable)',
+    shipped: 'the built-in list (the managed list is switched off)',
+  } as const;
 
   const DRY_RUN_LABELS = {
     allow: 'Allowed',
@@ -86,6 +101,11 @@
   $effect(() => {
     if (confirming && !shown.visible.includes(confirming)) untrack(() => (confirming = null));
   });
+
+  // The add action warned about this exact text; resubmitting it unchanged confirms.
+  const confirmingImpact = $derived(
+    mode === 'add' && !!form && 'confirmImpact' in form && form.confirmImpact === text
+  );
 
   const submit: SubmitFunction = () => async ({ result, update }) => {
     if (result.type === 'success') text = '';
@@ -226,6 +246,39 @@
   <p class="mb-4 max-w-xl text-sm text-dark-2">{BLOCKLIST_DESCRIPTIONS[data.type]}</p>
 {/if}
 
+{#if data.type === 'ProfanityWord' || data.type === 'ProfanityBenignWord'}
+  <form
+    method="POST"
+    action="?/profanityDryRun"
+    use:enhance
+    class="mb-4 flex max-w-xl flex-col gap-2 rounded-xl border p-3"
+  >
+    <label for="profanity-dry-run-text" class="text-sm font-medium">Dry run the profanity filter</label>
+    <p class="text-xs text-dark-2">
+      Runs the filter the site uses on the server and shows whether it flags the text. It never
+      shows which entry matched.
+    </p>
+    <div class="flex gap-2">
+      <Input
+        id="profanity-dry-run-text"
+        name="text"
+        maxlength={500}
+        value={profanityDryRun?.text ?? ''}
+      />
+      <Button type="submit" variant="outline">Test</Button>
+    </div>
+    {#if profanityDryRunError}
+      <ErrorAlert message={profanityDryRunError} />
+    {:else if profanityDryRun}
+      <p class="text-sm" data-testid="profanity-dry-run-result">
+        {profanityDryRun.flagged ? 'Flagged' : 'Not flagged'}, using {LIST_SOURCE_LABELS[
+          profanityDryRun.listSource
+        ]}.
+      </p>
+    {/if}
+  </form>
+{/if}
+
 {#if QUERY_RULE_TYPES.includes(data.type)}
   <form
     method="POST"
@@ -296,6 +349,7 @@
     >
       <input type="hidden" name="type" value={data.type} />
       {#if data.blocklist.id}<input type="hidden" name="id" value={data.blocklist.id} />{/if}
+      {#if confirmingImpact}<input type="hidden" name="confirmImpact" value={text} />{/if}
       <Textarea
         name="blocklist"
         bind:value={text}
@@ -304,7 +358,9 @@
           : 'Remove comma-delimited items from blocklist'}
       />
       <div class="flex justify-end">
-        <Button type="submit" disabled={text.trim().length === 0}>Submit</Button>
+        <Button type="submit" disabled={text.trim().length === 0}>
+          {confirmingImpact ? 'Add anyway' : 'Submit'}
+        </Button>
       </div>
     </form>
   </div>

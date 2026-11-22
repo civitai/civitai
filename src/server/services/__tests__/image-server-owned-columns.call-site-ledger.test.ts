@@ -171,7 +171,7 @@ const INSERT_SITE_LEDGER: Record<string, InsertSite> = {
     spreads: [],
     serverColumns: [],
   },
-  'src/pages/api/admin/temp/migrate-article-images.ts#processBatch': {
+  'src/server/api-routes/admin/temp/migrate-article-images.ts#processBatch': {
     sites: 1,
     spreads: [],
     serverColumns: [],

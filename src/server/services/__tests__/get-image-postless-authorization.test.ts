@@ -147,6 +147,17 @@ describe('getImage postless authorization', () => {
     expect(input).toEqual({ id: IMAGE_ID });
   });
 
+  it("keeps a review hold on the owner's own image unless the caller asks for the owner's view", async () => {
+    const hold = /i\."needsReview" NOT IN \('csam', ?'minor'\)( OR i\."userId" = (\w+))?\)/;
+    expect((await captureQuery({ id: IMAGE_ID, userId: VIEWER })).match(hold)?.[1]).toBeUndefined();
+    const owner = await captureQuery({ id: IMAGE_ID, userId: VIEWER, ownerSeesHeld: true });
+    expect(owner.match(hold)?.[2]).toBe(String(VIEWER));
+    // A signed-out read binds no owner, so no hold is lifted.
+    const anon = await captureQuery({ id: IMAGE_ID, ownerSeesHeld: true });
+    expect(anon).toMatch(hold);
+    expect(anon.match(hold)?.[1]).toBeUndefined();
+  });
+
   it('leaves the moderator path ungated', async () => {
     const sql = await captureQuery({ id: IMAGE_ID, userId: VIEWER, isModerator: true });
 

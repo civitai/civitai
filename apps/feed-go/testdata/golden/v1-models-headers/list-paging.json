@@ -1,0 +1,17 @@
+{
+  "name": "list-paging",
+  "fixture": "list-username-paging-primary-only.json",
+  "request": {
+    "headers": {}
+  },
+  "expect": {
+    "headers": {
+      "vary": "Authorization",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "GET",
+      "cache-control": "public, s-maxage=300, stale-while-revalidate=150",
+      "etag": "\"wtfi645q93201\""
+    }
+  }
+}

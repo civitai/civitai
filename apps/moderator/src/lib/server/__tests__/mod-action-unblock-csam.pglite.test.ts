@@ -53,6 +53,7 @@ const { trackImageRestore } = await import('../image-moderation-effects');
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "type" TEXT,
@@ -74,6 +75,7 @@ CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
 CREATE TABLE "ModActivity" ("entityType" TEXT, "entityId" INTEGER, "activity" TEXT);
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
@@ -89,7 +91,7 @@ CREATE TABLE "Appeal" (
   "buzzTransactionId" TEXT,
   "entityRemovedAt" TIMESTAMP(3)
 );
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP(3), "email" TEXT, "username" TEXT);
 -- Rates a restored image as its tags would: an untagged one would go back to the scanner.
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$
   UPDATE "Image" SET "nsfwLevel" = 1
@@ -113,7 +115,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.exec(`
-    TRUNCATE "Image", "ImageTagForReview";
+    TRUNCATE "Image", "ImageTagForReview", "User", "JobQueue";
     INSERT INTO "Image" ("id", "userId", "ingestion", "blockedFor", "nsfwLevel", "needsReview") VALUES
       (${CSAM}, 7, 'Blocked', 'CSAM', 32, 'csam'),
       (${MODERATED}, 8, 'Blocked', 'moderated', 32, NULL);
@@ -162,7 +164,15 @@ describe('imageModerate unblock of a CSAM-blocked image', () => {
   });
 
   it('answers as before when nothing in the batch is CSAM-blocked', async () => {
-    await expect(unblock([MODERATED])).resolves.toEqual({ count: 1 });
+    await expect(unblock([MODERATED])).resolves.toEqual({ count: 1, restored: 1, kept: 0 });
+  });
+
+  // Policy: LIFT_WHILE_OWNER_DELETED in @civitai/shared/account-deletion-grace: a deleted owner's image is never served.
+  it('counts an image kept blocked for its deleted owner apart from the restored ones', async () => {
+    await db.exec(`INSERT INTO "User" ("id", "deletedAt") VALUES (8, now())`);
+
+    await expect(unblock([MODERATED])).resolves.toEqual({ count: 1, restored: 0, kept: 1 });
+    expect(await row(MODERATED)).toMatchObject({ ingestion: 'Blocked' });
   });
 });
 
@@ -174,7 +184,7 @@ describe('imageModerate unblock when the replica has not caught up', () => {
     replicaHandle.current = new Kysely({ dialect: pgliteDialect(laggingReplica) });
     vi.mocked(trackImageRestore).mockClear();
 
-    await expect(unblock([MODERATED])).resolves.toEqual({ count: 1 });
+    await expect(unblock([MODERATED])).resolves.toEqual({ count: 1, restored: 1, kept: 0 });
     expect(await row(MODERATED)).toEqual({
       ingestion: 'Scanned',
       blockedFor: null,

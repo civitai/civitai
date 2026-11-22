@@ -1,3 +1,4 @@
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import { Prisma } from '@prisma/client';
 import { updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
@@ -340,9 +341,11 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
           ) images
         FROM "Image" i
         JOIN "ImageConnection" ic ON ic."imageId" = i.id AND ic."entityId" IN (SELECT "id" FROM target) AND ic."entityType" = 'Bounty'
-        -- No viewer: the images a signed-out visitor is served on the bounty page, less ToS removals.
+        -- No viewer: the images a signed-out visitor is served on the bounty page, less ToS removals
+        -- and images listed on a CSAM report.
         WHERE ${Prisma.join(entityImageVisibilityConditions({}), ' AND ')}
           AND i."tosViolation" IS NOT TRUE
+          AND (i.id)::text NOT IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})
         GROUP BY ic."entityId"
       ), tags AS MATERIALIZED (
         SELECT

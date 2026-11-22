@@ -1,5 +1,6 @@
 import {
   NO_SANDBOX_FEATURES,
+  PREVIEW_ID,
   SANDBOX_RESULT_LIMIT,
   SANDBOX_SERVER_ID,
   SANDBOX_SERVER_LABEL,
@@ -212,6 +213,27 @@ export class AppSandbox {
       timeoutMs: options.timeoutMs ?? RUNNER_CALL_TIMEOUT_MS,
     });
     return { text: mcpResultToText(result, Infinity), isError: result.isError === true };
+  }
+
+  /**
+   * The open app's current preview id, as the sandbox service reports it now (a stopped preview
+   * session changes it, so the id read as the reply started may be stale); `null` when no app is
+   * open or the service gives it none.
+   */
+  async previewId(): Promise<string | null> {
+    const active = this.#active;
+    if (!active) return null;
+    const sandbox = await this.#deps.client.get(active.name);
+    const id = sandbox?.previewId;
+    return typeof id === 'string' && PREVIEW_ID.test(id) ? id : null;
+  }
+
+  /** Gives the open app a new preview id, and answers it (`SandboxClient.rotatePreviewId`). */
+  async rotatePreviewId(): Promise<string> {
+    const active = this.#active;
+    const rotate = this.#deps.client.rotatePreviewId;
+    if (!active || !rotate) throw new Error('Your app is not running.');
+    return rotate.call(this.#deps.client, active.name);
   }
 
   async close(): Promise<void> {

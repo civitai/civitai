@@ -28,6 +28,7 @@ import { recordImageScanningResult } from '~/server/services/scanner-audit.servi
 import { recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
 import { labelUploadPrompt } from '~/server/services/upload-prompt-scan.service';
 import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
@@ -340,6 +341,9 @@ export async function processImageScanningWorkflow({
     );
     // Backstop: the in-pipeline showcase bust may not have run if an earlier step threw.
     if (image.postId) await bustPostCachesLazy(image.postId);
+    // Likewise the home-block refresh, which never throws.
+    if (outcome.ingestion === ImageIngestionStatus.Blocked)
+      await evictHomeBlocksForImages({ imageIds: [image.id] });
   }
 
   // A label for moderators to verify, recorded after the verdict so it cannot change it.

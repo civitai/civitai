@@ -21,6 +21,7 @@ export { createSessionTokenClient } from './session-token-client'; // rolling re
 export type { SessionTokenClient, RefreshFailure } from './session-token-client';
 export { createImpersonationClient } from './impersonation-client'; // moderator impersonate / exit
 export { probeInternalParity } from './hub'; // does the hub accept this app's service credential
+export { hubBaseUrl, hubFetch } from './hub';
 export type { ImpersonationClient, ImpersonationResult } from './impersonation-client';
 export { createSpokeGuard } from './spoke-guard'; // framework-agnostic first-party app session+role gate
 export { createSlotTally, type SlotCounts } from './slot-tally';
@@ -77,8 +78,13 @@ export {
 } from './first-party-bridge'; // framework-agnostic first-party login bridge (spoke side)
 export type { AuthorizeRedirect, FirstPartyCallbackResult } from './first-party-bridge';
 export { createSessionSigner, maybeCreateSessionSigner } from './sign';
-export { ACCESS_TOKEN_JWT_TYP } from './sign';
-export type { SessionSigner, SessionSignerConfig, AccessTokenJwtClaims } from './sign';
+export { ACCESS_TOKEN_JWT_TYP, BLOCK_EXCHANGE_TOKEN_KIND } from './sign';
+export type {
+  SessionSigner,
+  SessionSignerConfig,
+  AccessTokenJwtClaims,
+  BlockExchangeBinding,
+} from './sign';
 export { createAuthMiddleware } from './middleware';
 export type { AuthMiddlewareConfig } from './middleware';
 export {
@@ -122,6 +128,7 @@ export {
   readDeviceId,
   rollSlot,
   parseCookieHeader,
+  registrableDomain,
   type CookieSlot,
   type CookieRead,
   type CookieReadOptions,

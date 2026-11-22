@@ -38,6 +38,24 @@ type Config struct {
 	BackoffBase, BackoffMax time.Duration
 	// SearchTimeout bounds one search query (APP_INDEX_SEARCH_TIMEOUT_MS, default 2000).
 	SearchTimeout time.Duration
+	// Listings switches on the second consumer, of the store listing schema into the listings read
+	// model (APP_INDEX_LISTINGS: on/true/1, or off/false/0; unset is off). Off, nothing changes: no
+	// subscription, no tables, no series. It holds a second consumer lock, so it needs
+	// APP_INDEX_DB_MAX_CONNS of at least 3.
+	Listings bool
+	// ListingsInvalid is a value of APP_INDEX_LISTINGS that is neither on nor off. It is read as
+	// off, never as a reason to refuse to start: a typo in a dark feature's switch must not take
+	// down the search the process already serves. The process logs it as an error at start.
+	ListingsInvalid string
+	// ViewerKey verifies the viewer token the web tier signs on every listing API request
+	// (APP_INDEX_VIEWER_KEY, at least 32 bytes; internal/listingread ParseViewer). Read only with
+	// listings on. Unset or short, the process still starts and the listing routes answer 503:
+	// like APP_INDEX_LISTINGS itself, a dark feature's setting never takes /search down.
+	ViewerKey string
+	// ViewerKeyNext is a second key the viewer token may be signed with, during a rotation
+	// (APP_INDEX_VIEWER_KEY_NEXT, optional, at least 32 bytes when set). Set short, the listing
+	// routes answer 503, as with a short current key: never silently ignored.
+	ViewerKeyNext string
 }
 
 // Client is the index's OAuth client for the client credentials grant.
@@ -60,6 +78,8 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 		Schema:        getenv("APP_INDEX_SCHEMA"),
 		DatabaseURL:   getenv("APP_INDEX_DATABASE_URL"),
 		Addr:          getenv("APP_INDEX_ADDR"),
+		ViewerKey:     getenv("APP_INDEX_VIEWER_KEY"),
+		ViewerKeyNext: getenv("APP_INDEX_VIEWER_KEY_NEXT"),
 	}
 	if c.RegistryURL == "" {
 		return nil, errors.New("APP_INDEX_REGISTRY_URL is required")
@@ -104,6 +124,18 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 	conns, err := intEnv(getenv, "APP_INDEX_DB_MAX_CONNS", 4, 2, 64)
 	if err != nil {
 		return nil, err
+	}
+	switch raw := getenv("APP_INDEX_LISTINGS"); strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "off", "false", "0":
+	case "on", "true", "1":
+		c.Listings = true
+	default:
+		c.ListingsInvalid = raw
+	}
+	// Only when listings are actually on: off (or an invalid value, read as off) runs one consumer.
+	if c.Listings && conns < 3 {
+		// Each consumer holds one connection for its lock; searches and writes need another.
+		return nil, errors.New("APP_INDEX_DB_MAX_CONNS must be at least 3 with APP_INDEX_LISTINGS on")
 	}
 	c.DBMaxConns = int32(conns) //nolint:gosec // bounded to [2, 64] above
 	return c, nil

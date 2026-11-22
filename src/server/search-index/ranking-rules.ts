@@ -15,7 +15,7 @@
 //
 // Adding a field to an asc/desc rule makes Meilisearch build facet data for it across the index; a
 // pure reorder does not. To apply to the live index, use
-// src/pages/api/admin/temp/apply-models-index-ranking-rules.ts.
+// src/server/api-routes/admin/temp/apply-models-index-ranking-rules.ts.
 export const modelsRankingRules = [
   'sort',
   'attribute',

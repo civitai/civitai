@@ -44,6 +44,7 @@ vi.mock('~/env/client', () => ({
 vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));
 
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import { rateLimit } from '~/server/middleware.trpc';
 import { resolveUsageLimitRules } from '~/server/services/usage-limit-config.service';
 import { STUDIO_AUTO_LABEL_RATE_LIMITS } from '~/server/services/training-studio-auto-label.service';
@@ -59,6 +60,14 @@ const PROCEDURE_PATHS = {
   poll: 'training.studioAutoLabelPoll',
 } as const;
 
+const lastClaimBucket = () => {
+  const [, { keys, arguments: args }] = redisMock.redis.eval.mock.calls.at(-1) as unknown as [
+    string,
+    { keys: string[]; arguments: string[] }
+  ];
+  return { cacheKey: keys[0], hashKey: args[1] };
+};
+
 async function procedureAttempt(which: keyof typeof PROCEDURE_PATHS) {
   rateLimit(STUDIO_AUTO_LABEL_RATE_LIMITS[which].rules, undefined, {
     sharedKey: STUDIO_AUTO_LABEL_RATE_LIMITS[which].key,
@@ -69,16 +78,14 @@ async function procedureAttempt(which: keyof typeof PROCEDURE_PATHS) {
     path: PROCEDURE_PATHS[which],
     next: async () => ({ ok: true }),
   });
-  const [, cacheKey, hashKey] = mockHSetWithTTL.mock.calls.at(-1)!;
-  return { cacheKey, hashKey };
+  return lastClaimBucket();
 }
 
 async function endpointAttempt(which: keyof typeof PROCEDURE_PATHS) {
   const limit = STUDIO_AUTO_LABEL_RATE_LIMITS[which];
   const record = await claimRateLimitAttempt({ rules: limit.rules, keyName: limit.key, user, req });
   await record();
-  const [, cacheKey, hashKey] = mockHSetWithTTL.mock.calls.at(-1)!;
-  return { cacheKey, hashKey };
+  return lastClaimBucket();
 }
 
 describe("the standalone auto-label endpoint shares the embed procedures' buckets", () => {
@@ -86,6 +93,8 @@ describe("the standalone auto-label endpoint shares the embed procedures' bucket
     vi.clearAllMocks();
     redisMock.redis.packed.hGet.mockResolvedValue([]);
     mockHSetWithTTL.mockResolvedValue(undefined);
+    // training is fail-closed: the claim script must answer, or the claim refuses.
+    redisMock.redis.eval.mockImplementation(createLuaRedis(Date.now()).eval as never);
   });
 
   it.each(['submit', 'poll'] as const)('a %s is recorded in the same bucket', async (which) => {
@@ -125,14 +134,7 @@ describe("the standalone auto-label endpoint shares the embed procedures' bucket
     redisMock.redis.packed.hGet.mockResolvedValue([Date.now()]);
     const record = await claimRateLimitAttempt({ rules: [], keyName: 'training:x', user, req });
     await record();
+    expect(redisMock.redis.eval).not.toHaveBeenCalled();
     expect(mockHSetWithTTL).not.toHaveBeenCalled();
-  });
-
-  it('fails open when the attempt cannot be written', async () => {
-    const { key, rules } = STUDIO_AUTO_LABEL_RATE_LIMITS.submit;
-    mockHSetWithTTL.mockRejectedValue(new Error('sysredis failover'));
-    const record = await claimRateLimitAttempt({ rules, keyName: key, user, req });
-    await expect(record()).resolves.toBeUndefined();
-    expect(mockHSetWithTTL).toHaveBeenCalled();
   });
 });

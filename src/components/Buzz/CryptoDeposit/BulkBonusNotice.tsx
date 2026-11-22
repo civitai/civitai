@@ -1,7 +1,6 @@
 import { Group, Stack, Text } from '@mantine/core';
 import { IconArrowRight, IconTrendingUp } from '@tabler/icons-react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { dialogs } from '~/components/Dialog/dialog-registry2';
+import { openBulkBonusInfo } from '~/components/Dialog/triggers/bulk-bonus-info';
 import { buzzBulkBonusMultipliers } from '~/server/common/constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 
@@ -11,13 +10,6 @@ type Props = {
   /** Fiat per 1000 Buzz (same as the conversion rate shown above) */
   buzzPrice: number | null;
 };
-
-function openModal() {
-  dialogStore.trigger({
-    component: dialogs['bulk-bonus-info'].component,
-    id: 'bulk-bonus-info',
-  });
-}
 
 function formatFiat(buzz: number, buzzPrice: number | null, symbol: string) {
   if (buzzPrice == null) {
@@ -39,7 +31,7 @@ export function BulkBonusNotice({ fiatSymbol, buzzPrice }: Props) {
         </Group>
         <button
           type="button"
-          onClick={openModal}
+          onClick={openBulkBonusInfo}
           className="flex items-center gap-0.5 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
         >
           <span>View Details</span>
@@ -57,7 +49,7 @@ export function BulkBonusNotice({ fiatSymbol, buzzPrice }: Props) {
             <button
               key={min}
               type="button"
-              onClick={openModal}
+              onClick={openBulkBonusInfo}
               className="flex flex-1 flex-col items-center gap-0.5 rounded-md border border-blue-500/20 bg-blue-500/[0.05] px-2 py-1.5 transition-colors hover:border-blue-500/40 hover:bg-blue-500/[0.1] dark:border-blue-400/20 dark:bg-blue-400/[0.04] dark:hover:border-blue-400/40 dark:hover:bg-blue-400/[0.08]"
             >
               <Text size="xs" fw={700} c="blue.4" lh={1}>

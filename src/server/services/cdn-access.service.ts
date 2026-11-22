@@ -653,9 +653,18 @@ async function ownerHolds(userIds: number[]): Promise<OwnerHolds> {
 /** The call that moves `current` to `desired`, or null when nothing needs to change. */
 export function plannedCall(
   desired: CdnAccess,
-  current: StateRow['state'] | undefined
+  current: StateRow['state'] | undefined,
+  { takedown = false }: { takedown?: boolean } = {}
 ): CdnCall | null {
-  if (desired === 'retract') return current === 'Retracted' ? null : 'retract';
+  if (desired === 'retract') {
+    if (current === 'Retracted') return null;
+    // 🔴 A deny is never upgraded on its own: the hold that capped it may sit on a row since deleted,
+    // which nothing here can see any more. Only a moderator delete or shop takedown on the url, or
+    // this path's own deferral of a retraction past its per-run cap, retracts a denied url. Do not
+    // restore the automatic upgrade.
+    if (current === 'Denied' && !takedown) return null;
+    return 'retract';
+  }
   if (desired === 'deny') return current ? null : 'deny';
   return current ? 'allow' : null;
 }
@@ -665,10 +674,17 @@ export function plannedCall(
  * through the normal path, which invalidates on its own; whatever was asserted earlier stays until
  * the reconciler drops it.
  */
-function callFor(url: string, facts: UrlAccessFacts | undefined, current: StateRow | undefined) {
+function callFor(
+  url: string,
+  facts: UrlAccessFacts | undefined,
+  current: StateRow | undefined,
+  { deferred = false }: { deferred?: boolean } = {}
+) {
   if (!cdnImageKey(url)) return null;
   if (!facts || (!facts.images.length && !facts.deletes.length)) return null;
-  return plannedCall(desiredUrlAccess(facts), current?.state);
+  return plannedCall(desiredUrlAccess(facts), current?.state, {
+    takedown: facts.deletes.length > 0 || deferred,
+  });
 }
 
 async function applyCall(url: string, call: CdnCall, gate: RetractionGate, claim: UrlClaim) {
@@ -680,7 +696,10 @@ async function applyCall(url: string, call: CdnCall, gate: RetractionGate, claim
   const state = call === 'retract' ? 'Retracted' : 'Denied';
   await dbWrite.$executeRaw`
     INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt", "lastAssertedAt")
-    VALUES (${url}, ${state}, now(), ${call === 'retract' ? new Date() : null}, now())
+    -- Both stamps from one expression, so an outright retraction has them equal; an upgrade keeps the
+    -- earlier deny time on conflict. The retracted-media reads tell the two apart by that equality.
+    VALUES (${url}, ${state}, timezone('UTC', now()),
+      CASE WHEN ${call === 'retract'}::boolean THEN timezone('UTC', now()) END, now())
     ON CONFLICT (url) DO UPDATE SET
       state = EXCLUDED.state,
       "retractedAt" = COALESCE(EXCLUDED."retractedAt", "ImageCdnAccess"."retractedAt"),
@@ -1272,6 +1291,8 @@ type QueueRow = {
     urls?: string[];
     seq?: string;
     deferred?: string | null;
+    /** Url → when (database clock) the per-run cap deferred its retraction; see `pacedUrls`. */
+    pacedUrls?: Record<string, string>;
     retractFailures?: RetractFailures;
   } | null;
 };
@@ -1295,6 +1316,23 @@ const RETRACT_FAILING_ALERT_MS = 60 * 60 * 1000;
 const IS_DEFERRED = Prisma.raw(
   `COALESCE(data ? 'deferred' AND data->'deferred' IS NOT DISTINCT FROM data->'seq', false)`
 );
+
+/** Text keeps the microseconds a JS Date drops, so a marker and a read compare exactly. */
+async function dbClock() {
+  const [row] = await dbWrite.$queryRaw<{ at: string }[]>`SELECT clock_timestamp()::text AS at`;
+  return row.at;
+}
+
+/**
+ * A row's `pacedUrls` with each url stamped by the read that deferred it, not by this write: a
+ * read that saw a hold after the deferral, but before this write, must still win.
+ */
+const pacedWith = (paced: [url: string, at: string][]) => Prisma.sql`
+  COALESCE(data->'pacedUrls', '{}'::jsonb) || COALESCE((
+    SELECT jsonb_object_agg(x.url, x.at::timestamptz)
+    FROM unnest(${paced.map(([url]) => url)}::text[], ${paced.map(([, at]) => at)}::text[])
+      AS x(url, at)
+  ), '{}'::jsonb)`;
 
 /**
  * Drains `CdnAccessSync`. Each url's desired state is recomputed from the current rows, so the queue
@@ -1364,11 +1402,13 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
     `;
   }
 
+  const readAt = await dbClock();
   const [facts, state] = await Promise.all([loadFacts(urls), loadState(urls)]);
 
   const pending = new Set<string>();
-  // Retractions past this run's cap: denied for now, and retracted by a later run.
-  const deferred = new Set<string>();
+  // Retractions past this run's cap, with the read that deferred each: denied for now, and
+  // retracted by a later run.
+  const deferred = new Map<string, string>();
   const maxRetracts = env.CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN;
   let retracts = 0;
   let calls = 0;
@@ -1376,12 +1416,51 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   // After a 429 or a timeout the rest of the run's retractions wait for the next run; denies and
   // lifts still go.
   const gate = newRetractionGate();
+  const deferredUrls = new Set(queue.flatMap((q, i) => (q.deferred ? urlsByRow[i] : [])));
+  // A row deferred before per-url markers existed carries none. Each of its urls that still wants a
+  // retraction is taken as this path's own pacing, once, and written as a marker, so a later read
+  // that sees a hold drops it as it would any other. Remove once a deploy-time count finds no such row.
+  for (const [i, q] of queue.entries()) {
+    if (!q.data || !('deferred' in q.data) || 'pacedUrls' in q.data) continue;
+    const legacy = urlsByRow[i].filter((url) => {
+      const f = facts.get(url);
+      return !!f && desiredUrlAccess(f) === 'retract';
+    });
+    const [converted] = await dbWrite.$queryRaw<{ data: QueueRow['data'] }[]>`
+      UPDATE "JobQueue"
+      SET data = jsonb_set(data, '{pacedUrls}', COALESCE((
+        SELECT jsonb_object_agg(u, ${readAt}::timestamptz) FROM unnest(${legacy}::text[]) u
+      ), '{}'::jsonb))
+      WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
+        AND "entityType" = ${q.entityType}::"EntityType"
+        AND "entityId" = ${q.entityId}
+        -- Re-queued since the read: left for the next run, which reads facts after the re-queue.
+        AND data IS NOT DISTINCT FROM ${JSON.stringify(q.data)}::jsonb
+      RETURNING data
+    `;
+    if (converted) q.data = converted.data;
+  }
+
+  // Urls whose retraction this path itself deferred past the cap, re-queued since or not: their deny
+  // is this path's own pacing, so they may still upgrade. Kept per url, not per row: a post row can
+  // also cover a url denied by a hold, and that deny must never upgrade on its own.
+  const pacedUrls = new Set(queue.flatMap((q) => Object.keys(q.data?.pacedUrls ?? {})));
   const plannedCall = new Map(
-    urls.map((url) => [url, callFor(url, facts.get(url), state.get(url))])
+    urls.map((url) => [
+      url,
+      callFor(url, facts.get(url), state.get(url), { deferred: pacedUrls.has(url) }),
+    ])
   );
   const planned = urls.filter((url) => plannedCall.get(url));
+  // Url → the read showing it no longer wants a retraction (a hold caps it, or it was lifted). Only a
+  // marker written before that read is removed: one an overlapping run wrote since rests on a newer
+  // read. A retracted url keeps its marker, inert: only a lift moves it on, and that clears it.
+  const unpaceAt = new Map<string, string>();
+  for (const url of urls) {
+    const f = facts.get(url);
+    if (!f || desiredUrlAccess(f) !== 'retract') unpaceAt.set(url, readAt);
+  }
   // The cap goes to the oldest deferral first, then to new rows in queue order; the rest are denied.
-  const deferredUrls = new Set(queue.flatMap((q, i) => (q.deferred ? urlsByRow[i] : [])));
   const wantsRetract = planned.filter((url) => plannedCall.get(url) === 'retract');
   const mayRetract = new Set(
     [
@@ -1398,11 +1477,15 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       let call: CdnCall | null = null;
       try {
         const result = await withUrlClaim(url, async (claim) => {
+          const freshAt = await dbClock();
           const [fresh, freshState] = await Promise.all([loadFacts([url]), loadState([url])]);
-          call = callFor(url, fresh.get(url), freshState.get(url));
+          const f = fresh.get(url);
+          if (!f || desiredUrlAccess(f) !== 'retract') unpaceAt.set(url, freshAt);
+          else unpaceAt.delete(url);
+          call = callFor(url, f, freshState.get(url), { deferred: pacedUrls.has(url) });
           if (!call) return;
           if (call === 'retract' && !mayRetract.has(url)) {
-            deferred.add(url);
+            deferred.set(url, freshAt);
             if (freshState.get(url)?.state === 'Denied') return;
             call = 'deny';
           }
@@ -1458,6 +1541,11 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   }
 
   const settled = (url: string) => !pending.has(url) && !deferred.has(url);
+  const pacedIn = (urls: string[]) =>
+    urls.flatMap((url): [string, string][] => {
+      const at = deferred.get(url);
+      return at ? [[url, at]] : [];
+    });
   const done = queue.filter((_, i) => urlsByRow[i].every(settled));
   // A row keeps its first-deferral time, even after a re-queue, so the oldest deferral goes first.
   const rotate = queue.filter(
@@ -1488,7 +1576,9 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       SET "createdAt" = CASE WHEN data ? 'deferred' THEN "createdAt" ELSE now() END,
           data = (COALESCE(data, '{}'::jsonb) - ${
             failuresNext.get(q) === null ? 'retractFailures' : ''
-          }::text) || jsonb_build_object('deferred', data->'seq')
+          }::text) || jsonb_build_object('deferred', data->'seq', 'pacedUrls', ${pacedWith(
+      pacedIn(urlsByRow[queue.indexOf(q)])
+    )})
       WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
         AND "entityType" = ${q.entityType}::"EntityType"
         AND "entityId" = ${q.entityId}
@@ -1547,6 +1637,32 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   // A re-queued row still carries its first-deferral time, so its wait counts from the re-queue.
   const waitedSince = (q: QueueRow) =>
     q.data && 'deferred' in q.data && q.data.seq ? new Date(q.data.seq) : q.createdAt;
+  // The rotation skips a row with a url still pending, a row already deferred, and one a trigger
+  // re-queued mid-run; each must still record what this run deferred.
+  for (const [i, q] of queue.entries()) {
+    const paced = pacedIn(urlsByRow[i]);
+    if (removed.has(q) || !paced.length) continue;
+    await dbWrite.$executeRaw`
+      UPDATE "JobQueue"
+      SET data = jsonb_set(COALESCE(data, '{}'::jsonb), '{pacedUrls}', ${pacedWith(paced)})
+      WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
+        AND "entityType" = ${q.entityType}::"EntityType"
+        AND "entityId" = ${q.entityId}
+    `;
+  }
+  const unpace = [...unpaceAt].filter(([url]) => !deferred.has(url));
+  if (unpace.length)
+    await dbWrite.$executeRaw`
+      UPDATE "JobQueue"
+      SET data = jsonb_set(data, '{pacedUrls}', (data->'pacedUrls') - ARRAY(
+        SELECT x.url
+        FROM unnest(${unpace.map(([url]) => url)}::text[], ${unpace.map(([, at]) => at)}::text[])
+          AS x(url, at)
+        WHERE (data->'pacedUrls'->>x.url)::timestamptz < x.at::timestamptz))
+      WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
+        AND data ? 'pacedUrls' AND data->'pacedUrls' ?| ${unpace.map(([url]) => url)}::text[]
+    `;
+
   const oldest = earliest(queue.filter((q) => !q.deferred).map(waitedSince));
   if (failed && oldest && Date.now() - oldest.getTime() > QUEUE_AGE_ALERT_MS)
     logToAxiom({
@@ -1637,8 +1753,8 @@ async function syncQueued(url: string) {
 }
 
 /**
- * Daily pass over every url this path has denied: re-asserts a deny before it can expire, upgrades a
- * deny to a retraction once a hold is released or a late activity row lands, lifts a deny the queue
+ * Daily pass over every url this path has denied: re-asserts a deny before it can expire, retracts a
+ * denied url only on a moderator delete or shop takedown (`plannedCall`), lifts a deny the queue
  * missed, and forgets urls with no image rows and no moderator delete left (their deletion
  * invalidated on its own).
  */

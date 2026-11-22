@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { setProfanityListReaderForTests } from '~/server/services/profanity-list.service';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as Surfaces from '~/server/services/commentv3/surfaces';
+import type * as FliptClient from '~/server/flipt/client';
 import type * as WriteService from '~/server/services/commentv3/write.service';
 import type { StoredCommentV3 } from '~/server/services/commentv3/write.service';
 
@@ -32,6 +34,20 @@ const m = vi.hoisted(() => ({
   authors: vi.fn(async (..._a: unknown[]) => (_id: number): object => ({})),
   authorRow: vi.fn(async (): Promise<object | undefined> => undefined),
 }));
+
+// `profanity-managed-list` per test; every other flag as the real client answers it.
+const profanityFlag = vi.hoisted(() => ({ on: true }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const original = await importOriginal<typeof FliptClient>();
+  return {
+    ...original,
+    isFlipt: async (flag: string, ...rest: unknown[]) =>
+      flag === original.FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST
+        ? profanityFlag.on
+        : // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (original.isFlipt as any)(flag, ...rest),
+  };
+});
 
 vi.mock('~/server/services/commentv3/write.service', async (importOriginal) => {
   const actual = await importOriginal<typeof WriteService>();
@@ -184,6 +200,36 @@ const runsOn = async (
   await runner.query('SELECT 1');
   return tx.$queryRawUnsafe.mock.calls.length === 1;
 };
+
+describe('the masked copy on a saved comment', () => {
+  afterEach(() => setProfanityListReaderForTests());
+
+  // The comment is already saved: a masking failure must not turn the write into an error.
+  it('is left absent, and the create and the edit still answer, when masking fails', async () => {
+    setProfanityListReaderForTests({ read: () => Promise.reject(new Error('list down')) });
+    const saved = await create(STRANGER, {});
+    expect(saved.id).toBe(300);
+    expect(saved.maskedContent).toBeUndefined();
+    const edited = await update(AUTHOR, 101);
+    expect(edited).toMatchObject({ id: 101, maskedContent: undefined });
+  });
+
+  // Synthetic managed entries, on no real list, so a mask can only come from the list read.
+  it('carries the masked copy on the create and the edit, and null for clean text', async () => {
+    setProfanityListReaderForTests({
+      read: async () => ({ blocked: ['zqvoxblat', 'zqvoxcrud'], allowed: null, source: 'managed' }),
+    });
+    m.insertComment.mockResolvedValueOnce(row(300, { content: '<p>well zqvoxblat then</p>' }));
+    const saved = await create(STRANGER, {});
+    expect(saved.maskedContent).toMatch(/^<p>well \*+ then<\/p>$/);
+
+    m.updateCommentContent.mockResolvedValueOnce(row(101, { content: '<p>zqvoxcrud</p>' }));
+    expect((await update(AUTHOR, 101)).maskedContent).toMatch(/^<p>\*+<\/p>$/);
+
+    m.updateCommentContent.mockResolvedValueOnce(row(101, { content: '<p>all clean</p>' }));
+    expect(await update(AUTHOR, 101)).toHaveProperty('maskedContent', null);
+  });
+});
 
 describe('commentv3 create', () => {
   it('answers the saved comment with its author as the cache has them', async () => {
