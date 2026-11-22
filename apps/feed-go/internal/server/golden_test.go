@@ -1732,7 +1732,7 @@ func goldenRunInfiniteMode(t *testing.T, fx *goldenFixture, writeBack bool) {
 	for _, p := range goldenWriteProblems(fx, before, goldenCacheState(env.cache), writeBack) {
 		t.Error(p)
 	}
-	// createContext's policy, as for the gallery procedure: the public TTL exactly when signed out.
+	// createContext's policy: the public TTL when signed out, unless the answer depends on the viewer.
 	if fx.Expect.Cacheable == nil {
 		t.Fatal("an image.getInfinite fixture without expect.cacheable")
 	}
@@ -1740,7 +1740,7 @@ func goldenRunInfiniteMode(t *testing.T, fx *goldenFixture, writeBack bool) {
 		t.Errorf("signed out: want the public cache TTL %+v, got %v", trpc.SignedOutTTL, c.ttl)
 	}
 	if !*fx.Expect.Cacheable && c.ttl != nil {
-		t.Errorf("a session user: want no cache TTL, got %+v", *c.ttl)
+		t.Errorf("signed in, or a viewer-scoped input: want no cache TTL, got %+v", *c.ttl)
 	}
 	env.feed.check(t, true)
 }

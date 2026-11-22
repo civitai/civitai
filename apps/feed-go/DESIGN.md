@@ -827,7 +827,8 @@ request header. The public route applies it as follows, before the origin check 
   header it carries is one the app would strip: `image.getInfinite` reads it as absent (§14.2), the
   other procedures still fall back (`verified-bot`).
 - **Default response headers.** Every answer written here carries its Cache-Control: the app's
-  `PRIVATE_CACHE_CONTROL` (from the same file) unless the answer is edge-cacheable (signed out, §4).
+  `PRIVATE_CACHE_CONTROL` (from the same file) unless the answer is edge-cacheable (signed out, §4, and
+  for `image.getInfinite` an input that is not viewer-scoped).
   `X-Handled-By` (the Node pod name) is not set. It does not affect caching and names a Node pod.
 
 ## 7. Parity first: shadow mode
@@ -915,7 +916,8 @@ path as serving, and compares decoded values:
   outdated web bundle to reload; this service does not). They are still counted (as `mismatch`), but
   a sample whose only differences are these is logged at Debug; a body difference or any other header difference is logged at Info.
   `image.getInfinite` is not on the list: a signed-out unbatched call is cacheable in Node
-  (createContext), and its compute carries the same signed-out TTL as the gallery procedure's.
+  (createContext) unless its input is viewer-scoped (noEdgeCacheWhen), and its compute applies the
+  same rule (InfiniteInput.ViewerScoped).
 
 **Expected noise.** Go answers milliseconds after Node, so a reaction count, a metric hash refresh or
 a newly published image can differ without a bug. These show up as `stats.*` value diffs and rare

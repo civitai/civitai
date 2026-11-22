@@ -28,8 +28,31 @@ export function isTrustedSessionCaller(request: Request, url: URL): boolean {
   return source === null || source === url.origin || allowedCorsOrigin(source) !== null;
 }
 
-/** Response headers for a page whose buttons act on the session: no other origin may frame it. */
+/** Headers that stop other origins framing a response; the server hook adds them to every hub response. */
 export const NO_FRAMING = {
   'content-security-policy': "frame-ancestors 'none'",
   'x-frame-options': 'DENY',
 };
+
+function setNoFraming(headers: Headers) {
+  const ancestors = NO_FRAMING['content-security-policy'];
+  const csp = headers.get('content-security-policy');
+  if (!csp) headers.set('content-security-policy', ancestors);
+  else if (!/frame-ancestors/i.test(csp))
+    headers.set('content-security-policy', `${csp}; ${ancestors}`);
+  if (!headers.has('x-frame-options'))
+    headers.set('x-frame-options', NO_FRAMING['x-frame-options']);
+}
+
+/** Adds NO_FRAMING to a response, keeping any CSP or frame policy it already carries. */
+export function refuseFraming(response: Response): Response {
+  try {
+    setNoFraming(response.headers);
+    return response;
+  } catch {
+    // Response.redirect() and fetched responses have immutable headers.
+    const copy = new Response(response.body, response);
+    setNoFraming(copy.headers);
+    return copy;
+  }
+}
