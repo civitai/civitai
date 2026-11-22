@@ -70,18 +70,22 @@ describe('planCandidateSlots', () => {
     expect(plans.map((p) => p.kind === 'locked' && p.entry.key)).toEqual([undefined, undefined]);
   });
 
-  it('never hands back an older key once it has been locked, on the following run', () => {
-    const outputs = [out('a'), out('b', { blockedReason: 'canUpgrade' })];
-    const first = planCandidateSlots(outputs, ['key-0', 'key-1'], [1, 1]);
-    const stored = first.map((p) => (p.kind === 'locked' || p.kind === 'reuse' ? p.entry : null));
-    expect(
-      retainedCandidateKeys(
-        ['key-0', 'key-1'],
-        stored.filter((e) => e !== null),
-        []
-      )
-    ).toEqual(['key-0', 'key-1']);
-    const second = planCandidateSlots([out('a'), out('b')], stored, [1, 1]);
+  const storedFrom = (plans: ReturnType<typeof planCandidateSlots>) =>
+    plans.flatMap((p) => (p.kind === 'locked' || p.kind === 'reuse' ? [p.entry] : []));
+
+  it('downloads fresh on the next run after a blocked output locked an older key', () => {
+    const first = planCandidateSlots([out('a', { blockedReason: 'canUpgrade' })], ['key-0'], [1]);
+    expect(first[0].kind === 'locked' && first[0].entry.key).toBeUndefined();
+    expect(retainedCandidateKeys(['key-0'], storedFrom(first), [])).toEqual(['key-0']);
+    const second = planCandidateSlots([out('a')], storedFrom(first), [1]);
+    expect(second.map((p) => p.kind)).toEqual(['download']);
+  });
+
+  it('downloads fresh on the next run after a length mismatch locked an older key', () => {
+    const first = planCandidateSlots([out('a'), out('b')], ['key-0'], [1, 1]);
+    expect(first[0].kind === 'locked' && first[0].entry.key).toBeUndefined();
+    expect(retainedCandidateKeys(['key-0'], storedFrom(first), [])).toEqual(['key-0']);
+    const second = planCandidateSlots([out('a'), out('b')], storedFrom(first), [1, 1]);
     expect(second.map((p) => p.kind)).toEqual(['download', 'download']);
   });
 
