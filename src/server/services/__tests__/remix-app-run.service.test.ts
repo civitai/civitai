@@ -1822,7 +1822,8 @@ describe('a user app', () => {
       };
       const sizeBlobs = (workflow: (typeof h.workflows)[number], size?: object) => {
         for (const step of workflow.steps!)
-          for (const out of (step.output as { blobs: Record<string, unknown>[] }).blobs) {
+          for (const out of (step.output as unknown as { blobs: Record<string, unknown>[] })
+            .blobs) {
             delete out.width;
             delete out.height;
             Object.assign(out, size);
