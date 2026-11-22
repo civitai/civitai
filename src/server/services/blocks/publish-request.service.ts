@@ -1,4 +1,5 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
+import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 import {
   agentReviewSummaryFromQueueRow,
   isImpersonationCheckStale,
@@ -3493,9 +3494,14 @@ async function approveRequestUnderClaim(
       appId: true,
       repoUrl: true,
       trustTier: true,
+      status: true,
       app: { select: { allowedScopes: true, allowedOrigins: true, userId: true } },
     },
   });
+  // A remix app is edited only at /moderator/remix-apps. A row never moves into or out of these
+  // statuses, so this read needs no lock.
+  if (existingAppBlock && REMIX_STATUSES.includes(existingAppBlock.status))
+    throw new Error(`Cannot approve: ${request.slug} is a remix app.`);
   const isFirstVersion = !existingAppBlock;
 
   // A request filed before the owner accepted must not go live.

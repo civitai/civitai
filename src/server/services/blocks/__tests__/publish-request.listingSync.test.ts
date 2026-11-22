@@ -1037,3 +1037,30 @@ describe('approveRequest — media removed between the floor check and the trans
     expect(db.write.appBlockPublishRequest.update).toHaveBeenCalledOnce();
   });
 });
+
+describe('approveRequest — a remix app row', () => {
+  it.each(['remix', 'remix_disabled'])(
+    '🔴 refuses a request on a slug whose row is a remix app (status %s), writing nothing',
+    async (status) => {
+      db.read.appBlock.findFirst.mockResolvedValue({ ...existingAppBlock(), status });
+      const forgejo = await import('~/server/services/blocks/forgejo.service');
+
+      await expect(
+        approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+      ).rejects.toThrow('Cannot approve: cool-app is a remix app.');
+      expect(db.write.appBlock.update).not.toHaveBeenCalled();
+      expect(db.write.oauthClient.update).not.toHaveBeenCalled();
+      expect(forgejo.commitFiles).not.toHaveBeenCalled();
+    }
+  );
+
+  it('CONTROL: the same request on an approved store app replaces its manifest', async () => {
+    db.read.appBlock.findFirst.mockResolvedValue({ ...existingAppBlock(), status: 'approved' });
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    expect(db.write.appBlock.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ manifest: expect.anything() }) })
+    );
+  });
+});
