@@ -150,21 +150,24 @@ function hostSized(url: string, image: RemixSourceImage, log: readonly RemixLogE
 /**
  * The graph input for one workflow a runtime app asks for. Throws when the source may not reach
  * the app's engines, for an upscale too: the app's mature rule covers every step it runs.
- * `knownSizes`: set for a user app, whose claims are its author's: an upscale is then sized from the
- * source row or these outputs of the run, never the size the app names.
+ * A user app's claims are its author's: its upscale is sized from the source row or the outputs
+ * of the run so far (`log`), never the size the app names.
  */
 export function buildRuntimeRequest({
   app,
   image,
   request,
   viewer,
-  knownSizes,
+  author,
+  log,
 }: {
   app: Pick<RemixApp, 'name' | 'engine'>;
   image: RemixSourceImage;
   request: RemixWorkflowRequest;
   viewer: { isGreen: boolean; showNsfw: boolean };
-  knownSizes?: readonly RemixLogEntry[];
+  /** Required, so no caller can leave a user app's sizes to its claim. */
+  author: RegisteredRemixApp['author'] | undefined;
+  log: readonly RemixLogEntry[];
 }) {
   const resolved = resolveRemixAppEngine(app, image, viewer);
   if ('refusal' in resolved) throw new TRPCError({ code: 'FORBIDDEN', message: resolved.refusal });
@@ -176,9 +179,7 @@ export function buildRuntimeRequest({
   });
 
   if (request.kind === 'upscale') {
-    const input = knownSizes
-      ? hostSized(request.image.url, image, knownSizes)
-      : sized(request.image);
+    const input = author ? hostSized(request.image.url, image, log) : sized(request.image);
     return {
       tier,
       // The upscaler prices by the output size, so by the input's.
@@ -473,8 +474,9 @@ async function quoteRuntimeApp(
     image,
     request,
     viewer: viewerOf(caller),
+    author,
     // A first workflow follows no other: only the source is known.
-    knownSizes: author ? [] : undefined,
+    log: [],
   });
   const run = { tier, shape, submit: { graphInput } };
   return {

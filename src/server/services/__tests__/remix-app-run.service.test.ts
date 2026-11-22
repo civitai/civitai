@@ -348,8 +348,23 @@ vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) =
       return images;
     },
   });
+  /** A built-in app's claim is ours: it upscales the source at the size it names. */
+  const claimsBuiltIn = defineRemixApp({
+    slug: 'claims-built-in',
+    name: 'Claims',
+    icon: 'sparkles',
+    version: 1,
+    engine: DEFAULT_ENGINE,
+    async run(ctx) {
+      const { url } = ctx.source;
+      return (
+        await ctx.workflow({ kind: 'upscale', image: { url, width: 64, height: 48 }, scale: 2 })
+      ).images;
+    },
+  });
   const apps = new Map(
     [
+      claimsBuiltIn,
       pickThenEdit,
       endless,
       asksFirst,
@@ -1147,6 +1162,18 @@ describe('Pick of four', () => {
     expect(submits()).toHaveLength(1);
   });
 
+  it("upscales at a built-in app's own size: its claims are ours", async () => {
+    addImage(SOURCE_ID);
+    await startRemixRun({
+      slug: 'claims-built-in',
+      imageId: SOURCE_ID,
+      nonce: 'nonce-claims-built-in',
+      quote: 30,
+      caller: caller(),
+    });
+    expect(JSON.stringify(h.submitWorkflow.mock.calls.at(-1))).toContain('"width":64,"height":48');
+  });
+
   it('upscales the pick at the price its button showed, with the source still proven', async () => {
     const { runId } = await atFinish('nonce-p4-upscale');
 
@@ -1664,12 +1691,36 @@ describe('a user app', () => {
     // Upscales the source, then its own output, each time claiming a smaller size than it has.
     const SHRINKS_SOURCE =
       'export default defineRemixApp({ async run(ctx) { return []; } }); // shrinks';
+    // Asks first, so the upscale behind its option is priced at the ask.
+    const PRICED_SOURCE =
+      "export default defineRemixApp({ async run(ctx) { return []; } }); const t = ['Finish it?', 'up', 'Upscale', 'keep', 'Keep']";
     let runner: ReturnType<typeof fakeRemixRunner>;
     beforeEach(() => {
       const source = userRow().manifest.remix.source;
       runner = fakeRemixRunner({
         secret: SECRET,
         apps: {
+          [createHash('sha256').update(PRICED_SOURCE).digest('hex')]: {
+            async run(ctx) {
+              const finishIt = await ctx.ask({
+                kind: 'choice',
+                prompt: 'Finish it?',
+                options: [
+                  { value: 'up', label: 'Upscale' },
+                  { value: 'keep', label: 'Keep' },
+                ],
+              });
+              if (finishIt === 'keep') return [];
+              const { url } = ctx.source;
+              return (
+                await ctx.workflow({
+                  kind: 'upscale',
+                  image: { url, width: 64, height: 48 },
+                  scale: 2,
+                })
+              ).images;
+            },
+          },
           [createHash('sha256').update(SHRINKS_SOURCE).digest('hex')]: {
             async run(ctx) {
               const claim = { width: 64, height: 48 };
@@ -1793,6 +1844,44 @@ describe('a user app', () => {
         await advanceRemixRun({ runId, quote: 30, caller: flagOn() });
         upscaled('2400x1600');
         expect(submits()).toHaveLength(2);
+      });
+
+      const upscaleWhatIfs = () =>
+        whatIfs().filter((call) => JSON.stringify(call).includes('ImageUpscaleWithModel'));
+
+      it("of a user app is priced at its ask's options at the size the host knows", async () => {
+        const row = shrinksRow();
+        row.manifest.remix.source = PRICED_SOURCE;
+        serve(row);
+        dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row as never);
+        await bumpRemixAppRegistry();
+        const run = (answers: string[]) =>
+          startRemixRun({
+            slug: 'u5-mine',
+            imageId: SOURCE_ID,
+            nonce: 'nonce-priced-upscale',
+            answers,
+            quote: 30,
+            caller: flagOn(),
+          });
+        expect(await run([])).toMatchObject({
+          status: 'ask',
+          prices: { up: expect.any(Number), keep: 0 },
+        });
+        const priced = sizesOf(upscaleWhatIfs().at(-1));
+        await run(['up']);
+        upscaled('1200x800');
+        // The option was priced at what the tap then ran.
+        expect(sizesOf(h.submitWorkflow.mock.calls.at(-1))).toEqual(expect.arrayContaining(priced));
+      });
+
+      it('of a user app is quoted at the size the host knows, as its run is priced', async () => {
+        const { quoteRemixApps } = await import('~/server/services/remix-app.service');
+        await quoteRemixApps({ imageId: SOURCE_ID, slug: 'u5-mine', caller: flagOn() });
+        const quoted = sizesOf(upscaleWhatIfs().at(-1));
+        await startOn(SOURCE_ID);
+        expect(quoted).toEqual(sizesOf(whatIfs().at(-1)));
+        upscaled('1200x800');
       });
 
       it('of a user app is refused when it names an output whose size the run never recorded', async () => {
