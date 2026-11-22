@@ -649,7 +649,7 @@ async function main() {
       if (!withoutImageCdc) gateCheck = () => connectorBlock();
     }
 
-    const pg = vectorPgPool('vector-backfill');
+    const pg = vectorPgPool('vector-backfill', { batch: true });
     const store = VectorStore.fromConfig();
     if (!dryRun) await store.bootstrap();
     else if (!(await store.exists())) {

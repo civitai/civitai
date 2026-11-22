@@ -143,7 +143,7 @@ export async function runBackfill<P extends DomainPayload>(
         'embedding is a paid call'
     );
 
-  const pg = vectorPgPool(log);
+  const pg = vectorPgPool(log, { batch: true });
   const store = domain.store();
   const rejected = args.dryRun ? undefined : await domain.rejected?.();
   try {

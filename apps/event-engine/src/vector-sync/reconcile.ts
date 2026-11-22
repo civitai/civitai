@@ -109,7 +109,7 @@ async function main() {
   if (!dryRun && !args.includes('--confirm'))
     throw new Error('Writing needs --confirm (or pass --dry-run)');
 
-  const pg = vectorPgPool('vector-reconcile');
+  const pg = vectorPgPool('vector-reconcile', { batch: true });
   const store = VectorStore.fromConfig();
   try {
     await reconcile(

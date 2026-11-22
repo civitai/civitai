@@ -244,6 +244,9 @@ export const config = {
     // every later flush, and the consumer stops with nothing logged (image-vector-sync, 2026-11-22).
     // Longer than the event processor's: a backfill page or a reconcile range read is bigger. 0 = off.
     pgQueryTimeoutMs: envTimeoutMs(process.env.VECTOR_PG_QUERY_TIMEOUT_MS, 60_000),
+    // Backfill and reconcile Jobs read bigger slices (a reconcile bucket is 100k ids through the
+    // eligibility filter), and a slow one there only delays a Job, so their bound is looser.
+    pgBatchQueryTimeoutMs: envTimeoutMs(process.env.VECTOR_PG_BATCH_QUERY_TIMEOUT_MS, 300_000),
     pgConnectionTimeoutMs: envTimeoutMs(process.env.VECTOR_PG_CONNECTION_TIMEOUT_MS, 30_000),
     // Off: nothing embeds (a paid call). The consumer and reconcile still delete and update
     // payloads; backfill refuses to run. Embedding also needs CDC_IMAGE_ENABLED, see
