@@ -42,6 +42,7 @@ import type {
   ListingCard,
   ListingCardKindData,
   StoreGridItem,
+  SubListingCard,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import {
   APP_INDEX_VIEWER_HEADER,
@@ -192,11 +193,57 @@ const readModelCardSchema = z.object({
   ]),
 });
 export type ReadModelCard = z.infer<typeof readModelCardSchema>;
+// `internal/listingread` SubListingCard: the store's `SubListingCard`, which the read model answers
+// only when asked for sub-listing cards. Its id must be a sub-listing id, so it can never be matched
+// with a listing card.
+const readModelSubListingCardSchema = z.object({
+  cardType: z.literal('sub-listing'),
+  id: z.string().refine((id) => isAppSubListingId(id)),
+  name: z.string(),
+  tagline: z.string().nullable(),
+  kind: z.enum(['onsite', 'offsite']),
+  category: z.string().nullable(),
+  contentRating: z.string().nullable(),
+  coverUrl: z.string().nullable(),
+  creator: z.object({
+    id: z.number(),
+    username: z.string().nullable(),
+    image: z.string().nullable(),
+  }),
+  parent: z.object({
+    id: z.string().min(1),
+    slug: z.string().min(1),
+    name: z.string(),
+    iconUrl: z.string().nullable(),
+  }),
+  runHref: z.string().min(1),
+  external: z.literal(true).optional(),
+});
+export type ReadModelSubListingCard = z.infer<typeof readModelSubListingCardSchema>;
+/** One card of a read-model page: a listing's, or a sub-listing's. */
+export type ReadModelItem = ReadModelCard | ReadModelSubListingCard;
 const readModelPageSchema = z.object({
-  items: z.array(readModelCardSchema),
+  items: z.array(z.union([readModelSubListingCardSchema, readModelCardSchema])),
   nextCursor: z.string().optional(),
+  // Set by a read model that answered with sub-listing cards on (`subListings=1`, `subListingIds`).
+  // Asked for them, an answer without it is from a read model that ignored the parameter.
+  subListings: z.boolean().optional(),
 });
 type ReadModelPage = z.infer<typeof readModelPageSchema>;
+
+/** Whether a read-model card is a sub-listing's. */
+export function isReadModelSubListingCard(item: ReadModelItem): item is ReadModelSubListingCard {
+  return 'cardType' in item && item.cardType === 'sub-listing';
+}
+
+/**
+ * How the comparison names a card in its checks and its log line: a listing by its slug, a
+ * sub-listing (which has none) by its id. Both are public: an item's id is in its card's link.
+ */
+function nameOf(item: StoreGridItem | ReadModelItem): string {
+  if ('cardType' in item && item.cardType === 'sub-listing') return item.id;
+  return (item as ListingCard | ReadModelCard).slug;
+}
 
 /**
  * The read model's keyset cursor at a database cursor's position: after the row with sort key
@@ -230,16 +277,21 @@ export function decodeReadModelCursor(
   return { sortKey, id, mean };
 }
 
-/** `GET /listings` parameters for the database query `input` (no text query: never sent). */
+/**
+ * `GET /listings` parameters for the database query `input` (no text query: never sent), with
+ * sub-listing cards when the database read mixes them in (`includeSubListings`).
+ */
 export function readModelListParams(
   input: Pick<ListAppListingsInput, 'kind' | 'category' | 'sort' | 'limit' | 'userId'>,
-  cursor: string | undefined
+  cursor: string | undefined,
+  subListings = false
 ): URLSearchParams {
   const params = new URLSearchParams({ sort: input.sort, limit: String(input.limit) });
   if (input.kind !== 'all') params.set('kind', input.kind);
   if (input.category) params.set('category', input.category);
   if (input.userId != null) params.set('userId', String(input.userId));
   if (cursor) params.set('cursor', cursor);
+  if (subListings) params.set('subListings', '1');
   return params;
 }
 
@@ -303,6 +355,34 @@ export function servedCardOf(card: ReadModelCard): ListingCard | null {
   };
 }
 
+/**
+ * A read-model sub-listing card as the store's `SubListingCard`. Its cover and parent icon are the
+ * read model's own, gated for the signed viewer by the store's rule (`subListingImageCeiling`,
+ * ported as `listingread.ProjectSubListingCard`), and its link is the one the adapter built with the
+ * store's own builders; all are served as they are.
+ */
+export function servedSubListingCardOf(card: ReadModelSubListingCard): SubListingCard {
+  return {
+    cardType: 'sub-listing',
+    id: card.id,
+    name: card.name,
+    tagline: card.tagline,
+    kind: card.kind,
+    category: card.category,
+    contentRating: card.contentRating,
+    coverUrl: card.coverUrl,
+    creator: { id: card.creator.id, username: card.creator.username, image: card.creator.image },
+    parent: {
+      id: card.parent.id,
+      slug: card.parent.slug,
+      name: card.parent.name,
+      iconUrl: card.parent.iconUrl,
+    },
+    runHref: card.runHref,
+    ...(card.external ? { external: true as const } : {}),
+  };
+}
+
 /** Which compared fields of one listing differ between its database card and its read-model card. */
 export function cardFieldDiffs(db: ListingCard, rm: ReadModelCard): ReadModelComparedField[] {
   const out: ReadModelComparedField[] = [];
@@ -351,51 +431,120 @@ export function cardFieldDiffs(db: ListingCard, rm: ReadModelCard): ReadModelCom
 }
 
 /**
- * The two pages laid side by side, before any listing on one page only is checked. A listing is
- * matched by its id; the lists name each listing by its slug, which the by-slug check and the log
- * use. A database card and a read-model card left unmatched that share a slug are one slug naming
- * two ids: an `id` field mismatch of that slug (an identity field), never a visibility or order one.
+ * Which compared fields of one sub-listing differ between its database card and its read-model
+ * card: what it is (name, tagline, kind, category, rating, author, parent, link) and its gated media
+ * (its cover and its parent's icon).
+ */
+export function subListingFieldDiffs(
+  db: SubListingCard,
+  rm: ReadModelSubListingCard
+): ReadModelComparedField[] {
+  const out: ReadModelComparedField[] = [];
+  const check = (field: ReadModelComparedField, same: boolean) => {
+    if (!same) out.push(field);
+  };
+  check('name', db.name === rm.name);
+  check('tagline', sameNullable(db.tagline, rm.tagline));
+  check('kind', db.kind === rm.kind);
+  check('category', sameNullable(db.category, rm.category));
+  check('contentRating', sameNullable(db.contentRating, rm.contentRating));
+  check('coverUrl', sameNullable(db.coverUrl, rm.coverUrl));
+  check(
+    'creator',
+    db.creator.id === rm.creator.id &&
+      sameNullable(db.creator.username, rm.creator.username) &&
+      sameNullable(db.creator.image, rm.creator.image)
+  );
+  check(
+    'parent',
+    db.parent.id === rm.parent.id &&
+      db.parent.slug === rm.parent.slug &&
+      db.parent.name === rm.parent.name
+  );
+  check('parentIconUrl', sameNullable(db.parent.iconUrl, rm.parent.iconUrl));
+  check('runHref', db.runHref === rm.runHref && (db.external === true) === (rm.external === true));
+  return out;
+}
+
+/** The compared fields that differ between two cards of one id, of either type. */
+function itemFieldDiffs(db: StoreGridItem, rm: ReadModelItem): ReadModelComparedField[] {
+  const dbSub = isSubListingCard(db);
+  const rmSub = isReadModelSubListingCard(rm);
+  // One id naming a listing on one side and a sub-listing on the other.
+  if (dbSub !== rmSub) return ['id'];
+  if (dbSub && rmSub) return subListingFieldDiffs(db, rm);
+  return cardFieldDiffs(db as ListingCard, rm as ReadModelCard);
+}
+
+/**
+ * The two pages laid side by side, before any card on one page only is checked. A card is matched
+ * by its id; the lists name each listing by its slug, which the by-slug check and the log use, and
+ * each sub-listing card by its id, which the by-id check and the log use (`nameOf`). A database card
+ * and a read-model card of two listings left unmatched that share a slug are one slug naming two ids:
+ * an `id` field mismatch of that slug (an identity field), never a visibility or order one.
  */
 export type PageDiff = {
+  /** Listings on the database page only, by slug. */
   onlyDb: string[];
+  /** Listings on the read-model page only, by slug. */
   onlyReadModel: string[];
-  /** For each listing on both pages, by slug, the fields that differ (only those with one). */
+  /** Sub-listing cards on the database page only, by id. */
+  onlyDbSubListings: string[];
+  /** Sub-listing cards on the read-model page only, by id. */
+  onlyReadModelSubListings: string[];
+  /** For each card on both pages, by name, the fields that differ (only those with one). */
   fields: Map<string, ReadModelComparedField[]>;
   /** Slugs that name a different listing id on each side. */
   idMismatch: Set<string>;
+  /** Cards on either page: the comparison's denominator. */
   slugs: number;
 };
 
-export function diffPages(db: readonly ListingCard[], rm: readonly ReadModelCard[]): PageDiff {
+export function diffPages(db: readonly StoreGridItem[], rm: readonly ReadModelItem[]): PageDiff {
   const rmById = new Map(rm.map((c) => [c.id, c] as const));
   const dbIds = new Set(db.map((c) => c.id));
   const fields = new Map<string, ReadModelComparedField[]>();
-  const unmatchedDb: ListingCard[] = [];
+  const unmatchedDb: StoreGridItem[] = [];
   for (const card of db) {
     const other = rmById.get(card.id);
     if (!other) {
       unmatchedDb.push(card);
       continue;
     }
-    const diffs = cardFieldDiffs(card, other);
-    if (diffs.length) fields.set(card.slug, diffs);
+    const diffs = itemFieldDiffs(card, other);
+    if (diffs.length) fields.set(nameOf(card), diffs);
   }
   const unmatchedRm = rm.filter((c) => !dbIds.has(c.id));
-  const rmSlugs = new Set(unmatchedRm.map((c) => c.slug));
-  const idMismatch = new Set(unmatchedDb.filter((c) => rmSlugs.has(c.slug)).map((c) => c.slug));
+  const dbListings = unmatchedDb.filter((c): c is ListingCard => !isSubListingCard(c));
+  const rmListings = unmatchedRm.filter((c): c is ReadModelCard => !isReadModelSubListingCard(c));
+  const rmSlugs = new Set(rmListings.map((c) => c.slug));
+  const idMismatch = new Set(dbListings.filter((c) => rmSlugs.has(c.slug)).map((c) => c.slug));
   for (const slug of idMismatch) fields.set(slug, ['id']);
-  const onlyDb = unmatchedDb.map((c) => c.slug).filter((s) => !idMismatch.has(s));
-  const onlyReadModel = unmatchedRm.map((c) => c.slug).filter((s) => !idMismatch.has(s));
-  return { onlyDb, onlyReadModel, fields, idMismatch, slugs: db.length + onlyReadModel.length };
+  const onlyDb = dbListings.map((c) => c.slug).filter((s) => !idMismatch.has(s));
+  const onlyReadModel = rmListings.map((c) => c.slug).filter((s) => !idMismatch.has(s));
+  const onlyDbSubListings = unmatchedDb.filter((c) => isSubListingCard(c)).map((c) => c.id);
+  const onlyReadModelSubListings = unmatchedRm
+    .filter((c) => isReadModelSubListingCard(c))
+    .map((c) => c.id);
+  return {
+    onlyDb,
+    onlyReadModel,
+    onlyDbSubListings,
+    onlyReadModelSubListings,
+    fields,
+    idMismatch,
+    slugs: db.length + onlyReadModel.length + onlyReadModelSubListings.length,
+  };
 }
 
 /**
- * The comparison of one page, once every slug on one page only has been checked against the other
- * side: `missing` are database-page slugs the read model does not show this viewer at all, `extra`
- * read-model-page slugs the database does not show this viewer at all.
+ * The comparison of one page, once every card on one page only has been checked against the other
+ * side: `missing` are database-page cards (by name: a listing's slug, a sub-listing's id) the read
+ * model does not show this viewer at all, `extra` read-model-page cards the database does not show
+ * this viewer at all.
  */
 export function comparePages(
-  db: { items: readonly ListingCard[]; nextCursor?: string },
+  db: { items: readonly StoreGridItem[]; nextCursor?: string },
   rm: ReadModelPage,
   diff: PageDiff,
   missing: ReadonlySet<string>,
@@ -417,9 +566,11 @@ export function comparePages(
     for (const f of diffs) fields[f] = (fields[f] ?? 0) + 1;
   }
   // By id, as the pages were matched; a slug naming two ids is already an identity mismatch.
-  const kept = (slug: string) => !diff.idMismatch.has(slug);
-  const dbOrder = db.items.filter((c) => !missing.has(c.slug) && kept(c.slug)).map((c) => c.id);
-  const rmOrder = rm.items.filter((c) => !extra.has(c.slug) && kept(c.slug)).map((c) => c.id);
+  const kept = (name: string) => !diff.idMismatch.has(name);
+  const dbOrder = db.items
+    .filter((c) => !missing.has(nameOf(c)) && kept(nameOf(c)))
+    .map((c) => c.id);
+  const rmOrder = rm.items.filter((c) => !extra.has(nameOf(c)) && kept(nameOf(c))).map((c) => c.id);
   const order =
     dbOrder.length !== rmOrder.length ||
     dbOrder.some((s, i) => s !== rmOrder[i]) ||
@@ -478,6 +629,12 @@ export type ListingsShadowDeps = {
     input: ListAppListingsInput,
     opts: ListAvailableListingsOpts
   ) => Promise<ListingCard[]>;
+  /** `listStoreSubListingsByIds`: what the database grid shows this viewer of the items `ids`. */
+  dbSubListingsByIds: (
+    ids: string[],
+    input: ListAppListingsInput,
+    opts: ListAvailableListingsOpts
+  ) => Promise<SubListingCard[]>;
   breaker: IndexBreaker;
   log: (entry: ShadowLogEntry) => void;
 };
@@ -494,7 +651,7 @@ const TIMED_OUT = Symbol('timed out');
  * for the comparison beside it.
  */
 type ServeAttempt =
-  | { served: { items: ListingCard[]; nextCursor?: string }; rm: ReadModelPage; token: string }
+  | { served: { items: StoreGridItem[]; nextCursor?: string }; rm: ReadModelPage; token: string }
   | { fallback: ReadModelServeOutcome };
 
 /**
@@ -546,16 +703,17 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
 
   /**
    * The read model's cursor at the database cursor `cursor`'s position: undefined for the first
-   * page (no cursor, or one the database also reads as the first page), null for a position the
-   * read model has no row for (after a sub-listing card) or that names no listing (an empty id,
-   * which only a crafted cursor carries: refused here, so it never reaches the read model or its
-   * breaker).
+   * page (no cursor, or one the database also reads as the first page), null for a position that
+   * names no card (an empty id, which only a crafted cursor carries: refused here, so it never
+   * reaches the read model or its breaker). A position after a sub-listing card is moved like any
+   * other: the read model reads the item's tie-break from its id, as the database does
+   * (`listingread.Rank`), with sub-listings on or off.
    */
   async function readModelCursorOf(cursor: string | undefined): Promise<string | undefined | null> {
     if (!cursor) return undefined;
     const decoded = await deps.decodeCursor(cursor);
     if (decoded.cursorId === null || decoded.cursorSortKey === null) return undefined;
-    if (decoded.cursorId === '' || isAppSubListingId(decoded.cursorId)) return null;
+    if (decoded.cursorId === '') return null;
     return readModelCursor(decoded.cursorSortKey, decoded.cursorId, decoded.cursorMean);
   }
 
@@ -573,9 +731,10 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     token: string,
     input: ListAppListingsInput,
     opts: ListAvailableListingsOpts,
-    sides: { db: { items: ListingCard[]; nextCursor?: string } } | { rm: ReadModelPage },
+    sides: { db: { items: readonly StoreGridItem[]; nextCursor?: string } } | { rm: ReadModelPage },
     pending: Promise<unknown>[]
   ): Promise<ReadModelShadowOutcome> {
+    const subListings = opts.includeSubListings === true;
     // One of the shadow's own database reads, waited on for at most the shadow timeout. The read
     // itself is not cancelled by the timeout, so it is kept in `pending` and the page's in-flight
     // slot is held until it settles: with a slow replica, the in-flight cap still bounds how much
@@ -607,18 +766,27 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
         return outcome;
       }
     };
+    // Asked for sub-listing cards, an answer that does not say it has them is from a read model
+    // that ignored the parameter: not a page to compare.
+    const unmarked = (page: ReadModelPage): boolean => {
+      if (page.subListings === true) return false;
+      answer('bad_response');
+      return true;
+    };
 
-    let db: { items: ListingCard[]; nextCursor?: string };
+    let db: { items: readonly StoreGridItem[]; nextCursor?: string };
     let rm: ReadModelPage;
     if ('db' in sides) {
       db = sides.db;
-      // The database cursor, at the same position in the read model's terms: both break ties by id.
+      // The database cursor, at the same position in the read model's terms: both break ties by id
+      // (and a sub-listing after a listing on one key, which each reads from the id).
       // Awaited only with a cursor, so a first page asks the read model in the same tick.
       const cursor = input.cursor ? await readModelCursorOf(input.cursor) : undefined;
-      // A sub-listing id is a position the read model has no row for.
+      // A position that names no card.
       if (cursor === null) return 'unsupported_input';
-      const page = await askReadModel(readModelListParams(input, cursor));
+      const page = await askReadModel(readModelListParams(input, cursor, subListings));
       if (typeof page === 'string') return page;
+      if (subListings && unmarked(page)) return 'bad_response';
       rm = page;
     } else {
       rm = sides.rm;
@@ -629,14 +797,13 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
         return 'db_error';
       }
       if (page === TIMED_OUT) return 'db_timeout';
-      // A served page never asks for sub-listing cards, so the database page has none.
-      if (page.items.some((item) => isSubListingCard(item))) return 'unsupported_input';
-      db = { items: page.items as ListingCard[], nextCursor: page.nextCursor };
+      db = { items: page.items, nextCursor: page.nextCursor };
     }
 
     const diff = diffPages(db.items, rm.items);
 
-    // Each slug on one page only, asked of the other side by slug, with the same filters.
+    // Each card on one page only, asked of the other side with the same filters: a listing by its
+    // slug, a sub-listing card by its id.
     const missing = new Set<string>();
     const extra = new Set<string>();
     if (diff.onlyDb.length) {
@@ -652,15 +819,40 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       if (typeof found === 'string') return found;
       const admitted = new Set(
         found.items
+          .filter((c): c is ReadModelCard => !isReadModelSubListingCard(c))
           .filter((c) => input.userId == null || c.creator?.id === input.userId)
           .map((c) => c.slug)
       );
       for (const s of diff.onlyDb) if (!admitted.has(s)) missing.add(s);
     }
-    if (diff.onlyReadModel.length) {
-      let cards: ListingCard[] | typeof TIMED_OUT;
+    if (diff.onlyDbSubListings.length) {
+      // The id path takes the developer filter itself: it names the parent's owner, as the grid's
+      // child arm reads it, which no field of the item's card carries.
+      const params = readModelListParams(input, undefined);
+      params.delete('sort');
+      params.delete('limit');
+      params.set('subListingIds', diff.onlyDbSubListings.join(','));
+      const found = await askReadModel(params);
+      if (typeof found === 'string') return found;
+      if (unmarked(found)) return 'bad_response';
+      const admitted = new Set(
+        found.items.filter((c) => isReadModelSubListingCard(c)).map((c) => c.id)
+      );
+      for (const id of diff.onlyDbSubListings) if (!admitted.has(id)) missing.add(id);
+    }
+    if (diff.onlyReadModel.length || diff.onlyReadModelSubListings.length) {
+      let cards: StoreGridItem[] | typeof TIMED_OUT;
       try {
-        cards = await dbRead(deps.dbBySlugs(diff.onlyReadModel, input, opts));
+        cards = await dbRead(
+          Promise.all([
+            diff.onlyReadModel.length
+              ? deps.dbBySlugs(diff.onlyReadModel, input, opts)
+              : Promise.resolve([]),
+            diff.onlyReadModelSubListings.length
+              ? deps.dbSubListingsByIds(diff.onlyReadModelSubListings, input, opts)
+              : Promise.resolve([]),
+          ]).then(([listings, subs]): StoreGridItem[] => [...listings, ...subs])
+        );
       } catch {
         // The read model answered; a database failure is not its failure.
         answer();
@@ -671,13 +863,19 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
         return 'db_timeout';
       }
       // The slug path takes no developer filter: with one, the listing must also be that
-      // developer's for the database grid to show it.
+      // developer's for the database grid to show it. The id path applies it itself.
       const admitted = new Set(
         cards
-          .filter((c) => input.userId == null || c.creator?.id === input.userId)
-          .map((c) => c.slug)
+          .filter(
+            (c) =>
+              isSubListingCard(c) ||
+              input.userId == null ||
+              (c as ListingCard).creator?.id === input.userId
+          )
+          .map((c) => nameOf(c))
       );
       for (const s of diff.onlyReadModel) if (!admitted.has(s)) extra.add(s);
+      for (const id of diff.onlyReadModelSubListings) if (!admitted.has(id)) extra.add(id);
     }
 
     answer();
@@ -749,15 +947,8 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     if (!cfg.url || !appIndexViewerKeyUsable(cfg.key)) return record('unconfigured');
     const viewer = appIndexViewerFor(opts);
     if (!viewer) return record('unsupported_viewer');
-    // The read model holds no sub-listing card, and a page the app index's search answered is a
-    // search result, not a grid page.
-    if (
-      opts.includeSubListings === true ||
-      served.search === 'index' ||
-      served.items.some((item) => isSubListingCard(item))
-    ) {
-      return record('unsupported_input');
-    }
+    // A page the app index's search answered is a search result, not a grid page.
+    if (served.search === 'index') return record('unsupported_input');
     if (inFlight >= cfg.maxInFlight) return record('saturated');
     // Checked without taking the half-open probe (that is taken just before the first read-model
     // call): while the breaker is open, a page does no database work either.
@@ -767,7 +958,7 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       viewer,
       Math.floor(deps.nowMs() / 1000) + APP_INDEX_VIEWER_TTL_SECONDS
     );
-    const page = { items: served.items as ListingCard[], nextCursor: served.nextCursor };
+    const page = { items: served.items, nextCursor: served.nextCursor };
     return start(surface, cfg, token, input, opts, { db: page });
   }
 
@@ -781,7 +972,7 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     if (opts.viewer?.isModerator === true) return { fallback: 'unsupported_viewer' };
     const viewer = appIndexViewerFor(opts);
     if (!viewer) return { fallback: 'unsupported_viewer' };
-    if (opts.includeSubListings === true) return { fallback: 'unsupported_input' };
+    const subListings = opts.includeSubListings === true;
     const cursor = input.cursor ? await readModelCursorOf(input.cursor) : undefined;
     if (cursor === null) return { fallback: 'unsupported_input' };
     const token = signAppIndexViewer(
@@ -793,15 +984,30 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     if (!deps.breaker.allow()) return { fallback: 'breaker_open' };
     let rm: ReadModelPage;
     try {
-      rm = await fetchPage(cfg, readModelListParams(input, cursor), token, cfg.serveTimeoutMs);
+      rm = await fetchPage(
+        cfg,
+        readModelListParams(input, cursor, subListings),
+        token,
+        cfg.serveTimeoutMs
+      );
     } catch (err) {
       const outcome = failureOf(err);
       deps.breaker.failure(outcome);
       return { fallback: outcome };
     }
-    const items: ListingCard[] = [];
+    // Asked for sub-listing cards, an answer that does not say it has them would serve a page
+    // without them; and a sub-listing card the request did not ask for is never served.
+    if (subListings && rm.subListings !== true) {
+      deps.breaker.failure('bad_response');
+      return { fallback: 'bad_response' };
+    }
+    const items: StoreGridItem[] = [];
     for (const card of rm.items) {
-      const servedCard = servedCardOf(card);
+      const servedCard = isReadModelSubListingCard(card)
+        ? subListings
+          ? servedSubListingCardOf(card)
+          : null
+        : servedCardOf(card);
       if (!servedCard) {
         deps.breaker.failure('bad_response');
         return { fallback: 'bad_response' };
@@ -827,13 +1033,18 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     return { served: nextCursor ? { items, nextCursor } : { items }, rm, token };
   }
 
+  /**
+   * A served page's cards are typed as `dbRead`'s: a sub-listing card is served only when the
+   * request asked for them (`includeSubListings`), which is exactly when `dbRead`'s own page may
+   * carry them (`attemptServe` refuses one otherwise).
+   */
   async function serve<P extends ListingPage>(
     surface: ReadModelSurface,
     input: ListAppListingsInput,
     opts: ListAvailableListingsOpts,
     dbRead: () => Promise<P>,
     requestMode: ReadModelMode = mode(surface)
-  ): Promise<P | { items: ListingCard[]; nextCursor?: string }> {
+  ): Promise<P | { items: P['items']; nextCursor?: string }> {
     if (requestMode !== 'serve') return dbRead();
     let attempt: ServeAttempt;
     try {
@@ -854,7 +1065,7 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     } catch {
       // The comparison never affects the response.
     }
-    return attempt.served;
+    return attempt.served as { items: P['items']; nextCursor?: string };
   }
 
   return {
@@ -935,6 +1146,8 @@ function getProcessShadow() {
     dbPage: async (input, opts) => (await listingService()).listAvailableListings(input, opts),
     dbBySlugs: async (slugs, input, opts) =>
       (await listingService()).listStoreListingsBySlugs(slugs, input, opts),
+    dbSubListingsByIds: async (ids, input, opts) =>
+      (await listingService()).listStoreSubListingsByIds(ids, input, opts),
     breaker: new IndexBreaker(undefined, undefined, (from, to, why) => {
       recordReadModelBreakerTransition(to);
       void logToAxiom({
@@ -998,7 +1211,7 @@ export function serveListingPage<P extends ListingPage>(
   opts: ListAvailableListingsOpts,
   dbRead: () => Promise<P>,
   mode?: ReadModelMode
-): Promise<P | { items: ListingCard[]; nextCursor?: string }> {
+): Promise<P | { items: P['items']; nextCursor?: string }> {
   let processServe: ReturnType<typeof createListingsReadModelShadow>;
   try {
     processServe = getProcessShadow();

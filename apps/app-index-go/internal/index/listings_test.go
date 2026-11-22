@@ -37,6 +37,12 @@ func listingEntity(slug, name string) map[string]any {
 			"stats": map[string]any{"recommendedCount": 1, "notRecommendedCount": 0, "recommendPct": 1, "reviewCount": 1,
 				"openCount": 3, "installCount": 0},
 			"createdAt": "2026-01-02T03:04:05Z", "updatedAt": nil,
+			"subListings": []map[string]any{
+				{"id": "asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A", "title": name + " item", "tagline": nil, "contentRating": nil,
+					"cardContentRating": "pg13", "author": map[string]any{"id": 8, "username": "author", "image": nil},
+					"sortTime": "2026-01-03T00:00:00Z", "runHref": "/apps/run/" + slug + "/a?sl=asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A",
+					"external": false, "image": nil},
+			},
 		},
 	}
 }
@@ -146,6 +152,31 @@ func runListingScenarios(t *testing.T, newStore func(t *testing.T) store.Listing
 	t.Run("EmptyFirstSnapshotNeverServes", func(t *testing.T) { testEmptyFirstSnapshotNeverServes(t, newStore(t)) })
 	t.Run("UnavailableDeletesNothing", func(t *testing.T) { testUnavailableDeletesNothing(t, newStore(t)) })
 	t.Run("DropsKeepTheListing", func(t *testing.T) { testDropsKeepTheListing(t, newStore(t)) })
+	t.Run("BodyWithoutSubListingsIsInvalid", func(t *testing.T) { testBodyWithoutSubListingsIsInvalid(t, newStore(t)) })
+}
+
+// A body without subListings, from an adapter that does not publish them, is not one this layout can
+// use: the entity is invalid (applied as a delete), never stored as a listing with no items, whose
+// sub-listing cards the grid would then silently lack.
+func testBodyWithoutSubListingsIsInvalid(t *testing.T, st store.Listings) {
+	h := startListings(t, st)
+	c := h.reg.next(t)
+	e := listingEntity("alpha", "Alpha")
+	delete(e["body"].(map[string]any), "subListings")
+	c.send(t, "upsert", map[string]any{"entity": e, "cursor": ""})
+	c.listing(t, "beta", "Beta")
+	c.live(t, "L1")
+	h.servingCursorIs(t, "L1")
+	gen := h.state(t).Serving.ID
+	if _, ok, err := st.Get(context.Background(), gen, "urn:apps.civitai.com:store-listing/alpha"); ok || err != nil {
+		t.Fatalf("alpha without subListings was stored (err %v)", err)
+	}
+	if _, ok, err := st.Get(context.Background(), gen, "urn:apps.civitai.com:store-listing/beta"); !ok || err != nil {
+		t.Fatalf("beta was not stored: %v", err)
+	}
+	if got := testutil.ToFloat64(h.m.Applied.WithLabelValues("invalid")); got != 1 {
+		t.Fatalf("invalid = %v, want 1", got)
+	}
 }
 
 // A media item with an unknown slot and a stats counter that is not a count are left out, logged
@@ -219,6 +250,16 @@ func testListingIngest(t *testing.T, st store.Listings) {
 	}
 	if l.ContentRating != "pg13" || l.App != "urn:apps.civitai.com:app/alpha" || *l.CreatorID != 7 || *l.Stats.OpenCount != 3 {
 		t.Fatalf("listing columns %+v", l)
+	}
+	// Its sub-listing, held whole with the body, and by its key fields in Keys.
+	if len(l.SubListings) != 1 || l.SubListings[0].ID != "asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A" || l.SubListings[0].Title != "Alpha item" ||
+		l.SubListings[0].CardContentRating != "pg13" || l.SubListings[0].RunHref != "/apps/run/alpha/a?sl=asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A" {
+		t.Fatalf("sub-listings %+v", l.SubListings)
+	}
+	keys, err := st.Keys(context.Background(), gen)
+	if err != nil || len(keys) != 2 || len(keys[0].SubListings) != 1 || keys[0].SubListings[0].Title != keys[0].Name+" item" ||
+		keys[0].SubListings[0].RunHref != "" {
+		t.Fatalf("keys %+v %v, want each listing's one sub-listing by its key fields", keys, err)
 	}
 	c.delListing(t, "beta", "c2")
 	h.servingCursorIs(t, "c2")

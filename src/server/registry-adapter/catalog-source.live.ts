@@ -5,7 +5,11 @@
 import { dbRead } from '~/server/db/client';
 import type { CatalogReadDeps, ListingExtras } from '~/server/registry-adapter/catalog-source';
 import { listingFromCard } from '~/server/registry-adapter/catalog-source';
-import { registryIconUrl, registryListingMedia } from '~/server/registry-adapter/catalog-media';
+import {
+  registryIconUrl,
+  registryListingMedia,
+  registrySubListing,
+} from '~/server/registry-adapter/catalog-media';
 import type { ListingMediaImage } from '~/server/services/blocks/listing-media-audience';
 import { listingMediaImageSelect } from '~/server/services/blocks/listing-media-audience';
 import type { ListingRedMediaImages } from '~/server/services/blocks/listing-media-split.service';
@@ -33,6 +37,8 @@ import {
   readListingForkProvenanceMany,
 } from '~/server/services/blocks/app-fork.service';
 import { readListingBetaManyForRender } from '~/server/services/blocks/app-listing-beta.service';
+import type { StoreSubListingRow } from '~/server/services/blocks/app-sub-listing-store.service';
+import { readStoreSubListingsOfParents } from '~/server/services/blocks/app-sub-listing-store.service';
 import { readListingIssueTrackerUrlsForRender } from '~/server/services/blocks/app-listing-issue-tracker.service';
 import { readListingSourceRepoUrls } from '~/server/services/blocks/app-listing-source-repo.service';
 import { resolvePublicAppsCatalogScope } from '~/server/services/blocks/public-apps-catalog';
@@ -71,6 +77,8 @@ export function listingExtrasFromRow(
     issueTrackerUrl: string | null;
     fork: ListingForkProvenance;
     run: ListingActionsRunSource | null;
+    /** The listing's rows of `readStoreSubListingsOfParents`. */
+    subListings: readonly StoreSubListingRow[];
   }
 ): ListingExtras {
   return {
@@ -92,7 +100,36 @@ export function listingExtrasFromRow(
     forkable: publicForkable(r.kind, reads.fork.forkable),
     connectClientId: publicConnectClientId(r),
     fork: { isFork: reads.fork.isFork, forkOfListingId: reads.fork.forkOfListingId },
+    subListings: reads.subListings.flatMap((row) => {
+      const item = registrySubListing(row);
+      return item ? [item] : [];
+    }),
   };
+}
+
+/**
+ * Each listing's sub-listing rows the store grid could show, by parent id. The sub-listing tables
+ * are manual-apply: while they are absent the store grid serves parents only
+ * (`listAvailableListings`), so the stream carries none, rather than fail. Any other failure fails
+ * the listing read.
+ */
+async function readSubListingsByParent(
+  listingIds: string[]
+): Promise<Map<string, StoreSubListingRow[]>> {
+  const rows = await readStoreSubListingsOfParents(dbRead, listingIds).catch(
+    async (err: unknown) => {
+      const { isMissingTableError } = await import('~/server/services/blocks/app-access.service');
+      if (isMissingTableError(err)) return [] as StoreSubListingRow[];
+      throw err;
+    }
+  );
+  const out = new Map<string, StoreSubListingRow[]>();
+  for (const row of rows) {
+    const list = out.get(row.parent_listing_id) ?? [];
+    list.push(row);
+    out.set(row.parent_listing_id, list);
+  }
+  return out;
 }
 
 /** `listings`: the listing stream is on, so the cards keep their store fields and extras are read. */
@@ -179,31 +216,33 @@ export function liveCatalogReadDeps({
     ...(listings
       ? {
           async loadListingExtras(listingIds: string[]) {
-            const [rows, red, collaborators, beta, issueTrackers, forks] = await Promise.all([
-              dbRead.appListing.findMany({
-                where: { id: { in: listingIds } },
-                select: {
-                  id: true,
-                  serialId: true,
-                  kind: true,
-                  appBlockId: true,
-                  connectClientId: true,
-                  connectRequestedScopes: true,
-                  description: true,
-                  createdAt: true,
-                  icon: listingHydrateSelect.icon,
-                  cover: listingHydrateSelect.cover,
-                  screenshots: listingHydrateSelect.screenshots,
-                  appBlock: { select: { approvedScopes: true } },
-                  metric: { select: { installCount: true } },
-                },
-              }),
-              readListingRedMediaManyForRender(dbRead, listingIds),
-              loadDisplayedCollaboratorChipsMany(listingIds),
-              readListingBetaManyForRender(listingIds, dbRead),
-              readListingIssueTrackerUrlsForRender(listingIds, dbRead),
-              readListingForkProvenanceMany(listingIds, dbRead),
-            ]);
+            const [rows, red, collaborators, beta, issueTrackers, forks, subListings] =
+              await Promise.all([
+                dbRead.appListing.findMany({
+                  where: { id: { in: listingIds } },
+                  select: {
+                    id: true,
+                    serialId: true,
+                    kind: true,
+                    appBlockId: true,
+                    connectClientId: true,
+                    connectRequestedScopes: true,
+                    description: true,
+                    createdAt: true,
+                    icon: listingHydrateSelect.icon,
+                    cover: listingHydrateSelect.cover,
+                    screenshots: listingHydrateSelect.screenshots,
+                    appBlock: { select: { approvedScopes: true } },
+                    metric: { select: { installCount: true } },
+                  },
+                }),
+                readListingRedMediaManyForRender(dbRead, listingIds),
+                loadDisplayedCollaboratorChipsMany(listingIds),
+                readListingBetaManyForRender(listingIds, dbRead),
+                readListingIssueTrackerUrlsForRender(listingIds, dbRead),
+                readListingForkProvenanceMany(listingIds, dbRead),
+                readSubListingsByParent(listingIds),
+              ]);
             // The run is read as the detail reads it (`actionsRunSourceBlockId`).
             const runs = await readLiveActionsRunSourcesForBlocks(
               dbRead,
@@ -224,6 +263,7 @@ export function liveCatalogReadDeps({
                     issueTrackerUrl: issueTrackers.get(r.id) ?? null,
                     fork: forks.get(r.id) ?? NO_FORK_PROVENANCE,
                     run: (blockId && runs.get(blockId)) || null,
+                    subListings: subListings.get(r.id) ?? [],
                   }),
                 ];
               })

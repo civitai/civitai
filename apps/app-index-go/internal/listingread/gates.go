@@ -117,6 +117,26 @@ func redHostMediaCeiling(v Viewer, nonRedCeiling int64) int64 {
 	return (nonRedCeiling | (allLevels & viewer)) & allLevels
 }
 
+// subListingImageCeiling mirrors subListingImageCeiling (app-sub-listing-store.service.ts): the
+// levels an image may carry on one sub-listing card, its own image and its parent's cover and icon
+// alike. Off a red-capable host: the viewer's levels (onlySelectableLevels, the public floor when
+// none) ∩ SFW ∩ the levels up to the card's rating; on one, that lifted by redHostMediaCeiling.
+// Unlike listingMediaCeiling it reads the viewer's level off a red-capable host too.
+func subListingImageCeiling(v Viewer, cardRating string) int64 {
+	viewer := v.BrowsingLevel & allLevels
+	if viewer == 0 {
+		viewer = publicLevels
+	}
+	ratingMax := nsfwLevelFromContentRating(cardRating)
+	var ratingLevels int64
+	for _, l := range browsingLevels {
+		if l <= ratingMax {
+			ratingLevels |= l
+		}
+	}
+	return redHostMediaCeiling(v, viewer&ratingLevels&sfwLevels)
+}
+
 // visibleAt mirrors isLevelWithinCeiling for an item the adapter already passed through the
 // moderation check (isListingImageVisible at every level): a rated item shows when a bit of it is
 // inside the ceiling. A stored item's level is exactly one rating's bit (ListingFromEntity), never 0.

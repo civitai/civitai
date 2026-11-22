@@ -168,7 +168,7 @@ func decodeCursor(s string) cursor {
 	return c
 }
 
-// ListQuery is one grid request (listAppListingsSchema, less `query` and `includeSubListings`).
+// ListQuery is one grid request (listAppListingsSchema, less `query`).
 type ListQuery struct {
 	Kind     string // "" = all, else onsite or offsite
 	Category string // "" = any
@@ -176,13 +176,23 @@ type ListQuery struct {
 	Sort     string // one of the Sort* constants
 	Cursor   string
 	Limit    int
+	// SubListings mixes each admitted listing's sub-listings into the page, as listAvailableListings
+	// does with `includeSubListings` (the web tier sets it only when the database read would).
+	SubListings bool
 }
 
-// Page is one ranked page: the URNs in order, and the cursor of the next page ("" when this is the
-// last).
+// Page is one ranked page, in order, and the cursor of the next page ("" when this is the last).
+// URNs[i] is the listing of the page's i-th card: the card itself, or, when SubListings[i] is not
+// "", the listing whose sub-listing SubListings[i] is the card. The two have the same length.
 type Page struct {
-	URNs       []string
-	NextCursor string
+	URNs        []string
+	SubListings []string
+	NextCursor  string
+}
+
+func (p *Page) add(urn, sub string) {
+	p.URNs = append(p.URNs, urn)
+	p.SubListings = append(p.SubListings, sub)
 }
 
 // Filter mirrors storeEligibilityWhere's request terms over the viewer gate (Admits): the kind and
@@ -202,16 +212,54 @@ func Filter(keys []store.Listing, kind, category string, userID *int64, v Viewer
 	return out
 }
 
+// SubListingAdmits is the store grid's gate on a sub-listing of a listing the grid already admits
+// (Filter): the mature rule over the item's own rating (subListingMatureFilter reads
+// s.content_rating, the same rule as listingMatureFilter). Everything else the child arm checks (an
+// approved item, an active author, the parent's sub-listing switch, a working link) is applied
+// upstream: such an item is not in the stream.
+func SubListingAdmits(s store.SubListing, v Viewer) bool {
+	return matureRatingsAllowed(v.RedCapable, v.BrowsingLevel).Admits(s.ContentRating)
+}
+
+// subListingSortKey is a sub-listing's key for sort (subListingSortKeyExpr): the parent's key for
+// the rating and popularity sorts, so it ties with its parent; its own sort time and title for the
+// others.
+func subListingSortKey(sort string, parent store.Listing, s store.SubListing, mean float64) string {
+	switch sort {
+	case SortTopRated, SortPopular:
+		k, _ := sortKey(sort, parent, mean)
+		return k
+	case SortNewest:
+		return newestKey(s.SortTime)
+	default:
+		return nameKey(s.Title)
+	}
+}
+
+// cardTB is the store's tie-break between a listing and a sub-listing on one sort key: 0 for a
+// listing, 1 for a sub-listing, so a parent sorts before its children (the `tb` of
+// listAvailableListings). A cursor's is read from its id, as the database reads `cursorTb`.
+func cardTB(id string) int {
+	if store.IsSubListingID(id) {
+		return 1
+	}
+	return 0
+}
+
 // Rank mirrors listAvailableListings' keyset page over the listings keys holds, for v:
 //
-//	WHERE <Filter> AND (no cursor OR (sort_key, id) <|> (cursor_key, cursor_id))
-//	ORDER BY sort_key DIR, id DIR LIMIT limit + 1
+//	WHERE <Filter> AND (no cursor OR (sort_key, tb, id) after (cursor_key, cursor_tb, cursor_id))
+//	ORDER BY sort_key DIR, tb ASC, id DIR LIMIT limit + 1
 //
-// with the same tie-break, the listing id. Keys and ids compare as bytes; the database compares
-// them under its collation, which can only differ for the name sort (ids are `apl_` and a ULID, the
-// same order either way). Listed in LISTINGS-READ-MODEL.md, "Sort and paging", "Known divergences".
-// top-rated uses the cursor's pinned mean when it has one, else GlobalMean over every listing held
-// (not only those v may see, as the site's mean is not per viewer).
+// where tb is 0 for a listing and 1 for a sub-listing (cardTB), and only with q.SubListings are
+// sub-listings rows at all (each admitted listing's items that SubListingAdmits admits, keyed by
+// subListingSortKey). Without them every row's tb is 0, which is the parents-only statement: a
+// cursor on a sub-listing (the flag turned off between two pages) then resumes strictly after its
+// key, as that statement's parentKeyset does. Keys and ids compare as bytes; the database compares
+// them under its collation, which can only differ for the name sort (ids are `apl_` or `asl_` and a
+// ULID, the same order either way). Listed in LISTINGS-READ-MODEL.md, "Sort and paging", "Known
+// divergences". top-rated uses the cursor's pinned mean when it has one, else GlobalMean over every
+// listing held (not only those v may see, as the site's mean is not per viewer).
 func Rank(keys []store.Listing, q ListQuery, v Viewer) Page {
 	c := decodeCursor(q.Cursor)
 	var mean float64
@@ -223,31 +271,46 @@ func Rank(keys []store.Listing, q ListQuery, v Viewer) Page {
 		}
 		pinned = &mean
 	}
-	type row struct{ key, id, urn string }
+	type row struct {
+		key      string
+		tb       int
+		id       string
+		urn, sub string
+	}
 	_, desc := sortKey(q.Sort, store.Listing{}, mean)
 	rows := []row{}
 	for _, l := range Filter(keys, q.Kind, q.Category, q.UserID, v) {
 		k, _ := sortKey(q.Sort, l, mean)
-		rows = append(rows, row{k, l.ID, l.URN})
+		rows = append(rows, row{key: k, id: l.ID, urn: l.URN})
+		if !q.SubListings {
+			continue
+		}
+		for _, s := range l.SubListings {
+			if SubListingAdmits(s, v) {
+				rows = append(rows, row{key: subListingSortKey(q.Sort, l, s, mean), tb: 1, id: s.ID, urn: l.URN, sub: s.ID})
+			}
+		}
+	}
+	dir := func(c int) int {
+		if desc {
+			return -c
+		}
+		return c
 	}
 	order := func(a, b row) int {
-		return cmp.Or(strings.Compare(a.key, b.key), strings.Compare(a.id, b.id))
-	}
-	slices.SortFunc(rows, func(a, b row) int {
-		if desc {
-			return order(b, a)
+		if c := strings.Compare(a.key, b.key); c != 0 {
+			return dir(c)
 		}
-		return order(a, b)
-	})
+		// Ascending in every sort: a parent before its children.
+		if a.tb != b.tb {
+			return cmp.Compare(a.tb, b.tb)
+		}
+		return dir(strings.Compare(a.id, b.id))
+	}
+	slices.SortFunc(rows, order)
 	if c.ok {
-		at := row{key: c.key, id: c.id}
-		rows = slices.DeleteFunc(rows, func(r row) bool {
-			o := order(r, at)
-			if desc {
-				return o >= 0
-			}
-			return o <= 0
-		})
+		at := row{key: c.key, tb: cardTB(c.id), id: c.id}
+		rows = slices.DeleteFunc(rows, func(r row) bool { return order(r, at) <= 0 })
 	}
 	limit := q.Limit
 	var p Page
@@ -257,7 +320,7 @@ func Rank(keys []store.Listing, q ListQuery, v Viewer) Page {
 			p.NextCursor = EncodeCursor(last.key, last.id, pinned)
 			break
 		}
-		p.URNs = append(p.URNs, r.urn)
+		p.add(r.urn, r.sub)
 	}
 	return p
 }
@@ -282,7 +345,37 @@ func BySlugs(keys []store.Listing, slugs []string, kind, category string, v View
 			continue
 		}
 		seen[urn] = true
-		p.URNs = append(p.URNs, urn)
+		p.add(urn, "")
+	}
+	return p
+}
+
+// MaxSubListingIDs bounds a sub-listing hydration (GET /listings?subListingIds=): one store grid
+// page.
+const MaxSubListingIDs = 50
+
+// BySubListingIDs mirrors listStoreSubListingsByIds: the sub-listings ids names that v could find
+// in the store grid with sub-listings on and the same kind, category and developer filter (Filter on
+// the parent, SubListingAdmits on the item), in the order of ids, each once. An id the viewer could
+// not find there, or that no listing holds, is left out. One page: no cursor.
+func BySubListingIDs(keys []store.Listing, ids []string, kind, category string, userID *int64, v Viewer) Page {
+	parentOf := map[string]string{}
+	for _, l := range Filter(keys, kind, category, userID, v) {
+		for _, s := range l.SubListings {
+			if SubListingAdmits(s, v) {
+				parentOf[s.ID] = l.URN
+			}
+		}
+	}
+	seen := map[string]bool{}
+	var p Page
+	for _, id := range ids {
+		urn, ok := parentOf[id]
+		if !ok || seen[id] {
+			continue
+		}
+		seen[id] = true
+		p.add(urn, id)
 	}
 	return p
 }

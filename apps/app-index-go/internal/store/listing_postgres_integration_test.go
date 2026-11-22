@@ -139,3 +139,41 @@ CREATE TABLE app_index_listing_media (
 		t.Fatalf("keys after the column was added back: %+v %v", keys, err)
 	}
 }
+
+// A layout 3 database has no sub_listing_keys column. Starting adds it, a row written before reads
+// no sub-listing keys (its generation is rebuilt beside at layout 4, and never served meanwhile:
+// api.Server.ListingsLayout), and an upsert writes them.
+func TestIntegrationListingsAddsTheSubListingKeysColumn(t *testing.T) {
+	pool := pgtest.Pool(t)
+	ctx := context.Background()
+	ls, err := NewListingsPostgres(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := ls.NewBuilding(ctx, listingSchemaURN, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustApply(t, ls, g.ID, listingUpsert(mustListing("alpha", "Alpha"), ""))
+	if _, err := pool.Exec(ctx, `ALTER TABLE app_index_listings DROP COLUMN sub_listing_keys`); err != nil {
+		t.Fatal(err)
+	}
+	ls2, err := NewListingsPostgres(ctx, pool)
+	if err != nil {
+		t.Fatalf("restart over a layout 3 database: %v", err)
+	}
+	keys, err := ls2.Keys(ctx, g.ID)
+	if err != nil || len(keys) != 1 || keys[0].SubListings == nil || len(keys[0].SubListings) != 0 {
+		t.Fatalf("keys of a row written before the column: %+v %v", keys, err)
+	}
+	g2, err := ls2.NewBuilding(ctx, listingSchemaURN, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustApply(t, ls2, g2.ID, listingUpsert(mustListing("beta", "Beta"), ""))
+	keys, err = ls2.Keys(ctx, g2.ID)
+	if err != nil || len(keys) != 1 || len(keys[0].SubListings) != 2 || keys[0].SubListings[0].ID != subA ||
+		keys[0].SubListings[1].Tagline != nil || keys[0].SubListings[0].RunHref != "" {
+		t.Fatalf("keys after the column was added: %+v %v", keys, err)
+	}
+}
