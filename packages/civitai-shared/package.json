@@ -21,6 +21,7 @@
     "./moderator-paths": "./src/moderator-paths.ts",
     "./missing-media": "./src/missing-media.ts",
     "./owner-hidden-reviews": "./src/owner-hidden-reviews.ts",
+    "./restricted-lead-revision": "./src/restricted-lead-revision.ts",
     "./image-review-types": "./src/image-review-types.ts",
     "./image-ingestion": "./src/image-ingestion.ts",
     "./training-audio": "./src/training-audio.ts",

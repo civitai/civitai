@@ -13,6 +13,8 @@ import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { uniq } from 'lodash-es';
+import { restrictedLeadRevision } from '@civitai/shared/restricted-lead-revision';
+type RawDb = Pick<typeof dbWrite, '$queryRaw'>;
 
 export const RESTRICTED_NSFW_VERDICT_RULINGS = [
   'keep',
@@ -52,6 +54,85 @@ const restrictionOf = (row: Row, verdict: RestrictedNsfwVerdict): Restriction =>
     : 'sfwOnly';
 
 /**
+ * The revision of a model's lead as the moderator's screen shows it (`restrictedLeadRevision`). Two
+ * statements, run after the caller locked the Model row: a subquery on EntityModeration inside the
+ * locking statement would keep the snapshot it took before a lock wait.
+ */
+export async function currentRestrictedLeadRevision(db: RawDb, modelId: number) {
+  const [model] = await db.$queryRaw<
+    {
+      leadAt: string | null;
+      leadSource: string | null;
+      leadRestriction: string | null;
+      leadLiftedBy: string | null;
+      leadAppliedAt: string | null;
+      lastRulingAt: string | null;
+      minor: boolean;
+      poi: boolean;
+      isPrivate: boolean;
+      nsfw: boolean;
+      sfwOnly: boolean;
+      lockedProperties: string[] | null;
+      systemNsfwLockAt: string | null;
+      forensicsScannedAt: string | null;
+    }[]
+  >`
+    SELECT m.meta->'restrictedNsfwVerdict'->>'at' AS "leadAt",
+      m.meta->'restrictedNsfwVerdict'->>'source' AS "leadSource",
+      m.meta->'restrictedNsfwVerdict'->>'restriction' AS "leadRestriction",
+      m.meta->'restrictedNsfwVerdict'->>'liftedBy' AS "leadLiftedBy",
+      m.meta->'restrictedNsfwVerdict'->'applied'->>'at' AS "leadAppliedAt",
+      m.meta->'restrictedNsfwVerdictRulings'->-1->>'at' AS "lastRulingAt",
+      m.minor, m.poi, (m.availability::text = 'Private') AS "isPrivate", m.nsfw, m."sfwOnly",
+      m."lockedProperties",
+      m.meta->'systemNsfwLock'->>'at' AS "systemNsfwLockAt",
+      m.meta->'textModeration'->>'scannedAt' AS "forensicsScannedAt"
+    FROM "Model" m
+    WHERE m.id = ${modelId}
+  `;
+  if (!model) return null;
+  const [scan] = await db.$queryRaw<
+    {
+      nsfwLevel: number | null;
+      triggeredLabels: string[] | null;
+      nsfwReason: string | null;
+      contentHash: string | null;
+    }[]
+  >`
+    SELECT e."nsfwLevel", e."triggeredLabels", e.result->'labels'->'nsfw'->>'reason' AS "nsfwReason",
+      e."contentHash"
+    FROM "EntityModeration" e
+    WHERE e."entityType" = 'Model' AND e."entityId" = ${modelId}
+  `;
+  return restrictedLeadRevision({
+    lead: {
+      at: model.leadAt,
+      source: model.leadSource,
+      restriction: model.leadRestriction,
+      liftedBy: model.leadLiftedBy,
+      appliedAt: model.leadAppliedAt,
+    },
+    lastRulingAt: model.lastRulingAt,
+    model: {
+      minor: model.minor,
+      poi: model.poi,
+      isPrivate: model.isPrivate,
+      nsfw: model.nsfw,
+      sfwOnly: model.sfwOnly,
+      locks: model.lockedProperties ?? [],
+      systemNsfwLockAt: model.systemNsfwLockAt,
+    },
+    scan: {
+      nsfwLevel: scan?.nsfwLevel ?? null,
+      triggeredLabels: scan?.triggeredLabels ?? [],
+      nsfwReason: scan?.nsfwReason ?? null,
+      contentHash: scan?.contentHash ?? null,
+      forensicsScannedAt: model.forensicsScannedAt,
+    },
+  });
+}
+
+/**
  * A moderator's ruling on a lead the text scan left on a restricted model. A moderator's or a newer
  * scan's lock outlives Keep, and Keep on a model still minor or POI parks the verdict dormant, to come
  * back if the owner clears the flag.
@@ -61,11 +142,15 @@ export async function resolveRestrictedNsfwVerdict({
   ruling,
   reason,
   userId,
+  revision,
 }: {
   modelId: number;
   ruling: RestrictedNsfwVerdictRuling;
   reason?: string;
   userId: number;
+  /** The lead's revision as the moderator's screen showed it: a ruling is refused once the lead, the
+   *  model's flags and locks, or the scan shown have changed. */
+  revision?: string;
 }) {
   const note = reason?.trim() || null;
   const result = await dbWrite.$transaction(async (tx) => {
@@ -84,6 +169,9 @@ export async function resolveRestrictedNsfwVerdict({
     const verdict = row?.verdict;
     if (!row || !verdict || typeof verdict !== 'object')
       throw throwBadRequestError('This lead was ruled on meanwhile; reload.');
+    // After the lock and before any write, so a refusal keeps the lead as it is.
+    if (revision !== undefined && revision !== (await currentRestrictedLeadRevision(tx, modelId)))
+      throw throwBadRequestError('This lead has changed since it was opened; reload.');
 
     const restriction = restrictionOf(row, verdict);
     if (ruling === 'dismiss' && restriction === 'minor' && !note)

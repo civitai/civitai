@@ -2003,6 +2003,7 @@ describe('a .com face going away', () => {
   });
 });
 
+// docs/features/model-com-face.md: the held verdict, its hand-off and the face loss that applies it.
 describe('a mature rating the text scan held back for a clean .com face', () => {
   const face = {
     sfwName: 'Retro Style',
@@ -2086,6 +2087,14 @@ describe('a mature rating the text scan held back for a clean .com face', () => 
     });
   });
 
+  // A waiting lead is the moderator's to rule on, so a later hand-off never rewrites it.
+  it('leaves a lead already waiting as it is when a later save marks the model a real person', async () => {
+    const waiting = { source: 'text-scan', at: '2026-11-19T00:00:00.000Z', restriction: 'minor' };
+    mockStored({ nsfw: true, ...face, meta: { ...held, restrictedNsfwVerdict: waiting } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, poi: true });
+    expect((updateData().meta as ModelMeta).restrictedNsfwVerdict).toEqual(waiting);
+  });
+
   it('leaves a moderator-locked rating to the lock (control)', async () => {
     mockStored({ nsfw: true, ...face, lockedProperties: ['nsfw'], meta: held });
     await untick();
@@ -2098,6 +2107,12 @@ describe('a mature rating the text scan held back for a clean .com face', () => 
     mockStored({ nsfw: false, ...face, meta: held });
     await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
     expect(updateData()).toMatchObject({ sfwName: null });
+  });
+
+  it('lets the owner make an unrelated edit to a model that is not mature, keeping its face', async () => {
+    mockStored({ nsfw: false, ...face, meta: held });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Retro Style Two' });
+    expect(updateData()).toMatchObject({ name: 'Retro Style Two' });
   });
 
   it('lets the owner keep mature and edit the face', async () => {
