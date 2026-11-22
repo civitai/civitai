@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -1227,6 +1227,82 @@ describe('removing a file that must be kept', () => {
     expect(await fileRow(textId)).toBeUndefined();
     expect(deletedKeys()).toEqual(expect.arrayContaining(keys));
   });
+});
+
+describe('a refused upload is kept for a hold on its uploader only', () => {
+  const holds: [string, (p: number) => string][] = [
+    ['an evidence hold', (p) => `INSERT INTO "EvidenceHold" ("userId") VALUES (${p})`],
+    [
+      'a recent child-safety report',
+      (p) =>
+        `INSERT INTO "CsamReport" ("userId", "reportSentAt") VALUES (${p}, now() - interval '10 days')`,
+    ],
+  ];
+  /** Starts an upload that completion refuses for its size: an Attachment from the buyer, or a Final from the seller. */
+  const refuse = async (dealId: number, kind: 'Attachment' | 'Final') => {
+    const declared = {
+      fileName: 'big.txt',
+      mimeType: 'application/octet-stream',
+      size: TEXT.byteLength,
+    };
+    const { fileId } =
+      kind === 'Attachment'
+        ? await files.requestServiceDealAttachment({
+            ...ATTESTED,
+            ...declared,
+            dealId,
+            userId: BUYER,
+          })
+        : await files.requestServiceDealUpload({ ...declared, dealId, userId: SELLER, kind });
+    const uploaderKey = (await fileRow(fileId)).s3Key;
+    s3.headObject
+      .mockResolvedValueOnce({ status: 'present', size: TEXT.byteLength })
+      .mockResolvedValueOnce({ status: 'present', size: TEXT.byteLength + 1 });
+    s3.deleteObject.mockClear();
+    const complete =
+      kind === 'Attachment'
+        ? files.completeServiceDealAttachment({ fileId, userId: BUYER })
+        : files.completeServiceDealUpload({ fileId, userId: SELLER });
+    await expect(complete).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    return { fileId, uploaderKey };
+  };
+  const cases = holds.flatMap(([hold, sql]) =>
+    (['Attachment', 'Final'] as const).flatMap((kind) => {
+      const uploader = kind === 'Attachment' ? BUYER : SELLER;
+      const other = kind === 'Attachment' ? SELLER : BUYER;
+      return [
+        [`${hold} on the uploader keeps a refused ${kind}`, kind, sql(uploader), true],
+        [`${hold} on the other party does not keep a refused ${kind}`, kind, sql(other), false],
+      ] as const;
+    })
+  );
+
+  afterEach(() => q(`DELETE FROM "EvidenceHold"`));
+
+  it.each(cases)('%s', async (_n, kind, sql, kept) => {
+    const dealId = await accepted();
+    await holder.db.exec(sql);
+    const { fileId, uploaderKey } = await refuse(dealId, kind);
+    const row = await fileRow(fileId);
+    expect(row.status).toBe('Failed');
+    if (kept) {
+      expect(row.s3Key).toMatch(/^service-deals\/files\//);
+      expect(deletedKeys()).toEqual([uploaderKey]);
+    } else {
+      expect(row.s3Key).toBe(uploaderKey);
+      expect(deletedKeys()).toHaveLength(2);
+    }
+  });
+
+  it.each(['Attachment', 'Final'] as const)(
+    'with no hold, both copies of a refused %s are deleted',
+    async (kind) => {
+      const dealId = await accepted();
+      const { fileId, uploaderKey } = await refuse(dealId, kind);
+      expect((await fileRow(fileId)).s3Key).toBe(uploaderKey);
+      expect(deletedKeys()).toHaveLength(2);
+    }
+  );
 });
 
 describe('a removed file that is kept', () => {
