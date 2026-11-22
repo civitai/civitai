@@ -228,10 +228,11 @@ export function projectSubListingCard(
 
 /**
  * The columns of a {@link SubListingHydrateRow}, over the aliases its FROM clause gives
- * ({@link SUB_LISTING_HYDRATE_FROM}). One list, so the store grid's hydration and the listing
- * stream's read (`readStoreSubListingsOfParents`) project a card from the same columns.
+ * ({@link subListingHydrateFrom}). One list, so the store grid's hydration and the listing
+ * stream's read (`readStoreSubListingsOfParents`) project a card from the same columns. Built on
+ * use, not at import: a module that mocks `@prisma/client` partially can still import this one.
  */
-const SUB_LISTING_HYDRATE_COLUMNS = Prisma.sql`
+const subListingHydrateColumns = () => Prisma.sql`
     s.id, s.title, s.tagline, s.sub_path, s.content_rating, s.author_user_id,
            u.username AS author_username, ${Prisma.raw(fallbackUserImageColumn)} AS author_image,
            al.id AS parent_id, al.slug AS parent_slug, al.name AS parent_name,
@@ -261,8 +262,8 @@ const SUB_LISTING_HYDRATE_COLUMNS = Prisma.sql`
            i."modelRestricted" AS image_model_restricted,
            ${IMAGE_POST_PUBLIC_SQL} AS image_public`;
 
-/** The joins {@link SUB_LISTING_HYDRATE_COLUMNS} reads, `sp` left-joined. */
-const SUB_LISTING_HYDRATE_FROM = Prisma.sql`
+/** The joins {@link subListingHydrateColumns} reads, `sp` left-joined. */
+const subListingHydrateFrom = () => Prisma.sql`
     FROM app_sub_listings s
     JOIN app_listings al ON al.id = s.parent_listing_id
     JOIN "User" u ON u.id = s.author_user_id
@@ -273,7 +274,7 @@ const SUB_LISTING_HYDRATE_FROM = Prisma.sql`
     LEFT JOIN "Image" pi ON pi.id = al.icon_id`;
 
 /** An approved row by an author who is not banned or deleted: what every store read requires. */
-const SUB_LISTING_LIVE_WHERE = Prisma.sql`s.status = 'approved'
+const subListingLiveWhere = () => Prisma.sql`s.status = 'approved'
       AND u."bannedAt" IS NULL
       AND u."deletedAt" IS NULL`;
 
@@ -291,10 +292,10 @@ export async function hydrateSubListingCards(
 ): Promise<Map<string, SubListingCard>> {
   if (ids.length === 0) return new Map();
   const rows = await db.$queryRaw<SubListingHydrateRow[]>(Prisma.sql`
-    SELECT ${SUB_LISTING_HYDRATE_COLUMNS}
-    ${SUB_LISTING_HYDRATE_FROM}
+    SELECT ${subListingHydrateColumns()}
+    ${subListingHydrateFrom()}
     WHERE s.id IN (${Prisma.join(ids)})
-      AND ${SUB_LISTING_LIVE_WHERE}
+      AND ${subListingLiveWhere()}
   `);
   const cards = new Map<string, SubListingCard>();
   for (const row of rows) {
@@ -345,7 +346,7 @@ export type StoreSubListingRow = SubListingHydrateRow & {
  * projected from. The listing stream's read (`store-listing@v1` `subListings`,
  * `catalog-source.live.ts`): the parents are the public catalog's listings, so their own
  * eligibility is already applied, and this applies the child arm's ({@link subListingStoreArmWhere})
- * plus the hydration's re-check ({@link SUB_LISTING_LIVE_WHERE}). In id order.
+ * plus the hydration's re-check ({@link subListingLiveWhere}). In id order.
  */
 export async function readStoreSubListingsOfParents(
   db: Pick<PrismaClient, '$queryRaw'>,
@@ -353,14 +354,14 @@ export async function readStoreSubListingsOfParents(
 ): Promise<StoreSubListingRow[]> {
   if (parentIds.length === 0) return [];
   return db.$queryRaw<StoreSubListingRow[]>(Prisma.sql`
-    SELECT ${SUB_LISTING_HYDRATE_COLUMNS},
+    SELECT ${subListingHydrateColumns()},
            s.parent_listing_id,
            to_char(COALESCE(s.approved_at, s.created_at) AT TIME ZONE 'UTC',
                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS sort_time
-    ${SUB_LISTING_HYDRATE_FROM}
+    ${subListingHydrateFrom()}
     LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
     WHERE s.parent_listing_id IN (${Prisma.join(parentIds)})
-      AND ${SUB_LISTING_LIVE_WHERE}
+      AND ${subListingLiveWhere()}
       AND ${subListingStoreArmWhere(Prisma.sql`u."bannedAt" IS NULL AND u."deletedAt" IS NULL`)}
     ORDER BY s.id
   `);
