@@ -48,8 +48,8 @@ export function CsamItemTextSelect({
 }) {
   return (
     <Input.Wrapper
-      label="Other text the reported user wrote"
-      description="Only items the reported user wrote can be attached. Their text is copied when you submit, and links in the text are kept as text."
+      label="Text on the reported user's chat messages, items and profile"
+      description="Only the reported user's own chat messages and items can be attached. Their text is copied when you submit, and links in the text are kept as text."
     >
       <Stack gap="sm" mt="xs">
         <Text size="xs" c="dimmed">
@@ -94,20 +94,29 @@ function ItemList({
   onIds: (ids: number[]) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [typed, setTyped] = useState<number[]>([]);
+  const [ticked, setTicked] = useState(ids);
+  const [typedText, setTypedText] = useState('');
   const { data, isLoading, error } = trpc.csam.getItemContextCandidates.useQuery(
     { userId, source },
     { enabled: open && userId > 0 }
   );
-  const listed = new Set(data?.candidates.map((c) => c.id));
-  const picked = ids.filter((id) => listed.has(id));
-  const setTypedIds = (next: number[]) => {
-    setTyped(next);
-    onIds([...new Set([...picked, ...next])]);
+  const update = (nextTicked: number[], nextText: string) => {
+    setTicked(nextTicked);
+    setTypedText(nextText);
+    onIds([...new Set([...nextTicked, ...parseIds(nextText)])]);
   };
+  // Unticking also removes the id from the typed box, so nothing unticked is still sent.
   const toggle = (id: number, checked: boolean) => {
-    const rest = picked.filter((x) => x !== id);
-    onIds([...new Set([...(checked ? [...rest, id] : rest), ...typed])]);
+    const rest = ticked.filter((x) => x !== id);
+    update(
+      checked ? [...rest, id] : rest,
+      checked
+        ? typedText
+        : typedText
+            .split(/[\s,]+/)
+            .filter((token) => token && Number(token) !== id)
+            .join(', ')
+    );
   };
 
   return (
@@ -165,7 +174,8 @@ function ItemList({
       <TextInput
         size="xs"
         placeholder={`Other ${label.toLowerCase()} ids, separated by commas or spaces`}
-        onChange={(e) => setTypedIds(parseIds(e.currentTarget.value))}
+        value={typedText}
+        onChange={(e) => update(ticked, e.currentTarget.value)}
       />
     </Stack>
   );

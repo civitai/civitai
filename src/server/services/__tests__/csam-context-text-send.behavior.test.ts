@@ -289,7 +289,7 @@ describe('attached text on an image report', () => {
     expect(xml).toContain('held &lt;i&gt;words');
   });
 
-  it('sends a chat message as a chat incident and the other item types as page incidents', async () => {
+  it('sends a chat message as a chat incident and the other item types and post text as page incidents, one per internetDetails', async () => {
     const item = (over: Partial<CsamItemContextText>): CsamItemContextText => ({
       source: 'model',
       id: 1,
@@ -313,7 +313,8 @@ describe('attached text on an image report', () => {
         fields: [{ label: 'Bio', text: HOSTILE }],
       }),
     ];
-    await send({ contextText: items });
+    const post = contextText[0];
+    await send({ contextText: [post, ...items] });
 
     expect(submitReport).toHaveBeenCalledTimes(1);
     const xml = buildReport(submitReport.mock.calls[0][0]);
@@ -325,7 +326,10 @@ describe('attached text on an image report', () => {
     }[];
     const pages = details.flatMap((d) => d.webPageIncident ?? []);
     const chats = details.flatMap((d) => d.chatImIncident ?? []);
-    const expected = contextIncidents(items);
+    const expected = contextIncidents([post, ...items]);
+    expect(
+      details.map((d) => (d.webPageIncident?.length ?? 0) + (d.chatImIncident?.length ?? 0))
+    ).toEqual([1, 1, 1, 1, 1, 1]);
 
     expect(pages.map((p) => ({ url: p.url[0], additionalInfo: p.additionalInfo[0] }))).toEqual(
       expected.webPageIncidents
@@ -338,6 +342,7 @@ describe('attached text on an image report', () => {
       }))
     ).toEqual(expected.chatImIncidents);
     expect(pages.map((p) => new URL(p.url[0]).pathname)).toEqual([
+      '/posts/100',
       '/models/701',
       '/articles/801',
       '/services/1001',
@@ -356,8 +361,38 @@ describe('attached text on an image report', () => {
       name: 'csam-report',
       type: 'info',
       subType: 'send-incidents',
-      payload: { webPageIncidents: 4, chatImIncidents: 1 },
+      payload: { webPageIncidents: 5, chatImIncidents: 1 },
     });
+  });
+
+  it('sends a profile with no username as a page incident with no url', async () => {
+    const profile: CsamItemContextText = {
+      source: 'profile',
+      id: 20,
+      authorId: 20,
+      authorIsReportedUser: true,
+      fields: [{ label: 'Bio (civitai.red and civitai.com)', text: 'bio words' }],
+      text: 'Bio (civitai.red and civitai.com):\nbio words',
+      capturedAt: '2026-10-08T14:05:00.000Z',
+      capturedById: 10,
+    };
+    await send({ contextText: [profile] });
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    const xml = buildReport(submitReport.mock.calls[0][0]);
+    expect(xmlProblem(xml)).toBeNull();
+    const doc = await parsed(xml);
+    const [page] = doc.report.internetDetails[0].webPageIncident;
+    expect(page.url).toBeUndefined();
+    expect(page.additionalInfo[0]).toContain('"bio words"');
+    // The profile line names the same account as the reported-person block.
+    const espIdentifier =
+      doc.report.reportedPerson?.[0]?.espIdentifier?.[0] ??
+      doc.report.personOrUserReported[0].espIdentifier[0];
+    expect(page.additionalInfo[0]).toContain(
+      `Profile of the account reported in this CyberTip (user id ${espIdentifier}; username at capture none).`
+    );
+    expect(espIdentifier).toBe('20');
   });
 
   it('adds no page incident to a report with no attached text', async () => {

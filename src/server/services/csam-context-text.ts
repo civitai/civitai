@@ -56,9 +56,8 @@ export type CsamItemContextSource = (typeof CSAM_CONTEXT_ITEM_SOURCES)[number];
 export type CsamItemField = { label: string; text: string; at?: string };
 
 /**
- * A chat message, model, article, service offering or profile the reported account wrote, copied when
- * the report is filed. It carries no post or image id: `post_text_held` treats any entry with a
- * `postId` as holding that post's text.
+ * A chat message, model, article, service offering or profile of the report's own user, copied when
+ * the report is filed. Never give it a post or image id: database readers match entries by `postId`.
  */
 export type CsamItemContextText = {
   source: CsamItemContextSource;
@@ -438,8 +437,10 @@ async function readsBy(
 
 /** Ids and text stay out of it, and a missing item reads the same as another account's. */
 export const CSAM_CONTEXT_ITEM_REFUSAL =
-  'Some selected items do not exist or were not written by a reported account';
+  "Some selected items do not exist or are not the reported user's own";
 export const CSAM_CONTEXT_CHAT_TYPE_REFUSAL = 'Only text chat messages can be attached';
+export const CSAM_CONTEXT_ITEM_EMPTY_REFUSAL =
+  'Some selected items have no text to attach. Untick them and file again';
 const CANDIDATE_ITEM_LIMIT = 100;
 
 const iso = (d: Date | null | undefined) => (d ? new Date(d).toISOString() : undefined);
@@ -468,26 +469,42 @@ async function readWebItems(source: WebItemSource, ids: number[]) {
   if (source === 'model') {
     const rows = await kyselyWrite
       .selectFrom('Model')
-      .select(['id', 'userId', 'name', 'description', 'status', 'createdAt', 'deletedAt'])
+      .select([
+        'id',
+        'userId',
+        'name',
+        'description',
+        'sfwName',
+        'sfwDescription',
+        'status',
+        'createdAt',
+        'deletedAt',
+      ])
       .where('id', 'in', ids)
       .execute();
-    return rows.map(
-      (r): ItemRead => ({
+    const rich = (html: string | null) => html && htmlToPlainText(html, { keepTargets: true });
+    return rows.map((r): ItemRead => {
+      // A set sfwName turns the civitai.com face on: that site then shows sfwName and sfwDescription.
+      const red = r.sfwName ? 'civitai.red' : 'civitai.red and civitai.com';
+      return {
         source,
         id: r.id,
         authorId: r.userId,
         fields: present([
-          { label: 'Name', text: r.name },
-          {
-            label: 'Description',
-            text: r.description && htmlToPlainText(r.description, { keepTargets: true }),
-          },
+          { label: `Name (${red})`, text: r.name },
+          { label: `Description (${red})`, text: rich(r.description) },
+          ...(r.sfwName
+            ? [
+                { label: 'Name (civitai.com)', text: r.sfwName },
+                { label: 'Description (civitai.com)', text: rich(r.sfwDescription) },
+              ]
+            : []),
         ]),
         createdAt: iso(r.createdAt),
         status: r.status,
         ...(r.deletedAt && { deletedAt: iso(r.deletedAt) }),
-      })
-    );
+      };
+    });
   }
   if (source === 'article') {
     const rows = await kyselyWrite
@@ -688,15 +705,16 @@ async function snapshotItems({
   if (chats.some((c) => c.contentType !== 'Markdown'))
     throwBadRequestError(CSAM_CONTEXT_CHAT_TYPE_REFUSAL);
 
-  return [...chats.map((c) => c.item), ...web.flat(), ...(profile ? [profile] : [])]
-    .filter((item) => item.fields.length)
-    .map((item) => ({
-      ...item,
-      authorIsReportedUser: true as const,
-      text: joinFields(item.fields),
-      capturedAt: capturedAt.toISOString(),
-      capturedById,
-    }));
+  const items = [...chats.map((c) => c.item), ...web.flat(), ...(profile ? [profile] : [])];
+  if (items.some((item) => !item.fields.length))
+    throwBadRequestError(CSAM_CONTEXT_ITEM_EMPTY_REFUSAL);
+  return items.map((item) => ({
+    ...item,
+    authorIsReportedUser: true as const,
+    text: joinFields(item.fields),
+    capturedAt: capturedAt.toISOString(),
+    capturedById,
+  }));
 }
 
 /** Copies the chosen text, refusing any source outside the report's images. */
@@ -912,7 +930,9 @@ function describeItem(c: CsamItemContextText, base: string) {
       return {
         noun: 'profile',
         url: c.username ? `${base}/user/${encodeURIComponent(c.username)}` : undefined,
-        heading: 'Profile text at capture. Profile links and images are not included',
+        heading: `Profile of the account reported in this CyberTip (user id ${
+          c.id
+        }; username at capture ${c.username ?? 'none'}). Profile links and images are not included`,
       };
     case 'chatMessage':
       return {
@@ -934,8 +954,15 @@ function describeItem(c: CsamItemContextText, base: string) {
   }
 }
 
-const capturedLine = (noun: string, capturedAt: string) =>
-  `Text the reported user wrote in this ${noun}, captured by Civitai on ${formatUtc(capturedAt)}.`;
+// Only a chat message is worded as written by the reported user; the others say whose item it is.
+const capturedLine = (c: CsamItemContextText, noun: string) =>
+  c.source === 'chatMessage'
+    ? `Text the reported user wrote in this ${noun}, captured by Civitai on ${formatUtc(
+        c.capturedAt
+      )}.`
+    : `Text on the reported user's ${noun} as of capture, captured by Civitai on ${formatUtc(
+        c.capturedAt
+      )}.`;
 
 /**
  * The incidents as NCMEC reads them once parsed: a page incident per post or image page and capture
@@ -988,14 +1015,14 @@ export function contextIncidents(contextText: CsamContextText[] | undefined) {
       chatImIncidents.push({
         chatClient: 'Civitai chat',
         content: xmlSafe(quotedFields(c.fields).join('\n\n')),
-        additionalInfo: xmlSafe(`${capturedLine(noun, c.capturedAt)}\n${heading}.`),
+        additionalInfo: xmlSafe(`${capturedLine(c, noun)}\n${heading}.`),
       });
       continue;
     }
     webPageIncidents.push({
       ...(url && { url }),
       additionalInfo: xmlSafe(
-        [`${capturedLine(noun, c.capturedAt)}\n${heading}.`, ...quotedFields(c.fields)].join('\n\n')
+        [`${capturedLine(c, noun)}\n${heading}.`, ...quotedFields(c.fields)].join('\n\n')
       ),
     });
   }
