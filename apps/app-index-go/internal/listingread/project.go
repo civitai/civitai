@@ -104,14 +104,14 @@ func ProjectMedia(l store.Listing, v Viewer, gallery bool) Media {
 
 // Admits is the store's per-listing viewer gate as the read model applies it: the scope's kind
 // rule (storeVisibleListingRowGate / listingPublicVisibilityFilter), then the mature rating rule
-// (matureRatingAllowed with matureRatingsAllowed) over the listing's own rating, as
-// listingMatureFilter reads al.content_rating: a null or unknown rating is not mature, so it is
-// admitted, and its media ceiling is PG (nsfwLevelFromContentRating). Everything else the database gate checks (the
+// (matureRatingAllowed with matureRatingsAllowed, here store.Mature.Admits) over the listing's own
+// rating, as listingMatureFilter reads al.content_rating: a null or unknown rating is not mature,
+// so it is admitted, and its media ceiling is PG (nsfwLevelFromContentRating). Everything else the database gate checks (the
 // status and level, a shadow revision, the deploy gate, a banned or deleted owner) is applied
 // upstream: such a listing is not in the stream.
 func Admits(l store.Listing, v Viewer) bool {
 	return scopeAdmitsKind(NarrowScope(v.Scope), l.Kind) &&
-		matureRatingAllowed(l.ListingContentRating, matureRatingsAllowed(v.RedCapable, v.BrowsingLevel))
+		matureRatingsAllowed(v.RedCapable, v.BrowsingLevel).Admits(l.ListingContentRating)
 }
 
 // Creator is the creator chip (ListingCreatorChip).

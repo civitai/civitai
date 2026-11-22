@@ -17,47 +17,44 @@ type Query struct {
 	Text     string
 	Kind     string // "" = any
 	Category string // "" = any
-	// Mature is the mature ratings the caller asks for. Its zero value is the SFW audience: only
-	// apps rated g, pg or pg13.
+	// Mature is the mature ratings the caller asks for (Mature.Admits). Its zero value answers no
+	// app rated r, x or xxx.
 	Mature Mature
 	Limit  int
 }
 
-// Mature is which mature content ratings a search may answer, the registry's audience rule
-// (`audienceAdmits`, src/server/registry-adapter/audience.ts) read the same way: an app rated g,
-// pg or pg13 (in any case) is always answered; r, x or xxx only when that rating is allowed; any
-// other rating, none included, only when all three are. The zero value is the anonymous audience.
+// Mature is which mature content ratings a request may be shown. Its zero value is the SFW
+// audience. Admits is the one rating rule of this service: search (Query.Mature) and the listing
+// gate (listingread.Admits) both apply it.
 type Mature struct {
 	R, X, XXX bool
 }
 
-// sfwRatings are the content ratings every search answers, whatever its Mature.
-var sfwRatings = []string{"g", "pg", "pg13"}
-
-// admitted is the lower-cased ratings a search with m answers, or nil when it answers every row
-// (all three mature ratings allowed, so an unknown or missing rating is answered too). Both
-// stores filter by it, the Postgres one in its query, so the limit counts only admitted rows.
-func (m Mature) admitted() []string {
-	if m.R && m.X && m.XXX {
-		return nil
-	}
-	out := slices.Clone(sfwRatings)
-	if m.R {
+// hidden is the lower-cased mature ratings m does not admit. Both search stores filter by it, the
+// Postgres one in its query, so the limit counts only admitted rows.
+func (m Mature) hidden() []string {
+	var out []string
+	if !m.R {
 		out = append(out, "r")
 	}
-	if m.X {
+	if !m.X {
 		out = append(out, "x")
 	}
-	if m.XXX {
+	if !m.XXX {
 		out = append(out, "xxx")
 	}
 	return out
 }
 
-// Admits reports whether a search with m answers an app rated rating ("" for none).
+// Admits reports whether a request allowed m may be shown an app rated rating ("" for none).
+//
+// It is the site's database rule, matureRatingAllowed (app-listing-store-gate.ts) and its SQL twin
+// listingMatureFilter, because this service answers in that path's place for the same viewer: only
+// r, x and xxx (any case) are mature, each admitted when allowed; every other rating (g, pg, pg13,
+// pg-13, an unknown one, none) is admitted to everyone. The registry's audienceAdmits is stricter
+// for an unknown or missing rating; the index does not read as an audience, so it follows the site.
 func (m Mature) Admits(rating string) bool {
-	ratings := m.admitted()
-	return ratings == nil || slices.Contains(ratings, strings.ToLower(rating))
+	return !slices.Contains(m.hidden(), strings.ToLower(rating))
 }
 
 // Result is one app as search returns it.

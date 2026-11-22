@@ -2,12 +2,10 @@
  * `/apps` store text search through the app index (`apps/app-index-go`), behind the
  * `app-index-search` flag.
  *
- * Every index call names the viewer's mature ratings (`indexMature`, the index's `mature`
- * parameter), so the index answers only apps the viewer's level admits; without it the index
- * answers SFW apps only. The index still subscribes as the anonymous audience and so holds only SFW
- * apps, so a viewer whose level admits a mature rating is not routed to it yet
- * (`viewerNotRoutable`): it would miss that viewer's mature apps. It answers slugs; users only ever
- * see cards the database hydrated for those slugs through the store's own gates. Sub-listing cards are not in the index: with them on
+ * The index holds apps of every rating. A call carries `mature` (`indexMature`) when the viewer
+ * may see any mature rating, and the index answers only the ratings it names; without it the index
+ * answers SFW apps only. It answers slugs; users only ever see cards the database hydrated for
+ * those slugs through the store's own gates. Sub-listing cards are not in the index: with them on
  * the page, an index answer adds the matching ones from the database page (`withSubListingCards`).
  * Any index failure serves the database path, and a run of them opens a per-process breaker
  * (`IndexBreaker`) that keeps searches off the index for a cooldown.
@@ -295,10 +293,8 @@ export function storeGridRequest(
  */
 export function viewerNotRoutable(opts: ListAvailableListingsOpts): AppIndexSearchReason | null {
   if (!env.APP_INDEX_URL) return 'no_url';
-  const mature = matureRatingsAllowed(opts.redCapable ?? false, opts.viewerBrowsingLevel);
-  // The index holds the anonymous registry audience: SFW listings only. Its search already filters
-  // by the viewer's mature ratings (`indexMature`), so this check goes once it holds mature ones.
-  if (mature.r || mature.x || mature.xxx) return 'mature_viewer';
+  // A mature rating is no reason: the index holds every rating, and the call names the viewer's
+  // (`indexMature`).
   // A tester or moderator floor admits listings that are not public.
   if ((opts.floor ?? 'public') !== 'public') return 'unsupported_viewer';
   // Sub-listing cards (`includeSubListings`) do not make a viewer unroutable: the index has none,
@@ -332,7 +328,7 @@ function indexKind(input: ListAppListingsInput, opts: ListAvailableListingsOpts)
  * The index's `mature` parameter for this viewer: the mature ratings the database grid shows them
  * (`matureRatingsAllowed`, the same read `storeVisibleListingRowGate` filters by), as the index's
  * comma-separated list in a fixed order (so a shared cache sees one URL per set), or null for none.
- * Null is sent as no parameter, which the index answers as the SFW audience (g, pg, pg13).
+ * Null is sent as no parameter, which the index answers with no app rated r, x or xxx.
  */
 export function indexMature(opts: ListAvailableListingsOpts): string | null {
   const allowed = matureRatingsAllowed(opts.redCapable ?? false, opts.viewerBrowsingLevel);
