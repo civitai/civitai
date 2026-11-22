@@ -88,9 +88,11 @@ $function$;
 
 -- 2. The whole-model score ----------------------------------------------------
 --
--- The buyer count is read only for a version inside the 60-day window (a one-time filter: older
--- versions cost nothing), through the "EntityAccess" primary key (accessToId, accessToType, ...).
--- Most versions have no rows there.
+-- The buyer count is read only for a version inside the 60-day window and still under the bar
+-- without buyers (one-time filters: other versions cost nothing, and buyers can only raise the
+-- bar, so a version over it already scores the same with 0). It goes through the "EntityAccess"
+-- primary key (accessToId, accessToType, ...); a version under the bar has few rows there, while
+-- the best-selling recent versions hold hundreds and are skipped.
 
 CREATE OR REPLACE FUNCTION public.model_metric_hot_score()
 RETURNS trigger
@@ -120,6 +122,7 @@ BEGIN
              AND ea."accessorId" IS DISTINCT FROM owner_id
              AND ea.meta ?| array['download-buzzTransactionId', 'generation-buzzTransactionId']
              AND mv."publishedAt" > NOW() - INTERVAL '60 days'
+             AND mvm."thumbsUpCount" + mvm."downloadCount" / 6.4 < 25
       ) b
      WHERE mv."modelId" = NEW."modelId"
        AND mv.status = 'Published'
@@ -188,6 +191,7 @@ BEGIN
              AND ea."accessorId" IS DISTINCT FROM owner_id
              AND ea.meta ?| array['download-buzzTransactionId', 'generation-buzzTransactionId']
              AND mv."publishedAt" > NOW() - INTERVAL '60 days'
+             AND mvm."thumbsUpCount" + mvm."downloadCount" / 6.4 < 25
       ) b
      WHERE mv."modelId" = NEW."modelId"
        AND mv."baseModel" = NEW."baseModel"

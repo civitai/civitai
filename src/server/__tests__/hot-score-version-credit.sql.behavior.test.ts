@@ -591,6 +591,12 @@ describe('paid buyers count toward the head-start bar like likes', () => {
     expect(Math.abs((await slice(id, 'SDXL 1.0', 3_000)) - headStart(19))).toBeLessThanOrEqual(1);
   });
 
+  it('keeps the head start of a version over the bar on its own', async () => {
+    const id = await model(OLD, 3_000, [old, { at: RECENT, likes: 30, access: paid(6) }]);
+
+    await expectNear(id, headStart(30));
+  });
+
   it('scores a version with no buyers as before', async () => {
     const id = await model(OLD, 3_000, [old, { at: RECENT, likes: 19 }]);
 
