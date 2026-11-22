@@ -54,6 +54,7 @@ import {
   withServableImage,
 } from '~/server/common/image-visibility';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { panelSourceImageUrl, viewerPanelMetadata } from '~/server/services/comics/panel-metadata';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
@@ -1176,7 +1177,38 @@ export const comicsRouter = router({
         stripNsfwPanelImages([chapter], true);
       }
 
-      return chapter;
+      // A stored source may match several Image rows; every one must be servable, and none drops it.
+      const sources = [
+        ...new Set(
+          chapter.panels
+            .map((p) => panelSourceImageUrl(p.metadata))
+            .filter((v): v is string => v !== null)
+        ),
+      ];
+      const sourceRows = sources.length
+        ? await dbRead.image.findMany({
+            where: { url: { in: sources } },
+            select: { url: true, ...imageRestrictionSelect },
+          })
+        : [];
+      const keepSourceImage = (value: string) => {
+        const rows = sourceRows.filter((row) => row.url === value);
+        return (
+          rows.length > 0 &&
+          rows.every(
+            (row) =>
+              isImageServable(row, ctx.user.id) &&
+              (!ctx.features.isGreen || hasSafeBrowsingLevel(row.nsfwLevel))
+          )
+        );
+      };
+      return {
+        ...chapter,
+        panels: chapter.panels.map((panel) => ({
+          ...panel,
+          metadata: viewerPanelMetadata(panel.metadata, { isOwner, keepSourceImage }),
+        })),
+      };
     }),
 
   getProjectForReader: comicProtectedProcedure

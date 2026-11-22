@@ -8,12 +8,17 @@ const OWNER = 5;
 const UPLOADER = 7;
 const MODERATOR = 6;
 
-const image = (id: number, nsfwLevel: number, blockedFor: string | null = null) => ({
+const image = (
+  id: number,
+  nsfwLevel: number,
+  blockedFor: string | null = null,
+  userId = UPLOADER
+) => ({
   id,
   url: `key-${id}`,
   width: 1,
   height: 1,
-  userId: UPLOADER,
+  userId,
   nsfwLevel,
   modelRestricted: false,
   blockedFor,
@@ -21,7 +26,8 @@ const image = (id: number, nsfwLevel: number, blockedFor: string | null = null) 
 
 const referenceImageIds = async (
   viewer: { id: number; isModerator: boolean },
-  blockedFor: string | null
+  blockedFor: string | null,
+  uploader = UPLOADER
 ) => {
   dbMock.dbWrite.comicProject.findUnique.mockResolvedValue({
     id: 3,
@@ -37,8 +43,8 @@ const referenceImageIds = async (
       id: 11,
       userId: OWNER,
       images: [
-        { position: 0, image: image(1, NsfwLevel.PG) },
-        { position: 1, image: image(2, NsfwLevel.Blocked, blockedFor) },
+        { position: 0, image: image(1, NsfwLevel.PG, null, uploader) },
+        { position: 1, image: image(2, NsfwLevel.Blocked, blockedFor, uploader) },
       ],
     },
   ] as never);
@@ -70,4 +76,10 @@ describe.each(viewers)('getProjectShell reference images for %s', (_, viewer) =>
       expect(await referenceImageIds(viewer, blockedFor)).toEqual([1]);
     }
   );
+});
+
+describe('getProjectShell reference images for the project owner who uploaded them', () => {
+  it('keep their own image rated Blocked', async () => {
+    expect(await referenceImageIds({ id: OWNER, isModerator: false }, null, OWNER)).toEqual([1, 2]);
+  });
 });
