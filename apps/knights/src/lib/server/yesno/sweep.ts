@@ -55,7 +55,7 @@ export async function closeStrandedYesNo(
 
     const playable = new Set(
       (
-        await playableItems(db)
+        await playableItems(db, { forSweeps: true })
           .select('i.id')
           .where(
             'i.id',

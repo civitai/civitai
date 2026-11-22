@@ -133,6 +133,15 @@ describe('serving a hidden check', () => {
     expect(await pick(2)).toBeNull();
   });
 
+  it('skips a check on a Private post, and serves it once the post is not', async () => {
+    await seedPlayer(pg, 2);
+    const check = await reference(11);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 11`);
+    expect(await pick(2)).toBeNull();
+    await pg.query(`UPDATE "Post" SET availability = 'EarlyAccess' WHERE id = 11`);
+    expect((await pick(2))?.referenceId).toBe(check);
+  });
+
   it('finds the one check left whichever end of the pool the start point falls on', async () => {
     const ids: number[] = [];
     for (let i = 10; i < 20; i++) ids.push(await reference(i));
@@ -299,6 +308,14 @@ describe('answering a hidden check', () => {
     );
     expect(asCheck).toEqual(asVote);
     expect(asCheck).toEqual({ status: 'rejected', reason: 'unavailable' });
+    expect((await pg.query(`SELECT 1 FROM "KnightsVote"`)).rows).toHaveLength(0);
+  });
+
+  it('refuses an answer to a check on a Private post', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await reference(10);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 10`);
+    expect(await answer(1, ref, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
     expect((await pg.query(`SELECT 1 FROM "KnightsVote"`)).rows).toHaveLength(0);
   });
 
