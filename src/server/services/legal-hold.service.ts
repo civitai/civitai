@@ -45,6 +45,18 @@ export class LegalHoldStoppedError extends LegalHoldError {
   }
 }
 
+/** What a moderator is told when a wipe's profile archive failed, which stops it before any delete. */
+export const PURGE_ARCHIVE_REFUSAL =
+  "Purge refused: the profile couldn't be archived, so nothing was deleted. Try again.";
+
+/** A content wipe refused because its profile archive failed; nothing was deleted. */
+export class ProfileArchiveRefusedError extends Error {
+  constructor(options?: { cause?: unknown }) {
+    super(PURGE_ARCHIVE_REFUSAL, options);
+    this.name = 'ProfileArchiveRefusedError';
+  }
+}
+
 /** What a moderator is told when whether a hold applies could not be read. */
 export const HOLD_UNCONFIRMED = "Couldn't check legal hold status; try again.";
 

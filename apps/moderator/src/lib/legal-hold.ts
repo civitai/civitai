@@ -10,6 +10,11 @@ export const LEGAL_HOLD_STOPPED = 'Purge stopped by a legal hold part-way; conta
 /** The same, when bids it should have refunded were not; the same text the main app answers with. */
 export const LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE = `${LEGAL_HOLD_STOPPED} Some bids were not refunded; check the refund alerts.`;
 
+/** A purge refused before any delete because the profile archive failed; the same text the main app
+ *  answers with. */
+export const PURGE_ARCHIVE_REFUSAL =
+  "Purge refused: the profile couldn't be archived, so nothing was deleted. Try again.";
+
 export const HOLD_UNKNOWN_BUTTON_TEXT = "Couldn't check legal hold status. Try again.";
 export const HOLD_UNKNOWN_REFUSAL = "Couldn't check legal hold status; try again.";
 
