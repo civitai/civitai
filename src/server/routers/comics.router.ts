@@ -1651,6 +1651,20 @@ export const comicsRouter = router({
       if (input.heroImagePosition !== undefined) data.heroImagePosition = input.heroImagePosition;
       if (input.meta !== undefined) data.meta = input.meta;
 
+      const coverChanged =
+        input.coverImageId === undefined &&
+        input.coverUrl !== undefined &&
+        input.coverUrl !== project.coverImage?.url;
+      const heroChanged =
+        input.heroImageId === undefined &&
+        input.heroUrl !== undefined &&
+        input.heroUrl !== project.heroImage?.url;
+      // Both, before either image is created.
+      assertBareUploadKeys([
+        coverChanged ? input.coverUrl || null : null,
+        heroChanged ? input.heroUrl || null : null,
+      ]);
+
       // Cover image: accept either an existing Image ID or a CF URL (creates Image record)
       if (input.coverImageId !== undefined) {
         // A route may only point at an image the caller may use. Clearing, or re-sending the
@@ -1659,9 +1673,8 @@ export const comicsRouter = router({
           await getOwnedImageOrThrow(input.coverImageId, ctx.user.id);
         }
         data.coverImageId = input.coverImageId;
-      } else if (input.coverUrl !== undefined && input.coverUrl !== project.coverImage?.url) {
+      } else if (coverChanged) {
         if (input.coverUrl) {
-          assertBareUploadKeys([input.coverUrl]);
           const image = await createImage({
             url: input.coverUrl,
             type: 'image',
@@ -1680,9 +1693,8 @@ export const comicsRouter = router({
           await getOwnedImageOrThrow(input.heroImageId, ctx.user.id);
         }
         data.heroImageId = input.heroImageId;
-      } else if (input.heroUrl !== undefined && input.heroUrl !== project.heroImage?.url) {
+      } else if (heroChanged) {
         if (input.heroUrl) {
-          assertBareUploadKeys([input.heroUrl]);
           const image = await createImage({
             url: input.heroUrl,
             type: 'image',
@@ -2512,13 +2524,19 @@ export const comicsRouter = router({
       // primary: a lagging replica would show a just-saved image as changed and refuse it.
       const panel = await dbWrite.comicPanel.findUnique({
         where: { id: input.panelId },
-        include: { chapter: { include: { project: { select: { userId: true, id: true } } } } },
+        include: {
+          chapter: { include: { project: { select: { userId: true, id: true } } } },
+          image: { select: { url: true } },
+        },
       });
       if (!panel || panel.chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
-      const { chapter: _chapter, ...stored } = panel;
-      if (input.imageUrl === panel.imageUrl) return stored;
+      const { chapter: _chapter, image: linked, ...stored } = panel;
+      const unchanged =
+        input.imageUrl === panel.imageUrl &&
+        (!isBareUploadKey(input.imageUrl) || linked?.url === input.imageUrl);
+      if (unchanged) return stored;
       assertBareUploadKeys([input.imageUrl]);
 
       const image = await createImage({

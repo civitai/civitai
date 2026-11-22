@@ -84,13 +84,43 @@ describe('comics inputs', () => {
   });
 });
 
+const scanAccepted = () =>
+  // The scan request after an image write: the orchestrator package, stubbed for the whole suite.
+  vi.mocked(submitWorkflow).mockResolvedValue({
+    data: { id: 'wf' },
+    response: new Response(null, { status: 200 }),
+  } as never);
+
 describe('comics.replacePanelImage', () => {
-  const storedPanel = (imageUrl: string) =>
-    dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue({
+  const NEXT = KEY.replace(/0$/, '1');
+  const storedPanel = (
+    imageUrl: string,
+    { owner = USER_ID, linked = imageUrl }: { owner?: number; linked?: string | null } = {}
+  ) => {
+    const row = {
       id: PANEL_ID,
       imageUrl,
-      chapter: { project: { userId: USER_ID, id: PROJECT_ID } },
-    } as never);
+      chapter: { project: { userId: owner, id: PROJECT_ID } },
+      image: linked == null ? null : { url: linked },
+    };
+    // Both clients, so an older read path fails on the value, not on a missing panel.
+    dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue(row as never);
+    dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(row as never);
+  };
+  const acceptWrites = () => {
+    dbMock.dbWrite.image.create.mockResolvedValue({ id: 900 } as never);
+    dbMock.dbWrite.comicPanel.update.mockResolvedValue({ id: PANEL_ID } as never);
+    scanAccepted();
+  };
+
+  it('refuses another user, even for the stored value', async () => {
+    storedPanel(INPUT_A, { owner: USER_ID + 1 });
+
+    await expect(
+      caller().replacePanelImage({ panelId: PANEL_ID, imageUrl: INPUT_A })
+    ).rejects.toThrow();
+    noImageWritten();
+  });
 
   it('refuses a new value', async () => {
     storedPanel(KEY);
@@ -101,59 +131,87 @@ describe('comics.replacePanelImage', () => {
 
   it('stores a new accepted value', async () => {
     storedPanel(KEY);
-    dbMock.dbWrite.image.create.mockResolvedValue({ id: 900 } as never);
-    dbMock.dbWrite.comicPanel.update.mockResolvedValue({ id: PANEL_ID } as never);
-    const next = KEY.replace(/0$/, '1');
-    // The scan request after the write: the orchestrator package, stubbed for the whole suite.
-    vi.mocked(submitWorkflow).mockResolvedValue({
-      data: { id: 'wf' },
-      response: new Response(null, { status: 200 }),
-    } as never);
+    acceptWrites();
 
-    await caller().replacePanelImage({ panelId: PANEL_ID, imageUrl: next });
+    await caller().replacePanelImage({ panelId: PANEL_ID, imageUrl: NEXT });
 
-    expect(dbMock.dbWrite.image.create.mock.calls[0][0].data.url).toBe(next);
+    expect(dbMock.dbWrite.image.create.mock.calls[0][0].data.url).toBe(NEXT);
     expect(dbMock.dbWrite.comicPanel.update.mock.calls[0][0].data).toEqual({
-      imageUrl: next,
+      imageUrl: NEXT,
       imageId: 900,
     });
   });
 
-  it('returns the panel untouched for its stored value', async () => {
-    storedPanel(INPUT_A);
+  it('returns the panel untouched for an old stored value', async () => {
+    storedPanel(INPUT_A, { linked: null });
 
     const panel = await caller().replacePanelImage({ panelId: PANEL_ID, imageUrl: INPUT_A });
 
     expect(panel).toMatchObject({ id: PANEL_ID, imageUrl: INPUT_A });
     expect(panel).not.toHaveProperty('chapter');
+    expect(panel).not.toHaveProperty('image');
     noImageWritten();
+  });
+
+  it('returns the panel untouched for a stored value its image matches', async () => {
+    storedPanel(KEY);
+
+    await caller().replacePanelImage({ panelId: PANEL_ID, imageUrl: KEY });
+
+    noImageWritten();
+  });
+
+  it.each([
+    ['case 0', null],
+    ['case 1', NEXT],
+  ])('relinks a stored value its image does not match (%s)', async (_, linked) => {
+    storedPanel(KEY, { linked });
+    acceptWrites();
+
+    await caller().replacePanelImage({ panelId: PANEL_ID, imageUrl: KEY });
+
+    expect(dbMock.dbWrite.image.create.mock.calls[0][0].data.url).toBe(KEY);
+    expect(dbMock.dbWrite.comicPanel.update.mock.calls[0][0].data.imageId).toBe(900);
   });
 });
 
 describe('comics.updateProject', () => {
   beforeEach(() => {
-    dbMock.dbWrite.comicProject.findUnique.mockResolvedValue({
+    const row = {
       userId: USER_ID,
       coverImageId: 40,
-      heroImageId: null,
+      heroImageId: 41,
       coverImage: { url: INPUT_A },
-      heroImage: null,
-    } as never);
+      heroImage: { url: INPUT_C },
+    };
+    dbMock.dbWrite.comicProject.findUnique.mockResolvedValue(row as never);
+    dbMock.dbRead.comicProject.findUnique.mockResolvedValue(row as never);
     dbMock.dbWrite.comicProject.update.mockResolvedValue({ id: PROJECT_ID } as never);
   });
 
-  it('keeps the stored value', async () => {
-    await caller().updateProject({ id: PROJECT_ID, coverUrl: INPUT_A } as never);
+  it.each([
+    ['case 0', { coverUrl: INPUT_A }, 'coverImageId'],
+    ['case 1', { heroUrl: INPUT_C }, 'heroImageId'],
+  ])('keeps the stored value (%s)', async (_, input, field) => {
+    await caller().updateProject({ id: PROJECT_ID, ...input } as never);
 
     expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.comicProject.update.mock.calls[0][0].data).not.toHaveProperty(
-      'coverImageId'
-    );
+    expect(dbMock.dbWrite.comicProject.update.mock.calls[0][0].data).not.toHaveProperty(field);
   });
 
   it('refuses a new value', async () => {
     await refused(caller().updateProject({ id: PROJECT_ID, heroUrl: INPUT_B } as never));
     expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.comicProject.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses before creating either image', async () => {
+    scanAccepted();
+    dbMock.dbWrite.image.create.mockResolvedValue({ id: 900 } as never);
+
+    await refused(
+      caller().updateProject({ id: PROJECT_ID, coverUrl: KEY, heroUrl: INPUT_B } as never)
+    );
+    expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
   });
 });

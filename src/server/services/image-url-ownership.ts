@@ -52,7 +52,7 @@ export function urlScheme(url: string | null | undefined) {
 export const isBareUploadKey = (url: string) => keysIn(url)[0] === url;
 
 export function assertBareUploadKeys(urls: (string | null | undefined)[]) {
-  if (urls.some((url) => !!url && !isBareUploadKey(url))) throw imageUrlUnavailableError();
+  if (urls.some((url) => url != null && !isBareUploadKey(url))) throw imageUrlUnavailableError();
 }
 
 /** Refuses a save holding an image url that names no stored object. */

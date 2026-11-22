@@ -72,6 +72,9 @@ describe('createImage from a client', () => {
     ['case 1', `https://example.test/${KEY}/picture.png`],
     ['case 2', `//example.test/${KEY}`],
     ['case 3', `data:image/png;base64,${KEY}`],
+    ['case 4', KEY.toUpperCase()],
+    ['case 5', ` ${KEY}`],
+    ['case 6', ''],
   ])('refuses case %# before any read or write', async (_, url) => {
     await expect(create({ url, clientUrl: true })).rejects.toThrow(COVER_IMAGE_UNAVAILABLE_MESSAGE);
 
@@ -79,6 +82,13 @@ describe('createImage from a client', () => {
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
     expect(createImageIngestionRequest).not.toHaveBeenCalled();
+  });
+
+  it('refuses for a caller acting for another uploader too', async () => {
+    await expect(
+      create({ url: 'https://example.test/picture.png', clientUrl: { alsoIssuedTo: 9 } })
+    ).rejects.toThrow(COVER_IMAGE_UNAVAILABLE_MESSAGE);
+    expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
   });
 
   it('stores an accepted value', async () => {
