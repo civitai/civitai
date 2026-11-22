@@ -206,14 +206,34 @@ describe("an author's runner trip, in one transaction against Postgres", () => {
         JSON.stringify({ kind: 'remix', author: { userId: 5 }, runnerTrips: [recent, recent] }),
       ]
     );
+    // Another author's app: never locked by this author's trip.
+    await db.query(
+      `INSERT INTO app_blocks (id, app_id, block_id, version, manifest, status, content_rating)
+       VALUES ($1, 'civitai-remix-apps', 'remix-u6-other', '1.0.0', '{}', 'remix', 'pg')`,
+      [remixAppBlockRowId('u6-other')]
+    );
     // The transaction's client: its raw lock and its reads and writes all reach Postgres.
+    let lockedByThisTransaction: unknown;
     const tx = {
-      $queryRaw: raw.queryRaw,
+      $executeRaw: raw.executeRaw,
+      $queryRaw: async (...args: Parameters<typeof raw.queryRaw>) => {
+        const locked = await raw.queryRaw(...args);
+        // A row this transaction locked carries its id in xmax: proof the statement takes row locks,
+        // on the author's rows only. (Serialisation across connections needs a second one.)
+        lockedByThisTransaction = (
+          await db.query<{ block_id: string; mine: boolean }>(
+            `SELECT block_id, xmax::text = (txid_current() % 4294967296)::text AS mine
+             FROM app_blocks WHERE block_id LIKE 'remix-u%' ORDER BY block_id`
+          )
+        ).rows;
+        return locked;
+      },
       appBlock: {
-        findMany: async () =>
+        findMany: async ({ where }: { where: { id: { in: string[] } } }) =>
           (
             await db.query<{ id: string; blockId: string; manifest: unknown }>(
-              `SELECT id, block_id AS "blockId", manifest FROM app_blocks WHERE block_id LIKE 'remix-u5-%'`
+              `SELECT id, block_id AS "blockId", manifest FROM app_blocks WHERE id = ANY($1)`,
+              [where.id.in]
             )
           ).rows,
         updateMany: async ({
@@ -259,7 +279,11 @@ describe("an author's runner trip, in one transaction against Postgres", () => {
     // Held because it was written, not because a failed write fails closed.
     expect(row.manifest.runnerTrips).toHaveLength(3);
     expect(row.manifest.runnerHold).toBeTruthy();
-    await db.exec(`DELETE FROM app_blocks WHERE block_id = '${blockId}'`);
+    expect(lockedByThisTransaction).toEqual([
+      { block_id: 'remix-u5-probe', mine: true },
+      { block_id: 'remix-u6-other', mine: false },
+    ]);
+    await db.exec(`DELETE FROM app_blocks WHERE block_id IN ('${blockId}', 'remix-u6-other')`);
   });
 });
 

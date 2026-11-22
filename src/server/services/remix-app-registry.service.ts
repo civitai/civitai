@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from 'crypto';
 import { TRPCError } from '@trpc/server';
+import { IMPERSONATION_REFUSED } from '~/server/auth/refuse-while-impersonating';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { registerCounter } from '@civitai/telemetry/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { newBlockIdError } from '~/server/utils/apps-slug';
 import { isPrismaForeignKeyViolation, isPrismaUniqueViolation } from '~/server/utils/errorHandling';
@@ -119,6 +121,8 @@ export function visibleRemixApps<T extends Pick<RegisteredRemixApp, 'author' | '
   caller: {
     features: Pick<FeatureAccess, 'remixAppsUserCode'>;
     user?: { id: number; isModerator?: boolean };
+    /** A moderator acting as `user`. */
+    impersonated?: boolean;
   }
 ) {
   if (!caller.features.remixAppsUserCode) return apps.filter((entry) => !entry.author);
@@ -418,12 +422,13 @@ export async function getRegisteredRemixApp(
   );
   if (!entry || (!allowDisabled && !isRunnableBy(entry, caller)))
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
-  if (
-    entry.author &&
-    entry.author.userId === caller.user?.id &&
-    (await isRemixAuthorHeld(entry.author.userId))
-  )
-    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_AUTHOR_HELD });
+  if (entry.author && entry.author.userId === caller.user?.id) {
+    // The run would be the author's, counted against the author: never one acted by another.
+    if (caller.impersonated)
+      throw new TRPCError({ code: 'FORBIDDEN', message: IMPERSONATION_REFUSED.message });
+    if (await isRemixAuthorHeld(entry.author.userId))
+      throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_AUTHOR_HELD });
+  }
   return entry;
 }
 
@@ -1009,24 +1014,48 @@ export async function noteRunnerQuarantine(
 ): Promise<string | undefined> {
   if (!tripped || !author) return undefined;
   const own = author.userId === viewerId;
-  const held = await (own
-    ? recordAuthorTrip(slug, author.userId)
-    : recordRunnerQuarantine(slug, { viewerId, sha256 })
-  ).catch((error: unknown) => {
+  if (own) {
+    const held = await recordAuthorTrip(slug, author.userId).catch((error: unknown) => error);
+    if (held === true) return REMIX_AUTHOR_HELD;
+    if (held === false) return undefined;
+    // Nothing was stored: this call is refused, the failure counted, and the author may retry.
+    authorTripUnrecorded.inc();
     logToAxiom({
       name: 'remix-app-run',
       type: 'error',
-      message: own
-        ? 'Could not record an author runner trip; refused as held'
-        : 'Could not record a quarantined run of a user remix app',
+      message: 'Could not record an author runner trip; refused',
+      payload: {
+        slug,
+        error:
+          held === 'unrecorded'
+            ? 'no app of the author to record it on'
+            : held instanceof Error
+            ? held.message
+            : String(held),
+      },
+    });
+    return REMIX_AUTHOR_TRIP_UNRECORDED;
+  }
+  const held = await recordRunnerQuarantine(slug, { viewerId, sha256 }).catch((error: unknown) => {
+    logToAxiom({
+      name: 'remix-app-run',
+      type: 'error',
+      message: 'Could not record a quarantined run of a user remix app',
       payload: { slug, error: error instanceof Error ? error.message : String(error) },
     });
-    // An author's trip fails closed: this call is refused as held.
-    return own;
+    return false;
   });
-  if (!held) return undefined;
-  return own ? REMIX_AUTHOR_HELD : REMIX_APP_HELD;
+  return held ? REMIX_APP_HELD : undefined;
 }
+
+export const REMIX_AUTHOR_TRIP_UNRECORDED =
+  'This app could not run just now. Try again in a moment.';
+
+/** Author trips refused because they could not be stored: each one is a hold that may be missing. */
+const authorTripUnrecorded = registerCounter({
+  name: 'remix_author_trip_unrecorded_total',
+  help: 'Author runner trips refused because the trip could not be recorded',
+});
 
 const QUARANTINE_OBSERVED = 'held-runner-quarantine-observed';
 
@@ -1105,57 +1134,71 @@ async function recordRunnerQuarantine(
  * Locks every app of the author, so concurrent trips cannot miss each other's count. Lands on the
  * tripping app, or on another of theirs if that one is gone.
  */
-async function recordAuthorTrip(slug: string, authorId: number): Promise<boolean> {
+async function recordAuthorTrip(slug: string, authorId: number): Promise<boolean | 'unrecorded'> {
   const prefix = remixBlockId(userRemixSlugPrefix(authorId));
-  const outcome = await dbWrite.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "app_blocks" WHERE "block_id" LIKE ${
-      prefix + '%'
-    } ORDER BY id FOR UPDATE`;
-    const rows = await tx.appBlock.findMany({
-      where: { blockId: { startsWith: prefix } },
-      select: { id: true, blockId: true, manifest: true },
+  const record = () =>
+    dbWrite.$transaction(async (tx) => {
+      // A trip waits briefly for the lock, never indefinitely; ids in order, as every writer of
+      // several remix rows takes them.
+      await tx.$executeRaw`SET LOCAL lock_timeout = '2s'`;
+      const locked = await tx.$queryRaw<
+        { id: string }[]
+      >`SELECT id FROM "app_blocks" WHERE "block_id" LIKE ${
+        prefix + '%'
+      } ORDER BY id FOR NO KEY UPDATE`;
+      // Only the rows locked: one created since is not counted, and not written.
+      const rows = await tx.appBlock.findMany({
+        where: { id: { in: locked.map(({ id }) => id) } },
+        select: { id: true, blockId: true, manifest: true },
+      });
+      const target = rows.find((row) => row.blockId === remixBlockId(slug)) ?? rows[0];
+      if (!target) return { unrecorded: true as const };
+      const now = new Date().toISOString();
+      const since = Date.now() - QUARANTINE_WINDOW_MS;
+      const recent = (manifest: unknown) =>
+        tripsOf(manifest).filter((at) => Date.parse(at) >= since);
+      const trips = [...recent(target.manifest), now].slice(-REMIX_AUTHOR_RUNNER_TRIPS_MAX);
+      const count = rows.reduce(
+        (n, row) => n + (row === target ? trips.length : recent(row.manifest).length),
+        0
+      );
+      const already = rows.some((row) => hasRunnerHold(row.manifest));
+      const hold = !already && count >= REMIX_AUTHOR_RUNNER_TRIPS_MAX;
+      const raw = target.manifest as Record<string, unknown>;
+      const parsed = remixManifestSchema.safeParse(raw);
+      const reviewLog = Array.isArray(raw.reviewLog) ? raw.reviewLog : [];
+      const entry = {
+        by: REMIX_SYSTEM_ACTOR,
+        at: now,
+        action: 'held-runner-quarantine',
+        ...(parsed.success && 'source' in parsed.data.remix
+          ? { sha256: remixReviewHash({ ...parsed.data, remix: parsed.data.remix }) }
+          : {}),
+        note: `author trip ${count} of ${REMIX_AUTHOR_RUNNER_TRIPS_MAX}`,
+      };
+      await tx.appBlock.updateMany({
+        where: { id: target.id },
+        data: {
+          manifest: {
+            ...raw,
+            runnerTrips: trips,
+            ...(hold
+              ? {
+                  runnerHold: { at: now },
+                  reviewLog: [...reviewLog, entry].slice(-REMIX_REVIEW_LOG_MAX),
+                }
+              : {}),
+          } as Prisma.InputJsonValue,
+        },
+      });
+      return { unrecorded: false as const, held: already || hold, hold, count };
     });
-    const target = rows.find((row) => row.blockId === remixBlockId(slug)) ?? rows[0];
-    if (!target) return { held: true, hold: false, count: 0 };
-    const now = new Date().toISOString();
-    const since = Date.now() - QUARANTINE_WINDOW_MS;
-    const recent = (manifest: unknown) => tripsOf(manifest).filter((at) => Date.parse(at) >= since);
-    const trips = [...recent(target.manifest), now].slice(-REMIX_AUTHOR_RUNNER_TRIPS_MAX);
-    const count = rows.reduce(
-      (n, row) => n + (row === target ? trips.length : recent(row.manifest).length),
-      0
-    );
-    const already = rows.some((row) => hasRunnerHold(row.manifest));
-    const hold = !already && count >= REMIX_AUTHOR_RUNNER_TRIPS_MAX;
-    const raw = target.manifest as Record<string, unknown>;
-    const parsed = remixManifestSchema.safeParse(raw);
-    const reviewLog = Array.isArray(raw.reviewLog) ? raw.reviewLog : [];
-    const entry = {
-      by: REMIX_SYSTEM_ACTOR,
-      at: now,
-      action: 'held-runner-quarantine',
-      ...(parsed.success && 'source' in parsed.data.remix
-        ? { sha256: remixReviewHash({ ...parsed.data, remix: parsed.data.remix }) }
-        : {}),
-      note: `author trip ${count} of ${REMIX_AUTHOR_RUNNER_TRIPS_MAX}`,
-    };
-    await tx.appBlock.updateMany({
-      where: { id: target.id },
-      data: {
-        manifest: {
-          ...raw,
-          runnerTrips: trips,
-          ...(hold
-            ? {
-                runnerHold: { at: now },
-                reviewLog: [...reviewLog, entry].slice(-REMIX_REVIEW_LOG_MAX),
-              }
-            : {}),
-        } as Prisma.InputJsonValue,
-      },
-    });
-    return { held: already || hold, hold, count };
+  // One retry when Postgres picks this transaction as a deadlock's victim.
+  const outcome = await record().catch((error: unknown) => {
+    if (isDeadlock(error)) return record();
+    throw error;
   });
+  if (outcome.unrecorded) return 'unrecorded';
   // The trip is committed; a failed bump only delays the registry refresh.
   await bumpRemixAppRegistry().catch((error: unknown) =>
     logToAxiom({
@@ -1174,6 +1217,11 @@ async function recordAuthorTrip(slug: string, authorId: number): Promise<boolean
     });
   return outcome.held;
 }
+
+/** Postgres's deadlock_detected, however Prisma wraps it. */
+const isDeadlock = (error: unknown) =>
+  error instanceof Error &&
+  /40P01|deadlock detected/i.test(`${error.message} ${JSON.stringify(error)}`);
 
 const authorRows = (authorId: number) =>
   // primary: a mark or hold set a moment ago must already count.
@@ -1436,8 +1484,12 @@ export async function setRemixAppEnabled({
 
 /** `slugs` in menu order; apps it leaves out keep their place after these. */
 export async function orderRemixApps(slugs: string[]) {
+  // Rows in id order, as an author's runner trip locks them: no two can deadlock.
+  const ordered = slugs
+    .map((slug, order) => ({ slug, order }))
+    .sort((a, b) => remixAppBlockRowId(a.slug).localeCompare(remixAppBlockRowId(b.slug)));
   await dbWrite.$transaction(
-    slugs.map((slug, order) =>
+    ordered.map(({ slug, order }) =>
       dbWrite.appBlock.updateMany({
         where: { blockId: remixBlockId(slug), status: { in: REMIX_STATUSES } },
         data: { featuredOrder: order },

@@ -1,6 +1,7 @@
 import { logToAxiom } from '~/server/logging/client';
 import { createHash } from 'node:crypto';
 import { TRPCError } from '@trpc/server';
+import { IMPERSONATION_REFUSED } from '~/server/auth/refuse-while-impersonating';
 import { CacheTTL } from '~/server/common/constants';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -302,6 +303,8 @@ export type RemixAppCaller = {
   isGreenDomain: boolean;
   isApiCaller: boolean;
   track?: unknown;
+  /** A moderator acting as `user`: their own user apps are never run in that session. */
+  impersonated?: boolean;
 };
 
 /** What every remix submit sends for the caller: who pays, in what, and what it may show. */
@@ -407,6 +410,8 @@ export async function quoteRemixApps({
     (entry) =>
       entry.target === 'image.remix' && (slug === undefined ? !entry.author : entry.slug === slug)
   );
+  if (caller.impersonated && apps.some((entry) => entry.author?.userId === caller.user.id))
+    throw new TRPCError({ code: 'FORBIDDEN', message: IMPERSONATION_REFUSED.message });
   // Pricing a user app runs its source: an author held for runner trips prices none of theirs.
   const ownHeld =
     apps.some((entry) => entry.author?.userId === caller.user.id) &&

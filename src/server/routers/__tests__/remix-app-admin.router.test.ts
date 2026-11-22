@@ -286,6 +286,26 @@ describe('user app code: submit and review', () => {
     expect(u.review).not.toHaveBeenCalled();
   });
 
+  it("marks a run started while impersonating, so the author's own app refuses it", async () => {
+    const impersonating = remixAppRouter.createCaller(
+      Object.assign(ctx(moderator, flags({ remixAppsUserCode: true })), { impersonatedBy: 1 })
+    );
+    await impersonating.start({ slug: 'u88-probe', imageId: 5, nonce: 'nonce-test' });
+    expect(h.start).toHaveBeenCalledWith(
+      expect.objectContaining({ caller: expect.objectContaining({ impersonated: true }) })
+    );
+  });
+
+  it('refuses a submit while impersonating', async () => {
+    const impersonating = remixAppRouter.createCaller(
+      Object.assign(ctx(moderator, flags({ remixAppsUserCode: true, remixAppBuilder: true })), {
+        impersonatedBy: 1,
+      })
+    );
+    await expect(impersonating.submit(submission())).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(u.submit).not.toHaveBeenCalled();
+  });
+
   it("refuses a user app's enable, delete, dry run and test run while impersonating", async () => {
     const impersonating = remixAppRouter.createCaller(
       Object.assign(ctx(moderator, flags({ remixAppsUserCode: true })), { impersonatedBy: 1 })

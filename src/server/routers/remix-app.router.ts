@@ -111,6 +111,7 @@ function callerOf(ctx: Context & { user: SessionUser }): Omit<RemixAppCaller, 't
     isGreenDomain: ctx.domain === 'green',
     isApiCaller: ctx.apiKeyId != null,
     track: ctx.track,
+    impersonated: ctx.impersonatedBy != null,
   };
 }
 
@@ -219,9 +220,14 @@ export const remixAppRouter = router({
   submit: remixAppBuilderProcedure
     .use(submitRateLimit)
     .input(remixAppSubmitSchema)
-    .mutation(({ ctx, input }) =>
-      submitUserRemixApp({ ...input, authorId: ctx.user.id, isGreen: !!ctx.features.isGreen })
-    ),
+    .mutation(({ ctx, input }) => {
+      assertNotImpersonating(ctx);
+      return submitUserRemixApp({
+        ...input,
+        authorId: ctx.user.id,
+        isGreen: !!ctx.features.isGreen,
+      });
+    }),
   list: remixAppProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .query(({ ctx }) => listRemixApps(ctx)),

@@ -541,22 +541,37 @@ async function advance({
     const ask =
       shown && gateOf(shown.url, levels, caller) === 'shown' ? { ...choice, image: shown } : choice;
     if (!priceOptions) return { status: 'ask', runId, ask };
-    const prices = await cachedOptionPrices([runId, segments.length, outcome.index], () =>
-      optionPrices({
+    // Every option's replay settles before the prices count: a quarantine refusal on one outranks
+    // another's app fault, and nothing from such an ask is cached.
+    const replays: Promise<unknown>[] = [];
+    let refused: unknown;
+    const prices = await cachedOptionPrices([runId, segments.length, outcome.index], async () => {
+      const priced = await optionPrices({
         app,
         author,
-        replay: (...args) =>
-          replayer(...args).catch(async (error) => {
-            throw error instanceof RemixReplayError ? error : await quarantined(error);
-          }),
+        replay: (...args) => {
+          const call = replayer(...args).catch(async (error) => {
+            if (error instanceof RemixReplayError) throw error;
+            refused ??= await quarantined(error);
+            throw refused;
+          });
+          replays.push(call.catch(() => undefined));
+          return call;
+        },
         image,
         source,
         log,
         spec,
         caller,
         currencies,
-      })
-    );
+      }).catch((error: unknown) => {
+        refused ??= error;
+        return undefined;
+      });
+      await Promise.all(replays);
+      if (refused || !priced) throw refused;
+      return priced;
+    });
     return { status: 'ask', runId, ask, prices };
   }
 
