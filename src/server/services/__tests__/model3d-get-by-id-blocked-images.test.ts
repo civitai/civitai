@@ -5,6 +5,7 @@ import { Model3DStatus } from '~/shared/utils/prisma/enums';
 
 const { getModel3DById } = await import('~/server/services/model3d.service');
 
+// Blocked-level images stay with their uploader (civitai/civitai#9809).
 const UPLOADER = 5;
 const blockedImage = (blockedFor: string | null) => ({
   id: 1,

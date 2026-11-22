@@ -1140,6 +1140,7 @@ describe('a model-restricted mature cover', () => {
   });
 });
 
+// civitai/civitai#9809
 describe('announcement covers follow the shared blocked-image rule', () => {
   const STRANGER = 999;
   const BLOCKED = 32;

@@ -4,7 +4,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { comicsRouter } from '../comics.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-// The public listing does not lift the Blocked check for moderators.
+// The public listing does not lift the Blocked check for moderators (civitai/civitai#9809).
 describe('comics.getPublicProjects for a moderator', () => {
   it('withholds a cover rated Blocked', async () => {
     const cover = {
