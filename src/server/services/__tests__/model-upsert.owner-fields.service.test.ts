@@ -2003,6 +2003,7 @@ describe('a .com face going away', () => {
   });
 });
 
+// docs/features/model-com-face.md: the held verdict, its hand-off and the face loss that applies it.
 describe('a mature rating the text scan held back for a clean .com face', () => {
   const face = {
     sfwName: 'Retro Style',
@@ -2098,6 +2099,12 @@ describe('a mature rating the text scan held back for a clean .com face', () => 
     mockStored({ nsfw: false, ...face, meta: held });
     await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
     expect(updateData()).toMatchObject({ sfwName: null });
+  });
+
+  it('lets the owner make an unrelated edit to a model that is not mature, keeping its face', async () => {
+    mockStored({ nsfw: false, ...face, meta: held });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Retro Style Two' });
+    expect(updateData()).toMatchObject({ name: 'Retro Style Two' });
   });
 
   it('lets the owner keep mature and edit the face', async () => {

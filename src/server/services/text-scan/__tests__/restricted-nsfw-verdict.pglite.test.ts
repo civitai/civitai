@@ -43,6 +43,7 @@ vi.mock('~/server/clickhouse/tracker', () => ({
 }));
 
 const {
+  applyComFaceHeldVerdict,
   applyHeldRestrictedVerdict,
   applyHeldVerdictLeavingPrivate,
   applyModelNsfwTextScan,
@@ -75,6 +76,10 @@ beforeAll(async () => {
       "sfwOnly" boolean NOT NULL DEFAULT false,
       availability text NOT NULL DEFAULT 'Public',
       meta jsonb NOT NULL DEFAULT '{}',
+      name text,
+      "sfwName" text,
+      "sfwDescription" text,
+      "sfwCoverImageId" int,
       "deletedAt" timestamp(3)
     );
     CREATE TABLE "ModActivity" (
@@ -1196,5 +1201,138 @@ describe("a moderator lifting a model's SFW-only lock", () => {
     await seed({ minor: true, meta: lead('sfwOnly') });
     await holdLeadAfterSfwOnlyLift(dbMock.dbWrite as never, MODEL);
     expect((await row()).meta.restrictedNsfwVerdict).not.toHaveProperty('liftedBy');
+  });
+});
+
+// docs/features/model-com-face.md: the R+ verdict the scan holds for a clean .com face rates the model
+// once the face is gone. A moderator who ruled out the scan's reading must not see it come back that way.
+describe("a ruling on the scan's reading of a held .com-face verdict", () => {
+  const HELD_AT = '2026-11-01T00:00:00.000Z';
+  const held = (at: unknown = HELD_AT) => ({ comFaceHeldVerdict: { at, level: 16 } });
+  // The lead the owner's minor or POI save hands over (`upsertModel`), at the held verdict's time.
+  const handedOver = (restriction: 'minor' | 'poi' = 'minor') => ({
+    restrictedNsfwVerdict: { source: 'text-scan', at: HELD_AT, restriction, level: 16 },
+  });
+  const rule = (ruling: 'keep' | 'dismiss' | 'rateNsfw', reason?: string) =>
+    resolveRestrictedNsfwVerdict({ modelId: MODEL, ruling, reason, userId: MODERATOR });
+  // A moderator lifts minor: the flag and its locks go (`setModelMinor`).
+  const liftFlags = () =>
+    db.query(
+      `UPDATE "Model" SET minor = false, poi = false, "sfwOnly" = false, availability = 'Public',
+         "lockedProperties" = '{}' WHERE id = $1`,
+      [MODEL]
+    );
+  // The save that takes the face away (none is seeded, so the model has none).
+  const loseFace = () => applyComFaceHeldVerdict(dbMock.dbWrite as never, MODEL);
+
+  it('Dismiss spends it: a later face loss leaves the model unrated', async () => {
+    await seed({ minor: true, meta: { ...held(), ...handedOver() } });
+    await rule('dismiss', 'Not a minor');
+    expect((await row()).meta).not.toHaveProperty('comFaceHeldVerdict');
+    await liftFlags();
+    expect(await loseFace()).toBeNull();
+    expect(await row()).toMatchObject({ nsfw: false, lockedProperties: [] });
+  });
+
+  it('Keep on a model no longer restricted spends it too', async () => {
+    await seed({ sfwOnly: true, meta: { ...held(), ...handedOver('poi') } });
+    await rule('keep');
+    expect((await row()).meta).not.toHaveProperty('comFaceHeldVerdict');
+    await liftFlags();
+    expect(await loseFace()).toBeNull();
+    expect((await row()).nsfw).toBe(false);
+  });
+
+  it.each(['profanity-filter', 'xguard-text-moderation'])(
+    'a %s lead is not the reading of it, and leaves it',
+    async (source) => {
+      await seed({
+        minor: true,
+        meta: { ...held(), restrictedNsfwVerdict: { source, at: HELD_AT, restriction: 'minor' } },
+      });
+      await rule('dismiss', 'Not a minor');
+      expect((await row()).meta.comFaceHeldVerdict).toEqual(held().comFaceHeldVerdict);
+    }
+  );
+
+  it('a held verdict newer than the lead is a later reading, and stands', async () => {
+    const later = '2026-11-05T00:00:00.000Z';
+    await seed({ minor: true, meta: { ...held(later), ...handedOver() } });
+    await rule('dismiss', 'Not a minor');
+    expect((await row()).meta.comFaceHeldVerdict).toEqual(held(later).comFaceHeldVerdict);
+  });
+
+  it('a held verdict whose time cannot be read stands', async () => {
+    await seed({ minor: true, meta: { ...held('not a time'), ...handedOver() } });
+    await rule('dismiss', 'Not a minor');
+    expect((await row()).meta.comFaceHeldVerdict).toEqual(held('not a time').comFaceHeldVerdict);
+  });
+
+  // A later rescan holds a lead with no level before it reaches the .com-face check.
+  it.each([
+    ['went Private', { availability: 'Private' }],
+    ["got a moderator's SFW-only lock", { locked: ['sfwOnly'] }],
+  ] as const)(
+    'a model that %s and rescanned: Dismiss of that lead spends the earlier verdict',
+    async (_, how) => {
+      await seed({ sfwOnly: true, locked: 'locked' in how ? [...how.locked] : [], meta: held() });
+      if ('availability' in how)
+        await db.query(`UPDATE "Model" SET availability = 'Private' WHERE id = $1`, [MODEL]);
+      const before = await row();
+      expect(
+        await applySystemModelNsfwFlag({
+          model: scanned({ sfwOnly: true, lockedProperties: before.lockedProperties }),
+          source: 'text-scan',
+        })
+      ).toBe('held_restricted');
+      expect((await row()).meta.restrictedNsfwVerdict).not.toHaveProperty('level');
+      await rule('dismiss');
+      await liftFlags();
+      expect(await loseFace()).toBeNull();
+      expect(await row()).toMatchObject({ nsfw: false, lockedProperties: [] });
+    }
+  );
+
+  it('a dormant Keep leaves it with the lead; Dismiss of the revived lead spends it', async () => {
+    await seed({ minor: true, meta: { ...held(), ...handedOver() } });
+    await rule('keep');
+    const kept = await row();
+    expect(kept.meta.comFaceHeldVerdict).toEqual(held().comFaceHeldVerdict);
+    expect(kept.meta.restrictedNsfwVerdictDormant).toMatchObject({
+      source: 'text-scan',
+      at: HELD_AT,
+    });
+    await db.query(`UPDATE "Model" SET minor = false WHERE id = $1`, [MODEL]);
+    expect(await applyHeldRestrictedVerdict(MODEL)).toBe('applied');
+    await rule('dismiss', 'Not a minor');
+    expect((await row()).meta).not.toHaveProperty('comFaceHeldVerdict');
+  });
+
+  // The drop changes meta only: the ruling's own rating and locks are what the model keeps.
+  it("Dismiss of an applied lead keeps the rating and the scan's marker", async () => {
+    await seed({ sfwOnly: true, meta: held() });
+    expect(
+      await applySystemModelNsfwFlag({ model: scanned({ sfwOnly: true }), source: 'text-scan' })
+    ).toBe('applied');
+    await rule('dismiss');
+    const after = await row();
+    expect(after).toMatchObject({ nsfw: true, sfwOnly: false });
+    expect(after.meta.systemNsfwLock).toMatchObject({ source: 'text-scan' });
+    expect(after.meta).not.toHaveProperty('comFaceHeldVerdict');
+  });
+
+  // Rate NSFW rates the model and locks nsfw, so the verdict cannot flip it while that lock stands.
+  it('Rate NSFW leaves it', async () => {
+    await seed({ sfwOnly: true, meta: { ...held(), ...handedOver('poi') } });
+    await rule('rateNsfw');
+    const after = await row();
+    expect(after).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect(after.meta.comFaceHeldVerdict).toEqual(held().comFaceHeldVerdict);
+  });
+
+  it('Dismiss on a model still minor leaves it SFW', async () => {
+    await seed({ minor: true, meta: { ...held(), ...handedOver() } });
+    await rule('dismiss', 'Escalated');
+    expect(await row()).toMatchObject({ nsfw: false, sfwOnly: true });
   });
 });

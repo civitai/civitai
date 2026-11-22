@@ -12,6 +12,7 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { readComFaceHeldVerdict, SCAN_RATING_SOURCES } from '~/server/utils/minor-flag-meta';
 import { uniq } from 'lodash-es';
 
 export const RESTRICTED_NSFW_VERDICT_RULINGS = [
@@ -40,6 +41,7 @@ type Row = {
   ownerFlagOverride: ModelMeta['ownerFlagOverride'] | null;
   ownerDeclaredFlags: ModelMeta['ownerDeclaredFlags'] | null;
   minorFlagSnapshot: ModelMeta['minorFlagSnapshot'] | null;
+  comFaceHeldVerdict: ModelMeta['comFaceHeldVerdict'] | null;
 };
 
 /** A model the owner once declared minor counts as minor here even after they untick it: for the
@@ -50,6 +52,22 @@ const restrictionOf = (row: Row, verdict: RestrictedNsfwVerdict): Restriction =>
     : row.poi || verdict.restriction === 'poi'
     ? 'poi'
     : 'sfwOnly';
+
+/**
+ * A Dismiss, or a Keep that rules on the rating, also spends the verdict the scan held for a clean .com
+ * face (`meta.comFaceHeldVerdict`) when this lead is the scan's reading of it: a text-scan lead no older
+ * than the held verdict, whether the owner's flag handed it over or a later scan held it on a restricted
+ * model. Otherwise a later face loss would rate the model from the reading the moderator ruled out. A
+ * held verdict newer than the lead is a later reading and stands, and a time that cannot be read keeps it.
+ */
+function leadSpendsHeldVerdict(row: Row, verdict: RestrictedNsfwVerdict): boolean {
+  if (!SCAN_RATING_SOURCES.includes(verdict.source)) return false;
+  const held = readComFaceHeldVerdict(
+    row.comFaceHeldVerdict != null ? { comFaceHeldVerdict: row.comFaceHeldVerdict } : null
+  );
+  const leadAt = Date.parse(verdict.at);
+  return !!held?.at && !Number.isNaN(leadAt) && held.at.getTime() <= leadAt;
+}
 
 /**
  * A moderator's ruling on a lead the text scan left on a restricted model. A moderator's or a newer
@@ -76,7 +94,8 @@ export async function resolveRestrictedNsfwVerdict({
         m.meta->'restrictedNsfwVerdictRulings' AS rulings,
         m.meta->'ownerFlagOverride' AS "ownerFlagOverride",
         m.meta->'ownerDeclaredFlags' AS "ownerDeclaredFlags",
-        m.meta->'minorFlagSnapshot' AS "minorFlagSnapshot"
+        m.meta->'minorFlagSnapshot' AS "minorFlagSnapshot",
+        m.meta->'comFaceHeldVerdict' AS "comFaceHeldVerdict"
       FROM "Model" m
       WHERE m.id = ${modelId} AND jsonb_typeof(m.meta) = 'object'
       FOR UPDATE OF m
@@ -150,6 +169,8 @@ export async function resolveRestrictedNsfwVerdict({
       ruling === 'keep' && (row.minor || row.poi)
         ? { source: verdict.source, at: verdict.at, restriction: verdict.restriction }
         : null;
+    // A dormant Keep has not ruled on the rating yet: the verdict waits with its lead.
+    const spendsHeld = ruling !== 'rateNsfw' && !dormant && leadSpendsHeldVerdict(row, verdict);
 
     const record: RestrictedNsfwVerdictRulingRecord = {
       at: new Date().toISOString(),
@@ -170,6 +191,8 @@ export async function resolveRestrictedNsfwVerdict({
       // The owner's flag cleared a scan's rating and kept it to restore when the flag lifts: a Keep or
       // Dismiss has ruled on that rating, so a later lift must not bring it back.
       ...(ruling === 'rateNsfw' ? [] : ['ownerFlagOverride']),
+      // Meta only: the ruling's own rating and locks above are what the model keeps.
+      ...(spendsHeld ? ['comFaceHeldVerdict'] : []),
     ];
     // The override goes, but the minor-hash rollback still has to know the owner declared the flag.
     const dropsOverride = ruling !== 'rateNsfw' && !!row.ownerFlagOverride;
