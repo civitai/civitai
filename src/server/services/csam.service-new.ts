@@ -631,10 +631,10 @@ export async function processCsamReport(runStart: CsamReportProps) {
   }
 }
 
-/** Filed with each feedback page capture in an image report, whoever the report's subject is. */
 export const VIEWED_COPY_UNCONFIRMED_FILE_NOTE =
   "Civitai has a record of a reviewer viewing this item but can't confirm that the file sent is identical to the copy they viewed, so it is reported as not viewed.";
 
+/** Filed with each feedback page capture in an image report, whoever the report's subject is. */
 export const FEEDBACK_CAPTURE_FILE_NOTE =
   'Page capture submitted by a reporter: this file is a screenshot of a Civitai page that a user attached to a feedback report sent to Civitai. It may show content posted by an account other than the one who submitted it.';
 

@@ -394,10 +394,10 @@ describe('image report: fileViewedByEsp per file', () => {
 });
 
 // The report is filed an hour before the send, by user 10.
-describe('image report: a file stored as an absolute URL', () => {
-  const absolute = (id: number) => ({
+describe('image report: file view flags', () => {
+  const aligned = (id: number) => ({
     ...imageRow(id),
-    // The read refuses hosts outside its allowlist, so the fixture uses the site's own image host.
+    // A fixture the original read accepts.
     url: `https://image.civitai.com/fixture/${id}.png`,
   });
   const supplementalReport = (ids: number[]) =>
@@ -414,13 +414,13 @@ describe('image report: a file stored as an absolute URL', () => {
     "Civitai has a record of a reviewer viewing this item but can't confirm that the file sent is identical to the copy they viewed, so it is reported as not viewed.";
 
   beforeEach(() => {
-    dbMock.dbRead.image.findMany.mockResolvedValue([absolute(501), imageRow(502)]);
+    dbMock.dbRead.image.findMany.mockResolvedValue([aligned(501), imageRow(502)]);
     generatedFile
       .mockReset()
-      .mockResolvedValue(new File([stored], 'absolute.png', { type: 'image/png' }));
+      .mockResolvedValue(new File([stored], 'fixture.png', { type: 'image/png' }));
   });
 
-  it('is sent and stored as not viewed with a view record, saying so once', async () => {
+  it('is sent and stored as not viewed, with the sentence, when a record exists', async () => {
     await view(501);
     await view(502);
 
@@ -446,14 +446,14 @@ describe('image report: a file stored as an absolute URL', () => {
     expect(JSON.stringify(parsed)).toContain(JSON.stringify(NOTE).slice(1, -1));
   });
 
-  it('is sent as not viewed without a view record, with no sentence', async () => {
+  it('is sent as not viewed, without the sentence, when no record exists', async () => {
     await processCsamReport(imageReport([501, 502]));
 
     expect(viewedByName()).toEqual({ 'upload-501.png': false, 'upload-502.png': false });
     expect(note('upload-501.png')).toEqual([]);
   });
 
-  it('sends a supplemental whose file has a view record, as not viewed', async () => {
+  it('sends a supplemental whose file has a record, as not viewed', async () => {
     await view(501);
     await view(502);
 
@@ -464,7 +464,7 @@ describe('image report: a file stored as an absolute URL', () => {
     expect(note('upload-501.png')).toEqual([NOTE]);
   });
 
-  it('still refuses a supplemental whose file has no view record', async () => {
+  it('still refuses a supplemental whose file has no record', async () => {
     await view(502);
 
     await processCsamReport(supplementalReport([501, 502]));
@@ -473,7 +473,7 @@ describe('image report: a file stored as an absolute URL', () => {
     expect(lines('supplemental-unviewed')).toHaveLength(1);
   });
 
-  it('leaves a stored-key file with a view record viewed, in a supplemental too', async () => {
+  it('leaves the control file viewed, in a supplemental too', async () => {
     dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501), imageRow(502)]);
     await view(501);
     await view(502);
