@@ -519,6 +519,11 @@ type Listings interface {
 	Generations
 	// Count is how many listings gen holds. The consumer holds a snapshot that ends with none.
 	Count(ctx context.Context, gen int64) (int, error)
+	// StaleCount is how many listings of gen are marked stale (ChangeStale): rows kept as they
+	// were when the serving generation got an upsert of theirs it could not use, so they may lack a
+	// change that upsert carried. The read API answers not-ready while the serving generation holds
+	// any.
+	StaleCount(ctx context.Context, gen int64) (int, error)
 	// Get is one listing of gen, with its media in stream order; false when gen does not hold it.
 	Get(ctx context.Context, gen int64, urn string) (Listing, bool, error)
 	// Keys is every listing of gen with its columns only (no Body, no Media), for the grid's filter
@@ -581,6 +586,17 @@ func (m *ListingsMemory) Count(_ context.Context, gen int64) (int, error) {
 		return 0, ErrNoGeneration
 	}
 	return len(g.rows), nil
+}
+
+// StaleCount implements Listings.
+func (m *ListingsMemory) StaleCount(_ context.Context, gen int64) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.gens[gen]
+	if !ok {
+		return 0, ErrNoGeneration
+	}
+	return len(g.stale), nil
 }
 
 // Get implements Listings.

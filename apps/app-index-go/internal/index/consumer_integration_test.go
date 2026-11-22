@@ -64,7 +64,10 @@ func TestIntegrationStaleRowSurvivesARestart(t *testing.T) {
 	if c2.cursor != "c1" {
 		t.Fatalf("resumed from %q, want c1", c2.cursor)
 	}
+	// The restarted consumer reads the mark from the store before it applies anything.
+	h2.staleGaugeIs(t, 1)
 	c2.delListing(t, "alpha", "c2")
 	h2.servingCursorIs(t, "c2")
 	wantListingsStatus(t, reopened, "after a delete of the stale listing", http.StatusOK)
+	h2.staleGaugeIs(t, 0)
 }

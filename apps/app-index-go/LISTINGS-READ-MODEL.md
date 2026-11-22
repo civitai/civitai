@@ -492,8 +492,13 @@ reverse order: in particular **roll app-index-go back before the adapter**. An a
 below the layout the serving index requires (say, slice 6's `subListings` under a layout 4 index)
 sends bodies that index cannot use. A serving listings generation keeps its last good row for such
 an upsert (counted `invalid`; `Consumer.KeepInvalidWhileServing`) rather than deleting it, so the
-API keeps serving the last good listings, but they go stale until the index is rolled back too and
-rebuilds at the older layout.
+read model is never emptied one delete at a time. The kept row is marked stale (a `stale` column of
+the row, so a restart keeps it), since it may lack what the upsert changed: a stricter rating, a
+rejected sub-listing, a banned author. While the serving generation holds any stale row, every
+listing request is answered 503 `not_ready` (counted `app_index_listings_requests_total{outcome="stale"}`;
+the count is `app_index_listings_stale_rows`), and the site reads the database (Fallback). A later
+valid upsert or a delete of that listing ends its mark; the index rolled back too, rebuilding at the
+older layout, ends them all.
 
 1. The adapter publishes `listingContentRating` (slice 3) and the listing `id` and detail fields
    (slice 3b), so the read model holds every listing at layout 3. This must be deployed before an

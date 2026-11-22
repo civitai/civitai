@@ -158,9 +158,9 @@ func runListingScenarios(t *testing.T, newStore func(t *testing.T) store.Listing
 }
 
 // An adapter rolled back below this layout sends bodies the serving generation cannot use. Each
-// such upsert keeps the stored row (the cursor still advances, counted invalid), so the API keeps
-// serving the last good listings rather than emptying one delete at a time. A valid upsert and a
-// delete still apply.
+// such upsert keeps the stored row (the cursor still advances, counted invalid) rather than
+// emptying the generation one delete at a time; the row is marked stale, and the API fails closed
+// meanwhile (testInvalidWhileServingFailsClosed). A valid upsert and a delete still apply.
 func testInvalidWhileServingKeepsTheRow(t *testing.T, st store.Listings) {
 	h := startListings(t, st)
 	c := h.reg.next(t)

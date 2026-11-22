@@ -246,20 +246,9 @@ func cardTB(id string) int {
 	return 0
 }
 
-// Rank mirrors listAvailableListings' keyset page over the listings keys holds, for v:
-//
-//	WHERE <Filter> AND (no cursor OR (sort_key, tb, id) after (cursor_key, cursor_tb, cursor_id))
-//	ORDER BY sort_key DIR, tb ASC, id DIR LIMIT limit + 1
-//
-// where tb is 0 for a listing and 1 for a sub-listing (cardTB), and only with q.SubListings are
-// sub-listings rows at all (each admitted listing's items that SubListingAdmits admits, keyed by
-// subListingSortKey). Without them every row's tb is 0, which is the parents-only statement: a
-// cursor on a sub-listing (the flag turned off between two pages) then resumes strictly after its
-// key, as that statement's parentKeyset does. Keys and ids compare as bytes; the database compares
-// them under its collation, which can only differ for the name sort (ids are `apl_` or `asl_` and a
-// ULID, the same order either way). Listed in LISTINGS-READ-MODEL.md, "Sort and paging", "Known
-// divergences". top-rated uses the cursor's pinned mean when it has one, else GlobalMean over every
-// listing held (not only those v may see, as the site's mean is not per viewer).
+// Rank mirrors listAvailableListings' keyset page over the listings keys holds, for v. Keys and
+// ids compare as bytes, the database by its collation: see LISTINGS-READ-MODEL.md, "Sort and
+// paging" (Known divergences).
 func Rank(keys []store.Listing, q ListQuery, v Viewer) Page {
 	c := decodeCursor(q.Cursor)
 	var mean float64

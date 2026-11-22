@@ -1,6 +1,7 @@
 package index
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/civitai/civitai/apps/app-index-go/internal/api"
 	"github.com/civitai/civitai/apps/app-index-go/internal/listingread"
@@ -38,6 +40,15 @@ func listingsStatus(t *testing.T, st store.Listings) (int, string) {
 	defer func() { _ = res.Body.Close() }()
 	b, _ := io.ReadAll(res.Body)
 	return res.StatusCode, string(b)
+}
+
+// staleGaugeIs waits until the consumer's stale row gauge reads want: it is set after the change's
+// commit, so the stored cursor can be seen before it.
+func (h *listingHarness) staleGaugeIs(t *testing.T, want float64) {
+	t.Helper()
+	eventually(t, fmt.Sprintf("app_index_listings_stale_rows %v", want), func() bool {
+		return testutil.ToFloat64(h.m.Stale) == want
+	})
 }
 
 func wantListingsStatus(t *testing.T, st store.Listings, what string, want int) {
@@ -78,17 +89,24 @@ func testInvalidWhileServingFailsClosed(t *testing.T, st store.Listings) {
 	if l, ok, err := st.Get(t.Context(), gen, "urn:apps.civitai.com:store-listing/alpha"); err != nil || !ok || l.Name != "Alpha" {
 		t.Fatalf("alpha after an invalid upsert: %+v %v %v, want the last good row kept", l, ok, err)
 	}
+	if n, err := st.StaleCount(t.Context(), gen); err != nil || n != 1 {
+		t.Fatalf("stale count = %d %v, want 1", n, err)
+	}
+	h.staleGaugeIs(t, 1)
 
 	c.send(t, "upsert", map[string]any{"entity": listingEntity("alpha", "Alpha Two"), "cursor": "c2"})
 	h.servingCursorIs(t, "c2")
 	wantListingsStatus(t, st, "after a valid upsert of the stale listing", http.StatusOK)
+	h.staleGaugeIs(t, 0)
 
 	c.invalidListing(t, "beta", "c3")
 	h.servingCursorIs(t, "c3")
 	wantListingsStatus(t, st, "with beta stale", http.StatusServiceUnavailable)
+	h.staleGaugeIs(t, 1)
 	c.delListing(t, "beta", "c4")
 	h.servingCursorIs(t, "c4")
 	wantListingsStatus(t, st, "after a delete of the stale listing", http.StatusOK)
+	h.staleGaugeIs(t, 0)
 	if n := h.count(t, gen); n != 1 {
 		t.Fatalf("count = %d, want alpha only", n)
 	}
