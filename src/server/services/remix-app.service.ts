@@ -132,12 +132,10 @@ export function buildRemixAppRun({
 
 /** An upscale input at the size the host knows: the source row's, or the run's recorded output's. */
 function hostSized(url: string, image: RemixSourceImage, log: readonly RemixLogEntry[]) {
-  if (url === getRemixSourceUrl(image))
-    return {
-      url,
-      width: image.width || REMIX_FALLBACK_DIMENSIONS.width,
-      height: image.height || REMIX_FALLBACK_DIMENSIONS.height,
-    };
+  if (url === getRemixSourceUrl(image)) {
+    if (!image.width || !image.height) throw unsizedUpscale('user');
+    return { url, width: image.width, height: image.height };
+  }
   const made = log
     .flatMap((entry) => (entry.type === 'workflow' ? entry.result.images : []))
     .find((output) => output.url === url);
@@ -146,6 +144,28 @@ function hostSized(url: string, image: RemixSourceImage, log: readonly RemixLogE
     code: 'BAD_REQUEST',
     message: 'This upscale names an image of unknown size',
   });
+}
+
+/**
+ * A built-in app's upscale input, at the size it names. The upscaler prices by that size, so an
+ * input of unknown size, or the source when its row has none, is refused rather than guessed.
+ */
+function builtInSized({ url, width, height }: RemixImage, image: RemixSourceImage) {
+  const sourceUnsized = url === getRemixSourceUrl(image) && !(image.width && image.height);
+  if (!width || !height || sourceUnsized) throw unsizedUpscale('built-in');
+  return { url, width, height };
+}
+
+const REMIX_UPSCALE_UNAVAILABLE = 'Upscale unavailable for this image';
+
+function unsizedUpscale(app: 'built-in' | 'user') {
+  logToAxiom({
+    name: 'remix-app-run',
+    type: 'warning',
+    message: 'Refused an upscale of an image of unknown size',
+    payload: { app },
+  });
+  return new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_UPSCALE_UNAVAILABLE });
 }
 
 /**
@@ -180,7 +200,9 @@ export function buildRuntimeRequest({
   });
 
   if (request.kind === 'upscale') {
-    const input = author ? hostSized(request.image.url, image, log) : sized(request.image);
+    const input = author
+      ? hostSized(request.image.url, image, log)
+      : builtInSized(request.image, image);
     return {
       tier,
       // The upscaler prices by the output size, so by the input's.

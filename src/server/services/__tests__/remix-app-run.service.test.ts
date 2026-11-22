@@ -413,10 +413,12 @@ import {
 } from '~/server/services/remix-app-registry.service';
 import { REMIX_SYSTEM_ACTOR } from '~/shared/remix-apps/row.schema';
 import {
+  buildRuntimeRequest,
   listRemixApps,
   quoteRemixApps,
   type RemixAppCaller,
 } from '~/server/services/remix-app.service';
+import { getRemixSourceUrl } from '~/shared/utils/remix-tier';
 import { RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
 import {
   auditPromptServer,
@@ -474,10 +476,22 @@ const whatIfs = () =>
   h.submitWorkflow.mock.calls.filter(([args]) => (args as { query?: object }).query);
 
 /** Lands a workflow's outputs in the shape the orchestrator returns for its graph. */
-function finish(workflowId: string, urls: string[], nsfwLevel: Record<string, string> = {}) {
+function finish(
+  workflowId: string,
+  urls: string[],
+  nsfwLevel: Record<string, string> = {},
+  unsized: string[] = []
+) {
   const workflow = h.workflows.find((w) => w.id === workflowId)!;
   workflow.status = 'succeeded';
-  const blobs = urls.map((url) => ({ url, available: true, nsfwLevel: nsfwLevel[url] }));
+  // An imageGen step's blobs carry their size; a comfy step's (the upscaler's) never do.
+  const sized = !workflow.tags.includes('img2img:upscale');
+  const blobs = urls.map((url) => ({
+    url,
+    available: true,
+    nsfwLevel: nsfwLevel[url],
+    ...(sized && !unsized.includes(url) ? { width: 1024, height: 1536 } : {}),
+  }));
   workflow.steps = [
     // img2img:upscale runs as a comfy step, whose output is `blobs`, not `images`.
     workflow.tags.includes('img2img:upscale')
@@ -1177,6 +1191,30 @@ describe('Pick of four', () => {
     expect(JSON.stringify(h.submitWorkflow.mock.calls.at(-1))).toContain('"width":64,"height":48');
   });
 
+  it('gives an unsized take no upscale price, and refuses its upscale before any what-if or submit', async () => {
+    addImage(SOURCE_ID);
+    const { runId } = await startRemixRun({
+      slug: 'pick-of-four',
+      imageId: SOURCE_ID,
+      nonce: 'nonce-p4-unsized',
+      quote: 30,
+      caller: caller(),
+    });
+    finish(submits()[0].id, takes, {}, [takes[2]]);
+    await advanceRemixRun({ runId, caller: caller() });
+    const state = await advanceRemixRun({ runId, answers: [2], caller: caller() });
+    expect(state).toHaveProperty('prices', { keep: 0 });
+    const priced = whatIfs().length;
+    await expect(
+      advanceRemixRun({ runId, answers: [2, 'upscale'], quote: h.upscalePrice, caller: caller() })
+    ).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: 'Upscale unavailable for this image',
+    });
+    expect(whatIfs()).toHaveLength(priced);
+    expect(submits()).toHaveLength(1);
+  });
+
   it('upscales the pick at the price its button showed, with the source still proven', async () => {
     const { runId } = await atFinish('nonce-p4-upscale');
 
@@ -1318,6 +1356,72 @@ describe('Pick of four', () => {
     );
     expect(h.headlessPost).not.toHaveBeenCalled();
     expect(whatIfs()).toHaveLength(priced);
+  });
+});
+
+describe("an upscale's input size", () => {
+  const take = blob('take');
+  const row = (size: { width?: number; height?: number }) =>
+    ({
+      id: SOURCE_ID,
+      url: 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c07',
+      type: 'image',
+      nsfwLevel: 1,
+      ingestion: 'Scanned',
+      blockedFor: null,
+      minor: false,
+      poi: false,
+      ...size,
+    } as Parameters<typeof buildRuntimeRequest>[0]['image']);
+  const sizedRow = row({ width: 1200, height: 800 });
+  const unsizedRow = row({});
+  const build = (
+    image: { url: string; width?: number; height?: number },
+    source = sizedRow,
+    author?: { userId: number }
+  ) =>
+    buildRuntimeRequest({
+      app: {
+        name: 'Pick of four',
+        engine: { safe: { ecosystem: 'NanoBanana', versionId: NANO_V2_LITE } },
+      },
+      image: source,
+      request: { kind: 'upscale', image, scale: 2 },
+      viewer: { isGreen: false, showNsfw: true },
+      author,
+      log: [],
+    });
+  const refused = { code: 'PRECONDITION_FAILED', message: 'Upscale unavailable for this image' };
+
+  it("a sized take's graph input is byte for byte what it was", () => {
+    expect(JSON.stringify(build({ url: take, width: 1024, height: 1536 }).graphInput)).toBe(
+      `{"workflow":"img2img:upscale","images":[{"url":"${take}","width":1024,"height":1536}],"upscaleSelection":{"type":"multiplier","multiplier":2}}`
+    );
+  });
+
+  it.each([
+    ['no size', {}],
+    ['no width', { height: 1536 }],
+    ['no height', { width: 1024 }],
+    ['a zero size', { width: 0, height: 0 }],
+  ])('a built-in take with %s is refused, never priced at 512x512', (_, size) => {
+    expect(() => build({ url: take, ...size })).toThrow(expect.objectContaining(refused));
+  });
+
+  it('the source of a row with no size is refused, whatever size the app names', () => {
+    const url = getRemixSourceUrl(unsizedRow);
+    expect(() => build({ url, width: 512, height: 512 }, unsizedRow)).toThrow(
+      expect.objectContaining(refused)
+    );
+    expect(() => build({ url, width: 512, height: 512 }, unsizedRow, { userId: 5 })).toThrow(
+      expect.objectContaining(refused)
+    );
+    // POSITIVE CONTROL: the same upscale of a sized row's source is built.
+    expect(
+      build({ url: getRemixSourceUrl(sizedRow), width: 1200, height: 800 }).graphInput
+    ).toMatchObject({
+      images: [{ width: 1200, height: 800 }],
+    });
   });
 });
 
@@ -1875,7 +1979,6 @@ describe('a user app', () => {
         const priced = sizesOf(upscaleWhatIfs().at(-1));
         await run(['up']);
         upscaled('1200x800');
-        // The option was priced at what the tap then ran.
         expect(sizesOf(h.submitWorkflow.mock.calls.at(-1))).toEqual(expect.arrayContaining(priced));
       });
 

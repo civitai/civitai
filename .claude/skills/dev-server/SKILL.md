@@ -697,13 +697,14 @@ node .claude/skills/dev-server/cli.mjs wt new <name> <branch>                   
 node .claude/skills/dev-server/cli.mjs wt new <name> <branch> --base origin/feat/x  # a feature integration branch
 ```
 
-It fetches the base, runs `git worktree add <worktree-root>/<name> -b <branch> --no-track <base>`
+It fetches the base, runs `git worktree add <worktree-root>/<name> -b <branch> --no-track refs/remotes/<base>`
 (`<worktree-root>` is `<repos-root>/worktrees`, or `WORKTREE_ROOT` from the skill `.env` / process env when set;
 it must be absolute, and trees already under another root keep working with `wt stale`, `wt rm` and the daemon),
 initialises `event-engine-common`, writes `.envrc` when the primary has one, copies every `.env`
 file (root and per-app, plus the skills' credentials), runs `pnpm install` (`--no-install` skips it),
 and fails unless `git status -sb` prints `## <branch>` alone. It refuses an
-existing branch or path. Don't hand-roll it, and don't use the `EnterWorktree` tool (it creates outside
+existing branch or path, and a `<branch>` starting `origin/` or `refs/` (it is the new
+branch's name, not the base: the base is `--base`). Don't hand-roll it, and don't use the `EnterWorktree` tool (it creates outside
 the repos root, tracking `origin/main`). Why each flag matters: `docs/dev/worktrees.md`.
 
 Remove one when its PR merges with `wt stale` / `wt rm` (below).
