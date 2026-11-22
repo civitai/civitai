@@ -77,6 +77,8 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   AppOwnershipEvent: { subject: ['actorUserId'], others: ['targetUserId'] },
   AppOwnershipTransfer: { subject: ['fromUserId', 'toUserId'] },
   AppBlockPublishRequest: { subject: ['submittedByUserId'], staff: ['reviewedByUserId'] },
+  // Which of the user's App Assistant chats worked on which of their apps.
+  AppAssistantSessionLink: { subject: ['userId'] },
   AppListing: { subject: ['userId'] },
   PostIntentManifest: { subject: ['userId'] },
   AppListingReview: { subject: ['userId'] },

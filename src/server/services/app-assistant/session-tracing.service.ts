@@ -114,8 +114,8 @@ function logFailure(what: 'link' | 'event', report: AssistantTurnReport, err: un
     name: `app-assistant.tracing.${what}-failed`,
     message: `App Assistant tracing ${what} write skipped`,
     userId: report.userId,
-    runId: report.runId,
     error: safeError(err),
+    payload: { runId: report.runId },
   });
 }
 

@@ -46,7 +46,7 @@ const TURN: TurnEnded = {
   status: 'done',
   buzz: 23,
   startedAt: new Date('2026-11-20T10:00:00.000Z'),
-  endedAt: new Date('2026-11-20T10:00:41.500Z'),
+  endedAt: new Date('2026-11-20T10:00:04.500Z'),
   messages: CURRENT,
   earlier: EARLIER,
 };
@@ -74,9 +74,9 @@ describe('turnReportOf', () => {
       status: 'done',
       buzz: 23,
       toolCalls: { use_open_app: 1, read_docs: 3, sandbox__write_file: 1 },
-      durationMs: 41_500,
+      durationMs: 4_500,
       startedAt: '2026-11-20T10:00:00.000Z',
-      endedAt: '2026-11-20T10:00:41.500Z',
+      endedAt: '2026-11-20T10:00:04.500Z',
     });
   });
 

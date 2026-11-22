@@ -1,6 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as FliptClient from '~/server/flipt/client';
 
@@ -8,25 +9,23 @@ import type * as FliptClient from '~/server/flipt/client';
  * App Assistant's server runner reports each finished turn: `/api/internal/app-assistant/turn`.
  *
  * The route runs with the REAL grant verification and the REAL `recordAssistantTurn`; mocked are
- * the process boundaries it writes through (Flipt, Postgres's raw upsert, ClickHouse's insert).
+ * the process boundaries it writes through (Flipt, ClickHouse's insert; Postgres's raw upsert is the
+ * canonical db mock's `dbWrite.$executeRaw`).
  * What is pinned here: who may report, that the user and chat come from the grant and never the
  * body, that the flag off writes nothing, and that a failing write never fails the report.
  */
 
 const m = vi.hoisted(() => ({
   tracingOn: { value: true },
-  executeRaw: vi.fn<(strings: TemplateStringsArray, ...values: unknown[]) => Promise<number>>(),
   insert: vi.fn<(args: { table: string; values: unknown[]; format: string }) => Promise<void>>(),
 }));
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(), safeError: (e: unknown) => e }));
 // Flipt is a process boundary: only the tracing flag is answered here; every other key is off.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(async (flag: string) => flag === 'app-assistant-tracing' && m.tracingOn.value),
 }));
-vi.mock('~/server/db/client', () => ({ dbWrite: { $executeRaw: m.executeRaw } }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { insert: m.insert } }));
 
 const { signRunGrant } = await import('~/server/services/app-assistant/assistant-runner-tokens');
@@ -88,14 +87,15 @@ const report = (grant: string, overrides: Record<string, unknown> = {}) => ({
   status: 'done',
   buzz: 17.5,
   toolCalls: { read_docs: 2, sandbox__write_file: 9 },
-  durationMs: 61_250,
+  durationMs: 6_125,
   startedAt: '2026-11-21T08:00:00.000Z',
-  endedAt: '2026-11-21T08:01:01.250Z',
+  endedAt: '2026-11-21T08:00:06.125Z',
   ...overrides,
 });
 
 /** The values the upsert's tagged template was given, in order. */
-const upsertValues = () => m.executeRaw.mock.calls[0]!.slice(1);
+const executeRaw = () => dbMock.dbWrite.$executeRaw;
+const upsertValues = () => executeRaw().mock.calls[0]!.slice(1);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -105,7 +105,7 @@ beforeEach(() => {
     ASSISTANT_RUNNER_SIGNING_KEY: SIGNING_KEY,
     ASSISTANT_RUNNER_GRANT_TTL_SECONDS: 7800,
   });
-  m.executeRaw.mockResolvedValue(1);
+  executeRaw().mockResolvedValue(1);
   m.insert.mockResolvedValue(undefined);
 });
 
@@ -117,7 +117,7 @@ describe('POST /api/internal/app-assistant/turn', () => {
       status: 401,
       json: { code: 'invalid_grant' },
     });
-    expect(m.executeRaw).not.toHaveBeenCalled();
+    expect(executeRaw()).not.toHaveBeenCalled();
     expect(m.insert).not.toHaveBeenCalled();
   });
 
@@ -126,7 +126,7 @@ describe('POST /api/internal/app-assistant/turn', () => {
       status: 403,
       json: { code: 'refused' },
     });
-    expect(m.executeRaw).not.toHaveBeenCalled();
+    expect(executeRaw()).not.toHaveBeenCalled();
     expect(m.insert).not.toHaveBeenCalled();
   });
 
@@ -144,7 +144,7 @@ describe('POST /api/internal/app-assistant/turn', () => {
       status: 200,
       json: { tracing: false, linked: false, event: false },
     });
-    expect(m.executeRaw).not.toHaveBeenCalled();
+    expect(executeRaw()).not.toHaveBeenCalled();
     expect(m.insert).not.toHaveBeenCalled();
   });
 
@@ -153,13 +153,13 @@ describe('POST /api/internal/app-assistant/turn', () => {
       status: 200,
       json: { tracing: true, linked: true, event: true },
     });
-    expect(m.executeRaw).toHaveBeenCalledTimes(1);
+    expect(executeRaw()).toHaveBeenCalledTimes(1);
     expect(upsertValues()).toEqual([
       USER,
       CONVERSATION,
       APP,
       new Date('2026-11-21T08:00:00.000Z'),
-      new Date('2026-11-21T08:01:01.250Z'),
+      new Date('2026-11-21T08:00:06.125Z'),
       'model-x9',
       17.5,
       'run-5530',
@@ -171,7 +171,7 @@ describe('POST /api/internal/app-assistant/turn', () => {
       format: 'JSONEachRow',
       values: [
         {
-          time: '2026-11-21 08:01:01.250',
+          time: '2026-11-21 08:00:06.125',
           startedAt: '2026-11-21 08:00:00.000',
           userId: USER,
           conversationId: CONVERSATION,
@@ -181,7 +181,7 @@ describe('POST /api/internal/app-assistant/turn', () => {
           model: 'model-x9',
           status: 'done',
           buzz: 17.5,
-          durationMs: 61_250,
+          durationMs: 6_125,
           toolCallCount: 11,
           toolCalls: { read_docs: 2, sandbox__write_file: 9 },
         },
@@ -203,12 +203,12 @@ describe('POST /api/internal/app-assistant/turn', () => {
       status: 200,
       json: { tracing: true, linked: false, event: true },
     });
-    expect(m.executeRaw).not.toHaveBeenCalled();
+    expect(executeRaw()).not.toHaveBeenCalled();
     expect(m.insert.mock.calls[0]![0].values[0]).toMatchObject({ appSlug: '' });
   });
 
   it('a link write that fails (the table not applied yet) and a ClickHouse insert that fails still answer 200', async () => {
-    m.executeRaw.mockRejectedValueOnce(
+    executeRaw().mockRejectedValueOnce(
       new Error('relation "app_assistant_session_links" does not exist')
     );
     m.insert.mockRejectedValueOnce(new Error('Table default.appAssistantTurns does not exist'));
