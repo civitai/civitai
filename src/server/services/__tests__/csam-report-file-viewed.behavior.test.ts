@@ -6,6 +6,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CybertiplineTools from '@civitai/cybertipline-tools';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { Parser } from 'xml2js';
+import { buildSubmitFileDetails } from '@civitai/cybertipline-tools';
 
 /**
  * `fileViewedByEsp` per file, from the `reportMedia:*` rows written before the CyberTip is opened.
@@ -392,6 +394,97 @@ describe('image report: fileViewedByEsp per file', () => {
 });
 
 // The report is filed an hour before the send, by user 10.
+describe('image report: a file stored as an absolute URL', () => {
+  const absolute = (id: number) => ({
+    ...imageRow(id),
+    // The read refuses hosts outside its allowlist, so the fixture uses the site's own image host.
+    url: `https://image.civitai.com/fixture/${id}.png`,
+  });
+  const supplementalReport = (ids: number[]) =>
+    ({
+      ...imageReport(ids),
+      details: {
+        supplemental: { priorCsamReportId: 7, priorReportNumbers: [900], unreviewedImageIds: [] },
+      },
+    } as unknown as CsamReportProps);
+  const note = (name: string) =>
+    submitFileDetails.mock.calls.find(([d]) => d.originalFileName === name)?.[0].additionalInfo ??
+    [];
+  const NOTE =
+    "Civitai has a record of a reviewer viewing this item but can't confirm that the file sent is identical to the copy they viewed, so it is reported as not viewed.";
+
+  beforeEach(() => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([absolute(501), imageRow(502)]);
+    generatedFile
+      .mockReset()
+      .mockResolvedValue(new File([stored], 'absolute.png', { type: 'image/png' }));
+  });
+
+  it('is sent and stored as not viewed with a view record, saying so once', async () => {
+    await view(501);
+    await view(502);
+
+    await processCsamReport(imageReport([501, 502]));
+
+    expect(viewedByName()).toEqual({ 'upload-501.png': false, 'upload-502.png': true });
+    const images = sentImages() as { id: number; viewedByEsp?: boolean; viewRendition?: string }[];
+    expect(
+      images.map(({ id, viewedByEsp, viewRendition }) => ({ id, viewedByEsp, viewRendition }))
+    ).toEqual([
+      { id: 501, viewedByEsp: false, viewRendition: undefined },
+      { id: 502, viewedByEsp: true, viewRendition: 'original' },
+    ]);
+    expect(note('upload-501.png')).toEqual([NOTE]);
+    expect(note('upload-502.png')).toEqual([]);
+    // The XML sent reads back as the sentence itself, escaped once.
+    const sent = submitFileDetails.mock.calls.find(
+      ([d]) => d.originalFileName === 'upload-501.png'
+    )![0];
+    const xml = buildSubmitFileDetails(sent);
+    expect(xml).not.toContain('&amp;apos;');
+    const parsed = await new Parser({ explicitArray: false }).parseStringPromise(xml);
+    expect(JSON.stringify(parsed)).toContain(JSON.stringify(NOTE).slice(1, -1));
+  });
+
+  it('is sent as not viewed without a view record, with no sentence', async () => {
+    await processCsamReport(imageReport([501, 502]));
+
+    expect(viewedByName()).toEqual({ 'upload-501.png': false, 'upload-502.png': false });
+    expect(note('upload-501.png')).toEqual([]);
+  });
+
+  it('sends a supplemental whose file has a view record, as not viewed', async () => {
+    await view(501);
+    await view(502);
+
+    await processCsamReport(supplementalReport([501, 502]));
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    expect(viewedByName()).toEqual({ 'upload-501.png': false, 'upload-502.png': true });
+    expect(note('upload-501.png')).toEqual([NOTE]);
+  });
+
+  it('still refuses a supplemental whose file has no view record', async () => {
+    await view(502);
+
+    await processCsamReport(supplementalReport([501, 502]));
+
+    expect(submitReport).not.toHaveBeenCalled();
+    expect(lines('supplemental-unviewed')).toHaveLength(1);
+  });
+
+  it('leaves a stored-key file with a view record viewed, in a supplemental too', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501), imageRow(502)]);
+    await view(501);
+    await view(502);
+
+    await processCsamReport(supplementalReport([501, 502]));
+
+    expect(viewedByName()).toEqual({ 'upload-501.png': true, 'upload-502.png': true });
+    expect(note('upload-501.png')).toEqual([]);
+  });
+});
+
 describe('image report: a view of the CDN copy', () => {
   const cdn = 'reportMedia:select:cdn-450';
 
