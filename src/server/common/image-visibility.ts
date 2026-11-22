@@ -13,6 +13,7 @@ import { Availability, ImageIngestionStatus } from '~/shared/utils/prisma/enums'
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
+import { LIFT_WHILE_OWNER_DELETED } from '@civitai/shared/account-deletion-grace';
 import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
 import {
   minorContentNotRestrictedWhere,
@@ -415,6 +416,42 @@ export const withoutGraceMarkersSql = (metadata: Prisma.Sql = Prisma.sql`"metada
   Prisma.sql`(CASE WHEN jsonb_typeof(${metadata}) = 'object'
     THEN (${metadata}) - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text
     ELSE ${metadata} END)`;
+
+/** The image's owner has deleted their account (in its grace period, or not yet purged). */
+export const ownerDeletedSql = Prisma.sql`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "Image"."userId" AND u."deletedAt" IS NOT NULL)`;
+
+// A lift (approved appeal, unblock) while the owner is deleted keeps the row blocked and records the
+// lifted state for an account restore: LIFT_WHILE_OWNER_DELETED. Twin: OWNER_DELETED and the LIFTED_*
+// fragments in apps/moderator/src/lib/server/image-moderation.service.ts.
+const { keeps: KEPT, records: RECORDED } = LIFT_WHILE_OWNER_DELETED;
+
+/** `needsReview` for a lifted row: none while it stays blocked, else the review a lift keeps. */
+export const liftedNeedsReviewSql = Prisma.sql`(CASE WHEN ${ownerDeletedSql} THEN NULL ELSE ${reviewKeptWhenLiftedSql} END)`;
+/** `blockedFor` for a lifted row. */
+export const liftedBlockedForSql = Prisma.sql`(CASE WHEN ${ownerDeletedSql} THEN ${KEPT.blockedFor}::text END)`;
+/** `ingestion` for a lifted row. */
+export const liftedIngestionSql = Prisma.sql`(CASE WHEN ${ownerDeletedSql} THEN ${KEPT.ingestion} ELSE ${RECORDED.ingestion} END)::"ImageIngestionStatus"`;
+/** `nsfwLevel` for a lifted row: Blocked while it stays blocked, as the grace block sets it. */
+export const liftedNsfwLevelSql = Prisma.sql`(CASE WHEN ${ownerDeletedSql} THEN ${KEPT.nsfwLevel}::int ELSE "nsfwLevel" END)`;
+/** For RETURNING: the lifted row stayed blocked because its owner is deleted. */
+export const liftKeptBlockedSql = Prisma.sql`(ingestion = ${KEPT.ingestion}::"ImageIngestionStatus")`;
+
+/** `metadata` for a lifted row: the breadcrumbs off, or while the owner is deleted, recording the lift. */
+export function liftedUnderGraceSql(stripped: Prisma.Sql) {
+  return Prisma.sql`(CASE WHEN ${ownerDeletedSql}
+  THEN COALESCE(${stripped}, '{}'::jsonb) || jsonb_build_object(
+    ${PRIOR_INGESTION_KEY}::text, ${RECORDED.ingestion}::text, ${PRIOR_BLOCKED_FOR_KEY}::text, ${RECORDED.blockedFor}::text,
+    ${PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLiftedSql})
+  ELSE ${stripped} END)`;
+}
+
+/** `metadata` for an approved appeal. */
+export const liftedMetadataSql = liftedUnderGraceSql(withoutGraceMarkersSql());
+
+/** `metadata` for an unblock: also drops the rule keys; while the owner is deleted, `liftedUnderGraceSql` records the lift for the account restore. */
+export const unblockedMetadataSql = liftedUnderGraceSql(
+  Prisma.sql`"metadata" - 'ruleId' - 'ruleReason' - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text`
+);
 
 export const ingestionAfterScanErrorSql = () => Prisma.sql`(CASE
   WHEN "ingestion" = 'NotFound'::"ImageIngestionStatus" OR ${graceBlockedSql} THEN "ingestion"

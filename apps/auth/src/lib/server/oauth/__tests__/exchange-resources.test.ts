@@ -70,10 +70,21 @@ describe('parseExchangeResources', () => {
           introspectors: ['origin-1'],
           services: [],
           serviceSubjects: [],
+          narrowsBlockClaims: false,
         },
       ],
       serviceErrors: [],
     });
+  });
+
+  it('reads narrowsBlockClaims: false unless declared, and true only when declared true', () => {
+    const resources = (p: ReturnType<typeof parse>) =>
+      (p as { resources: { narrowsBlockClaims: boolean }[] }).resources;
+    expect(resources(parse(entry()))[0].narrowsBlockClaims).toBe(false);
+    expect(resources(parse(entry({ narrowsBlockClaims: false })))[0].narrowsBlockClaims).toBe(
+      false
+    );
+    expect(resources(parse(entry({ narrowsBlockClaims: true })))[0].narrowsBlockClaims).toBe(true);
   });
 
   it('accepts the Apps scopes (bits 31, 32): they are user scopes a resource may receive', () => {
@@ -101,9 +112,21 @@ describe('parseExchangeResources', () => {
     ['no apps', { apps: [] }],
     ['a client id outside the charset', { relays: ['relay 1'] }],
     ['a list that is not a list', { introspectors: 'origin-1' }],
+    ['narrowsBlockClaims as a string', { narrowsBlockClaims: 'true' }],
+    ['narrowsBlockClaims as a number', { narrowsBlockClaims: 1 }],
+    ['narrowsBlockClaims as null', { narrowsBlockClaims: null }],
   ];
   it.each(invalid)('refuses %s', (_, over) => {
     expect(parse(entry(over))).toHaveProperty('error');
+  });
+
+  it('registers no resource when one entry has a malformed narrowsBlockClaims (all or nothing)', () => {
+    expect(
+      parse(
+        entry({ narrowsBlockClaims: true }),
+        entry({ resource: 'https://registry2.test', narrowsBlockClaims: 'yes' })
+      )
+    ).toEqual({ error: 'https://registry2.test: narrowsBlockClaims must be true or false' });
   });
 
   it('refuses a resource listed twice', () => {

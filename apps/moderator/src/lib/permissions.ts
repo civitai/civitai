@@ -208,6 +208,10 @@ export const PERMISSIONS = [
     id: 'apps.buzz.refund.large',
     label: 'Refund more than 5,000 App Blocks Buzz in one call',
   },
+  // Money: refunds an allowlisted training run and submits it again on the owner's Buzz. Checked by
+  // this literal in the main app's `/api/mod/training/retrain-source` (`ModeratorGrantId`); rename
+  // them together.
+  { id: 'training.retrain', label: 'Refund and retrain an allowlisted training run' },
   // Model Flags → Needs review lists two kinds of lead, each ruled by its own right: a held text-scan
   // detection (flag or dismiss, recorded with a reason) and a file match (set minor or dismiss). The
   // page grant opens the tab; the tab lists, and its actions rule, only the kinds held here.

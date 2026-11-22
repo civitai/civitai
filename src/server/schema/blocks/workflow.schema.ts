@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import type { ImageRating } from '~/shared/constants/browsingLevel.constants';
 import { REGISTERED_RECIPE_IDS } from '~/server/services/blocks/recipes';
 import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
 import type { BlockStepToolCall } from '~/server/services/blocks/steps';
@@ -1669,8 +1670,11 @@ export type BlockWorkflowSnapshot = {
   throttled?: true;
 };
 
-/** The orchestrator content rating of an output the app may load. */
-export type BlockWorkflowOutputRating = 'pg' | 'pg13' | 'r' | 'x' | 'xxx';
+/**
+ * The orchestrator content rating of an output the app may load: `'pg' | 'pg13' | 'r' | 'x' |
+ * 'xxx'`, the image rating ladder (`IMAGE_RATING_LADDER`).
+ */
+export type BlockWorkflowOutputRating = ImageRating;
 
 export type BlockWorkflowRestrictedReason = 'pool' | 'ceiling' | 'unrated' | 'unrecognised_url';
 

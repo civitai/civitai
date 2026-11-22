@@ -69,6 +69,7 @@ const CDN_ACCESS_MIGRATION = path.resolve(
 );
 
 const SCHEMA = `
+CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
 CREATE TYPE "JobQueueType" AS ENUM ('BlockedImageDelete', 'ImageStorageDelete', 'UpdateNsfwLevel', 'PendingDelete');
 CREATE TABLE "JobQueue" (
@@ -106,7 +107,7 @@ CREATE TABLE "CsamReport" (
 );
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "profilePictureId" INTEGER, "image" TEXT);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "profilePictureId" INTEGER, "image" TEXT, "deletedAt" TIMESTAMP(3));
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,

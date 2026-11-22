@@ -13,6 +13,24 @@
  * Gates 1–4 are fixed for the token's life; gate 5 re-runs on every poll, which is what turns a
  * revocation into `Delete`s within one {@link PrivateFeedOptions.pollMs}.
  *
+ * A BLOCK-EXCHANGE TOKEN (`VerifiedToken.block`: the hub minted it from an App Block token, and it
+ * carries that token's block, install and ceiling; `auth.jwt.ts`) is held, on every poll, to what
+ * the site's document store would serve the block token itself:
+ *   - its ceiling: a source app whose rating the viewer's audience admits is read only when
+ *     `ratingAllowedForCeiling` (`rating-ceiling.ts`) also admits it for the token's
+ *     `civitai_max_browsing_level`. That is the store's own rule for a block token's import
+ *     (`resolveImportAccess` in `doc-store-access.ts`), the same function: a mature rating (`r`,
+ *     `x`, `xxx`) only under a ceiling with a mature bit, so an SFW host's token reads no mature-rated
+ *     app's records, its own app's or an import's;
+ *   - its block: `decideCollectionRead` is passed the token's `civitai_app_block_id`
+ *     (`DataReader.appBlockId`), and refuses unless that block is still its client's one approved
+ *     block, by the predicate's own resolution (`clientIsOnlySource` / `resolveConsumer`);
+ *   - its install: refused while the install is revoked (uninstalled, turned off, or its publisher
+ *     banned), by the markers the store's `withBlockScope` reads
+ *     ({@link PrivateFeedOptions.instanceRevoked}).
+ * A refusal is a stream that holds nothing, as for gate 5: `Delete`s on the next poll. Any other
+ * token (a user-exchange token included) has no `block`, and none of this applies to it.
+ *
  * A refusal is believed only when it was read: an `apps_disabled` while the run gate's flag cannot
  * be read (a Flipt outage refuses everyone) ends the stream `unavailable` instead of sending
  * `Delete`s ({@link PrivateFeedOptions.runGateReadable}), and so does any failed read.
@@ -37,6 +55,7 @@ import type { AdapterContext, Change, Entity } from '~/server/registry-adapter/p
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
 import { sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
 import { registryUrn } from '~/server/registry-adapter/urn';
+import { ratingAllowedForCeiling } from '~/server/utils/rating-ceiling';
 import type {
   CollectionReadDecision,
   CollectionReadTarget,
@@ -130,6 +149,13 @@ export type PrivateFeedOptions = {
    * unreadable gate then ends the stream `unavailable` instead of sending `Delete`s.
    */
   runGateReadable: (userId: number) => Promise<boolean>;
+  /**
+   * Whether a block-exchange token's install is revoked for `userId`'s block token: uninstalled,
+   * turned off, or its publisher banned (`BlockRevocation.isRevoked`, the check `withBlockScope`
+   * runs on every REST call). Asked only for a token with a `block`. Like the store's, a marker
+   * that cannot be read is not a revocation (it answers false).
+   */
+  instanceRevoked: (blockInstanceId: string, userId: number) => Promise<boolean>;
   /**
    * The private states' store: the same key space as the public feed's, with a retention of its
    * own ({@link PRIVATE_STATE_RETENTION_SECONDS}).
@@ -252,12 +278,22 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
   ): Promise<{ next: PrivateState; entities: Map<string, Entity> }> {
     const nothing = () => ({ next: emptyState(schema, audience), entities: new Map() });
     if (privateTokenGate(opts.relays, reader) !== null) return nothing();
-    const { subject, userId, clientId } = reader as Reader & { userId: number };
+    const { subject, userId, clientId, block } = reader as Reader & { userId: number };
     const stream = await opts.resolve(schema);
     if (!stream) return nothing();
     const { appId, slug, collection, family } = stream;
+    // A block-exchange token's install, revoked since it was exchanged (see the file comment).
+    if (block && (await opts.instanceRevoked(block.blockInstanceId, userId))) return nothing();
     const decision = await opts.decide(
-      { userId, clientId, matureAllowed: (rating) => audienceAdmits(audience, rating) },
+      {
+        userId,
+        clientId,
+        // The viewer's audience, and for a block-exchange token also its ceiling: the store's rule.
+        matureAllowed: (rating) =>
+          audienceAdmits(audience, rating) &&
+          (block === undefined || ratingAllowedForCeiling(rating, block.maxBrowsingLevel)),
+        ...(block ? { appBlockId: block.appBlockId } : {}),
+      },
       { sourceBlockId: slug, collection }
     );
     if (!decision.ok) {

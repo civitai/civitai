@@ -537,6 +537,7 @@ export const serverSchema = z
     // The least a link's fetch cap can be; large files get more (`linkFetchCap`).
     DOWNLOAD_LINK_MAX_FETCHES: z.coerce.number().int().positive().default(50),
     DOWNLOAD_LINK_MIN_REUSE_SECONDS: z.coerce.number().int().nonnegative().default(7200),
+    // Sent as expiresInSeconds, which the storage resolver ignores (see ResolveOptions).
     DOWNLOAD_LINK_FILE_URL_TTL_SECONDS: z.coerce
       .number()
       .int()
@@ -660,6 +661,23 @@ export const serverSchema = z
     // one search probes it.
     APP_INDEX_BREAKER_FAILURE_THRESHOLD: z.coerce.number().int().min(1).default(5),
     APP_INDEX_BREAKER_COOLDOWN_MS: z.coerce.number().int().min(1000).default(30_000),
+    // The key the site signs the listings read model's viewer token with (`X-App-Index-Viewer`,
+    // app-index-viewer-token.ts): the same value as the app index's APP_INDEX_VIEWER_KEY, at least
+    // 32 bytes. Unset or shorter = no read-model call is made (the shadow counts `unconfigured`).
+    // Read only while the `app-listings-read-model` flag is on.
+    APP_INDEX_VIEWER_KEY: z.string().optional(),
+    // The `app-listings-read-model` shadow (app-listings-read-model-shadow.service.ts): the fraction
+    // (0-1) of store grid and public REST list pages also asked of the read model, the most such
+    // reads in flight per process (more are dropped, not queued), and each read's timeout. The
+    // breaker uses the APP_INDEX_BREAKER_* knobs above.
+    APP_LISTINGS_READ_MODEL_SHADOW_SAMPLE: z.coerce.number().min(0).max(1).default(0.1),
+    APP_LISTINGS_READ_MODEL_SHADOW_MAX_IN_FLIGHT: z.coerce.number().int().min(1).max(64).default(4),
+    APP_LISTINGS_READ_MODEL_SHADOW_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(50)
+      .max(10_000)
+      .default(1000),
     // Debounce window (ms) for flushing model-metric-affected ids into the
     // model search-index update queue. The model metric processor runs every
     // minute and accumulates every model whose ModelVersionMetric.updatedAt
@@ -1110,6 +1128,14 @@ export const serverSchema = z
     SHOPIFY_CLIENT_ID: z.string().optional(),
     SHOPIFY_CLIENT_SECRET: z.string().optional(),
     SHOPIFY_ADMIN_TOKEN: z.string().optional(),
+
+    // Feature pages (/features/<slug>). The page 404s until all four are set; votes need only the
+    // signer URL and client id/secret. EMBED_URL must be on a registrable domain that is not one of
+    // ours, at an origin that serves only feature pages.
+    FEATURE_PAGES_EMBED_URL: z.url().optional(),
+    FEATURE_PAGES_SIGNER_URL: z.url().optional(),
+    FEATURE_PAGES_CLIENT_ID: z.string().optional(),
+    FEATURE_PAGES_CLIENT_SECRET: z.string().optional(),
 
     FLIPT_URL: z.string(),
     FLIPT_FETCHER_SECRET: z.string(),

@@ -115,8 +115,30 @@ export class IndexBreaker {
       threshold: env.APP_INDEX_BREAKER_FAILURE_THRESHOLD,
       cooldownMs: env.APP_INDEX_BREAKER_COOLDOWN_MS,
     }),
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    /**
+     * Reports each state change. The default is the store search's gauge, counter and log line;
+     * another caller of the index (the listings read-model shadow) passes its own.
+     */
+    private readonly report: (
+      from: AppIndexBreakerState,
+      to: AppIndexBreakerState,
+      why: string
+    ) => void = (from, to, why) => {
+      recordAppIndexBreakerTransition(to);
+      // No query text: the breaker never sees one.
+      console.info(`app-index-search: breaker ${from}->${to} ${why}`);
+    }
   ) {}
+
+  /**
+   * Whether `allow()` would refuse right now, without changing state or taking the probe: open and
+   * still inside its cooldown. For a caller that has work to do before its first index call and
+   * should skip that work while the breaker is open.
+   */
+  refusing(): boolean {
+    return this.state === 'open' && this.now() - this.since < this.config().cooldownMs;
+  }
 
   /** Whether this search may call the index. Admits the half-open probe. */
   allow(): boolean {
@@ -134,7 +156,7 @@ export class IndexBreaker {
     if (this.state === 'half_open') this.transition('closed', 'probe succeeded');
   }
 
-  failure(reason: AppIndexSearchReason) {
+  failure(reason: string) {
     if (this.state === 'half_open') {
       this.open(`probe failed reason=${reason}`);
       return;
@@ -156,9 +178,7 @@ export class IndexBreaker {
   private transition(to: AppIndexBreakerState, why: string) {
     const from = this.state;
     this.state = to;
-    recordAppIndexBreakerTransition(to);
-    // No query text: the breaker never sees one.
-    console.info(`app-index-search: breaker ${from}->${to} ${why}`);
+    this.report(from, to, why);
   }
 }
 

@@ -308,7 +308,12 @@ export function StickerMotionEditor({
                   selectedKey={at}
                   others={drafts.filter((draft) => draft.id !== selected.id)}
                   onSeek={seek}
-                  onRetime={(index, t) => setKeys(editKey(keys, index, { t }))}
+                  // `keys` here is the list from the render the drag started in, so `index` stays the
+                  // grabbed key however far the drag carries it past its neighbours.
+                  onRetime={(index, t) => {
+                    const next = editKey(keys, index, { t });
+                    if (next !== keys) setKeys(next);
+                  }}
                 />
                 <Text size="xs" className="shrink-0 tabular-nums">
                   {formatTime(playheadMs)} / {formatTime(durationMs)}
@@ -475,14 +480,10 @@ function ScrubBar({
     target.setPointerCapture(event.pointerId);
     const startX = event.clientX;
     let dragged = false;
-    let current = index;
     const onMove = (move: PointerEvent) => {
       if (!dragged && Math.abs(move.clientX - startX) < 3) return;
       dragged = true;
-      const t = Math.round(timeAt(move.clientX));
-      onRetime(current, t);
-      current = keysRef.current.findIndex((key) => key.t === t);
-      if (current < 0) current = index;
+      onRetime(index, Math.round(timeAt(move.clientX)));
     };
     const onUp = () => {
       target.removeEventListener('pointermove', onMove);
@@ -528,7 +529,8 @@ function ScrubBar({
       )}
       {keys.map((key, index) => (
         <span
-          key={key.t}
+          // By position, not time: a drag retimes the key, and a new element would drop the drag.
+          key={index}
           role="button"
           aria-label={`Key ${index + 1} at ${formatTime(key.t)}`}
           data-key-index={index}

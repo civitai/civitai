@@ -439,6 +439,9 @@ export function listingBody(
     name: listing.name,
     kind: listing.kind,
     contentRating: appContentRating(app),
+    // The listing's own rating: the store gates on the listing column alone (`listingMatureFilter`,
+    // `listingMediaCeiling`), never on the block fallback `appContentRating` takes.
+    listingContentRating: listing.contentRating,
     tagline: listing.tagline,
     category: listing.category,
     description: store.description,

@@ -13,6 +13,7 @@ import {
   type FeedGoV1ShapeClass,
 } from '~/server/prom/feed-go-shadow.metrics';
 import { pickSessionCookies } from '~/server/utils/session-cookies';
+import { trainingDataListingRulesId } from '~/server/services/training-data-restricted.service';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler';
 
@@ -352,7 +353,21 @@ export type FeedGoShadowDeps = {
   recordProbe?: (outcome: FeedGoProbeOutcome, endpoint: FeedGoShadowEndpoint) => void;
   /** Epoch milliseconds clock for the probe's start time (production: timeOrigin + now). */
   epochNow?: () => number;
+  /**
+   * Headers a model sample (`v1-models`, `v1-models-id`) carries besides the request's (production:
+   * the Training Data statement hash, FEED_GO_TRAINING_DATA_SQL_HEADER). Absent or throwing: none.
+   */
+  modelSampleHeaders?: () => Record<string, string>;
 };
+
+/**
+ * The header a model sample carries this build's Training Data rule set in
+ * (`trainingDataListingRulesId`: the statement's SHA-256 and the decision's version). feed-go lists
+ * Training Data files only when it equals its own, and falls back otherwise (absent included): it
+ * never lists by rules other than these. The production wiring is pinned in
+ * src/server/__tests__/trpc-feed-go-shadow.test.ts.
+ */
+export const FEED_GO_TRAINING_DATA_SQL_HEADER = 'x-feed-go-training-data-sql';
 
 /** A sampler instance. The module exports one wired to the env, the flag and the counter. */
 export function createFeedGoShadow(deps: FeedGoShadowDeps) {
@@ -502,6 +517,13 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       const path = q < 0 ? target : target.slice(0, q);
       const input = q < 0 ? '' : target.slice(q + 1);
       const headers = pickShadowHeaders(req);
+      if (endpoint === 'v1-models' || endpoint === 'v1-models-id') {
+        try {
+          Object.assign(headers, deps.modelSampleHeaders?.());
+        } catch {
+          // Without the hash feed-go falls back on any body with a Training Data file.
+        }
+      }
       return {
         endpoint,
         holdsSlot: false,
@@ -772,6 +794,9 @@ function getInstance(): FeedGoShadow {
     enabledProbe: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_GOFIRST_PROBE)
     ),
+    modelSampleHeaders: () => ({
+      [FEED_GO_TRAINING_DATA_SQL_HEADER]: trainingDataListingRulesId(),
+    }),
   });
   return instance;
 }

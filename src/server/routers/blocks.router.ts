@@ -14551,7 +14551,7 @@ async function estimateMultiStepWorkflow(opts: {
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   await assertBlockTrainingModelsAllowed(prepared.steps);
   await assertStepPositionsAllowed(claims, userId, prepared.steps, body.arguments);
-  await checkAppStepResources(body, userId);
+  await checkAppStepResources(body, userId, { workflow: true });
   // Per-WORKFLOW pick: the orchestrator takes one `currencies` list per workflow.
   const currencies = resolveBlockCurrenciesForAccount(
     resolveBlockMaturity(claims).isGreen,
@@ -14643,7 +14643,7 @@ async function submitMultiStepWorkflow(opts: {
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   await assertBlockTrainingModelsAllowed(prepared.steps);
   await assertBlockTrainingLicensesAccepted(userId, prepared.steps);
-  const { capOutput } = await checkAppStepResources(body, userId);
+  const { capOutput } = await checkAppStepResources(body, userId, { workflow: true });
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);

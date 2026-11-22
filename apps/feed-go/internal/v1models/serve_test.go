@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -66,6 +67,13 @@ type testWorld struct {
 	usernames  map[string]int
 	tagRows    map[int]string // the replica's Tag rows (tagCache's lookup), by id
 	tagLookups int
+	// The Training Data listing's rows (by file), its read error, and the candidates each read bound.
+	tdRows       []map[string]any
+	tdErr        error
+	tdCandidates [][]int
+	tagIDs       map[string]int // the replica's Tag rows by name (the `tag` filter's lookup)
+	tagNames     []string       // each name the `tag` lookup bound
+	db           *testkit.DB
 }
 
 func newTestWorld() *testWorld {
@@ -182,12 +190,42 @@ func (w *testWorld) deps(t *testing.T) *Deps {
 			}
 			return rows([]string{"id"}), nil
 		}},
+		{Match: `AS restricted`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			if sql != trainingDataListingSQL {
+				return nil, errors.New("not the training data statement")
+			}
+			ids, _ := args[0].([]int)
+			w.tdCandidates = append(w.tdCandidates, ids)
+			if w.tdErr != nil {
+				return nil, w.tdErr
+			}
+			cols := []string{"id", "virusScanResult", "nsfwLevel", "fullyRated", "restricted"}
+			vals := make([][]any, 0, len(w.tdRows))
+			for _, r := range w.tdRows {
+				row := make([]any, len(cols))
+				for i, c := range cols {
+					row[i] = r[c]
+				}
+				vals = append(vals, row)
+			}
+			return rows(cols, vals...), nil
+		}},
+		{Match: `SELECT id FROM "Tag" WHERE name = $1`, Rows: func(args []any) (*testkit.Rows, error) {
+			// Tag.name is citext: the replica folds case (internal/hydrate's integration test runs it).
+			w.tagNames = append(w.tagNames, args[0].(string))
+			if id, ok := w.tagIDs[strings.ToLower(args[0].(string))]; ok {
+				return rows([]string{"id"}, []any{int64(id)}), nil
+			}
+			return rows([]string{"id"}), nil
+		}},
 	}}
+	w.db = db
 	packed := &hydrate.PackedReader{Redis: w.cache, Now: func() time.Time { return testNow }}
 	return &Deps{
 		DB: db, Packed: packed, Sources: &hydrate.Sources{Packed: packed, Cache: w.cache, Replica: db},
 		Gallery: &feed.GalleryStore{Cache: w.cache, DB: db},
 		Addons:  (&feed.AddonSource{Sys: w.sys}).Addons,
+		Blocked: &feed.BlockedTags{Cache: w.cache, TTL: -1},
 		Config: Config{
 			ImageLocation: "https://image.example.test", BaseURL: "https://site.example.test",
 			CoverageNext: false, BaseModelFeedMetrics: true, ResponseCacheTTL: 180 * time.Second, Production: true,
@@ -198,7 +236,7 @@ func (w *testWorld) deps(t *testing.T) *Deps {
 
 func detailOf(t *testing.T, w *testWorld) (*Answer, error) {
 	t.Helper()
-	return ServeDetail(context.Background(), w.deps(t), DetailRequest{ID: "5001"})
+	return ServeDetail(context.Background(), w.deps(t), DetailRequest{ID: "5001", TrainingDataSQL: TrainingDataSQLHash})
 }
 
 func TestServeDetailBuilds(t *testing.T) {
@@ -282,12 +320,13 @@ func TestServeDetailFallbacks(t *testing.T) {
 			w.raw["model:gallery-settings:5001"] = `{"sfwHeld":true}`
 		}, nil, "v1-models-held-level-unset"},
 		{"gallery settings miss", func(w *testWorld) { w.modelRow["sfwOnly"] = true }, nil, "gallery-settings-miss"},
-		{"training data", func(w *testWorld) {
+		{"training data unread", func(w *testWorld) {
 			w.entries[KeyFilesForVersion+":6001"] = meta("modelVersionId", int64(6001), "files", []any{
 				meta("id", int64(7001), "name", "a.safetensors", "type", "Model", "visibility", "Public", "metadata", meta()),
 				meta("id", int64(7002), "name", "d.zip", "type", "Training Data", "visibility", "Public", "metadata", meta()),
-			})
-		}, nil, "v1-models-training-data"},
+			}, "cachedAt", testNow.Add(-time.Minute))
+			w.tdErr = errors.New("replica down")
+		}, nil, "v1-models-training-data-unread"},
 		{"bad id", nil, nil, "v1-models-id"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -303,7 +342,7 @@ func TestServeDetailFallbacks(t *testing.T) {
 			if c.name == "bad id" {
 				id = "x"
 			}
-			_, err := ServeDetail(context.Background(), d, DetailRequest{ID: id})
+			_, err := ServeDetail(context.Background(), d, DetailRequest{ID: id, TrainingDataSQL: TrainingDataSQLHash})
 			if reason(err) != c.reason {
 				t.Fatalf("reason %q (%v), want %q", reason(err), err, c.reason)
 			}
@@ -395,7 +434,9 @@ func TestServeDetailOriginCache(t *testing.T) {
 	if err != nil || !ans.Cached {
 		t.Fatalf("fresh entry: %+v %v", ans, err)
 	}
-	if body, _ := superjson.Plain(ans.Body); string(body) != `{"id":5001,"name":"cached"}` {
+	// `{ ...body, modelVersions: (body.modelVersions ?? []).map(…) }`: a body without versions
+	// gains an empty list at its end.
+	if body, _ := superjson.Plain(ans.Body); string(body) != `{"id":5001,"name":"cached","modelVersions":[]}` {
 		t.Errorf("cached body %s", body)
 	}
 	// An entry younger than NodeBuiltWindow is the one Node built for the sampled request: it is
@@ -425,12 +466,22 @@ func TestServeDetailOriginCache(t *testing.T) {
 			t.Errorf("entry %v: %+v %v", v, ans, err)
 		}
 	}
-	// A cached body with a Training Data file falls back like a built one.
+	// A cached body's Training Data files go through the listing like a built body's: the cache keys on
+	// neither the host nor a restriction placed since it was written.
 	w = newTestWorld()
-	w.entries[key] = meta("data", meta("modelVersions", []any{meta("files", []any{meta("type", "Training Data")})}),
-		"cachedAt", float64(testNow.Add(-time.Minute).UnixMilli()))
-	if _, err := detailOf(t, w); reason(err) != "v1-models-training-data" {
-		t.Errorf("cached training data: %v", err)
+	w.entries[key] = meta("data", meta("modelVersions", []any{meta("id", int64(6001), "files", []any{
+		meta("id", int64(7002), "type", "Training Data"), meta("id", int64(7001), "type", "Model"),
+	})}), "cachedAt", float64(testNow.Add(-time.Minute).UnixMilli()))
+	w.tdRows = []map[string]any{tdRow(7002, true)}
+	ans, err = detailOf(t, w)
+	if err != nil || !ans.Cached {
+		t.Fatalf("cached training data: %+v %v", ans, err)
+	}
+	if body, _ := superjson.Plain(ans.Body); string(body) != `{"modelVersions":[{"id":6001,"files":[{"id":7001,"type":"Model"}]}]}` {
+		t.Errorf("cached training data: %s", body)
+	}
+	if len(w.tdCandidates) != 1 || len(w.tdCandidates[0]) != 1 || w.tdCandidates[0][0] != 6001 {
+		t.Errorf("candidates %v", w.tdCandidates)
 	}
 	// Without the mirror (Node off DataPacket) the key is not read.
 	w = newTestWorld()
@@ -526,5 +577,126 @@ func TestServeDetailSendsEmptyImages(t *testing.T) {
 	body, _ := superjson.Plain(ans.Body)
 	if !strings.Contains(string(body), `"images":[]`) {
 		t.Errorf("body lacks \"images\":[]:\n%s", body)
+	}
+}
+
+// The model statement this world's last list built (its text and whether a tag clause is in it).
+func (w *testWorld) modelStatement(t *testing.T) string {
+	t.Helper()
+	for i := len(w.db.Calls) - 1; i >= 0; i-- {
+		if strings.Contains(w.db.Calls[i], `as "cursorId"`) {
+			return w.db.Calls[i]
+		}
+	}
+	return ""
+}
+
+func TestServeListEmptyQuery(t *testing.T) {
+	// `query=` is falsy: the database path, as with no `query` at all, and the same body.
+	serve := func(q string) string {
+		w := newTestWorld()
+		d := w.deps(t)
+		ans, err := ServeList(context.Background(), d, d.Sources, ListRequest{Query: q, Path: "/api/v1/models", Host: "site.example.test"})
+		if err != nil {
+			t.Fatalf("%s: %v (%s)", q, err, reason(err))
+		}
+		body, _ := superjson.Plain(ans.Body)
+		return string(body)
+	}
+	if a, b := serve("limit=5&query="), serve("limit=5"); a != b {
+		t.Errorf("query= differs from no query:\n %s\n %s", a, b)
+	}
+}
+
+func TestServeListTag(t *testing.T) {
+	const blockedKey = feed.BlockedTagsKey
+	list := func(w *testWorld, q string) (*Answer, error) {
+		d := w.deps(t)
+		return ServeList(context.Background(), d, d.Sources, ListRequest{Query: q, Path: "/api/v1/models", Host: "site.example.test"})
+	}
+	tagClause := `tom."tagId" = $`
+
+	// A tag the replica names: its EXISTS clause, bound to the id.
+	w := newTestWorld()
+	w.raw[blockedKey] = `[{"id":99,"name":"Blocked Thing"}]`
+	w.tagIDs = map[string]int{"character": 11}
+	if _, err := list(w, "tag=character"); err != nil {
+		t.Fatalf("tag: %v (%s)", err, reason(err))
+	}
+	if sql := w.modelStatement(t); !strings.Contains(sql, tagClause) {
+		t.Errorf("no tag clause in:\n%s", sql)
+	}
+	// The name reaches the lookup as the request gave it (no lowercasing, no trim): the case-insensitive
+	// match is citext's on the replica, as for Node's findUnique. `tag=Character` finds `character`.
+	w = newTestWorld()
+	w.raw[blockedKey] = `[]`
+	w.tagIDs = map[string]int{"character": 11}
+	if _, err := list(w, "tag=Character"); err != nil {
+		t.Fatalf("tag=Character: %v (%s)", err, reason(err))
+	}
+	if !reflect.DeepEqual(w.tagNames, []string{"Character"}) {
+		t.Errorf("lookup names %q, want [Character]", w.tagNames)
+	}
+	if sql := w.modelStatement(t); !strings.Contains(sql, tagClause) {
+		t.Errorf("tag=Character: no tag clause in:\n%s", sql)
+	}
+	// A name no tag has, and an empty `tag`: no clause (`if (tagId)`, `if (tagname ?? tag)`).
+	for _, q := range []string{"tag=nosuch", "tag="} {
+		w = newTestWorld()
+		w.raw[blockedKey] = `[]`
+		w.tagIDs = map[string]int{"character": 11}
+		if _, err := list(w, q); err != nil {
+			t.Fatalf("%s: %v (%s)", q, err, reason(err))
+		}
+		if sql := w.modelStatement(t); sql == "" || strings.Contains(sql, tagClause) {
+			t.Errorf("%s: statement %q", q, sql)
+		}
+	}
+	// A blocked name, matched lowercased: the empty page, with no statement and no username read,
+	// and the paging metadata kept.
+	for _, q := range []string{"tag=blocked%20thing", "tag=BLOCKED%20THING&page=2&limit=5&username=nobody"} {
+		w = newTestWorld()
+		w.raw[blockedKey] = `[{"id":99,"name":"Blocked Thing"}]`
+		ans, err := list(w, q)
+		if err != nil {
+			t.Fatalf("%s: %v (%s)", q, err, reason(err))
+		}
+		body, _ := superjson.Plain(ans.Body)
+		want := `{"items":[],"metadata":{}}`
+		if strings.Contains(q, "page=2") {
+			want = `{"items":[],"metadata":{"currentPage":2,"pageSize":5}}`
+		}
+		if string(body) != want || !ans.Trivial || len(w.db.Calls) != 0 {
+			t.Errorf("%s: body %s trivial %v calls %v", q, body, ans.Trivial, w.db.Calls)
+		}
+	}
+	// What cannot be decided as Node decides it falls back.
+	for _, c := range []struct {
+		name, q, blocked string
+		noBlocked        bool
+		want             string
+	}{
+		{"no blocked list cached", "tag=x", "", false, "blocked-tags-miss"},
+		{"no blocked list source", "tag=x", "[]", true, "blocked-tags-unconfigured"},
+		{"a non-ASCII blocked name", "tag=x", `[{"id":1,"name":"\u0130stanbul"}]`, false, "v1-models-tag"},
+		{"a non-ASCII tag", "tag=%C4%B0stanbul", "[]", false, "v1-models-tag"},
+	} {
+		w = newTestWorld()
+		if c.blocked != "" {
+			w.raw[blockedKey] = c.blocked
+		}
+		d := w.deps(t)
+		if c.noBlocked {
+			d.Blocked = nil
+		}
+		_, err := ServeList(context.Background(), d, d.Sources, ListRequest{Query: c.q, Path: "/api/v1/models", Host: "h"})
+		if reason(err) != c.want {
+			t.Errorf("%s: %q (%v), want %q", c.name, reason(err), err, c.want)
+		}
+	}
+	// Without a tag the blocked list is never read: its absence changes nothing.
+	w = newTestWorld()
+	if _, err := list(w, "limit=1"); err != nil {
+		t.Errorf("no tag, no blocked list: %v", err)
 	}
 }

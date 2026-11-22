@@ -2216,9 +2216,16 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 2. **Viewer and level.** The list reads a session or an API key; `[id]` reads neither (a block JWT
    only skips the origin cache). The level is `nsfw ? all : PG` on the list, all on `[id]`, PG/PG-13
    in a restricted region on both. No domain cap.
-3. **Text search.** A `query` asks Meilisearch for the page's ids (`resolveModelSearchIds`).
+3. **Text search.** A truthy `query` asks Meilisearch for the page's ids (`resolveModelSearchIds`).
+   `query` is `z.string().optional()` (no trim), so only the empty string (`?query=`, `?query`) is
+   falsy: the handler then takes the database path exactly as with no `query` (cursor and skip kept,
+   no `query && page` 400), and `nextPage` leaves the empty value out (QS.stringify's
+   `skipEmptyString`). A repeated `query` is an array, a 400.
 4. **The model statement.** `getModelsRaw` resolves the browsing-settings addons at the level
-   (`enforceBlockedBrowsingTagsForModels`; `[id]` keeps only `disablePoi`), then one statement on the
+   (`enforceBlockedBrowsingTagsForModels`; `[id]` keeps only `disablePoi`; a `tagname ?? tag` whose
+   lowercased name is a blocked browsing tag's answers an empty page there, before any other read),
+   looks a `tag` up by its exact name on the replica (`EXISTS` on `TagsOnModels` when found, no
+   clause when not), then one statement on the
    replica: `ModelMetric` × `Model` (or one of the three `ModelBaseModelMetric` forms when
    `baseModels` is set and `base-model-feed-metrics` is on), the filters, the sort's ORDER BY and the
    keyset cursor (`getCursorClauses`: a UNION ALL of the equality and the tuple branch for a
@@ -2238,9 +2245,24 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
    `fileId`, drops image `id`s and uses `getBaseUrl()` for download URLs; the list keeps nulls and
    empty arrays, uses the request origin, and passes every image through on `nsfw=true`. Both pick the
    primary file by the default preferences (a version without one is dropped), name each file
-   (`resolveModelFileName`), build edge URLs, and leave Training Data files to
-   `trainingDataListing`.
-8. **Body.** `res.json`: the list `{ items, metadata: { nextCursor, nextPage, currentPage?, pageSize? } }`
+   (`resolveModelFileName`), build edge URLs, and give a Training Data file no metadata
+   (`publicFileMetadata`).
+8. **Training Data listing.** A `Training Data` file is listed only where `trainingDataListing`
+   (`src/server/services/training-data-restricted.service.ts`) lists it: the list runs it over every
+   item's versions (all their files) inside its shaper (`file.visibility === Public && listed(file)`);
+   `[id]` runs it over the body's versions AFTER the origin cache (`withListableTrainingData`), since
+   that cache keys on neither the host nor a restriction placed since. Every version listing a
+   Training Data file is a candidate; one replica statement reads each candidate's Training Data
+   rows with `restricted` (the owner's legal hold through `ownerHeldSql`: the placeholder owner, a
+   holding report naming them as subject or secondary user, a hold marker, an image of theirs under
+   CSAM review, blocked or listed in a holding report; any `CsamReport` naming them; a POI, minor or
+   ToS-violation model; a post image of the version with `needsReview`, `blockedFor` or ingestion
+   `Blocked`). A row is refused when `restricted !== false` (NULL included), its virus scan is not
+   `Success`, or, off a red-capable host (`isRedCapableHost`: the Host header, lowercased, port
+   kept, is SERVER_DOMAIN_RED or an alias), its `metadata.fullyRated` is `false` or its
+   `metadata.nsfwLevel` is a number with a bit outside PG|PG-13. A file with no row is listed. The
+   read failing leaves every Training Data file out.
+9. **Body.** `res.json`: the list `{ items, metadata: { nextCursor, nextPage, currentPage?, pageSize? } }`
    (`nextPage` is the request's query with `cursor` set, on `https://<host>` in production — `page`
    never advances); `[id]` the model object, from the origin response cache
    (`packed:caches:public-model-response:v2:<id>:<level>`, 180 s) when fresh.
@@ -2249,11 +2271,12 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Query | every key above except those on the right; unknown keys ignored and kept for `nextPage` | `query` (`v1-models-query`: Meilisearch), every other schema key (`v1-models-<key>`: `tag`, `supportsGeneration`, `checkpointType`, …), a signed-out `favorites`/`hidden` (`v1-models-authed-only`), `limit=0` or over 100 (`v1-models-limit`), the 429 (`v1-models-page-limit`), a Recently Added or unknown sort (`v1-models-sort`), a value `Number()` or zod reads otherwise (`v1-models-input-*`), a cursor Node answers with a 400 or reads through JS's Date parser (`v1-models-cursor`) |
+| Query | every key above except those on the right; an empty `query` (falsy: the database path); `tag` (ASCII); unknown keys ignored and kept for `nextPage` | a truthy or repeated `query` (`v1-models-query`: Meilisearch), a non-ASCII `tag` or a blocked list holding a non-ASCII name (`v1-models-tag`: Go's lowercasing of such text is not always JS's `toLowerCase`), no cached blocked list (`blocked-tags-*`), every other schema key (`v1-models-<key>`: `tagname`, `supportsGeneration`, `checkpointType`, …), a signed-out `favorites`/`hidden` (`v1-models-authed-only`), `limit=0` or over 100 (`v1-models-limit`), the 429 (`v1-models-page-limit`), a Recently Added or unknown sort (`v1-models-sort`), a value `Number()` or zod reads otherwise (`v1-models-input-*`), a cursor Node answers with a 400 or reads through JS's Date parser (`v1-models-cursor`) |
 | Viewer | the list signed out; `[id]` always (it reads no session) | a list session (`v1-models-session`); API credentials (`bearer-token`; the sampler never sends them) |
-| Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, ids, earlyAccess, archived, the addons' POI/minor/tag clauses | a username the replica does not hold (`v1-models-username-miss`) |
+| Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, `tag` (the blocked-name empty page, the Tag lookup, its `EXISTS`), ids, earlyAccess, archived, the addons' POI/minor/tag clauses | a username the replica does not hold (`v1-models-username-miss`) |
 | Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads); a tag-name miss with `FEED_GO_COMPUTE_MISSES` (tagCache's lookup, §16.7) | a model-data, model-tags, images, files or membership miss (`v1-models-*-miss`), a tag-name miss with `FEED_GO_COMPUTE_MISSES` off, a stale images/files/tag entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level |
-| Shaping | both shapers, the file naming over ASCII model names | a Public Training Data file (`v1-models-training-data`), a name the scheme strips non-ASCII text from (`v1-models-filename`) |
+| Shaping | both shapers, the file naming over ASCII model names, Training Data files' empty metadata | a name the scheme strips non-ASCII text from (`v1-models-filename`) |
+| Training Data | the listing on both routes (list: in the shaper; `[id]`: after the build or the cache, a body without `modelVersions` gaining an empty one): the candidates, the statement (`internal/v1models/training_data_listing.sql`, Node's rendered text), the predicate, the red-capable host (SERVER_DOMAIN_RED and its aliases, read as Node reads them) | a sample whose Training Data statement hash is missing or is not this build's (`v1-models-training-data-drift`, below), the statement failing (`v1-models-training-data-unread`, see §16.7), a value of a type a jsonb read does not produce, an absolute-form request line (`v1-models-host`: its host replaces the Host header Node reads), a body or row shape the Node code would throw on (`v1-models-training-data`), non-ASCII text in the Host header or the red host list (`v1-models-host`) |
 | Config | | no `NEXT_PUBLIC_IMAGE_LOCATION` or (`[id]`) `NEXTAUTH_URL` (`v1-models-unconfigured-urls`) |
 
 ### 16.3 Flags and settings
@@ -2272,7 +2295,8 @@ One flag for both routes, sampled through the REST sampler of §13.4 (`beginFeed
 `captureFeedGoShadowRest`), with its own per-second bucket per route and the shared rate and
 in-flight cap. A request with an API credential is counted (`skipped_credential`) and never sent.
 The list route does not sample a text `query` or a signed-in caller: feed-go answers every one of
-them with a fallback (`v1-models-query`, `v1-models-session`). Both routes finish every sampled
+them with a fallback (`v1-models-query`, `v1-models-session`). An empty `query` is falsy to the
+sampler's `query || user` test as to the handler, so it is sampled, and answered here. Both routes finish every sampled
 request in a `finally`, so one that answers other than 200 is counted `skipped_status`.
 Outcomes are `civitai_app_feed_go_shadow_samples_total{feed_endpoint="v1-models"|"v1-models-id"}`.
 
@@ -2301,8 +2325,46 @@ reads) and requires the fixture's `expect.body` to be the exact bytes `res.json`
 `expect.sql` the statement it builds; `internal/v1models/golden_test.go` requires the same bytes and
 the same statement (text and bound values) from Go.
 
+The Training Data statement is held to Node in two more ways: the golden fixtures pin its text and
+candidates (`expect.trainingDataSql`), and
+`src/server/services/__tests__/feed-go-training-data-listing.parity.test.ts` requires the embedded
+file to be, byte for byte, the text Node's builder (`trainingDataListingSql`) renders (re-render it when `ownerHeldSql` or the restriction legs
+change) and runs both on Postgres (PGlite with the hold migrations), one Training Data file per
+refusal reason, requiring the same rows. The predicate over the rows is pinned per rule by
+`internal/v1models/trainingdata_test.go`.
+
+**Drift.** feed-go and the Node app deploy separately, so a Node change to the rules would otherwise
+leave feed-go listing by the old ones. The rules are two parts: the statement (`ownerHeldSql`, the
+restriction legs) and the JS decision over its rows (`trainingDataServableOnHost`, the
+`restricted !== false` and virus-scan tests, the listed predicate). Every model sample carries the
+Node build's rule set id, `<sha256 of the statement text>;rules=<TRAINING_DATA_LISTING_RULES_VERSION>`
+(`trainingDataListingRulesId`, header `x-feed-go-training-data-sql`, added by the sampler); a body
+with a Training Data candidate is answered only when it equals this build's
+(`v1models.TrainingDataSQLHash`: the embedded copy's hash and `TrainingDataRulesVersion`), and falls
+back (`v1-models-training-data-drift`) when it differs or is absent, before anything is read. A body
+with no Training Data file needs no id. `feed-go-training-data-listing.parity.test.ts` records, per
+version, the SHA-256 of exactly: `training-data-visibility.ts`, the body of `trainingDataListing`
+between its `feed-go-rules` markers (the owner/moderator return, the candidate filter, the read, its
+fail-closed return and the predicate), and the values of `sfwBrowsingLevelsFlag` and
+`ScanResultCode.Success`. It fails when that changes without a bump, and requires the Go constant to
+equal Node's. Outside the hash: the call sites' inputs, `isRedCapableHost(req.headers.host)` in
+`src/pages/api/v1/models/[id].ts` and in `model-search.service.ts` (`redCapable`), and feed-go's
+`redCapable`; a change there needs the same bump by hand (the test's failure message lists them).
+Known limit: a version bump that is not ported to Go passes every check; nothing compares the two
+decisions' behaviour beyond the golden fixtures.
+
 ### 16.7 Known divergences
 
+- the download file name of a model or version name with non-ASCII text falls back
+  (`v1-models-filename`): `resolveModelFileName` strips the model name out of the version name with
+  `new RegExp(…, 'gi')`, whose case-insensitive match (non-Unicode mode) canonicalizes each UTF-16
+  unit with the engine's `toUpperCase`. That is the running Node build's ICU case table, a newer
+  Unicode version than Go's `unicode` package carries, and a golden fixture pins it for one Node
+  build only; ASCII text, where both agree, is ported;
+- the Training Data statement failing: Node leaves every Training Data file out (fails closed);
+  here it falls back (`v1-models-training-data-unread`). Whether Node's own read failed is not
+  known here, so answering Node's fail-closed body would differ from Node's whenever only this read
+  failed, while a fallback can neither list a file Node left out nor differ from Node's answer;
 - `superjson.Plain` escapes U+2028/U+2029 where `JSON.stringify` writes them raw (same decoded
   value; the comparator decodes);
 - a cursor timestamp's fraction is padded to three digits before it is read, as parseCursor's

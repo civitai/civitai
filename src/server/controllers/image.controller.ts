@@ -56,6 +56,7 @@ import {
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { getRequestBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
 import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
+import { DELETE_PROCESSING_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { readImageAppChip } from '~/server/services/blocks/image-app-chip.service';
@@ -198,9 +199,6 @@ export const deleteImageHandler = async ({
       .map((tag) => ({ tagName: tag.tagName }));
 
     const [image] = await deleteImages([input.id], { actor: ctx.user });
-    // Only a case the owner can already see is acknowledged; any other kept delete answers like a delete.
-    if (!image && (await imagesPendingDeletion([input.id])).has(input.id))
-      return { deleteAfterReview: true as const };
 
     if (image) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
@@ -220,6 +218,11 @@ export const deleteImageHandler = async ({
       ]);
     }
 
+    // A member's own delete answers the same whether it went or any hold kept it, a review they can
+    // see included: that one lasts until the report is sent, so telling it apart would say when.
+    if (!ctx.user.isModerator) return { deleteNotice: DELETE_PROCESSING_MESSAGE };
+    if (!image && (await imagesPendingDeletion([input.id])).has(input.id))
+      return { deleteAfterReview: true as const };
     // The id only: the deleted row also carries its moderation state, which is not the caller's to see.
     return image ? { id: image.id } : null;
   } catch (error) {

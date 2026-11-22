@@ -593,3 +593,50 @@ describe('upsertModelVersionHandler — the percent flag gates a change to perce
     expect(written.licensingFeeType).toBe('PercentOfCompute');
   });
 });
+
+// A restricted root's fee is owed only for the versions its licence covers (decided on
+// civitai/civitai#9951's follow-up with Legal). Staff link those versions; anyone else picking it would
+// charge their users a licence fee that reaches no licensor. A version already linked keeps the link on
+// any save, which is what keeps the covered copies paying.
+describe('upsertModelVersionHandler — a restricted licensing root', () => {
+  const restrictedRoot = { ...animaRoot, restricted: true } as unknown as Root;
+
+  it('drops it from a creator who picks it', async () => {
+    const { licensingSourceVersionId, licensingSourceCoercedReason } = await call({
+      ...creating('Checkpoint'),
+      root: restrictedRoot,
+    });
+    expect(licensingSourceVersionId).toBeNull();
+    expect(licensingSourceCoercedReason).toBe('restricted-root');
+  });
+
+  it('keeps it on an owner save that leaves the stored link out of the payload', async () => {
+    const { licensingSourceVersionId } = await call({
+      ...creating('Checkpoint'),
+      id: VERSION_ID,
+      root: restrictedRoot,
+      omitSource: true,
+      storedLicensingSourceVersionId: ANIMA_ROOT_VERSION_ID,
+    });
+    expect(licensingSourceVersionId).toBe(ANIMA_ROOT_VERSION_ID);
+  });
+
+  it('keeps it on an owner save that re-sends the stored link (the editor does)', async () => {
+    const { licensingSourceVersionId } = await call({
+      ...creating('Checkpoint'),
+      id: VERSION_ID,
+      root: restrictedRoot,
+      storedLicensingSourceVersionId: ANIMA_ROOT_VERSION_ID,
+    });
+    expect(licensingSourceVersionId).toBe(ANIMA_ROOT_VERSION_ID);
+  });
+
+  it('lets a moderator link a version to it', async () => {
+    const { licensingSourceVersionId } = await call({
+      ...creating('Checkpoint'),
+      root: restrictedRoot,
+      isModerator: true,
+    });
+    expect(licensingSourceVersionId).toBe(ANIMA_ROOT_VERSION_ID);
+  });
+});

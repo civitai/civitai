@@ -56,8 +56,8 @@ export type SampledRowBuffer<Row> = {
   /**
    * Samples, then builds and buffers one row. `build` gets the time and the active OTEL traceId.
    * `unsampled` rows skip the rate roll but not the switch, `until` or the cap. A `sampleKey`
-   * replaces the roll with a hash of the key, so every row sharing a key is kept or dropped together.
-   * Never throws.
+   * replaces the roll with a hash of the key, so the rate decision is the same for every row sharing
+   * it (the cap still applies per row). Never throws.
    */
   push: (
     build: (at: number, traceId: string) => Row,

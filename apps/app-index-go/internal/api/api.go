@@ -5,6 +5,8 @@
 //	GET /healthz  the process is up
 //	GET /readyz   200 once a generation is serving (the first Live), 503 before
 //	GET /metrics  Prometheus
+//	GET /listings, GET /listings/{slug}  the listing API, only while the listings read model is on
+//	    (listings.go)
 //
 // Results are in relevance order (store.Query), at most `limit` of them. There is one page: no
 // other sort and no paging, since no caller reads either.
@@ -61,8 +63,30 @@ type Server struct {
 	Metrics  *metrics.Metrics
 	Gatherer prometheus.Gatherer
 	Log      *slog.Logger
-	// SearchTimeout bounds one search's store query.
+	// SearchTimeout bounds one search's store query, and one listing request's store reads.
 	SearchTimeout time.Duration
+
+	// Listings is the listings read model, nil while APP_INDEX_LISTINGS is off: the listing routes
+	// (listings.go) are then not registered at all, so they answer 404.
+	Listings store.Listings
+	// ViewerKey verifies the viewer token of a listing request (APP_INDEX_VIEWER_KEY), and
+	// ViewerKeyNext, when set, too (APP_INDEX_VIEWER_KEY_NEXT, for a rotation with no 401 window).
+	// The current key shorter than listingread.MinViewerKeyLen (unset included), or a next key set
+	// but short, makes every listing request answer 503 `unconfigured` and read nothing.
+	ViewerKey     []byte
+	ViewerKeyNext []byte
+	// ListingsLayout is the row layout the listings consumer builds (index.ListingsLayoutVersion).
+	// A serving generation of another layout is answered 503 `not_ready` until the rebuild beside
+	// it switches over: its rows may lack what the gates read. 0 checks nothing.
+	ListingsLayout int
+	// ListingReads counts listing requests (metrics.NewListingReads); nil counts nothing.
+	ListingReads *prometheus.CounterVec
+	// Now is the clock viewer tokens are checked against; nil is time.Now.
+	Now func() time.Time
+
+	// keys memoises the serving generation's listing keys per (generation, cursor)
+	// (listings_keys_memo.go). Its zero value is empty.
+	keys keysMemo
 }
 
 // Handler is the routes.
@@ -74,6 +98,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.HandleFunc("GET /search", s.search)
 	mux.HandleFunc("OPTIONS /search", preflight)
+	if s.Listings != nil {
+		mux.HandleFunc("GET /listings", s.listingRequest("list", s.listListings))
+		mux.HandleFunc("GET /listings/{slug}", s.listingRequest("detail", s.listingDetail))
+	}
 	metricsHandler := promhttp.HandlerFor(s.Gatherer, promhttp.HandlerOpts{})
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", NoStore)

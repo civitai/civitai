@@ -436,6 +436,7 @@ func run(log *slog.Logger) error {
 			Sources: sources,
 			Gallery: deps.Gallery,
 			Addons:  deps.Addons.Addons,
+			Blocked: blocked,
 			Config: v1models.Config{
 				ImageLocation:        cfg.ImageLocation,
 				BaseURL:              mc.BaseURL,
@@ -444,6 +445,7 @@ func run(log *slog.Logger) error {
 				ComputeMisses:        cfg.ComputeMisses,
 				ResponseCacheTTL:     mc.ResponseCacheTTL,
 				Production:           true,
+				RedHosts:             v1models.RedHosts(cfg.HostPrimaries["red"], cfg.Hosts["red"]),
 			},
 		},
 		Users: sources,
