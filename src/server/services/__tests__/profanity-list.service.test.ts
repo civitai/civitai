@@ -33,6 +33,7 @@ vi.mock('@civitai/mod-utils/profanity/word-rules', async (importOriginal) => {
     },
   };
 });
+import { ensureRegisterProfanityListMetrics } from '~/server/metrics/profanity-list.metrics';
 import {
   createProfanityListReader,
   getServerProfanityFilter,
@@ -247,6 +248,27 @@ describe('isProfaneSearch', () => {
       await isProfaneSearch([SHIPPED_WORD]),
     ]).toEqual([false, false, true]);
     expect(readRow).toHaveBeenCalledTimes(1);
+  });
+
+  // The flip is measured against the refusal rate with the flag off; uncounted, there is none.
+  it('counts a refusal with the flag off, or with the list unreadable, by source only', async () => {
+    const { hits } = ensureRegisterProfanityListMetrics();
+    const count = async (source: string) =>
+      (await hits.get()).values.find(
+        (v) => v.labels.surface === 'search' && v.labels.source === source
+      )?.value ?? 0;
+    h.flagOn = false;
+    const shipped = await count('shipped');
+    expect([await isProfaneSearch([SHIPPED_WORD]), await isProfaneSearch(['hello'])]).toEqual([
+      true,
+      false,
+    ]);
+    expect(await count('shipped')).toBe(shipped + 1);
+
+    setProfanityListReaderForTests({ read: () => Promise.reject(new Error('list down')) });
+    const fallback = await count('fallback');
+    expect(await isProfaneSearch([SHIPPED_WORD])).toBe(true);
+    expect(await count('fallback')).toBe(fallback + 1);
   });
 
   it('reads the query of a single search and of each search in a multi-search', () => {

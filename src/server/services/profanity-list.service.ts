@@ -258,7 +258,12 @@ export async function profaneSearchCheck(queries: string[]): Promise<'clean' | '
       : ('clean' as const);
   try {
     const profanity = await getServerProfanityFilter();
-    if (profanity.source === 'shipped') return verdict(benignFilter(profanity.benign ?? null));
+    if (profanity.source === 'shipped') {
+      // Counted too: with the flag off, this is the refusal rate the flip is measured against.
+      const shipped = verdict(benignFilter(profanity.benign ?? null));
+      if (shipped === 'profane') profanity.countHit('search');
+      return shipped;
+    }
     const result = verdict(profanity.filter);
     if (result === 'profane') profanity.countHit('search');
     return result;
@@ -269,6 +274,9 @@ export async function profaneSearchCheck(queries: string[]): Promise<'clean' | '
       message: 'Site search profanity check failed; checked against the shipped list',
       details: { error: error instanceof Error ? error.message : String(error) },
     });
-    return verdict(getProfanityFilter());
+    const fallback = verdict(getProfanityFilter());
+    if (fallback === 'profane')
+      ensureRegisterProfanityListMetrics().hits.inc({ surface: 'search', source: 'fallback' });
+    return fallback;
   }
 }
