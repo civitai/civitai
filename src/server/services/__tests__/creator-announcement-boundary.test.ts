@@ -1139,3 +1139,69 @@ describe('a model-restricted mature cover', () => {
     ]);
   });
 });
+
+// civitai/civitai#9809
+describe('announcement covers follow the shared blocked-image rule', () => {
+  const STRANGER = 999;
+  const BLOCKED = 32;
+  const XXX = 16;
+  const row = (id: number, nsfwLevel: number) => ({
+    id,
+    metadata: {},
+    content: 'kept',
+    cover: { id: 500 + id, url: `cover-${id}`, userId: AUTHOR, nsfwLevel, modelRestricted: false },
+    user: { id: AUTHOR, username: 'author' },
+  });
+  const AT_BLOCKED = 1;
+  const AT_XXX = 2;
+
+  beforeEach(() => {
+    dbMock.dbRead.announcement.findMany.mockResolvedValue([
+      row(AT_BLOCKED, BLOCKED),
+      row(AT_XXX, XXX),
+    ] as never);
+  });
+
+  const shape = (
+    rows: { id: number; content?: string; cover: { url: string } | null; nsfwLevel: number }[]
+  ) =>
+    rows.map(({ id, content, cover, nsfwLevel }) => ({
+      id,
+      content,
+      cover: cover?.url ?? null,
+      nsfwLevel,
+    }));
+
+  it('leaves the cover out of the profile read for another viewer and keeps the text', async () => {
+    expect(shape(await getCreatorAnnouncements({ userId: AUTHOR, viewerId: STRANGER }))).toEqual([
+      { id: AT_BLOCKED, content: 'kept', cover: null, nsfwLevel: 0 },
+      { id: AT_XXX, content: 'kept', cover: 'cover-2', nsfwLevel: XXX },
+    ]);
+  });
+
+  it('leaves the cover out of a signed-out profile read', async () => {
+    expect(shape(await getCreatorAnnouncements({ userId: AUTHOR }))[0]).toEqual({
+      id: AT_BLOCKED,
+      content: 'kept',
+      cover: null,
+      nsfwLevel: 0,
+    });
+  });
+
+  it('keeps the cover for its author', async () => {
+    expect(shape(await getCreatorAnnouncements({ userId: AUTHOR, viewerId: AUTHOR }))[0]).toEqual({
+      id: AT_BLOCKED,
+      content: 'kept',
+      cover: 'cover-1',
+      nsfwLevel: BLOCKED,
+    });
+  });
+
+  it('leaves the cover out of a follower\u2019s feed', async () => {
+    const { items } = await getFollowedAnnouncements({ userId: STRANGER });
+    expect(shape(items)).toEqual([
+      { id: AT_BLOCKED, content: 'kept', cover: null, nsfwLevel: 0 },
+      { id: AT_XXX, content: 'kept', cover: 'cover-2', nsfwLevel: XXX },
+    ]);
+  });
+});

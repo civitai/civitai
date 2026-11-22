@@ -717,3 +717,16 @@ describe('a blocked or ToS-violating bounty image', () => {
     });
   });
 });
+
+describe('a cover at the Blocked level with no block recorded', () => {
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, "blockedFor", "nsfwLevel") VALUES (3022, NULL, ${NsfwLevel.Blocked});
+      INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (3032, 3022, 'Published', now());
+    `);
+  });
+
+  it.each(['anonymous', 'stranger', 'owner'] as const)('is no cover for the %s', async (who) => {
+    expect(await coverOf('Article', 3032, viewers[who])).toBeNull();
+  });
+});
