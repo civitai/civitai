@@ -1218,12 +1218,15 @@ describe('link targets in rich text', () => {
     expect(text).toContain('blurb words [embed id: 77]');
   });
 
-  it('keeps a target as written inside a heading, which converts its own text to upper case', () => {
+  it('keeps a heading, its link and every target as written', () => {
     const text = htmlToPlainText(
       '<h1>title <img src="https://img.example/AbC.png"><edge-media url="MiXed"></edge-media></h1>' +
-        '<h2><iframe src="https://v.example/XyZ"></iframe></h2>',
+        '<h2><iframe src="https://v.example/XyZ"></iframe></h2>' +
+        '<h3><a href="https://ex.test/AbCd">https://ex.test/AbCd</a></h3>',
       { keepTargets: true }
     );
+    expect(text).toMatch(/^title /);
+    expect(text).toContain('https://ex.test/AbCd [https://ex.test/AbCd]');
     expect(text).toContain('[image: https://img.example/AbC.png]');
     expect(text).toContain('[media: MiXed]');
     expect(text).toContain('[frame: https://v.example/XyZ]');
@@ -1232,5 +1235,8 @@ describe('link targets in rich text', () => {
   // Re-file folding and the holds queue compare this text with what earlier filings stored.
   it('leaves post and comment text exactly as before', () => {
     expect(htmlToPlainText(html)).toBe('see this [https://x.example/a]\n\n\nblurb words');
+    expect(
+      htmlToPlainText('<h3><a href="https://ex.test/AbCd">https://ex.test/AbCd</a></h3>')
+    ).toBe('HTTPS://EX.TEST/ABCD');
   });
 });

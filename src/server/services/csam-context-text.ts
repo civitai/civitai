@@ -144,15 +144,23 @@ export const htmlToPlainText = (html: string, { keepTargets = false } = {}) =>
       },
     }),
     selectors: [
-      { selector: 'a', options: { hideLinkHrefIfSameAsText: true } },
       ...(keepTargets
         ? [
+            // No case change and no dropped href: a link target's exact text is the evidence.
+            { selector: 'a', options: { hideLinkHrefIfSameAsText: false } },
+            ...(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const).map((selector) => ({
+              selector,
+              options: { uppercase: false },
+            })),
             { selector: 'img', format: 'csamImage' },
             { selector: 'iframe', format: 'csamFrame' },
             { selector: 'edge-media', format: 'csamMedia' },
             { selector: 'div[data-id]', format: 'csamEmbed' },
           ]
-        : [{ selector: 'img', format: 'skip' }]),
+        : [
+            { selector: 'a', options: { hideLinkHrefIfSameAsText: true } },
+            { selector: 'img', format: 'skip' },
+          ]),
     ],
   }).trim();
 
