@@ -354,8 +354,8 @@ func (s *Server) prepare(ctx context.Context, r *http.Request) (feed.Request, bo
 // computeInfinite answers an `image.getInfinite` request (getInfiniteImagesHandler), or returns a
 // fallback/other error. The viewer, the domain cap and the region rules are read as for the gallery
 // procedure (the same middleware runs on both), and so is the cache policy: a signed-out answer
-// carries createContext's public TTL. Shadowed, and served on the public route only with
-// ServeInfinite.
+// carries createContext's public TTL unless its input is viewer-scoped (InfiniteInput.ViewerScoped).
+// Shadowed, and served on the public route only with ServeInfinite.
 func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*computed, error) {
 	req, cacheable, err := s.prepareInfinite(ctx, r)
 	if err != nil {
@@ -366,9 +366,9 @@ func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*compute
 		return nil, err
 	}
 	out := &computed{value: ans.Value, trivial: ans.Trivial}
-	if cacheable {
-		// createContext: cacheable without a session user and without a verified crawler. Nothing in
-		// this procedure's chain lowers it, so Node answers such an unbatched call public.
+	if cacheable && !req.Input.ViewerScoped() {
+		// createContext: cacheable without a session user and without a verified crawler, unless
+		// noEdgeCacheWhen(isViewerScopedInfiniteFeed) lowers it, as it does for a viewer-scoped input.
 		out.ttl = &trpc.SignedOutTTL
 	}
 	if err := out.encode(ctx); err != nil {

@@ -386,6 +386,13 @@ func (in *InfiniteInput) prioritizedSystemUser() bool {
 	return len(in.PrioritizedUserIDs) == 1 && in.PrioritizedUserIDs[0] == -1
 }
 
+// ViewerScoped is isViewerScopedInfiniteFeed (src/server/schema/image.schema.ts) for the inputs this
+// port answers; the rest of that list falls back to the app. The answer depends on the viewer, so it
+// is not edge-cached.
+func (in *InfiniteInput) ViewerScoped() bool {
+	return len(in.Reactions) > 0 || in.Followed || in.Pending
+}
+
 // ownScoped is applyAddonExclusions' isOwnScoped for this input (see ownScope).
 func (in *InfiniteInput) ownScoped(viewerID int, viewerUsername string) bool {
 	return ownScope(viewerID, viewerUsername, in.UserID, in.Username)
