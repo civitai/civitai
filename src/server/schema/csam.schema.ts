@@ -44,9 +44,22 @@ export const csamReportDetails = z.object({
 });
 
 export type CsamContextSources = z.infer<typeof csamContextSourcesSchema>;
+export type CsamContextSourcesInput = z.input<typeof csamContextSourcesSchema>;
 export const csamContextSourcesSchema = z.object({
   postIds: z.number().int().positive().array().max(100),
   commentIds: z.number().int().positive().array().max(500),
+  chatMessageIds: z.number().int().positive().array().max(100).default([]),
+  modelIds: z.number().int().positive().array().max(100).default([]),
+  articleIds: z.number().int().positive().array().max(100).default([]),
+  serviceOfferingIds: z.number().int().positive().array().max(100).default([]),
+  /** The report's user's own profile. */
+  profile: z.boolean().default(false),
+});
+
+export type GetCsamItemCandidatesSchema = z.infer<typeof getCsamItemCandidatesSchema>;
+export const getCsamItemCandidatesSchema = z.object({
+  userId: z.number().int().positive(),
+  source: z.enum(['model', 'article', 'serviceOffering']),
 });
 
 export type CreateCsamReportSchema = z.infer<typeof createCsamReportSchema>;

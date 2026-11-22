@@ -22,7 +22,12 @@ import { uniqBy } from 'lodash-es';
 import { useEffect, useMemo, useState } from 'react';
 import * as z from 'zod';
 import { useCsamImageSelectStore } from '~/components/Csam/useCsamImageSelect.store';
-import { CsamContextTextSelect, noContextSources } from '~/components/Csam/CsamContextTextSelect';
+import {
+  CsamContextTextSelect,
+  hasContextSources,
+  noContextSources,
+} from '~/components/Csam/CsamContextTextSelect';
+import { CsamItemTextSelect } from '~/components/Csam/CsamItemTextSelect';
 import { settleShown } from '~/components/Csam/csam-shown';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { Form, InputCheckboxGroup, InputRadioGroup, useForm } from '~/libs/form';
@@ -100,10 +105,7 @@ export function CsamDetailsForm({
           userId,
           details: data,
           supplementalOf,
-          ...(type === 'Image' &&
-            (contextSources.postIds.length > 0 || contextSources.commentIds.length > 0) && {
-              contextSources,
-            }),
+          ...(type === 'Image' && hasContextSources(contextSources) && { contextSources }),
         });
       },
     });
@@ -168,6 +170,13 @@ export function CsamDetailsForm({
                 <CsamContextTextSelect
                   userId={userId}
                   imageIds={imageIds}
+                  value={contextSources}
+                  onChange={setContextSources}
+                />
+              )}
+              {type === 'Image' && userId > 0 && (
+                <CsamItemTextSelect
+                  userId={userId}
                   value={contextSources}
                   onChange={setContextSources}
                 />

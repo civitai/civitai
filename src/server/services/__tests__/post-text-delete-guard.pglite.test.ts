@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CsamItemContextText } from '~/server/services/csam-context-text';
+import { CSAM_CONTEXT_ITEM_SOURCES } from '~/server/services/csam-context-text';
 import { postHoldsHeldTextSql, unheldPostTextUpdateSql } from '~/server/services/post-text-hold';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -181,6 +183,32 @@ describe('PostText delete trigger', () => {
     await pg.query(`INSERT INTO "CsamReport" ("userId", details) VALUES ($1, $2)`, [
       OTHER,
       JSON.stringify({ contextText: [{ source: 'postDescription', id: 2, postId: 2 }] }),
+    ]);
+    await pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id]);
+    expect(await texts()).toEqual([]);
+  });
+
+  it("doesn't hold text over a report capturing chat, model, article, offering or profile text with the post's id", async () => {
+    const id = await addText(1);
+    const item = (source: CsamItemContextText['source']): CsamItemContextText => ({
+      source,
+      id: 1,
+      authorId: OTHER,
+      authorIsReportedUser: true,
+      fields: [{ label: 'Name', text: 'words' }],
+      text: 'Name:\nwords',
+      capturedAt: new Date().toISOString(),
+      capturedById: 99,
+    });
+    const items = CSAM_CONTEXT_ITEM_SOURCES.map(item);
+    // The control: the same entries carrying the post's id hold it.
+    await pg.query(`INSERT INTO "CsamReport" ("userId", details) VALUES ($1, $2)`, [
+      OTHER,
+      JSON.stringify({ contextText: items.map((c) => ({ ...c, postId: 1 })) }),
+    ]);
+    await expect(pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id])).rejects.toThrow(/held/);
+    await pg.query(`UPDATE "CsamReport" SET details = $1`, [
+      JSON.stringify({ contextText: items }),
     ]);
     await pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id]);
     expect(await texts()).toEqual([]);

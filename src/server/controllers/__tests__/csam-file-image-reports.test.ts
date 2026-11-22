@@ -343,7 +343,15 @@ describe('fileCsamReport blocklist scope by report type', () => {
 });
 
 describe('fileCsamReport with attached text', () => {
-  const sources = { postIds: [100], commentIds: [11] };
+  const sources = {
+    postIds: [100],
+    commentIds: [11],
+    chatMessageIds: [],
+    modelIds: [],
+    articleIds: [],
+    serviceOfferingIds: [],
+    profile: false,
+  };
 
   it('files the text copied for the images, judged against the reported account', async () => {
     const copied = [{ source: 'comment', id: 11, text: 'copied' }];

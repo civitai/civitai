@@ -298,7 +298,7 @@ import {
   CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS,
 } from '~/server/services/csam.service-new';
 import type { CsamContextText } from '~/server/services/csam-context-text';
-import { contextWebPageIncidents } from '~/server/services/csam-context-text';
+import { contextIncidents } from '~/server/services/csam-context-text';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
@@ -958,7 +958,7 @@ describe("a report's attached text", () => {
 
     const data = JSON.parse(storedObjects.get('data.json')!.body.toString('utf8'));
     expect(data.reportContext).toEqual({
-      webPageIncidents: contextWebPageIncidents(contextText),
+      ...contextIncidents(contextText),
       contextText,
     });
     expect(data.reportContext.webPageIncidents[0].additionalInfo).toContain('a & b <c> nul\uFFFD');

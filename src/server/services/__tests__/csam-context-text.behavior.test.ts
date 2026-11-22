@@ -1,5 +1,11 @@
 import { PGlite } from '@electric-sql/pglite';
-import type { CsamContextReview, CsamContextText } from '~/server/services/csam-context-text';
+import type { CsamContextSources } from '~/server/schema/csam.schema';
+import type {
+  CsamContextReview,
+  CsamContextText,
+  CsamItemContextText,
+  CsamPostContextText,
+} from '~/server/services/csam-context-text';
 import {
   Kysely,
   PostgresAdapter,
@@ -39,10 +45,15 @@ const {
   snapshotCsamContextText,
   reportedUserIdsOf,
   foldContextText,
-  contextWebPageIncidents,
+  contextIncidents,
+  htmlToPlainText,
+  CSAM_CONTEXT_ITEM_REFUSAL,
+  CSAM_CONTEXT_CHAT_TYPE_REFUSAL,
+  getCsamItemCandidates,
   CSAM_CONTEXT_TEXT_MAX_CHARS,
 } = await import('~/server/services/csam-context-text');
 const RED = 'https://red.example.invalid';
+const webPages = (c: CsamContextText[] | undefined) => contextIncidents(c).webPageIncidents;
 
 const MOD = 10;
 const OWNER = 20;
@@ -98,6 +109,28 @@ CREATE TABLE "TextScanHold" (
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "activity" TEXT NOT NULL, "entityType" TEXT,
   "entityId" INTEGER, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
+);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
+CREATE TABLE "UserProfile" (
+  "userId" INTEGER PRIMARY KEY, "bio" TEXT, "message" TEXT, "messageAddedAt" TIMESTAMP(3),
+  "sfwBio" TEXT, "sfwMessage" TEXT, "sfwMessageAddedAt" TIMESTAMP(3)
+);
+CREATE TABLE "ChatMessage" (
+  "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "content" TEXT NOT NULL,
+  "contentType" TEXT NOT NULL DEFAULT 'Markdown', "createdAt" TIMESTAMP(3) NOT NULL,
+  "editedAt" TIMESTAMP(3), "deletedAt" TIMESTAMP(3)
+);
+CREATE TABLE "Model" (
+  "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "name" TEXT NOT NULL, "description" TEXT,
+  "status" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL, "deletedAt" TIMESTAMP(3)
+);
+CREATE TABLE "Article" (
+  "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "title" TEXT NOT NULL, "content" TEXT NOT NULL,
+  "status" TEXT NOT NULL, "createdAt" TIMESTAMP(3)
+);
+CREATE TABLE "ServiceOffering" (
+  "id" INTEGER PRIMARY KEY, "sellerId" INTEGER NOT NULL, "title" TEXT NOT NULL,
+  "description" TEXT NOT NULL, "status" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL
 );
 CREATE TABLE "CommentV3" (
   "id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
@@ -282,7 +315,7 @@ describe('snapshot', () => {
 
 describe('fold', () => {
   const capture = (id: number, text: string, day: number) =>
-    ({ source: 'postText', id, text, capturedAt: at(day).toISOString() } as CsamContextText);
+    ({ source: 'postText', id, text, capturedAt: at(day).toISOString() } as CsamPostContextText);
 
   it('keeps an earlier capture as it was and adds a later capture of the same item with new text', () => {
     const first = capture(7, 'first', 8);
@@ -320,7 +353,7 @@ describe('fold', () => {
   describe('an identical capture with a review', () => {
     const review = (origin?: string) =>
       ({ byId: MOD, at: at(11).toISOString(), ...(origin && { origin }) } as CsamContextReview);
-    const reviewed = (c: CsamContextText, r: CsamContextReview) => ({ ...c, reviewed: r });
+    const reviewed = (c: CsamPostContextText, r: CsamContextReview) => ({ ...c, reviewed: r });
 
     it.each(['filer-read', 'individual-decision'])(
       'marks the stored capture reviewed (%s), keeping its text and capture time',
@@ -417,7 +450,7 @@ describe('fold', () => {
       [{ ...base, ...capture(7, 'the first text', 8) }],
       [{ ...base, ...capture(7, 'the edited text', 12) }]
     );
-    const incidents = contextWebPageIncidents(folded);
+    const incidents = webPages(folded);
     expect(incidents).toHaveLength(2);
     expect(incidents[0].additionalInfo).toContain('the first text');
     expect(incidents[0].additionalInfo).not.toContain('the edited text');
@@ -437,7 +470,7 @@ describe('what NCMEC is sent', () => {
     } as never);
 
   it('is one block per page, worded as Legal approved, naming no other account', () => {
-    const [post, image] = contextWebPageIncidents([
+    const [post, image] = webPages([
       item({
         source: 'comment',
         id: 11,
@@ -464,7 +497,7 @@ describe('what NCMEC is sent', () => {
   });
 
   it('splits a page captured at two times into one block per capture', () => {
-    const blocks = contextWebPageIncidents([
+    const blocks = webPages([
       item({ source: 'comment', id: 11, postId: 100, text: 'first' }),
       item({
         source: 'comment',
@@ -483,9 +516,7 @@ describe('what NCMEC is sent', () => {
 
   it('sends an item of exactly the cap whole', () => {
     const exact = 'x'.repeat(CSAM_CONTEXT_TEXT_MAX_CHARS);
-    const [incident] = contextWebPageIncidents([
-      item({ source: 'comment', id: 11, postId: 100, text: exact }),
-    ]);
+    const [incident] = webPages([item({ source: 'comment', id: 11, postId: 100, text: exact })]);
 
     expect(incident.additionalInfo).toContain(`"${exact}"`);
     expect(incident.additionalInfo).not.toContain('[Truncated');
@@ -493,9 +524,7 @@ describe('what NCMEC is sent', () => {
 
   it('truncates an item over the cap with the agreed line, counting characters not code units', () => {
     const long = '😀'.repeat(CSAM_CONTEXT_TEXT_MAX_CHARS + 7);
-    const [incident] = contextWebPageIncidents([
-      item({ source: 'comment', id: 11, postId: 100, text: long }),
-    ]);
+    const [incident] = webPages([item({ source: 'comment', id: 11, postId: 100, text: long })]);
 
     expect(incident.additionalInfo).toContain(
       `"${'😀'.repeat(
@@ -568,7 +597,7 @@ describe('held text items', () => {
       at: at(4).toISOString().replace('14:05', '00:00'),
       origin: 'individual-decision',
     });
-    const [incident] = contextWebPageIncidents(rows);
+    const [incident] = webPages(rows);
     expect(incident.additionalInfo).toContain(
       `Text item 2 of this post, posted 10/02/2026 00:00 UTC by the reported account. Not reviewed by Civitai:\n"pending words"`
     );
@@ -587,7 +616,7 @@ describe('held text items', () => {
 
     const rows = await snapshot(MOD, new Date());
     expect(byId(rows, 2)?.reviewed).toEqual({ byId: MOD, at: result.readAt, origin: 'filer-read' });
-    expect(contextWebPageIncidents(rows)[0].additionalInfo).not.toContain(
+    expect(webPages(rows)[0].additionalInfo).not.toContain(
       'Text item 2 of this post, posted 10/02/2026 00:00 UTC by the reported account. Not reviewed'
     );
   });
@@ -641,5 +670,298 @@ describe('held text items', () => {
     const rows = await snapshot();
     expect(rows.some((r) => r.source === 'postDescription')).toBe(false);
     expect(rows.filter((r) => r.source === 'postText')).toHaveLength(4);
+  });
+});
+
+describe('items the reported user wrote', () => {
+  const SYSTEM = -1;
+  beforeEach(async () => {
+    await db.pg.exec(
+      `TRUNCATE "User", "UserProfile", "ChatMessage", "Model", "Article", "ServiceOffering";
+       INSERT INTO "User" VALUES (${OWNER}, 'owner_name'), (${OTHER}, 'other'), (${SECONDARY}, 'second');
+       INSERT INTO "UserProfile" VALUES
+         (${OWNER}, 'red bio & <stuff>', 'hello there', '2026-10-03 14:05', 'clean bio', NULL, NULL);
+       INSERT INTO "ChatMessage" VALUES
+         (901, ${OWNER}, 'meet me <b>later</b>', 'Markdown', '2026-10-02 14:05', NULL, NULL),
+         (902, ${OTHER}, 'not theirs', 'Markdown', '2026-10-02 14:05', NULL, NULL),
+         (903, ${OWNER}, 'https://image.example/x.png', 'Image', '2026-10-02 14:05', NULL, NULL),
+         (904, ${SYSTEM}, 'a system notice', 'Markdown', '2026-10-02 14:05', NULL, NULL),
+         (905, ${OWNER}, 'changed words', 'Markdown', '2026-10-02 14:05', '2026-10-03 14:05', '2026-10-04 14:05'),
+         (906, ${SECONDARY}, 'by the secondary user', 'Markdown', '2026-10-02 14:05', NULL, NULL);
+       INSERT INTO "Model" VALUES
+         (701, ${OWNER}, 'Model name', '<p>about <img src="https://img.example/a.png"></p>', 'Draft', '2026-10-01 14:05', NULL),
+         (702, ${OTHER}, 'Other model', NULL, 'Published', '2026-10-01 14:05', NULL),
+         (703, ${SECONDARY}, 'Secondary model', NULL, 'Published', '2026-10-01 14:05', NULL);
+       INSERT INTO "Article" VALUES
+         (801, ${OWNER}, 'Untitled draft', '', 'Draft', NULL),
+         (802, ${OWNER}, 'Article title', '<p>body text</p>', 'Published', '2026-10-01 14:05');
+       INSERT INTO "ServiceOffering" VALUES
+         (1001, ${OWNER}, 'Offer title', 'plain <desc> & more', 'Paused', '2026-10-01 14:05');`
+    );
+  });
+
+  const capture = (sources: Partial<CsamContextSources>, details?: unknown) =>
+    snapshotCsamContextText({
+      imageIds: [],
+      ownerId: OWNER,
+      sources: { postIds: [], commentIds: [], ...sources },
+      reportedUserIds: reportedUserIdsOf(OWNER, details),
+      capturedById: MOD,
+      capturedAt: at(8),
+    });
+  const refusal = (sources: Partial<CsamContextSources>, details?: unknown) =>
+    capture(sources, details).then(
+      () => 'filed',
+      (e: Error) => e.message
+    );
+
+  it('copies each type as one entry of labeled fields, with no post or image id', async () => {
+    const rows = await capture({
+      chatMessageIds: [901],
+      modelIds: [701],
+      articleIds: [802],
+      serviceOfferingIds: [1001],
+      profile: true,
+    });
+
+    expect(rows.map((r) => [r.source, r.id])).toEqual([
+      ['chatMessage', 901],
+      ['model', 701],
+      ['article', 802],
+      ['serviceOffering', 1001],
+      ['profile', OWNER],
+    ]);
+    for (const row of rows) {
+      expect(row).not.toHaveProperty('postId');
+      expect(row).not.toHaveProperty('imageId');
+      expect(row).toMatchObject({ authorId: OWNER, authorIsReportedUser: true, capturedById: MOD });
+    }
+    const [chat, model, article, offering, profile] = rows as CsamItemContextText[];
+    expect(chat.fields).toEqual([{ label: 'Message', text: 'meet me <b>later</b>' }]);
+    expect(model).toMatchObject({
+      status: 'Draft',
+      createdAt: at(1).toISOString(),
+      fields: [
+        { label: 'Name', text: 'Model name' },
+        { label: 'Description', text: 'about [image: https://img.example/a.png]' },
+      ],
+    });
+    expect(article.fields).toEqual([
+      { label: 'Title', text: 'Article title' },
+      { label: 'Content', text: 'body text' },
+    ]);
+    expect(offering).toMatchObject({
+      status: 'Paused',
+      fields: [
+        { label: 'Title', text: 'Offer title' },
+        { label: 'Description', text: 'plain <desc> & more' },
+      ],
+    });
+    expect(profile).toMatchObject({
+      username: 'owner_name',
+      fields: [
+        { label: 'Bio (civitai.red)', text: 'red bio & <stuff>' },
+        {
+          label: 'Message (civitai.red and civitai.com)',
+          text: 'hello there',
+          at: at(3).toISOString(),
+        },
+        { label: 'Bio (civitai.com)', text: 'clean bio' },
+      ],
+    });
+    expect(profile.text).toBe(
+      'Bio (civitai.red):\nred bio & <stuff>\n\nMessage (civitai.red and civitai.com):\nhello there\n\nBio (civitai.com):\nclean bio'
+    );
+  });
+
+  it('captures no item a filing does not name', async () => {
+    expect(await capture({})).toEqual([]);
+  });
+
+  it("refuses a missing item and another account's in the same words, naming neither", async () => {
+    const missing = await refusal({ chatMessageIds: [999] });
+    expect(missing).toBe(CSAM_CONTEXT_ITEM_REFUSAL);
+    expect(await refusal({ chatMessageIds: [902] })).toBe(missing);
+    expect(await refusal({ modelIds: [702] })).toBe(missing);
+    expect(await refusal({ modelIds: [9999] })).toBe(missing);
+    expect(missing).not.toMatch(/\d/);
+  });
+
+  it("refuses the secondary user's items even when the report names one", async () => {
+    const details = { secondaryUserId: SECONDARY };
+    expect(reportedUserIdsOf(OWNER, details)).toContain(SECONDARY);
+    expect(await refusal({ chatMessageIds: [906] }, details)).toBe(CSAM_CONTEXT_ITEM_REFUSAL);
+    expect(await refusal({ modelIds: [703] }, details)).toBe(CSAM_CONTEXT_ITEM_REFUSAL);
+  });
+
+  it('refuses a system message, and a message that is not text', async () => {
+    expect(await refusal({ chatMessageIds: [904] })).toBe(CSAM_CONTEXT_ITEM_REFUSAL);
+    expect(await refusal({ chatMessageIds: [903] })).toBe(CSAM_CONTEXT_CHAT_TYPE_REFUSAL);
+  });
+
+  it('keeps a deleted, edited message, saying both and that its text may differ from what was sent', async () => {
+    const [row] = await capture({ chatMessageIds: [905] });
+    expect(row).toMatchObject({ editedAt: at(3).toISOString(), deletedAt: at(4).toISOString() });
+
+    const {
+      chatImIncidents: [incident],
+      webPageIncidents,
+    } = contextIncidents([row]);
+    expect(webPageIncidents).toEqual([]);
+    expect(incident).toEqual({
+      chatClient: 'Civitai chat',
+      content: 'Message:\n"changed words"',
+      additionalInfo:
+        'Text the reported user wrote in this chat message, captured by Civitai on 10/08/2026 14:05 UTC.\n' +
+        'Chat message 905, sent 10/02/2026 14:05 UTC, deleted 10/04/2026 14:05 UTC, edited 10/03/2026 14:05 UTC: text as of capture; may differ from what was sent.',
+    });
+  });
+
+  it('adds no entry for an item with no text, and leaves an empty field out', async () => {
+    await db.pg.exec(
+      `UPDATE "UserProfile" SET bio = NULL, message = '  ', "sfwBio" = NULL, "sfwMessage" = NULL`
+    );
+    expect(await capture({ profile: true })).toEqual([]);
+
+    const [article] = (await capture({ articleIds: [801] })) as CsamItemContextText[];
+    expect(article.fields).toEqual([{ label: 'Title', text: 'Untitled draft' }]);
+    expect(article).not.toHaveProperty('createdAt');
+  });
+
+  it('adds nothing when an unchanged item is filed again, a four-field profile included', async () => {
+    const sources = { chatMessageIds: [901], profile: true };
+    const first = await capture(sources);
+    const again = await snapshotCsamContextText({
+      imageIds: [],
+      ownerId: OWNER,
+      sources: { postIds: [], commentIds: [], ...sources },
+      reportedUserIds: [OWNER],
+      capturedById: MOD,
+      capturedAt: at(12),
+    });
+    await db.pg.exec(`UPDATE "UserProfile" SET "sfwMessage" = 'com message'`);
+    const fourFields = await capture({ profile: true });
+    expect((fourFields[0] as CsamItemContextText).fields).toHaveLength(4);
+    const heard: string[] = [];
+
+    const folded = foldContextText(first, again, (c) => heard.push(`${c.source}:${c.id}`));
+    expect(folded).toEqual(first);
+    expect(heard).toEqual(['chatMessage:901', `profile:${OWNER}`]);
+    const refiled = foldContextText(foldContextText(first, fourFields), [
+      { ...fourFields[0], capturedAt: at(20).toISOString() },
+    ]);
+    expect(refiled).toHaveLength(3);
+  });
+
+  it("lists the user's own items newest first, capped, and still files an id past the cap", async () => {
+    const ids = Array.from({ length: 101 }, (_, i) => 2000 + i);
+    await db.pg.exec(
+      `INSERT INTO "Model" VALUES ${ids
+        .map((id) => `(${id}, ${OWNER}, 'm${id}', NULL, 'Published', '2026-10-01', NULL)`)
+        .join(', ')}`
+    );
+
+    const { candidates, more } = await getCsamItemCandidates({ userId: OWNER, source: 'model' });
+    expect(candidates).toHaveLength(100);
+    expect(more).toBe(true);
+    expect(candidates[0]).toEqual({
+      source: 'model',
+      id: 2100,
+      title: 'm2100',
+      status: 'Published',
+    });
+    expect(candidates.some((c) => c.id === 701 || c.id === 702)).toBe(false);
+
+    const [unlisted] = await capture({ modelIds: [701] });
+    expect(unlisted.id).toBe(701);
+  });
+
+  describe('what NCMEC is sent', () => {
+    it('gives each web item its address and state at capture, never calling it posted or public', async () => {
+      const rows = await capture({
+        modelIds: [701],
+        articleIds: [801],
+        serviceOfferingIds: [1001],
+      });
+      const { webPageIncidents, chatImIncidents } = contextIncidents(rows);
+
+      expect(chatImIncidents).toEqual([]);
+      expect(webPageIncidents).toEqual([
+        {
+          url: `${RED}/models/701`,
+          additionalInfo:
+            'Text the reported user wrote in this model, captured by Civitai on 10/08/2026 14:05 UTC.\n' +
+            'Model 701, status Draft at capture, created 10/01/2026 14:05 UTC.\n\n' +
+            'Name:\n"Model name"\n\nDescription:\n"about [image: https://img.example/a.png]"',
+        },
+        {
+          url: `${RED}/articles/801`,
+          additionalInfo:
+            'Text the reported user wrote in this article, captured by Civitai on 10/08/2026 14:05 UTC.\n' +
+            'Article 801, status Draft at capture.\n\nTitle:\n"Untitled draft"',
+        },
+        {
+          url: `${RED}/services/1001`,
+          additionalInfo:
+            'Text the reported user wrote in this service offering, captured by Civitai on 10/08/2026 14:05 UTC.\n' +
+            'Service offering 1001, status Paused at capture, created 10/01/2026 14:05 UTC.\n\n' +
+            'Title:\n"Offer title"\n\nDescription:\n"plain <desc> & more"',
+        },
+      ]);
+      for (const { additionalInfo } of webPageIncidents)
+        expect(additionalInfo).not.toMatch(/posted|public/i);
+    });
+
+    it('labels profile fields by site, with a time only where one is recorded', async () => {
+      const {
+        webPageIncidents: [incident],
+      } = contextIncidents(await capture({ profile: true }));
+
+      expect(incident).toEqual({
+        url: `${RED}/user/owner_name`,
+        additionalInfo:
+          'Text the reported user wrote in this profile, captured by Civitai on 10/08/2026 14:05 UTC.\n' +
+          'Profile text at capture. Profile links and images are not included.\n\n' +
+          'Bio (civitai.red):\n"red bio & <stuff>"\n\n' +
+          'Message (civitai.red and civitai.com), added 10/03/2026 14:05 UTC:\n"hello there"\n\n' +
+          'Bio (civitai.com):\n"clean bio"',
+      });
+    });
+
+    it('sends at most the cap per item, across its fields', async () => {
+      const long = 'x'.repeat(CSAM_CONTEXT_TEXT_MAX_CHARS - 10);
+      await db.pg.query(`UPDATE "UserProfile" SET bio = $1, "sfwBio" = NULL`, [long]);
+      const {
+        webPageIncidents: [incident],
+      } = contextIncidents(await capture({ profile: true }));
+
+      expect(incident.additionalInfo).toContain(`Bio (civitai.red and civitai.com):\n"${long}"`);
+      expect(incident.additionalInfo).toContain(
+        'Message (civitai.red and civitai.com), added 10/03/2026 14:05 UTC:\n"hello ther"\n[Truncated: 1 further characters are preserved by Civitai with this report.]'
+      );
+    });
+  });
+});
+
+describe('link targets in rich text', () => {
+  const html =
+    '<p>see <a href="https://x.example/a">this</a></p>' +
+    '<img src="https://img.example/1.png">' +
+    '<div data-type="embed"><iframe src="https://www.youtube.com/embed/abc"></iframe></div>' +
+    '<edge-media url="abc-uuid" type="image"></edge-media>' +
+    '<div data-type="blurb" data-id="77">blurb words</div>';
+
+  it('keeps each target kind as text for the five item types', () => {
+    const text = htmlToPlainText(html, { keepTargets: true });
+    expect(text).toContain('see this [https://x.example/a]');
+    expect(text).toContain('[image: https://img.example/1.png]');
+    expect(text).toContain('[frame: https://www.youtube.com/embed/abc]');
+    expect(text).toContain('[media: abc-uuid]');
+    expect(text).toContain('blurb words [embed id: 77]');
+  });
+
+  // Re-file folding and the holds queue compare this text with what earlier filings stored.
+  it('leaves post and comment text exactly as before', () => {
+    expect(htmlToPlainText(html)).toBe('see this [https://x.example/a]\n\n\nblurb words');
   });
 });
