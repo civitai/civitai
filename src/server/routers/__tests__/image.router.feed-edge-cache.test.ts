@@ -95,3 +95,13 @@ describe.each(['getInfinite', 'getImagesAsPostsInfinite'] as const)(
     });
   }
 );
+
+// The Hat Turf inputs are read by image.getInfinite only; the gallery answers them the same for everyone.
+describe('Hat Turf inputs', () => {
+  it('image.getInfinite does not store a signed-out answer to a hat filter', async () => {
+    expect((await call('getInfinite', { hideWornHats: true })).edgeCached).toBe(false);
+  });
+  it('image.getImagesAsPostsInfinite still stores it', async () => {
+    expect((await call('getImagesAsPostsInfinite', { hideWornHats: true })).edgeCached).toBe(true);
+  });
+});

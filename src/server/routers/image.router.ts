@@ -63,6 +63,7 @@ import {
   getInfiniteImagesSchema,
   getMyImagesInput,
   isViewerScopedImageFeed,
+  isViewerScopedInfiniteFeed,
   imageModerationSchema,
   removeImageResourceSchema,
   reportCsamImagesSchema,
@@ -131,7 +132,7 @@ export const imageRouter = router({
   getInfinite: heavyProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteImagesSchema)
-    .use(noEdgeCacheWhen(isViewerScopedImageFeed))
+    .use(noEdgeCacheWhen(isViewerScopedInfiniteFeed))
     // One `user` object per creator on the wire (`image-feed-shared-users`, dark). Here rather
     // than in the handler, which `civitai-embed` also calls directly.
     .query(async (opts) => withSharedFeedUsers(await getInfiniteImagesHandler(opts))),

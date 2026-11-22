@@ -453,9 +453,9 @@ export function requiresImageDbPath(input: {
 }
 
 /**
- * Inputs whose answer depends on who is asking: signed out, each is ignored or reads as nobody's.
+ * Feed inputs whose answer depends on who is asking: signed out, each is ignored or reads as nobody's.
  * A signed-out answer to one of them must not be stored by a shared cache, or a signed-in caller at
- * the same URL gets that answer instead of their own. The hat inputs matter to image.getInfinite only.
+ * the same URL gets that answer instead of their own.
  */
 export function isViewerScopedImageFeed(input: {
   reactions?: unknown[] | null;
@@ -467,10 +467,6 @@ export function isViewerScopedImageFeed(input: {
   poiOnly?: boolean | null;
   minorOnly?: boolean | null;
   pendingReviewOnly?: boolean | null;
-  hatSort?: unknown;
-  hatTurfMine?: boolean | null;
-  hideTurfHats?: boolean | null;
-  hideWornHats?: boolean | null;
 }) {
   return (
     !!input.reactions?.length ||
@@ -481,7 +477,21 @@ export function isViewerScopedImageFeed(input: {
     !!input.scheduled ||
     !!input.poiOnly ||
     !!input.minorOnly ||
-    !!input.pendingReviewOnly ||
+    !!input.pendingReviewOnly
+  );
+}
+
+/** `isViewerScopedImageFeed` plus the Hat Turf inputs, which only image.getInfinite reads. */
+export function isViewerScopedInfiniteFeed(
+  input: Parameters<typeof isViewerScopedImageFeed>[0] & {
+    hatSort?: unknown;
+    hatTurfMine?: boolean | null;
+    hideTurfHats?: boolean | null;
+    hideWornHats?: boolean | null;
+  }
+) {
+  return (
+    isViewerScopedImageFeed(input) ||
     !!input.hatSort ||
     !!input.hatTurfMine ||
     !!input.hideTurfHats ||
