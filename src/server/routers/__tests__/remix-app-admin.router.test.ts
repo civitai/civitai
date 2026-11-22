@@ -267,6 +267,7 @@ describe('user app code: submit and review', () => {
   });
 
   it('refuses a review, a mark clear and a hold clear made while impersonating', async () => {
+    // Decided in civitai/civitai#10060: a moderator acting as a user does not act for them here.
     const impersonating = remixAppRouter.createCaller(
       Object.assign(ctx(moderator, flags({ remixAppsUserCode: true })), { impersonatedBy: 1 })
     ).admin;
@@ -287,6 +288,7 @@ describe('user app code: submit and review', () => {
   });
 
   it("marks a run started while impersonating, so the author's own app refuses it", async () => {
+    // Decided in civitai/civitai#10060: a moderator acting as a user does not act for them here.
     const impersonating = remixAppRouter.createCaller(
       Object.assign(ctx(moderator, flags({ remixAppsUserCode: true })), { impersonatedBy: 1 })
     );
@@ -297,6 +299,7 @@ describe('user app code: submit and review', () => {
   });
 
   it('refuses a submit while impersonating', async () => {
+    // Decided in civitai/civitai#10060: a moderator acting as a user does not act for them here.
     const impersonating = remixAppRouter.createCaller(
       Object.assign(ctx(moderator, flags({ remixAppsUserCode: true, remixAppBuilder: true })), {
         impersonatedBy: 1,
@@ -307,6 +310,7 @@ describe('user app code: submit and review', () => {
   });
 
   it("refuses a user app's enable, delete, dry run and test run while impersonating", async () => {
+    // Decided in civitai/civitai#10060: a moderator acting as a user does not act for them here.
     const impersonating = remixAppRouter.createCaller(
       Object.assign(ctx(moderator, flags({ remixAppsUserCode: true })), { impersonatedBy: 1 })
     ).admin;

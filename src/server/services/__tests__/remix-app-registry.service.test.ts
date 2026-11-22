@@ -1411,25 +1411,3 @@ describe('user apps: submit, review and enable', () => {
     });
   });
 });
-
-describe('orderRemixApps', () => {
-  it('writes the rows in id order whatever the menu order, as a runner trip locks them', async () => {
-    const { orderRemixApps, remixAppBlockRowId } = await import(
-      '~/server/services/remix-app-registry.service'
-    );
-    dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
-    const menu = ['zeta-app', 'alpha-app', 'mid-app'];
-    await orderRemixApps(menu);
-    const written = dbMock.dbWrite.appBlock.updateMany.mock.calls.map(
-      ([args]) => args as { where: { blockId: string }; data: { featuredOrder: number } }
-    );
-    const ids = written.map(({ where }) =>
-      remixAppBlockRowId(where.blockId.slice('remix-'.length))
-    );
-    expect(ids).toEqual([...ids].sort());
-    // Each keeps its menu place.
-    expect(
-      Object.fromEntries(written.map(({ where, data }) => [where.blockId, data.featuredOrder]))
-    ).toEqual({ 'remix-zeta-app': 0, 'remix-alpha-app': 1, 'remix-mid-app': 2 });
-  });
-});

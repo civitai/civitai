@@ -8,6 +8,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
   noteRunnerQuarantine,
+  orderRemixApps,
   REMIX_AUTHOR_HELD,
   remixAppBlockRowId,
   saveRemixApp,
@@ -269,7 +270,7 @@ describe("an author's runner trip, in one transaction against Postgres", () => {
       5,
       new RemixQuarantinedError('a'.repeat(64), true)
     );
-    expect(refusal).toBe(REMIX_AUTHOR_HELD);
+    expect(refusal).toEqual({ kind: 'held', message: REMIX_AUTHOR_HELD });
     const [row] = (
       await db.query<{ manifest: { runnerTrips: string[]; runnerHold?: unknown } }>(
         `SELECT manifest FROM app_blocks WHERE block_id = $1`,
@@ -284,6 +285,92 @@ describe("an author's runner trip, in one transaction against Postgres", () => {
       { block_id: 'remix-u6-other', mine: false },
     ]);
     await db.exec(`DELETE FROM app_blocks WHERE block_id IN ('${blockId}', 'remix-u6-other')`);
+  });
+});
+
+describe('reordering the menu, in one transaction against Postgres', () => {
+  it("locks every row it moves first, through the runner trip's statement, then writes the order", async () => {
+    const raw = pgliteRaw(db);
+    // Ids a locale sort and a code-unit sort put in opposite orders: a JS sort of the ids would
+    // not match the lock order a runner trip takes.
+    const slugs = ['u5-a-b', 'u5-a1'];
+    const [x, y] = slugs.map(remixAppBlockRowId);
+    expect(x.localeCompare(y)).not.toBe(Math.sign(x < y ? -1 : 1));
+    for (const slug of slugs)
+      await db.query(
+        `INSERT INTO app_blocks (id, app_id, block_id, version, manifest, status, content_rating)
+         VALUES ($1, 'civitai-remix-apps', $2, '1.0.0', '{}', 'remix', 'pg')`,
+        [remixAppBlockRowId(slug), `remix-${slug}`]
+      );
+    const events: string[] = [];
+    const tx = {
+      $executeRaw: raw.executeRaw,
+      $queryRaw: async (...args: Parameters<typeof raw.queryRaw>) => {
+        const locked = (await raw.queryRaw(...args)) as { id: string }[];
+        const mine = (
+          await db.query<{ block_id: string; mine: boolean }>(
+            `SELECT block_id, xmax::text = (txid_current() % 4294967296)::text AS mine
+             FROM app_blocks WHERE block_id LIKE 'remix-u5-a%' ORDER BY block_id`
+          )
+        ).rows;
+        events.push(`lock ${locked.map(({ id }) => id).join(',')}`);
+        events.push(`mine ${mine.map((r) => `${r.block_id}=${r.mine}`).join(',')}`);
+        return locked;
+      },
+      appBlock: {
+        updateMany: async ({
+          where,
+          data,
+        }: {
+          where: { blockId: string; status: { in: string[] } };
+          data: { featuredOrder: number };
+        }) => {
+          events.push(`write ${where.blockId}`);
+          const { affectedRows } = await db.query(
+            `UPDATE app_blocks SET featured_order = $1 WHERE block_id = $2 AND status = ANY($3)`,
+            [data.featuredOrder, where.blockId, where.status.in]
+          );
+          return { count: affectedRows ?? 0 };
+        },
+      },
+    };
+    dbMock.dbWrite.$transaction.mockImplementation((async (fn: (t: typeof tx) => unknown) => {
+      await db.exec('BEGIN');
+      try {
+        const out = await fn(tx);
+        await db.exec('COMMIT');
+        return out;
+      } catch (error) {
+        await db.exec('ROLLBACK');
+        throw error;
+      }
+    }) as never);
+    redisMock.redis.set.mockResolvedValue('OK' as never);
+
+    await orderRemixApps(['u5-a1', 'u5-a-b']);
+
+    const byId = (
+      await db.query<{ id: string }>(
+        `SELECT id FROM app_blocks WHERE block_id LIKE 'remix-u5-a%' ORDER BY id`
+      )
+    ).rows.map(({ id }) => id);
+    expect(events).toEqual([
+      `lock ${byId.join(',')}`,
+      'mine remix-u5-a-b=true,remix-u5-a1=true',
+      'write remix-u5-a1',
+      'write remix-u5-a-b',
+    ]);
+    expect(
+      (
+        await db.query<{ block_id: string; featured_order: number }>(
+          `SELECT block_id, featured_order FROM app_blocks WHERE block_id LIKE 'remix-u5-a%' ORDER BY block_id`
+        )
+      ).rows
+    ).toEqual([
+      { block_id: 'remix-u5-a-b', featured_order: 1 },
+      { block_id: 'remix-u5-a1', featured_order: 0 },
+    ]);
+    await db.exec(`DELETE FROM app_blocks WHERE block_id LIKE 'remix-u5-a%'`);
   });
 });
 

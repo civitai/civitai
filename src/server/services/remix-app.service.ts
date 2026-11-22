@@ -425,7 +425,7 @@ export async function quoteRemixApps({
             // Pricing a user app runs its source, so a quarantine here counts as a run's does.
             if (error instanceof RemixQuarantinedError) {
               const refusal = await noteRunnerQuarantine(entry, caller.user.id, error);
-              return { slug: entry.slug, refusal: refusal ?? PRICE_UNAVAILABLE };
+              return { slug: entry.slug, refusal: refusal?.message ?? PRICE_UNAVAILABLE };
             }
             logToAxiom({
               name: 'remix-app-quote',

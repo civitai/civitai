@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logToAxiom } from '~/server/logging/client';
@@ -998,6 +999,13 @@ describe('posting a finished run', () => {
     finish(workflowId, [url], level ? { [url]: level } : {});
     return workflowId;
   }
+  /** A one-shot run's workflow: a runtime segment's tags without `remix:runtime`. */
+  async function oneShotAnime(nonce: string, url: string, level?: string) {
+    const workflowId = await finishedAnime(nonce, url, level);
+    const workflow = h.workflows.find(({ id }) => id === workflowId)!;
+    workflow.tags = workflow.tags.filter((tag: string) => tag !== 'remix:runtime');
+    return workflowId;
+  }
   const post = (
     workflowId: string,
     over: {
@@ -1007,7 +1015,7 @@ describe('posting a finished run', () => {
   ) => postRemixResult({ workflowId, caller: caller(), ctx: {} as never, ...over });
 
   it("posts the workflow's own outputs, published, once per workflow, and takes the run off the tray", async () => {
-    const workflowId = await finishedAnime('nonce-post-1', blob('out'));
+    const workflowId = await oneShotAnime('nonce-post-1', blob('out'));
 
     await post(workflowId);
 
@@ -1024,7 +1032,7 @@ describe('posting a finished run', () => {
   });
 
   it('refuses while an output is unrated for a viewer who hides mature content', async () => {
-    const workflowId = await finishedAnime('nonce-post-2', blob('unrated'));
+    const workflowId = await oneShotAnime('nonce-post-2', blob('unrated'));
     const viewer = caller();
     viewer.user = { ...viewer.user, showNsfw: false };
 
@@ -1036,7 +1044,7 @@ describe('posting a finished run', () => {
   });
 
   it('leaves a mature output out on green', async () => {
-    const workflowId = await finishedAnime('nonce-post-3', blob('x'), 'x');
+    const workflowId = await oneShotAnime('nonce-post-3', blob('x'), 'x');
 
     await expect(post(workflowId, { caller: caller({ isGreenDomain: true }) })).rejects.toThrow(
       'Nothing from this remix can be posted.'
@@ -1045,7 +1053,7 @@ describe('posting a finished run', () => {
   });
 
   it("submits to the source's gallery only, and still posts when asked for another", async () => {
-    const workflowId = await finishedAnime('nonce-post-4', blob('out'));
+    const workflowId = await oneShotAnime('nonce-post-4', blob('out'));
     const ownGallery = { hostImageId: SOURCE_ID, method: 'free' as const };
 
     await post(workflowId, { gallery: ownGallery });
@@ -1058,6 +1066,22 @@ describe('posting a finished run', () => {
       expect.objectContaining({ remixGallery: undefined })
     );
     expect(other).toMatchObject({ postId: 500, gallery: { submitted: false } });
+  });
+
+  it('refuses a runtime run by its workflow id, which posts only from its run (best-effort: tags are editable)', async () => {
+    const workflowId = await finishedAnime('nonce-post-runtime', blob('out'));
+
+    await expect(post(workflowId)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(h.headlessPost).not.toHaveBeenCalled();
+  });
+
+  it('does not post a remix workflow that names no app', async () => {
+    const workflowId = await oneShotAnime('nonce-post-noslug', blob('out'));
+    const workflow = h.workflows.find(({ id }) => id === workflowId)!;
+    workflow.tags = workflow.tags.filter((tag: string) => !tag.startsWith('remix-app:'));
+
+    await expect(post(workflowId)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(h.headlessPost).not.toHaveBeenCalled();
   });
 
   it('does not post a workflow that is not a remix', async () => {
@@ -2576,16 +2600,7 @@ describe('a user app', () => {
             await bumpRemixAppRegistry();
           };
 
-          it('hold the author at the third, a new source each time; until another mod clears it, the author neither runs, prices, saves nor deletes', async () => {
-            const {
-              submitUserRemixApp,
-              clearRemixRunnerHold,
-              deleteRemixApp,
-              validateUserRemixApp,
-            } = await import('~/server/services/remix-app-registry.service');
-            // A run started before the hold, to advance once it is in place.
-            const started = await runAsAuthor();
-            expect(started).toMatchObject({ status: 'running' });
+          it('hold the author at the third, a new source each time', async () => {
             quarantine(true);
             for (const source of [ASKING_SOURCE, SUFFIX_SOURCE]) {
               await withSource(source);
@@ -2601,102 +2616,162 @@ describe('a user app', () => {
             });
             // The app itself stays as the mod left it: only its author is held.
             expect(stored.status).toBe('remix');
+          });
 
-            // From here the runner answers as a cached quarantine: a call that got past a gate would
-            // be refused as unavailable, not held.
-            quarantine(false);
-            const writes = written().length;
-            await expect(runAsAuthor()).rejects.toMatchObject(authorHeld);
-            await expect(validateUserRemixApp('u5-mine', OTHER_AUTHOR)).rejects.toMatchObject(
-              authorHeld
-            );
-            await expect(
-              advanceRemixRun({ runId: started.runId, caller: author })
-            ).rejects.toMatchObject(authorHeld);
-            expect(
-              await quoteRemixApps({ imageId: SOURCE_ID, slug: 'u5-mine', caller: author })
-            ).toEqual({ prices: [{ slug: 'u5-mine', refusal: REMIX_AUTHOR_HELD }] });
-            await expect(
-              submitUserRemixApp({
-                name: 'mine',
-                title: 'Mine',
-                icon: 'sparkles',
-                source: ASKING_SOURCE,
-                authorId: OTHER_AUTHOR,
-                isGreen: false,
-              })
-            ).rejects.toMatchObject(authorHeld);
-            await expect(
-              clearRemixRunnerHold({ slug: 'u5-mine', moderatorId: OTHER_AUTHOR })
-            ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-            // The hold alone bars a delete, once its trips are over a day old too.
-            const aged = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
-            stored = {
-              ...stored,
-              status: 'remix_disabled',
-              manifest: { ...stored.manifest, runnerTrips: [aged] } as typeof stored.manifest,
+          describe('until another mod clears the hold, the author', () => {
+            const registry = () => import('~/server/services/remix-app-registry.service');
+            let writes: number;
+            /** Held, with the runner answering as a cached quarantine: a call past a gate is refused as unavailable, not held. */
+            const hold = async () => {
+              const now = new Date().toISOString();
+              stored = {
+                ...stored,
+                manifest: {
+                  ...stored.manifest,
+                  runnerHold: { at: now },
+                  runnerTrips: [now, now, now],
+                } as typeof stored.manifest,
+              };
+              await bumpRemixAppRegistry();
+              quarantine(false);
+              writes = written().length;
             };
-            await expect(
-              deleteRemixApp({ slug: 'u5-mine', moderatorId: 88 })
-            ).rejects.toMatchObject({
-              code: 'FORBIDDEN',
-              message: expect.stringContaining('runner trips'),
-            });
-            expect(written()).toHaveLength(writes);
-            expect(dbMock.dbWrite.appBlock.deleteMany).not.toHaveBeenCalled();
+            const nothingWritten = () => expect(written()).toHaveLength(writes);
 
-            stored = { ...stored, status: 'remix' };
-            // Nor publish their own app: approving or enabling it is another mod's. Disabling is open.
-            const { reviewUserRemixApp, remixReviewHash, setRemixAppEnabled } = await import(
-              '~/server/services/remix-app-registry.service'
-            );
-            const inReview = {
-              ...stored,
-              manifest: { ...stored.manifest, review: 'submitted' },
-            } as typeof stored;
-            stored = inReview;
-            await expect(
-              reviewUserRemixApp({
+            it('cannot run', async () => {
+              await hold();
+              await expect(runAsAuthor()).rejects.toMatchObject(authorHeld);
+              nothingWritten();
+            });
+
+            it('cannot dry-run', async () => {
+              const { validateUserRemixApp } = await registry();
+              await hold();
+              await expect(validateUserRemixApp('u5-mine', OTHER_AUTHOR)).rejects.toMatchObject(
+                authorHeld
+              );
+              nothingWritten();
+            });
+
+            it('cannot advance a run started before the hold', async () => {
+              const started = await runAsAuthor();
+              expect(started).toMatchObject({ status: 'running' });
+              await hold();
+              await expect(
+                advanceRemixRun({ runId: started.runId, caller: author })
+              ).rejects.toMatchObject(authorHeld);
+              nothingWritten();
+            });
+
+            it('cannot price', async () => {
+              await hold();
+              expect(
+                await quoteRemixApps({ imageId: SOURCE_ID, slug: 'u5-mine', caller: author })
+              ).toEqual({ prices: [{ slug: 'u5-mine', refusal: REMIX_AUTHOR_HELD }] });
+            });
+
+            it('cannot save', async () => {
+              const { submitUserRemixApp } = await registry();
+              await hold();
+              await expect(
+                submitUserRemixApp({
+                  name: 'mine',
+                  title: 'Mine',
+                  icon: 'sparkles',
+                  source: ASKING_SOURCE,
+                  authorId: OTHER_AUTHOR,
+                  isGreen: false,
+                })
+              ).rejects.toMatchObject(authorHeld);
+              nothingWritten();
+            });
+
+            it('cannot clear it', async () => {
+              const { clearRemixRunnerHold } = await registry();
+              await hold();
+              await expect(
+                clearRemixRunnerHold({ slug: 'u5-mine', moderatorId: OTHER_AUTHOR })
+              ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+              nothingWritten();
+            });
+
+            it('cannot have the app deleted, by anyone, once its trips are over a day old too', async () => {
+              const { deleteRemixApp } = await registry();
+              await hold();
+              const aged = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+              stored = {
+                ...stored,
+                status: 'remix_disabled',
+                manifest: { ...stored.manifest, runnerTrips: [aged] } as typeof stored.manifest,
+              };
+              await expect(
+                deleteRemixApp({ slug: 'u5-mine', moderatorId: 88 })
+              ).rejects.toMatchObject({
+                code: 'FORBIDDEN',
+                message: expect.stringContaining('runner trips'),
+              });
+              expect(dbMock.dbWrite.appBlock.deleteMany).not.toHaveBeenCalled();
+            });
+
+            it('cannot approve their own app', async () => {
+              const { reviewUserRemixApp, remixReviewHash } = await registry();
+              await hold();
+              stored = {
+                ...stored,
+                manifest: { ...stored.manifest, review: 'submitted' },
+              } as typeof stored;
+              await expect(
+                reviewUserRemixApp({
+                  slug: 'u5-mine',
+                  sha256: remixReviewHash(stored.manifest as never),
+                  seenReview: 'submitted',
+                  decision: 'approved',
+                  moderatorId: OTHER_AUTHOR,
+                })
+              ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+              nothingWritten();
+            });
+
+            it('cannot enable their own app, but can disable it', async () => {
+              const { setRemixAppEnabled } = await registry();
+              await hold();
+              stored = {
+                ...stored,
+                manifest: { ...stored.manifest, review: 'approved' },
+              } as typeof stored;
+              await expect(
+                setRemixAppEnabled({ slug: 'u5-mine', enabled: true, moderatorId: OTHER_AUTHOR })
+              ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+              nothingWritten();
+              await setRemixAppEnabled({
                 slug: 'u5-mine',
-                sha256: remixReviewHash(stored.manifest as never),
-                seenReview: 'submitted',
-                decision: 'approved',
+                enabled: false,
                 moderatorId: OTHER_AUTHOR,
-              })
-            ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-            stored = {
-              ...stored,
-              manifest: { ...stored.manifest, review: 'approved' },
-            } as typeof stored;
-            await expect(
-              setRemixAppEnabled({ slug: 'u5-mine', enabled: true, moderatorId: OTHER_AUTHOR })
-            ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-            expect(written()).toHaveLength(writes);
-            await setRemixAppEnabled({
-              slug: 'u5-mine',
-              enabled: false,
-              moderatorId: OTHER_AUTHOR,
+              });
+              expect(stored.status).toBe('remix_disabled');
             });
-            expect(stored.status).toBe('remix_disabled');
 
-            // The clear reads the rows raw: a held row that no longer validates is cleared too.
-            stored = {
-              ...stored,
-              status: 'remix',
-              manifest: { ...stored.manifest, version: 'not semver' },
-            } as typeof stored;
-            await clearRemixRunnerHold({ slug: 'u5-mine', moderatorId: 88 });
-            stored = {
-              ...stored,
-              manifest: { ...stored.manifest, version: '1.0.0' },
-            } as typeof stored;
-            await bumpRemixAppRegistry();
-            expect(stored.manifest).not.toHaveProperty('runnerHold');
-            expect(stored.manifest).not.toHaveProperty('runnerTrips');
-            expect(reviewLog().at(-1)).toMatchObject({ action: 'cleared-runner-hold', by: 88 });
-            quarantine(true);
-            await expect(runAsAuthor()).rejects.toMatchObject(unavailable);
-            expect(stored.manifest).toMatchObject({ runnerTrips: [expect.any(String)] });
+            it('runs again once another mod clears it, reading the row raw, and trips count afresh', async () => {
+              const { clearRemixRunnerHold } = await registry();
+              await hold();
+              // A held row that no longer validates is cleared too.
+              stored = {
+                ...stored,
+                manifest: { ...stored.manifest, version: 'not semver' },
+              } as typeof stored;
+              await clearRemixRunnerHold({ slug: 'u5-mine', moderatorId: 88 });
+              stored = {
+                ...stored,
+                manifest: { ...stored.manifest, version: '1.0.0' },
+              } as typeof stored;
+              await bumpRemixAppRegistry();
+              expect(stored.manifest).not.toHaveProperty('runnerHold');
+              expect(stored.manifest).not.toHaveProperty('runnerTrips');
+              expect(reviewLog().at(-1)).toMatchObject({ action: 'cleared-runner-hold', by: 88 });
+              quarantine(true);
+              await expect(runAsAuthor()).rejects.toMatchObject(unavailable);
+              expect(stored.manifest).toMatchObject({ runnerTrips: [expect.any(String)] });
+            });
           });
 
           describe('on several apps at once', () => {
@@ -2882,7 +2957,13 @@ describe('a user app', () => {
             it('retry once when Postgres picks the trip as a deadlock victim, and count it', async () => {
               const real = dbMock.dbWrite.$transaction.getMockImplementation()!;
               dbMock.dbWrite.$transaction
-                .mockRejectedValueOnce(new Error('deadlock detected (SQLSTATE 40P01)'))
+                // Prisma's documented shape for a raw query Postgres aborted (the lock is a raw query).
+                .mockRejectedValueOnce(
+                  new Prisma.PrismaClientKnownRequestError(
+                    'Raw query failed. Code: `40P01`. Message: `ERROR: deadlock detected`',
+                    { code: 'P2010', clientVersion: '6.13.0', meta: { code: '40P01' } }
+                  )
+                )
                 .mockImplementation(real);
               await expect(runOn('one')).rejects.toMatchObject(unavailable);
               expect(tripsOf()).toHaveLength(1);
@@ -2901,6 +2982,8 @@ describe('a user app', () => {
                   message: 'Could not record an author runner trip; refused',
                 })
               );
+              // A contract, not wiring: each unrecorded trip is a hold that may be missing, and an
+              // alert reads remix_author_trip_unrecorded_total before user apps open (civitai/civitai#10060).
               expect(await unrecordedCount()).toBe(before + 1);
             });
 
@@ -3076,6 +3159,112 @@ describe('a user app', () => {
             expect(
               [...h.sys.keys()].some((key) => key.startsWith('remix-app:option-prices:'))
             ).toBe(false);
+          });
+
+          describe('when option prices replay at once, every trip is recorded and the worst outcome wins', () => {
+            const CHOICE = `export default defineRemixApp({ async run(ctx) {
+  await ctx.ask({ kind: 'choice', prompt: 'Which?', options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }] });
+  return [];
+} });`;
+            type Reply = 'trip' | 'cached' | 'busy';
+            /** Option `a` and `b` replies, each after `ms`; the base replay asks. */
+            const pricing = async (
+              trips: number,
+              a: { reply: Reply; ms: number },
+              b: { reply: Reply; ms: number }
+            ) => {
+              const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+              stored = {
+                ...rowOf(CHOICE),
+                manifest: { ...rowOf(CHOICE).manifest, runnerTrips: Array(trips).fill(recent) },
+              } as typeof stored;
+              await bumpRemixAppRegistry();
+              const asks = fakeRemixRunner({
+                secret: SECRET,
+                apps: {
+                  [createHash('sha256').update(CHOICE).digest('hex')]: {
+                    async run(ctx) {
+                      await ctx.ask({
+                        kind: 'choice',
+                        prompt: 'Which?',
+                        options: [
+                          { value: 'a', label: 'A' },
+                          { value: 'b', label: 'B' },
+                        ],
+                      });
+                      return [];
+                    },
+                  },
+                },
+              });
+              const runners = {
+                trip: fakeRemixRunner({ secret: SECRET, apps: {}, quarantined: { tripped: true } }),
+                cached: fakeRemixRunner({
+                  secret: SECRET,
+                  apps: {},
+                  quarantined: { tripped: false },
+                }),
+              };
+              vi.stubGlobal('fetch', (async (url: string, init: RequestInit) => {
+                const body = String(init.body);
+                const option = body.includes('"answer":"a"')
+                  ? a
+                  : body.includes('"answer":"b"')
+                  ? b
+                  : null;
+                if (!option) return asks.fetchImpl(url, init);
+                await new Promise((resolve) => setTimeout(resolve, option.ms));
+                if (option.reply === 'busy') return new Response('busy', { status: 503 });
+                return runners[option.reply].fetchImpl(url, init);
+              }) as unknown as typeof fetch);
+              return startRemixRun({
+                slug: 'u5-mine',
+                imageId: SOURCE_ID,
+                nonce: `nonce-${a.reply}-${b.reply}-${a.ms}`,
+                quote: 30,
+                caller: author,
+              });
+            };
+            const tripsStored = () =>
+              (stored.manifest as { runnerTrips?: string[] }).runnerTrips ?? [];
+            const nothingCached = () =>
+              expect(
+                [...h.sys.keys()].some((key) => key.startsWith('remix-app:option-prices:'))
+              ).toBe(false);
+
+            it('a runner fault on one option, then a later trip on the other: the trip is recorded and holds', async () => {
+              await expect(
+                pricing(2, { reply: 'busy', ms: 0 }, { reply: 'trip', ms: 30 })
+              ).rejects.toMatchObject(authorHeld);
+              expect(tripsStored()).toHaveLength(3);
+              expect(stored.manifest).toMatchObject({ runnerHold: { at: expect.any(String) } });
+              nothingCached();
+            });
+
+            it('two trips are both recorded', async () => {
+              await expect(
+                pricing(0, { reply: 'trip', ms: 0 }, { reply: 'trip', ms: 30 })
+              ).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+              expect(tripsStored()).toHaveLength(2);
+              nothingCached();
+            });
+
+            it.each([
+              [
+                'the hold first',
+                { reply: 'trip' as const, ms: 0 },
+                { reply: 'cached' as const, ms: 30 },
+              ],
+              [
+                'the hold last',
+                { reply: 'cached' as const, ms: 0 },
+                { reply: 'trip' as const, ms: 30 },
+              ],
+            ])('a hold outranks a cached refusal, %s', async (_order, a, b) => {
+              await expect(pricing(2, a, b)).rejects.toMatchObject(authorHeld);
+              expect(stored.manifest).toMatchObject({ runnerHold: { at: expect.any(String) } });
+              nothingCached();
+            });
           });
 
           it('end a dry run with branches at the hold, with no runner call after it', async () => {

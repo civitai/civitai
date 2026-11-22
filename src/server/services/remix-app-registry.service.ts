@@ -42,7 +42,7 @@ import {
   type RemixReviewLogEntry,
 } from '~/shared/remix-apps/row.schema';
 import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { CODE_REMIX_APPS } from '~/shared/remix-apps/system-apps';
 import {
@@ -678,12 +678,18 @@ async function submitUserRemixAppLocked({
 const withReviewLog = (
   manifest: RemixManifest,
   entry: Omit<RemixReviewLogEntry, 'at'>
-): RemixManifest => ({
-  ...manifest,
-  reviewLog: [...(manifest.reviewLog ?? []), { ...entry, at: new Date().toISOString() }].slice(
-    -REMIX_REVIEW_LOG_MAX
-  ),
-});
+): RemixManifest => appendReviewLog(manifest, entry);
+
+/** `manifest` with `entry` logged, keeping the newest entries; takes a raw row, valid or not. */
+function appendReviewLog<T extends object>(
+  manifest: T,
+  entry: { at?: string; [key: string]: unknown }
+): T {
+  const { reviewLog } = manifest as { reviewLog?: unknown };
+  const log = Array.isArray(reviewLog) ? reviewLog : [];
+  const logged = { ...entry, at: entry.at ?? new Date().toISOString() };
+  return { ...manifest, reviewLog: [...log, logged].slice(-REMIX_REVIEW_LOG_MAX) };
+}
 
 /** A user app as stored now: every mod decision is checked against it. */
 async function readUserRemixApp(slug: string) {
@@ -990,7 +996,7 @@ export async function validateUserRemixApp(slug: string, moderatorId: number) {
                 if (!(error instanceof RemixQuarantinedError)) throw error;
                 const refusal = await noteRunnerQuarantine({ slug, author }, moderatorId, error);
                 if (!refusal) throw error;
-                held = new TRPCError({ code: 'PRECONDITION_FAILED', message: refusal });
+                held = new TRPCError({ code: 'PRECONDITION_FAILED', message: refusal.message });
                 throw held;
               })
       : replay,
@@ -1011,12 +1017,12 @@ export async function noteRunnerQuarantine(
   { slug, author }: Pick<RegisteredRemixApp, 'slug' | 'author'>,
   viewerId: number,
   { sha256, tripped }: RemixQuarantinedError
-): Promise<string | undefined> {
+): Promise<RunnerRefusal | undefined> {
   if (!tripped || !author) return undefined;
   const own = author.userId === viewerId;
   if (own) {
     const held = await recordAuthorTrip(slug, author.userId).catch((error: unknown) => error);
-    if (held === true) return REMIX_AUTHOR_HELD;
+    if (held === true) return { kind: 'held', message: REMIX_AUTHOR_HELD };
     if (held === false) return undefined;
     // Nothing was stored: this call is refused, the failure counted, and the author may retry.
     authorTripUnrecorded.inc();
@@ -1034,7 +1040,7 @@ export async function noteRunnerQuarantine(
             : String(held),
       },
     });
-    return REMIX_AUTHOR_TRIP_UNRECORDED;
+    return { kind: 'unrecorded', message: REMIX_AUTHOR_TRIP_UNRECORDED };
   }
   const held = await recordRunnerQuarantine(slug, { viewerId, sha256 }).catch((error: unknown) => {
     logToAxiom({
@@ -1045,8 +1051,11 @@ export async function noteRunnerQuarantine(
     });
     return false;
   });
-  return held ? REMIX_APP_HELD : undefined;
+  return held ? { kind: 'held', message: REMIX_APP_HELD } : undefined;
 }
+
+/** A recorded trip's refusal: the app or its author is held, or the trip could not be stored. */
+export type RunnerRefusal = { kind: 'held' | 'unrecorded'; message: string };
 
 export const REMIX_AUTHOR_TRIP_UNRECORDED =
   'This app could not run just now. Try again in a moment.';
@@ -1138,17 +1147,10 @@ async function recordAuthorTrip(slug: string, authorId: number): Promise<boolean
   const prefix = remixBlockId(userRemixSlugPrefix(authorId));
   const record = () =>
     dbWrite.$transaction(async (tx) => {
-      // A trip waits briefly for the lock, never indefinitely; ids in order, as every writer of
-      // several remix rows takes them.
-      await tx.$executeRaw`SET LOCAL lock_timeout = '2s'`;
-      const locked = await tx.$queryRaw<
-        { id: string }[]
-      >`SELECT id FROM "app_blocks" WHERE "block_id" LIKE ${
-        prefix + '%'
-      } ORDER BY id FOR NO KEY UPDATE`;
+      const locked = await lockRemixRows(tx, Prisma.sql`"block_id" LIKE ${prefix + '%'}`);
       // Only the rows locked: one created since is not counted, and not written.
       const rows = await tx.appBlock.findMany({
-        where: { id: { in: locked.map(({ id }) => id) } },
+        where: { id: { in: locked } },
         select: { id: true, blockId: true, manifest: true },
       });
       const target = rows.find((row) => row.blockId === remixBlockId(slug)) ?? rows[0];
@@ -1166,7 +1168,6 @@ async function recordAuthorTrip(slug: string, authorId: number): Promise<boolean
       const hold = !already && count >= REMIX_AUTHOR_RUNNER_TRIPS_MAX;
       const raw = target.manifest as Record<string, unknown>;
       const parsed = remixManifestSchema.safeParse(raw);
-      const reviewLog = Array.isArray(raw.reviewLog) ? raw.reviewLog : [];
       const entry = {
         by: REMIX_SYSTEM_ACTOR,
         at: now,
@@ -1179,16 +1180,9 @@ async function recordAuthorTrip(slug: string, authorId: number): Promise<boolean
       await tx.appBlock.updateMany({
         where: { id: target.id },
         data: {
-          manifest: {
-            ...raw,
-            runnerTrips: trips,
-            ...(hold
-              ? {
-                  runnerHold: { at: now },
-                  reviewLog: [...reviewLog, entry].slice(-REMIX_REVIEW_LOG_MAX),
-                }
-              : {}),
-          } as Prisma.InputJsonValue,
+          manifest: (hold
+            ? appendReviewLog({ ...raw, runnerTrips: trips, runnerHold: { at: now } }, entry)
+            : { ...raw, runnerTrips: trips }) as Prisma.InputJsonValue,
         },
       });
       return { unrecorded: false as const, held: already || hold, hold, count };
@@ -1216,6 +1210,18 @@ async function recordAuthorTrip(slug: string, authorId: number): Promise<boolean
       payload: { slug, trips: outcome.count },
     });
   return outcome.held;
+}
+
+/**
+ * Locks the remix rows `where` picks, in id order: every writer of several remix rows takes them
+ * through here, so no two can deadlock. Waits briefly for a lock, never indefinitely.
+ */
+async function lockRemixRows(tx: Prisma.TransactionClient, where: Prisma.Sql) {
+  await tx.$executeRaw`SET LOCAL lock_timeout = '2s'`;
+  const locked = await tx.$queryRaw<
+    { id: string }[]
+  >`SELECT id FROM "app_blocks" WHERE ${where} ORDER BY id FOR NO KEY UPDATE`;
+  return locked.map(({ id }) => id);
 }
 
 /** Postgres's deadlock_detected, however Prisma wraps it. */
@@ -1299,11 +1305,9 @@ export async function clearRemixRunnerHold({
   for (const row of ordered) {
     if (!hasRunnerHold(row.manifest) && !tripsOf(row.manifest).length) continue;
     const { runnerHold, runnerTrips: _, ...rest } = row.manifest as Record<string, unknown>;
-    const reviewLog = Array.isArray(rest.reviewLog) ? rest.reviewLog : [];
-    const entry = { by: moderatorId, action: 'cleared-runner-hold', at: new Date().toISOString() };
     await writeUserRemixApp(row, {
       manifest: (runnerHold
-        ? { ...rest, reviewLog: [...reviewLog, entry].slice(-REMIX_REVIEW_LOG_MAX) }
+        ? appendReviewLog(rest, { by: moderatorId, action: 'cleared-runner-hold' })
         : rest) as Prisma.InputJsonValue,
     });
   }
@@ -1484,18 +1488,21 @@ export async function setRemixAppEnabled({
 
 /** `slugs` in menu order; apps it leaves out keep their place after these. */
 export async function orderRemixApps(slugs: string[]) {
-  // Rows in id order, as an author's runner trip locks them: no two can deadlock.
-  const ordered = slugs
-    .map((slug, order) => ({ slug, order }))
-    .sort((a, b) => remixAppBlockRowId(a.slug).localeCompare(remixAppBlockRowId(b.slug)));
-  await dbWrite.$transaction(
-    ordered.map(({ slug, order }) =>
-      dbWrite.appBlock.updateMany({
-        where: { blockId: remixBlockId(slug), status: { in: REMIX_STATUSES } },
-        data: { featuredOrder: order },
-      })
-    )
-  );
+  if (slugs.length)
+    await dbWrite.$transaction(async (tx) => {
+      // Locked first, as an author's runner trip locks them.
+      await lockRemixRows(
+        tx,
+        Prisma.sql`"block_id" IN (${Prisma.join(
+          slugs.map(remixBlockId)
+        )}) AND "status" IN (${Prisma.join(REMIX_STATUSES)})`
+      );
+      for (const [order, slug] of slugs.entries())
+        await tx.appBlock.updateMany({
+          where: { blockId: remixBlockId(slug), status: { in: REMIX_STATUSES } },
+          data: { featuredOrder: order },
+        });
+    });
   await bumpRemixAppRegistry();
 }
 
