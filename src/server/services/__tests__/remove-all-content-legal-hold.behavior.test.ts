@@ -2098,6 +2098,35 @@ describe('removeAllContent and the profile archive', () => {
       expect(vi.mocked(del).mock.invocationCallOrder[0]).toBeGreaterThan(archivedAt);
   });
 
+  // The wipe does not ban, so the owner can still add a link while the rest of it runs.
+  it('never deletes a link the archive did not see, when one is added mid-wipe', async () => {
+    const live = [...LINKS];
+    const archived: number[] = [];
+    const deletedUnarchived: number[] = [];
+    vi.mocked(dbMock.dbWrite.userLink.findMany).mockImplementation((async () => [
+      ...live,
+    ]) as never);
+    vi.mocked(dbMock.dbWrite.userLink.deleteMany).mockImplementation((async () => {
+      deletedUnarchived.push(...live.map((l) => l.id).filter((l) => !archived.includes(l)));
+      const count = live.length;
+      live.length = 0;
+      return { count };
+    }) as never);
+    const readModels = vi.mocked(dbMock.dbWrite.model.findMany).getMockImplementation()!;
+    vi.mocked(dbMock.dbWrite.model.findMany).mockImplementation((async (args: never) => {
+      live.push({ id: 42, url: 'https://example.com/added', type: 'Social' });
+      return readModels(args);
+    }) as never);
+    const archive = vi.fn(async (snapshot: { links: { id: number }[] }) => {
+      archived.push(...snapshot.links.map((l) => l.id));
+    });
+
+    await removeAllContent({ id: OLD_REPORT, actorUserId: 9, archive });
+
+    expect(archived).toEqual([41]);
+    expect(deletedUnarchived).toEqual([]);
+  });
+
   it('deletes nothing when the archive fails', async () => {
     const archive = vi.fn(async () => {
       throw new Error('bucket down');

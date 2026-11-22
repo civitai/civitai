@@ -2086,13 +2086,16 @@ export const removeAllContent = async ({
   // held to it. The deletes that destroy evidence check again in their own statements.
   const { markerView } = await assertContentRemovalNotHeld(id);
   const held = contentRemovalHeldSql(Prisma.sql`${id}::int`, markerView);
-  // Before any delete, as in `deleteUser`: a failed archive deletes nothing.
+  // Before any delete, as in `deleteUser`: a failed archive deletes nothing. The profile and links
+  // go straight after it, so an edit during the rest of the wipe cannot be deleted unarchived.
   await archiveProfileBeforeModeratorChange({
     userId: id,
     actorId: actorUserId,
     fields: [...PROFILE_CLEAR_FIELDS, 'links'],
     archive,
   });
+  await dbWrite.userLink.deleteMany({ where: { userId: id } });
+  await dbWrite.userProfile.deleteMany({ where: { userId: id } });
 
   // The primary, as the deletes below: a row the replica has not seen yet is still deleted.
   const models = await dbWrite.model.findMany({
@@ -2166,8 +2169,6 @@ export const removeAllContent = async ({
     where: { userId: id, id: { notIn: keptBountyIds } },
     select: { id: true },
   });
-  await dbWrite.userLink.deleteMany({ where: { userId: id } });
-  await dbWrite.userProfile.deleteMany({ where: { userId: id } });
   await dbWrite.collection.deleteMany({ where: { userId: id } });
 
   // Evidence: each delete repeats the hold, so one that lands after the check above deletes nothing
