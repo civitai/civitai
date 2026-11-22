@@ -8,10 +8,11 @@
 //	GET /listings, GET /listings/{slug}  the listing API, only while the listings read model is on
 //	    (listings.go)
 //
-// `mature` is the mature content ratings the caller's viewer may see, a comma-separated list of
-// r, x and xxx (ParseQuery). Absent or empty, a search answers only apps rated g, pg or pg13: what
-// the anonymous registry audience reads. The caller is trusted to send its viewer's own set; the
-// parameter is part of the URL, so a shared cache keys on it.
+// `mature` is the mature content ratings the caller asks for, a comma-separated list of r, x and
+// xxx (ParseQuery). Absent or empty, a search answers only apps rated g, pg or pg13: what the
+// anonymous registry audience reads. It is not a gate: no identity is checked, so any caller may
+// ask for any set; the caller is trusted to send its viewer's own. The parameter is part of the
+// URL, so a shared cache keys on it.
 //
 // Results are in relevance order (store.Query), at most `limit` of them. There is one page: no
 // other sort and no paging, since no caller reads either.
@@ -190,8 +191,8 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	writeJSONCache(w, http.StatusOK, res, SearchCacheControl)
 }
 
-// ParseQuery validates the search parameters. `mature` names the mature ratings the viewer may
-// see (store.Mature): each comma-separated element must be exactly r, x or xxx (repeats are
+// ParseQuery validates the search parameters. `mature` names the mature ratings the caller asks
+// for (store.Mature): each comma-separated element must be exactly r, x or xxx (repeats are
 // harmless); absent or empty is none, the SFW audience.
 func ParseQuery(v map[string][]string) (store.Query, error) {
 	get := func(k string) string {

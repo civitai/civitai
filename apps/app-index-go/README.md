@@ -24,16 +24,16 @@ that stops calling the index for a cooldown (`APP_INDEX_BREAKER_FAILURE_THRESHOL
 With the listings read model on, two more routes answer for the web tier: `GET /listings` and
 `GET /listings/{slug}` (below, "Listing API").
 
-`mature` is the mature content ratings the caller's viewer may see: a comma-separated list of `r`,
-`x` and `xxx` (`mature=r,x`). Absent or empty, `/search` answers only apps rated `g`, `pg` or
-`pg13`, what the anonymous registry audience reads, so a caller that sends nothing gets SFW
-results. With it, an app rated one of the listed ratings is answered too; an app whose rating is
-none of the six (or missing) only with all three listed, the registry's own audience rule
-(`audienceAdmits`). Ratings compare case-insensitively. Any other element answers 400. The filter
-is in the store query, before `limit`, so a page is never short for it. The caller is trusted to
-send its viewer's own set (the web tier derives it from the viewer's browsing level and host,
-`indexMature` in `app-index-search.service.ts`); the parameter is part of the URL, so a shared
-cache keys on it.
+`mature` is the mature content ratings the caller asks for: a comma-separated list of `r`, `x` and
+`xxx` (`mature=r,x`). Absent or empty, `/search` answers only apps rated `g`, `pg` or `pg13`, what
+the anonymous registry audience reads, so a caller that sends nothing gets SFW results. With it, an
+app rated one of the listed ratings is answered too; an app whose rating is none of the six (or
+missing) only with all three listed, the registry's own audience rule (`audienceAdmits`). Ratings
+compare case-insensitively. Any other element answers 400. The filter is in the store query, before
+`limit`, so a page is never short for it. The caller is trusted to send its viewer's own set: the
+index checks no identity, so any caller, a browser included, may ask for any set. The web tier
+derives it from the viewer's browsing level and host (`indexMature` in
+`app-index-search.service.ts`). The parameter is part of the URL, so a shared cache keys on it.
 
 `q` matches word by word: every word must be a prefix of a word of the app's name, slug, tagline or
 creator. Results are in relevance order, Postgres `ts_rank` (name above slug and tagline above
@@ -104,11 +104,12 @@ others it needs, refuses to start. Unset, nothing changes: no token is fetched a
 1. The auth hub: the index's service client, and `serviceSubjects` and relay listings on the
    resources its token is exchanged for.
 2. The apps origin: `REGISTRY_ADAPTER_SERVICE_CLIENTS` names the index's client.
-3. Only then this service's client settings. Search already filters mature apps per viewer: a
-   `/search` without `mature` answers SFW apps only, so public search shows no mature app once the
-   index holds them. The web tier still routes no viewer who may see a mature rating to the index
-   (`viewerNotRoutable`, reason `mature_viewer`); lift that once the index holds mature apps, and
-   each such call carries the viewer's `mature` (`indexMature`).
+3. Only then this service's client settings. Search already filters mature apps per request: a
+   `/search` that does not ask for mature ratings answers SFW apps only; any caller may ask for
+   mature ratings with `mature` and get those apps' metadata. The web tier still routes no viewer
+   who may see a mature rating to the index (`viewerNotRoutable`, reason `mature_viewer`); lift that
+   once the index holds mature apps, and each such call carries the viewer's `mature`
+   (`indexMature`).
 
 Configured before steps 1 and 2, every token is refused: the index stops taking in changes and
 keeps retrying with backoff. Its stored cursor and serving generation are kept, and it catches up

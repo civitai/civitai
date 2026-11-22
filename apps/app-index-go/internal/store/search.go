@@ -17,8 +17,8 @@ type Query struct {
 	Text     string
 	Kind     string // "" = any
 	Category string // "" = any
-	// Mature is the mature ratings the caller's viewer may see. Its zero value is the SFW
-	// audience: only apps rated g, pg or pg13.
+	// Mature is the mature ratings the caller asks for. Its zero value is the SFW audience: only
+	// apps rated g, pg or pg13.
 	Mature Mature
 	Limit  int
 }
