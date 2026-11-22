@@ -63,16 +63,18 @@ type FeedSearch = ReturnType<typeof useSemanticBountyFeed> & { text: string };
 function BountiesFeed({ showEof = true, search, ...props }: Props & { search?: FeedSearch }) {
   const filters = useInfiniteBountyFilters(props);
   // A failed search shows its banner over no results, never the keyword feed with the query:
-  // that feed has no server profanity check.
+  // that feed has no server profanity check. Its earlier page is not shown either, nor paged:
+  // fetchNextPage runs even while the query is disabled.
   const searchFailed = !!search?.isError;
   const searching = !!search && !searchFailed;
   const feed = useQueryBounties(
-    // The feed's own query is a keyword match, used only as the fallback.
     { ...filters, query: search?.text },
     { keepPreviousData: true, enabled: !search }
   );
-  const { bounties, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    search && searching ? search : feed;
+  const shown = search && searching ? search : feed;
+  const { fetchNextPage, isRefetching, isFetching } = shown;
+  const bounties = searchFailed ? [] : shown.bounties;
+  const hasNextPage = !searchFailed && shown.hasNextPage;
 
   return (
     <>

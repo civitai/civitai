@@ -205,7 +205,7 @@ export async function getCommentThreadHandler({
 }
 
 async function asNewItem(row: StoredCommentV3) {
-  // No masked copy: the author would learn from it which words in their own text matched.
+  // No masked copy in the write response; viewers get theirs from the thread read.
   const [author, lookup] = await Promise.all([
     kyselyV3Read
       .selectFrom('User')
@@ -355,7 +355,7 @@ export async function updateCommentV3Handler({
     content: input.content,
     track: ctx.track,
   });
-  // No masked copy for the author, as on create.
+  // No masked copy in the write response, as on create.
   return { id: comment.id, content: row.content, updatedAt: row.updatedAt };
 }
 

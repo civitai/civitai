@@ -1167,7 +1167,7 @@ export const updateMessageHandler = async ({
       )
     ).catch(() => undefined);
 
-    // No masked copy for the editor: it would say which words in their own text matched.
+    // No masked copy in the write response; viewers get theirs from the chat signal and reads.
     return { messageId: existing.id, chatId: existing.chatId, content: trimmed };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

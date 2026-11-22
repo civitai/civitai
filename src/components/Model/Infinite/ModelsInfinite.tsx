@@ -92,14 +92,16 @@ function ModelsFeed({
   const filters = useInfiniteModelFilters(props);
   const browsingLevel = useBrowsingLevelDebounced();
   const search = feedSearch?.search;
-  // A search that fails falls back to the keyword search with a banner, never an empty page.
   // A failed search shows its banner over no results, never the keyword feed with the query:
-  // that feed has no server profanity check.
+  // that feed has no server profanity check. Its earlier page is not shown either, nor paged:
+  // fetchNextPage runs even while the query is disabled.
   const searchFailed = !!search?.isError;
   const searching = !!search && !searchFailed;
   const feed = useQueryModels({ ...filters, browsingLevel }, { enabled: !search });
-  const { models, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    search && searching ? search : feed;
+  const shown = search && searching ? search : feed;
+  const { fetchNextPage, isRefetching, isFetching } = shown;
+  const models = searchFailed ? [] : shown.models;
+  const hasNextPage = !searchFailed && shown.hasNextPage;
   const modelIds = models.map((m) => m.id);
   const salesByModelId = useModelSaleBadges(modelIds);
   useEngagedModelsPrefetch(modelIds);

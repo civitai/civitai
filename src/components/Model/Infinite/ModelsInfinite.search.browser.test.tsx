@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
   refusal: undefined as string | undefined,
   searchQueries: [] as (string | undefined)[],
   feedEnabled: [] as (boolean | undefined)[],
+  feedPaged: 0,
   features: {} as Record<string, boolean>,
 }));
 
@@ -34,7 +35,13 @@ vi.mock('~/components/Model/model.utils', async (importOriginal) => ({
   useModelFilters: () => ({}),
   useQueryModels: (_filters: unknown, options?: { enabled?: boolean }) => {
     state.feedEnabled.push(options?.enabled);
-    return result([1, 2, 3]);
+    // An earlier page with more to load, as a disabled query keeps it.
+    return result([1, 2, 3], {
+      hasNextPage: true,
+      fetchNextPage: () => {
+        state.feedPaged++;
+      },
+    });
   },
   useSemanticModelFeed: (_filters: unknown, query: string | undefined) => {
     state.searchQueries.push(query);
@@ -81,6 +88,7 @@ const render = (props: { searchable?: boolean } = { searchable: true }) =>
 describe('ModelsInfinite with a search', () => {
   beforeEach(() => {
     state.searchFails = false;
+    state.feedPaged = 0;
     state.refusal = undefined;
     state.searchQueries = [];
     state.feedEnabled = [];
@@ -96,12 +104,14 @@ describe('ModelsInfinite with a search', () => {
     expect(state.feedEnabled.at(-1)).toBe(false);
   });
 
-  test('falls back to the keyword feed with a banner when the search fails', async () => {
+  // The keyword feed has no server profanity check, so it must not show or page the query.
+  test('shows the banner over no results when the search fails, never the feed', async () => {
     state.searchFails = true;
     render();
-    await expect.element(page.getByText('model 1', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByText('Retry search')).toBeInTheDocument();
-    expect(state.feedEnabled.at(-1)).toBe(true);
+    expect(page.getByText('model 1', { exact: true }).query()).toBeNull();
+    expect(state.feedPaged).toBe(0);
+    expect(state.feedEnabled.at(-1)).toBe(false);
   });
 
   test("keeps today's keyword feed without the flag, or off the models page", async () => {

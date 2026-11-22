@@ -3,7 +3,8 @@ import { browserChecksProfanity, isSearchRefusedError } from '~/components/Searc
 import { SEARCH_REFUSED_CODE } from '~/shared/constants/search-refusal.constants';
 
 describe('browserChecksProfanity', () => {
-  // The server always checks these, flag on or off, so the browser never needs to.
+  // The server always checks these, flag on or off, so the browser never needs to
+  // (docs/features/profanity-filter.md, Managed blocked list).
   it('leaves semantic search, and site search through the proxy, to the server', () => {
     expect([
       browserChecksProfanity({ via: 'semantic', proxyEnabled: false }),

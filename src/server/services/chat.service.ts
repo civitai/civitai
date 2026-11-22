@@ -901,7 +901,7 @@ export const createMessage = async ({
     }
   }
 
-  // The sender gets their text without the masked copy, which would say which words matched.
+  // No masked copy in the write response; viewers get theirs from the chat signal and reads.
   return resp;
 };
 

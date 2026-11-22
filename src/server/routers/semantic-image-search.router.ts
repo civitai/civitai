@@ -2,7 +2,7 @@ import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import { TRPCError } from '@trpc/server';
 import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { rateLimit } from '~/server/middleware.trpc';
-import { refuseProfaneSearch } from '~/server/utils/search-refusal-budget';
+import { refuseProfaneSearch } from '~/server/utils/refuse-profane-search';
 import {
   type SemanticImageSearchInput,
   semanticImageSearchSchema,

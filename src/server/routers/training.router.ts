@@ -102,7 +102,7 @@ export const trainingRouter = router({
 
   /**
    * The trainer's trigger-word warning, against the server's profanity list so the browser needs
-   * no copy of it. Soft: the submit check (training-trigger-word-check.ts) is unchanged.
+   * no copy of it. Advisory only: the submit check (training-trigger-word-check.ts) is what enforces.
    */
   auditTriggerWord: protectedProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })

@@ -1,6 +1,6 @@
 import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { rateLimit } from '~/server/middleware.trpc';
-import { refuseProfaneSearch } from '~/server/utils/search-refusal-budget';
+import { refuseProfaneSearch } from '~/server/utils/refuse-profane-search';
 import { semanticComicSearchSchema } from '~/server/schema/semantic-comic-search.schema';
 import { searchSemanticComics } from '~/server/services/semantic-comic-search.service';
 import { isFlagProtected, publicProcedure, router } from '~/server/trpc';

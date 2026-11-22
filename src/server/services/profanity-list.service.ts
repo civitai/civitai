@@ -214,12 +214,7 @@ export function siteSearchQueries(body: unknown): string[] {
 
 /**
  * Whether a site search must be refused for profanity (civitai.com only; the caller decides the
- * domain), against the same lists the browser checks. Fails OPEN: a broken check must
- * not refuse every search, and the domain's browsing-level filter still applies.
- *
- * With `profanity-managed-list` off it refuses nothing: the browser's own check is today's rule,
- * and its allow list (the moderators') is not the shipped one the server reads with the flag off,
- * so a server refusal could reject a search the page let through.
+ * domain). See `profaneSearchCheck` for which list applies.
  */
 export async function isProfaneSearch(queries: string[]): Promise<boolean> {
   return (await profaneSearchCheck(queries)) === 'profane';
