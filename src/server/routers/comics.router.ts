@@ -121,6 +121,11 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { getImageUploadBackend } from '~/utils/s3-utils';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
+import {
+  assertBareUploadKeys,
+  COVER_IMAGE_UNAVAILABLE_MESSAGE,
+  isBareUploadKey,
+} from '~/server/services/image-url-ownership';
 import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
 import {
   assertGenerationInputsUsable,
@@ -337,12 +342,14 @@ const isChapterOwner = middleware(async ({ ctx, next, input = {} }) => {
 });
 
 // Schemas
+const uploadKeySchema = z.string().refine(isBareUploadKey, COVER_IMAGE_UNAVAILABLE_MESSAGE);
+
 const createProjectSchema = z.object({
   name: z.string().min(1).max(255),
   description: z.string().max(5000).optional(),
   genre: z.nativeEnum(ComicGenre).optional(),
-  coverUrl: z.string().optional(),
-  heroUrl: z.string().optional(),
+  coverUrl: uploadKeySchema.optional(),
+  heroUrl: uploadKeySchema.optional(),
   heroImagePosition: z.number().int().min(0).max(100).optional(),
 });
 
@@ -375,7 +382,7 @@ const addReferenceImagesSchema = z.object({
   images: z
     .array(
       z.object({
-        url: z.string().min(1),
+        url: uploadKeySchema,
         width: z.number().int().positive(),
         height: z.number().int().positive(),
       })
@@ -492,7 +499,7 @@ const enhancePanelSchema = z.object({
   chapterPosition: z.number().int().min(0),
   referenceIds: z.array(z.number().int()).optional(),
   selectedImageIds: z.array(z.number().int()).optional(),
-  sourceImageUrl: z.string().min(1),
+  sourceImageUrl: uploadKeySchema,
   sourceImageWidth: z.number().int().positive(),
   sourceImageHeight: z.number().int().positive(),
   prompt: z.string().max(2000).optional(),
@@ -541,7 +548,7 @@ const bulkCreatePanelsSchema = z.object({
         // For generation mode (text prompt -> image)
         prompt: z.string().max(2000).optional(),
         // For upload/enhance mode (source image -> comic panel)
-        sourceImageUrl: z.string().optional(),
+        sourceImageUrl: uploadKeySchema.optional(),
         sourceImageWidth: z.number().int().positive().optional(),
         sourceImageHeight: z.number().int().positive().optional(),
         // For import mode (existing image ID)
@@ -1617,9 +1624,16 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(updateProjectSchema)
     .mutation(async ({ ctx, input }) => {
-      const project = await dbRead.comicProject.findUnique({
+      // primary: the unchanged checks below compare against the stored images.
+      const project = await dbWrite.comicProject.findUnique({
         where: { id: input.id },
-        select: { userId: true, coverImageId: true, heroImageId: true },
+        select: {
+          userId: true,
+          coverImageId: true,
+          heroImageId: true,
+          coverImage: { select: { url: true } },
+          heroImage: { select: { url: true } },
+        },
       });
       if (!project || project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
@@ -1645,8 +1659,9 @@ export const comicsRouter = router({
           await getOwnedImageOrThrow(input.coverImageId, ctx.user.id);
         }
         data.coverImageId = input.coverImageId;
-      } else if (input.coverUrl !== undefined) {
+      } else if (input.coverUrl !== undefined && input.coverUrl !== project.coverImage?.url) {
         if (input.coverUrl) {
+          assertBareUploadKeys([input.coverUrl]);
           const image = await createImage({
             url: input.coverUrl,
             type: 'image',
@@ -1665,8 +1680,9 @@ export const comicsRouter = router({
           await getOwnedImageOrThrow(input.heroImageId, ctx.user.id);
         }
         data.heroImageId = input.heroImageId;
-      } else if (input.heroUrl !== undefined) {
+      } else if (input.heroUrl !== undefined && input.heroUrl !== project.heroImage?.url) {
         if (input.heroUrl) {
+          assertBareUploadKeys([input.heroUrl]);
           const image = await createImage({
             url: input.heroUrl,
             type: 'image',
@@ -2493,13 +2509,17 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(z.object({ panelId: z.number().int(), imageUrl: z.string().min(1) }))
     .mutation(async ({ ctx, input }) => {
-      const panel = await dbRead.comicPanel.findUnique({
+      // primary: the unchanged check below compares against the stored value.
+      const panel = await dbWrite.comicPanel.findUnique({
         where: { id: input.panelId },
         include: { chapter: { include: { project: { select: { userId: true, id: true } } } } },
       });
       if (!panel || panel.chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      const { chapter: _chapter, ...stored } = panel;
+      if (input.imageUrl === panel.imageUrl) return stored;
+      assertBareUploadKeys([input.imageUrl]);
 
       const image = await createImage({
         url: input.imageUrl,

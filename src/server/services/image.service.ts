@@ -389,6 +389,7 @@ import {
 } from '~/server/services/orchestrator/remix-provenance';
 import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe';
 import {
+  assertBareUploadKeys,
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
   shopArtworkUrls,
@@ -5311,6 +5312,8 @@ export async function createImage({
    */
   clientUrl?: true | { alsoIssuedTo: number };
 }) {
+  // Before any read, write, upload or ingest.
+  if (clientUrl) assertBareUploadKeys([image.url]);
   if (blockProvenance && !blockProvenance.appId) {
     throw new Error('createImage: blockProvenance requires an appId');
   }

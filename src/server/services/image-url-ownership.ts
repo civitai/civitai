@@ -49,6 +49,12 @@ export function urlScheme(url: string | null | undefined) {
   return url ? SCHEME.exec(compacted(url))?.[1].toLowerCase() : undefined;
 }
 
+export const isBareUploadKey = (url: string) => keysIn(url)[0] === url;
+
+export function assertBareUploadKeys(urls: (string | null | undefined)[]) {
+  if (urls.some((url) => !!url && !isBareUploadKey(url))) throw imageUrlUnavailableError();
+}
+
 /** Refuses a save holding an image url that names no stored object. */
 export function assertNoUnfinishedUploads(urls: (string | null | undefined)[]) {
   if (urls.some(isUnfinishedUploadUrl))
@@ -657,7 +663,7 @@ export async function assertShopArtworkKeysIssued({
   assertNoUnfinishedUploads(urls);
   const given = urls.filter((url): url is string => !!url);
   // Shop artwork is stored as the bare key the upload issued, never as a url.
-  if (given.some((url) => keysIn(url)[0] !== url)) throw imageUrlUnavailableError();
+  assertBareUploadKeys(given);
   const keys = [...new Set(given)];
   if (!keys.length) return;
   if (keys.length > MAX_KEYS) throw imageUrlUnavailableError();
