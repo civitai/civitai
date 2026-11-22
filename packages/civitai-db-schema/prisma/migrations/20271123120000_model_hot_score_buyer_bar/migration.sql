@@ -9,9 +9,9 @@
 --   buyers = distinct users holding a live paid purchase of the version: an "EntityAccess" row for
 --            the version whose meta has a download- or generation-purchase transaction key (the
 --            keys of EARLY_ACCESS_PURCHASES in model-version-access.service.ts; a new purchase kind
---            there needs adding to the three copies below). Not
---            the model's owner, and not a gift or a moderator grant (no purchase key). A refund or
---            a moderator revoke removes the key, so it stops counting.
+--            there must be added to the three copies below). Not the model's owner, and not a gift
+--            or a moderator grant (no purchase key). A refund or a moderator revoke removes the key,
+--            so it stops counting.
 --
 -- Each buyer counts as 1 in place of one download, so a buyer who also downloaded is not counted
 -- twice; when buyers outnumber downloads (generation-only purchases), the download share is 0. The
@@ -91,8 +91,7 @@ $function$;
 -- The buyer count is read only for a version inside the 60-day window and still under the bar
 -- without buyers (one-time filters: other versions cost nothing, and buyers can only raise the
 -- bar, so a version over it already scores the same with 0). It goes through the "EntityAccess"
--- primary key (accessToId, accessToType, ...); a version under the bar has few rows there, while
--- the best-selling recent versions hold hundreds and are skipped.
+-- primary key (accessToId, accessToType, ...), and runs only where it can change the score.
 
 CREATE OR REPLACE FUNCTION public.model_metric_hot_score()
 RETURNS trigger

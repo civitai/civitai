@@ -802,10 +802,7 @@ describe('the rescore lag watch', () => {
     readFileSync(path.join(MIGRATIONS, dir, file), 'utf8').match(
       /DO \$preflight\$[\s\S]*?\$preflight\$;/
     )?.[0] ?? 'SELECT missing_preflight()';
-  const preflight = (file: string) =>
-    readFileSync(path.join(MIGRATIONS, HEAD_START, file), 'utf8').match(
-      /DO \$preflight\$[\s\S]*?\$preflight\$;/
-    )?.[0] ?? 'SELECT missing_preflight()';
+  const preflight = (file: string) => preflightOf(HEAD_START, file);
   const usesHeadStart = async (pg: PGlite) =>
     (
       await pg.query(
