@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 let root;
@@ -46,7 +46,7 @@ https.request = (_options, cb) => {
 after(() => rmSync(root, { recursive: true, force: true }));
 
 function run(args, { status = 200, body = '{}', token = 'test-token' } = {}) {
-  const r = spawnSync(process.execPath, ['--import', preload, cli, ...args], {
+  const r = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, cli, ...args], {
     cwd: root,
     encoding: 'utf8',
     env: { PATH: process.env.PATH, AXIOM_TOKEN: token, FAKE_STATUS: String(status), FAKE_BODY: body },
