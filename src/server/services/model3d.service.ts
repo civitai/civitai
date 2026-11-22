@@ -247,10 +247,9 @@ export const getModel3DById = async ({
 
     return {
       ...withServableImage(
-        withServableImage(model3d, 'thumbnailImage', user?.id, user?.isModerator === true),
+        withServableImage(model3d, 'thumbnailImage', user?.id),
         'sourceImage',
-        user?.id,
-        user?.isModerator === true
+        user?.id
       ),
       tags: model3d.tags.map((t) => t.tag),
       userReview,

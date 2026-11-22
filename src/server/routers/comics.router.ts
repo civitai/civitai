@@ -1097,10 +1097,9 @@ export const comicsRouter = router({
       const { chapters: _chapters, ...projectRest } = project;
       return {
         ...withServableImage(
-          withServableImage(projectRest, 'coverImage', ctx.user.id, ctx.user.isModerator === true),
+          withServableImage(projectRest, 'coverImage', ctx.user.id),
           'heroImage',
-          ctx.user.id,
-          ctx.user.isModerator === true
+          ctx.user.id
         ),
         chapters,
         references,
@@ -1170,7 +1169,7 @@ export const comicsRouter = router({
       });
 
       if (!chapter) throw throwNotFoundError();
-      withholdRestrictedPanelImages([chapter], ctx.user.id, ctx.user.isModerator === true);
+      withholdRestrictedPanelImages([chapter], ctx.user.id);
 
       // Same green-domain mature-content stripping as `getProject`.
       if (ctx.features.isGreen) {
@@ -1226,7 +1225,7 @@ export const comicsRouter = router({
       if (!project || (project.userId !== ctx.user.id && !ctx.user.isModerator)) {
         throw throwAuthorizationError();
       }
-      withholdRestrictedPanelImages(project.chapters, ctx.user.id, ctx.user.isModerator === true);
+      withholdRestrictedPanelImages(project.chapters, ctx.user.id);
 
       // Server-side gate: on green, strip mature panels' `imageUrl` so the
       // raw CDN URL never reaches the client. Client-side blur on its own
