@@ -78,6 +78,7 @@ const {
   htmlToPlainText,
   getCsamItemCandidates,
   csamProfileHasText,
+  readCsamReportCapture,
   CSAM_CONTEXT_TEXT_MAX_CHARS,
 } = await import('~/server/services/csam-context-text');
 const { CSAM_CONTEXT_ITEM_SELECT_LIMIT } = await import(
@@ -137,6 +138,7 @@ CREATE TABLE "TextScanHold" (
   "label" TEXT NOT NULL, "status" TEXT NOT NULL, "decidedById" INTEGER, "decidedAt" TIMESTAMP(3),
   "meta" JSONB, "createdAt" TIMESTAMP(3) NOT NULL, "updatedAt" TIMESTAMP(3) NOT NULL
 );
+CREATE TABLE "CsamReport" ("id" INTEGER PRIMARY KEY, "details" JSONB);
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "activity" TEXT NOT NULL, "entityType" TEXT,
   "entityId" INTEGER, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
@@ -1078,6 +1080,58 @@ describe('items the reported user wrote', () => {
 
     const [unlisted] = await capture({ modelIds: [701] });
     expect(unlisted.id).toBe(701);
+  });
+
+  describe("reading a report's preserved capture", () => {
+    const reads = async () =>
+      (
+        await db.pg.query(
+          `SELECT "userId", "entityType", "entityId" FROM "ModActivity" WHERE activity = 'csamReportCaptureRead'`
+        )
+      ).rows;
+    beforeEach(async () => {
+      await db.pg.exec(`TRUNCATE "CsamReport", "ModActivity"`);
+    });
+
+    it('returns every stored item as worded for NCMEC, recording each read first', async () => {
+      const stored = await capture({ chatMessageIds: [901], serviceOfferingIds: [1001] });
+      await db.pg.query(`INSERT INTO "CsamReport" VALUES (77, $1)`, [
+        JSON.stringify({ contextText: stored, minorDepiction: 'real' }),
+      ]);
+      const read = await readCsamReportCapture({ reportId: 77, moderatorId: MOD });
+      expect(read?.blocks).toEqual([
+        expect.stringMatching(
+          /^Text the reported user wrote in this chat message.*\n\nMessage:\n"meet me <b>later<\/b>"$/s
+        ),
+        expect.stringMatching(
+          /^Text on the reported user's service offering as of capture.*Page: https:\/\/red\.example\.invalid\/services\/1001.*plain <desc> & more/s
+        ),
+      ]);
+      await readCsamReportCapture({ reportId: 77, moderatorId: MOD });
+      expect(await reads()).toEqual([
+        { userId: MOD, entityType: 'CsamReport', entityId: 77 },
+        { userId: MOD, entityType: 'CsamReport', entityId: 77 },
+      ]);
+    });
+
+    it('returns nothing and records nothing for a missing report or one with no capture', async () => {
+      await db.pg.query(`INSERT INTO "CsamReport" VALUES (78, $1)`, [
+        JSON.stringify({ minorDepiction: 'real' }),
+      ]);
+      expect(await readCsamReportCapture({ reportId: 78, moderatorId: MOD })).toBeNull();
+      expect(await readCsamReportCapture({ reportId: 79, moderatorId: MOD })).toBeNull();
+      expect(await reads()).toEqual([]);
+    });
+
+    it('refuses a moderator who is impersonating, recording nothing', async () => {
+      await db.pg.query(`INSERT INTO "CsamReport" VALUES (77, $1)`, [
+        JSON.stringify({ contextText: await capture({ chatMessageIds: [901] }) }),
+      ]);
+      await expect(
+        readCsamReportCapture({ reportId: 77, moderatorId: OTHER, impersonatedBy: MOD })
+      ).rejects.toThrow('Not available while impersonating');
+      expect(await reads()).toEqual([]);
+    });
   });
 
   describe('what NCMEC is sent', () => {

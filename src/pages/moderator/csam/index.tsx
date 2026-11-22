@@ -9,6 +9,7 @@ import { formatDateNullable } from '~/utils/date-helpers';
 import { Container, Stack, Group, Title, Badge } from '@mantine/core';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { CsamReportCaptureButton } from '~/components/Csam/CsamReportCaptureButton';
 
 const limit = 20;
 
@@ -85,6 +86,11 @@ export default function CsamReports() {
       {
         id: 'reportId',
         header: 'Report Id',
+      },
+      {
+        id: 'capture',
+        header: 'Captured text',
+        Cell: ({ row }) => <CsamReportCaptureButton reportId={row.original.id} />,
       },
     ],
     []

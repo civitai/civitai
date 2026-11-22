@@ -9,6 +9,7 @@ import {
   getCsamContextCandidatesSchema,
   getCsamItemCandidatesSchema,
   getCsamProfileContextSchema,
+  readCsamReportCaptureSchema,
   readHeldCsamContextTextSchema,
   getCsamSupplementalPreviewSchema,
   getImageResourcesSchema,
@@ -33,6 +34,7 @@ import { getCsamSupplementalPreview } from '~/server/services/csam-supplemental.
 import {
   getCsamContextCandidates,
   csamProfileHasText,
+  readCsamReportCapture,
   getCsamItemCandidates,
   readHeldCsamContextText,
 } from '~/server/services/csam-context-text';
@@ -78,6 +80,14 @@ export const csamRouter = router({
     .input(paginationSchema)
     .query(({ input }) => getCsamReportsPaged(input)),
   getCsamReportsStats: csamProcedure.query(() => getCsamReportStats()),
+  readReportCapture: csamProcedure.input(readCsamReportCaptureSchema).mutation(({ input, ctx }) => {
+    assertSessionOrFullUserKey(ctx);
+    return readCsamReportCapture({
+      reportId: input.reportId,
+      moderatorId: ctx.user.id,
+      impersonatedBy: ctx.impersonatedBy,
+    });
+  }),
   getGeneratorEvidenceTriggers: csamProcedure
     .input(generatorEvidenceUserSchema)
     .query(({ input }) => getEvidenceTriggers(input.userId)),

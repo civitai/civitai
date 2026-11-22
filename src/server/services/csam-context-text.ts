@@ -7,7 +7,7 @@ import type {
   GetCsamItemCandidatesSchema,
 } from '~/server/schema/csam.schema';
 import { xmlSafe } from '~/server/services/ncmec-xml';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -418,6 +418,71 @@ export async function readHeldCsamContextText({
     .returning('createdAt')
     .execute();
   return { id: postTextId, text: held!.text, readAt: new Date(read.createdAt).toISOString() };
+}
+
+/** The `ModActivity` a read of a report's preserved capture writes. */
+export const CSAM_REPORT_CAPTURE_READ_ACTIVITY = 'csamReportCaptureRead';
+
+/**
+ * A report's preserved capture as plain text, every stored item included (also those its send left
+ * out), each block opening as it was worded for NCMEC. For the person filing a supplemental.
+ */
+export function captureAsText(contextText: CsamContextText[]) {
+  const posts = contextText.filter((c) => !isItemContextText(c));
+  const base = getBaseUrl('red');
+  return [
+    ...contextIncidents(posts).webPageIncidents.map(
+      ({ url, additionalInfo }) => `${additionalInfo}${url ? `\nPage: ${url}` : ''}`
+    ),
+    ...contextText.filter(isItemContextText).map((c) => {
+      const { noun, url, heading } = describeItem(c, base);
+      return [
+        `${capturedLine(c, noun)}\n${heading}.${url ? `\nPage: ${url}` : ''}`,
+        ...quotedFields(c.fields),
+      ].join('\n\n');
+    }),
+  ];
+}
+
+/**
+ * Reads a report's preserved capture and records the read first, one row per read. Nothing is returned,
+ * and nothing recorded, for a missing report or one without a capture.
+ */
+export async function readCsamReportCapture({
+  reportId,
+  moderatorId,
+  impersonatedBy,
+}: {
+  reportId: number;
+  moderatorId: number;
+  impersonatedBy?: number | null;
+}) {
+  // The record must name the person who read it.
+  if (impersonatedBy != null) throw throwAuthorizationError('Not available while impersonating');
+  // primary: the capture a supplemental copies must be the one stored, not a lagging replica's.
+  const [report] = await kyselyWrite
+    .selectFrom('CsamReport')
+    .select('details')
+    .where('id', '=', reportId)
+    .execute();
+  const contextText = (report?.details as { contextText?: unknown } | null)?.contextText;
+  if (!Array.isArray(contextText) || !contextText.length) return null;
+
+  const [read] = await kyselyWrite
+    .insertInto('ModActivity')
+    .values({
+      userId: moderatorId,
+      activity: CSAM_REPORT_CAPTURE_READ_ACTIVITY,
+      entityType: 'CsamReport',
+      entityId: reportId,
+    })
+    .returning('createdAt')
+    .execute();
+  return {
+    reportId,
+    readAt: new Date(read.createdAt).toISOString(),
+    blocks: captureAsText(contextText as CsamContextText[]),
+  };
 }
 
 /** Each held item's newest read by this moderator after it was held and by `before`. */
