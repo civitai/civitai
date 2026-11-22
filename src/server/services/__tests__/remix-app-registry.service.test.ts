@@ -775,6 +775,27 @@ describe('user apps: submit, review and enable', () => {
     });
     expect(lastWrite().data.manifest.minorThemed).toEqual(marked.minorThemed);
 
+    // Authors are moderators too: the marked author neither approves, enables nor clears it.
+    dbMock.dbWrite.appBlock.updateMany.mockClear();
+    await expect(
+      reviewUserRemixApp({
+        slug: 'u7-probe',
+        sha256: hashOf(markedRow),
+        seenReview: reviewOf(markedRow),
+        decision: 'approved',
+        moderatorId: 7,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const approvedMarked = userRow('approved', SOURCE, 'remix_disabled', marked);
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(approvedMarked as never);
+    await expect(
+      setRemixAppEnabled({ slug: 'u7-probe', enabled: true, moderatorId: 7 })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(dbMock.dbWrite.appBlock.updateMany).not.toHaveBeenCalled();
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(markedRow as never);
+    await expect(clearRemixMinorThemed({ slug: 'u7-probe', moderatorId: 7 })).rejects.toMatchObject(
+      { code: 'FORBIDDEN' }
+    );
     await expect(
       clearRemixMinorThemed({ slug: 'u7-probe', moderatorId: MOD })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });

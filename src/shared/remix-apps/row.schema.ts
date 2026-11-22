@@ -338,9 +338,9 @@ export const remixManifestSchema = z
           .max(REMIX_COMBINATION_BLOCKS_MAX),
       })
       .optional(),
-    /** When the author's own calls of this app tripped the runner, within the last day. */
+    /** When the author's own calls of this app tripped the runner; readers count only the last day's. */
     runnerTrips: z.array(z.string()).max(REMIX_AUTHOR_RUNNER_TRIPS_MAX).optional(),
-    /** Set by the author's last allowed trip: until a mod clears it, they neither run nor save an app. */
+    /** Set by the trip that reaches REMIX_AUTHOR_RUNNER_TRIPS_MAX: until a mod clears it, the author's runs, prices and saves are refused. */
     runnerHold: z.strictObject({ at: z.string() }).optional(),
     /**
      * Viewers whose own audit refused a run of this source, each as an unkeyed hash of the slug and

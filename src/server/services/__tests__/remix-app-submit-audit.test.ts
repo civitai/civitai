@@ -67,12 +67,29 @@ beforeEach(() => {
   redisMock.sysRedis.lRange.mockResolvedValue([]);
   dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(null);
   dbMock.dbWrite.appBlock.count.mockResolvedValue(0);
+  dbMock.dbWrite.appBlock.findMany.mockResolvedValue([]);
   dbMock.dbWrite.appBlock.aggregate.mockResolvedValue({ _max: { featuredOrder: 0 } } as never);
   dbMock.dbRead.user.findUnique.mockResolvedValue({ isModerator: false } as never);
   dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({ id: 'remix' } as never);
 });
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe("an author's runner hold", () => {
+  it('refuses the save when it lands while the audit runs', async () => {
+    vi.stubGlobal('fetch', (async (url: string, init: RequestInit) => {
+      dbMock.dbWrite.appBlock.findMany.mockResolvedValue([
+        { id: 'other', blockId: 'remix-u7-other', manifest: { runnerHold: { at: '2026-11-21' } } },
+      ] as never);
+      return classifier(url, init);
+    }) as unknown as typeof fetch);
+    await expect(submitUserRemixApp(submission(sourceWith('a portrait')))).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+    });
+    expect(classified()).toHaveLength(1);
+    expect(saved()).toBe(0);
+  });
+});
 
 describe("a user app's fixed prompt text", () => {
   it('is audited as the author, its fixed pieces only, in one classifier call', async () => {

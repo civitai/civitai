@@ -266,6 +266,26 @@ describe('user app code: submit and review', () => {
     expect(u.clear).toHaveBeenCalledWith({ slug: 'u88-probe', moderatorId: moderator.id });
   });
 
+  it('refuses a review, a mark clear and a hold clear made while impersonating', async () => {
+    const impersonating = remixAppRouter.createCaller(
+      Object.assign(ctx(moderator, flags({ remixAppsUserCode: true })), { impersonatedBy: 1 })
+    ).admin;
+    const slug = { slug: 'u88-probe' };
+    await expect(impersonating.clearRunnerHold(slug)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(impersonating.clearMinorThemed(slug)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      impersonating.review({
+        ...slug,
+        sha256: 'a'.repeat(64),
+        seenReview: 'submitted',
+        decision: 'approved',
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(u.clearHold).not.toHaveBeenCalled();
+    expect(u.clear).not.toHaveBeenCalled();
+    expect(u.review).not.toHaveBeenCalled();
+  });
+
   it("clears an author's runner hold only as a moderator with remixAppsUserCode on", async () => {
     const on = flags({ remixAppsUserCode: true });
     await expect(as(moderator).clearRunnerHold({ slug: 'u88-probe' })).rejects.toMatchObject({

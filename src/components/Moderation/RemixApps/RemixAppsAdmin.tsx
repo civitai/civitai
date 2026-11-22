@@ -270,6 +270,11 @@ function AdminTableRow({
             Invalid, not served
           </Badge>
         )}
+        {'runnerHeld' in row && row.runnerHeld && (
+          <Badge color="orange" variant="light">
+            Author held: runner trips
+          </Badge>
+        )}
       </Table.Td>
       <Table.Td>
         <Text size="xs">{row.version}</Text>

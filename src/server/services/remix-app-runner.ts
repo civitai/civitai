@@ -27,9 +27,12 @@ const CALL_BACKSTOP_MS = 50 + 100;
 /** At most this many branches beside `base` in one call (the runner's `MAX_REMIX_BRANCHES`). */
 export const REMIX_RUNNER_MAX_BRANCHES = 12;
 
-/** The runner's own answer time for `replays` (its backstop), plus the network. */
+/**
+ * The runner's own answer time for `replays` (its backstop), plus its longest queue wait (its
+ * REMIX_MAX_QUEUE_WAIT_MS, 100 ms) and the network: every call it evaluates still has a caller.
+ */
 export const remixRunnerTimeoutMs = (replays: number) =>
-  replays * REPLAY_BACKSTOP_MS + CALL_BACKSTOP_MS + 200;
+  replays * REPLAY_BACKSTOP_MS + CALL_BACKSTOP_MS + 100 + 300;
 
 type RunnerResult =
   | { effects: unknown[]; done?: { outputs: unknown } }

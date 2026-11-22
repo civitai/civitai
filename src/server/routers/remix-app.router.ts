@@ -45,6 +45,7 @@ import {
   USER_REMIX_SLUG,
 } from '~/shared/remix-apps/row.schema';
 import { TRPCError } from '@trpc/server';
+import { assertNotImpersonating } from '~/server/auth/refuse-while-impersonating';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
 import { REMIX_RUN_LIMITS } from '~/shared/remix-apps/replay';
@@ -149,7 +150,11 @@ const remixAppAdminRouter = router({
         note: z.string().trim().max(200).optional(),
       })
     )
-    .mutation(({ ctx, input }) => reviewUserRemixApp({ ...input, moderatorId: ctx.user.id })),
+    .mutation(({ ctx, input }) => {
+      // The id is the decision's author, and a second-moderator rule compares it.
+      assertNotImpersonating(ctx);
+      return reviewUserRemixApp({ ...input, moderatorId: ctx.user.id });
+    }),
   /** Runs a user app down every path in the sandbox, on a placeholder image: what review reads. */
   validate: userCodeReviewProcedure
     .use(runStepRateLimit)
@@ -158,15 +163,17 @@ const remixAppAdminRouter = router({
   /** Lifts a minor-themed mark; refused to the moderator who set it. */
   clearMinorThemed: userCodeReviewProcedure
     .input(z.object({ slug: remixAppSlugSchema }))
-    .mutation(({ ctx, input }) =>
-      clearRemixMinorThemed({ slug: input.slug, moderatorId: ctx.user.id })
-    ),
+    .mutation(({ ctx, input }) => {
+      assertNotImpersonating(ctx);
+      return clearRemixMinorThemed({ slug: input.slug, moderatorId: ctx.user.id });
+    }),
   /** Lifts a runner-trip hold off the app's author. */
   clearRunnerHold: userCodeReviewProcedure
     .input(z.object({ slug: remixAppSlugSchema }))
-    .mutation(({ ctx, input }) =>
-      clearRemixRunnerHold({ slug: input.slug, moderatorId: ctx.user.id })
-    ),
+    .mutation(({ ctx, input }) => {
+      assertNotImpersonating(ctx);
+      return clearRemixRunnerHold({ slug: input.slug, moderatorId: ctx.user.id });
+    }),
   order: remixAppAdminProcedure
     .input(z.object({ slugs: remixAppSlugSchema.array().max(100) }))
     .mutation(({ input }) => orderRemixApps(input.slugs)),
