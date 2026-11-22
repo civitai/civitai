@@ -18,7 +18,7 @@ import {
 import type { RatingFloorResult } from '~/server/services/text-scan/rated-entities';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
-import { SCAN_RATING_SOURCES } from '~/server/utils/minor-flag-meta';
+import { readComFaceHeldVerdict, SCAN_RATING_SOURCES } from '~/server/utils/minor-flag-meta';
 import { recordVerdictUnderIntentLock } from '~/server/services/model-com-face-intent.service';
 import {
   holdRestrictedVerdict,
@@ -350,16 +350,10 @@ export async function applyComFaceHeldVerdict(
   modelId: number
 ): Promise<NotifyTextScanRatingRaisedArgs | null> {
   // Read in the transaction that already holds the row: the verdict the flip below spends.
-  const [held] = await db.$queryRaw<
-    { name: string | null; userId: number; at: string | null; level: number | null }[]
-  >`
-    SELECT m.name, m."userId",
-      m.meta->'comFaceHeldVerdict'->>'at' AS at,
-      CASE WHEN jsonb_typeof(m.meta->'comFaceHeldVerdict'->'level') = 'number'
-        THEN (m.meta->'comFaceHeldVerdict'->>'level')::numeric::int END AS level
-    FROM "Model" m
-    WHERE m.id = ${modelId}
+  const [row] = await db.$queryRaw<{ name: string | null; userId: number; meta: unknown }[]>`
+    SELECT m.name, m."userId", m.meta FROM "Model" m WHERE m.id = ${modelId}
   `;
+  const held = row && readComFaceHeldVerdict(row.meta);
   const flipped = await flipRow(
     db,
     modelId,
@@ -398,13 +392,12 @@ export async function applyComFaceHeldVerdict(
   return {
     entityType: 'Model',
     entityId: modelId,
-    userId: held.userId,
-    // Held only for a read above PG-13, so R at the least.
-    level: held.level ?? NsfwLevel.R,
-    title: held.name,
+    userId: row.userId,
+    level: held.level,
+    title: row.name,
     url: `/models/${modelId}`,
     // One notice per held verdict: a later hold and loss is a new one.
-    workflowId: `com-face-held-${held.at ?? 'unknown'}`,
+    workflowId: `com-face-held-${held.at?.toISOString() ?? 'unknown'}`,
   };
 }
 

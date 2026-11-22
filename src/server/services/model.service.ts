@@ -277,6 +277,7 @@ import {
 import {
   pickModerationOwnedMeta,
   pickServerOwnedMeta,
+  readComFaceHeldVerdict,
   readSystemNsfwLockAt,
   SCAN_RATING_SOURCES,
   RESTORE_CANNOT_PROMOTE_KEY,
@@ -4098,7 +4099,9 @@ export async function leavePrivateWithHeldVerdict(
 function locksWithScanRating(row: { meta: unknown; lockedProperties: string[] | null }) {
   const locks = row.lockedProperties ?? [];
   const source = (row.meta as ModelMeta | null)?.systemNsfwLock?.source;
-  return source && SCAN_RATING_SOURCES.includes(source) ? uniq([...locks, 'nsfw']) : locks;
+  const scanRated =
+    (!!source && SCAN_RATING_SOURCES.includes(source)) || !!readComFaceHeldVerdict(row.meta);
+  return scanRated ? uniq([...locks, 'nsfw']) : locks;
 }
 
 /**
@@ -4138,11 +4141,15 @@ async function assertScanRatingKept({
     sfwOnly?: boolean;
   };
 }) {
-  const ratedAt = readSystemNsfwLockAt(before.meta);
-  if (!ratedAt || before.lockedProperties?.includes('nsfw')) return;
+  if (before.lockedProperties?.includes('nsfw')) return;
   // Only a text check's rating, which a clean read of edited text releases.
   const source = (before.meta as ModelMeta | null)?.systemNsfwLock?.source;
-  if (!source || !SCAN_RATING_SOURCES.includes(source)) return;
+  const markedAt =
+    source && SCAN_RATING_SOURCES.includes(source) ? readSystemNsfwLockAt(before.meta) : null;
+  // A verdict the scan held for a clean .com face is the same mature reading with no marker yet. It
+  // holds the rating only: removing the face applies the verdict in the save itself.
+  const held = markedAt ? null : readComFaceHeldVerdict(before.meta);
+  if (!markedAt && !held) return;
   const after = <K extends keyof typeof data>(key: K) =>
     (data[key] !== undefined ? data[key] : before[key as keyof typeof before]) as
       | (typeof data)[K]
@@ -4160,8 +4167,10 @@ async function assertScanRatingKept({
   });
   if (after('nsfw')) return;
   // A row already not mature (an older one): only removing the face that listed it.
-  if (!before.nsfw && (faceAfter || !hasFace(before))) return;
-  if (await moderatorRuledNsfwSince(modelId, ratedAt, { db })) return;
+  if (!before.nsfw && (held || faceAfter || !hasFace(before))) return;
+  // A held verdict whose time cannot be read has no ruling to compare against: it holds.
+  const ratedAt = markedAt ?? held?.at;
+  if (ratedAt && (await moderatorRuledNsfwSince(modelId, ratedAt, { db }))) return;
   // The versions the scan reads, for the explanation: published ones only.
   const versions = await (db ?? dbWrite).modelVersion.findMany({
     where: { modelId, status: { in: PUBLIC_MODEL_STATUSES } },

@@ -888,6 +888,30 @@ describe('system nsfw lock marker on a moderator save', () => {
     );
   });
 
+  // A verdict the text scan held for a clean .com face is a mature reading too: this flow keeps the
+  // rating, and a mature model cannot be made SFW-only here.
+  it("refuses the owner's untick of mature in the private flow while a held verdict stands", async () => {
+    mockStored({ nsfw: true, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await expect(
+      privateFromTraining({
+        user: { id: OWNER_ID, isModerator: false },
+        nsfw: false,
+        lockedProperties: [],
+      })
+    ).rejects.toThrow();
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it("keeps the owner's untick in the private flow when nothing is held (control)", async () => {
+    mockStored({ nsfw: true, meta: {} });
+    await privateFromTraining({
+      user: { id: OWNER_ID, isModerator: false },
+      nsfw: false,
+      lockedProperties: [],
+    });
+    expect(updateData()).toHaveProperty('nsfw', false);
+  });
+
   it("keeps the marker and logs nothing on an owner's private-flow publish", async () => {
     mockStored({ ...locked, nsfw: false });
     await privateFromTraining({ user: { id: OWNER_ID, isModerator: false }, lockedProperties: [] });
