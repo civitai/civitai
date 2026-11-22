@@ -4,7 +4,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { comicsRouter } from '../comics.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-// The public listing looks the same to everyone: a moderator gets no Blocked-level cover here.
+// The public listing does not lift the Blocked check for moderators.
 describe('comics.getPublicProjects for a moderator', () => {
   it('withholds a cover rated Blocked', async () => {
     const cover = {
