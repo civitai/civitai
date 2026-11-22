@@ -491,8 +491,10 @@ func runContract(t *testing.T, newStore func(t *testing.T) testStore) {
 				t.Errorf("mature %+v limit %d = %v, want %v", tc.m, tc.limit, got, tc.want)
 			}
 		}
-		// Text search filters on it too.
-		if got := slugs(t, s, Query{Text: "block"}); !slices.Equal(got, shown[:3]) {
+		// Text search filters on it too. Compared as a set: the relevance order is each store's own.
+		got := slugs(t, s, Query{Text: "block"})
+		slices.Sort(got)
+		if !slices.Equal(got, shown[:3]) {
 			t.Errorf("SFW text search = %v, want %v", got, shown[:3])
 		}
 		// The rating answered is still the app entity's: only the filter changed.
