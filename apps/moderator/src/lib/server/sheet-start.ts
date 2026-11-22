@@ -1,5 +1,6 @@
 import type { RequestHandler } from '@sveltejs/kit';
 import type { ReviewTier } from '@civitai/shared/review-batch';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { canAccess } from './access';
 import {
   type BatchBinding,
@@ -26,12 +27,6 @@ const headers = (callback?: string) => ({
 });
 
 const status = (code: number) => new Response(null, { status: code, headers: headers() });
-
-const escapeHtml = (text: string) =>
-  text.replace(
-    /[&<>"']/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!)
-  );
 
 function page(heading: string, username: string, params: StartParams, batch: string | null) {
   const hidden = (name: string, value: string) =>
