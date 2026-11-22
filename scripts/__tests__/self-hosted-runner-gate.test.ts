@@ -233,6 +233,23 @@ describe('self-hosted runner gate', () => {
   const unitJob = unit?.job as Job;
   const unitRunsOn = unit?.runsOn as string;
 
+  // The runner logs in to ghcr.io with the job's token by itself for any ghcr.io service or
+  // container image that has no credentials, so a hosted job must not name one at all.
+  it('pulls a ghcr.io image only from a civitai-dc job', () => {
+    const civitaiDc = new Set(selfHostedJobs.map((j) => `${j.file} → ${j.name}`));
+    const hostedGhcr = workflows.flatMap(({ file, doc }) =>
+      Object.entries(doc.jobs ?? {})
+        .filter(([name]) => !civitaiDc.has(`${file} → ${name}`))
+        .filter(([, job]) =>
+          JSON.stringify([(job as { container?: unknown }).container, job.services]).includes(
+            'ghcr.io'
+          )
+        )
+        .map(([name]) => `${file} → ${name}`)
+    );
+    expect(hostedGhcr).toEqual([]);
+  });
+
   it('lint.yml unit pulls both services from the ghcr mirror on civitai-dc', () => {
     expect(Object.values(unitJob.services ?? {}).filter((s) => s.credentials)).toHaveLength(2);
   });

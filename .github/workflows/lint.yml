@@ -876,6 +876,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: true
+          # packages: read cannot be conditional, so a hosted run (a fork PR labelled full-ci) holds
+          # it too: keep the token out of .git/config, where the PR's own tests could read it.
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v6
 
