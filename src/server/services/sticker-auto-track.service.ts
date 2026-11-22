@@ -119,7 +119,7 @@ export async function getStickerAutoTrack({
   );
   if (result.status === 'missing') throw throwNotFoundError('placement: auto-track run not found');
   if (result.status === 'failed') {
-    // The client only ever says "on our side"; this is the one record of which run failed and how.
+    // The client gets no detail, so this log is where the run and its failure reason live.
     logToAxiom({
       name: 'sticker-auto-track',
       type: 'warning',
