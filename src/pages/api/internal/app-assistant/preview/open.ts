@@ -43,7 +43,8 @@ import { withDistributedLock } from '~/server/utils/distributed-lock';
  * Rotate the Sandbox's preview id and call again, once; a second `fresh` is an error, not a
  * reason to loop.
  *
- *   200 `{ mode: "tunnel" }`, `{ mode: "direct", sessionId, host }`, or `{ mode: "direct", fresh: true }`
+ *   200 `{ mode: "tunnel" }`, `{ mode: "direct", sessionId }`, or `{ mode: "direct", fresh: true }`.
+ *       No session host: it is the session's credential, and the page gets the frame by block id.
  *   400 `{ error }` the body is not that shape
  *   401 `{ error }` the runner's secret is missing or wrong; `invalid_grant` not a current run grant
  *   403 `refused` an App Assistant gate refuses the user; `FORBIDDEN` no author capability, or the
@@ -126,11 +127,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         sessionId: opened.session.sessionId,
         grantId: grant.grantId,
       });
-    return res.json({
-      mode: 'direct',
-      sessionId: opened.session.sessionId,
-      host: opened.session.host,
-    });
+    return res.json({ mode: 'direct', sessionId: opened.session.sessionId });
   } catch (err) {
     logToAxiom({
       type: 'app-assistant.runner-preview.failed',
