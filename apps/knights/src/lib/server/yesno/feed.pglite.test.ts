@@ -123,6 +123,15 @@ describe('what a player is offered', () => {
     expect(await pick(3, { rank: 'Inquisitor' })).toBeNull();
   });
 
+  it('is never an image on a Private post', async () => {
+    await seed([row('private', 11)]);
+    await seedPlayer(pg, 1);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 11`);
+    expect(await pick(1)).toBeNull();
+    await pg.query(`UPDATE "Post" SET availability = 'Unsearchable' WHERE id = 11`);
+    expect(await pick(1)).toMatchObject({ prompt: 'Question private?' });
+  });
+
   it('does not offer a question the player skipped', async () => {
     const ids = await seed([row('a', 10), row('b', 11)]);
     await seedPlayer(pg, 1);

@@ -1,4 +1,5 @@
 import { createEmail, renderEmailShell } from '@civitai/email';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { env } from '$env/dynamic/private';
 import { siteAppealDecisionText, type SiteAppealCategory } from '@civitai/shared/site-appeal';
 
@@ -9,9 +10,6 @@ export type AppealResolutionEmailData = {
   // Affected content, each linked when a public URL is available.
   items: { url?: string; label: string }[];
 };
-
-const escapeHtml = (s: string) =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 const tosFooter =
   'For more information, see our <a href="https://civitai.com/content/tos">Terms of Service</a>.';
