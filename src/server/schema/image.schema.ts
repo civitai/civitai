@@ -452,6 +452,43 @@ export function requiresImageDbPath(input: {
   );
 }
 
+/**
+ * Inputs whose answer depends on who is asking: signed out, each is ignored or reads as nobody's.
+ * A signed-out answer to one of them must not be stored by a shared cache, or a signed-in caller at
+ * the same URL gets that answer instead of their own. The hat inputs matter to image.getInfinite only.
+ */
+export function isViewerScopedImageFeed(input: {
+  reactions?: unknown[] | null;
+  followed?: boolean | null;
+  hidden?: boolean | null;
+  pending?: boolean | null;
+  notPublished?: boolean | null;
+  scheduled?: boolean | null;
+  poiOnly?: boolean | null;
+  minorOnly?: boolean | null;
+  pendingReviewOnly?: boolean | null;
+  hatSort?: unknown;
+  hatTurfMine?: boolean | null;
+  hideTurfHats?: boolean | null;
+  hideWornHats?: boolean | null;
+}) {
+  return (
+    !!input.reactions?.length ||
+    !!input.followed ||
+    !!input.hidden ||
+    !!input.pending ||
+    !!input.notPublished ||
+    !!input.scheduled ||
+    !!input.poiOnly ||
+    !!input.minorOnly ||
+    !!input.pendingReviewOnly ||
+    !!input.hatSort ||
+    !!input.hatTurfMine ||
+    !!input.hideTurfHats ||
+    !!input.hideWornHats
+  );
+}
+
 // faux-extends imagesQueryParamSchema output type
 export const getInfiniteImagesSchema = baseQuerySchema
   .extend({

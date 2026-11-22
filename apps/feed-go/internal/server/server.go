@@ -366,9 +366,9 @@ func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*compute
 		return nil, err
 	}
 	out := &computed{value: ans.Value, trivial: ans.Trivial}
-	if cacheable {
-		// createContext: cacheable without a session user and without a verified crawler. Nothing in
-		// this procedure's chain lowers it, so Node answers such an unbatched call public.
+	if cacheable && !req.Input.ViewerScoped() {
+		// createContext: cacheable without a session user and without a verified crawler, unless
+		// noEdgeCacheWhen(isViewerScopedImageFeed) lowers it, as it does for a viewer-scoped input.
 		out.ttl = &trpc.SignedOutTTL
 	}
 	if err := out.encode(ctx); err != nil {

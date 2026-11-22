@@ -387,6 +387,13 @@ func (in *InfiniteInput) prioritizedSystemUser() bool {
 }
 
 // ownScoped is applyAddonExclusions' isOwnScoped for this input (see ownScope).
+// ViewerScoped is isViewerScopedImageFeed (src/server/schema/image.schema.ts) for the inputs this
+// port answers: the rest of that list falls back to the app. A signed-out answer to one of them is
+// not edge-cacheable, or a signed-in caller at the same URL gets it instead of their own.
+func (in *InfiniteInput) ViewerScoped() bool {
+	return len(in.Reactions) > 0 || in.Followed || in.Pending
+}
+
 func (in *InfiniteInput) ownScoped(viewerID int, viewerUsername string) bool {
 	return ownScope(viewerID, viewerUsername, in.UserID, in.Username)
 }

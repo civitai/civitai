@@ -581,7 +581,7 @@ export const getInfiniteImagesHandler = async ({
       headers: { src: 'getInfiniteImagesHandler' },
       include: [...scopedInput.include, 'tagIds' as const],
       dbTarget: features.datapacketRead ? ('datapacket' as const) : ('read' as const),
-      // image.getInfinite is never cached, so its viewer's decorations are theirs alone.
+      // Signed-in answers are never stored by a shared cache (only signed-out ones are), so these decorations reach only this viewer.
       eventDecorationViewer: eventViewer,
     };
 
@@ -655,7 +655,7 @@ export const getInfiniteImagesHandler = async ({
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
-        // image.getInfinite is never cached, so its viewer's decorations are theirs alone.
+        // Signed-in answers are never stored by a shared cache (only signed-out ones are), so these decorations reach only this viewer.
         eventDecorationViewer: eventViewer,
         signal,
         actor: buildSearchActor({
@@ -674,7 +674,7 @@ export const getInfiniteImagesHandler = async ({
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
-        // image.getInfinite is never cached, so its viewer's decorations are theirs alone.
+        // Signed-in answers are never stored by a shared cache (only signed-out ones are), so these decorations reach only this viewer.
         eventDecorationViewer: eventViewer,
       });
       // Name this branch too, like the index path's `source`. Stamped here rather
