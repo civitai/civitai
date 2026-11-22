@@ -97,14 +97,17 @@ describe('comics.updatePanel image url', () => {
 });
 
 describe('comics.updatePanel other fields', () => {
-  it('refuses any status but generating', async () => {
-    await expect(updatePanel({ status: ComicPanelStatus.Enqueued })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-    });
-    await expect(updatePanel({ status: ComicPanelStatus.Ready })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-    });
-    expect(dbMock.dbWrite.comicPanel.update).not.toHaveBeenCalled();
+  it.each(Object.values(ComicPanelStatus).filter((s) => s !== ComicPanelStatus.Generating))(
+    'refuses status %s and writes nothing',
+    async (status) => {
+      await expect(updatePanel({ status })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(dbMock.dbWrite.comicPanel.update).not.toHaveBeenCalled();
+    }
+  );
+
+  it('leaves the status unwritten when none is sent', async () => {
+    await updatePanel({ imageUrl: null });
+    expect(written().status).toBeUndefined();
   });
 
   it('writes no error text or job id', async () => {
