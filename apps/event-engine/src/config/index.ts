@@ -241,7 +241,7 @@ export const config = {
       .filter(Boolean),
     pgPoolMax: vectorInt('VECTOR_PG_POOL_MAX', 4, 1),
     // Without these a query on a half-open connection never settles: the flush awaiting it holds
-    // every later flush, and the consumer stops with nothing logged (image-vector-sync, 2026-11-22).
+    // every later flush, and the consumer stops with nothing logged.
     // Longer than the event processor's: a backfill page or a reconcile range read is bigger. 0 = off.
     pgQueryTimeoutMs: envTimeoutMs(process.env.VECTOR_PG_QUERY_TIMEOUT_MS, 60_000),
     // Backfill and reconcile Jobs read bigger slices (a reconcile bucket is 100k ids through the
