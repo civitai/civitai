@@ -67,6 +67,18 @@ describe('blockedForSignal', () => {
     expect(blockedForSignal('bene', both)).toBe(true);
   });
 
+  it('a minor-only reason is clean, unless a signal pattern also matches it', () => {
+    const minor = parseBlockedForPatterns('# signal\n^sig.*$\n# minor\n^minor-.*$\n^sig-minor$')!;
+    expect(blockedForSignal('minor-a', minor)).toBe(false);
+    expect(blockedForSignal('minor-a, moderated', minor)).toBe(false);
+    expect(blockedForSignal('sig-minor', minor)).toBe(true);
+    expect(blockedForSignal('minor-a,never seen', minor)).toBe(true);
+  });
+
+  it('a minor-only reason is a signal while the patterns have no minor section', () => {
+    expect(blockedForSignal('minor-a', PATTERNS)).toBe(true);
+  });
+
   it('without patterns, every value but the fixed reasons is a signal', () => {
     expect(blockedForSignal('benign', null)).toBe(true);
     expect(blockedForSignal('moderated', null)).toBe(false);

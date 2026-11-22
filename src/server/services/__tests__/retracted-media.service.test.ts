@@ -236,6 +236,68 @@ describe('getRetractedMedia', () => {
     await expectTiers('cleared', [10]);
   });
 
+  // A minor flag alone lets any moderator see the media; only a CSAM signal, report or hold keeps it
+  // to cleared moderators. The private patterns name which block reasons are minor-only.
+  describe('a block reason the patterns list as minor-only', () => {
+    const MINOR = { signal: [], nonMinor: [], minor: [/^scan-reason-/u] };
+
+    it('is open to any moderator', async () => {
+      patterns.current = MINOR;
+      await expectTiers('anyMod', [10]);
+    });
+
+    it('stays with cleared moderators while the patterns have no minor section', async () => {
+      patterns.current = { signal: [], nonMinor: [] };
+      await expectTiers('cleared', [10]);
+    });
+
+    it('stays with cleared moderators when the scanner marks the image as CSAM', async () => {
+      patterns.current = MINOR;
+      scanner.hits.add(10);
+      try {
+        await expectTiers('cleared', [10]);
+      } finally {
+        scanner.hits.delete(10);
+      }
+    });
+
+    it('stays with cleared moderators when a CSAM report lists the image', async () => {
+      patterns.current = MINOR;
+      await pg.exec(`
+        INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId")
+          VALUES (990000120, 'key-990000120', 'Blocked', 'scan-reason-y', 990100120);
+        INSERT INTO "CsamReport" ("userId", details, images) VALUES (NULL, '{}', '[990000120]');
+      `);
+      try {
+        await expectTiers('cleared', [990000120]);
+      } finally {
+        await pg.exec(`
+          DELETE FROM "CsamReport" WHERE images = '[990000120]';
+          DELETE FROM "Image" WHERE id = 990000120;
+        `);
+      }
+    });
+
+    it('does not open a reason a signal pattern also matches', async () => {
+      patterns.current = { ...MINOR, signal: [/^scan-reason-x$/u] };
+      await expectTiers('cleared', [10]);
+    });
+
+    // The SQL and the block-reason read decide together: over the same reasons, the route gives
+    // each the access the rule names.
+    it.each([
+      ['a CSAM block reason', 11, 'none'],
+      ['a block with no reason', 4, 'cleared'],
+      ['moderated', 1, 'anyMod'],
+      ['tos', 2, 'anyMod'],
+      ['AiNotVerified', 3, 'anyMod'],
+      ['a minor-only reason', 10, 'anyMod'],
+    ])('gives %s the access the rule names', async (_, id, tier) => {
+      patterns.current = MINOR;
+      await expectTiers(tier, [id]);
+    });
+  });
+
   it('never serves held media, which the held-media route serves', async () => {
     // CSAM block, CSAM review flag, an owner who is a report's subject.
     await expectTiers('none', [11, 13, 20]);

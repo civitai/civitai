@@ -225,8 +225,8 @@ export type RetractedAccessRow = {
 
 /**
  * Whether a moderator without the CSAM grant may see an eligible row read with
- * `retractedAccessColumnsSql`: not restricted, no `blockedFor` signal (`blockedForSignal`, which
- * reads a minor block reason as one too), the scanner's CSAM label on neither the row
+ * `retractedAccessColumnsSql`: not restricted, no `blockedFor` signal (`blockedForSignal`, where a
+ * minor reason alone is none), the scanner's CSAM label on neither the row
  * (`readVerdict`) nor its url's other rows, and `siblingsServable`. A verdict that could not be read
  * (null) refuses. The scanner is read only for a row Postgres has not refused.
  */
