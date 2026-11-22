@@ -80,7 +80,11 @@ import { logToAxiom } from '~/server/logging/client';
 import type { CsamSupplementalDetails } from '~/server/services/csam-supplemental-text';
 import { supplementalReportText } from '~/server/services/csam-supplemental-text';
 import type { CsamContextText } from '~/server/services/csam-context-text';
-import { contextWebPageIncidents } from '~/server/services/csam-context-text';
+import {
+  contextTextOmittedLine,
+  contextWebPageIncidents,
+  unsendableContextText,
+} from '~/server/services/csam-context-text';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
@@ -221,6 +225,8 @@ type CsamReportDetails = CsamReportFormOutput & {
    * case changes and removed when the report is sent.
    */
   sendHold?: SendHold;
+  /** Captured text the sent CyberTip left out (`omittedContext` below); written with the send stamp. */
+  omittedContext?: { count: number; onlyText: boolean };
 };
 
 /** `no-files`: nothing the report names can be sent. `missing-user`: no reporting or reported user. */
@@ -813,6 +819,12 @@ const underClaim = (claim: SendClaim) => ({
   reportSentAt: null,
 });
 
+/** The record of captured text a sent report went without; `onlyText` means no text was sent at all. */
+const omittedContext = (report: CsamReportProps, count: number) => ({
+  count,
+  onlyText: count === (report.details?.contextText?.length ?? 0),
+});
+
 function logSendLine(
   claim: SendClaim,
   subType: string,
@@ -1170,6 +1182,7 @@ async function sendCyberTip(
     fileDetails,
     sendFiles,
     beforeCancel,
+    onFinished,
     failureSubType = 'archive-data',
   }: {
     /** The details each file will be sent with, but for its fileId. */
@@ -1177,6 +1190,8 @@ async function sendCyberTip(
     /** Resolves to the details keys the report is marked sent with. */
     sendFiles: (ncmecReportId: number) => Promise<Record<string, unknown> | void>;
     beforeCancel?: () => Promise<void>;
+    /** Runs once NCMEC has the finished report, before it is stamped sent here. */
+    onFinished?: () => void;
     failureSubType?: string;
   }
 ) {
@@ -1247,6 +1262,7 @@ async function sendCyberTip(
   }
 
   // Finished at NCMEC from here on: a lost stamp is alerted, and the next run sends a duplicate.
+  onFinished?.();
   if (!isProd) return true;
   try {
     if (
@@ -1367,7 +1383,9 @@ async function reportImages(claim: SendClaim) {
   const noLongerStored =
     absent.length +
     report.images.filter(({ id }) => !images.some((image) => image.id === id)).length;
+  const unsendable = unsendableContextText(report.details?.contextText).length;
   const omitted = [
+    unsendable > 0 && contextTextOmittedLine(unsendable),
     failed.length > 0 &&
       `${failed.length} file(s) named in this report could not be read from storage after repeated attempts and are not included.`,
     noLongerStored > 0 &&
@@ -1534,7 +1552,24 @@ async function reportImages(claim: SendClaim) {
     },
     {
       fileDetails: [...fileDetailsOf.values()].map(({ fileDetails }) => fileDetails),
-      sendFiles,
+      // Marked with the send, so the record of what went without it can't be lost between two writes.
+      sendFiles: async (ncmecReportId) => ({
+        ...(await sendFiles(ncmecReportId)),
+        ...(unsendable > 0 && { omittedContext: omittedContext(report, unsendable) }),
+      }),
+      // Logged once NCMEC has the report, so a stamp that fails or loses its answer still leaves it.
+      onFinished: () => {
+        if (unsendable > 0)
+          logSendLine(
+            claim,
+            'send-omitted',
+            {
+              message: `report ${report.id} sent without ${unsendable} captured text item(s)`,
+              payload: omittedContext(report, unsendable),
+            },
+            'error'
+          );
+      },
       // A file already being sent finishes before the cancel, so its read failure is counted too.
       beforeCancel: async () => {
         await Promise.allSettled(started);

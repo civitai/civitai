@@ -50,7 +50,7 @@ import {
 import {
   imageNotRestrictedWhere,
   imageRestrictionSelect,
-  isImageNotRestricted,
+  isImageServable,
   withServableImage,
 } from '~/server/common/image-visibility';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
@@ -1038,7 +1038,7 @@ export const comicsRouter = router({
       for (const ref of references) {
         ref.images = ref.images.filter(
           (ri) =>
-            isImageNotRestricted(ri.image, ctx.user.id) &&
+            isImageServable(ri.image, ctx.user.id) &&
             (!ctx.features.isGreen ||
               !ri.image.nsfwLevel ||
               hasSafeBrowsingLevel(ri.image.nsfwLevel))
