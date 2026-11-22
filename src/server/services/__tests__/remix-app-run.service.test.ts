@@ -1887,10 +1887,8 @@ describe('a user app', () => {
         await bumpRemixAppRegistry();
         vi.mocked(classifyPromptServer).mockResolvedValue(pass as never);
         vi.mocked(auditPromptServer).mockImplementation(async () => undefined);
-        setEnv({ REMIX_FIRST_STRIKE_CATEGORIES: ['synthetic-minor'] });
       });
       afterEach(() => {
-        setEnv({ REMIX_FIRST_STRIKE_CATEGORIES: undefined });
         // clearAllMocks keeps implementations: these would refuse every later test's runs.
         vi.mocked(auditPromptServer).mockImplementation(async () => undefined);
         vi.mocked(classifyPromptServer).mockResolvedValue(pass as never);
@@ -2045,9 +2043,7 @@ describe('a user app', () => {
         });
         expect(vi.mocked(auditPromptServer)).not.toHaveBeenCalled();
         expect(submits()).toHaveLength(0);
-        expect(stored.manifest).toMatchObject({
-          reviewLog: [expect.objectContaining({ action: 'held-combination-blocks' })],
-        });
+        expect(blocks()).toHaveLength(1);
       });
 
       it('C: a refusal the prompt, judged again, does not repeat never counts', async () => {
@@ -2116,51 +2112,36 @@ describe('a user app', () => {
       });
 
       it.each([
-        [
-          'an operator-listed category',
-          blocked('external', 'synthetic-minor'),
-          ['synthetic-minor'],
-          'held-combination-blocks',
-        ],
-        ['a minor-age regex block', blocked('minor_age'), [], 'held-combination-blocks'],
+        ['a minor-age regex block', blocked('minor_age'), 'held-combination-blocks'],
         [
           'an inappropriate-minor regex block',
           blocked('inappropriate_minor'),
-          [],
           'held-combination-blocks',
         ],
-        [
-          'any block while the operator list is unset',
-          blocked('external', 'synthetic-other'),
-          undefined,
-          'held-combination-blocks',
-        ],
+        ['an external category', blocked('external', 'synthetic-minor'), 'held-combination-blocks'],
         [
           'a verdict the classifier could not finish',
           { ...blocked('external', 'synthetic-other'), externalError: { message: 'down' } },
-          ['synthetic-minor'],
           'held-classifier-error',
         ],
-      ])('C: %s takes the app out on the first refusal', async (_, verdict, listed, action) => {
-        setEnv({ REMIX_FIRST_STRIKE_CATEGORIES: listed as string[] | undefined });
-        classify(verdict);
-        await expect(runAs(101)).rejects.toMatchObject({ message: REMIX_APP_PROMPT_REFUSED });
-        expect(stored.status).toBe('remix_disabled');
-        expect(stored.manifest).toMatchObject({
-          review: 'submitted',
-          reviewLog: [expect.objectContaining({ action })],
-        });
-      });
-
-      it.each([
-        ['an unlisted external category', blocked('external', 'synthetic-other')],
-        ['an unlisted regex category', blocked('nsfw_blocklist')],
-      ])('C: %s needs three viewers while the list is set', async (_, verdict) => {
-        classify(verdict);
-        await expect(runAs(101)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-        expect(stored.status).toBe('remix');
-        expect(blocks()).toHaveLength(1);
-      });
+      ])(
+        "C: %s never takes the app out on one viewer's refusals; the third distinct viewer does",
+        async (_, verdict, action) => {
+          classify(verdict);
+          await expect(runAs(101)).rejects.toMatchObject({ message: REMIX_APP_PROMPT_REFUSED });
+          await expect(runAs(101)).rejects.toMatchObject({ message: REMIX_APP_PROMPT_REFUSED });
+          expect(stored.status).toBe('remix');
+          expect(blocks()).toHaveLength(1);
+          await expect(runAs(102)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+          expect(stored.status).toBe('remix');
+          await expect(runAs(103)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+          expect(stored.status).toBe('remix_disabled');
+          expect(stored.manifest).toMatchObject({
+            review: 'submitted',
+            reviewLog: [expect.objectContaining({ action })],
+          });
+        }
+      );
 
       it('C: a count that fails to save still refuses the run', async () => {
         classify(blocked('minor_age'));

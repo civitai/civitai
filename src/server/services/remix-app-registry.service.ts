@@ -884,18 +884,16 @@ async function holdMatureApp(first: RemixAppRow, moderatorId: number) {
 /**
  * The run-time audit sending an approved user app back to review, out of menus: its author's own
  * part of a prompt blocked, or viewers' audits refused runs of it, counted once per
- * distinct viewer and pulled on the {@link REMIX_COMBINATION_BLOCKS_MAX}th, or at once on a
- * `firstStrike`. Re-read and retried when another write lands first. `true` when this pulled it.
+ * distinct viewer and pulled on the {@link REMIX_COMBINATION_BLOCKS_MAX}th. Re-read and retried when another write lands first. `true` when this pulled it.
  */
 export async function holdUserRemixApp(
   slug: string,
   hold:
     | { action: 'held-author-prompt' }
     | {
-        /** `held-classifier-error`: a first strike only because the classifier could not answer. */
+        /** `held-classifier-error`: counted because the classifier could not answer in full. */
         action: 'held-combination-blocks' | 'held-classifier-error';
         viewerId: number;
-        firstStrike: boolean;
       }
 ): Promise<boolean> {
   for (let attempt = 1; ; attempt++) {
@@ -908,8 +906,7 @@ export async function holdUserRemixApp(
       const viewer = createHash('sha256').update(`${slug}:${hold.viewerId}`).digest('hex');
       if (!blocks.includes(viewer.slice(0, 16))) blocks = [...blocks, viewer.slice(0, 16)];
     }
-    const pull =
-      !('viewerId' in hold) || hold.firstStrike || blocks.length >= REMIX_COMBINATION_BLOCKS_MAX;
+    const pull = !('viewerId' in hold) || blocks.length >= REMIX_COMBINATION_BLOCKS_MAX;
     if (!pull && blocks === before) return false;
     const counted = { ...manifest, combinationBlocks: blocks.slice(-REMIX_COMBINATION_BLOCKS_MAX) };
     try {

@@ -13,8 +13,7 @@ import {
   classifyPromptServer,
   type PromptClassification,
 } from '~/server/services/orchestrator/promptAuditing';
-import { env } from '~/env/server';
-import { isOverLengthRefusal, type PromptTriggerCategory } from '~/utils/metadata/audit';
+import { isOverLengthRefusal } from '~/utils/metadata/audit';
 import { signProvenance, verifyProvenance } from '~/server/services/orchestrator/remix-provenance';
 import {
   getWorkflow,
@@ -362,21 +361,6 @@ async function assertAuthorPartPasses(slug: string, part: AuthorPart) {
   throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD });
 }
 
-const MINOR_TRIGGERS: PromptTriggerCategory[] = ['minor_age', 'inappropriate_minor'];
-
-/** A first strike, and why: a minor-adjacent or listed category, or a classifier that could not say. */
-function firstStrikeOf({ triggers, externalError }: PromptClassification) {
-  if (externalError) return 'error';
-  const listed = env.REMIX_FIRST_STRIKE_CATEGORIES;
-  const strikes =
-    !listed ||
-    triggers.some(
-      ({ category, message }) =>
-        MINOR_TRIGGERS.includes(category) || (category === 'external' && listed.includes(message))
-    );
-  return strikes ? 'listed' : 'none';
-}
-
 export const REMIX_APP_PROMPT_REFUSED =
   "This app's prompt was refused with these answers. Try other ones.";
 
@@ -412,8 +396,8 @@ async function assertWholePromptPasses(
 
 /**
  * The combination count: a user app's whole prompt blocked where its author part and the viewer's
- * words alone did not. One block per distinct viewer; a first strike takes the app out of menus at
- * once. A soft block or an over-length refusal counts against nobody, so not against the app either.
+ * words alone did not. One block per distinct viewer, and only the threshold pulls the app: no one
+ * viewer can. A soft block or an over-length refusal counts against nobody, so not against the app either.
  */
 async function recordCombinationBlock(
   slug: string,
@@ -422,13 +406,11 @@ async function recordCombinationBlock(
   viewerId: number
 ) {
   if (whole.outcome === 'soft' || isOverLengthRefusal(whole.triggers)) return;
-  const strike = alone.some((verdict) => !verdict || verdict.externalError)
-    ? 'error'
-    : firstStrikeOf(whole);
+  const unjudged =
+    !!whole.externalError || alone.some((verdict) => !verdict || verdict.externalError);
   await holdUserRemixApp(slug, {
-    action: strike === 'error' ? 'held-classifier-error' : 'held-combination-blocks',
+    action: unjudged ? 'held-classifier-error' : 'held-combination-blocks',
     viewerId,
-    firstStrike: strike !== 'none',
   }).catch((error: unknown) =>
     logToAxiom({
       name: 'remix-app-run',
