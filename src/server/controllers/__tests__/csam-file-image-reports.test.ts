@@ -128,6 +128,22 @@ describe('an image report with no image that still exists', () => {
     }
   );
 
+  it('is refused as a supplemental too, when every id lost its row', async () => {
+    dbMock.dbWrite.image.count.mockResolvedValue(0 as never);
+
+    await expect(
+      fileCsamReport({
+        userId: OWNER,
+        imageIds: [IMAGE, OTHER_IMAGE],
+        type: 'Image',
+        reportedById: MOD,
+        supplementalOf: 77,
+      } as never)
+    ).rejects.toThrow(CSAM_IMAGE_FILING_NO_IMAGE_REFUSAL);
+    expect(createSupplementalCsamReport).not.toHaveBeenCalled();
+    expect(softDeleteUser).not.toHaveBeenCalled();
+  });
+
   it('never tells the moderator to file it', () => {
     expect(CSAM_IMAGE_FILING_NO_IMAGE_REFUSAL).toMatch(/^Nothing was filed\./);
     expect(CSAM_IMAGE_FILING_NO_IMAGE_REFUSAL).not.toMatch(/file (now|it|without|the report)/i);
