@@ -8,6 +8,7 @@ import {
   LEGAL_HOLD_REFUSAL,
   LEGAL_HOLD_STOPPED,
   LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
+  PURGE_ARCHIVE_REFUSAL,
   type DeleteHold,
 } from '$lib/legal-hold';
 import { PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
@@ -1852,6 +1853,8 @@ export async function purgeAllContent(input: {
       await logAction('purgeAllContent', input.userId, input.moderatorId);
       return { ok: false, error: result.reason };
     }
+    if (result.status === 503 && result.reason === PURGE_ARCHIVE_REFUSAL)
+      return { ok: false, error: PURGE_ARCHIVE_REFUSAL };
     // The wipe runs to completion on the main app whether or not this side is still waiting, so a
     // lost answer is reported as started, never as failed: a failure invites a second purge.
     if (!responseMayHaveLanded(result)) return { ok: false, error: result.error };
