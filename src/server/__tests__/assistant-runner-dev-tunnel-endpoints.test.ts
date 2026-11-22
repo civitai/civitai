@@ -1033,10 +1033,8 @@ describe('POST preview/open (App Assistant direct preview)', () => {
   });
 
   it('stop by block id ends the session: record, host and set member go, and the id is revoked', async () => {
-    const { sessionId, host } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<
-      string,
-      string
-    >;
+    const { sessionId } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+    const host = sessionRecord(sessionId).host as string;
     expect(await byBlock(stopRoute, OTHER, OWNED_APP)).toMatchObject({ json: { stopped: false } });
     expect(sessionRecord(sessionId)).not.toBeNull();
     expect(revokesSent()).toEqual([]);
@@ -1049,10 +1047,8 @@ describe('POST preview/open (App Assistant direct preview)', () => {
   });
 
   it('keepalive by block id moves the direct session’s idle clock; by its host is refused', async () => {
-    const { sessionId, host } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<
-      string,
-      string
-    >;
+    const { sessionId } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+    const host = sessionRecord(sessionId).host as string;
     const stale = nowSec() - DEV_TUNNEL_IDLE_SECONDS - 120;
     // By host first: the session host is the session's credential, so the host path refuses it,
     // even for the session's own user, and records nothing.
@@ -1120,7 +1116,8 @@ describe('POST preview/open (App Assistant direct preview)', () => {
 
   it('the DNS gate never holds a direct session host back (it has no record of its own)', async () => {
     setEnv({ APPS_DEV_TUNNEL_INGRESS_TARGET: '192.0.2.10' });
-    const { host } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+    const { sessionId } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+    const host = sessionRecord(sessionId).host as string;
     expect(await isDevTunnelHostPublished(host)).toBe(true);
     // Control: the same gate still refuses a host of neither shape.
     expect(await isDevTunnelHostPublished(`x${host}`)).toBe(false);
@@ -1243,7 +1240,8 @@ describe('POST preview/open (App Assistant direct preview)', () => {
   it('logs a direct session host only as a hash, at start and at stop', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     try {
-      const { host } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+      const { sessionId } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+      const host = sessionRecord(sessionId).host as string;
       await byBlock(stopRoute, OWNER, OWNED_APP);
       const events = logSpy.mock.calls
         .map((c) => String(c[0]))
@@ -1281,7 +1279,8 @@ describe('POST preview/open (App Assistant direct preview)', () => {
   it('APP_ASSISTANT_PREVIEW_KEYS in the gateway’s key-set form: mints with current', async () => {
     const current = { kid: 4, key: Buffer.alloc(32, 5).toString('base64') };
     setEnv({ APP_ASSISTANT_PREVIEW_KEYS: JSON.stringify({ current, previous: KEY }) });
-    const { host } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+    const { sessionId } = (await open(OWNER, OWNED_APP, PID_A)).json! as Record<string, string>;
+    const host = sessionRecord(sessionId).host as string;
     expect(decodePreviewLabel(host.split('.')[0])).toMatchObject({
       ok: true,
       kid: 4,
