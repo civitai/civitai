@@ -1,28 +1,27 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { createHash } from 'crypto';
-import { reviewSuspectImageSql, unreadableImageSql } from '@civitai/shared/held-media';
+import { unreadableImageSql } from '@civitai/shared/held-media';
+import { retractedAccessColumnsSql } from '@civitai/shared/retracted-media-tier';
 import {
-  imageAuditContentHash,
   imageRoutesHeld,
   newReviewBatchId,
   REVIEW_BATCH_TTL_SECONDS,
   REVIEW_MEDIA_ORIGIN,
   reviewBatchHash,
   reviewBatchLink,
-  SCANNER_HITS_SQL,
-  scannerHeldIds,
-  scannerVerdict,
   type ImageSignalRow,
   type ReviewBatchRecord,
   type ReviewTier,
 } from '@civitai/shared/review-batch';
+import { createScannerReader } from '@civitai/shared/media-signals';
 import { env } from '~/env/server';
 import { sessionClient } from '~/server/auth/session-client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
@@ -30,7 +29,6 @@ import type { SessionUser } from '~/types/session';
 import { batchKey, deleteBatch, keySetKey, reviewBatchCall } from './review-batch.store';
 import { blockedForPatterns } from '~/server/services/blocked-for-patterns';
 
-const CLICKHOUSE_TIMEOUT_SECONDS = 3;
 /** Longer than any mint takes, so a lock only outlives a crashed one. */
 const IDEMPOTENCY_LOCK_SECONDS = 120;
 
@@ -44,8 +42,11 @@ export const holdsHeldGrant = (user: SessionUser) => !!getFeatureFlags({ user })
 
 /** Each image's Postgres signals, read on the primary so a report filed a moment ago counts. */
 export async function readImageSignals(ids: number[]): Promise<Map<number, ImageSignalRow>> {
+  const access = retractedAccessColumnsSql('i', { csamReview: false });
   const rows = await dbWrite.$queryRaw<ImageSignalRow[]>`
-    SELECT i.id, ${Prisma.raw(reviewSuspectImageSql('i'))} AS suspect,
+    SELECT i.id, ${Prisma.raw(access.restricted)} AS restricted, ${Prisma.raw(
+    access.siblings
+  )} AS siblings,
       ${Prisma.raw(unreadableImageSql('i'))} AS unreadable, i."blockedFor"
     FROM "Image" i
     WHERE i.id IN (${Prisma.join(ids)})
@@ -53,65 +54,52 @@ export async function readImageSignals(ids: number[]): Promise<Map<number, Image
   return new Map(rows.map((row) => [row.id, row]));
 }
 
-type ScannerRow = { contentHash: string; hit: number };
-
-/** The scanner's ClickHouse rows for `ids`; null when ClickHouse cannot answer in time. */
-async function readScannerRows(ids: number[]): Promise<ScannerRow[] | null> {
-  if (!clickhouse) return null;
-  const abort = AbortSignal.timeout((CLICKHOUSE_TIMEOUT_SECONDS + 1) * 1000);
-  try {
-    const result = await clickhouse.query({
-      query: SCANNER_HITS_SQL,
-      query_params: { hashes: ids.map(imageAuditContentHash) },
-      format: 'JSONEachRow',
-      abort_signal: abort,
-      clickhouse_settings: { max_execution_time: CLICKHOUSE_TIMEOUT_SECONDS },
-    });
-    return await result.json<ScannerRow>();
-  } catch (e) {
-    void logToAxiom({
-      name: 'review-batch-scanner-read-failed',
-      type: 'warning',
-      message: (e as Error).message,
-    });
-    return null;
+/** The scanner's CSAM verdicts (`createScannerReader`); null when ClickHouse cannot answer in time. */
+export const { readScannerCsamVerdict, readScannerCsamVerdicts } = createScannerReader(
+  () => clickhouse,
+  {
+    onError: (e) =>
+      void logToAxiom({
+        name: 'review-batch-scanner-read-failed',
+        type: 'warning',
+        message: (e as Error).message,
+      }),
+    deadline: fetchTimeoutSignal,
   }
-}
-
-/**
- * The ids the scanner's ClickHouse rows mark CSAM or minor, or that have no rows yet; a completed,
- * unblocked scan stores its minor verdict nowhere else. Null when ClickHouse cannot answer in time:
- * the caller holds every image.
- */
-export async function readScannerHits(
-  ids: number[],
-  { absentHolds = true } = {}
-): Promise<Set<number> | null> {
-  const rows = await readScannerRows(ids);
-  return rows ? scannerHeldIds(ids, rows, absentHolds) : null;
-}
-
-/** One image's scanner verdict (`scannerVerdict`), or null when ClickHouse cannot answer in time. */
-export async function readScannerVerdict(imageId: number) {
-  const rows = await readScannerRows([imageId]);
-  return rows ? scannerVerdict(imageId, rows) : null;
-}
+);
 
 /** Whether the batch is declared suspect: by its minter, or by having no source card. */
 export function isDeclared(input: { suspect: boolean; source: string }) {
   return input.suspect || !input.source.trim();
 }
 
-/** Held when the batch is declared or any image has, or cannot be shown not to have, a signal. */
+/**
+ * Held when the batch is declared, the patterns are missing, the scanner cannot be read, or any image
+ * is CSAM-restricted, unfinished or gone. An image with no scanner rows routes general.
+ */
 export async function routeBatch(ids: number[], declared: boolean): Promise<ReviewTier> {
-  if (declared || !blockedForPatterns()) return 'held';
-  const [signals, scannerHits] = await Promise.all([readImageSignals(ids), readScannerHits(ids)]);
-  if (!scannerHits) return 'held';
-  const patternList = blockedForPatterns();
-  const anyHeld = ids.some(
-    (id) => scannerHits.has(id) || imageRoutesHeld(signals.get(id), patternList)
-  );
-  return anyHeld ? 'held' : 'general';
+  const patterns = blockedForPatterns();
+  if (declared || !patterns) return 'held';
+  const [signals, verdicts] = await Promise.all([
+    readImageSignals(ids),
+    readScannerCsamVerdicts(ids),
+  ]);
+  if (!verdicts) return 'held';
+  // Every image's url siblings in one scanner read, not one read per image.
+  const siblingIds = [
+    ...new Set([...signals.values()].flatMap((row) => row.siblings.map((s) => s.id))),
+  ];
+  const siblingVerdicts = await readScannerCsamVerdicts(siblingIds);
+  if (!siblingVerdicts) return 'held';
+  for (const id of ids) {
+    const held = await imageRoutesHeld(signals.get(id), {
+      patterns,
+      verdict: verdicts.get(id) ?? null,
+      readVerdicts: async () => siblingVerdicts,
+    });
+    if (held) return 'held';
+  }
+  return 'general';
 }
 
 export type MintInput = {

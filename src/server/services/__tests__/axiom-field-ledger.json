@@ -890,6 +890,7 @@
   "opaque": {
     "apps/auth/src/lib/server/axiom.ts": 1,
     "apps/auth/src/lib/server/oauth/audit-log.ts": 1,
+    "apps/auth/src/lib/server/oauth/client-exchange.ts": 2,
     "apps/auth/src/lib/server/oauth/jwt-introspection.ts": 18,
     "apps/auth/src/lib/server/oauth/service-token.ts": 2,
     "apps/auth/src/lib/server/oauth/user-exchange.ts": 3,
@@ -913,8 +914,8 @@
     "apps/training-studio/src/routes/api/auth/authorize/+server.ts": 1,
     "apps/training-studio/src/routes/api/auth/callback/+server.ts": 1,
     "packages/civitai-axiom/src/client.ts": 1,
-    "src/pages/api/admin/temp/convert-model-rules.ts": 1,
-    "src/pages/api/admin/temp/model-text-moderation-backfill.ts": 1,
+    "src/server/api-routes/admin/temp/convert-model-rules.ts": 1,
+    "src/server/api-routes/admin/temp/model-text-moderation-backfill.ts": 1,
     "src/pages/api/auth/callback.ts": 1,
     "src/pages/api/internal/app-assistant/dev-tunnel/keepalive.ts": 1,
     "src/pages/api/internal/app-assistant/dev-tunnel/stop.ts": 1,

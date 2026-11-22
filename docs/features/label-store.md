@@ -97,7 +97,7 @@ question's `votesToResolve`, not unanimous), so the store's `consensus` computes
 Pipelines submit predictions to `POST /api/mod/label-store/predictions` as a moderator holding the
 moderator-app permission `labelStore.submitPrediction`. Images only, up to 500 per call; each comes back
 recorded, a duplicate, or rejected with a reason. The ref is stored as `pipeline:<sourceRef>` under family
-`pipeline`, so it never collides with a site producer's. The endpoint's reference is on `/moderator/api`.
+`pipeline`, so it never collides with a site producer's.
 
 ```sql
 SELECT label_store.record_label(

@@ -259,8 +259,8 @@ describe('sendNotice', () => {
 
 describe('the brake', () => {
   it('reads as paused when Redis cannot be read', async () => {
-    redis.get.mockRejectedValueOnce(new Error('ECONNREFUSED'));
-    expect((await readBrake()).paused).toBe(true);
+    for (let i = 0; i < 3; i++) redis.get.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    expect((await readBrake({ retryMs: 0 })).paused).toBe(true);
   });
 
   it('reads as running only when the key is absent', async () => {

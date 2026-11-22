@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as Rewards from '~/server/rewards';
 
@@ -51,6 +52,7 @@ vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { insert: clickhouseInsert, $query: vi.fn(async () => []) },
 }));
 
+const markResolved = vi.fn(async (_k: string, _f: string[], _t: number) => 1);
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 const run = async (flat: { text: string; values: unknown[] }) =>
   holder.db.query(flat.text, flat.values as unknown[]);
@@ -75,7 +77,8 @@ beforeAll(async () => {
       "nsfwLevel" int NOT NULL DEFAULT 0,
       "needsReview" text,
       "pHash" bigint,
-      "updatedAt" timestamp(3)
+      "updatedAt" timestamp(3),
+      metadata jsonb
     );
     CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
     CREATE TYPE "ReportReason" AS ENUM ('TOSViolation', 'NSFW', 'CSAM');
@@ -85,9 +88,13 @@ beforeAll(async () => {
       reason "ReportReason" NOT NULL,
       status "ReportStatus" NOT NULL,
       "statusSetAt" timestamp(3),
-      "statusSetBy" int
+      "statusSetBy" int,
+      "alsoReportedBy" int[] NOT NULL DEFAULT '{}',
+      details jsonb,
+      "previouslyReviewedCount" int NOT NULL DEFAULT 0
     );
     CREATE TABLE "ImageReport" ("imageId" int, "reportId" int);
+    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
     CREATE TABLE "CsamQueueSetAside" ("imageId" int PRIMARY KEY, outcome text NOT NULL);
     CREATE TABLE "ImageDeferredBlockEffect" (
       "imageId" int PRIMARY KEY,
@@ -103,6 +110,10 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  // No reporter here is banned or deleted.
+  dbMock.dbWrite.user.findMany.mockResolvedValue([] as never);
+  (redisMock.redis as unknown as { hSetMultiWithExpire: typeof markResolved }).hSetMultiWithExpire =
+    markResolved;
   dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...v: unknown[]
@@ -123,7 +134,7 @@ beforeEach(async () => {
     return (await run(flat)).affectedRows ?? 0;
   }) as never);
   await holder.db.exec(`
-    TRUNCATE "Image", "Report", "ImageReport", "CsamQueueSetAside", "ImageDeferredBlockEffect";
+    TRUNCATE "Image", "Report", "ImageReport", "User", "CsamQueueSetAside", "ImageDeferredBlockEffect";
     INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview", "pHash") VALUES
       (${HELD}, 7, 'Blocked', 'CSAM', 32, NULL, 201),
       (${FLAGGED_LIVE}, 7, 'Scanned', NULL, 4, 'csam', 202),
@@ -342,6 +353,29 @@ describe('blocking an image under the review flag again', () => {
   });
 });
 
+describe('blocking an image whose blocklist write fails', () => {
+  it('still requeues the documents showing it, after the write, and still fails', async () => {
+    await tosBlock(FLAGGED_LIVE);
+    dbMock.dbWrite.$queryRaw.mockClear();
+    clickhouseInsert.mockClear();
+    clickhouseInsert.mockRejectedValueOnce(new Error('blocklist store down'));
+
+    await expect(
+      handleBlockImages({ ids: [FLAGGED_LIVE], include: ['phash-block'] })
+    ).rejects.toThrow('the blocklist call failed');
+
+    const calls = dbMock.dbWrite.$queryRaw.mock.calls;
+    const lookup = calls.findIndex(([strings]) =>
+      (strings as unknown as string[]).join('?').includes('JOIN "ModelVersion"')
+    );
+    expect(lookup).toBeGreaterThanOrEqual(0);
+    expect(calls[lookup].slice(1)).toEqual([[FLAGGED_LIVE]]);
+    expect(clickhouseInsert.mock.invocationCallOrder[0]).toBeLessThan(
+      dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[lookup]
+    );
+  });
+});
+
 describe('setTosViolationHandler on any other image', () => {
   it('notifies the owner, actions the report, pays the reward and adds a TOS blocklist entry', async () => {
     await tosBlock(OTHER_REASON);
@@ -424,6 +458,164 @@ describe('handleBlockImages over held and other images', () => {
 
     expect(blocklistReasons()['201']).toBeUndefined();
     expect(noHashLogs()).toEqual([{ imageId: HELD, step: 'block' }]);
+  });
+});
+
+describe("handleBlockImages and the images' reports", () => {
+  const all = [HELD, FLAGGED_LIVE, FLAG_REMOVED, OTHER_REASON, DISMISSED];
+  const CSAM_REPORT = 2001;
+  const UNACTIONED_REPORT = 2002;
+  const ACTIONED_REPORT = 2003;
+  beforeEach(async () => {
+    await holder.db.exec(`
+      INSERT INTO "Report" (id, "userId", reason, status) VALUES
+        (${CSAM_REPORT}, 9, 'CSAM', 'Pending'), (${UNACTIONED_REPORT}, 9, 'TOSViolation', 'Unactioned'),
+        (${ACTIONED_REPORT}, 9, 'TOSViolation', 'Actioned');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES
+        (${OTHER_REASON}, ${CSAM_REPORT}), (${OTHER_REASON}, ${UNACTIONED_REPORT}),
+        (${OTHER_REASON}, ${ACTIONED_REPORT});
+    `);
+  });
+  const statuses = async () =>
+    Object.fromEntries(
+      (
+        await holder.db.query<{ id: number; status: string }>(
+          `SELECT id, status FROM "Report" ORDER BY id`
+        )
+      ).rows.map((r) => [r.id, r.status])
+    );
+
+  // An image under the review flag keeps its reports even once dismissed from the CSAM queue, unlike
+  // `setTosViolationHandler`: a bulk removal leaves every flagged image's reports to that queue.
+  it("a moderator's removal actions and rewards the Pending TOS reports of images not held or flagged", async () => {
+    await handleBlockImages({ ids: all, moderatorId: 2 });
+
+    expect(await statuses()).toEqual({
+      [report(HELD)]: 'Pending',
+      [report(FLAGGED_LIVE)]: 'Pending',
+      [report(FLAG_REMOVED)]: 'Pending',
+      [report(OTHER_REASON)]: 'Actioned',
+      [report(DISMISSED)]: 'Pending',
+      [CSAM_REPORT]: 'Pending',
+      [UNACTIONED_REPORT]: 'Unactioned',
+      [ACTIONED_REPORT]: 'Actioned',
+    });
+    expect(applyReward).toHaveBeenCalledWith(
+      { userId: 9, reportId: report(OTHER_REASON) },
+      expect.anything()
+    );
+    expect(rewardedReports()).toEqual([report(OTHER_REASON)]);
+  });
+
+  it('a failure settling the reports leaves them Pending and still completes the removal', async () => {
+    const raw = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+    dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...v: unknown[]) =>
+      strings.join('').includes('FROM "Report" r')
+        ? Promise.reject(new Error('lock timeout'))
+        : raw(strings, ...v)) as never);
+
+    await expect(handleBlockImages({ ids: all, moderatorId: 2 })).resolves.toBeDefined();
+
+    expect(await blockedFor(OTHER_REASON)).toBe('moderated');
+    expect(await reportStatus(report(OTHER_REASON))).toBe('Pending');
+    expect(rewardedReports()).toEqual([]);
+  });
+
+  it('pays every reporter of a settled report, co-reporters included', async () => {
+    await holder.db.exec(
+      `UPDATE "Report" SET "alsoReportedBy" = '{10}' WHERE id = ${report(OTHER_REASON)}`
+    );
+
+    await handleBlockImages({ ids: all, moderatorId: 2 });
+
+    expect(applyReward.mock.calls.map(([a]) => a.userId).sort()).toEqual([10, 9].sort());
+    expect(rewardedReports()).toEqual([report(OTHER_REASON), report(OTHER_REASON)]);
+  });
+
+  it('stamps the settled report as reviewed and marks it resolved for the moderator queue', async () => {
+    await holder.db.exec(
+      `UPDATE "Report" SET "alsoReportedBy" = '{10}' WHERE id = ${report(OTHER_REASON)}`
+    );
+
+    await handleBlockImages({ ids: all, moderatorId: 2 });
+
+    const { rows } = await holder.db.query<{ previouslyReviewedCount: number }>(
+      `SELECT "previouslyReviewedCount" FROM "Report" WHERE id = $1`,
+      [report(OTHER_REASON)]
+    );
+    expect(rows[0].previouslyReviewedCount).toBe(2);
+    expect(markResolved).toHaveBeenCalledWith(
+      'report:resolved-recent',
+      [String(report(OTHER_REASON)), '1'],
+      300
+    );
+  });
+
+  it("drops a moderation rule's keys, so the removal reads as the moderator's", async () => {
+    await holder.db.exec(
+      `UPDATE "Image" SET metadata = '{"ruleId": 5, "ruleReason": "r", "other": 1}' WHERE id = ${OTHER_REASON}`
+    );
+
+    await handleBlockImages({ ids: [OTHER_REASON], moderatorId: 2 });
+
+    const { rows } = await holder.db.query<{ metadata: unknown }>(
+      `SELECT metadata FROM "Image" WHERE id = $1`,
+      [OTHER_REASON]
+    );
+    expect(rows[0].metadata).toEqual({ other: 1 });
+  });
+
+  it('a failed banned-reporter lookup leaves the reports Pending and pays nobody', async () => {
+    dbMock.dbWrite.user.findMany.mockRejectedValue(new Error('connection lost') as never);
+
+    await expect(handleBlockImages({ ids: all, moderatorId: 2 })).resolves.toBeDefined();
+
+    expect(await reportStatus(report(OTHER_REASON))).toBe('Pending');
+    expect(rewardedReports()).toEqual([]);
+  });
+
+  it("closes a banned owner's reports and pays none of their reporters", async () => {
+    await holder.db.exec(`
+      INSERT INTO "User" (id, "bannedAt") VALUES (7, now());
+      UPDATE "Report" SET "alsoReportedBy" = '{10}' WHERE id = ${report(OTHER_REASON)};
+    `);
+
+    await handleBlockImages({ ids: all, moderatorId: 2 });
+
+    expect(await reportStatus(report(OTHER_REASON))).toBe('Actioned');
+    expect(rewardedReports()).toEqual([]);
+  });
+
+  it('a second removal of the same images pays nothing more', async () => {
+    await handleBlockImages({ ids: all, moderatorId: 2 });
+    await handleBlockImages({ ids: [OTHER_REASON], moderatorId: 3 });
+
+    expect(rewardedReports()).toEqual([report(OTHER_REASON)]);
+  });
+
+  it('an account-wide removal moves no report and pays no one', async () => {
+    dbMock.dbRead.image.findMany.mockImplementationOnce(
+      (async () =>
+        (
+          await holder.db.query(
+            `SELECT id, "userId", "pHash", NULL::int AS "postId", "nsfwLevel", "blockedFor", "needsReview"
+           FROM "Image" WHERE "userId" = 7`
+          )
+        ).rows) as never
+    );
+    await handleBlockImages({ userId: 7, moderatorId: 2 });
+
+    expect(await blockedFor(OTHER_REASON)).toBe('moderated');
+
+    expect(await reportStatus(report(OTHER_REASON))).toBe('Pending');
+    expect(rewardedReports()).toEqual([]);
+  });
+
+  it('a removal with no moderator moves no report', async () => {
+    await handleBlockImages({ ids: all });
+
+    expect(await reportStatus(report(OTHER_REASON))).toBe('Pending');
+    expect(rewardedReports()).toEqual([]);
   });
 });
 

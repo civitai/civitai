@@ -46,6 +46,10 @@ type ImagesQuery struct {
 	// TargetUserID is the creator filter (`userId`, or the id a `username` resolved to):
 	// `i."userId" = <targetUserId>`. getAllImages marks that query personalized, so it is never cached.
 	TargetUserID int
+	// FollowedUserIDs is image.getInfinite's `followed` for a signed-in viewer with a non-empty
+	// follow list (getUserFollows): `i."userId" = ANY(<follows>)` (Node's `IN (…)`). getAllImages marks that query
+	// personalized, so it is never cached. Empty (signed out, no follows): no clause at all.
+	FollowedUserIDs []int
 	// TagIDs is the input's own `tags` inclusion filter, after the blocked tags are stripped: images
 	// carrying any of them. getAllImages marks that query personalized, so it is never cached.
 	TagIDs []int
@@ -57,9 +61,9 @@ type ImagesQuery struct {
 	// feed-service hydrate sets it, so a slow hydrate is not read as a page the filters emptied).
 	ThrowOnStatementTimeout bool
 	// PrioritizedUserIDs is getAllImages' prioritizeUser branch with the version cache off (image.getInfinite's
-	// `prioritizedUserIds`, never the system user alone: that sub-case falls back): no
-	// ImageResourceNew join for the model scope; `p."modelVersionId" = <version>` when there is one;
-	// only these creators' images; ordered oldest post first, then by index and id. The cursor
+	// `prioritizedUserIds`): no ImageResourceNew join for the model scope; `p."modelVersionId" =
+	// <version>` when there is one; only these creators' images, ordered oldest post first, then by
+	// index and id (PrioritizedSystemOrder replaces those two for the system user alone). The cursor
 	// column stays the one the sort chose (the cursor itself is refused by the caller). Never cached.
 	PrioritizedUserIDs []int
 	// Pending is the input's `pending`: no published-before-now clause, and for a moderator or a
@@ -74,7 +78,34 @@ type ImagesQuery struct {
 	// BaseModels is image.getInfinite's `baseModels`, as sent: only images with an ImageResourceNew row
 	// whose ModelVersion's `baseModel` is one of them. Not personalized: the query keeps its cache policy.
 	BaseModels []string
+	// CollectionID is image.getInfinite's `collectionId`, after the read permission was granted: the
+	// collection's image items as the `ct` CTE, joined on the image, with their note, status and
+	// adder selected. Its items are the ACCEPTED ones, and for a signed-in viewer also the ones they
+	// added that are not REJECTED. In a collection the viewer's own acceptableMinor images are kept,
+	// and a moderator's view has no acceptableMinor clause. Not personalized: the query keeps its
+	// cache policy (the viewer id is bound into it for a signed-in viewer).
+	CollectionID int
+	// CollectionTagID is `collectionTagId` (with a CollectionID only; 0 = none): only the items
+	// carrying that tag.
+	CollectionTagID int
+	// NewCreators is image.getInfinite's `newCreators: true`: only the creators on the "new &
+	// upcoming" board (NewCreatorUserIDs, `i."userId" = ANY(<board>)`, Node's `IN (…)`), or no row at
+	// all for an empty board (`1 = 0`). Not personalized: the query keeps its cache policy.
+	NewCreators       bool
+	NewCreatorUserIDs []int
+	// Reactions is image.getInfinite's `reactions` for a signed-in viewer (ViewerID): only the images
+	// the viewer reacted to with one of them. Personalized: never cached. Without a viewer Node adds no
+	// clause, so the caller leaves it empty.
+	Reactions []string
+	// PrioritizedSystemOrder is the prioritizeUser branch for the system user alone (-1) with no post
+	// of its own on the version: no creator clause, and every creator's images ordered by
+	// `IIF(i."userId" IN (-1), i.index, 1000)` ahead of the sort's own order. Only with
+	// PrioritizedUserIDs = [-1].
+	PrioritizedSystemOrder bool
 }
+
+// reviewReactions is the ReviewReactions enum (the `reactions` schema's z.enum).
+var reviewReactions = map[string]bool{"Like": true, "Dislike": true, "Laugh": true, "Cry": true, "Heart": true}
 
 // Built is the SQL for one page plus its caching policy.
 type Built struct {
@@ -84,6 +115,11 @@ type Built struct {
 	CacheTags []string
 	// ThrowOnStatementTimeout: see ImagesQuery.
 	ThrowOnStatementTimeout bool
+	// PersonalizedViewerID is the viewer of a page only they see (their reactions, their own
+	// gallery), else 0: a statement timeout on it is a fallback, never an empty page (FetchRows).
+	PersonalizedViewerID int
+	// Collection: the SQL selects the collection item columns after "cursorId" (a CollectionID).
+	Collection bool
 }
 
 type sqlArgs struct{ args []any }
@@ -110,6 +146,11 @@ func (q *ImagesQuery) Build() Built {
 	and := []string{`i."postId" IS NOT NULL`}
 	cacheTTL := time.Duration(0)
 	var tags []string
+	collection := q.CollectionID != 0
+	with := ""
+	if collection {
+		with = q.collectionCTE(a)
+	}
 
 	browsingLevel := browsing.OnlySelectable(q.BrowsingLevel)
 	if browsingLevel == 0 {
@@ -152,6 +193,10 @@ func (q *ImagesQuery) Build() Built {
 			and = append(and, `(i."minor" != TRUE)`)
 		}
 	}
+	// minorMatureImageVisibleSql({ userId: ownerId, isModerator }), whatever DisableMinor says: on every
+	// read built here (the page, the post completion, the pinned and sponsored posts, the feed-service
+	// hydrate, the REST endpoint).
+	and = append(and, hydrate.MinorMatureImageVisibleSQL("i", q.ViewerID, q.IsModerator, a.add))
 	if len(q.ExcludedTagIDs) > 0 {
 		notExcluded := `NOT EXISTS (
       SELECT 1 FROM "TagsOnImageDetails" toi
@@ -192,6 +237,19 @@ func (q *ImagesQuery) Build() Built {
 	if q.TargetUserID != 0 {
 		and = append(and, `i."userId" = `+a.add(q.TargetUserID))
 	}
+	if len(q.FollowedUserIDs) > 0 {
+		// `userId && followed && prefetchedUserFollows?.length`, after the creator clause as there.
+		and = append(and, `i."userId" = ANY(`+a.add(q.FollowedUserIDs)+`::int[])`)
+	}
+	if q.NewCreators {
+		// After the follow clause and before the tag scope, as in getAllImagesUncaptured: an empty
+		// board is no row at all, never the unfiltered feed.
+		if len(q.NewCreatorUserIDs) > 0 {
+			and = append(and, `i."userId" = ANY(`+a.add(q.NewCreatorUserIDs)+`::int[])`)
+		} else {
+			and = append(and, `1 = 0`)
+		}
+	}
 	if len(q.TagIDs) > 0 {
 		and = append(and, `i.id IN (
       SELECT "imageId"
@@ -215,9 +273,10 @@ func (q *ImagesQuery) Build() Built {
 	// The pending view of a moderator or a signed-in viewer (`effectivePending && (isModerator ||
 	// ownerId)`).
 	pendingView := q.Pending && (q.IsModerator || q.ViewerID != 0)
-	if q.TargetUserID != 0 || len(q.TagIDs) > 0 || prioritized || pendingView {
-		// isPersonalized (the user-gallery path, a tag combination, prioritizedUserIds, the pending
-		// view): never cached.
+	reactions := len(q.Reactions) > 0 && q.ViewerID != 0
+	if q.TargetUserID != 0 || len(q.FollowedUserIDs) > 0 || len(q.TagIDs) > 0 || prioritized || pendingView || reactions {
+		// isPersonalized (the user-gallery path, a follow set, a tag combination, prioritizedUserIds,
+		// the pending view, the viewer's own reactions): never cached.
 		cacheTTL, tags = 0, nil
 	}
 
@@ -227,6 +286,10 @@ func (q *ImagesQuery) Build() Built {
 		// getCursor('i."index"'): ascending, inclusive on its only field; the id tie-break is
 		// appended after the cursor clause, so the cursor stays the index.
 		orderBy, cursorCol, cursorOp = `i."index"`, `i."index"`, ">="
+	case q.Sort == SortRecentlyAdded:
+		// The collection's newest items first (only beside a collectionId: ParseInfinite), the cursor
+		// on the item id (getCursor, descending and inclusive).
+		orderBy, cursorCol, cursorOp = `ct."collectionItemId" DESC`, `ct."collectionItemId"`, "<="
 	case q.Sort == SortOldest:
 		orderBy, cursorCol, cursorOp = `i."id" ASC`, `i."id"`, ">="
 	case strings.Contains(from, "irr"):
@@ -250,13 +313,26 @@ func (q *ImagesQuery) Build() Built {
 		orderBy += `, i."id"`
 	}
 	if prioritized {
-		// After getCursor, so the cursor column is still the sort's. The system user alone (an IIF
-		// order over every creator when it has no post on the version) is a fallback upstream.
+		// After getCursor, so the cursor column is still the sort's.
 		if q.ModelVersionID != 0 {
 			and = append(and, `p."modelVersionId" = `+a.add(q.ModelVersionID))
 		}
-		and = append(and, `i."userId" = ANY(`+a.add(q.PrioritizedUserIDs)+`::int[])`)
-		orderBy = `(i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"` // oldest post first
+		if q.PrioritizedSystemOrder {
+			// The system user alone, with no post of its own on the version: every creator's images,
+			// the system user's first by their index. Node inlines the joined id list (`-1`).
+			orderBy = `IIF(i."userId" IN (-1), i.index, 1000),  ` + orderBy
+		} else {
+			and = append(and, `i."userId" = ANY(`+a.add(q.PrioritizedUserIDs)+`::int[])`)
+			orderBy = `(i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"` // oldest post first
+		}
+	}
+	if reactions {
+		// `userId && reactions?.length`, after the prioritizeUser branch: the viewer's own reactions,
+		// read first as an array (ARRAY(), as in Node, so the plan starts from them).
+		and = append(and, `i.id = ANY(ARRAY(
+      SELECT ir."imageId" FROM "ImageReaction" ir
+      WHERE ir."userId" = `+a.add(q.ViewerID)+` AND ir.reaction = ANY(`+a.add(q.Reactions)+`::text[]::"ReviewReactions"[])
+    ))`)
 	}
 	if len(q.Tools) > 0 {
 		// getAllImagesUncaptured's `tools` clause, after the prioritizeUser branch as there. The list
@@ -296,7 +372,18 @@ func (q *ImagesQuery) Build() Built {
 			and = append(and, pendingViewerSQL(a, q.ViewerID, browsingLevel))
 		}
 	} else {
-		and = append(and, `i."needsReview" IS NULL`, `i."acceptableMinor" = FALSE`)
+		and = append(and, `i."needsReview" IS NULL`)
+		switch {
+		case !collection:
+			and = append(and, `i."acceptableMinor" = FALSE`)
+		case q.IsModerator:
+			// In a collection a moderator still sees an acceptableMinor image: no clause.
+		case q.ViewerID != 0:
+			// In a collection the image's owner still sees it.
+			and = append(and, `(i."acceptableMinor" = FALSE OR i."userId" = `+a.add(q.ViewerID)+`)`)
+		default:
+			and = append(and, `i."acceptableMinor" = FALSE`)
+		}
 		and = append(and, `(i."nsfwLevel" & `+a.add(browsingLevel)+`) != 0 AND i."nsfwLevel" != 0`)
 		and = append(and, hydrate.ImageReviewedSQL("i"))
 	}
@@ -306,6 +393,13 @@ func (q *ImagesQuery) Build() Built {
 		restrictedOwnerSQL = ` OR i."userId" = ` + a.add(q.ViewerID)
 	}
 
+	collectionCols, collectionJoin := "", ""
+	if collection {
+		collectionCols = `, ct.note as "collectionItemNote", ct.status as "collectionItemStatus", ct."addedById" as "collectionItemAddedById"`
+		collectionJoin = `
+    JOIN ct ON ct."imageId" = i.id`
+	}
+
 	offset := ""
 	if q.Skip > 0 {
 		// Inlined, as Node does: an int, never request text.
@@ -313,7 +407,7 @@ func (q *ImagesQuery) Build() Built {
     OFFSET ` + strconv.Itoa(q.Skip)
 	}
 
-	sql := `
+	sql := with + `
     SELECT
       i.id,
       i.name,
@@ -362,10 +456,10 @@ func (q *ImagesQuery) Build() Built {
       i."acceptableMinor",
       -- No viewer exception: true for the uploader too (the owner's notice reads it).
       ((i."nsfwLevel" & ` + strconv.Itoa(browsing.NSFWLevels) + `) = 0 OR NOT i."modelRestricted") IS NOT TRUE "restricted",
-      ` + cursorCol + ` "cursorId"
+      ` + cursorCol + ` "cursorId"` + collectionCols + `
     ` + from + `
     ` + strings.Join(joins, "\n    ") + `
-    JOIN "Post" p ON p.id = i."postId"
+    JOIN "Post" p ON p.id = i."postId"` + collectionJoin + `
     WHERE ` + strings.Join(and, " AND ") + `
       -- An R+ image on a license-restricted base model is its uploader's alone.
       AND (
@@ -375,7 +469,48 @@ func (q *ImagesQuery) Build() Built {
     ORDER BY ` + orderBy + offset + `
     LIMIT ` + a.add(q.Limit+1)
 
-	return Built{SQL: sql, Args: a.args, CacheTTL: cacheTTL, CacheTags: tags, ThrowOnStatementTimeout: q.ThrowOnStatementTimeout}
+	personalizedViewer := 0
+	if reactions || (q.ViewerID != 0 && q.TargetUserID == q.ViewerID) {
+		personalizedViewer = q.ViewerID
+	}
+	return Built{SQL: sql, Args: a.args, CacheTTL: cacheTTL, CacheTags: tags, ThrowOnStatementTimeout: q.ThrowOnStatementTimeout,
+		PersonalizedViewerID: personalizedViewer, Collection: collection}
+}
+
+// collectionCTE is getAllImagesUncaptured's `ct` CTE for a collection page outside the Random sort
+// (an empty seed in the sortKey hash, no cursor clause and no ORDER BY inside it): the collection's
+// image items, narrowed to CollectionTagID when set, with the status filter `ci."status" = 'ACCEPTED'`,
+// or for a signed-in viewer `(ci."status" = 'ACCEPTED' OR (ci."status" <> 'REJECTED' AND
+// ci."addedById" = <viewer>))`. Node inlines the tag and the viewer; both are bound here.
+func (q *ImagesQuery) collectionCTE(a *sqlArgs) string {
+	// Bound in the order the text reads: the collection, the tag, the viewer.
+	collection := a.add(q.CollectionID)
+	tag := ""
+	if q.CollectionTagID != 0 {
+		tag = `
+              AND ci."tagId" = ` + a.add(q.CollectionTagID)
+	}
+	status := `(ci."status" = 'ACCEPTED')`
+	if q.ViewerID != 0 {
+		status = `(ci."status" = 'ACCEPTED' OR (ci."status" <> 'REJECTED' AND ci."addedById" = ` + a.add(q.ViewerID) + `))`
+	}
+	return `WITH
+        ct AS (
+          SELECT "imageId", note, status, "addedById", "collectionItemId", "sortKey"
+          FROM (
+            SELECT
+              ci."imageId",
+              ci.note,
+              ci.status,
+              ci."addedById",
+              ci.id as "collectionItemId",
+              abs(mod(hashtext(concat(ci.id::text, '')), 1000000000)) as "sortKey"
+            FROM "CollectionItem" ci
+            WHERE ci."collectionId" = ` + collection + tag + `
+              AND ci."imageId" IS NOT NULL
+              AND ` + status + `
+          ) sub
+        )`
 }
 
 // nsfwLevelBlocked is NsfwLevel.Blocked (src/server/common/enums.ts).
@@ -384,11 +519,12 @@ const nsfwLevelBlocked = 32
 // pendingViewerSQL is pendingViewerImageSql({ userId, browsingLevel }) (collection-review.sql.ts,
 // with pendingOthersImageConditions from common/image-visibility.ts), without a reviewCollectionId
 // (server-set, never on image.getInfinite): another creator's image must not await review, not be
-// acceptableMinor, and be reviewed if rated; the viewer's own are exempt, and shown unrated; a rated,
+// acceptableMinor, and be reviewed if rated; the viewer's own are exempt (held ones included: a feed-go
+// viewer is always a cookie session, the owner's view), and shown unrated; a rated,
 // reviewed image of a post in a collection the viewer MANAGEs shows above browsingLevel.
 func pendingViewerSQL(a *sqlArgs, viewerID, browsingLevel int) string {
 	own := func() string { return `i."userId" = ` + a.add(viewerID) }
-	return `((i."needsReview" IS NULL OR i."needsReview" NOT IN (` + a.add("csam") + `, ` + a.add("minor") + `)) AND (i."needsReview" IS NULL OR ` + own() + `) AND (i."acceptableMinor" = FALSE OR ` + own() + `) AND (` + own() +
+	return `((i."needsReview" IS NULL OR i."needsReview" NOT IN (` + a.add("csam") + `, ` + a.add("minor") + `) OR ` + own() + `) AND (i."needsReview" IS NULL OR ` + own() + `) AND (i."acceptableMinor" = FALSE OR ` + own() + `) AND (` + own() +
 		` OR i."nsfwLevel" = 0 OR ` + hydrate.ImageReviewedSQL("i") + `)
     AND ((i."nsfwLevel" & ` + a.add(browsingLevel) + `) != 0 OR (i."nsfwLevel" = 0 AND ` + own() +
 		`) OR (p."collectionId" IS NOT NULL AND i."nsfwLevel" NOT IN (0, ` + a.add(nsfwLevelBlocked) + `) AND (i."acceptableMinor" = FALSE OR ` + own() +

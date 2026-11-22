@@ -31,8 +31,7 @@ import {
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { isHubTokenClaims } from '~/server/services/block-token-subject';
-import { isMatureContentRating } from '~/server/utils/server-domain';
-import { allowMatureContentForCeiling } from '~/shared/constants/browsingLevel.constants';
+import { ratingAllowedForCeiling } from '~/server/utils/rating-ceiling';
 import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
 import { resolveStrictAppBlockApproval } from '~/server/services/blocks/block-approval.service';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
@@ -81,8 +80,9 @@ export type StorageAccess = {
   /** The imports this app's reviewed manifest declares (source blockId → import). */
   imports: DeclaredStorageImports;
   /**
-   * Which kind of token this is: only an ordinary `app` token may import (`resolveImportAccess`).
-   * `hub` is a hub-issued OAuth bearer of an approved app; `dev` any token carrying `dev: true`
+   * Which kind of token this is: an ordinary `app` token and a `hub` token may import
+   * (`resolveImportAccess`), under the same declaration, export and grant checks; `dev` and
+   * `review` may not. `hub` is a hub-issued OAuth bearer of an approved app; `dev` any token carrying `dev: true`
    * (the dev-token route, the tunnels — including a tunnel's hub bearer); `review` the
    * run-for-real review mint.
    */
@@ -118,17 +118,6 @@ const notEligible = (reason: string, message: string) =>
 
 const unavailable = docStoreUnavailable;
 const dependency = docStoreDependency;
-
-/**
- * Whether a token with this `maxBrowsingLevel` claim may reach an app rated `rating`: the mint's
- * rule (`isMatureContentRating`, refused off a red-capable host) read from the ceiling the mint
- * derived from that host (`allowMatureContentForCeiling`). An absent claim is the SFW ceiling.
- */
-function ratingAllowedForCeiling(rating: unknown, maxBrowsingLevel: number | undefined): boolean {
-  if (!isMatureContentRating(typeof rating === 'string' ? rating : null)) return true;
-  if (typeof maxBrowsingLevel !== 'number' || !Number.isFinite(maxBrowsingLevel)) return false;
-  return allowMatureContentForCeiling(maxBrowsingLevel) !== false;
-}
 
 /** The verified subject as a user id, or null for an anonymous token. */
 function viewerOf(claims: BlockTokenClaims): number | null {
@@ -309,9 +298,6 @@ export async function resolveImportAccess(
   }
   if (consumer.tokenKind === 'dev') {
     throw notEligible('import_dev_token', 'a development token cannot reach another app');
-  }
-  if (consumer.tokenKind === 'hub') {
-    throw notEligible('import_hub_token', 'a hub token cannot reach another app');
   }
   // The predicate checks this too; it is read here first because the write check below needs the
   // declared access, and both answer before any database read.

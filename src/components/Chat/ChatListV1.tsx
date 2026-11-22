@@ -36,7 +36,7 @@ import { LazyMotion } from 'motion/react';
 import { div } from 'motion/react-m';
 import React, { useEffect, useState } from 'react';
 import { useChatStore } from '~/components/Chat/ChatProvider';
-import { chatPreviewText, loadMotion } from '~/components/Chat/util';
+import { chatPreviewText, loadMotion, serverMaskedPreview } from '~/components/Chat/util';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -96,6 +96,7 @@ export function ChatListV1() {
 
   const muteSounds = userSettings?.muteSounds ?? false;
   const replaceBadWords = userSettings?.replaceBadWords ?? false;
+  const previewBlur = replaceBadWords || domainColor === 'green';
 
   const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
   const chatCounts = queryUtils.chat.getUnreadCount.getData();
@@ -428,10 +429,10 @@ export function ChatListV1() {
                             textOverflow: 'ellipsis',
                             minWidth: 0,
                           }}
-                          blur={replaceBadWords || domainColor === 'green'}
+                          blur={previewBlur && d.messages[0].maskedContent === undefined}
                         >
                           {chatPreviewText({
-                            message: d.messages[0],
+                            message: serverMaskedPreview(d.messages[0], previewBlur),
                             viewerId: currentUser?.id,
                             otherMembers,
                           })}

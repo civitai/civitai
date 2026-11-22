@@ -15,6 +15,8 @@ export interface AutoLabelResult {
   status: 'succeeded' | 'failed' | 'pending';
   tags?: string[];
   caption?: string;
-  /** Why a failed item was refused, when the submit itself was rejected (shown on the tile). */
+  /** Why the item failed (shown on the tile). */
   error?: string;
+  /** The poll can't tell this failure from a capacity refusal, so resending may succeed. */
+  retryable?: boolean;
 }

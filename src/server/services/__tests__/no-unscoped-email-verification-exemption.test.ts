@@ -87,6 +87,8 @@ const MUST_NOT_BE_GUARDED: Record<string, string[]> = {
  * to say whether that was intended. Update the value in the same commit that moves it, or don't move it.
  */
 const DERIVED_BASES: Record<string, string> = {
+  // `takedown-request.router.ts`: the public takedown forms; a claimant needs no account.
+  takedownFormsProcedure: 'publicProcedure',
   appStorageProcedure: 'publicProcedure',
   // `app-storage.router.ts`: reading and deleting the caller's OWN app data, never creating content.
   appStorageUserProcedure: 'protectedProcedure',
@@ -120,9 +122,13 @@ const DERIVED_BASES: Record<string, string> = {
   // `remix-app.router.ts`: `list` and `quote` only read; `run` is on `guardedProcedure` itself.
   // `remix-app.router.ts` `admin.*`: mod-only edits of the remix app rows, and a mod's own test run.
   remixAppAdminProcedure: 'moderatorProcedure',
+  remixAppBuilderProcedure: 'guardedProcedure',
   remixAppProcedure: 'protectedProcedure',
+  reviewsProcedure: 'publicProcedure',
   // `semantic-image-search.router.ts`: read-only image search, open to signed-out visitors.
   semanticSearchProcedure: 'publicProcedure',
+  // The same, over the video index (flag-gated, mods-only to start).
+  semanticVideoSearchProcedure: 'publicProcedure',
   servicesGuardedProcedure: 'guardedProcedure',
   servicesProcedure: 'protectedProcedure',
   sharedStorageProcedure: 'publicProcedure',
@@ -132,6 +138,7 @@ const DERIVED_BASES: Record<string, string> = {
   storylineReadProcedure: 'publicProcedure',
   storylineTextProcedure: 'guardedProcedure',
   storylineWriteProcedure: 'guardedProcedure',
+  userCodeReviewProcedure: 'remixAppAdminProcedure',
 };
 
 const stripComments = (s: string) =>

@@ -15,6 +15,12 @@
   }
 }
 
+/* Hidden, not unmounted, until the density walk settles so the row keeps its
+   height and never paints a density it is about to leave. */
+.container:not([data-measured]) .root {
+  visibility: hidden;
+}
+
 .root {
   display: flex;
   align-items: center;
@@ -77,9 +83,11 @@
   background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
 }
 
-/* Level 2/3: collapse the label to zero width, reveal it on hover (or when
-   active) with the grid 0fr -> 1fr trick. It animates to the exact content
-   width — no guessed max-width, no jank — and the count slides right as it opens. */
+/* Level 2/3: collapse the label to zero width, reveal it when active or
+   keyboard-focused with the grid 0fr -> 1fr trick. Not on hover: the reveal
+   widens the pill and shifts its neighbours under the pointer (a tooltip names
+   it instead). It animates to the exact content width — no guessed max-width,
+   no jank — and the count slides right as it opens. */
 /* Compact spacing runs on animated margins (not flex gap) so a collapsed label
    leaves no dead space and the lone icon stays perfectly centered. */
 .container[data-density='2'] .tabLabel,
@@ -99,14 +107,6 @@
      the negative margin cancels the added height so vertical centering holds. */
   padding-block: 2px;
   margin-block: -2px;
-}
-
-/* Hover reveal — delayed so a quick pass-over doesn't twitch it open. */
-.container[data-density='2'] .pill:hover .tabLabel,
-.container[data-density='3'] .pill:hover .tabLabel {
-  grid-template-columns: 1fr;
-  margin-inline-start: 6px;
-  transition-delay: 500ms;
 }
 
 /* Active pill shows its label permanently; keyboard focus reveals it too (no
@@ -133,13 +133,17 @@
   margin-inline-end: 3px;
 }
 
-.container[data-density='2'] .pill:not(:has(.tabCount)):hover .tabLabel,
-.container[data-density='3'] .pill:not(:has(.tabCount)):hover .tabLabel,
 .container[data-density='2'] .pill:not(:has(.tabCount))[data-active] .tabLabel,
 .container[data-density='3'] .pill:not(:has(.tabCount))[data-active] .tabLabel,
 .container[data-density='2'] .pill:not(:has(.tabCount)):focus-visible .tabLabel,
 .container[data-density='3'] .pill:not(:has(.tabCount)):focus-visible .tabLabel {
   margin-inline-end: 4px;
+}
+
+/* The walk's own steps would otherwise start these transitions while hidden and
+   finish them after the reveal, sliding the row a few px under the pointer. */
+.container:not([data-measured]) .tabLabel {
+  transition: none;
 }
 
 /* Level 3: also drop counts, leaving icon-only. Active pill keeps its count. */

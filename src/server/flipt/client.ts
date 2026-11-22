@@ -6,6 +6,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // Mirrors the `knightsApp` fliptKey (KNIGHTS_APP_FLIPT_FLAG) and the Knights app's own access flag.
   // Read here with no user for the server-side cutover from the old in-app game.
   KNIGHTS_APP = 'knights-of-new-order-app',
+  // App Assistant direct preview, per user (segment): on, the runner's preview opens a direct
+  // session served by the sandbox service's preview gateway; off (or missing), the dev tunnel as
+  // before. Evaluated with the user's context; fails closed.
+  APP_ASSISTANT_DIRECT_PREVIEW = 'app-assistant-direct-preview',
   // Mirrors the `articleRatingDispute` fliptKey in feature-flags.service.ts so
   // background paths (no request context) can gate on the same Flipt flag the
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
@@ -54,7 +58,7 @@ export enum FLIPT_FEATURE_FLAGS {
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false is fine) BEFORE THIS CODE SERVES TRAFFIC,
   // and must not be deleted while it does. A MISSING key makes `evaluateBoolean` throw; the throw
-  // bypasses the eval cache and the default `onEvalError` console.errors — on every call of a
+  // bypasses the eval cache and `onEvalError` logs an error record — on every call of a
   // read issued on every signed-in image feed page. It still answers false (Prisma), but the log
   // flood and the uncached wasm eval also inflate the "off" baseline this flag exists to measure.
   //
@@ -70,7 +74,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // The reads in packages/civitai-db-queries/src/hot-reads-7.db.ts, through Kysely instead of Prisma.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call — and
   // several of these reads run on most feed pages.
   //
   // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead`. Its acquire wait is
@@ -81,7 +85,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // The reads in packages/civitai-db-queries/src/hot-reads-8.db.ts, through Kysely instead of Prisma.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call, and
   // the storyline read runs on most feed pages.
   //
   // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead`. Its acquire wait is
@@ -94,7 +98,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // one per relation. Evaluated with no entity id, once per call.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call, and
   // this read runs on every profile page view.
   //
   // 🔴 ON MOVES THIS READ OFF PRISMA'S PRIMARY POOL ONTO `pgDbWrite` (kyselyWrite), keeping it on
@@ -109,7 +113,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // per call.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // key makes `evaluateBoolean` throw, bypass the eval cache and log an error on every call, and
   // this read runs on every collection page view.
   //
   // 🔴 ON MOVES THIS READ OFF PRISMA'S POOLS ONTO `pgDbRead` (kyselyRead), or `pgDbWrite`
@@ -257,6 +261,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // uninitialised client) keeps the plain behaviour, a bounded refetch that falls back to the last
   // list on failure.
   OAUTH_PROVIDERS_SERVE_STALE = 'oauth-providers-serve-stale',
+  // Offline access as a separate OAuth grant. Also read by the auth hub (apps/auth
+  // OFFLINE_GRANT_FLAG, same key). Here: a refresh-minted OAuth token's orchestrator work is held to
+  // its consent's Buzz cap (orchestrator/offline-spend-cap.ts). Global boolean, DEFAULT-OFF: a missing
+  // key or an unreachable Flipt reads false, today's behaviour.
+  OAUTH_OFFLINE_GRANT = 'oauth-offline-grant',
   // Writes superjson tRPC responses with `fastSuperjsonSerialize` (same output, cheaper walk)
   // instead of `superjson.serialize`. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
@@ -293,6 +302,18 @@ export enum FLIPT_FEATURE_FLAGS {
   // is enabled separately; shares FEED_GO_SHADOW_URL, the sample rate and the in-flight cap with
   // FEED_GO_SHADOW, with its own per-second bucket. Default OFF. See `src/server/trpc/feed-go-shadow.ts`.
   FEED_GO_SHADOW_MODEL_GET_ALL = 'feed-go-shadow-model-getall',
+  // Shadow reads of the app store's listings read model (app-index-go `GET /listings`) beside the
+  // store grid's and the public REST list's database reads: the database answer is served, the two
+  // are compared off the response path (`app_listings_read_model_*`). DEFAULT-OFF. Global boolean,
+  // read at most once per 5s per process; also needs APP_INDEX_URL and APP_INDEX_VIEWER_KEY. See
+  // `src/server/services/blocks/app-listings-read-model-shadow.service.ts`.
+  APP_LISTINGS_READ_MODEL = 'app-listings-read-model',
+  // Mirror sampled `model.getAssociatedResourcesCardData` requests (raw input, the headers the answer
+  // depends on, Node's superjson envelope) to feed-go's
+  // `/internal/shadow/model.getAssociatedResourcesCardData`. Its own flag; shares FEED_GO_SHADOW_URL,
+  // the sample rate and the in-flight cap with FEED_GO_SHADOW, with its own per-second bucket.
+  // Default OFF. See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW_MODEL_ASSOCIATED = 'feed-go-shadow-model-associated',
   // The Go-first cache-presence probe: for a request the feed-go shadow sampler sampled, a POST at
   // the START of the request (before the handler fills the caches) to feed-go's
   // `/internal/probe/image.getImagesAsPostsInfinite`, which records the serve-time cache misses a
@@ -498,6 +519,9 @@ export enum FLIPT_FEATURE_FLAGS {
   DOWNLOAD_SCOPE_GATE = 'download-scope-gate',
   // Variant: `log` | `enforce`; any other answer is off. Read by pass-through-prompt-audit.ts.
   APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT = 'app-block-pass-through-prompt-audit',
+  // Variant: `off` | `log`; any other answer, a missing flag included, enforces. Read by
+  // app-step-positions.ts.
+  APP_BLOCK_STEP_POSITIONS = 'app-block-step-positions',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
   // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
   // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:
@@ -553,6 +577,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // OFF is the shipped default and means the pattern list is recorded but not enforced on these
   // surfaces. The link-domain half throws either way — this flag has never governed it.
   USER_CONTENT_PATTERN_ENFORCE = 'user-content-pattern-enforce',
+
+  // BOOLEAN ONLY: read with no context into an edge-cached response shared by every visitor, so a
+  // segment or percentage rollout would cache one evaluation for everyone. OFF serves the
+  // profanity list shipped in the bundle; ON serves the moderator-managed ProfanityWord list.
+  PROFANITY_MANAGED_LIST = 'profanity-managed-list',
 
   // Kill switch for the event points engine (src/server/events/points). DEFAULT-OFF: an unknown
   // flag, or a client that never initialised, stops every award, removal, hat sync, signals tick
@@ -642,14 +671,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // or unreachable): they are allowed and counted in generation_input_url_refusals_total{mode="log"}.
   GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS = 'generation-input-refuse-external-hosts',
   // On: App Blocks generation sources must be scanned Image rows, so orchestrator blob urls from
-  // apps are refused. Off (and unknown or unreachable): blob urls are accepted as before.
+  // apps are refused. Off: blob urls are accepted as before. Unreadable: answers on (refused).
   // EVALUATED PER APP like `app-blocks-storage-publish` (entityId = the app block id, NO context):
   // ramp it with an ENTITY_ID segment of app block ids. Read ONLY through
   // `appUsesScannedSourceRows` (`services/blocks/source-scanned-rows.ts`), so the host's picker,
   // the copy and the generation gate answer the same for one app.
   APP_BLOCK_SOURCE_SCANNED_ROWS = 'app-block-source-scanned-rows',
-  // On: App Blocks generation inputs on an external host are refused. Off (and unknown or
-  // unreachable): they are allowed and each one is logged as `app-block-source-refusal`.
+  // On: App Blocks generation inputs on an external host are refused. Off: they are allowed and
+  // each one is logged as `app-block-source-refusal`. Unreadable: answers on (refused), read
+  // through `readAppBlockSourceFlag`.
   APP_BLOCK_REFUSE_EXTERNAL_SOURCES = 'app-block-refuse-external-sources',
 
   // On: the followed creator-announcements feed first narrows to authors this viewer follows who
@@ -683,6 +713,28 @@ export enum FLIPT_FEATURE_FLAGS {
   // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
   // serves traffic.
   IMAGE_METRICS_SWR = 'image-metrics-swr',
+
+  // On, with CLICKHOUSE_METRICS_HOST and CLICKHOUSE_METRICS_USERNAME set: the image MetricService
+  // (`getImageMetricService` in image.service, so the inline metric read and the image-metrics-swr
+  // background refresher alike) queries the dedicated entity-metrics ClickHouse instead of the
+  // shared one. A failed read there degrades exactly as a failed shared read does (served from the
+  // metrics cache); it is not retried on the shared client. Off (and unknown, a client that has
+  // not initialised, or the env unset): it queries the shared ClickHouse, as before. Kill: disable.
+  //
+  // The dedicated server must serve the `entityMetricDailyAgg_v2` view under that name in the
+  // user's default database, and the user must be allowed to change the settings the client sends
+  // (async_insert, wait_for_async_insert, output_format_json_quote_64bit_integers, max_threads,
+  // max_execution_time, timeout_overflow_mode): readonly=2, not readonly=1.
+  //
+  // 🔴 Turn it on only while the dedicated data lags the shared data by well under 15 minutes (the
+  // recent-event marker window). A populate from a lagging source writes LOWER counts into the
+  // shared Redis `metrics:*` hashes, and turning the flag off does not undo entries already written;
+  // they stay low until their next refresh.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`, `~/server/services/image-metrics-clickhouse`). The key must exist in
+  // flag state (enabled: false) before this code serves traffic.
+  IMAGE_METRICS_DEDICATED_CLICKHOUSE = 'image-metrics-dedicated-clickhouse',
 
   // On: a full page load of `/images/[imageId]` or `/posts/[postId]` server-renders a fixed
   // placeholder in place of the sections listed at their `ClientOnlySection` call sites, and those
@@ -727,6 +779,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // (`createCachedFlagGate`, `~/server/services/site-search-passthrough`). The key must exist in
   // flag state (enabled: false) before this code serves traffic.
   SITE_SEARCH_PASSTHROUGH = 'site-search-passthrough',
+  // Lets staff set a PercentOfCompute licence fee. Off until the orchestrator charges by the type:
+  // before that, a percent is charged as that many Buzz per image.
+  LICENSING_FEE_PERCENT_OF_COMPUTE = 'licensing-fee-percent-of-compute',
+  // On: page 1 of a signed-in viewer's default Hot model feed leads with models they liked,
+  // favourited or set Notify on that have a new version, then one per followed or staked creator
+  // (getPersonalLeadModelIds). EVALUATED PER VIEWER — entityId = the user
+  // id, context = `buildFliptContext(user)`. Off, unknown or Flipt down: plain Hot.
+  PERSONAL_HOT_LEAD = 'personal-hot-lead',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a
@@ -838,6 +898,15 @@ const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
       'temp-search'
     );
   },
+  // One record per error, the stack in a field, so its stdout copy stays one line.
+  onEvalError: (error, flag) =>
+    logToAxiom({
+      name: 'flipt-eval-error',
+      type: 'error',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      payload: { flag },
+    }),
 }));
 
 // 🔴 THE ENTITY-ID TRAP. All four evaluators below take `(flag, entityId?,

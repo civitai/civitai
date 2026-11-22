@@ -118,6 +118,34 @@ export const OFFSITE_CONTENT_RATING_LADDER = ['g', 'pg', 'pg13', 'r', 'x'] as co
 export type OffsiteRatingValue = (typeof OFFSITE_CONTENT_RATING_LADDER)[number];
 
 /**
+ * The rating of ONE image, ascending: one rung per `NsfwLevel` bit from PG to XXX. The spelling
+ * an app workflow output (`BlockWorkflowOutputRating`) and a `store-listing@v1` media item
+ * (`MediaRating`) carry. XXX is a rung of its own here, unlike {@link OFFSITE_CONTENT_RATING_LADDER}
+ * (a listing's rating, where `contentRatingFromNsfwLevel` folds XXX into `x`), which is why that
+ * ladder is a separate one.
+ */
+export const IMAGE_RATING_LADDER = ['pg', 'pg13', 'r', 'x', 'xxx'] as const;
+export type ImageRating = (typeof IMAGE_RATING_LADDER)[number];
+
+/** Each image rating's `NsfwLevel` bit. */
+export const NSFW_LEVEL_BY_IMAGE_RATING: Readonly<Record<ImageRating, NsfwLevel>> = {
+  pg: NsfwLevel.PG,
+  pg13: NsfwLevel.PG13,
+  r: NsfwLevel.R,
+  x: NsfwLevel.X,
+  xxx: NsfwLevel.XXX,
+};
+
+/**
+ * The image rating whose bit `level` is EXACTLY, or null: 0, Blocked, and any flag of several
+ * bits have none. Exact, never "the highest bit", so a value that is not one image's own level is
+ * never given a rating.
+ */
+export function imageRatingOfNsfwLevel(level: number): ImageRating | null {
+  return IMAGE_RATING_LADDER.find((rating) => NSFW_LEVEL_BY_IMAGE_RATING[rating] === level) ?? null;
+}
+
+/**
  * Off-site content rating → its USER-FACING label. The counterpart of
  * `MARKETPLACE_CATEGORY_LABELS`, and the single source of truth for how a stored
  * rating is spelled to a human.
@@ -377,9 +405,9 @@ export function effectiveBrowsingCeiling(
 }
 
 // helpers
+/** `level` held to the browsing levels: no Blocked bit, and nothing above it. */
 export function onlySelectableLevels(level: number) {
-  if (Flags.hasFlag(level, NsfwLevel.Blocked)) level = Flags.removeFlag(level, NsfwLevel.Blocked);
-  return level;
+  return level & allBrowsingLevelsFlag;
 }
 
 export function getIsPublicBrowsingLevel(level: number) {

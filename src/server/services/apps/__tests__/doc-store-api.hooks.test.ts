@@ -604,7 +604,7 @@ type RunnerPool = {
   close: () => Promise<void>;
 };
 type RunnerModules = {
-  buildApp: (deps: { secret: string; pool: unknown; metrics: unknown }) => {
+  buildApp: (deps: { secret: string; mode: 'check'; pool: unknown; metrics: unknown }) => {
     listen: (o: { port: number; host: string }) => Promise<string>;
     close: () => Promise<void>;
   };
@@ -642,7 +642,12 @@ async function startRealRunner(): Promise<Runner> {
     seen.push({ sha256: sha(args.source), input: JSON.parse(args.inputJson), appId: args.appId });
     return run(args);
   };
-  const app = m.buildApp({ secret: RUNNER_SECRET, pool, metrics: m.createMetrics() });
+  const app = m.buildApp({
+    secret: RUNNER_SECRET,
+    mode: 'check',
+    pool,
+    metrics: m.createMetrics(),
+  });
   const url = await app.listen({ port: 0, host: '127.0.0.1' });
   return {
     kind: 'real',
@@ -1063,6 +1068,12 @@ describe('fail closed: the runner cannot answer → 503 hook_unavailable, nothin
     return url;
   }
 
+  let shortTimeouts: { mockRestore(): void } | undefined;
+  afterEach(() => {
+    shortTimeouts?.mockRestore();
+    shortTimeouts = undefined;
+  });
+
   const MODES: [string, () => Promise<void>][] = [
     [
       'refused (nothing listening)',
@@ -1072,7 +1083,17 @@ describe('fail closed: the runner cannot answer → 503 hook_unavailable, nothin
           STORAGE_HOOK_RUNNER_SECRET: RUNNER_SECRET,
         }),
     ],
-    ['black-holed (never answers)', async () => void (stub.mode = 'blackhole')],
+    [
+      'black-holed (never answers)',
+      async () => {
+        stub.mode = 'blackhole';
+        // The client still times out; it just does so in 100 ms instead of its real budget.
+        const timeout = AbortSignal.timeout.bind(AbortSignal);
+        shortTimeouts = vi
+          .spyOn(AbortSignal, 'timeout')
+          .mockImplementation((ms) => timeout(Math.min(ms, 100)));
+      },
+    ],
     ['a runner 500 (a backstop kill)', async () => void (stub.mode = '500')],
     ['a response with a bad signature', async () => void (stub.mode = 'badsig')],
     // Signed correctly, but bound to ANOTHER request: its `req` is not this body's sha256.
@@ -1129,6 +1150,7 @@ describe('fail closed: the runner cannot answer → 503 hook_unavailable, nothin
         expect(r.headers['retry-after']).toBe('5');
       }
       expect((await hookCalls('unavailable')) - unavailable0).toBe(OVER);
+      shortTimeouts?.mockRestore();
       stub.mode = 'ok';
       setEnv({ STORAGE_HOOK_RUNNER_URL: runner.url });
       expect((await call({ token, method: 'GET', path: '/cards' })).body.items).toEqual([]);

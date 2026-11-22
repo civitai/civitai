@@ -21,6 +21,7 @@ const { bountiesIndex, collectionsIndex, bountyService } = vi.hoisted(() => ({
 vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
+  assertContentRemovalNotHeld: async () => ({ markerView: false }),
 }));
 vi.mock('~/server/search-index', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;

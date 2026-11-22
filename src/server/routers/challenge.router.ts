@@ -437,7 +437,13 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(z.object({ imageId: z.number(), judgeUserId: z.number() }))
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input }) => getJudgeCommentForImage(input)),
+    .query(({ input, ctx }) =>
+      getJudgeCommentForImage({
+        ...input,
+        userId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      })
+    ),
 
   // --- Judge Playground ---
 

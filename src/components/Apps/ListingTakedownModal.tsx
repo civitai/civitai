@@ -2,6 +2,7 @@ import { Text } from '@mantine/core';
 import { useState } from 'react';
 
 import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
+import { showOfflineCutFailureWarning } from '~/components/Apps/offlineCutNotice';
 import {
   TAKEDOWN_TESTID_STEM,
   detailModActionLabel,
@@ -92,7 +93,18 @@ export function ListingTakedownModal({
   const onError = (e: { message: string }) =>
     showErrorNotification({ title: 'Action failed', error: new Error(e.message) });
 
-  const delist = trpc.appListings.delistListing.useMutation({ onSuccess, onError });
+  const delist = trpc.appListings.delistListing.useMutation({
+    onSuccess: (result) => {
+      // The listing this modal was opened for is the one it delisted; the result's own
+      // `appListingId` still wins inside `offlineCutFailureNotice`.
+      showOfflineCutFailureWarning(result, {
+        appListingId: listing?.appListingId ?? '',
+        slug: listing?.slug ?? '',
+      });
+      return onSuccess(result);
+    },
+    onError,
+  });
   const resetOffsite = trpc.appListings.resetListingToPending.useMutation({ onSuccess, onError });
   const resetOnsite = trpc.appListings.resetOnsiteListingToPending.useMutation({
     onSuccess,

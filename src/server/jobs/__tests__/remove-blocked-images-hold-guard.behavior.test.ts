@@ -45,7 +45,11 @@ import {
   blockedQueueExpiredAmongSql,
   purgeHoldGuard,
 } from '~/server/jobs/image-ingestion';
-import { legalHoldUserIdsSql, userNamedOnHoldingReportSql } from '~/server/utils/legal-hold';
+import {
+  legalHoldUserIdsSql,
+  reportNamedUserIdsSql,
+  userNamedOnHoldingReportSql,
+} from '~/server/utils/legal-hold';
 import {
   accountHoldSql,
   assertOwnersNotUnderLegalHold,
@@ -154,6 +158,11 @@ const BASE_SCHEMA = `
       "cascadeParentId" int
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb DEFAULT '{}', "bannedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (
+      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
     CREATE TABLE "Post" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
@@ -312,6 +321,13 @@ const remaining = async () =>
 const sorted = (ids: number[]) => [...ids].sort((a, b) => a - b);
 
 describe('legalHoldUserIdsSql', () => {
+  // The shared builder keeps only the filter's text: a bound value would be dropped, not sent.
+  it('refuses a report filter that binds a value', () => {
+    expect(() => reportNamedUserIdsSql((r) => Prisma.sql`${Prisma.raw(r)}.id = ${1}`)).toThrow(
+      'A report filter must bind no values'
+    );
+  });
+
   it('names the subject and secondary user of every report still inside the hold', async () => {
     // The query the job runs, as it runs it.
     const { rows } = await holder.db.query<{ userId: string }>(
@@ -1534,5 +1550,42 @@ describe('the blocked-image queue reads, with a held set past the bind-variable 
 
     expect(rows).toHaveLength(HELD.length + 5);
     expect(rows[0].entityId).toBe(3);
+  });
+});
+
+// A ban note is not a hold: such a user's blocked media purges as anyone's does.
+describe('a CSAM/NCMEC ban note alone', () => {
+  const NOTE_USER = 990077001;
+  const PLAIN_USER = 990077002;
+  const NOTE_IMAGE = 990077101;
+  const PLAIN_IMAGE = 990077102;
+
+  beforeEach(() =>
+    holder.db.exec(`
+      INSERT INTO "User" (id, meta, "bannedAt") VALUES
+        (${NOTE_USER}, '{"banDetails": {"detailsInternal": "NCMEC report filed"}}', NULL),
+        (${PLAIN_USER}, '{}', NULL);
+      INSERT INTO "Image" (id, "userId", ingestion) VALUES
+        (${NOTE_IMAGE}, ${NOTE_USER}, 'Blocked'), (${PLAIN_IMAGE}, ${PLAIN_USER}, 'Blocked');
+      INSERT INTO "JobQueue" (type, "entityType", "entityId", "createdAt") VALUES
+        ('BlockedImageDelete', 'Image', ${NOTE_IMAGE}, now() - interval '30 days'),
+        ('BlockedImageDelete', 'Image', ${PLAIN_IMAGE}, now() - interval '30 days');
+    `)
+  );
+  afterEach(() =>
+    holder.db.exec(`
+      DELETE FROM "JobQueue" WHERE "entityId" IN (${NOTE_IMAGE}, ${PLAIN_IMAGE});
+      DELETE FROM "Image" WHERE id IN (${NOTE_IMAGE}, ${PLAIN_IMAGE});
+      DELETE FROM "User" WHERE id IN (${NOTE_USER}, ${PLAIN_USER});
+    `)
+  );
+
+  it("does not keep the blocked media: the purge deletes it like anyone else's", async () => {
+    const deleted = await imageService.deleteImages([NOTE_IMAGE, PLAIN_IMAGE], {
+      actor: { system: 'test' },
+      onlyWhere: purgeHoldGuard(NO_COPY),
+    });
+    expect(deleted.map((r) => r.id).sort()).toEqual([NOTE_IMAGE, PLAIN_IMAGE].sort());
+    expect(await remaining()).not.toContain(NOTE_IMAGE);
   });
 });

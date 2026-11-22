@@ -15,7 +15,9 @@ import {
 } from '~/components/Image/Infinite/useImageFeedSearch';
 import { SearchLock, SearchSortLock } from '~/components/Search/SearchSortLock';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
+import { SearchResourceFilter } from '~/components/Image/Filters/SearchResourceFilter';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SortFilter } from '../SortFilter';
 
 // Newest orders the best matches by date; it never widens them to every new image.
@@ -35,6 +37,7 @@ export function ImageFeedFilters({
   const similarTo = useImageFeedSimilarTo();
   const searching = !!searchQuery || !!similarTo;
   const searchSort = useImageFeedSearchSort();
+  const features = useFeatureFlags();
 
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
@@ -68,6 +71,7 @@ export function ImageFeedFilters({
       ) : (
         <SortFilter type={type} />
       )}
+      {searching && features.imageSearchResources && <SearchResourceFilter />}
       <MediaFiltersDropdown
         w="100%"
         filterType={type}
@@ -84,6 +88,7 @@ export function ImageFeedFilters({
             : undefined
         }
         isFeed
+        showTags
         size="compact-sm"
       />
     </Group>

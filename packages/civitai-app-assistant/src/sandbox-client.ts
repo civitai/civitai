@@ -14,7 +14,15 @@ export interface Sandbox {
   lastActivityAt: string | null;
   /** When an idle, suspended sandbox is deleted. */
   expiresAt: string | null;
+  /**
+   * The id its live preview is served under (32 lowercase hex), which changes when a preview
+   * session ends. `null` or absent when the service has not given it one (yet).
+   */
+  previewId?: string | null;
 }
+
+/** A sandbox preview id: 32 lowercase hex. */
+export const PREVIEW_ID = /^[0-9a-f]{32}$/;
 
 export type SandboxErrorKind =
   | 'limit'
@@ -137,6 +145,11 @@ export interface SandboxClient {
   remove(name: string): Promise<void>;
   /** The app `app` in sandbox `name`, as a zip (`appExportPath`). */
   exportApp(name: string, app: string): Promise<Blob>;
+  /**
+   * Gives sandbox `name` a new preview id and answers it, so the next preview session opens under
+   * an id no ended session used. Optional: only the server runner's direct preview calls it.
+   */
+  rotatePreviewId?(name: string): Promise<string>;
 }
 
 export interface SandboxClientOptions {
@@ -264,6 +277,13 @@ export function createSandboxClient({
       const res = await request('GET', appExportPath(name, app));
       if (!res.ok) throw await failure(res);
       return res.blob();
+    },
+    async rotatePreviewId(name) {
+      const { data } = await send('POST', itemPath(name, '/preview-id'));
+      const previewId = data?.previewId;
+      if (typeof previewId !== 'string' || !PREVIEW_ID.test(previewId))
+        throw new SandboxApiError('The sandbox service answered oddly', 502, 'unavailable');
+      return previewId;
     },
   };
 }

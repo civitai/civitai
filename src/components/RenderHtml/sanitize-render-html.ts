@@ -19,7 +19,10 @@ import { maskProfanityOutsideMarkup } from './mask-profanity';
  * on `optionsKey` then refuses to compile until it is part of the cache key too.
  */
 export type RenderHtmlSanitizeOptions = {
-  /** `withProfanityFilter && blurNsfw` at the call site. */
+  /**
+   * Mask in the browser with the shipped list: `withProfanityFilter && blurNsfw` at the call site,
+   * when the server sent no masked copy.
+   */
   maskProfanity: boolean;
   allowStickers: boolean;
   allowCustomStyles: boolean;

@@ -158,6 +158,7 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     expect(res._getJSONData()).toEqual({ error: 'Not found' });
     expect(res._getRedirect()).toBeUndefined();
     expect(res._getHeader('retry-after')).toBeUndefined();
+    expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 
   it('delivery worker 410 (gone) → 404', async () => {
@@ -191,6 +192,14 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
       expect(res._getStatusCode()).not.toBe(404);
       expect(res._getJSONData()).toEqual({ error: 'Download temporarily unavailable' });
       expect(res._getHeader('retry-after')).toBe('2');
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'error',
+          name: 'resolve-download-url-failed',
+          status: 503,
+          workerStatus: status,
+        })
+      );
     }
   );
 
@@ -215,6 +224,14 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     expect(res._getStatusCode()).toBe(500);
     expect(res._getJSONData()).toEqual({ error: 'Error resolving download' });
     expect(res._getStatusCode()).not.toBe(404);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'resolve-download-url-failed',
+        status: 500,
+        message: 'fetch failed',
+      })
+    );
   });
 
   it('delivery worker returns OK but no url → 5xx (502), never redirects to undefined', async () => {
@@ -225,6 +242,9 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
 
     expect(res._getStatusCode()).toBe(502);
     expect(res._getRedirect()).toBeUndefined();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'resolve-download-url-failed', status: 502 })
+    );
   });
 
   it('blacklisted ip → 403 (unchanged), never calls the delivery worker', async () => {

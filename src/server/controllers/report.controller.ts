@@ -62,6 +62,9 @@ export async function createReportHandler({
     if (input.type === ReportEntity.CommentV3) await assertCommentActionable(input.id, ctx);
     // Only a text the reporter is shown can be reported: the flag, its post's gate and its rating.
     if (input.type === ReportEntity.PostText) await assertPostTextVisible(input.id, ctx);
+    // Reviews are shown only behind the flag; without it there is nothing the reporter could see.
+    if (input.type === ReportEntity.ServiceDealReview && !ctx.features.creatorServicesNext)
+      throw throwNotFoundError('That review is not shown.');
     const result = await createReport({
       ...input,
       userId: ctx.user.id,

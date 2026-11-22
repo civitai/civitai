@@ -322,7 +322,7 @@ against.
 `envModeSummary`, and the daemon log prints them next to `Env:` at start:
 
 ```
-Env: <repos-root>\worktrees\thing\.env
+Env: <worktree-root>\thing\.env
 Env modes: buzz=dev db=prod redis=dev search=dev signals=dev | always prod (no dev target): ...
 ```
 
@@ -686,7 +686,7 @@ It earns the space in any checkout you restart: **45.8s cold vs 4.3s warm** on t
 
 Dirs are evicted LRU on every start against **both** budgets: the `DIST_CACHE_KEEP` most recent (default 4) and `DIST_CACHE_MAX_GB` total (default 40). The size cap does the real work — with a ~4 GB working set per branch, a count cap alone lets four branches reach ~16 GB. The active branch is never evicted; if it alone blows the budget the daemon logs a warning instead.
 
-Knobs live in `.claude/skills/dev-server/.env`, which is gitignored — copy `.env.example`, which documents all of them: `BRANCH_WATCH_ENABLED`, `BRANCH_WATCH_INTERVAL`, `BRANCH_SWITCH_DEBOUNCE`, `KILL_ON_BRANCH_SWITCH`, `AUTO_INSTALL`, `PREWARM_ROUTES`, `PREWARM_TIMEOUT`, `PER_BRANCH_DIST_DIR`, `DIST_CACHE_KEEP`, `DIST_CACHE_MAX_GB`, `WORKTREE_DEV_FS_CACHE`, `WORKTREE_CACHE_MAX_GB`.
+Knobs live in `.claude/skills/dev-server/.env`, which is gitignored — copy `.env.example`, which documents all of them: `BRANCH_WATCH_ENABLED`, `BRANCH_WATCH_INTERVAL`, `BRANCH_SWITCH_DEBOUNCE`, `KILL_ON_BRANCH_SWITCH`, `AUTO_INSTALL`, `PREWARM_ROUTES`, `PREWARM_TIMEOUT`, `PER_BRANCH_DIST_DIR`, `DIST_CACHE_KEEP`, `DIST_CACHE_MAX_GB`, `WORKTREE_DEV_FS_CACHE`, `WORKTREE_CACHE_MAX_GB`, `WORKTREE_ROOT`.
 
 ## Worktrees
 
@@ -697,7 +697,9 @@ node .claude/skills/dev-server/cli.mjs wt new <name> <branch>                   
 node .claude/skills/dev-server/cli.mjs wt new <name> <branch> --base origin/feat/x  # a feature integration branch
 ```
 
-It fetches the base, runs `git worktree add <repos-root>/worktrees/<name> -b <branch> --no-track <base>`,
+It fetches the base, runs `git worktree add <worktree-root>/<name> -b <branch> --no-track <base>`
+(`<worktree-root>` is `<repos-root>/worktrees`, or `WORKTREE_ROOT` from the skill `.env` / process env when set;
+it must be absolute, and trees already under another root keep working with `wt stale`, `wt rm` and the daemon),
 initialises `event-engine-common`, writes `.envrc` when the primary has one, copies every `.env`
 file (root and per-app, plus the skills' credentials), runs `pnpm install` (`--no-install` skips it),
 and fails unless `git status -sb` prints `## <branch>` alone. It refuses an

@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { TIMEOUT_DEFAULT_MS, TIMEOUT_MAX_MS, TIMEOUT_MIN_MS } from './limits.ts';
+import {
+  MAX_REMIX_ANSWER_CHARS,
+  MAX_REMIX_BRANCHES,
+  MAX_REMIX_EFFECTS,
+  TIMEOUT_DEFAULT_MS,
+  TIMEOUT_MAX_MS,
+  TIMEOUT_MIN_MS,
+} from './limits.ts';
 
 /**
  * The wire contract of `POST /v1/check`. The README documents it; the civitai write path (the
@@ -102,6 +109,59 @@ export const CheckRequest = z
   );
 export type CheckRequest = z.infer<typeof CheckRequest>;
 
+const Url = z.string().min(1).max(2048);
+const Dimension = z.number().int().positive().max(100_000);
+
+const RemixImage = z.strictObject({
+  url: Url,
+  width: Dimension.optional(),
+  height: Dimension.optional(),
+});
+
+/** One recorded step of a run: a workflow's result, or the answer to an ask. */
+const RemixLogEntry = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('workflow'),
+    result: z.strictObject({
+      workflowId: z.string().min(1).max(128),
+      images: z.array(RemixImage).max(16),
+    }),
+  }),
+  z.strictObject({
+    type: z.literal('ask'),
+    answer: z.union([z.string().max(MAX_REMIX_ANSWER_CHARS), z.number().int().nonnegative()]),
+  }),
+]);
+const RemixLog = z.array(RemixLogEntry).max(MAX_REMIX_EFFECTS);
+
+/**
+ * The wire contract of `POST /v1/remix/replay`, strict like `/v1/check`'s. `base` is replayed,
+ * then `base` followed by each of `branches` (the host prices a choice's options this way).
+ */
+export const RemixReplayRequest = z.strictObject({
+  ts: z.number().int(),
+  /** The remix row's blockId. */
+  appId: Name,
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  source: z.string(),
+  input: z
+    .strictObject({
+      source: z.strictObject({
+        imageId: z.number().int().positive(),
+        url: Url,
+        width: Dimension,
+        height: Dimension,
+      }),
+      base: RemixLog,
+      branches: z.array(RemixLog).max(MAX_REMIX_BRANCHES).optional(),
+      autoAnswer: z.literal('first').optional(),
+    })
+    .refine((i) => (i.branches ?? []).every((b) => i.base.length + b.length <= MAX_REMIX_EFFECTS), {
+      message: `base plus a branch holds at most ${MAX_REMIX_EFFECTS} entries`,
+    }),
+});
+export type RemixReplayRequest = z.infer<typeof RemixReplayRequest>;
+
 export function clampTimeout(ms: number | undefined): number {
   if (ms === undefined) return TIMEOUT_DEFAULT_MS;
   return Math.min(TIMEOUT_MAX_MS, Math.max(TIMEOUT_MIN_MS, Math.round(ms)));
@@ -118,4 +178,5 @@ export type RefusalCode =
   | 'overloaded'
   | 'worker_crashed'
   | 'worker_terminated'
+  | 'quarantined'
   | 'shutting_down';

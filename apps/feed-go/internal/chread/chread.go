@@ -40,6 +40,9 @@ type Config struct {
 	MaxInFlight int
 	// HTTP is the client (nil: a dedicated one). Request deadlines come from the caller's context.
 	HTTP *http.Client
+	// CredentialEnv names, in New's error for a URL carrying credentials, the variables the login
+	// belongs in ("": "FEED_GO_CLICKHOUSE_USERNAME / FEED_GO_CLICKHOUSE_PASSWORD", this reader's own).
+	CredentialEnv string
 	// Tracer observes every query (nil: none, and Query does no tracing work at all).
 	// tracing.ClickHouseTracer is the one this service sets when tracing is on.
 	Tracer Tracer
@@ -100,7 +103,11 @@ func New(cfg Config) (*Client, error) {
 		return nil, errors.New("clickhouse url: want an absolute http(s) URL")
 	}
 	if u.User != nil {
-		return nil, errors.New("clickhouse url: credentials belong in FEED_GO_CLICKHOUSE_USERNAME / FEED_GO_CLICKHOUSE_PASSWORD")
+		env := cfg.CredentialEnv
+		if env == "" {
+			env = "FEED_GO_CLICKHOUSE_USERNAME / FEED_GO_CLICKHOUSE_PASSWORD"
+		}
+		return nil, errors.New("clickhouse url: credentials belong in " + env)
 	}
 	n := cfg.MaxInFlight
 	if n < 1 {

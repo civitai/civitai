@@ -100,7 +100,8 @@ function provenance(
 ) {
   mockDbRead.$queryRaw.mockImplementation(async (...args: unknown[]) => {
     const text = sqlText(args);
-    if (text.includes('fork_of_listing_id')) return row ? [row] : [];
+    // The read is the batched one, keyed by listing id.
+    if (text.includes('fork_of_listing_id')) return row ? [{ id: FORK_ID, ...row }] : [];
     return [];
   });
 }

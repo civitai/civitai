@@ -485,7 +485,7 @@ describe('getArticleByShareToken: body images', () => {
     expect(result.status === 'ok' && result.article.contentImages).toEqual([linked]);
     expect(dbMock.dbWrite.imageConnection.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { entityId: ARTICLE, entityType: 'Article' },
+        where: expect.objectContaining({ entityId: ARTICLE, entityType: 'Article' }),
         select: {
           image: {
             select: expect.objectContaining({

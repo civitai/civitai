@@ -32,7 +32,8 @@ vi.mock('~/components/Article/article.utils', async (importOriginal) => ({
   useArticleFilters: () => ({}),
   useQueryArticles: (filters: { query?: string }, options?: { enabled?: boolean }) => {
     state.feedCalls.push({ query: filters.query, enabled: options?.enabled });
-    return result([1, 2, 3]);
+    // An earlier page with more to load, as a disabled query keeps it.
+    return result([1, 2, 3], { hasNextPage: true });
   },
   useSemanticArticleFeed: (_filters: unknown, query: string | undefined) => {
     state.searchQueries.push(query);
@@ -82,12 +83,13 @@ describe('ArticlesInfinite with a search', () => {
     expect(state.feedCalls.at(-1)?.enabled).toBe(false);
   });
 
-  test("falls back to the feed's title match with a banner when the search fails", async () => {
+  // The keyword feed has no server profanity check, so it must not show or page the query.
+  test('shows the banner over no results when the search fails, never the feed', async () => {
     state.searchFails = true;
     await renderWithProviders(<ArticlesInfinite searchable />);
-    await expect.element(page.getByText('article 1', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByText('Retry search')).toBeInTheDocument();
-    expect(state.feedCalls.at(-1)).toEqual({ query: 'lora guide', enabled: true });
+    expect(page.getByText('article 1', { exact: true }).query()).toBeNull();
+    expect(state.feedCalls.at(-1)?.enabled).toBe(false);
   });
 
   test('a feed that is not searchable, or without the flag, never sends the page query', async () => {

@@ -205,6 +205,8 @@ export function getUserWithProfileRow(db: Kysely<DB>, where: UserWithProfileWher
               .as('links')
           )
           .whereRef('UserLink.userId', '=', 'User.id')
+          // A banned user's links are not served; a ban whose archive failed keeps them as evidence.
+          .where('User.bannedAt', 'is', null)
           .$castTo<{ links: UserWithProfileLinkJson[] }>()
           .as('links'),
         eb

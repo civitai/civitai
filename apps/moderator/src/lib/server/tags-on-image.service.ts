@@ -5,11 +5,12 @@ import { NsfwLevel } from '@civitai/shared';
 import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
 import { syncSearchIndexBulk } from './search-index';
-import { queueModelsForImageChildTagChanges } from './image-models-reindex';
+import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
 import { bustImageTagCaches } from './cache';
 import { bustAfterWrite } from './bust-after-write';
 import { invalidateThumbnails } from './thumbnail-cache';
 import { bustProfilePictures } from './profile-picture-cache';
+import { evictHomeBlocks } from './home-blocks';
 
 // Unset fields stay NULL; upsert_tag_on_image preserves the existing value on conflict — so a flip can pass
 // just { imageId, tagId, disabled, needsReview } without clobbering source/confidence.
@@ -103,17 +104,18 @@ export async function upsertTagsOnImageNew(args: TagOnImageArgs[]): Promise<void
     await bustAfterWrite('tag-write-cache-bust', () => bustImageTagCaches(imageIds));
     await invalidateThumbnails(imageIds);
     await bustProfilePictures({ imageIds });
-    await queueModelsForImageChildTagChanges({ tagWrites: items, levelImageIds: imageIds });
+    await queueDocumentsForImageMinorChanges({ levelImageIds: imageIds });
   }
-  await queueBlockedTagReviews(items);
+  await evictHomeBlocks(await queueBlockedTagReviews(items));
   void syncSearchIndexBulk({ entityType: 'image', entityIds: imageIds, action: 'update' });
 }
 
 // Mirrors queueBlockedTagReviews in the main app's tagsOnImageNew.service: update_nsfw_levels_new raises an
 // image to Blocked but never queues it, so without this a blocked-level tag would hide it with no review.
+// Returns the images it put on hold.
 async function queueBlockedTagReviews(items: TagOnImageArgs[]) {
   const written = sql.join(items.map((t) => sql`(${t.imageId}::int, ${t.tagId}::int)`));
-  await sql`
+  const { rows } = await sql<{ id: number }>`
     WITH written AS (
       SELECT DISTINCT w."imageId", w."tagId"
       FROM (VALUES ${written}) AS w("imageId", "tagId")
@@ -129,9 +131,12 @@ async function queueBlockedTagReviews(items: TagOnImageArgs[]) {
         AND i."blockedFor" IS NULL
         AND NOT i."nsfwLevelLocked"
       RETURNING i.id
+    ), queued AS (
+      INSERT INTO "ImageTagForReview" ("imageId", "tagId")
+      SELECT w."imageId", w."tagId" FROM written w JOIN flagged f ON f.id = w."imageId"
+      ON CONFLICT DO NOTHING
     )
-    INSERT INTO "ImageTagForReview" ("imageId", "tagId")
-    SELECT w."imageId", w."tagId" FROM written w JOIN flagged f ON f.id = w."imageId"
-    ON CONFLICT DO NOTHING
+    SELECT id FROM flagged
   `.execute(dbWrite);
+  return rows.map((row) => row.id);
 }

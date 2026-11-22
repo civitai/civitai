@@ -33,6 +33,12 @@ name: App suites
 #       main app's).
 #   src/server/utils/__tests__/redis-lua-harness.ts
 #       the real-Lua redis harness apps/auth's device tests run their scripts through.
+#   src/server/services/block-token.service.ts, src/server/services/block-token-subject.ts,
+#   src/server/middleware/block-scope.middleware.ts, src/server/common/enums.ts,
+#   src/shared/constants/browsingLevel.constants.ts, src/server/services/apps/data-read-grant.ts
+#       read by apps/auth's block-exchange test, which pins the hub's copies of the site's block-token
+#       constants (issuer, audience, subject pattern, kid, age cap, clock tolerance, the mature
+#       browsing-level bits) and its one-approved-block rule to them.
 #   containers/notification-db/docker-init/**
 #       the DDL apps/notifications' behavioural test builds its database from.
 #   package.json
@@ -56,7 +62,8 @@ name: App suites
 #
 # Same label as lint.yml (read its header): on a PR carrying `full-ci` the draft gate is lifted.
 # `types` deliberately omits `labeled`; full-ci.yml dispatches this workflow when the label is
-# added. That first, dispatched run is NOT path-filtered (`paths:` applies to pull_request
+# added to a draft PR (on a ready PR, the PR's own run here is not draft-gated, so nothing is
+# dispatched). That first, dispatched run is NOT path-filtered (`paths:` applies to pull_request
 # events only); later pushes are: a PR that touches nothing these suites read starts no PR run
 # here, label or not.
 #
@@ -112,6 +119,12 @@ on:
       - 'src/components/Account/creator-score-copy.ts'
       - 'src/server/services/crucible-bradley-terry.ts'
       - 'src/server/utils/__tests__/redis-lua-harness.ts'
+      - 'src/server/services/block-token.service.ts'
+      - 'src/server/services/block-token-subject.ts'
+      - 'src/server/middleware/block-scope.middleware.ts'
+      - 'src/server/common/enums.ts'
+      - 'src/shared/constants/browsingLevel.constants.ts'
+      - 'src/server/services/apps/data-read-grant.ts'
       - 'src/server/services/knights/**'
       - 'containers/notification-db/docker-init/**'
   push:
@@ -140,7 +153,7 @@ jobs:
   # `apps` job's comment describes: a slow test step can no longer cancel the typecheck.
   apps-typecheck:
     name: App typecheck
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
     # Measured 2026-11-18: step 169-286 s, install ~40 s.
     timeout-minutes: 20
@@ -173,6 +186,9 @@ jobs:
     # 2026-10-29), so no merge gate keys on it. It was `App unit tests + typecheck` until the
     # typecheck moved to `apps-typecheck`.
     name: App unit tests
+    # Hosted, not civitai-dc: the pglite suites here (knights apprenticeship, event-engine
+    # collection-item-adder) hit their 5s test timeout under civitai-dc load while hosted stays green.
+    # App typecheck stays on civitai-dc.
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
     # The `apps/*` suites had never once run in CI before this job existed (369 tests across

@@ -19,7 +19,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 
-import handler from '~/pages/api/mod/bounty-entry-file/clear-check';
+import handler from '~/server/api-routes/mod/bounty-entry-file/clear-check';
 import { fileCheckState } from '~/server/services/bounty-entry-file-check.service';
 
 const FILE_ID = 31;

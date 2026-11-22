@@ -16,12 +16,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,10 +47,10 @@ const (
 	goldenDir = "../../testdata/golden"
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
-	goldenMinAsPosts  = 32
+	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
-	goldenMinInfinite = 30
-	goldenMinModels   = 31
+	goldenMinInfinite = 87
+	goldenMinModels   = 34
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
@@ -59,6 +61,9 @@ var goldenHosts = browsing.HostColors{
 	"blue":  {"blue.example.test"},
 	"red":   {"red.example.test"},
 }
+
+// goldenPrimaries is each color's SERVER_DOMAIN_<COLOR>: every fixture host is its color's primary.
+var goldenPrimaries = map[string]string{"green": "green.example.test", "blue": "blue.example.test", "red": "red.example.test"}
 
 // goldenTime is a timestamp written as {"$date": "<ISO>"}, or null.
 type goldenTime struct{ T *time.Time }
@@ -276,6 +281,20 @@ type goldenDB struct {
 		UserID   int    `json:"userId"`
 		Reaction string `json:"reaction"`
 	} `json:"reactions"`
+	// SystemPosts are the system user's (-1) posts on each version Node looked one up for
+	// (getAllImages' hasSystemPosts; an infinite/ fixture of `prioritizedUserIds: [-1]`).
+	SystemPosts []struct {
+		ID             int `json:"id"`
+		ModelVersionID int `json:"modelVersionId"`
+	} `json:"systemPosts"`
+	// TagVotes are TagsOnImageVote rows (an infinite/ fixture whose signed-in request has the 'tags'
+	// include: the votes the handler merges).
+	TagVotes []struct {
+		ImageID int `json:"imageId"`
+		TagID   int `json:"tagId"`
+		UserID  int `json:"userId"`
+		Vote    int `json:"vote"`
+	} `json:"tagVotes"`
 	Placements []struct {
 		ID         int             `json:"id"`
 		Surface    string          `json:"surface"`
@@ -327,6 +346,9 @@ type goldenDB struct {
 		ID   int    `json:"id"`
 		Type string `json:"type"`
 	} `json:"officialModels"`
+	// CollectionItems are CollectionItem rows (an infinite/ fixture whose request names a collection:
+	// every item of it, whatever its status or tag).
+	CollectionItems []goldenCollectionItem `json:"collectionItems"`
 	// Collections are the Collection rows Node's permission read found, each with the contributor
 	// rows it holds.
 	Collections []struct {
@@ -381,6 +403,17 @@ type goldenDB struct {
 		Meta            string  `json:"meta"`
 		RejectionReason *string `json:"rejectionReason"`
 	} `json:"cosmeticShopItems"`
+}
+
+// goldenCollectionItem is one CollectionItem row.
+type goldenCollectionItem struct {
+	ID           int     `json:"id"`
+	CollectionID int     `json:"collectionId"`
+	ImageID      int     `json:"imageId"`
+	Status       string  `json:"status"`
+	AddedByID    *int    `json:"addedById"`
+	Note         *string `json:"note"`
+	TagID        *int    `json:"tagId"`
 }
 
 // goldenModelRow is one row of model.getAll's page query (getModelsRaw's SELECT).
@@ -560,9 +593,12 @@ var (
 	goldenReModel     = regexp.MustCompile(`mv\."modelId" = \$(\d+)`)
 	goldenReLevel     = regexp.MustCompile(`\(i\."nsfwLevel" & \$(\d+)\) != 0`)
 	goldenReTarget    = regexp.MustCompile(` AND i\."userId" = \$(\d+)`)
+	goldenReFollowed  = regexp.MustCompile(`i\."userId" = ANY\(\$(\d+)::int\[\]\)`)
+	goldenRePostVer   = regexp.MustCompile(`p\."modelVersionId" = \$(\d+)`)
+	goldenReReactions = regexp.MustCompile(`ir\."userId" = \$(\d+) AND ir\.reaction = ANY\(\$(\d+)::text\[\]::"ReviewReactions"\[\]\)`)
 	goldenReExclUsers = regexp.MustCompile(`i\."userId" != ALL\(\$(\d+)::int\[\]\)`)
 	goldenReTypes     = regexp.MustCompile(`i\.type = ANY\(\$(\d+)::text`)
-	goldenReCursor    = regexp.MustCompile(`\(\((i\."id"|irr\."imageId"|i\."index") (<=|>=) \$(\d+)\)\)`)
+	goldenReCursor    = regexp.MustCompile(`\(\((i\."id"|irr\."imageId"|i\."index"|ct\."collectionItemId") (<=|>=) \$(\d+)\)\)`)
 	goldenReTags      = regexp.MustCompile(`WHERE "tagId" = ANY\(\$(\d+)::int\[\]\) AND "disabled" = FALSE`)
 	goldenReTechnique = regexp.MustCompile(`it\."techniqueId" = ANY\(\$(\d+)::int\[\]\)`)
 	goldenReTools     = regexp.MustCompile(`HAVING array_agg\(it\."toolId" ORDER BY it\."toolId"\) @> \$(\d+)::integer\[\]`)
@@ -572,7 +608,32 @@ var (
 	goldenReMinorOwn  = regexp.MustCompile(`\(i\."minor" != TRUE OR i\."userId" = \$(\d+)\)`)
 	goldenReRRModel   = regexp.MustCompile(`rr\."modelId" = \$(\d+)`)
 	goldenReRRVersion = regexp.MustCompile(`rr\."modelVersionId" = \$(\d+)`)
+	// The collection page: the `ct` CTE's collection, tag and viewer (whose own not-REJECTED items it
+	// keeps), and the acceptableMinor owner exemption.
+	goldenReCollection = regexp.MustCompile(`ci\."collectionId" = \$(\d+)`)
+	goldenReCollTag    = regexp.MustCompile(`ci\."tagId" = \$(\d+)`)
+	goldenReCollOwner  = regexp.MustCompile(`ci\."status" <> 'REJECTED' AND ci\."addedById" = \$(\d+)`)
+	goldenReMinorOwner = regexp.MustCompile(`\(i\."acceptableMinor" = FALSE OR i\."userId" = \$(\d+)\)`)
+	// The minor content rule (minorMatureImageVisibleSql): a minor-flagged image rated NULL, 0 or at
+	// least the captured level is kept only for the bound owner (none bound: for nobody).
+	goldenReMinorMature = regexp.MustCompile(`\(NOT \(\(COALESCE\(i\."minor", FALSE\)\) AND \(i\."nsfwLevel" IS NULL OR i\."nsfwLevel" = 0 OR i\."nsfwLevel" >= (\d+)\)\)(?: OR i\."userId" = \$(\d+))?\)`)
 )
+
+// goldenMinorMature reads the minor content rule's clause from sql: present, the level it restricts
+// from, and the owner it exempts (0: none).
+func goldenMinorMature(args []any, sql string) (present bool, from, owner int) {
+	m := goldenReMinorMature.FindStringSubmatch(sql)
+	if m == nil {
+		return false, 0, 0
+	}
+	from, _ = strconv.Atoi(m[1])
+	if m[2] != "" {
+		if n, _ := strconv.Atoi(m[2]); n >= 1 && n <= len(args) {
+			owner = goldenInt(args[n-1])
+		}
+	}
+	return true, from, owner
+}
 
 func goldenArg(args []any, re *regexp.Regexp, sql string) (any, bool) {
 	m := re.FindStringSubmatch(sql)
@@ -629,8 +690,8 @@ func goldenHas(list []int, n int) bool {
 
 // goldenImageRows answers the getAllImages page query: the clauses the fixtures reach, evaluated
 // over the images table as Postgres would (ids, posts, version or model scope, level, creator,
-// excluded creators, types, tools, base models, the minor exclusion, published-before-now, order,
-// cursor, offset, limit).
+// followed creators, excluded creators, types, tools, base models, the minor exclusion, the minor
+// content rule, published-before-now, order, cursor, offset, limit).
 func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, error) {
 	versionModel := map[int]int{}
 	versionBase := map[int]string{}
@@ -645,6 +706,30 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	model, hasModel := goldenArg(args, goldenReModel, sql)
 	level, hasLevel := goldenArg(args, goldenReLevel, sql)
 	target, hasTarget := goldenArg(args, goldenReTarget, sql)
+	// Every `i."userId" = ANY(<list>)` clause (the follow list, the new-creators board, the prioritized
+	// creators): an image must be in each.
+	var userLists [][]int
+	for _, m := range goldenReFollowed.FindAllStringSubmatch(sql, -1) {
+		n, _ := strconv.Atoi(m[1])
+		if n < 1 || n > len(args) {
+			return nil, errors.New("golden: a creator list bound past the arguments")
+		}
+		userLists = append(userLists, goldenInts(args[n-1]))
+	}
+	postVersion, hasPostVersion := goldenArg(args, goldenRePostVer, sql)
+	var reactionUser int
+	var reactionKinds []string
+	if m := goldenReReactions.FindStringSubmatch(sql); m != nil {
+		u, _ := strconv.Atoi(m[1])
+		k, _ := strconv.Atoi(m[2])
+		reactionUser = goldenInt(args[u-1])
+		reactionKinds, _ = args[k-1].([]string)
+		if reactionUser == 0 || len(reactionKinds) == 0 {
+			return nil, errors.New("golden: a reaction clause without its viewer or kinds")
+		}
+	}
+	// An empty new-creators board: `1 = 0`, no row at all.
+	noRow := strings.Contains(sql, ` AND 1 = 0 AND `)
 	exclUsers, hasExcl := goldenArg(args, goldenReExclUsers, sql)
 	types, hasTypes := goldenArg(args, goldenReTypes, sql)
 	minorOwner, hasMinorOwner := goldenArg(args, goldenReMinorOwn, sql)
@@ -654,11 +739,40 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	baseModels, hasBaseModels := goldenArg(args, goldenReBaseMdl, sql)
 	minorAll := strings.Contains(sql, `(i."minor" != TRUE)`)
 	published := strings.Contains(sql, `(p."publishedAt" < now())`)
+	acceptableMinorOwner, hasAcceptableMinorOwner := goldenArg(args, goldenReMinorOwner, sql)
+	acceptableMinorAll := strings.Contains(sql, ` AND i."acceptableMinor" = FALSE AND `)
+	minorMature, minorMatureFrom, minorMatureOwner := goldenMinorMature(args, sql)
+	collection, hasCollection := goldenArg(args, goldenReCollection, sql)
+	collTag, hasCollTag := goldenArg(args, goldenReCollTag, sql)
+	collOwner, hasCollOwner := goldenArg(args, goldenReCollOwner, sql)
 	if !hasLevel {
 		return nil, errors.New("golden: image query without a level clause")
 	}
+	if hasCollection != strings.Contains(sql, `JOIN ct ON ct."imageId" = i.id`) ||
+		(hasCollection && !strings.Contains(sql, `AND ci."imageId" IS NOT NULL`)) {
+		return nil, errors.New("golden: a collection CTE without its join, or the join without the CTE")
+	}
+	// itemsOf is the `ct` CTE's rows of an image: the collection's items, with the tag, and ACCEPTED
+	// or (with a viewer) the viewer's own that are not REJECTED.
+	itemsOf := func(imageID int) []goldenCollectionItem {
+		var out []goldenCollectionItem
+		for _, ci := range fx.DB.CollectionItems {
+			if ci.CollectionID != goldenInt(collection) || ci.ImageID != imageID {
+				continue
+			}
+			if hasCollTag && (ci.TagID == nil || *ci.TagID != goldenInt(collTag)) {
+				continue
+			}
+			own := hasCollOwner && ci.Status != "REJECTED" && ci.AddedByID != nil && *ci.AddedByID == goldenInt(collOwner)
+			if ci.Status == "ACCEPTED" || own {
+				out = append(out, ci)
+			}
+		}
+		return out
+	}
 	var out [][]any
 	var kept []goldenImage
+	itemOf := map[int]goldenCollectionItem{} // kept index -> its item (a collection page)
 	for _, img := range fx.DB.Images {
 		if hasIDs && !goldenHas(goldenInts(ids), img.ID) {
 			continue
@@ -685,6 +799,25 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 		}
 		if hasTarget && img.UserID != goldenInt(target) {
 			continue
+		}
+		inLists := true
+		for _, list := range userLists {
+			inLists = inLists && goldenHas(list, img.UserID)
+		}
+		if !inLists || noRow {
+			continue
+		}
+		if hasPostVersion && (img.ModelVersionID == nil || *img.ModelVersionID != goldenInt(postVersion)) {
+			continue
+		}
+		if reactionUser != 0 {
+			reacted := false
+			for _, r := range fx.DB.Reactions {
+				reacted = reacted || (r.UserID == reactionUser && r.ImageID == img.ID && slices.Contains(reactionKinds, r.Reaction))
+			}
+			if !reacted {
+				continue
+			}
 		}
 		if hasTags {
 			carries := false
@@ -747,22 +880,67 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 		if img.Minor && (minorAll || (hasMinorOwner && img.UserID != goldenInt(minorOwner))) {
 			continue
 		}
+		if minorMature && img.Minor && (img.NsfwLevel == 0 || img.NsfwLevel >= minorMatureFrom) &&
+			(minorMatureOwner == 0 || img.UserID != minorMatureOwner) {
+			continue
+		}
 		if published && (img.PublishedAt.T == nil || !img.PublishedAt.T.Before(fx.Now)) {
+			continue
+		}
+		if img.AcceptableMinor && (acceptableMinorAll || (hasAcceptableMinorOwner && img.UserID != goldenInt(acceptableMinorOwner))) {
+			continue
+		}
+		if hasCollection {
+			// JOIN ct: one row per matching item.
+			for _, ci := range itemsOf(img.ID) {
+				itemOf[len(kept)] = ci
+				kept = append(kept, img)
+			}
 			continue
 		}
 		kept = append(kept, img)
 	}
-	asc := strings.Contains(sql, `ORDER BY i."id" ASC`)
+	if hasCollection {
+		// Carry each row's item through the sort and the paging below.
+		return goldenCollectionRows(sql, args, kept, itemOf)
+	}
+	// The system user's IIF ahead of the sort's own order (prioritizedUserIds [-1] without a post of
+	// its own), or the prioritized creators' oldest-post order in place of it.
+	const iifPrefix = `ORDER BY IIF(i."userId" IN (-1), i.index, 1000),  `
+	iif := strings.Contains(sql, iifPrefix)
+	oldestPost := strings.Contains(sql, `ORDER BY (i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"`)
+	order := "ORDER BY "
+	if iif {
+		order = iifPrefix
+	}
+	asc := strings.Contains(sql, order+`i."id" ASC`)
 	// A post's own media: ORDER BY i."index", i."id", and the index is the cursor column.
-	byIndex := strings.Contains(sql, `ORDER BY i."index", i."id"`)
+	byIndex := strings.Contains(sql, order+`i."index", i."id"`)
 	indexOf := func(img goldenImage) int {
 		if img.Index == nil {
 			return 0
 		}
 		return *img.Index
 	}
+	iifOf := func(img goldenImage) int {
+		if img.UserID == -1 {
+			if img.Index == nil {
+				return math.MaxInt // NULL sorts last ascending; no fixture row has one
+			}
+			return *img.Index
+		}
+		return 1000
+	}
 	sort.SliceStable(kept, func(a, b int) bool {
 		switch {
+		case oldestPost:
+			ka, kb := kept[a].PostID*100+indexOf(kept[a]), kept[b].PostID*100+indexOf(kept[b])
+			if ka != kb {
+				return ka < kb
+			}
+			return kept[a].ID < kept[b].ID
+		case iif && iifOf(kept[a]) != iifOf(kept[b]):
+			return iifOf(kept[a]) < iifOf(kept[b])
 		case byIndex && indexOf(kept[a]) != indexOf(kept[b]):
 			return indexOf(kept[a]) < indexOf(kept[b])
 		case asc || byIndex:
@@ -802,6 +980,60 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	return testkit.NewRows(goldenImageColumns, out...), nil
 }
 
+// goldenCollectionRows orders and pages a collection page's rows (kept[i] joined to itemOf[i]):
+// `ORDER BY ct."collectionItemId" DESC` or the id orders, the inclusive cursor on the sort's column,
+// the limit; each row with its item's note, status and adder after the cursor column.
+func goldenCollectionRows(sql string, args []any, kept []goldenImage, itemOf map[int]goldenCollectionItem) (*testkit.Rows, error) {
+	type joined struct {
+		img  goldenImage
+		item goldenCollectionItem
+	}
+	rows := make([]joined, len(kept))
+	for i, img := range kept {
+		rows[i] = joined{img, itemOf[i]}
+	}
+	byItem := strings.Contains(sql, `ORDER BY ct."collectionItemId" DESC`)
+	asc := strings.Contains(sql, `ORDER BY i."id" ASC`)
+	if !byItem && !asc && !strings.Contains(sql, `ORDER BY i."id" DESC`) {
+		return nil, errors.New("golden: a collection page in an order the fake does not evaluate")
+	}
+	key := func(r joined) int {
+		if byItem {
+			return r.item.ID
+		}
+		return r.img.ID
+	}
+	sort.SliceStable(rows, func(a, b int) bool {
+		if asc {
+			return key(rows[a]) < key(rows[b])
+		}
+		return key(rows[a]) > key(rows[b])
+	})
+	if m := goldenReCursor.FindStringSubmatch(sql); m != nil {
+		if (m[1] == `ct."collectionItemId"`) != byItem {
+			return nil, fmt.Errorf("golden: cursor column %s for the order of %q", m[1], sql)
+		}
+		n, _ := strconv.Atoi(m[3])
+		c := goldenInt(args[n-1])
+		var paged []joined
+		for _, r := range rows {
+			if v := key(r); (m[2] == "<=" && v <= c) || (m[2] == ">=" && v >= c) {
+				paged = append(paged, r)
+			}
+		}
+		rows = paged
+	}
+	if limit, ok := goldenArg(args, goldenReLimit, sql); ok && len(rows) > goldenInt(limit) {
+		rows = rows[:goldenInt(limit)]
+	}
+	cols := append(append([]string(nil), goldenImageColumns...), "collectionItemNote", "collectionItemStatus", "collectionItemAddedById")
+	out := make([][]any, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, append(r.img.row(key(r)), goldenPtr(r.item.Note), r.item.Status, goldenPtr(r.item.AddedByID)))
+	}
+	return testkit.NewRows(cols, out...), nil
+}
+
 // newGoldenPG is the fixture's Postgres: one route per query this service sends, each answered
 // over the fixture's tables. A query no route matches fails (testkit.DB), so the test fails too.
 func newGoldenPG(fx *goldenFixture) *testkit.DB {
@@ -823,6 +1055,32 @@ func newGoldenPG(fx *goldenFixture) *testkit.DB {
 		{Match: `"cursorId"`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
 			return goldenImageRows(fx, sql, args)
 		}},
+		// The collection permission read (image.getInfinite's `collectionId`): the fixture's
+		// Collection row and the viewer's contributor permissions (none: an empty list); a collection
+		// the fixture does not hold is no row. The contributor row is joined exactly for a viewer.
+		{Match: `FROM "Collection" c`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			cols := []string{"read", "userId", "permissions"}
+			viewer := 0
+			if len(args) > 1 {
+				viewer = goldenInt(args[1])
+			}
+			if (viewer != 0) != strings.Contains(sql, `"CollectionContributor"`) {
+				return nil, fmt.Errorf("golden: the collection read joins the contributor row exactly for a viewer (viewer %d)", viewer)
+			}
+			for _, c := range db.Collections {
+				if c.ID != goldenInt(args[0]) {
+					continue
+				}
+				perms := []string{}
+				for _, cc := range c.Contributors {
+					if cc.UserID == viewer {
+						perms = cc.Permissions
+					}
+				}
+				return testkit.NewRows(cols, []any{c.Read, c.UserID, perms}), nil
+			}
+			return testkit.NewRows(cols), nil
+		}},
 		{Match: `SELECT "modelId" FROM "ModelVersion" WHERE id = $1`, Rows: func(args []any) (*testkit.Rows, error) {
 			for _, v := range db.ModelVersions {
 				if v.ID == goldenInt(args[0]) {
@@ -839,6 +1097,26 @@ func newGoldenPG(fx *goldenFixture) *testkit.DB {
 				}
 			}
 			return testkit.NewRows([]string{"id", "modelId"}, rows...), nil
+		}},
+		// getHeldLevelsByPost's owner read (image.getInfinite's `ids`): each existing model's owner.
+		{Match: `SELECT id, "userId" FROM "Model" WHERE id = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, m := range db.Models {
+				if goldenHas(goldenInts(args[0]), m.ID) {
+					rows = append(rows, []any{m.ID, m.UserID})
+				}
+			}
+			return testkit.NewRows([]string{"id", "userId"}, rows...), nil
+		}},
+		// getAllImages' hasSystemPosts (`prioritizedUserIds: [-1]` on a version): a post of the system
+		// user on the version, or none.
+		{Match: `SELECT id FROM "Post" WHERE "userId" = -1 AND "modelVersionId" = $1`, Rows: func(args []any) (*testkit.Rows, error) {
+			for _, p := range db.SystemPosts {
+				if p.ModelVersionID == goldenInt(args[0]) {
+					return testkit.NewRows([]string{"id"}, []any{p.ID}), nil
+				}
+			}
+			return testkit.NewRows([]string{"id"}), nil
 		}},
 		{Match: `SELECT "userId", mode::text FROM "Model"`, Rows: func(args []any) (*testkit.Rows, error) {
 			var rows [][]any
@@ -905,6 +1183,15 @@ func newGoldenPG(fx *goldenFixture) *testkit.DB {
 				}
 			}
 			return testkit.NewRows([]string{"imageId", "reaction"}, rows...), nil
+		}},
+		{Match: `FROM "TagsOnImageVote"`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, v := range db.TagVotes {
+				if goldenHas(goldenInts(args[0]), v.ImageID) && v.UserID == goldenInt(args[1]) {
+					rows = append(rows, []any{v.ImageID, v.TagID, v.Vote})
+				}
+			}
+			return testkit.NewRows([]string{"imageId", "tagId", "vote"}, rows...), nil
 		}},
 		{Match: `SELECT "imageId", "modelVersionId" FROM "ImageResourceNew"`, Rows: func(args []any) (*testkit.Rows, error) {
 			var rows [][]any
@@ -1203,8 +1490,9 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 		NodeProduction: true,
 		Now:            nowFn,
 	}
-	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: blocked}
-	s := &Server{Resolver: resolver, Deps: deps, Hosts: goldenHosts, V1: v1, Infinite: infinite}
+	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: blocked,
+		NewCreators: &feed.NewCreatorBoards{Cache: cache, Now: nowFn}}
+	s := &Server{Resolver: resolver, Deps: deps, Hosts: goldenHosts, HostPrimaries: goldenPrimaries, V1: v1, Infinite: infinite}
 
 	headers := map[string]string{}
 	for k, v := range fx.Request.Headers {

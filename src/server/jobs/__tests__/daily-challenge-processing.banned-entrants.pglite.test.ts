@@ -113,6 +113,7 @@ beforeAll(async () => {
       "collectionId" int, "imageId" int, "tagId" int, note text, status text,
       "reviewedAt" timestamp
     );
+    CREATE TABLE "Challenge" ("collectionId" int, "modelVersionIds" int[] NOT NULL DEFAULT '{}');
     CREATE TABLE "CommentV3" (
       "entityType" text, "entityId" int, "parentId" int, "deletedAt" timestamp, "userId" int
     );
@@ -164,7 +165,8 @@ function routeQueries() {
           prizeMode: 'Fixed',
         },
       ];
-    if (sql.includes('JOIN "User" u')) return runOnPglite(strings, ...values);
+    if (sql.includes('JOIN "User" u') || sql.includes('"ImageResourceNew"'))
+      return runOnPglite(strings, ...values);
     return [];
   }) as never);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
@@ -172,7 +174,12 @@ function routeQueries() {
     ...values: unknown[]
   ) => {
     const sql = strings.join('?');
-    if (sql.includes('JOIN "User" u') || sql.includes('HAVING COUNT(*) >='))
+    if (
+      sql.includes('JOIN "User" u') ||
+      sql.includes('HAVING COUNT(*) >=') ||
+      sql.includes('"ImageResourceNew"') ||
+      sql.includes("status = 'REVIEW'")
+    )
       return runOnPglite(strings, ...values);
     if (sql.includes('AS "exists"')) return [{ exists: false }];
     return [];
@@ -395,5 +402,103 @@ describe('model-restricted mature entries', () => {
       ).map((tx) => tx.toAccountId);
       expect(paidTo).toEqual([PAID]);
     });
+  });
+});
+
+// The featured resource has to be able to run on the entry's checkpoint. Entries submitted before
+// the rule existed are still in collections: they cannot place, but they are not rejected.
+describe('entries whose featured resource cannot run on their checkpoint', () => {
+  const JUDGE_COLLECTION = 400;
+  const PROMOTE_COLLECTION = 401;
+  const PONY_LORA = 653;
+  const KREA_CHECKPOINT = 701;
+  const SDXL_CHECKPOINT = 702;
+  const ON_KREA = 61;
+  const ON_SDXL = 62;
+  const NO_CHECKPOINT = 63;
+  // SDXL only on a hand-credited (detected: false) row, which cannot rescue it.
+  const ON_KREA_SDXL_CREDITED = 64;
+
+  beforeAll(async () => {
+    await db.exec(`
+      DO $$ BEGIN
+        CREATE TYPE "CollectionItemStatus" AS ENUM ('ACCEPTED', 'REVIEW', 'REJECTED');
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "createdAt" timestamp NOT NULL DEFAULT now();
+      ALTER TABLE "CollectionItem" ADD COLUMN IF NOT EXISTS "reviewedById" int;
+      CREATE TABLE "Model" (id int PRIMARY KEY, type text);
+      CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, "baseModel" text);
+      CREATE TABLE "ImageResourceNew" ("imageId" int, "modelVersionId" int, detected boolean);
+      INSERT INTO "Model" VALUES (1, 'LORA'), (2, 'Checkpoint'), (3, 'Checkpoint');
+      INSERT INTO "ModelVersion" VALUES
+        (${PONY_LORA}, 1, 'Pony'),
+        (${KREA_CHECKPOINT}, 2, 'Krea 2 Turbo'),
+        (${SDXL_CHECKPOINT}, 3, 'SDXL 1.0');
+      INSERT INTO "Image" (id, "userId", url, "nsfwLevel") VALUES
+        (${ON_KREA}, ${CLEAN}, 'img-${ON_KREA}', 1),
+        (${ON_SDXL}, ${CLEAN}, 'img-${ON_SDXL}', 1),
+        (${NO_CHECKPOINT}, ${CLEAN}, 'img-${NO_CHECKPOINT}', 1),
+        (${ON_KREA_SDXL_CREDITED}, ${CLEAN}, 'img-${ON_KREA_SDXL_CREDITED}', 1);
+      INSERT INTO "ImageResourceNew" VALUES
+        (${ON_KREA}, ${PONY_LORA}, true), (${ON_KREA}, ${KREA_CHECKPOINT}, true),
+        (${ON_SDXL}, ${PONY_LORA}, true), (${ON_SDXL}, ${SDXL_CHECKPOINT}, true),
+        (${NO_CHECKPOINT}, ${PONY_LORA}, true),
+        (${ON_KREA_SDXL_CREDITED}, ${PONY_LORA}, true),
+        (${ON_KREA_SDXL_CREDITED}, ${KREA_CHECKPOINT}, true),
+        (${ON_KREA_SDXL_CREDITED}, ${SDXL_CHECKPOINT}, false);
+      INSERT INTO "Challenge" VALUES
+        (${JUDGE_COLLECTION}, '{${PONY_LORA}}'), (${PROMOTE_COLLECTION}, '{${PONY_LORA}}');
+      INSERT INTO "CollectionItem" ("collectionId", "imageId", "tagId", note, status)
+        SELECT ${JUDGE_COLLECTION}, id, ${JUDGED_TAG}, '${note}', 'ACCEPTED' FROM "Image"
+        WHERE id IN (${ON_KREA}, ${ON_SDXL}, ${NO_CHECKPOINT}, ${ON_KREA_SDXL_CREDITED});
+      INSERT INTO "CollectionItem" ("collectionId", "imageId", status)
+        SELECT ${PROMOTE_COLLECTION}, id, 'REVIEW' FROM "Image"
+        WHERE id IN (${ON_KREA}, ${ON_SDXL}, ${NO_CHECKPOINT}, ${ON_KREA_SDXL_CREDITED});
+    `);
+  });
+
+  it('cannot place, even though it was accepted', async () => {
+    const entries = await getJudgedEntries(
+      JUDGE_COLLECTION,
+      { judgedTagId: JUDGED_TAG, finalReviewAmount: 10 } as never,
+      undefined,
+      ChallengeSource.User,
+      undefined,
+      { limit: Infinity, perUserBest: false }
+    );
+
+    expect(entries.map((e) => e.imageId).sort()).toEqual([ON_SDXL, NO_CHECKPOINT]);
+  });
+
+  // Deliberate: an entry still in REVIEW may have paid an entry fee under the old rule, and fees are
+  // not refunded. Promotion must not reject it; getJudgedEntries keeps it from placing. Do not add
+  // the compatibility check back to promotion without a refund path.
+  it('is still accepted at promotion, so a fee paid before the rule is not forfeited', async () => {
+    vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(
+      (async (strings: TemplateStringsArray, ...values: unknown[]) =>
+        (await runOnPglite(strings, ...values)).length) as never
+    );
+    const { promoteChallengeEntries } = await vi.importActual<typeof ChallengeRewards>(
+      '~/server/games/daily-challenge/challenge-rewards'
+    );
+
+    await promoteChallengeEntries({
+      collectionId: PROMOTE_COLLECTION,
+      allowedNsfwLevel: 1,
+      modelVersionIds: [PONY_LORA],
+      challengeDate: new Date(0),
+      reviewerId: 1,
+    });
+
+    const { rows } = await db.query<{ imageId: number; status: string }>(
+      `SELECT "imageId", status FROM "CollectionItem" WHERE "collectionId" = $1 ORDER BY "imageId"`,
+      [PROMOTE_COLLECTION]
+    );
+    expect(rows).toEqual([
+      { imageId: ON_KREA, status: 'ACCEPTED' },
+      { imageId: ON_SDXL, status: 'ACCEPTED' },
+      { imageId: NO_CHECKPOINT, status: 'ACCEPTED' },
+      { imageId: ON_KREA_SDXL_CREDITED, status: 'ACCEPTED' },
+    ]);
   });
 });

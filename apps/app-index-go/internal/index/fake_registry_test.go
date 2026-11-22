@@ -30,12 +30,23 @@ const testSchema = "urn:schema:apps.civitai.com:app@v1"
 type fakeRegistry struct {
 	srv   *httptest.Server
 	conns chan *fakeConn
+	// schemas counts every subscribe request by its schema, refused ones included.
+	mu      sync.Mutex
+	schemas map[string]int
+}
+
+// subscribed is how many subscribe requests named schema.
+func (r *fakeRegistry) subscribed(schema string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.schemas[schema]
 }
 
 // fakeConn's writes run on its handler goroutine (ops), never on the test's: a ResponseWriter
 // must not be used once its handler returned, nor from two goroutines at once.
 type fakeConn struct {
 	cursor  string
+	auth    string // the Authorization header the subscription carried
 	ops     chan func(w http.ResponseWriter)
 	started bool
 	done    chan struct{}
@@ -56,14 +67,23 @@ func (c *fakeConn) do(op func(w http.ResponseWriter)) {
 
 func newFakeRegistry(t *testing.T) *fakeRegistry {
 	t.Helper()
-	r := &fakeRegistry{conns: make(chan *fakeConn)}
+	return newFakeRegistryFor(t, testSchema)
+}
+
+// newFakeRegistryFor serves subscriptions to schema only; any other is refused with bad_request.
+func newFakeRegistryFor(t *testing.T, schema string) *fakeRegistry {
+	t.Helper()
+	r := &fakeRegistry{conns: make(chan *fakeConn), schemas: map[string]int{}}
 	r.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Path != "/subscribe" || req.URL.Query().Get("schema") != testSchema {
+		r.mu.Lock()
+		r.schemas[req.URL.Query().Get("schema")]++
+		r.mu.Unlock()
+		if req.URL.Path != "/subscribe" || req.URL.Query().Get("schema") != schema {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(w, `{"error":"bad_request","message":"unexpected request"}`)
 			return
 		}
-		c := &fakeConn{cursor: req.URL.Query().Get("cursor"),
+		c := &fakeConn{cursor: req.URL.Query().Get("cursor"), auth: req.Header.Get("Authorization"),
 			ops: make(chan func(http.ResponseWriter)), done: make(chan struct{}), gone: req.Context().Done()}
 		select {
 		case r.conns <- c:
@@ -198,6 +218,8 @@ type harness struct {
 	promReg *prometheus.Registry
 	api     *httptest.Server
 	backoff Backoff
+	// tokens, when set before start, is the consumer's token source.
+	tokens TokenSource
 
 	mu     sync.Mutex
 	delays []time.Duration
@@ -228,8 +250,9 @@ func (h *harness) start(t *testing.T, layout int) {
 		Schema:  testSchema,
 		Layout:  layout,
 		Log:     slog.New(slog.DiscardHandler),
-		Metrics: h.m,
+		Metrics: h.m.Stream,
 		Backoff: h.backoff,
+		Tokens:  h.tokens,
 		Sleep: func(ctx context.Context, d time.Duration) error {
 			h.mu.Lock()
 			h.delays = append(h.delays, d)

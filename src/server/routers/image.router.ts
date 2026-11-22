@@ -1,3 +1,4 @@
+import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import {
@@ -114,7 +115,12 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .query(({ input, ctx }) =>
-      getImageDetail({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator })
+      getImageDetail({
+        ...input,
+        userId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+        ownerSeesHeld: isSessionOrFullUserKey(ctx),
+      })
     ),
   /**
    * @ported-to-go feed-go · status: shadow · see ports/manifest.json (id: image.getInfinite).
@@ -169,8 +175,9 @@ export const imageRouter = router({
     .query(getEntitiesCoverImageHandler),
   get404Images: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
-    .use(edgeCacheIt({ ttl: CacheTTL.month }))
-    .use(cacheIt({ ttl: CacheTTL.week }))
+    // A moderation flag on an entry reaches this shared, signed-out list only when these expire.
+    .use(edgeCacheIt({ ttl: CacheTTL.day }))
+    .use(cacheIt({ key: 'image:get404Images:v3', ttl: CacheTTL.day }))
     .query(() => get404Images()),
   reportCsamImages: moderatorProcedure
     .input(reportCsamImagesSchema)

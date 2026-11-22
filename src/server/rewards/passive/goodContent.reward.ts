@@ -1,5 +1,7 @@
 import type { ReactionEntityType } from '~/server/schema/reaction.schema';
 import { reactableEntities } from '~/server/schema/reaction.schema';
+import type { PrismaClient } from '@prisma/client';
+import { chunk, groupBy } from 'lodash-es';
 import { createBuzzEvent } from '../base.reward';
 
 const CUTOFF_DAYS = 30;
@@ -50,48 +52,26 @@ export const goodContentReward = createBuzzEvent({
       return false;
     }
   },
-  // We already check for qualified entities in the getKey function
-  // Leaving this as an example preprocessor
-  /*
+  // Pays only for a reaction still present when the job runs (`process-rewards` holds every
+  // event for its settle window first). Any reaction value counts, so swapping one for another
+  // still pays. A failed read throws, leaving the events pending for the job to retry.
   preprocess: async ({ db, toProcess }) => {
-    // Break into sets by entity type
-    const sets = toProcess.reduce((sets, x) => {
-      const entityType = x.type.split(':')[1];
-      if (!sets[entityType]) sets[entityType] = [x];
-      else sets[entityType].push(x);
-
-      return sets;
-    }, {} as Record<ReactionEntityType, BuzzEventLog[]>);
-
-    // For each set, check if the entity is still qualified
-    for (const [entityType, events] of Object.entries(sets)) {
-      let qualifiedIds: number[] = [];
-
-      // Get all qualified ids
-      const table = typeToTable[entityType as ReactionEntityType];
-      if (table) {
-        const ids = new Set(events.map((x) => x.forId));
-        qualifiedIds = (
-          await db.$queryRawUnsafe<{ id: number }[]>(`
-          SELECT id
-          FROM "${table}"
-          WHERE "createdAt" >= NOW() - INTERVAL '${CUTOFF_DAYS} days'
-            AND id IN (${[...ids].join(',')})
-        `)
-        ).map((x) => x.id);
+    const byEntityType = groupBy(toProcess, (event) => event.type.split(':')[1]);
+    for (const [entityType, events] of Object.entries(byEntityType)) {
+      const present = new Set<string>();
+      for (const batch of chunk(events, 1000)) {
+        const entityIds = [...new Set(batch.map((event) => Number(event.forId)))];
+        const userIds = [...new Set(batch.map((event) => Number(event.byUserId)))];
+        const rows = await findReactions(db, entityType, entityIds, userIds);
+        for (const row of rows) present.add(`${row.entityId}:${row.userId}`);
       }
-
-      // Mark unqualified events
       for (const event of events) {
-        const isQualified = qualifiedIds.length && qualifiedIds.includes(event.forId);
-        if (!isQualified) {
-          event.status = 'unqualified';
-          event.awardAmount = 0;
-        }
+        if (present.has(`${Number(event.forId)}:${Number(event.byUserId)}`)) continue;
+        event.status = 'unqualified';
+        event.awardAmount = 0;
       }
     }
   },
-  */
 });
 
 const typeToTable: Partial<Record<ReactionEntityType, string>> = {
@@ -99,6 +79,41 @@ const typeToTable: Partial<Record<ReactionEntityType, string>> = {
   image: 'Image',
   article: 'Article',
 };
+
+// primary: the job's client. A replica lagging past the settle window would miss a reaction still
+// present and drop its reward.
+async function findReactions(
+  db: PrismaClient,
+  entityType: string,
+  entityIds: number[],
+  userIds: number[]
+): Promise<{ entityId: number; userId: number }[]> {
+  switch (entityType as ReactionEntityType) {
+    case 'image':
+      return (
+        await db.imageReaction.findMany({
+          where: { imageId: { in: entityIds }, userId: { in: userIds } },
+          select: { imageId: true, userId: true },
+        })
+      ).map((row) => ({ entityId: row.imageId, userId: row.userId }));
+    case 'article':
+      return (
+        await db.articleReaction.findMany({
+          where: { articleId: { in: entityIds }, userId: { in: userIds } },
+          select: { articleId: true, userId: true },
+        })
+      ).map((row) => ({ entityId: row.articleId, userId: row.userId }));
+    case 'comment':
+      return (
+        await db.commentV3Reaction.findMany({
+          where: { commentId: { in: entityIds }, userId: { in: userIds } },
+          select: { commentId: true, userId: true },
+        })
+      ).map((row) => ({ entityId: row.commentId, userId: row.userId }));
+    default:
+      return [];
+  }
+}
 
 type ReactionEvent = {
   type: ReactionEntityType;

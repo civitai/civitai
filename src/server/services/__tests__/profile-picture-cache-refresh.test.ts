@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Caches from '~/server/redis/caches';
 import type * as ReDerive from '~/server/services/blocks/app-listing-rating-rederive.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import * as refreshAlert from '~/server/services/profile-picture-refresh-alert';
@@ -149,20 +148,6 @@ beforeEach(() => {
   dbMock.dbWrite.image.update.mockResolvedValue({} as never);
 });
 
-describe('an avatar change', () => {
-  it("busts the event engine's copy of the user's picture too", async () => {
-    const { deleteUserProfilePictureCache } = await import('../user.service');
-
-    await deleteUserProfilePictureCache(AVATAR_OWNER);
-
-    expect(refreshPicture).toHaveBeenCalledWith(AVATAR_OWNER);
-    expect(redisMock.redis.hSet).toHaveBeenCalledWith(`user:profilePicture:v3:${AVATAR_OWNER}`, {
-      debounce: '1',
-      cachedAt: expect.any(String),
-    });
-  });
-});
-
 describe('a bulk picture refresh', () => {
   it("clears a User.image naming a held picture, then refreshes those users' basic-user cache and search documents", async () => {
     const { refreshProfilePicturesForUsers } = await import('../user.service');
@@ -176,13 +161,6 @@ describe('a bulk picture refresh', () => {
     await refreshProfilePicturesForUsers([3, 4]);
     expect(refreshBasic).not.toHaveBeenCalled();
     expect(queueUserUpdate).not.toHaveBeenCalled();
-
-    // The event engine's copy of each picture is busted whether or not it is held.
-    expect(redisMock.redis.hSet).toHaveBeenCalledWith('user:profilePicture:v3:3', {
-      debounce: '1',
-      cachedAt: expect.any(String),
-    });
-    expect(redisMock.redis.expire).toHaveBeenCalledWith('user:profilePicture:v3:4', 10);
 
     clearImages.mockResolvedValueOnce([4]);
     await refreshProfilePicturesForUsers([3, 4]);
@@ -371,11 +349,16 @@ describe('a moderator unblock', () => {
   });
 
   it('refreshes the cached profile picture after the image is set back to Scanned', async () => {
+    // The unblock UPDATE hands back the row it restored.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('AS "keptBlocked"')
+        ? [{ id: AVATAR, keptBlocked: false }]
+        : []) as never);
     await handleUnblockImages({ ids: [AVATAR], moderatorId: MOD } as never);
 
     expect(refreshPicture).toHaveBeenCalledWith([AVATAR_OWNER]);
     const unblock = dbMock.dbWrite.$queryRaw.mock.calls.findIndex(([strings]) =>
-      (strings as TemplateStringsArray).join('?').includes(`"ingestion" = 'Scanned'`)
+      (strings as TemplateStringsArray).join('?').includes('AS "keptBlocked"')
     );
     expect(unblock).toBeGreaterThanOrEqual(0);
     expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[unblock]).toBeLessThan(

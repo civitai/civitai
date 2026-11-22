@@ -461,7 +461,9 @@ describe('the public Source row is for public repositories only', () => {
   });
 
   it('the listing read returns the row only for a public repository', async () => {
+    // The block the run is filed under: the read is the batched one, keyed by block id.
     const row = (visibility: string) => ({
+      id: 'apb_01TEST',
       repository: SOURCE.repository,
       repositoryId: SOURCE.repositoryId,
       repositoryOwnerId: SOURCE.repositoryOwnerId,

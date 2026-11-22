@@ -9,7 +9,10 @@ import {
   fetchPreviewFrame,
   PreviewGoneError,
 } from '~/components/Apps/AppAssistant/previewFrame';
-import type { SandboxTunnelStatus } from '~/components/Apps/AppAssistant/previewTunnelStatus';
+import type {
+  SandboxDevServerStatus,
+  SandboxTunnelStatus,
+} from '~/components/Apps/AppAssistant/previewTunnelStatus';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 
 function EmptyState({ children }: { children: React.ReactNode }) {
@@ -86,7 +89,9 @@ export function AppAssistantPreview({
   restart,
   liveCheckMs = PREVIEW_LIVE_CHECK_MS,
   tunnelStatus,
+  devServerStatus,
   devServerUp = 0,
+  onDirectFrame,
 }: {
   canPreview: boolean;
   session: PreviewSession | null;
@@ -99,8 +104,19 @@ export function AppAssistantPreview({
    * would not say. Given, a check made when the tab comes back into view asks it too.
    */
   tunnelStatus?: () => Promise<SandboxTunnelStatus | null>;
+  /**
+   * Asks the open app's sandbox whether its dev server is up (`fetchSandboxDevServerStatus`); `null`
+   * when it would not say. Asked in place of `tunnelStatus` for a direct preview (the frame's
+   * `transport: 'direct'`), which has no tunnel: its sandbox side is the dev server itself.
+   */
+  devServerStatus?: () => Promise<SandboxDevServerStatus | null>;
   /** Counts the times the open app's dev server came back up (`devServerUpOf`). */
   devServerUp?: number;
+  /**
+   * The frame fetched for `session` is a direct preview, while the session still names a host: a
+   * direct preview's session host is a bearer credential, which the caller must not keep.
+   */
+  onDirectFrame?: (session: PreviewSession) => void;
 }) {
   const frame = useQuery({
     // A new start (the page's own tunnel id, or the runner's next start) fetches a fresh frame.
@@ -112,6 +128,12 @@ export function AppAssistantPreview({
     gcTime: 0,
     retry: false,
   });
+  const direct = !!frame.data && 'transport' in frame.data && frame.data.transport === 'direct';
+  const onDirectFrameRef = useRef(onDirectFrame);
+  onDirectFrameRef.current = onDirectFrame;
+  useEffect(() => {
+    if (direct && session?.host) onDirectFrameRef.current?.(session);
+  }, [direct, session]);
   // The frame reached its host's terminal fallback (never ready, its token failed, a fatal error).
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [frame.data]);
@@ -142,14 +164,16 @@ export function AppAssistantPreview({
   }, []);
   // On the server runner, while the frame is up: whether the preview is still live. Down when civitai
   // has no live tunnel for it (`PreviewGoneError`), or when the app's sandbox says its tunnel is not
-  // running, or runs to another host than civitai's; a sandbox's "down" stands for that preview, as
-  // civitai lists a tunnel until its idle expiry. civitai is asked every `liveCheckMs` and when the
-  // tab comes back into view; the sandbox only on the occasions above, because every request to it
-  // counts as activity and a visible tab nobody works in must still let the app pause. Any other
-  // failure, and a sandbox that does not answer (`null`: a timeout, an error status), leaves the
-  // preview shown: an unreachable sandbox says nothing about the tunnel, and showing a live preview
-  // as stopped would be the worse mistake. Each preview (`view`) is checked afresh, so an old answer
-  // never ends a new one.
+  // running, or runs to another host than civitai's. A direct preview has no tunnel: its sandbox is
+  // asked whether its dev server runs instead, and there is no host to compare (the session host is
+  // civitai's alone). The check is sent as `check=1`, so it never counts as preview activity. A
+  // sandbox's "down" stands for that preview, as civitai lists a session until its idle expiry.
+  // civitai is asked every `liveCheckMs` and when the tab comes back into view; the sandbox only on
+  // the occasions above, because every request to it counts as activity and a visible tab nobody
+  // works in must still let the app pause. Any other failure, and a sandbox that does not answer
+  // (`null`: a timeout, an error status), leaves the preview shown: an unreachable sandbox says
+  // nothing about the preview, and showing a live preview as stopped would be the worse mistake.
+  // Each preview (`view`) is checked afresh, so an old answer never ends a new one.
   const live = useQuery({
     queryKey: [
       'app-assistant',
@@ -164,10 +188,20 @@ export function AppAssistantPreview({
       if (sandboxDownView.current === view) return false;
       let shown;
       try {
-        shown = await fetchPreviewFrame((session as PreviewSession).blockId);
+        shown = await fetchPreviewFrame((session as PreviewSession).blockId, undefined, {
+          check: true,
+        });
       } catch (error) {
         if (error instanceof PreviewGoneError) return false;
         throw error;
+      }
+      if ('transport' in shown && shown.transport === 'direct') {
+        if (!devServerStatus || !askSandbox.current) return true;
+        askSandbox.current = false;
+        const devServer = await devServerStatus().catch(() => null);
+        if (!devServer || devServer.running) return true;
+        sandboxDownView.current = view;
+        return false;
       }
       if (!tunnelStatus || !askSandbox.current) return true;
       askSandbox.current = false;
@@ -187,6 +221,18 @@ export function AppAssistantPreview({
     gcTime: 0,
     retry: false,
   });
+  // A direct preview's sandbox side is its dev server, which the assistant restarts while it builds:
+  // one that came back up (`devServerUp`) ends a "down" the sandbox gave meanwhile, so the preview
+  // shows again with no click. A tunnel's "down" is about its tunnel and still stands.
+  const seenUpDirect = useRef(devServerUp);
+  useEffect(() => {
+    const up = devServerUp > seenUpDirect.current;
+    seenUpDirect.current = devServerUp;
+    if (!up || !sandboxDownView.current) return;
+    if (!direct) return;
+    sandboxDownView.current = null;
+    void live.refetch();
+  }, [devServerUp, direct, live]);
   const gone = !!restart && live.data === false;
 
   if (!canPreview)
@@ -251,8 +297,10 @@ export function AppAssistantPreview({
         ) : (
           <DevTunnelBlockHost
             onFallbackChange={(reason) => setFailed(!!reason)}
-            // A fresh entry URL is a fresh mount, so the host re-runs its handshake.
-            key={frame.data.iframeSrc}
+            // Each fetch of the frame is a fresh mount, so the host re-runs its handshake. Keyed on
+            // the fetch, not only the URL: a direct preview's URL is the same for its whole session,
+            // and a tunnel's entry URL repeats for fetches within the same second.
+            key={`${frame.data.iframeSrc}\n${frame.dataUpdatedAt}`}
             {...frame.data}
             fit="fill"
             // The app reloaded itself (Vite live reload): the Reload button's own path. Not

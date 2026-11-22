@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { PLAYER_STATS_EVENT, QUEUE_DROP_EVENT, queueTopic, type QueueDrop } from '$lib/live-events';
+import { logToAxiom } from '../axiom';
 import { getDailyStatus } from '../daily/daily.service';
 import { getPlayerStatus, type PlayerStatus } from '../player-status';
 import { goldForRank } from '../progression/config';
@@ -105,6 +106,11 @@ export async function announceMoves(db: Kysely<DB>, before: ItemStage[]) {
       );
     }
   } catch (error) {
-    console.error('knights: could not announce moved items', { error });
+    void logToAxiom({
+      type: 'error',
+      name: 'knights-live-announce-failed',
+      message: 'Moved items could not be announced',
+      details: { error: error instanceof Error ? error.message : String(error) },
+    });
   }
 }

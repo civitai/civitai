@@ -653,6 +653,8 @@ func TestCacheMissCounter(t *testing.T) {
 		"model-data/computed": 0, "model-data/error": 0, "model-tags/computed": 0, "model-tags/error": 0,
 		"official-models/computed": 0, "official-models/error": 0,
 		"metrics/computed": 0, "metrics/error": 0,
+		"image-tags/computed": 0, "image-tags/error": 0,
+		"user-follows/computed": 0, "user-follows/error": 0,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("series %v, want %v", got, want)
@@ -714,8 +716,10 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	if checked != 19 {
-		t.Fatalf("checked %d per-endpoint families, want 19 (a family was renamed or lost)", checked)
+	// 21: feed_go_shadow_compare_viewer_total (model-associated's per-viewer-class results) and
+	// feed_go_devalue_write_total included.
+	if checked != 21 {
+		t.Fatalf("checked %d per-endpoint families, want 21 (a family was renamed or lost)", checked)
 	}
 }
 

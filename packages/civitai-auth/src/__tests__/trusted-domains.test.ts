@@ -76,6 +76,38 @@ describe('createTrustedDomainRegistry', () => {
     });
   });
 
+  describe('matchedEntry (which entry admitted a first-party origin)', () => {
+    const reg = createTrustedDomainRegistry({
+      load: async () => rows(['civitai.com', false], ['civitaic.com', true], ['localhost', false]),
+      alwaysTrustHosts: ['127.0.0.1'],
+    });
+
+    it('names the exact row for an exact host', async () => {
+      expect(await reg.matchedEntry('https://civitai.com')).toBe('civitai.com');
+    });
+
+    it('names the parent row, not the request host, for an includeSubdomains match', async () => {
+      expect(await reg.matchedEntry('https://pr-2468.civitaic.com')).toBe('civitaic.com');
+    });
+
+    it('refuses http on a non-loopback host that a row would otherwise admit', async () => {
+      expect(await reg.matchedEntry('http://civitai.com')).toBeNull();
+      expect(await reg.matchedEntry('http://pr-1.civitaic.com')).toBeNull();
+    });
+
+    it("names a loopback row over http, and 'always' for an always-trust host", async () => {
+      expect(await reg.matchedEntry('http://localhost:5173')).toBe('localhost');
+      expect(await reg.matchedEntry('http://127.0.0.1:3000')).toBe('always');
+    });
+
+    it('returns null for an unknown host, a non-subdomain row, or an unparseable origin', async () => {
+      expect(await reg.matchedEntry('https://evil.com')).toBeNull();
+      expect(await reg.matchedEntry('https://www.civitai.com')).toBeNull(); // civitai.com row is exact-only
+      expect(await reg.matchedEntry('https://notcivitaic.com')).toBeNull();
+      expect(await reg.matchedEntry('not a url')).toBeNull();
+    });
+  });
+
   describe('ownedOriginCheck (redirect guard — registry ∪ owned-eTLD+1 backstop)', () => {
     it('allows registered hosts, owned-domain subdomains via the backstop, and dev loopback', async () => {
       const reg = createTrustedDomainRegistry({

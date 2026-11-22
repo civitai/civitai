@@ -6,14 +6,17 @@
  * it (`viewerNotRoutable`). It answers slugs; users only ever see cards the database hydrated for
  * those slugs through the store's own gates. Sub-listing cards are not in the index: with them on
  * the page, an index answer adds the matching ones from the database page (`withSubListingCards`).
- * Any index failure serves the database path.
+ * Any index failure serves the database path, and a run of them opens a per-process breaker
+ * (`IndexBreaker`) that keeps searches off the index for a cooldown.
  */
 import * as z from 'zod';
 import { env } from '~/env/server';
 import {
   APP_INDEX_COMPARED_FIELDS,
+  recordAppIndexBreakerTransition,
   recordAppIndexSearch,
   recordAppIndexSearchFieldDiffs,
+  type AppIndexBreakerState,
   type AppIndexComparedField,
   type AppIndexSearchReason,
   type AppIndexSearchSource,
@@ -80,11 +83,150 @@ const DB_READS: StoreGridReads = {
     (await listingService()).listStoreListingsBySlugs(slugs, input, opts),
 };
 
-class IndexUnavailable extends Error {
-  constructor(readonly reason: AppIndexSearchReason) {
+/** Why an app index call gave no usable answer: the outcomes every caller of it counts. */
+export type AppIndexFetchFailure = 'timeout' | 'not_ready' | 'error' | 'bad_response';
+
+/** Thrown by {@link fetchAppIndexJson}, naming why the call gave no usable answer. */
+export class AppIndexUnavailable extends Error {
+  constructor(readonly reason: AppIndexFetchFailure) {
     super(reason);
   }
 }
+
+/** Whether `err` is a fetch or body read cut off by its timeout (or aborted). */
+export function isTimeout(err: unknown): boolean {
+  return err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
+}
+
+/**
+ * One app index call (`apps/app-index-go`), classified: the body parsed by `schema`, or
+ * {@link AppIndexUnavailable} naming why not (a timeout or abort, a 503 while the index is not
+ * ready, any other failure or non-2xx status, a 2xx body that does not parse). `fetch` is the
+ * caller's (`outboundFetch` in production).
+ */
+export async function fetchAppIndexJson<T>(
+  fetch: (
+    url: string,
+    init: { headers: Record<string, string>; timeoutMs: number }
+  ) => Promise<Response>,
+  url: string,
+  init: { headers: Record<string, string>; timeoutMs: number },
+  schema: z.ZodType<T>
+): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch (err) {
+    throw new AppIndexUnavailable(isTimeout(err) ? 'timeout' : 'error');
+  }
+  if (res.status === 503) throw new AppIndexUnavailable('not_ready');
+  if (!res.ok) throw new AppIndexUnavailable('error');
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (err) {
+    throw new AppIndexUnavailable(isTimeout(err) ? 'timeout' : 'bad_response');
+  }
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) throw new AppIndexUnavailable('bad_response');
+  return parsed.data;
+}
+
+/**
+ * A per-process circuit breaker around the index call.
+ *
+ * Closed, every routable search calls the index. After `threshold` consecutive index failures
+ * (timeouts, 503s, other errors, bad bodies) it opens: searches serve the database path without
+ * calling the index (`breaker_open`). Once `cooldownMs` has passed since it opened, the next
+ * search is a single probe (half-open) while the others stay on the database path; the probe's
+ * success closes the breaker, its failure re-opens it for another cooldown. Any index success
+ * resets the count. Only the index call's own outcome counts: a database read failing after the
+ * index answered (`db_error`) is a success for the breaker.
+ *
+ * Consecutive failures, not an error rate over a window: one success proves the index is
+ * serving, and the count needs no window sized to a traffic level that differs per process
+ * and per rollout step.
+ */
+export class IndexBreaker {
+  private state: AppIndexBreakerState = 'closed';
+  private failures = 0;
+  /** When the breaker last opened, or when the in-flight probe started (half-open). */
+  private since = 0;
+
+  constructor(
+    private readonly config: () => { threshold: number; cooldownMs: number } = () => ({
+      threshold: env.APP_INDEX_BREAKER_FAILURE_THRESHOLD,
+      cooldownMs: env.APP_INDEX_BREAKER_COOLDOWN_MS,
+    }),
+    private readonly now: () => number = () => Date.now(),
+    /**
+     * Reports each state change. The default is the store search's gauge, counter and log line;
+     * another caller of the index (the listings read-model shadow) passes its own.
+     */
+    private readonly report: (
+      from: AppIndexBreakerState,
+      to: AppIndexBreakerState,
+      why: string
+    ) => void = (from, to, why) => {
+      recordAppIndexBreakerTransition(to);
+      // No query text: the breaker never sees one.
+      console.info(`app-index-search: breaker ${from}->${to} ${why}`);
+    }
+  ) {}
+
+  /**
+   * Whether `allow()` would refuse right now, without changing state or taking the probe: open and
+   * still inside its cooldown. For a caller that has work to do before its first index call and
+   * should skip that work while the breaker is open.
+   */
+  refusing(): boolean {
+    return this.state === 'open' && this.now() - this.since < this.config().cooldownMs;
+  }
+
+  /** Whether this search may call the index. Admits the half-open probe. */
+  allow(): boolean {
+    if (this.state === 'closed') return true;
+    // Open: the probe after the cooldown. Half-open: another probe only if the one in flight has
+    // outlived a whole cooldown without reporting, which the index call's deadline should prevent.
+    if (this.now() - this.since < this.config().cooldownMs) return false;
+    this.since = this.now();
+    this.transition('half_open', 'cooldown elapsed');
+    return true;
+  }
+
+  success() {
+    this.failures = 0;
+    if (this.state === 'half_open') this.transition('closed', 'probe succeeded');
+  }
+
+  failure(reason: string) {
+    if (this.state === 'half_open') {
+      this.open(`probe failed reason=${reason}`);
+      return;
+    }
+    if (this.state === 'open') return;
+    this.failures++;
+    const { threshold } = this.config();
+    if (this.failures >= threshold) {
+      this.open(`consecutive_failures=${this.failures} reason=${reason}`);
+    }
+  }
+
+  private open(why: string) {
+    this.since = this.now();
+    this.failures = 0;
+    this.transition('open', why);
+  }
+
+  private transition(to: AppIndexBreakerState, why: string) {
+    const from = this.state;
+    this.state = to;
+    this.report(from, to, why);
+  }
+}
+
+/** This process's breaker. */
+const indexBreaker = new IndexBreaker();
 
 /**
  * The `/apps` store grid page: through the index when `indexSearch` (the viewer's flag) is on and
@@ -94,7 +236,8 @@ export async function listStoreGrid(
   input: ListAppListingsInput,
   opts: ListAvailableListingsOpts,
   { indexSearch }: { indexSearch: boolean },
-  reads: StoreGridReads = DB_READS
+  reads: StoreGridReads = DB_READS,
+  breaker: IndexBreaker = indexBreaker
 ): Promise<StoreGridPage> {
   if (!indexSearch) return reads.listAvailableListings(input, opts);
   const indexSearchRoutable = viewerNotRoutable(opts) === null;
@@ -102,7 +245,7 @@ export async function listStoreGrid(
   const page =
     query === ''
       ? await reads.listAvailableListings(input, opts)
-      : await searchThroughIndex(input, query, opts, reads);
+      : await searchThroughIndex(input, query, opts, reads, breaker);
   return { ...page, indexSearchRoutable };
 }
 
@@ -175,10 +318,15 @@ async function searchThroughIndex(
   input: ListAppListingsInput,
   query: string,
   opts: ListAvailableListingsOpts,
-  reads: StoreGridReads
+  reads: StoreGridReads,
+  breaker: IndexBreaker
 ): Promise<StoreGridPage> {
   const skip = notRoutable(input, opts);
   if (skip) return fallBack(reads.listAvailableListings(input, opts), query, skip);
+  // While open the request is exactly the unsampled database path: no index call, one read.
+  if (!breaker.allow()) {
+    return fallBack(reads.listAvailableListings(input, opts), query, 'breaker_open');
+  }
 
   // The latency shape. A sampled request (APP_INDEX_SEARCH_COMPARE_SAMPLE) reads the database page
   // at once, beside the index call: it is the comparison's other side, and, if the index fails,
@@ -203,14 +351,18 @@ async function searchThroughIndex(
   try {
     indexed = await fetchIndexResults(query, input, indexKind(input, opts));
   } catch (err) {
-    return fallBack(dbPage(), query, err instanceof IndexUnavailable ? err.reason : 'error');
+    const reason = err instanceof AppIndexUnavailable ? err.reason : 'error';
+    breaker.failure(reason);
+    return fallBack(dbPage(), query, reason);
   }
+  breaker.success();
+  // From here on the index has answered: a failure is the database's (`db_error`).
   const slugs = indexed.map((r) => r.slug);
   let cards: ListingCard[];
   try {
     cards = await reads.listStoreListingsBySlugs(slugs, input, opts);
   } catch {
-    return fallBack(dbPage(), query, 'error');
+    return fallBack(dbPage(), query, 'db_error');
   }
   let items: StoreGridItem[] = cards;
   if (early && withSubListings) {
@@ -221,7 +373,7 @@ async function searchThroughIndex(
       // The database page this answer needs failed. Serving the index's apps alone would hide
       // every sub-listing card as if none matched, so the request is the database path's: one
       // fresh read of the full page, whose own failure is the request's error, as with the flag off.
-      return fallBack(reads.listAvailableListings(input, opts), query, 'error');
+      return fallBack(reads.listAvailableListings(input, opts), query, 'db_error');
     }
     items = withSubListingCards(cards, db.items, query);
   }
@@ -293,7 +445,7 @@ async function fallBack(
   return db;
 }
 
-/** The index's results, in its order. Throws IndexUnavailable naming why it could not. */
+/** The index's results, in its order. Throws AppIndexUnavailable naming why it could not. */
 async function fetchIndexResults(
   query: string,
   input: ListAppListingsInput,
@@ -303,26 +455,13 @@ async function fetchIndexResults(
   if (kind) params.set('kind', kind);
   if (input.category) params.set('category', input.category);
   const base = (env.APP_INDEX_URL as string).replace(/\/+$/, '');
-  let res: Response;
-  try {
-    res = await outboundFetch(`${base}/search?${params}`, {
-      headers: { accept: 'application/json' },
-      timeoutMs: APP_INDEX_SEARCH_TIMEOUT_MS,
-    });
-  } catch (err) {
-    throw new IndexUnavailable(isTimeout(err) ? 'timeout' : 'error');
-  }
-  if (res.status === 503) throw new IndexUnavailable('not_ready');
-  if (!res.ok) throw new IndexUnavailable('error');
-  let body: unknown;
-  try {
-    body = await res.json();
-  } catch (err) {
-    throw new IndexUnavailable(isTimeout(err) ? 'timeout' : 'bad_response');
-  }
-  const parsed = indexResponseSchema.safeParse(body);
-  if (!parsed.success) throw new IndexUnavailable('bad_response');
-  return parsed.data.results;
+  const { results } = await fetchAppIndexJson(
+    outboundFetch,
+    `${base}/search?${params}`,
+    { headers: { accept: 'application/json' }, timeoutMs: APP_INDEX_SEARCH_TIMEOUT_MS },
+    indexResponseSchema
+  );
+  return results;
 }
 
 type FieldCounts = Record<AppIndexComparedField, number>;
@@ -375,10 +514,6 @@ export function compareIndexFields(
 
 const formatCounts = (c: FieldCounts, fields: readonly AppIndexComparedField[]) =>
   fields.map((f) => `${f}:${c[f]}`).join(',');
-
-function isTimeout(err: unknown): boolean {
-  return err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
-}
 
 /**
  * The slugs of a page's listing cards that match the query (the client rule). Listing cards only,

@@ -111,8 +111,7 @@ func TestComputeInfiniteEarlyFallbacks(t *testing.T) {
 		{"a POST", mk(http.MethodPost, `{"json":{}}`, nil), "method"},
 		{"an undecodable input", mk(http.MethodGet, `not json`, nil), "input-envelope"},
 		{"a hat sort", mk(http.MethodGet, `{"json":{"hatSort":"most"}}`, nil), "infinite-hat-turf"},
-		{"a collection", mk(http.MethodGet, `{"json":{"collectionId":4}}`, nil), "input-collectionId"},
-		{"a verified crawler", mk(http.MethodGet, `{"json":{}}`, map[string]string{verifiedBotHeader: "1"}), "verified-bot"},
+		{"a hub", mk(http.MethodGet, `{"json":{"hubId":4}}`, nil), "input-hubId"},
 	}
 	for _, c := range cases {
 		_, err := s.computeInfinite(context.Background(), c.r)

@@ -1,8 +1,16 @@
 import { sql } from '@civitai/db/kysely';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
+import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
+import {
+  GRACE_PRIOR_BLOCKED_FOR_KEY,
+  GRACE_PRIOR_INGESTION_KEY,
+  GRACE_PRIOR_NEEDS_REVIEW_KEY,
+  LIFT_KEPT_ACTIVITY,
+  LIFT_WHILE_OWNER_DELETED,
+} from '@civitai/shared/account-deletion-grace';
 import { dbRead, dbWrite } from './db';
-import { dropBlockedImageDeleteQueue } from './blocked-image-queue';
-import { insertModActivityBatch, recordModActivity } from './mod-activity';
+import { dropBlockedImageDeleteQueue, restartBlockedImageDeleteClock } from './blocked-image-queue';
+import { insertModActivity, insertModActivityBatch, recordModActivity } from './mod-activity';
 import { syncSearchIndex } from './search-index';
 import { upsertTagsOnImageNew } from './tags-on-image.service';
 import {
@@ -34,8 +42,8 @@ import {
   setAsideCounts,
   setAsideState,
 } from './csam-queue-set-aside';
-import type { Kysely, Transaction } from 'kysely';
-import { queueModelsForImageChildTagChanges } from './image-models-reindex';
+import type { Kysely, RawBuilder, Transaction } from 'kysely';
+import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
 import { queueArticlesForCoverImages } from './article-cover-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
 
@@ -55,27 +63,82 @@ const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM} OR ("need
   SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = "Image".id AND s.outcome = 'Dismissed'
 )))`;
 
+/** Blocked by an automated moderation rule: it carries a rule's keys, unless that rule is a Hold rule and
+ *  never was a Block rule. A Hold rule's keys can stay on an image a moderator later removed; a rule since deleted, or edited away from Block, still counts as the blocker.
+ *  Compared as text, so a malformed `ruleId` matches no rule rather than failing. */
+const RULE_BLOCKED = sql<boolean>`(("Image"."metadata" -> 'ruleId') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM "ModerationRule" mr
+  WHERE mr.id::text = "Image"."metadata"->>'ruleId' AND mr.action <> 'Block'
+    AND NOT EXISTS (SELECT 1 FROM "ModerationRuleVersion" v WHERE v."ruleId" = mr.id AND v.action = 'Block')
+))`;
+
+/** Removed by a moderator, or under an account-deletion grace block, which a report verdict does not lift
+ *  either. Not a block by an automated moderation rule (`metadata.ruleId`): a report review is where a rule's
+ *  false positive is restored. Never NULL, so `NOT` of it is safe. */
+const REMOVED_BY_MODERATOR = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS NOT DISTINCT FROM ${BLOCKED_REASON_MODERATED} AND (NOT ${RULE_BLOCKED} OR ("metadata" -> ${GRACE_PRIOR_INGESTION_KEY}::text) IS NOT NULL))`;
+/** `isModerationBlocked` as a condition: a grace block is not one. Remove still blocks a grace-blocked image,
+ *  which strips its breadcrumbs, so a later account restore cannot put it back. */
+const MODERATION_BLOCKED = sql<boolean>`(${REMOVED_BY_MODERATOR} AND ("metadata" -> ${GRACE_PRIOR_INGESTION_KEY}::text) IS NULL)`;
+const OWNER_BANNED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "Image"."userId" AND u."bannedAt" IS NOT NULL)`;
+/** A banned owner's image, blocked for anything but CSAM: a report verdict neither restores it nor blocks it
+ *  again, whatever blocked it. The ban's own block skips rows already blocked, so a rule block can be the
+ *  only cause on record. */
+const BANNED_OWNER_BLOCKED = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS DISTINCT FROM ${BLOCKED_REASON_CSAM} AND ${OWNER_BANNED})`;
+/** What Remove leaves as it is: a banned owner's grace-blocked image still gets the real block, which
+ *  clears the breadcrumbs an account restore reads. */
+const KEPT_BY_REMOVE = sql<boolean>`(${MODERATION_BLOCKED} OR (${BANNED_OWNER_BLOCKED} AND ("metadata" -> ${GRACE_PRIOR_INGESTION_KEY}::text) IS NULL))`;
+
+/** `needsReview` for a row a moderator lifts (an unblock or an approved appeal): the review a grace
+ *  block recorded, when lifting does not settle it, else none. The main app's `reviewKeptWhenLiftedSql`. */
+const reviewKeptWhenLifted = sql<string | null>`(CASE
+  WHEN "metadata"->>${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text = ANY(${[
+  ...REVIEWS_KEPT_WHEN_LIFTED,
+]}::text[])
+  THEN "metadata"->>${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text
+END)`;
+
+/** The image's owner has deleted their account (in its grace period, or not yet purged). */
+const OWNER_DELETED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "Image"."userId" AND u."deletedAt" IS NOT NULL)`;
+
 /**
- * The three `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
- * out here for the same reason `BLOCKED_REASON_MODERATED` is: this app does not import from the
- * main app's `src/`. Canonical definitions are `PRIOR_INGESTION_KEY` / `PRIOR_BLOCKED_FOR_KEY` /
- * `PRIOR_NEEDS_REVIEW_KEY` in
- * `src/server/utils/image-removal-mode.ts`, and the drift between the two spellings is pinned by
- * `src/server/services/__tests__/account-deletion-marker-clearing.test.ts`.
+ * The grace-block breadcrumbs off `metadata`; a non-object value is left as it is.
  *
  * A block strips them: the main app's restore path un-blocks an image on the presence of the first
  * key alone, so a row marked during a grace period and then moderated would be put back by a later
  * account restore.
  */
-const ACCOUNT_DELETION_PRIOR_INGESTION_KEY = 'accountDeletionPriorIngestion';
-const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
-const ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview';
+const withoutGraceMarkers = (metadata: RawBuilder<unknown>) =>
+  sql`(CASE WHEN jsonb_typeof(${metadata}) = 'object'
+    THEN (${metadata}) - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text
+    ELSE ${metadata} END)`;
+
+// A lift (approved appeal, accept) while the owner is deleted keeps the row blocked and records the
+// lifted state for an account restore: LIFT_WHILE_OWNER_DELETED. Twin: ownerDeletedSql and the lifted*
+// fragments in src/server/common/image-visibility.ts.
+const { keeps: KEPT, records: RECORDED } = LIFT_WHILE_OWNER_DELETED;
+const LIFTED_NEEDS_REVIEW = sql<
+  string | null
+>`(CASE WHEN ${OWNER_DELETED} THEN NULL ELSE ${reviewKeptWhenLifted} END)`;
+const LIFTED_BLOCKED_FOR = sql<
+  string | null
+>`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.blockedFor}::text END)`;
+const LIFTED_INGESTION = sql<
+  'Blocked' | 'Scanned'
+>`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.ingestion} ELSE ${RECORDED.ingestion} END)::"ImageIngestionStatus"`;
+const LIFTED_NSFW_LEVEL = sql<number>`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.nsfwLevel}::int ELSE "nsfwLevel" END)`;
+const LIFT_KEPT_BLOCKED = sql<boolean>`(ingestion = ${KEPT.ingestion}::"ImageIngestionStatus")`;
+/** `metadata` for a lifted row: `stripped`, or while the owner is deleted, that recording the lift. */
+const liftedMetadata = (stripped: RawBuilder<unknown>) => sql`(CASE WHEN ${OWNER_DELETED}
+  THEN COALESCE(${stripped}, '{}'::jsonb) || jsonb_build_object(
+    ${GRACE_PRIOR_INGESTION_KEY}::text, ${RECORDED.ingestion}::text, ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text, ${RECORDED.blockedFor}::text,
+    ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLifted})
+  ELSE ${stripped} END)`;
 
 const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
   await invalidateThumbnails(imageId);
   await bustProfilePictures({ imageIds: [imageId] });
-  await queueModelsForImageChildTagChanges({ levelImageIds: [imageId] });
+  await queueDocumentsForImageMinorChanges({ levelImageIds: [imageId] });
 };
 
 // The recompute rates an image from its live tags, so one the scanner never tagged (blocked before
@@ -117,7 +180,8 @@ const rescanIfUnrated = async (imageId: number) => {
             .select(sql<number>`1`.as('one'))
             .where('entityType', '=', 'image')
             .where('entityId', '=', imageId)
-            .where('activity', '=', 'review')
+            // A lift kept blocked for a deleted owner is a moderator review too.
+            .where('activity', 'in', ['review', LIFT_KEPT_ACTIVITY])
         )
       )
     )
@@ -150,6 +214,22 @@ export class RemovedImageNotRestorableError extends Error {
   }
 }
 
+/** A verdict on a report refused for an image under the CSAM review flag: that queue decides it. */
+export class CsamReviewImageError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} is under CSAM review`);
+  }
+}
+
+/** A verdict on a report refused to restore an image a moderator already removed. */
+export class ModeratorRemovedImageError extends Error {
+  /** `unpaid`: removed because of its owner's account (a deletion grace block, or a ban), not a
+   *  ruling on the report, so closing the report pays no reporter. */
+  constructor(readonly imageId: number, readonly unpaid = false) {
+    super(`Image ${imageId} was already removed by a moderator`);
+  }
+}
+
 /** An explicit restore that left the image removed: it is lifted only through its own review. */
 export class ImageNotRestoredError extends Error {
   constructor(readonly imageId: number) {
@@ -170,11 +250,15 @@ export async function acceptImage({
   userId,
   deferAppealEmail = false,
   restoreRemoved = false,
+  keepModeratorRemoved = false,
 }: {
   imageId: number;
   removeMinorFlag?: boolean;
   userId: number;
   deferAppealEmail?: boolean;
+  /** A verdict on a report: an image a moderator removed stays removed, and this throws
+   *  `ModeratorRemovedImageError`. */
+  keepModeratorRemoved?: boolean;
   /** An explicit unblock. Review queues leave it off, so an image removed with only the review flag
    *  left cannot come back live from one; they throw `RemovedImageNotRestorableError` instead. Not even
    *  this lifts a CSAM block: it throws `ImageNotRestoredError`. */
@@ -198,19 +282,21 @@ export async function acceptImage({
 
   // remixSource: stamp remixSourceReviewed so the audit job doesn't re-flag it. COALESCE guards the usual
   // metadata=NULL — both `-` and `||` NULL-propagate, silently dropping the stamp otherwise.
-  const metadataExpr =
+  // The account-deletion breadcrumbs come off too: a lifted row is not the deletion's to put back.
+  const metadataExpr = withoutGraceMarkers(
     nr === 'remixSource'
       ? sql`(COALESCE("metadata", '{}'::jsonb) - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
-      : sql`"metadata" - 'ruleId' - 'ruleReason'`;
-
+      : sql`"metadata" - 'ruleId' - 'ruleReason'`
+  );
   // Refused in the statement itself, not off the replica read above.
   const updated = await dbWrite
     .updateTable('Image')
     .set({
-      needsReview: null,
-      blockedFor: null,
-      ingestion: 'Scanned',
-      metadata: metadataExpr,
+      needsReview: LIFTED_NEEDS_REVIEW,
+      blockedFor: LIFTED_BLOCKED_FOR,
+      nsfwLevel: LIFTED_NSFW_LEVEL,
+      ingestion: LIFTED_INGESTION,
+      metadata: liftedMetadata(metadataExpr),
       ...(nr === 'poi' ? { poi: false } : {}),
       ...(nr === 'minor'
         ? {
@@ -226,10 +312,16 @@ export async function acceptImage({
     .where('id', '=', imageId)
     .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
     .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
+    .$if(keepModeratorRemoved, (qb) =>
+      qb.where(
+        sql<boolean>`NOT (${REMOVED_BY_MODERATOR} OR ${BANNED_OWNER_BLOCKED}) AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
+      )
+    )
     // Only a minor-queue accept reads the flag back. A subquery in RETURNING reads the statement's
     // snapshot, so `wasMinor` is the value this update replaced, from the primary, not the replica.
     .returning([
       'id',
+      LIFT_KEPT_BLOCKED.as('keptBlocked'),
       sql<boolean | null>`${nr === 'minor' ? sql`"minor"` : sql`NULL`}`.as('minor'),
       sql<boolean | null>`${
         nr === 'minor'
@@ -240,10 +332,36 @@ export async function acceptImage({
     .executeTakeFirst();
   if (!updated) {
     if (restoreRemoved) throw new ImageNotRestoredError(imageId);
+    if (keepModeratorRemoved) {
+      // An image under the review flag, removed or not and dismissed or not, is the CSAM queue's.
+      const flagged = await dbWrite
+        .selectFrom('Image')
+        .select('id')
+        .where('id', '=', imageId)
+        .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
+        .executeTakeFirst();
+      if (flagged) throw new CsamReviewImageError(imageId);
+      const removed = await dbWrite
+        .selectFrom('Image')
+        .select(
+          sql<boolean>`(("metadata" -> ${GRACE_PRIOR_INGESTION_KEY}::text) IS NOT NULL OR ${OWNER_BANNED})`.as(
+            'unpaid'
+          )
+        )
+        .where('id', '=', imageId)
+        .where(
+          sql<boolean>`(${REMOVED_BY_MODERATOR} OR ${BANNED_OWNER_BLOCKED}) AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
+        )
+        .executeTakeFirst();
+      if (removed) throw new ModeratorRemovedImageError(imageId, removed.unpaid);
+    }
     throw new RemovedImageNotRestorableError(imageId);
   }
-  await dropBlockedImageDeleteQueue(imageId);
-  await resetBlockedNsfwLevel(imageId);
+  const restored = !updated.keptBlocked;
+  if (restored) {
+    await dropBlockedImageDeleteQueue(imageId);
+    await resetBlockedNsfwLevel(imageId);
+  } else await restartBlockedImageDeleteClock(imageId);
 
   const reviewTags = await reader
     .selectFrom('ImageTagForReview')
@@ -261,23 +379,30 @@ export async function acceptImage({
       }))
     );
     await dbWrite.deleteFrom('ImageTagForReview').where('imageId', '=', imageId).execute();
-  } else {
+  } else if (restored) {
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
   }
+  if (!restored) syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
   // A minor-queue accept rewrites "minor", which no trigger watches.
   if (nr === 'minor') {
     await queueArticlesForCoverImages([imageId]);
-    await queueModelsForImageChildTagChanges({ minorImageIds: [imageId] });
+    await queueDocumentsForImageMinorChanges({ minorImageIds: [imageId] });
   }
-  await rescanIfUnrated(imageId);
+  if (restored) await rescanIfUnrated(imageId);
 
   // Only a moderator removal is logged as one, so only its undoing is a restore. A scanner block
   // (`AiNotVerified` in the POI queue) has no removal event to pair with.
-  if (img.ingestion === 'Blocked' && img.blockedFor === BLOCKED_REASON_MODERATED)
+  if (restored && img.ingestion === 'Blocked' && img.blockedFor === BLOCKED_REASON_MODERATED)
     await trackImageRestore({ imageId, actorUserId: userId, db: reader });
 
-  await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
+  // A kept row must not log 'review': that is a takedown activity, which licenses retraction.
+  await recordModActivity({
+    userId,
+    entityType: 'image',
+    entityId: imageId,
+    activity: restored ? 'review' : LIFT_KEPT_ACTIVITY,
+  });
   // Every accept out of the minor queue logs exactly one of these beside `review`, so the log shows
   // which queue it came from and whether it lifted the flag.
   if (nr === 'minor')
@@ -306,6 +431,18 @@ export async function acceptImage({
   }
 }
 
+/** True when a lift left the image blocked because its owner is deleted (LIFT_WHILE_OWNER_DELETED). */
+export async function isKeptForDeletedOwner(imageId: number): Promise<boolean> {
+  const row = await dbWrite
+    .selectFrom('Image')
+    .select('id')
+    .where('id', '=', imageId)
+    .where(LIFT_KEPT_BLOCKED)
+    .where(OWNER_DELETED)
+    .executeTakeFirst();
+  return !!row;
+}
+
 /**
  * True when the image already carries this app's moderation block. A block from anywhere else (an
  * account-deletion grace block, an automated reason) is weaker and reversible, so it does not count.
@@ -317,7 +454,7 @@ export async function isModerationBlocked(imageId: number): Promise<boolean> {
     .where('id', '=', imageId)
     .where('ingestion', '=', 'Blocked')
     .where('blockedFor', '=', BLOCKED_REASON_MODERATED)
-    .where(sql<boolean>`("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NULL`)
+    .where(sql<boolean>`("metadata" -> ${GRACE_PRIOR_INGESTION_KEY}::text) IS NULL`)
     .executeTakeFirst();
   return !!row;
 }
@@ -332,6 +469,17 @@ export async function isHeldImage(imageId: number): Promise<boolean> {
   return !!row?.held;
 }
 
+/** A banned owner's image blocked for anything but CSAM, whose report closes unpaid. Read before a
+ *  block, which clears the grace breadcrumbs. */
+export async function isBannedOwnerBlocked(imageId: number) {
+  const row = await dbWrite
+    .selectFrom('Image')
+    .select(sql<boolean>`${BANNED_OWNER_BLOCKED}`.as('blocked'))
+    .where('id', '=', imageId)
+    .executeTakeFirst();
+  return !!row?.blocked;
+}
+
 export async function blockImage({
   imageId,
   userId,
@@ -342,6 +490,7 @@ export async function blockImage({
   reportIds,
   source = 'moderator.block',
   skipAppealCheck = false,
+  skipModeratorRemoved = false,
 }: {
   imageId: number;
   userId: number;
@@ -355,10 +504,17 @@ export async function blockImage({
   source?: string;
   /** The actor may confirm re-removals themselves, or this IS the confirmation. */
   skipAppealCheck?: boolean;
+  /** A verdict on a report: an image a moderator already removed is not blocked again (no second owner
+   *  notice); the result says `alreadyRemoved` and the caller only actions the report. */
+  skipModeratorRemoved?: boolean;
 }): Promise<{
   held?: HeldRemoval;
   /** `HELD_IMAGE`: the caller leaves its reports open. */
   skipped?: true;
+  /** `skipModeratorRemoved` left it as it was. */
+  alreadyRemoved?: true;
+  /** A banned owner's blocked image: the ban removed it, so closing its report pays no reporter. */
+  unpaid?: true;
 }> {
   const img = await dbRead
     .selectFrom('Image')
@@ -374,6 +530,24 @@ export async function blockImage({
     .where('id', '=', imageId)
     .executeTakeFirst();
   if (!img) return {};
+  // An image under the review flag goes on to the block below, which decides its reports as before.
+  let unpaid = false;
+  if (skipModeratorRemoved) {
+    const prior = await dbWrite
+      .selectFrom('Image')
+      .select([
+        sql<boolean>`(${KEPT_BY_REMOVE} AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK})`.as(
+          'removed'
+        ),
+        sql<boolean>`${OWNER_BANNED}`.as('ownerBanned'),
+        sql<boolean>`${BANNED_OWNER_BLOCKED}`.as('bannedOwnerBlocked'),
+      ])
+      .where('id', '=', imageId)
+      .executeTakeFirst();
+    if (prior?.removed)
+      return { alreadyRemoved: true, ...(prior.ownerBanned && { unpaid: true as const }) };
+    unpaid = !!prior?.bannedOwnerBlocked;
+  }
 
   if (!skipAppealCheck) {
     const { held } = await holdRemovals(
@@ -400,19 +574,29 @@ export async function blockImage({
         // Two things happen to `metadata` on a block, and they compose in one expression:
         //   - the account-deletion breadcrumbs come off, always. `jsonb - key` NULL-propagates, so a
         //     row whose metadata is NULL stays NULL rather than becoming `{}`.
+        //   - a moderation rule's keys come off: the removal is the moderator's now, which is what
+        //     `REMOVED_BY_MODERATOR` reads.
         //   - remixSource gets its stamp. COALESCE guards the usual metadata=NULL, because `||`
         //     NULL-propagates too and would drop the stamp.
         metadata:
           img.needsReview === 'remixSource'
-            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text) || '{"remixSourceReviewed": true}'::jsonb`
-            : sql`"metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text`,
+            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
+            : sql`"metadata" - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason'`,
       })
       .where('id', '=', imageId)
       // Already removed with only the review flag left: blocking again would only notify the uploader a
       // second time. Decided here, not off the replica read above.
       .where(NOT_FLAG_ONLY_REMAINING)
+      // Decided again in the statement, for a block that landed since the check above.
+      .$if(skipModeratorRemoved, (qb) => qb.where(sql<boolean>`NOT ${KEPT_BY_REMOVE}`))
       .returning('id')
       .executeTakeFirst();
+    // The takedown's activity row commits with the block, as in the main app's writeModeratorBlock.
+    if (updated)
+      await insertModActivity(
+        { userId, entityType: 'image', entityId: imageId, activity: 'review' },
+        tx
+      );
     // A statement of its own, after the UPDATE took the row lock: one that waited on a dismissal
     // reads the set-aside row that dismissal committed.
     const state = await tx
@@ -460,14 +644,15 @@ export async function blockImage({
           throw e;
         }
       );
-    return state?.held ? { skipped: true } : {};
+    // From the reports queue an image under the review flag, even dismissed, keeps its reports open.
+    if (state?.held || (skipModeratorRemoved && state?.underReview)) return { skipped: true };
+    return skipModeratorRemoved ? { alreadyRemoved: true } : {};
   }
   const blocked = state!;
   await keepPendingAppealFlag(imageId);
   await invalidateThumbnails(imageId, [img.parentId]);
   await bustProfilePictures({ imageIds: [imageId] });
 
-  await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
   syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
 
   // The pre-block row (read above, before the update), with the hash read under the block.
@@ -485,7 +670,8 @@ export async function blockImage({
     if (e instanceof CsamBlocklistWriteError && blocked.held) e.skipped = true;
     throw e;
   });
-  return blocked.held ? { skipped: true } : {};
+  if (blocked.held) return { skipped: true };
+  return unpaid ? { unpaid: true } : {};
 }
 
 export type DismissResult = { ok: true } | { ok: false; reason: 'changed' | 'unavailable' };
@@ -825,24 +1011,40 @@ export async function resolveImageAppeal({
     .executeTakeFirst();
 
   let restored = false;
+  let written = false;
   // An appeal verdict never reaches an image under the moderator-only review flag; that flag's own
   // queue decides it.
   if (status === 'Approved') {
-    const { numUpdatedRows } = await dbWrite
+    const row = await dbWrite
       .updateTable('Image')
-      .set({ needsReview: null, blockedFor: null, ingestion: 'Scanned' })
+      // On a row an account deletion blocked, the approval settles the appeal but not a review the
+      // deletion recorded, which comes back.
+      .set({
+        needsReview: LIFTED_NEEDS_REVIEW,
+        blockedFor: LIFTED_BLOCKED_FOR,
+        nsfwLevel: LIFTED_NSFW_LEVEL,
+        ingestion: LIFTED_INGESTION,
+        metadata: liftedMetadata(withoutGraceMarkers(sql`"metadata"`)),
+      })
       .where('id', '=', imageId)
       .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
       .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
+      .returning(LIFT_KEPT_BLOCKED.as('keptBlocked'))
       .executeTakeFirst();
-    restored = numUpdatedRows > 0n;
+    written = !!row;
+    restored = written && !row?.keptBlocked;
+    if (written && !restored) await restartBlockedImageDeleteClock(imageId);
     if (restored) {
       await dropBlockedImageDeleteQueue(imageId);
       await resetBlockedNsfwLevel(imageId);
+      await recompute(imageId);
+      await rescanIfUnrated(imageId);
     }
-    await recompute(imageId);
-    await rescanIfUnrated(imageId);
-    syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
+    syncSearchIndex({
+      entityType: 'image',
+      entityId: imageId,
+      action: restored ? 'update' : 'delete',
+    });
     if (restored) await trackImageRestore({ imageId, actorUserId: userId });
   } else {
     await dbWrite
@@ -854,8 +1056,8 @@ export async function resolveImageAppeal({
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
   }
 
-  // Restored nothing: back to Pending, with no refund and no notice, even if the revert fails.
-  if (approved && !restored) {
+  // Wrote nothing: back to Pending, with no refund and no notice, even if the revert fails.
+  if (approved && !written) {
     await dbWrite
       .updateTable('Appeal')
       .set({ status: 'Pending', resolvedBy: null, resolvedAt: null })
@@ -873,7 +1075,9 @@ export async function resolveImageAppeal({
   }
 
   const postId = img?.postId ?? null;
-  if (restored)
+  // An approval takes the pHash off the blocklist even while the owner is deleted: an account restore
+  // brings the image back but never revisits the blocklist.
+  if (approved)
     await applyAcceptSideEffects({ pHash: img?.pHash ?? null, postId }, imageId, userId);
   else await applyVisibilitySideEffects(imageId, postId);
 

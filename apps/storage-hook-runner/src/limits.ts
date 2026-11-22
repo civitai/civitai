@@ -40,9 +40,54 @@ export const COMPILE_ALLOWANCE_FLOOR_MS = 5;
  * native operation does not poll, so an allocation loop that grows towards the memory cap can run
  * far past its deadline between two polls. A call still running at
  * `timeoutMs + BACKSTOP_MS` gets its worker terminated and answers 500 (a runner fault, not the
- * author's `timeout`: see BackstopError in pool.ts).
+ * author's `timeout`: see BackstopError in pool.ts); a remix call answers 423 and quarantines its
+ * app (REMIX_QUARANTINE_MS).
  */
 export const BACKSTOP_MS = 100;
+
+/** A remix app's source size cap (UTF-8 bytes), matching the civitai row schema. */
+export const MAX_REMIX_SOURCE_BYTES = 32 * 1024;
+
+/** Each remix replay's time budget; not settable by the caller. */
+export const REMIX_REPLAY_TIMEOUT_MS = 50;
+
+/** Logs one remix call replays: the base log, then at most this many branches of it. */
+export const MAX_REMIX_BRANCHES = 12;
+
+/** An ask's answer, as a string, at most this many characters (the log's and an auto-answer's). */
+export const MAX_REMIX_ANSWER_CHARS = 1000;
+
+/** Effects one run may hold (asks included), matching the civitai host's limit. */
+export const MAX_REMIX_EFFECTS = 16;
+
+/** One replay's result, serialised inside the VM, at most this many characters. */
+export const MAX_REMIX_RESULT_CHARS = 32 * 1024;
+
+/** ...and nested at most this deep (an effect needs 5), so it crosses to the host as plain data. */
+export const MAX_REMIX_RESULT_DEPTH = 16;
+
+/**
+ * Each replay's share of the backstop beyond its own budget: the compile-only pass, the compile
+ * allowance and floor, and runtime setup and disposal. Without it a looping app's own timeouts
+ * would add up past the backstop, turning the author's fault into a runner fault.
+ */
+export const REMIX_REPLAY_OVERHEAD_MS = 30;
+
+/** A remix call's share for its fresh WebAssembly instance (measured in the README). */
+export const REMIX_INSTANCE_ALLOWANCE_MS = 50;
+
+/**
+ * How long a remix app is refused (423 `quarantined`) after the backstop terminated a worker
+ * running one of its calls. In-process: each pod keeps its own list.
+ */
+export const REMIX_QUARANTINE_MS = 10 * 60 * 1000;
+
+/** A remix call's budget, before the backstop's margin. */
+export function remixBudgetMs(replays: number): number {
+  return (
+    replays * (REMIX_REPLAY_TIMEOUT_MS + REMIX_REPLAY_OVERHEAD_MS) + REMIX_INSTANCE_ALLOWANCE_MS
+  );
+}
 
 /** Hook source size cap (UTF-8 bytes), matching the manifest-side cap. */
 export const MAX_SOURCE_BYTES = 64 * 1024;
@@ -71,6 +116,12 @@ export const DEFAULT_MAX_QUEUE = 64;
 export function defaultMaxPerApp(maxQueue: number): number {
   return Math.max(1, Math.ceil(maxQueue / 4));
 }
+
+/**
+ * The per-app cap in remix mode: a remix call can hold a worker for up to
+ * `remixBudgetMs(13) + BACKSTOP_MS`, so one app gets far fewer than a hook's quarter of the queue.
+ */
+export const REMIX_DEFAULT_MAX_PER_APP = 4;
 
 /** Replacement-worker start retries: first delay, doubling up to the max. */
 export const RESPAWN_BASE_MS = 100;

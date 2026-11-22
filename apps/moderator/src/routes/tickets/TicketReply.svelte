@@ -6,7 +6,7 @@
   import { FormState } from '$lib/form-state.svelte';
   import { denied } from '$lib/permissions';
   import { cancelUnlessConfirming } from '$lib/tickets/confirm-guard';
-  import { SETTABLE_STATUSES, statusLabel } from '$lib/tickets/statuses';
+  import { SETTABLE_STATUSES, STATUS, statusLabel } from '$lib/tickets/statuses';
 
   let {
     ticketId,
@@ -48,12 +48,25 @@
   const afterLabel = $derived(
     statusAfter === LEAVE ? `Leave as ${statusLabel(currentStatus)}` : statusLabel(Number(statusAfter))
   );
+  // Same `?/status` write as TicketStatusMenu, and `reset: false` for the same reason: a reset blanks
+  // the hidden fields, and the next close would post them empty.
+  const closing = new FormState({
+    onSuccess: (data) => ondone('Closed without a reply', data, STATUS.closed),
+    reset: false,
+  });
+
   const why = $derived(canReply ? undefined : denied('tickets.reply'));
   $effect(() => {
-    submitting = reply.submitting;
+    submitting = reply.submitting || closing.submitting;
   });
-  const busy = $derived(reply.submitting || locked);
+  const busy = $derived(reply.submitting || closing.submitting || locked);
 </script>
+
+<!-- Outside the reply form: forms cannot nest. -->
+<form id="close-{ticketId}" method="POST" action="?/status" use:enhance={closing.enhance} hidden>
+  <input type="hidden" name="ticketId" value={ticketId} />
+  <input type="hidden" name="status" value={STATUS.closed} />
+</form>
 
 <form method="POST" action="?/reply" use:enhance={reply.enhance} class="flex flex-col gap-2">
   <input type="hidden" name="ticketId" value={ticketId} />
@@ -97,19 +110,35 @@
         </Button>
       </div>
     {:else}
-      <Button
-        type="button"
-        size="sm"
-        disabled={!canReply || busy || !text.trim()}
-        title={why}
-        onclick={() => (confirming = true)}
-        data-touch-target
-      >
-        Send reply
-      </Button>
+      <div class="flex flex-wrap items-center gap-1.5">
+        {#if currentStatus !== STATUS.closed}
+          <Button
+            type="submit"
+            form="close-{ticketId}"
+            size="sm"
+            variant="outline"
+            disabled={!canReply || busy}
+            title={why ?? 'Close the ticket without sending a reply.'}
+            data-touch-target
+          >
+            Close without reply
+          </Button>
+        {/if}
+        <Button
+          type="button"
+          size="sm"
+          disabled={!canReply || busy || !text.trim()}
+          title={why}
+          onclick={() => (confirming = true)}
+          data-touch-target
+        >
+          Send reply
+        </Button>
+      </div>
     {/if}
   </div>
   {#if reply.error}<p class="m-0 text-xs text-red-300">{reply.error}</p>{/if}
+  {#if closing.error}<p class="m-0 text-xs text-red-300">{closing.error}</p>{/if}
   {#if reply.warning}<p class="m-0 text-xs text-amber-300">{reply.warning}</p>{/if}
   {#if why}<p class="m-0 text-[11px] text-amber-300">{why}</p>{/if}
 </form>

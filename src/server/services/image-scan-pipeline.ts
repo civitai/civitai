@@ -38,7 +38,8 @@ import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 import { createImageTagsForReview } from '~/server/services/image-review.service';
 import {
   queueArticlesAndComicsForImages,
-  queueModelsForImageChildTagChanges,
+  queueDocumentsForBlockedImages,
+  queueDocumentsForImageMinorChanges,
 } from '~/server/services/image-models-reindex.service';
 import {
   tagIdsForImagesCache,
@@ -91,6 +92,7 @@ import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { decreaseDate } from '~/utils/date-helpers';
 import { getIsImageBlocked } from '~/server/services/blocked-image-hash';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import {
   FEEDBACK_CAPTURE_OWNER_ID,
   isFeedbackCaptureOwner,
@@ -1269,6 +1271,9 @@ export async function applyIngestionSideEffects({
     // moderation gates in `comics.search-index.ts:WHERE`.
     await queueComicsForPanelImage(image.id);
     await refreshProfilePicturesForImages([image.id]);
+    // No trigger watches a block, so the documents showing the image are queued here.
+    await queueDocumentsForBlockedImages([image.id]);
+    await evictHomeBlocksForImages({ imageIds: [image.id] });
     return;
   }
 
@@ -1313,7 +1318,7 @@ export async function applyIngestionSideEffects({
     // comics through minorImageIds; otherwise they are queued here.
     const minorChanged = !!outcome.audit && !!outcome.audit.minor !== !!image.minor;
     if (!minorChanged) await queueArticlesAndComicsForImages([image.id]);
-    await queueModelsForImageChildTagChanges({
+    await queueDocumentsForImageMinorChanges({
       levelImageIds: [image.id],
       ...(minorChanged && { minorImageIds: [image.id] }),
     });

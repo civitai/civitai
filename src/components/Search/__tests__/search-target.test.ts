@@ -176,21 +176,26 @@ describe('the bounties feed search', () => {
   });
 });
 
-// /videos is the images feed's videos, so the images index searches it, under its own flag.
+// /videos searches the video index, which has its own flag on top of the feed search's two.
 describe('the videos feed search', () => {
-  const both = { feedSearch: true, videoFeedSearch: true };
+  const all = { feedSearch: true, videoFeedSearch: true, semanticVideoSearch: true };
 
-  it('filters /videos in place from the images index only with both flags', () => {
-    expect(searchesFeedInPlace(both, 'images', '/videos')).toBe(true);
-    expect(searchesFeedInPlace(both, 'models', '/videos')).toBe(false);
-    expect(searchesFeedInPlace({ feedSearch: true }, 'images', '/videos')).toBe(false);
-    expect(searchesFeedInPlace({ videoFeedSearch: true }, 'images', '/videos')).toBe(false);
+  it('filters /videos in place only with all three flags', () => {
+    expect(searchesFeedInPlace(all, 'images', '/videos')).toBe(true);
+    expect(searchesFeedInPlace(all, 'models', '/videos')).toBe(false);
+    expect(searchesFeedInPlace({ ...all, feedSearch: false }, 'images', '/videos')).toBe(false);
+    expect(searchesFeedInPlace({ ...all, videoFeedSearch: false }, 'images', '/videos')).toBe(
+      false
+    );
+    expect(searchesFeedInPlace({ ...all, semanticVideoSearch: false }, 'images', '/videos')).toBe(
+      false
+    );
   });
 
   it('points the header bar at images on /videos, and leaves other sections alone', () => {
-    expect(searchSectionFor('/videos', both)).toBe('images');
-    expect(searchSectionFor('/videos', { feedSearch: true })).toBe('videos');
-    expect(searchSectionFor('/models', both)).toBe('models');
+    expect(searchSectionFor('/videos', all)).toBe('images');
+    expect(searchSectionFor('/videos', { ...all, semanticVideoSearch: false })).toBe('videos');
+    expect(searchSectionFor('/models', all)).toBe('models');
   });
 });
 

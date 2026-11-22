@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * The deleted-account drain leaves every image and post of a user under a legal hold, including a
@@ -72,7 +73,12 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
-    CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3), meta jsonb);
+    CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3), meta jsonb, "bannedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (
+      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
+    CREATE TABLE "JobQueue" (type text, "entityType" text, "entityId" int, "createdAt" timestamp(3) DEFAULT now(), UNIQUE (type, "entityType", "entityId"));
     CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Image" (
@@ -81,7 +87,10 @@ beforeAll(async () => {
       "postId" int,
       ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
       "blockedFor" text,
-      "needsReview" text
+      "needsReview" text,
+      "nsfwLevel" int NOT NULL DEFAULT 1,
+      metadata jsonb NOT NULL DEFAULT '{}',
+      "updatedAt" timestamp(3)
     );
     CREATE TABLE "Thread" (
       id int PRIMARY KEY, "postId" int UNIQUE REFERENCES "Post"(id) ON DELETE CASCADE,
@@ -412,5 +421,79 @@ describe('remove-deleted-user-images under any account hold', () => {
 
     expect(await imagesOf(-1)).toBe(1);
     expect(await imagesOf(UNHELD)).toBe(0);
+  });
+});
+
+describe('a held account deleted for good', () => {
+  const blockedOf = async (userId: number) =>
+    (
+      await holder.db.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "Image" WHERE "userId" = $1 AND ingestion = 'Blocked'`,
+        [userId]
+      )
+    ).rows[0].n;
+  const banNote = (userId: number, bannedAgo: string) =>
+    holder.db.query(
+      `UPDATE "User" SET "bannedAt" = now() - $2::interval, meta = $3 WHERE id = $1`,
+      [userId, bannedAgo, JSON.stringify({ banDetails: { detailsInternal: 'NCMEC report filed' } })]
+    );
+
+  it('hides every image of a held account and keeps it, and drains everyone else', async () => {
+    await holdSecondaryUser(HELD);
+
+    await run();
+
+    expect(await blockedOf(HELD)).toBe(MANY);
+    expect(await imagesOf(HELD)).toBe(MANY);
+    expect(await postsOf(HELD)).toBe(1);
+    expect(await imagesOf(UNHELD)).toBe(0);
+  });
+
+  it('drains an account banned with a CSAM/NCMEC note and no hold, as anyone else', async () => {
+    await banNote(HELD, '2 days');
+
+    await run();
+
+    expect(await imagesOf(HELD)).toBe(0);
+    expect(await postsOf(HELD)).toBe(0);
+  });
+
+  it('leaves the images of an account an unarchived report names unblocked, until it is archived', async () => {
+    await holder.db.exec(
+      `INSERT INTO "CsamReport" ("userId", "reportSentAt") VALUES (${HELD}, now() - interval '1 day')`
+    );
+
+    await run();
+
+    expect(await blockedOf(HELD)).toBe(0);
+    expect(await imagesOf(HELD)).toBe(MANY);
+
+    await holder.db.exec(`UPDATE "CsamReport" SET "archivedAt" = now() WHERE "userId" = ${HELD}`);
+    await run();
+
+    expect(await blockedOf(HELD)).toBe(MANY);
+    expect(await imagesOf(HELD)).toBe(MANY);
+  });
+
+  it('stops picking up a held account once every image of it is blocked', async () => {
+    const candidates = () =>
+      vi
+        .mocked(loggingMock.logToAxiom)
+        .mock.calls.map(([entry]) => entry as { name?: string; candidates?: number })
+        .filter(
+          (entry) => entry.name === 'remove-deleted-user-images' && entry.candidates !== undefined
+        )
+        .map((entry) => entry.candidates);
+    await holdSecondaryUser(HELD);
+    vi.mocked(loggingMock.logToAxiom).mockClear();
+    await run();
+    expect(await blockedOf(HELD)).toBe(MANY);
+    // The control: the first run did pick the account up.
+    expect(candidates()[0]).toBeGreaterThan(0);
+
+    vi.mocked(loggingMock.logToAxiom).mockClear();
+    await run();
+
+    expect(candidates()).toEqual([0]);
   });
 });

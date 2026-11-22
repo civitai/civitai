@@ -69,8 +69,9 @@ const CDN_ACCESS_MIGRATION = path.resolve(
 );
 
 const SCHEMA = `
+CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
-CREATE TYPE "JobQueueType" AS ENUM ('BlockedImageDelete', 'ImageStorageDelete', 'UpdateNsfwLevel', 'ImageDelete');
+CREATE TYPE "JobQueueType" AS ENUM ('BlockedImageDelete', 'ImageStorageDelete', 'UpdateNsfwLevel', 'PendingDelete');
 CREATE TABLE "JobQueue" (
   type "JobQueueType" NOT NULL,
   "entityType" "EntityType" NOT NULL,
@@ -106,7 +107,7 @@ CREATE TABLE "CsamReport" (
 );
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "profilePictureId" INTEGER, "image" TEXT);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "profilePictureId" INTEGER, "image" TEXT, "deletedAt" TIMESTAMP(3));
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -268,11 +269,11 @@ describe("a moderator's article delete", () => {
   const queued = async () =>
     (
       await db.query<{ entityId: number; data: unknown }>(
-        `SELECT "entityId", data FROM "JobQueue" WHERE type = 'ImageDelete' ORDER BY "entityId"`
+        `SELECT "entityId", data FROM "JobQueue" WHERE type = 'PendingDelete' ORDER BY "entityId"`
       )
     ).rows;
 
-  it('queues its orphaned cover and banner for image-deletes, and deletes neither itself', async () => {
+  it('queues its orphaned cover and banner for pending-deletes, and deletes neither itself', async () => {
     await articleWithCover(10, 1);
     await plainImage(3);
     await db.query(`UPDATE "Article" SET "bannerId" = 3 WHERE id = 10`);
@@ -283,8 +284,8 @@ describe("a moderator's article delete", () => {
 
     expect(await articleExists(10)).toBe(false);
     expect(await queued()).toEqual([
-      { entityId: 1, data: { moderatorDelete: true } },
-      { entityId: 3, data: { moderatorDelete: true } },
+      { entityId: 1, data: { cleanup: true, moderatorDelete: true } },
+      { entityId: 3, data: { cleanup: true, moderatorDelete: true } },
     ]);
     expect(await imageExists(1)).toBe(true);
     expect((await queueRow('CdnAccessSync', 1))?.data?.moderatorDelete).toBeUndefined();
@@ -297,7 +298,7 @@ describe("a moderator's article delete", () => {
       ok: true,
     });
 
-    expect(await queued()).toEqual([{ entityId: 1, data: {} }]);
+    expect(await queued()).toEqual([{ entityId: 1, data: { cleanup: true } }]);
   });
 
   // Which images qualify is queue-image-deletes.pglite.test.ts; this pins that the delete removes only
@@ -321,7 +322,7 @@ describe("a moderator's article delete", () => {
     const lock = statements.findIndex((s) => /for no key update/i.test(s.sql));
     const removeArticle = statements.findIndex((s) => /delete from "Article"/i.test(s.sql));
     const check = statements.findIndex((s) =>
-      /insert into "JobQueue"[^]*'ImageDelete'/i.test(s.sql)
+      /insert into "JobQueue"[^]*'PendingDelete'/i.test(s.sql)
     );
     expect(lock).toBeGreaterThanOrEqual(0);
     expect(statements[lock].params).toEqual([1, 2, 3]);

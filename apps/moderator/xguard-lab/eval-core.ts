@@ -106,6 +106,8 @@ const GROUND_TRUTH_SQL = `
  */
 const MODE_BY_SOURCE: Record<string, XGuardMode> = {
   xguardPromptResults: 'prompt',
+  prohibitedRequests: 'prompt',
+  named: 'prompt',
   // Every entity that flows through EntityModeration is scanned in text mode. The sampler writes
   // `source` as the entity type lowercased, so a new one is a line here, not a code change.
   model: 'text',
@@ -114,7 +116,7 @@ const MODE_BY_SOURCE: Record<string, XGuardMode> = {
   wildcardsetcategory: 'text',
 };
 
-function resolveMode(sources: string[], override?: XGuardMode): XGuardMode {
+export function resolveMode(sources: string[], override?: XGuardMode): XGuardMode {
   if (override) return override;
   const distinct = [...new Set(sources)];
   const modes = new Set(

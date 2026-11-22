@@ -2,28 +2,42 @@ package store
 
 import (
 	"context"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
 )
 
-// Memory is an in-process Store with the same transaction semantics as Postgres: every method
-// changes a copy of the state and commits it whole, or not at all. Its text ranking differs from
-// Postgres's ts_rank (a weighted count of the fields a word matched), so tests that pin a
-// relevance ORDER run against Postgres; everything else is shared (contract_test.go).
-type Memory struct {
+// memGens is the generation half of an in-process store, over rows of type R, with the same
+// transaction semantics as Postgres: every method changes a copy of the state and commits it whole,
+// or not at all. Memory (the app index) and ListingsMemory (the listings read model) are built on
+// it.
+type memGens[R any] struct {
 	mu   sync.Mutex
-	gens map[int64]*memGen
+	gens map[int64]*memGen[R]
 	next int64
+	// row is an upsert's key and row.
+	row func(Change) (string, R)
 
 	// failBeforeCommit, when set, is called where the transaction would commit; an error aborts
 	// it. Tests use it to stand in for a crash between a change and its commit.
 	failBeforeCommit func(op string) error
 }
 
-type memGen struct {
+type memGen[R any] struct {
 	Generation
-	apps map[string]memApp
+	rows map[string]R
+}
+
+func newMemGens[R any](row func(Change) (string, R)) memGens[R] {
+	return memGens[R]{gens: map[int64]*memGen[R]{}, row: row}
+}
+
+// Memory is an in-process Store with the same transaction semantics as Postgres. Its text ranking
+// differs from Postgres's ts_rank (a weighted count of the fields a word matched), so tests that pin
+// a relevance ORDER run against Postgres; everything else is shared (contract_test.go).
+type Memory struct {
+	memGens[memApp]
 }
 
 type memApp struct {
@@ -33,17 +47,19 @@ type memApp struct {
 
 // NewMemory returns an empty Memory store.
 func NewMemory() *Memory {
-	return &Memory{gens: map[int64]*memGen{}}
+	return &Memory{newMemGens(func(c Change) (string, memApp) {
+		return c.App.URN, memApp{App: c.App, nameKey: nameKey(c.App.Name)}
+	})}
 }
 
-func (m *Memory) commit(op string) error {
+func (m *memGens[R]) commit(op string) error {
 	if m.failBeforeCommit != nil {
 		return m.failBeforeCommit(op)
 	}
 	return nil
 }
 
-func (m *Memory) find(state string) *memGen {
+func (m *memGens[R]) find(state string) *memGen[R] {
 	for _, g := range m.gens {
 		if g.State == state {
 			return g
@@ -52,11 +68,12 @@ func (m *Memory) find(state string) *memGen {
 	return nil
 }
 
-// Lock implements Store. A Memory store belongs to one process, so the lock is always free.
-func (m *Memory) Lock(context.Context) (func(), error) { return func() {}, nil }
+// Lock implements Generations. An in-process store belongs to one process, so the lock is always
+// free.
+func (m *memGens[R]) Lock(context.Context) (func(), error) { return func() {}, nil }
 
-// Claim implements Store.
-func (m *Memory) Claim(_ context.Context, gen int64) error {
+// Claim implements Generations.
+func (m *memGens[R]) Claim(_ context.Context, gen int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.gens[gen]; !ok {
@@ -65,8 +82,8 @@ func (m *Memory) Claim(_ context.Context, gen int64) error {
 	return nil
 }
 
-// State implements Store.
-func (m *Memory) State(context.Context) (State, error) {
+// State implements Generations.
+func (m *memGens[R]) State(context.Context) (State, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var st State
@@ -81,8 +98,8 @@ func (m *Memory) State(context.Context) (State, error) {
 	return st, nil
 }
 
-// NewBuilding implements Store.
-func (m *Memory) NewBuilding(_ context.Context, schema string, layout int) (Generation, error) {
+// NewBuilding implements Generations.
+func (m *memGens[R]) NewBuilding(_ context.Context, schema string, layout int) (Generation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.commit("new-building"); err != nil {
@@ -92,13 +109,13 @@ func (m *Memory) NewBuilding(_ context.Context, schema string, layout int) (Gene
 		delete(m.gens, g.ID)
 	}
 	m.next++
-	g := &memGen{Generation: Generation{ID: m.next, Layout: layout, Schema: schema, State: StateBuilding}, apps: map[string]memApp{}}
+	g := &memGen[R]{Generation: Generation{ID: m.next, Layout: layout, Schema: schema, State: StateBuilding}, rows: map[string]R{}}
 	m.gens[g.ID] = g
 	return g.Generation, nil
 }
 
-// Reset implements Store.
-func (m *Memory) Reset(_ context.Context, gen int64) error {
+// Reset implements Generations.
+func (m *memGens[R]) Reset(_ context.Context, gen int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	g, ok := m.gens[gen]
@@ -108,13 +125,13 @@ func (m *Memory) Reset(_ context.Context, gen int64) error {
 	if err := m.commit("reset"); err != nil {
 		return err
 	}
-	g.apps = map[string]memApp{}
+	g.rows = map[string]R{}
 	g.Cursor = ""
 	return nil
 }
 
-// Apply implements Store.
-func (m *Memory) Apply(_ context.Context, gen int64, c Change) error {
+// Apply implements Generations.
+func (m *memGens[R]) Apply(_ context.Context, gen int64, c Change) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	g, ok := m.gens[gen]
@@ -122,36 +139,29 @@ func (m *Memory) Apply(_ context.Context, gen int64, c Change) error {
 		return ErrNoGeneration
 	}
 	// The change and its cursor are staged together and committed together.
-	apps := g.apps
+	rows := g.rows
 	switch c.Kind {
 	case ChangeUpsert:
-		apps = cloneApps(g.apps)
-		apps[c.App.URN] = memApp{App: c.App, nameKey: nameKey(c.App.Name)}
+		rows = maps.Clone(g.rows)
+		k, r := m.row(c)
+		rows[k] = r
 	case ChangeDelete:
-		if _, ok := g.apps[c.URN]; ok {
-			apps = cloneApps(g.apps)
-			delete(apps, c.URN)
+		if _, ok := g.rows[c.URN]; ok {
+			rows = maps.Clone(g.rows)
+			delete(rows, c.URN)
 		}
 	case ChangeProgress:
 	}
 	if err := m.commit("apply"); err != nil {
 		return err
 	}
-	g.apps = apps
+	g.rows = rows
 	g.Cursor = c.Cursor
 	return nil
 }
 
-func cloneApps(in map[string]memApp) map[string]memApp {
-	out := make(map[string]memApp, len(in)+1)
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-// Live implements Store.
-func (m *Memory) Live(_ context.Context, gen int64, cursor string) (bool, error) {
+// Live implements Generations.
+func (m *memGens[R]) Live(_ context.Context, gen int64, cursor string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	g, ok := m.gens[gen]
@@ -189,7 +199,7 @@ func (m *Memory) Search(_ context.Context, q Query) (Page, error) {
 		rank float64
 	}
 	var hits []hit
-	for _, a := range g.apps {
+	for _, a := range g.rows {
 		if q.Kind != "" && a.Kind != q.Kind {
 			continue
 		}

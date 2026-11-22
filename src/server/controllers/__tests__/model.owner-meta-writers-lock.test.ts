@@ -29,8 +29,9 @@ const { requestReviewHandler, changeModelModifierHandler, declineReviewHandler }
   '../model.controller'
 );
 type ModHandler = { handler: (input: { modelId: number }, ctx: unknown) => Promise<unknown> };
-const takeDown = (await import('~/pages/api/mod/model/take-down')).default as unknown as ModHandler;
-const bringBack = (await import('~/pages/api/mod/model/bring-back'))
+const takeDown = (await import('~/server/api-routes/mod/model/take-down'))
+  .default as unknown as ModHandler;
+const bringBack = (await import('~/server/api-routes/mod/model/bring-back'))
   .default as unknown as ModHandler;
 const { setModelShowcaseCollection } = await import('~/server/services/model.service');
 

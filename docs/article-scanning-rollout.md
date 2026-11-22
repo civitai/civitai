@@ -19,7 +19,7 @@ Ships the full "articles get scanned like everything else" system and turns it o
 2. **Text moderation via xGuard** — on every article create/update, `(title + stripped content)` is fire-and-forget submitted to the orchestrator xGuard workflow with `labels: ['nsfw']`. A content-hash on `EntityModeration` dedupes unchanged text.
 3. **Composite NSFW level** — `updateArticleNsfwLevels` computes `GREATEST(userNsfwLevel, image-derived level, moderation floor)`, where the moderation floor is an `EXISTS` subquery against `EntityModeration` (text-mod Succeeded + NSFW-or-blocked) and `ArticleReport`/`Report` (Actioned NSFW reports) that returns R when either is present, else 0. Because the floor is re-evaluated on every recompute, a text-flagged article lands at R minimum regardless of image ratings, and the floor drops automatically if a mod invalidates the underlying record. (Previously this was gated on `a.nsfw = TRUE` forcing the full `nsfwBrowsingLevelsFlag` mask — see deprecation note above.)
 4. **Serving-path hygiene for Civitai Green** — closed every read path that previously ignored `nsfwLevel` on articles (`getCivitaiNews`, `getCivitaiEvents` (since removed), `getArticleById`, `sitemap-articles.xml`, `/api/og`) so articles can be served to the `public` audience safely.
-5. **Profanity filter retired from articles** — orchestrator text moderation supersedes the lexical profanity keyword filter. `ArticleMetadata.profanityMatches`/`profanityEvaluation` fields were removed; the legacy `migrate-profanity-nsfw.ts` admin backfill no longer accepts `entity=articles` (models + bounties still use it).
+5. **Profanity filter retired from articles** — orchestrator text moderation supersedes the lexical profanity keyword filter. `ArticleMetadata.profanityMatches`/`profanityEvaluation` fields were removed; the legacy `migrate-profanity-nsfw.ts` admin backfill no longer accepts `entity=articles`; the backfill itself has since been deleted.
 6. **Backfill endpoints** — `migrate-article-images.ts` backfills image links, `migrate-article-text-moderation.ts` backfills xGuard submissions. Both are cancellable on client disconnect.
 
 **Feature flag state on this branch**:
@@ -123,7 +123,7 @@ Civitai Green now serves articles. This is **intentionally bundled** with the re
 
 ### 2.6 `migrate-profanity-nsfw.ts` dropped the articles entity (commit `81e3efbc2`)
 
-Not a rollout concern, but noted for completeness: because `ArticleMetadata.profanityMatches`/`profanityEvaluation` were removed, the articles branch of the legacy profanity admin backfill failed typecheck. The entire articles branch was removed. Models and bounties still work.
+Not a rollout concern, but noted for completeness: because `ArticleMetadata.profanityMatches`/`profanityEvaluation` were removed, the articles branch of the legacy profanity admin backfill failed typecheck. The entire articles branch was removed; the models and bounties branches stayed until the backfill itself was deleted.
 
 ---
 
@@ -289,7 +289,7 @@ Old articles that mixed PG and NSFW content images have multi-bit masks like `5`
 git grep -E "profanityMatches|profanityEvaluation" -- 'src/**/*.ts' 'src/**/*.tsx'
 ```
 
-As of this branch, only `migrate-profanity-nsfw.ts` (models + bounties sections) references them.
+As of this branch, only `migrate-profanity-nsfw.ts` (models + bounties sections) referenced them; that backfill has since been deleted.
 
 ### 5.9 ⚠️ Legacy articles are exposed to Civitai Green before backfills run
 

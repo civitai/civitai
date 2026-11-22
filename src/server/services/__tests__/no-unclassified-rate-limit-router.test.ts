@@ -15,7 +15,7 @@ import {
  */
 describe('rate-limit fail-closed ledger', () => {
   const routersDir = path.resolve(__dirname, '../../routers');
-  const indexSrc = readFileSync(path.join(routersDir, 'index.ts'), 'utf8');
+  const indexSrc = readFileSync(path.join(routersDir, 'loaders.ts'), 'utf8');
   const keyByFile = new Map<string, string>();
   for (const m of indexSrc.matchAll(/^\s+([a-zA-Z0-9]+): \(\) =>\s*import\('([^']+)'\)/gm)) {
     keyByFile.set(path.basename(m[2]), m[1]);

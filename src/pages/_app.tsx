@@ -409,7 +409,6 @@ function MyApp(props: CustomAppProps) {
                                                         {isProd && <TrackPageView />}
                                                         <CustomModalsProvider>
                                                           {getLayout(<Component {...pageProps} />)}
-                                                          {/* <StripeSetupSuccessProvider /> */}
                                                           <DialogProvider />
                                                           <RoutedDialogProvider />
                                                         </CustomModalsProvider>
@@ -841,6 +840,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       url: request.url,
       headers: request.headers,
       cookies,
+      signedIn: !!session?.user,
     });
     if (sync) [guardTo, guardCookies] = [sync.location, sync.setCookies];
   }

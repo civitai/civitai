@@ -18,7 +18,11 @@ const getRetractedMedia = vi.hoisted(() => vi.fn());
 const getGetUrlByKey = vi.hoisted(() => vi.fn());
 const trackModActivity = vi.hoisted(() => vi.fn());
 const checkFixedWindow = vi.hoisted(() => vi.fn());
-const flags = vi.hoisted(() => ({ modRetractedMedia: true, csamReports: false }));
+const flags = vi.hoisted(() => ({
+  modRetractedMedia: true,
+  csamReports: false,
+  modRetractedMediaCdnLeg: false,
+}));
 const getFeatureFlagsAsync = vi.hoisted(() => vi.fn());
 
 // The moderator check, and what `noStore` does there, run for real in
@@ -41,7 +45,6 @@ vi.mock('~/server/services/feature-flags.service', () => ({
 }));
 vi.mock('~/server/services/retracted-media.service', () => ({
   getRetractedMedia,
-  NEEDS_CSAM_QUEUE: 'needs-csam-queue',
 }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 vi.mock('~/server/utils/public-api-rate-limit', () => ({ checkFixedWindow }));
@@ -109,6 +112,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   flags.modRetractedMedia = true;
   flags.csamReports = false;
+  flags.modRetractedMediaCdnLeg = false;
   getFeatureFlagsAsync.mockImplementation(async () => flags);
   getRetractedMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null });
   getGetUrlByKey.mockResolvedValue({ url: SIGNED, bucket: 'media', key: KEY });
@@ -146,13 +150,12 @@ describe('/api/mod/retracted-media refusals', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('tells a moderator an image with no scanner verdict needs CSAM-queue access', async () => {
-    getRetractedMedia.mockResolvedValue('needs-csam-queue');
+  it('answers 503 when the eligibility read fails, touching no storage', async () => {
+    getRetractedMedia.mockRejectedValue(new Error('canceling statement due to statement timeout'));
     const res = await call();
-    expect(res.statusCode).toBe(403);
-    expect(JSON.stringify(res.body)).toContain('Needs CSAM-queue access');
-    expect(res.headers['cache-control']).toBe('private, no-store');
+    expect(res.statusCode).toBe(503);
     expect(getGetUrlByKey).not.toHaveBeenCalled();
+    expect(trackModActivity).not.toHaveBeenCalled();
   });
 
   it('answers a probe with eligibility alone: no storage, no audit row', async () => {
@@ -164,10 +167,16 @@ describe('/api/mod/retracted-media refusals', () => {
 
   it('asks for the CSAM-review tier only for a moderator cleared for CSAM reports', async () => {
     await call();
-    expect(getRetractedMedia).toHaveBeenLastCalledWith(7, { csamReview: false });
+    expect(getRetractedMedia).toHaveBeenLastCalledWith(7, { csamReview: false, cdnLeg: false });
     flags.csamReports = true;
     await call();
-    expect(getRetractedMedia).toHaveBeenLastCalledWith(7, { csamReview: true });
+    expect(getRetractedMedia).toHaveBeenLastCalledWith(7, { csamReview: true, cdnLeg: false });
+  });
+
+  it('takes the CDN-refusal leg only while its own flag is on', async () => {
+    flags.modRetractedMediaCdnLeg = true;
+    await call();
+    expect(getRetractedMedia).toHaveBeenLastCalledWith(7, { csamReview: false, cdnLeg: true });
   });
 
   it('refuses a bad id with no-store', async () => {
@@ -217,7 +226,7 @@ describe('/api/mod/retracted-media serving', () => {
       'cache-control': 'private, no-store',
       'x-content-type-options': 'nosniff',
     });
-    expect(getRetractedMedia).toHaveBeenCalledWith(7, { csamReview: false });
+    expect(getRetractedMedia).toHaveBeenCalledWith(7, { csamReview: false, cdnLeg: false });
     expect(getGetUrlByKey).toHaveBeenCalledWith(KEY, { s3: {}, bucket: 'media', expiresIn: 60 });
     expect(trackModActivity).toHaveBeenCalledWith(42, {
       entityType: 'image',

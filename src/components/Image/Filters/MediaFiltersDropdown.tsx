@@ -23,6 +23,8 @@ import { useDomainColor } from '~/hooks/useDomainColor';
 import useIsClient from '~/hooks/useIsClient';
 import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
 import { BaseModelFilterSelect } from '~/components/SfwOnlyBadge/BaseModelFilterSelect';
+import { FeedTagFilter } from '~/components/Image/Filters/FeedTagFilter';
+import { appliedRouteQuery } from '~/components/Image/Filters/media-filter-url';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import type { GetInfiniteImagesOutput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -84,6 +86,7 @@ export function MediaFiltersDropdown({
   exclude,
   unavailable,
   jumpToSort,
+  showTags = false,
   style,
   ...buttonProps
 }: Props) {
@@ -162,31 +165,40 @@ export function MediaFiltersDropdown({
     return overrides;
   }, [query, routeParams]);
 
+  // `?tags=` has no store field: it is staged with the other filters and written back to the URL.
   const committedFilters = useMemo(
-    () => query || { ...filters, ...urlOverrides },
-    [query, filters, urlOverrides]
+    () =>
+      query || {
+        ...filters,
+        ...urlOverrides,
+        ...(showTags ? { tags: routeParams.tags } : {}),
+      },
+    [query, filters, urlOverrides, showTags, routeParams.tags]
   );
 
   const setStoreFilters = useCallback(
-    (next: Partial<typeof filters>) => {
-      setFilters(next);
+    (next: Partial<typeof committedFilters>) => {
+      const { tags, ...storeFilters } = next as Partial<typeof filters> & { tags?: number[] };
+      setFilters(storeFilters);
       const overridden = Object.keys(urlOverrides);
       // The raw router query, not the schema-parsed one: parsing drops dynamic route params
       // (`/models/[id]`), and Next throws on a pathname missing them.
-      if (overridden.length)
+      if (overridden.length || showTags)
         router.replace(
           {
             pathname: router.pathname,
-            query: removeEmpty({
-              ...router.query,
-              ...Object.fromEntries(overridden.map((key) => [key, undefined])),
-            }),
+            query: removeEmpty(
+              appliedRouteQuery(router.query, {
+                overridden,
+                tags: showTags ? tags ?? [] : null,
+              })
+            ),
           },
           undefined,
           { shallow: true, scroll: false }
         );
     },
-    [setFilters, urlOverrides, router]
+    [setFilters, urlOverrides, router, showTags]
   );
 
   const handleApply = useCallback(
@@ -228,6 +240,7 @@ export function MediaFiltersDropdown({
       poiOnly: undefined,
       minorOnly: undefined,
       includePG13: undefined,
+      ...(showTags ? { tags: undefined } : {}),
       ...(showJumpTo ? { jumpTo: undefined } : {}),
       ...(showTurf
         ? {
@@ -254,7 +267,7 @@ export function MediaFiltersDropdown({
         types: getDefaultMediaTypes(filterType),
         period: MetricTimeframe.AllTime,
       });
-  }, [onChange, setStoreFilters, filterType, shows, showJumpTo, showTurf]);
+  }, [onChange, setStoreFilters, filterType, shows, showJumpTo, showTurf, showTags]);
 
   const {
     opened,
@@ -308,6 +321,7 @@ export function MediaFiltersDropdown({
     (showTurf && mergedFilters.hideTurfHats ? 1 : 0) +
     (showTurf && mergedFilters.hideWornHats ? 1 : 0) +
     (shows('baseModels') ? mergedFilters.baseModels?.length ?? 0 : 0) +
+    (showTags && 'tags' in mergedFilters ? mergedFilters.tags?.length ?? 0 : 0) +
     (!turfHydrated &&
     ((shows('remixesOnly') && !!mergedFilters.remixesOnly) ||
       (shows('nonRemixesOnly') && !!mergedFilters.nonRemixesOnly))
@@ -618,6 +632,16 @@ export function MediaFiltersDropdown({
           </>
         )}
 
+        {showTags && 'tags' in mergedFilters && (
+          <>
+            <Divider label="Tags" className="text-sm font-bold" mb={4} />
+            <FeedTagFilter
+              value={mergedFilters.tags ?? []}
+              onChange={(tags) => handleChange({ tags })}
+            />
+          </>
+        )}
+
         {shows('baseModels') && (
           <>
             <Divider label="Base model" className="text-sm font-bold" mb={4} />
@@ -761,4 +785,6 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   };
   /** Offer the jump-to-month control; it only applies while this is a chronological sort. */
   jumpToSort?: string;
+  /** Offer a tag filter, kept in the URL's `?tags=` (the main image and video feeds). */
+  showTags?: boolean;
 };

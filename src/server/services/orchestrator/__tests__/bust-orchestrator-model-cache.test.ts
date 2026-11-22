@@ -13,8 +13,10 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 import {
   bustOrchestratorModelCache,
   bustOrchestratorScannedFileCache,
+  clearOrchestratorForGateChange,
   invalidateOrchestratorVersionsOrThrow,
 } from '~/server/services/orchestrator/models';
+import type { GateRule } from '~/shared/generation/gates';
 import { modelVersionAirSelect } from '~/server/utils/resource-air';
 
 /** The global `@civitai/orchestration-client` stub returns `''` from `Air.stringify`; the AIR is the assertion. */
@@ -155,5 +157,66 @@ describe('invalidateOrchestratorVersionsOrThrow', () => {
 
     expect(count).toBe(invalidatedAirs().length);
     expect(count).toBeGreaterThan(0);
+  });
+});
+
+describe('clearOrchestratorForGateChange', () => {
+  const version = (id: number, baseModel = 'Anima') => ({
+    ...diffusionModelCheckpoint,
+    id,
+    baseModel,
+    model: { ...diffusionModelCheckpoint.model, id: id + 1 },
+  });
+  const rule = (over: Partial<GateRule>): GateRule => ({
+    id: 'gate',
+    name: '',
+    availableTo: 'members',
+    presentation: 'hidden',
+    message: null,
+    ecosystems: [],
+    workflows: [],
+    modelVersionIds: [],
+    ...over,
+  });
+  // A Diffusion Model checkpoint is cleared under two AIRs; the versions are the assertion.
+  const clearedVersions = () => [
+    ...new Set(invalidatedAirs().map((air) => Number(decodeURIComponent(air!).split('@')[1]))),
+  ];
+
+  beforeEach(() => {
+    dbMock.dbWrite.modelVersion.findMany.mockImplementation((async (args: {
+      where: { id: { in: number[] } };
+    }) => args.where.id.in.map((id) => version(id))) as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+  });
+
+  it('clears what the rule named before and after the change', async () => {
+    const cleared = await clearOrchestratorForGateChange([
+      rule({ modelVersionIds: [11] }),
+      rule({ modelVersionIds: [12] }),
+    ]);
+    expect(cleared).toEqual({ cleared: true, ecosystemsNotCleared: [] });
+    expect(clearedVersions().sort()).toEqual([11, 12]);
+  });
+
+  it("clears alias versions whose target the rule names, by id or by the target's ecosystem", async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      { id: 21, targetId: 11, targetBaseModel: 'Anima' },
+      { id: 22, targetId: 99, targetBaseModel: 'Anima' },
+      { id: 23, targetId: 98, targetBaseModel: 'SD 1.5' },
+    ] as never);
+    const result = await clearOrchestratorForGateChange([
+      rule({ modelVersionIds: [11], ecosystems: ['Anima'] }),
+    ]);
+    expect(clearedVersions().sort()).toEqual([11, 21, 22]);
+    // The ecosystem's own versions can't be cleared yet; the moderator is told which.
+    expect(result.ecosystemsNotCleared).toEqual(['Anima']);
+  });
+
+  it('reports a failed clear so the moderator can retry', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500, statusText: 'Boom' });
+    expect((await clearOrchestratorForGateChange([rule({ modelVersionIds: [11] })])).cleared).toBe(
+      false
+    );
   });
 });

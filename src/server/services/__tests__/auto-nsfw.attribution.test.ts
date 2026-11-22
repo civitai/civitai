@@ -1,13 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as ProfanitySimple from '~/libs/profanity-simple';
+import type { SimpleProfanityFilter } from '~/libs/profanity-simple';
+import { autoNsfwTextHash, evaluateAutoNsfw } from '~/server/services/auto-nsfw';
+import type { ServerProfanityFilter } from '~/server/services/profanity-list.service';
 
 // A stand-in filter: any text holding the placeholder token counts as a match, and so does a phrase
 // that only exists once the two fields are joined.
 const TOKEN = 'PLACEHOLDER_TOKEN';
 const SPANNING = ['PLACEHOLDER_HALF_A', 'PLACEHOLDER_HALF_B'] as const;
-vi.mock('~/libs/profanity-simple', async (importOriginal) => ({
-  ...(await importOriginal<typeof ProfanitySimple>()),
-  createProfanityFilter: () => ({
+const profanity: ServerProfanityFilter = {
+  source: 'managed',
+  countHit: () => undefined,
+  filter: {
     evaluateContent: (text: string) => {
       const matchCount = text.split(TOKEN).length - 1 + (text.includes(SPANNING.join(' ')) ? 1 : 0);
       return {
@@ -18,13 +21,11 @@ vi.mock('~/libs/profanity-simple', async (importOriginal) => ({
         matchedWords: matchCount ? [TOKEN] : [],
       };
     },
-  }),
-}));
-
-import { autoNsfwTextHash, evaluateAutoNsfw } from '~/server/services/auto-nsfw';
+  } as unknown as SimpleProfanityFilter,
+};
 
 const evaluate = (name: string, description: string) =>
-  evaluateAutoNsfw({ name, description, alreadyNsfw: false, lockedProperties: [] });
+  evaluateAutoNsfw({ name, description, alreadyNsfw: false, lockedProperties: [], profanity });
 
 beforeEach(() => vi.clearAllMocks());
 

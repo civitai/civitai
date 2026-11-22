@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import type * as PrismaSqlKysely from '~/server/db/prisma-sql-kysely';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { ProtectedContext } from '~/server/createContext';
@@ -67,6 +68,14 @@ vi.mock('~/server/services/notification.service', () => ({
 }));
 vi.mock('~/server/services/metric-excluded-users.service', () => ({
   getMetricExcludedUserIds: vi.fn(async () => []),
+}));
+// The image visibility check admits every image here; its rule is pinned in
+// image-thread-visibility.behavior.test.ts.
+vi.mock('~/server/db/prisma-sql-kysely', async (importOriginal) => ({
+  ...(await importOriginal<typeof PrismaSqlKysely>()),
+  queryPrismaSql: vi.fn(async () => [
+    { id: 1, userId: 1, nsfwLevel: 1, postId: 1, visibleSignedOut: null },
+  ]),
 }));
 
 import { toggleReactionHandler } from '~/server/controllers/reaction.controller';

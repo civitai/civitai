@@ -30,6 +30,7 @@ import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { importDep, mark, packMarked, packMarkedCompressed } from './pack.mjs';
+import { resetDevalueDir, writeDevalueBody } from './devalue-body.mjs';
 
 if (new Date(0).getTimezoneOffset() !== 0) throw new Error('run with TZ=UTC (the Node pods run in UTC)');
 
@@ -53,10 +54,13 @@ const USERS = {
   1002: { id: 1002, username: 'artist_two', image: null, deletedAt: null },
   1003: { id: 1003, username: 'viewer_three', image: null, deletedAt: null },
   1004: { id: 1004, username: 'mod_four', image: null, deletedAt: null },
+  // The system user (-1): the showcase carousel's `prioritizedUserIds: [-1]`.
+  [-1]: { id: -1, username: 'golden_system', image: null, deletedAt: null },
 };
 // session:data2:<id> — the cached session user (packages/civitai-auth/src/session-client.ts).
 const SESSIONS = {
   1001: { id: 1001, username: 'artist_one', isModerator: false, bannedAt: null, tier: null },
+  1002: { id: 1002, username: 'artist_two', isModerator: false, bannedAt: null, tier: null },
   1003: { id: 1003, username: 'viewer_three', isModerator: false, bannedAt: null, tier: null },
   1004: { id: 1004, username: 'mod_four', isModerator: true, bannedAt: null, tier: null },
 };
@@ -157,6 +161,7 @@ const MODELS = {
   5003: { id: 5003, userId: 1001, mode: 'TakenDown', minor: false, sfwOnly: false, galleryLevel: null },
   5004: { id: 5004, userId: 1002, mode: null, minor: false, sfwOnly: false, galleryLevel: null },
   5005: { id: 5005, userId: 1002, mode: null, minor: false, sfwOnly: false, galleryLevel: null },
+  5006: { id: 5006, userId: 1001, mode: null, minor: false, sfwOnly: false, galleryLevel: null },
 };
 const VERSIONS = {
   6001: 5001,
@@ -165,6 +170,7 @@ const VERSIONS = {
   6201: 5003,
   6301: 5004,
   6401: 5005,
+  6501: 5006,
 };
 // ModelVersion.baseModel per version (the `baseModels` filter). Read only by a fixture that sends it.
 const VERSION_BASE_MODELS = {
@@ -174,6 +180,7 @@ const VERSION_BASE_MODELS = {
   6201: 'SDXL 1.0',
   6301: 'Pony',
   6401: 'Illustrious',
+  6501: 'SDXL 1.0',
 };
 const settings = (extra) => ({
   hiddenTags: [],
@@ -192,6 +199,7 @@ const GALLERY_SETTINGS = {
   5003: { none: true, hiddenTags: [], hiddenUsers: [], hiddenImages: {}, pinnedPosts: {} },
   5004: settings({ pinnedPosts: { 6301: [7101] } }),
   5005: settings({}),
+  5006: settings({}),
 };
 
 // Posts: [id, userId, modelVersionId, publishedAt]
@@ -216,6 +224,12 @@ for (const [id, userId, versionId, publishedAt] of [
   [7301, 1002, 6101, day(11)],
   [7401, 1001, 6201, day(11)],
   [7011, 1002, null, day(6, 12)],
+  [7501, 1001, null, day(9, 14)],
+  [7013, 1002, 6401, day(13)],
+  // Version 6501: two posts by the system user (-1) and one by 1001 (prioritized-system-user-own-post).
+  [7601, -1, 6501, day(9)],
+  [7602, 1001, 6501, day(10)],
+  [7603, -1, 6501, day(11)],
 ])
   POSTS[id] = { id, userId, modelVersionId: versionId, publishedAt };
 
@@ -311,6 +325,54 @@ image(8302, 7301, { index: 1, nsfwLevel: 4 });
 image(8401, 7401);
 // An image that hides its meta: the column holds one, the cache and the lookup answer null.
 image(8030, 7011, { hideMeta: true, hasMeta: false });
+// An acceptableMinor image (1001's), listed only in a collection, and there only to its owner and to
+// moderators.
+image(8501, 7501);
+// A post of the minor content rule's fixtures (minor-mature-*): a minor-flagged R image the rule shows
+// only to its owner (1002) and moderators, an unflagged R image and a minor-flagged PG-13 image (both
+// shown to every viewer at their level: the controls).
+image(8701, 7013, { index: 0, nsfwLevel: 4, minor: true });
+image(8702, 7013, { index: 1, nsfwLevel: 4 });
+image(8703, 7013, { index: 2, nsfwLevel: 2, minor: true });
+IMAGES[8501].acceptableMinor = true;
+// The system user's images on version 6501 (two posts, out of id order against the post order) and
+// another creator's.
+image(8601, 7603, { index: 0 });
+image(8602, 7601, { index: 1 });
+image(8603, 7601, { index: 0 });
+image(8604, 7602, { index: 0 });
+
+// Collections (Collection rows, getUserCollectionPermissionsByIds' read) and their CollectionItem
+// rows (the `ct` CTE). 9101 is public (1001's): items accepted, in review and rejected, one of each
+// by 1003, a tagged one and one whose note holds no score. 9102 is private (1001's): 1002 holds VIEW
+// as a contributor, 1003 a contributor row without it. 9103 is public with a judged item (a score in
+// its note).
+const COLLECTIONS = {
+  9101: { id: 9101, read: 'Public', userId: 1001, contributors: [] },
+  9102: {
+    id: 9102,
+    read: 'Private',
+    userId: 1001,
+    contributors: [
+      { userId: 1002, permissions: ['VIEW', 'ADD'] },
+      { userId: 1003, permissions: ['ADD'] },
+    ],
+  },
+  9103: { id: 9103, read: 'Public', userId: 1002, contributors: [] },
+};
+const COLLECTION_ITEMS = [
+  { id: 95001, collectionId: 9101, imageId: 8001, status: 'ACCEPTED', addedById: 1001, note: null, tagId: null },
+  { id: 95004, collectionId: 9101, imageId: 8003, status: 'ACCEPTED', addedById: 1003, note: null, tagId: 31 },
+  { id: 95002, collectionId: 9101, imageId: 8007, status: 'ACCEPTED', addedById: null, note: '{"comment":"no score"}', tagId: null },
+  { id: 95006, collectionId: 9101, imageId: 8006, status: 'REVIEW', addedById: 1003, note: null, tagId: null },
+  { id: 95005, collectionId: 9101, imageId: 8204, status: 'REVIEW', addedById: 1002, note: null, tagId: null },
+  { id: 95003, collectionId: 9101, imageId: 8203, status: 'REJECTED', addedById: 1003, note: null, tagId: null },
+  { id: 95101, collectionId: 9102, imageId: 8002, status: 'ACCEPTED', addedById: 1001, note: null, tagId: null },
+  { id: 95102, collectionId: 9102, imageId: 8501, status: 'ACCEPTED', addedById: 1001, note: null, tagId: null },
+  { id: 95103, collectionId: 9102, imageId: 8105, status: 'ACCEPTED', addedById: 1002, note: null, tagId: null },
+  { id: 95201, collectionId: 9103, imageId: 8201, status: 'ACCEPTED', addedById: 1001, note: null, tagId: null },
+  { id: 95202, collectionId: 9103, imageId: 8202, status: 'ACCEPTED', addedById: 1001, note: '{"score":{"theme":7,"wittiness":5}}', tagId: null },
+];
 
 // Image.meta (jsonb), the generation parameters imageMetaCache serves (withMeta). Each differs; the
 // first holds an integer-like key ("10", listed first in JS, after "a" in jsonb's order), a fraction,
@@ -401,6 +463,35 @@ const PLACEMENTS = [
     data: { postId: 7201, days: 7, modelVersionIds: [6401], imageIds: [8201], acceptedLevel: 3, endsAt: '2026-06-21T10:00:00.000Z' },
   },
 ];
+// imageTagsCache (packed:caches:image-tags, src/server/redis/caches.ts): each image's votable tags,
+// listImageTagsForImages' rows (imageTagCompositeSelect, score desc then tagId asc), grouped by image.
+// Every other image's entry is a notFound marker (the lookup found no ImageTag row for it).
+const IMAGE_TAGS = {
+  8001: [
+    { tagId: 531, tagName: 'golden_fox', tagType: 'UserGenerated', score: 12, upVotes: 2, downVotes: 0, tagNsfwLevel: 1, automated: false, needsReview: false, concrete: true, lastUpvote: new Date('2026-06-12T09:30:00.000Z'), source: 'User' },
+    { tagId: 532, tagName: 'forest', tagType: 'Label', score: 7.5, upVotes: 0, downVotes: 1, tagNsfwLevel: 1, automated: true, needsReview: null, concrete: true, lastUpvote: null, source: 'WD14' },
+  ],
+  8003: [
+    { tagId: 533, tagName: 'sunset', tagType: 'Label', score: 0, upVotes: 0, downVotes: 0, tagNsfwLevel: 2, automated: true, needsReview: false, concrete: true, lastUpvote: null, source: 'Rekognition' },
+  ],
+  8007: [
+    { tagId: 531, tagName: 'golden_fox', tagType: 'UserGenerated', score: 3, upVotes: 1, downVotes: 0, tagNsfwLevel: 1, automated: false, needsReview: false, concrete: true, lastUpvote: new Date('2026-06-10T18:00:00.125Z'), source: 'User' },
+  ],
+};
+// TagsOnImageVote rows: what the handler merges as `vote` for a signed-in viewer. 1003's vote on 8007
+// names a tag 8007 does not carry; 1001's are another viewer's.
+const TAG_VOTES = [
+  { imageId: 8001, tagId: 531, userId: 1003, vote: 1 },
+  { imageId: 8001, tagId: 532, userId: 1003, vote: -1 },
+  { imageId: 8007, tagId: 999, userId: 1003, vote: 1 },
+  { imageId: 8007, tagId: 531, userId: 1001, vote: 1 },
+];
+// userFollowsCache (packed:caches:user-follows, src/server/redis/caches.ts): each user's followed
+// creators, the lookupFn's `{userId, follows}`. 1003 follows 1002 only; every other user's entry is a
+// notFound marker (the lookup found no Follow row).
+const USER_FOLLOWS = {
+  1003: [1002],
+};
 // system:blocked-browsing-tags (cache cluster): getBlockedBrowsingTags' list. Synthetic names; the
 // ids are two of BLOCKED_BROWSING_TAG_IDS (src/shared/constants/browsing-settings-addons.ts).
 const BLOCKED_TAGS = [
@@ -412,6 +503,17 @@ const ADDONS = [
   { type: 'some', nsfwLevels: [4, 8, 16], disableMinor: true, excludedTagIds: [9911] },
   { type: 'some', nsfwLevels: [1, 2, 4, 8, 16], disablePoi: true, excludedTagIds: [9901] },
 ];
+// ADDONS without its minor exclusion: what a fixture of the minor content rule reads (`spec.addons`),
+// so that no `disableMinor` hides a minor-flagged image and the rule alone decides on it.
+const ADDONS_NO_MINOR = [ADDONS[1]];
+// ADDONS plus an entry scoped to the "new & upcoming" boards (`scope: 'newCreators'`): it applies only
+// to a `newCreators` request (resolveBrowsingSettingsAddons' scope), so a request that resolved the
+// addons without the scope answers without its excluded tag.
+const ADDONS_NEW_CREATORS = [...ADDONS, { type: 'some', nsfwLevels: [1, 2, 4, 8, 16], scope: 'newCreators', excludedTagIds: [9921] }];
+// packed:caches:new-creators:<boardId> (getNewCreatorUserIds' fetchThroughCache entry): each board's
+// creators in board order. `cachedAt` is a number (Date.now()), fresh within the hour's ttl.
+const NEW_CREATOR_BOARDS = { 'images-new': [1002], 'images-new-red': [1001, 1002] };
+const NEW_CREATORS_CACHED_AT = NOW.getTime() - 10 * 60_000;
 
 // ---------------------------------------------------------------------------------------------
 // Redis: the world's cache entries, as Node writes them ({...result, cachedAt}, or a marker)
@@ -430,6 +532,9 @@ const K = {
   versionModel: 'model:gallery-settings:version-model',
   session: 'session:data2',
   meta: 'packed:caches:image-meta',
+  imageTags: 'packed:caches:image-tags',
+  userFollows: 'packed:caches:user-follows',
+  newCreators: 'packed:caches:new-creators',
 };
 const notFound = (idKey, id) => ({ [idKey]: id, notFound: true, cachedAt: CACHED_AT });
 const entry = (v) => ({ ...v, cachedAt: CACHED_AT });
@@ -482,6 +587,12 @@ function worldPacked(prefix, id) {
       return VERSIONS[id] ? entry({ id, modelId: VERSIONS[id] }) : undefined;
     case K.session:
       return SESSIONS[id];
+    case K.userFollows:
+      if (!USERS[id]) return undefined;
+      return USER_FOLLOWS[id] ? entry({ userId: id, follows: USER_FOLLOWS[id] }) : notFound('userId', id);
+    case K.imageTags:
+      if (!IMAGES[id]) return undefined;
+      return IMAGE_TAGS[id] ? entry({ imageId: id, tags: IMAGE_TAGS[id] }) : notFound('imageId', id);
     case K.meta:
       if (META_NOT_FOUND.has(id)) return notFound('id', id);
       return IMAGES[id] ? entry({ id, meta: metaOf(id) }) : undefined;
@@ -512,6 +623,12 @@ class Trace {
     this.toolsCandidatePosts = new Set(); // posts of every row a tools query matches without its tools clause
     this.baseModelsRead = false; // a query filtered by `baseModels`: the tables then carry each version's baseModel
     this.baseModelsCandidatePosts = new Set(); // posts of every row such a query matches without that clause
+    this.tagVotesRead = false; // the viewer's TagsOnImageVote rows were read (include 'tags', signed in)
+    this.followedRead = false; // a query filtered by the viewer's follow list (`followed`, signed in)
+    this.followedCandidatePosts = new Set(); // posts of every row such a query matches without that clause
+    this.collectionIds = new Set(); // collections a request reads (`collectionId`): their rows and items are in the tables
+    this.systemPostReads = new Set(); // versions whose system-user post Node looked up (hasSystemPosts)
+    this.newCreatorBoards = undefined; // a fixture's own board entries (spec.newCreatorBoards), by board id
   }
 }
 let T; // the fixture being traced
@@ -573,6 +690,52 @@ function cacheFetch(prefix, ids, { appendFn, lookup, idKey, ttl, notFoundTtl, ne
 
 const DAY = 24 * 60 * 60;
 const HOUR = 60 * 60;
+
+/** getUserCollectionPermissionsById (src/server/services/collection.service.ts), its `read` flag only:
+ *  Public or Unlisted, then (signed in) the owner, a moderator, a contributor row holding VIEW. A
+ *  collection that does not exist reads for no one (createEmptyPermissions). */
+function getUserCollectionPermissionsById({ id, userId, isModerator }) {
+  T.collectionIds.add(id);
+  const collection = COLLECTIONS[id];
+  if (!collection) return { read: false };
+  const permissions = { read: collection.read === 'Public' || collection.read === 'Unlisted' };
+  if (!userId) return permissions;
+  if (userId === collection.userId) permissions.read = true;
+  if (isModerator && userId !== collection.userId) permissions.read = true;
+  const contributor = collection.contributors.find((c) => c.userId === userId);
+  if (contributor && userId !== collection.userId && contributor.permissions.includes('VIEW')) permissions.read = true;
+  return permissions;
+}
+
+/** parseJudgeScore (src/server/games/daily-challenge/daily-challenge.utils.ts). */
+function parseJudgeScore(note) {
+  if (!note) return null;
+  try {
+    const parsed = JSON.parse(note);
+    return parsed?.score ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** getNewCreatorUserIds({ entity: 'images', domain }) (new-creators.service.ts): the board of the
+ *  request's board color through fetchThroughCache, a fresh entry served as cached. */
+function getNewCreatorUserIds(domain) {
+  const boardId = domain === 'red' ? 'images-new-red' : 'images-new';
+  const key = `${K.newCreators}:${boardId}`;
+  const value = T.newCreatorBoards?.[boardId] ?? { data: NEW_CREATOR_BOARDS[boardId], cachedAt: NEW_CREATORS_CACHED_AT };
+  T.packed.set(key, value);
+  if (!(NOW.getTime() - 3600 * 1000 <= value.cachedAt)) throw new Error('an expired board is refreshed: not a served shape');
+  return value.data;
+}
+/** getRequestBoardDomainColor (server-domain.ts) over the fixture hosts: each host is its color's
+ *  primary and no alias, so the host's own color (red for the red host). */
+const boardColorOf = (host) => Object.entries(HOST).find(([, h]) => h === host)?.[0];
+
+/** getUserFollows (src/server/redis/caches.ts): `userFollows[userId]?.follows ?? []`. */
+function getUserFollows(userId) {
+  return cacheFetch(K.userFollows, [userId])[userId]?.follows ?? [];
+}
 
 // --- the lookupFns (src/server/redis/caches.ts) over the world tables ---------------------------
 function isListingDisplayable(listing) {
@@ -687,10 +850,12 @@ const onlySelectableLevels = (l) => l & ~FLAGS.Blocked;
 const intersection = (a, b) => a & b;
 
 /** resolveBrowsingSettingsAddons (src/shared/constants/browsing-settings-addons.ts). */
-function resolveAddons(data, browsingLevel, { isModerator } = {}) {
+function resolveAddons(data, browsingLevel, { isModerator, scope } = {}) {
   const acc = { disablePoi: false, disableMinor: false, excludedTagIds: [] };
   if (isModerator) return acc;
   for (const elem of data) {
+    // An entry with a scope applies only to that surface (BROWSING_ADDON_SCOPES: 'newCreators').
+    if (elem.scope && (elem.scope !== 'newCreators' || elem.scope !== scope)) continue;
     const levels = elem.nsfwLevels.filter((l) => l > 0 && (l & (l - 1)) === 0).reduce((a, b) => a | b, 0);
     const inter = browsingLevel & levels;
     let apply = false;
@@ -707,8 +872,8 @@ function resolveAddons(data, browsingLevel, { isModerator } = {}) {
 
 /** getBrowsingSettingAddons: the system key, read raw. */
 function getAddons() {
-  T.raw.set('sys:system:browsing-setting-addons', JSON.stringify(ADDONS));
-  return ADDONS;
+  T.raw.set('sys:system:browsing-setting-addons', JSON.stringify(T.addons));
+  return T.addons;
 }
 
 /** getBlockedBrowsingTags (system-cache.ts): the cache key, read raw. Node reads it on every call;
@@ -730,7 +895,7 @@ function enforceBlockedBrowsingTags(input, viewer) {
   }
   const addons = getAddons();
   const level = onlySelectableLevels(input.browsingLevel || publicBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
-  const resolved = resolveAddons(addons, level, { isModerator: viewer.isModerator });
+  const resolved = resolveAddons(addons, level, { isModerator: viewer.isModerator, scope: input.newCreators ? 'newCreators' : undefined });
   input.disablePoi = input.disablePoi || resolved.disablePoi;
   input.disableMinor = input.disableMinor || resolved.disableMinor;
   const isOwnScoped = input.userId
@@ -772,6 +937,20 @@ function mapSearchInputToFeedQuery(input, mode, caller) {
     if (!inRequestedSort) return skip('input:postId');
     if (postIds.length > 50) return skip('postIds>50');
     if (input.postIdsInRequestedSort === true && typeof input.limit === 'number' && input.limit > 200) return skip('postIds:limit>200');
+  }
+  // Signed out, the search path drops the flag and serves the global feed.
+  const followedOn = input.followed === true && present(input.currentUserId);
+  const followed = followedOn ? input.followedUserIds : undefined;
+  if (followedOn) {
+    if (!Array.isArray(followed)) return skip('flag:followed');
+    if (followed.length > 10_000) return skip('followed>10000');
+    if (present(input.userId)) return skip('flag:followed:userId');
+  }
+  const newCreators = input.newCreators === true ? input.newCreatorUserIds : undefined;
+  if (input.newCreators === true) {
+    if (!Array.isArray(newCreators)) return skip('flag:newCreators');
+    if (newCreators.length > 10_000) return skip('newCreators>10000');
+    if (present(input.userId) || input.followed === true) return skip('flag:newCreators:userId');
   }
   const sort = SORTS[String(input.sort)];
   if (!sort) return skip(`sort:${String(input.sort || 'none')}`);
@@ -816,6 +995,10 @@ function mapSearchInputToFeedQuery(input, mode, caller) {
   if (excludedUsers.length) params.set('excludedUserIds', excludedUsers.slice(0, 1000).join(','));
   if (versionIds) params.set('versionIds', versionIds.join(','));
   if (userId) params.set('userIds', String(userId));
+  const followedIds = ints(followed);
+  if (followedIds.length) params.set('userIds', followedIds.join(','));
+  const newCreatorIds = ints(newCreators);
+  if (newCreatorIds.length) params.set('userIds', newCreatorIds.join(','));
   if (types.length) params.set('types', types.join(','));
   if (input.withMeta === true) params.set('withMeta', '1');
   if (input.fromPlatform === true) params.set('fromPlatform', '1');
@@ -857,8 +1040,12 @@ function fetchFeed(query) {
   };
 }
 
-/** serveFromFeed (feed-primary.service.ts) for a feed without hubs, follows or degrade. */
+/** serveFromFeed (feed-primary.service.ts) for a feed without hubs or degrade. */
 function serveFromFeed(input, { hydrate, route }) {
+  // A follow list with no creators, or an unpopulated new-creators board, is an empty feed, whatever
+  // else is set.
+  if ((input.followed === true && input.followedUserIds?.length === 0) || (input.newCreators === true && input.newCreatorUserIds?.length === 0))
+    return { ok: true, page: { data: [], nextCursor: undefined } };
   const mapping = mapSearchInputToFeedQuery(input, 'primary', route);
   if (!mapping.ok && (mapping.reason === 'tags:none' || mapping.reason === 'ids:none')) return { ok: true, page: { data: [], nextCursor: undefined } };
   if (!mapping.ok) return { ok: false, reason: mapping.reason };
@@ -894,6 +1081,10 @@ class NodeError extends Error {
 }
 
 // --- getAllImagesUncaptured: the SQL (over the world), hydration and per-image transform ----------
+/** isMinorMatureImage (src/server/common/image-visibility.ts) over isMinorContentRestricted
+ *  (packages/civitai-shared/src/minor-content-gate.ts): `minor === true` and a level that is
+ *  missing, 0 or at least R. */
+const isMinorMatureImage = (i) => i.minor === true && (i.nsfwLevel == null || i.nsfwLevel === 0 || i.nsfwLevel >= FLAGS.R);
 /** The rows Node's getAllImages SQL returns, for the clauses these inputs reach. */
 function imageSql(q) {
   if (q.techniques?.length) T.techniquesRead = true;
@@ -902,14 +1093,46 @@ function imageSql(q) {
   if (q.baseModels?.length) T.baseModelsRead = true;
   const isModerator = !!q.user?.isModerator;
   const userId = q.user?.id;
+  // getAllImagesUncaptured's prefetch: `userId && followed ? getUserFollows(userId) : undefined`, and
+  // the clause only for a non-empty list.
+  const follows = userId && q.followed ? getUserFollows(userId) : undefined;
+  if (follows?.length) T.followedRead = true;
   let browsingLevel = onlySelectableLevels(q.browsingLevel ?? 0);
   if (!browsingLevel) browsingLevel = publicBrowsingLevelsFlag;
+  // The `ct` CTE: the collection's image items, its tag, ACCEPTED or (signed in) the viewer's own
+  // not REJECTED (`ownerId`: a session, as every fixture's viewer is).
+  const collectionItems = q.collectionId
+    ? COLLECTION_ITEMS.filter(
+        (ci) =>
+          ci.collectionId === q.collectionId &&
+          (!q.collectionTagId || ci.tagId === q.collectionTagId) &&
+          ci.imageId != null &&
+          (ci.status === 'ACCEPTED' || (userId && ci.status !== 'REJECTED' && ci.addedById === userId))
+      )
+    : undefined;
+  // getAllImagesUncaptured's prefetch of the new-creators board (`newCreators`): `i."userId" IN
+  // (board)`, or `1 = 0` for an empty one.
+  const board = q.newCreators ? getNewCreatorUserIds(q.domain) : undefined;
+  // `userId && reactions?.length`: the viewer's own reactions of those kinds.
+  const reactionsOn = !!userId && !!q.reactions?.length;
+  // The prioritizeUser branch (the version cache off): no model join; the post's version; for the
+  // system user alone without a post of its own on the version, every creator ordered by an IIF,
+  // else only those creators ordered oldest post first.
+  const prioritized = !!q.prioritizedUserIds?.length;
+  const systemAlone = prioritized && q.prioritizedUserIds.length === 1 && q.prioritizedUserIds[0] === -1;
+  let hasSystemPosts = false;
+  if (systemAlone && q.modelVersionId) {
+    // dbRead.post.findFirst({ where: { userId: -1, modelVersionId } }).
+    T.systemPostReads.add(q.modelVersionId);
+    hasSystemPosts = Object.values(POSTS).some((p) => p.userId === -1 && p.modelVersionId === q.modelVersionId);
+  }
+  const iifOrder = systemAlone && !hasSystemPosts;
   // `without` names one more filter clause to leave out (the candidate rows below).
   let without;
   const viaVersion = q.modelVersionId || q.modelId;
   const passes = (i, applyTools, applyBaseModels = true) => {
     const p = POSTS[i.postId];
-    if (q.ids?.length && !q.ids.includes(i.id)) return false;
+    if (without !== 'ids' && q.ids?.length && !q.ids.includes(i.id)) return false;
     if (q.types?.length && !q.types.includes(i.type)) return false;
     if (!(p.publishedAt < NOW)) return false;
     if (!isModerator) {
@@ -918,10 +1141,19 @@ function imageSql(q) {
     }
     if (q.disablePoi && !(i.poi !== true || p.userId === userId)) return false;
     if (q.disableMinor && !(i.minor !== true || (userId && i.userId === userId))) return false;
+    // minorMatureImageVisibleSql({ userId: ownerId, isModerator }) (image-visibility.ts): whatever
+    // disableMinor says, a restricted minor-flagged image is its owner's and moderators' only.
+    if (without !== 'minorMature' && !isModerator && isMinorMatureImage(i) && !(userId && i.userId === userId)) return false;
     if (q.excludedTagIds?.length && tagIdsOf(i.id).some((t) => q.excludedTagIds.includes(t)) && !(userId && i.userId === userId)) return false;
-    if (q.modelVersionId && !RESOURCES[i.id].some((r) => r.modelVersionId === q.modelVersionId)) return false;
-    if (!q.modelVersionId && q.modelId && !RESOURCES[i.id].some((r) => VERSIONS[r.modelVersionId] === q.modelId)) return false;
+    if (!prioritized && q.modelVersionId && !RESOURCES[i.id].some((r) => r.modelVersionId === q.modelVersionId)) return false;
+    if (!prioritized && !q.modelVersionId && q.modelId && !RESOURCES[i.id].some((r) => VERSIONS[r.modelVersionId] === q.modelId)) return false;
+    if (prioritized && q.modelVersionId && p.modelVersionId !== q.modelVersionId) return false;
+    if (without !== 'prioritized' && prioritized && !iifOrder && !q.prioritizedUserIds.includes(i.userId)) return false;
+    if (without !== 'reactions' && reactionsOn && !REACTIONS.some((r) => r.userId === userId && r.imageId === i.id && q.reactions.includes(r.reaction))) return false;
     if (q.userId && i.userId !== q.userId) return false;
+    // i."userId" IN (follows), after the creator clause.
+    if (without !== 'followed' && follows?.length && !follows.includes(i.userId)) return false;
+    if (without !== 'newCreators' && board && !board.includes(i.userId)) return false;
     if (without !== 'tags' && q.tags?.length && !tagIdsOf(i.id).some((t) => q.tags.includes(t))) return false;
     // EXISTS (… FROM "ImageTechnique" … "techniqueId" IN (techniques)): any listed technique.
     if (without !== 'techniques' && q.techniques?.length && !techniqueIdsOf(i.id).some((t) => q.techniques.includes(t))) return false;
@@ -936,16 +1168,47 @@ function imageSql(q) {
     // existing version carrying one of the names (the whole list, an empty name included).
     if (applyBaseModels && q.baseModels?.length && !RESOURCES[i.id].some((r) => r.modelVersionId in VERSION_BASE_MODELS && q.baseModels.includes(VERSION_BASE_MODELS[r.modelVersionId])))
       return false;
-    if (i.needsReview !== null || i.acceptableMinor) return false;
+    if (i.needsReview !== null) return false;
+    // `acceptableMinor = FALSE`; in a collection the image's owner (and a moderator) still sees it.
+    if (i.acceptableMinor && (!q.collectionId || (!isModerator && i.userId !== userId))) return false;
     if ((i.nsfwLevel & browsingLevel) === 0 || i.nsfwLevel === 0) return false;
     return true;
   };
   let rows = Object.values(IMAGES).filter((i) => passes(i, true));
+  // JOIN ct ON ct."imageId" = i.id: one row per matching item, with its note, status and adder.
+  if (collectionItems)
+    rows = rows.flatMap((i) =>
+      collectionItems
+        .filter((ci) => ci.imageId === i.id)
+        .map((ci) => ({ ...i, collectionItemId: ci.id, collectionItemNote: ci.note, collectionItemStatus: ci.status, collectionItemAddedById: ci.addedById }))
+    );
   // As for `tools` below: every row the query would match without its techniques (or tags) clause.
   for (const key of ['techniques', 'tags']) {
     if (!q[key]?.length) continue;
     without = key;
     for (const i of Object.values(IMAGES)) if (passes(i, true)) T[`${key}CandidatePosts`].add(i.postId);
+    without = undefined;
+  }
+  // Each row the minor content rule alone drops (in a collection, of its items): the fixture's tables
+  // must hold it, or a feed-go without the rule would answer the same.
+  const shown = new Set(Object.values(IMAGES).filter((i) => passes(i, true)).map((i) => i.id));
+  without = 'minorMature';
+  for (const i of Object.values(IMAGES))
+    if (passes(i, true) && !shown.has(i.id) && (!collectionItems || collectionItems.some((ci) => ci.imageId === i.id))) T.posts.add(i.postId);
+  without = undefined;
+  // The same for the ids, new-creators, reactions and prioritized-creators clauses: the tables hold every
+  // row each alone decides on.
+  // (`ids` only as the input's own: the feed hydrate's ids are the feed's page, whose rows are held.)
+  for (const [key, on] of [['ids', !!q.ids?.length && !q.throwOnStatementTimeout && T.idsCandidates], ['newCreators', !!board], ['reactions', reactionsOn], ['prioritized', prioritized && !iifOrder]]) {
+    if (!on) continue;
+    without = key;
+    for (const i of Object.values(IMAGES)) if (passes(i, true)) T.posts.add(i.postId);
+    without = undefined;
+  }
+  // The same for the follow clause.
+  if (follows?.length) {
+    without = 'followed';
+    for (const i of Object.values(IMAGES)) if (passes(i, true)) T.followedCandidatePosts.add(i.postId);
     without = undefined;
   }
   // Every row the same query would match WITHOUT the tools clause (before order, cursor and limit):
@@ -957,18 +1220,32 @@ function imageSql(q) {
   // index (getCursor('i."index"'), inclusive), and the index as the cursor column.
   const byIndex = !!q.postId && !q.modelId;
   const asc = q.sort === 'Oldest';
-  if (byIndex) rows.sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
-  else rows.sort((a, b) => (asc ? a.id - b.id : b.id - a.id));
+  // Recently Added: ORDER BY ct."collectionItemId" DESC, the cursor on it.
+  const byItem = !byIndex && q.sort === 'Recently Added';
+  const baseOrder = (a, b) => {
+    if (byIndex) return (a.index ?? 0) - (b.index ?? 0) || a.id - b.id;
+    if (byItem) return b.collectionItemId - a.collectionItemId;
+    return asc ? a.id - b.id : b.id - a.id;
+  };
+  if (prioritized && !iifOrder) rows.sort((a, b) => a.postId * 100 + (a.index ?? 0) - (b.postId * 100 + (b.index ?? 0)) || a.id - b.id);
+  else if (iifOrder) {
+    // IIF(i."userId" IN (-1), i.index, 1000), then the sort's own order (no fixture row has a NULL index).
+    const iif = (r) => (r.userId === -1 ? r.index : 1000);
+    rows.sort((a, b) => iif(a) - iif(b) || baseOrder(a, b));
+  } else rows.sort(baseOrder);
   if (q.cursor) {
     // getCursor: a single-field sort's cursor is one integer (parseCursor's parseInt).
     const c = typeof q.cursor === 'string' ? parseInt(q.cursor, 10) : q.cursor;
     if (Number.isNaN(c)) throw new NodeError(400, 'cursor');
-    rows = rows.filter((r) => (byIndex ? (r.index ?? 0) >= c : asc ? r.id >= c : r.id <= c));
+    rows = rows.filter((r) => (byIndex ? (r.index ?? 0) >= c : byItem ? r.collectionItemId <= c : asc ? r.id >= c : r.id <= c));
   }
   for (const r of rows) T.posts.add(r.postId);
   void viaVersion;
   const skip = q.skip ?? 0; // OFFSET
-  return rows.slice(skip, skip + q.limit + 1).map((r) => ({ ...structuredClone(r), cursorId: byIndex ? r.index : r.id }));
+  return rows.slice(skip, skip + q.limit + 1).map(({ collectionItemId, ...r }) => ({
+    ...structuredClone(r),
+    cursorId: byIndex ? r.index : byItem ? collectionItemId : r.id,
+  }));
 }
 
 /** toImageV2Stats(shapeImageMetrics(...)) over MetricService.fetch's parse of the hash. */
@@ -1015,6 +1292,9 @@ function getAllImagesUncaptured(input) {
   const { limit, include = [], includeBaseModel } = input;
   const userId = input.user?.id;
   const isModerator = input.user?.isModerator ?? false;
+  // The prefetched collection permission: no read is an empty page.
+  if (input.collectionId && !getUserCollectionPermissionsById({ userId, isModerator, id: input.collectionId }).read)
+    return { nextCursor: undefined, items: [] };
   const includeCosmetics = include.includes('cosmetics');
   const rawImages = imageSql(input);
   const imageIds = rawImages.map((i) => i.id);
@@ -1037,6 +1317,29 @@ function getAllImagesUncaptured(input) {
       }, {})
     : undefined;
   const tagIdsVar = include.includes('tagIds') ? cacheFetch(K.tagIds, ids) : undefined;
+  // getImageTagsForImages: imageTagsCache.fetch, each tag `{...tag, imageId, id: tagId, type: tagType,
+  // nsfwLevel: tagNsfwLevel, name: tagName}`, flattened in image order.
+  let tagsVar;
+  if (include.includes('tags')) {
+    const tagsByImage = cacheFetch(K.imageTags, ids);
+    tagsVar = ids.flatMap(
+      (imageId) =>
+        tagsByImage[imageId]?.tags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
+          ...tag,
+          imageId,
+          id: tagId,
+          type: tagType,
+          nsfwLevel: tagNsfwLevel,
+          name: tagName,
+        })) ?? []
+    );
+  }
+  // dbRead.tagsOnImageVote.findMany({ where: { imageId: { in: imageIds }, userId }, select: { imageId, tagId, vote } }).
+  let userVotes;
+  if (include.includes('tags') && userId) {
+    T.tagVotesRead = true;
+    userVotes = TAG_VOTES.filter((v) => v.userId === userId && ids.includes(v.imageId)).map(({ imageId, tagId, vote }) => ({ imageId, tagId, vote }));
+  }
   const userBasicData = cacheFetch(K.basic, uids);
   let userCosmetics;
   if (includeCosmetics) {
@@ -1079,6 +1382,22 @@ function getAllImagesUncaptured(input) {
       }
   }
 
+  // The transform's vote merge and its tagsByImageId index.
+  if (tagsVar && userVotes) {
+    const voteMap = new Map(userVotes.map((v) => [`${v.imageId}:${v.tagId}`, v.vote]));
+    for (const tag of tagsVar) {
+      const vote = voteMap.get(`${tag.imageId}:${tag.id}`);
+      if (vote !== undefined) tag.vote = vote > 0 ? 1 : -1;
+    }
+  }
+  const tagsByImageId = tagsVar
+    ? tagsVar.reduce((acc, tag) => {
+        const arr = acc.get(tag.imageId);
+        if (arr) arr.push(tag);
+        else acc.set(tag.imageId, [tag]);
+        return acc;
+      }, new Map())
+    : undefined;
   const filtered = rawImages.filter((x) => {
     if (isModerator) return true;
     if ((!x.publishedAt || x.publishedAt > NOW || !!x.unpublishedAt) && x.userId !== userId) return false;
@@ -1108,12 +1427,12 @@ function getAllImagesUncaptured(input) {
       },
       stats,
       reactions: userReactions?.[i.id]?.map((r) => ({ userId, reaction: r })) ?? [],
-      tags: undefined,
+      tags: tagsByImageId?.get(i.id),
       tagIds: tagIdsVar?.[i.id]?.tags,
       cosmetic: frames?.[i.id] ?? null,
       eventDecoration: eventDecorations?.[i.id] ?? null,
       thumbnailUrl: thumbnail?.url,
-      judgeScore: null,
+      judgeScore: parseJudgeScore(collectionItemNote ?? null),
     };
   });
   // stripImageForInfiniteWire
@@ -1139,6 +1458,9 @@ function getAllImagesIndex(input) {
   const offset = isNumber(cursorParsed?.[0]) ? Number(cursorParsed?.[0]) : 0;
   const entry = isNumber(cursorParsed?.[1]) ? Number(cursorParsed?.[1]) : undefined;
   const searchInput = { ...input, userId, currentUserId: user?.id, isModerator: user?.isModerator, offset, entry };
+  // serveImagesFromFeedService: the viewer's follow list, signed in only.
+  if (searchInput.followed && searchInput.currentUserId) searchInput.followedUserIds = getUserFollows(searchInput.currentUserId);
+  if (searchInput.newCreators) searchInput.newCreatorUserIds = getNewCreatorUserIds(searchInput.domain);
   const served = serveFromFeed(withoutUnservedFilters(searchInput), {
     route: 'website',
     hydrate: (ids) => {
@@ -1445,11 +1767,50 @@ function runAsPosts(spec) {
 
 // --- image.getInfinite ----------------------------------------------------------------------------
 /** requiresImageDbPath (src/server/schema/image.schema.ts), for the inputs these fixtures send. */
-const requiresImageDbPath = (input) => !!input.postId || (!!input.modelId && !input.modelVersionId);
+const requiresImageDbPath = (input) =>
+  !!input.postId ||
+  !!input.collectionId ||
+  !!input.reactions?.length ||
+  !!input.ids?.length ||
+  (!!input.modelId && !input.modelVersionId) ||
+  (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId));
 
-/** getInfiniteImagesHandler (image.controller.ts) without Hat Turf (no fixture sends a hat key),
- *  hubs or ids; then withSharedFeedUsers, which changes no decoded value (one shared `user` object
- *  per creator is a superjson referential equality, not a different value). */
+/** The handler's withoutHeldFromViewer over getHeldLevelsByPost (withOwners): an image on a held
+ *  model's post only at a level intersecting the hold, or to the model's owner (a session); a
+ *  moderator sees every image. */
+function withoutHeldFromViewer(user, images) {
+  const postIds = images.map((image) => image.postId).filter((id) => id != null);
+  if (!postIds.length || user?.isModerator) return images;
+  const ids = [...new Set(postIds)];
+  const posts = cacheFetch(K.postVersion, ids);
+  const versionIds = [...new Set(Object.values(posts).map((post) => post.modelVersionId))].filter((id) => id != null);
+  const held = new Map();
+  if (!versionIds.length) return images;
+  const versions = cacheFetch(K.versionModel, versionIds);
+  const levels = new Map();
+  for (const v of Object.values(versions)) {
+    const g = gallerySettingsOf(v.modelId);
+    if (g?.sfwHeld) levels.set(v.modelId, g.level);
+  }
+  if (!levels.size) return images;
+  // dbRead.model.findMany({ where: { id: { in: [...levels.keys()] } }, select: { id, userId } }).
+  const ownerOf = new Map([...levels.keys()].map((id) => [id, MODELS[id]?.userId]));
+  for (const id of ids) {
+    const versionId = posts[id]?.modelVersionId;
+    const modelId = versionId ? versions[versionId]?.modelId : undefined;
+    const level = modelId ? levels.get(modelId) : undefined;
+    if (modelId && level !== undefined) held.set(id, { level, ownerId: ownerOf.get(modelId) });
+  }
+  return images.filter((image) => {
+    const hold = image.postId ? held.get(image.postId) : undefined;
+    const owner = !!user && hold?.ownerId === user.id;
+    return !hold || owner || (hold.level & image.nsfwLevel) !== 0;
+  });
+}
+
+/** getInfiniteImagesHandler (image.controller.ts) without Hat Turf (no fixture sends a hat key) or
+ *  hubs; then withSharedFeedUsers, which changes no decoded value (one shared `user` object per
+ *  creator is a superjson referential equality, not a different value). */
 function infiniteHandler({ input, ctx }) {
   const { user, features } = ctx;
   const { hatSort: _s, hatTeams: _t, hatTurfMine: _m, hideTurfHats: _h, hideWornHats: _w, ...unhatted } = input;
@@ -1464,11 +1825,16 @@ function infiniteHandler({ input, ctx }) {
     if (!browsingLevel) return { items: [], nextCursor: undefined };
     scopedInput = { ...scopedInput, browsingLevel };
   }
-  const args = { ...scopedInput, user, include: [...scopedInput.include, 'tagIds'] };
+  const args = { ...scopedInput, user, domain: ctx.domain, include: [...scopedInput.include, 'tagIds'] };
+  // Images picked by id name no model, so each is held by its own post's model.
+  const byId = !!scopedInput.imageId || !!scopedInput.ids?.length;
   if (useIndex) return getAllImagesIndex(structuredCloneInput(args));
   const result = getAllImages(args);
-  return { ...result, items: result.items, source: 'db' };
+  return { ...result, items: byId ? withoutHeldFromViewer(user, result.items) : result.items, source: 'db' };
 }
+
+/** parseVerifiedBotHeader (bot-detection/header.ts). */
+const parseVerifiedBotHeader = (raw) => (raw === 'googlebot' || raw === 'bingbot' ? raw : null);
 
 function runInfinite(spec) {
   const session = spec.viewer ? SESSIONS[spec.viewer] : null;
@@ -1476,7 +1842,11 @@ function runInfinite(spec) {
   const user = session && !session.bannedAt ? { ...session } : undefined;
   const color = Object.entries(HOST).find(([, h]) => h === spec.host)?.[0] ?? 'blue';
   const canViewNsfw = color === 'blue' || color === 'red';
-  const cap = !user ? publicBrowsingLevelsFlag : !canViewNsfw ? sfwBrowsingLevelsFlag : undefined;
+  // requestDomainBrowsingLevelCap: a verified crawler (the header as the API policy left it) counts as
+  // signed in where mature content is allowed.
+  const crawler = parseVerifiedBotHeader(spec.headers?.['x-civitai-verified-bot']) !== null;
+  const isAuthorized = !!user || (crawler && canViewNsfw);
+  const cap = !isAuthorized ? publicBrowsingLevelsFlag : !canViewNsfw ? sfwBrowsingLevelsFlag : undefined;
   // zod strips the keys getInfiniteImagesSchema lacks (the legacy clients' `useIndex` and `search`).
   const { useIndex: _useIndex, search: _search, ...raw } = structuredClone(spec.input);
   if (cap !== undefined) raw.browsingLevel = ((raw.browsingLevel ?? 0) & cap) || cap;
@@ -1491,8 +1861,8 @@ function runInfinite(spec) {
     ...raw,
   };
   const features = { imageIndexFeed: spec.nodeFlags.imageIndexFeed };
-  // createContext's policy, as for the gallery procedure: cacheable without a session.
-  return { value: infiniteHandler({ input, ctx: { user, features } }), cacheable: !session };
+  // createContext's policy: cacheable without a session and without a verified crawler.
+  return { value: infiniteHandler({ input, ctx: { user, features, domain: boardColorOf(spec.host) } }), cacheable: !session && !crawler };
 }
 
 // --- GET /api/v1/images ----------------------------------------------------------------------------
@@ -2055,6 +2425,25 @@ const AS_POSTS = [
     goConfig: { creatorPromotions: '' },
     input: { modelId: 5005, modelVersionId: 6401, sort: 'Most Reactions', browsingLevel: 1, limit: 5 },
   },
+  // The minor content rule (minorMatureImageVisibleSql) on the gallery's Postgres path: post 7013 on
+  // version 6401 holds 8701 (minor-flagged, R, by 1002), 8702 (R) and 8703 (minor-flagged, PG-13). The
+  // addons carry no minor exclusion, so the rule alone decides on 8701.
+  ...[
+    [1003, 'stranger', 'another signed-in viewer: 8701 is left out of the page and of the post completion'],
+    [1002, 'owner', 'its owner: 8701 is kept'],
+    [1004, 'moderator', 'a moderator: 8701 is kept'],
+  ].map(([viewer, who, what]) => ({
+    name: `minor-mature-db-path-${who}`,
+    ...(who === 'stranger' ? { alsoCached: [8701] } : {}),
+    description: `image-index-feed off, level 31 on an NSFW host, the addons without the minor exclusion, for ${what}; 8702 and 8703 are shown to every viewer.`,
+    viewer,
+    host: HOST.blue,
+    addons: ADDONS_NO_MINOR,
+    nodeFlags: { imageIndexFeed: false },
+    goConfig: { imageIndexFeed: false },
+    input: { modelId: 5005, modelVersionId: 6401, sort: 'Newest', browsingLevel: 31, limit: 1 },
+    replies: {},
+  })),
 ];
 
 const V1 = [
@@ -2492,7 +2881,142 @@ const INFINITE = [
       'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=2': { body: { items: [8001, 8003], ...fc('1718000000000', '8003') } },
     },
   },
+  {
+    name: 'include-tags-signed-out',
+    description: '`include: [cosmetics, tags]` signed out: each image’s votable tags from imageTagsCache, as getImageTagsForImages renames them; `tags` undefined where the entry is a notFound marker; no vote read.',
+    viewer: null,
+    host: HOST.green,
+    input: { include: ['cosmetics', 'tags'], sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
+    },
+  },
+  {
+    name: 'include-tags-signed-in-votes',
+    description: '`include: [cosmetics, tags]` signed in: the viewer’s TagsOnImageVote rows merged as `vote` (1 / -1) on the tags they voted; none for a vote on a tag the image does not carry, nor for another viewer’s vote.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { include: ['cosmetics', 'tags'], sort: 'Newest', browsingLevel: 31, limit: 10 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&excludedTags=9911%2C9901&excludeMinor=1&excludePoi=1&viewerId=1003&sort=newest&limit=10': { body: { items: [8204, 8007, 8006, 8004, 8002, 8001] } },
+    },
+  },
+  {
+    name: 'followed-signed-in',
+    description: '`followed: true` signed in: the viewer’s follow list (userFollowsCache: 1002) as the feed’s userIds, and as the hydrate’s `i."userId" IN (…)`, which drops 8004 (1001’s), which the feed named.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { followed: true, sort: 'Newest', browsingLevel: 31, limit: 10 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&excludedTags=9911%2C9901&userIds=1002&excludeMinor=1&excludePoi=1&viewerId=1003&sort=newest&limit=10': { body: { items: [8006, 8004, 8003] } },
+    },
+  },
+  {
+    name: 'followed-signed-in-no-follows',
+    description: '`followed: true` signed in with an empty follow list (a notFound marker): serveFromFeed’s empty page, no feed call.',
+    viewer: 1001,
+    host: HOST.green,
+    input: { followed: true, sort: 'Newest', browsingLevel: 1, limit: 10 },
+    replies: {},
+  },
+  {
+    name: 'followed-signed-out',
+    description: '`followed: true` signed out: the flag is dropped (no follow read, no userIds): the global feed.',
+    viewer: null,
+    host: HOST.green,
+    input: { followed: true, sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
+    },
+  },
+  {
+    name: 'followed-with-creator',
+    description: '`followed: true` with a `userId` signed in: the mapper refuses a follow list beside a creator (flag:followed:userId), an empty page; no feed call.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { followed: true, userId: 1001, sort: 'Newest', browsingLevel: 31, limit: 5 },
+    replies: {},
+  },
+  {
+    name: 'followed-model-only-db-path',
+    description: '`followed: true` signed in on the Postgres path (a model without a version): only the followed creator’s (1002) images of the model, irr.imageId DESC, the look-ahead row’s id as the cursor.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { followed: true, modelId: 5001, sort: 'Newest', browsingLevel: 31, limit: 2 },
+    replies: {},
+  },
+  {
+    name: 'collection-public-signed-out',
+    description: 'A public collection (9101) signed out: its ACCEPTED items only (not 8006 or 8204 in review, nor the rejected 8203), Newest; 8007’s note holds no score (judgeScore null).',
+    viewer: null,
+    host: HOST.green,
+    input: { collectionId: 9101, sort: 'Newest', browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'collection-public-signed-in-own-items',
+    description: 'A public collection (9101) signed in as 1003: the ACCEPTED items and 1003’s own item in review (8006), not 1002’s in review (8204) nor 1003’s rejected one (8203); Recently Added (item id DESC), the look-ahead item’s id as the cursor.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { collectionId: 9101, sort: 'Recently Added', browsingLevel: 31, limit: 3 },
+  },
+  {
+    name: 'collection-recently-added-cursor',
+    description: 'The next Recently Added page of 9101 for 1003: the cursor is an item id, inclusive.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { collectionId: 9101, sort: 'Recently Added', cursor: 95002, browsingLevel: 31, limit: 3 },
+  },
+  {
+    name: 'collection-tag',
+    description: 'A collection narrowed by `collectionTagId` (31): only 8003’s item.',
+    viewer: null,
+    host: HOST.green,
+    input: { collectionId: 9101, collectionTagId: 31, sort: 'Newest', browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'collection-public-moderator',
+    description: 'A public collection read by a moderator (1004): read is granted whatever the branch, so it is answered; the moderator view’s filters apply.',
+    viewer: 1004,
+    host: HOST.blue,
+    input: { collectionId: 9101, sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'collection-private-owner',
+    description: 'A private collection (9102) read by its owner (1001): its items, 1001’s acceptableMinor 8501 included (an owner still sees it in a collection).',
+    viewer: 1001,
+    host: HOST.blue,
+    input: { collectionId: 9102, sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'collection-private-other-viewer',
+    description: 'A private collection (9102) read by 1003, whose contributor row holds no VIEW: no read, Node’s empty page; no page query.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { collectionId: 9102, sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'collection-private-signed-out',
+    description: 'A private collection (9102) signed out: no read, the empty page.',
+    viewer: null,
+    host: HOST.green,
+    input: { collectionId: 9102, browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'collection-missing',
+    description: 'A collection that does not exist (88): createEmptyPermissions reads for no one, the empty page.',
+    viewer: null,
+    host: HOST.green,
+    input: { collectionId: 88, browsingLevel: 1, limit: 10 },
+  },
   // Fallbacks.
+  {
+    name: 'fallback-followed-not-a-boolean',
+    description: '`followed: "true"`: z.boolean() is not coerced, so the schema’s BAD_REQUEST, which Node answers itself.',
+    fallback: 'input-invalid',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { followed: 'true', browsingLevel: 31, limit: 2 },
+  },
   {
     name: 'fallback-base-models-not-a-list',
     description: '`baseModels` as a bare string: the schema’s BAD_REQUEST (z.string().array()), which Node answers itself.',
@@ -2502,12 +3026,12 @@ const INFINITE = [
     input: { baseModels: 'Pony', browsingLevel: 1, limit: 2 },
   },
   {
-    name: 'fallback-include-tags',
-    description: '`include: [cosmetics, tags]`: the votable tags (imageTagsCache and the viewer’s votes) are not ported.',
+    name: 'fallback-include-meta-select',
+    description: '`include: [cosmetics, tags, metaSelect]`: the tags are answered, but metaSelect (getMetaForImages) is not ported.',
     fallback: 'input-include',
     viewer: null,
     host: HOST.green,
-    input: { include: ['cosmetics', 'tags'], browsingLevel: 1, limit: 2 },
+    input: { include: ['cosmetics', 'tags', 'metaSelect'], browsingLevel: 1, limit: 2 },
   },
   {
     name: 'fallback-unknown-key',
@@ -2534,13 +3058,320 @@ const INFINITE = [
     input: { hubId: 77, browsingLevel: 1, limit: 10 },
   },
   {
-    name: 'fallback-collection',
-    description: 'A collection scope: permissions, item statuses and the collection sorts; not ported.',
-    fallback: 'input-collectionId',
+    name: 'fallback-collection-contributor',
+    description: 'A private collection read by a contributor whose row holds VIEW (1002 on 9102): Node grants read; the contributor branch is not answered here.',
+    fallback: 'collection-contributor',
+    viewer: 1002,
+    host: HOST.blue,
+    input: { collectionId: 9102, sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'fallback-collection-moderator',
+    description: 'A private collection read by a moderator who does not own it (1004 on 9102): Node grants read; the moderator branch is not answered here.',
+    fallback: 'collection-moderator',
+    viewer: 1004,
+    host: HOST.blue,
+    input: { collectionId: 9102, sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'fallback-collection-judge-score',
+    description: 'A collection item whose note holds a judge’s score (9103’s 8202): parseJudgeScore’s value is not rebuilt here.',
+    fallback: 'collection-judge-score',
     viewer: null,
     host: HOST.green,
-    input: { collectionId: 88, browsingLevel: 1, limit: 10 },
+    input: { collectionId: 9103, sort: 'Newest', browsingLevel: 1, limit: 10 },
   },
+  {
+    name: 'fallback-collection-random',
+    description: 'A collection’s Random sort (the hourly seed, the seed:sortKey:id cursor): not ported.',
+    fallback: 'input-sort',
+    viewer: null,
+    host: HOST.green,
+    input: { collectionId: 9101, sort: 'Random', browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'fallback-collection-tag-without-collection',
+    description: 'A `collectionTagId` without a `collectionId`: Node’s BAD_REQUEST, which it answers itself.',
+    fallback: 'input-collectionTagId',
+    viewer: null,
+    host: HOST.green,
+    input: { collectionTagId: 31, browsingLevel: 1, limit: 10 },
+  },
+  // `ids` (requiresImageDbPath: always Postgres), each answered image held by its own post's model
+  // (withoutHeldFromViewer): 8302 is an R image on 7301, whose model 5002 is held at PG|PG-13.
+  {
+    name: 'ids-held-stranger',
+    description: '`ids` signed in on an NSFW host: only those images, newest first, and 8302 (R, on held model 5002) left out for a viewer who does not own the model.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { ids: [8302, 8301, 8001, 8999], sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'ids-held-owner',
+    description: '`ids` for the held model’s owner (1002 owns 5002): 8302 is kept.',
+    viewer: 1002,
+    host: HOST.blue,
+    input: { ids: [8302, 8301, 8001], sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'ids-held-moderator',
+    description: '`ids` for a moderator: no hold read at all, 8302 kept.',
+    viewer: 1004,
+    host: HOST.blue,
+    input: { ids: [8302, 8301, 8001], sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'ids-single-signed-out',
+    description: 'A single id, signed out (PG): the image alone, cacheable.',
+    viewer: null,
+    host: HOST.green,
+    input: { ids: [8003], browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'ids-max-length',
+    description: '200 ids (the schema’s max), most of them no image, Oldest with a limit of 3: the first three of the ones that exist, and the next cursor.',
+    viewer: null,
+    host: HOST.green,
+    input: { ids: Array.from({ length: 200 }, (_, i) => 8001 + i), sort: 'Oldest', browsingLevel: 1, limit: 3 },
+  },
+  {
+    name: 'ids-with-types',
+    description: '`ids` combined with `types: [image]`: the video among them is left out.',
+    viewer: null,
+    host: HOST.green,
+    input: { ids: [8005, 8003, 8001], types: ['image'], browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'ids-and-reactions-empty',
+    description: '`ids: []` and `reactions: []`: no filter and no Postgres routing (`?.length`), so the feed page.',
+    viewer: null,
+    host: HOST.green,
+    input: { ids: [], reactions: [], sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
+    },
+  },
+  {
+    name: 'fallback-ids-too-many',
+    description: '201 ids: past the schema’s max(200), Node’s BAD_REQUEST.',
+    fallback: 'input-invalid',
+    viewer: null,
+    host: HOST.green,
+    input: { ids: Array.from({ length: 201 }, (_, i) => 8001 + i), browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'fallback-ids-not-int4',
+    description: 'A fractional id: the schema accepts it and Postgres refuses the `::int[]` bind (a 500 not reproduced).',
+    fallback: 'ids-not-int4',
+    viewer: null,
+    host: HOST.green,
+    input: { ids: [8001, 8003.5], browsingLevel: 1, limit: 10 },
+  },
+  // `reactions` (requiresImageDbPath): the viewer's own reactions of those kinds; signed out, no clause.
+  {
+    name: 'reactions-signed-in',
+    description: '`reactions: [Like, Laugh]` for 1003: the images 1003 reacted to with either (8001 Like, 8007 Laugh), newest first, never cached.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { reactions: ['Like', 'Laugh'], sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'reactions-with-tags',
+    description: '`reactions` combined with a tag scope: 8007 alone carries tag 526.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { reactions: ['Like', 'Laugh'], tags: [526], sort: 'Newest', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'reactions-signed-out',
+    description: '`reactions` signed out: still the Postgres path, but no reaction clause (`userId && …`): the PG page.',
+    viewer: null,
+    host: HOST.green,
+    input: { reactions: ['Heart'], sort: 'Newest', browsingLevel: 1, limit: 3 },
+  },
+  {
+    name: 'fallback-reactions-not-an-enum',
+    description: 'A reaction outside ReviewReactions: the schema’s BAD_REQUEST.',
+    fallback: 'input-invalid',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { reactions: ['Love'], browsingLevel: 31, limit: 10 },
+  },
+  // `newCreators`: the "new & upcoming" board of the request's board color (images-new: [1002];
+  // images-new-red: [1001, 1002]), and the addons under the `newCreators` scope (9921).
+  {
+    name: 'new-creators-feed-signed-out',
+    description: '`newCreators` on the global feed, signed out on the SFW host: the SFW board’s creators as userIds, the scoped addon’s tag excluded, the hydrate keeping the board’s creators only.',
+    viewer: null,
+    host: HOST.green,
+    addons: ADDONS_NEW_CREATORS,
+    input: { newCreators: true, sort: 'Newest', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1&excludedTags=9901%2C9921&userIds=1002&excludePoi=1&sort=newest&limit=4': { body: { items: [8006, 8003, 8001] } },
+    },
+  },
+  {
+    name: 'new-creators-feed-red-board',
+    description: '`newCreators` signed in on the red host: the red board (two creators), in board order.',
+    viewer: 1003,
+    host: HOST.red,
+    addons: ADDONS_NEW_CREATORS,
+    input: { newCreators: true, sort: 'Newest', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&excludedTags=9911%2C9901%2C9921&userIds=1001%2C1002&excludeMinor=1&excludePoi=1&viewerId=1003&sort=newest&limit=4': { body: { items: [8204, 8007, 8006] } },
+    },
+  },
+  {
+    name: 'new-creators-db-path',
+    description: '`newCreators` on a model without a version (the Postgres path): `i."userId" IN (board)` after the model scope.',
+    viewer: null,
+    host: HOST.green,
+    input: { newCreators: true, modelId: 5001, browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'new-creators-empty-board-feed',
+    description: 'An unpopulated board on the feed path: an empty page with no feed call.',
+    viewer: null,
+    host: HOST.green,
+    newCreatorBoards: { 'images-new': { data: [], cachedAt: NEW_CREATORS_CACHED_AT } },
+    input: { newCreators: true, browsingLevel: 1, limit: 4 },
+  },
+  {
+    name: 'new-creators-empty-board-db-path',
+    description: 'An unpopulated board on the Postgres path: `1 = 0`, no row (never the unfiltered gallery).',
+    viewer: null,
+    host: HOST.green,
+    newCreatorBoards: { 'images-new': { data: [], cachedAt: NEW_CREATORS_CACHED_AT } },
+    input: { newCreators: true, modelId: 5001, browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'new-creators-with-followed',
+    description: '`newCreators` beside `followed` (signed in, a non-empty follow list): the feed takes one userIds, so the mapper refuses it and the answer is an empty page.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { newCreators: true, followed: true, browsingLevel: 31, limit: 4 },
+  },
+  {
+    name: 'new-creators-false',
+    description: '`newCreators: false`: no board read, the plain feed.',
+    viewer: null,
+    host: HOST.green,
+    input: { newCreators: false, sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
+    },
+  },
+  {
+    name: 'fallback-new-creators-miss',
+    description: 'No board entry: Node builds it from the database (fetchThroughCache’s fetch).',
+    fallback: 'new-creators-miss',
+    viewer: null,
+    host: HOST.green,
+    input: { newCreators: true, browsingLevel: 1, limit: 4 },
+  },
+  {
+    name: 'fallback-new-creators-stale',
+    description: 'A board entry older than its hour: Node refreshes it (or serves it stale under another caller’s lock).',
+    fallback: 'new-creators-stale',
+    viewer: null,
+    host: HOST.green,
+    newCreatorBoards: { 'images-new': { data: [1002], cachedAt: NOW.getTime() - 2 * 3600_000 } },
+    input: { newCreators: true, browsingLevel: 1, limit: 4 },
+  },
+  {
+    name: 'fallback-new-creators-null',
+    description: '`newCreators: null`: z.boolean().optional() refuses it, Node’s BAD_REQUEST.',
+    fallback: 'input-invalid',
+    viewer: null,
+    host: HOST.green,
+    input: { newCreators: null, browsingLevel: 1, limit: 4 },
+  },
+  // `prioritizedUserIds: [-1]` (the system user alone; the model showcase carousel).
+  {
+    name: 'prioritized-system-user-no-post',
+    description: 'The system user alone on version 6401, where it has no post: every creator’s images on the version (no creator clause), ordered by the IIF (all 1000 here), then newest first.',
+    viewer: null,
+    host: HOST.green,
+    input: { modelId: 5005, modelVersionId: 6401, prioritizedUserIds: [-1], browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'prioritized-system-user-own-post',
+    description: 'The system user alone on version 6501, where it has posts: only its images, oldest post first, then by index and id.',
+    viewer: null,
+    host: HOST.green,
+    input: { modelId: 5006, modelVersionId: 6501, prioritizedUserIds: [-1], browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'fallback-prioritized-system-user-no-version',
+    description: 'The system user alone on a model without a version: Node sorts every visible image on the site by an IIF; left to Node.',
+    fallback: 'prioritized-system-user-no-version',
+    viewer: null,
+    host: HOST.green,
+    input: { modelId: 5005, prioritizedUserIds: [-1], browsingLevel: 1, limit: 10 },
+  },
+  // A verified crawler: the header as the app's API policy left it (`googlebot` / `bingbot`).
+  {
+    name: 'verified-bot-nsfw-host',
+    description: 'A verified crawler, signed out, on an NSFW host: authorized for the cap (level 31 uncapped), no viewer, never edge-cached.',
+    viewer: null,
+    host: HOST.blue,
+    headers: { 'x-civitai-verified-bot': 'googlebot' },
+    input: { sort: 'Newest', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&excludedTags=9911%2C9901&excludeMinor=1&excludePoi=1&sort=newest&limit=4': { body: { items: [8204, 8007, 8006, 8004] } },
+    },
+  },
+  {
+    name: 'verified-bot-sfw-host',
+    description: 'A verified crawler on the SFW host: no NSFW there, so it counts as signed out for the cap (PG), and still not edge-cached.',
+    viewer: null,
+    host: HOST.green,
+    headers: { 'x-civitai-verified-bot': 'bingbot' },
+    input: { sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
+    },
+  },
+  {
+    name: 'verified-bot-header-not-a-crawler',
+    description: 'A verified-crawler header whose value is no crawler the app names: parseVerifiedBotHeader reads it as none, so the signed-out PG page, edge-cacheable.',
+    viewer: null,
+    host: HOST.blue,
+    headers: { 'x-civitai-verified-bot': '1' },
+    input: { sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
+    },
+  },
+  // The minor content rule (minorMatureImageVisibleSql) on image.getInfinite, on the feed-service
+  // hydrate and on the Postgres path (a post's own media), over post 7013 (see the gallery fixtures):
+  // 8701 is shown only to its owner (1002) and moderators.
+  ...[
+    [1003, 'stranger', 'another signed-in viewer: 8701 is left out', 'levels=1%2C2%2C4%2C8%2C16&excludedTags=9901&excludePoi=1&viewerId=1003&sort=newest&limit=10'],
+    [1002, 'owner', 'its owner: 8701 is kept', 'levels=1%2C2%2C4%2C8%2C16&excludedTags=9901&excludePoi=1&viewerId=1002&sort=newest&limit=10'],
+    [1004, 'moderator', 'a moderator: 8701 is kept', 'levels=1%2C2%2C4%2C8%2C16&sort=newest&limit=10'],
+  ].flatMap(([viewer, who, what, query]) => [
+    {
+      name: `minor-mature-feed-hydrate-${who}`,
+      ...(who === 'stranger' ? { alsoCached: [8701] } : {}),
+      description: `The global feed at level 31 on an NSFW host, the addons without the minor exclusion: the feed names 8701, 8702 and 8703, and the hydrate decides, for ${what}.`,
+      viewer,
+      host: HOST.blue,
+      addons: ADDONS_NO_MINOR,
+      input: { sort: 'Newest', browsingLevel: 31, limit: 10 },
+      replies: { [query]: { body: { items: [8701, 8702, 8703] } } },
+    },
+    {
+      name: `minor-mature-post-scope-${who}`,
+      ...(who === 'stranger' ? { alsoCached: [8701] } : {}),
+      description: `Post 7013's own media (the Postgres path) at level 31 on an NSFW host, the addons without the minor exclusion, for ${what}.`,
+      viewer,
+      host: HOST.blue,
+      addons: ADDONS_NO_MINOR,
+      input: { postId: 7013, browsingLevel: 31, limit: 5 },
+      replies: {},
+    },
+  ]),
 ];
 
 // ---------------------------------------------------------------------------------------------
@@ -2569,6 +3400,14 @@ function dbTables({ tags = false, meta = false } = {}) {
     for (const f of T.feed) for (const id of f.body?.items ?? []) if (IMAGES[id]) T.posts.add(IMAGES[id].postId);
     for (const id of T.baseModelsCandidatePosts) T.posts.add(id);
   }
+  if (T.followedRead) {
+    // And for the follow clause: each row it alone decides on (another creator's).
+    for (const id of T.followedCandidatePosts) T.posts.add(id);
+  }
+  // A collection request: every item's image of the collections it reads, whatever its status or
+  // tag, so a row the status, tag or permission check alone decides on is in the tables.
+  const collectionItems = COLLECTION_ITEMS.filter((ci) => T.collectionIds.has(ci.collectionId));
+  for (const ci of collectionItems) T.posts.add(IMAGES[ci.imageId].postId);
   const postIds = [...T.posts].sort((a, b) => a - b);
   const images = Object.values(IMAGES)
     .filter((i) => postIds.includes(i.postId))
@@ -2604,6 +3443,16 @@ function dbTables({ tags = false, meta = false } = {}) {
     userCosmetics: USER_COSMETIC_ROWS.map((r) => ({ ...r, data: r.data === null ? null : jsonbText(r.data), equippedAt: r.equippedAt !== null })),
     cosmetics: Object.values(COSMETICS).map((c) => ({ id: c.id, name: c.name, type: c.type, source: c.source, data: jsonbText(c.data), flags: c.flags, createdById: COSMETIC_CREATORS[c.id] ?? null })),
     cosmeticShopItems: SHOP_ITEMS.map((x) => ({ ...x, meta: jsonbText(x.meta) })),
+    // The TagsOnImageVote rows, only in a fixture whose request read the viewer's votes.
+    ...(T.tagVotesRead ? { tagVotes: TAG_VOTES } : {}),
+    // The Collection rows (with their contributor rows) and CollectionItem rows, only in a fixture
+    // whose request names a collection.
+    ...(T.collectionIds.size
+      ? {
+          collections: [...T.collectionIds].filter((id) => COLLECTIONS[id]).map((id) => COLLECTIONS[id]),
+          collectionItems,
+        }
+      : {}),
   };
 }
 
@@ -2656,8 +3505,19 @@ function newTrace(name, spec) {
   T.usedReplies = new Set();
   T.events = new Set(spec.events ?? []);
   T.cold = new Set(spec.cold ?? []);
+  T.addons = spec.addons ?? ADDONS;
   T.usernames = new Set();
   T.metaRead = false;
+}
+
+/** `spec.alsoCached`: images whose per-image cache entries (tag ids, frame, metric hash) the fixture
+ *  holds although Node's answer reads none of them (an image the answer leaves out), so a feed-go that
+ *  kept the image fails on its answer, not on a cache miss. */
+function alsoCached(spec) {
+  for (const id of spec.alsoCached ?? []) {
+    for (const k of [K.tagIds, K.frames]) T.packed.set(`${k}:${id}`, worldPacked(k, id));
+    T.hashes.set(`metrics:Image:${id}`, metricsOf(id));
+  }
 }
 
 function checkReplies(spec) {
@@ -2672,6 +3532,7 @@ function emitAsPosts() {
   const dir = join(HERE, 'as-posts');
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
+  resetDevalueDir('as-posts');
   for (const spec of AS_POSTS) {
     newTrace(spec.name, spec);
     const nodeFlags = { ...FLAGS_ON, ...(spec.nodeFlags ?? {}) };
@@ -2687,7 +3548,9 @@ function emitAsPosts() {
     } else {
       const { value, cacheable } = runAsPosts({ ...spec, nodeFlags });
       checkReplies(spec);
+      alsoCached(spec);
       expect = { envelope: superjson.serialize(value), cacheable, writes: writeEntries() };
+      writeDevalueBody('as-posts', spec.name, value);
     }
     writeFixture(dir, spec.name, {
       name: spec.name,
@@ -2701,7 +3564,7 @@ function emitAsPosts() {
       },
       feed: T.feed,
       redis: redisEntries(spec.dropKeys),
-      sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(ADDONS) } },
+      sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(T.addons) } },
       db: dbTables(),
       expect,
     });
@@ -2737,7 +3600,7 @@ function emitV1() {
       },
       feed: T.feed,
       redis: redisEntries(),
-      sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(ADDONS) } },
+      sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(T.addons) } },
       db: { ...dbTables({ meta: T.metaRead }), usernames: [...T.usernames] },
       expect,
     });
@@ -2749,18 +3612,32 @@ function emitInfinite() {
   const dir = join(HERE, 'infinite');
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
+  resetDevalueDir('infinite');
   for (const spec of INFINITE) {
     newTrace(spec.name, spec);
     const nodeFlags = { ...FLAGS_ON, ...(spec.nodeFlags ?? {}) };
     const goConfig = { ...GO_ON, ...(spec.goConfig ?? {}), decorationEvents: spec.events ?? [], frameCacheNegative: FRAME_CACHE_NEGATIVE };
     let expect;
+    // A collection's rows are in the tables whether or not the mirror runs: a fallback fixture's
+    // reason may be decided on them.
+    if (spec.input.collectionId) T.collectionIds.add(spec.input.collectionId);
+    T.newCreatorBoards = spec.newCreatorBoards;
+    // image.getInfinite's own `ids` (the REST endpoint's legacy ids fixtures predate this, and keep
+    // their tables).
+    T.idsCandidates = true;
     if (spec.fallback) {
       if (spec.viewer) T.packed.set(`${K.session}:${spec.viewer}`, SESSIONS[spec.viewer]);
+      // The board entries a fallback fixture's reason is decided on (an expired one).
+      for (const [id, v] of Object.entries(spec.newCreatorBoards ?? {})) T.packed.set(`${K.newCreators}:${id}`, v);
+      // The gallery gates run before a scoped request's own fallback: its model's settings are held.
+      if (spec.input.modelId || spec.input.modelVersionId) getHeldGalleryLevel(spec.input);
       expect = { fallback: spec.fallback };
     } else {
       const { value, cacheable } = runInfinite({ ...spec, nodeFlags });
       checkReplies(spec);
+      alsoCached(spec);
       expect = { envelope: superjson.serialize(value), cacheable, writes: writeEntries() };
+      writeDevalueBody('infinite', spec.name, value);
     }
     // Every image the feed named is in the tables, so a row the hydrate's own filters drop (the tag
     // scope) is one feed-go must drop too, not one the fixture never held.
@@ -2777,8 +3654,15 @@ function emitInfinite() {
       },
       feed: T.feed,
       redis: redisEntries(spec.dropKeys),
-      sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(ADDONS) } },
-      db: { ...dbTables({ tags: true }), usernames: [...T.usernames] },
+      sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(T.addons) } },
+      db: {
+        ...dbTables({ tags: true }),
+        usernames: [...T.usernames],
+        // The system user's posts on each version Node looked one up for (hasSystemPosts).
+        ...(T.systemPostReads.size
+          ? { systemPosts: Object.values(POSTS).filter((p) => p.userId === -1 && T.systemPostReads.has(p.modelVersionId)).map((p) => ({ id: p.id, modelVersionId: p.modelVersionId })) }
+          : {}),
+      },
       expect,
     });
   }

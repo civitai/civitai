@@ -20,7 +20,8 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-const input = { userId: 7, clientId: 'app-1', scope: 5n, ttlSeconds: 600 };
+// A non-null impersonatedBy, so the body assertion pins that the hub is told of an impersonation.
+const input = { userId: 7, clientId: 'app-1', scope: 5n, ttlSeconds: 600, impersonatedBy: 3 };
 
 describe('mintAppToken', () => {
   it('posts the mint request under the service-secret bearer and maps the hub response', async () => {

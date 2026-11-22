@@ -38,7 +38,11 @@ import {
 import { BEARER_KEYS, redactBlockTokens } from '~/server/logging/redact-block-token';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import { recordBlockTokenGetRequest } from '~/server/prom/block-token-transport.metrics';
-import { setTrpcProcedureRegistry } from '~/server/prom/trpc-fast-superjson.metrics';
+import {
+  fastSuperjsonPathLabel,
+  setTrpcProcedureRegistry,
+} from '~/server/prom/trpc-fast-superjson.metrics';
+import { pyroscopeArmed, withProfileRoute } from '~/server/pyroscope-labels';
 import { rateLimitHeaders } from '~/server/trpc/rate-limit-headers';
 import { retryAfterHeader } from '~/server/trpc/retry-after-header';
 import {
@@ -353,12 +357,19 @@ export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
   // must run here, ahead of the handler: the handler's own cache fills would hide the misses.
   const shadow = beginFeedGoShadow(req);
   probeFeedGoShadow(shadow);
-  try {
-    await runWithResponseWriteFormat(req.headers, () =>
-      runWithSerializeCtx(serializeCtxFromRequest(req), () =>
+  // Pyroscope route label for the whole request; procedures re-label their own span (trpc.ts),
+  // so only shared batch work stays on trpc:batch.
+  const serializeCtx = serializeCtxFromRequest(req);
+  const serve = () =>
+    runWithResponseWriteFormat(req.headers, () =>
+      runWithSerializeCtx(serializeCtx, () =>
         runWithFeedGoShadow(shadow, () => trpcHandler(req, res))
       )
     );
+  try {
+    await (pyroscopeArmed
+      ? withProfileRoute(() => `trpc:${fastSuperjsonPathLabel(serializeCtx.path)}`, serve)
+      : serve());
   } finally {
     // With the status and the response headers responseMeta set (Cache-Control, Cache-Tag, …).
     if (shadow) finishFeedGoShadow(shadow, res.statusCode, res);

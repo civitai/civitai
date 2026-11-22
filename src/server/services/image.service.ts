@@ -1,7 +1,7 @@
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
-import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
+import { isSessionOrFullUserKey, withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { credentialLogFields, type RequestCredential } from '~/server/auth/request-credential';
 import { Prisma } from '@prisma/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
@@ -43,6 +43,7 @@ import {
 } from '~/server/services/orchestrator/trusted-blob-url';
 import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
+import { clickhouseMetrics } from '~/server/clickhouse/metrics-client';
 import { toClickhouseInt64 } from '~/server/clickhouse/int64';
 import {
   feedRequestCapture,
@@ -76,11 +77,28 @@ import {
   servableLevelWhere,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
   minorMatureImageVisibleSql,
+  reviewKeptWhenLiftedSql,
+  liftedBlockedForSql,
+  liftedIngestionSql,
+  liftedNeedsReviewSql,
+  liftedNsfwLevelSql,
+  liftKeptBlockedSql,
+  unblockedMetadataSql,
 } from '~/server/common/image-visibility';
+import {
+  BLOCKED_IMAGE_DELETE_QUEUE,
+  LIFT_KEPT_ACTIVITY,
+} from '@civitai/shared/account-deletion-grace';
+import {
+  PRIOR_BLOCKED_FOR_KEY,
+  PRIOR_INGESTION_KEY,
+  PRIOR_NEEDS_REVIEW_KEY,
+} from '~/server/utils/image-removal-mode';
 import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
   imageBlockedForConditions,
+  reviewedGalleryImageConditions,
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
 import {
@@ -98,6 +116,7 @@ import {
 } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import {
   getDbWithoutLag,
   getDbWithoutLagBatch,
@@ -113,6 +132,7 @@ import {
 import { poolCounters } from '~/server/games/new-order/utils';
 import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { flagImagesForCsamReview } from '~/server/services/csam-image-review';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { isStatementTimeout } from '~/server/utils/statement-timeout';
@@ -122,6 +142,7 @@ import {
   resolveMetricsStaleWhileRevalidate,
   type MetricRefresher,
 } from '~/server/services/image-metrics-swr';
+import { readsDedicatedImageMetricsClickhouse } from '~/server/services/image-metrics-clickhouse';
 import { postMetrics } from '~/server/metrics';
 import {
   imageScanSubmittedCounter,
@@ -189,7 +210,10 @@ import type {
 import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { imagesMetricsSearchIndex } from '~/server/search-index';
-import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
+import {
+  queueDocumentsForBlockedImages,
+  queueDocumentsForImageMinorChanges,
+} from '~/server/services/image-models-reindex.service';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
@@ -269,6 +293,7 @@ import {
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
+  allBrowsingLevelsFlag,
   browsingLevels as selectableBrowsingLevels,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
@@ -287,7 +312,6 @@ import {
 import type {
   DomainColor,
   ModelType,
-  ReportReason,
   ReviewReactions,
   CollectionItemStatus,
 } from '~/shared/utils/prisma/enums';
@@ -302,6 +326,7 @@ import {
   JobQueueType,
   MediaType,
   NewOrderRankType,
+  ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import {
@@ -326,7 +351,9 @@ import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import {
   deleteImageRows,
+  imagesPendingDeletion as readImagesPendingDeletion,
   moderatorPurge,
+  ownImageDeleteBlocked,
   queueImageStorageDelete as queueStorageDelete,
   queuePostNsfwLevelUpdates,
   type DeleteActor,
@@ -367,7 +394,7 @@ import {
   shopArtworkUrls,
 } from '~/server/services/image-url-ownership';
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const model3dService = () => import('~/server/services/model3d.service');
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -936,10 +963,17 @@ export async function queueReplacedImageDeletion(ids: number[]) {
   }
 }
 
+/** Of `ids`, the images whose delete waits on a review their owner can see. */
+export async function imagesPendingDeletion(ids: number[]) {
+  // Primary: read straight after the delete that queued it.
+  return readImagesPendingDeletion(kyselyOver(dbWrite), ids);
+}
+
 type ImageDeleteOptions = {
   actor: DeleteActor;
   /** Extra condition on the DELETE itself; ids it (or a member actor's ownership limit) excludes
-   *  are skipped and not returned. */
+   *  are skipped and not returned. Skips the owner's delete hold, so an owner's own delete must
+   *  never pass it, except to undo images created in the same request. */
   onlyWhere?: Prisma.Sql | RawBuilder<boolean>;
   /** A moderator or moderation job ordered it: the stored file goes with every version (see
    *  `moderatorPurge`) and each url's CDN takedown is queued. Every other delete is by key alone.
@@ -1010,13 +1044,18 @@ export async function deleteImages(
         : imagesWithOpenReports(ids).catch(() => new Set(ids)),
     ]);
 
+    const callerWhere =
+      !onlyWhere || 'toOperationNode' in onlyWhere ? onlyWhere : fromPrismaSql<boolean>(onlyWhere);
+    // The deleter's own image in a child-safety case waits for the case to close, as a pending
+    // delete. Never under a caller's condition, which the job would not carry out with it.
     const rows = await deleteImageRows(kyselyOver(dbWrite), {
       ids,
       actor,
-      where:
-        !onlyWhere || 'toOperationNode' in onlyWhere
-          ? onlyWhere
-          : fromPrismaSql<boolean>(onlyWhere),
+      where: callerWhere,
+      pending:
+        deletedById === undefined || callerWhere
+          ? undefined
+          : { blocked: ownImageDeleteBlocked(deletedById), data: { ownerId: deletedById } },
       files: keepStoredFiles
         ? undefined
         : {
@@ -1089,6 +1128,7 @@ async function invalidateDeletedImages({
     bustCachesForPosts(postIds),
     postMetrics.queueUpdate(postIds),
     enqueueCollectionRebuild({ ...collections, source: 'image-delete' }),
+    evictHomeBlocksForImages({ collectionIds: collections.collectionIds }),
     ...(thumbnailParentIds.length ? [thumbnailCache.refresh(thumbnailParentIds)] : []),
     refreshProfilePicturesForUsers(profilePictureUserIds),
     ...(kept.length ? [bustKeptImages(kept, updatePosts)] : []),
@@ -1226,6 +1266,8 @@ export async function handleUnblockImages({
   const images = found.filter(
     (image) => image.blockedFor !== BlockedReason.CSAM && !csamIds.has(image.id)
   );
+  const kept: number[] = [];
+  const restoredAll: number[] = [];
   await Limiter().process(images, async (images) => {
     const ids = images.map((x) => x.id);
     const grouped = images.reduce<Record<string, number[]>>((acc, image) => {
@@ -1236,15 +1278,16 @@ export async function handleUnblockImages({
     }, {});
 
     const imageTagsForReview = await getImagTagsForReviewByImageIds(ids);
-    await Promise.all([
+    const [, ...written] = await Promise.all([
       // Drops its blocks' deferred effects unfired.
       dbWrite.$executeRaw`DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${ids}::int[])`,
       ...Object.entries(grouped).map(
-        ([needsReview, groupedIds]) => dbWrite.$queryRaw`
+        ([needsReview, groupedIds]) => dbWrite.$queryRaw<{ id: number; keptBlocked: boolean }[]>`
           UPDATE "Image" SET
-            "needsReview" = NULL,
-            "blockedFor" = NULL,
-            "metadata" = "metadata" - 'ruleId' - 'ruleReason', -- Remove ruleId and ruleReason from metadata
+            "needsReview" = ${liftedNeedsReviewSql},
+            "blockedFor" = ${liftedBlockedForSql},
+            "nsfwLevel" = ${liftedNsfwLevelSql},
+            "metadata" = ${unblockedMetadataSql},
             ${needsReview === 'poi' ? Prisma.sql`"poi" = false,` : Prisma.sql``}
             ${
               needsReview === 'minor'
@@ -1258,9 +1301,10 @@ export async function handleUnblockImages({
                 ? Prisma.sql`"scannedAt" = NOW(),`
                 : Prisma.sql``
             }
-            "ingestion" = 'Scanned'
+            "ingestion" = ${liftedIngestionSql}
           WHERE id IN (${Prisma.join(groupedIds)})
-            AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM};
+            AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
+          RETURNING id, ${liftKeptBlockedSql} AS "keptBlocked";
         `
       ),
       upsertTagsOnImageNew(
@@ -1273,13 +1317,28 @@ export async function handleUnblockImages({
       ),
     ]);
 
+    // From the UPDATE's RETURNING, so a row it skipped (a CSAM block racing in) is neither.
+    const rows = written
+      .flat()
+      .filter((row): row is { id: number; keptBlocked: boolean } => !!row && 'keptBlocked' in row);
+    const keptIds = new Set(rows.filter((row) => row.keptBlocked).map((row) => row.id));
+    const restoredIds = rows.filter((row) => !row.keptBlocked).map((row) => row.id);
     const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
     await Promise.all([
-      resetBlockedNsfwLevel(ids),
-      dropBlockedImageDeleteQueue(ids),
-      queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
+      resetBlockedNsfwLevel(restoredIds),
+      dropBlockedImageDeleteQueue(restoredIds),
+      restartBlockedImageDeleteClock([...keptIds]),
+      queueImageSearchIndexUpdate({
+        ids: restoredIds,
+        action: SearchIndexUpdateQueueAction.Update,
+      }),
+      keptIds.size &&
+        queueImageSearchIndexUpdate({
+          ids: [...keptIds],
+          action: SearchIndexUpdateQueueAction.Delete,
+        }),
       // The unblock SQL above can rewrite "minor", which no trigger watches.
-      queueModelsForImageChildTagChanges({ minorImageIds: ids }),
+      queueDocumentsForImageMinorChanges({ minorImageIds: ids }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined), {
         step: 'unblock',
@@ -1296,12 +1355,22 @@ export async function handleUnblockImages({
     if (postIds.length) await bustCachesForPosts(postIds);
 
     if (moderatorId) {
-      await trackModActivity(moderatorId, {
-        entityType: 'image',
-        entityId: ids,
-        activity: 'review',
-      });
+      // A kept row must not log 'review': that is a takedown activity, which licenses retraction.
+      if (restoredIds.length)
+        await trackModActivity(moderatorId, {
+          entityType: 'image',
+          entityId: restoredIds,
+          activity: 'review',
+        });
+      if (keptIds.size)
+        await trackModActivity(moderatorId, {
+          entityType: 'image',
+          entityId: [...keptIds],
+          activity: LIFT_KEPT_ACTIVITY,
+        });
     }
+    kept.push(...keptIds);
+    restoredAll.push(...restoredIds);
   });
 
   // Resolve any pending appeals for images that were in appeal review
@@ -1319,7 +1388,13 @@ export async function handleUnblockImages({
   // Prevent remix-source audit job from re-flagging accepted images
   await markRemixSourceReviewed(images);
 
-  return images;
+  // Kept apart: a row kept blocked while its owner is deleted was not restored.
+  const keptSet = new Set(kept);
+  const restoredSet = new Set(restoredAll);
+  return {
+    restored: images.filter((img) => restoredSet.has(img.id)),
+    kept: images.filter((img) => keptSet.has(img.id)),
+  };
 }
 
 /**
@@ -1334,11 +1409,14 @@ const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needs
 /**
  * Returns the ids the block left held, and those under the moderator-only review flag, read on the
  * primary under the block's row locks: not as a replica last saw them. With `deferFor`, a held image
- * not removed for CSAM gets its deferred-effect row in the same transaction.
+ * not removed for CSAM gets its deferred-effect row in the same transaction. With `moderatorId`, so
+ * does the takedown's ModActivity row: the CDN access sync reads the block as a takedown only with
+ * that row, and a run between the two would deny without ever retracting.
  */
 export async function writeModeratorBlock(
   ids: number[],
-  deferFor?: { blockedBy?: number; violationType?: string; reportReason?: ReportReason }
+  deferFor?: { blockedBy?: number; violationType?: string; reportReason?: ReportReason },
+  { moderatorId }: { moderatorId?: number } = {}
 ): Promise<{
   held: Set<number>;
   underReview: Set<number>;
@@ -1353,7 +1431,7 @@ export async function writeModeratorBlock(
       removedForCsam: new Set(),
       pHashes: new Map(),
     };
-  return dbWrite.$transaction(async (tx) => {
+  const written = await dbWrite.$transaction(async (tx) => {
     // Locks the rows and reads what they were before this block.
     const prior = await tx.$queryRaw<{ id: number; removed: boolean }[]>`
       SELECT id, ingestion = 'Blocked' AS removed FROM "Image" WHERE id = ANY(${ids}::int[]) FOR UPDATE
@@ -1364,9 +1442,16 @@ export async function writeModeratorBlock(
         ingestion = 'Blocked',
         "nsfwLevel" = ${NsfwLevel.Blocked},
         "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
-        "updatedAt" = NOW()
+        "updatedAt" = NOW(),
+        "metadata" = CASE WHEN jsonb_typeof("metadata") = 'object' THEN "metadata" - 'ruleId' - 'ruleReason' ELSE "metadata" END
       WHERE id = ANY(${ids}::int[])
     `;
+    if (moderatorId)
+      await trackModActivity(
+        moderatorId,
+        { entityType: 'image', entityId: [...ids], activity: 'review' },
+        tx
+      );
     // A statement of its own, after the UPDATE took the row locks: one that waited on a dismissal
     // reads the set-aside row that dismissal committed.
     const rows = await tx.$queryRaw<
@@ -1406,6 +1491,8 @@ export async function writeModeratorBlock(
       pHashes: new Map(rows.map((r) => [r.id, r.pHash])),
     };
   });
+  await evictHomeBlocksForImages({ imageIds: ids });
+  return written;
 }
 
 /** Logged when an owner notice goes out for an image under the moderator-only review flag. */
@@ -1445,7 +1532,8 @@ export async function handleBlockImages({
     await Promise.all([
       writeModeratorBlock(
         ids,
-        include?.includes('user-notification') ? { blockedBy: moderatorId } : undefined
+        include?.includes('user-notification') ? { blockedBy: moderatorId } : undefined,
+        { moderatorId: imageIds?.length ? moderatorId : undefined }
       )
         .then((written) => {
           ({ held, underReview, removedForCsam, pHashes } = written);
@@ -1471,27 +1559,36 @@ export async function handleBlockImages({
     await clearAccountDeletionImageMarkers({ ids });
     // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
     if (postIds.length) await bustCachesForPosts(postIds);
-    if (include?.includes('phash-block')) {
-      logCsamBlocklistNoHash(
-        ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
-        'block'
-      );
-      await bulkAddBlockedImages({
-        data: images
-          .map(({ id, blockedFor }) => {
-            const pHash = pHashes.get(id);
-            if (!pHash) return null;
-            return {
-              hash: pHash,
-              // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
-              reason: removedForCsam.has(id)
-                ? BlockImageReason.CSAM
-                : nonCsamBlockReason(blockedFor ?? BlockedReason.Moderated),
-            };
-          })
-          .filter(isDefined),
-        context: { step: 'block', imageIds: images.map(({ id }) => id), actorUserId: moderatorId },
-      });
+    // The requeue runs even when the blocklist write throws: the block has landed.
+    try {
+      if (include?.includes('phash-block')) {
+        logCsamBlocklistNoHash(
+          ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
+          'block'
+        );
+        await bulkAddBlockedImages({
+          data: images
+            .map(({ id, blockedFor }) => {
+              const pHash = pHashes.get(id);
+              if (!pHash) return null;
+              return {
+                hash: pHash,
+                // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
+                reason: removedForCsam.has(id)
+                  ? BlockImageReason.CSAM
+                  : nonCsamBlockReason(blockedFor ?? BlockedReason.Moderated),
+              };
+            })
+            .filter(isDefined),
+          context: {
+            step: 'block',
+            imageIds: images.map(({ id }) => id),
+            actorUserId: moderatorId,
+          },
+        });
+      }
+    } finally {
+      await queueDocumentsForBlockedImages(ids);
     }
     if (include?.includes('user-notification')) {
       const notified = images.filter(
@@ -1517,13 +1614,23 @@ export async function handleBlockImages({
       );
     }
 
-    if (moderatorId && !!imageIds?.length) {
-      await trackModActivity(moderatorId, {
-        entityType: 'image',
-        entityId: ids,
-        activity: 'review',
-      });
-    }
+    // A moderator's removal settles the images' open TOS reports, as the reports queue does. Held
+    // images and those under the review flag keep theirs for the CSAM queue; an account-wide removal
+    // moves none. Last, so a failure cannot fail a removal that has already notified the owners.
+    if (moderatorId && !!imageIds?.length)
+      await actionPendingTosReports(
+        ids.filter((id) => !held.has(id) && !underReview.has(id)),
+        moderatorId
+      ).catch((e: unknown) =>
+        logToAxiom({
+          type: 'error',
+          // Only the reads before the status UPDATE can throw: the rewards after it are allSettled and
+          // the resolved-marker write catches its own error. So every report is still Pending.
+          name: 'block-images-reports-not-settled',
+          imageIds: ids,
+          error: safeError(e),
+        })
+      );
   });
 
   if (moderatorId && userId) {
@@ -1559,7 +1666,7 @@ export async function updateNsfwLevel(ids: number | number[]) {
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
   await Promise.all([refreshThumbnailCache(ids), refreshProfilePicturesForImages(ids)]);
-  await queueModelsForImageChildTagChanges({ levelImageIds: ids });
+  await queueDocumentsForImageMinorChanges({ levelImageIds: ids });
 }
 
 // Single source of truth for restoring an image's rating after it's unblocked.
@@ -1605,7 +1712,9 @@ export async function rescanUnratedImages(ids: number[]) {
       AND NOT EXISTS (SELECT 1 FROM "TagsOnImageDetails" t WHERE t."imageId" = i.id)
       AND NOT EXISTS (
         SELECT 1 FROM "ModActivity" m
-        WHERE m."entityType" = 'image' AND m."entityId" = i.id AND m.activity = 'review'
+        -- A lift kept blocked for a deleted owner is a moderator review too.
+        WHERE m."entityType" = 'image' AND m."entityId" = i.id
+          AND m.activity = ANY(${['review', LIFT_KEPT_ACTIVITY]}::text[])
       )
     RETURNING i.id, i.ingestion
   `;
@@ -1638,6 +1747,21 @@ export async function dropBlockedImageDeleteQueue(ids: number[]) {
   `;
 }
 
+/**
+ * Re-queues images that stay blocked with the clock starting now, as a fresh block would: a lift kept
+ * blocked while the owner is deleted must not inherit the original block's time. One statement, so a
+ * failure cannot leave the image with no queue row. Twin: apps/moderator/src/lib/server/blocked-image-queue.ts.
+ */
+export async function restartBlockedImageDeleteClock(ids: number[]) {
+  if (!ids.length) return;
+  await dbWrite.$executeRaw`
+    INSERT INTO "JobQueue" ("entityId", "entityType", type)
+    SELECT id, ${BLOCKED_IMAGE_DELETE_QUEUE.entityType}::"EntityType", ${BLOCKED_IMAGE_DELETE_QUEUE.type}::"JobQueueType"
+    FROM unnest(${ids}::int[]) AS id
+    ON CONFLICT ("entityType", "entityId", type) DO UPDATE SET "createdAt" = now()
+  `;
+}
+
 export const updateImageReportStatusByReason = ({
   id,
   reason,
@@ -1664,6 +1788,48 @@ export const updateImageReportStatusByReason = ({
   `;
 };
 
+/** Actions the Pending TOS reports on these images and pays their reporters, filer and co-reporters,
+ *  through `bulkSetReportStatus`: a report another path has moved since is left as it is. A report on
+ *  a banned owner's image closes unpaid, as the moderator app's report queue closes it: the ban
+ *  removed the image, not a ruling on the report. */
+export const actionPendingTosReports = async (ids: number[], actorId: number) => {
+  if (!ids.length) return;
+  // On the primary: a ban from moments ago may not have reached a replica.
+  const reports = await dbWrite.$queryRaw<{ id: number; ownerBanned: boolean }[]>`
+    SELECT r.id, bool_or(u."bannedAt" IS NOT NULL) AS "ownerBanned" FROM "Report" r
+    JOIN "ImageReport" i ON i."reportId" = r.id
+    JOIN "Image" img ON img.id = i."imageId"
+    LEFT JOIN "User" u ON u.id = img."userId"
+    WHERE i."imageId" = ANY(${ids}::int[])
+      AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
+      AND r.status = ${ReportStatus.Pending}::"ReportStatus"
+    GROUP BY r.id
+  `;
+  const unpaid = new Set(reports.filter((r) => r.ownerBanned).map((r) => r.id));
+  const moved = await bulkSetReportStatus({
+    ids: reports.map((r) => r.id),
+    status: ReportStatus.Actioned,
+    userId: actorId,
+    fromStatus: ReportStatus.Pending,
+    rewardRemovedReporters: false,
+    paysNoReporter: (reportId) => unpaid.has(reportId),
+  });
+  // The moderator app's resolved marker, so a lagging replica does not hand them back to its queue.
+  if (moved.length)
+    await redis
+      .hSetMultiWithExpire(
+        REDIS_KEYS.REPORT.RESOLVED_RECENT,
+        moved.flatMap((id) => [String(id), '1']),
+        REPORT_RESOLVED_MARKER_TTL_SECONDS
+      )
+      .catch((e: unknown) =>
+        logToAxiom({ type: 'error', name: 'report-resolved-marker', error: safeError(e) })
+      );
+};
+
+/** The moderator app's `RESOLVED_MARKER_TTL_SECONDS`. */
+const REPORT_RESOLVED_MARKER_TTL_SECONDS = 300;
+
 /** The image's reports for one reason that are not yet actioned. */
 export const getOpenImageReportIds = async (id: number, reason: ReportReason) => {
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
@@ -1680,9 +1846,10 @@ export const getImageDetail = async ({
   id,
   userId,
   isModerator,
-}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
+  ownerSeesHeld = false,
+}: GetByIdInput & { userId?: number; isModerator?: boolean; ownerSeesHeld?: boolean }) => {
   // The resource and tag caches are keyed by image id alone, so the viewer check runs first.
-  await assertImageVisibleToViewer({ id, userId, isModerator });
+  await assertImageVisibleToViewer({ id, userId, isModerator, ownerSeesHeld });
   const [resourcesData, tagsData] = await Promise.all([
     imageResourcesCache.fetch([id]),
     imageTagsCache.fetch([id]),
@@ -2465,6 +2632,9 @@ const getAllImagesUncaptured = async (
     if (!prefetchedTargetUser) throw throwNotFoundError('User not found');
     targetUserId = prefetchedTargetUser.id;
   }
+  // A page only this viewer sees: an empty page after a timeout reads to them as "you have none", so
+  // the timeout is an error instead. Mirrored by feed-go's Built.PersonalizedViewerID.
+  const personalizedPage = !!userId && (!!reactions?.length || targetUserId === userId);
 
   // Hacked this to use the model version image cache instead
   const prioritizeUser = !!prioritizedUserIds?.length;
@@ -3108,7 +3278,7 @@ const getAllImagesUncaptured = async (
         },
       });
       noteEmptyIdsPage(input, 'statement-timeout', { dbTarget });
-      if (input.throwOnStatementTimeout) throw e;
+      if (input.throwOnStatementTimeout || personalizedPage) throw e;
       return { items: [], nextCursor: undefined };
     }
     throw e;
@@ -3785,12 +3955,30 @@ async function resolveHubForFeed(searchInput: CapturableSearchInput) {
 
 // Lazily-built MetricService over the watcher-fed `metrics:*` cache, reused
 // across calls (this is the hot feed path) rather than reconstructed per call.
+//
+// One instance per ClickHouse client: the shared one, and the dedicated entity-metrics one
+// (`image-metrics-dedicated-clickhouse`). The choice is made on EVERY call, so a flag flip takes
+// effect within the gate's refresh window without a restart, and each instance is built once.
+// The two share only Redis (the `metrics:*` hashes and their populate locks), which is what keeps
+// a flip from re-querying ids the other instance is already populating.
+//
+// A failed read on the dedicated client is NOT retried on the shared one: it degrades the way a
+// failed shared read does (`getImageMetricsObjectDirect` serves the cache). A retry would put the
+// whole read back on the shared ClickHouse exactly when the dedicated one is down, and spend the
+// same latency budget twice; the kill switch is the flag.
 let _imageMetricService: MetricService | null = null;
-const getImageMetricService = () =>
-  (_imageMetricService ??= new MetricService(
+let _imageMetricServiceDedicated: MetricService | null = null;
+const getImageMetricService = () => {
+  if (readsDedicatedImageMetricsClickhouse(clickhouseMetrics !== undefined))
+    return (_imageMetricServiceDedicated ??= new MetricService(
+      clickhouseMetrics as IClickhouseClient,
+      redis as unknown as IRedisClient
+    ));
+  return (_imageMetricService ??= new MetricService(
     clickhouse as IClickhouseClient,
     redis as unknown as IRedisClient
   ));
+};
 
 type ImageMetricsObject = Record<
   number,
@@ -4186,8 +4374,17 @@ export const getImage = async ({
   id,
   userId,
   isModerator,
-}: GetImageInput & { userId?: number; isModerator?: boolean }) => {
-  const AND = [Prisma.sql`i.id = ${id}`, ...imageVisibilityConditions({ userId, isModerator })];
+  ownerSeesHeld = false,
+}: GetImageInput & {
+  userId?: number;
+  isModerator?: boolean;
+  /** `imageVisibilityConditions`' `ownerSeesHeld`: the image page's read, not a remix or other use. */
+  ownerSeesHeld?: boolean;
+}) => {
+  const AND = [
+    Prisma.sql`i.id = ${id}`,
+    ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld }),
+  ];
 
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
     SELECT
@@ -4302,12 +4499,14 @@ export const getImage = async ({
 export const getImageResources = async ({
   id,
   viewer,
-}: GetByIdInput & { viewer?: { id: number; isModerator?: boolean } }) => {
+  ownerSeesHeld = false,
+}: GetByIdInput & { viewer?: { id: number; isModerator?: boolean }; ownerSeesHeld?: boolean }) => {
   const { visibleSignedOut } = await assertImageVisibleToViewer({
     id,
     userId: viewer?.id,
     isModerator: viewer?.isModerator,
     withSignedOutVerdict: true,
+    ownerSeesHeld,
   });
   const resources = await dbRead.$queryRaw<
     (ImageResourceHelperModel & { sfwName: string | null })[]
@@ -4445,13 +4644,7 @@ export const getImagesForModelVersion = async ({
       );
     }
   } else {
-    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`);
-    imageWhere.push(
-      browsingLevel
-        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
-        : Prisma.sql`i."nsfwLevel" != 0`
-    );
-    imageWhere.push(imageReviewedSql());
+    imageWhere.push(...reviewedGalleryImageConditions(browsingLevel || allBrowsingLevelsFlag));
   }
   imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
 
@@ -4700,7 +4893,8 @@ export const getImagesForPosts = async ({
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
       imageWhere.push(
-        ...pendingOthersImageConditions(userId),
+        // `user` must come from a request that carries the owner's view: their held images show.
+        ...pendingOthersImageConditions(userId, { ownerSeesHeld: true }),
         pendingLevelImageSql(userId, browsingLevel)
       );
     } else {
@@ -4967,6 +5161,7 @@ export const getImagesByEntity = async ({
   include,
   userId,
   isModerator,
+  ownerSeesHeld = false,
 }: {
   id?: number;
   ids?: number[];
@@ -4975,14 +5170,15 @@ export const getImagesByEntity = async ({
   include?: ['tags'];
   userId?: number;
   isModerator?: boolean;
+  /** The request carries the owner's view (`credentialViews`): `userId`'s held images show. */
+  ownerSeesHeld?: boolean;
 }) => {
   if (!id && (!ids || ids.length === 0)) {
     return [];
   }
 
   const AND = entityImageVisibilityConditions({ userId, isModerator });
-  // Owner-hidden review holds are left out here even for the owner; bounty images keep their own rule.
-  if (!isModerator) AND.push(notHeldForReviewSql());
+  if (!isModerator) AND.push(notHeldForReviewSql(ownerSeesHeld ? userId : undefined));
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
     WITH targets AS (
@@ -5136,7 +5332,7 @@ export async function createImage({
    *   2. `createEntityImages`, below in this file (`dbClient.image.createMany`)
    *   3. `updateEntityImages`, below in this file (`dbClient.image.createMany`)
    *   4. `blocks/app-listing-assets.service.ts` (`dbWrite.image.create`)
-   *   5. `pages/api/admin/temp/migrate-article-images.ts` (a one-off admin backfill)
+   *   5. `server/api-routes/admin/temp/migrate-article-images.ts` (a one-off admin backfill)
    *   6. `jobs/daily-challenge-processing.ts` `duplicateImage` — a raw
    *      `INSERT INTO "Image" (…) SELECT … FROM "Image" i WHERE i.id = …` that re-owns an
    *      existing row's columns (`url` first among them) to another user, for the
@@ -5559,7 +5755,7 @@ export const getEntityCoverImage = async ({
   })}`;
 
   // An unrated image is never a cover for anyone but moderators, owner included.
-  const coverRated = Prisma.sql`(i."nsfwLevel" != 0 OR ${isModerator}::boolean)`;
+  const coverRated = Prisma.sql`(i."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) OR ${isModerator}::boolean)`;
 
   // A minor or SFW-only model's image above its gallery level is its owner's and moderators'
   // alone. Placed before DISTINCT ON, so a held first image falls back to the next one.
@@ -5859,6 +6055,7 @@ export const getEntityCoverImage = async ({
             AND ${coverRated}
             AND ${withinHeldGallery}
             AND ${baseModelAllowed}
+            AND ${coverNotBlocked}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
             AND (
@@ -6080,16 +6277,19 @@ export async function get404Images() {
     SELECT
       u.username,
       i.url,
-      i.meta
+      CASE WHEN i."hideMeta" THEN NULL ELSE i.meta END AS meta
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
+    LEFT JOIN "Post" p ON p.id = i."postId"
     JOIN "User" u ON u.id = i."userId" AND username IS NOT NULL
+      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
     JOIN "Collection" c ON c.id = ci."collectionId"
     WHERE c."userId" = -1
       AND c.name = '404 Contest'
       AND i."ingestion" = 'Scanned'
-      AND i."needsReview" IS NULL
       AND (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
+      AND ${Prisma.join(imageVisibilityConditions({}), ' AND ')}
+      AND i."tosViolation" = FALSE
       AND ci.status = 'ACCEPTED';
   `;
 
@@ -6177,27 +6377,9 @@ export async function reportCsamImages({
   if (!user.isModerator) throw throwAuthorizationError();
   // An appeal that starts after the flag is refused by createEntityAppeal; one already Pending stays
   // Pending, and no approval of it restores the image while the flag is on.
-  await dbWrite.$transaction(async (tx) => {
-    await tx.image.updateMany({
-      where: { id: { in: imageIds } },
-      data: { needsReview: 'csam' },
-    });
-    // Reporting an image already flagged leaves its flag unchanged, so the set-aside trigger does not
-    // fire and this delete is what puts the image back in the queue. It must follow the flag write:
-    // that write's row lock is what a concurrent dismiss waits on, and its new row version is what
-    // makes that dismiss refuse. The table and its grants are applied by hand; a role that may not
-    // delete skips it rather than fail the report.
-    const [setAside] = await tx.$queryRaw<{ deletable: boolean | null }[]>`
-      SELECT has_table_privilege(to_regclass('"CsamQueueSetAside"'), 'DELETE') AS deletable`;
-    if (setAside?.deletable)
-      await tx.$executeRaw`DELETE FROM "CsamQueueSetAside" WHERE "imageId" = ANY(${imageIds}::int[])`;
-    else if (setAside?.deletable === false)
-      logToAxiom({
-        type: 'warning',
-        name: 'csam-queue-set-aside-not-deletable',
-        message: 'the table exists but this role may not delete from it; grant DELETE',
-      });
-  });
+  await dbWrite.$transaction((tx) => flagImagesForCsamReview(tx, imageIds));
+  // First: it never throws, and the picture refresh after it can.
+  await evictHomeBlocksForImages({ imageIds });
   await refreshProfilePicturesForImages(imageIds);
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
@@ -6235,7 +6417,7 @@ async function afterImageNsfwLevelSet({
     // The version showcase is cached for a day and filtered by level when it is built.
     postId ? bustCachesForPosts(postId) : undefined,
   ]);
-  await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
+  await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
   if (status) {
     await dbWrite.imageRatingRequest.updateMany({
       where: { imageId: id, status: 'Pending' },
@@ -6432,7 +6614,7 @@ export async function raiseOwnImageNsfwLevel({
 
   await Promise.all([refreshThumbnailCache(id), refreshProfilePicturesForImages([id])]);
   if (raised.postId) await updatePostNsfwLevel(raised.postId);
-  await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
+  await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
   await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
   return true;
@@ -6630,7 +6812,7 @@ export async function resolveIngestionError({
     ids: [id],
     action: SearchIndexUpdateQueueAction.Update,
   });
-  await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
+  await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
 
   await trackModActivity(userId, {
     entityType: 'image',
@@ -6829,6 +7011,7 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
     id,
     userId: viewer.user?.id,
     isModerator: viewer.user?.isModerator,
+    ownerSeesHeld: isSessionOrFullUserKey(viewer),
   });
   const showMedia = await viewerCanSeeImageMedia(viewer, visible);
 
@@ -7901,7 +8084,7 @@ export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
     data: { [flag]: !image[flag] },
   });
   await imageMetadataCache.refresh(id);
-  if (flag === 'minor') await queueModelsForImageChildTagChanges({ minorImageIds: [id] });
+  if (flag === 'minor') await queueDocumentsForImageMinorChanges({ minorImageIds: [id] });
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -7921,7 +8104,7 @@ export const updateImagesFlag = async ({
     data: { [flag]: value },
   });
   await imageMetadataCache.refresh(ids);
-  if (flag === 'minor') await queueModelsForImageChildTagChanges({ minorImageIds: ids });
+  if (flag === 'minor') await queueDocumentsForImageMinorChanges({ minorImageIds: ids });
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate(

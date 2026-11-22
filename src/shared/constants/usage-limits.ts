@@ -275,11 +275,12 @@ export const usageLimitDefs = [
     base: 1000,
   },
   {
-    // Counted by the gift claim itself (a calendar window), not by rateLimit().
+    // Claims of the creator's gift links, counted by the gift claim itself (a calendar window), not
+    // by rateLimit(). It is the creator's limit: whoever claims is never limited.
     id: 'gifts.monthly',
     area: 'gifts',
     kind: 'product',
-    label: 'Gift claims per month',
+    label: 'Gift claims of your links per month',
     window: { type: 'utc-month' },
     base: 3,
     byTier: {
@@ -288,10 +289,22 @@ export const usageLimitDefs = [
       silver: { limit: 30 },
       gold: { limit: 60 },
     },
+    // Shown to the claimer, whose own count and limit are not what was reached.
+    message: "This creator's gift links have reached this month's limit.",
+  },
+  {
+    // Counted by sticker auto-track itself (a calendar window), not by rateLimit(). Each run is
+    // paid by the system account, so this is what bounds that spend.
+    id: 'stickers.auto-track-daily',
+    area: 'stickers',
+    kind: 'product',
+    label: 'Sticker auto-tracks per day',
+    window: { type: 'utc-day' },
+    base: 3,
     message: ({ limit }) =>
-      `You've claimed your ${numberWithCommas(limit)} ${
-        limit === 1 ? 'gift' : 'gifts'
-      } for this month. To get this one, reach out to the person who gave you the link.`,
+      `You've used your ${numberWithCommas(limit)} sticker ${
+        limit === 1 ? 'auto-track' : 'auto-tracks'
+      } for today. Try again tomorrow.`,
   },
   // ── Per-user App Platform caps, by membership tier. Read ONLY through `resolveUserAppCaps`
   // (`server/services/blocks/user-app-caps.service.ts`), which both enforcement and the

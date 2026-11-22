@@ -64,6 +64,9 @@ vi.mock('~/server/db/client', () => ({
 }));
 
 vi.mock('~/server/services/generation/generation.service', () => ({
+  getGateRuleState: vi.fn(async () => ({ known: true, value: [] })),
+  getGateSubjects: vi.fn(async () => new Map()),
+  gatedVersionIds: vi.fn(() => new Set()),
   resolveCanGenerateForVersions: mockResolveCanGenerateForVersions,
   getShouldChargeForResources: mockGetShouldChargeForResources,
 }));
@@ -251,6 +254,7 @@ const versionRow = {
   licensingFee: null,
   licensingFeeType: null,
   licensingFeeSettlementCurrency: null,
+  licensingFeeMarkup: null,
   isLicensingRoot: false,
   licensingSourceVersionId: null,
   sourceLicensingFeeRecipientUserId: null,
@@ -259,6 +263,7 @@ const versionRow = {
   sourceLicensingFee: null,
   sourceLicensingFeeType: null,
   sourceLicensingFeeSettlementCurrency: null,
+  sourceLicensingFeeMarkup: null,
   versionFlags: 0,
   userFlags: 0,
 };
@@ -1104,6 +1109,67 @@ describe('non-commercial base models: no fee, no comp, no tips', () => {
       ).fees
     ).toEqual([
       expect.objectContaining({ role: 'baseModel', amount: 3, recipientModelVersionId: 900 }),
+    ]);
+  });
+});
+
+describe('percent-of-compute fees carry their markup', () => {
+  type Fee = { role: string; type: string; amount: number; markup?: number };
+  const feesFor = async (overrides: Partial<typeof versionRow>) => {
+    const { body } = await run([SAFETENSOR], {}, { baseModel: 'SDXL 1.0', ...overrides });
+    return (body as Body & { fees: Fee[] }).fees;
+  };
+
+  it('sends the percent as the amount and the markup beside it', async () => {
+    expect(
+      await feesFor({
+        licensingFee: 35 as never,
+        licensingFeeType: 'PercentOfCompute' as never,
+        licensingFeeMarkup: 10 as never,
+      })
+    ).toEqual([
+      expect.objectContaining({
+        role: 'version',
+        type: 'percentOfCompute',
+        amount: 35,
+        markup: 10,
+      }),
+    ]);
+  });
+
+  it('a per-image fee never carries a markup, whatever the column holds', async () => {
+    const fees = await feesFor({
+      licensingFee: 5 as never,
+      licensingFeeType: 'PerImageBuzz' as never,
+      licensingFeeMarkup: 10 as never,
+    });
+    expect(fees.map((f) => [f.type, f.amount, f.markup])).toEqual([['perImageBuzz', 5, undefined]]);
+  });
+
+  it('a licensing-root percent fee carries its own markup', async () => {
+    const fees = await feesFor({
+      isLicensingRoot: true as never,
+      licensingFee: 35 as never,
+      licensingFeeType: 'PercentOfCompute' as never,
+      licensingFeeMarkup: 10 as never,
+      sourceLicensingFeeMarkup: 99 as never,
+    });
+    expect(fees.map((f) => [f.role, f.type, f.amount, f.markup])).toEqual([
+      ['baseModel', 'percentOfCompute', 35, 10],
+    ]);
+  });
+
+  it('a lineage percent fee carries its source version markup', async () => {
+    const fees = await feesFor({
+      licensingSourceVersionId: 900 as never,
+      sourceLicensingFee: 35 as never,
+      sourceLicensingFeeType: 'PercentOfCompute' as never,
+      sourceLicensingFeeMarkup: 10 as never,
+      sourceLicensingFeeRecipientUserId: 31 as never,
+      sourceBaseModel: 'SDXL 1.0' as never,
+    });
+    expect(fees.map((f) => [f.role, f.type, f.amount, f.markup])).toEqual([
+      ['baseModel', 'percentOfCompute', 35, 10],
     ]);
   });
 });
