@@ -335,12 +335,33 @@ var computeFallbackReasons = []string{"deadline", "canceled", "panic"}
 // match_cached): the single-model route only (v1models.Answer.Cached).
 func cachedEndpoint(e string) bool { return e == EndpointV1ModelsID }
 
+// emptyReachable reports whether endpoint can count a trivial answer (served_empty, match_empty) in
+// mode: never on as-posts, whose compute does not mark one, and on the single-model route only in
+// the shadow, as its trivial answer is the not-found body, which the public route falls back on.
+func emptyReachable(endpoint, mode string) bool {
+	return endpoint != EndpointAsPosts && (endpoint != EndpointV1ModelsID || mode == "shadow")
+}
+
+// outcomeReachable reports whether the mode's path can count outcome for endpoint.
+func outcomeReachable(endpoint, mode, outcome string) bool {
+	switch outcome {
+	case "served_cached":
+		return cachedEndpoint(endpoint)
+	case "served_empty":
+		return emptyReachable(endpoint, mode)
+	}
+	return true
+}
+
 // shadowResultReachable reports whether the compare path can count result for endpoint: match_cached
-// needs a cached answer, and the single-model route's classifier (ClassifyV1ModelID) has no order.
+// needs a cached answer, match_empty a trivial one, and the single-model route's classifier
+// (ClassifyV1ModelID) has no order.
 func shadowResultReachable(endpoint, result string) bool {
 	switch result {
 	case "match_cached":
 		return cachedEndpoint(endpoint)
+	case "match_empty":
+		return emptyReachable(endpoint, "shadow")
 	case "order":
 		return endpoint != EndpointV1ModelsID
 	}
@@ -355,7 +376,7 @@ func shadowResultReachable(endpoint, result string) bool {
 func (m *Metrics) seedOutcomes() {
 	for _, e := range ServedEndpoints {
 		for _, o := range RequestOutcomes {
-			if o != "served_cached" || cachedEndpoint(e) {
+			if outcomeReachable(e, "serve", o) {
 				m.Requests.WithLabelValues(e, "serve", o)
 			}
 		}
@@ -367,7 +388,7 @@ func (m *Metrics) seedOutcomes() {
 	}
 	for _, e := range Endpoints {
 		for _, o := range RequestOutcomes {
-			if o != "served_cached" || cachedEndpoint(e) {
+			if outcomeReachable(e, "shadow", o) {
 				m.Requests.WithLabelValues(e, "shadow", o)
 			}
 		}

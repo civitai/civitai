@@ -12,20 +12,27 @@ import (
 // (metricValue), never by WithLabelValues, which would create the series it is meant to find.
 
 // Every request outcome a path can reach is a 0 series per endpoint, and only those: served_cached
-// on the single-model route alone (the only cached answer), on both modes.
+// on the single-model route alone (the only cached answer), on both modes; no served_empty on
+// as-posts (its compute marks no trivial answer) nor on the single-model public route (its trivial
+// answer, the not-found body, falls back there).
 func TestRequestOutcomesAreSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
-	// serve: 5 public routes x served, served_empty, fallback, error, + v1-models-id served_cached;
-	// shadow: 7 endpoints x the same 4, + v1-models-id served_cached.
-	if n := testutil.CollectAndCount(m.Requests); n != 5*4+1+7*4+1 {
-		t.Fatalf("feed_go_requests_total has %d series at construction, want 50", n)
+	// serve: 5 public routes x served, served_empty, fallback, error, + v1-models-id served_cached,
+	// - served_empty on as-posts and v1-models-id; shadow: 7 endpoints x the same 4, + v1-models-id
+	// served_cached, - served_empty on as-posts.
+	if n := testutil.CollectAndCount(m.Requests); n != 5*4+1-2+7*4+1-1 {
+		t.Fatalf("feed_go_requests_total has %d series at construction, want 47", n)
 	}
 	served := []string{"as-posts", "model-getall", "infinite", "v1-models", "v1-models-id"}
 	all := append([]string{"v1-images", "model-associated"}, served...)
 	for mode, endpoints := range map[string][]string{"serve": served, "shadow": all} {
 		for _, e := range endpoints {
-			for _, o := range []string{"served", "served_empty", "fallback", "error"} {
+			outcomes := []string{"served", "fallback", "error"}
+			if e != "as-posts" && (e != "v1-models-id" || mode == "shadow") {
+				outcomes = append(outcomes, "served_empty")
+			}
+			for _, o := range outcomes {
 				l := map[string]string{"feed_endpoint": e, "mode": mode, "outcome": o}
 				if v, found := metricValue(t, reg, "feed_go_requests_total", l); !found || v != 0 {
 					t.Errorf("requests%v = %v found=%v, want a 0 series", l, v, found)
@@ -41,6 +48,15 @@ func TestRequestOutcomesAreSeeded(t *testing.T) {
 			t.Errorf("requests%v exists: as-posts has no cached answer", l)
 		}
 	}
+	for _, l := range []map[string]string{
+		{"feed_endpoint": "as-posts", "mode": "serve", "outcome": "served_empty"},
+		{"feed_endpoint": "as-posts", "mode": "shadow", "outcome": "served_empty"},
+		{"feed_endpoint": "v1-models-id", "mode": "serve", "outcome": "served_empty"},
+	} {
+		if _, found := metricValue(t, reg, "feed_go_requests_total", l); found {
+			t.Errorf("requests%v exists, but its path cannot count it", l)
+		}
+	}
 	if _, found := metricValue(t, reg, "feed_go_requests_total", map[string]string{"feed_endpoint": "v1-images", "mode": "serve", "outcome": "served"}); found {
 		t.Error("v1-images has no public route, yet a serve series exists")
 	}
@@ -51,16 +67,19 @@ func TestRequestOutcomesAreSeeded(t *testing.T) {
 func TestShadowResultsAreSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
-	// 7 endpoints x 10 results, less match_cached on the 6 without a cached answer and order on
-	// v1-models-id (one model: ClassifyV1ModelID has no order).
-	if n := testutil.CollectAndCount(m.ShadowResults); n != 7*10-6-1 {
-		t.Fatalf("feed_go_shadow_compare_total has %d series at construction, want 63", n)
+	// 7 endpoints x 10 results, less match_cached on the 6 without a cached answer, order on
+	// v1-models-id (one model: ClassifyV1ModelID has no order) and match_empty on as-posts.
+	if n := testutil.CollectAndCount(m.ShadowResults); n != 7*10-6-1-1 {
+		t.Fatalf("feed_go_shadow_compare_total has %d series at construction, want 62", n)
 	}
-	common := []string{"match", "match_empty", "fields", "membership", "unsupported", "deadline", "go_error", "bad_request"}
+	common := []string{"match", "fields", "membership", "unsupported", "deadline", "go_error", "bad_request"}
 	for _, e := range []string{"as-posts", "v1-images", "infinite", "model-getall", "v1-models", "v1-models-id", "model-associated"} {
 		results := append([]string(nil), common...)
 		if e != "v1-models-id" {
 			results = append(results, "order")
+		}
+		if e != "as-posts" {
+			results = append(results, "match_empty")
 		}
 		for _, r := range results {
 			if v, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": e, "result": r}); !found || v != 0 {
@@ -71,7 +90,7 @@ func TestShadowResultsAreSeeded(t *testing.T) {
 	if v, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": "v1-models-id", "result": "match_cached"}); !found || v != 0 {
 		t.Errorf("shadow_compare{v1-models-id,match_cached} = %v found=%v, want a 0 series", v, found)
 	}
-	for _, c := range [][2]string{{"as-posts", "match_cached"}, {"v1-models-id", "order"}} {
+	for _, c := range [][2]string{{"as-posts", "match_cached"}, {"v1-models-id", "order"}, {"as-posts", "match_empty"}} {
 		if _, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": c[0], "result": c[1]}); found {
 			t.Errorf("shadow_compare{%s,%s} exists, but the compare path cannot count it", c[0], c[1])
 		}
