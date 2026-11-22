@@ -13,7 +13,7 @@ export const PREVIEW_OPEN_PATH = 'api/internal/app-assistant/preview/open';
  * apart.
  */
 export const OPEN_ATTEMPTS = 4;
-const OPEN_RETRY_MS = 1_000;
+export const OPEN_RETRY_MS = 1_000;
 /** How long a keep-alive or a stop waits for civitai. */
 export const REQUEST_TIMEOUT_MS = 15_000;
 /**
@@ -86,9 +86,14 @@ export interface DevTunnels {
   start(input: DevTunnelStartInput, signal?: AbortSignal): Promise<StartedTunnel>;
   /**
    * Asks civitai how to open the preview, and opens it when it is a direct one (no tunnel): see
-   * `PreviewOpenAnswer`. civitai judges the same gates as `start`.
+   * `PreviewOpenAnswer`. civitai judges the same gates as `start`. `once`: ask a single time, with
+   * no retry of `unavailable` (a start with a deadline, the page's Restart preview).
    */
-  open(input: PreviewOpenInput, signal?: AbortSignal): Promise<PreviewOpenAnswer>;
+  open(
+    input: PreviewOpenInput,
+    signal?: AbortSignal,
+    options?: { once?: boolean }
+  ): Promise<PreviewOpenAnswer>;
   /**
    * Stamps the idle clock (never the 8 h cap) of one of the run's user's previews, whoever opened
    * it (this run, the page's Restart preview, an earlier reply): the tunnel at `host`, the host the
@@ -177,7 +182,7 @@ export class CivitaiDevTunnels {
           throw error;
         }
       },
-      open: (input, signal) => this.#open(grant, input, signal),
+      open: (input, signal, options) => this.#open(grant, input, signal, options?.once === true),
       keepalive: async (target, signal) => {
         if ('host' in target) {
           await post('keepalive', { host: target.host }, signal);
@@ -218,8 +223,10 @@ export class CivitaiDevTunnels {
   async #open(
     grant: () => Promise<string | null>,
     input: PreviewOpenInput,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    once = false
   ): Promise<PreviewOpenAnswer> {
+    const attempts = once ? 1 : OPEN_ATTEMPTS;
     for (let attempt = 1; ; attempt++) {
       let answer: unknown;
       try {
@@ -234,7 +241,7 @@ export class CivitaiDevTunnels {
         if (error instanceof DevTunnelError && error.status === 404 && error.code === undefined)
           return { mode: 'tunnel' };
         const again = error instanceof DevTunnelError && error.code === 'unavailable';
-        if (!again || attempt >= OPEN_ATTEMPTS || signal?.aborted) throw error;
+        if (!again || attempt >= attempts || signal?.aborted) throw error;
         await sleep(OPEN_RETRY_MS, signal);
         continue;
       }

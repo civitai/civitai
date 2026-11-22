@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../app';
 import {
+  CivitaiDevTunnels,
   DevTunnelError,
   type DevTunnels,
   type DevTunnelStartInput,
@@ -11,6 +12,7 @@ import {
 } from '../app-assistant/dev-tunnel';
 import {
   PreviewRestarter,
+  TUNNEL_START_BUDGET_MS,
   restartGrantConversation,
   RESTART_LIMIT,
   RESTART_MESSAGES,
@@ -202,6 +204,47 @@ describe('PreviewRestarter', () => {
       // The manifest declares scopes: the app's direct session was ended first, so the open wrote
       // one with them (never a reused session with older ones).
       expect(tunnels.blockStops).toEqual([MANIFEST_BLOCK]);
+    });
+
+    // The restart's grant leaves a fixed time for its tunnel start (`tunnelStartBy`): retrying a
+    // civitai that keeps answering `unavailable` must not use up what the tunnel fallback needs.
+    it('a preview/open that keeps answering unavailable is asked once, and the tunnel still opens', async () => {
+      fake.add(APP).previewId = PREVIEW_ID;
+      const opens: string[] = [];
+      const civitai = new CivitaiDevTunnels({
+        civitaiUrl: 'https://civitai.example',
+        secret: 'test-only-runner-secret',
+        log: quiet,
+        fetch: async (input) => {
+          const url = String(input);
+          if (url.endsWith('/preview/open')) {
+            opens.push(url);
+            return Response.json({ error: 'busy', code: 'unavailable' }, { status: 503 });
+          }
+          if (url.endsWith('/start'))
+            return Response.json({ sessionId: SESSION, host: HOST, sshHostPublicKey: HOST_KEY });
+          return Response.json({ stopped: false });
+        },
+      });
+      const restarts = new PreviewRestarter({
+        sandboxUrl: fake.url,
+        forGrant: (grant) => ({
+          tokens: async (purpose) => `test-token-${purpose}`,
+          tunnels: civitai.forRun(async () => grant),
+        }),
+        log: quiet,
+        pollMs: 5,
+      });
+      // About 2 s of headroom before the tunnel start's deadline: less than the open's retries.
+      const outcome = await restarts.restart(
+        'u-1',
+        APP,
+        'test-preview-grant',
+        new Date(Date.now() + TUNNEL_START_BUDGET_MS + 2_000)
+      );
+      expect(opens).toHaveLength(1);
+      expect(outcome).toEqual({ ok: true, blockId: MANIFEST_BLOCK, host: HOST });
+      expect(tunnelCalls()).toEqual(['tunnel_key', 'tunnel_connect']);
     });
 
     it('an id whose session ended is rotated once; a second `fresh` answers unavailable', async () => {

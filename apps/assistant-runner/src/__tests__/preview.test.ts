@@ -8,7 +8,9 @@ import {
   DEV_TUNNEL_PATH,
   DevTunnelError,
   OPEN_ATTEMPTS,
+  OPEN_RETRY_MS,
   PREVIEW_OPEN_PATH,
+  REQUEST_TIMEOUT_MS,
   type DevTunnels,
   type DevTunnelStartInput,
   type PreviewOpenAnswer,
@@ -1433,7 +1435,21 @@ describe('direct preview (civitai serves it with no tunnel)', () => {
         stop.abort();
         return stop.signal.reason;
       };
-      const { tools } = await open();
+      const warned: unknown[] = [];
+      const tools = await new AppAssistantTools({
+        sandboxUrl: fake.url,
+        tokens: () => async (purpose) => `test-token-${purpose}`,
+        devTunnels: () => tunnels,
+        log: { ...quiet, warn: (_o: object, m?: string) => void warned.push(m) },
+        previewKeepaliveMs: KEEPALIVE_MS,
+      }).open({
+        userId: 'u-1',
+        runId: 'run-1',
+        conversationId: 'conv-1',
+        page: { app: 'my-app' },
+        signal: new AbortController().signal,
+      });
+      opened.push(tools);
       const tool = tools.tools['start_preview']!;
       const result = (await Promise.resolve(
         tool.execute!(
@@ -1446,6 +1462,11 @@ describe('direct preview (civitai serves it with no tunnel)', () => {
         )
       ).catch((error: unknown) => ({ thrown: error }))) as Record<string, unknown>;
       expect(result.shown).toBeUndefined();
+      expect(tunnels.opens).toHaveLength(1);
+      // Never taken for a hiccup: no fall back to the tunnel was even tried.
+      expect(warned).not.toContain(
+        'asking civitai how to open the preview failed; opening a tunnel'
+      );
       expect(tunnels.started).toEqual([]);
       expect(tunnelCalls()).toEqual([]);
     });
@@ -1690,8 +1711,10 @@ describe('CivitaiDevTunnels: direct preview calls', () => {
       await vi.runAllTimersAsync();
       expect(await opened).toMatchObject({ status: 503, code: 'unavailable' });
       expect(sent).toHaveLength(OPEN_ATTEMPTS);
-      // The worst-case wait is OPEN_ATTEMPTS × the per-ask timeout: keep it bounded.
-      expect(OPEN_ATTEMPTS).toBeLessThanOrEqual(5);
+      // The worst case: every ask runs to its own timeout, with the gaps between them.
+      expect(
+        OPEN_ATTEMPTS * REQUEST_TIMEOUT_MS + (OPEN_ATTEMPTS - 1) * OPEN_RETRY_MS
+      ).toBeLessThanOrEqual(70_000);
 
       const refused = client(() =>
         Response.json({ error: 'Too many', code: 'TOO_MANY_REQUESTS' }, { status: 429 })

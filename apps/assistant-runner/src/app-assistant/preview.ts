@@ -601,7 +601,10 @@ export class RunnerPreview {
           ...(declaredScopes ? { declaredScopes } : {}),
           ...(declaredAuth ? { declaredAuth } : {}),
         },
-        signal
+        signal,
+        // A start with a deadline (the page's Restart preview, `tunnelStartBy`) asks once: retries
+        // could use up the time its tunnel fallback needs.
+        this.#deps.tunnelStartBy !== undefined ? { once: true } : undefined
       );
     let answer: PreviewOpenAnswer | null;
     let rotated = false;
