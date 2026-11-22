@@ -67,6 +67,7 @@ export async function hasAppAssistantConsent(
   purpose: AppAssistantTokenPurpose = 'chat'
 ): Promise<boolean> {
   const scope = appAssistantTokenScope(purpose);
+  // primary: a consent the user just revoked must stop the next mint, not one replica lag later.
   const consent = await dbWrite.oauthConsent.findUnique({
     where: { userId_clientId: { userId, clientId: appAssistantClientId(userId) } },
     select: { scope: true },
