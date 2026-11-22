@@ -1660,7 +1660,8 @@ function appDataShadowInput(
   access: StorageAccess,
   body: unknown
 ): AppDataShadowInput {
-  const served = body as { items: { data: unknown }[]; nextCursor: string | null };
+  const served = body as { items: { key: string; data: unknown }[]; nextCursor: string | null };
+  const keyPrefix = req.query.keyPrefix;
   return {
     authorization: req.headers.authorization,
     own: from === null,
@@ -1669,6 +1670,7 @@ function appDataShadowInput(
     signedIn: access.ctx.viewerUid !== null,
     visibility: access.collections.get(collection)?.visibility,
     queryKeys: Object.keys(req.query).filter((k) => k !== 'path' && k !== FROM_PARAM),
+    keyPrefix: typeof keyPrefix === 'string' ? keyPrefix : undefined,
     appBlockId: access.ctx.appId,
     blockId: access.blockId,
     collection,

@@ -7,9 +7,9 @@ and the PR's infra list). The design, the stream
 count arithmetic and the open questions are in [DESIGN.md](DESIGN.md).
 
 ```
-GET /v1/apps/{slug}/collections/{collection}/records[?major=N]
+GET /v1/apps/{slug}/collections/{collection}/records[?major=N][&keyPrefix=P]
 Authorization: Bearer <the app's hub access token for the user>
-→ {"source":"registry"|"rest","items":[{"urn"|"key":…,"rev":…,"data":{…}}]}
+→ {"source":"registry"|"rest","items":[{"urn"?:…,"key":…,"rev":…,"data":{…}}]}
 ```
 
 A read is answered from a per-user stream on the registry adapter, opened lazily with a token this

@@ -49,9 +49,9 @@ function makeShadow() {
 }
 
 /** Pairwise-distinct record bodies; none equals another, and none is a constant the code names. */
-const R1 = { data: { score: 71, model: 'bench-alpha-4c1' } };
-const R2 = { data: { score: 18, model: 'bench-bravo-9e7' } };
-const R3 = { data: { score: 55, model: 'bench-charlie-2d3' } };
+const R1 = { key: 'run:a41', data: { score: 71, model: 'bench-alpha-4c1' } };
+const R2 = { key: 'run:b07', data: { score: 18, model: 'bench-bravo-9e7' } };
+const R3 = { key: 'run:c95', data: { score: 55, model: 'bench-charlie-2d3' } };
 
 function input(over: Partial<AppDataShadowInput> = {}): AppDataShadowInput {
   return {
@@ -62,6 +62,7 @@ function input(over: Partial<AppDataShadowInput> = {}): AppDataShadowInput {
     signedIn: true,
     visibility: 'private',
     queryKeys: [],
+    keyPrefix: undefined,
     appBlockId: 'apb_bench01',
     blockId: 'model-benchmarking',
     collection: 'runs',
@@ -71,10 +72,10 @@ function input(over: Partial<AppDataShadowInput> = {}): AppDataShadowInput {
   };
 }
 
-const registryAnswer = (items: { data: unknown }[]) => () =>
+const registryAnswer = (items: { key?: string; data: unknown }[]) => () =>
   Response.json({
     source: 'registry',
-    items: items.map((r, i) => ({ urn: `urn:x/${i}`, rev: `r${i}`, data: r.data })),
+    items: items.map((r, i) => ({ urn: `urn:x/${i}`, key: r.key, rev: `r${i}`, data: r.data })),
   });
 const noneAnswer = (reason: string) => () => Response.json({ source: 'none', reason, items: [] });
 
@@ -182,11 +183,17 @@ describe('which lists are shadowed', () => {
     ]);
   });
 
-  it('a hub token and a page size alone are shadowed', async () => {
+  it('a hub token, a page size and a key prefix are shadowed', async () => {
     const shadow = makeShadow();
     await shadow.shadow(input({ tokenKind: 'hub' }));
     await shadow.shadow(input({ queryKeys: ['limit'] }));
-    expect(calls).toHaveLength(2);
+    await shadow.shadow(input({ queryKeys: ['keyPrefix', 'limit'], keyPrefix: 'run:' }));
+    expect(calls).toHaveLength(3);
+    expect(calls.map((c) => new URL(c.url).searchParams.get('keyPrefix'))).toEqual([
+      null,
+      null,
+      'run:',
+    ]);
   });
 });
 
@@ -220,13 +227,61 @@ describe('what is asked of app-data-go', () => {
 });
 
 describe('the comparison', () => {
-  it('records are matched by their data, whatever its key order', async () => {
-    reply = registryAnswer([{ data: { model: 'bench-bravo-9e7', score: 18 } }, R1]);
+  it('records are matched by key, and their data whatever its key order', async () => {
+    reply = registryAnswer([{ key: R2.key, data: { model: 'bench-bravo-9e7', score: 18 } }, R1]);
     await makeShadow().shadow(input());
     expect(logs).toEqual([]);
     expect(await moved()).toEqual([
       'compared_records_total{}:2',
-      'compared_total{match}:1',
+      'compared_total{match/key}:1',
+      'requests_total{compared}:1',
+    ]);
+  });
+
+  it('🔴 the same key with different data is a data mismatch, logged with counts only', async () => {
+    reply = registryAnswer([{ key: R1.key, data: { score: 70, model: 'bench-alpha-4c1' } }, R2]);
+    await makeShadow().shadow(input());
+    expect(logs).toEqual([
+      {
+        appBlockId: 'apb_bench01',
+        collection: 'runs',
+        basis: 'key',
+        restCount: 2,
+        registryCount: 2,
+        restOnly: 0,
+        registryOnly: 0,
+        dataDiffers: 1,
+      },
+    ]);
+    expect(JSON.stringify(logs)).not.toContain(R1.key);
+    expect(await moved()).toEqual([
+      'compared_records_total{}:2',
+      'compared_total{mismatch/key}:1',
+      'mismatched_records_total{data}:1',
+      'requests_total{compared}:1',
+    ]);
+  });
+
+  it('registry records without keys (an adapter before private keys) are matched by their data', async () => {
+    reply = registryAnswer([{ data: R2.data }, { data: R3.data }]);
+    await makeShadow().shadow(input());
+    expect(logs).toEqual([
+      {
+        appBlockId: 'apb_bench01',
+        collection: 'runs',
+        basis: 'data',
+        restCount: 2,
+        registryCount: 2,
+        restOnly: 1,
+        registryOnly: 1,
+        dataDiffers: 0,
+      },
+    ]);
+    expect(await moved()).toEqual([
+      'compared_records_total{}:3',
+      'compared_total{mismatch/data}:1',
+      'mismatched_records_total{registry_only}:1',
+      'mismatched_records_total{rest_only}:1',
       'requests_total{compared}:1',
     ]);
   });
@@ -238,37 +293,71 @@ describe('the comparison', () => {
       {
         appBlockId: 'apb_bench01',
         collection: 'runs',
+        basis: 'key',
         restCount: 2,
         registryCount: 2,
         restOnly: 1,
         registryOnly: 1,
+        dataDiffers: 0,
       },
     ]);
     const text = JSON.stringify(logs);
-    for (const v of ['bench-alpha-4c1', 'bench-bravo-9e7', 'bench-charlie-2d3', AUTH]) {
+    for (const v of [
+      'bench-alpha-4c1',
+      'bench-bravo-9e7',
+      'bench-charlie-2d3',
+      R1.key,
+      R2.key,
+      R3.key,
+      AUTH,
+    ]) {
       expect(text).not.toContain(v);
     }
     expect(await moved()).toEqual([
       'compared_records_total{}:3',
-      'compared_total{mismatch}:1',
+      'compared_total{mismatch/key}:1',
       'mismatched_records_total{registry_only}:1',
       'mismatched_records_total{rest_only}:1',
       'requests_total{compared}:1',
     ]);
   });
 
-  it('records are a multiset: a duplicate on one side only is a mismatch', () => {
-    expect(compareRecords([R1, R1, R2], [R2, R1])).toEqual({
+  it('by key: a key on one side only, or on both with other data; a record moved to another key is both', () => {
+    expect(compareRecords([R1, R2], [R2, { key: 'run:z00', data: R1.data }])).toEqual({
+      basis: 'key',
+      restCount: 2,
+      registryCount: 2,
+      restOnly: 1,
+      registryOnly: 1,
+      dataDiffers: 0,
+    });
+    expect(compareRecords([R1, R2, R3], [{ key: R3.key, data: R1.data }])).toEqual({
+      basis: 'key',
+      restCount: 3,
+      registryCount: 1,
+      restOnly: 2,
+      registryOnly: 0,
+      dataDiffers: 1,
+    });
+  });
+
+  it('without keys, records are a multiset: a duplicate on one side only is a mismatch', () => {
+    const unkeyed = (r: { data: unknown }) => ({ data: r.data });
+    expect(compareRecords([R1, R1, R2], [unkeyed(R2), unkeyed(R1)])).toEqual({
+      basis: 'data',
       restCount: 3,
       registryCount: 2,
       restOnly: 1,
       registryOnly: 0,
+      dataDiffers: 0,
     });
-    expect(compareRecords([R2], [R2, R3, R3])).toEqual({
+    expect(compareRecords([R2], [unkeyed(R2), unkeyed(R3), unkeyed(R3)])).toEqual({
+      basis: 'data',
       restCount: 1,
       registryCount: 3,
       restOnly: 0,
       registryOnly: 2,
+      dataDiffers: 0,
     });
   });
 
@@ -292,7 +381,7 @@ describe('the comparison', () => {
     await shadow.shadow(input({ served: { items: [], nextCursor: null } }));
     await shadow.shadow(input());
     expect(await moved()).toEqual([
-      'compared_total{match}:1',
+      'compared_total{match/key}:1',
       'registry_misses_total{empty}:1',
       'requests_total{compared}:1',
       'requests_total{registry_miss}:1',
@@ -376,7 +465,7 @@ describe('🔴 a failing shadow never touches the served answer', () => {
     expect(calls).toHaveLength(2);
     expect(await moved()).toEqual([
       'compared_records_total{}:4',
-      'compared_total{match}:2',
+      'compared_total{match/key}:2',
       'requests_total{compared}:2',
       'requests_total{saturated}:1',
     ]);

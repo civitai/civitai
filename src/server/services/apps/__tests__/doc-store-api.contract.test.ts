@@ -4950,10 +4950,23 @@ describe('the app-data shadow read: handed each list after the response, never a
     // `from` naming the app itself is its own read too.
     await call({ token, claims, deps, method: 'GET', path: '/prefs', query: { from: A.blockId } });
     expect(seen).toHaveLength(2);
-    expect(seen[1]).toMatchObject({ own: true, queryKeys: [] });
+    expect(seen[1]).toMatchObject({ own: true, queryKeys: [], keyPrefix: undefined });
+    // A key prefix is handed on with its value, and the served answer is the filtered one.
+    const prefixed = await call({
+      token,
+      claims,
+      deps,
+      method: 'GET',
+      path: '/prefs',
+      query: { keyPrefix: 'k2' },
+    });
+    expect(prefixed.status).toBe(200);
+    expect(seen).toHaveLength(3);
+    expect(seen[2]).toMatchObject({ queryKeys: ['keyPrefix'], keyPrefix: 'k2' });
+    expect(seen[2].served.items.map((d) => d.key)).toEqual(['k2']);
     const doc = await call({ token, claims, deps, method: 'GET', path: '/prefs/k1' });
     expect(doc.status).toBe(200);
-    expect(seen).toHaveLength(2);
+    expect(seen).toHaveLength(3);
   });
 
   it('🔴 a shadow that throws, or never settles, leaves the list exactly as it is without one', async () => {

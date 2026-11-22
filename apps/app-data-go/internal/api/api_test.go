@@ -208,7 +208,9 @@ type fakeStore struct {
 	by    map[string]restAnswer // token → answer
 	calls atomic.Int32
 	froms []string
-	block chan struct{}
+	// prefixes are the keyPrefix values sent, one per request ("" when none).
+	prefixes []string
+	block    chan struct{}
 }
 
 func newFakeStore(t *testing.T) *fakeStore {
@@ -218,6 +220,7 @@ func newFakeStore(t *testing.T) *fakeStore {
 		f.calls.Add(1)
 		f.mu.Lock()
 		f.froms = append(f.froms, r.URL.Query().Get("from"))
+		f.prefixes = append(f.prefixes, r.URL.Query().Get("keyPrefix"))
 		a, ok := f.by[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
 		block := f.block
 		f.mu.Unlock()
@@ -954,5 +957,102 @@ func TestThePreflightDoesNotAllowTheRegistryOnlyHeader(t *testing.T) {
 	s.h.ServeHTTP(rec, req)
 	if strings.Contains(strings.ToLower(rec.Header().Get("Access-Control-Allow-Headers")), strings.ToLower(RegistryOnlyHeader)) {
 		t.Fatalf("preflight allows %s", RegistryOnlyHeader)
+	}
+}
+
+// kent is ent with the storage key the adapter's private feed sends beside the body.
+func kent(urn, key, canary string) registry.Entity {
+	e := ent(urn, canary)
+	e.Key = key
+	return e
+}
+
+func itemKeys(a answer) string {
+	keys := make([]string, 0, len(a.Items))
+	for _, it := range a.Items {
+		keys = append(keys, it.Key)
+	}
+	return strings.Join(keys, ",")
+}
+
+// A registry item carries its storage key beside its URN.
+func TestARegistryItemCarriesItsKey(t *testing.T) {
+	s := newStack(t, true, session.Options{})
+	s.reg.records["civitai_alice"] = []registry.Entity{kent("urn:apps.civitai.com:todo-app/notes/r-k1", "note-a41", "KEY-ALICE-0e5c")}
+	g := s.get(t, notesPath, "civitai_alice")
+	if g.status != 200 || g.ans.Source != "registry" || len(g.ans.Items) != 1 ||
+		g.ans.Items[0].URN != "urn:apps.civitai.com:todo-app/notes/r-k1" || g.ans.Items[0].Key != "note-a41" {
+		t.Fatalf("%d %s", g.status, g.body)
+	}
+}
+
+// keyPrefix keeps the registry records whose key starts with it; a prefix that keeps none is an empty
+// registry answer (the stream holds records, so it was not refused), and REST is never read.
+func TestAKeyPrefixFiltersTheRegistryAnswer(t *testing.T) {
+	s := newStack(t, true, session.Options{})
+	s.reg.records["civitai_alice"] = []registry.Entity{
+		kent("urn:apps.civitai.com:todo-app/notes/r-1", "run:b7", "PFX-RUN-B-11aa"),
+		kent("urn:apps.civitai.com:todo-app/notes/r-2", "cfg:x2", "PFX-CFG-X-22bb"),
+		kent("urn:apps.civitai.com:todo-app/notes/r-3", "run:a3", "PFX-RUN-A-33cc"),
+	}
+	g := s.get(t, notesPath+"?keyPrefix=run:", "civitai_alice")
+	if g.status != 200 || g.ans.Source != "registry" || itemKeys(g.ans) != "run:b7,run:a3" || strings.Contains(g.body, "PFX-CFG-X-22bb") {
+		t.Fatalf("%d %s", g.status, g.body)
+	}
+	none := s.get(t, notesPath+"?keyPrefix=zzz", "civitai_alice")
+	if none.status != 200 || none.ans.Source != "registry" || !strings.Contains(none.body, `"items":[]`) {
+		t.Fatalf("%d %s", none.status, none.body)
+	}
+	if s.store.calls.Load() != 0 {
+		t.Fatal("a registry answer read REST")
+	}
+}
+
+// 🔴 A stream whose records carry no key cannot be filtered: a keyPrefix read goes to REST with the
+// prefix (`unkeyed`), and a registry-only one answers the miss.
+func TestAKeyPrefixReadOfAnUnkeyedStreamGoesToREST(t *testing.T) {
+	s := newStack(t, true, session.Options{})
+	s.reg.records["civitai_alice"] = []registry.Entity{ent("urn:apps.civitai.com:todo-app/notes/r-u", "UNKEYED-ALICE-4f1d")}
+	s.store.by["civitai_alice"] = restAnswer{200, `{"items":[{"key":"run:k","data":{"text":"REST-PFX-77e0"},"version":4}],"nextCursor":null}`}
+	g := s.get(t, notesPath+"?keyPrefix=run:", "civitai_alice")
+	if g.status != 200 || g.ans.Source != "rest" || itemKeys(g.ans) != "run:k" || fallbacks(s, "unkeyed") != 1 {
+		t.Fatalf("%d %s", g.status, g.body)
+	}
+	if strings.Join(s.store.prefixes, ",") != "run:" {
+		t.Fatalf("keyPrefix sent to REST: %q", s.store.prefixes)
+	}
+	ro := s.getRegistryOnly(t, notesPath+"?keyPrefix=run:", "civitai_alice", "1")
+	if ro.ans.Source != "none" || ro.ans.Reason != "unkeyed" || s.store.calls.Load() != 1 {
+		t.Fatalf("%d %s", ro.status, ro.body)
+	}
+	// Without a prefix the same unkeyed stream answers as before.
+	if g := s.get(t, notesPath, "civitai_alice"); g.ans.Source != "registry" || len(g.ans.Items) != 1 {
+		t.Fatalf("%d %s", g.status, g.body)
+	}
+}
+
+// With the registry off, the keyPrefix is passed through to REST; without one none is sent.
+func TestTheRESTPathPassesTheKeyPrefixThrough(t *testing.T) {
+	s := newStack(t, false, session.Options{})
+	s.store.by["civitai_alice"] = restAnswer{200, `{"items":[],"nextCursor":null}`}
+	_ = s.get(t, notesPath+"?keyPrefix=bench.v2-", "civitai_alice")
+	_ = s.get(t, notesPath, "civitai_alice")
+	if strings.Join(s.store.prefixes, "|") != "bench.v2-|" {
+		t.Fatalf("keyPrefix sent: %q", s.store.prefixes)
+	}
+}
+
+func TestABadKeyPrefixIsRefused(t *testing.T) {
+	s := newStack(t, true, session.Options{})
+	for _, q := range []string{"?keyPrefix=", "?keyPrefix=a/b", "?keyPrefix=" + strings.Repeat("k", 129)} {
+		if g := s.get(t, notesPath+q, "civitai_alice"); g.status != 400 {
+			t.Errorf("%s: %d %s", q, g.status, g.body)
+		}
+	}
+	if g := s.get(t, notesPath+"?keyPrefix="+strings.Repeat("k", 128), "civitai_alice"); g.status == 400 {
+		t.Fatalf("a 128-character prefix was refused: %s", g.body)
+	}
+	if s.store.calls.Load() != 1 {
+		t.Fatalf("%d REST reads, want only the valid one", s.store.calls.Load())
 	}
 }

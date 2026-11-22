@@ -63,12 +63,13 @@ type Client struct {
 	MaxRecords int
 }
 
-// List reads every document of collection, in the app `from` names, that the token may read.
-func (c *Client) List(ctx context.Context, token, collection, from string) ([]Doc, error) {
+// List reads every document of collection, in the app `from` names, that the token may read; with
+// keyPrefix, only those whose key starts with it (the store's own `keyPrefix` filter).
+func (c *Client) List(ctx context.Context, token, collection, from, keyPrefix string) ([]Doc, error) {
 	var out []Doc
 	cursor := ""
 	for {
-		page, next, err := c.page(ctx, token, collection, from, cursor)
+		page, next, err := c.page(ctx, token, collection, from, keyPrefix, cursor)
 		if err != nil {
 			return nil, err
 		}
@@ -87,7 +88,7 @@ func (c *Client) List(ctx context.Context, token, collection, from string) ([]Do
 	}
 }
 
-func (c *Client) page(ctx context.Context, token, collection, from, cursor string) ([]Doc, string, error) {
+func (c *Client) page(ctx context.Context, token, collection, from, keyPrefix, cursor string) ([]Doc, string, error) {
 	u, err := url.Parse(strings.TrimRight(c.BaseURL, "/"))
 	if err != nil {
 		return nil, "", &Error{}
@@ -96,6 +97,9 @@ func (c *Client) page(ctx context.Context, token, collection, from, cursor strin
 	q := url.Values{"limit": {strconv.Itoa(PageSize)}}
 	if from != "" {
 		q.Set("from", from)
+	}
+	if keyPrefix != "" {
+		q.Set("keyPrefix", keyPrefix)
 	}
 	if cursor != "" {
 		q.Set("cursor", cursor)

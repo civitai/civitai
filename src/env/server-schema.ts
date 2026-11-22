@@ -684,7 +684,7 @@ export const serverSchema = z
     APP_DATA_SHADOW_URL: z.url().optional(),
     // The fraction (0-1) of eligible lists, of apps the flag is on for, also asked of app-data-go;
     // the most such reads in flight per process (more are dropped, not queued); each read's timeout.
-    APP_DATA_SHADOW_SAMPLE: z.coerce.number().min(0).max(1).default(0.1),
+    APP_DATA_SHADOW_SAMPLE: z.coerce.number().min(0).max(1).default(1),
     APP_DATA_SHADOW_MAX_IN_FLIGHT: z.coerce.number().int().min(1).max(64).default(4),
     APP_DATA_SHADOW_TIMEOUT_MS: z.coerce.number().int().min(50).max(10_000).default(2000),
     // Debounce window (ms) for flushing model-metric-affected ids into the

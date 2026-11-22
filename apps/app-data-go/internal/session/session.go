@@ -335,7 +335,7 @@ func (s *session) snapshot() []registry.Entity {
 }
 
 func entitySize(e registry.Entity) int {
-	n := len(e.URN) + len(e.Rev) + len(e.Body)
+	n := len(e.URN) + len(e.Rev) + len(e.Body) + len(e.Key)
 	for _, sc := range e.Schemas {
 		n += len(sc)
 	}

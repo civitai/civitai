@@ -12,7 +12,8 @@ export const APP_DATA_SHADOW_OUTCOMES = [
   'compared',
   // Not asked: a list app-data-go cannot answer the same way. Not the app's own collection (an
   // import), not a private collection, not the published namespace (dev, review), not an app or hub
-  // token, an anonymous viewer, or a list with filters, a sort, a mark, a key prefix or a cursor.
+  // token, an anonymous viewer, or a list with a parameter but `limit` and `keyPrefix` (a filter, a
+  // sort, a mark, an author or a cursor).
   'unsupported_input',
   // Not asked: the REST answer has a next page, so it is not the whole collection.
   'incomplete',
@@ -54,6 +55,7 @@ export const APP_DATA_REGISTRY_MISS_REASONS = [
   'closed',
   'block_spent',
   'block_cache_full',
+  'unkeyed',
   'other',
 ] as const;
 export type AppDataRegistryMissReason = (typeof APP_DATA_REGISTRY_MISS_REASONS)[number];
@@ -85,8 +87,10 @@ const registryMisses = counter(
 );
 const compared = counter(
   'app_data_shadow_compared_total',
-  'Shadow reads whose REST and registry answers were compared, by result (match, mismatch).',
-  ['result']
+  'Shadow reads whose REST and registry answers were compared, by result (match, mismatch) and ' +
+    'basis (key: records matched by storage key; data: a registry record carried no key, so they ' +
+    'were matched as a multiset of their data).',
+  ['result', 'basis']
 );
 const comparedRecords = counter(
   'app_data_shadow_compared_records_total',
@@ -95,9 +99,9 @@ const comparedRecords = counter(
 );
 const mismatchedRecords = counter(
   'app_data_shadow_mismatched_records_total',
-  'Records on one side only, by side (rest_only: the REST answer holds it and the registry does ' +
-    'not; registry_only: the reverse). A record is matched by its data, not its key.',
-  ['side']
+  'Records that differ, by kind (rest_only: the REST answer holds it and the registry does not; ' +
+    'registry_only: the reverse; data: the same key on both sides with different data, basis key only).',
+  ['kind']
 );
 
 export function recordAppDataShadow(outcome: AppDataShadowOutcome) {
@@ -109,17 +113,22 @@ export function recordAppDataRegistryMiss(reason: AppDataRegistryMissReason) {
 }
 
 export type AppDataComparison = {
+  /** How records were matched: by storage key, or (a registry record without one) by their data. */
+  basis: 'key' | 'data';
   restCount: number;
   registryCount: number;
   restOnly: number;
   registryOnly: number;
+  /** Keys on both sides whose data differs; always 0 on basis `data`. */
+  dataDiffers: number;
 };
 
 export function recordAppDataComparison(c: AppDataComparison) {
-  const mismatch = c.restOnly > 0 || c.registryOnly > 0;
-  compared.inc({ result: mismatch ? 'mismatch' : 'match' });
+  const mismatch = c.restOnly > 0 || c.registryOnly > 0 || c.dataDiffers > 0;
+  compared.inc({ result: mismatch ? 'mismatch' : 'match', basis: c.basis });
   const records = c.restCount + c.registryOnly;
   if (records > 0) comparedRecords.inc(records);
-  if (c.restOnly > 0) mismatchedRecords.inc({ side: 'rest_only' }, c.restOnly);
-  if (c.registryOnly > 0) mismatchedRecords.inc({ side: 'registry_only' }, c.registryOnly);
+  if (c.restOnly > 0) mismatchedRecords.inc({ kind: 'rest_only' }, c.restOnly);
+  if (c.registryOnly > 0) mismatchedRecords.inc({ kind: 'registry_only' }, c.registryOnly);
+  if (c.dataDiffers > 0) mismatchedRecords.inc({ kind: 'data' }, c.dataDiffers);
 }

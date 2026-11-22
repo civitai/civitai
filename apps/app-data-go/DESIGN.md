@@ -423,14 +423,21 @@ makes a read do less; the preflight does not allow it, so a browser cannot send 
 
 **Which lists are shadowed.** The app's own collection (no `from`, or `from` naming the app itself),
 a `private` collection, the published namespace, an `app` or `hub` token with a signed-in viewer, and
-no list parameter but `limit` (no filter, sort, mark, key prefix, author or cursor). The REST answer
-must be the whole collection: a list with a next page is counted `incomplete` and not asked. The
-schema major is the collection's current one (`resolveSchemaMajor`), 1 when it has none.
+no list parameter but `limit` and `keyPrefix` (no filter, sort, mark, author or cursor). A
+`keyPrefix` is sent on, and this service filters the stream's records by it (below). The REST answer
+must be the whole collection, or the whole prefix: a list with a next page is counted `incomplete`
+and not asked (a paged list would need the site to read every page itself, which the shadow does not
+do). The schema major is the collection's current one (`resolveSchemaMajor`), 1 when it has none.
+
+Why `keyPrefix` matters: model-benchmarking, the first app, lists its private collection only through
+a prefixed scan (the SDK kv `list({ prefix })`), so without it every one of its lists would be
+`unsupported_input`.
 
 **The gate,** in order, each before any work of the next:
 
 1. `APP_DATA_SHADOW_URL` set (this service's base URL; unset: nothing happens);
-2. a sample: `random() < APP_DATA_SHADOW_SAMPLE` (default `0.1`);
+2. a sample: `random() < APP_DATA_SHADOW_SAMPLE` (default `1`: every eligible list of an app the
+   flag is on for; the flag is the ramp, the knob stays for load);
 3. fewer than `APP_DATA_SHADOW_MAX_IN_FLIGHT` (default 4) shadow reads in flight in the process,
    else counted `saturated` and dropped;
 4. the Flipt flag **`app-data-registry-shadow`**, a boolean evaluated **per app**: entity id the app
@@ -443,35 +450,60 @@ Each read is bounded by `APP_DATA_SHADOW_TIMEOUT_MS` (default 2000 ms, above thi
 `LIVE_WAIT_MS`), does not follow redirects, and never fails, delays or changes the REST answer: it
 starts after the response is sent, and every failure is an outcome.
 
-**What is compared.** The multiset of the records' `data`, canonicalised (sorted keys) and hashed.
-Not keys (see "Record names" below: the two sides name records differently), and not versions (a
-stream's `rev` is a digest). An empty registry answer (`reason: empty`) agrees with an empty REST
-answer and is a miss against a non-empty one, since this service cannot tell an empty stream from a
-refused one.
+**What is compared.** Each record by its storage key, and its `data` canonicalised (sorted keys) and
+hashed: a key on one side only (`rest_only`, `registry_only`), or on both with different data
+(`data`). The keys match because the adapter's private feed now sends each record's key ("Private
+records carry their key" below). When a registry record carries no key (an adapter that predates
+it), the records are matched as a multiset of their data instead (`basis="data"`), which cannot
+tell a changed record from a removed one plus an added one. Versions are not compared (a stream's
+`rev` is a digest). An empty registry answer (`reason: empty`) agrees with an empty REST answer and
+is a miss against a non-empty one, since this service cannot tell an empty stream from a refused
+one.
 
 **Telemetry** (on the site's `/api/metrics`; no label carries an app, collection, key, user or value):
 
 - `app_data_shadow_requests_total{outcome}`: `compared`, `unsupported_input`, `incomplete`,
   `saturated`, `registry_miss`, `timeout`, `error`, `bad_response` (a `rest` answer counts here: a
   release of this service without registry-only);
-- `app_data_shadow_registry_misses_total{reason}`: this service's fallback reasons, `other` for any
-  it adds later;
-- `app_data_shadow_compared_total{result}`: `match`, `mismatch`;
-- `app_data_shadow_compared_records_total` and `app_data_shadow_mismatched_records_total{side}`
-  (`rest_only`, `registry_only`).
+- `app_data_shadow_registry_misses_total{reason}`: this service's fallback reasons (`unkeyed`
+  included), `other` for any it adds later;
+- `app_data_shadow_compared_total{result,basis}`: `match`/`mismatch`, by `key`/`data`;
+- `app_data_shadow_compared_records_total` and `app_data_shadow_mismatched_records_total{kind}`
+  (`rest_only`, `registry_only`, `data`).
 
 A mismatch is logged (`app-data-shadow-mismatch`, at most 30 lines a minute per process) with the
-app block id, the collection and the four counts only.
+app block id, the collection, the basis and the counts only: never a key or a value.
+
+**Private records carry their key.** The adapter's private feed sends each record's storage key as
+the entity's `key`, beside the body (`private-feed.ts`, `Entity.key` in `protocol.ts`). The body is
+unchanged, still the document its schemas claim, so no collection schema changes (and private
+collections' schemas are not published to registries anyway); the URN still names the `record_id`.
+A private stream belongs to one user's token, so a key never reaches another user. The public feeds
+carry no key. The HTTP binding sends it (an SSE upsert is the whole entity); the gRPC binding's
+`Entity` message has no field for it. Every private `rev` and the poll's read digest now include a
+body format (`k1`), so a cursor saved before keys were carried resumes as a change: each record is
+sent again, with its key, and no cursor is expired.
+
+This service carries the key on through: a registry item is `{"urn":…,"key":…,"rev":…,"data":…}`.
+`?keyPrefix=P` (a key's grammar, at most 128 characters) keeps the records whose key starts with `P`
+on the registry path and is sent on as the store's own `keyPrefix` on REST. A stream whose records
+carry no key cannot be filtered: a `keyPrefix` read of it goes to REST (`unkeyed`). A prefix that
+keeps none of a stream's records is an empty registry answer: the stream held records, so it was
+not refused.
 
 **Turn-on order:**
 
-1. This service on a release with registry-only (this one or later). An older one answers the
-   shadow from REST, which reads the site again (counted `bad_response`).
-2. The site on a release with the shadow, `APP_DATA_SHADOW_URL` set to this service's in-cluster
+1. This service on a release with registry-only and `keyPrefix` (this one or later). An older one
+   answers the shadow from REST, which reads the site again (counted `bad_response`).
+2. **The registry adapter on a release with private keys (this one or later), before the shadow
+   can compare by key.** Until then a keyed registry answer cannot exist: model-benchmarking's
+   prefixed lists read `registry_miss{reason="unkeyed"}`, and its unprefixed ones compare on
+   `basis="data"`.
+3. The site on a release with the shadow, `APP_DATA_SHADOW_URL` set to this service's in-cluster
    URL (cluster-local `http` only).
-3. The network path from the site's pods to this service's HTTP port (below).
-4. Create `app-data-registry-shadow` in Flipt, on for model-benchmarking only.
-5. Until the block exchange (`APP_DATA_BLOCK_EXCHANGE`) and the adapter's private relays (S7) are on,
+4. The network path from the site's pods to this service's HTTP port (below).
+5. Create `app-data-registry-shadow` in Flipt, on for model-benchmarking only.
+6. Until the block exchange (`APP_DATA_BLOCK_EXCHANGE`) and the adapter's private relays (S7) are on,
    every shadow read is a `registry_miss` (`token_not_exchangeable` for a block token): that is the
    first thing it shows, and the positive control for the wiring.
 
@@ -495,8 +527,9 @@ app block id, the collection and the four counts only.
   blockId (the URN slug segment), which is what #9800 matches. Until it merges, an own-collection
   read falls back to that refusal, and only the registry path serves it. Do not deploy before #9800.
 - **Record names (Q2).** A stream names a record by its record core URN (`…/<record_id>`), the REST
-  list by its key, and an app cannot match the two. The REST list should expose `recordId`: the
-  store reads it (`doc-store.ts`), but `presentDocs` in `doc-store-api.ts` does not return it.
+  list by its key. A private stream's record now also carries its key ("Private records carry their
+  key" above), so an answer from either path can be matched by key. The REST list still does not
+  expose `recordId` (`presentDocs` in `doc-store-api.ts`).
 
 ## Before merge
 

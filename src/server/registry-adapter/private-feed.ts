@@ -43,7 +43,11 @@
  * that subject check.
  *
  * A record's URN carries its stored `record_id`, not its key: a private key is unique only within
- * one user's key space.
+ * one user's key space. The key itself travels beside the body, as the entity's `key`
+ * ({@link PRIVATE_BODY_FORMAT}): the body stays the document its schemas claim, and a private stream
+ * belongs to one user's token, so the key never reaches another user. The public feeds carry none.
+ * The HTTP binding sends it (an SSE upsert is the whole entity); the gRPC binding's `Entity` message
+ * has no field for it.
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import { audienceAdmits, contextAudience } from '~/server/registry-adapter/audience';
@@ -169,6 +173,23 @@ export type PrivateFeedOptions = {
 
 export const PRIVATE_PAGE = 500;
 const STATE_FORMAT = 'p1';
+/**
+ * The version of what a private entity carries: `k1` is the body plus the record's storage `key`.
+ * It is folded into every private `rev` and into the poll's read digest, so a cursor saved before
+ * keys were carried resumes as a change: its read digest no longer matches, every record's rev
+ * differs, and each is sent again, now with its key. No cursor has to be expired for it.
+ */
+export const PRIVATE_BODY_FORMAT = 'k1';
+
+/** A private entity's rev: the document feed's `docRev`, under {@link PRIVATE_BODY_FORMAT} and the key. */
+export const privateRev = (
+  d: Pick<PrivateFeedDocument, 'key' | 'version' | 'data'>,
+  schemas: readonly string[]
+) =>
+  sha256Hex(sortedKeyJson({ f: PRIVATE_BODY_FORMAT, key: d.key, rev: docRev(d, schemas) })).slice(
+    0,
+    16
+  );
 /** The cursor of a private stream that holds nothing; it names no stored state. */
 export const PRIVATE_EMPTY_CURSOR = `${STATE_FORMAT}.empty`;
 const CURSOR_RE = /^p1\.([0-9a-f]{32})$/;
@@ -181,7 +202,10 @@ type PrivateState = {
   audience: string;
   appId: string | null;
   family: string | null;
-  /** A digest of every (record id, version) read, sent or not: what an unchanged poll compares. */
+  /**
+   * A digest of every (record id, version) read, sent or not, under {@link PRIVATE_BODY_FORMAT}:
+   * what an unchanged poll compares.
+   */
   read: string | null;
   /** When the state was saved, ms: its cursor expires {@link PRIVATE_CURSOR_TTL_MS} after. */
   issuedAt: number;
@@ -317,7 +341,10 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
       opts.source.versions(appId, collection, userId, after, PRIVATE_PAGE)
     );
     const read = sha256Hex(
-      sortedKeyJson(versions.map((v) => [v.recordId, v.version]).sort())
+      sortedKeyJson({
+        f: PRIVATE_BODY_FORMAT,
+        read: versions.map((v) => [v.recordId, v.version]).sort(),
+      })
     ).slice(0, 32);
     if (prev && prev.appId === appId && prev.family === digest && prev.read === read) {
       return { next: prev, entities: new Map() };
@@ -332,7 +359,7 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
       const schemas = claims(d.data);
       if (!schemas.includes(schema)) continue;
       const urn = registryUrn({ kind: 'document', slug, collection, key: d.recordId });
-      entities.set(urn, { urn, schemas, rev: docRev(d, schemas), body: d.data });
+      entities.set(urn, { urn, schemas, rev: privateRev(d, schemas), body: d.data, key: d.key });
     }
     return {
       next: {

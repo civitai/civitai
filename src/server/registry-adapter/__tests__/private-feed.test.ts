@@ -3,7 +3,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { Principal, VerifiedToken, VerifyToken } from '~/server/registry-adapter/auth';
 import { authenticate } from '~/server/registry-adapter/auth';
 import type { CatalogApp } from '~/server/registry-adapter/entities';
-import { createDocFeed } from '~/server/registry-adapter/doc-feed';
+import { createDocFeed, docRev } from '~/server/registry-adapter/doc-feed';
+import { sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
 import { composeAdapter, resolvePrivateFromCatalog } from '~/server/registry-adapter/doc-streams';
 import {
   PRIVATE_CURSOR_TTL_MS,
@@ -829,5 +830,85 @@ describe('🔴 a block-exchange token is held to its block token, on every poll'
     const { events } = await snapshotOf('owner-full');
     expect(upserts(events)).toEqual([OWNER_URN]);
     expect(revocationReads).toEqual([]);
+  });
+});
+
+describe('a private record carries its storage key (the shared app-data service matches by it)', () => {
+  const upsertEntities = (events: StreamEvent[]) =>
+    events.flatMap((e) => (e.type === 'upsert' ? [e.entity] : []));
+
+  it("the owner's snapshot: each record's key beside its body; the URN still names the record id", async () => {
+    docs.set(docsKey(SOURCE_ID, 'journal', OWNER), [
+      { key: 'entry-1', recordId: OWNER_RECORD, version: 3, data: { t: OWNER_CANARY } },
+      { key: 'entry-7c', recordId: OWNER_RECORD_2, version: 2, data: { t: OWNER_CANARY_2 } },
+    ]);
+    const { events } = await snapshotOf('owner-own');
+    expect(
+      upsertEntities(events)
+        .map((e) => ({ urn: e.urn, key: e.key, body: e.body }))
+        .sort((a, b) => (a.urn < b.urn ? -1 : 1))
+    ).toEqual(
+      [
+        { urn: OWNER_URN, key: 'entry-1', body: { t: OWNER_CANARY } },
+        { urn: OWNER_URN_2, key: 'entry-7c', body: { t: OWNER_CANARY_2 } },
+      ].sort((a, b) => (a.urn < b.urn ? -1 : 1))
+    );
+  });
+
+  it("🔴 another user's stream carries only their own key and record, never the owner's", async () => {
+    docs.set(docsKey(SOURCE_ID, 'journal', OWNER), [
+      { key: 'owner-only-key-5d2', recordId: OWNER_RECORD, version: 3, data: { t: OWNER_CANARY } },
+    ]);
+    const { events } = await snapshotOf('other-own');
+    expect(upsertEntities(events).map((e) => e.key)).toEqual(['entry-1']);
+    expect(JSON.stringify(events)).not.toContain('owner-only-key-5d2');
+    expect(JSON.stringify(events)).not.toContain(OWNER_CANARY);
+  });
+
+  it('🔴 a cursor saved before keys were carried resumes as a change: every record is sent again, with its key', async () => {
+    const owner = await principalOf('owner-own');
+    const binding = requestBinding({ schema: SCHEMA, urns: [] }, owner.subject);
+    const adapter = composeAdapter(entities, publicFeed(), privateFeed());
+    const first = subscribe(adapter, owner);
+    await settle(first);
+    first.stop();
+    wake();
+    await first.done;
+    const schemas = upsertEntities(first.events)[0].schemas;
+    const raw = unbindCursor(
+      (first.events.find((e) => e.type === 'live') as { cursor: string }).cursor,
+      binding
+    );
+    const digest = /^p1\.([0-9a-f]{32})$/.exec(raw ?? '')?.[1] as string;
+    const resume = async () => {
+      const run = subscribe(
+        adapter,
+        await principalOf('owner-own'),
+        bindCursor(raw as string, binding)
+      );
+      await settle(run);
+      run.stop();
+      wake();
+      await run.done;
+      return run.events;
+    };
+
+    // Control: the cursor as this release saved it resumes with nothing to send.
+    expect((await resume()).map((e) => e.type)).toEqual(['live']);
+
+    // The same state as the release before keys saved it: the read digest and revs without the format.
+    const state = JSON.parse((await store.get(digest)) as string) as {
+      read: string;
+      served: Array<[string, string]>;
+    };
+    state.read = sha256Hex(sortedKeyJson([[OWNER_RECORD, 3]])).slice(0, 32);
+    state.served = [[OWNER_URN, docRev({ version: 3, data: { t: OWNER_CANARY } }, schemas)]];
+    await store.put(digest, sortedKeyJson(state), `${SCHEMA}#x`);
+
+    const events = await resume();
+    expect(events.map((e) => e.type)).toEqual(['live', 'upsert']);
+    expect(upsertEntities(events).map((e) => ({ urn: e.urn, key: e.key }))).toEqual([
+      { urn: OWNER_URN, key: 'entry-1' },
+    ]);
   });
 });

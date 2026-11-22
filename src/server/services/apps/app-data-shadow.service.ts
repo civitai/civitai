@@ -10,10 +10,11 @@
  * the header, a read the registry cannot answer would read this route again from inside its own
  * read, for the answer this route already holds.
  *
- * What is compared: the multiset of the records' `data`, canonicalised (sorted keys) and hashed.
- * Not the keys: the registry names a record by its record id, the REST list by its key, and the two
- * cannot be matched (DESIGN.md, "Record names"). Not the versions: the registry's `rev` is a digest.
- * Nothing logged or counted carries a key, a value, a user or the token.
+ * What is compared: each record by its storage key, and its `data` canonicalised (sorted keys) and
+ * hashed. The adapter's private feed sends each record's key beside its body, and app-data-go passes
+ * it on. Only when a registry item carries no key (an adapter that predates private keys) are the
+ * records matched as a multiset of their data instead. Not the versions: the registry's `rev` is a
+ * digest. Nothing logged or counted carries a key, a value, a user or the token.
  */
 import { createHash } from 'node:crypto';
 import * as z from 'zod';
@@ -40,8 +41,12 @@ export const APP_DATA_REGISTRY_ONLY_HEADER = 'X-App-Data-Registry-Only';
 /** At most this many mismatch log lines per minute per process; the counters count every one. */
 export const LOG_LINES_PER_MINUTE = 30;
 
-/** The list parameters app-data-go's whole-collection read answers the same way: a page size only. */
-const SHADOWABLE_LIST_PARAMS: ReadonlySet<string> = new Set(['limit']);
+/**
+ * The list parameters app-data-go answers the same way: a page size (its answer is the whole
+ * collection, and a REST answer with a next page is not shadowed), and a key prefix, which it
+ * filters by on the records' keys.
+ */
+const SHADOWABLE_LIST_PARAMS: ReadonlySet<string> = new Set(['limit', 'keyPrefix']);
 
 /**
  * One list the storage route answered, as the route saw it. `queryKeys` are the list's own query
@@ -58,6 +63,8 @@ export type AppDataShadowInput = {
   signedIn: boolean;
   visibility: 'private' | 'shared' | undefined;
   queryKeys: readonly string[];
+  /** The list's `keyPrefix`, when it has one. */
+  keyPrefix: string | undefined;
   /** The app block id (`apb_…`): the flag's entity. */
   appBlockId: string;
   /** The app's blockId: the slug app-data-go's path and the collection's schema URN name. */
@@ -66,7 +73,7 @@ export type AppDataShadowInput = {
   /** What the collection's schema major is derived against (`doc-store-schema-major.ts`). */
   head: EnforcedManifest | undefined;
   /** The served answer. */
-  served: { items: readonly { data: unknown }[]; nextCursor: string | null };
+  served: { items: readonly { key: string; data: unknown }[]; nextCursor: string | null };
 };
 
 export type AppDataShadowConfig = {
@@ -103,7 +110,7 @@ export type AppDataShadowDeps = {
 const answerSchema = z.object({
   source: z.enum(['registry', 'rest', 'none']),
   reason: z.string().optional(),
-  items: z.array(z.object({ data: z.unknown() })),
+  items: z.array(z.object({ key: z.string().optional(), data: z.unknown() })),
 });
 
 /** Why a list cannot be shadowed, or null when it can. */
@@ -130,11 +137,31 @@ const dataHash = (data: unknown) =>
     .update(sortedKeyJson(data ?? null))
     .digest('hex');
 
-/** The two answers' records, matched by their data as a multiset. */
+/**
+ * The two answers' records compared. By key when every registry record carries one (the REST answer
+ * always does): a key on one side only, or on both with different data. Otherwise as a multiset of
+ * their data, which cannot tell a changed record from a removed one and an added one.
+ */
 export function compareRecords(
-  rest: readonly { data: unknown }[],
-  registry: readonly { data: unknown }[]
+  rest: readonly { key?: string; data: unknown }[],
+  registry: readonly { key?: string; data: unknown }[]
 ): AppDataComparison {
+  const counts = { restCount: rest.length, registryCount: registry.length };
+  const keyed = (r: { key?: string }) => typeof r.key === 'string' && r.key !== '';
+  if (rest.every(keyed) && registry.every(keyed)) {
+    const left = new Map(rest.map((r) => [r.key as string, dataHash(r.data)] as const));
+    let registryOnly = 0;
+    let dataDiffers = 0;
+    for (const r of registry) {
+      const h = left.get(r.key as string);
+      if (h === undefined) registryOnly++;
+      else {
+        if (h !== dataHash(r.data)) dataDiffers++;
+        left.delete(r.key as string);
+      }
+    }
+    return { basis: 'key', ...counts, restOnly: left.size, registryOnly, dataDiffers };
+  }
   const left = new Map<string, number>();
   for (const r of rest) {
     const h = dataHash(r.data);
@@ -149,14 +176,22 @@ export function compareRecords(
   }
   let restOnly = 0;
   for (const n of left.values()) restOnly += n;
-  return { restCount: rest.length, registryCount: registry.length, restOnly, registryOnly };
+  return { basis: 'data', ...counts, restOnly, registryOnly, dataDiffers: 0 };
 }
 
 /** app-data-go's read path for one collection. */
-export function appDataReadUrl(base: string, blockId: string, collection: string, major: number) {
+export function appDataReadUrl(
+  base: string,
+  blockId: string,
+  collection: string,
+  major: number,
+  keyPrefix?: string
+) {
+  const params = new URLSearchParams({ major: String(major) });
+  if (keyPrefix !== undefined) params.set('keyPrefix', keyPrefix);
   return `${base.replace(/\/+$/, '')}/v1/apps/${encodeURIComponent(
     blockId
-  )}/collections/${encodeURIComponent(collection)}/records?major=${major}`;
+  )}/collections/${encodeURIComponent(collection)}/records?${params}`;
 }
 
 // `outboundFetch`'s deadline rejects with a `TimeoutError` DOMException (an `AbortError` from an
@@ -196,14 +231,17 @@ export function createAppDataShadow(deps: AppDataShadowDeps) {
 
     let res: Response;
     try {
-      res = await deps.fetch(appDataReadUrl(cfg.url, input.blockId, input.collection, major), {
-        headers: {
-          accept: 'application/json',
-          authorization: input.authorization as string,
-          [APP_DATA_REGISTRY_ONLY_HEADER]: '1',
-        },
-        timeoutMs: cfg.timeoutMs,
-      });
+      res = await deps.fetch(
+        appDataReadUrl(cfg.url, input.blockId, input.collection, major, input.keyPrefix),
+        {
+          headers: {
+            accept: 'application/json',
+            authorization: input.authorization as string,
+            [APP_DATA_REGISTRY_ONLY_HEADER]: '1',
+          },
+          timeoutMs: cfg.timeoutMs,
+        }
+      );
     } catch (err) {
       return isTimeout(err) ? 'timeout' : 'error';
     }
@@ -231,7 +269,7 @@ export function createAppDataShadow(deps: AppDataShadowDeps) {
     }
     const comparison = compareRecords(input.served.items, parsed.items);
     recordAppDataComparison(comparison);
-    if (comparison.restOnly > 0 || comparison.registryOnly > 0) {
+    if (comparison.restOnly > 0 || comparison.registryOnly > 0 || comparison.dataDiffers > 0) {
       deps.log({ appBlockId: input.appBlockId, collection: input.collection, ...comparison });
     }
     return 'compared';
@@ -304,6 +342,8 @@ function getProcessShadow() {
             registryCount: entry.registryCount,
             restOnly: entry.restOnly,
             registryOnly: entry.registryOnly,
+            dataDiffers: entry.dataDiffers,
+            basis: entry.basis,
           },
         });
       },

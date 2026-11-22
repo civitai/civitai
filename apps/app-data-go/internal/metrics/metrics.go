@@ -18,10 +18,12 @@ var Sources = []string{"registry", "rest", "none"}
 
 // FallbackReasons are the `reason` values of app_data_fallbacks_total: why a read went to REST.
 // `empty` is a stream that holds nothing, which the origin also answers a token it refuses.
+// `unkeyed` is a `keyPrefix` read of a stream whose records carry no key (an adapter that predates
+// private keys), which cannot be filtered.
 var FallbackReasons = []string{
 	"registry_off", "token_not_exchangeable", "empty", "capacity", "token_capacity", "not_live", "stalled",
 	"cooling_down", "invalid_token", "exchange_refused", "not_private", "too_large", "ended", "failed", "closed",
-	"block_spent", "block_cache_full",
+	"block_spent", "block_cache_full", "unkeyed",
 }
 
 // CloseReasons are the `reason` values of app_data_streams_closed_total (session.Close*).

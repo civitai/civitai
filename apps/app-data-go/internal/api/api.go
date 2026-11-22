@@ -1,6 +1,6 @@
 // Package api is the service's HTTP surface.
 //
-//	GET /v1/apps/{slug}/collections/{collection}/records[?major=N]
+//	GET /v1/apps/{slug}/collections/{collection}/records[?major=N][&keyPrefix=P]
 //	    Authorization: Bearer <the app's hub access token for the signed-in user>
 //
 // Every private record of one collection of the app `slug` names that the token's user may read
@@ -9,7 +9,12 @@
 // name the source by slug and leave the basis to the server (the adapter on the registry path, the
 // site on REST). The answer is
 //
-//	{"source":"registry"|"rest","items":[{"urn"|"key":…,"rev":…,"data":{…}}]}
+//	{"source":"registry"|"rest","items":[{"urn"?:…,"key":…,"rev":…,"data":{…}}]}
+//
+// `keyPrefix` keeps only the records whose storage key starts with it, on both paths (the
+// document store's own `keyPrefix` on REST). A registry item carries its key beside its URN, as the
+// adapter's private feed sends it; a stream whose records carry none cannot be filtered, and a
+// `keyPrefix` read of it goes to REST (`unkeyed`).
 //
 // `source: registry` items come from the user's stream (named by URN: the record core's
 // `urn:apps.civitai.com:<slug>/<collection>/<record_id>`); `source: rest` items from the
@@ -28,6 +33,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -57,7 +63,7 @@ type Streams interface {
 
 // Lister is the REST fallback (rest.Client).
 type Lister interface {
-	List(ctx context.Context, token, collection, from string) ([]rest.Doc, error)
+	List(ctx context.Context, token, collection, from, keyPrefix string) ([]rest.Doc, error)
 }
 
 // Server serves the API.
@@ -145,6 +151,11 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		}
 		major = n
 	}
+	keyPrefix := q.Get("keyPrefix")
+	if _, given := q["keyPrefix"]; given && !keyPrefixRE.MatchString(keyPrefix) {
+		s.refuse(w, start, http.StatusBadRequest, "bad_request", "invalid keyPrefix", "bad_request")
+		return
+	}
 	schema, err := urn.CollectionSchema(slug, collection, major)
 	if err != nil {
 		s.refuse(w, start, http.StatusBadRequest, "bad_request", "invalid app, collection or major", "bad_request")
@@ -171,15 +182,22 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		lcancel()
 		// An empty answer is not trusted: the origin answers a token it refuses with an empty
 		// snapshot, exactly as a user who holds nothing, so only REST can tell the two apart.
-		if err == nil && len(ents) > 0 {
+		switch {
+		case err != nil || len(ents) == 0:
+			reason = fallbackReason(err)
+		case keyPrefix != "" && !allKeyed(ents):
+			reason = "unkeyed"
+		default:
+			// The stream holds records, so it was not refused: a prefix that keeps none is an empty answer.
 			out := answer{Source: "registry", Items: make([]item, 0, len(ents))}
 			for _, e := range ents {
-				out.Items = append(out.Items, item{URN: e.URN, Rev: e.Rev, Data: e.Body})
+				if strings.HasPrefix(e.Key, keyPrefix) {
+					out.Items = append(out.Items, item{URN: e.URN, Key: e.Key, Rev: e.Rev, Data: e.Body})
+				}
 			}
 			s.write(w, start, http.StatusOK, out, "registry", "ok")
 			return
 		}
-		reason = fallbackReason(err)
 	}
 	if r.Header.Get(RegistryOnlyHeader) == "1" {
 		s.write(w, start, http.StatusOK, answer{Source: "none", Reason: reason, Items: []item{}}, "none", "registry_only")
@@ -197,7 +215,7 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 	}
 	// Always `from=<slug>`: the site then reads the app the request names, whoever the token's app
 	// is, so a REST answer can never be another app's data under this slug's name.
-	docs, err := s.REST.List(ctx, token, collection, slug)
+	docs, err := s.REST.List(ctx, token, collection, slug, keyPrefix)
 	if err != nil {
 		s.restError(w, start, err)
 		return
@@ -207,6 +225,19 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		out.Items = append(out.Items, item{Key: d.Key, Rev: strconv.FormatInt(d.Version, 10), Data: d.Data})
 	}
 	s.write(w, start, http.StatusOK, out, "rest", "ok")
+}
+
+// keyPrefixRE is a document key's grammar (the store's `[A-Za-z0-9._:-]{1,128}`): a prefix of one.
+var keyPrefixRE = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+// allKeyed reports whether every entity carries its storage key.
+func allKeyed(ents []registry.Entity) bool {
+	for _, e := range ents {
+		if e.Key == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) exchangeable(token string) bool {
