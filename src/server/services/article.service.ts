@@ -888,7 +888,7 @@ function modelHidesArticleImage(
 
 /** The article availability rule for reads. */
 export function canViewArticle(
-  article: { availability: Availability; userId: number },
+  article: { availability: Availability; userId: number | null },
   viewer: { id?: number; isModerator?: boolean } | undefined
 ) {
   if (article.availability !== Availability.Private) return true;

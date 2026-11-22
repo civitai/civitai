@@ -95,11 +95,12 @@ const articles = (over: ArticleOver = {}) => {
     select,
   }: {
     where: { id: number };
-    select?: { coverImage?: ImageSelect; bannerImage?: ImageSelect };
+    select?: { coverImage?: ImageSelect; bannerImage?: ImageSelect; availability?: boolean };
   }) => {
-    const row = base(where.id) as Record<string, unknown>;
+    const { availability, ...row } = base(where.id) as Record<string, unknown>;
     return {
       ...row,
+      ...(select?.availability ? { availability } : {}),
       coverImage: asSelected(row.coverImage, select?.coverImage),
       bannerImage: asSelected(row.bannerImage, select?.bannerImage),
     };
@@ -177,7 +178,7 @@ describe('getArticleByShareToken', () => {
     expect(await read()).toEqual({ status: 'unavailable' });
   });
 
-  it('keeps the link for a draft with the default availability', async () => {
+  it('opens a draft by its link', async () => {
     articles({ availability: 'Public' });
     expect((await read()).status).toBe('ok');
   });
@@ -784,11 +785,16 @@ describe('comments on a shared draft', () => {
   });
 
   it('follows the article availability rule for comments: owner and moderator, no link', async () => {
-    dbMock.dbRead.article.findUnique.mockResolvedValue({
+    // Answers availability only when the gate selects it.
+    dbMock.dbRead.article.findUnique.mockImplementation((async ({
+      select,
+    }: {
+      select?: { availability?: boolean };
+    }) => ({
       userId: AUTHOR,
       status: ArticleStatus.Published,
-      availability: 'Private',
-    } as never);
+      ...(select?.availability ? { availability: 'Private' } : {}),
+    })) as never);
     await expect(gate(as(STRANGER))).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await expect(gate(as(undefined))).rejects.toMatchObject({ code: 'NOT_FOUND' });
     const owner = as(AUTHOR, { cookie: false });

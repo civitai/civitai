@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
+import { Prisma } from '@prisma/client';
 import { articleSearchEligibleWhere } from '~/server/search-index/articles.search-index';
+import { CLEANUP_INDEXES } from '~/server/meilisearch/cleanup';
 
 const SCHEMA = `
   CREATE TYPE "ArticleStatus" AS ENUM ('Draft', 'Published', 'Unpublished', 'UnpublishedViolation', 'Processing');
@@ -35,5 +37,13 @@ describe('articles search index', () => {
       orderBy: { id: 'asc' },
     });
     expect(rows.map((r) => r.id)).toEqual([1, 2]);
+  });
+
+  it('cleanup keeps the same articles', async () => {
+    const articles = CLEANUP_INDEXES.find((index) => index.key === 'articles')!;
+    const rows = await harness.prisma.$queryRaw<{ id: number }[]>(
+      Prisma.sql`SELECT a.id FROM "Article" a WHERE ${articles.where([1, 2, 3, 4])} ORDER BY a.id`
+    );
+    expect(rows.map((r) => Number(r.id))).toEqual([1, 2]);
   });
 });

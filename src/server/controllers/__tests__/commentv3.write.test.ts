@@ -716,6 +716,33 @@ describe('a comment in a section the caller may not see', () => {
   });
 });
 
+describe('commentv3 delete on an article', () => {
+  beforeEach(() => {
+    m.visible.mockRejectedValue(new Error('hidden'));
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({ availability: 'Private' } as never);
+  });
+  afterEach(() => {
+    m.visible.mockImplementation(async () => undefined);
+    dbMock.dbWrite.article.findUnique.mockReset();
+  });
+
+  it('case 1', async () => {
+    await expect(deleteCommentV3Handler({ ctx: ctx(AUTHOR), input: { id: 101 } })).resolves.toEqual(
+      { id: 101 }
+    );
+    expect(m.deleteComments3).toHaveBeenCalled();
+  });
+
+  it('case 2', async () => {
+    await expect(
+      deleteCommentV3Handler({ ctx: ctx(STRANGER), input: { id: 101 } })
+    ).rejects.toThrow('hidden');
+    await expect(update(AUTHOR, 101)).rejects.toThrow('hidden');
+    expect(m.deleteComments3).not.toHaveBeenCalled();
+    expect(m.updateCommentContent).not.toHaveBeenCalled();
+  });
+});
+
 describe('commentv3 section lock', () => {
   it('is for moderators only, whatever procedure the router puts it behind', async () => {
     const section = { entityType: 'article', entityId: 10 } as const;

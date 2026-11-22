@@ -155,7 +155,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       "id" integer PRIMARY KEY, "coverId" integer, "status" text, "publishedAt" timestamp, "ingestion" text,
-      "bannerId" integer, "nsfwLevel" integer NOT NULL DEFAULT 1, availability text DEFAULT 'Public'
+      "bannerId" integer, "nsfwLevel" integer NOT NULL DEFAULT 1, availability text DEFAULT 'Public', "userId" int
     );
     CREATE TABLE "ImageConnection" ("imageId" integer, "entityId" integer, "entityType" text);
     CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int NOT NULL);
