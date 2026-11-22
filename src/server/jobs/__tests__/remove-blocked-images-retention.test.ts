@@ -51,8 +51,15 @@ const MOD_ACTIVITY = QUEUE.map((q) => ({
   entityId: q.entityId,
   lastActedAt: new Date(q.createdAt.getTime() + 1000),
 }));
+type FixtureImage = {
+  id: number;
+  userId: number;
+  blockedFor: string;
+  ingestion?: string;
+  nsfwLevel?: number;
+};
 // The Image SELECT only ever returns still-Blocked rows; id 4 is absent by construction.
-const IMAGES = [
+const IMAGES: FixtureImage[] = [
   { id: 1, userId: PLAIN_USER, blockedFor: 'CSAM' },
   { id: 2, userId: PLAIN_USER, blockedFor: 'CSAM' },
   { id: 3, userId: PLAIN_USER, blockedFor: 'AiNotVerified' },
@@ -63,13 +70,7 @@ const IMAGES = [
   { id: 10, userId: HELD_USER, blockedFor: 'CSAM' },
 ];
 // Added by the test that needs it, so the placeholder owner's image is not in every batch.
-const extraImages: {
-  id: number;
-  userId: number;
-  blockedFor: string;
-  ingestion?: string;
-  nsfwLevel?: number;
-}[] = [];
+const extraImages: FixtureImage[] = [];
 const extraQueue: { entityId: number; createdAt: Date }[] = [];
 const allImages = () => [...IMAGES, ...extraImages];
 
@@ -608,6 +609,17 @@ describe('remove-blocked-images retention clock', () => {
     expect(deletedIds()).not.toContain(6);
     expect(batchWhere()?.entityId?.notIn).toContain(6);
     expect(queuePruneIds()).not.toContain(6);
+  });
+
+  it('keeps a hold-marker owner’s row in the shared hold selection out of the batch', async () => {
+    evidenceHeldUserIds.push(777);
+    extraImages.push({ id: 12, userId: 777, blockedFor: 'moderated', ingestion: 'Error' });
+    extraQueue.push({ entityId: 12, createdAt: EXPIRED });
+    await runJob();
+
+    expect(batchWhere()?.entityId?.notIn).toContain(12);
+    expect(queuePruneIds()).not.toContain(12);
+    expect(deletedIds()).not.toContain(12);
   });
 
   it('keeps an image whose owner is under a hold marker', async () => {

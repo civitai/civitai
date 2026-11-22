@@ -1125,6 +1125,15 @@ describe('scan result writes', () => {
   describe('the shared definition', () => {
     it('matches exactly the rows the write keeps', async () => {
       await toError(W_CSAM, W_MODERATED, W_HELD_OWNER, W_AI_UNVERIFIED);
+      await holder.db.exec(`
+        INSERT INTO "User" (id) VALUES (120), (121), (122), (123);
+        INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel", "needsReview", "nsfwLevelLocked") VALUES
+          (20, 120, 'Error', 32, 'csam', false),
+          (21, 121, 'Error', 32, 'appeal', false),
+          (22, 122, 'Error', 32, NULL, true),
+          (23, 123, 'Error', 32, NULL, false);
+        INSERT INTO "ModActivity" ("entityType", "entityId", activity) VALUES ('image', 23, 'bulkRemove');
+      `);
       const flat = scanKeepsRowSql('i');
       const { rows } = await holder.db.query<{ id: number }>(
         `SELECT i.id FROM "Image" i WHERE ${flat.text} ORDER BY i.id`,
@@ -1137,6 +1146,10 @@ describe('scan result writes', () => {
         W_FLAGGED,
         W_TAKEN_DOWN,
         W_AI_FLAGGED,
+        20,
+        21,
+        22,
+        23,
         CSAM,
         OTHER,
       ]);

@@ -570,6 +570,17 @@ describe('image takedowns', () => {
     expect(calls.map(kind)).toEqual(['deny']);
   });
 
+  it('keeps the deny while the row keeps its block reason', async () => {
+    await image(1);
+    await scannerBlock(1);
+    await syncCdnAccess();
+    await sql`UPDATE "Image" SET ingestion = 'Error' WHERE id = 1`;
+    expect((await queued()).n).toBe(1);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(await stateOf(u(1))).toBe('Denied');
+  });
+
   it('an AiNotVerified block makes no call', async () => {
     await image(1);
     await sql`UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'AiNotVerified' WHERE id = 1`;

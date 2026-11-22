@@ -289,6 +289,15 @@ describe('the candidate SQL, on real Postgres', () => {
     expect(await query(SWEEP_COUNT_SQL)).toEqual([{ sweep: 1 }]);
   });
 
+  it('reads a listed CSAM removal in the hold selection', async () => {
+    await pg.exec(`
+      INSERT INTO "Image" VALUES (10, 7, 'Error', 'CSAM', 210);
+      INSERT INTO "CsamReport" ("userId", images, "createdAt") VALUES (7, '[10]', '2026-11-20');
+    `);
+    expect((await candidates()).map((c) => c.id).sort((a, b) => a - b)).toEqual([1, 5, 10]);
+    expect(await query(STILL_BLOCKED_SQL, [[10]])).toEqual([{ id: 10, pHash: '210' }]);
+  });
+
   it('re-reads on the write only the ids still removed for CSAM', async () => {
     expect(await query(STILL_BLOCKED_SQL, [[1, 3, 4, 6]])).toEqual([
       { id: 1, pHash: '-4276845791567733103' },
