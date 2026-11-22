@@ -819,7 +819,13 @@ export class Runner implements RunService {
     const end = async (
       status: RunEndStatus,
       reply: EndedReply,
-      outcome: Partial<AgentCoreOutcome> = {}
+      outcome: Partial<AgentCoreOutcome> = {},
+      /**
+       * Whether this end is a turn the model worked on, so `turnEnded` hears of it. Not for a pass
+       * that never asked the model (stopped before it started, or out of time already) nor for one a
+       * newer run of the same turn took over: those are not turns of their own.
+       */
+      { reported = true }: { reported?: boolean } = {}
     ): Promise<ReplyOutput> => {
       // An end that could not be saved after its retries is kept with the grant, so it lands later.
       if (!(await progress.end(reply)))
@@ -846,21 +852,22 @@ export class Runner implements RunService {
       });
       await emitter.drain();
       emitter.close();
-      this.#reportTurn({
-        userId,
-        runId,
-        conversationId,
-        seq,
-        model: input.model,
-        status,
-        ...(progress.chargedSoFar !== undefined ? { buzz: progress.chargedSoFar } : {}),
-        startedAt: passStartedAt,
-        endedAt: new Date(),
-        messages: reply.messages,
-        earlier: (head?.turns ?? [])
-          .filter((saved) => saved.seq < seq)
-          .flatMap((saved) => turnFrom(saved).assistant.messages),
-      });
+      if (reported)
+        this.#reportTurn(() => ({
+          userId,
+          runId,
+          conversationId,
+          seq,
+          model: input.model,
+          status,
+          ...(progress.chargedSoFar !== undefined ? { buzz: progress.chargedSoFar } : {}),
+          startedAt: passStartedAt,
+          endedAt: new Date(),
+          messages: reply.messages,
+          earlier: (head?.turns ?? [])
+            .filter((saved) => saved.seq < seq)
+            .flatMap((saved) => turnFrom(saved).assistant.messages),
+        }));
       return { status, steps, ...(outcome.resume ? { resume: outcome.resume } : {}) };
     };
 
@@ -868,19 +875,27 @@ export class Runner implements RunService {
     // A retry of the same turn took it over (this run was recovered late): it is that run's now, and
     // this one ends without writing to it (its saves are refused).
     if (turn && !ownedBy(turn, runId))
-      return end('stopped', { messages: carried, status: 'aborted' });
+      return end('stopped', { messages: carried, status: 'aborted' }, {}, { reported: false });
     if (begun.stoppedBeforeStart || stop.aborted) {
-      return end(why.reason === 'ran_out' ? 'ran_out' : 'stopped', {
-        messages: carried,
-        status: 'aborted',
-      });
+      return end(
+        why.reason === 'ran_out' ? 'ran_out' : 'stopped',
+        { messages: carried, status: 'aborted' },
+        {},
+        { reported: false }
+      );
     }
     // Progress saved with every step it may take: there is nothing left to ask without starting over.
     if (turn?.assistant?.status === 'running' && !from && turn.assistant.messages.length > 0) {
       return end('ran_out', { messages: shownMessages(turn), status: 'done', ranOut: true });
     }
     const remaining = begun.deadline - Date.now();
-    if (remaining <= 0) return end('ran_out', { messages: carried, status: 'done', ranOut: true });
+    if (remaining <= 0)
+      return end(
+        'ran_out',
+        { messages: carried, status: 'done', ranOut: true },
+        {},
+        { reported: false }
+      );
 
     // The pass's tools now. A rebuild mid-reply (`reopenTools`) opens new ones: every set opened is
     // closed once, whichever of the rebuild, a Stop or the pass's end comes to it first.
@@ -1047,14 +1062,18 @@ export class Runner implements RunService {
     );
   }
 
-  /** Tells the deployment's `turnEnded` of a pass that ended; nothing it does reaches the reply. */
-  #reportTurn(turn: TurnEnded): void {
+  /**
+   * Tells the deployment's `turnEnded` of a pass that ended; nothing it does reaches the reply. The
+   * report is BUILT inside the try too: reading the earlier turns (`turnFrom`) throws on a malformed
+   * saved turn, and that must not fail the pass after its end was journaled.
+   */
+  #reportTurn(build: () => TurnEnded): void {
     const { turnEnded, log } = this.#deps;
     if (!turnEnded) return;
     try {
-      turnEnded(turn);
+      turnEnded(build());
     } catch (error) {
-      log.warn({ err: error, runId: turn.runId }, 'reporting a finished turn failed');
+      log.warn({ err: error }, 'reporting a finished turn failed');
     }
   }
 

@@ -529,6 +529,64 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     }
   });
 
+  it('a pass that never asked the model (stopped by key before it started) is not reported as a turn', async () => {
+    const user = 'u-turn-report-unstarted';
+    const key = randomUUID();
+    await post('/runs/stop', as(user), {
+      v: 1,
+      idempotencyKey: key,
+      conversationId: 'c-tr-unstarted',
+    });
+    const start = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-tr-unstarted', model: 'tools', key })
+    );
+    const runId = start.body!.runId as string;
+    expect(ended(await events(runId, user)).status).toBe('stopped');
+    await DBOS.retrieveWorkflow(runId).getResult();
+    expect(turnReports.filter((turn) => turn.runId === runId)).toEqual([]);
+  });
+
+  it('a malformed earlier turn never fails the run through its report: the workflow still ends SUCCESS', async () => {
+    const user = 'u-turn-report-malformed';
+    const conversationId = 'c-tr-malformed';
+    // A saved first turn with no `user`: the chat package's reader (`turnFrom`) throws on it.
+    await store.update(
+      user,
+      conversationId,
+      () =>
+        ({
+          v: 2,
+          app: 'chat-cvt',
+          conversationId,
+          title: 'broken',
+          titleSource: 'first-message',
+          createdAt: '2026-11-20T00:00:00.000Z',
+          updatedAt: '2026-11-20T00:00:00.000Z',
+          turns: [
+            {
+              seq: 1,
+              createdAt: '2026-11-20T00:00:00.000Z',
+              assistant: { messages: [], status: 'done' },
+            },
+          ],
+        } as never)
+    );
+    const start = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId, model: 'tools', seq: 2 })
+    );
+    expect(start.status).toBe(201);
+    const runId = start.body!.runId as string;
+    await events(runId, user);
+    // The reply's own outcome is the model's business; what matters is that the report did not
+    // turn it into a workflow failure after its end was journaled.
+    await expect(DBOS.retrieveWorkflow(runId).getResult()).resolves.toBeDefined();
+    expect(await DBOS.getWorkflowStatus(runId)).toMatchObject({ status: 'SUCCESS' });
+  });
+
   it('resumes the event stream after Last-Event-ID', async () => {
     const user = 'u-resume';
     const start = await post(

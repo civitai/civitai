@@ -87,6 +87,31 @@ export async function upsertSessionLink(
   `;
 }
 
+/**
+ * Account deletion's part (`deleteUser`'s `delete-app-assistant-links` step): the user's chat ↔ app
+ * link rows. `deleteUser` is a SOFT delete (the User row is scrubbed and kept), so the table's
+ * `ON DELETE CASCADE` never fires for it; this is what removes them. A table not applied yet holds
+ * nothing to delete: that reads as 0, not as a failure. Any other error is the caller's to log.
+ */
+export async function deleteSessionLinksOfAccount(
+  userId: number,
+  {
+    db,
+    isMissingTable,
+  }: {
+    db: Pick<PrismaClient, 'appAssistantSessionLink'>;
+    isMissingTable: (err: unknown) => boolean;
+  }
+): Promise<number> {
+  try {
+    const { count } = await db.appAssistantSessionLink.deleteMany({ where: { userId } });
+    return count;
+  } catch (err) {
+    if (isMissingTable(err)) return 0;
+    throw err;
+  }
+}
+
 /** The ClickHouse row for one turn (`appAssistantTurns`). Ids and counts only: no message text. */
 export function turnEventRow(report: AssistantTurnReport) {
   const toolCallCount = Object.values(report.toolCalls).reduce((sum, count) => sum + count, 0);

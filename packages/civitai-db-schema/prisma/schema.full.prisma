@@ -3596,7 +3596,9 @@ model AppBlockBuildAttempt {
 ///
 /// 🔴 APPLIED MANUALLY, AND THE APP TOLERATES IT BEING ABSENT: every write is best-effort (a failure,
 /// a missing table included, is logged and dropped), so code using it ships before the table.
-/// Migration `20271124120000_app_assistant_session_links`.
+/// Migration `20271124120000_app_assistant_session_links`. The user FK cascades only on a HARD
+/// delete; account deletion (`deleteUser`) is soft, and its `delete-app-assistant-links` step
+/// deletes these rows.
 model AppAssistantSessionLink {
   id             Int      @id @default(autoincrement())
   userId         Int      @map("user_id")

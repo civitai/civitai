@@ -13,6 +13,10 @@
 -- tolerates the table being absent: every write is best-effort (logged and
 -- dropped), so a turn never fails on it. Until it is applied, no links are kept.
 --
+-- Account deletion: the FK below cascades only on a HARD delete of the User row. Civitai's account
+-- deletion (deleteUser) is a soft delete that keeps the row, so the cascade never fires for it;
+-- deleteUser's `delete-app-assistant-links` step deletes these rows instead.
+--
 -- Idempotent: safe to run more than once.
 
 BEGIN;
