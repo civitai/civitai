@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The on-site approve's last step runs after the code is committed, so its hold check must be
@@ -64,6 +65,29 @@ describe('finaliseOnsiteApprove', () => {
     );
   });
 
+  it('🔴 a late hold on a row that matches no store status (P2025) fails the transaction: no token revoke, no ceiling restore', async () => {
+    resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [12] });
+    const tx = fakeTx();
+    tx.appBlock.update.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+        code: 'P2025',
+        clientVersion: 'test',
+      })
+    );
+    await expect(
+      finaliseOnsiteApprove(
+        tx as never,
+        {
+          ...input,
+          priorVersion: { block: {}, oauthClientId: 'oc_1', allowedScopes: 5n },
+        } as never
+      )
+    ).rejects.toMatchObject({ code: 'P2025' });
+    expect(tx.apiKey.deleteMany).not.toHaveBeenCalled();
+    expect(tx.oauthClient.update).not.toHaveBeenCalled();
+    expect(tx.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
   it('🔴 a late hold re-suspends the block in the same transaction and leaves the request pending', async () => {
     resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [12] });
     const tx = fakeTx();
@@ -73,7 +97,7 @@ describe('finaliseOnsiteApprove', () => {
     });
     // The held sha is not marked current, so no restore or rebuild can serve it.
     expect(tx.appBlock.update).toHaveBeenCalledWith({
-      where: { id: 'apb_1' },
+      where: { id: 'apb_1', status: { notIn: ['remix', 'remix_disabled'] } },
       data: { status: 'suspended' },
     });
     // 🔴 The held request stays pending, so the next version is reviewed against the live one.
@@ -114,7 +138,7 @@ describe('finaliseOnsiteApprove', () => {
       priorVersion: { block, oauthClientId: 'oc_1', allowedScopes: 5n },
     });
     expect(tx.appBlock.update).toHaveBeenCalledWith({
-      where: { id: 'apb_1' },
+      where: { id: 'apb_1', status: { notIn: ['remix', 'remix_disabled'] } },
       data: { status: 'suspended', ...block },
     });
     expect(tx.oauthClient.update).toHaveBeenCalledWith({
