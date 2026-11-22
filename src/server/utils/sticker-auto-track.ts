@@ -13,12 +13,13 @@ import {
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { throwRateLimited } from '~/server/utils/rate-limit-error';
 
-// The comfyui-sticker-track node pack follows the head under a sticker and returns a v1 track.
+// The civitai-sticker-track node pack (our fork of rmatif/comfyui-sticker-track) follows the
+// subject under a sticker and returns a v1 track.
 // Pin every AIR. COMFY_IMAGE and NODE_PACK_LAYER must change together: the layer's AIR embeds
 // the image's and only runs on that image.
 const COMFY_IMAGE = 'urn:air:oci:image:ghcr:civitai/civitai-spine-comfy@v2.7.60';
 const NODE_PACK_LAYER =
-  'urn:air:comfy:nodepacklayer:comfyregistry:rmatif/comfyui-sticker-track@1.0.3+75726e3a6169723a6f63693a696d6167653a676863723a636976697461692f636976697461692d7370696e652d636f6d66794076322e372e3630';
+  'urn:air:comfy:nodepacklayer:comfyregistry:civitai/civitai-sticker-track@1.1.0+75726e3a6169723a6f63693a696d6167653a676863723a636976697461692f636976697461692d7370696e652d636f6d66794076322e372e3630';
 const SAM_CHECKPOINT =
   'urn:air:other:checkpoint:huggingface:Comfy-Org/sam3.1@7bb8374780a725b4353ed31f3a9395c9742b5621/checkpoints/sam3.1_multiplex_fp16.safetensors';
 const TAPNEXT_CHECKPOINT =
@@ -173,7 +174,7 @@ export function buildStickerAutoTrackWorkflow({
   const underSticker = frame
     ? JSON.stringify([{ x: pixel(pose.x, frame.width), y: pixel(pose.y, frame.height) }])
     : null;
-  // Heads come first in the batch, so a head holding the point wins the pick.
+  // Whatever is under the sticker, picked only when no head holds the point.
   const fallback = underSticker
     ? {
         '12': {
@@ -187,10 +188,6 @@ export function buildStickerAutoTrackWorkflow({
             individual_masks: true,
           },
         },
-        '13': { class_type: 'MaskToImage', inputs: { mask: ['5', 0] } },
-        '14': { class_type: 'MaskToImage', inputs: { mask: ['12', 0] } },
-        '15': { class_type: 'ImageBatch', inputs: { image1: ['13', 0], image2: ['14', 0] } },
-        '16': { class_type: 'ImageToMask', inputs: { image: ['15', 0], channel: 'red' } },
       }
     : {};
   return {
@@ -224,7 +221,11 @@ export function buildStickerAutoTrackWorkflow({
         },
         '6': {
           class_type: 'StickerAnchorPick',
-          inputs: { masks: underSticker ? ['16', 0] : ['5', 0], placement },
+          inputs: {
+            masks: ['5', 0],
+            ...(underSticker ? { fallback_masks: ['12', 0] } : {}),
+            placement,
+          },
         },
         '7': {
           class_type: 'SAM3_VideoTrack',
@@ -257,6 +258,8 @@ export function buildStickerAutoTrackWorkflow({
             points_per_side: 16,
             cut_threshold: 30.0,
             reid_threshold: 0.4,
+            // Off for a sticker not on a head, so after a cut it hides rather than jump onto a person.
+            reid: ['6', 1],
             eyes: ['11', 0],
           },
         },
