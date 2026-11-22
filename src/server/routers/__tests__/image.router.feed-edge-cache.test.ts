@@ -4,10 +4,8 @@ import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
- * A signed-out answer is stored by the edge under its URL. When the input names something only a
- * signed-in viewer has (their reactions, the people they follow, their drafts...), a signed-in caller
- * can send the same URL, so the signed-out answer must not be stored. Read through the procedure and
- * the same header builder the tRPC route's responseMeta uses.
+ * When a feed input makes the answer depend on the viewer, the answer is not edge-cached. Read
+ * through the procedure and the same header builder the tRPC route's responseMeta uses.
  */
 
 // The feed's own query is the process boundary: it answers no rows.
@@ -77,6 +75,9 @@ describe.each(['getInfinite', 'getImagesAsPostsInfinite'] as const)(
       ['pending', { pending: true }],
       ['notPublished', { notPublished: true }],
       ['scheduled', { scheduled: true }],
+      ['poiOnly', { poiOnly: true }],
+      ['minorOnly', { minorOnly: true }],
+      ['pendingReviewOnly', { pendingReviewOnly: true }],
     ])('does not store a signed-out answer to %s', async (_name, input) => {
       const { edgeCached, headers } = await call(path, input);
       expect(edgeCached).toBe(false);
@@ -95,6 +96,17 @@ describe.each(['getInfinite', 'getImagesAsPostsInfinite'] as const)(
     });
   }
 );
+
+// `hidden`: getInfinite refuses it signed out (an error is never stored); the gallery reads it
+// only beside a modelId, for the model's owner.
+describe('hidden', () => {
+  it('image.getInfinite refuses it signed out', async () => {
+    await expect(call('getInfinite', { hidden: true })).rejects.toThrow();
+  });
+  it('image.getImagesAsPostsInfinite does not store a signed-out answer to it', async () => {
+    expect((await call('getImagesAsPostsInfinite', { hidden: true })).edgeCached).toBe(false);
+  });
+});
 
 // The Hat Turf inputs are read by image.getInfinite only; the gallery answers them the same for everyone.
 describe('Hat Turf inputs', () => {

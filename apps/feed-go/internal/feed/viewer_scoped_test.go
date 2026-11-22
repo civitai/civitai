@@ -6,8 +6,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 )
 
-// ViewerScoped mirrors isViewerScopedImageFeed for the inputs this port answers: computeInfinite
-// withholds the public TTL from a signed-out answer to any of them.
+// computeInfinite withholds the public TTL from a signed-out answer to any viewer-scoped input.
 func TestInfiniteInputViewerScoped(t *testing.T) {
 	for input, want := range map[string]bool{
 		`{"limit":10}`:                      false,

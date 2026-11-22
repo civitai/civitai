@@ -1762,10 +1762,21 @@ function runAsPosts(spec) {
     ...raw,
   };
   const features = { imageIndexFeed: spec.nodeFlags.imageIndexFeed, galleryLazyPostImages: spec.nodeFlags.lazy, creatorPromotions: spec.nodeFlags.creatorPromotions };
-  return { value: asPostsHandler({ input, ctx: { user, features } }), cacheable: !session };
+  return { value: asPostsHandler({ input, ctx: { user, features } }), cacheable: !session && !isViewerScopedImageFeed(raw) };
 }
 
 // --- image.getInfinite ----------------------------------------------------------------------------
+/**
+ * isViewerScopedImageFeed and isViewerScopedInfiniteFeed (src/server/schema/image.schema.ts), read
+ * on the raw input as noEdgeCacheWhen reads it: the answer depends on the viewer, so it is not
+ * edge-cached. A copy, as requiresImageDbPath below is: this script cannot import the app's modules.
+ */
+const isViewerScopedImageFeed = (input) =>
+  !!input.reactions?.length ||
+  ['followed', 'hidden', 'pending', 'notPublished', 'scheduled', 'poiOnly', 'minorOnly', 'pendingReviewOnly'].some((k) => !!input[k]);
+const isViewerScopedInfiniteFeed = (input) =>
+  isViewerScopedImageFeed(input) || ['hatSort', 'hatTurfMine', 'hideTurfHats', 'hideWornHats'].some((k) => !!input[k]);
+
 /** requiresImageDbPath (src/server/schema/image.schema.ts), for the inputs these fixtures send. */
 const requiresImageDbPath = (input) =>
   !!input.postId ||
@@ -1861,8 +1872,12 @@ function runInfinite(spec) {
     ...raw,
   };
   const features = { imageIndexFeed: spec.nodeFlags.imageIndexFeed };
-  // createContext's policy: cacheable without a session and without a verified crawler.
-  return { value: infiniteHandler({ input, ctx: { user, features, domain: boardColorOf(spec.host) } }), cacheable: !session && !crawler };
+  // createContext's policy (cacheable without a session and without a verified crawler), lowered by
+  // noEdgeCacheWhen when the answer depends on the viewer.
+  return {
+    value: infiniteHandler({ input, ctx: { user, features, domain: boardColorOf(spec.host) } }),
+    cacheable: !session && !crawler && !isViewerScopedInfiniteFeed(raw),
+  };
 }
 
 // --- GET /api/v1/images ----------------------------------------------------------------------------
@@ -3188,6 +3203,13 @@ const INFINITE = [
     viewer: null,
     host: HOST.green,
     input: { reactions: ['Heart'], sort: 'Newest', browsingLevel: 1, limit: 3 },
+  },
+  {
+    name: 'pending-signed-out',
+    description: '`pending: true` signed out: no moderator or owner, so the reviewed published page; the answer depends on the viewer, so it is not edge-cached.',
+    viewer: null,
+    host: HOST.green,
+    input: { pending: true, sort: 'Newest', browsingLevel: 1, limit: 3 },
   },
   {
     name: 'fallback-reactions-not-an-enum',

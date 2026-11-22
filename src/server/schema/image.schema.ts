@@ -453,9 +453,8 @@ export function requiresImageDbPath(input: {
 }
 
 /**
- * Feed inputs whose answer depends on who is asking: signed out, each is ignored or reads as nobody's.
- * A signed-out answer to one of them must not be stored by a shared cache, or a signed-in caller at
- * the same URL gets that answer instead of their own.
+ * Feed inputs whose answer depends on the viewer (signed out, each is ignored or reads as nobody's),
+ * so the answer is not edge-cached.
  */
 export function isViewerScopedImageFeed(input: {
   reactions?: unknown[] | null;

@@ -387,8 +387,8 @@ func (in *InfiniteInput) prioritizedSystemUser() bool {
 }
 
 // ViewerScoped is isViewerScopedInfiniteFeed (src/server/schema/image.schema.ts) for the inputs this
-// port answers: the rest of that list falls back to the app. A signed-out answer to one of them is
-// not edge-cacheable, or a signed-in caller at the same URL gets it instead of their own.
+// port answers; the rest of that list falls back to the app. The answer depends on the viewer, so it
+// is not edge-cached.
 func (in *InfiniteInput) ViewerScoped() bool {
 	return len(in.Reactions) > 0 || in.Followed || in.Pending
 }
