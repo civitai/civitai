@@ -589,7 +589,8 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     if ('db' in sides) {
       db = sides.db;
       // The database cursor, at the same position in the read model's terms: both break ties by id.
-      const cursor = await readModelCursorOf(input.cursor);
+      // Awaited only with a cursor, so a first page asks the read model in the same tick.
+      const cursor = input.cursor ? await readModelCursorOf(input.cursor) : undefined;
       // A sub-listing id is a position the read model has no row for.
       if (cursor === null) return 'unsupported_input';
       const page = await askReadModel(readModelListParams(input, cursor));
@@ -756,7 +757,7 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     const viewer = appIndexViewerFor(opts);
     if (!viewer) return { fallback: 'unsupported_viewer' };
     if (opts.includeSubListings === true) return { fallback: 'unsupported_input' };
-    const cursor = await readModelCursorOf(input.cursor);
+    const cursor = input.cursor ? await readModelCursorOf(input.cursor) : undefined;
     if (cursor === null) return { fallback: 'unsupported_input' };
     const token = signAppIndexViewer(
       cfg.key,
