@@ -1,4 +1,5 @@
 import type { KohyaTrainingInputWritable } from '@civitai/orchestration-client';
+import { baseModelSupportsClipSkip } from '@civitai/shared/basemodel.constants';
 import {
   TARGET_STEPS,
   type ModelVersionInfo,
@@ -121,9 +122,27 @@ export const KOHYA_PARAM_FIELDS = [
   'zeroTerminalSnr',
 ] as const;
 
+/** Clip skip applies to SD1 and the SDXL family; the trainer treats SDXL values below 2 as 2, so SDXL starts
+ *  at 2 and offers nothing lower. */
+export function kohyaClipSkip(
+  ecosystem: string
+): { min: number; max: number; default: number } | undefined {
+  const family = kohyaFamily(ecosystem);
+  const baseModel = family === 'sd1' ? 'SD 1.5' : family === 'sdxl' ? 'SDXL 1.0' : undefined;
+  if (!baseModelSupportsClipSkip(baseModel)) return undefined;
+  const sdxl = family === 'sdxl';
+  return { min: sdxl ? 2 : 1, max: KOHYA_BOUNDS.clipSkip!.max, default: sdxl ? 2 : 1 };
+}
+
+export function kohyaBound(field: string, ecosystem: string): ParamBound | undefined {
+  const bound = KOHYA_BOUNDS[field];
+  const clip = field === 'clipSkip' ? kohyaClipSkip(ecosystem) : undefined;
+  return bound && clip ? { ...bound, min: clip.min } : bound;
+}
+
 export function kohyaFieldSupported(field: string, ecosystem: string): boolean {
   if (field === 'negativePrompt') return ecosystem !== 'flux1';
-  if (field === 'clipSkip') return ecosystem === 'sd1';
+  if (field === 'clipSkip') return !!kohyaClipSkip(ecosystem);
   if (field === 'fp8Base' || field === 'blocksToSwap') return isKohyaFlux(ecosystem);
   if (field === 'vParameterization' || field === 'zeroTerminalSnr') return !isKohyaFlow(ecosystem);
   return true;
