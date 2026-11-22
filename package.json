@@ -267,6 +267,7 @@
     "@trpc/next": "^11.17.0",
     "@trpc/react-query": "^11.17.0",
     "@trpc/server": "^11.17.0",
+    "acorn": "8.18.0",
     "ajv": "^8.20.0",
     "algoliasearch": "^4.23.3",
     "archiver": "^6.0.1",

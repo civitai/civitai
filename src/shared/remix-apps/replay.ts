@@ -38,7 +38,15 @@ export const REMIX_RUN_LIMITS = {
   textMaxLength: 500,
   choiceOptions: 12,
   pickImages: 4,
+  /** The widest or tallest image the runner's log accepts. */
+  imageDimension: 100_000,
+  /** The longest text answer the runner's log accepts. */
+  answerLength: 1000,
 } as const;
+
+/** An image size as a log the runner replays may carry it; any other is left out. */
+export const remixLogSize = (n?: number | null) =>
+  Number.isInteger(n) && n! > 0 && n! <= REMIX_RUN_LIMITS.imageDimension ? n! : undefined;
 
 // Not strict: an app may pass `ctx.source` itself, which also carries its imageId.
 const image = z.object({
@@ -72,7 +80,13 @@ const effectSchema = z.discriminatedUnion('type', [
         kind: z.literal('choice'),
         prompt: z.string(),
         options: z
-          .array(z.strictObject({ value: z.string(), label: z.string() }))
+          .array(
+            z.strictObject({
+              // The answer it becomes goes back in the log, which takes no longer one.
+              value: z.string().max(REMIX_RUN_LIMITS.answerLength),
+              label: z.string(),
+            })
+          )
           .min(1)
           .max(REMIX_RUN_LIMITS.choiceOptions),
         image: image.optional(),
@@ -152,10 +166,77 @@ export function remixReplayChecks(
         throw new RemixReplayError(
           `${slug} finished after ${next} steps, but the run recorded ${log.length}`
         );
-      if (!z.array(image).safeParse(outputs).success || outputs.some(({ url }) => !made.has(url)))
+      // Parsed, so only an image's known keys reach the client.
+      const parsed = z.array(image).safeParse(outputs);
+      if (!parsed.success || parsed.data.some(({ url }) => !made.has(url)))
         throw new RemixReplayError(`${slug} returned an image this run did not make`);
-      return outputs;
+      return parsed.data;
     },
+  };
+}
+
+/** What a sandboxed replay claims: the app's calls, and its outputs when `run` returned. */
+export type RemixClaimedReplay = {
+  effects: readonly unknown[];
+  done?: { outputs: unknown };
+};
+
+/**
+ * A sandboxed replay's claim, checked against the host's own log with the same checks an
+ * in-process replay gets: the runner is the app's own interpreter, so nothing it says is taken
+ * on trust. With `autoAnswer`, an ask past the log may carry the runner's answer: it must be the
+ * one `autoAnswer` gives, and it is recorded; those answers come back beside the outcome.
+ */
+export function checkRemixReplay(
+  slug: string,
+  source: RemixAppSource,
+  log: readonly RemixLogEntry[],
+  claimed: RemixClaimedReplay,
+  {
+    autoAnswer,
+  }: {
+    /** The answer the runner must have given each ask past the log; none may be given without it. */
+    autoAnswer?: (spec: RemixAsk) => RemixAnswer;
+  } = {}
+): { outcome: RemixReplayOutcome; answered: RemixAnswer[] } {
+  const extended = [...log];
+  const answered: RemixAnswer[] = [];
+  const checks = remixReplayChecks(slug, source, extended);
+  const { effects } = claimed;
+  for (let index = 0; index < effects.length; index++) {
+    const raw = effects[index];
+    if (typeof raw !== 'object' || raw === null)
+      throw new RemixReplayError(`${slug} reported a step that is not one, at step ${index}`);
+    const { answer, ...effect } = raw as { answer?: unknown };
+    if (answer !== undefined) {
+      if (!autoAnswer || index < extended.length || (effect as { type?: unknown }).type !== 'ask')
+        throw new RemixReplayError(`${slug} answered a step itself, at step ${index}`);
+      extended.push({ type: 'ask', answer: answer as RemixAnswer });
+      answered.push(answer as RemixAnswer);
+    }
+    try {
+      checks.step(effect as RemixEffect);
+      // Against the checked spec: the step parsed above, never the runner's raw copy.
+      if (
+        answer !== undefined &&
+        answer !== autoAnswer!((effectSchema.parse(effect) as { spec: RemixAsk }).spec)
+      )
+        throw new RemixReplayError(
+          `${slug} answered step ${index} with an answer the host would not`
+        );
+    } catch (error) {
+      if (!(error instanceof Suspend)) throw error;
+      // The first step past the log is where the run stops: it must be the last one claimed.
+      if (index !== effects.length - 1 || claimed.done)
+        throw new RemixReplayError(`${slug} went on past step ${index}, which has no result`);
+      return { outcome: { status: 'effect', index, effect: error.effect }, answered };
+    }
+  }
+  if (!claimed.done)
+    throw new RemixReplayError(`${slug} stopped without asking for a step or finishing`);
+  return {
+    outcome: { status: 'done', outputs: checks.finish(claimed.done.outputs as RemixImage[]) },
+    answered,
   };
 }
 

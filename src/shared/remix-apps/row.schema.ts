@@ -257,8 +257,14 @@ export type RemixRejectReason = (typeof REMIX_REJECT_REASONS)[number];
 /** A user app's review log keeps its latest entries only, so toggling cannot grow the row. */
 export const REMIX_REVIEW_LOG_MAX = 50;
 
+/** `by` on a review-log entry the run-time audit wrote, not a person. */
+export const REMIX_SYSTEM_ACTOR = -1;
+
+/** Distinct viewers whose refused runs of a user app take it out of menus. */
+export const REMIX_COMBINATION_BLOCKS_MAX = 3;
+
 const reviewLogEntry = z.strictObject({
-  by: z.number().int().positive(),
+  by: z.union([z.number().int().positive(), z.literal(REMIX_SYSTEM_ACTOR)]),
   at: z.string(),
   action: z.enum([
     'submitted',
@@ -268,6 +274,11 @@ const reviewLogEntry = z.strictObject({
     'disabled',
     'cleared-minor-themed',
     'mature-revoked',
+    'held-author-prompt',
+    'held-combination-blocks',
+    'held-classifier-error',
+    'held-runner-quarantine',
+    'held-runner-quarantine-observed',
   ]),
   sha256: z.string().optional(),
   mature: z.boolean().optional(),
@@ -314,6 +325,24 @@ export const remixManifestSchema = z
     reviewLog: z.array(reviewLogEntry).max(REMIX_REVIEW_LOG_MAX).optional(),
     /** A rejection as minor-themed: it survives resubmits and bars the mature engine. */
     minorThemed: z.strictObject({ by: z.number().int().positive(), at: z.string() }).optional(),
+    /** Viewers whose call tripped the runner's quarantine of this source, keyed as `combinationBlocks`. */
+    runnerQuarantines: z
+      .strictObject({
+        sha256: z.string().regex(/^[0-9a-f]{64}$/),
+        viewers: z
+          .array(z.strictObject({ key: z.string().regex(/^[0-9a-f]{16}$/), at: z.string() }))
+          .max(REMIX_COMBINATION_BLOCKS_MAX),
+      })
+      .optional(),
+    /**
+     * Viewers whose own audit refused a run of this source, each as an unkeyed hash of the slug and
+     * their id: distinct, not secret, so no listing returns it. A submit starts it again; an
+     * approval clears it.
+     */
+    combinationBlocks: z
+      .array(z.string().regex(/^[0-9a-f]{16}$/))
+      .max(REMIX_COMBINATION_BLOCKS_MAX)
+      .optional(),
   })
   .superRefine((manifest, ctx) => {
     const user = 'source' in manifest.remix;
