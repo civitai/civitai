@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS app_index_listings (
   open_count bigint,
   install_count bigint,
   sub_listing_keys jsonb NOT NULL DEFAULT '[]'::jsonb,
+  sub_listings_omitted bigint NOT NULL DEFAULT 0,
   PRIMARY KEY (generation, urn)
 );
 DROP TABLE IF EXISTS app_index_listing_media;
@@ -71,6 +72,7 @@ CREATE INDEX IF NOT EXISTS app_index_listings_slug ON app_index_listings (genera
 ALTER TABLE app_index_listings ADD COLUMN IF NOT EXISTS listing_content_rating text;
 ALTER TABLE app_index_listings ADD COLUMN IF NOT EXISTS listing_id text;
 ALTER TABLE app_index_listings ADD COLUMN IF NOT EXISTS sub_listing_keys jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE app_index_listings ADD COLUMN IF NOT EXISTS sub_listings_omitted bigint NOT NULL DEFAULT 0;
 ALTER TABLE app_index_listings
   ALTER COLUMN recommended_count DROP NOT NULL,
   ALTER COLUMN not_recommended_count DROP NOT NULL,
@@ -119,12 +121,12 @@ func (p *ListingsPostgres) Apply(ctx context.Context, gen int64, c Change) error
 		_, err = tx.Exec(ctx, `
 INSERT INTO app_index_listings (generation, urn, rev, body, app, slug, name, name_key, kind, category, content_rating,
   creator_id, created_at, updated_at, recommended_count, not_recommended_count, review_count, open_count, install_count,
-  listing_content_rating, listing_id, sub_listing_keys)
+  listing_content_rating, listing_id, sub_listing_keys, sub_listings_omitted)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), NULLIF($11, ''), $12, $13, $14, $15, $16, $17, $18, $19,
-  NULLIF($20, ''), $21, $22)`,
+  NULLIF($20, ''), $21, $22, $23)`,
 			gen, l.URN, l.Rev, []byte(l.Body), l.App, l.Slug, l.Name, nameKey(l.Name), l.Kind, l.Category, l.ContentRating,
 			l.CreatorID, l.CreatedAt, l.UpdatedAt, l.Stats.RecommendedCount, l.Stats.NotRecommendedCount,
-			l.Stats.ReviewCount, l.Stats.OpenCount, l.Stats.InstallCount, l.ListingContentRating, l.ID, subKeys)
+			l.Stats.ReviewCount, l.Stats.OpenCount, l.Stats.InstallCount, l.ListingContentRating, l.ID, subKeys, l.SubListingsOmitted)
 		return err
 	})
 }
@@ -221,7 +223,7 @@ func (p *ListingsPostgres) Keys(ctx context.Context, gen int64) ([]Listing, erro
 	rows, err := p.pool.Query(ctx, `
 SELECT urn, rev, coalesce(listing_id, ''), app, slug, name, kind, coalesce(category, ''), coalesce(content_rating, ''),
   coalesce(listing_content_rating, ''), creator_id, created_at, updated_at, recommended_count, not_recommended_count,
-  review_count, open_count, install_count, sub_listing_keys
+  review_count, open_count, install_count, sub_listing_keys, sub_listings_omitted
 FROM app_index_listings WHERE generation = $1`, gen)
 	if err != nil {
 		return nil, err
@@ -234,7 +236,7 @@ FROM app_index_listings WHERE generation = $1`, gen)
 		if err := rows.Scan(&l.URN, &l.Rev, &l.ID, &l.App, &l.Slug, &l.Name, &l.Kind, &l.Category, &l.ContentRating,
 			&l.ListingContentRating, &l.CreatorID,
 			&l.CreatedAt, &l.UpdatedAt, &l.Stats.RecommendedCount, &l.Stats.NotRecommendedCount, &l.Stats.ReviewCount,
-			&l.Stats.OpenCount, &l.Stats.InstallCount, &subKeys); err != nil {
+			&l.Stats.OpenCount, &l.Stats.InstallCount, &subKeys, &l.SubListingsOmitted); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(subKeys, &l.SubListings); err != nil {

@@ -228,6 +228,9 @@ const readModelPageSchema = z.object({
   // Set by a read model that answered with sub-listing cards on (`subListings=1`, `subListingIds`).
   // Asked for them, an answer without it is from a read model that ignored the parameter.
   subListings: z.boolean().optional(),
+  // On a `subListingIds` answer: the listings this viewer could find whose stream left items out
+  // past the adapter's per-listing cap (`MAX_STREAM_SUB_LISTINGS`).
+  cappedListings: z.array(z.string()).optional(),
 });
 type ReadModelPage = z.infer<typeof readModelPageSchema>;
 
@@ -548,7 +551,12 @@ export function comparePages(
   rm: ReadModelPage,
   diff: PageDiff,
   missing: ReadonlySet<string>,
-  extra: ReadonlySet<string>
+  extra: ReadonlySet<string>,
+  /**
+   * Database-page sub-listing cards the read model does not hold because their listing is over the
+   * adapter's cap: a known difference, counted apart (`sub_listing_cap`) and left out of the order.
+   */
+  capped: ReadonlySet<string> = new Set()
 ): ReadModelComparison {
   const kinds: Record<ReadModelMismatchKind, number> = {
     visibility_missing: missing.size,
@@ -556,6 +564,7 @@ export function comparePages(
     media: 0,
     identity_field: 0,
     stats_field: 0,
+    sub_listing_cap: capped.size,
   };
   const fields: Partial<Record<ReadModelComparedField, number>> = {};
   for (const diffs of diff.fields.values()) {
@@ -568,7 +577,7 @@ export function comparePages(
   // By id, as the pages were matched; a slug naming two ids is already an identity mismatch.
   const kept = (name: string) => !diff.idMismatch.has(name);
   const dbOrder = db.items
-    .filter((c) => !missing.has(nameOf(c)) && kept(nameOf(c)))
+    .filter((c) => !missing.has(nameOf(c)) && !capped.has(nameOf(c)) && kept(nameOf(c)))
     .map((c) => c.id);
   const rmOrder = rm.items.filter((c) => !extra.has(nameOf(c)) && kept(nameOf(c))).map((c) => c.id);
   const order =
@@ -806,6 +815,7 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     // slug, a sub-listing card by its id.
     const missing = new Set<string>();
     const extra = new Set<string>();
+    const capped = new Set<string>();
     if (diff.onlyDb.length) {
       // The read model's slug path takes no developer filter (it answers 400), so with one the
       // listing must also be that developer's, checked on the card below: a listing of another
@@ -838,7 +848,19 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       const admitted = new Set(
         found.items.filter((c) => isReadModelSubListingCard(c)).map((c) => c.id)
       );
-      for (const id of diff.onlyDbSubListings) if (!admitted.has(id)) missing.add(id);
+      // An item of a listing over the adapter's cap is past the cap, not hidden: the read model
+      // holds that listing's newest items only.
+      const cappedListings = new Set(found.cappedListings ?? []);
+      const parentOf = new Map(
+        db.items
+          .filter((c): c is SubListingCard => isSubListingCard(c))
+          .map((c) => [c.id, c.parent.id] as const)
+      );
+      for (const id of diff.onlyDbSubListings) {
+        if (admitted.has(id)) continue;
+        if (cappedListings.has(parentOf.get(id) ?? '')) capped.add(id);
+        else missing.add(id);
+      }
     }
     if (diff.onlyReadModel.length || diff.onlyReadModelSubListings.length) {
       let cards: StoreGridItem[] | typeof TIMED_OUT;
@@ -879,8 +901,9 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     }
 
     answer();
-    const comparison = comparePages(db, rm, diff, missing, extra);
+    const comparison = comparePages(db, rm, diff, missing, extra, capped);
     recordReadModelComparison(surface, comparison);
+    // A capped item is counted (`sub_listing_cap`), not logged: its listing is the known cause.
     if (missing.size || extra.size || diff.fields.size || comparison.order) {
       deps.log({
         surface,

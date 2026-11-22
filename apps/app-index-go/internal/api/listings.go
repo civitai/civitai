@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +45,10 @@ type listingsResponse struct {
 	// SubListings is set on every answer that could carry sub-listing cards (subListings=1, or
 	// subListingIds).
 	SubListings bool `json:"subListings,omitempty"`
+	// CappedListings, on a subListingIds answer, is the id of every listing this viewer could find
+	// with these filters whose stream left sub-listings out (store.Listing.SubListingsOmitted): an
+	// item of one of them that is not found here may only be past the cap.
+	CappedListings []string `json:"cappedListings,omitempty"`
 }
 
 // listingsParams is a validated GET /listings query: a ranked page (Query), or the hydration of
@@ -243,6 +248,7 @@ func (s *Server) listListings(ctx context.Context, w http.ResponseWriter, r *htt
 		return s.fail(w, "listing keys", err)
 	}
 	var page listingread.Page
+	var capped []string
 	userID := q.UserID
 	switch {
 	case p.Slugs != nil:
@@ -250,6 +256,12 @@ func (s *Server) listListings(ctx context.Context, w http.ResponseWriter, r *htt
 		userID = nil
 	case p.SubListingIDs != nil:
 		page = listingread.BySubListingIDs(keys, p.SubListingIDs, q.Kind, q.Category, q.UserID, v)
+		for _, l := range listingread.Filter(keys, q.Kind, q.Category, q.UserID, v) {
+			if l.SubListingsOmitted > 0 {
+				capped = append(capped, l.ID)
+			}
+		}
+		slices.Sort(capped)
 	default:
 		page = listingread.Rank(keys, q, v)
 	}
@@ -267,7 +279,7 @@ func (s *Server) listListings(ctx context.Context, w http.ResponseWriter, r *htt
 		byURN[l.URN] = l
 	}
 	res := listingsResponse{Items: []any{}, NextCursor: page.NextCursor,
-		SubListings: q.SubListings || p.SubListingIDs != nil}
+		SubListings: q.SubListings || p.SubListingIDs != nil, CappedListings: capped}
 	for i, urn := range page.URNs {
 		// A listing deleted between the two reads, or no longer admitted, is left out, as the site's
 		// hydration drops an id with no row.

@@ -1544,6 +1544,27 @@ describe('sub-listing cards (includeSubListings)', () => {
     ]);
   });
 
+  it('🔴 a sub-listing card past the adapter cap is a known difference: sub_listing_cap, not visibility or order', async () => {
+    reply = ({ url }) =>
+      url.searchParams.has('subListingIds')
+        ? Response.json({ items: [], subListings: true, cappedListings: [S2.parent.id] })
+        : Response.json({ items: [rmCard(A), rmSub(S1)], subListings: true });
+    await makeShadow().shadow('grid', INPUT, SUBS, { items: [A, S1, S2] });
+    expect(await moved()).toEqual([
+      'compared_slugs_total{grid}:3',
+      'mismatches_total{grid/sub_listing_cap}:1',
+      'shadow_requests_total{grid/compared}:1',
+    ]);
+    expect(logs).toEqual([]);
+    // Positive control: the same answer naming another listing is a visibility mismatch.
+    reply = ({ url }) =>
+      url.searchParams.has('subListingIds')
+        ? Response.json({ items: [], subListings: true, cappedListings: ['al_other'] })
+        : Response.json({ items: [rmCard(A), rmSub(S1)], subListings: true });
+    await makeShadow().shadow('grid', INPUT, SUBS, { items: [A, S1, S2] });
+    expect(await moved()).toContain('mismatches_total{grid/visibility_missing}:1');
+  });
+
   it('a sub-listing card on the database page only that the read model admits by id: order only', async () => {
     readModelAnswers([rmCard(A), rmSub(S1)], undefined, [], [rmSub(S2)]);
     await makeShadow().shadow('grid', INPUT, SUBS, { items: [A, S1, S2] });

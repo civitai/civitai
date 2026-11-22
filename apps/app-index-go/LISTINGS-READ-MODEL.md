@@ -135,6 +135,25 @@ This is the smallest change that keeps parity:
 - No new schema, URN kind, relay gate, consumer, generation or cursor. A second entity type would
   need all of those, and a join across two streams that can each lag the other.
 
+**The cap.** A body carries at most `MAX_STREAM_SUB_LISTINGS` (200) items (`capSubListings`,
+`catalog-media.ts`). A listing has no limit on its items but `maxPerAuthor`, and the grid pages
+through all of them, so its page size bounds nothing. The bound is the stream line: a body travels as
+one registry stream line, and app-index-go reads lines of at most 1 MiB (`MaxLine`,
+`internal/registry`); a longer one ends the stream `unavailable` and replays from the same cursor
+forever, wedging the listing stream for every index. An item is about 0.6 KB of JSON with short ASCII
+text and at most about 1.9 KB with every field at its bound (computed, and pinned by a test that
+builds 200 such items into a body: under 512 KiB), so 200 items leave more than half the line for the
+rest of the body. Past the cap the adapter keeps the most recently approved items (the `newest` order:
+`sortTime`, then id, descending, so the same catalog keeps the same items), says how many it left out
+(`subListingsOmitted`), counts them on `registry_adapter_listing_sub_listings_dropped_total` (per
+catalog read) and logs the listing id. The read model holds the count (`sub_listings_omitted`) and
+names such listings on every `subListingIds` answer (`cappedListings`); the shadow counts a
+database-page item of one of them that the read model does not hold as `sub_listing_cap`, a known
+difference outside the gate and outside the order, never as `visibility_missing`. A listing over the
+cap is served from the read model without its oldest items, which is why the count is reported: a
+nonzero `sub_listing_cap` before `serve` is read, and the cap raised or the items split into an
+entity of their own if a listing needs more.
+
 The cost: a parent's body, and so its upsert, grows with its items, and any item change re-sends the
 parent. Sub-listings change at review cadence, not rollup cadence, and the catalog is small; split
 them into an entity of their own if a parent's body or upsert volume becomes a measured problem.
@@ -468,7 +487,13 @@ page, from `GET /listings` instead of from the database, when the read model can
 
 ### Turn-on order
 
-Each step is reversible by undoing it; nothing before the flag changes what any user sees.
+Nothing before the flag changes what any user sees. Each step is reversible by undoing it, in
+reverse order: in particular **roll app-index-go back before the adapter**. An adapter rolled back
+below the layout the serving index requires (say, slice 6's `subListings` under a layout 4 index)
+sends bodies that index cannot use. A serving listings generation keeps its last good row for such
+an upsert (counted `invalid`; `Consumer.KeepInvalidWhileServing`) rather than deleting it, so the
+API keeps serving the last good listings, but they go stale until the index is rolled back too and
+rebuilds at the older layout.
 
 1. The adapter publishes `listingContentRating` (slice 3) and the listing `id` and detail fields
    (slice 3b), so the read model holds every listing at layout 3. This must be deployed before an
@@ -485,11 +510,15 @@ Each step is reversible by undoing it; nothing before the flag changes what any 
    ingest treats a body without it as unusable, and holds an empty first snapshot rather than serve
    listings without their items. The layout 4 generation is rebuilt beside the serving one, and the
    API answers 503 from an older layout until it switches.
-6. Per surface, once the gate above passes for it: the flag at `serve` for that surface (a rule on
+6. Per surface, once the gate above passes for it, and only once an app-index-go of layout 4 is
+   serving: the flag at `serve` for that surface (a rule on
    the `surface` context, `grid` or `rest_list`). Back to `shadow` is the rollback. For `grid` the
    gate is measured on every grid read the index does not search, the `/apps` grid page with its
    sub-listing cards included (Serving, "What `grid` covers"); a `grid` gate measured before slice 6
-   covered only the rail and the developer filter, and is measured again.
+   covered only the rail and the developer filter, and is measured again. A layout 3 index must not
+   serve: it ignores `subListings=1` (its answer lacks the mark, so the web tier reads the database
+   instead), but a cursor after a sub-listing card, from a page the database served, is read there
+   as a listing position and can serve again the listings on that card's sort key.
 
 ## Cutover flags
 

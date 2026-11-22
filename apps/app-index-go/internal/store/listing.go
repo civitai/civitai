@@ -49,6 +49,11 @@ type Listing struct {
 	// SubListings is the body's subListings in stream order: the items the store grid shows as cards
 	// of their own beside the listing. Keys carries each with its key fields only (SubListing).
 	SubListings []SubListing
+	// SubListingsOmitted is how many more sub-listings the store grid shows beside the listing than
+	// the stream carries: the adapter caps each body's items (MAX_STREAM_SUB_LISTINGS) and says how
+	// many it left out (the body's subListingsOmitted, 0 when absent). The read API names such a
+	// listing to the web tier's shadow, so a left-out item is a known cap difference, not a mismatch.
+	SubListingsOmitted int64
 }
 
 // SubListing is one item of a store-listing@v1 body's subListings (ListingSubListingItem in
@@ -211,6 +216,8 @@ type listingBody struct {
 	// SubListings is required (an empty array for none): a body without it is from an adapter that
 	// does not publish sub-listings, and its listing would read as having none.
 	SubListings []json.RawMessage `json:"subListings"`
+	// SubListingsOmitted is optional: absent is none left out.
+	SubListingsOmitted *int64 `json:"subListingsOmitted"`
 }
 
 type subListingBody struct {
@@ -272,6 +279,8 @@ func ListingFromEntity(urn, rev string, body json.RawMessage) (Listing, []Drop, 
 		return Listing{}, nil, errors.New("media missing")
 	case b.SubListings == nil:
 		return Listing{}, nil, errors.New("subListings missing")
+	case b.SubListingsOmitted != nil && *b.SubListingsOmitted < 0:
+		return Listing{}, nil, errors.New("subListingsOmitted is negative")
 	}
 	l := Listing{URN: urn, Rev: rev, Body: body, ID: *b.ID, App: *b.App, Slug: *b.Slug, Name: *b.Name, Kind: *b.Kind}
 	var err error
@@ -310,6 +319,9 @@ func ListingFromEntity(urn, rev string, body json.RawMessage) (Listing, []Drop, 
 		// Position is the item's index in the stream's array, so a dropped item leaves a gap.
 		m.Position = i
 		l.Media = append(l.Media, m)
+	}
+	if b.SubListingsOmitted != nil {
+		l.SubListingsOmitted = *b.SubListingsOmitted
 	}
 	l.SubListings = make([]SubListing, 0, len(b.SubListings))
 	seen := map[string]bool{}

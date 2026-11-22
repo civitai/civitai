@@ -153,6 +153,46 @@ func runListingScenarios(t *testing.T, newStore func(t *testing.T) store.Listing
 	t.Run("UnavailableDeletesNothing", func(t *testing.T) { testUnavailableDeletesNothing(t, newStore(t)) })
 	t.Run("DropsKeepTheListing", func(t *testing.T) { testDropsKeepTheListing(t, newStore(t)) })
 	t.Run("BodyWithoutSubListingsIsInvalid", func(t *testing.T) { testBodyWithoutSubListingsIsInvalid(t, newStore(t)) })
+	t.Run("InvalidWhileServingKeepsTheRow", func(t *testing.T) { testInvalidWhileServingKeepsTheRow(t, newStore(t)) })
+}
+
+// An adapter rolled back below this layout sends bodies the serving generation cannot use. Each
+// such upsert keeps the stored row (the cursor still advances, counted invalid), so the API keeps
+// serving the last good listings rather than emptying one delete at a time. A valid upsert and a
+// delete still apply.
+func testInvalidWhileServingKeepsTheRow(t *testing.T, st store.Listings) {
+	h := startListings(t, st)
+	c := h.reg.next(t)
+	c.listing(t, "alpha", "Alpha")
+	c.listing(t, "beta", "Beta")
+	c.live(t, "L1")
+	h.servingCursorIs(t, "L1")
+	gen := h.state(t).Serving.ID
+	for _, slug := range []string{"alpha", "beta"} {
+		e := listingEntity(slug, "Renamed")
+		delete(e["body"].(map[string]any), "subListings")
+		c.send(t, "upsert", map[string]any{"entity": e, "cursor": "c-" + slug})
+	}
+	h.servingCursorIs(t, "c-beta")
+	if n := h.count(t, gen); n != 2 {
+		t.Fatalf("count after invalid upserts = %d, want both rows kept", n)
+	}
+	l, ok, err := st.Get(context.Background(), gen, "urn:apps.civitai.com:store-listing/alpha")
+	if err != nil || !ok || l.Name != "Alpha" || len(l.SubListings) != 1 {
+		t.Fatalf("alpha after an invalid upsert: %+v %v %v, want the last good row", l, ok, err)
+	}
+	if got := testutil.ToFloat64(h.m.Applied.WithLabelValues("invalid")); got != 2 {
+		t.Fatalf("invalid = %v, want 2", got)
+	}
+	// Positive control: a valid upsert replaces the row, and a delete removes one.
+	e := listingEntity("alpha", "Alpha Two")
+	c.send(t, "upsert", map[string]any{"entity": e, "cursor": "c3"})
+	c.delListing(t, "beta", "c4")
+	h.servingCursorIs(t, "c4")
+	l, _, _ = st.Get(context.Background(), gen, "urn:apps.civitai.com:store-listing/alpha")
+	if l.Name != "Alpha Two" || h.count(t, gen) != 1 {
+		t.Fatalf("after a valid upsert and a delete: %q, %d rows", l.Name, h.count(t, gen))
+	}
 }
 
 // A body without subListings, from an adapter that does not publish them, is not one this layout can

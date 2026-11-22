@@ -106,7 +106,14 @@ import {
   parseAppSearchUrl,
   servedSchemas,
 } from '~/server/registry-adapter/entities';
-import { gateListings, parseListingRelays } from '~/server/registry-adapter/listing-stream';
+import {
+  createListingStreamMetrics,
+  gateListings,
+  parseListingRelays,
+  reportSubListingsCapped,
+} from '~/server/registry-adapter/listing-stream';
+import { MAX_STREAM_SUB_LISTINGS } from '~/server/registry-adapter/catalog-media';
+import { Registry } from 'prom-client';
 import type { ResourceConfig } from '~/server/registry-adapter/auth';
 import {
   createCivitaiTokenVerifier,
@@ -117,6 +124,7 @@ import {
   subscriptionLimitsFromEnv,
 } from '~/server/registry-adapter/limits';
 import { startPolicy } from '~/server/registry-adapter/policy-enforce';
+import { DEFAULT_METRICS_PORT, createMetricsServer } from '~/server/registry-adapter/policy-shadow';
 import { createRegistryServer, keepAliveTimeoutFromEnv } from '~/server/registry-adapter/serve';
 import { describeRegionConfig } from '~/server/registry-adapter/request-origin';
 import { createRedisSnapshotStore } from '~/server/registry-adapter/snapshot-store.redis';
@@ -185,7 +193,11 @@ function main() {
   // Shadow mode: off unless REGISTRY_ADAPTER_POLICY_URL is set; it never changes a decision.
   // Enforcement: off unless REGISTRY_ADAPTER_POLICY_ENFORCE=1 as well. A misconfiguration of
   // either never stops the adapter (`startPolicy`).
-  const { shadow: policyShadow, enforce: policyEnforce } = startPolicy(process.env);
+  const {
+    shadow: policyShadow,
+    enforce: policyEnforce,
+    registry: policyRegistry,
+  } = startPolicy(process.env);
   const auth = { verifyToken, resource, limiter, onRegion, policyShadow, policyEnforce };
 
   const listingRelays = parseListingRelays(process.env.REGISTRY_ADAPTER_LISTING_RELAYS);
@@ -196,7 +208,32 @@ function main() {
       : 'registry-adapter: listing stream off (REGISTRY_ADAPTER_LISTING_RELAYS unset)'
   );
   const served = servedSchemas({ listings });
-  const deps = liveCatalogReadDeps({ listings });
+  // The listing stream's cap counter, on the policy shadow's /metrics when it is on, else on a
+  // /metrics of its own (REGISTRY_ADAPTER_METRICS_PORT), only while the listing stream is.
+  let onSubListingsCapped: ((listingId: string, omitted: number) => void) | undefined;
+  if (listings) {
+    const { dropped, registry } = createListingStreamMetrics(policyRegistry ?? new Registry());
+    if (!policyRegistry) {
+      const metricsPort = Number(process.env.REGISTRY_ADAPTER_METRICS_PORT) || DEFAULT_METRICS_PORT;
+      createMetricsServer(registry)
+        .on('error', (err: NodeJS.ErrnoException) =>
+          console.warn(
+            `registry-adapter: WARNING: listing /metrics not served on :${metricsPort} (${
+              err.code ?? err.message
+            })`
+          )
+        )
+        .listen(metricsPort, () =>
+          console.log(`registry-adapter: listing stream /metrics on :${metricsPort}`)
+        );
+    }
+    onSubListingsCapped = reportSubListingsCapped(
+      dropped,
+      (line) => console.warn(line),
+      MAX_STREAM_SUB_LISTINGS
+    );
+  }
+  const deps = liveCatalogReadDeps({ listings, onSubListingsCapped });
   // Every subscription polls; they share one catalog read per half poll interval.
   const readApps = sharedRead(() => readCatalog(deps, { listings, onError }), pollMs / 2);
   const store = createRedisSnapshotStore();

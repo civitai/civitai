@@ -222,6 +222,7 @@ describe('listing media parity (media-parity.json): the site side', () => {
         connectClientId: null,
         forkOf: null,
         subListings: [],
+        subListingsOmitted: 0,
       };
       const body = listingBody(app, `urn:apps.civitai.com:app/${l.slug}`, store);
       expect([body.contentRating, body.listingContentRating]).toEqual([

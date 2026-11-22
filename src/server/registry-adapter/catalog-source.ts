@@ -84,6 +84,8 @@ export type ListingExtras = {
    * (`readStoreSubListingsOfParents`, `registrySubListing`); empty when it has none.
    */
   subListings: ListingSubListingItem[];
+  /** How many more items the grid shows than `subListings` carries (`capSubListings`); usually 0. */
+  subListingsOmitted: number;
 };
 
 /**

@@ -64,6 +64,10 @@ export const READ_MODEL_MISMATCH_KINDS = [
   'media',
   'identity_field',
   'stats_field',
+  // A sub-listing card on the database page only, of a listing whose stream left items out past
+  // the adapter's per-listing cap (MAX_STREAM_SUB_LISTINGS): a known difference. Reported, not
+  // gating; a listing over the cap is served without its oldest items.
+  'sub_listing_cap',
 ] as const;
 export type ReadModelMismatchKind = (typeof READ_MODEL_MISMATCH_KINDS)[number];
 

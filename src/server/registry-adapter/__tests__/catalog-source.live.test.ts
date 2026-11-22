@@ -333,6 +333,7 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
           },
         },
       ],
+      subListingsOmitted: 0,
     });
     // One read of the sub-listings for every listing, through the grid's child arm.
     expect(subListingQueries).toHaveLength(1);
@@ -356,9 +357,61 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
       connectClientId: 'client-f6',
       fork: { isFork: false, forkOfListingId: null },
       subListings: [],
+      subListingsOmitted: 0,
     });
     // The run read asks only for the on-site listing's block.
     expect(runBlocks).toHaveLength(1);
+  });
+
+  it('🔴 a listing over the sub-listing cap carries the newest 200 items, and the excess is reported', async () => {
+    dbMock.dbRead.appListing.findMany.mockImplementation((async (args: {
+      select: Record<string, unknown>;
+    }) =>
+      args.select.isBeta
+        ? []
+        : [
+            {
+              id: 'lst-a1',
+              serialId: 7101,
+              kind: 'onsite',
+              appBlockId: null,
+              connectClientId: null,
+              connectRequestedScopes: null,
+              appBlock: null,
+              description: null,
+              createdAt: new Date('2026-01-01T00:00:00.000Z'),
+              icon: null,
+              cover: null,
+              screenshots: [],
+              metric: null,
+            },
+          ]) as never);
+    const rows = Array.from({ length: 203 }, (_, i) => ({
+      ...subListingRow,
+      id: `asl_01J9ZK3Q4R5S6T7V8W9X${String(i).padStart(6, '0')}`,
+      sort_time: `2026-05-06T07:08:09.${String(i).padStart(6, '0')}Z`,
+    }));
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray | { strings: readonly string[] }
+    ) => {
+      const sql = (
+        Array.isArray(strings) ? strings : (strings as { strings: readonly string[] }).strings
+      ).join('?');
+      return sql.includes('FROM app_sub_listings s') ? rows : [];
+    }) as never);
+    dbMock.dbRead.appCollaborator.findMany.mockResolvedValue([] as never);
+    const capped: Array<[string, number]> = [];
+    const { loadListingExtras } = liveCatalogReadDeps({
+      listings: true,
+      onSubListingsCapped: (id, omitted) => capped.push([id, omitted]),
+    });
+    if (!loadListingExtras) throw new Error('listings on, but no loadListingExtras');
+    const extras = (await loadListingExtras(['lst-a1'])).get('lst-a1');
+    expect(extras?.subListings).toHaveLength(200);
+    expect(extras?.subListingsOmitted).toBe(3);
+    // The three oldest (the first three rows) are the ones left out.
+    expect(extras?.subListings[0].id).toBe(rows[3].id);
+    expect(capped).toEqual([['lst-a1', 3]]);
   });
 
   /**

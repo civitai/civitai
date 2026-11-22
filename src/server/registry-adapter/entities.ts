@@ -548,6 +548,8 @@ export function listingBody(
         ? { url: item.image.url, nsfwLevel: item.image.nsfwLevel, rating: item.image.rating }
         : null,
     })),
+    // How many more items the grid shows than `subListings` carries (the cap, `capSubListings`).
+    subListingsOmitted: store.subListingsOmitted,
   };
 }
 

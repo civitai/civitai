@@ -168,7 +168,10 @@ series is registered, nothing subscribes to the schema and the listing routes ar
   2, r 4, x 8, xxx 16), or a sub-listing item that cannot be read whole (an `asl_` id, its title, own
   and card ratings, author, sort time, link, and an image whose level is its rating's), is treated as
   deleted (`app_index_listings_events_applied_total{type="invalid"}`): such an item could not be
-  gated, or a listing without `subListings` would read as having no sub-listing cards.
+  gated, or a listing without `subListings` would read as having no sub-listing cards. That is in a
+  building generation; in a serving one the stored row is kept and only the cursor moves (still
+  counted `invalid`), so an adapter rolled back below this layout leaves the last good listings
+  serving instead of emptying the generation.
 - What can be left out without misgating is dropped and the listing kept, each drop logged and
   counted (`app_index_listings_dropped_total{what}`): a media item with an unknown slot
   (`media_item`), and a stats counter that is missing, negative or not an integer (`stat`), stored
@@ -257,7 +260,9 @@ exactly like a missing one.
   parent's own cover; its parent's own icon) gated at `subListingImageCeiling` (the card rating, the
   viewer's levels on any host, lifted on a red host), never a civitai.red override or a screenshot.
   `subListingIds` hydrates items by id, as `listStoreSubListingsByIds` does: the web tier's shadow
-  checks an item one page shows and the other does not.
+  checks an item one page shows and the other does not. Its answer also names, in
+  `cappedListings`, every listing the viewer could find with those filters whose stream left items
+  out past the adapter's per-listing cap (`subListingsOmitted` in the body).
 - `slugs` hydrates a search the site answered itself: the site keeps its text search where it is
   (the app index's `/search`, routed by its own `viewerNotRoutable` rule) and asks here for the cards
   of the slugs it found, as `listStoreListingsBySlugs` does from the database. They come back in the

@@ -54,7 +54,8 @@ func listingJSON(slug, name string) json.RawMessage {
     {"id": "` + subB + `", "title": "Gen Beta", "tagline": null, "contentRating": null, "cardContentRating": "r",
      "author": {"id": 52, "username": null, "image": null}, "sortTime": "2026-03-06T00:00:00Z",
      "runHref": "https://games.invalid/?game=b", "external": true, "image": null}
-  ]
+  ],
+  "subListingsOmitted": 3
 }`)
 }
 
@@ -142,7 +143,7 @@ func checkListing(t *testing.T, got Listing, slug, name string) {
 		Stats:       ListingStats{RecommendedCount: i64(7), NotRecommendedCount: i64(3), ReviewCount: i64(5), OpenCount: i64(120), InstallCount: i64(0)},
 		Media:       wantMedia,
 		Detail:      ListingDetail{SerialID: i64(77), Scopes: []string{"models:read:self"}, ForkOf: &ListingStreamFork{Slug: strp("parent-" + slug)}},
-		SubListings: wantSubListings(slug)}
+		SubListings: wantSubListings(slug), SubListingsOmitted: 3}
 	body := got.Body
 	got.Body = nil
 	if !reflect.DeepEqual(got, want) {
@@ -288,6 +289,10 @@ func runListingsContract(t *testing.T, newStore func(t *testing.T) listingsTestS
 		want.Body, want.Media, want.Detail = nil, nil, ListingDetail{}
 		ta := time.Date(2026, 3, 5, 1, 2, 3, 654321000, time.UTC)
 		tb := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
+		// The count left out by the adapter's cap is a column too.
+		if want.SubListingsOmitted != 3 {
+			t.Fatalf("fixture omitted %d, want 3", want.SubListingsOmitted)
+		}
 		want.SubListings = []SubListing{{ID: subA, Title: "Gen Alpha", ContentRating: "x", SortTime: &ta},
 			{ID: subB, Title: "Gen Beta", SortTime: &tb}}
 		if len(keys) != 2 || !reflect.DeepEqual(keys[0], want) || keys[1].Slug != "beta" {
@@ -386,7 +391,8 @@ func TestListingFromEntity(t *testing.T) {
 	}
 	checkListing(t, Listing{URN: l.URN, Rev: "rev-alpha", Body: l.Body, ID: l.ID, App: l.App, Slug: l.Slug, Name: l.Name, Kind: l.Kind,
 		Category: l.Category, ContentRating: l.ContentRating, ListingContentRating: l.ListingContentRating, CreatorID: l.CreatorID, CreatedAt: l.CreatedAt,
-		UpdatedAt: l.UpdatedAt, Stats: l.Stats, Media: l.Media, Detail: l.Detail, SubListings: l.SubListings}, "alpha", "Alpha")
+		UpdatedAt: l.UpdatedAt, Stats: l.Stats, Media: l.Media, Detail: l.Detail, SubListings: l.SubListings,
+		SubListingsOmitted: l.SubListingsOmitted}, "alpha", "Alpha")
 
 	// Off-site: openCount null, no creator, no media, no dates.
 	off, drops, err := ListingFromEntity(listingURN("o"), "r", json.RawMessage(`{"app":"urn:apps.civitai.com:app/o","id":"apl_o","slug":"o","name":"O",
@@ -396,7 +402,8 @@ func TestListingFromEntity(t *testing.T) {
 		t.Fatalf("off-site body: err %v drops %+v (a null openCount is not a drop)", err, drops)
 	}
 	if off.Stats.OpenCount != nil || off.CreatorID != nil || off.CreatedAt != nil || off.ContentRating != "" ||
-		*off.Stats.InstallCount != 9 || off.Media == nil || len(off.Media) != 0 || off.SubListings == nil || len(off.SubListings) != 0 {
+		*off.Stats.InstallCount != 9 || off.Media == nil || len(off.Media) != 0 || off.SubListings == nil || len(off.SubListings) != 0 ||
+		off.SubListingsOmitted != 0 {
 		t.Fatalf("off-site listing %+v", off)
 	}
 
@@ -435,6 +442,7 @@ func TestListingFromEntity(t *testing.T) {
 		// A body without subListings is from an adapter that does not publish them: its listing would
 		// read as having none, so it is unusable rather than a listing with no items.
 		{"no subListings", `"subListings": [`, `"subListingsX": [`, "subListings missing"},
+		{"negative subListingsOmitted", `"subListingsOmitted": 3`, `"subListingsOmitted": -1`, "subListingsOmitted is negative"},
 		{"sub-listing not an object", `"subListings": [`, `"subListings": [7, `, "subListings[0]: not an object"},
 		{"sub-listing id not a sub-listing id", `"id": "` + subA + `"`, `"id": "apl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A"`, "subListings[0]: id missing or not a sub-listing id"},
 		{"sub-listing id too short", `"id": "` + subB + `"`, `"id": "asl_01J9"`, "subListings[1]: id missing or not a sub-listing id"},

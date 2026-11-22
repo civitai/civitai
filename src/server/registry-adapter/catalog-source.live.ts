@@ -6,6 +6,7 @@ import { dbRead } from '~/server/db/client';
 import type { CatalogReadDeps, ListingExtras } from '~/server/registry-adapter/catalog-source';
 import { listingFromCard } from '~/server/registry-adapter/catalog-source';
 import {
+  capSubListings,
   registryIconUrl,
   registryListingMedia,
   registrySubListing,
@@ -100,11 +101,21 @@ export function listingExtrasFromRow(
     forkable: publicForkable(r.kind, reads.fork.forkable),
     connectClientId: publicConnectClientId(r),
     fork: { isFork: reads.fork.isFork, forkOfListingId: reads.fork.forkOfListingId },
-    subListings: reads.subListings.flatMap((row) => {
+    ...subListingsOf(reads.subListings),
+  };
+}
+
+/** A listing's stream items from its rows, capped (`capSubListings`). */
+function subListingsOf(
+  rows: readonly StoreSubListingRow[]
+): Pick<ListingExtras, 'subListings' | 'subListingsOmitted'> {
+  const { items, omitted } = capSubListings(
+    rows.flatMap((row) => {
       const item = registrySubListing(row);
       return item ? [item] : [];
-    }),
-  };
+    })
+  );
+  return { subListings: items, subListingsOmitted: omitted };
 }
 
 /**
@@ -132,10 +143,18 @@ async function readSubListingsByParent(
   return out;
 }
 
-/** `listings`: the listing stream is on, so the cards keep their store fields and extras are read. */
+/**
+ * `listings`: the listing stream is on, so the cards keep their store fields and extras are read.
+ * `onSubListingsCapped` is told, per catalog read, of each listing whose items were capped and how
+ * many were left out.
+ */
 export function liveCatalogReadDeps({
   listings = false,
-}: { listings?: boolean } = {}): CatalogReadDeps {
+  onSubListingsCapped,
+}: {
+  listings?: boolean;
+  onSubListingsCapped?: (listingId: string, omitted: number) => void;
+} = {}): CatalogReadDeps {
   return {
     // The adapter has no principal of its own: it takes the public catalog's SCOPE as an
     // anonymous caller would, so the kill switch and visibility levels apply. Its RATING rule is
@@ -254,18 +273,19 @@ export function liveCatalogReadDeps({
             return new Map(
               rows.map((r) => {
                 const blockId = actionsRunSourceBlockId(r);
-                return [
-                  r.id,
-                  listingExtrasFromRow(r, {
-                    red: red.get(r.id) ?? null,
-                    collaborators: collaborators.get(r.id) ?? [],
-                    beta: beta.get(r.id) ?? null,
-                    issueTrackerUrl: issueTrackers.get(r.id) ?? null,
-                    fork: forks.get(r.id) ?? NO_FORK_PROVENANCE,
-                    run: (blockId && runs.get(blockId)) || null,
-                    subListings: subListings.get(r.id) ?? [],
-                  }),
-                ];
+                const extras = listingExtrasFromRow(r, {
+                  red: red.get(r.id) ?? null,
+                  collaborators: collaborators.get(r.id) ?? [],
+                  beta: beta.get(r.id) ?? null,
+                  issueTrackerUrl: issueTrackers.get(r.id) ?? null,
+                  fork: forks.get(r.id) ?? NO_FORK_PROVENANCE,
+                  run: (blockId && runs.get(blockId)) || null,
+                  subListings: subListings.get(r.id) ?? [],
+                });
+                if (extras.subListingsOmitted > 0) {
+                  onSubListingsCapped?.(r.id, extras.subListingsOmitted);
+                }
+                return [r.id, extras];
               })
             );
           },

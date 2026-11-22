@@ -293,5 +293,10 @@ export const STORE_LISTING_SCHEMA_DOCUMENT: Record<string, unknown> = {
         },
       },
     },
+    subListingsOmitted: {
+      ...count,
+      description:
+        'How many more items the store shows beside the app than `subListings` carries: a body carries at most a fixed number of them, the most recently approved. Usually 0',
+    },
   },
 };

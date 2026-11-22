@@ -151,6 +151,41 @@ export type ListingSubListingItem = {
 };
 
 /**
+ * The most sub-listing items one listing's body carries. A listing has no cap of its own on its
+ * items (only `maxPerAuthor`), and the store grid pages through all of them, so its page size bounds
+ * nothing here. The bound is the registry stream: a body travels as one stream line, and
+ * app-index-go's registry client reads lines of at most 1 MiB (`MaxLine`, `internal/registry`); a
+ * longer line ends the stream `unavailable` and replays it from the same cursor forever.
+ *
+ * Measured from the item's bounds (`APP_SUB_LISTING_*_MAX`, the link template's 300, the id, the
+ * URLs): one item is about 0.6 KB of JSON with short ASCII text and at most about 1.9 KB (a title
+ * and tagline at their bounds in three-byte characters, a 300-character link template, long avatar
+ * and image URLs). 200 items are then at most about 0.36 MiB (pinned by `listing-stream.test.ts`),
+ * which leaves more than half of the line for the rest of the body and the event around it.
+ */
+export const MAX_STREAM_SUB_LISTINGS = 200;
+
+/**
+ * `items` (in id order) capped at `max`: the most recently approved are kept (the `newest` order,
+ * `sortTime` then id, both descending), the rest left out and counted, so the same catalog always
+ * keeps the same items. The kept items stay in id order.
+ */
+export function capSubListings(
+  items: readonly ListingSubListingItem[],
+  max: number = MAX_STREAM_SUB_LISTINGS
+): { items: ListingSubListingItem[]; omitted: number } {
+  if (items.length <= max) return { items: [...items], omitted: 0 };
+  const newest = [...items].sort((a, b) =>
+    a.sortTime !== b.sortTime ? (a.sortTime < b.sortTime ? 1 : -1) : a.id < b.id ? 1 : -1
+  );
+  const kept = new Set(newest.slice(0, max).map((item) => item.id));
+  return {
+    items: items.filter((item) => kept.has(item.id)),
+    omitted: items.length - kept.size,
+  };
+}
+
+/**
  * The stream item of one sub-listing row (`readStoreSubListingsOfParents`), or null when the card
  * would have nowhere valid to link to, which `projectSubListingCard` drops too.
  */

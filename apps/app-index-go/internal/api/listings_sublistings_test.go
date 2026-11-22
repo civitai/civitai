@@ -136,6 +136,38 @@ func TestListingSubListingsOnThePage(t *testing.T) {
 	}
 }
 
+// A listing whose stream left items out past the adapter's cap is named on every subListingIds
+// answer that could have found it (cappedListings), and only there: the web tier's shadow then reads
+// an item of it that is not found as a known cap difference.
+func TestListingSubListingIDsNameCappedListings(t *testing.T) {
+	capped := strings.Replace(hubBody, `"createdAt":"2026-03-03T00:00:00.000Z"`, `"subListingsOmitted":4,"createdAt":"2026-03-03T00:00:00.000Z"`, 1)
+	if capped == hubBody {
+		t.Fatal("the fixture did not change")
+	}
+	srv := newListingServer(t, readyStore(t), readyListings(t, capped, paintBody, linksBody), viewerKey)
+	names := func(query string) []string {
+		_, _, b := getAs(t, srv.URL+"/listings?"+query, &sfwViewer)
+		var p struct {
+			CappedListings []string `json:"cappedListings"`
+		}
+		if err := json.Unmarshal(b, &p); err != nil {
+			t.Fatal(err)
+		}
+		return p.CappedListings
+	}
+	if got := names("subListingIds=asl_01J9ZK3Q4R5S6T7V8W9X0YH999"); !reflect.DeepEqual(got, []string{"apl_hub_4"}) {
+		t.Errorf("by id: capped %v, want the hub", got)
+	}
+	// Not a listing this viewer could find with these filters: not named.
+	if got := names("subListingIds=" + subCanvas + "&kind=offsite"); got != nil {
+		t.Errorf("off-site filter: capped %v, want none", got)
+	}
+	// Not on a page answer.
+	if got := names("sort=name&subListings=1"); got != nil {
+		t.Errorf("page: capped %v, want none", got)
+	}
+}
+
 // Sub-listing hydration: the cards of the named items this viewer could find in the grid with
 // sub-listings on, in the given order, each once, with the kind, category and developer filters.
 func TestListingSubListingIDs(t *testing.T) {
