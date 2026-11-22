@@ -126,7 +126,8 @@ export async function getStickerAutoTrack({
       message: 'auto-track run gave no track',
       workflowId,
       userId,
-      ...result,
+      reason: result.reason,
+      payload: { runStatus: result.reason === 'run' ? result.runStatus : undefined },
     });
     return { status: 'failed' };
   }
