@@ -58,12 +58,13 @@ export function newestHeads(
 export async function transcriptReaderFor(
   userId: number
 ): Promise<TranscriptReader | { refused: TranscriptReaderRefusal }> {
-  const [{ mintAppAssistantToken }, chat, { createOrchestratorClient }, orchestration] =
+  const [{ mintAppAssistantToken }, chat, { createOrchestratorClient }, orchestration, timeouts] =
     await Promise.all([
-      import('~/server/services/app-assistant/app-assistant.service'),
+      import('~/server/services/app-assistant/app-assistant-token'),
       import('@civitai/components-chat/core'),
       import('~/server/services/orchestrator/client'),
       import('@civitai/orchestration-client'),
+      import('~/server/utils/fetch-timeout'),
     ]);
   let token: string;
   try {
@@ -80,7 +81,7 @@ export async function transcriptReaderFor(
   const query = async (tags: string[], take: number, cursor?: string) => {
     const { data, error } = await orchestration.queryWorkflows({
       client,
-      signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+      signal: timeouts.fetchTimeoutSignal(READ_TIMEOUT_MS),
       query: { tags, take, ...(cursor ? { cursor } : {}) },
     });
     if (error || !data) throw new Error('orchestration refused the chat read');

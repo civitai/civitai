@@ -131,8 +131,8 @@ describe('ReviewAssistantSessionsPanel', () => {
     );
     await expect.element(page.getByText('Make me a sticker maker')).toBeInTheDocument();
     await expect.element(page.getByText('Reading the theme docs first.')).toBeInTheDocument();
-    // Collapsed: the output is not visible until the tool's row is opened.
-    await expect.element(page.getByText('THEME-DOC-BODY-SENTINEL')).not.toBeVisible();
+    // Collapsed: the output is not rendered until the tool's row is opened.
+    expect(page.getByText('THEME-DOC-BODY-SENTINEL').elements()).toHaveLength(0);
     await page.getByTestId('apps-review-sessions-tool').click();
     await expect.element(page.getByText('THEME-DOC-BODY-SENTINEL')).toBeVisible();
     await expect.element(page.getByText('Output (cut)')).toBeInTheDocument();

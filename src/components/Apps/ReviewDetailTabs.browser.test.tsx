@@ -561,7 +561,7 @@ describe('the Preview tab’s mode gates — one implementation, both clauses', 
 
 describe('the Build sessions tab', () => {
   test('🔴 reads the moderator trace API for THIS request, and only once the tab is opened', async () => {
-    const fetchSpy = vi.fn(async () =>
+    const fetchSpy = vi.fn(async (_url: string) =>
       Response.json({ request: { id: 'pubreq_01HZX' }, trace: null, links: [] })
     );
     vi.stubGlobal('fetch', fetchSpy);

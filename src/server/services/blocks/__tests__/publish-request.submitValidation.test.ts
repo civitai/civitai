@@ -4,6 +4,7 @@ import type * as AppDeveloperTermsService from '~/server/services/blocks/app-dev
 import type * as ReviewAutodeployService from '~/server/services/blocks/review-autodeploy.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
+import type * as FliptClient from '~/server/flipt/client';
 
 /**
  * `submitVersion`, through the real pipeline and the REAL BlockManifestValidator:
@@ -49,6 +50,20 @@ vi.mock('~/server/services/blocks/review-autodeploy.service', async (importOrigi
   ...(await importOriginal<typeof ReviewAutodeployService>()),
   onNewPendingSubmission: (...a: unknown[]) => followUps.onNewPendingSubmission(...a),
 }));
+
+// Flipt is a process boundary: only App Assistant session tracing is answered here (off unless a
+// case turns it on); every other flag evaluates as it does with no Flipt.
+const tracing = vi.hoisted(() => ({ on: false }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof FliptClient>();
+  return {
+    ...actual,
+    isFlipt: (flag: string, ...rest: unknown[]) =>
+      flag === 'app-assistant-tracing'
+        ? Promise.resolve(tracing.on)
+        : (actual.isFlipt as (...a: unknown[]) => Promise<boolean>)(flag, ...rest),
+  };
+});
 
 const { submitVersion } = await import('~/server/services/blocks/publish-request.service');
 const { ManifestValidationRefusal } = await import(
@@ -96,6 +111,7 @@ beforeEach(() => {
   db.appListingCreate.mockResolvedValue({ id: 'apl_draft' });
   followUps.onNewPendingSubmission.mockReset();
   followUps.onNewPendingSubmission.mockResolvedValue(undefined);
+  tracing.on = false;
 });
 
 describe('submitVersion — deep manifest validation at submit', () => {
@@ -272,5 +288,85 @@ describe('submitVersion — follow-ups of a new pending request', () => {
     });
     await flush();
     expect(followUps.onNewPendingSubmission).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * App Assistant session tracing at submit: `submitVersion` fires the REAL `recordSubmissionTrace`
+ * once the request exists (its reads and writes land on the canonical db mock), and NOTHING the trace
+ * does can fail or hold up the submit.
+ */
+describe('submitVersion — App Assistant session trace', () => {
+  const links = dbMock.dbRead.appAssistantSessionLink.findMany;
+  const writeTrace = dbMock.dbWrite.appPublishRequestTrace.create;
+
+  it('with tracing on, records the new request’s trace: its id, slug, submitter and bundle signals', async () => {
+    tracing.on = true;
+    links.mockResolvedValueOnce([]);
+    const result = await submitVersion({
+      bundleBuffer: await bundle(VALID),
+      submittedByUserId: 7713,
+      submitterIsModerator: false,
+    });
+    await vi.waitFor(() => expect(writeTrace).toHaveBeenCalledTimes(1), { timeout: 15_000 });
+    expect(links).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { appSlug: 'my-app', userId: 7713 } })
+    );
+    const data = writeTrace.mock.calls[0]![0].data;
+    expect(data).toMatchObject({
+      publishRequestId: result.publishRequestId,
+      slug: 'my-app',
+      userId: 7713,
+      conversationIds: [],
+      snapshots: [],
+      signalsVersion: 1,
+      snapshotError: null,
+    });
+    // The bundle's own index.html was read for the theme signal.
+    expect(data.signals).toMatchObject({ themeCustomized: false, theme: { filesScanned: 1 } });
+    await settleFollowUps();
+  });
+
+  it('with tracing off, writes no trace and reads no link', async () => {
+    await submitVersion({
+      bundleBuffer: await bundle(VALID),
+      submittedByUserId: 7713,
+      submitterIsModerator: false,
+    });
+    await settleFollowUps();
+    await flush();
+    expect(links).not.toHaveBeenCalled();
+    expect(writeTrace).not.toHaveBeenCalled();
+  });
+
+  it('a trace whose every read and write fails never fails the submit', async () => {
+    tracing.on = true;
+    links.mockRejectedValueOnce(new Error('db down'));
+    writeTrace.mockRejectedValueOnce(
+      new Error('relation "app_publish_request_traces" does not exist')
+    );
+    const result = await submitVersion({
+      bundleBuffer: await bundle(VALID),
+      submittedByUserId: 7713,
+      submitterIsModerator: false,
+    });
+    expect(result.slug).toBe('my-app');
+    await vi.waitFor(() => expect(writeTrace).toHaveBeenCalledTimes(1), { timeout: 15_000 });
+    await settleFollowUps();
+  });
+
+  it('a trace that never settles never holds the submit up', async () => {
+    tracing.on = true;
+    links.mockImplementationOnce(() => new Promise(() => undefined));
+    const outcome = await Promise.race([
+      submitVersion({
+        bundleBuffer: await bundle(VALID),
+        submittedByUserId: 7713,
+        submitterIsModerator: false,
+      }).then(() => 'submitted'),
+      new Promise((resolve) => setTimeout(() => resolve('held up'), 5_000)),
+    ]);
+    expect(outcome).toBe('submitted');
+    await settleFollowUps();
   });
 });

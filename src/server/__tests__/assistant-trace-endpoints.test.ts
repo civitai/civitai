@@ -1,40 +1,52 @@
+import type * as CivitaiAuth from '@civitai/auth';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ClickhouseModule from '~/server/clickhouse/client';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 /**
- * The moderator trace API, `/api/mod/apps/assistant-trace/*`, through the real
- * `defineModeratorEndpoint` front door: every route refuses anyone who is not a signed-in,
- * unbanned moderator BEFORE reading anything (a transcript is the user's own chat), and each one
- * answers from the trace service it names. The service reads are spies.
+ * The moderator trace API, `/api/mod/apps/assistant-trace/*`, through the REAL front door
+ * (`defineModeratorEndpoint`) and the REAL bearer-key path: a caller presents an API key, the key
+ * row is read through the canonical db mock, and the user it names comes from the auth hub, which is
+ * the one thing stubbed here (`@civitai/auth`'s session client: a network boundary). The trace reads
+ * themselves run for real over the canonical db mock.
+ *
+ * Pinned: every route refuses an unknown key, a non-moderator and a banned moderator BEFORE it reads
+ * any trace (a transcript is the user's own chat), and refuses a POST; a moderator's key is answered.
  */
 
-const { session, mockAudit, svc } = vi.hoisted(() => ({
-  session: { current: null as null | { user: Record<string, unknown> } },
-  mockAudit: vi.fn(),
-  svc: {
-    getRequestTrace: vi.fn(),
-    getAppTraces: vi.fn(),
-    readSnapshotTranscript: vi.fn(),
-    aggregateSignals: vi.fn(),
-  },
+// TEST-ONLY salt for API-key hashing, set before the auth package first reads its env.
+vi.hoisted(() => vi.stubEnv('NEXTAUTH_SECRET', 'test-only-salt-for-key-hashing'));
+
+const h = vi.hoisted(() => ({
+  user: null as null | Record<string, unknown>,
+  audit: vi.fn(),
 }));
 
-vi.mock('~/server/auth/bearer-token', () => ({
-  getSessionFromBearerToken: vi.fn(async () => null),
-}));
-vi.mock('~/server/auth/get-server-auth-session', () => ({
-  getServerAuthSession: vi.fn(async () => session.current),
-}));
+vi.mock('@civitai/auth', async (importOriginal) => {
+  const actual = await importOriginal<typeof CivitaiAuth>();
+  return {
+    ...actual,
+    // The auth hub: the user an API key's row names.
+    createSessionClient: () =>
+      new Proxy(
+        { getSessionUserById: async () => h.user },
+        {
+          get: (target, key) =>
+            key in target ? target[key as 'getSessionUserById'] : vi.fn(async () => null),
+        }
+      ),
+  };
+});
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseModule>()),
   Tracker: class {
-    retoolAudit = mockAudit;
+    retoolAudit = h.audit;
   },
 }));
-vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
-vi.mock('~/server/services/app-assistant/submission-trace.service', () => svc);
 
 const routes = {
   request: (await import('~/server/api-routes/mod/apps/assistant-trace/request')).default,
@@ -51,8 +63,21 @@ const VALID: Record<Route, Record<string, string>> = {
   signals: {},
 };
 
-function call(route: Route, query: Record<string, string>, method = 'GET', headers = {}) {
-  const req = { method, query, headers, body: {} };
+const KEY = 'test-only-moderator-key';
+
+function call(
+  route: Route,
+  query: Record<string, string>,
+  method = 'GET',
+  key: string | null = KEY
+) {
+  const req = {
+    method,
+    query,
+    headers: key ? { authorization: `Bearer ${key}` } : {},
+    body: {},
+    cookies: {},
+  };
   let statusCode = 200;
   let payload: unknown;
   const res = {
@@ -65,6 +90,7 @@ function call(route: Route, query: Record<string, string>, method = 'GET', heade
       return res;
     },
     setHeader: vi.fn(),
+    getHeader: vi.fn(),
     end: () => res,
   };
   return Promise.resolve(routes[route](req as never, res as never)).then(() => ({
@@ -73,12 +99,33 @@ function call(route: Route, query: Record<string, string>, method = 'GET', heade
   }));
 }
 
-const MOD = 990000412;
-const serviceCalls = () => Object.values(svc).reduce((n, fn) => n + fn.mock.calls.length, 0);
+const MOD = { id: 4207, isModerator: true, bannedAt: null, permissions: [] };
+
+/** Every trace read the routes can make. */
+const traceReads = () =>
+  [
+    dbMock.dbRead.appBlockPublishRequest.findUnique,
+    dbMock.dbRead.appBlockPublishRequest.findMany,
+    dbMock.dbRead.appPublishRequestTrace.findUnique,
+    dbMock.dbRead.appAssistantSessionLink.findMany,
+    dbMock.dbRead.$queryRaw,
+  ].reduce((n, fn) => n + fn.mock.calls.length, 0);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions: [] } };
+  h.user = { ...MOD };
+  // The API key's row: a full-access personal key, used recently (no last-used write).
+  dbMock.dbWrite.apiKey.findFirst.mockResolvedValue({
+    id: 31,
+    userId: MOD.id,
+    tokenScope: Number(TokenScope.Full),
+    tokenScopeWide: null,
+    lastUsedAt: new Date(),
+    buzzLimit: null,
+    clientId: null,
+    type: ApiKeyType.User,
+    expiresAt: null,
+  });
   redisMock.sysRedis.multi.mockImplementation(() => ({
     set: vi.fn().mockReturnThis(),
     incr: vi.fn().mockReturnThis(),
@@ -90,95 +137,82 @@ beforeEach(() => {
 describe('/api/mod/apps/assistant-trace/* — moderators only', () => {
   const ROUTES = Object.keys(routes) as Route[];
 
-  it.each(ROUTES)('%s refuses a signed-out caller, reading nothing', async (route) => {
-    session.current = null;
+  it.each(ROUTES)('%s refuses an unknown API key (401), reading no trace', async (route) => {
+    dbMock.dbWrite.apiKey.findFirst.mockResolvedValue(null);
     expect((await call(route, VALID[route])).status).toBe(401);
-    expect(serviceCalls()).toBe(0);
+    expect(traceReads()).toBe(0);
   });
 
   it.each(
     ROUTES.flatMap((route) => [
-      [route, 'a signed-in non-moderator', { isModerator: false, bannedAt: null }] as const,
+      [route, 'a non-moderator', { isModerator: false, bannedAt: null }] as const,
       [route, 'a banned moderator', { isModerator: true, bannedAt: new Date() }] as const,
     ])
-  )('%s refuses %s, reading nothing', async (route, _label, user) => {
-    session.current = { user: { id: 5, permissions: [], ...user } };
-    const { status, body } = await call(route, VALID[route]);
-    expect(status).toBe(403);
-    expect(body.error).toBe('Moderator role required');
-    expect(serviceCalls()).toBe(0);
+  )('%s refuses %s, reading no trace', async (route, _label, user) => {
+    h.user = { id: MOD.id, permissions: [], ...user };
+    const { status } = await call(route, VALID[route]);
+    // A banned user's key resolves to no session (401); a non-moderator's is refused the role (403).
+    expect(user.bannedAt ? 401 : 403).toBe(status);
+    expect(traceReads()).toBe(0);
   });
 
   it.each(ROUTES)('%s refuses a POST: reads only', async (route) => {
     expect((await call(route, VALID[route], 'POST')).status).toBe(405);
-    expect(serviceCalls()).toBe(0);
+    expect(traceReads()).toBe(0);
   });
 
-  it.each(ROUTES)(
-    '%s refuses an API key that is not a full-access moderator key',
-    async (route) => {
-      // The bearer resolves to no session: the key is refused before the role is even read.
-      expect(
-        (await call(route, VALID[route], 'GET', { authorization: 'Bearer not-a-key' })).status
-      ).toBe(401);
-      expect(serviceCalls()).toBe(0);
-    }
-  );
+  it('CONTROL: the same key, held by a moderator, is answered', async () => {
+    dbMock.dbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: 'pubreq_a',
+      slug: 'some-app',
+      version: '0.1.0',
+      status: 'pending',
+      submittedAt: new Date('2026-11-21T00:00:00.000Z'),
+      submittedByUserId: 5150,
+    });
+    const { status, body } = await call('request', VALID.request);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ request: { id: 'pubreq_a' }, trace: null, links: [] });
+    // Links are read for the SUBMITTER only.
+    expect(dbMock.dbRead.appAssistantSessionLink.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { appSlug: 'some-app', userId: 5150 } })
+    );
+  });
 });
 
 describe('/api/mod/apps/assistant-trace/* — answers', () => {
-  it('request: the trace the service found; 404 when there is no such request', async () => {
-    svc.getRequestTrace.mockResolvedValueOnce({
-      request: { id: 'pubreq_a' },
-      trace: null,
-      links: [],
-    });
-    expect(await call('request', VALID.request)).toEqual({
-      status: 200,
-      body: { request: { id: 'pubreq_a' }, trace: null, links: [] },
-    });
-    expect(svc.getRequestTrace).toHaveBeenCalledWith('pubreq_a');
-    svc.getRequestTrace.mockResolvedValueOnce(null);
+  it('request: 404 when there is no such request', async () => {
+    dbMock.dbRead.appBlockPublishRequest.findUnique.mockResolvedValue(null);
     expect((await call('request', VALID.request)).status).toBe(404);
   });
 
-  it('app: pages with limit and cursor', async () => {
-    svc.getAppTraces.mockResolvedValueOnce({ requests: [], nextCursor: null, links: [] });
-    await call('app', { slug: 'some-app', limit: '7', cursor: 'pubreq_z' });
-    expect(svc.getAppTraces).toHaveBeenCalledWith('some-app', { limit: 7, cursor: 'pubreq_z' });
+  it('app: bounds its page size', async () => {
     expect((await call('app', { slug: 'some-app', limit: '500' })).status).toBe(400);
+    expect((await call('app', { slug: 'some-app', limit: '7' })).status).toBe(200);
+    expect(dbMock.dbRead.appBlockPublishRequest.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { slug: 'some-app' }, take: 8 })
+    );
   });
 
-  it('transcript: the frozen chat, its tool outputs cut as asked; each refusal reason is its own answer', async () => {
-    svc.readSnapshotTranscript.mockResolvedValueOnce({
-      ok: true,
-      capturedAt: '2026-11-21T00:00:00.000Z',
-      transcript: { conversationId: 'conv-a', turns: [] },
-    });
-    expect(await call('transcript', { ...VALID.transcript, toolOutputChars: '300' })).toEqual({
-      status: 200,
-      body: {
-        publishRequestId: 'pubreq_a',
-        capturedAt: '2026-11-21T00:00:00.000Z',
-        transcript: { conversationId: 'conv-a', turns: [] },
-      },
-    });
-    expect(svc.readSnapshotTranscript).toHaveBeenCalledWith('pubreq_a', 'conv-a', {
-      toolOutputChars: 300,
-    });
-    svc.readSnapshotTranscript.mockResolvedValueOnce({ ok: false, reason: 'not-in-trace' });
+  it('transcript: no trace is 404; a frozen chat the store cannot give back is 503', async () => {
+    dbMock.dbRead.appPublishRequestTrace.findUnique.mockResolvedValueOnce(null);
     expect((await call('transcript', VALID.transcript)).status).toBe(404);
-    svc.readSnapshotTranscript.mockResolvedValueOnce({ ok: false, reason: 'unreadable' });
+    dbMock.dbRead.appPublishRequestTrace.findUnique.mockResolvedValueOnce({
+      snapshots: [{ conversationId: 'conv-other', key: 'k' }],
+    });
+    expect((await call('transcript', VALID.transcript)).status).toBe(404);
+    dbMock.dbRead.appPublishRequestTrace.findUnique.mockResolvedValueOnce({
+      snapshots: [{ conversationId: 'conv-a', error: 'not-found' }],
+    });
+    expect((await call('transcript', VALID.transcript)).status).toBe(404);
+    // The bundle store is not configured here: the read fails, and that is a retryable 503.
+    dbMock.dbRead.appPublishRequestTrace.findUnique.mockResolvedValueOnce({
+      snapshots: [{ conversationId: 'conv-a', key: 'app-assistant-transcripts/x/y.json' }],
+    });
     expect((await call('transcript', VALID.transcript)).status).toBe(503);
   });
 
-  it('signals: the window defaults to 90 days and is bounded', async () => {
-    svc.aggregateSignals.mockResolvedValue({ weeks: [], docsTopics: [] });
-    await call('signals', { to: '2026-11-21T00:00:00.000Z' });
-    expect(svc.aggregateSignals).toHaveBeenCalledWith({
-      from: new Date('2026-08-23T00:00:00.000Z'),
-      to: new Date('2026-11-21T00:00:00.000Z'),
-    });
+  it('signals: the window is bounded', async () => {
     expect(
       (await call('signals', { from: '2025-01-01T00:00:00.000Z', to: '2026-11-21T00:00:00.000Z' }))
         .status
@@ -187,19 +221,19 @@ describe('/api/mod/apps/assistant-trace/* — answers', () => {
       (await call('signals', { from: '2026-11-22T00:00:00.000Z', to: '2026-11-21T00:00:00.000Z' }))
         .status
     ).toBe(400);
+    const ok = await call('signals', { to: '2026-11-21T00:00:00.000Z' });
+    expect(ok).toMatchObject({
+      status: 200,
+      body: { from: '2026-08-23T00:00:00.000Z', to: '2026-11-21T00:00:00.000Z', weeks: [] },
+    });
   });
 
   it('a transcript read is audited, naming the request and the chat', async () => {
-    svc.readSnapshotTranscript.mockResolvedValueOnce({
-      ok: true,
-      capturedAt: null,
-      transcript: {},
-    });
+    dbMock.dbRead.appPublishRequestTrace.findUnique.mockResolvedValueOnce(null);
     await call('transcript', VALID.transcript);
-    expect(mockAudit).toHaveBeenCalledWith(
+    expect(h.audit).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'apps.assistantTrace.transcript',
-        outcome: 'ok',
         payload: expect.objectContaining({
           publishRequestId: 'pubreq_a',
           conversationId: 'conv-a',

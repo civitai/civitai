@@ -1,4 +1,4 @@
-import { Accordion, Badge, Button, Code, Group, Loader, Stack, Table, Text } from '@mantine/core';
+import { Badge, Button, Code, Group, Loader, Stack, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import type { TraceSignals } from '~/shared/app-assistant/trace-signals';
 import type { TranscriptStep, TranscriptView } from '~/shared/app-assistant/transcript-view';
@@ -124,33 +124,45 @@ function Step({ step }: { step: TranscriptStep }) {
         {step.text}
       </Text>
     );
+  return <ToolStep step={step} />;
+}
+
+/** One tool call: its name, and its input and output only once a moderator opens it. */
+function ToolStep({ step }: { step: TranscriptStep }) {
+  const [open, setOpen] = useState(false);
   return (
-    <Accordion variant="contained" chevronPosition="left">
-      <Accordion.Item value="tool">
-        <Accordion.Control data-testid="apps-review-sessions-tool">
-          <Group gap="xs">
-            <Code>{step.tool}</Code>
-            {step.isError && (
-              <Badge size="xs" color="red">
-                error
-              </Badge>
-            )}
-          </Group>
-        </Accordion.Control>
-        <Accordion.Panel>
+    <Stack gap={4}>
+      <Group gap="xs">
+        <Button
+          size="compact-xs"
+          variant="subtle"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          data-testid="apps-review-sessions-tool"
+        >
+          {open ? '▾' : '▸'} <Code ml={4}>{step.tool}</Code>
+        </Button>
+        {step.isError && (
+          <Badge size="xs" color="red">
+            error
+          </Badge>
+        )}
+      </Group>
+      {open && (
+        <Stack gap={2} pl="md">
           <Text size="xs" fw={600}>
             Input
           </Text>
           <Code block>{JSON.stringify(step.input, null, 2)}</Code>
-          <Text size="xs" fw={600} mt={4}>
+          <Text size="xs" fw={600}>
             Output{step.outputTruncated ? ' (cut)' : ''}
           </Text>
           <Code block data-testid="apps-review-sessions-tool-output">
             {step.output}
           </Code>
-        </Accordion.Panel>
-      </Accordion.Item>
-    </Accordion>
+        </Stack>
+      )}
+    </Stack>
   );
 }
 
@@ -232,42 +244,37 @@ export function ReviewAssistantSessionsPanel({ publishRequestId }: { publishRequ
           No App Assistant chat of the submitter was linked to this app.
         </Text>
       ) : (
-        <Table>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>Chat</Table.Th>
-              <Table.Th>Frozen turns</Table.Th>
-              <Table.Th>Last model</Table.Th>
-              <Table.Th />
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {trace.snapshots.map((snapshot) => (
-              <Table.Tr key={snapshot.conversationId} data-testid="apps-review-sessions-row">
-                <Table.Td>
-                  <Code>{snapshot.conversationId}</Code>
-                </Table.Td>
-                <Table.Td>
-                  {snapshot.error ? <Badge color="red">{snapshot.error}</Badge> : snapshot.turns}
-                </Table.Td>
-                <Table.Td>{liveLinks.get(snapshot.conversationId)?.lastModel ?? '—'}</Table.Td>
-                <Table.Td>
-                  {snapshot.key && (
-                    <Button
-                      size="compact-xs"
-                      variant="light"
-                      onClick={() =>
-                        setOpen(open === snapshot.conversationId ? null : snapshot.conversationId)
-                      }
-                    >
-                      {open === snapshot.conversationId ? 'Hide transcript' : 'Show transcript'}
-                    </Button>
-                  )}
-                </Table.Td>
-              </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
+        <Stack gap={4}>
+          {trace.snapshots.map((snapshot) => (
+            <Group
+              key={snapshot.conversationId}
+              gap="sm"
+              wrap="nowrap"
+              data-testid="apps-review-sessions-row"
+            >
+              <Code>{snapshot.conversationId}</Code>
+              {snapshot.error ? (
+                <Badge color="red">{snapshot.error}</Badge>
+              ) : (
+                <Text size="xs">{snapshot.turns} turns frozen</Text>
+              )}
+              <Text size="xs" c="dimmed">
+                {liveLinks.get(snapshot.conversationId)?.lastModel ?? ''}
+              </Text>
+              {snapshot.key && (
+                <Button
+                  size="compact-xs"
+                  variant="light"
+                  onClick={() =>
+                    setOpen(open === snapshot.conversationId ? null : snapshot.conversationId)
+                  }
+                >
+                  {open === snapshot.conversationId ? 'Hide transcript' : 'Show transcript'}
+                </Button>
+              )}
+            </Group>
+          ))}
+        </Stack>
       )}
       {open && <Transcript publishRequestId={publishRequestId} conversationId={open} />}
     </Stack>
