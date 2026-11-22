@@ -400,6 +400,42 @@ describe('fileCsamReport with attached text', () => {
     expect(filed.details).toEqual({ contextText: copied, contextNotAttachedCount: 2 });
   });
 
+  describe('when a step after filing throws', () => {
+    const fileWithNotAttached = () => {
+      snapshotCsamContextText.mockResolvedValueOnce({
+        contextText: [],
+        notAttached: ['chat message 902', 'profile'],
+      });
+      return fileCsamReport({
+        userId: OWNER,
+        imageIds: [IMAGE],
+        type: 'Image',
+        reportedById: MOD,
+        contextSources: sources,
+      });
+    };
+    const named = /Not attached: chat message 902, profile\./;
+
+    it('names what was not attached and says not to file again', async () => {
+      softDeleteUser.mockRejectedValueOnce(new Error('ban failed'));
+      const removal = await fileWithNotAttached().catch((e: Error) => e);
+      expect((removal as Error).message).toMatch(
+        /^The report was filed\..*Do not file the report again\./
+      );
+      expect((removal as Error).message).toMatch(named);
+
+      vi.mocked(dbMock.dbWrite.appeal.updateMany).mockRejectedValueOnce(new Error('db down'));
+      await expect(fileWithNotAttached()).rejects.toThrow(named);
+    });
+
+    it('keeps the blocklist message, adding the names', async () => {
+      vi.mocked(bulkAddBlockedImages).mockRejectedValueOnce(new Error('no ClickHouse client'));
+      const error = (await fileWithNotAttached().catch((e: Error) => e)) as Error;
+      expect(error.message.startsWith(CSAM_BLOCKLIST_FAILED_MESSAGE)).toBe(true);
+      expect(error.message).toMatch(named);
+    });
+  });
+
   it('refuses text on an image report with no images, before filing anything', async () => {
     await expect(
       fileCsamReport({
