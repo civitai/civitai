@@ -556,6 +556,11 @@ describe('buildStickerAutoTrackWorkflow', () => {
     expect(workflow['6'].inputs).toMatchObject({ masks: ['5', 0], fallback_masks: ['12', 0] });
   });
 
+  it('hides an eye sticker while its eye is turned away', () => {
+    // Off, a sticker placed on an eye rides the cheek while the head is in profile.
+    expect(graph()['9'].inputs.hide_when_eye_lost).toBe(true);
+  });
+
   it('turns re-id off for a sticker that is not on a head', () => {
     // Wired to a constant true, a lantern sticker jumps onto a person after a cut.
     expect(graph({ width: 1920, height: 1080 })['9'].inputs.reid).toEqual(['6', 1]);

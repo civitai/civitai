@@ -259,7 +259,6 @@ export function buildStickerAutoTrackWorkflow({
             reid_threshold: 0.4,
             // Off when no head holds the sticker, so after a cut it hides instead of jumping onto a person.
             reid: ['6', 1],
-            // A sticker placed on an eye hides while that eye is turned away, not on the cheek.
             hide_when_eye_lost: true,
             eyes: ['11', 0],
           },
