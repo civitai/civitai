@@ -1665,7 +1665,7 @@ export const comicsRouter = router({
         heroChanged ? input.heroUrl || null : null,
       ]);
 
-      // Cover image: accept either an existing Image ID or a CF URL (creates Image record)
+      // Cover image: an existing Image ID, or an uploaded image (creates an Image record).
       if (input.coverImageId !== undefined) {
         // A route may only point at an image the caller may use. Clearing, or re-sending the
         // project's current image, needs no lookup.
@@ -1687,7 +1687,7 @@ export const comicsRouter = router({
         }
       }
 
-      // Hero image: accept either an existing Image ID or a CF URL (creates Image record)
+      // Hero image: an existing Image ID, or an uploaded image (creates an Image record).
       if (input.heroImageId !== undefined) {
         if (input.heroImageId !== null && input.heroImageId !== project.heroImageId) {
           await getOwnedImageOrThrow(input.heroImageId, ctx.user.id);
