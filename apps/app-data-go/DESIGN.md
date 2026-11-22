@@ -402,6 +402,145 @@ too (the spec's Validity rule 2). A change the cache cannot apply (a malformed u
 A revoked user token is served for at most 2 minutes ("Token lifetime" above). A revoked grant's
 lag is the adapter's poll plus the time to the next read. REST reads see a revocation at once.
 
+## P4: the site's shadow read
+
+The first caller is the site itself, in **shadow**: an App Block's App Storage list
+(`GET /api/v1/blocks/storage/<collection>`, the block SDK's `storage.list`) is still answered by the
+site's document store, and a sampled fraction of those lists is also read here, off the response
+path, and compared. Nothing the app sees changes. Code: `src/server/services/apps/app-data-shadow.service.ts`,
+called by the storage route (`doc-store-api.ts`) after it has sent its answer.
+
+**Server-side, not in the browser.** Serving apps from here (a browser SDK calling this service) is a
+later step, and it needs a public route. A shadow needs neither: the site already holds the block
+token and the answer, and only a server can count and log the comparison. So the shadow call is
+site → this service, in-cluster, with the request's own `Authorization` header, sent on unchanged.
+
+**Registry only (`X-App-Data-Registry-Only: 1`).** This service's fallback is the very route that is
+asking, so the shadow request asks for the registry's answer only: a read the registry cannot answer
+is answered `200 {"source":"none","reason":<fallback reason>,"items":[]}` and REST is not read
+(`app_data_reads_total{source="none",outcome="registry_only"}`, not a fallback). The header only ever
+makes a read do less; the preflight does not allow it, so a browser cannot send it.
+
+**Which lists are shadowed.** The app's own collection (no `from`, or `from` naming the app itself),
+a `private` collection, the published namespace, an `app` or `hub` token with a signed-in viewer, and
+no list parameter but `limit` and `keyPrefix` (no filter, sort, mark, author or cursor). A
+`keyPrefix` is sent on, and this service filters the stream's records by it (below). The REST answer
+must be the whole collection, or the whole prefix: a list with a next page is not asked (a paged
+list would need the site to read every page itself, which the shadow does not do). An empty
+`keyPrefix` filters nothing and is not sent. Any other list is dropped before the flag is read: it
+takes no in-flight slot and is counted nowhere, since it may be any app's with the flag off. The
+schema major is the collection's current one (`resolveSchemaMajor`), 1 when it has none.
+
+Why `keyPrefix` matters: model-benchmarking, the first app, lists its private collection only through
+a prefixed scan (the SDK kv `list({ prefix })`), so without it none of its lists would be shadowed.
+
+**The gate,** in order, each before any work of the next:
+
+1. `APP_DATA_SHADOW_URL` set: this service's base URL, http(s) to a cluster-local service host
+   (`*.svc`, `*.svc.cluster.local`) only, the rule this service applies to the URLs it sends tokens
+   to. Unset, or any other value (read as unset, so a bad value never stops the site booting):
+   nothing happens;
+2. the list is one the shadow can compare (above), checked synchronously;
+3. a sample: `random() < APP_DATA_SHADOW_SAMPLE` (default `1`: every eligible list of an app the
+   flag is on for; the flag is the ramp, the knob stays for load);
+4. fewer than `APP_DATA_SHADOW_MAX_IN_FLIGHT` (default 4) shadow reads in flight in the process,
+   else counted `saturated` and dropped;
+5. the Flipt flag **`app-data-registry-shadow`**, a boolean evaluated **per app**: entity id the app
+   block id (`apb_…`), context `{ blockId: <the app's slug> }`. Default off (absent, or Flipt
+   unreachable). To start with model-benchmarking only: `enabled: false` with a rule whose segment
+   matches its app block id (an `ENTITY_ID` constraint), or its slug (a `blockId` context
+   constraint), returning `true`. Off for an app, nothing is asked and nothing is counted.
+
+Each read is bounded by `APP_DATA_SHADOW_TIMEOUT_MS` (default 2000 ms, above this service's
+`LIVE_WAIT_MS`), does not follow redirects, and never fails, delays or changes the REST answer: it
+starts after the response is sent, and every failure is an outcome.
+
+**What is compared.** Each record by its storage key, and its `data` canonicalised (sorted keys) and
+hashed: a key on one side only (`rest_only`, `registry_only`), or on both with different data
+(`data`). The keys match because the adapter's private feed now sends each record's key ("Private
+records carry their key" below). When a registry record carries no key (an adapter that predates
+it), the records are matched as a multiset of their data instead (`basis="data"`), which cannot
+tell a changed record from a removed one plus an added one. Versions are not compared (a stream's
+`rev` is a digest). An empty registry answer (`reason: empty`) agrees with an empty REST answer and
+is a miss against a non-empty one, since this service cannot tell an empty stream from a refused
+one.
+
+**Telemetry** (on the site's `/api/metrics`; no label carries an app, collection, key, user or value):
+
+- `app_data_shadow_requests_total{outcome}`: `compared`, `saturated`, `registry_miss`, `timeout`, `error`, `bad_response` (a `rest` answer counts here: a
+  release of this service without registry-only);
+- `app_data_shadow_registry_misses_total{reason}`: this service's fallback reasons (`unkeyed`
+  included), `other` for any it adds later;
+- `app_data_shadow_compared_total{result,basis}`: `match`/`mismatch`, by `key`/`data`;
+- `app_data_shadow_compared_records_total` and `app_data_shadow_mismatched_records_total{kind}`
+  (`rest_only`, `registry_only`, `data`).
+
+A mismatch is logged (`app-data-shadow-mismatch`, at most 30 lines a minute per process) with the
+app block id, the collection, the basis and the counts only: never a key or a value.
+
+**Private records carry their key.** The adapter's private feed sends each record's storage key as
+the entity's `key`, beside the body (`private-feed.ts`, `Entity.key` in `protocol.ts`). The body is
+unchanged, still the document its schemas claim, so no collection schema changes (and private
+collections' schemas are not published to registries anyway); the URN still names the `record_id`.
+A private stream belongs to one user's token, so a key never reaches another user. The public feeds
+carry no key. The HTTP binding sends it (an SSE upsert is the whole entity); the gRPC binding's
+`Entity` message has no field for it. Every private `rev` and the poll's read digest now include a
+body format (`k1`), so a cursor saved before keys were carried resumes as a change: each record is
+sent again, with its key, and no cursor is expired.
+
+This service carries the key on through: a registry item is `{"urn":…,"key":…,"rev":…,"data":…}`.
+`?keyPrefix=P` (a key's grammar, at most 128 characters) keeps the records whose key starts with `P`
+on the registry path and is sent on as the store's own `keyPrefix` on REST. A stream whose records
+carry no key cannot be filtered: a `keyPrefix` read of it goes to REST (`unkeyed`). A prefix that
+keeps none of a stream's records is an empty registry answer: the stream held records, so it was
+not refused.
+
+**Turn-on order:**
+
+1. This service on a release with registry-only and `keyPrefix` (this one or later). An older one
+   answers the shadow from REST, which reads the site again (counted `bad_response`).
+2. **The registry adapter on a release with private keys (this one or later), before the shadow
+   can compare by key.** Until then a keyed registry answer cannot exist: model-benchmarking's
+   prefixed lists read `registry_miss{reason="unkeyed"}`, and its unprefixed ones compare on
+   `basis="data"`.
+3. **Create `app-data-registry-shadow` in Flipt with `enabled: false` and no rule, BEFORE the URL is
+   set.** With the URL set, every eligible list reads the flag, and a missing key makes each read
+   throw past the eval cache and log a `flipt-eval-error`.
+4. The network path from the site's pods to this service's HTTP port (below).
+5. The site on a release with the shadow, `APP_DATA_SHADOW_URL` set to this service's cluster-local
+   URL. Still off: the flag answers false for every app.
+6. The flag's rule for model-benchmarking only.
+7. Until the block exchange (`APP_DATA_BLOCK_EXCHANGE`) and the adapter's private relays (S7) are on,
+   every shadow read is a `registry_miss` (`token_not_exchangeable` for a block token): that is the
+   first thing it shows, and the positive control for the wiring.
+
+**The load it adds once on**, all on this service and the adapter, none on the site's response:
+
+- each new block token that reads a shadowed list opens one stream: one hub exchange, one adapter
+  private snapshot of that user's collection, then an adapter poll every 60 s while it is open
+  (about 5 queries a poll, plus the install revocation read). A block token lives at most 15
+  minutes and the app's next one is a new token, so an active user opens a new stream per token;
+- a stream closes after 5 minutes without a read (`STREAM_IDLE_TTL_MS`) and at most 14 minutes after
+  it opened (`STREAM_MAX_AGE_MS`), so it outlives the user's session by up to the idle TTL;
+- bounded per replica by `APP_DATA_MAX_STREAMS` (100) and per token by
+  `APP_DATA_MAX_STREAMS_PER_TOKEN` (4); past either, reads go without a stream
+  (`registry_miss{reason="capacity"}` / `"token_capacity"`), which is correct, only uncompared.
+
+**Watch** after each step: the adapter's database reads (its private feed's query rate and time)
+and `app_data_streams_open`; `app_data_shadow_registry_misses_total{reason="capacity"}`, the sign
+the stream cap binds; `app_data_block_exchanges_total` (the hub exchange rate); and
+`app_data_shadow_requests_total{outcome=~"timeout|error|saturated"}`.
+
+**Infra it needs** (deployment config, not in this repo):
+
+- the site's deployments (every one that serves `/api/v1/blocks/storage`) get `APP_DATA_SHADOW_URL`
+  = this service's cluster-local Service URL and HTTP port (`APP_DATA_ADDR`, default `:8080`), and
+  optionally the `APP_DATA_SHADOW_*` knobs;
+- a network policy admitting the site's pods to this service on that port (ingress on this service,
+  egress from the site if its egress is restricted). The metrics stay on their own path;
+- no public route, no CORS origin and no new secret: the call is in-cluster and carries the
+  request's own token.
+
 ## Depends on site changes not in this PR
 
 - **An app's own collection on REST.** Hub tokens may import on REST now (#9783): an import is judged
@@ -412,8 +551,9 @@ lag is the adapter's poll plus the time to the next read. REST reads see a revoc
   blockId (the URN slug segment), which is what #9800 matches. Until it merges, an own-collection
   read falls back to that refusal, and only the registry path serves it. Do not deploy before #9800.
 - **Record names (Q2).** A stream names a record by its record core URN (`…/<record_id>`), the REST
-  list by its key, and an app cannot match the two. The REST list should expose `recordId`: the
-  store reads it (`doc-store.ts`), but `presentDocs` in `doc-store-api.ts` does not return it.
+  list by its key. A private stream's record now also carries its key ("Private records carry their
+  key" above), so an answer from either path can be matched by key. The REST list still does not
+  expose `recordId` (`presentDocs` in `doc-store-api.ts`).
 
 ## Before merge
 
@@ -425,7 +565,8 @@ lag is the adapter's poll plus the time to the next read. REST reads see a revoc
 - Resuming a stream from its cursor (see "Token lifetime").
 - A block-token stream outliving its block token's one exchange (see "Block tokens": the next read
   is REST's).
-- Any write path (P3b), the app SDK side (P4), overlays.
+- Any write path (P3b), the app SDK serving side of P4 (a browser calling this service, which needs a
+  public route; the shadow above is server-side), overlays.
 - Deploy manifests and the image build.
 - A true per-user cap: only per token, which is per (user, app).
 

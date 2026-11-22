@@ -7,9 +7,9 @@ and the PR's infra list). The design, the stream
 count arithmetic and the open questions are in [DESIGN.md](DESIGN.md).
 
 ```
-GET /v1/apps/{slug}/collections/{collection}/records[?major=N]
+GET /v1/apps/{slug}/collections/{collection}/records[?major=N][&keyPrefix=P]
 Authorization: Bearer <the app's hub access token for the user>
-→ {"source":"registry"|"rest","items":[{"urn"|"key":…,"rev":…,"data":{…}}]}
+→ {"source":"registry"|"rest","items":[{"urn"?:…,"key":…,"rev":…,"data":{…}}]}
 ```
 
 A read is answered from a per-user stream on the registry adapter, opened lazily with a token this
@@ -19,6 +19,10 @@ token. With `APP_DATA_REGISTRY_URL` unset every read is the REST read and no tok
 App Block token is exchanged at the hub's block exchange, once per block token, only with
 `APP_DATA_BLOCK_EXCHANGE` on (default off: it reads REST), after its signature and claims are checked
 here against the site's block-token JWKS (`APP_DATA_BLOCK_JWKS_URL`); DESIGN.md, "Block tokens".
+
+With `X-App-Data-Registry-Only: 1` a read the registry cannot answer is not read from REST: it
+answers `{"source":"none","reason":<why>,"items":[]}`. The site's shadow read of App Storage lists
+sends it, since the REST fallback is the site's own route (DESIGN.md, "P4: the site's shadow read").
 
 ## Layout
 

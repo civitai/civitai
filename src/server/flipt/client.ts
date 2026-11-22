@@ -310,6 +310,18 @@ export enum FLIPT_FEATURE_FLAGS {
   // APP_INDEX_URL and APP_INDEX_VIEWER_KEY. See `readReadModelMode` in
   // `src/server/services/blocks/app-listings-read-model-shadow.service.ts`.
   APP_LISTINGS_READ_MODEL = 'app-listings-read-model',
+  // Shadow reads of App Storage lists through the shared app-data service (apps/app-data-go): a
+  // sampled own-collection private list an app block reads is also asked of app-data-go
+  // (registry-only), off the response path, and the two answers are compared
+  // (`app_data_shadow_*`). The REST answer is always the one served. DEFAULT-OFF. EVALUATED PER
+  // APP: entityId = the app block id (`apb_…`), context `{ blockId }` (the app's slug), so a
+  // segment can name apps by either. Also needs APP_DATA_SHADOW_URL. See
+  // `src/server/services/apps/app-data-shadow.service.ts`.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC WITH
+  // APP_DATA_SHADOW_URL SET. A missing key makes `evaluateBoolean` throw, bypass the eval cache and
+  // log an error on every call, and with the URL set every eligible App Storage list reads it.
+  APP_DATA_REGISTRY_SHADOW = 'app-data-registry-shadow',
   // Mirror sampled `model.getAssociatedResourcesCardData` requests (raw input, the headers the answer
   // depends on, Node's superjson envelope) to feed-go's
   // `/internal/shadow/model.getAssociatedResourcesCardData`. Its own flag; shares FEED_GO_SHADOW_URL,

@@ -17,6 +17,12 @@ export interface Entity {
   schemas: string[];
   rev: string;
   body: unknown;
+  /**
+   * A private document's storage key (`private-feed.ts`), beside the body so the body stays the
+   * document its schemas claim. Only the private feed sets it, on a stream that belongs to one
+   * user's token. Sent by the HTTP binding; the gRPC `Entity` message has no field for it.
+   */
+  key?: string;
 }
 
 /**
