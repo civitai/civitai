@@ -1624,7 +1624,7 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(updateProjectSchema)
     .mutation(async ({ ctx, input }) => {
-      // primary: the unchanged checks below compare against the stored images.
+      // primary: a lagging replica would show a just-saved cover as changed and refuse it.
       const project = await dbWrite.comicProject.findUnique({
         where: { id: input.id },
         select: {
@@ -2509,7 +2509,7 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(z.object({ panelId: z.number().int(), imageUrl: z.string().min(1) }))
     .mutation(async ({ ctx, input }) => {
-      // primary: the unchanged check below compares against the stored value.
+      // primary: a lagging replica would show a just-saved image as changed and refuse it.
       const panel = await dbWrite.comicPanel.findUnique({
         where: { id: input.panelId },
         include: { chapter: { include: { project: { select: { userId: true, id: true } } } } },

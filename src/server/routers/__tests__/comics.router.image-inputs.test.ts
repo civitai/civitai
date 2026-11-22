@@ -4,6 +4,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
+import { submitWorkflow } from '@civitai/orchestration-client';
 
 const USER_ID = 7;
 const PROJECT_ID = 11;
@@ -96,6 +97,26 @@ describe('comics.replacePanelImage', () => {
 
     await refused(caller().replacePanelImage({ panelId: PANEL_ID, imageUrl: INPUT_A }));
     noImageWritten();
+  });
+
+  it('stores a new accepted value', async () => {
+    storedPanel(KEY);
+    dbMock.dbWrite.image.create.mockResolvedValue({ id: 900 } as never);
+    dbMock.dbWrite.comicPanel.update.mockResolvedValue({ id: PANEL_ID } as never);
+    const next = KEY.replace(/0$/, '1');
+    // The scan request after the write: the orchestrator package, stubbed for the whole suite.
+    vi.mocked(submitWorkflow).mockResolvedValue({
+      data: { id: 'wf' },
+      response: new Response(null, { status: 200 }),
+    } as never);
+
+    await caller().replacePanelImage({ panelId: PANEL_ID, imageUrl: next });
+
+    expect(dbMock.dbWrite.image.create.mock.calls[0][0].data.url).toBe(next);
+    expect(dbMock.dbWrite.comicPanel.update.mock.calls[0][0].data).toEqual({
+      imageUrl: next,
+      imageId: 900,
+    });
   });
 
   it('returns the panel untouched for its stored value', async () => {
