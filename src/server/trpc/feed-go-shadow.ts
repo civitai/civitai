@@ -775,15 +775,13 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
         release(sample);
         return;
       }
-      if (
-        isRestEndpoint(sample.endpoint) &&
-        response?.headersSent === false &&
-        typeof response.once === 'function'
-      ) {
+      const sent =
+        isRestEndpoint(sample.endpoint) && response?.headersSent === false ? response : undefined;
+      const once = typeof sent?.once === 'function' ? sent.once.bind(sent) : undefined;
+      if (sent && once) {
         if (!takeSlot(sample)) return;
-        const sent = response;
         let settled = false;
-        sent.once('finish', () => {
+        once('finish', () => {
           if (settled) return;
           settled = true;
           complete(
@@ -792,7 +790,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
             sent
           );
         });
-        sent.once('close', () => {
+        once('close', () => {
           if (settled) return;
           settled = true;
           complete(sample, 0, sent);
