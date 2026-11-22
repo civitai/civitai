@@ -1431,10 +1431,13 @@ describe('an expired item on a Private post', () => {
     expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
   });
 
+  // A month partition before the Knight votes, so a scan without ORDER BY returns the later stage first.
+  const EARLIER_MONTH = new Date('2026-11-20T12:00:00Z');
   async function escalatedItem(
     stage: string,
-    votes: [stage: string, answer: string, weight: number][]
+    votes: [stage: string, answer: string, weight: number, castAt?: Date][]
   ) {
+    await ensureVotePartitions(db, { now: EARLIER_MONTH, monthsAhead: 0 });
     await active(20, 'Templar');
     await active(30, 'Paladin');
     await image(10, 4);
@@ -1444,11 +1447,11 @@ describe('an expired item on a Private post', () => {
       stage,
       new Date(PAST.getTime() - 3_600_000),
     ]);
-    for (const [i, [at, answer, weight]] of votes.entries()) {
+    for (const [i, [at, answer, weight, castAt]] of votes.entries()) {
       await pg.query(
         `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
          VALUES ($1,$2,$3,$4,10,$5,$6,$7)`,
-        [id, 100 + i, PAST, Q, at, answer, weight]
+        [id, 100 + i, castAt ?? PAST, Q, at, answer, weight]
       );
     }
     return id;
@@ -1468,9 +1471,9 @@ describe('an expired item on a Private post', () => {
 
   it('takes only the latest voted stage, over an earlier stage with another pick', async () => {
     const id = await escalatedItem('Paladin', [
+      ['Templar', '32', 1, EARLIER_MONTH],
       ['Knight', '4', 1],
       ['Knight', '4', 1],
-      ['Templar', '32', 1],
     ]);
     await makePrivate();
     expect((await escalateExpired(db, { now: NOW })).toInquisitor).toBe(1);
@@ -1479,8 +1482,8 @@ describe('an expired item on a Private post', () => {
 
   it('does not route when a later stage picked a level over an earlier Blocked pick', async () => {
     const id = await escalatedItem('Paladin', [
+      ['Templar', '4', 1, EARLIER_MONTH],
       ['Knight', '32', 1],
-      ['Templar', '4', 1],
     ]);
     await makePrivate();
     expect(await escalateExpired(db, { now: NOW })).toMatchObject({ toInquisitor: 0, extended: 1 });
