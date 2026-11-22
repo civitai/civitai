@@ -1508,6 +1508,21 @@ describe('createFeedGoShadow — REST response headers', () => {
     expect(h.shadow.inFlight()).toBe(0);
   });
 
+  it('a REST response already closed when the handler returns (a client abort mid-handler) is skipped_status and holds no slot', async () => {
+    // A destroyed response emits neither `finish` nor `close` again, so waiting on them would hold
+    // the in-flight slot for good.
+    const h = harness();
+    const sample = h.shadow.beginRest('v1-models-id', modelsRequest('/api/v1/models/42'))!;
+    h.shadow.captureRest(sample, { id: 42 });
+    const p = pendingResponse();
+    h.shadow.finish(sample, 200, { ...p.res, destroyed: true });
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_status']);
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  // Invariant guard (green before the fix too): a later slot-take would let the second sample in.
   it('a REST response waiting to be sent counts against the in-flight cap', async () => {
     const h = harness({ config: { maxInFlight: 1 } });
     const first = h.shadow.beginRest('v1-models-id', modelsRequest('/api/v1/models/1'))!;
@@ -1524,6 +1539,7 @@ describe('createFeedGoShadow — REST response headers', () => {
     expect(h.fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  // Invariant guard (green before the fix too): the tRPC path is unchanged.
   it('a tRPC sample is read when finish is called, even on a response not yet sent', async () => {
     const h = harness();
     const sample = h.shadow.begin(request())!;

@@ -154,6 +154,7 @@ export type ShadowResponseLike = {
   getHeaders?: () => ShadowResponseHeaders;
   statusCode?: number;
   headersSent?: boolean;
+  destroyed?: boolean;
   once?(event: 'finish' | 'close', listener: () => void): unknown;
 };
 
@@ -755,8 +756,9 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
    * off). So when the response has not sent its headers yet, the headers and the status are read
    * when it emits `finish`, which is exactly what went out (a 304 Next answered to `If-None-Match` is
    * then `skipped_status`). The in-flight slot is taken first, so the samples waiting on a response
-   * are bounded like the ones in flight; a response that closes without finishing (a client abort)
-   * is `skipped_status`. A tRPC sample is read now, as before.
+   * are bounded like the ones in flight; a response that closes without finishing (a client abort),
+   * or was already closed when the handler returned, is `skipped_status`. A tRPC sample is read now,
+   * as before.
    */
   function finish(
     sample: FeedGoShadowSample,
@@ -777,6 +779,12 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       }
       const sent =
         isRestEndpoint(sample.endpoint) && response?.headersSent === false ? response : undefined;
+      // Already closed (the client went away while the handler ran): neither event comes again, and
+      // nothing complete was sent.
+      if (sent?.destroyed === true) {
+        complete(sample, 0, sent);
+        return;
+      }
       const once = typeof sent?.once === 'function' ? sent.once.bind(sent) : undefined;
       if (sent && once) {
         if (!takeSlot(sample)) return;
