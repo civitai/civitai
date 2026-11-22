@@ -54,23 +54,54 @@ export function highestTagVersion(tags, tagPrefix) {
 }
 
 /**
- * Is this branch's package.json behind the app's released history?
+ * Is this branch behind the app's released history, and which version does the
+ * next release continue from?
  *
- * Equal is fine — that is the normal state right before a release. Ahead is fine
- * too (someone bumped by hand). Only BEHIND is refused, because that is the state
- * in which the computed tag does not continue the released line.
+ * `tags` is every tag in the repo; `reachableTags` is the subset reachable from
+ * HEAD (`git tag --merged HEAD`). A tag reachable from HEAD is history this branch
+ * already CONTAINS, so the release continues from it even when package.json was not
+ * bumped to match. That happens when a tag is cut on `main` without a release commit
+ * (an automated tagger that tags green merges does exactly this). So:
+ *
+ *   base   = max(package.json, highest tag reachable from HEAD)
+ *   behind = the app's highest tag anywhere is above `base`
+ *
+ * Equal is fine; that is the normal state right before a release. Ahead is fine
+ * too (someone bumped by hand). BEHIND is refused, because then the highest release
+ * was cut from code this branch does not contain (the moderator case above), and a
+ * tag computed here does not continue that line.
+ *
+ * `reachableTags` defaults to none, which is the original rule: package.json alone.
  */
-export function releaseSkew({ currentVersion, tags, tagPrefix }) {
+export function releaseSkew({ currentVersion, tags, tagPrefix, reachableTags = [] }) {
   const highest = highestTagVersion(tags, tagPrefix);
-  if (highest === null) return { behind: false, current: currentVersion, highest: null };
+  if (highest === null) {
+    return { behind: false, current: currentVersion, highest: null, base: currentVersion };
+  }
   if (!parseSemver(currentVersion)) {
     throw new Error(`package.json version is not a plain x.y.z version: ${currentVersion}`);
   }
+  const highestReachable = highestTagVersion(reachableTags, tagPrefix);
+  const base =
+    highestReachable !== null && compareSemver(highestReachable, currentVersion) > 0
+      ? highestReachable
+      : currentVersion;
   return {
-    behind: compareSemver(currentVersion, highest) < 0,
+    behind: compareSemver(base, highest) < 0,
     current: currentVersion,
     highest,
+    base,
   };
+}
+
+/** `version` bumped by `patch` | `minor` | `major`, as `npm version` would bump it. */
+export function bumpVersion(version, bump) {
+  const v = parseSemver(version);
+  if (!v) throw new Error(`cannot bump a non-semver version: ${version}`);
+  if (bump === 'patch') return `${v.major}.${v.minor}.${v.patch + 1}`;
+  if (bump === 'minor') return `${v.major}.${v.minor + 1}.0`;
+  if (bump === 'major') return `${v.major + 1}.0.0`;
+  throw new Error(`unknown bump: ${bump}`);
 }
 
 /** The refusal text. Separate from the check so a test can pin what an operator is told. */

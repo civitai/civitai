@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  bumpVersion,
   compareSemver,
   highestTagVersion,
   parseSemver,
@@ -74,7 +75,7 @@ describe('releaseSkew', () => {
       tags: MODERATOR_TAGS,
       tagPrefix: 'moderator-v',
     });
-    expect(skew).toEqual({ behind: true, current: '0.0.1', highest: '0.0.26' });
+    expect(skew).toEqual({ behind: true, current: '0.0.1', highest: '0.0.26', base: '0.0.1' });
   });
 
   // The case with no natural brake, and the reason this guard exists: a minor bump
@@ -93,7 +94,7 @@ describe('releaseSkew', () => {
     // The legitimate path: releasing 0.0.27 from the branch that carries 0.0.26.
     expect(
       releaseSkew({ currentVersion: '0.0.26', tags: MODERATOR_TAGS, tagPrefix: 'moderator-v' })
-    ).toEqual({ behind: false, current: '0.0.26', highest: '0.0.26' });
+    ).toEqual({ behind: false, current: '0.0.26', highest: '0.0.26', base: '0.0.26' });
   });
 
   it('allows a release when the branch is ahead', () => {
@@ -106,13 +107,91 @@ describe('releaseSkew', () => {
   it('allows the first ever release of an app', () => {
     expect(
       releaseSkew({ currentVersion: '0.0.1', tags: MODERATOR_TAGS, tagPrefix: 'storage-v' })
-    ).toEqual({ behind: false, current: '0.0.1', highest: null });
+    ).toEqual({ behind: false, current: '0.0.1', highest: null, base: '0.0.1' });
   });
 
   it('throws rather than passing when package.json holds a non-semver version', () => {
     expect(() =>
       releaseSkew({ currentVersion: 'nightly', tags: MODERATOR_TAGS, tagPrefix: 'moderator-v' })
     ).toThrow(/not a plain x\.y\.z/);
+  });
+});
+
+// Tags cut on `main` without a release commit (a tagger tagging green merges):
+// package.json stays at the last human release, 0.0.38, while 0.0.39 and 0.0.40 are
+// tagged on commits the branch contains. Values are written from that tag list.
+const FEED_TAGS = Array.from({ length: 40 }, (_, i) => `feed-go-v0.0.${i + 1}`);
+
+describe('releaseSkew with tags reachable from HEAD', () => {
+  it('continues from the highest reachable tag above package.json', () => {
+    expect(
+      releaseSkew({
+        currentVersion: '0.0.38',
+        tags: FEED_TAGS,
+        reachableTags: FEED_TAGS,
+        tagPrefix: 'feed-go-v',
+      })
+    ).toEqual({ behind: false, current: '0.0.38', highest: '0.0.40', base: '0.0.40' });
+  });
+
+  it('keeps package.json as the base when it is above every reachable tag', () => {
+    expect(
+      releaseSkew({
+        currentVersion: '0.1.0',
+        tags: FEED_TAGS,
+        reachableTags: FEED_TAGS,
+        tagPrefix: 'feed-go-v',
+      })
+    ).toEqual({ behind: false, current: '0.1.0', highest: '0.0.40', base: '0.1.0' });
+  });
+
+  // The moderator state: every release is on a branch main never merged, so none is
+  // reachable and the guard must still fire.
+  it('still refuses when the higher tags are not reachable', () => {
+    expect(
+      releaseSkew({
+        currentVersion: '0.0.1',
+        tags: MODERATOR_TAGS,
+        reachableTags: [],
+        tagPrefix: 'moderator-v',
+      })
+    ).toEqual({ behind: true, current: '0.0.1', highest: '0.0.26', base: '0.0.1' });
+  });
+
+  it('refuses when the highest tag is above the highest reachable one', () => {
+    expect(
+      releaseSkew({
+        currentVersion: '0.0.38',
+        tags: [...FEED_TAGS, 'feed-go-v0.0.45'],
+        reachableTags: FEED_TAGS,
+        tagPrefix: 'feed-go-v',
+      })
+    ).toEqual({ behind: true, current: '0.0.38', highest: '0.0.45', base: '0.0.40' });
+  });
+
+  it('ignores reachable tags of other apps', () => {
+    expect(
+      releaseSkew({
+        currentVersion: '0.0.38',
+        tags: [...FEED_TAGS.slice(0, 38), 'auth-app-v0.0.90'],
+        reachableTags: ['auth-app-v0.0.90'],
+        tagPrefix: 'feed-go-v',
+      })
+    ).toEqual({ behind: false, current: '0.0.38', highest: '0.0.38', base: '0.0.38' });
+  });
+});
+
+describe('bumpVersion', () => {
+  it('bumps like npm version', () => {
+    expect(bumpVersion('0.0.40', 'patch')).toBe('0.0.41');
+    expect(bumpVersion('0.0.40', 'minor')).toBe('0.1.0');
+    expect(bumpVersion('0.3.40', 'major')).toBe('1.0.0');
+    expect(bumpVersion('1.9.12', 'minor')).toBe('1.10.0');
+  });
+
+  it('throws on a non-semver version or an unknown bump', () => {
+    expect(() => bumpVersion('nightly', 'patch')).toThrow(/non-semver/);
+    expect(() => bumpVersion('0.0.1', 'prerelease')).toThrow(/unknown bump/);
   });
 });
 
