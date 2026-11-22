@@ -142,7 +142,6 @@ async function carryOut(kind: Kind, rows: Row[]) {
   const groups = new Map<string, { ids: number[]; remove: (ids: number[]) => Promise<unknown> }>();
   for (const { id, data, attempted } of rows) {
     const { remove, key } = replay(kind, data);
-    // A post goes alone, and a retry goes alone; images batch by what replays them.
     const groupKey = kind === 'Post' || attempted ? `one:${id}` : key;
     const group = groups.get(groupKey) ?? { ids: [], remove };
     group.ids.push(id);

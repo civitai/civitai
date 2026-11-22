@@ -1492,7 +1492,6 @@ export const deletePost = async ({
   await userImageVideoCountCaches.bust(imageOwnerIds);
 
   if (post) return { ...post, deletedImageIds, deleteAfterReview };
-  // Kept: the notice only if one is owed (above).
   return deleteAfterReview ? { deleteAfterReview } : undefined;
 };
 

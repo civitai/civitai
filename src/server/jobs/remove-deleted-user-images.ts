@@ -14,6 +14,7 @@ import {
 } from '~/server/services/image.service';
 import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { contentRemovalHeldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import { ACCOUNT_DELETION_DRAIN } from '~/server/services/account-deletion-images';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { refreshProfilePicturesForUsersLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import {
@@ -215,7 +216,7 @@ async function drainUser(
 
       // Re-checked on the delete itself, so a hold placed mid-drain still stops it.
       const deleted = await deleteImages(batch, {
-        actor: { system: 'remove-deleted-user-images' },
+        actor: { system: ACCOUNT_DELETION_DRAIN },
         onlyWhere: Prisma.sql`NOT ${held}`,
       });
       deletedImages += deleted.length;
@@ -246,7 +247,7 @@ async function drainUser(
         return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: true };
       const { deleted } = await deletePostRows(kyselyOver(dbWrite), {
         ids: batch,
-        actor: { system: 'remove-deleted-user-images' },
+        actor: { system: ACCOUNT_DELETION_DRAIN },
         where: fromPrismaSql(Prisma.sql`
           "userId" = ${userId}
           AND EXISTS (
