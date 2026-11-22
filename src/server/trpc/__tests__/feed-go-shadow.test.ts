@@ -7,6 +7,7 @@
  * pins one decision. The end-to-end path through the real route and transformer is
  * `src/server/__tests__/trpc-feed-go-shadow.test.ts`.
  */
+import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import superjson from 'superjson';
@@ -1435,6 +1436,105 @@ describe('createFeedGoShadow — REST response headers', () => {
       vary: 'Authorization',
       'cache-control': 'public, s-maxage=300, stale-while-revalidate=150',
     });
+  });
+
+  /**
+   * A response that has not sent its headers when the route's `finally` calls `finish` (the endpoint
+   * wrappers' withAxiom runs Next's res.json later), emitting `finish` / `close` when told to.
+   */
+  function pendingResponse() {
+    const emitter = new EventEmitter();
+    const headers: Record<string, string> = { 'cache-control': 'private, no-store' };
+    const res = {
+      statusCode: 200,
+      headersSent: false,
+      getHeaders: () => ({ ...headers }),
+      once: (event: 'finish' | 'close', listener: () => void) => emitter.once(event, listener),
+    };
+    return { res, headers, emit: (event: 'finish' | 'close') => emitter.emit(event) };
+  }
+
+  it('a REST response not yet sent is read on finish: the ETag set after the handler is in the sample', async () => {
+    const h = harness();
+    const sample = h.shadow.beginRest('v1-models-id', modelsRequest('/api/v1/models/42'))!;
+    h.shadow.captureRest(sample, { id: 42 });
+    const p = pendingResponse();
+    h.shadow.finish(sample, 200, p.res);
+    // Nothing is read or queued before the response goes out, but the slot is already held.
+    expect(h.queued).toHaveLength(0);
+    expect(h.shadow.inFlight()).toBe(1);
+    // What Next's res.json sets when it finally runs.
+    p.headers.etag = '"later-etag"';
+    p.res.headersSent = true;
+    p.emit('finish');
+    p.emit('close');
+    await h.flush();
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body.responseHeaders).toEqual({
+      'cache-control': 'private, no-store',
+      etag: '"later-etag"',
+    });
+    expect(h.outcomes).toEqual(['sent']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('a REST response that finishes with a 304 (Next answering If-None-Match) is skipped_status', async () => {
+    const h = harness();
+    const sample = h.shadow.beginRest('v1-models', modelsRequest('/api/v1/models?limit=1'))!;
+    h.shadow.captureRest(sample, { items: [], metadata: {} });
+    const p = pendingResponse();
+    h.shadow.finish(sample, 200, p.res);
+    p.res.statusCode = 304;
+    p.emit('finish');
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_status']);
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('a REST response that closes without finishing (a client abort) is skipped_status and frees the slot', async () => {
+    const h = harness();
+    const sample = h.shadow.beginRest('v1-models-id', modelsRequest('/api/v1/models/42'))!;
+    h.shadow.captureRest(sample, { id: 42 });
+    const p = pendingResponse();
+    h.shadow.finish(sample, 200, p.res);
+    expect(h.shadow.inFlight()).toBe(1);
+    p.emit('close');
+    p.emit('finish');
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_status']);
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('a REST response waiting to be sent counts against the in-flight cap', async () => {
+    const h = harness({ config: { maxInFlight: 1 } });
+    const first = h.shadow.beginRest('v1-models-id', modelsRequest('/api/v1/models/1'))!;
+    h.shadow.captureRest(first, { id: 1 });
+    const p = pendingResponse();
+    h.shadow.finish(first, 200, p.res);
+    const second = h.shadow.beginRest('v1-models-id', modelsRequest('/api/v1/models/2'))!;
+    h.shadow.captureRest(second, { id: 2 });
+    h.shadow.finish(second, 200, pendingResponse().res);
+    expect(h.outcomes).toEqual(['dropped_overload']);
+    p.emit('finish');
+    await h.flush();
+    expect(h.outcomes).toEqual(['dropped_overload', 'sent']);
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a tRPC sample is read when finish is called, even on a response not yet sent', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    const data = { items: [] };
+    h.shadow.run(sample, () => h.shadow.capture(data, superjson.serialize(data), false));
+    const p = pendingResponse();
+    h.shadow.finish(sample, 200, p.res);
+    expect(h.queued).toHaveLength(1);
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body.responseHeaders).toEqual({ 'cache-control': 'private, no-store' });
   });
 
   it('a REST sample without readable headers carries neither field', async () => {
