@@ -121,10 +121,6 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { getImageUploadBackend } from '~/utils/s3-utils';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
-import {
-  assertClientImageUrlsUsable,
-  assertClientKeysIssuedToCaller,
-} from '~/server/services/image-url-ownership';
 import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
 import {
   assertGenerationInputsUsable,
@@ -423,10 +419,8 @@ const createPanelSchema = z.object({
 
 const updatePanelSchema = z.object({
   panelId: z.number().int(),
-  status: z.nativeEnum(ComicPanelStatus).optional(),
+  status: z.literal(ComicPanelStatus.Generating).optional(),
   imageUrl: z.string().nullish(),
-  civitaiJobId: z.string().optional(),
-  errorMessage: z.string().nullish(),
 });
 
 const deletePanelSchema = z.object({
@@ -2470,7 +2464,8 @@ export const comicsRouter = router({
     .input(updatePanelSchema)
     .mutation(async ({ ctx, input }) => {
       // Verify ownership via chapter -> project
-      const panel = await dbRead.comicPanel.findUnique({
+      // primary: the image url check below compares against the value about to be overwritten.
+      const panel = await dbWrite.comicPanel.findUnique({
         where: { id: input.panelId },
         include: { chapter: { include: { project: { select: { userId: true } } } } },
       });
@@ -2478,18 +2473,16 @@ export const comicsRouter = router({
       if (!panel || panel.chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
-      if (input.imageUrl && input.imageUrl !== panel.imageUrl) {
-        await assertClientImageUrlsUsable({ urls: [input.imageUrl], userId: ctx.user.id });
-        await assertClientKeysIssuedToCaller({ urls: [input.imageUrl], userId: ctx.user.id });
+      if (input.imageUrl != null && input.imageUrl !== panel.imageUrl) {
+        throw throwBadRequestError('A panel image is changed through replacePanelImage');
       }
 
       const updated = await dbWrite.comicPanel.update({
         where: { id: input.panelId },
         data: {
           status: input.status,
-          imageUrl: input.imageUrl,
-          civitaiJobId: input.civitaiJobId,
-          errorMessage: input.errorMessage,
+          // Only clearing is written; any other value is the current one.
+          imageUrl: input.imageUrl === null ? null : undefined,
         },
       });
 
