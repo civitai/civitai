@@ -1,4 +1,5 @@
 import { createEmail, emailTheme, EMAIL_MUTED_CLASS, renderEmailShell } from '@civitai/email';
+import { escapeHtml } from '@civitai/shared/html-escape';
 
 // appName comes from the client's registration, never the request, so an app can't send invites in
 // another's name.
@@ -9,12 +10,6 @@ type InviteData = {
   invitedBy: string | null;
   message: string | null;
 };
-
-const escapeHtml = (s: string) =>
-  s.replace(
-    /[&<>"']/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!)
-  );
 
 const headline = ({ appName, invitedBy }: InviteData) =>
   invitedBy ? `${invitedBy} invited you to ${appName}` : `You're invited to ${appName}`;
