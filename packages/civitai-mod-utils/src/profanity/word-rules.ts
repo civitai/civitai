@@ -71,11 +71,16 @@ export const MIN_MANAGED_PROFANITY_ENTRIES = 192;
  * The usable entries of a managed profanity block list, and whether there are enough of them for
  * the list to be enforced. The server filter and the moderator app's removal guard both decide
  * through this, so a change to the rule reaches each of them.
+ *
+ * `distinct` counts entries the way the filter keys them (by `cleanWord`), so spellings of one
+ * entry count once toward the floor.
  */
 export function managedProfanityEntries(entries: readonly string[]): {
   usable: string[];
+  distinct: number;
   enforced: boolean;
 } {
   const usable = entries.filter(isUsableBlockedEntry);
-  return { usable, enforced: usable.length >= MIN_MANAGED_PROFANITY_ENTRIES };
+  const distinct = new Set(usable.map(cleanWord)).size;
+  return { usable, distinct, enforced: distinct >= MIN_MANAGED_PROFANITY_ENTRIES };
 }
