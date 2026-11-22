@@ -367,20 +367,28 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
   // An off-site parent whose link template is unusable has no showable item at all: the bounded read
   // carries none and reports none left out, since the rows past the bound would not link either.
   it.each<
-    [string, number, { parent_kind?: string; parent_link_template?: string | null }, number, number]
+    [
+      string,
+      number,
+      { parent_kind?: string; parent_link_template?: string | null },
+      number,
+      number,
+      number | null,
+    ]
   >([
-    ['every row', 0, {}, 200, 3],
-    ['the bounded read', 3, {}, 200, 3],
+    ['every row', 0, {}, 200, 3, 3],
+    ['the bounded read', 3, {}, 200, 3, 3],
     [
       'the bounded read, under an unusable link template',
       3,
       { parent_kind: 'offsite', parent_link_template: 'not-a-link-template' },
       0,
       0,
+      null,
     ],
   ])(
     '🔴 a listing over the sub-listing cap carries the newest showable items, and the excess is reported (%s)',
-    async (_name, unread, over, carried, omitted) => {
+    async (_name, unread, over, carried, omitted, first) => {
       dbMock.dbRead.appListing.findMany.mockImplementation((async (args: {
         select: Record<string, unknown>;
       }) =>
@@ -429,8 +437,9 @@ describe('liveCatalogReadDeps({ listings: true }).loadListingExtras', () => {
       const extras = (await loadListingExtras(['lst-a1'])).get('lst-a1');
       expect(extras?.subListings).toHaveLength(carried);
       expect(extras?.subListingsOmitted).toBe(omitted);
-      // The three oldest (the first three rows) are the ones left out.
-      if (carried > 0) expect(extras?.subListings[0].id).toBe(all[3].id);
+      // The three oldest (the first three rows) are the ones left out; none is carried at all
+      // under an unusable template.
+      expect(extras?.subListings[0]?.id).toBe(first === null ? undefined : all[first].id);
       expect(capped).toEqual(omitted > 0 ? [['lst-a1', omitted]] : []);
     }
   );
