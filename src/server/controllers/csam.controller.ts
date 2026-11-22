@@ -107,7 +107,8 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     : await createCsamReport({ ...filed, writeBlocklist: false });
   // Folds included: what the report's send will leave out, named while the moderator is here.
   const contextWontSend = contextItemsOverBudget(
-    (report.details as { contextText?: CsamContextText[] } | null)?.contextText
+    ('details' in report ? (report.details as { contextText?: CsamContextText[] } | null) : null)
+      ?.contextText
   );
 
   try {
@@ -307,7 +308,7 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
       error: (error as Error)?.message,
       payload: { reportedById, csamReportId: report.id },
     });
-    throwServiceUnavailableError(
+    throw throwServiceUnavailableError(
       `${
         error instanceof TRPCError && error.code === 'SERVICE_UNAVAILABLE'
           ? error.message
