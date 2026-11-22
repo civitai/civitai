@@ -4171,9 +4171,8 @@ async function assertScanRatingKept({
     sfwCoverImageId: after('sfwCoverImageId'),
   });
   if (after('nsfw')) return;
-  // A row already not mature. A held verdict has no rating here to lower, and removing the face
-  // applies it in this save (`applyComFaceHeldVerdict`); a marked row (an older one) is refused only
-  // for removing the face that listed it.
+  // A row already not mature: a marked row (an older one) is refused only for removing the face that
+  // listed it.
   if (!before.nsfw && (held || faceAfter || !hasFace(before))) return;
   // A held verdict whose time cannot be read has no ruling to compare against: it holds.
   const ratedAt = markedAt ?? held?.at;

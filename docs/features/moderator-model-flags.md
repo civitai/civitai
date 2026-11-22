@@ -58,7 +58,8 @@ Notes on the tabs:
     reason; refused while the model is NSFW and SFW-only, which its owner cannot save, or NSFW and minor or a
     real person) or **Rate NSFW** (refused
     while the model is minor, a real person or Private; a lead held as minor needs a reason). The form
-    sends the time of the lead it shows, and a ruling for a lead that has since been replaced is refused.
+    sends a revision of what it shows (the lead and its rulings, the model's flags, rating and locks, and
+    the scan); a ruling is refused if any of these has changed since.
   - Each ruling, and each rating the scan applies itself, logs a ModActivity row and keeps the values it
     replaced in `meta.restrictedNsfwVerdictRulings`. The block shows how many leads wait when it lists fewer.
     The sidebar's Needs review badge adds these leads to the held-detection count; a model with both counts

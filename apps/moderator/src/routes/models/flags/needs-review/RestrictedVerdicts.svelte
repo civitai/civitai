@@ -9,6 +9,7 @@
   import { leadComCoverBlurred } from '$lib/com-face';
   import { ConfirmButton } from '@civitai/ui/components/confirm/index.js';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
+  import RestrictedLeadFields from './RestrictedLeadFields.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
   import {
     LIFTED_NOTE,
@@ -186,8 +187,7 @@
                 {/if}
               </dl>
               <form method="POST" action="?/ruleRestrictedVerdict" use:enhance={submit(row.modelId)}>
-                <input type="hidden" name="modelId" value={row.modelId} />
-                <input type="hidden" name="leadAt" value={row.heldAt ?? ''} />
+                <RestrictedLeadFields modelId={row.modelId} revision={row.revision} />
                 <label class="flex flex-col gap-1 text-xs">
                   <span class="text-dark-2">
                     Reason {row.restriction === 'minor'
@@ -251,8 +251,7 @@
                   class="hidden"
                   use:enhance={submit(row.modelId)}
                 >
-                  <input type="hidden" name="modelId" value={row.modelId} />
-                  <input type="hidden" name="leadAt" value={row.heldAt ?? ''} />
+                  <RestrictedLeadFields modelId={row.modelId} revision={row.revision} />
                   <input type="hidden" name="ruling" value="rateNsfw" />
                   <input type="hidden" name="reason" value={reasons[row.modelId] ?? ''} />
                 </form>

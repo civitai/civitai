@@ -442,10 +442,9 @@ describe('restricted-verdict leads', () => {
     expect(bustMinorQueueCounts).toHaveBeenCalled();
   });
 
-  it('forwards the time of the lead on screen, so a replaced lead is refused', async () => {
-    const leadAt = '2026-11-04T00:00:00.000Z';
-    await rule({ modelId: '42', ruling: 'keep', leadAt });
-    expect(ruleRestrictedVerdict).toHaveBeenCalledWith(42, 'keep', undefined, leadAt);
+  it('forwards the revision of the lead on screen, so one that has changed is refused', async () => {
+    await rule({ modelId: '42', ruling: 'keep', revision: 'rev-1' });
+    expect(ruleRestrictedVerdict).toHaveBeenCalledWith(42, 'keep', undefined, 'rev-1');
   });
 
   it('is refused without the detections permission, before anything is sent', async () => {

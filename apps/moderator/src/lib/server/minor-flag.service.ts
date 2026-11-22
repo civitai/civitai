@@ -241,11 +241,11 @@ export async function ruleRestrictedVerdict(
   modelId: number,
   ruling: RestrictedVerdictRuling,
   reason: string | undefined,
-  leadAt?: string
+  revision?: string
 ): Promise<RestrictedVerdictResult> {
   const result = await callModEndpoint(
     'model/resolve-restricted-nsfw-verdict',
-    { modelId, ruling, ...(reason ? { reason } : {}), ...(leadAt ? { leadAt } : {}) },
+    { modelId, ruling, ...(reason ? { reason } : {}), ...(revision ? { revision } : {}) },
     RULING_LABEL[ruling]
   );
   return result.ok ? { ok: true } : { ok: false, error: result.error };

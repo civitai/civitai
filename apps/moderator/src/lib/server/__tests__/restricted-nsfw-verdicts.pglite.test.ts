@@ -27,6 +27,7 @@ vi.mock('$env/dynamic/private', () => ({
 const { getRestrictedVerdictCount, getRestrictedVerdicts } = await import(
   '../restricted-nsfw-verdicts'
 );
+const { restrictedLeadRevision } = await import('@civitai/shared/restricted-lead-revision');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const INDEX_MIGRATION = readFileSync(
@@ -52,7 +53,7 @@ beforeEach(async () => {
       "nsfwLevel" INTEGER NOT NULL);
     CREATE TABLE "EntityModeration" ("id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL,
       "entityId" INTEGER NOT NULL, "nsfwLevel" INTEGER, "triggeredLabels" TEXT[],
-      "result" JSONB, "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now());
+      "result" JSONB, "contentHash" TEXT, "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now());
   `);
   // CONCURRENTLY cannot run in a transaction block; PGlite runs exec's statements as one.
   await db.exec(INDEX_MIGRATION.replace('CONCURRENTLY ', ''));
@@ -194,6 +195,64 @@ describe('restricted-verdict leads', () => {
       1: false,
       2: true,
     });
+  });
+
+  // The same stored row as the main app's ruling test (restricted-nsfw-verdict.pglite.test.ts): both
+  // must read it into this revision, or every ruling from this screen is refused.
+  it('gives each lead the revision the main app compares before it rules', async () => {
+    await model(1, {
+      sfwOnly: true,
+      meta: {
+        restrictedNsfwVerdict: {
+          source: 'text-scan',
+          at: '2026-11-04T00:00:00.000Z',
+          restriction: 'minor',
+          liftedBy: 'moderator',
+          applied: { at: '2026-11-05T00:00:00.000Z' },
+        },
+        restrictedNsfwVerdictRulings: [
+          { at: '2026-11-01T00:00:00Z' },
+          { at: '2026-11-03T00:00:00Z' },
+        ],
+        systemNsfwLock: { source: 'text-scan', at: '2026-11-05T00:00:00.000Z' },
+        textModeration: { scannedAt: '2026-11-02T00:00:00.000Z' },
+      },
+    });
+    await db.query(`UPDATE "Model" SET "lockedProperties" = '{sfwOnly,minor}' WHERE id = 1`);
+    await db.query(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", "triggeredLabels", result, "contentHash", "nsfwLevel")
+       VALUES ('Model', 1, '{nsfw,violence}', $1, 'h1', 16)`,
+      [{ labels: { nsfw: { reason: 'explicit' } } }]
+    );
+    const [row] = await getRestrictedVerdicts();
+    expect(row.revision).toBe(
+      restrictedLeadRevision({
+        lead: {
+          at: '2026-11-04T00:00:00.000Z',
+          source: 'text-scan',
+          restriction: 'minor',
+          liftedBy: 'moderator',
+          appliedAt: '2026-11-05T00:00:00.000Z',
+        },
+        lastRulingAt: '2026-11-03T00:00:00Z',
+        model: {
+          minor: false,
+          poi: false,
+          isPrivate: false,
+          nsfw: false,
+          sfwOnly: true,
+          locks: ['minor', 'sfwOnly'],
+          systemNsfwLockAt: '2026-11-05T00:00:00.000Z',
+        },
+        scan: {
+          nsfwLevel: 16,
+          triggeredLabels: ['violence', 'nsfw'],
+          nsfwReason: 'explicit',
+          contentHash: 'h1',
+          forensicsScannedAt: '2026-11-02T00:00:00.000Z',
+        },
+      })
+    );
   });
 
   it("shows the scan's own verdict row next to the lead", async () => {

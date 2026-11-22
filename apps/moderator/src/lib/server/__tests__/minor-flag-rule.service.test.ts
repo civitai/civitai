@@ -73,11 +73,11 @@ describe('revertMinorFlag', () => {
 });
 
 describe('ruleRestrictedVerdict', () => {
-  it('sends the time of the lead the moderator saw', async () => {
-    await ruleRestrictedVerdict(42, 'dismiss', 'escalated', '2026-11-04T00:00:00.000Z');
+  it('sends the revision of the lead the moderator saw', async () => {
+    await ruleRestrictedVerdict(42, 'dismiss', 'escalated', 'rev-1');
     expect(callModEndpoint).toHaveBeenCalledWith(
       'model/resolve-restricted-nsfw-verdict',
-      { modelId: 42, ruling: 'dismiss', reason: 'escalated', leadAt: '2026-11-04T00:00:00.000Z' },
+      { modelId: 42, ruling: 'dismiss', reason: 'escalated', revision: 'rev-1' },
       expect.any(String)
     );
   });
