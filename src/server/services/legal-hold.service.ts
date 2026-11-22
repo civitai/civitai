@@ -12,8 +12,21 @@ import {
   userUnderLegalHoldSql,
 } from '~/server/utils/legal-hold';
 
-/** What a moderator is told. Never says which hold applies. */
-export const LEGAL_HOLD_REFUSAL = 'Account under legal hold; contact Legal.';
+import {
+  HOLD_UNKNOWN_REFUSAL as HOLD_UNCONFIRMED,
+  LEGAL_HOLD_REFUSAL,
+  LEGAL_HOLD_STOPPED,
+  LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
+  PURGE_ARCHIVE_REFUSAL,
+} from '@civitai/shared/legal-hold-texts';
+
+export {
+  HOLD_UNCONFIRMED,
+  LEGAL_HOLD_REFUSAL,
+  LEGAL_HOLD_STOPPED,
+  LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
+  PURGE_ARCHIVE_REFUSAL,
+};
 
 /** The one definition of a hold marker, and the table behind it. Both may not exist yet. */
 export const HOLD_MARKER_VIEW = 'EvidenceHeldUser';
@@ -30,12 +43,6 @@ export class LegalHoldError extends Error {
   }
 }
 
-/** What a moderator is told when a hold stopped a wipe part-way. Never says which hold applies. */
-export const LEGAL_HOLD_STOPPED = 'Purge stopped by a legal hold part-way; contact Legal.';
-
-/** A stopped purge that also left bids unrefunded; the moderator must not read it as nothing owed. */
-export const LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE = `${LEGAL_HOLD_STOPPED} Some bids were not refunded; check the refund alerts.`;
-
 /** A hold that landed after the check stopped a wipe part-way: some of it was already deleted. */
 export class LegalHoldStoppedError extends LegalHoldError {
   /** The steps that ran before the stop and failed, as `removeAllContent` names them. */
@@ -45,10 +52,6 @@ export class LegalHoldStoppedError extends LegalHoldError {
   }
 }
 
-/** What a moderator is told when a wipe's profile archive failed, which stops it before any delete. */
-export const PURGE_ARCHIVE_REFUSAL =
-  "Purge refused: the profile couldn't be archived, so nothing was deleted. Try again.";
-
 /** A content wipe refused because its profile archive failed; nothing was deleted. */
 export class ProfileArchiveRefusedError extends Error {
   constructor(options?: { cause?: unknown }) {
@@ -56,9 +59,6 @@ export class ProfileArchiveRefusedError extends Error {
     this.name = 'ProfileArchiveRefusedError';
   }
 }
-
-/** What a moderator is told when whether a hold applies could not be read. */
-export const HOLD_UNCONFIRMED = "Couldn't check legal hold status; try again.";
 
 /** Whether the account is held could not be read; refused like a hold. */
 export class LegalHoldUnconfirmedError extends LegalHoldError {

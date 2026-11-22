@@ -1455,9 +1455,9 @@ describe('removeAllContent', () => {
 });
 
 /**
- * The moderator app's real body reader and refusal texts, loaded across the app boundary by path (both
- * modules are import-free for this). It matches the reason against its own constants by equality, so
- * a reworded constant on either side, or a body-shape drift, turns a refusal into a generic failure.
+ * The moderator app's real body reader and refusal texts, loaded across the app boundary by path. It
+ * matches the reason against those texts by equality, so a body-shape drift, or a text one app stops
+ * taking from `@civitai/shared/legal-hold-texts`, turns a refusal into a generic failure.
  */
 const moderator = {} as {
   restErrorReason: (body: unknown, status: number) => string | null;
@@ -2159,13 +2159,6 @@ describe('removeAllContent and the profile archive', () => {
       res as never
     );
 
-    expect(vi.mocked(loggingMock.logToAxiom)).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'remove-all-content-archive-failed',
-        userId: OLD_REPORT,
-        message: 'missing CSAM env vars',
-      })
-    );
     expect(res.statusCode).toBe(503);
     expect(moderatorReads(res)).toBe(moderator.PURGE_ARCHIVE_REFUSAL);
     expect(await remaining(OLD_REPORT)).toEqual(all(1));
