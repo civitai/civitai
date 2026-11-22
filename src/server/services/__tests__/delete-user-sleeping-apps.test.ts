@@ -357,9 +357,6 @@ describe('deleteUser — App Assistant session traces', () => {
     );
     dbMock.dbWrite.appPublishRequestTrace.deleteMany.mockResolvedValue({ count: 1 });
     dbMock.dbWrite.appAssistantSessionLink.deleteMany.mockResolvedValue({ count: 3 });
-    dbMock.dbWrite.$transaction.mockImplementation(async (ops: unknown) =>
-      Promise.all(ops as Promise<unknown>[])
-    );
   });
 
   it('deletes the user’s frozen transcripts (a stray under their request too) and their rows; no one else’s', async () => {

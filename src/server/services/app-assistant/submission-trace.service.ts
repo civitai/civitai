@@ -410,11 +410,11 @@ export async function liveTraceDeletionDeps(): Promise<TraceDeletionDeps> {
         .getBundleS3Client()
         .send(new DeleteObjectCommand({ Bucket: s3.getBundleBucket(), Key: key }));
     },
+    // Two plain deletes, no transaction: each is the user's own rows, and a link row left by a
+    // failed second delete is harmless (it names a chat, not its contents).
     deleteRows: async (userId) => {
-      const [traces, links] = await dbWrite.$transaction([
-        dbWrite.appPublishRequestTrace.deleteMany({ where: { userId } }),
-        dbWrite.appAssistantSessionLink.deleteMany({ where: { userId } }),
-      ]);
+      const traces = await dbWrite.appPublishRequestTrace.deleteMany({ where: { userId } });
+      const links = await dbWrite.appAssistantSessionLink.deleteMany({ where: { userId } });
       return { traces: traces.count, links: links.count };
     },
   };
