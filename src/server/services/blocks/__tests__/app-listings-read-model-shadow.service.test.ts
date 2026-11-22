@@ -403,6 +403,31 @@ describe('what is asked', () => {
       'shadow_requests_total{grid/compared}:2',
     ]);
   });
+
+  it('🔴 a cursor after a sub-listing card with sub-listings off (the flag turned off between two pages) is moved too', async () => {
+    // The read model resumes after the item's key, as the parents-only statement does.
+    decoded = { cursorSortKey: 'k', cursorId: 'asl_01ARZ3NDEKTSV4RRFFQ69G5FAV', cursorMean: null };
+    readModelAnswers([rmCard(A)]);
+    await makeShadow().shadow('grid', { ...INPUT, cursor: 'db-cursor' }, OPTS, { items: [A] });
+    expect(calls.map((c) => c.url.searchParams.get('cursor'))).toEqual([
+      'cm0yH2sfYXNsXzAxQVJaM05ERUtUU1Y0UlJGRlE2OUc1RkFW',
+    ]);
+    expect(calls[0].url.searchParams.has('subListings')).toBe(false);
+    mode = 'serve';
+    config.sample = 0;
+    const page = await makeShadow().serve(
+      'grid',
+      { ...INPUT, cursor: 'db-cursor' },
+      OPTS,
+      async () => ({ items: [dbCard('database-only')] })
+    );
+    expect(page.items.map((c) => c.id)).toEqual(['al_alpha']);
+    expect(await moved()).toEqual([
+      'compared_slugs_total{grid}:1',
+      'serve_requests_total{grid/served}:1',
+      'shadow_requests_total{grid/compared}:1',
+    ]);
+  });
 });
 
 describe('the comparison', () => {
