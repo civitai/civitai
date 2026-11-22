@@ -760,8 +760,8 @@ jobs:
     # which is why the shard pick lives in the matrix expression instead.
     #
     # The first clause is the PR gate (no draft clause: a labeled PR runs it as a
-    # draft too).
-    if: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
+    # draft too). Fork PRs don't run the gated unit job.
+    if: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'full-ci'))) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
     # ── SHARDED ACROSS 6 RUNNERS ────────────────────────────────────────────
     #
     # Vitest's `--shard` cuts a path-hash-ordered list into equal file COUNTS. Fixed
@@ -815,7 +815,7 @@ jobs:
     # On civitai-dc the images come from the private ghcr mirror (mirror-ci-images.yml), because
     # Docker Hub rate-limits those runners' anonymous pulls, and the job logs in to ghcr with its own
     # read-only token. Each image and its credentials use the runs-on condition above, so a hosted
-    # run (a fork PR, a bot) pulls the same digest from Docker Hub with no login. The whole
+    # run (a bot, or the kill switch) pulls the same digest from Docker Hub with no login. The whole
     # credentials mapping switches, not each field: the workflow schema rejects an empty username or
     # password at job setup, while an empty mapping leaves both unset and the runner skips the login.
     permissions:
@@ -876,8 +876,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: true
-          # packages: read cannot be conditional, so a hosted run (a fork PR labelled full-ci) holds
-          # it too: keep the token out of .git/config, where the PR's own tests could read it.
+          # Defense in depth: keeps the job token out of .git/config.
           persist-credentials: false
 
       - uses: pnpm/action-setup@v6

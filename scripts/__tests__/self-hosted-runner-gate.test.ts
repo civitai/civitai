@@ -28,6 +28,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.resolve(HERE, '../../.github/workflows');
 
 type Job = {
+  if?: string;
   'runs-on'?: unknown;
   permissions?: unknown;
   services?: Record<string, Service>;
@@ -86,6 +87,7 @@ function evaluate(
       .endsWith(suffix.toLowerCase());
   const body = expr
     .replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+    .replace(/\b(github(?:\.[\w-]+)+)\.\*\.([\w-]+)/g, "names($1, '$2')")
     .replace(/!=/g, '!==')
     .replace(/(?<![!=])==(?!=)/g, '===')
     .replace(
@@ -96,6 +98,11 @@ function evaluate(
     template.replace(/\{\{|\}\}|\{(\d+)\}/g, (m, i?: string) =>
       i === undefined ? m[0] : String(args[Number(i)])
     );
+  const names = (list: unknown, key: string) =>
+    Array.isArray(list) ? list.map((x: Record<string, unknown>) => x[key]) : [];
+  const contains = (haystack: unknown, needle: string) =>
+    Array.isArray(haystack) ? haystack.includes(needle) : String(haystack ?? '').includes(needle);
+  const startsWith = (s: unknown, prefix: string) => String(s ?? '').startsWith(prefix);
   return new Function(
     'github',
     'vars',
@@ -103,8 +110,21 @@ function evaluate(
     'endsWith',
     'fromJSON',
     'format',
+    'names',
+    'contains',
+    'startsWith',
     `return (${body});`
-  )(ctx.github, ctx.vars, ctx.inputs ?? {}, endsWith, JSON.parse, format) as string;
+  )(
+    ctx.github,
+    ctx.vars,
+    ctx.inputs ?? {},
+    endsWith,
+    JSON.parse,
+    format,
+    names,
+    contains,
+    startsWith
+  ) as string;
 }
 
 type Service = { image?: unknown; credentials?: unknown };
@@ -141,7 +161,7 @@ function tokenViolations(job: Job, runsOn: string): string[] {
     const image = new RegExp(
       `^\\$\\{\\{ ${escapeRegExp(
         cond
-      )} && 'ghcr\\.io/civitai/[\\w.-]+:[\\w.-]+@(sha256:[0-9a-f]{64})' \\|\\| '[\\w./-]+:[\\w.-]+@(sha256:[0-9a-f]{64})' \\}\\}$`
+      )} && 'ghcr\\.io/civitai/[\\w.-]+:[\\w.-]+@(sha256:[0-9a-f]{64})' \\|\\| '(?!ghcr\\.io/)[\\w./-]+:[\\w.-]+@(sha256:[0-9a-f]{64})' \\}\\}$`
     ).exec(String(svc.image));
     if (!image || image[1] !== image[2])
       found.push(`${name}: image not ghcr on the runs-on condition, else Docker Hub, same digest`);
@@ -250,6 +270,17 @@ describe('self-hosted runner gate', () => {
     expect(hostedGhcr).toEqual([]);
   });
 
+  it('names no ghcr.io image on the hosted branch of a civitai-dc job', () => {
+    const hostedBranch = (image: unknown) =>
+      /\|\| '([^']+)' \}\}$/.exec(String(image))?.[1] ?? String(image);
+    const ghcrOnHosted = selfHostedJobs.flatMap(({ file, name, job }) =>
+      Object.entries((job as Job).services ?? {})
+        .filter(([, s]) => hostedBranch(s.image).startsWith('ghcr.io/'))
+        .map(([svc]) => `${file} → ${name} → ${svc}`)
+    );
+    expect(ghcrOnHosted).toEqual([]);
+  });
+
   it('lint.yml unit pulls both services from the ghcr mirror on civitai-dc', () => {
     expect(Object.values(unitJob.services ?? {}).filter((s) => s.credentials)).toHaveLength(2);
   });
@@ -313,6 +344,14 @@ describe('self-hosted runner gate', () => {
       'a ghcr image pinned by tag only',
       (j) =>
         (redis(j).image = String(redis(j).image).replace(/@sha256:[0-9a-f]{64}(?=' \|\|)/, '')),
+    ],
+    [
+      'a ghcr.io fallback at the same digest',
+      (j) =>
+        (redis(j).image = String(redis(j).image).replace(
+          /\|\| '[^']+@(sha256:[0-9a-f]{64})' \}\}$/,
+          (_m, digest: string) => `|| 'ghcr.io/civitai/redis:7@${digest}' }}`
+        )),
     ],
     [
       'a Docker Hub fallback on another digest',
@@ -395,6 +434,21 @@ describe('self-hosted runner gate', () => {
     expect(
       evaluate(gate('ubuntu-latest', true), { github, vars, inputs: { runner: 'auto' } })
     ).toBe(expected);
+  });
+
+  const labelled = (headRepo: string | null) => {
+    const github = pr(headRepo);
+    return {
+      ...github,
+      event: { pull_request: { ...github.event.pull_request, labels: [{ name: 'full-ci' }] } },
+    };
+  };
+  it.each([
+    ['a same-repo', repo, true],
+    ['a fork', 'someone/civitai', false],
+    ['a deleted fork', null, false],
+  ] as const)('unit runs on %s pull_request labelled full-ci: %s', (_label, headRepo, expected) => {
+    expect(evaluate(String(unitJob.if), { github: labelled(headRepo), vars: {} })).toBe(expected);
   });
 
   const off = { CIVITAI_DC_OFF: 'true' };
