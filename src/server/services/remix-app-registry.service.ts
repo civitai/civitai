@@ -96,7 +96,7 @@ export type RegisteredRemixApp = {
 export { REMIX_APP_UNAVAILABLE } from '~/server/services/remix-app-runner';
 import { REMIX_APP_UNAVAILABLE, remixSourceDigest } from '~/server/services/remix-app-runner';
 
-// shortcut: until the sandbox runner ships, a user app refuses every replay.
+// A user app's `run` in its compiled shape: its code runs only on the runner, never in-process.
 const unavailable = async (): Promise<never> => {
   throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE });
 };
@@ -881,6 +881,10 @@ async function holdMatureApp(first: RemixAppRow, moderatorId: number) {
   }
 }
 
+/** A viewer as one app's counts store them: hashed, so no viewer id sits on the author's row. */
+const viewerKey = (slug: string, viewerId: number) =>
+  createHash('sha256').update(`${slug}:${viewerId}`).digest('hex').slice(0, 16);
+
 /**
  * Sends an approved user app back to review when its author part blocks, or when refused runs
  * reach {@link REMIX_COMBINATION_BLOCKS_MAX} distinct viewers. `true` when this pulled it.
@@ -902,8 +906,8 @@ export async function holdUserRemixApp(
     const before = manifest.combinationBlocks ?? [];
     let blocks = before;
     if ('viewerId' in hold) {
-      const viewer = createHash('sha256').update(`${slug}:${hold.viewerId}`).digest('hex');
-      if (!blocks.includes(viewer.slice(0, 16))) blocks = [...blocks, viewer.slice(0, 16)];
+      const viewer = viewerKey(slug, hold.viewerId);
+      if (!blocks.includes(viewer)) blocks = [...blocks, viewer];
     }
     const pull = !('viewerId' in hold) || blocks.length >= REMIX_COMBINATION_BLOCKS_MAX;
     if (!pull && blocks === before) return false;
@@ -991,7 +995,7 @@ async function recordRunnerQuarantine(
       manifest.runnerQuarantines?.sha256 === sha256
         ? manifest.runnerQuarantines.viewers.filter(({ at }) => Date.parse(at) >= since)
         : [];
-    const key = createHash('sha256').update(`${slug}:${viewerId}`).digest('hex').slice(0, 16);
+    const key = viewerKey(slug, viewerId);
     if (seen.some((viewer) => viewer.key === key)) return false;
     const viewers = [...seen, { key, at: new Date().toISOString() }];
     const pull = viewers.length >= REMIX_COMBINATION_BLOCKS_MAX;
