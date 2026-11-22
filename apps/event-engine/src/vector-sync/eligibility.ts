@@ -25,7 +25,11 @@ export type ImageRow = {
 
 type Rule =
   | { column: keyof ImageRow & string; equals: string | boolean }
-  | { column: keyof ImageRow & string; isNull: boolean };
+  | { column: keyof ImageRow & string; isNull: boolean }
+  | { column: keyof ImageRow & string; bitClear: number };
+
+/** NsfwLevel.Blocked. */
+const BLOCKED_LEVEL = 32;
 
 const RULES: Rule[] = [
   { column: 'ingestion', equals: 'Scanned' },
@@ -35,12 +39,14 @@ const RULES: Rule[] = [
   { column: 'needsReview', isNull: true },
   { column: 'minor', equals: false },
   { column: 'poi', equals: false },
+  { column: 'nsfwLevel', bitClear: BLOCKED_LEVEL },
 ];
 
 export function isEligible(row: ImageRow): boolean {
   return RULES.every((rule) => {
     const value = row[rule.column];
     if ('isNull' in rule) return (value === null || value === undefined) === rule.isNull;
+    if ('bitClear' in rule) return typeof value === 'number' && (value & rule.bitClear) === 0;
     return value === rule.equals;
   });
 }
@@ -50,6 +56,7 @@ export function eligibleSql(alias = 'i'): string {
   return RULES.map((rule) => {
     const col = `${alias}."${rule.column}"`;
     if ('isNull' in rule) return `${col} IS ${rule.isNull ? '' : 'NOT '}NULL`;
+    if ('bitClear' in rule) return `(${col} & ${rule.bitClear}) = 0`;
     if (typeof rule.equals === 'boolean') return `${col} = ${rule.equals}`;
     return `${col} = '${rule.equals}'`;
   }).join(' AND ');

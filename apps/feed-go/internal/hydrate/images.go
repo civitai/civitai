@@ -109,12 +109,14 @@ func VisibleEventDecorations(imageIDs []int, got map[int]Entry, visibleEvents ma
 		if e.NotFound {
 			continue
 		}
-		data, _ := e.Value["data"].(map[string]any)
-		event, ok := data["event"].(string)
+		// The ordered record (an ordered cache): `data` keeps the key order Node's answer has.
+		rec := e.Ordered()
+		data, _ := ObjectField(rec, "data").(superjson.Object)
+		event, ok := ObjectField(data, "event").(string)
 		if !ok || !visibleEvents[event] {
 			continue
 		}
-		out[id] = Pick(e.Value, "id", "name", "type", "source", "data", "equippedToId", "equippedToType")
+		out[id] = PickOrdered(rec, "id", "name", "type", "source", "data", "equippedToId", "equippedToType")
 	}
 	return out, nil
 }

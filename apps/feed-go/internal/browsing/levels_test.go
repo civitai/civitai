@@ -103,3 +103,45 @@ func TestRegionRestricted(t *testing.T) {
 		t.Fatal("no country header must not restrict")
 	}
 }
+
+// getRequestBoardDomainColor: a host on red's list is red, whatever else lists it; an alias of a color
+// whose primary is on red's list is red too (a blue alias of the red-primary blue site); otherwise the
+// walked color, and "" for an unknown host.
+func TestBoardColorOf(t *testing.T) {
+	h := HostColors{
+		"green": {"green.example.test"},
+		"blue":  {"red.example.test", "blue-alias.example.test"},
+		"red":   {"red.example.test"},
+	}
+	primaries := map[string]string{"green": "green.example.test", "blue": "red.example.test", "red": "red.example.test"}
+	for host, want := range map[string]string{
+		"red.example.test":        "red",
+		"RED.example.test":        "red",
+		"blue-alias.example.test": "red",
+		"green.example.test":      "green",
+		"unknown.example.test":    "",
+		"":                        "",
+	} {
+		if got := h.BoardColorOf(host, primaries); got != want {
+			t.Errorf("BoardColorOf(%q) = %q, want %q", host, got, want)
+		}
+	}
+	// ColorOf walks green, blue, red: the red host reads blue there, which is why the board color exists.
+	if got := h.ColorOf("red.example.test"); got != "blue" {
+		t.Fatalf("control: ColorOf(red host) = %q, want blue", got)
+	}
+	// A blue site whose primary is its own SFW host: its alias stays blue, and so it does without
+	// primaries at all.
+	h2 := HostColors{"blue": {"blue.example.test", "blue-alias.example.test"}, "red": {"red.example.test"}}
+	sfw := map[string]string{"blue": "blue.example.test", "red": "red.example.test"}
+	if got := h2.BoardColorOf("blue-alias.example.test", sfw); got != "blue" {
+		t.Fatalf("an SFW blue primary: alias reads %q, want blue", got)
+	}
+	if got := h2.BoardColorOf("blue-alias.example.test", nil); got != "blue" {
+		t.Fatalf("no primaries: alias reads %q, want blue", got)
+	}
+	// Host matching is ColorOf's (port stripped, case-insensitive), so both walks agree on a host.
+	if !h.hasHost("red", "Red.Example.Test:8443") || h.hasHost("red", "green.example.test") {
+		t.Fatal("hasHost must match as ColorOf does")
+	}
+}

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { TokenScope } from '@civitai/auth/token-scope';
 
@@ -39,7 +40,10 @@ vi.mock('$lib/server/db/db', () => ({
   },
 }));
 vi.mock('$lib/server/oauth/server', () => ({ oauthServer: { authorize: h.authorize } }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: async () => true }));
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
+  checkOAuthRateLimit: async () => true,
+}));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: vi.fn() }));
 vi.mock('$lib/server/axiom', () => ({ logAxiomError: vi.fn() }));
 vi.mock('$lib/server/oauth/oidc-nonce', () => ({ storeOidcContext: vi.fn(async () => true) }));

@@ -167,10 +167,10 @@ import {
   isCollaboratorRow,
 } from '~/server/services/collection-permission.utils';
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const modelService = () => import('~/server/services/model.service');
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const articleService = () => import('~/server/services/article.service');
 
 export type CollectionContributorPermissionFlags = {
@@ -4054,7 +4054,7 @@ export const bulkSaveItems = async ({
 
   // Check for challenge entry prize eligibility (Contest mode collections only)
   if (collection.mode === CollectionMode.Contest && count > 0) {
-    // Import dynamically to avoid circular dependencies
+    // Dynamic import, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
     const { checkAndAwardEntryPrize } = await import(
       '~/server/games/daily-challenge/challenge-prize'
     );
@@ -4219,6 +4219,7 @@ export const removeCollectionItem = async ({
   userId,
   collectionId,
   itemId,
+  type,
   isModerator,
 }: RemoveCollectionItemInput & { userId: number; isModerator?: boolean }) => {
   const permissions = await getUserCollectionPermissionsById({
@@ -4227,21 +4228,24 @@ export const removeCollectionItem = async ({
     isModerator,
   });
 
-  if (!permissions.collectionType) {
-    throw throwNotFoundError('Unable to determine collection type');
+  // A typed collection's own type wins. A type-NULL collection holds items of every type (see
+  // `saveItemInCollections`), so a bare `itemId` is ambiguous there and the caller must name it.
+  const collectionType = permissions.collectionType ?? type;
+  if (!collectionType) {
+    throw throwBadRequestError('Item type is required to remove an item from this collection');
   }
 
   let isOwner = false;
   const tableKey =
-    permissions.collectionType === CollectionType.Model
+    collectionType === CollectionType.Model
       ? 'Model'
-      : permissions.collectionType === CollectionType.Article
+      : collectionType === CollectionType.Article
       ? 'Article'
-      : permissions.collectionType === CollectionType.Image
+      : collectionType === CollectionType.Image
       ? 'Image'
-      : permissions.collectionType === CollectionType.Post
+      : collectionType === CollectionType.Post
       ? 'Post'
-      : permissions.collectionType === CollectionType.Model3D
+      : collectionType === CollectionType.Model3D
       ? 'Model3D'
       : null;
 
@@ -4315,46 +4319,28 @@ export const removeCollectionItem = async ({
   return {
     collectionId,
     itemId,
-    type: permissions.collectionType,
+    type: collectionType,
   };
 };
 
+// Whether the caller's own collection holds their own work. The table comes from the item's id
+// field, not `Collection.type`, which is NULL on folders.
 export async function checkUserOwnsCollectionAndItem({
-  itemId,
+  item,
   collectionId,
   userId,
 }: {
-  itemId: number;
+  item: Parameters<typeof getCollectionItemOwnerId>[0];
   collectionId: number;
   userId: number;
 }) {
   const collection = await dbRead.collection.findFirst({
     where: { id: collectionId, userId },
-    select: { type: true, userId: true },
+    select: { id: true },
   });
   if (!collection) return false;
 
-  const tableKey =
-    collection.type === CollectionType.Model
-      ? 'Model'
-      : collection.type === CollectionType.Article
-      ? 'Article'
-      : collection.type === CollectionType.Image
-      ? 'Image'
-      : collection.type === CollectionType.Post
-      ? 'Post'
-      : collection.type === CollectionType.Model3D
-      ? 'Model3D'
-      : null;
-
-  if (!tableKey) throw throwNotFoundError('Unable to determine collection type');
-
-  const [item] = await dbRead.$queryRaw<{ userId: number }[]>`
-    SELECT "userId" FROM "${Prisma.raw(tableKey)}" WHERE id = ${itemId}
-  `;
-  if (!item) return false;
-
-  return item.userId === collection.userId;
+  return (await getCollectionItemOwnerId(item)) === userId;
 }
 
 export const setItemScore = async ({

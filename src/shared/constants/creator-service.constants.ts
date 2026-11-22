@@ -32,6 +32,17 @@ export const SERVICE_TITLE_MAX = 100;
 export const SERVICE_DESCRIPTION_MAX = 2_000;
 export const SERVICE_MAX_ACTIVE_OFFERINGS = 20;
 
+/** Buyers who must count before an offering shows a happy share (and sorts by it). */
+export const SERVICE_HAPPY_MIN_REVIEWS = 3;
+
+/** The happy share as a whole percent, or null below the minimum. Sum offerings for a seller. */
+export function serviceHappyShare(counts: { happyCount: number; reviewCount: number }[]) {
+  const happy = counts.reduce((sum, c) => sum + c.happyCount, 0);
+  const total = counts.reduce((sum, c) => sum + c.reviewCount, 0);
+  if (total < SERVICE_HAPPY_MIN_REVIEWS) return null;
+  return { percent: Math.round((happy / total) * 100), reviews: total };
+}
+
 /**
  * The ratings an offering can carry: one NsfwLevel bit, its ceiling. Never Blocked, never a mask
  * (the DB CHECK refuses both; the schema answers 400 before it gets there).

@@ -1,8 +1,11 @@
 import { REDIS_SYS_KEYS } from '@civitai/redis';
+import type { AccessTokenJwtClaims, SessionSigner } from '@civitai/auth';
+import { logToAxiom } from '$lib/server/axiom';
 import { parseTokenScope, TokenScope, tokenScopeMaskToList } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getSysRedis } from '$lib/server/redis';
 import { waitForRedisReady } from '$lib/server/redis-ready';
+import { raceTimeout } from './timeout';
 import { isRefusedModerationAccount } from '$lib/server/auth/moderation-account';
 import { checkClientAccess, userHasRole } from './access';
 import { SYSTEM_USER_ID, SYSTEM_WORKLOAD_ROLE } from './constants';
@@ -185,7 +188,56 @@ export interface ServiceExchangeRecord {
   subjectJti: string;
 }
 
-export type TokenRecord = ExchangeRecord | ServiceTokenRecord | ServiceExchangeRecord;
+/**
+ * What ties a token minted by the block token exchange (block-exchange.ts) to its user, app, relay and the
+ * block token it came from. Introspection does not answer for these (it reads them as inactive): the
+ * registry adapter verifies them locally, and no further exchange accepts them as a subject.
+ */
+export interface BlockExchangeRecord {
+  kind: 'block-exchange';
+  userId: number;
+  clientId: string;
+  actor: string;
+  resource: string;
+  scopeBits: bigint;
+  exp: number;
+  /** The `jti` of the block token it was exchanged from. */
+  blockJti: string;
+}
+
+export type TokenRecord =
+  | ExchangeRecord
+  | ServiceTokenRecord
+  | ServiceExchangeRecord
+  | BlockExchangeRecord;
+
+/**
+ * Mint an exchanged `at+jwt` and store its record: the one way the user exchange and the block exchange
+ * issue a token. The record is written after signing and before the token is returned, so no token leaves
+ * the hub without one. `logName` prefixes the error lines (`<logName>-sign-failed`,
+ * `<logName>-record-failed`).
+ */
+export async function mintExchangedJwt(
+  signer: SessionSigner,
+  claims: AccessTokenJwtClaims,
+  record: TokenRecord,
+  logName: string
+): Promise<{ ok: true; accessToken: string } | { ok: false; reason: string }> {
+  let accessToken: string;
+  try {
+    accessToken = await signer.mintAccessTokenJwt(claims);
+  } catch (err) {
+    void logToAxiom({ type: 'error', name: `${logName}-sign-failed`, message: String(err) });
+    return { ok: false, reason: 'signing failed' };
+  }
+  try {
+    await writeExchangeRecord(claims.jti, record, claims.iat);
+  } catch (err) {
+    void logToAxiom({ type: 'error', name: `${logName}-record-failed`, message: String(err) });
+    return { ok: false, reason: 'exchange record not stored' };
+  }
+  return { ok: true, accessToken };
+}
 
 const recordKey = (jti: string) => `${REDIS_SYS_KEYS.OAUTH.TOKEN_EXCHANGES}:${jti}` as const;
 
@@ -205,14 +257,7 @@ async function withSysRedis<T>(op: (redis: StringRedis) => Promise<T>): Promise<
   if (!redis) throw new Error('REDIS_SYS_URL is not configured');
   if (!(await waitForRedisReady(redis, RECORD_TIMEOUT_MS)))
     throw new Error('exchange record store not ready');
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error('exchange record timed out')),
-      Math.max(0, deadline - Date.now())
-    );
-  });
-  return Promise.race([op(redis), timeout]).finally(() => clearTimeout(timer));
+  return raceTimeout(op(redis), Math.max(0, deadline - Date.now()), 'exchange record timed out');
 }
 
 /** Store the record until a minute past the JWT's expiry. Throws when it cannot be stored. */

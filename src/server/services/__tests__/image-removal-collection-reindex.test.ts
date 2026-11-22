@@ -83,6 +83,14 @@ const COLLECTION_B = 9107;
 
 const mockDbWrite = dbMock.dbWrite;
 
+// The home-block refresh (`evictHomeBlocksForImages`) is seen at the database: its lookup binds the
+// ids as one array.
+const homeBlockLookupsFor = (calls: unknown[][], table: string) =>
+  calls
+    .map(([query]) => query as { sql?: string; values?: unknown[] })
+    .filter((query) => !!query?.sql?.includes(table))
+    .flatMap((query) => (query.values ?? []).filter(Array.isArray));
+
 const expectedUpdatePayload = (ids: number[]) =>
   ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }));
 
@@ -122,6 +130,14 @@ describe('deleteImages — one image', () => {
     expect(mockCollectionsQueueUpdate).toHaveBeenCalledWith(
       expectedUpdatePayload([COLLECTION_A, COLLECTION_B])
     );
+  });
+
+  it('refreshes the home blocks of every collection that contained the deleted image', async () => {
+    await deleteImages([IMAGE_ID], { updatePosts: false, actor: { system: 'test' } });
+
+    expect(
+      homeBlockLookupsFor(dbMock.dbRead.$queryRaw.mock.calls, 'FROM "Collection" c')
+    ).toContainEqual([COLLECTION_A, COLLECTION_B]);
   });
 
   it('resolves the collections BEFORE the delete, since CollectionItem cascades away', async () => {

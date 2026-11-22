@@ -84,3 +84,17 @@
     clear: both;
   }
 }
+
+// A blank line ends the wrap: what follows it starts below a floated image. Include it on the
+// element whose children are the doc's top-level blocks. Top level only: on the article a spoiler
+// block is a layout of its own, so a blank line inside one can't clear the image outside it there.
+// A blank paragraph is empty on the article and holds only ProseMirror's trailing <br> in the
+// editor. Only text-like blocks clear, because the article's parser puts an empty paragraph in
+// front of every image it lifts out of a paragraph, and clearing that image would stack floats set
+// side by side.
+@mixin blank-line-clears-float {
+  > :is(p:empty, p:has(> br:global(.ProseMirror-trailingBreak):only-child))
+    + :is(p, ul, ol, blockquote) {
+    clear: both;
+  }
+}

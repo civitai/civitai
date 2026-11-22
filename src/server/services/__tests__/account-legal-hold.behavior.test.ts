@@ -26,9 +26,12 @@ vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
 
 import {
   areAccountsUnderLegalHold,
+  areContentRemovalsHeld,
+  assertContentRemovalNotHeld,
   getAccountLegalHoldLegs,
   guardedAccountScrubSql,
   isAccountUnderLegalHold,
+  isContentRemovalHeld,
   isLegalHoldAbort,
   LegalHoldError,
 } from '~/server/services/legal-hold.service';
@@ -64,8 +67,11 @@ const BIG_IMAGE_ID = 10_000_000_019;
 const EXPIRED_MARKER = 20;
 const EXTENDED_MARKER = 21;
 const RELEASED_WITH_REPORT = 22; // a released marker, and a pending report naming them
+// Unsent but archived: held by the unsent clause alone, so self-delete stays refused (no queue).
+const UNSENT_ARCHIVED_REPORT = 23;
 const OTHER_OWNERS_MODEL = 102;
-const ALL_USERS = Array.from({ length: 22 }, (_, i) => i + 1);
+const BAN_NOTE = 24; // banned with a note naming NCMEC; no account hold
+const ALL_USERS = Array.from({ length: 24 }, (_, i) => i + 1);
 
 let failQueries = false;
 let unreadable = false;
@@ -104,7 +110,8 @@ beforeAll(async () => {
       image text,
       "profilePictureId" int,
       "subscriptionId" text,
-      meta jsonb
+      meta jsonb,
+      "bannedAt" timestamp(3)
     );
     CREATE TABLE "UserReport" ("userId" int, "reportId" int);
     -- What deleteUser's deal-file statement reads; no deals, so it marks nothing.
@@ -115,7 +122,7 @@ beforeAll(async () => {
     CREATE TABLE "Report" (id int PRIMARY KEY, status text);
     CREATE TABLE "ServiceOfferingReport" ("serviceOfferingId" int, "reportId" int);
     CREATE TABLE "Appeal" ("userId" int, status text);
-    CREATE TABLE "ModActivity" ("entityType" text, "entityId" int, activity text);
+    CREATE TABLE "ModActivity" ("entityType" text, "entityId" int, activity text, "createdAt" timestamp(3));
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     INSERT INTO "Model" VALUES (${CLEAN_MODEL}, ${CLEAN}), (${OTHER_OWNERS_MODEL}, ${RECENTLY_SENT});
     CREATE TYPE "ModelStatus" AS ENUM
@@ -221,6 +228,7 @@ beforeEach(async () => {
     -- carry the upload's keys beside the id, as the sending job writes them.
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details, images) VALUES
       (${PENDING_REPORT}, NULL, NULL, '{}', '[]'),
+      (${UNSENT_ARCHIVED_REPORT}, NULL, now(), '{}', '[]'),
       (${RELEASED_WITH_REPORT}, NULL, NULL, '{}', '[]'),
       (${RECENTLY_SENT}, now() - interval '30 days', now(), 'null', '[]'),
       (${SENT_OVER_A_YEAR_AGO}, now() - interval '400 days', now(), '{}', '[]'),
@@ -390,8 +398,39 @@ describe('areAccountsUnderLegalHold (one batched lookup)', () => {
   });
 });
 
+describe('content removal: the account holds only', () => {
+  const banWithNote = (id: number) =>
+    holder.db.query(
+      `UPDATE "User" SET "bannedAt" = now() - interval '1 day',
+         meta = '{"banDetails": {"detailsInternal": "NCMEC report filed"}}' WHERE id = $1`,
+      [id]
+    );
+
+  it('does not hold an account banned with a CSAM/NCMEC note and no account hold', async () => {
+    await banWithNote(BAN_NOTE);
+    expect(await isContentRemovalHeld(BAN_NOTE)).toBe(false);
+    expect(await assertContentRemovalNotHeld(BAN_NOTE)).toEqual({ markerView: false });
+    expect(await areContentRemovalsHeld([CLEAN, BAN_NOTE, PENDING_REPORT])).toEqual(
+      new Map([
+        [CLEAN, false],
+        [BAN_NOTE, false],
+        [PENDING_REPORT, true],
+      ])
+    );
+    await expect(assertContentRemovalNotHeld(PENDING_REPORT)).rejects.toBeInstanceOf(
+      LegalHoldError
+    );
+  });
+
+  it('a failed lookup is unknown for one user and held for a batch', async () => {
+    failQueries = true;
+    expect(await isContentRemovalHeld(CLEAN)).toBeNull();
+    expect(await areContentRemovalsHeld([CLEAN])).toEqual(new Map([[CLEAN, true]]));
+  });
+});
+
 describe('deleteUser under a legal hold', () => {
-  const run = (id: number) => deleteUser({ id, username: 'someone' });
+  const run = (id: number) => deleteUser({ id, username: 'someone', actorId: id });
 
   beforeEach(async () => {
     dbMock.dbWrite.user.findFirst.mockImplementation((async (args: { where: { id: number } }) => ({
@@ -426,13 +465,16 @@ describe('deleteUser under a legal hold', () => {
     await holder.db.exec(`UPDATE "Model" SET "userId" = ${CLEAN} WHERE id = ${CLEAN_MODEL}`);
   });
 
-  it.each([PENDING_REPORT, SECONDARY_ON_REPORT, IMAGE_IN_REVIEW, IMAGE_BLOCKED_UNREPORTED])(
-    'refuses held account %i before anything is written',
-    async (userId) => {
-      await expect(run(userId)).rejects.toBeInstanceOf(LegalHoldError);
-      expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
-    }
-  );
+  it.each([
+    PENDING_REPORT,
+    UNSENT_ARCHIVED_REPORT,
+    SECONDARY_ON_REPORT,
+    IMAGE_IN_REVIEW,
+    IMAGE_BLOCKED_UNREPORTED,
+  ])('refuses held account %i before anything is written', async (userId) => {
+    await expect(run(userId)).rejects.toBeInstanceOf(LegalHoldError);
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
 
   it('refuses the feedback capture account before anything is read or written', async () => {
     await expect(run(-2)).rejects.toThrow(/feedback page captures/);
@@ -502,7 +544,7 @@ describe('deleteUser under a legal hold', () => {
         .rows[0].n;
     const before = await rows();
 
-    await deleteUser({ id: CLEAN, username: 'someone', removeModels: true });
+    await deleteUser({ id: CLEAN, username: 'someone', removeModels: true, actorId: CLEAN });
 
     expect(await rows()).toBe(before);
   });
@@ -527,6 +569,42 @@ describe('deleteUser under a legal hold', () => {
       // Kept on purpose: see delete-user-pii-scrub.test.ts.
       customerId: `cus${CLEAN}`,
     });
+  });
+
+  it('deletes an account named only by a ban note without archiving it; a reported one is archived', async () => {
+    dbMock.dbWrite.userProfile.findUnique.mockResolvedValue({ bio: 'pay me offsite' } as never);
+    dbMock.dbWrite.userLink.findMany.mockResolvedValue([] as never);
+    await holder.db.query(
+      `UPDATE "User" SET "bannedAt" = now(),
+         meta = '{"banDetails": {"detailsExternal": "CSAM"}}' WHERE id = $1`,
+      [BAN_NOTE]
+    );
+    const banNoteArchive = vi.fn(async () => ({}));
+    const reportedArchive = vi.fn(async () => ({}));
+
+    try {
+      await deleteUser({
+        id: BAN_NOTE,
+        username: 'someone',
+        actorId: BAN_NOTE,
+        archive: banNoteArchive,
+      });
+      // The control: a report naming the account, past its hold, still archives it first.
+      await deleteUser({
+        id: SENT_OVER_A_YEAR_AGO,
+        username: 'someone',
+        actorId: SENT_OVER_A_YEAR_AGO,
+        archive: reportedArchive,
+      });
+    } finally {
+      dbMock.dbWrite.userProfile.findUnique.mockReset();
+    }
+
+    expect(banNoteArchive).not.toHaveBeenCalled();
+    expect((await userRow(BAN_NOTE)).deletedAt).not.toBeNull();
+    expect(reportedArchive).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: SENT_OVER_A_YEAR_AGO })
+    );
   });
 
   // PGlite runs one connection, so these land the hold strictly between the check and the scrub;
@@ -624,7 +702,7 @@ describe('deleteUser under a legal hold', () => {
     });
 
     it('deletes its published and scheduled versions with the models', async () => {
-      await deleteUser({ id: CLEAN, username: 'someone', removeModels: true });
+      await deleteUser({ id: CLEAN, username: 'someone', removeModels: true, actorId: CLEAN });
 
       expect(await statuses()).toEqual({
         1: 'Deleted',
@@ -647,7 +725,7 @@ describe('deleteUser under a legal hold', () => {
     });
 
     it('leaves the versions alone when the models are kept', async () => {
-      await deleteUser({ id: CLEAN, username: 'someone', removeModels: false });
+      await deleteUser({ id: CLEAN, username: 'someone', removeModels: false, actorId: CLEAN });
 
       expect(await statuses()).toEqual({
         1: 'Published',
@@ -669,7 +747,7 @@ describe('deleteUser under a legal hold', () => {
         holder.db.exec(`INSERT INTO "CsamReport" ("userId", details) VALUES (${CLEAN}, '{}')`);
 
       await expect(
-        deleteUser({ id: CLEAN, username: 'someone', removeModels: true })
+        deleteUser({ id: CLEAN, username: 'someone', removeModels: true, actorId: CLEAN })
       ).rejects.toBeInstanceOf(LegalHoldError);
       expect((await statuses())[1]).toBe('Published');
     });

@@ -1,11 +1,17 @@
 import { TRPCError } from '@trpc/server';
+import { FLIPT_FEATURE_FLAGS, readFliptBoolean } from '~/server/flipt/client';
 import { toPublicApiVersionFlags } from '~/shared/constants/model-version-flags.constants';
 import {
   coverageAudience,
   coveragePairForUser,
 } from '~/server/services/generation/coverage-source';
 
-import { licensingFeeBlockedFor, paidAccessBlockedFor } from '@civitai/buzz';
+import {
+  licensingFeeBlockedFor,
+  lockedLicensingFeeRefusal,
+  paidAccessBlockedFor,
+  percentOfComputeFeeRefusal,
+} from '@civitai/buzz';
 import { recordPricingSlot, releasePricingSlot } from '~/server/services/pricing-slot.service';
 import {
   assertMonetizationWrite,
@@ -32,6 +38,7 @@ import {
   baseModelLicenses,
   constants,
   hasAdditionalLicensePermissions,
+  isNonCommercialBaseModel,
 } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
@@ -229,6 +236,7 @@ const loadModelVersion = async ({
         licensingFee: true,
         licensingFeeType: true,
         licensingFeeSettlementCurrency: true,
+        licensingFeeLocked: true,
         licensingSourceVersionId: true,
         flags: true,
         meta: true,
@@ -564,7 +572,9 @@ export const upsertModelVersionHandler = async ({
           select: {
             usageControl: true,
             licensingFee: true,
+            licensingFeeType: true,
             licensingFeeSettlementCurrency: true,
+            licensingFeeLocked: true,
             licensingSourceVersionId: true,
             baseModel: true,
           },
@@ -702,6 +712,25 @@ export const upsertModelVersionHandler = async ({
 
     // The service migrates the price onto the surviving tier; nothing to reject here.
 
+    // A null type means "keep the stored one", as an omitted one does: written through, it would turn a
+    // staff-set percent into Buzz per image.
+    if (input.licensingFeeType === null) input.licensingFeeType = undefined;
+    // Fails closed: an unreadable flag refuses, since a percent charged early is charged as Buzz per image.
+    if (
+      input.licensingFeeType === LicensingFeeType.PercentOfCompute &&
+      storedVersion?.licensingFeeType !== LicensingFeeType.PercentOfCompute &&
+      (await readFliptBoolean(FLIPT_FEATURE_FLAGS.LICENSING_FEE_PERCENT_OF_COMPUTE)) !== true
+    )
+      throw throwBadRequestError('Percentage license fees are not available yet.');
+    const percentRefusal = percentOfComputeFeeRefusal({
+      isModerator: !!ctx.user.isModerator,
+      requestedType: input.licensingFeeType,
+      storedType: storedVersion?.licensingFeeType,
+      fee: input.licensingFee !== undefined ? input.licensingFee : storedFee,
+      storedFee,
+    });
+    if (percentRefusal) throw throwBadRequestError(percentRefusal);
+
     if (input.licensingFee != null && input.licensingFee > 0) {
       const hadExistingFee = storedFee > 0;
       if (!ctx.features.licensingFee && !ctx.user.isModerator && !hadExistingFee) {
@@ -714,9 +743,32 @@ export const upsertModelVersionHandler = async ({
       ) {
         throw throwBadRequestError('Cash settlement is restricted; please contact support.');
       }
-      if (!input.licensingFeeType) input.licensingFeeType = LicensingFeeType.PerImageBuzz;
+      if (!input.licensingFeeType)
+        input.licensingFeeType = storedVersion?.licensingFeeType ?? LicensingFeeType.PerImageBuzz;
       if (!input.licensingFeeSettlementCurrency)
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
+    }
+
+    // Skipped when a policy clear (POI/private owner, a version already on a non-commercial base model)
+    // strips the fee: refusing it would strand the owner's save. Keyed on the STORED base model, so an
+    // owner cannot clear a locked fee by choosing a non-commercial one.
+    if (policyKeepsFee && !isNonCommercialBaseModel(storedVersion?.baseModel)) {
+      const lockRefusal = lockedLicensingFeeRefusal({
+        isModerator: !!ctx.user.isModerator,
+        locked: storedVersion?.licensingFeeLocked,
+        stored: {
+          fee: storedFee,
+          type: storedVersion?.licensingFeeType ?? null,
+          currency: storedVersion?.licensingFeeSettlementCurrency ?? null,
+        },
+        next: {
+          // The service clears the fee on a non-commercial base model even when the write omits it.
+          fee: isNonCommercialBaseModel(input.baseModel) ? 0 : input.licensingFee,
+          type: input.licensingFeeType,
+          currency: input.licensingFeeSettlementCurrency,
+        },
+      });
+      if (lockRefusal) throw throwBadRequestError(lockRefusal);
     }
 
     // Set when the block below repairs the payload, so the audit can attribute the change to the rule
@@ -773,7 +825,7 @@ export const upsertModelVersionHandler = async ({
         // `'not-a-root'`, which silently clears a legitimate source with no error to the creator.
         dbWrite.licensingRoot.findUnique({
           where: { modelVersionId: input.licensingSourceVersionId },
-          select: { baseModel: true, modelType: true },
+          select: { baseModel: true, modelType: true, restricted: true },
         }),
         // 🔴 The model this save LANDS the version on, which is `input.modelId` — always, on a create
         // and on an update alike. `modelId` is not destructured in `upsertModelVersion`, so it rides
@@ -813,6 +865,10 @@ export const upsertModelVersionHandler = async ({
         ? 'model-not-found'
         : destinationModel.type !== source.modelType
         ? 'model-type-mismatch'
+        : source.restricted &&
+          !ctx.user.isModerator &&
+          input.licensingSourceVersionId !== storedVersion?.licensingSourceVersionId
+        ? 'restricted-root'
         : null;
       if (rejectedReason) {
         // A coercion leaves no trace in the row it corrected, so emit the deciding branch. This is

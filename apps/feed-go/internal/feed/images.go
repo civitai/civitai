@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
@@ -94,6 +95,10 @@ var statementTimeout = 20 * time.Second
 // empty page (never cached) unless the query asks to throw, as Node answers a statement timeout (getAllImages: "feeds can accept an
 // empty page after a timeout"), so a slow replica is not handed on to the Node app to run again. Only
 // this query's own deadline does that: a cancelled or expired caller context is still an error.
+//
+// A personalized page (Built.PersonalizedViewerID) is the `statement-timeout` fallback instead: an
+// empty page there reads as "you have none", so it is logged, counted and handed to the Node app,
+// which errors on the same timeout (getAllImages' throwOnStatementTimeout).
 func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]RawImage, error) {
 	useCache := cache != nil && cache.Enabled && cache.Redis != nil && b.CacheTTL > 0
 	var key string
@@ -108,22 +113,22 @@ func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]R
 	}
 	qctx, cancel := context.WithTimeout(ctx, statementTimeout)
 	defer cancel()
-	timedOut := func() bool {
-		return !b.ThrowOnStatementTimeout && ctx.Err() == nil && errors.Is(qctx.Err(), context.DeadlineExceeded)
+	onError := func(err error) ([]RawImage, error) {
+		if b.ThrowOnStatementTimeout || ctx.Err() != nil || !errors.Is(qctx.Err(), context.DeadlineExceeded) {
+			return nil, err
+		}
+		if b.PersonalizedViewerID != 0 {
+			return nil, fallback.Safef("statement-timeout", "viewer %d", b.PersonalizedViewerID)
+		}
+		return []RawImage{}, nil
 	}
 	rows, err := db.Query(qctx, b.SQL, b.Args...)
 	if err != nil {
-		if timedOut() {
-			return []RawImage{}, nil
-		}
-		return nil, err
+		return onError(err)
 	}
 	out, err := scanRows(rows, b.Collection)
 	if err != nil {
-		if timedOut() {
-			return []RawImage{}, nil
-		}
-		return nil, err
+		return onError(err)
 	}
 	if useCache && !cache.ReadOnly {
 		if raw, err := json.Marshal(out); err == nil {
@@ -191,10 +196,24 @@ type Image struct {
 	Index       int
 	NsfwLevel   int
 	SortAt      time.Time
-	PublishedAt any // time.Time (= sortAt) or Undefined
+	PublishedAt any // the wire's sortAt Date (*time.Time, see SortAtWire) or Undefined
 	ModelVerID  any
 	User        superjson.Object
 	Stats       superjson.Object
+	// sortAt is the image's one `sortAt` Date as the wire holds it: getAllImagesUncaptured writes
+	// `publishedAt: i.publishedAt ? i.sortAt : undefined`, and the gallery handler copies both onto the
+	// post, so the Node answer holds ONE Date at up to four places. A shared pointer is that one Date to
+	// the devalue writer (written once, referenced after); the superjson writer reads through it.
+	sortAt *time.Time
+}
+
+// SortAtWire is the image's sortAt as it goes on the wire: the Date buildImage shared between the
+// image's sortAt and publishedAt, or SortAt itself for an Image built without it.
+func (img Image) SortAtWire() any {
+	if img.sortAt != nil {
+		return img.sortAt
+	}
+	return img.SortAt
 }
 
 // Page is one getAllImages result.
@@ -356,9 +375,12 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 	if r.Model3DID != nil && hy.VisibleModel3D[*r.Model3DID] {
 		model3d = int64(*r.Model3DID)
 	}
+	// One Date for sortAt and publishedAt (`publishedAt: i.publishedAt ? i.sortAt : undefined`).
+	sortAt := new(time.Time)
+	*sortAt = r.SortAt
 	var publishedAt any = superjson.Undefined{}
 	if r.PublishedAt != nil {
-		publishedAt = r.SortAt
+		publishedAt = sortAt
 	}
 
 	basic, hasBasic := hy.Basic[r.UserID]
@@ -417,7 +439,7 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 		{Key: "onSite", Val: boolOrNil(r.OnSite)},
 		{Key: "remixOfId", Val: rawOrNil(r.RemixOfID)},
 		{Key: "createdAt", Val: r.CreatedAt},
-		{Key: "sortAt", Val: r.SortAt},
+		{Key: "sortAt", Val: sortAt},
 		{Key: "type", Val: r.Type},
 		{Key: "metadata", Val: rawOrNil(r.Metadata)},
 		{Key: "ingestion", Val: r.Ingestion},
@@ -453,6 +475,7 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 	return Image{
 		Wire: wire, ID: r.ID, PostID: r.PostID, Index: idx, NsfwLevel: nsfw, SortAt: r.SortAt,
 		PublishedAt: publishedAt, ModelVerID: intOrNil(r.ModelVersionID), User: user, Stats: stats,
+		sortAt: sortAt,
 	}
 }
 

@@ -27,8 +27,10 @@
     "./training-review": "./src/training-review.ts",
     "./training-custom-model": "./src/training-custom-model.ts",
     "./training-options": "./src/training-options.ts",
+    "./training-kohya-replay": "./src/training-kohya-replay.ts",
     "./training-text-encoder": "./src/training-text-encoder.ts",
     "./job-queue": "./src/job-queue.ts",
+    "./account-deletion-grace": "./src/account-deletion-grace.ts",
     "./search-index-queue": "./src/search-index-queue.ts",
     "./rated-entity-sql": "./src/rated-entity-sql.ts",
     "./minor-content-gate": "./src/minor-content-gate.ts",
@@ -55,13 +57,15 @@
     "./held-media": "./src/held-media.ts",
     "./held-url": "./src/held-url.ts",
     "./retracted-media": "./src/retracted-media.ts",
+    "./media-signals": "./src/media-signals.ts",
     "./retracted-media-tier": "./src/retracted-media-tier.ts",
     "./review-batch": "./src/review-batch.ts",
     "./report-reward": "./src/report-reward.ts",
     "./new-order-levels": "./src/new-order-levels.ts",
     "./new-order": "./src/new-order.ts",
     "./knights-shop": "./src/knights-shop.ts",
-    "./sensitive-block-scopes": "./src/sensitive-block-scopes.ts"
+    "./sensitive-block-scopes": "./src/sensitive-block-scopes.ts",
+    "./usage-limit-view": "./src/usage-limit-view.ts"
   },
   "scripts": {
     "test": "vitest run",

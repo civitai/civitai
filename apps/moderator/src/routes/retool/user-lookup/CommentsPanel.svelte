@@ -19,25 +19,38 @@
     civitaiUrl: string;
   } = $props();
 
-  // The cursors walked so far, so Previous is an index move. The panel remounts per account, so no
-  // cursor carries over to the next one.
-  let cursors = $state<(CommentCursor | null)[]>([null]);
-  let index = $state(0);
+  // The search runs on the server, over every comment, not just the page on screen.
+  let filters = $state<Record<string, string>>({});
+  const q = $derived((filters.q ?? '').trim());
+
+  // The cursors walked so far, so Previous is an index move. The walk is kept with the search it was
+  // made under, so a new search starts on page 1 with no $effect to reset it. The panel remounts per
+  // account, so no cursor carries over to the next one.
+  let walk = $state<{ q: string; cursors: (CommentCursor | null)[]; index: number }>({
+    q: '',
+    cursors: [null],
+    index: 0,
+  });
+  const at = $derived(walk.q === q ? walk : { q, cursors: [null], index: 0 });
   // Bumped by a delete, so the page and its total come back from the server rather than being patched.
   let refreshed = $state(0);
   // Each answer carries the index it was asked for. A failed turn keeps the previous rows on screen,
   // and the pager must keep describing those rather than the page that never arrived.
   const comments = keepLast(() => {
     if (!browser) return null;
-    const at = index;
-    return fetchComments(userId, cursors[at], refreshed).then((p) => ({ ...p, index: at }));
+    const { index, cursors } = at;
+    return fetchComments(userId, cursors[index], q, refreshed).then((p) => ({ ...p, index }));
   });
 
   // Always a new `cursors`, even going back: after a failed turn `index` may already hold the target,
   // and only a changed source makes `keepLast` ask again.
   const goTo = (from: number, next: CommentCursor | null) => {
-    cursors = next ? [...cursors.slice(0, from + 1), next] : cursors.slice(0, Math.max(1, from));
-    index = next ? from + 1 : Math.max(0, from - 1);
+    const { cursors } = at;
+    walk = {
+      q,
+      cursors: next ? [...cursors.slice(0, from + 1), next] : cursors.slice(0, Math.max(1, from)),
+      index: next ? from + 1 : Math.max(0, from - 1),
+    };
   };
 </script>
 
@@ -48,6 +61,8 @@
       title="Comments"
       rows={p.items}
       total={p.total}
+      matched={p.matched}
+      bind:filters
       loading={comments.loading}
       onDeleted={() => refreshed++}
       {userId}

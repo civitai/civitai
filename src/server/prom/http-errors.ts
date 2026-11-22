@@ -3,6 +3,7 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { routeSegments } from '~/server/utils/route-segments';
+import { ROUTE_BUDGET } from '~/server/route-label-budget';
 
 // ---------------------------------------------------------------------------
 // Unsampled per-route APP-EMITTED 5xx attribution counter
@@ -59,13 +60,9 @@ type Kind = 'api' | 'trpc';
 // Bounded distinct-route tracking (hard cardinality cap, grow-only, per kind)
 // ---------------------------------------------------------------------------
 //
-// Sized to cover the real route surface so legit routes are NEVER lost to
-// <overflow> — ~203 wrapped Pages-API route files and ~870 tRPC procedures. With
-// route params normalized and query-string keys excluded (see reconstructApiRoute),
-// nothing user-controlled can inflate this; only genuinely novel real routes
-// beyond the budget collapse. Per-kind so a tRPC error storm can't starve the API
-// budget (or vice-versa).
-const ROUTE_BUDGET: Record<Kind, number> = { api: 400, trpc: 1000 };
+// Budget per kind (route-label-budget.ts): a tRPC error storm cannot starve the API budget.
+// Params are normalized and query keys excluded (see reconstructApiRoute), so only novel real
+// routes collapse.
 const seenByKind: Record<Kind, Set<string>> = { api: new Set(), trpc: new Set() };
 
 function bounded(route: string, kind: Kind): string {

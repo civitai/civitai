@@ -118,6 +118,18 @@ const OWNED: { section: string; table: string; owner: string; columns: string[] 
     ],
   },
   {
+    section: 'serviceDealReviews',
+    table: 'ServiceDealReview',
+    owner: 'buyerId',
+    columns: ['id', 'dealId', 'buyerId', 'comment', 'hiddenAt', 'createdAt', 'updatedAt'],
+  },
+  {
+    section: 'serviceDealReviewReplies',
+    table: 'ServiceDealReview',
+    owner: 'sellerId',
+    columns: ['id', 'dealId', 'sellerId', 'sellerReply', 'sellerReplyAt', 'hiddenAt'],
+  },
+  {
     section: 'questions',
     table: 'Question',
     owner: 'userId',
@@ -166,7 +178,11 @@ const read = async (section: string, userId: number, pageSize = PAGE) => {
 };
 
 beforeAll(async () => {
-  for (const { table, columns } of OWNED) await pg.exec(ddl(table, columns));
+  // A table two sections read (a review's comment and its reply) is created once, with both lists.
+  const tables = new Map<string, Set<string>>();
+  for (const { table, columns } of OWNED)
+    tables.set(table, new Set([...(tables.get(table) ?? []), ...columns]));
+  for (const [table, columns] of tables) await pg.exec(ddl(table, [...columns]));
   await pg.exec(`
     ${ddl('UserProfile', [
       'userId',
@@ -210,7 +226,7 @@ afterAll(() => pg.close());
 
 beforeEach(async () => {
   const tables = [
-    ...OWNED.map((o) => o.table),
+    ...new Set(OWNED.map((o) => o.table)),
     'UserProfile',
     'TextScanHold',
     'ChatMessageEdit',
@@ -233,6 +249,8 @@ describe('the archive text sections', () => {
       'bounties',
       'bountyEntries',
       'serviceOfferings',
+      'serviceDealReviews',
+      'serviceDealReviewReplies',
       'questions',
       'answers',
     ]);

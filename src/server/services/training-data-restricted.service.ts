@@ -1,4 +1,5 @@
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
+import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { logToAxiom } from '~/server/logging/client';
 import { ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
@@ -60,6 +61,53 @@ export function trainingDataShareRestricted(
 type ListedFile = { id: number; type: string; visibility: string };
 
 /**
+ * `trainingDataListing`'s statement over the candidate versions. feed-go reads the same rows with an
+ * embedded copy of this text (apps/feed-go/internal/v1models/training_data_listing.sql), held to it
+ * byte for byte by feed-go-training-data-listing.parity.test.ts.
+ */
+export function trainingDataListingSql(candidates: number[]): Prisma.Sql {
+  return Prisma.sql`
+    SELECT mf.id, mf."virusScanResult", mf.metadata -> 'nsfwLevel' AS "nsfwLevel",
+      mf.metadata -> 'fullyRated' AS "fullyRated", (${trainingDataOwnerRestrictedSql(
+        Prisma.raw('m."userId"')
+      )}
+      OR ${trainingDataContentRestrictedSql(Prisma.raw('mv.id'))}) AS restricted
+    FROM "ModelFile" mf
+    JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mf."modelVersionId" = ANY(${candidates}::int[]) AND mf.type = 'Training Data'`;
+}
+
+/**
+ * The version of `trainingDataListing`'s JS decision (its whole body, between the feed-go-rules
+ * markers, src/shared/utils/training-data-visibility.ts, and the values of sfwBrowsingLevelsFlag and
+ * ScanResultCode.Success it reads). feed-go mirrors it (TrainingDataRulesVersion in
+ * apps/feed-go/internal/v1models/trainingdata.go) and lists Training Data files only for a Node
+ * sending the same version. feed-go-training-data-listing.parity.test.ts hashes that source and fails
+ * until this is bumped (in both places) whenever it changes.
+ */
+export const TRAINING_DATA_LISTING_RULES_VERSION = 1;
+
+let listingSqlSha256: string | undefined;
+/**
+ * The SHA-256 (hex) of `trainingDataListingSql`'s text: the statement half of the rule set
+ * `trainingDataListingRulesId` names (the decision half is TRAINING_DATA_LISTING_RULES_VERSION).
+ */
+export function trainingDataListingSqlSha256(): string {
+  listingSqlSha256 ??= createHash('sha256').update(trainingDataListingSql([]).text).digest('hex');
+  return listingSqlSha256;
+}
+
+/**
+ * The rule set this build lists Training Data files by, as the feed-go shadow sends it with every
+ * model sample: the statement's hash and the decision's version, `<sha256>;rules=<n>`. feed-go answers
+ * a body with Training Data files only when both equal its own, and falls back otherwise.
+ */
+export function trainingDataListingRulesId(): string {
+  return `${trainingDataListingSqlSha256()};rules=${TRAINING_DATA_LISTING_RULES_VERSION}`;
+}
+
+/**
  * Whether a file may be listed: a `Training Data` file is left out where its download would be
  * refused, so the listing never offers one. That is a shared dataset `trainingDataShareRestricted`
  * refuses, one `trainingDataServableOnHost` refuses on this host, or one whose virus scan is not
@@ -71,6 +119,7 @@ export async function trainingDataListing(
   versions: { id: number; files?: ListedFile[] | null }[],
   { redCapable, viewerManages = false }: { redCapable: boolean; viewerManages?: boolean }
 ): Promise<(file: ListedFile) => boolean> {
+  // feed-go-rules:begin (TRAINING_DATA_LISTING_RULES_VERSION: bump it when this body changes)
   if (viewerManages) return () => true;
   const candidates = versions
     // `files` is absent when the read did not select them (model-version getById without
@@ -86,25 +135,14 @@ export async function trainingDataListing(
       virusScanResult: string;
       restricted: boolean | null;
     }[]
-  >`
-    SELECT mf.id, mf."virusScanResult", mf.metadata -> 'nsfwLevel' AS "nsfwLevel",
-      mf.metadata -> 'fullyRated' AS "fullyRated", (${trainingDataOwnerRestrictedSql(
-        Prisma.raw('m."userId"')
-      )}
-      OR ${trainingDataContentRestrictedSql(Prisma.raw('mv.id'))}) AS restricted
-    FROM "ModelFile" mf
-    JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
-    JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mf."modelVersionId" = ANY(${candidates}::int[]) AND mf.type = 'Training Data'`.catch(
-    (e: unknown) => {
-      logToAxiom({
-        type: 'error',
-        name: 'training-data-share-check-failed',
-        message: (e as Error).message,
-      });
-      return null;
-    }
-  );
+  >`${trainingDataListingSql(candidates)}`.catch((e: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'training-data-share-check-failed',
+      message: (e as Error).message,
+    });
+    return null;
+  });
   if (!rows) return (file) => file.type !== 'Training Data';
   const refused = new Set(
     rows
@@ -117,6 +155,7 @@ export async function trainingDataListing(
       .map((r) => r.id)
   );
   return (file) => !(file.type === 'Training Data' && refused.has(file.id));
+  // feed-go-rules:end
 }
 
 type ViewedFile = { id: number; type: string; visibility: string; metadata?: unknown };

@@ -2,7 +2,11 @@ import { json, type RequestHandler } from '@sveltejs/kit';
 import { timingSafeEqual } from 'crypto';
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { db } from '$lib/server/db/db';
-import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
+import {
+  checkOAuthRateLimit,
+  oauthRetryAfter,
+  rateLimitedResponse,
+} from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import {
   basicCredentials,
@@ -43,7 +47,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   if (!(await checkOAuthRateLimit('revoke', clientIp))) {
     const headers = new Headers();
     setWildcardCors(headers);
-    return json({ error: 'rate_limited' }, { status: 429, headers });
+    return rateLimitedResponse(oauthRetryAfter('revoke'), headers, 'Too many revocation requests');
   }
 
   // Single lookup covers origin enforcement (public clients) + secret validation (confidential clients).

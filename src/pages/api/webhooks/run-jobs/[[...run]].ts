@@ -179,6 +179,7 @@ import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-recon
 import { serviceOfferingIngestionReconcile } from '~/server/jobs/service-offering-ingestion-reconcile';
 import { articleContentLinkHold } from '~/server/jobs/article-content-link-hold';
 import { metricJobs } from '~/server/jobs/update-metrics';
+import { updateModelImageCountsJob } from '~/server/jobs/update-model-image-counts';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
 import { grantCreatorMilestones } from '~/server/jobs/grant-creator-milestones';
@@ -189,7 +190,7 @@ import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-image
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
 import { purgeFeedbackCaptures } from '~/server/jobs/purge-feedback-captures';
 import { imageStorageDeletes } from '~/server/jobs/image-storage-deletes';
-import { imageDeletes } from '~/server/jobs/image-deletes';
+import { pendingDeletes } from '~/server/jobs/pending-deletes';
 import { retryUploadPromptScansJob } from '~/server/jobs/retry-upload-prompt-scans';
 import { restoreUserImages } from '~/server/jobs/restore-user-images';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
@@ -239,7 +240,7 @@ export const jobs: Job[] = [
   removeReplacedImages,
   purgeFeedbackCaptures,
   imageStorageDeletes,
-  imageDeletes,
+  pendingDeletes,
   retryUploadPromptScansJob,
   processScheduledPublishing,
   knightsPublishSampling,
@@ -253,6 +254,7 @@ export const jobs: Job[] = [
   autoFeatureImages,
   autoFeatureHealthCheckJob,
   ...metricJobs,
+  updateModelImageCountsJob,
   ...searchIndexJobs,
   searchIndexUserCleanupJob,
   searchIndexCleanupJob,

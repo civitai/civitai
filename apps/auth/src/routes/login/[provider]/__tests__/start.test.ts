@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { isRedirect } from '@sveltejs/kit';
 
-vi.mock('$lib/server/auth/rate-limit', () => ({ checkRateLimit: async () => true }));
+const limit = vi.hoisted(() => ({
+  result: { ok: true } as { ok: true } | { ok: false; retryAfter: number },
+}));
+vi.mock('$lib/server/auth/rate-limit', () => ({ consumeRateLimit: async () => limit.result }));
 vi.mock('$lib/server/auth/request', () => ({ getClientIp: () => '203.0.113.9' }));
 
 import { GET } from '../+server';
@@ -36,11 +39,41 @@ function start(query: Record<string, string>) {
 }
 
 beforeEach(() => {
+  limit.result = { ok: true };
   process.env.DISCORD_CLIENT_ID = 'client-123';
   process.env.DISCORD_CLIENT_SECRET = 'secret';
 });
 
 describe('/login/discord start', () => {
+  const spent = (accept?: string) => {
+    limit.result = { ok: false, retryAfter: 42 };
+    const url = new URL('https://auth.civitai.com/login/discord');
+    return GET({
+      params: { provider: 'discord' },
+      url,
+      cookies: { set: vi.fn(), delete: vi.fn(), get: () => undefined },
+      locals: {},
+      request: new Request(url, accept ? { headers: { accept } } : undefined),
+    } as never) as Promise<Response>;
+  };
+
+  it('answers a spent limit with a 429 that says when to retry, before any provider work', async () => {
+    const res = await spent('application/json');
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('42');
+    expect(await res.json()).toMatchObject({ error: 'rate_limited', retry_after: 42 });
+  });
+
+  it('shows a browser following the sign-in link a readable page, not JSON', async () => {
+    const res = await spent('text/html,application/xhtml+xml,*/*;q=0.8');
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('42');
+    expect(res.headers.get('Content-Type')).toContain('text/html');
+    expect(await res.text()).toContain(
+      'Too many sign-in attempts from your network. Try again in 42 seconds.'
+    );
+  });
+
   it('roles leg: no PKCE challenge, no verifier cookie, marks the flow as no-PKCE', async () => {
     const { run, set, deleted } = start({ link: 'true', roles: 'true' });
     const authorize = await run();

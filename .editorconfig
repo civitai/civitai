@@ -11,3 +11,6 @@ indent_size = 4
 
 [Makefile]
 indent_style = tab
+# Hashed byte for byte against the Node statement it copies (feed-go Training Data drift guard).
+[apps/feed-go/internal/v1models/training_data_listing.sql]
+insert_final_newline = false

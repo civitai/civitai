@@ -206,7 +206,7 @@ func TestPageComputesUserCosmeticsMiss(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Page: %v (fallback %q)", err, fallback.Reason(err))
 			}
-			if s, want := pagePlain(t, got.UserCosmetics[1002]), `[{"cosmeticId":503,"data":{"a":2,"b":1},"cosmetic":{"id":503,"name":"c503","type":"NamePlate","data":{},"source":"Claim","flags":3}}]`; s != want {
+			if s, want := pagePlain(t, got.UserCosmetics[1002]), `[{"cosmeticId":503,"data":{"b":1,"a":2},"cosmetic":{"id":503,"name":"c503","type":"NamePlate","data":{},"source":"Claim","flags":3}}]`; s != want {
 				t.Fatalf("user 1002 cosmetics:\n got %s\nwant %s", s, want)
 			}
 			if _, ok := got.UserCosmetics[1003]; ok {
@@ -399,7 +399,7 @@ func TestPageComputesEventDecorationMiss(t *testing.T) {
 			if s, want := pagePlain(t, got.Decorations[12]), `{"id":602,"name":"deco2","type":"ContentDecoration","source":"Event","data":{"event":"ev","url":"x.png"},"equippedToId":12,"equippedToType":"Image"}`; s != want {
 				t.Fatalf("decoration 12:\n got %s\nwant %s", s, want)
 			}
-			if s, want := pagePlain(t, got.Decorations[14]), `{"id":603,"name":"deco3","type":"ContentDecoration","source":"Event","data":{"event":"ev","url":"y.png"},"equippedToId":14,"equippedToType":"Image"}`; s != want {
+			if s, want := pagePlain(t, got.Decorations[14]), `{"id":603,"name":"deco3","type":"ContentDecoration","source":"Event","data":{"url":"y.png","event":"ev"},"equippedToId":14,"equippedToType":"Image"}`; s != want {
 				t.Fatalf("decoration 14 (replica cosmetic):\n got %s\nwant %s", s, want)
 			}
 			if keys := sortedKeys(got.Decorations); !reflect.DeepEqual(keys, []int{11, 12, 14}) {

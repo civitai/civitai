@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.534",
+  "version": "5.1.540",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -112,7 +112,6 @@
     "deploy": "pnpm run build && pnpm run db:deploy",
     "postinstall": "pnpm run db:generate",
     "typecheck": "node scripts/typecheck.mjs",
-    "typecheck:fast": "node scripts/typecheck-fast.mjs",
     "typecheck:tests": "node scripts/ci/typecheck-tests-gate.mjs",
     "typecheck:apps": "node scripts/typecheck-apps-run.mjs",
     "lint": "node scripts/queued-check.mjs lint",
@@ -162,7 +161,7 @@
     "depcheck": "depcheck",
     "generate-types": "typed-scss-modules src",
     "ts-script": "NODE_ENV=development tsx",
-    "generate:moderator-endpoints": "node scripts/generate-moderator-endpoint-catalog.mjs"
+    "generate:api-routes": "node scripts/generate-api-routes.mjs"
   },
   "prisma": {
     "schema": "packages/civitai-db-schema/prisma/schema.prisma",
@@ -194,6 +193,7 @@
     "@clickhouse/client": "^1.23.1",
     "@coinbase/cdp-sdk": "^1.13.0",
     "@contentauth/c2pa-wasm": "0.15.1",
+    "@datadog/pprof": "5.14.4",
     "@discordjs/rest": "^2.6.0",
     "@dnd-kit/core": "^6.1.0",
     "@dnd-kit/sortable": "^8.0.0",

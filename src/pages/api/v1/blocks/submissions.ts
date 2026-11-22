@@ -5,6 +5,11 @@ import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { dbRead } from '~/server/db/client';
+import type { ListingActionsRunSource } from '~/server/schema/blocks/app-listing-read.schema';
+import {
+  publicActionsRunSource,
+  readActionsRunSourcesForRender,
+} from '~/server/services/blocks/actions-run-source.service';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { isApprovedAndServing } from '~/shared/constants/app-block-deploy.constants';
@@ -114,6 +119,24 @@ type SubmissionRow = {
 };
 
 /**
+ * The recorded Actions run of each row, filtered by `publicActionsRunSource`, the SAME rule the
+ * public store page uses: public repositories only, tag refs only, shape-checked. One predicate
+ * for "may this run be shown", so the CLI can never print a run the store page would hide.
+ * Never throws (the read degrades to "none recorded").
+ */
+async function readActionsRunSources(
+  ids: readonly string[]
+): Promise<Map<string, ListingActionsRunSource>> {
+  const out = new Map<string, ListingActionsRunSource>();
+  const runs = await readActionsRunSourcesForRender(dbRead, ids);
+  for (const [id, run] of runs) {
+    const shown = publicActionsRunSource(run);
+    if (shown) out.set(id, shown);
+  }
+  return out;
+}
+
+/**
  * Shape one DB row into the safe, CLI-friendly response. NO internal-only
  * columns (bundleKey/bundleSha256/forgejoCommitSha/manifest/file diffs/reviewer
  * id), and never another user's data (rows are self-scoped at the query).
@@ -130,7 +153,11 @@ type SubmissionRow = {
  * before deploy-state tracking existed, or carrying a recorded transition), so
  * pre-feature rows that genuinely deployed keep their URL.
  */
-function shapeRow(row: SubmissionRow, appsDomain: string) {
+function shapeRow(
+  row: SubmissionRow,
+  appsDomain: string,
+  actionsRunSource: ListingActionsRunSource | null
+) {
   const isLive = isApprovedAndServing(row);
   return {
     id: row.id,
@@ -160,6 +187,14 @@ function shapeRow(row: SubmissionRow, appsDomain: string) {
     // platform's own repo, not the author's.
     sourceCommit: row.sourceCommit,
     sourceDirty: row.sourceDirty,
+    // The GitHub Actions run that sent this submit, from a token GitHub signed: a DIFFERENT
+    // trust level from the client claim above, so never aliased with it or defaulted from it.
+    // It says which RUN submitted, not what the bundle was built from, so a consumer may only
+    // word it "Submitted by a GitHub Actions run of <repository> @ <tag> (<sha>)", never
+    // "verified". Null when no run was recorded, the repository was not public at the time of
+    // the run, the stored ref is not a tag, or the columns are not readable here (see
+    // `actions-run-source.service.ts`).
+    actionsRunSource,
     submittedAt: row.submittedAt.toISOString(),
     reviewedAt: row.reviewedAt ? row.reviewedAt.toISOString() : null,
     updatedAt: row.updatedAt.toISOString(),
@@ -336,7 +371,8 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       res.status(404).json({ message: 'Submission not found' });
       return;
     }
-    res.status(200).json({ submission: shapeRow(row, appsDomain) });
+    const runs = await readActionsRunSources([row.id]);
+    res.status(200).json({ submission: shapeRow(row, appsDomain, runs.get(row.id) ?? null) });
     return;
   }
 
@@ -348,5 +384,8 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     select: SELECT,
   })) as SubmissionRow[];
 
-  res.status(200).json({ submissions: rows.map((r) => shapeRow(r, appsDomain)) });
+  const runs = await readActionsRunSources(rows.map((r) => r.id));
+  res.status(200).json({
+    submissions: rows.map((r) => shapeRow(r, appsDomain, runs.get(r.id) ?? null)),
+  });
 });

@@ -773,6 +773,13 @@ describe('checkInlineComfyGraph — nodes the host does not run inline', () => {
     ['FetchImage', { src: ['2', 0] }, LINKED],
     ['DownloadMedia', { src: ['2', 0] }, LINKED],
     ['LoraLoader', { model: ['1', 0], clip: ['1', 1], lora_name: ['2', 0] }, LINKED],
+    // An array that is not a `[nodeId, slot]` link is a value, even in an input that may be linked.
+    [
+      'LoraLoader',
+      { model: [{ $ref: '$arguments', path: 'm' }], clip: ['1', 1], lora_name: AIR },
+      'as an object',
+    ],
+    ['LoraLoader', { model: ['1', 0, 'x'], clip: ['1', 1], lora_name: AIR }, 'as an object'],
     ['CreateHookLora', { lora_name: ['2', 0], strength_model: 1 }, LINKED],
     ['LoadImage', { image: 'x.png' }, LOCAL],
     ['LoadImage', { image: '../x.png' }, LOCAL],

@@ -9,7 +9,7 @@ import type * as BrowserSettingsProvider from '~/providers/BrowserSettingsProvid
 import type * as StickerUtil from '~/components/Sticker/sticker.util';
 
 // Server render only: the bug was a server-drawn .com href that hydration never corrected.
-const viewing = vi.hoisted(() => ({ host: 'civitai.red' }));
+const viewing = vi.hoisted(() => ({ host: 'civitai.red', blurNsfw: false }));
 
 vi.mock('~/providers/AppProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof AppProvider>()),
@@ -35,7 +35,7 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 
 vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowserSettingsProvider>()),
-  useBrowsingSettings: () => false,
+  useBrowsingSettings: () => viewing.blurNsfw,
 }));
 
 vi.mock('~/components/Sticker/sticker.util', async (importOriginal) => ({
@@ -47,6 +47,7 @@ const { RenderRichText } = await import('~/components/RichTextEditor/RenderRichT
 const { RenderHtml } = await import('~/components/RenderHtml/RenderHtml');
 const { CustomMarkdown } = await import('~/components/Markdown/CustomMarkdown');
 const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+const { ProfanityBlocklistCtx } = await import('~/providers/ProfanityBlocklistProvider');
 
 const render = (el: ReturnType<typeof createElement>) =>
   renderToStaticMarkup(createElement(MantineProvider, null, el));
@@ -165,5 +166,28 @@ describe('announcement action buttons', () => {
     expect(buttonHref('https://t.me/SomeGroup', 'civitai.red')).toBe(
       '/leaving?url=https://t.me/SomeGroup'
     );
+  });
+});
+
+// Lives here for the stubs above: RenderHtml reads the managed list from the app-level context.
+describe('RenderHtml comment masking, server render', () => {
+  const comment = () =>
+    createElement(RenderHtml, { html: '<p>a zorblat here</p>', withProfanityFilter: true });
+
+  it('masks with the managed list the app provides, and with the shipped list without it', () => {
+    viewing.blurNsfw = true;
+    try {
+      const managed = render(
+        createElement(
+          ProfanityBlocklistCtx.Provider,
+          { value: { version: '31:1', words: ['zorblat'] } },
+          comment()
+        )
+      );
+      expect(managed).not.toContain('zorblat');
+      expect(render(comment())).toContain('zorblat');
+    } finally {
+      viewing.blurNsfw = false;
+    }
   });
 });

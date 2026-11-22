@@ -18,7 +18,7 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   },
 }));
 
-import handler from '~/pages/api/mod/clean-up';
+import handler from '~/server/api-routes/mod/clean-up';
 import { ModelFileScanSubmissionError } from '~/server/services/orchestrator/orchestrator.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 

@@ -16,12 +16,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,7 +49,7 @@ const (
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
-	goldenMinInfinite = 58
+	goldenMinInfinite = 87
 	goldenMinModels   = 34
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
@@ -59,6 +61,9 @@ var goldenHosts = browsing.HostColors{
 	"blue":  {"blue.example.test"},
 	"red":   {"red.example.test"},
 }
+
+// goldenPrimaries is each color's SERVER_DOMAIN_<COLOR>: every fixture host is its color's primary.
+var goldenPrimaries = map[string]string{"green": "green.example.test", "blue": "blue.example.test", "red": "red.example.test"}
 
 // goldenTime is a timestamp written as {"$date": "<ISO>"}, or null.
 type goldenTime struct{ T *time.Time }
@@ -276,6 +281,12 @@ type goldenDB struct {
 		UserID   int    `json:"userId"`
 		Reaction string `json:"reaction"`
 	} `json:"reactions"`
+	// SystemPosts are the system user's (-1) posts on each version Node looked one up for
+	// (getAllImages' hasSystemPosts; an infinite/ fixture of `prioritizedUserIds: [-1]`).
+	SystemPosts []struct {
+		ID             int `json:"id"`
+		ModelVersionID int `json:"modelVersionId"`
+	} `json:"systemPosts"`
 	// TagVotes are TagsOnImageVote rows (an infinite/ fixture whose signed-in request has the 'tags'
 	// include: the votes the handler merges).
 	TagVotes []struct {
@@ -583,6 +594,8 @@ var (
 	goldenReLevel     = regexp.MustCompile(`\(i\."nsfwLevel" & \$(\d+)\) != 0`)
 	goldenReTarget    = regexp.MustCompile(` AND i\."userId" = \$(\d+)`)
 	goldenReFollowed  = regexp.MustCompile(`i\."userId" = ANY\(\$(\d+)::int\[\]\)`)
+	goldenRePostVer   = regexp.MustCompile(`p\."modelVersionId" = \$(\d+)`)
+	goldenReReactions = regexp.MustCompile(`ir\."userId" = \$(\d+) AND ir\.reaction = ANY\(\$(\d+)::text\[\]::"ReviewReactions"\[\]\)`)
 	goldenReExclUsers = regexp.MustCompile(`i\."userId" != ALL\(\$(\d+)::int\[\]\)`)
 	goldenReTypes     = regexp.MustCompile(`i\.type = ANY\(\$(\d+)::text`)
 	goldenReCursor    = regexp.MustCompile(`\(\((i\."id"|irr\."imageId"|i\."index"|ct\."collectionItemId") (<=|>=) \$(\d+)\)\)`)
@@ -693,7 +706,30 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	model, hasModel := goldenArg(args, goldenReModel, sql)
 	level, hasLevel := goldenArg(args, goldenReLevel, sql)
 	target, hasTarget := goldenArg(args, goldenReTarget, sql)
-	followed, hasFollowed := goldenArg(args, goldenReFollowed, sql)
+	// Every `i."userId" = ANY(<list>)` clause (the follow list, the new-creators board, the prioritized
+	// creators): an image must be in each.
+	var userLists [][]int
+	for _, m := range goldenReFollowed.FindAllStringSubmatch(sql, -1) {
+		n, _ := strconv.Atoi(m[1])
+		if n < 1 || n > len(args) {
+			return nil, errors.New("golden: a creator list bound past the arguments")
+		}
+		userLists = append(userLists, goldenInts(args[n-1]))
+	}
+	postVersion, hasPostVersion := goldenArg(args, goldenRePostVer, sql)
+	var reactionUser int
+	var reactionKinds []string
+	if m := goldenReReactions.FindStringSubmatch(sql); m != nil {
+		u, _ := strconv.Atoi(m[1])
+		k, _ := strconv.Atoi(m[2])
+		reactionUser = goldenInt(args[u-1])
+		reactionKinds, _ = args[k-1].([]string)
+		if reactionUser == 0 || len(reactionKinds) == 0 {
+			return nil, errors.New("golden: a reaction clause without its viewer or kinds")
+		}
+	}
+	// An empty new-creators board: `1 = 0`, no row at all.
+	noRow := strings.Contains(sql, ` AND 1 = 0 AND `)
 	exclUsers, hasExcl := goldenArg(args, goldenReExclUsers, sql)
 	types, hasTypes := goldenArg(args, goldenReTypes, sql)
 	minorOwner, hasMinorOwner := goldenArg(args, goldenReMinorOwn, sql)
@@ -764,8 +800,24 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 		if hasTarget && img.UserID != goldenInt(target) {
 			continue
 		}
-		if hasFollowed && !goldenHas(goldenInts(followed), img.UserID) {
+		inLists := true
+		for _, list := range userLists {
+			inLists = inLists && goldenHas(list, img.UserID)
+		}
+		if !inLists || noRow {
 			continue
+		}
+		if hasPostVersion && (img.ModelVersionID == nil || *img.ModelVersionID != goldenInt(postVersion)) {
+			continue
+		}
+		if reactionUser != 0 {
+			reacted := false
+			for _, r := range fx.DB.Reactions {
+				reacted = reacted || (r.UserID == reactionUser && r.ImageID == img.ID && slices.Contains(reactionKinds, r.Reaction))
+			}
+			if !reacted {
+				continue
+			}
 		}
 		if hasTags {
 			carries := false
@@ -852,17 +904,43 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 		// Carry each row's item through the sort and the paging below.
 		return goldenCollectionRows(sql, args, kept, itemOf)
 	}
-	asc := strings.Contains(sql, `ORDER BY i."id" ASC`)
+	// The system user's IIF ahead of the sort's own order (prioritizedUserIds [-1] without a post of
+	// its own), or the prioritized creators' oldest-post order in place of it.
+	const iifPrefix = `ORDER BY IIF(i."userId" IN (-1), i.index, 1000),  `
+	iif := strings.Contains(sql, iifPrefix)
+	oldestPost := strings.Contains(sql, `ORDER BY (i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"`)
+	order := "ORDER BY "
+	if iif {
+		order = iifPrefix
+	}
+	asc := strings.Contains(sql, order+`i."id" ASC`)
 	// A post's own media: ORDER BY i."index", i."id", and the index is the cursor column.
-	byIndex := strings.Contains(sql, `ORDER BY i."index", i."id"`)
+	byIndex := strings.Contains(sql, order+`i."index", i."id"`)
 	indexOf := func(img goldenImage) int {
 		if img.Index == nil {
 			return 0
 		}
 		return *img.Index
 	}
+	iifOf := func(img goldenImage) int {
+		if img.UserID == -1 {
+			if img.Index == nil {
+				return math.MaxInt // NULL sorts last ascending; no fixture row has one
+			}
+			return *img.Index
+		}
+		return 1000
+	}
 	sort.SliceStable(kept, func(a, b int) bool {
 		switch {
+		case oldestPost:
+			ka, kb := kept[a].PostID*100+indexOf(kept[a]), kept[b].PostID*100+indexOf(kept[b])
+			if ka != kb {
+				return ka < kb
+			}
+			return kept[a].ID < kept[b].ID
+		case iif && iifOf(kept[a]) != iifOf(kept[b]):
+			return iifOf(kept[a]) < iifOf(kept[b])
 		case byIndex && indexOf(kept[a]) != indexOf(kept[b]):
 			return indexOf(kept[a]) < indexOf(kept[b])
 		case asc || byIndex:
@@ -1019,6 +1097,26 @@ func newGoldenPG(fx *goldenFixture) *testkit.DB {
 				}
 			}
 			return testkit.NewRows([]string{"id", "modelId"}, rows...), nil
+		}},
+		// getHeldLevelsByPost's owner read (image.getInfinite's `ids`): each existing model's owner.
+		{Match: `SELECT id, "userId" FROM "Model" WHERE id = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, m := range db.Models {
+				if goldenHas(goldenInts(args[0]), m.ID) {
+					rows = append(rows, []any{m.ID, m.UserID})
+				}
+			}
+			return testkit.NewRows([]string{"id", "userId"}, rows...), nil
+		}},
+		// getAllImages' hasSystemPosts (`prioritizedUserIds: [-1]` on a version): a post of the system
+		// user on the version, or none.
+		{Match: `SELECT id FROM "Post" WHERE "userId" = -1 AND "modelVersionId" = $1`, Rows: func(args []any) (*testkit.Rows, error) {
+			for _, p := range db.SystemPosts {
+				if p.ModelVersionID == goldenInt(args[0]) {
+					return testkit.NewRows([]string{"id"}, []any{p.ID}), nil
+				}
+			}
+			return testkit.NewRows([]string{"id"}), nil
 		}},
 		{Match: `SELECT "userId", mode::text FROM "Model"`, Rows: func(args []any) (*testkit.Rows, error) {
 			var rows [][]any
@@ -1392,8 +1490,9 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 		NodeProduction: true,
 		Now:            nowFn,
 	}
-	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: blocked}
-	s := &Server{Resolver: resolver, Deps: deps, Hosts: goldenHosts, V1: v1, Infinite: infinite}
+	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: blocked,
+		NewCreators: &feed.NewCreatorBoards{Cache: cache, Now: nowFn}}
+	s := &Server{Resolver: resolver, Deps: deps, Hosts: goldenHosts, HostPrimaries: goldenPrimaries, V1: v1, Infinite: infinite}
 
 	headers := map[string]string{}
 	for k, v := range fx.Request.Headers {

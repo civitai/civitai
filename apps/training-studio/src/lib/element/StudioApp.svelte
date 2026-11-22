@@ -5,6 +5,8 @@
   import RunView from './RunView.svelte';
   import { backend, navigate, type StudioLocation } from '$lib/host';
   import { buzzBalance } from '$lib/buzz-balance.svelte';
+  import { setElementsUi } from '$lib/elements-ui';
+  import { ELEMENTS_UI_FLAG_KEY } from '$lib/data/trainingModels';
 
   // The element's internal views — the host owns the URL space and hands us a location; everything
   // below resolves data through the backend seam, so no view ever leaves the embedding page.
@@ -18,6 +20,8 @@
   // getBuzzBalances (null when the host has none) — without this, the Review step's Yellow/Green
   // spend confirmation had no Blue balance to compare against in the embed and never fired.
   onMount(() => void buzzBalance.refresh());
+
+  setElementsUi(() => enabledModelFlags.includes(ELEMENTS_UI_FLAG_KEY));
 
   // `reloadTick` is the host-context refresh(): bumping it rebuilds the promises, so "server data is
   // stale" re-reads the current view. Entering a view re-derives too, so home is always fresh after

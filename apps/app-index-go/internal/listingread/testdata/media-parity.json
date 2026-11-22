@@ -1,0 +1,1321 @@
+{
+  "$comment": "The listing media parity fixture, read by two tests that must both pass: apps/app-index-go/internal/listingread/parity_test.go (the read model) and src/server/services/blocks/__tests__/listing-media-parity.test.ts (the site's database path and the adapter). Each listing is a database row's media as the adapter publishes them (registryListingMedia order: own icon, own cover, screenshots, red icon, red cover), keyed by the image's stored url. `contentRating` is the listing's own rating (the column the store gates on); `appContentRating`, when present, is the app entity's rating the stream also carries as `contentRating` (`appContentRating`: the listing's if known, else its block's, `blockContentRating`), which must not be gated on. `expected` is, per viewer and listing, null when the store does not show the listing to that viewer, else the keys of the icon, the cover (a screenshot key: its cover rendition) and the gallery. `cards` is each listing's stats as the card shows them (checked on the read model side; the site side's stats come from the same card read the adapter publishes). Change a value here only together with the rule it pins, on both sides.",
+  "viewers": [
+    {
+      "name": "anonymous SFW",
+      "redCapable": false,
+      "browsingLevel": 0,
+      "scope": "full"
+    },
+    {
+      "name": "PG13 main",
+      "redCapable": false,
+      "browsingLevel": 3,
+      "scope": "full"
+    },
+    {
+      "name": "R main",
+      "redCapable": false,
+      "browsingLevel": 7,
+      "scope": "full"
+    },
+    {
+      "name": "anonymous red",
+      "redCapable": true,
+      "browsingLevel": 0,
+      "scope": "full"
+    },
+    {
+      "name": "X red",
+      "redCapable": true,
+      "browsingLevel": 15,
+      "scope": "full"
+    },
+    {
+      "name": "XXX red",
+      "redCapable": true,
+      "browsingLevel": 31,
+      "scope": "full"
+    },
+    {
+      "name": "anonymous SFW, public-external",
+      "redCapable": false,
+      "browsingLevel": 0,
+      "scope": "public-external"
+    }
+  ],
+  "listings": [
+    {
+      "slug": "pg-mixed",
+      "id": "apl_11PG-",
+      "kind": "onsite",
+      "contentRating": "pg",
+      "stats": {
+        "recommendedCount": 8,
+        "notRecommendedCount": 2,
+        "recommendPct": 0.8,
+        "reviewCount": 10,
+        "openCount": 50,
+        "installCount": 3
+      },
+      "media": [
+        {
+          "key": "img/pg-mixed/icon",
+          "slot": "icon",
+          "host": "any",
+          "nsfwLevel": 1,
+          "rating": "pg"
+        },
+        {
+          "key": "img/pg-mixed/cover-pg13",
+          "slot": "cover",
+          "host": "any",
+          "nsfwLevel": 2,
+          "rating": "pg13"
+        },
+        {
+          "key": "img/pg-mixed/s1-r",
+          "slot": "screenshot",
+          "host": "any",
+          "nsfwLevel": 4,
+          "rating": "r",
+          "caption": "an R shot"
+        },
+        {
+          "key": "img/pg-mixed/s2-pg",
+          "slot": "screenshot",
+          "host": "any",
+          "nsfwLevel": 1,
+          "rating": "pg",
+          "caption": "a PG shot"
+        },
+        {
+          "key": "img/pg-mixed/s3-pg13",
+          "slot": "screenshot",
+          "host": "any",
+          "nsfwLevel": 2,
+          "rating": "pg13",
+          "caption": null
+        },
+        {
+          "key": "img/pg-mixed/red-icon-x",
+          "slot": "icon",
+          "host": "red",
+          "nsfwLevel": 8,
+          "rating": "x"
+        },
+        {
+          "key": "img/pg-mixed/red-cover-pg13",
+          "slot": "cover",
+          "host": "red",
+          "nsfwLevel": 2,
+          "rating": "pg13"
+        }
+      ]
+    },
+    {
+      "slug": "pg13-plain",
+      "id": "apl_10PG1",
+      "kind": "onsite",
+      "contentRating": "pg13",
+      "stats": {
+        "recommendedCount": 1,
+        "notRecommendedCount": 0,
+        "recommendPct": null,
+        "reviewCount": 1,
+        "openCount": 0,
+        "installCount": 0
+      },
+      "media": [
+        {
+          "key": "img/pg13-plain/icon-pg13",
+          "slot": "icon",
+          "host": "any",
+          "nsfwLevel": 2,
+          "rating": "pg13"
+        },
+        {
+          "key": "img/pg13-plain/s1-x",
+          "slot": "screenshot",
+          "host": "any",
+          "nsfwLevel": 8,
+          "rating": "x",
+          "caption": "an X shot"
+        },
+        {
+          "key": "img/pg13-plain/s2-pg13",
+          "slot": "screenshot",
+          "host": "any",
+          "nsfwLevel": 2,
+          "rating": "pg13",
+          "caption": null
+        }
+      ]
+    },
+    {
+      "slug": "r-listing",
+      "id": "apl_09R-L",
+      "kind": "onsite",
+      "contentRating": "r",
+      "stats": {
+        "recommendedCount": 3,
+        "notRecommendedCount": 3,
+        "recommendPct": 0.5,
+        "reviewCount": 6,
+        "openCount": 7,
+        "installCount": 1
+      },
+      "media": [
+        {
+          "key": "img/r-listing/icon-pg",
+          "slot": "icon",
+          "host": "any",
+          "nsfwLevel": 1,
+          "rating": "pg"
+        },
+        {
+          "key": "img/r-listing/cover-r",
+          "slot": "cover",
+          "host": "any",
+          "nsfwLevel": 4,
+          "rating": "r"
+        },
+        {
+          "key": "img/r-listing/s1-x",
+          "slot": "screenshot",
+          "host": "any",
+          "nsfwLevel": 8,
+          "rating": "x",
+          "caption": null
+        },
+        {
+          "key": "img/r-listing/s2-xxx",
+          "slot": "screenshot",
+          "host": "any",
+          "nsfwLevel": 16,
+          "rating": "xxx",
+          "caption": null
+        },
+        {
+          "key": "img/r-listing/s3-r",
+          "slot": "screenshot",
+          "host": "any",
+          "nsfwLevel": 4,
+          "rating": "r",
+          "caption": "third"
+        },
+        {
+          "key": "img/r-listing/red-icon-pg13",
+          "slot": "icon",
+          "host": "red",
+          "nsfwLevel": 2,
+          "rating": "pg13"
+        },
+        {
+          "key": "img/r-listing/red-cover-xxx",
+          "slot": "cover",
+          "host": "red",
+          "nsfwLevel": 16,
+          "rating": "xxx"
+        }
+      ]
+    },
+    {
+      "slug": "x-listing",
+      "id": "apl_08X-L",
+      "kind": "onsite",
+      "contentRating": "x",
+      "stats": {
+        "recommendedCount": 0,
+        "notRecommendedCount": 0,
+        "recommendPct": null,
+        "reviewCount": 0,
+        "openCount": 0,
+        "installCount": 0
+      },
+      "media": [
+        {
+          "key": "img/x-listing/icon-x",
+          "slot": "icon",
+          "host": "any",
+          "nsfwLevel": 8,
+          "rating": "x"
+        },
+        {
+          "key": "img/x-listing/cover-x",
+          "slot": "cover",
+          "host": "any",
+          "nsfwLevel": 8,
+          "rating": "x"
+        },
+        {
+          "key": "img/x-listing/s1-pg",
+          "slot": "screenshot",
+          "host": "any",
+          "nsfwLevel": 1,
+          "rating": "pg",
+          "caption": null
+        },
+        {
+          "key": "img/x-listing/red-icon-xxx",
+          "slot": "icon",
+          "host": "red",
+          "nsfwLevel": 16,
+          "rating": "xxx"
+        }
+      ]
+    },
+    {
+      "slug": "null-rating",
+      "id": "apl_07NUL",
+      "kind": "offsite",
+      "contentRating": null,
+      "stats": {
+        "recommendedCount": 4,
+        "notRecommendedCount": 1,
+        "recommendPct": 0.8,
+        "reviewCount": 5,
+        "openCount": null,
+        "installCount": 12
+      },
+      "media": [
+        {
+          "key": "img/null-rating/icon-pg13",
+          "slot": "icon",
+          "host": "any",
+          "nsfwLevel": 2,
+          "rating": "pg13"
+        },
+        {
+          "key": "img/null-rating/cover-pg",
+          "slot": "cover",
+          "host": "any",
+          "nsfwLevel": 1,
+          "rating": "pg"
+        },
+        {
+          "key": "img/null-rating/s1-pg13",
+          "slot": "screenshot",
+          "host": "any",
+          "nsfwLevel": 2,
+          "rating": "pg13",
+          "caption": null
+        }
+      ]
+    },
+    {
+      "slug": "no-media",
+      "id": "apl_06NO-",
+      "kind": "onsite",
+      "contentRating": "pg13",
+      "stats": {
+        "recommendedCount": 0,
+        "notRecommendedCount": 0,
+        "recommendPct": null,
+        "reviewCount": 0,
+        "openCount": 2,
+        "installCount": 0
+      },
+      "media": []
+    },
+    {
+      "slug": "xxx-listing",
+      "id": "apl_05XXX",
+      "kind": "onsite",
+      "contentRating": "xxx",
+      "stats": {
+        "recommendedCount": 0,
+        "notRecommendedCount": 0,
+        "recommendPct": null,
+        "reviewCount": 0,
+        "openCount": 0,
+        "installCount": 0
+      },
+      "media": [
+        {
+          "key": "img/xxx-listing/icon-xxx",
+          "slot": "icon",
+          "host": "any",
+          "nsfwLevel": 16,
+          "rating": "xxx"
+        },
+        {
+          "key": "img/xxx-listing/s1-pg13",
+          "slot": "screenshot",
+          "host": "any",
+          "nsfwLevel": 2,
+          "rating": "pg13",
+          "caption": null
+        }
+      ]
+    },
+    {
+      "slug": "g-listing",
+      "id": "apl_04G-L",
+      "kind": "offsite",
+      "contentRating": "g",
+      "stats": {
+        "recommendedCount": 2,
+        "notRecommendedCount": 3,
+        "recommendPct": 0.4,
+        "reviewCount": 5,
+        "openCount": null,
+        "installCount": 0
+      },
+      "media": [
+        {
+          "key": "img/g-listing/icon-pg13",
+          "slot": "icon",
+          "host": "any",
+          "nsfwLevel": 2,
+          "rating": "pg13"
+        },
+        {
+          "key": "img/g-listing/cover-pg",
+          "slot": "cover",
+          "host": "any",
+          "nsfwLevel": 1,
+          "rating": "pg"
+        }
+      ]
+    },
+    {
+      "slug": "pg13-red-safe",
+      "id": "apl_03PG1",
+      "kind": "onsite",
+      "contentRating": "pg13",
+      "stats": {
+        "recommendedCount": 0,
+        "notRecommendedCount": 0,
+        "recommendPct": null,
+        "reviewCount": 0,
+        "openCount": 1,
+        "installCount": 0
+      },
+      "media": [
+        {
+          "key": "img/pg13-red-safe/icon-pg13",
+          "slot": "icon",
+          "host": "any",
+          "nsfwLevel": 2,
+          "rating": "pg13"
+        },
+        {
+          "key": "img/pg13-red-safe/cover-pg",
+          "slot": "cover",
+          "host": "any",
+          "nsfwLevel": 1,
+          "rating": "pg"
+        },
+        {
+          "key": "img/pg13-red-safe/red-icon-pg",
+          "slot": "icon",
+          "host": "red",
+          "nsfwLevel": 1,
+          "rating": "pg"
+        },
+        {
+          "key": "img/pg13-red-safe/red-cover-pg13",
+          "slot": "cover",
+          "host": "red",
+          "nsfwLevel": 2,
+          "rating": "pg13"
+        }
+      ]
+    },
+    {
+      "slug": "null-listing-pg13-block",
+      "id": "apl_02NUL",
+      "kind": "onsite",
+      "contentRating": null,
+      "blockContentRating": "pg13",
+      "appContentRating": "pg13",
+      "stats": {
+        "recommendedCount": 6,
+        "notRecommendedCount": 0,
+        "recommendPct": 1,
+        "reviewCount": 6,
+        "openCount": null,
+        "installCount": 2
+      },
+      "media": [
+        {
+          "key": "img/null-listing-pg13-block/icon-pg13",
+          "slot": "icon",
+          "host": "any",
+          "nsfwLevel": 2,
+          "rating": "pg13"
+        },
+        {
+          "key": "img/null-listing-pg13-block/cover-pg",
+          "slot": "cover",
+          "host": "any",
+          "nsfwLevel": 1,
+          "rating": "pg"
+        },
+        {
+          "key": "img/null-listing-pg13-block/s1-pg13",
+          "slot": "screenshot",
+          "host": "any",
+          "nsfwLevel": 2,
+          "rating": "pg13",
+          "caption": null
+        }
+      ]
+    },
+    {
+      "slug": "null-listing-r-block",
+      "id": "apl_01NUL",
+      "kind": "onsite",
+      "contentRating": null,
+      "blockContentRating": "r",
+      "appContentRating": "r",
+      "stats": {
+        "recommendedCount": 0,
+        "notRecommendedCount": 0,
+        "recommendPct": null,
+        "reviewCount": 0,
+        "openCount": 4,
+        "installCount": 0
+      },
+      "media": [
+        {
+          "key": "img/null-listing-r-block/icon-pg",
+          "slot": "icon",
+          "host": "any",
+          "nsfwLevel": 1,
+          "rating": "pg"
+        },
+        {
+          "key": "img/null-listing-r-block/cover-pg13",
+          "slot": "cover",
+          "host": "any",
+          "nsfwLevel": 2,
+          "rating": "pg13"
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "anonymous SFW": {
+      "pg-mixed": {
+        "icon": "img/pg-mixed/icon",
+        "cover": "img/pg-mixed/s2-pg",
+        "screenshots": ["img/pg-mixed/s2-pg"]
+      },
+      "pg13-plain": {
+        "icon": "img/pg13-plain/icon-pg13",
+        "cover": "img/pg13-plain/s2-pg13",
+        "screenshots": ["img/pg13-plain/s2-pg13"]
+      },
+      "r-listing": null,
+      "x-listing": null,
+      "null-rating": {
+        "icon": null,
+        "cover": "img/null-rating/cover-pg",
+        "screenshots": []
+      },
+      "no-media": {
+        "icon": null,
+        "cover": null,
+        "screenshots": []
+      },
+      "xxx-listing": null,
+      "g-listing": {
+        "icon": null,
+        "cover": "img/g-listing/cover-pg",
+        "screenshots": []
+      },
+      "pg13-red-safe": {
+        "icon": "img/pg13-red-safe/icon-pg13",
+        "cover": "img/pg13-red-safe/cover-pg",
+        "screenshots": []
+      },
+      "null-listing-pg13-block": {
+        "icon": null,
+        "cover": "img/null-listing-pg13-block/cover-pg",
+        "screenshots": []
+      },
+      "null-listing-r-block": {
+        "icon": "img/null-listing-r-block/icon-pg",
+        "cover": null,
+        "screenshots": []
+      }
+    },
+    "PG13 main": {
+      "pg-mixed": {
+        "icon": "img/pg-mixed/icon",
+        "cover": "img/pg-mixed/s2-pg",
+        "screenshots": ["img/pg-mixed/s2-pg"]
+      },
+      "pg13-plain": {
+        "icon": "img/pg13-plain/icon-pg13",
+        "cover": "img/pg13-plain/s2-pg13",
+        "screenshots": ["img/pg13-plain/s2-pg13"]
+      },
+      "r-listing": null,
+      "x-listing": null,
+      "null-rating": {
+        "icon": null,
+        "cover": "img/null-rating/cover-pg",
+        "screenshots": []
+      },
+      "no-media": {
+        "icon": null,
+        "cover": null,
+        "screenshots": []
+      },
+      "xxx-listing": null,
+      "g-listing": {
+        "icon": null,
+        "cover": "img/g-listing/cover-pg",
+        "screenshots": []
+      },
+      "pg13-red-safe": {
+        "icon": "img/pg13-red-safe/icon-pg13",
+        "cover": "img/pg13-red-safe/cover-pg",
+        "screenshots": []
+      },
+      "null-listing-pg13-block": {
+        "icon": null,
+        "cover": "img/null-listing-pg13-block/cover-pg",
+        "screenshots": []
+      },
+      "null-listing-r-block": {
+        "icon": "img/null-listing-r-block/icon-pg",
+        "cover": null,
+        "screenshots": []
+      }
+    },
+    "R main": {
+      "pg-mixed": {
+        "icon": "img/pg-mixed/icon",
+        "cover": "img/pg-mixed/s2-pg",
+        "screenshots": ["img/pg-mixed/s2-pg"]
+      },
+      "pg13-plain": {
+        "icon": "img/pg13-plain/icon-pg13",
+        "cover": "img/pg13-plain/s2-pg13",
+        "screenshots": ["img/pg13-plain/s2-pg13"]
+      },
+      "r-listing": null,
+      "x-listing": null,
+      "null-rating": {
+        "icon": null,
+        "cover": "img/null-rating/cover-pg",
+        "screenshots": []
+      },
+      "no-media": {
+        "icon": null,
+        "cover": null,
+        "screenshots": []
+      },
+      "xxx-listing": null,
+      "g-listing": {
+        "icon": null,
+        "cover": "img/g-listing/cover-pg",
+        "screenshots": []
+      },
+      "pg13-red-safe": {
+        "icon": "img/pg13-red-safe/icon-pg13",
+        "cover": "img/pg13-red-safe/cover-pg",
+        "screenshots": []
+      },
+      "null-listing-pg13-block": {
+        "icon": null,
+        "cover": "img/null-listing-pg13-block/cover-pg",
+        "screenshots": []
+      },
+      "null-listing-r-block": {
+        "icon": "img/null-listing-r-block/icon-pg",
+        "cover": null,
+        "screenshots": []
+      }
+    },
+    "anonymous red": {
+      "pg-mixed": {
+        "icon": "img/pg-mixed/icon",
+        "cover": "img/pg-mixed/s2-pg",
+        "screenshots": ["img/pg-mixed/s2-pg"]
+      },
+      "pg13-plain": {
+        "icon": "img/pg13-plain/icon-pg13",
+        "cover": "img/pg13-plain/s2-pg13",
+        "screenshots": ["img/pg13-plain/s2-pg13"]
+      },
+      "r-listing": null,
+      "x-listing": null,
+      "null-rating": {
+        "icon": null,
+        "cover": "img/null-rating/cover-pg",
+        "screenshots": []
+      },
+      "no-media": {
+        "icon": null,
+        "cover": null,
+        "screenshots": []
+      },
+      "xxx-listing": null,
+      "g-listing": {
+        "icon": null,
+        "cover": "img/g-listing/cover-pg",
+        "screenshots": []
+      },
+      "pg13-red-safe": {
+        "icon": "img/pg13-red-safe/red-icon-pg",
+        "cover": "img/pg13-red-safe/red-cover-pg13",
+        "screenshots": []
+      },
+      "null-listing-pg13-block": {
+        "icon": null,
+        "cover": "img/null-listing-pg13-block/cover-pg",
+        "screenshots": []
+      },
+      "null-listing-r-block": {
+        "icon": "img/null-listing-r-block/icon-pg",
+        "cover": null,
+        "screenshots": []
+      }
+    },
+    "X red": {
+      "pg-mixed": {
+        "icon": "img/pg-mixed/red-icon-x",
+        "cover": "img/pg-mixed/red-cover-pg13",
+        "screenshots": ["img/pg-mixed/s1-r", "img/pg-mixed/s2-pg", "img/pg-mixed/s3-pg13"]
+      },
+      "pg13-plain": {
+        "icon": "img/pg13-plain/icon-pg13",
+        "cover": "img/pg13-plain/s1-x",
+        "screenshots": ["img/pg13-plain/s1-x", "img/pg13-plain/s2-pg13"]
+      },
+      "r-listing": {
+        "icon": "img/r-listing/red-icon-pg13",
+        "cover": "img/r-listing/cover-r",
+        "screenshots": ["img/r-listing/s1-x", "img/r-listing/s3-r"]
+      },
+      "x-listing": {
+        "icon": "img/x-listing/icon-x",
+        "cover": "img/x-listing/cover-x",
+        "screenshots": ["img/x-listing/s1-pg"]
+      },
+      "null-rating": {
+        "icon": "img/null-rating/icon-pg13",
+        "cover": "img/null-rating/cover-pg",
+        "screenshots": ["img/null-rating/s1-pg13"]
+      },
+      "no-media": {
+        "icon": null,
+        "cover": null,
+        "screenshots": []
+      },
+      "xxx-listing": null,
+      "g-listing": {
+        "icon": "img/g-listing/icon-pg13",
+        "cover": "img/g-listing/cover-pg",
+        "screenshots": []
+      },
+      "pg13-red-safe": {
+        "icon": "img/pg13-red-safe/red-icon-pg",
+        "cover": "img/pg13-red-safe/red-cover-pg13",
+        "screenshots": []
+      },
+      "null-listing-pg13-block": {
+        "icon": "img/null-listing-pg13-block/icon-pg13",
+        "cover": "img/null-listing-pg13-block/cover-pg",
+        "screenshots": ["img/null-listing-pg13-block/s1-pg13"]
+      },
+      "null-listing-r-block": {
+        "icon": "img/null-listing-r-block/icon-pg",
+        "cover": "img/null-listing-r-block/cover-pg13",
+        "screenshots": []
+      }
+    },
+    "XXX red": {
+      "pg-mixed": {
+        "icon": "img/pg-mixed/red-icon-x",
+        "cover": "img/pg-mixed/red-cover-pg13",
+        "screenshots": ["img/pg-mixed/s1-r", "img/pg-mixed/s2-pg", "img/pg-mixed/s3-pg13"]
+      },
+      "pg13-plain": {
+        "icon": "img/pg13-plain/icon-pg13",
+        "cover": "img/pg13-plain/s1-x",
+        "screenshots": ["img/pg13-plain/s1-x", "img/pg13-plain/s2-pg13"]
+      },
+      "r-listing": {
+        "icon": "img/r-listing/red-icon-pg13",
+        "cover": "img/r-listing/red-cover-xxx",
+        "screenshots": ["img/r-listing/s1-x", "img/r-listing/s2-xxx", "img/r-listing/s3-r"]
+      },
+      "x-listing": {
+        "icon": "img/x-listing/red-icon-xxx",
+        "cover": "img/x-listing/cover-x",
+        "screenshots": ["img/x-listing/s1-pg"]
+      },
+      "null-rating": {
+        "icon": "img/null-rating/icon-pg13",
+        "cover": "img/null-rating/cover-pg",
+        "screenshots": ["img/null-rating/s1-pg13"]
+      },
+      "no-media": {
+        "icon": null,
+        "cover": null,
+        "screenshots": []
+      },
+      "xxx-listing": {
+        "icon": "img/xxx-listing/icon-xxx",
+        "cover": "img/xxx-listing/s1-pg13",
+        "screenshots": ["img/xxx-listing/s1-pg13"]
+      },
+      "g-listing": {
+        "icon": "img/g-listing/icon-pg13",
+        "cover": "img/g-listing/cover-pg",
+        "screenshots": []
+      },
+      "pg13-red-safe": {
+        "icon": "img/pg13-red-safe/red-icon-pg",
+        "cover": "img/pg13-red-safe/red-cover-pg13",
+        "screenshots": []
+      },
+      "null-listing-pg13-block": {
+        "icon": "img/null-listing-pg13-block/icon-pg13",
+        "cover": "img/null-listing-pg13-block/cover-pg",
+        "screenshots": ["img/null-listing-pg13-block/s1-pg13"]
+      },
+      "null-listing-r-block": {
+        "icon": "img/null-listing-r-block/icon-pg",
+        "cover": "img/null-listing-r-block/cover-pg13",
+        "screenshots": []
+      }
+    },
+    "anonymous SFW, public-external": {
+      "pg-mixed": null,
+      "pg13-plain": null,
+      "r-listing": null,
+      "x-listing": null,
+      "null-rating": {
+        "icon": null,
+        "cover": "img/null-rating/cover-pg",
+        "screenshots": []
+      },
+      "no-media": null,
+      "xxx-listing": null,
+      "g-listing": {
+        "icon": null,
+        "cover": "img/g-listing/cover-pg",
+        "screenshots": []
+      },
+      "pg13-red-safe": null,
+      "null-listing-pg13-block": null,
+      "null-listing-r-block": null
+    }
+  },
+  "cards": {
+    "pg-mixed": {
+      "recommend": {
+        "recommendedCount": 8,
+        "notRecommendedCount": 2,
+        "recommendPct": 0.8
+      },
+      "reviewCount": 10,
+      "openCount": 50
+    },
+    "pg13-plain": {
+      "recommend": {
+        "recommendedCount": 1,
+        "notRecommendedCount": 0,
+        "recommendPct": null
+      },
+      "reviewCount": 1,
+      "openCount": 0
+    },
+    "r-listing": {
+      "recommend": {
+        "recommendedCount": 3,
+        "notRecommendedCount": 3,
+        "recommendPct": 0.5
+      },
+      "reviewCount": 6,
+      "openCount": 7
+    },
+    "x-listing": {
+      "recommend": {
+        "recommendedCount": 0,
+        "notRecommendedCount": 0,
+        "recommendPct": null
+      },
+      "reviewCount": 0,
+      "openCount": 0
+    },
+    "null-rating": {
+      "recommend": {
+        "recommendedCount": 4,
+        "notRecommendedCount": 1,
+        "recommendPct": 0.8
+      },
+      "reviewCount": 5,
+      "openCount": null
+    },
+    "no-media": {
+      "recommend": {
+        "recommendedCount": 0,
+        "notRecommendedCount": 0,
+        "recommendPct": null
+      },
+      "reviewCount": 0,
+      "openCount": 2
+    },
+    "xxx-listing": {
+      "recommend": {
+        "recommendedCount": 0,
+        "notRecommendedCount": 0,
+        "recommendPct": null
+      },
+      "reviewCount": 0,
+      "openCount": 0
+    },
+    "g-listing": {
+      "recommend": {
+        "recommendedCount": 2,
+        "notRecommendedCount": 3,
+        "recommendPct": 0.4
+      },
+      "reviewCount": 5,
+      "openCount": null
+    },
+    "pg13-red-safe": {
+      "recommend": {
+        "recommendedCount": 0,
+        "notRecommendedCount": 0,
+        "recommendPct": null
+      },
+      "reviewCount": 0,
+      "openCount": 1
+    },
+    "null-listing-pg13-block": {
+      "recommend": {
+        "recommendedCount": 6,
+        "notRecommendedCount": 0,
+        "recommendPct": 1
+      },
+      "reviewCount": 6,
+      "openCount": 0
+    },
+    "null-listing-r-block": {
+      "recommend": {
+        "recommendedCount": 0,
+        "notRecommendedCount": 0,
+        "recommendPct": null
+      },
+      "reviewCount": 0,
+      "openCount": 4
+    }
+  },
+  "details": {
+    "$comment": "The public detail fields, for the listings named. `rows` is each listing's database state as getListingDetail reads it (`fork.parent` names the listing its fork pointer holds, by slug). `stream` is the detail part of the store-listing@v1 body the adapter publishes from it to the read model (the service audience). `expected` is the detail an anonymous viewer is served: the same on both sides, `connectClientId` (off-site only) is the detail's `kindData.connectClientId`, and `forkOf` is per viewer (the parent named only when that viewer is shown the parent, by the store's gate; `name` is the parent's name, which in this fixture is its slug). The site side runs `rows` through projectListingDetail, resolveForkAttribution and the adapter (listingExtrasFromRow, listingBody); the read model runs `stream` through its ingest and ProjectDetail.",
+    "rows": {
+      "pg-mixed": {
+        "appBlockId": "ab_pgmixed_1",
+        "serialId": 311,
+        "approvedScopes": ["models:read:self", "ai:write:budgeted"],
+        "connectClientId": null,
+        "connectRequestedScopes": null,
+        "beta": {
+          "isBeta": true,
+          "betaMessage": "pg-mixed is in beta"
+        },
+        "collaborators": [
+          {
+            "id": 9101,
+            "username": "pgm-helper",
+            "image": "img/avatars/pgm-helper"
+          }
+        ],
+        "sourceRepoUrl": "https://github.com/pgm-org/pg-mixed",
+        "issueTrackerUrl": "https://pgm-support.example/issues",
+        "actionsRunSource": {
+          "repository": "pgm-org/pg-mixed",
+          "tag": "v3.1.0",
+          "sha": "3a1f00000000000000000000000000000000c0de"
+        },
+        "forkable": true,
+        "fork": {
+          "isFork": true,
+          "parent": "r-listing"
+        }
+      },
+      "g-listing": {
+        "appBlockId": null,
+        "serialId": 422,
+        "approvedScopes": null,
+        "connectClientId": "g-listing-client",
+        "connectRequestedScopes": 5,
+        "beta": {
+          "isBeta": false,
+          "betaMessage": "a stale note"
+        },
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": "https://g-listing.example/help",
+        "actionsRunSource": null,
+        "forkable": true,
+        "fork": {
+          "isFork": false,
+          "parent": null
+        }
+      },
+      "null-rating": {
+        "appBlockId": "ab_nullrating_3",
+        "serialId": 533,
+        "approvedScopes": ["models:read:self"],
+        "connectClientId": null,
+        "connectRequestedScopes": 3,
+        "beta": {
+          "isBeta": true,
+          "betaMessage": null
+        },
+        "collaborators": [
+          {
+            "id": 9302,
+            "username": null,
+            "image": null
+          },
+          {
+            "id": 9301,
+            "username": "nr-second",
+            "image": "img/avatars/nr-second"
+          }
+        ],
+        "sourceRepoUrl": "https://codeberg.org/nr-org/null-rating",
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "forkable": false,
+        "fork": {
+          "isFork": false,
+          "parent": null
+        }
+      },
+      "pg13-plain": {
+        "appBlockId": "ab_pg13plain_4",
+        "serialId": 644,
+        "approvedScopes": [],
+        "connectClientId": null,
+        "connectRequestedScopes": null,
+        "beta": {
+          "isBeta": false,
+          "betaMessage": null
+        },
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "forkable": false,
+        "fork": {
+          "isFork": true,
+          "parent": null
+        }
+      },
+      "no-media": {
+        "appBlockId": "ab_nomedia_5",
+        "serialId": 755,
+        "approvedScopes": ["ai:write:budgeted"],
+        "connectClientId": null,
+        "connectRequestedScopes": null,
+        "beta": {
+          "isBeta": false,
+          "betaMessage": null
+        },
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "forkable": true,
+        "fork": {
+          "isFork": true,
+          "parent": "pg-mixed"
+        }
+      }
+    },
+    "stream": {
+      "pg-mixed": {
+        "serialId": 311,
+        "collaborators": [
+          {
+            "id": 9101,
+            "username": "pgm-helper",
+            "image": "img/avatars/pgm-helper"
+          }
+        ],
+        "sourceRepoUrl": "https://github.com/pgm-org/pg-mixed",
+        "issueTrackerUrl": "https://pgm-support.example/issues",
+        "actionsRunSource": {
+          "repository": "pgm-org/pg-mixed",
+          "tag": "v3.1.0",
+          "sha": "3a1f00000000000000000000000000000000c0de"
+        },
+        "scopes": ["models:read:self", "ai:write:budgeted"],
+        "connectScopes": [],
+        "betaMessage": "pg-mixed is in beta",
+        "forkable": true,
+        "appBlockId": "ab_pgmixed_1",
+        "forkOf": {
+          "slug": "r-listing"
+        }
+      },
+      "g-listing": {
+        "serialId": 422,
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": "https://g-listing.example/help",
+        "actionsRunSource": null,
+        "scopes": [],
+        "connectScopes": ["UserRead", "ModelsRead"],
+        "betaMessage": null,
+        "forkable": false,
+        "forkOf": null,
+        "connectClientId": "g-listing-client"
+      },
+      "null-rating": {
+        "serialId": 533,
+        "collaborators": [
+          {
+            "id": 9302,
+            "username": null,
+            "image": null
+          },
+          {
+            "id": 9301,
+            "username": "nr-second",
+            "image": "img/avatars/nr-second"
+          }
+        ],
+        "sourceRepoUrl": "https://codeberg.org/nr-org/null-rating",
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "scopes": [],
+        "connectScopes": [],
+        "betaMessage": null,
+        "forkable": false,
+        "forkOf": null,
+        "connectClientId": null
+      },
+      "pg13-plain": {
+        "serialId": 644,
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "scopes": [],
+        "connectScopes": [],
+        "betaMessage": null,
+        "forkable": false,
+        "appBlockId": "ab_pg13plain_4",
+        "forkOf": {
+          "slug": null
+        }
+      },
+      "no-media": {
+        "serialId": 755,
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "scopes": ["ai:write:budgeted"],
+        "connectScopes": [],
+        "betaMessage": null,
+        "forkable": true,
+        "appBlockId": "ab_nomedia_5",
+        "forkOf": {
+          "slug": "pg-mixed"
+        }
+      }
+    },
+    "expected": {
+      "pg-mixed": {
+        "serialId": 311,
+        "collaborators": [
+          {
+            "id": 9101,
+            "username": "pgm-helper",
+            "image": "img/avatars/pgm-helper"
+          }
+        ],
+        "sourceRepoUrl": "https://github.com/pgm-org/pg-mixed",
+        "issueTrackerUrl": "https://pgm-support.example/issues",
+        "actionsRunSource": {
+          "repository": "pgm-org/pg-mixed",
+          "tag": "v3.1.0",
+          "sha": "3a1f00000000000000000000000000000000c0de"
+        },
+        "scopes": ["models:read:self", "ai:write:budgeted"],
+        "connectScopes": [],
+        "betaMessage": "pg-mixed is in beta",
+        "forkable": true,
+        "id": "apl_11PG-",
+        "forkOf": {
+          "anonymous SFW": {
+            "visible": false
+          },
+          "PG13 main": {
+            "visible": false
+          },
+          "R main": {
+            "visible": false
+          },
+          "anonymous red": {
+            "visible": false
+          },
+          "X red": {
+            "visible": true,
+            "slug": "r-listing",
+            "name": "r-listing"
+          },
+          "XXX red": {
+            "visible": true,
+            "slug": "r-listing",
+            "name": "r-listing"
+          },
+          "anonymous SFW, public-external": {
+            "visible": false
+          }
+        }
+      },
+      "g-listing": {
+        "serialId": 422,
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": "https://g-listing.example/help",
+        "actionsRunSource": null,
+        "scopes": [],
+        "connectScopes": ["UserRead", "ModelsRead"],
+        "betaMessage": null,
+        "forkable": false,
+        "id": "apl_04G-L",
+        "forkOf": {
+          "anonymous SFW": null,
+          "PG13 main": null,
+          "R main": null,
+          "anonymous red": null,
+          "X red": null,
+          "XXX red": null,
+          "anonymous SFW, public-external": null
+        },
+        "connectClientId": "g-listing-client"
+      },
+      "null-rating": {
+        "serialId": 533,
+        "collaborators": [
+          {
+            "id": 9302,
+            "username": null,
+            "image": null
+          },
+          {
+            "id": 9301,
+            "username": "nr-second",
+            "image": "img/avatars/nr-second"
+          }
+        ],
+        "sourceRepoUrl": "https://codeberg.org/nr-org/null-rating",
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "scopes": [],
+        "connectScopes": [],
+        "betaMessage": null,
+        "forkable": false,
+        "id": "apl_07NUL",
+        "forkOf": {
+          "anonymous SFW": null,
+          "PG13 main": null,
+          "R main": null,
+          "anonymous red": null,
+          "X red": null,
+          "XXX red": null,
+          "anonymous SFW, public-external": null
+        },
+        "connectClientId": null
+      },
+      "pg13-plain": {
+        "serialId": 644,
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "scopes": [],
+        "connectScopes": [],
+        "betaMessage": null,
+        "forkable": false,
+        "id": "apl_10PG1",
+        "forkOf": {
+          "anonymous SFW": {
+            "visible": false
+          },
+          "PG13 main": {
+            "visible": false
+          },
+          "R main": {
+            "visible": false
+          },
+          "anonymous red": {
+            "visible": false
+          },
+          "X red": {
+            "visible": false
+          },
+          "XXX red": {
+            "visible": false
+          },
+          "anonymous SFW, public-external": {
+            "visible": false
+          }
+        }
+      },
+      "no-media": {
+        "serialId": 755,
+        "collaborators": [],
+        "sourceRepoUrl": null,
+        "issueTrackerUrl": null,
+        "actionsRunSource": null,
+        "scopes": ["ai:write:budgeted"],
+        "connectScopes": [],
+        "betaMessage": null,
+        "forkable": true,
+        "id": "apl_06NO-",
+        "forkOf": {
+          "anonymous SFW": {
+            "visible": true,
+            "slug": "pg-mixed",
+            "name": "pg-mixed"
+          },
+          "PG13 main": {
+            "visible": true,
+            "slug": "pg-mixed",
+            "name": "pg-mixed"
+          },
+          "R main": {
+            "visible": true,
+            "slug": "pg-mixed",
+            "name": "pg-mixed"
+          },
+          "anonymous red": {
+            "visible": true,
+            "slug": "pg-mixed",
+            "name": "pg-mixed"
+          },
+          "X red": {
+            "visible": true,
+            "slug": "pg-mixed",
+            "name": "pg-mixed"
+          },
+          "XXX red": {
+            "visible": true,
+            "slug": "pg-mixed",
+            "name": "pg-mixed"
+          },
+          "anonymous SFW, public-external": {
+            "visible": false
+          }
+        }
+      }
+    }
+  }
+}

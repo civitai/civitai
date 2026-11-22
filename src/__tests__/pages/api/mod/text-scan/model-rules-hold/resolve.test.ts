@@ -51,7 +51,7 @@ vi.mock('~/server/services/text-scan/model-rules-hold-decision', async (importOr
   decideModelRulesHoldBatch: mocks.decideBatch,
 }));
 
-import handler from '~/pages/api/mod/text-scan/model-rules-hold/resolve';
+import handler from '~/server/api-routes/mod/text-scan/model-rules-hold/resolve';
 
 function call(body: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];

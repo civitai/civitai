@@ -3,6 +3,7 @@ package feed
 import (
 	"encoding/json"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -154,8 +155,9 @@ func TestServeInfinitePrioritizedFallbacks(t *testing.T) {
 		{"a numeric cursor", map[string]any{"modelVersionId": num("60"), "prioritizedUserIds": []any{num("5")}, "cursor": num("7")}, "prioritized-cursor"},
 		{"a numeric string cursor", map[string]any{"modelVersionId": num("60"), "prioritizedUserIds": []any{num("5")}, "cursor": "7"}, "prioritized-cursor"},
 		{"a cursor on a model alone", map[string]any{"modelId": num("50"), "prioritizedUserIds": []any{num("5")}, "cursor": num("7")}, "prioritized-cursor"},
-		// Node reads whether the system user has a post on the version, then orders by an IIF.
-		{"the system user alone", map[string]any{"modelVersionId": num("60"), "prioritizedUserIds": []any{num("-1")}}, "prioritized-system-user"},
+		// The system user alone on a model without a version: Node orders every visible image on the
+		// site by an IIF (TestServeInfinitePrioritizedSystemUser covers the version).
+		{"the system user alone without a version", map[string]any{"modelId": num("50"), "prioritizedUserIds": []any{num("-1")}}, "prioritized-system-user-no-version"},
 	} {
 		f := newCarouselFixture(t)
 		_, _, _, err := serveInf(t, f, c.m, InfiniteRequest{})
@@ -330,9 +332,9 @@ func TestBuildPrioritized(t *testing.T) {
 	}
 }
 
-// The owner's own image under an owner-hidden review hold (csam, minor) is withheld from their pending
-// view, as on the Node path (pendingOthersImageConditions); other review states stay the owner's.
-func TestServeInfinitePendingViewWithholdsOwnHeldImages(t *testing.T) {
+// The owner's own image under an owner-hidden review hold (csam, minor) shows in their pending view,
+// as on the Node path (pendingOthersImageConditions with the owner's view); another user's stays held.
+func TestServeInfinitePendingViewShowsOwnHeldImages(t *testing.T) {
 	f := newCarouselFixture(t)
 	f.rows = []RawImage{infRow(31, 700)}
 	if _, _, _, err := serveInf(t, f, carouselInput(), InfiniteRequest{Viewer: &Viewer{ID: 9}, ViewerUsername: "nine"}); err != nil {
@@ -343,6 +345,10 @@ func TestServeInfinitePendingViewWithholdsOwnHeldImages(t *testing.T) {
 		// Control: the owner keeps their other review states.
 		`(i."needsReview" IS NULL OR i."userId" = $`,
 	)
+	// The hold is lifted for the viewer's own rows only.
+	if !regexp.MustCompile(`i\."needsReview" NOT IN \(\$\d+, \$\d+\) OR i\."userId" = \$\d+\)`).MatchString(f.sql[0]) {
+		t.Fatalf("the hold is not lifted for the owner's own rows: %s", f.sql[0])
+	}
 	bound := map[string]bool{}
 	for _, a := range f.sqlArgs[0] {
 		if s, ok := a.(string); ok {

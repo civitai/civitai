@@ -11,8 +11,8 @@
 --   - `Login` and `Registration` rows when a referral source is set
 --     (src/server/auth/login-side-effects.ts) — `Login` feeds the last-seen rollup
 --     (2026-09-04-user-activity-rollup.sql), so those users read as less active than they are;
---   - `Muted` / `Unmuted` rows from src/pages/api/mod/mute-user-pending-review.ts,
---     src/pages/api/mod/overturn-user-mute.ts and src/server/services/scam-auto-mute.service.ts —
+--   - `Muted` / `Unmuted` rows from src/server/api-routes/mod/mute-user-pending-review.ts,
+--     src/server/api-routes/mod/overturn-user-mute.ts and src/server/services/scam-auto-mute.service.ts —
 --     the moderation history of those mutes is missing;
 --   - plus any other row, of any type, rejected in the same batch as one of the above.
 --

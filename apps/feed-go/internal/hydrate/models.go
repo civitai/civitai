@@ -26,10 +26,11 @@ const (
 )
 
 // ModelData is one dataForModelsCache value after its appendFn: the model's versions (index order, as
-// cached), its SHA256 hashes, and its tag ids (modelTagCache's ids that tagCache still holds).
+// cached, each with the key order the cached record has: Entry.Ordered), its SHA256 hashes, and its
+// tag ids (modelTagCache's ids that tagCache still holds).
 type ModelData struct {
 	Hashes   []any
-	Versions []map[string]any
+	Versions []superjson.Object
 	TagIDs   []int
 }
 
@@ -232,12 +233,14 @@ func (s *Sources) modelDataFrom(ctx context.Context, models []int, data, tags ma
 			continue
 		}
 		var md ModelData
-		md.Hashes, _ = e.Value["hashes"].([]any)
+		// The ordered record (an ordered cache): each version keeps the key order Node's answer has.
+		rec := e.Ordered()
+		md.Hashes, _ = ObjectField(rec, "hashes").([]any)
 		if md.Hashes == nil {
 			md.Hashes = []any{}
 		}
-		for _, v := range asList(e.Value["versions"]) {
-			if m, ok := v.(map[string]any); ok {
+		for _, v := range asList(ObjectField(rec, "versions")) {
+			if m, ok := v.(superjson.Object); ok {
 				md.Versions = append(md.Versions, m)
 			}
 		}
@@ -252,9 +255,9 @@ func (s *Sources) modelDataFrom(ctx context.Context, models []int, data, tags ma
 			allTags = append(allTags, list...)
 		} else {
 			// The entry's own `tags` (written as [] by the lookup).
-			for _, v := range asList(e.Value["tags"]) {
-				if m, ok := v.(map[string]any); ok {
-					if n, ok := Int(m["tagId"]); ok {
+			for _, v := range asList(ObjectField(rec, "tags")) {
+				if m, ok := v.(superjson.Object); ok {
+					if n, ok := Int(ObjectField(m, "tagId")); ok {
 						md.TagIDs = append(md.TagIDs, n)
 					}
 				}
@@ -376,9 +379,9 @@ func (s *Sources) privacyDefaultsFrom(ctx context.Context, owners []int, got map
 // showcase query, lag-aware with write-back on) and a stale entry revalidated as Node's fetch
 // revalidates it; without, a miss falls back and a stale entry is served. An image-tags miss is
 // computed as on the image feed (fillTagIDs), and falls back without s.Compute.
-func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int][]map[string]any, error) {
+func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int][]superjson.Object, error) {
 	ids := Unique(versionIDs)
-	out := map[int][]map[string]any{}
+	out := map[int][]superjson.Object{}
 	if len(ids) == 0 {
 		return out, nil
 	}
@@ -399,17 +402,19 @@ func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int]
 		if e.NotFound {
 			continue
 		}
-		list := make([]map[string]any, 0)
-		for _, v := range asList(e.Value["images"]) {
-			if m, ok := v.(map[string]any); ok {
+		// The ordered record (an ordered cache): each image keeps the key order Node's answer has
+		// (model.getAll writes its images' keys in that order).
+		list := make([]superjson.Object, 0)
+		for _, v := range asList(ObjectField(e.Ordered(), "images")) {
+			if m, ok := v.(superjson.Object); ok {
 				list = append(list, m)
 			}
 		}
 		// The appendFn drops the images the minor content rule restricts before it reads their tags,
 		// on every read, for every viewer (an entry cached before the lookup left them out holds them).
-		list = WithoutMinorMatureImages(list, func(m map[string]any, k string) any { return m[k] })
+		list = WithoutMinorMatureImages(list, ObjectField)
 		for _, m := range list {
-			if iid, ok := Int(m["id"]); ok {
+			if iid, ok := Int(ObjectField(m, "id")); ok {
 				imageIDs = append(imageIDs, iid)
 			}
 		}
@@ -431,17 +436,15 @@ func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int]
 		return nil, err
 	}
 	for vid, list := range out {
-		copied := make([]map[string]any, len(list))
+		copied := make([]superjson.Object, len(list))
 		for i, img := range list {
-			c := make(map[string]any, len(img)+1)
-			for k, v := range img {
-				c[k] = v
-			}
-			iid, _ := Int(img["id"])
+			// `image.tags = …`: an existing member keeps its place, a new one goes last.
+			c := append(make(superjson.Object, 0, len(img)+1), img...)
+			iid, _ := Int(ObjectField(img, "id"))
 			if t, ok := tagIDs[iid]; ok && t != nil {
-				c["tags"] = t
+				c.Set("tags", t)
 			} else {
-				c["tags"] = []any{}
+				c.Set("tags", []any{})
 			}
 			copied[i] = c
 		}
