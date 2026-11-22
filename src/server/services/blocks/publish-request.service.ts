@@ -1,4 +1,5 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
+import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 import {
   agentReviewSummaryFromQueueRow,
   isImpersonationCheckStale,
@@ -3493,9 +3494,13 @@ async function approveRequestUnderClaim(
       appId: true,
       repoUrl: true,
       trustTier: true,
+      status: true,
       app: { select: { allowedScopes: true, allowedOrigins: true, userId: true } },
     },
   });
+  // A remix app is edited only at /moderator/remix-apps. The update below re-checks status, so no lock.
+  if (existingAppBlock && REMIX_STATUSES.includes(existingAppBlock.status))
+    throw new Error(`Cannot approve: ${request.slug} is a remix app.`);
   const isFirstVersion = !existingAppBlock;
 
   // A request filed before the owner accepted must not go live.
@@ -3908,8 +3913,9 @@ async function approveRequestUnderClaim(
     // Subsequent version: refresh manifest + version + approvedScopes
     // on the existing row. currentVersionSha is stamped in step (6) below,
     // right after the Forgejo commit returns the approved sha.
+    // Throws (P2025) for a row that became a remix app since the guard above.
     await dbWrite.appBlock.update({
-      where: { id: appBlockId },
+      where: { id: appBlockId, status: { notIn: REMIX_STATUSES } },
       data: {
         manifest: manifest as object,
         version: request.version,

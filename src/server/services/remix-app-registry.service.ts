@@ -478,7 +478,12 @@ export async function saveRemixApp(input: RemixAppInput) {
     contentRating: contentRatingOf(input.spec),
   };
 
-  if (existing) await dbWrite.appBlock.update({ where: { blockId }, data: fields });
+  // Throws (P2025) if the row is no longer a remix app's.
+  if (existing)
+    await dbWrite.appBlock.update({
+      where: { blockId, status: { in: REMIX_STATUSES } },
+      data: fields,
+    });
   else await createRemixAppRow(input.slug, fields);
   await bumpRemixAppRegistry();
   return { slug: input.slug, version: runVersion };
@@ -688,7 +693,12 @@ async function writeUserRemixApp(
   afterWrite?: () => Promise<void>
 ) {
   const { count } = await dbWrite.appBlock.updateMany({
-    where: { id: row.id, manifest: { equals: row.manifest as Prisma.InputJsonValue } },
+    where: {
+      id: row.id,
+      manifest: { equals: row.manifest as Prisma.InputJsonValue },
+      // Never gives a store app's row a remix status, whatever its blockId.
+      status: { in: REMIX_STATUSES },
+    },
     data,
   });
   if (!count) throw userAppChanged();

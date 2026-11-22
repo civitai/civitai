@@ -54,6 +54,7 @@ import {
   withServableImage,
 } from '~/server/common/image-visibility';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { panelSourceImageUrl, viewerPanelMetadata } from '~/server/services/comics/panel-metadata';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
@@ -685,6 +686,14 @@ async function assertReferencePanelImageUnblocked(
 }
 
 // Shared helper: resolve a reference's images for generation
+async function primarySourceRows(urls: string[]) {
+  // primary: a block or re-rating must show up on the next read, not after replica lag.
+  return dbWrite.image.findMany({
+    where: { url: { in: urls } },
+    select: { url: true, ...imageRestrictionSelect },
+  });
+}
+
 async function getReferenceImages(referenceId: number) {
   const reference = await dbRead.comicReference.findUnique({
     where: { id: referenceId },
@@ -1176,7 +1185,33 @@ export const comicsRouter = router({
         stripNsfwPanelImages([chapter], true);
       }
 
-      return chapter;
+      // A source URL can match several Image rows; keep it only if every row may be shown.
+      const sources = [
+        ...new Set(
+          chapter.panels
+            .map((p) => panelSourceImageUrl(p.metadata))
+            .filter((v): v is string => v !== null)
+        ),
+      ];
+      const sourceRows = sources.length ? await primarySourceRows(sources) : [];
+      const keepSourceImage = (value: string) => {
+        const rows = sourceRows.filter((row) => row.url === value);
+        return (
+          rows.length > 0 &&
+          rows.every(
+            (row) =>
+              isImageServable(row, ctx.user.id) &&
+              (!ctx.features.isGreen || hasSafeBrowsingLevel(row.nsfwLevel))
+          )
+        );
+      };
+      return {
+        ...chapter,
+        panels: chapter.panels.map((panel) => ({
+          ...panel,
+          metadata: viewerPanelMetadata(panel.metadata, { isOwner, keepSourceImage }),
+        })),
+      };
     }),
 
   getProjectForReader: comicProtectedProcedure

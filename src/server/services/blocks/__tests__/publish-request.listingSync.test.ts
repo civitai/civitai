@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import JSZip from 'jszip';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
@@ -1035,5 +1036,56 @@ describe('approveRequest — media removed between the floor check and the trans
       approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
     ).resolves.toMatchObject({ publishRequestId: 'req_1' });
     expect(db.write.appBlockPublishRequest.update).toHaveBeenCalledOnce();
+  });
+});
+
+describe('approveRequest — a remix app row', () => {
+  it.each(['remix', 'remix_disabled'])(
+    '🔴 refuses a request on a slug whose row is a remix app (status %s), writing nothing',
+    async (status) => {
+      db.read.appBlock.findFirst.mockResolvedValue({ ...existingAppBlock(), status });
+      const forgejo = await import('~/server/services/blocks/forgejo.service');
+
+      await expect(
+        approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+      ).rejects.toThrow('Cannot approve: cool-app is a remix app.');
+      expect(db.write.appBlock.update).not.toHaveBeenCalled();
+      expect(db.write.oauthClient.update).not.toHaveBeenCalled();
+      expect(forgejo.commitFiles).not.toHaveBeenCalled();
+    }
+  );
+
+  it('🔴 refuses when the status-guarded write matches nothing (P2025), re-capping and committing nothing', async () => {
+    db.read.appBlock.findFirst.mockResolvedValue({ ...existingAppBlock(), status: 'approved' });
+    // The row became a remix app after the guard read it: only the guarded write misses.
+    db.write.appBlock.update.mockImplementation((async (a: { where?: { status?: unknown } }) => {
+      if (a?.where?.status)
+        throw new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+          code: 'P2025',
+          clientVersion: 'test',
+        });
+      return {};
+    }) as never);
+    const forgejo = await import('~/server/services/blocks/forgejo.service');
+
+    await expect(
+      approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+    ).rejects.toMatchObject({ code: 'P2025' });
+    expect(db.write.oauthClient.update).not.toHaveBeenCalled();
+    expect(forgejo.commitFiles).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: the same request on an approved store app replaces its manifest', async () => {
+    db.read.appBlock.findFirst.mockResolvedValue({ ...existingAppBlock(), status: 'approved' });
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    // The write re-checks the status the guard read: a row that became a remix app is not replaced.
+    expect(db.write.appBlock.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'apb_1', status: { notIn: ['remix', 'remix_disabled'] } },
+        data: expect.objectContaining({ manifest: expect.anything() }),
+      })
+    );
   });
 });
