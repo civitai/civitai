@@ -307,7 +307,10 @@ export type RestrictableImage = Pick<Selectable<DB['Image']>, keyof typeof image
 export const isImageNotRestricted = (image: RestrictableImage, viewerId?: number | null) =>
   !isRestrictedImage(image) || (isUploaderId(viewerId) && image.userId === viewerId);
 
-/** Whether `viewerId` may see `image`: not restricted, and not rated Blocked, unless they uploaded it. */
+/**
+ * Whether `viewerId` may see `image`: not restricted, and not rated Blocked, unless they uploaded it.
+ * `isModerator` lifts the Blocked check only.
+ */
 export const isImageServable = (
   image: RestrictableImage,
   viewerId?: number | null,
