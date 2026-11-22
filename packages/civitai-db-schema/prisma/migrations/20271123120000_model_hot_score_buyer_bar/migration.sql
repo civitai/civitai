@@ -7,7 +7,9 @@
 --   likes + greatest(downloads - buyers, 0) / 6.4 + buyers >= 25
 --
 --   buyers = distinct users holding a live paid purchase of the version: an "EntityAccess" row for
---            the version whose meta has a download- or generation-purchase transaction key. Not
+--            the version whose meta has a download- or generation-purchase transaction key (the
+--            keys of EARLY_ACCESS_PURCHASES in model-version-access.service.ts; a new purchase kind
+--            there needs adding to the three copies below). Not
 --            the model's owner, and not a gift or a moderator grant (no purchase key). A refund or
 --            a moderator revoke removes the key, so it stops counting.
 --
@@ -203,7 +205,7 @@ BEGIN
 END
 $function$;
 
--- Nothing calls the 9-argument overload now. Kept, a 9-argument call would score without buyers.
+-- Dropped, not kept: a leftover 9-argument overload would silently score without buyers.
 -- IF EXISTS: re-running this file is how a stopped rescore resumes.
 DROP FUNCTION IF EXISTS public.hot_version_score(
     numeric, numeric, numeric, int, timestamp, timestamp, numeric, numeric, numeric);

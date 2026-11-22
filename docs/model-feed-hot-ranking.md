@@ -1722,4 +1722,4 @@ bar = likes + max(downloads - buyers, 0) / 6.4 + buyers >= 25
   version through the `EntityAccess` primary key, only for a version inside the 60-day window.
 - The migration (`20271123120000_model_hot_score_buyer_bar`) is applied by hand like §19's and
   rescores only the models whose versions its buyers lift over the bar. Its `rollback.sql`
-  restores §19's functions and rescores every model with a version accessed since 2026-09-22.
+  restores §19's functions and rescores every model with an access row on a version published since 2026-09-22.

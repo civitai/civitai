@@ -572,6 +572,7 @@ describe("an unmeasured slice follows its model's score", () => {
 const BUYER_BAR_DIR = '20271123120000_model_hot_score_buyer_bar';
 
 describe('paid buyers count toward the head-start bar like likes', () => {
+  // The rule is docs/model-feed-hot-ranking.md §20 (civitai/civitai#10034): change it there first.
   // As the head-start fixtures: model 3,000 likes, so a qualifying version of engagement e scores
   // term(e + 0.01 * (3,000 - e)). The buyers move the bar only, never e.
   const old = { at: OLD, likes: 2_970 };
@@ -733,21 +734,27 @@ describe('the rescore lag watch', () => {
   // file and called without it.
   it.each([
     [
+      HEAD_START_DIR,
       'migration.sql',
       /CREATE OR REPLACE PROCEDURE public\.rescore_hot_version_head_start\([\s\S]*?\$procedure\$;/,
       'rescore_hot_version_head_start',
     ],
     [
+      HEAD_START_DIR,
       'rollback.sql',
       /CREATE OR REPLACE PROCEDURE public\.rescore_hot_version_head_start_rollback\([\s\S]*?\$procedure\$;/,
       'rescore_hot_version_head_start_rollback',
     ],
+    [
+      BUYER_BAR_DIR,
+      'rollback.sql',
+      /CREATE OR REPLACE PROCEDURE public\.rescore_hot_version_buyer_bar_rollback\([\s\S]*?\$procedure\$;/,
+      'rescore_hot_version_buyer_bar_rollback',
+    ],
   ])(
-    'the %s procedure refuses before writing when it cannot see replica lag',
-    async (file, re, proc) => {
-      const procedure = readFileSync(path.join(MIGRATIONS, HEAD_START, file), 'utf8').match(
-        re
-      )?.[0];
+    'the %s %s procedure refuses before writing when it cannot see replica lag',
+    async (dir, file, re, proc) => {
+      const procedure = readFileSync(path.join(MIGRATIONS, dir, file), 'utf8').match(re)?.[0];
       const id = await model(OLD, 3_000, [
         { at: OLD, likes: 2_970 },
         { at: RECENT, likes: 30 },
@@ -785,6 +792,10 @@ describe('the rescore lag watch', () => {
   // PGlite reports a failed chunk by its last error ("current transaction is aborted"), not the
   // guard's, so the guard is asserted by running the file's own preflight alone. A file broken for
   // another reason fails every other test here, which apply it with the opt-out.
+  const preflightOf = (dir: string, file: string) =>
+    readFileSync(path.join(MIGRATIONS, dir, file), 'utf8').match(
+      /DO \$preflight\$[\s\S]*?\$preflight\$;/
+    )?.[0] ?? 'SELECT missing_preflight()';
   const preflight = (file: string) =>
     readFileSync(path.join(MIGRATIONS, HEAD_START, file), 'utf8').match(
       /DO \$preflight\$[\s\S]*?\$preflight\$;/
@@ -835,6 +846,10 @@ describe('the rescore lag watch', () => {
     await expect(apply(BUYER_BAR_DIR, 'migration.sql', pg)).rejects.toThrow();
     await pg.exec('ROLLBACK');
     expect(await countsBuyers()).toBe(false);
+    for (const file of ['migration.sql', 'rollback.sql'])
+      await expect(pg.exec(preflightOf(BUYER_BAR_DIR, file))).rejects.toThrow(
+        'no replica lag visible'
+      );
     expect(await usesHeadStart(pg)).toBe(true);
     await pg.close();
   });
