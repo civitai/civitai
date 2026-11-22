@@ -907,6 +907,7 @@ describe('sub-listings: the card fields of every item the grid could show', () =
     image_public: true,
     parent_listing_id: 'apl_gen_hub',
     sort_time: '2026-10-11T12:13:14.567891Z',
+    parent_item_count: 1,
     ...over,
   });
 

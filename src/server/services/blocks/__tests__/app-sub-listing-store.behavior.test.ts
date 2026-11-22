@@ -156,17 +156,15 @@ dbMock.dbWrite.appSubListing.updateMany.mockImplementation(
   }
 );
 
-const { listAvailableListings, listStoreSubListingsByIds } = await import(
-  '~/server/services/blocks/app-listing.service'
-);
-const { listAppListingsSchema, getAppListingsListQuery } = await import(
-  '~/server/schema/blocks/app-listing-read.schema'
-);
+const { listAvailableListings, listStoreSubListingsByIds } =
+  await import('~/server/services/blocks/app-listing.service');
+const { listAppListingsSchema, getAppListingsListQuery } =
+  await import('~/server/schema/blocks/app-listing-read.schema');
 const { moderateSubListing } = await import('~/server/services/blocks/app-sub-listing.service');
-const { hydrateSubListingCards, readStoreSubListingsOfParents } = await import(
-  '~/server/services/blocks/app-sub-listing-store.service'
-);
-const { registrySubListing } = await import('~/server/registry-adapter/catalog-media');
+const { hydrateSubListingCards, readStoreSubListingsOfParents } =
+  await import('~/server/services/blocks/app-sub-listing-store.service');
+const { capSubListings, registrySubListing } =
+  await import('~/server/registry-adapter/catalog-media');
 
 const OWNER = 7001;
 const AUTHOR = 7002;
@@ -1113,7 +1111,9 @@ describe('the listing stream read is the grid’s child arm, executed', () => {
   const rawDb = dbMock.dbRead as unknown as Parameters<typeof readStoreSubListingsOfParents>[0];
   const EVERY_RATING = { redCapable: true, viewerBrowsingLevel: 31 } as const;
   const streamed = async () =>
-    (await readStoreSubListingsOfParents(rawDb, [PARENT, OTHER, OFFSITE])).map((r) => r.id).sort();
+    (await readStoreSubListingsOfParents(rawDb, [PARENT, OTHER, OFFSITE], 200))
+      .map((r) => r.id)
+      .sort();
   const shown = async () => childIds(await page(EVERY_RATING)).sort();
   const withTemplate = async () => {
     await seedOffsiteChild();
@@ -1178,7 +1178,7 @@ describe('the listing stream read is the grid’s child arm, executed', () => {
        UPDATE app_sub_listings SET image_id = 2 WHERE id = '${GAME}';`
     );
     const cards = new Map((await page(EVERY_RATING)).map((c) => [c.id, c] as const));
-    const rows = await readStoreSubListingsOfParents(rawDb, [PARENT, OFFSITE]);
+    const rows = await readStoreSubListingsOfParents(rawDb, [PARENT, OFFSITE], 200);
     expect(rows.map((r) => r.id).sort()).toEqual([CHILD_A, CHILD_B, GAME].sort());
     for (const row of rows) {
       const item = registrySubListing(row);
@@ -1208,6 +1208,40 @@ describe('the listing stream read is the grid’s child arm, executed', () => {
     // The newest key, to the microsecond, as the grid sorts on it.
     const a = rows.find((r) => r.id === CHILD_A);
     expect(a?.sort_time).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/);
+  });
+
+  // The per-parent bound keeps the items `capSubListings` keeps (sort time, then id, descending),
+  // and each row counts its parent's items before the bound. CHILD_B's id is the higher one: the
+  // first case is newer and higher, the second newer and lower, the third a tie broken by id.
+  it.each<[string, string | null, string]>([
+    ['the newer item, also the higher id', null, CHILD_B],
+    [
+      'the newer item, the lower id',
+      `UPDATE app_sub_listings SET approved_at = now() + interval '1 day' WHERE id = '${CHILD_A}'`,
+      CHILD_A,
+    ],
+    [
+      'on a tied sort time, the higher id',
+      `UPDATE app_sub_listings SET approved_at = '2026-01-01T00:00:00Z' WHERE parent_listing_id = '${PARENT}'`,
+      CHILD_B,
+    ],
+  ])('a parent over the bound keeps %s, and counts every item', async (_name, sql, kept) => {
+    await withTemplate();
+    if (sql) await holder.db.exec(sql);
+    const bounded = await readStoreSubListingsOfParents(rawDb, [PARENT, OFFSITE], 1);
+    // In id order: both of PARENT's ids sort before GAME's.
+    expect(bounded.map((r) => [r.id, r.parent_listing_id, r.parent_item_count])).toEqual([
+      [kept, PARENT, 2],
+      [GAME, OFFSITE, 1],
+    ]);
+    // The same item the adapter's cap keeps out of the unbounded read.
+    const all = await readStoreSubListingsOfParents(rawDb, [PARENT], 200);
+    expect(all.map((r) => r.parent_item_count)).toEqual([2, 2]);
+    const items = all.flatMap((r) => {
+      const item = registrySubListing(r);
+      return item ? [item] : [];
+    });
+    expect(capSubListings(items, 1).items.map((i) => i.id)).toEqual([kept]);
   });
 });
 

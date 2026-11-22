@@ -1889,13 +1889,10 @@ export async function listStoreListingsBySlugs(
 }
 
 /**
- * The sub-listing cards of the items `ids` names, in that order: only items this viewer could find
- * in the store grid with sub-listings on and the same `kind`, `category` and developer filter
- * (`userId`, which names the PARENT's owner, as the grid's child arm reads it), through the same
- * parent eligibility, child arm and mature filter as {@link listAvailableListings}, and the same
- * live hydration. An id the viewer could not find there is dropped. The read model shadow's
- * by-id check of a sub-listing card one page shows and the other does not. Not cached: the id read
- * is keyed on the ids. With the sub-listing tables absent (manual-apply), none.
+ * The sub-listing cards of `ids`, in that order and each once: only those this viewer could find in
+ * the store grid with sub-listings on and the same filters. `userId` names the PARENT's owner, as
+ * the grid's child arm reads it. An id not found is dropped. Not cached. With the sub-listing tables
+ * absent (manual-apply migration), none.
  */
 export async function listStoreSubListingsByIds(
   ids: string[],

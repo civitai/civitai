@@ -357,6 +357,7 @@ function subListingRowOf(it: FixtureSubListing): StoreSubListingRow {
     image_public: it.image ? true : null,
     parent_listing_id: `apl_${parent.slug}`,
     sort_time: '2026-01-03T00:00:00.000000Z',
+    parent_item_count: 1,
   };
 }
 
