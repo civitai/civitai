@@ -40,6 +40,7 @@ const {
   reportedUserIdsOf,
   foldContextText,
   contextWebPageIncidents,
+  unsendableContextText,
   CSAM_CONTEXT_TEXT_MAX_CHARS,
 } = await import('~/server/services/csam-context-text');
 const RED = 'https://red.example.invalid';
@@ -435,6 +436,16 @@ describe('what NCMEC is sent', () => {
       capturedById: MOD,
       ...fields,
     } as never);
+
+  it('leaves out text of a source this build cannot send, never throwing over it', () => {
+    const newer = (id: number) =>
+      ({ source: 'fromANewerBuild', id, text: 'newer', capturedAt: at(8).toISOString() } as never);
+    const post = item({ source: 'comment', id: 11, postId: 100, text: 'kept' });
+
+    const incidents = contextWebPageIncidents([newer(1), post, newer(2)]);
+    expect(incidents).toEqual(contextWebPageIncidents([post]));
+    expect(unsendableContextText([newer(1), post, newer(2)])).toHaveLength(2);
+  });
 
   it('is one block per page, worded as Legal approved, naming no other account', () => {
     const [post, image] = contextWebPageIncidents([

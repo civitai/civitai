@@ -80,7 +80,11 @@ import { logToAxiom } from '~/server/logging/client';
 import type { CsamSupplementalDetails } from '~/server/services/csam-supplemental-text';
 import { supplementalReportText } from '~/server/services/csam-supplemental-text';
 import type { CsamContextText } from '~/server/services/csam-context-text';
-import { contextWebPageIncidents } from '~/server/services/csam-context-text';
+import {
+  CONTEXT_TEXT_OMITTED_LINE,
+  contextWebPageIncidents,
+  unsendableContextText,
+} from '~/server/services/csam-context-text';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
@@ -221,6 +225,8 @@ type CsamReportDetails = CsamReportFormOutput & {
    * case changes and removed when the report is sent.
    */
   sendHold?: SendHold;
+  /** Captured text the sent CyberTip left out (`omittedContext` below); written with the send stamp. */
+  omittedContext?: { count: number; onlyText: boolean };
 };
 
 /** `no-files`: nothing the report names can be sent. `missing-user`: no reporting or reported user. */
@@ -813,6 +819,13 @@ const underClaim = (claim: SendClaim) => ({
   reportSentAt: null,
 });
 
+/** What a sent report went without: never marked as sent, and kept open until a supplemental or Legal. */
+const omittedContext = (report: CsamReportProps, count: number) => ({
+  count,
+  // Every captured text was left out: Legal is told the same day.
+  onlyText: count === (report.details?.contextText?.length ?? 0),
+});
+
 function logSendLine(
   claim: SendClaim,
   subType: string,
@@ -1367,7 +1380,9 @@ async function reportImages(claim: SendClaim) {
   const noLongerStored =
     absent.length +
     report.images.filter(({ id }) => !images.some((image) => image.id === id)).length;
+  const unsendable = unsendableContextText(report.details?.contextText).length;
   const omitted = [
+    ...Array<string>(unsendable).fill(CONTEXT_TEXT_OMITTED_LINE),
     failed.length > 0 &&
       `${failed.length} file(s) named in this report could not be read from storage after repeated attempts and are not included.`,
     noLongerStored > 0 &&
@@ -1534,7 +1549,11 @@ async function reportImages(claim: SendClaim) {
     },
     {
       fileDetails: [...fileDetailsOf.values()].map(({ fileDetails }) => fileDetails),
-      sendFiles,
+      // Marked with the send, so the record of what went without it can't be lost between two writes.
+      sendFiles: async (ncmecReportId) => ({
+        ...(await sendFiles(ncmecReportId)),
+        ...(unsendable > 0 && { omittedContext: omittedContext(report, unsendable) }),
+      }),
       // A file already being sent finishes before the cancel, so its read failure is counted too.
       beforeCancel: async () => {
         await Promise.allSettled(started);
@@ -1543,6 +1562,18 @@ async function reportImages(claim: SendClaim) {
     }
   );
   if (!sent) return;
+  // Pages the Mod Lead through an Axiom monitor: the text left out needs a supplemental or Legal's
+  // ruling that none is needed.
+  if (unsendable > 0)
+    logSendLine(
+      claim,
+      'send-omitted',
+      {
+        message: `report ${report.id} sent without ${unsendable} captured text item(s)`,
+        payload: omittedContext(report, unsendable),
+      },
+      'error'
+    );
 
   const filesMissing = uploadResult.filter((entry) => entry?.source === 'missing').length;
   if (filesMissing > 0)

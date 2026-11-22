@@ -87,7 +87,13 @@ import { buildReport } from '@civitai/cybertipline-tools';
 import type { CsamReportProps } from '~/server/services/csam.service-new';
 import { processCsamReport } from '~/server/services/csam.service-new';
 import type { CsamContextText } from '~/server/services/csam-context-text';
-import { contextWebPageIncidents, foldContextText } from '~/server/services/csam-context-text';
+import {
+  CONTEXT_TEXT_OMITTED_LINE,
+  contextWebPageIncidents,
+  foldContextText,
+} from '~/server/services/csam-context-text';
+
+const webPages = contextWebPageIncidents;
 import { logToAxiom } from '~/server/logging/client';
 
 const stored = Buffer.from('the bytes the user uploaded');
@@ -284,6 +290,54 @@ describe('attached text on an image report', () => {
     expect(JSON.stringify(sent)).not.toContain('identicalRefiles');
     expect(xml).not.toContain(marker);
     expect(xml).toContain('held &lt;i&gt;words');
+  });
+
+  // A capture of a source this build can't send: what a newer build writes, read during a rolling
+  // deploy or after a rollback.
+  it('sends a report holding text it cannot send, without it, saying so and recording it with the send', async () => {
+    const newer = {
+      ...contextText[1],
+      source: 'fromANewerBuild',
+      id: 5,
+    } as unknown as CsamContextText;
+    await send({ contextText: [...contextText, newer, newer] });
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    const sent = submitReport.mock.calls[0][0];
+    expect(sent.incidentDetails.webPageIncidents.map((i: { url: string[] }) => i.url)).toEqual(
+      webPages(contextText).map((i) => [i.url])
+    );
+    expect(sent.additionalInfo.split('\n')).toEqual([
+      CONTEXT_TEXT_OMITTED_LINE,
+      CONTEXT_TEXT_OMITTED_LINE,
+    ]);
+    const stamp = dbMock.dbWrite.csamReport.updateMany.mock.calls
+      .map(([args]) => args as { data: { reportSentAt?: Date; details?: Record<string, unknown> } })
+      .find(({ data }) => data.reportSentAt);
+    expect(stamp?.data.details?.omittedContext).toEqual({ count: 2, onlyText: false });
+    expect(stamp?.data.details?.contextText).toHaveLength(contextText.length + 2);
+    const alert = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([line]) => line as Record<string, unknown>)
+      .find((line) => line.subType === 'send-omitted');
+    expect(alert).toMatchObject({
+      type: 'error',
+      reportId: 1,
+      payload: { count: 2, onlyText: false },
+    });
+    expect(JSON.stringify(alert)).not.toContain(contextText[1].text);
+  });
+
+  it('says when every captured text was left out', async () => {
+    const newer = { ...contextText[1], source: 'fromANewerBuild' } as unknown as CsamContextText;
+    await send({ contextText: [newer] });
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    expect(submitReport.mock.calls[0][0]).not.toHaveProperty('incidentDetails');
+    const stamp = dbMock.dbWrite.csamReport.updateMany.mock.calls
+      .map(([args]) => args as { data: { reportSentAt?: Date; details?: Record<string, unknown> } })
+      .find(({ data }) => data.reportSentAt);
+    expect(stamp?.data.details?.omittedContext).toEqual({ count: 1, onlyText: true });
   });
 
   it('adds no page incident to a report with no attached text', async () => {
