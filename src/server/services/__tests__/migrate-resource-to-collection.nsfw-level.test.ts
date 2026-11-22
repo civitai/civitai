@@ -261,8 +261,8 @@ describe('migrateResourceToCollection and a .com face the text scan relied on', 
         ...values: unknown[]
       ) =>
         Array.isArray(sql) &&
-        (sql as readonly string[]).join('?').includes("'comFaceHeldVerdict'->>'at'")
-          ? [{ name: 'Split', userId: OWNER, at: 'h', level: 16 }]
+        (sql as readonly string[]).join('?').includes('SELECT m.name, m."userId", m.meta')
+          ? [{ name: 'Split', userId: OWNER, meta: { comFaceHeldVerdict: { at: 'h', level: 16 } } }]
           : levelRollups?.(sql, ...values)) as never);
     }
 

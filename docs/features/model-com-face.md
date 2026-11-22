@@ -99,7 +99,9 @@ the face away: the model is marked mature and the owner gets the rating notice; 
 model gets the text scan's marker; where the rating is held (minor, POI, Private, SFW-only lock), it
 waits as a moderator's lead. This holds even when the same save edits the .red title or
 description: the rescan that follows a lost face reads the new text, and if it is no longer mature
-it releases the marker, so the owner can change the rating.
+it releases the marker, so the owner can change the rating. While a verdict is held, the owner of a
+model already marked mature cannot unmark it, as for the scan's marker; a rescan that reads edited
+text as not mature drops the held verdict.
 
 ### Dispute
 
