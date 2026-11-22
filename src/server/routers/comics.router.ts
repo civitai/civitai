@@ -418,10 +418,8 @@ const createPanelSchema = z.object({
 
 const updatePanelSchema = z.object({
   panelId: z.number().int(),
-  status: z.nativeEnum(ComicPanelStatus).optional(),
+  status: z.literal(ComicPanelStatus.Generating).optional(),
   imageUrl: z.string().nullish(),
-  civitaiJobId: z.string().optional(),
-  errorMessage: z.string().nullish(),
 });
 
 const deletePanelSchema = z.object({
@@ -2440,7 +2438,6 @@ export const comicsRouter = router({
       if (!panel || panel.chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
-      // A new image goes through replacePanelImage, which records and scans it.
       if (input.imageUrl != null && input.imageUrl !== panel.imageUrl) {
         throw throwBadRequestError('A panel image is changed through replacePanelImage');
       }
@@ -2449,9 +2446,8 @@ export const comicsRouter = router({
         where: { id: input.panelId },
         data: {
           status: input.status,
-          imageUrl: input.imageUrl,
-          civitaiJobId: input.civitaiJobId,
-          errorMessage: input.errorMessage,
+          // Only clearing is written; any other value is the current one.
+          imageUrl: input.imageUrl === null ? null : undefined,
         },
       });
 
