@@ -283,6 +283,13 @@ describe('the stream', () => {
     expect(item.referenceId).toBe(good);
   });
 
+  it('never serves a reference on a Private post', async () => {
+    await player(1);
+    await rating(5);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 5`);
+    expect((await getApprentice(db, 1)).kind).toBe('exhausted');
+  });
+
   it('is for Acolytes only', async () => {
     await player(1, { rank: 'Knight' });
     await rating(1);

@@ -311,6 +311,14 @@ describe('answering a hidden check', () => {
     expect((await pg.query(`SELECT 1 FROM "KnightsVote"`)).rows).toHaveLength(0);
   });
 
+  it('refuses an answer to a check on a Private post', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await reference(10);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 10`);
+    expect(await answer(1, ref, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
+    expect((await pg.query(`SELECT 1 FROM "KnightsVote"`)).rows).toHaveLength(0);
+  });
+
   it('refuses like a vote while a career reset is pending', async () => {
     await seedPlayer(pg, 1);
     await pg.query(`INSERT INTO "NewOrderSmite" ("targetPlayerId") VALUES (1),(1),(1)`);

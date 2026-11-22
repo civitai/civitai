@@ -1430,6 +1430,85 @@ describe('an expired item on a Private post', () => {
     });
     expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
   });
+
+  async function escalatedItem(
+    stage: string,
+    votes: [stage: string, answer: string, weight: number][]
+  ) {
+    await active(20, 'Templar');
+    await active(30, 'Paladin');
+    await image(10, 4);
+    const id = await item(10, { expires: PAST });
+    await pg.query(`UPDATE "KnightsQueueItem" SET "minRank"=$2, "escalatedAt"=$3 WHERE id=$1`, [
+      id,
+      stage,
+      new Date(PAST.getTime() - 3_600_000),
+    ]);
+    for (const [i, [at, answer, weight]] of votes.entries()) {
+      await pg.query(
+        `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
+         VALUES ($1,$2,$3,$4,10,$5,$6,$7)`,
+        [id, 100 + i, PAST, Q, at, answer, weight]
+      );
+    }
+    return id;
+  }
+
+  it('takes the Blocked plurality of the stage before when the current stage has no counted vote, and reports the move', async () => {
+    const id = await escalatedItem('Templar', [['Knight', '32', 1]]);
+    await makePrivate();
+    const moved = vi.fn();
+    expect(await escalateExpired(db, { now: NOW, moved })).toMatchObject({
+      toInquisitor: 1,
+      extended: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', escalationReason: 'blocked' });
+    expect(moved).toHaveBeenCalledWith([{ id, status: 'Open', minRank: 'Templar' }]);
+  });
+
+  it('takes only the latest voted stage, over an earlier stage with another pick', async () => {
+    const id = await escalatedItem('Paladin', [
+      ['Knight', '4', 1],
+      ['Knight', '4', 1],
+      ['Templar', '32', 1],
+    ]);
+    await makePrivate();
+    expect((await escalateExpired(db, { now: NOW })).toInquisitor).toBe(1);
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', escalationReason: 'blocked' });
+  });
+
+  it('does not route when a later stage picked a level over an earlier Blocked pick', async () => {
+    const id = await escalatedItem('Paladin', [
+      ['Knight', '32', 1],
+      ['Templar', '4', 1],
+    ]);
+    await makePrivate();
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({ toInquisitor: 0, extended: 1 });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Paladin' });
+  });
+
+  it('does not route on earlier votes that carry no weight', async () => {
+    const id = await escalatedItem('Templar', [['Knight', '32', 0]]);
+    await makePrivate();
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({ toInquisitor: 0, extended: 1 });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+  });
+
+  it('skips a later stage whose votes carry no weight', async () => {
+    const id = await escalatedItem('Paladin', [
+      ['Knight', '32', 1],
+      ['Templar', '4', 0],
+    ]);
+    await makePrivate();
+    expect((await escalateExpired(db, { now: NOW })).toInquisitor).toBe(1);
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', escalationReason: 'blocked' });
+  });
+
+  it('extends the same history on a Public post, as before', async () => {
+    const id = await escalatedItem('Templar', [['Knight', '32', 1]]);
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({ toInquisitor: 0, extended: 1 });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+  });
 });
 
 describe('escalation with empty ranks', () => {

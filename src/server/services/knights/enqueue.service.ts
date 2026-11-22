@@ -44,7 +44,7 @@ export type EnqueueOptions = {
   /**
    * Refuse images with no post (`no-post`), whose post is not live at `now`: a draft or a later
    * date (`unpublished`), or whose post is Private (`private-post`). Scan sampling and owner
-   * ratings pass it; the publish sweep samples the post once it goes live.
+   * ratings pass it.
    */
   requirePublished?: boolean;
   /**

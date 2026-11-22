@@ -20,7 +20,7 @@ An item that still has no counted vote at its current stage once its extension i
 
 An item at a stage nobody can serve is not extended. It is handed up as rule 1 says when a later stage is served, and expires when that hand-up would reach the Inquisitors with no counted vote at its stage.
 
-An expired item whose image's post is Private and whose counted votes at its stage pick Blocked (ties go high) goes to the Inquisitors as `blocked`, at any stage and vote count; every other item follows the rules above.
+An expired item whose image's post is Private goes to the Inquisitors as `blocked` when the counted votes of the latest stage that has any (its current stage first) pick Blocked (ties go high), at any stage and vote count; every other item follows the rules above.
 
 The tick response carries `escalated`, `toInquisitor`, `extended`, `expired` and `rerated`; each expiry also counts as `knights_escalations_total{reason="expired"}`.
 
