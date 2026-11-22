@@ -1,4 +1,5 @@
 import type { shownActivity } from '@civitai/shared/held-media';
+import type { LIFT_KEPT_ACTIVITY } from '@civitai/shared/account-deletion-grace';
 import { dbWrite } from '~/server/db/client';
 
 type TagActivities = 'moderateTag' | 'disableTag' | 'addTag' | 'deleteTag';
@@ -46,6 +47,7 @@ export type ImageModActivity = {
   activity:
     | TagActivities
     | 'review'
+    | typeof LIFT_KEPT_ACTIVITY
     | 'setNsfwLevel'
     | 'resolveAppeal'
     | 'setNsfwLevelKono'
@@ -126,6 +128,11 @@ type UserModActivity = {
     // Support minted a membership code for this account (`mintMembershipCode:<tier>:<months>`). The
     // daily per-moderator cap counts these rows; the code itself lives on RedeemableCode, never here.
     | `mintMembershipCode:${string}`
+    // A moderator comped a membership gift to this account (`compMembershipGift:<tier>:<months>`). The
+    // daily per-moderator cap counts these rows; the gift itself lives on MembershipGift.
+    | `compMembershipGift:${string}`
+    // A moderator took back a comped gift (`revokeCompMembershipGift:<giftId>`).
+    | `revokeCompMembershipGift:${string}`
     // Support withdrew an unredeemed code it minted (`revokeMembershipCode:<tier>:<months>`).
     | `revokeMembershipCode:${string}`
     // Support ended a Buzz-purchased membership early (`endBuzzMembership:<productId>`).
@@ -205,6 +212,11 @@ type SearchQueryRuleModActivity = {
   activity: 'dryRun';
 };
 
+type ProfanityListModActivity = {
+  entityType: 'profanityList';
+  activity: 'dryRun';
+};
+
 type PublishRequestHoldModActivity = {
   entityType: 'publishRequestHold';
   activity: 'publishRequestHoldOverride' | 'publishRequestHoldLateResuspend';
@@ -213,6 +225,11 @@ type PublishRequestHoldModActivity = {
 type PostTextModActivity = {
   entityType: 'postText';
   activity: 'refuse' | 'restore' | 'csamHold';
+};
+
+type ServiceDealReviewModActivity = {
+  entityType: 'serviceDealReview';
+  activity: 'csamHold';
 };
 
 type CsamReportModActivity = {
@@ -224,6 +241,8 @@ type ModActivity = {
   entityId?: number | number[];
 } & (
   | PublishRequestHoldModActivity
+  | ServiceDealReviewModActivity
+  | ProfanityListModActivity
   | CsamReportModActivity
   | ModelModActivity
   | ModelVersionModActivity

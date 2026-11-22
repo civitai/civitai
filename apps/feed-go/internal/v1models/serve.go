@@ -10,6 +10,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -39,6 +40,11 @@ type DetailRequest struct {
 	ID string
 	// RegionRestricted: the caller's region holds the level to PG/PG-13 (apiBrowsingLevel).
 	RegionRestricted bool
+	// Host is the request's Host header (isRedCapableHost, for the Training Data listing).
+	Host string
+	// TrainingDataSQL is Node's Training Data rule-set id the sample carried
+	// (TrainingDataSQLHeader); "" = none.
+	TrainingDataSQL string
 }
 
 // ServeDetail answers `GET /api/v1/models/[id]` (the PublicEndpoint path: no session is read).
@@ -57,10 +63,13 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 	}
 	if d.Config.ResponseCacheTTL > 0 {
 		if body, age, ok := d.cachedDetail(ctx, id, level); ok && age >= NodeBuiltWindow {
-			if err := refuseTrainingData(body); err != nil {
+			// withListableTrainingData runs after the cache, which keys on neither the host nor a
+			// restriction placed since the entry was written.
+			out, err := d.withListableTrainingData(ctx, body, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL})
+			if err != nil {
 				return nil, err
 			}
-			return &Answer{Body: body, Cached: true}, nil
+			return &Answer{Body: out, Cached: true}, nil
 		}
 	}
 	res, err := d.getModelsWithVersions(ctx, withVersionsInput{
@@ -76,13 +85,19 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 	if len(res.items) == 0 {
 		return &Answer{Body: superjson.Object{{Key: "error", Val: "No model with id " + strconv.Itoa(id)}}, Trivial: true}, nil
 	}
+	// buildPublicModelResponse lists every Public file (Training Data too, without its metadata); the
+	// listing is applied to the built body as to a cached one.
 	body, err := shapeModel(res.items[0], shapeOptions{
 		level: level, detail: true, downloadBase: d.Config.BaseURL, imageLocation: d.Config.ImageLocation,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Answer{Body: body}, nil
+	out, err := d.withListableTrainingData(ctx, body, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL})
+	if err != nil {
+		return nil, err
+	}
+	return &Answer{Body: out}, nil
 }
 
 // cachedDetail is fetchModelResponseCached's read: the packed `{ data, cachedAt }` entry, served when
@@ -112,29 +127,15 @@ func (d *Deps) cachedDetail(ctx context.Context, id, level int) (superjson.Objec
 	return data, time.Duration(ageMS) * time.Millisecond, true
 }
 
-// refuseTrainingData falls back on a body listing a Training Data file (withListableTrainingData
-// reads the replica's dataset rules: not ported).
-func refuseTrainingData(body superjson.Object) error {
-	versions, _ := getVal(body, "modelVersions").([]any)
-	for _, v := range versions {
-		vo, _ := v.(superjson.Object)
-		files, _ := getVal(vo, "files").([]any)
-		for _, f := range files {
-			fo, _ := f.(superjson.Object)
-			if t, _ := getVal(fo, "type").(string); t == "Training Data" {
-				return fallback.New("v1-models-training-data")
-			}
-		}
-	}
-	return nil
-}
-
 // ListRequest is one `GET /api/v1/models`.
 type ListRequest struct {
 	// Query is the raw query string, Path the request path, Host its Host header.
 	Query, Path, Host string
 	// RegionRestricted: the caller's region holds the level to PG/PG-13.
 	RegionRestricted bool
+	// TrainingDataSQL is Node's Training Data rule-set id the sample carried
+	// (TrainingDataSQLHeader); "" = none.
+	TrainingDataSQL string
 }
 
 // UsernameResolver is the `username` filter's user lookup on the replica.
@@ -161,7 +162,7 @@ func (d *Deps) origin(host string) (string, error) {
 }
 
 // ServeList answers `GET /api/v1/models` for a signed-out caller with no text query (the
-// Meilisearch path is not ported).
+// Meilisearch path is not ported; an empty `query` is no text query).
 func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListRequest) (*Answer, error) {
 	in, err := ParseList(req.Query)
 	if err != nil {
@@ -188,6 +189,15 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 	if req.RegionRestricted {
 		level = browsing.SFWLevels
 	}
+	// enforceBlockedBrowsingTagsForModels, ahead of every lookup in getModelsRaw: a blocked tag name
+	// is an empty page (`{ items: [] }`, no cursor), with no statement and no username read.
+	blocked, err := d.tagBlocked(ctx, in.Tag)
+	if err != nil {
+		return nil, err
+	}
+	if blocked {
+		return listAnswer(in, &withVersions{}, nil, origin, path), nil
+	}
 	target := 0
 	if in.Username != "" {
 		if users == nil {
@@ -203,9 +213,22 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 		}
 		target = id
 	}
+	// getModelsRaw's tag clause: `dbRead.tag.findUnique({ where: { name } })` (Tag.name is citext:
+	// the name is passed as given, matched case-insensitively by the replica); a name no tag has adds
+	// no clause.
+	var tagID *int
+	if in.Tag != "" {
+		id, found, err := hydrate.TagIDByName(ctx, d.DB, in.Tag)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			tagID = &id
+		}
+	}
 	res, err := d.getModelsWithVersions(ctx, withVersionsInput{
 		raw: RawInput{
-			Take: in.Limit, Cursor: in.Cursor, Archived: in.Archived, DisablePoi: true, TargetUserID: target,
+			Take: in.Limit, Cursor: in.Cursor, Archived: in.Archived, DisablePoi: true, TargetUserID: target, TagID: tagID,
 			Types: in.Types, BaseModels: in.BaseModels, Sort: in.Sort, Period: in.Period, PeriodMode: in.PeriodMode,
 			IDs: in.IDs, EarlyAccess: in.EarlyAccess, BrowsingLevel: level,
 		},
@@ -214,9 +237,19 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 	if err != nil {
 		return nil, err
 	}
+	// runModelSearch's trainingDataListing over every item's versions (all their files, before the
+	// shaper's own filters).
+	versions := make([]superjson.Object, 0, len(res.items))
+	for _, it := range res.items {
+		versions = append(versions, it.versions...)
+	}
+	listing, err := d.trainingDataListing(ctx, versions, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL})
+	if err != nil {
+		return nil, err
+	}
 	opts := shapeOptions{
 		level: level, downloadBase: origin, nsfwImagePassthrough: in.Nsfw && !req.RegionRestricted,
-		primaryFileOnly: in.PrimaryFileOnly, imageLocation: d.Config.ImageLocation,
+		primaryFileOnly: in.PrimaryFileOnly, imageLocation: d.Config.ImageLocation, listing: listing,
 	}
 	items := make([]any, 0, len(res.items))
 	for _, it := range res.items {
@@ -225,6 +258,15 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 			return nil, err
 		}
 		items = append(items, o)
+	}
+	return listAnswer(in, res, items, origin, path), nil
+}
+
+// listAnswer is the handler's body: `{ items, metadata: { nextCursor, nextPage, currentPage?,
+// pageSize? } }`, the undefined members left out.
+func listAnswer(in *ListInput, res *withVersions, items []any, origin, path string) *Answer {
+	if items == nil {
+		items = []any{}
 	}
 	meta := superjson.Object{}
 	if res.nextCursor != "" {
@@ -238,5 +280,25 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 	return &Answer{
 		Body:    superjson.Object{{Key: "items", Val: items}, {Key: "metadata", Val: meta}},
 		Trivial: len(res.items) == 0,
-	}, nil
+	}
+}
+
+// tagBlocked is isBlockedTagName(tagname ?? tag, blocked names lowercased): the name, lowercased, is
+// one of the blocked tags' names. An empty name is never blocked. The name is ASCII (ParseList); a
+// blocked name that is not falls back, since Go's lowercasing of it is not always JS's.
+func (d *Deps) tagBlocked(ctx context.Context, tag string) (bool, error) {
+	if tag == "" {
+		return false, nil
+	}
+	if d.Blocked == nil {
+		return false, fallback.New("blocked-tags-unconfigured")
+	}
+	names, ascii, err := d.Blocked.NamesASCII(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !ascii {
+		return false, fallback.New("v1-models-tag")
+	}
+	return names[strings.ToLower(tag)], nil
 }

@@ -99,9 +99,13 @@ import {
   refreshHasReceivedReviews,
   userBasicCache,
   userModelCountCache,
+  getUserFollows,
 } from '~/server/redis/caches';
 import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
+import { listModelStake, listRecentlyVersionedModels } from '@civitai/db-queries/model';
+import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import {
   bustModelGallerySettings,
   getCreatorGalleryHiddenUserIds,
@@ -150,6 +154,7 @@ import { readSimpleModelWithOwner } from '~/server/services/hot-reads-12.reads';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { evaluateAutoNsfw, writeAutoNsfw } from '~/server/services/auto-nsfw';
+import { getServerProfanityFilter } from '~/server/services/profanity-list.service';
 import { holdRestrictedVerdict } from '~/server/services/text-scan/actions/hold-restricted-verdict';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import {
@@ -211,6 +216,7 @@ import {
   reassertModelPoiRestrictions,
 } from '~/server/services/text-scan/actions/model-poi-minor';
 import type { holdModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
+import type { NotifyTextScanRatingRaisedArgs } from '~/server/services/text-scan/notify';
 import { hasOpenTextScanFlag } from '~/server/services/text-scan/flag-snapshot';
 import { loadModelRulesUnpublishDetail } from '~/server/services/text-scan/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
@@ -365,6 +371,7 @@ import {
   sfwFaceStamp,
 } from '~/server/services/model-sfw-face-stamp';
 import {
+  faceLossNotice as heldVerdictNotice,
   queueComFaceRecheck,
   queueComFaceRestore,
   rescanTextAfterFaceLoss,
@@ -4346,6 +4353,7 @@ export const upsertModel = async (
       description: data.description,
       alreadyNsfw: !!data.nsfw,
       lockedProperties: storedLockedProperties,
+      profanity: await getServerProfanityFilter(),
     });
 
     if (evaluation) {
@@ -4558,6 +4566,7 @@ export const upsertModel = async (
     let lockedBeforeUpdate: string[] | undefined;
 
     let heldVerdictApplied = false;
+    let faceLossNotice: NotifyTextScanRatingRaisedArgs | null = null;
     const result = await dbWrite.$transaction(
       async (tx) => {
         // Merged over the row as it is now: a wipe, a moderator or a scan may have written its meta
@@ -4849,31 +4858,38 @@ export const upsertModel = async (
           data.availability !== Availability.Private
         )
           heldVerdictApplied = await heldVerdict.applyHeldVerdictLeavingPrivate(tx, updated.id);
-        if (
-          losesSfwFace(beforeUpdate, data) &&
-          (await heldVerdict.applyComFaceHeldVerdict(tx, updated.id))
-        )
-          heldVerdictApplied = true;
+        // Applied even when this save also edits the listing text, so a failed rescan never leaves
+        // the model unrated: the rescan of the new text releases the marker if it is not mature.
+        if (losesSfwFace(beforeUpdate, data)) {
+          faceLossNotice = await heldVerdict.applyComFaceHeldVerdict(tx, updated.id);
+          if (faceLossNotice) heldVerdictApplied = true;
+        }
 
         return updated;
       },
       { maxWait: 10000, timeout: 30000 }
     );
-    // First after commit, so a later post-save step that throws cannot drop it. Re-checked even when
-    // the gate ran: it read the description before blurb expansion, not the text stored.
-    const listingChanged =
-      (data.name !== undefined && data.name !== beforeUpdate.name) ||
-      (data.description !== undefined && data.description !== beforeUpdate.description);
-    const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
-    if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
-      await queueComFaceRecheck(id);
-    if (!isModerator && listingChanged) await queueComFaceRestore(id);
-    if (losesSfwFace(beforeUpdate, data)) await rescanTextAfterFaceLoss(id);
-    if (heldVerdictApplied) {
-      const { finishHeldVerdictApply } = await import(
-        '~/server/services/text-scan/actions/model-nsfw'
-      );
-      await finishHeldVerdictApply(id);
+    // The owner's notice goes in the finally: after the level refresh, so a slow notice cannot keep
+    // the old level listed, and even when a step before it throws.
+    try {
+      // First of the post-save steps, so a later one that throws cannot drop it. Re-checked even when
+      // the gate ran: it read the description before blurb expansion, not the text stored.
+      const listingChanged =
+        (data.name !== undefined && data.name !== beforeUpdate.name) ||
+        (data.description !== undefined && data.description !== beforeUpdate.description);
+      const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
+      if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
+        await queueComFaceRecheck(id);
+      if (!isModerator && listingChanged) await queueComFaceRestore(id);
+      if (losesSfwFace(beforeUpdate, data)) await rescanTextAfterFaceLoss(id);
+      if (heldVerdictApplied) {
+        const { finishHeldVerdictApply } = await import(
+          '~/server/services/text-scan/actions/model-nsfw'
+        );
+        await finishHeldVerdictApply(id);
+      }
+    } finally {
+      if (faceLossNotice) await heldVerdictNotice.send([faceLossNotice]);
     }
     await preventReplicationLag('model', id);
     await userModelCountCache.refresh(userId);
@@ -5163,6 +5179,7 @@ export async function applyModelContentChange({
           description,
           alreadyNsfw: stored.nsfw,
           lockedProperties: stored.lockedProperties,
+          profanity: await getServerProfanityFilter(),
         })
       : null;
     if (flagged) await writeAutoNsfw(dbWrite, { id, ...flagged });
@@ -7345,7 +7362,7 @@ export async function migrateResourceToCollection({
   const faceMoves = remainingVersions.some((v) => v.id === coverVersionId);
   const noFace = { sfwName: null, sfwDescription: null, sfwCoverImageId: null };
 
-  const { collection, modelIds, faceless } = await dbWrite.$transaction(
+  const { collection, modelIds, faceless, faceLossNotices } = await dbWrite.$transaction(
     async (tx) => {
       // Create the collection
       const collection = await tx.collection.create({
@@ -7438,37 +7455,44 @@ export async function migrateResourceToCollection({
         '~/server/services/text-scan/actions/model-nsfw'
       );
       const faceless = hasSfwFaceParts(model) ? modelIds.filter((id) => id !== faceModelId) : [];
-      for (const id of faceless) await applyComFaceHeldVerdict(tx, id);
+      const faceLossNotices = [];
+      for (const id of faceless) faceLossNotices.push(await applyComFaceHeldVerdict(tx, id));
 
-      return { collection, modelIds, faceless };
+      return { collection, modelIds, faceless, faceLossNotices };
     },
     { timeout: 60000, maxWait: 10000 }
   );
+  // The owners' notices go in the finally: after the level refresh and the cache busts, so a slow
+  // notice cannot keep the old level listed, and even when one of them throws.
+  try {
+    // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
+    // each was given its version's stored level. Versions first: the model level reads them.
+    await updateModelVersionNsfwLevels(filteredVersions.map((v) => v.id));
+    await updateModelNsfwLevels(modelIds);
 
-  // The Model trigger fires on UPDATE only, so nothing queues a recompute for the new models, and
-  // each was given its version's stored level. Versions first: the model level reads them.
-  await updateModelVersionNsfwLevels(filteredVersions.map((v) => v.id));
-  await updateModelNsfwLevels(modelIds);
+    // Set the showcase collection for the original model
+    await setModelShowcaseCollection({
+      collectionId: collection.id,
+      id: modelId,
+      userId: model.userId,
+      isModerator,
+      modelAlreadyInCollection: true,
+    });
 
-  // Set the showcase collection for the original model
-  await setModelShowcaseCollection({
-    collectionId: collection.id,
-    id: modelId,
-    userId: model.userId,
-    isModerator,
-    modelAlreadyInCollection: true,
-  });
-
-  // Bust caches
-  await Promise.all([
-    dataForModelsCache.refresh(modelIds),
-    bustMvCache(
-      filteredVersions.map((v) => v.id),
-      modelIds
-    ),
-    // The versions now belong to new models.
-    bustTwice(() => versionModelCache().bust(filteredVersions.map((v) => v.id))),
-  ]);
+    // Bust caches
+    await Promise.all([
+      dataForModelsCache.refresh(modelIds),
+      bustMvCache(
+        filteredVersions.map((v) => v.id),
+        modelIds
+      ),
+      // The versions now belong to new models.
+      bustTwice(() => versionModelCache().bust(filteredVersions.map((v) => v.id))),
+    ]);
+  } finally {
+    const notices = faceLossNotices.filter((notice) => notice !== null);
+    if (notices.length) await heldVerdictNotice.send(notices);
+  }
 
   modelMetrics
     .queueUpdate(modelIds)
@@ -8667,4 +8691,277 @@ export async function transferModelOwnership({
     postsUpdated: Number(result[5]),
     imagesUpdated: Number(result[6]),
   };
+}
+
+// ── Personalised Hot lead ────────────────────────────────────────────────────────────────────
+// Page 1 of a signed-in viewer's default Hot feed leads with up to PERSONAL_LEAD_K models they have a
+// stake in that have something new. The controller feeds these ids through the official-pin path, so
+// every feed filter still applies to them.
+
+const PERSONAL_LEAD_K = 6;
+const PERSONAL_LEAD_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+const PERSONAL_LEAD_CANDIDATES_LIMIT = 5000;
+const PERSONAL_LEAD_STAKE_LIMIT = 500;
+const PERSONAL_LEAD_BUDGET_MS = 150;
+const PERSONAL_LEAD_TTL_S = 60 * 60;
+const PERSONAL_LEAD_TIMEOUT_TTL_S = 60;
+const PERSONAL_LEAD_CANDIDATES_FRESH_MS = 5 * 60 * 1000;
+const PERSONAL_LEAD_CANDIDATES_TTL_S = 60 * 60;
+
+export type PersonalLeadCandidate = {
+  modelId: number;
+  userId: number;
+  hotScore: number | null;
+  versionPublishedAt: Date | string | null;
+  versionNsfwLevel: number;
+};
+export type PersonalLeadStake = {
+  modelId: number;
+  userId: number;
+  touchedAt: Date | string | null;
+  muted?: boolean;
+};
+
+const toMs = (d: Date | string | null) => (d ? new Date(d).getTime() : 0);
+
+/**
+ * The lead, from the global candidate list. Stake arm: a model the viewer liked, favourited or set
+ * Notify on whose new version came out after their latest touch. Creator arm: a model by a creator
+ * they follow or whose model they hold a stake in, one per creator. Muted, hidden and blocked models
+ * and users, the viewer's own models, and versions outside their browsing level are dropped. Stake
+ * arm first, Hot order within each arm.
+ */
+export function pickPersonalLead({
+  viewerId,
+  browsingLevel,
+  stake,
+  follows,
+  hiddenModelIds,
+  hiddenUserIds,
+  candidates,
+  k = PERSONAL_LEAD_K,
+}: {
+  viewerId: number;
+  browsingLevel: number;
+  stake: PersonalLeadStake[];
+  follows: number[];
+  hiddenModelIds: Set<number>;
+  hiddenUserIds: Set<number>;
+  candidates: PersonalLeadCandidate[];
+  k?: number;
+}) {
+  const touchedAt = new Map<number, number>();
+  const muted = new Set<number>();
+  const creators = new Set<number>(follows);
+  for (const s of stake) {
+    if (s.muted) {
+      muted.add(s.modelId);
+      continue;
+    }
+    touchedAt.set(s.modelId, Math.max(touchedAt.get(s.modelId) ?? 0, toMs(s.touchedAt)));
+    creators.add(s.userId);
+  }
+  creators.delete(viewerId);
+
+  const visible = (c: PersonalLeadCandidate) =>
+    c.userId !== viewerId &&
+    !muted.has(c.modelId) &&
+    !hiddenModelIds.has(c.modelId) &&
+    !hiddenUserIds.has(c.userId) &&
+    Flags.intersects(c.versionNsfwLevel, browsingLevel);
+  const byHot = (a: PersonalLeadCandidate, b: PersonalLeadCandidate) =>
+    (b.hotScore ?? 0) - (a.hotScore ?? 0);
+
+  const stakeArm = candidates
+    .filter((c) => {
+      const touched = touchedAt.get(c.modelId);
+      return touched !== undefined && toMs(c.versionPublishedAt) > touched && visible(c);
+    })
+    .sort(byHot);
+  const creatorArm: PersonalLeadCandidate[] = [];
+  const creatorsUsed = new Set<number>();
+  for (const c of candidates
+    .filter((c) => !touchedAt.has(c.modelId) && creators.has(c.userId) && visible(c))
+    .sort(byHot)) {
+    if (creatorsUsed.has(c.userId)) continue;
+    creatorsUsed.add(c.userId);
+    creatorArm.push(c);
+  }
+  const ids = [...stakeArm, ...creatorArm].slice(0, k).map((c) => c.modelId);
+  return {
+    ids,
+    stakeArm: Math.min(stakeArm.length, k),
+    creatorArm: ids.length - Math.min(stakeArm.length, k),
+  };
+}
+
+type CandidatesEntry = { data: PersonalLeadCandidate[]; cachedAt: number };
+let candidatesRefreshing = false;
+// Per-pod copy of the global list, so a per-viewer compute does not fetch and decode it from Redis.
+const PERSONAL_LEAD_CANDIDATES_L1_MS = 60 * 1000;
+let candidatesL1: { data: PersonalLeadCandidate[]; at: number } | undefined;
+
+async function refreshPersonalLeadCandidates() {
+  const key = REDIS_KEYS.CACHES.PERSONAL_HOT_LEAD_CANDIDATES;
+  const gotLock = await clusterCacheGuard
+    .call('personal hot lead candidates lock', () =>
+      redis.setNxKeepTtlWithEx(`${REDIS_KEYS.CACHE_LOCKS}:${key}`, '1', 60)
+    )
+    .catch(() => false);
+  if (!gotLock) return;
+  const { kyselyRead } = await loadKyselyDb();
+  const data = await listRecentlyVersionedModels(kyselyRead, {
+    since: new Date(Date.now() - PERSONAL_LEAD_WINDOW_MS),
+    limit: PERSONAL_LEAD_CANDIDATES_LIMIT,
+  });
+  if (data.length >= PERSONAL_LEAD_CANDIDATES_LIMIT)
+    logToAxiom({
+      type: 'info',
+      name: 'personal-hot-lead-candidates-capped',
+      payload: { count: data.length },
+    });
+  await clusterCacheGuard.writeBestEffort('personal hot lead candidates set', () =>
+    redis.packed.set(key, { data, cachedAt: Date.now() } satisfies CandidatesEntry, {
+      EX: PERSONAL_LEAD_CANDIDATES_TTL_S,
+    })
+  );
+}
+
+/**
+ * The global candidate list. A stale or missing entry starts one background refresh and is served
+ * as it is (missing: null), so no viewer waits on the global query.
+ */
+async function getPersonalLeadCandidates() {
+  if (candidatesL1 && Date.now() - candidatesL1.at < PERSONAL_LEAD_CANDIDATES_L1_MS)
+    return candidatesL1.data;
+  const entry = await clusterCacheGuard.readOr(
+    'personal hot lead candidates get',
+    () => redis.packed.get<CandidatesEntry>(REDIS_KEYS.CACHES.PERSONAL_HOT_LEAD_CANDIDATES),
+    'unavailable' as const
+  );
+  if (entry === 'unavailable') return null;
+  if (!entry || Date.now() - entry.cachedAt > PERSONAL_LEAD_CANDIDATES_FRESH_MS) {
+    if (!candidatesRefreshing) {
+      candidatesRefreshing = true;
+      void refreshPersonalLeadCandidates()
+        .catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'personal-hot-lead-candidates',
+            error: safeError(error),
+          })
+        )
+        .finally(() => {
+          candidatesRefreshing = false;
+        });
+    }
+  }
+  if (entry) candidatesL1 = { data: entry.data, at: Date.now() };
+  return entry?.data ?? null;
+}
+
+const personalLeadSources = {
+  getCandidates: getPersonalLeadCandidates,
+  listStake: async (userId: number) =>
+    listModelStake((await loadKyselyDb()).kyselyRead, { userId, limit: PERSONAL_LEAD_STAKE_LIMIT }),
+  getFollows: (userId: number) => getUserFollows(userId),
+  getHidden: (userId: number) => getAllHiddenForUser({ userId }),
+};
+
+export async function computePersonalLead(
+  userId: number,
+  browsingLevel: number,
+  sources: Pick<typeof personalLeadSources, 'getCandidates' | 'listStake' | 'getFollows'> & {
+    getHidden: (userId: number) => Promise<{
+      hiddenModels: { id: number }[];
+      hiddenUsers: { id: number }[];
+      blockedUsers: { id: number }[];
+      blockedByUsers: { id: number }[];
+    }>;
+  } = personalLeadSources
+) {
+  const candidates = await sources.getCandidates();
+  if (!candidates) return 'no-candidates' as const;
+  const [{ likes, engagements }, follows, hidden] = await Promise.all([
+    sources.listStake(userId),
+    sources.getFollows(userId),
+    sources.getHidden(userId),
+  ]);
+  return pickPersonalLead({
+    viewerId: userId,
+    browsingLevel,
+    stake: [...likes, ...engagements.map((e) => ({ ...e, muted: e.type === 'Mute' }))],
+    follows,
+    hiddenModelIds: new Set(hidden.hiddenModels.map((m) => m.id)),
+    hiddenUserIds: new Set(
+      [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((u) => u.id)
+    ),
+    candidates,
+  });
+}
+
+/**
+ * Lead ids, cached per viewer and browsing level. Only page 1 computes; later pages read the same entry
+ * to exclude what page 1 showed, and a miss there excludes nothing. Any failure, or a compute past the
+ * budget, gives no lead (plain Hot).
+ */
+export async function getPersonalLeadModelIds(
+  {
+    userId,
+    browsingLevel,
+    firstPage,
+  }: {
+    userId: number;
+    browsingLevel: number;
+    firstPage: boolean;
+  },
+  compute: (
+    userId: number,
+    browsingLevel: number
+  ) => ReturnType<typeof computePersonalLead> = computePersonalLead
+): Promise<number[]> {
+  const key = `${REDIS_KEYS.CACHES.PERSONAL_HOT_LEAD}:${userId}:${browsingLevel}` as const;
+  const cached = await clusterCacheGuard.readOr(
+    'personal hot lead get',
+    () => redis.packed.get<number[]>(key),
+    'unavailable' as const
+  );
+  if (cached === 'unavailable') return [];
+  if (Array.isArray(cached)) return cached;
+  if (!firstPage) return [];
+
+  const started = Date.now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), PERSONAL_LEAD_BUDGET_MS);
+  });
+  const result = await Promise.race([
+    compute(userId, browsingLevel).catch((error) => {
+      logToAxiom({ type: 'error', name: 'personal-hot-lead', error: safeError(error) });
+      return 'failed' as const;
+    }),
+    budget,
+  ]).finally(() => clearTimeout(timer));
+  if (result === 'failed' || result === 'no-candidates') return [];
+
+  const ids = result === 'timeout' ? [] : result.ids;
+  // A timeout is cached briefly: long enough that a slow viewer is not recomputed on every page 1
+  // and page 2 hides nothing, short enough that a passing slowdown does not cost an hour of leads.
+  await clusterCacheGuard.writeBestEffort('personal hot lead set', () =>
+    redis.packed.set(key, ids, {
+      EX: result === 'timeout' ? PERSONAL_LEAD_TIMEOUT_TTL_S : PERSONAL_LEAD_TTL_S,
+    })
+  );
+  logToAxiom({
+    type: 'info',
+    name: 'personal-hot-lead',
+    payload: {
+      size: ids.length,
+      stakeArm: result === 'timeout' ? 0 : result.stakeArm,
+      creatorArm: result === 'timeout' ? 0 : result.creatorArm,
+      timedOut: result === 'timeout',
+      ms: Date.now() - started,
+    },
+  });
+  return ids;
 }

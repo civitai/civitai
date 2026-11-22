@@ -20,6 +20,8 @@ const h = vi.hoisted(() => ({
   storeConfigured: true,
   /** What the legal-hold check answers: `null` is "could not be read". */
   hold: false as boolean | null,
+  /** A hold that lands after deleteUser's own check: only the later content-removal reads see it. */
+  lateHold: false,
   log: [] as string[],
   repo: undefined as unknown as ReturnType<typeof fakeRepo>,
   store: undefined as unknown as ReturnType<typeof fakeStore>,
@@ -31,6 +33,9 @@ vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
   isAccountUnderLegalHold: async () => h.hold,
   areAccountsUnderLegalHold: async (ids: number[]) =>
     new Map(ids.map((id) => [id, h.hold !== false])),
+  isContentRemovalHeld: async () => (h.hold !== false ? h.hold : h.lateHold),
+  areContentRemovalsHeld: async (ids: number[]) =>
+    new Map(ids.map((id) => [id, h.hold !== false || h.lateHold])),
 }));
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
   getDocStoreMaintenance: () => ({ wipeAccount: vi.fn() }),
@@ -73,6 +78,7 @@ beforeEach(() => {
   h.log = [];
   h.storeConfigured = true;
   h.hold = false;
+  h.lateHold = false;
   h.repo = fakeRepo(h.log);
   h.store = fakeStore(h.log);
   dbMock.dbWrite.user.findFirst.mockResolvedValue({ id: USER_ID, meta: {} });
@@ -114,7 +120,7 @@ describe('deleteUser — sleeping apps', () => {
     sleeping(USER_ID, 'habit-tracker');
     sleeping(OTHER_ID, 'tip-calculator');
 
-    await UserService.deleteUser({ id: USER_ID });
+    await UserService.deleteUser({ id: USER_ID, actorId: USER_ID });
 
     expect([...h.repo.rows.keys()]).toEqual([`${OTHER_ID}/tip-calculator`]);
     expect([...h.store.objects.keys()].sort()).toEqual([
@@ -123,12 +129,33 @@ describe('deleteUser — sleeping apps', () => {
     ]);
   });
 
+  it('a hold landing after the check keeps the sleeping apps, in deleteUser and the sweep', async () => {
+    sleeping(USER_ID, 'tip-calculator');
+    h.lateHold = true;
+
+    await UserService.deleteUser({ id: USER_ID, actorId: USER_ID });
+
+    // The deletion itself ran.
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalled();
+    expect(dbMock.dbWrite.account.deleteMany).toHaveBeenCalled();
+    expect([...h.repo.rows.keys()]).toEqual([`${USER_ID}/tip-calculator`]);
+    expect(h.store.objects.size).toBe(2);
+
+    h.repo.accounts.set(USER_ID, 'deleted');
+    const res = (await (
+      await sweepHibernationObjectsJob.run({} as never)
+    ).result) as Record<string, unknown>;
+    expect(res.heldAccounts).toBe(1);
+    expect(h.repo.rows.size).toBe(1);
+    expect(h.store.objects.size).toBe(2);
+  });
+
   it('a failed sleeping-apps step keeps the rows; the hourly sweep job then leaves nothing for that user', async () => {
     sleeping(USER_ID, 'tip-calculator');
     sleeping(OTHER_ID, 'tip-calculator');
     h.store.state.failDeletes = true;
 
-    await UserService.deleteUser({ id: USER_ID }); // the step fails; deleteUser does not throw
+    await UserService.deleteUser({ id: USER_ID, actorId: USER_ID }); // the step fails; deleteUser does not throw
     expect([...h.repo.rows.keys()].sort()).toEqual(
       [`${OTHER_ID}/tip-calculator`, `${USER_ID}/tip-calculator`].sort()
     );

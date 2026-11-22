@@ -28,6 +28,7 @@ vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
 vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   isAccountUnderLegalHold: async (id: number) => (live.holds.has(id) ? live.holds.get(id) : false),
+  isContentRemovalHeld: async (id: number) => (live.holds.has(id) ? live.holds.get(id) : false),
 }));
 vi.mock('../job', () => ({
   createJob: (name: string, cron: string, fn: (ctx: unknown) => unknown) => ({ name, cron, fn }),

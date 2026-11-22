@@ -106,7 +106,7 @@ beforeAll(async () => {
       SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
     CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected', 'Void');
     CREATE TABLE "Appeal" (id serial PRIMARY KEY, "userId" int NOT NULL, status "AppealStatus" NOT NULL);
-    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text NOT NULL);
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text NOT NULL, "createdAt" timestamp(3) NOT NULL DEFAULT now());
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1,
@@ -323,11 +323,6 @@ describe('holds', () => {
         `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "SexualMinor"}}' WHERE id = ${p}`,
     ],
     [
-      'ban notes naming a child-safety report',
-      (p) =>
-        `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "Harassment", "detailsInternal": "NCMEC report filed"}}' WHERE id = ${p}`,
-    ],
-    [
       'an image held for review',
       (p) => `INSERT INTO "Image" ("userId", "needsReview") VALUES (${p}, 'csam')`,
     ],
@@ -403,6 +398,30 @@ describe('holds', () => {
     await sweepAndPurge();
     expect(await kept(finalId)).toBe(true);
     await q(`UPDATE "Report" SET status = 'Unactioned', "statusSetAt" = ${daysAgo(35)}`);
+    await sweepAndPurge();
+    expect(await kept(finalId)).toBe(false);
+  });
+
+  // A ban note alone is not a hold.
+  it.each([
+    [
+      'an internal ban note naming a child-safety report on the buyer',
+      BUYER,
+      'detailsInternal',
+      'NCMEC report filed',
+    ],
+    [
+      'an external ban note naming a child-safety report on the seller',
+      SELLER,
+      'detailsExternal',
+      'csam',
+    ],
+  ] as const)('%s keeps nothing', async (_name, party, field, note) => {
+    const { finalId } = await closedDeal('Cancelled', 40);
+    await q(`UPDATE "User" SET "bannedAt" = now(), meta = $2 WHERE id = $1`, [
+      party,
+      JSON.stringify({ banDetails: { reasonCode: 'Harassment', [field]: note } }),
+    ]);
     await sweepAndPurge();
     expect(await kept(finalId)).toBe(false);
   });

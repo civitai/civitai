@@ -155,6 +155,9 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
       'moderator-edit',
       // Writes `is_official` only — a label, never a status.
       'set-official',
+      // The offline-access cut after a takedown: refresh tokens, not `app_listings`.
+      'offline-cut',
+      'offline-cut-failed',
     ]);
   });
 
@@ -187,6 +190,10 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
     'moderator-edit',
     // The moderator-set Official flag: `is_official` moves; `status` does not.
     'set-official',
+    // Recorded right AFTER the delist it follows, so it is the newest event on a taken-down
+    // listing — and must not displace the delist (or the owner could republish).
+    'offline-cut',
+    'offline-cut-failed',
   ])(
     '%s leaves app_listings.status alone ⇒ state-neutral, and must NOT displace a removal',
     (action) => {

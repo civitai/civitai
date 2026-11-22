@@ -107,6 +107,8 @@ export const RATE_LIMIT_FALLBACK_SCOPES: readonly string[] = [
   'creatorServiceDealFile',
   'crucible',
   'event',
+  // vote / mine: a viewer's own feature-request votes; nothing charges or pays Buzz.
+  'featurePages',
   'feedback',
   'hatTurf',
   'hiddenPreferences',
@@ -131,6 +133,8 @@ export const RATE_LIMIT_FALLBACK_SCOPES: readonly string[] = [
   'semanticModel3DSearch',
   'semanticStorylineSearch',
   'storyline',
+  // The public takedown forms.
+  'takedownRequest',
   'user',
 ];
 

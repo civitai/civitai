@@ -12,11 +12,7 @@ import { createLruCache } from '~/server/utils/lru-cache';
 import { logToAxiom } from '~/server/logging/client';
 import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/benign-phrases';
 import { hashify, removeTags, removeTagsCompact } from '~/utils/string-helpers';
-import {
-  cleanWord,
-  isValidWord,
-  MIN_DATASET_WORD_LENGTH,
-} from '@civitai/mod-utils/profanity/word-rules';
+import { managedProfanityEntries } from '@civitai/mod-utils/profanity/word-rules';
 import { foldConfusables } from '~/server/utils/confusable-fold';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '~/server/flipt/client';
 import { domainAcceptsMail } from '~/server/utils/email-domain';
@@ -400,7 +396,7 @@ export async function stripBenignPhrases(text = '', type: BlocklistType) {
  * `SearchLayout`) run their POI / minor / profanity checks client-side against Meili
  * directly, so there is no server hop to strip on — the lists have to be shipped down.
  * Public and edge-cached. With `profanity-managed-list` on it also carries the managed
- * blocked words, which the bundle has always shipped to the browser in the same way.
+ * blocked words.
  */
 export type ClientBenignLists = {
   prompt: string[];
@@ -460,8 +456,9 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
 
 /**
  * Its own try/catch: a failure here falls back to the shipped list instead of emptying the
- * benign lists above. Unlike ProfanityBenignWord, an EMPTY row also falls back (as does one with
- * no entry the filter can use): for a deny list, honouring it would filter nothing.
+ * benign lists above. Unlike ProfanityBenignWord, a row below the floor falls back too:
+ * `managedProfanityEntries` decides it here and in the server's filter, so the browser and the
+ * server enforce the same list whenever both can read the row.
  */
 async function getManagedProfanityWords(): Promise<
   { id: number; data: string[] } | null | 'unavailable'
@@ -469,10 +466,9 @@ async function getManagedProfanityWords(): Promise<
   try {
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST))) return null;
     const row = await getBlocklistDTO({ type: BlocklistType.ProfanityWord });
-    const usable = (word: string) =>
-      isValidWord(word) && cleanWord(word).length >= MIN_DATASET_WORD_LENGTH;
-    if (row.id == null || !row.data.some(usable)) return null;
-    return { id: row.id, data: row.data };
+    const { usable, enforced } = managedProfanityEntries(row.data);
+    if (row.id == null || !enforced) return null;
+    return { id: row.id, data: usable };
   } catch (error) {
     logToAxiom({
       name: 'profanity-managed-list-unavailable',

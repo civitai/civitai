@@ -737,3 +737,224 @@ describe('the batch item routes', () => {
     );
   });
 });
+
+describe('the access audit', () => {
+  const audits = async (name: string) => {
+    const { logToAxiom } = await import('$lib/server/axiom');
+    return vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([data]) => data as Record<string, unknown>)
+      .filter((data) => data.name === name);
+  };
+  const pick = (rows: Record<string, unknown>[], ...keys: string[]) =>
+    rows.map((row) => Object.fromEntries(keys.map((k) => [k, row[k]])));
+  const tag = (batchId: string) => reviewBatchHash(batchId).slice(0, 6);
+  const codeFor = async (family: Family, batch: string | null) =>
+    new URL((await startPost(family, batch)).headers.get('location')!).searchParams.get('code')!;
+  const post = (family: Family, body: string, type = 'application/json') => {
+    const url = new URL(`${ORIGIN}/api/${family}-media/auth/exchange`);
+    return exchangeOf[family].POST({
+      url,
+      request: new Request(url, { method: 'POST', headers: { 'content-type': type }, body }),
+      locals: {},
+      cookies: { get: () => undefined },
+    } as never);
+  };
+  const signOut = (token: string | undefined) =>
+    signout.POST({
+      cookies: { get: (n: string) => (n === COOKIE.review ? token : undefined) },
+    } as never);
+
+  // These names are what the held-media access audit queries in Axiom. Renaming
+  // one silently empties those queries: change the queries first, then this test.
+  it('keeps the event names the access audit queries', async () => {
+    const audit = await import('$lib/server/sheet-audit');
+    expect([
+      audit.SHEET_START_EVENT,
+      audit.SHEET_EXCHANGE_EVENT,
+      audit.SHEET_SIGNOUT_EVENT,
+    ]).toEqual(['held-sheet-start', 'held-sheet-exchange', 'review-sheet-signout']);
+  });
+
+  it('logs one start and one exchange per sign-in, with the tier, the moderator and the batch tag', async () => {
+    seedBatch(HELD, 'held');
+    seedBatch(GENERAL, 'general');
+    seedBatch(GENERAL_2, 'general');
+    expect(await signIn('held', HELD)).toBeTruthy();
+    const token = await signIn('review', GENERAL);
+    // A second general batch joins the live review session; its exchange is still logged.
+    expect(await signIn('review', GENERAL_2, token!)).toBe(token);
+    const keys = ['type', 'tier', 'batch', 'outcome', 'moderatorId'];
+    expect(pick(await audits('held-sheet-start'), ...keys)).toEqual([
+      { type: 'info', tier: 'held', batch: tag(HELD), outcome: 'issued', moderatorId: 42 },
+      { type: 'info', tier: 'general', batch: tag(GENERAL), outcome: 'issued', moderatorId: 42 },
+      { type: 'info', tier: 'general', batch: tag(GENERAL_2), outcome: 'issued', moderatorId: 42 },
+    ]);
+    expect(pick(await audits('held-sheet-exchange'), ...keys)).toEqual([
+      { type: 'info', tier: 'held', batch: tag(HELD), outcome: 'ok', moderatorId: 42 },
+      { type: 'info', tier: 'general', batch: tag(GENERAL), outcome: 'ok', moderatorId: 42 },
+      { type: 'info', tier: 'general', batch: tag(GENERAL_2), outcome: 'ok', moderatorId: 42 },
+    ]);
+  });
+
+  it('logs every refused or failed start by a signed-in user, with the batch they named', async () => {
+    seedBatch(OTHER_VIEWER, 'held', { viewer: 99 });
+    seedBatch(HELD, 'held');
+    expect((await startPost('held', OTHER_VIEWER)).status).toBe(404);
+    expect((await startPost('held', HELD, { ...MOD, roles: [] })).status).toBe(403);
+    const url = new URL(`${ORIGIN}/api/held-media/auth/start`);
+    const malformed = new Request(url, {
+      method: 'POST',
+      headers: { cookie: WEB_COOKIE, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ code_challenge_method: 'plain' }),
+    });
+    expect(
+      (await heldStart.POST({ url, locals: { user: MOD }, request: malformed } as never)).status
+    ).toBe(400);
+    verifyToken.mockResolvedValueOnce({ ...CLAIMS, impersonatedBy: 7 });
+    expect((await startPost('held', HELD)).status).toBe(403);
+    redis.set.mockRejectedValueOnce(new Error('down'));
+    expect((await startPost('held', HELD)).status).toBe(503);
+    expect(
+      pick(await audits('held-sheet-start'), 'tier', 'batch', 'outcome', 'status', 'moderatorId')
+    ).toEqual([
+      { tier: 'held', batch: tag(OTHER_VIEWER), outcome: 'refused', status: 404, moderatorId: 42 },
+      { tier: 'held', batch: undefined, outcome: 'refused', status: 403, moderatorId: 42 },
+      { tier: 'held', batch: undefined, outcome: 'refused', status: 400, moderatorId: 42 },
+      { tier: 'held', batch: tag(HELD), outcome: 'refused', status: 403, moderatorId: 42 },
+      { tier: 'held', batch: tag(HELD), outcome: 'error', status: 503, moderatorId: 42 },
+    ]);
+  });
+
+  it('logs why a found code was refused, on both routes, and a store failure', async () => {
+    seedBatch(HELD, 'held');
+    seedBatch(GENERAL, 'general');
+    const code = await codeFor('held', HELD);
+    expect(
+      (await post('held', JSON.stringify({ code, code_verifier: 'w'.repeat(43) }))).status
+    ).toBe(400);
+    expect((await exchange('held', await codeFor('review', GENERAL))).status).toBe(400);
+    expect((await exchange('review', await codeFor('held', HELD))).status).toBe(400);
+    const pending = await codeFor('held', HELD);
+    redis.getDel.mockRejectedValueOnce(new Error('down'));
+    expect((await exchange('held', pending)).status).toBe(503);
+    expect(
+      pick(await audits('held-sheet-exchange'), 'tier', 'outcome', 'reason', 'moderatorId', 'batch')
+    ).toEqual([
+      {
+        tier: 'held',
+        outcome: 'refused',
+        reason: 'verifier-mismatch',
+        moderatorId: 42,
+        batch: tag(HELD),
+      },
+      {
+        tier: 'held',
+        outcome: 'refused',
+        reason: 'wrong-tier',
+        moderatorId: 42,
+        batch: tag(GENERAL),
+      },
+      {
+        tier: 'general',
+        outcome: 'refused',
+        reason: 'wrong-tier',
+        moderatorId: 42,
+        batch: tag(HELD),
+      },
+      {
+        tier: 'held',
+        outcome: 'error',
+        reason: undefined,
+        moderatorId: undefined,
+        batch: undefined,
+      },
+    ]);
+  });
+
+  // The exchange and sign-out routes need no sign-in, so a refusal that names no moderator is
+  // anyone's to send; logging it would let them fill a stream that is kept for good.
+  it('logs no refusal that names no moderator: a used, unknown or malformed code, or a dead cookie', async () => {
+    seedBatch(HELD, 'held');
+    const used = await codeFor('held', HELD);
+    expect((await exchange('held', used)).status).toBe(204);
+    expect((await exchange('held', used)).status).toBe(400);
+    expect((await post('held', 'x', 'text/plain')).status).toBe(400);
+    expect((await post('review', 'x', 'text/plain')).status).toBe(400);
+    expect(
+      (await post('held', JSON.stringify({ code: 'short', code_verifier: VERIFIER }))).status
+    ).toBe(400);
+    expect((await signOut(undefined)).status).toBe(204);
+    expect((await signOut('t'.repeat(43))).status).toBe(204);
+    expect(pick(await audits('held-sheet-exchange'), 'outcome')).toEqual([{ outcome: 'ok' }]);
+    expect(await audits('review-sheet-signout')).toEqual([]);
+  });
+
+  it('logs a sign out that ended a session, and one that failed', async () => {
+    seedBatch(GENERAL, 'general');
+    const token = (await signIn('review', GENERAL))!;
+    expect((await signOut(token)).status).toBe(204);
+    const again = (await signIn('review', GENERAL))!;
+    redis.del.mockRejectedValueOnce(new Error('down'));
+    expect((await signOut(again)).status).toBe(503);
+    expect(
+      pick(
+        (await audits('review-sheet-signout')).map((row) => ({
+          ...row,
+          ended: (row.payload as { ended?: boolean })?.ended,
+        })),
+        'type',
+        'tier',
+        'moderatorId',
+        'ended'
+      )
+    ).toEqual([
+      { type: 'info', tier: 'general', moderatorId: 42, ended: true },
+      { type: 'error', tier: 'general', moderatorId: undefined, ended: false },
+    ]);
+  });
+
+  it('a corrupt session record still signs out, naming nobody', async () => {
+    seedBatch(GENERAL, 'general');
+    const token = (await signIn('review', GENERAL))!;
+    const key = [...store.keys()].find(
+      (k) => k.startsWith('app:review-sheet:session:') && !k.endsWith(':batches')
+    )!;
+    store.set(key, { value: '{not json', expiresAt: null });
+    expect((await signOut(token)).status).toBe(204);
+    expect(store.has(key)).toBe(false);
+    expect(
+      pick(
+        (await audits('review-sheet-signout')).map((row) => ({
+          ...row,
+          ended: (row.payload as { ended?: boolean })?.ended,
+        })),
+        'moderatorId',
+        'ended'
+      )
+    ).toEqual([]);
+  });
+
+  it('never logs a batch id, code, verifier, state or token, only six characters of the batch hash', async () => {
+    seedBatch(HELD, 'held');
+    seedBatch(GENERAL, 'general');
+    const code = await codeFor('held', HELD);
+    const held = await exchange('held', code);
+    const token = (await signIn('review', GENERAL))!;
+    await signOut(token);
+    const wrong = await codeFor('held', HELD);
+    await post('held', JSON.stringify({ code: wrong, code_verifier: 'w'.repeat(43) }));
+    const { inspect } = await import('node:util');
+    const logged = [
+      ...(await audits('held-sheet-start')),
+      ...(await audits('held-sheet-exchange')),
+      ...(await audits('review-sheet-signout')),
+    ];
+    expect(logged).toHaveLength(7);
+    const text = logged.map((e) => inspect(e, { depth: 8 })).join('\n');
+    const heldToken = /__Secure-held_sheet=([^;]+)/.exec(held.headers.get('set-cookie')!)![1];
+    const secrets = [HELD, GENERAL, reviewBatchHash(HELD), reviewBatchHash(GENERAL), code, wrong];
+    for (const secret of [...secrets, heldToken, token, VERIFIER, STATE, CHALLENGE])
+      expect(text).not.toContain(secret);
+  });
+});

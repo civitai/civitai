@@ -8,6 +8,7 @@ import {
 
 import {
   licensingFeeBlockedFor,
+  lockedLicensingFeeRefusal,
   paidAccessBlockedFor,
   percentOfComputeFeeRefusal,
 } from '@civitai/buzz';
@@ -37,6 +38,7 @@ import {
   baseModelLicenses,
   constants,
   hasAdditionalLicensePermissions,
+  isNonCommercialBaseModel,
 } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
@@ -234,6 +236,7 @@ const loadModelVersion = async ({
         licensingFee: true,
         licensingFeeType: true,
         licensingFeeSettlementCurrency: true,
+        licensingFeeLocked: true,
         licensingSourceVersionId: true,
         flags: true,
         meta: true,
@@ -571,6 +574,7 @@ export const upsertModelVersionHandler = async ({
             licensingFee: true,
             licensingFeeType: true,
             licensingFeeSettlementCurrency: true,
+            licensingFeeLocked: true,
             licensingSourceVersionId: true,
             baseModel: true,
           },
@@ -714,6 +718,7 @@ export const upsertModelVersionHandler = async ({
     // Fails closed: an unreadable flag refuses, since a percent charged early is charged as Buzz per image.
     if (
       input.licensingFeeType === LicensingFeeType.PercentOfCompute &&
+      storedVersion?.licensingFeeType !== LicensingFeeType.PercentOfCompute &&
       (await readFliptBoolean(FLIPT_FEATURE_FLAGS.LICENSING_FEE_PERCENT_OF_COMPUTE)) !== true
     )
       throw throwBadRequestError('Percentage license fees are not available yet.');
@@ -742,6 +747,28 @@ export const upsertModelVersionHandler = async ({
         input.licensingFeeType = storedVersion?.licensingFeeType ?? LicensingFeeType.PerImageBuzz;
       if (!input.licensingFeeSettlementCurrency)
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
+    }
+
+    // Skipped when a policy clear (POI/private owner, a version already on a non-commercial base model)
+    // strips the fee: refusing it would strand the owner's save. Keyed on the STORED base model, so an
+    // owner cannot clear a locked fee by choosing a non-commercial one.
+    if (policyKeepsFee && !isNonCommercialBaseModel(storedVersion?.baseModel)) {
+      const lockRefusal = lockedLicensingFeeRefusal({
+        isModerator: !!ctx.user.isModerator,
+        locked: storedVersion?.licensingFeeLocked,
+        stored: {
+          fee: storedFee,
+          type: storedVersion?.licensingFeeType ?? null,
+          currency: storedVersion?.licensingFeeSettlementCurrency ?? null,
+        },
+        next: {
+          // The service clears the fee on a non-commercial base model even when the write omits it.
+          fee: isNonCommercialBaseModel(input.baseModel) ? 0 : input.licensingFee,
+          type: input.licensingFeeType,
+          currency: input.licensingFeeSettlementCurrency,
+        },
+      });
+      if (lockRefusal) throw throwBadRequestError(lockRefusal);
     }
 
     // Set when the block below repairs the payload, so the audit can attribute the change to the rule
@@ -798,7 +825,7 @@ export const upsertModelVersionHandler = async ({
         // `'not-a-root'`, which silently clears a legitimate source with no error to the creator.
         dbWrite.licensingRoot.findUnique({
           where: { modelVersionId: input.licensingSourceVersionId },
-          select: { baseModel: true, modelType: true },
+          select: { baseModel: true, modelType: true, restricted: true },
         }),
         // 🔴 The model this save LANDS the version on, which is `input.modelId` — always, on a create
         // and on an update alike. `modelId` is not destructured in `upsertModelVersion`, so it rides
@@ -838,6 +865,10 @@ export const upsertModelVersionHandler = async ({
         ? 'model-not-found'
         : destinationModel.type !== source.modelType
         ? 'model-type-mismatch'
+        : source.restricted &&
+          !ctx.user.isModerator &&
+          input.licensingSourceVersionId !== storedVersion?.licensingSourceVersionId
+        ? 'restricted-root'
         : null;
       if (rejectedReason) {
         // A coercion leaves no trace in the row it corrected, so emit the deciding branch. This is

@@ -133,6 +133,7 @@ export default defineModeratorEndpoint('user.delete', {
         removeModels: input.removeModels,
         removeImages: input.removeImages,
         removeAppData: input.removeAppData,
+        actorId: ctx.actor.id,
       });
     } catch (e) {
       // No moderator override: a hold is released by Legal, not here.

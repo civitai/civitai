@@ -302,6 +302,18 @@ export enum FLIPT_FEATURE_FLAGS {
   // is enabled separately; shares FEED_GO_SHADOW_URL, the sample rate and the in-flight cap with
   // FEED_GO_SHADOW, with its own per-second bucket. Default OFF. See `src/server/trpc/feed-go-shadow.ts`.
   FEED_GO_SHADOW_MODEL_GET_ALL = 'feed-go-shadow-model-getall',
+  // Shadow reads of the app store's listings read model (app-index-go `GET /listings`) beside the
+  // store grid's and the public REST list's database reads: the database answer is served, the two
+  // are compared off the response path (`app_listings_read_model_*`). DEFAULT-OFF. Global boolean,
+  // read at most once per 5s per process; also needs APP_INDEX_URL and APP_INDEX_VIEWER_KEY. See
+  // `src/server/services/blocks/app-listings-read-model-shadow.service.ts`.
+  APP_LISTINGS_READ_MODEL = 'app-listings-read-model',
+  // Mirror sampled `model.getAssociatedResourcesCardData` requests (raw input, the headers the answer
+  // depends on, Node's superjson envelope) to feed-go's
+  // `/internal/shadow/model.getAssociatedResourcesCardData`. Its own flag; shares FEED_GO_SHADOW_URL,
+  // the sample rate and the in-flight cap with FEED_GO_SHADOW, with its own per-second bucket.
+  // Default OFF. See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW_MODEL_ASSOCIATED = 'feed-go-shadow-model-associated',
   // The Go-first cache-presence probe: for a request the feed-go shadow sampler sampled, a POST at
   // the START of the request (before the handler fills the caches) to feed-go's
   // `/internal/probe/image.getImagesAsPostsInfinite`, which records the serve-time cache misses a
@@ -507,6 +519,9 @@ export enum FLIPT_FEATURE_FLAGS {
   DOWNLOAD_SCOPE_GATE = 'download-scope-gate',
   // Variant: `log` | `enforce`; any other answer is off. Read by pass-through-prompt-audit.ts.
   APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT = 'app-block-pass-through-prompt-audit',
+  // Variant: `off` | `log`; any other answer, a missing flag included, enforces. Read by
+  // app-step-positions.ts.
+  APP_BLOCK_STEP_POSITIONS = 'app-block-step-positions',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
   // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
   // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:
@@ -767,6 +782,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // Lets staff set a PercentOfCompute licence fee. Off until the orchestrator charges by the type:
   // before that, a percent is charged as that many Buzz per image.
   LICENSING_FEE_PERCENT_OF_COMPUTE = 'licensing-fee-percent-of-compute',
+  // On: page 1 of a signed-in viewer's default Hot model feed leads with models they liked,
+  // favourited or set Notify on that have a new version, then one per followed or staked creator
+  // (getPersonalLeadModelIds). EVALUATED PER VIEWER — entityId = the user
+  // id, context = `buildFliptContext(user)`. Off, unknown or Flipt down: plain Hot.
+  PERSONAL_HOT_LEAD = 'personal-hot-lead',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

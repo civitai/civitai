@@ -118,6 +118,8 @@ var (
 	ErrNotPrivate    = errors.New("session: the collection is not served by the private feed")
 	ErrEnded         = errors.New("session: the registry ended the stream")
 	ErrFailed        = errors.New("session: the stream failed")
+	ErrBlockSpent    = errors.New("session: the block token's one exchange is used up")
+	ErrBlockFull     = errors.New("session: the block exchange cache is full")
 	ErrClosed        = errors.New("session: closed")
 )
 
@@ -135,6 +137,10 @@ const (
 	CloseMalformed    = "malformed"
 	CloseError        = "error"
 	CloseShutdown     = "shutdown"
+	// A block token's stream that could not open: its one exchange is used up (exchange.ErrSpent),
+	// or the block cache is full (exchange.ErrBlockCacheFull). Neither is a registry error.
+	CloseBlockSpent = "block_spent"
+	CloseBlockFull  = "block_cache_full"
 )
 
 // Options bound the manager. Zero values are not defaults: main sets every field from config.
@@ -276,8 +282,11 @@ func (m *Manager) read(ctx context.Context, s *session, token string) ([]registr
 	s.mu.Lock()
 	switch {
 	case s.ended:
+		// end publishes ended before it has finished (stream closed, close counted): wait for that,
+		// so a read never reports a close the manager has not completed. end does not block.
 		err := s.err
 		s.mu.Unlock()
+		<-s.done
 		return nil, err
 	case s.isLive && m.opts.Recheck > 0 && !s.checking && now().Sub(s.checked) >= m.opts.Recheck:
 		// One read re-checks; reads arriving meanwhile are answered from the cache, still within
@@ -337,8 +346,13 @@ func entitySize(e registry.Entity) int {
 func (m *Manager) follow(ctx context.Context, s *session, token string) (string, error) {
 	tok, err := m.opts.Exchange(ctx, token)
 	if err != nil {
-		if errors.Is(err, exchange.ErrRefused) {
+		switch {
+		case errors.Is(err, exchange.ErrRefused):
 			return CloseRefused, ErrRefused
+		case errors.Is(err, exchange.ErrSpent):
+			return CloseBlockSpent, ErrBlockSpent
+		case errors.Is(err, exchange.ErrBlockCacheFull):
+			return CloseBlockFull, ErrBlockFull
 		}
 		return CloseError, ErrFailed
 	}
@@ -469,10 +483,12 @@ func (m *Manager) end(s *session, reason string, err error) {
 	if st != nil {
 		_ = st.Close()
 	}
-	close(s.done)
+	// Observed before done is closed: a reader woken by done (Read returning the session's error)
+	// then finds the close already counted, never a moment before it.
 	if m.opts.Closed != nil {
 		m.opts.Closed(reason)
 	}
+	close(s.done)
 }
 
 // Sweep closes every stream idle for IdleTTL, open for MaxAge, or within ExpiryMargin of its token

@@ -46,9 +46,9 @@ import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 //                bound to an authenticated client before it is used as a key.
 //   - introspect-worker: per-client (1200/min) — `introspect` for a caller allowed to see Worker tokens,
 //                which checks each worker that registers.
-//   - token-exchange: per-client (600/min, or the client's staff-set `tokenRateLimit`) — the user token
-//                exchange, charged after client auth. One relay exchanges for many users from one IP, so the
-//                per-IP `token` limit never applies to it.
+//   - token-exchange: per-client (600/min, or the client's staff-set `tokenRateLimit`) — the user and
+//                block token exchanges (one budget per client), charged after client auth. One relay exchanges
+//                for many users from one IP, so the per-IP `token` limit never applies to it.
 //   - token-exchange-ip: per-IP (120/min) — FAILED client-secret checks on the user token exchange. A request
 //                whose secret checks out is never charged or refused by it. With no resolvable IP the
 //                failures share one bucket, never one keyed on the claimed client id.

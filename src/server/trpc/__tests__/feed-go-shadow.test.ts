@@ -14,6 +14,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createFeedGoShadow,
   feedGoV1ShapeClass,
+  FEED_GO_TRAINING_DATA_SQL_HEADER,
+  FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH,
   FEED_GO_SHADOW_MODEL_GET_ALL_PATH,
   FEED_GO_SHADOW_PATH,
   pickShadowHeaders,
@@ -31,6 +33,7 @@ const V1_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/images';
 const PROBE_URL = 'http://feed-go.test:9090/internal/probe/image.getImagesAsPostsInfinite';
 const INF_URL = 'http://feed-go.test:9090/internal/shadow/image.getInfinite';
 const MODELS_URL = 'http://feed-go.test:9090/internal/shadow/model.getAll';
+const ASSOC_URL = 'http://feed-go.test:9090/internal/shadow/model.getAssociatedResourcesCardData';
 const V1_MODELS_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/models';
 const V1_MODEL_ID_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/models/id';
 const INPUT = '{"json":{"modelId":7,"limit":50},"meta":{"values":{"cursor":["undefined"]}}}';
@@ -41,6 +44,7 @@ function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig
     v1ImagesUrl: V1_URL,
     infiniteUrl: INF_URL,
     modelGetAllUrl: MODELS_URL,
+    modelAssociatedUrl: ASSOC_URL,
     v1ModelsUrl: V1_MODELS_URL,
     v1ModelsIdUrl: V1_MODEL_ID_URL,
     rate: 1,
@@ -79,11 +83,14 @@ function harness(
     infinite?: boolean;
     /** The `feed-go-shadow-model-getall` flag (default OFF here, as in production). */
     models?: boolean;
+    /** The `feed-go-shadow-model-associated` flag (default OFF here, as in production). */
+    associated?: boolean;
     /** The `feed-go-shadow-v1-models` flag (default on here, as `v1` is). */
     v1Models?: boolean;
     random?: number;
     fetchImpl?: (url: string, init: RequestInit) => Promise<Response>;
     now?: () => number;
+    modelSampleHeaders?: () => Record<string, string>;
   } = {}
 ) {
   const outcomes: string[] = [];
@@ -99,6 +106,7 @@ function harness(
     enabledV1Images: () => opts.v1 ?? true,
     enabledInfinite: () => opts.infinite ?? false,
     enabledModelGetAll: () => opts.models ?? false,
+    enabledModelAssociated: () => opts.associated ?? false,
     enabledV1Models: () => opts.v1Models ?? true,
     random: () => opts.random ?? 0,
     fetch: fetchMock as unknown as typeof fetch,
@@ -109,6 +117,7 @@ function harness(
     recordEncode: (seconds, bytes) => void encodes.push({ seconds, bytes }),
     now: opts.now ?? (() => 0),
     schedule: (fn) => void queued.push(fn),
+    modelSampleHeaders: opts.modelSampleHeaders,
   });
   const flush = async () => {
     while (queued.length) queued.shift()!();
@@ -148,6 +157,7 @@ describe('readFeedGoShadowConfig', () => {
       v1ImagesUrl: undefined,
       infiniteUrl: undefined,
       modelGetAllUrl: undefined,
+      modelAssociatedUrl: undefined,
       v1ModelsUrl: undefined,
       v1ModelsIdUrl: undefined,
       rate: 0,
@@ -175,6 +185,8 @@ describe('readFeedGoShadowConfig', () => {
       v1ImagesUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/images',
       infiniteUrl: 'http://feed-go.internal.test:9090/internal/shadow/image.getInfinite',
       modelGetAllUrl: 'http://feed-go.internal.test:9090/internal/shadow/model.getAll',
+      modelAssociatedUrl:
+        'http://feed-go.internal.test:9090/internal/shadow/model.getAssociatedResourcesCardData',
       v1ModelsUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/models',
       v1ModelsIdUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/models/id',
       rate: 0.25,
@@ -201,6 +213,7 @@ describe('readFeedGoShadowConfig', () => {
     expect(c.probeUrl).toBeUndefined();
     expect(c.infiniteUrl).toBeUndefined();
     expect(c.modelGetAllUrl).toBeUndefined();
+    expect(c.modelAssociatedUrl).toBeUndefined();
     expect(c.v1ModelsUrl).toBeUndefined();
     expect(c.v1ModelsIdUrl).toBeUndefined();
     expect(c.rate).toBe(1);
@@ -406,6 +419,23 @@ describe('createFeedGoShadow — sampling decision', () => {
       request({ query: { trpc: 'model.getAll', input: INPUT } }),
     ],
     [
+      'model.getAssociatedResourcesCardData, its flag off',
+      { models: true },
+      request({ query: { trpc: 'model.getAssociatedResourcesCardData', input: INPUT } }),
+    ],
+    [
+      'model.getAssociatedResourcesCardData with no URL',
+      { associated: true, config: { modelAssociatedUrl: undefined } },
+      request({ query: { trpc: 'model.getAssociatedResourcesCardData', input: INPUT } }),
+    ],
+    [
+      'model.getAssociatedResourcesCardData batched',
+      { associated: true },
+      request({
+        query: { trpc: 'model.getAssociatedResourcesCardData', batch: '1', input: INPUT },
+      }),
+    ],
+    [
       'an unmirrored procedure',
       { infinite: true },
       request({ query: { trpc: 'image.get', input: INPUT } }),
@@ -451,6 +481,41 @@ describe('createFeedGoShadow — sampling decision', () => {
     } finally {
       delete (Object.prototype as Record<string, unknown>)[key];
     }
+  });
+
+  it('samples model.getAssociatedResourcesCardData under its own flag and posts it to its own path', async () => {
+    const h = harness({ associated: true, enabled: false });
+    const input = '{"json":{"fromId":9001,"type":"Suggested","browsingLevel":1}}';
+    const data = [{ resourceType: 'model', id: 5001, sponsored: false }];
+    const written = superjson.serialize(data);
+    const sample = serve(
+      h,
+      request({ query: { trpc: 'model.getAssociatedResourcesCardData', input } }),
+      { data, written }
+    );
+    expect(sample?.endpoint).toBe('model-associated');
+    await h.flush();
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = h.fetchMock.mock.calls[0];
+    expect(url).toBe(ASSOC_URL);
+    expect(url.endsWith(FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH)).toBe(true);
+    expect(JSON.parse(init.body as string)).toEqual({
+      input,
+      headers: { host: 'civitai.com' },
+      node: JSON.parse(JSON.stringify(written)),
+    });
+    expect(h.outcomes).toEqual(['sent']);
+    expect(h.endpoints).toEqual(['model-associated']);
+  });
+
+  it('the model.getAll flag does not sample model.getAssociatedResourcesCardData, nor its flag model.getAll', () => {
+    const assoc = request({
+      query: { trpc: 'model.getAssociatedResourcesCardData', input: INPUT },
+    });
+    const getAll = request({ query: { trpc: 'model.getAll', input: INPUT } });
+    expect(harness({ models: true }).shadow.begin(assoc)).toBeUndefined();
+    expect(harness({ associated: true }).shadow.begin(getAll)).toBeUndefined();
+    expect(harness({ associated: true }).shadow.begin(assoc)?.endpoint).toBe('model-associated');
   });
 
   it('samples a fraction: random below the rate is sampled, at the rate is not', () => {
@@ -928,6 +993,37 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
       node: { id: 42 },
     });
     expect(h.endpoints).toEqual(['v1-models-id']);
+  });
+
+  it("a model sample carries the Training Data statement hash; another route's does not", async () => {
+    const hash = { [FEED_GO_TRAINING_DATA_SQL_HEADER]: 'abc123' };
+    const h = harness({ modelSampleHeaders: () => hash });
+    serveModels(h, 'v1-models', modelsRequest('/api/v1/models?limit=1'));
+    serveModels(h, 'v1-models-id', modelsRequest('/api/v1/models/42'), { body: { id: 42 } });
+    const img = h.shadow.beginV1Images(restRequest());
+    if (img) {
+      h.shadow.captureV1Images(img, { items: [] });
+      h.shadow.finish(img, 200);
+    }
+    await h.flush();
+    const headers = h.fetchMock.mock.calls.map(
+      ([url, init]) => [url, JSON.parse(init.body as string).headers] as const
+    );
+    expect(headers.filter(([url]) => url === V1_MODELS_URL || url === V1_MODEL_ID_URL)).toEqual([
+      [V1_MODELS_URL, expect.objectContaining(hash)],
+      [V1_MODEL_ID_URL, expect.objectContaining(hash)],
+    ]);
+    const others = headers.filter(([url]) => url !== V1_MODELS_URL && url !== V1_MODEL_ID_URL);
+    expect(others).toHaveLength(1);
+    expect(others[0][1]).not.toHaveProperty(FEED_GO_TRAINING_DATA_SQL_HEADER);
+    // A source that throws leaves the header off (feed-go then falls back on Training Data).
+    const broken = harness({
+      modelSampleHeaders: () => {
+        throw new Error('x');
+      },
+    });
+    const s = broken.shadow.beginRest('v1-models', modelsRequest('/api/v1/models'));
+    expect(s?.headers).not.toHaveProperty(FEED_GO_TRAINING_DATA_SQL_HEADER);
   });
 
   it('one flag covers both model routes, and neither the images nor the gallery flag does', () => {

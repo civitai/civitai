@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
 
-import { getProfanityFilter } from '~/libs/profanity-simple';
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { findBlockedUserContent, stripBenignPhrases } from '~/server/services/blocklist.service';
+import {
+  getServerProfanityFilter,
+  type ServerProfanityFilter,
+} from '~/server/services/profanity-list.service';
 import { BlocklistType } from '~/server/common/enums';
 import {
   auditPromptEnriched,
@@ -146,8 +149,8 @@ export interface SharedTextScan {
 }
 
 /**
- * How many leaves in one scan may take the FULL profanity audit (see `auditLeaf`). Each costs
- * ~2.2 ms, so this bounds one write's worst case at ~70 ms. A leaf the prefilter flags once the
+ * How many leaves in one scan may take the FULL profanity audit (see `auditLeaf`), bounding one
+ * write's worst case. A leaf the prefilter flags once the
  * budget is spent is NOT passed: it becomes an `overflow` (`audit_budget`) hit, the same rule as
  * every other cap — text that was not fully read does not get through by being past a cap.
  */
@@ -184,24 +187,32 @@ type AuditLeafResult = AuditLeafMatch | null | typeof AUDIT_BUDGET_EXCEEDED | ty
  * Any other `success: false` is a hit whatever the triggers say — a check that only looked at
  * triggers would pass any refusal the audit reports without one.
  */
-async function auditLeaf(text: string, budget: { remaining: number }): Promise<AuditLeafResult> {
+async function auditLeaf(
+  text: string,
+  budget: { remaining: number },
+  profanity: ServerProfanityFilter
+): Promise<AuditLeafResult> {
   if (!text.trim()) return null;
   const stripped = await stripBenignPhrases(normalizeText(text), BlocklistType.PromptBenignPhrase);
   const input = stripped || text;
   if (input.length > MAX_AUDIT_PROMPT_LENGTH) return LEAF_TOO_LONG;
-  // 🔴 COST, measured: `auditPromptEnriched(_, _, true)` builds a fresh profanity matcher on every
-  // call, ~2.2 ms each — 1,000 leaves took 2.2 s against 12 ms with profanity off. So the profanity
-  // step is asked for only when the CACHED matcher (same config: no moderator whitelist) already
-  // finds profanity in the same normalised input. That prefilter reads a SUPERSET of what the audit
+  // The full audit takes the profanity step only when the same filter already finds profanity in
+  // the same normalised input. That prefilter reads a SUPERSET of what the audit
   // reads (the audit additionally blanks booru rating/score/source tags first), so it can only send
   // extra leaves down the full path, never fewer — and the verdict always comes from the audit
   // itself. `shared-data-moderation.test.ts` pins fast-path ≡ full-audit over a corpus.
-  const mayBeProfane = getProfanityFilter().analyze(normalizeText(input)).isProfane;
+  const mayBeProfane = profanity.filter.analyze(normalizeText(input)).isProfane;
+  if (mayBeProfane) profanity.countHit('appdata');
   const fullAudit = mayBeProfane && budget.remaining > 0;
   if (fullAudit) budget.remaining -= 1;
-  const { success, triggers, blockedFor } = auditPromptEnriched(input, undefined, fullAudit, {
-    nsfw: !!includesNsfw(normalizeText(text)),
-  });
+  const { success, triggers, blockedFor } = auditPromptEnriched(
+    input,
+    undefined,
+    fullAudit ? profanity.filter : undefined,
+    {
+      nsfw: !!includesNsfw(normalizeText(text)),
+    }
+  );
   if (success) return mayBeProfane && !fullAudit ? AUDIT_BUDGET_EXCEEDED : null;
   const first = triggers[0];
   return {
@@ -236,8 +247,10 @@ export async function classifySharedTexts(
   const blocklistHits = await findBlockedUserContent(texts, { exemptFromPatterns: isModerator });
   const budget = { remaining: SHARED_DATA_FULL_AUDIT_BUDGET };
   const audits: AuditLeafResult[] = [];
+  // One filter for the whole scan, so the prefilter and the audit read the same list.
+  const profanity = await getServerProfanityFilter();
   // Sequential, so the budget is spent in leaf order and the outcome is deterministic.
-  for (const text of texts) audits.push(await auditLeaf(text, budget));
+  for (const text of texts) audits.push(await auditLeaf(text, budget, profanity));
 
   texts.forEach((text, index) => {
     const leaf = inputs[index];

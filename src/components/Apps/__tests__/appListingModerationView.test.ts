@@ -4,9 +4,12 @@ import {
   isDestructiveAction,
   listingStatusChip,
   moderationActionChip,
+  moderationHistoryTarget,
+  offlineCutFailureNotice,
   reportActionLabel,
   reportRowActions,
   reportStatusChip,
+  retryableOfflineCutEventId,
   type ReportRowAction,
 } from '~/components/Apps/appListingModerationView';
 import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-moderation.schema';
@@ -130,5 +133,134 @@ describe('reportActionLabel', () => {
     ).map(reportActionLabel);
     expect(new Set(labels).size).toBe(labels.length);
     for (const l of labels) expect(l.trim().length).toBeGreaterThan(0);
+  });
+});
+
+describe('retryableOfflineCutEventId — where "Retry cut" is drawn', () => {
+  const ev = (id: string, action: string) => ({ id, action });
+
+  it('the newest cut event, when it is a failure', () => {
+    expect(
+      retryableOfflineCutEventId([
+        ev('alme_3', 'offline-cut-failed'),
+        ev('alme_2', 'delist'),
+        ev('alme_1', 'offline-cut-failed'),
+      ])
+    ).toBe('alme_3');
+  });
+
+  it('a non-cut event newer than the failure does not hide it', () => {
+    expect(
+      retryableOfflineCutEventId([
+        ev('alme_9', 'message-owner'),
+        ev('alme_8', 'offline-cut-failed'),
+      ])
+    ).toBe('alme_8');
+  });
+
+  it('none once a later cut succeeded', () => {
+    expect(
+      retryableOfflineCutEventId([ev('alme_5', 'offline-cut'), ev('alme_4', 'offline-cut-failed')])
+    ).toBeNull();
+  });
+
+  it('none without any failure', () => {
+    expect(retryableOfflineCutEventId([ev('alme_1', 'delist')])).toBeNull();
+    expect(retryableOfflineCutEventId([])).toBeNull();
+  });
+});
+
+describe('offlineCutFailureNotice — the takedown toast', () => {
+  const TAKEN = { appListingId: 'apl_taken_down', slug: 'taken-down-app' };
+
+  it('warns only on an ATTEMPTED and FAILED cut, and its button targets the taken-down listing', () => {
+    expect(
+      offlineCutFailureNotice(
+        { appListingId: 'apl_taken_down', status: 'removed', offlineCut: { outcome: 'failed' } },
+        TAKEN
+      )
+    ).toEqual({
+      title: 'Offline access not cut',
+      message:
+        "The listing is down, but the app's offline access could not be cut, so its users may stay signed in. Open its moderation history to retry.",
+      historyFor: { appListingId: 'apl_taken_down', slug: 'taken-down-app' },
+    });
+  });
+
+  it('🔴 the RESULT’s listing id wins over the caller’s, and then no stale slug is shown', () => {
+    // A caller that passed the wrong listing (stale UI state) must not send the moderator to the
+    // wrong history: the server's own id is the one whose cut failed.
+    expect(
+      offlineCutFailureNotice(
+        { appListingId: 'apl_server_says', status: 'removed', offlineCut: { outcome: 'failed' } },
+        TAKEN
+      )?.historyFor
+    ).toEqual({ appListingId: 'apl_server_says', slug: '' });
+  });
+
+  it('falls back to the caller’s listing when the result carries no id', () => {
+    expect(
+      offlineCutFailureNotice({ offlineCut: { outcome: 'failed' } }, TAKEN)?.historyFor
+    ).toEqual(TAKEN);
+  });
+
+  it('silent on a successful cut, on no cut (flag off / nothing to cut), and on junk', () => {
+    expect(
+      offlineCutFailureNotice(
+        {
+          appListingId: 'apl_taken_down',
+          status: 'removed',
+          offlineCut: { outcome: 'cut', deleted: 2 },
+        },
+        TAKEN
+      )
+    ).toBeNull();
+    expect(
+      offlineCutFailureNotice({ appListingId: 'apl_taken_down', status: 'removed' }, TAKEN)
+    ).toBeNull();
+    expect(offlineCutFailureNotice(undefined, TAKEN)).toBeNull();
+    expect(offlineCutFailureNotice('failed', TAKEN)).toBeNull();
+  });
+
+  it('both cut actions have a mod-history label', () => {
+    expect(moderationActionChip('offline-cut')).toEqual({
+      label: 'Offline access cut',
+      color: 'gray',
+    });
+    expect(moderationActionChip('offline-cut-failed')).toEqual({
+      label: 'Offline access cut failed',
+      color: 'orange',
+    });
+  });
+});
+
+describe('moderationHistoryTarget — the "History" entry point (mod-only)', () => {
+  const LISTING = { appListingId: 'apl_entry_9', slug: 'entry-app' };
+
+  it('a moderator gets the listing’s history', () => {
+    expect(moderationHistoryTarget({ isModerator: true }, LISTING)).toEqual({
+      appListingId: 'apl_entry_9',
+      slug: 'entry-app',
+    });
+  });
+
+  it('🔴 a non-moderator, a signed-out viewer and an unknown moderator flag get NO entry point', () => {
+    expect(moderationHistoryTarget({ isModerator: false }, LISTING)).toBeNull();
+    expect(moderationHistoryTarget({}, LISTING)).toBeNull();
+    expect(moderationHistoryTarget({ isModerator: null }, LISTING)).toBeNull();
+    expect(moderationHistoryTarget(null, LISTING)).toBeNull();
+    expect(moderationHistoryTarget(undefined, LISTING)).toBeNull();
+  });
+
+  it('no entry point without a listing id; a missing slug reads as empty', () => {
+    expect(
+      moderationHistoryTarget({ isModerator: true }, { appListingId: null, slug: 'x' })
+    ).toBeNull();
+    expect(
+      moderationHistoryTarget({ isModerator: true }, { appListingId: '', slug: 'x' })
+    ).toBeNull();
+    expect(
+      moderationHistoryTarget({ isModerator: true }, { appListingId: 'apl_entry_9', slug: null })
+    ).toEqual({ appListingId: 'apl_entry_9', slug: '' });
   });
 });

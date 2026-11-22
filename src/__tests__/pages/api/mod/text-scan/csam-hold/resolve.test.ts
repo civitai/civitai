@@ -373,6 +373,7 @@ describe('textScan.resolveCsamHold', () => {
       expect(mocks.clearUserProfileFields).toHaveBeenCalledTimes(1);
       expect(mocks.clearUserProfileFields).toHaveBeenCalledWith({
         userId: 900,
+        fields: ['location', 'bio', 'message', 'showcaseSections'],
         actorId: 7,
         archive: archiveUserProfile,
         alwaysArchive: true,
@@ -394,7 +395,7 @@ describe('textScan.resolveCsamHold', () => {
       expect(mocks.tracker.chatAudit).toHaveBeenCalledWith({ type: 'delete' });
     });
 
-    it('finishes a user profile decision when the clear’s record fails to write', async () => {
+    it('leaves a user profile hold undecided when the clear’s record fails to write', async () => {
       const actual = await vi.importActual<typeof UserService>('~/server/services/user.service');
       mocks.clearUserProfileFields.mockImplementationOnce(actual.clearUserProfileFields);
       findFirst.mockResolvedValue(pendingHold({ entityType: 'UserProfile', entityId: 900 }));
@@ -414,12 +415,10 @@ describe('textScan.resolveCsamHold', () => {
         reportChoice: 'none',
       });
 
+      // The clear and its record share a transaction, so the clear rolls back with it.
       expect(dbMock.dbWrite.userProfile.updateMany).toHaveBeenCalledTimes(1);
-      expect(res.status).toBe(200);
-      expect(labelCalls()).toHaveLength(1);
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'clear-user-profile-mod-activity', userId: 900 })
-      );
+      expect(res.status).toBe(500);
+      expect(labelCalls()).toHaveLength(0);
     });
 
     it('deletes every message of the judged chat window, the held one included', async () => {

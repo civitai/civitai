@@ -163,6 +163,10 @@ export function createPollingAdapter(opts: PollingAdapterOptions): Adapter {
       opts.onError?.(err);
       throw new ProtocolError('unavailable', 'the catalog could not be read');
     }
+    // Only this schema's part of the read failed (`EntitySets.unavailable`): its set is not empty.
+    if (sets.unavailable?.has(schema)) {
+      throw new ProtocolError('unavailable', 'this schema could not be read');
+    }
     return narrow(sets, schema, audience);
   };
 
