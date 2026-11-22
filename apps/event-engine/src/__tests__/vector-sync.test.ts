@@ -1864,6 +1864,32 @@ describe('review round 2', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  test('liveness: a flush hung on a query that never returns is wedged; a failing or progressing one is not', async () => {
+    const hung = new FakePg();
+    hung.query = () => new Promise(() => undefined);
+    const queue = new VectorSyncQueue(deps(hung, new FakeStore()), async () => undefined);
+    queue.add(1, { topic: 't', partition: 0, offset: '1' });
+    void queue.flush();
+    await Promise.resolve();
+    const t0 = queue.flushStartedAt!;
+    expect(t0).not.toBeNull();
+    expect(queue.isWedged(t0 + 39 * 60_000)).toBe(false);
+    expect(queue.isWedged(t0 + 40 * 60_000)).toBe(true);
+    // Vectors stored meanwhile mean it is slow, not stuck.
+    queue.lastProgress = t0 + 30 * 60_000;
+    expect(queue.isWedged(t0 + 40 * 60_000)).toBe(false);
+
+    const failing = new FakePg();
+    failing.query = async () => {
+      throw new Error('Query read timeout');
+    };
+    const retried = new VectorSyncQueue(deps(failing, new FakeStore()), async () => undefined);
+    retried.add(1, { topic: 't', partition: 0, offset: '1' });
+    await expect(retried.flush()).rejects.toThrow('Query read timeout');
+    expect(retried.flushStartedAt).toBeNull();
+    expect(retried.isWedged(Date.now() + 60 * 60_000)).toBe(false);
+  });
+
   test('health: a slow flush making progress after one failure stays up; a retry loop does not', () => {
     const queue = new VectorSyncQueue(deps(new FakePg(), new FakeStore()), async () => undefined);
     const t0 = 1_000_000_000;

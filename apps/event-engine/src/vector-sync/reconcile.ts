@@ -6,8 +6,8 @@
  *   node dist/vector-sync/reconcile.js --from <id> --to <id> [--bucket 100000] [--dry-run] [--confirm]
  */
 import type { Pool } from 'pg';
-import { assertVectorSyncConfig, config } from '@/config';
-import { createGuardedPgPool } from '@/utils/pg-pool-guard';
+import { assertVectorSyncConfig } from '@/config';
+import { vectorPgPool } from './pg';
 import { logger } from '@/utils/logger';
 import { eligibleSql } from './eligibility';
 import { Embedder } from './embedder';
@@ -109,11 +109,7 @@ async function main() {
   if (!dryRun && !args.includes('--confirm'))
     throw new Error('Writing needs --confirm (or pass --dry-run)');
 
-  const pg = createGuardedPgPool(
-    { connectionString: config.postgres.connectionString, max: config.vectorSync.pgPoolMax },
-    'vector-reconcile',
-    (m, err) => logger.error({ err }, m)
-  );
+  const pg = vectorPgPool('vector-reconcile');
   const store = VectorStore.fromConfig();
   try {
     await reconcile(
