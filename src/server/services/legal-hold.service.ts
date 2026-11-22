@@ -471,7 +471,7 @@ export async function getAccountLegalHoldLegs(userId: number): Promise<AccountHo
 
 /**
  * Whether content owned by `id` (an int SQL expression) must not be removed: any account hold. For
- * every path that deletes a user's media or content. A ban note alone is not a hold.
+ * every path that deletes a user's media or content.
  */
 export function contentRemovalHeldSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
   return accountHoldSql(id, markerView);
