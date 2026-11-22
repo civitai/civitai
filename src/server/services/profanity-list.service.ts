@@ -157,7 +157,8 @@ export function setProfanityListReaderForTests(next?: ProfanityListReader, share
 export type ServerProfanityFilter = {
   filter: SimpleProfanityFilter;
   source: ProfanityListSource;
-  benign: string[] | null;
+  /** Flag off only: the moderators' benign words a search check allows. */
+  benign?: string[] | null;
   /** Counts a match against this filter's list source. */
   countHit(surface: ProfanityHitSurface): void;
 };
@@ -257,7 +258,7 @@ export async function profaneSearchCheck(queries: string[]): Promise<'clean' | '
       : ('clean' as const);
   try {
     const profanity = await getServerProfanityFilter();
-    if (profanity.source === 'shipped') return verdict(benignFilter(profanity.benign));
+    if (profanity.source === 'shipped') return verdict(benignFilter(profanity.benign ?? null));
     const result = verdict(profanity.filter);
     if (result === 'profane') profanity.countHit('search');
     return result;
