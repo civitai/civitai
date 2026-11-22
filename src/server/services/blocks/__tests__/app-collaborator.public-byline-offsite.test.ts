@@ -294,7 +294,7 @@ describe('🔴 an OFF-SITE listing carries a public collaborator byline', () => 
     await getListingDetail({ slug: 'ext-app' }, { scope: 'public-external' });
     expect(mockDb.appCollaborator.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { appListingId: OFFSITE, status: 'accepted', displayed: true },
+        where: { appListingId: { in: [OFFSITE] }, status: 'accepted', displayed: true },
       })
     );
   });
@@ -372,13 +372,17 @@ describe('the ONSITE byline still works (regression guard)', () => {
       })
     );
     mockDb.appCollaborator.findMany.mockImplementation(async (args: unknown) => {
-      const w = (args as { where: { appListingId?: string } }).where;
-      return w.appListingId === ONSITE ? [{ userId: DISPLAYED }] : [];
+      const w = (args as { where: { appListingId?: { in: string[] } } }).where;
+      return w.appListingId?.in.includes(ONSITE)
+        ? [{ appListingId: ONSITE, userId: DISPLAYED }]
+        : [];
     });
     const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
     expect(detail!.collaborators.map((c) => c.id)).toEqual([DISPLAYED]);
     expect(mockDb.appCollaborator.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ appListingId: ONSITE }) })
+      expect.objectContaining({
+        where: expect.objectContaining({ appListingId: { in: [ONSITE] } }),
+      })
     );
   });
 });

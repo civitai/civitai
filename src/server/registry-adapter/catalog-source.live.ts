@@ -76,10 +76,10 @@ export function listingExtrasFromRow(
     installCount: r.metric?.installCount ?? 0,
     createdAt: r.createdAt.toISOString(),
     serialId: r.serialId,
-    collaborators: reads.collaborators.map((u) => ({
-      id: u.id,
-      username: u.username ?? null,
-      image: u.image ?? null,
+    collaborators: reads.collaborators.map((chip) => ({
+      id: chip.id,
+      username: chip.username ?? null,
+      image: chip.image ?? null,
     })),
     scopes: listingDetailScopes(r),
     connectScopes: listingDetailConnectScopes(r, r.connectRequestedScopes),
