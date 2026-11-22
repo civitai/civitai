@@ -7,7 +7,7 @@ import type * as Trpc from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 
 // The service page's title row carries Share and the options menu (which holds Report) for every
-// viewer, the Request button is the Buzz button, and the seller's stats sit in the creator card.
+// viewer, the Request button is a plain button in the domain's Buzz color, and the seller's stats sit in the creator card.
 
 const mocks = vi.hoisted(() => ({ viewerId: 1 as number | null }));
 
@@ -63,10 +63,6 @@ vi.mock('~/components/ShareButton/ShareButton', () => ({
   ShareButton: ({ children }: { children: ReactNode }) =>
     createElement('span', { 'data-share': true }, children),
 }));
-vi.mock('~/components/Buzz/BuzzTransactionButton', () => ({
-  BuzzTransactionButton: (p: { label: string }) =>
-    createElement('button', { 'data-buzz-button': true }, p.label),
-}));
 vi.mock('~/components/CreatorCard/CreatorCard', () => ({
   SmartCreatorCard: ({ footer }: { footer?: ReactNode }) =>
     createElement('aside', { 'data-creator-card': true }, footer),
@@ -109,8 +105,8 @@ describe('service page title row', () => {
     expect(menu).toBeGreaterThan(-1);
     expect(html).toContain('data-menu-placement="title"');
     expect(html).toContain('data-menu-owner="false"');
-    expect(html.indexOf('data-share')).toBeLessThan(html.indexOf('data-buzz-button'));
-    expect(menu).toBeLessThan(html.indexOf('data-buzz-button'));
+    expect(html.indexOf('data-share')).toBeLessThan(html.indexOf('Request · 500 Buzz'));
+    expect(menu).toBeLessThan(html.indexOf('Request · 500 Buzz'));
   });
 
   it('offers the menu signed out too, so Report stays reachable', () => {
@@ -129,10 +125,10 @@ describe('service page title row', () => {
 });
 
 describe('service page sidebar', () => {
-  it('labels the Request button without the price, which the Buzz button draws', () => {
+  it('draws Request as a plain button in the domain color, not the funds-checking Buzz button', () => {
     const html = render();
-    expect(html).toContain('>Request<');
-    expect(html).not.toContain('Request · ');
+    expect(html).toContain('>Request · 500 Buzz<');
+    expect(html).toContain('--button-bg:var(--mantine-color-green-filled)');
   });
 
   it("shows the seller's deals and on-time share inside the creator card", () => {

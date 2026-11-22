@@ -39,10 +39,21 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 vi.mock('next/router', () => ({ useRouter: () => ({ push: () => undefined }) }));
 vi.mock('~/components/Currency/CurrencyBadge', () => ({ CurrencyBadge: () => null }));
 vi.mock('~/components/Buzz/BuzzTransactionButton', () => ({
-  BuzzTransactionButton: (p: { colorType: string; buzzAmount: number; label: string }) =>
+  BuzzTransactionButton: (p: {
+    colorType: string;
+    buzzAmount: number;
+    label: string;
+    'aria-label': string;
+    performTransactionOnPurchase?: boolean;
+  }) =>
     createElement(
       'button',
-      { 'data-buzz-button': p.colorType, 'data-amount': p.buzzAmount },
+      {
+        'data-buzz-button': p.colorType,
+        'data-amount': p.buzzAmount,
+        'data-purchase-places-hold': String(p.performTransactionOnPurchase ?? true),
+        'aria-label': p['aria-label'],
+      },
       p.label
     ),
 }));
@@ -67,11 +78,16 @@ beforeEach(() => {
 });
 
 describe('request popup hold button', () => {
-  it('is the Buzz button in green on the green domain, with the label unchanged', () => {
+  it('is the Buzz button in green on the green domain, with the short label and the full text as its name', () => {
     const out = render();
     expect(out).toContain('data-buzz-button="green"');
     expect(out).toContain('data-amount="2500"');
-    expect(out).toContain('>Hold 2,500 Buzz and send request<');
+    expect(out).toContain('>Hold and send request<');
+    expect(out).toContain('aria-label="Hold 2,500 Buzz and send request"');
+  });
+
+  it('never places the hold on the back of a Buzz purchase', () => {
+    expect(render()).toContain('data-purchase-places-hold="false"');
   });
 
   it('is the Buzz button in yellow on the red domain', () => {

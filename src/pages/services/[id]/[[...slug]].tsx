@@ -1,4 +1,4 @@
-import { Badge, Button, Container, Group, Stack, Text, Title } from '@mantine/core';
+import { Accordion, Badge, Button, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { IconChecks, IconClock, IconMoodHappy, IconShare3 } from '@tabler/icons-react';
 import type { InferGetServerSidePropsType } from 'next';
 import type { ComponentProps } from 'react';
@@ -7,7 +7,6 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { pluralize } from '~/components/CreatorShop/Services/creator-service.util';
 import { useServiceBuzzType } from '~/components/CreatorShop/Services/useServiceBuzzType';
@@ -27,10 +26,7 @@ import { servicePageHref } from '~/components/CreatorShop/section-meta';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import {
-  DetailsAccordion,
-  DetailsAccordionItem,
-} from '~/components/DetailsAccordion/DetailsAccordion';
+import { DetailsAccordion } from '~/components/DetailsAccordion/DetailsAccordion';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -212,27 +208,31 @@ function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSidePro
                 </Button>
               ) : (
                 <LoginRedirect reason="perform-action">
-                  <BuzzTransactionButton
+                  {/* Opens the popup without spending, so no funds check: a plain button in the Buzz color. */}
+                  <Button
+                    color={buzzType}
                     size="lg"
                     fullWidth
-                    buzzAmount={full ? 0 : offering.price}
-                    colorType={buzzType}
-                    label={full ? 'Fully booked' : 'Request'}
                     disabled={!isActive || full}
-                    onPerformTransaction={() =>
+                    onClick={() =>
                       dialogStore.trigger({
                         component: ServiceRequestModal,
                         props: { offering, sellerUsername },
                       })
                     }
-                  />
+                  >
+                    {full ? 'Fully booked' : `Request · ${offering.price.toLocaleString()} Buzz`}
+                  </Button>
                 </LoginRedirect>
               )}
 
               <DetailsAccordion defaultValue="details">
-                <DetailsAccordionItem value="details" title="Details">
-                  <DescriptionTable items={details} labelWidth="40%" withBorder={false} />
-                </DetailsAccordionItem>
+                <Accordion.Item value="details">
+                  <Accordion.Control>Details</Accordion.Control>
+                  <Accordion.Panel p={0}>
+                    <DescriptionTable items={details} labelWidth="40%" withBorder={false} />
+                  </Accordion.Panel>
+                </Accordion.Item>
               </DetailsAccordion>
 
               <ServiceOfferingLicense offering={offering} />

@@ -159,7 +159,13 @@ export function ServiceRequestModal({
             <BuzzTransactionButton
               buzzAmount={offering.price}
               colorType={buzzType}
-              label={buyerHoldButtonLabel(offering.price)}
+              // The badge carries the amount, so the label is the short form; the full legal text
+              // stays as the accessible name.
+              label="Hold and send request"
+              aria-label={buyerHoldButtonLabel(offering.price)}
+              // A buyer who is short buys Buzz, then clicks again: the hold is never placed on the
+              // back of a purchase.
+              performTransactionOnPurchase={false}
               disabled={disabled}
               loading={request.isPending}
               onPerformTransaction={sendRequest}

@@ -1,10 +1,9 @@
 import type { AccordionProps } from '@mantine/core';
 import { Accordion, useComputedColorScheme } from '@mantine/core';
-import type { ReactNode } from 'react';
 
 /**
  * The model page's "Details" accordion look: padded control, label without its own padding,
- * a bordered, shadowed item and a panel with no padding so the table inside runs edge to edge.
+ * a bordered, shadowed item. Give the panel `p={0}` so a table inside runs edge to edge.
  */
 export function DetailsAccordion<Multiple extends boolean = false>(
   props: AccordionProps<Multiple>
@@ -28,22 +27,5 @@ export function DetailsAccordion<Multiple extends boolean = false>(
       })}
       {...props}
     />
-  );
-}
-
-export function DetailsAccordionItem({
-  value,
-  title,
-  children,
-}: {
-  value: string;
-  title: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <Accordion.Item value={value}>
-      <Accordion.Control>{title}</Accordion.Control>
-      <Accordion.Panel p={0}>{children}</Accordion.Panel>
-    </Accordion.Item>
   );
 }
