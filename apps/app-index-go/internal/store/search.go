@@ -48,11 +48,9 @@ func (m Mature) hidden() []string {
 
 // Admits reports whether a request allowed m may be shown an app rated rating ("" for none).
 //
-// It is the site's database rule, matureRatingAllowed (app-listing-store-gate.ts) and its SQL twin
-// listingMatureFilter, because this service answers in that path's place for the same viewer: only
-// r, x and xxx (any case) are mature, each admitted when allowed; every other rating (g, pg, pg13,
-// pg-13, an unknown one, none) is admitted to everyone. The registry's audienceAdmits is stricter
-// for an unknown or missing rating; the index does not read as an audience, so it follows the site.
+// Mirrors the site's matureRatingAllowed / listingMatureFilter (app-listing-store-gate.ts), not the
+// registry's audienceAdmits, which is stricter for an unknown or missing rating: this service answers
+// in the database path's place. Only r, x and xxx are mature.
 func (m Mature) Admits(rating string) bool {
 	return !slices.Contains(m.hidden(), strings.ToLower(rating))
 }

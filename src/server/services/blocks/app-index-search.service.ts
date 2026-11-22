@@ -4,7 +4,7 @@
  *
  * The index holds apps of every rating. A call carries `mature` (`indexMature`) when the viewer
  * may see any mature rating, and the index answers only the ratings it names; without it the index
- * answers SFW apps only. It answers slugs; users only ever see cards the database hydrated for
+ * answers no app rated r, x or xxx. It answers slugs; users only ever see cards the database hydrated for
  * those slugs through the store's own gates. Sub-listing cards are not in the index: with them on
  * the page, an index answer adds the matching ones from the database page (`withSubListingCards`).
  * Any index failure serves the database path, and a run of them opens a per-process breaker
@@ -293,8 +293,6 @@ export function storeGridRequest(
  */
 export function viewerNotRoutable(opts: ListAvailableListingsOpts): AppIndexSearchReason | null {
   if (!env.APP_INDEX_URL) return 'no_url';
-  // A mature rating is no reason: the index holds every rating, and the call names the viewer's
-  // (`indexMature`).
   // A tester or moderator floor admits listings that are not public.
   if ((opts.floor ?? 'public') !== 'public') return 'unsupported_viewer';
   // Sub-listing cards (`includeSubListings`) do not make a viewer unroutable: the index has none,
