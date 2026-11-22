@@ -44,6 +44,7 @@ import {
   assertContentRemovalNotHeld,
   contentRemovalHeldSql,
   LegalHoldStoppedError,
+  ProfileArchiveRefusedError,
   heldModelIdsSql,
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
@@ -2093,6 +2094,14 @@ export const removeAllContent = async ({
     actorId: actorUserId,
     fields: [...PROFILE_CLEAR_FIELDS, 'links'],
     archive,
+  }).catch((error: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'remove-all-content-archive-failed',
+      userId: id,
+      message: (error as Error)?.message,
+    });
+    throw new ProfileArchiveRefusedError({ cause: error });
   });
   await dbWrite.userLink.deleteMany({ where: { userId: id } });
   await dbWrite.userProfile.deleteMany({ where: { userId: id } });

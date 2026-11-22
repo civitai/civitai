@@ -89,6 +89,32 @@ func slugs(t *testing.T, s Store, q Query) []string {
 	return out
 }
 
+// ratedCatalog is one app per rating class, ratings in mixed case as the stream may send them.
+var ratedCatalog = []struct{ slug, rating string }{
+	{"m1-r", "r"},
+	{"m2-x", "X"},
+	{"m3-xxx", "xxx"},
+	{"m4-unknown", "mystery"},
+	{"m5-none", ""},
+	{"s1-g", "g"},
+	{"s2-pg", "PG"},
+	{"s3-pg13", "pg13"},
+}
+
+// ratedApp is an app named its slug, rated rating ("" sends a null contentRating).
+func ratedApp(slug, rating string) App {
+	var r any
+	if rating != "" {
+		r = rating
+	}
+	body, _ := json.Marshal(map[string]any{"slug": slug, "name": slug, "kind": "onsite", "contentRating": r})
+	a, err := AppFromEntity(urnOf(slug), "rev-"+slug, body)
+	if err != nil {
+		panic(err)
+	}
+	return a
+}
+
 var catalog = []fixture{
 	{"pixel-forge", "Pixel Forge", "onsite", "generation", "Make pixel art from prompts", "ana"},
 	{"alpha-chat", "Alpha Chat", "offsite", "chat", "Talk to characters", "bo"},
@@ -349,6 +375,47 @@ func runContract(t *testing.T, newStore func(t *testing.T) testStore) {
 		}
 		if got := slugs(t, s, Query{Text: "pix", Limit: 2}); len(got) != 2 {
 			t.Errorf("text with limit 2 = %v", got)
+		}
+	})
+
+	t.Run("SearchMatureRatings", func(t *testing.T) {
+		s := newStore(t)
+		g := mustBuilding(t, s)
+		// The mature, unknown and missing ratings sort first by name, so a filter applied after the
+		// limit would leave a short page (the limit cases below).
+		for _, c := range ratedCatalog {
+			mustApply(t, s, g.ID, Change{Kind: ChangeUpsert, App: ratedApp(c.slug, c.rating)})
+		}
+		mustLive(t, s, g.ID, "L")
+		cases := []struct {
+			m     Mature
+			limit int
+			want  []string
+		}{
+			{Mature{}, 0, []string{"s1-g", "s2-pg", "s3-pg13"}},
+			{Mature{R: true}, 0, []string{"m1-r", "s1-g", "s2-pg", "s3-pg13"}},
+			{Mature{X: true}, 0, []string{"m2-x", "s1-g", "s2-pg", "s3-pg13"}},
+			{Mature{XXX: true}, 0, []string{"m3-xxx", "s1-g", "s2-pg", "s3-pg13"}},
+			{Mature{R: true, X: true}, 0, []string{"m1-r", "m2-x", "s1-g", "s2-pg", "s3-pg13"}},
+			{Mature{X: true, XXX: true}, 0, []string{"m2-x", "m3-xxx", "s1-g", "s2-pg", "s3-pg13"}},
+			// Only all three admit a rating this index does not know, or none.
+			{Mature{R: true, X: true, XXX: true}, 0,
+				[]string{"m1-r", "m2-x", "m3-xxx", "m4-unknown", "m5-none", "s1-g", "s2-pg", "s3-pg13"}},
+			// Filtered before the limit: the first two names are both mature.
+			{Mature{}, 2, []string{"s1-g", "s2-pg"}},
+			{Mature{X: true}, 2, []string{"m2-x", "s1-g"}},
+		}
+		for _, tc := range cases {
+			if got := slugs(t, s, Query{Mature: tc.m, Limit: tc.limit}); !slices.Equal(got, tc.want) {
+				t.Errorf("mature %+v limit %d = %v, want %v", tc.m, tc.limit, got, tc.want)
+			}
+		}
+		// Text search filters too.
+		if got := slugs(t, s, Query{Text: "m1"}); len(got) != 0 {
+			t.Errorf("SFW text search answered %v", got)
+		}
+		if got := slugs(t, s, Query{Text: "m1", Mature: Mature{R: true}}); !slices.Equal(got, []string{"m1-r"}) {
+			t.Errorf("r text search = %v", got)
 		}
 	})
 

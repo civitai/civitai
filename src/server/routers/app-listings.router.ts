@@ -2064,9 +2064,13 @@ export const appListingsRouter = router({
       if (scope === 'none') {
         return { items: [], nextCursor: undefined };
       }
-      const { listStoreGrid, storeGridRequest } = await import(
+      const { DB_READS, listStoreGrid, storeGridRequest } = await import(
         '~/server/services/blocks/app-index-search.service'
       );
+      // A failure to load the read-model module leaves the page on the database.
+      const readModel = await import(
+        '~/server/services/blocks/app-listings-read-model-shadow.service'
+      ).catch(() => null);
       // The sub-listing opt-in and the index switch meet the viewer's flags there.
       const [opts, routing] = storeGridRequest(input, {
         features: ctx.features,
@@ -2076,12 +2080,31 @@ export const appListingsRouter = router({
         viewer: listingViewerFromCtx(ctx),
         viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
       });
-      const page = await listStoreGrid(input, opts, routing);
-      // Behind `app-listings-read-model`: the same page asked of the listings read model, with the
-      // same options, off the response path. Never awaited, never throws into the request.
-      void import('~/server/services/blocks/app-listings-read-model-shadow.service')
-        .then(({ shadowListingPage }) => shadowListingPage('grid', input, opts, page))
-        .catch(() => undefined);
+      // Behind `app-listings-read-model`. At `serve`, a page the index does not search is read from
+      // the listings read model when it can answer this viewer, else from the database. At
+      // `shadow`, the page the database served is asked of the read model, with the same options,
+      // off the response path (never awaited, never throws into the request).
+      // The mode is resolved once, so serving and shadowing cannot see two different answers.
+      const mode = readModel?.listingReadModelMode('grid');
+      const page = await listStoreGrid(
+        input,
+        opts,
+        routing,
+        readModel
+          ? {
+              ...DB_READS,
+              gridPage: (i, o) =>
+                readModel.serveListingPage(
+                  'grid',
+                  i,
+                  o,
+                  () => DB_READS.listAvailableListings(i, o),
+                  mode
+                ),
+            }
+          : DB_READS
+      );
+      readModel?.shadowListingPage('grid', input, opts, page, mode);
       return page;
     }),
 

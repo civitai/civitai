@@ -165,6 +165,10 @@ describe('replay checks', () => {
       outputs: [take(0)],
     });
     await refused(returning(() => [source]));
+    // Only an image's known keys reach the client.
+    await expect(
+      returning((images) => images.map((image) => ({ ...image, onclick: 'x' })))
+    ).resolves.toEqual({ status: 'done', outputs: [take(0)] });
   });
 
   it('stays refused when the app catches the refusal and goes on', async () => {

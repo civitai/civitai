@@ -696,6 +696,14 @@ export const serverSchema = z
     APP_DATA_SHADOW_SAMPLE: z.coerce.number().min(0).max(1).default(1),
     APP_DATA_SHADOW_MAX_IN_FLIGHT: z.coerce.number().int().min(1).max(64).default(4),
     APP_DATA_SHADOW_TIMEOUT_MS: z.coerce.number().int().min(50).max(10_000).default(2000),
+    // With the `app-listings-read-model` flag at its `serve` variant: how long a store grid or
+    // public REST list page waits for the read model before it is read from the database instead.
+    APP_LISTINGS_READ_MODEL_SERVE_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(50)
+      .max(5_000)
+      .default(400),
     // Debounce window (ms) for flushing model-metric-affected ids into the
     // model search-index update queue. The model metric processor runs every
     // minute and accumulates every model whose ModelVersionMetric.updatedAt
@@ -1417,6 +1425,17 @@ export const serverSchema = z
       .string()
       .refine((value) => value.trim() === '' || value.trim().length >= 32, {
         message: 'STORAGE_HOOK_RUNNER_SECRET must be at least 32 characters',
+      })
+      .optional(),
+    // Remix user apps: the same runner image started in remix mode, a pool of its own so author
+    // code never shares the permission-check workers, with a secret of its own. Base URL (the
+    // client posts to `<url>/v1/remix/replay`) and HMAC secret, as above. Unset or blank, every
+    // user remix app is unavailable.
+    REMIX_RUNNER_URL: z.union([z.url(), z.literal('')]).optional(),
+    REMIX_RUNNER_SECRET: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'REMIX_RUNNER_SECRET must be at least 32 characters',
       })
       .optional(),
     // How long a run grant lasts: the runner's wall clock per run (2 h) plus a margin.

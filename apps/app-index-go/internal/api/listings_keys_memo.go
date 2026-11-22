@@ -17,19 +17,15 @@ import (
 const maxKeysLoad = 10 * time.Second
 
 // keysMemo holds the serving generation's Keys (every listing's columns, which each GET /listings
-// ranks or filters) for the (generation, cursor) it was read at, so a page costs one read of its own
-// rows (GetMany) rather than a scan of every listing too. Ranking stays in Go, the one port of the
-// store's sort, paging and viewer gate (internal/listingread), rather than a second copy in SQL.
+// ranks or filters), read once per (generation, cursor). Three invariants:
 //
-// Every committed change moves its generation's cursor in the same transaction, so a new cursor or
-// generation misses and is read again; State is read before the load, so held rows are never older
-// than their key. Concurrent misses share one load (singleflight), run detached from the first
-// caller's cancellation and bounded by timeout; each waiter leaves at its own deadline. A load that
-// finishes after a newer key was asked for (a later generation, or a later request's cursor within
-// one) answers its waiters but is not stored.
+//   - The cursor is the cache key: every committed change moves its generation's cursor, so a
+//     change is a miss.
+//   - State is read before the load, so held rows are never older than their key.
+//   - A load for a stale key (a newer generation or cursor was asked for since) answers its
+//     waiters but is not stored.
 //
-// The slice returned is shared by every request at that key: callers read it and never write it
-// (listingread's Rank, BySlugs and Filter build new slices).
+// The returned slice is shared: callers never write it.
 type keysMemo struct {
 	mu   sync.Mutex
 	at   string

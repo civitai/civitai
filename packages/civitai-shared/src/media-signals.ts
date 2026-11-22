@@ -97,25 +97,31 @@ export function scannerCsamVerdict(
   return Number(row.csamHit) === 1 || row.csamHit === true ? 'hit' : 'clear';
 }
 
-export type BlockedForPatterns = { signal: RegExp[]; nonMinor: RegExp[] };
+export type BlockedForPatterns = {
+  signal: RegExp[];
+  nonMinor: RegExp[];
+  /** Minor-only reasons: a minor flag alone does not keep media from a moderator. Absent: none. */
+  minor?: RegExp[];
+};
 
 const ALWAYS_NON_MINOR = new Set(['moderated', 'tos', 'ainotverified']);
 
 /**
- * The private `Image.blockedFor` patterns: regex lines under a `# signal` or `# known-non-minor`
- * header; other `#` lines are comments. Null when absent, when a pattern sits
- * under no header, or when one does not compile: the caller then reads every non-trivial value as
- * a signal.
+ * The private `Image.blockedFor` patterns: regex lines under a `# signal`, `# known-non-minor` or
+ * `# minor` header; other `#` lines are comments. Null when absent, when a pattern sits
+ * under no header, when one does not compile, or when it has no signal patterns:
+ * the caller then reads every non-trivial value as a signal.
  */
 export function parseBlockedForPatterns(raw: string | null | undefined): BlockedForPatterns | null {
   if (!raw?.trim()) return null;
-  const patterns: BlockedForPatterns = { signal: [], nonMinor: [] };
+  const patterns = { signal: [] as RegExp[], nonMinor: [] as RegExp[], minor: [] as RegExp[] };
   let section: RegExp[] | null = null;
   for (const line of raw.split(/\r?\n/)) {
     const text = line.trim();
     if (!text) continue;
     if (text === '# signal') section = patterns.signal;
     else if (text === '# known-non-minor') section = patterns.nonMinor;
+    else if (text === '# minor') section = patterns.minor;
     else if (text.startsWith('#')) continue;
     else if (!section) return null;
     else
@@ -125,7 +131,8 @@ export function parseBlockedForPatterns(raw: string | null | undefined): Blocked
         return null;
       }
   }
-  return patterns.signal.length || patterns.nonMinor.length ? patterns : null;
+  // A list without its signals is damaged, whatever else it names.
+  return patterns.signal.length ? patterns : null;
 }
 
 /** The private patterns read through `getRaw`, parsed once per value it returns. */
@@ -145,10 +152,11 @@ export function cachedBlockedForPatterns(getRaw: () => string | undefined) {
 const normalizeBlockedForValue = (value: string) => value.normalize('NFKC').toLowerCase().trim();
 
 /**
- * Whether `Image.blockedFor` is a CSAM or minor signal. It is free text, a comma list of reasons, so
- * the rule is an allowlist: a value is clean only if it is a known non-minor reason or matches a
- * known-non-minor pattern and no signal pattern. Anything else, including any value when the
- * patterns are missing, is a signal.
+ * Whether `Image.blockedFor` keeps media to moderators cleared for CSAM review. It is free text, a
+ * comma list of reasons, so the rule is an allowlist: a value is clean only if it matches no signal
+ * pattern and is a known non-minor reason, a known-non-minor pattern, or a minor pattern (a minor
+ * reason alone does not restrict). Anything else, including any value when the patterns are
+ * missing, is a signal.
  */
 export function blockedForSignal(
   blockedFor: string | null | undefined,
@@ -160,6 +168,7 @@ export function blockedForSignal(
   return values.some((value) => {
     if (patterns?.signal.some((re) => re.test(value))) return true;
     if (ALWAYS_NON_MINOR.has(value)) return false;
-    return !patterns?.nonMinor.some((re) => re.test(value));
+    const clean = [...(patterns?.nonMinor ?? []), ...(patterns?.minor ?? [])];
+    return !clean.some((re) => re.test(value));
   });
 }

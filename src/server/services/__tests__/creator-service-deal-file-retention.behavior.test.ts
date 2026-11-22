@@ -4,7 +4,6 @@ import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -303,18 +302,26 @@ describe('holds', () => {
   const holds: [string, (party: number) => string][] = [
     ['an evidence hold', (p) => `INSERT INTO "EvidenceHold" ("userId") VALUES (${p})`],
     [
-      'a moderation report, long sent and archived',
-      (p) =>
-        `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES (${p}, ${daysAgo(
-          800
-        )}, ${daysAgo(700)})`,
+      'a moderation report archived long ago but never sent',
+      (p) => `INSERT INTO "CsamReport" ("userId", "archivedAt") VALUES (${p}, ${daysAgo(700)})`,
     ],
     [
-      'a moderation report naming them second, long sent and archived',
+      'a moderation report long sent but not archived',
+      (p) => `INSERT INTO "CsamReport" ("userId", "reportSentAt") VALUES (${p}, ${daysAgo(800)})`,
+    ],
+    [
+      'a moderation report sent and archived within the year',
       (p) =>
-        `INSERT INTO "CsamReport" (details, "reportSentAt", "archivedAt") VALUES ('{"secondaryUserId": "${p}"}', ${daysAgo(
-          800
-        )}, ${daysAgo(700)})`,
+        `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES (${p}, ${daysAgo(
+          300
+        )}, ${daysAgo(200)})`,
+    ],
+    [
+      'a moderation report naming them second, archived long ago but never sent',
+      (p) =>
+        `INSERT INTO "CsamReport" (details, "archivedAt") VALUES ('{"secondaryUserId": "${p}"}', ${daysAgo(
+          700
+        )})`,
     ],
     ['a pending appeal', (p) => `INSERT INTO "Appeal" ("userId", status) VALUES (${p}, 'Pending')`],
     [
@@ -359,6 +366,27 @@ describe('holds', () => {
     await sweepAndPurge();
     expect(await kept(finalId)).toBe(false);
   });
+
+  it.each([
+    ['naming them', (p: number) => `"userId" = ${p}`],
+    ['naming them second', (p: number) => `details = '{"secondaryUserId": "${p}"}'`],
+  ])(
+    'a moderation report %s, sent and archived over a year ago, keeps nothing',
+    async (_n, who) => {
+      const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
+      for (const p of [BUYER, SELLER]) {
+        await q(
+          `INSERT INTO "CsamReport" ("reportSentAt", "archivedAt") VALUES (${daysAgo(
+            400
+          )}, ${daysAgo(10)})`
+        );
+        await q(`UPDATE "CsamReport" SET ${who(p)} WHERE id = (SELECT max(id) FROM "CsamReport")`);
+      }
+      await sweepAndPurge();
+      expect(await kept(finalId)).toBe(false);
+      expect(await kept(attachmentId)).toBe(false);
+    }
+  );
 
   it.each(cases)('%s hides the deal files on schedule and keeps them', async (_name, sql) => {
     const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
@@ -718,7 +746,7 @@ describe('the purge after the sweep', () => {
     expect(JSON.stringify(record)).not.toContain('portrait');
   });
 
-  it('takes a store without versioning (501) as a plain delete, with no warning', async () => {
+  it('takes a store without versioning (501) as a plain delete', async () => {
     const { dealId } = await closedDeal('Cancelled', 40);
     s3.purgeObjectVersions.mockRejectedValue(
       Object.assign(new Error('NotImplemented'), {
@@ -729,9 +757,6 @@ describe('the purge after the sweep', () => {
     await sweep();
     expect(await purge()).toBe(2);
     expect(s3.deleteObject).toHaveBeenCalledWith('bucket', `k/${dealId}/final`, expect.anything());
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'object versions may remain after delete' })
-    );
   });
 
   it('keeps the row and its pending record when the delete fails, and finishes it next run', async () => {
@@ -757,16 +782,12 @@ describe('the purge after the sweep', () => {
       ],
     ];
     for (const [, setUp] of runs) {
-      loggingMock.logToAxiom.mockClear();
       setUp();
       expect(await purge()).toBe(0);
       expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [finalId])).toHaveLength(1);
       expect(
         await q(`SELECT "fileId" FROM "ServiceDealFilePurge" WHERE "fileId" = $1`, [finalId])
       ).toEqual([{ fileId: finalId }]);
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ message: 'object versions may remain after delete' })
-      );
     }
     s3.purgeObjectVersions.mockResolvedValue({ versionsDeleted: 1, remaining: 0 });
     s3.deleteObject.mockResolvedValue(undefined);

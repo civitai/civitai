@@ -2,9 +2,12 @@
  * `/apps` store text search through the app index (`apps/app-index-go`), behind the
  * `app-index-search` flag.
  *
- * The index holds only the SFW audience, so only viewers it can answer completely are routed to
- * it (`viewerNotRoutable`). It answers slugs; users only ever see cards the database hydrated for
- * those slugs through the store's own gates. Sub-listing cards are not in the index: with them on
+ * Every index call names the viewer's mature ratings (`indexMature`, the index's `mature`
+ * parameter), so the index answers only apps the viewer's level admits; without it the index
+ * answers SFW apps only. The index still subscribes as the anonymous audience and so holds only SFW
+ * apps, so a viewer whose level admits a mature rating is not routed to it yet
+ * (`viewerNotRoutable`): it would miss that viewer's mature apps. It answers slugs; users only ever
+ * see cards the database hydrated for those slugs through the store's own gates. Sub-listing cards are not in the index: with them on
  * the page, an index answer adds the matching ones from the database page (`withSubListingCards`).
  * Any index failure serves the database path, and a run of them opens a per-process breaker
  * (`IndexBreaker`) that keeps searches off the index for a cooldown.
@@ -72,11 +75,20 @@ export type StoreGridReads = {
     input: ListAppListingsInput,
     opts: ListAvailableListingsOpts
   ) => Promise<ListingCard[]>;
+  /**
+   * The page of a request the index does not search (no text query, or the index switch off):
+   * `listAvailableListings` when absent. The store grid passes the listings read model's serving
+   * read (`serveListingPage`). A search's own database reads, its fallbacks included, never use it.
+   */
+  gridPage?: (
+    input: ListAppListingsInput,
+    opts: ListAvailableListingsOpts
+  ) => Promise<StoreGridPage>;
 };
 
 // Imported on use: the listing service is a large module the routing does not need until it reads.
 const listingService = () => import('~/server/services/blocks/app-listing.service');
-const DB_READS: StoreGridReads = {
+export const DB_READS: StoreGridReads = {
   listAvailableListings: async (input, opts) =>
     (await listingService()).listAvailableListings(input, opts),
   listStoreListingsBySlugs: async (slugs, input, opts) =>
@@ -230,7 +242,7 @@ const indexBreaker = new IndexBreaker();
 
 /**
  * The `/apps` store grid page: through the index when `indexSearch` (the viewer's flag) is on and
- * the request carries a text query, else `listAvailableListings` exactly as before.
+ * the request carries a text query, else `reads.gridPage` (`listAvailableListings` when absent).
  */
 export async function listStoreGrid(
   input: ListAppListingsInput,
@@ -239,12 +251,13 @@ export async function listStoreGrid(
   reads: StoreGridReads = DB_READS,
   breaker: IndexBreaker = indexBreaker
 ): Promise<StoreGridPage> {
-  if (!indexSearch) return reads.listAvailableListings(input, opts);
+  const gridPage = reads.gridPage ?? reads.listAvailableListings;
+  if (!indexSearch) return gridPage(input, opts);
   const indexSearchRoutable = viewerNotRoutable(opts) === null;
   const query = input.query?.trim() ?? '';
   const page =
     query === ''
-      ? await reads.listAvailableListings(input, opts)
+      ? await gridPage(input, opts)
       : await searchThroughIndex(input, query, opts, reads, breaker);
   return { ...page, indexSearchRoutable };
 }
@@ -283,7 +296,8 @@ export function storeGridRequest(
 export function viewerNotRoutable(opts: ListAvailableListingsOpts): AppIndexSearchReason | null {
   if (!env.APP_INDEX_URL) return 'no_url';
   const mature = matureRatingsAllowed(opts.redCapable ?? false, opts.viewerBrowsingLevel);
-  // The index holds the anonymous registry audience: SFW listings only.
+  // The index holds the anonymous registry audience: SFW listings only. Its search already filters
+  // by the viewer's mature ratings (`indexMature`), so this check goes once it holds mature ones.
   if (mature.r || mature.x || mature.xxx) return 'mature_viewer';
   // A tester or moderator floor admits listings that are not public.
   if ((opts.floor ?? 'public') !== 'public') return 'unsupported_viewer';
@@ -312,6 +326,18 @@ function notRoutable(
 function indexKind(input: ListAppListingsInput, opts: ListAvailableListingsOpts): string | null {
   if (opts.scope === 'public-external') return 'offsite';
   return input.kind === 'all' ? null : input.kind;
+}
+
+/**
+ * The index's `mature` parameter for this viewer: the mature ratings the database grid shows them
+ * (`matureRatingsAllowed`, the same read `storeVisibleListingRowGate` filters by), as the index's
+ * comma-separated list in a fixed order (so a shared cache sees one URL per set), or null for none.
+ * Null is sent as no parameter, which the index answers as the SFW audience (g, pg, pg13).
+ */
+export function indexMature(opts: ListAvailableListingsOpts): string | null {
+  const allowed = matureRatingsAllowed(opts.redCapable ?? false, opts.viewerBrowsingLevel);
+  const list = (['r', 'x', 'xxx'] as const).filter((r) => allowed[r]);
+  return list.length > 0 ? list.join(',') : null;
 }
 
 async function searchThroughIndex(
@@ -349,7 +375,7 @@ async function searchThroughIndex(
 
   let indexed: IndexResult[];
   try {
-    indexed = await fetchIndexResults(query, input, indexKind(input, opts));
+    indexed = await fetchIndexResults(query, input, indexKind(input, opts), indexMature(opts));
   } catch (err) {
     const reason = err instanceof AppIndexUnavailable ? err.reason : 'error';
     breaker.failure(reason);
@@ -449,11 +475,13 @@ async function fallBack(
 async function fetchIndexResults(
   query: string,
   input: ListAppListingsInput,
-  kind: string | null
+  kind: string | null,
+  mature: string | null
 ): Promise<IndexResult[]> {
   const params = new URLSearchParams({ q: query, limit: String(input.limit) });
   if (kind) params.set('kind', kind);
   if (input.category) params.set('category', input.category);
+  if (mature) params.set('mature', mature);
   const base = (env.APP_INDEX_URL as string).replace(/\/+$/, '');
   const { results } = await fetchAppIndexJson(
     outboundFetch,

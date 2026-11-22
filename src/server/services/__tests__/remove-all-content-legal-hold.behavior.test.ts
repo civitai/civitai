@@ -153,6 +153,7 @@ import {
   LegalHoldError,
   LegalHoldStoppedError,
   LegalHoldUnconfirmedError,
+  ProfileArchiveRefusedError,
 } from '~/server/services/legal-hold.service';
 import { removeAllContent } from '~/server/services/user.service';
 import {
@@ -1454,9 +1455,9 @@ describe('removeAllContent', () => {
 });
 
 /**
- * The moderator app's real body reader and refusal texts, loaded across the app boundary by path (both
- * modules are import-free for this). It matches the reason against its own constants by equality, so
- * a reworded constant on either side, or a body-shape drift, turns a refusal into a generic failure.
+ * The moderator app's real body reader and refusal texts, loaded across the app boundary by path. It
+ * matches the reason against those texts by equality, so a body-shape drift, or a text one app stops
+ * taking from `@civitai/shared/legal-hold-texts`, turns a refusal into a generic failure.
  */
 const moderator = {} as {
   restErrorReason: (body: unknown, status: number) => string | null;
@@ -1464,6 +1465,7 @@ const moderator = {} as {
   LEGAL_HOLD_STOPPED: string;
   LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE: string;
   HOLD_UNKNOWN_REFUSAL: string;
+  PURGE_ARCHIVE_REFUSAL: string;
   purgeWarning: (body: unknown) => string | undefined;
   PURGE_INCOMPLETE: string;
 };
@@ -1480,6 +1482,7 @@ beforeAll(async () => {
     LEGAL_HOLD_STOPPED: texts.LEGAL_HOLD_STOPPED,
     LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE: texts.LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
     HOLD_UNKNOWN_REFUSAL: texts.HOLD_UNKNOWN_REFUSAL,
+    PURGE_ARCHIVE_REFUSAL: texts.PURGE_ARCHIVE_REFUSAL,
     purgeWarning: purge.purgeWarning,
     PURGE_INCOMPLETE: purge.PURGE_INCOMPLETE,
   });
@@ -2133,14 +2136,32 @@ describe('removeAllContent and the profile archive', () => {
       throw new Error('bucket down');
     });
 
-    await expect(removeAllContent({ id: OLD_REPORT, actorUserId: 9, archive })).rejects.toThrow(
-      'bucket down'
-    );
+    await expect(
+      removeAllContent({ id: OLD_REPORT, actorUserId: 9, archive })
+    ).rejects.toBeInstanceOf(ProfileArchiveRefusedError);
 
     expect(await remaining(OLD_REPORT)).toEqual(all(1));
     expect(dbMock.dbWrite.imageReaction.deleteMany).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.userLink.deleteMany).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.userProfile.deleteMany).not.toHaveBeenCalled();
+  });
+
+  // The webhook takes the real archive, which fails here: the evidence bucket is not configured.
+  it('the webhook refuses with the text the moderator app shows, when the archive fails', async () => {
+    const res = fakeRes();
+    await removeAllContentWebhook(
+      {
+        method: 'POST',
+        query: { token: 'test-webhook-token', userId: String(OLD_REPORT) },
+        headers: {},
+        cookies: {},
+      } as never,
+      res as never
+    );
+
+    expect(res.statusCode).toBe(503);
+    expect(moderatorReads(res)).toBe(moderator.PURGE_ARCHIVE_REFUSAL);
+    expect(await remaining(OLD_REPORT)).toEqual(all(1));
   });
 
   it('wipes an account no report names without archiving it', async () => {

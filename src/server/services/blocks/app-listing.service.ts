@@ -90,7 +90,10 @@ import {
 } from '~/server/services/blocks/app-listing-source-repo.service';
 // The no-type `issue_tracker_url` column, raw SQL only — see its module header.
 import { readListingIssueTrackerUrlForRender } from '~/server/services/blocks/app-listing-issue-tracker.service';
-import { readLiveActionsRunSourceForListing } from '~/server/services/blocks/actions-run-source.service';
+import {
+  actionsRunSourceBlockId,
+  readLiveActionsRunSourceForListing,
+} from '~/server/services/blocks/actions-run-source.service';
 // The MANUAL-APPLY `is_beta` / `beta_message` columns are read ONLY through this guard —
 // never via `listingHydrateSelect` or `moderationListingSelect`, for the same reason. See
 // its module header.
@@ -1927,6 +1930,7 @@ export async function getListingDetail(
   });
   if (!gated) return null;
   const { row, visibility } = gated;
+  const runBlockId = actionsRunSourceBlockId(row);
 
   // All three extras run in PARALLEL with each other, so the public detail read still costs
   // ONE round trip more than the bare hydrate, not three. Each is separately guarded
@@ -1959,11 +1963,9 @@ export async function getListingDetail(
     // The Support link (no-type column; degrades to "no link" on any error).
     readListingIssueTrackerUrlForRender(row.id, dbRead),
     // The GitHub Actions run that submitted the serving version, public repositories only
-    // (no-type columns; degrades to none on any error). On-site apps only: an off-site
-    // listing has no submitted bundle.
-    row.kind === 'onsite' && row.appBlockId
-      ? readLiveActionsRunSourceForListing(dbRead, row.appBlockId)
-      : Promise.resolve(null),
+    // (no-type columns; degrades to none on any error). On-site apps with a block only
+    // (`actionsRunSourceBlockId`).
+    runBlockId ? readLiveActionsRunSourceForListing(dbRead, runBlockId) : Promise.resolve(null),
   ]);
   // "Forked from …". The parent is resolved through THE SAME gate this read applies to its own
   // row, with this viewer's scope / floor / host — so a parent this viewer could not open in the
