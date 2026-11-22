@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { CSAM_CONTEXT_NO_IMAGES_REFUSAL } from '~/shared/constants/csam-context.constants';
+import {
+  CSAM_CONTEXT_ITEM_SELECT_LIMIT,
+  CSAM_CONTEXT_NO_IMAGES_REFUSAL,
+  CSAM_CONTEXT_TEXT_MAX_CHARS,
+} from '~/shared/constants/csam-context.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as CsamContextTextService from '~/server/services/csam-context-text';
 import type * as CsamService from '~/server/services/csam.service';
@@ -250,6 +254,7 @@ describe('fileCsamReport', () => {
       denyBookkeepingFailed: false,
       strikesReviewFailed: false,
       contextNotAttached: [],
+      contextWontSend: [],
     });
 
     expect(logToAxiom).not.toHaveBeenCalledWith(
@@ -398,6 +403,26 @@ describe('fileCsamReport with attached text', () => {
     expect(result.contextNotAttached).toEqual(['chat message 902', 'profile']);
     const [filed] = createCsamReport.mock.calls[0] as [Record<string, unknown>];
     expect(filed.details).toEqual({ contextText: copied, contextNotAttachedCount: 2 });
+  });
+
+  it('names the stored items, folds included, that the send will leave out', async () => {
+    snapshotCsamContextText.mockResolvedValueOnce({ contextText: [], notAttached: [] });
+    const stored = Array.from({ length: CSAM_CONTEXT_ITEM_SELECT_LIMIT + 1 }, (_, i) => ({
+      source: 'model',
+      id: i + 1,
+      text: 'x'.repeat(CSAM_CONTEXT_TEXT_MAX_CHARS),
+    }));
+    createCsamReport.mockResolvedValueOnce({ id: 900, details: { contextText: stored } });
+
+    const result = await fileCsamReport({
+      userId: OWNER,
+      imageIds: [IMAGE],
+      type: 'Image',
+      reportedById: MOD,
+      contextSources: sources,
+    });
+
+    expect(result.contextWontSend).toEqual([`model ${CSAM_CONTEXT_ITEM_SELECT_LIMIT + 1}`]);
   });
 
   describe('when a step after filing throws', () => {

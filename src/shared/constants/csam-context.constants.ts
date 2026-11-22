@@ -30,6 +30,15 @@ export const csamOutsideFieldsHelp = (hasImages: boolean) =>
 /** Under the model picker. Ownership on record can miss an earlier owner. */
 export const CSAM_MODEL_EARLIER_OWNER_HELP = `If you know this model, or the model it was split from, had an earlier owner, leave it unticked and ${CSAM_PRIVATE_ROUTE}.`;
 
+/** After a filing whose response can't say whether the item text was attached. */
+export const CSAM_ITEM_TEXT_UNCONFIRMED = `The report was filed. Civitai can't confirm the selected text was attached. Don't file it again. If the text is the reason for this report, ${CSAM_PRIVATE_ROUTE}.`;
+
+/** Items the report keeps that its CyberTip can't carry. */
+export const csamWontSendNotice = (items: string[]) =>
+  `Not sent: ${items.join(
+    ', '
+  )}. They are kept with the report, but its CyberTip can't carry them. If one is the reason for this report, ${CSAM_PRIVATE_ROUTE}.`;
+
 export const csamNotAttachedNotice = (items: string[]) =>
   `Not attached: ${items.join(
     ', '

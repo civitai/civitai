@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { csamPickerState, csamPickOrder, csamUntick } from '~/components/Csam/csam-item-picker';
+import {
+  csamFiledNotices,
+  csamPickerState,
+  csamPickOrder,
+  csamSourcesToSend,
+  csamUntick,
+} from '~/components/Csam/csam-item-picker';
 import {
   CSAM_CONTEXT_ITEM_SELECT_LIMIT,
   CSAM_CONTEXT_NO_IMAGES_REFUSAL,
@@ -86,5 +92,40 @@ describe('the CSAM report item picker', () => {
   // Fails until the private route names who to tell: the PR stays a draft until then.
   it('names who a moderator tells privately', () => {
     expect(CSAM_PRIVATE_ROUTE).not.toContain('[WHO');
+  });
+});
+
+describe('a filing with item text during a rollout', () => {
+  const sources = {
+    postIds: [100],
+    commentIds: [],
+    chatMessageIds: [901],
+    modelIds: [],
+    articleIds: [],
+    serviceOfferingIds: [],
+    profile: true,
+    order: ['chatMessage:901', 'profile'],
+  };
+
+  it('sends only post and comment ids while item text is off', () => {
+    expect(csamSourcesToSend(sources, false)).toEqual({ postIds: [100], commentIds: [] });
+    expect(csamSourcesToSend({ ...sources, postIds: [] }, false)).toBeUndefined();
+    expect(csamSourcesToSend(sources, true)).toBe(sources);
+  });
+
+  it('says a response without the item fields was still filed, and not to file again', () => {
+    const [notice] = csamFiledNotices(true, {} as never);
+    expect(notice).toMatch(/^The report was filed\..*Don't file it again\./);
+    expect(csamFiledNotices(false, {} as never)).toEqual([]);
+  });
+
+  it('names what was not attached and what the send will leave out', () => {
+    expect(
+      csamFiledNotices(true, { contextNotAttached: ['model 7'], contextWontSend: ['article 3'] })
+    ).toEqual([
+      expect.stringMatching(/^Not attached: model 7\./),
+      expect.stringMatching(/^Not sent: article 3\./),
+    ]);
+    expect(csamFiledNotices(true, { contextNotAttached: [], contextWontSend: [] })).toEqual([]);
   });
 });

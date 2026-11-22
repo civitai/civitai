@@ -620,7 +620,9 @@ async function readChatMessages(ids: number[], ownerId: number) {
         )
         .execute()
     : [];
-  const editedByOthers = new Set(edits.filter((e) => e.editorId !== ownerId).map((e) => e.messageId));
+  const editedByOthers = new Set(
+    edits.filter((e) => e.editorId !== ownerId).map((e) => e.messageId)
+  );
   const [firstRecorded] = edited.length
     ? await kyselyWrite
         .selectFrom('ChatMessageEdit')
@@ -676,7 +678,8 @@ async function modelsOwnedByOthers(ids: number[], ownerId: number) {
     .execute();
   const showcaseOf = new Map<number, number>();
   for (const m of models) {
-    const collectionId = (m.meta as { showcaseCollectionId?: unknown } | null)?.showcaseCollectionId;
+    const collectionId = (m.meta as { showcaseCollectionId?: unknown } | null)
+      ?.showcaseCollectionId;
     if (typeof collectionId === 'number') showcaseOf.set(m.id, collectionId);
   }
   const collections = showcaseOf.size
@@ -1184,6 +1187,30 @@ const capturedLine = (c: CsamItemContextText, noun: string) =>
       )}.`;
 
 /**
+ * Item captures that fit `CSAM_CONTEXT_ITEM_SEND_BUDGET`, in stored order (the moderator's), and those
+ * that don't. Post and comment text is never counted against it.
+ */
+function splitBySendBudget(contextText: CsamContextText[]) {
+  const within: CsamItemContextText[] = [];
+  const over: CsamItemContextText[] = [];
+  let budget = CSAM_CONTEXT_ITEM_SEND_BUDGET;
+  for (const c of contextText) {
+    if (!isItemContextText(c)) continue;
+    const cost = Math.min(Array.from(c.text).length, CSAM_CONTEXT_TEXT_MAX_CHARS);
+    if (cost > budget) over.push(c);
+    else {
+      budget -= cost;
+      within.push(c);
+    }
+  }
+  return { within, over };
+}
+
+/** A report's stored items, folds included, that its send will leave out. */
+export const contextItemsOverBudget = (contextText: CsamContextText[] | undefined) =>
+  splitBySendBudget(contextText ?? []).over.map((c) => itemLabel(c.source, c.id));
+
+/**
  * The incidents as NCMEC reads them once parsed: a page incident per post or image page and capture
  * time, one per model, article, service offering or profile capture, and a chat incident per message.
  */
@@ -1229,16 +1256,9 @@ export function contextIncidents(contextText: CsamContextText[] | undefined) {
       ),
     });
   }
-  // Post and comment text is never counted against it. Items go in stored order: the moderator's.
-  let budget = CSAM_CONTEXT_ITEM_SEND_BUDGET;
-  for (const c of contextText) {
-    if (!isItemContextText(c)) continue;
-    const cost = Math.min(Array.from(c.text).length, CSAM_CONTEXT_TEXT_MAX_CHARS);
-    if (cost > budget) {
-      overBudget++;
-      continue;
-    }
-    budget -= cost;
+  const { within, over } = splitBySendBudget(contextText);
+  overBudget = over.length;
+  for (const c of within) {
     const { noun, url, heading } = describeItem(c, base);
     if (c.source === 'chatMessage') {
       chatImIncidents.push({

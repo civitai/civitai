@@ -28,7 +28,12 @@ import {
   noContextSources,
 } from '~/components/Csam/CsamContextTextSelect';
 import { CsamItemTextSelect } from '~/components/Csam/CsamItemTextSelect';
-import { csamNotAttachedNotice } from '~/shared/constants/csam-context.constants';
+import {
+  csamFiledNotices,
+  csamSourcesToSend,
+  hasItemSources,
+} from '~/components/Csam/csam-item-picker';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { settleShown } from '~/components/Csam/csam-shown';
@@ -72,6 +77,7 @@ export function CsamDetailsForm({
   });
 
   const imageIds = useCsamImageSelectStore.getState().getSelected(userId);
+  const features = useFeatureFlags();
   const [contextSources, setContextSources] = useState(noContextSources);
   const [itemProblem, setItemProblem] = useState<string>();
   const supplemental = trpc.csam.getSupplementalPreview.useQuery(
@@ -80,16 +86,23 @@ export function CsamDetailsForm({
   );
 
   const { mutate: createReport, isPending: isLoading } = trpc.csam.createReport.useMutation({
-    onSuccess: ({ contextNotAttached }) => {
+    onSuccess: (response, { contextSources: sent }) => {
       closeModal('csam-confirm');
+      const notices = csamFiledNotices(!!sent && hasItemSources(sent), response);
       // Stays until dismissed: the moderator has to see what the report went without.
-      if (contextNotAttached.length)
+      if (notices.length)
         dialogStore.trigger({
           component: AlertDialog,
           props: {
             type: 'info',
-            title: 'Some text was not attached',
-            children: <Text>{csamNotAttachedNotice(contextNotAttached)}</Text>,
+            title: 'The report was filed',
+            children: (
+              <Stack gap="xs">
+                {notices.map((notice) => (
+                  <Text key={notice}>{notice}</Text>
+                ))}
+              </Stack>
+            ),
           },
         });
       onSuccess?.();
@@ -119,7 +132,10 @@ export function CsamDetailsForm({
           userId,
           details: data,
           supplementalOf,
-          ...(type === 'Image' && hasContextSources(contextSources) && { contextSources }),
+          ...(type === 'Image' &&
+            hasContextSources(contextSources) && {
+              contextSources: csamSourcesToSend(contextSources, !!features.csamItemText),
+            }),
         });
       },
     });
@@ -188,7 +204,7 @@ export function CsamDetailsForm({
                   onChange={setContextSources}
                 />
               )}
-              {type === 'Image' && userId > 0 && (
+              {type === 'Image' && userId > 0 && features.csamItemText && (
                 <CsamItemTextSelect
                   userId={userId}
                   hasImages={imageIds.length > 0}

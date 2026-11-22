@@ -20,7 +20,11 @@ import type {
 import { throwBadRequestError, throwServiceUnavailableError } from '~/server/utils/errorHandling';
 import { createCsamReport } from '~/server/services/csam.service';
 import type { CsamContextText } from '~/server/services/csam-context-text';
-import { reportedUserIdsOf, snapshotCsamContextText } from '~/server/services/csam-context-text';
+import {
+  contextItemsOverBudget,
+  reportedUserIdsOf,
+  snapshotCsamContextText,
+} from '~/server/services/csam-context-text';
 import {
   CSAM_CONTEXT_NO_IMAGES_REFUSAL,
   csamNotAttachedNotice,
@@ -101,6 +105,10 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   const report = supplementalOf
     ? await createSupplementalCsamReport({ ...filed, supplementalOf })
     : await createCsamReport({ ...filed, writeBlocklist: false });
+  // Folds included: what the report's send will leave out, named while the moderator is here.
+  const contextWontSend = contextItemsOverBudget(
+    (report.details as { contextText?: CsamContextText[] } | null)?.contextText
+  );
 
   try {
     // Hashes read now, written after the account removal below, so a failed blocklist write cannot
@@ -281,7 +289,13 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
       );
 
     // Reported and removed either way; the caller decides how loudly to say the run is still open.
-    return { denyFailed, denyBookkeepingFailed, strikesReviewFailed, contextNotAttached };
+    return {
+      denyFailed,
+      denyBookkeepingFailed,
+      strikesReviewFailed,
+      contextNotAttached,
+      contextWontSend,
+    };
   } catch (error) {
     if (!contextNotAttached.length) throw error;
     // The moderator sees the error, not the response: the names must reach them here.

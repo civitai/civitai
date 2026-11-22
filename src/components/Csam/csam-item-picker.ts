@@ -1,4 +1,10 @@
-import { CSAM_CONTEXT_ITEM_SELECT_LIMIT } from '~/shared/constants/csam-context.constants';
+import type { CsamContextSources } from '~/server/schema/csam.schema';
+import {
+  CSAM_CONTEXT_ITEM_SELECT_LIMIT,
+  CSAM_ITEM_TEXT_UNCONFIRMED,
+  csamNotAttachedNotice,
+  csamWontSendNotice,
+} from '~/shared/constants/csam-context.constants';
 
 export type ItemSource = 'model' | 'article' | 'serviceOffering';
 export type IdField = 'chatMessageIds' | 'modelIds' | 'articleIds' | 'serviceOfferingIds';
@@ -70,4 +76,36 @@ export function csamPickOrder(previous: string[], lists: PickedLists, profile: b
   ];
   const kept = previous.filter((key) => keys.includes(key));
   return [...kept, ...keys.filter((key) => !kept.includes(key))];
+}
+
+/**
+ * What a filing sends. With item text off, only post and comment ids go: a server without item support
+ * would drop the other keys and file without them.
+ */
+export const hasItemSources = (s: Partial<CsamContextSources>) =>
+  !!s.profile ||
+  [s.chatMessageIds, s.modelIds, s.articleIds, s.serviceOfferingIds].some((ids) => !!ids?.length);
+
+export function csamSourcesToSend(sources: CsamContextSources, itemTextOn: boolean) {
+  if (itemTextOn) return sources;
+  const { postIds, commentIds } = sources;
+  return postIds.length || commentIds.length ? { postIds, commentIds } : undefined;
+}
+
+/**
+ * What the moderator is told after a filing. A response without the item fields, from a server that
+ * doesn't know them, still means the report was filed.
+ */
+export function csamFiledNotices(
+  sentItems: boolean,
+  response: { contextNotAttached?: string[]; contextWontSend?: string[] } | undefined
+) {
+  if (!sentItems) return [];
+  if (!Array.isArray(response?.contextNotAttached)) return [CSAM_ITEM_TEXT_UNCONFIRMED];
+  return [
+    ...(response.contextNotAttached.length
+      ? [csamNotAttachedNotice(response.contextNotAttached)]
+      : []),
+    ...(response.contextWontSend?.length ? [csamWontSendNotice(response.contextWontSend)] : []),
+  ];
 }

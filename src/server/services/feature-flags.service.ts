@@ -799,6 +799,9 @@ const featureFlags = createFeatureFlags({
   // Dark and owned by Flipt: the Knights app's own access flag, so the links to it follow who the app
   // admits (testers before launch, everyone after).
   knightsApp: { availability: [], fliptKey: KNIGHTS_APP_FLIPT_FLAG },
+  // The CSAM form's chat, model, article, service and profile text picker. Dark until every web pod
+  // serves the item schema, and the switch to turn off before any rollback below it.
+  csamItemText: { availability: [], fliptKey: 'csam-report-item-text' },
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
   bugsPage: ['public'],
