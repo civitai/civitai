@@ -2733,6 +2733,7 @@ describe('a user app', () => {
               return { count: 1 };
             };
             let onTripRead = async () => undefined;
+            let lockSql: string[] = [];
             beforeEach(async () => {
               const { remixBlockId } = await import('~/server/services/remix-app-registry.service');
               rows = new Map(
@@ -2744,6 +2745,7 @@ describe('a user app', () => {
               );
               chain = Promise.resolve();
               onTripRead = async () => undefined;
+              lockSql = [];
               const findMany = async () => [...rows.values()];
               dbMock.dbWrite.appBlock.findMany.mockImplementation(findMany as never);
               dbMock.dbWrite.appBlock.findUnique.mockImplementation(
@@ -2758,7 +2760,10 @@ describe('a user app', () => {
               ) =>
                 locked(() =>
                   fn({
-                    $queryRaw: async () => [],
+                    $queryRaw: async (sql: TemplateStringsArray) => {
+                      lockSql.push(sql.join('?'));
+                      return [];
+                    },
                     appBlock: {
                       findMany: async () => {
                         await onTripRead();
@@ -2795,6 +2800,16 @@ describe('a user app', () => {
                   o.status === 'rejected' ? (o.reason as TRPCError).message : 'ran'
                 )
               ).toContain(REMIX_AUTHOR_HELD);
+            });
+
+            it("lock the author's rows in the table Postgres actually has", async () => {
+              const { Prisma } = await import('@prisma/client');
+              const table = Prisma.dmmf.datamodel.models.find((m) => m.name === 'AppBlock')?.dbName;
+              expect(table).toBeTruthy();
+              await expect(runOn('one')).rejects.toMatchObject(unavailable);
+              expect(lockSql).toHaveLength(1);
+              expect(lockSql[0]).toContain(`FROM "${table}"`);
+              expect(lockSql[0]).toContain('FOR UPDATE');
             });
 
             it("count one while the author's own write changes its row on every read", async () => {

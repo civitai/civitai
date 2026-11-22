@@ -1102,14 +1102,13 @@ async function recordRunnerQuarantine(
  * quarantine after minutes and keys it by source. The {@link REMIX_AUTHOR_RUNNER_TRIPS_MAX}th
  * across their apps in a day holds the author. `true` when they are held.
  *
- * One transaction with every app of the author locked: no concurrent trip or write can make the
- * count miss, and the trip is written unconditionally rather than retried against a changing row.
- * It lands on the tripping app, or on another of theirs if that one is gone.
+ * Locks every app of the author, so concurrent trips cannot miss each other's count. Lands on the
+ * tripping app, or on another of theirs if that one is gone.
  */
 async function recordAuthorTrip(slug: string, authorId: number): Promise<boolean> {
   const prefix = remixBlockId(userRemixSlugPrefix(authorId));
   const outcome = await dbWrite.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "AppBlock" WHERE "block_id" LIKE ${
+    await tx.$queryRaw`SELECT id FROM "app_blocks" WHERE "block_id" LIKE ${
       prefix + '%'
     } ORDER BY id FOR UPDATE`;
     const rows = await tx.appBlock.findMany({
@@ -1157,7 +1156,7 @@ async function recordAuthorTrip(slug: string, authorId: number): Promise<boolean
     });
     return { held: already || hold, hold, count };
   });
-  // Recorded: a registry bump that fails after the commit doesn't undo that.
+  // The trip is committed; a failed bump only delays the registry refresh.
   await bumpRemixAppRegistry().catch((error: unknown) =>
     logToAxiom({
       name: 'remix-app-registry',
@@ -1196,8 +1195,8 @@ export async function isRemixAuthorHeld(authorId: number) {
 }
 
 /**
- * The one decision behind every second-moderator rule on a user app: a moderator acting on an app
- * they wrote must not clear, approve, enable or delete what holds it.
+ * The one decision behind every second-moderator rule on a user app: a moderator may not act on
+ * their own app.
  */
 const isOwnApp = (authorId: number | undefined, moderatorId: number) =>
   authorId !== undefined && authorId === moderatorId;
@@ -1332,7 +1331,7 @@ export async function deleteRemixApp({ slug, moderatorId }: { slug: string; mode
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
   if (BUILT_IN_SLUGS.has(slug))
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Built-in default apps cannot be deleted' });
-  // A trip still in flight would be recorded against a row its author had just deleted.
+  // A mod's own run can still be tripping this row.
   if (isOwnApp(Number(USER_REMIX_SLUG.exec(slug)?.[1]) || undefined, moderatorId))
     throw new TRPCError({
       code: 'FORBIDDEN',

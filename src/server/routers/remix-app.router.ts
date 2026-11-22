@@ -59,12 +59,12 @@ const remixAppBuilderProcedure = guardedProcedure
   .use(isFlagProtected('remixAppsUserCode'))
   .use(isFlagProtected('remixAppBuilder'));
 
-/** A user app's row is only acted on with its flag, like its review. */
 /** A user app's author check compares the session's user id, which an impersonation replaces. */
 function assertUserAppNotImpersonating(slug: string, ctx: { impersonatedBy?: number | null }) {
   if (USER_REMIX_SLUG.test(slug)) assertNotImpersonating(ctx);
 }
 
+/** A user app's row is only acted on with its flag, like its review. */
 function assertUserCodeAccess(slug: string, features: { remixAppsUserCode?: boolean }) {
   if (USER_REMIX_SLUG.test(slug) && !features.remixAppsUserCode)
     throw new TRPCError({ code: 'FORBIDDEN', message: 'User remix apps are not enabled for you' });

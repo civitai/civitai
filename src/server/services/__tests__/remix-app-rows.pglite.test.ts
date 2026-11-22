@@ -6,7 +6,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { BlockRegistry } from '~/server/services/block-registry.service';
-import { remixAppBlockRowId, saveRemixApp } from '~/server/services/remix-app-registry.service';
+import {
+  noteRunnerQuarantine,
+  REMIX_AUTHOR_HELD,
+  remixAppBlockRowId,
+  saveRemixApp,
+} from '~/server/services/remix-app-registry.service';
+import { RemixQuarantinedError } from '~/server/services/remix-app-runner';
 import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 
@@ -179,6 +185,81 @@ describe('saveRemixApp against the prod CHECKs', () => {
     expect(row).toEqual({ id: remixAppBlockRowId(slug), status: 'remix_disabled' });
     expect(row.id).toHaveLength(40);
     await db.exec(`DELETE FROM app_blocks WHERE block_id = 'remix-${slug}'`);
+  });
+});
+
+describe("an author's runner trip, in one transaction against Postgres", () => {
+  it('locks the real table, then writes the trip and the hold', async () => {
+    const raw = pgliteRaw(db);
+    const blockId = 'remix-u5-probe';
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    await db.query(
+      `INSERT INTO "OauthClient" (id, name, "userId") VALUES ('civitai-remix-apps', 'Remix', -1)
+       ON CONFLICT DO NOTHING`
+    );
+    await db.query(
+      `INSERT INTO app_blocks (id, app_id, block_id, version, manifest, status, content_rating)
+       VALUES ($1, 'civitai-remix-apps', $2, '1.0.0', $3, 'remix', 'pg')`,
+      [
+        remixAppBlockRowId('u5-probe'),
+        blockId,
+        JSON.stringify({ kind: 'remix', author: { userId: 5 }, runnerTrips: [recent, recent] }),
+      ]
+    );
+    // The transaction's client: its raw lock and its reads and writes all reach Postgres.
+    const tx = {
+      $queryRaw: raw.queryRaw,
+      appBlock: {
+        findMany: async () =>
+          (
+            await db.query<{ id: string; blockId: string; manifest: unknown }>(
+              `SELECT id, block_id AS "blockId", manifest FROM app_blocks WHERE block_id LIKE 'remix-u5-%'`
+            )
+          ).rows,
+        updateMany: async ({
+          where,
+          data,
+        }: {
+          where: { id: string };
+          data: { manifest: unknown };
+        }) => {
+          await db.query(`UPDATE app_blocks SET manifest = $1 WHERE id = $2`, [
+            JSON.stringify(data.manifest),
+            where.id,
+          ]);
+          return { count: 1 };
+        },
+      },
+    };
+    dbMock.dbWrite.$transaction.mockImplementation((async (fn: (t: typeof tx) => unknown) => {
+      await db.exec('BEGIN');
+      try {
+        const out = await fn(tx);
+        await db.exec('COMMIT');
+        return out;
+      } catch (error) {
+        await db.exec('ROLLBACK');
+        throw error;
+      }
+    }) as never);
+    redisMock.redis.set.mockResolvedValue('OK' as never);
+
+    const refusal = await noteRunnerQuarantine(
+      { slug: 'u5-probe', author: { userId: 5 } },
+      5,
+      new RemixQuarantinedError('a'.repeat(64), true)
+    );
+    expect(refusal).toBe(REMIX_AUTHOR_HELD);
+    const [row] = (
+      await db.query<{ manifest: { runnerTrips: string[]; runnerHold?: unknown } }>(
+        `SELECT manifest FROM app_blocks WHERE block_id = $1`,
+        [blockId]
+      )
+    ).rows;
+    // Held because it was written, not because a failed write fails closed.
+    expect(row.manifest.runnerTrips).toHaveLength(3);
+    expect(row.manifest.runnerHold).toBeTruthy();
+    await db.exec(`DELETE FROM app_blocks WHERE block_id = '${blockId}'`);
   });
 });
 

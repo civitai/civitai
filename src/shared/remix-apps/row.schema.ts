@@ -340,7 +340,7 @@ export const remixManifestSchema = z
       .optional(),
     /** When the author's own calls of this app tripped the runner; readers count only the last day's. */
     runnerTrips: z.array(z.string()).max(REMIX_AUTHOR_RUNNER_TRIPS_MAX).optional(),
-    /** Set by the trip that reaches REMIX_AUTHOR_RUNNER_TRIPS_MAX: until a mod clears it, the author's runs, prices and saves are refused. */
+    /** Set when the author's trips reach REMIX_AUTHOR_RUNNER_TRIPS_MAX; only a mod's clear removes it. */
     runnerHold: z.strictObject({ at: z.string() }).optional(),
     /**
      * Viewers whose own audit refused a run of this source, each as an unkeyed hash of the slug and
