@@ -32,6 +32,11 @@ export const ENTITY_SCHEMA_DOCUMENTS: ReadonlyArray<Record<string, unknown>> = [
         description:
           'The content rating of the app, or null when it has none (an off-site app may have no rating). Also the rating of every document this app publishes: a document carries no rating of its own, so a consumer joins it to its app entity.',
       },
+      listingContentRating: {
+        ...nullableString,
+        description:
+          "The store listing's own content rating, without the block fallback `contentRating` has: what the store filters its search on. Null when the listing has none",
+      },
       tagline: nullableString,
       category: nullableString,
       iconUrl: nullableString,

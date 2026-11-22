@@ -48,7 +48,9 @@ import (
 
 // LayoutVersion is the shape of an index row. Bump it when what a row holds changes (a new filter
 // column, a changed tsvector): the next start builds a new generation beside the serving one.
-const LayoutVersion = 1
+// 2: the listing's own rating (listing_rating, listing_rated), which search filters on
+// (store.App.GateRating); a layout 1 row was written without reading it from its body.
+const LayoutVersion = 2
 
 // ListingsLayoutVersion is LayoutVersion for the listings read model's rows (store.Listing).
 // 2: the listing's own rating (listing_content_rating), which the read API gates on. 3: the listing

@@ -1717,7 +1717,6 @@
   "src/server/routers/__tests__/comics.router.restricted-generation.test.ts": 2,
   "src/server/routers/__tests__/comics.router.unlock-refusal.test.ts": 3,
   "src/server/routers/__tests__/comics.router.unrated-output.test.ts": 7,
-  "src/server/routers/__tests__/comics.router.updatePanel-key-issuer.test.ts": 1,
   "src/server/routers/__tests__/comics.router.updateProject-images.test.ts": 3,
   "src/server/routers/__tests__/commentv3.router.comment-bucket.test.ts": 1,
   "src/server/routers/__tests__/commentv3.router.guarded-procedure.test.ts": 1,

@@ -43,7 +43,10 @@ import {
 } from '~/server/schema/blocks/publish-request.schema';
 // Pure shared module (only depends on token-scope.constants) — safe to import
 // statically without coupling to env/Prisma, so the pure-helper tests still run.
-import { assertSensitiveScopesJustified } from '~/shared/constants/block-scope.constants';
+import {
+  appBlockOauthCeiling,
+  assertSensitiveScopesJustified,
+} from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest and trims the
 // string fields the validator measures trimmed.
 import {
@@ -3787,9 +3790,10 @@ async function approveRequestUnderClaim(
       // matches the pattern used by buzz-attribution.service.ts.
       const code = (err as { code?: unknown })?.code;
       if (code !== 'P2002') throw err;
-      const existing = await dbRead.oauthClient.findUnique({
+      // primary: the ceiling re-derived below must keep a bit granted just before this approve.
+      const existing = await dbWrite.oauthClient.findUnique({
         where: { id: oauthClientId },
-        select: { id: true },
+        select: { id: true, allowedScopes: true },
       });
       if (!existing) {
         // P2002 without a hit on findUnique would indicate a foreign
@@ -3802,7 +3806,10 @@ async function approveRequestUnderClaim(
       // the inherited interactive grants.
       await dbWrite.oauthClient.update({
         where: { id: oauthClientId },
-        data: { grants: [], allowedScopes: derivedOauthCeiling },
+        data: {
+          grants: [],
+          allowedScopes: appBlockOauthCeiling(derivedOauthCeiling, existing.allowedScopes),
+        },
       });
     }
 
@@ -3926,14 +3933,18 @@ async function approveRequestUnderClaim(
       },
     });
     // A1 fix — keep the OauthClient ceiling in sync with the newly-approved
-    // manifest. Re-cap to the derived bitmask so the policy ceiling never
-    // exceeds what this version's manifest declares, and force grants:[] so an
+    // manifest. Re-cap to the derived bitmask (plus any operator-granted bit the
+    // client already holds, via appBlockOauthCeiling) so the ceiling does not
+    // exceed what this version's manifest declares, and force grants:[] so an
     // older row created before this fix (Full + interactive grants) is
     // self-healed on its next approve. This is byte-for-byte scoped to the
     // app-block client (existingAppBlock.appId is the `appblk-<slug>` id).
     await dbWrite.oauthClient.update({
       where: { id: existingAppBlock.appId },
-      data: { grants: [], allowedScopes: derivedOauthCeiling },
+      data: {
+        grants: [],
+        allowedScopes: appBlockOauthCeiling(derivedOauthCeiling, client.allowedScopes),
+      },
     });
   }
 

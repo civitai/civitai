@@ -1205,3 +1205,58 @@ describe('announcement covers follow the shared blocked-image rule', () => {
     ]);
   });
 });
+
+// A cover is shown to others only when the shared image rule allows it; its uploader always sees it.
+describe('announcement cover fields and scan state', () => {
+  const STRANGER = 999;
+  const SCANNED = { ingestion: 'Scanned', nsfwLevel: 1, blockedFor: null };
+  const row = (
+    id: number,
+    cover: { ingestion: string; nsfwLevel: number; blockedFor: string | null }
+  ) => ({
+    id,
+    metadata: {},
+    cover: { id: 500 + id, url: `cover-${id}`, userId: AUTHOR, modelRestricted: false, ...cover },
+    user: { id: AUTHOR, username: 'author' },
+  });
+  const CONTROL = 1;
+  const LEVEL_32 = 2;
+  const INGESTION = 3;
+  const REASON = 4;
+
+  beforeEach(() => {
+    dbMock.dbRead.announcement.findMany.mockResolvedValue([
+      row(CONTROL, SCANNED),
+      row(LEVEL_32, { ...SCANNED, nsfwLevel: 32 }),
+      row(INGESTION, { ...SCANNED, ingestion: 'Blocked' }),
+      row(REASON, { ...SCANNED, ingestion: 'Error', blockedFor: 'moderated' }),
+    ] as never);
+  });
+
+  const covers = (rows: { id: number; cover: { url: string } | null; nsfwLevel: number }[]) =>
+    rows.map(({ id, cover, nsfwLevel }) => ({ id, cover: cover?.url ?? null, nsfwLevel }));
+
+  it('is left out for another viewer on the profile read and the feed; the control keeps its cover', async () => {
+    const expected = [
+      { id: CONTROL, cover: 'cover-1', nsfwLevel: 1 },
+      { id: LEVEL_32, cover: null, nsfwLevel: 0 },
+      { id: INGESTION, cover: null, nsfwLevel: 0 },
+      { id: REASON, cover: null, nsfwLevel: 0 },
+    ];
+    expect(covers(await getCreatorAnnouncements({ userId: AUTHOR, viewerId: STRANGER }))).toEqual(
+      expected
+    );
+    expect(covers(await getCreatorAnnouncements({ userId: AUTHOR }))).toEqual(expected);
+    expect(covers((await getFollowedAnnouncements({ userId: STRANGER })).items)).toEqual(expected);
+  });
+
+  it('is kept for its uploader, without the fields only the check reads', async () => {
+    const rows = await getCreatorAnnouncements({ userId: AUTHOR, viewerId: AUTHOR });
+
+    expect(covers(rows).map((r) => r.cover)).toEqual(['cover-1', 'cover-2', 'cover-3', 'cover-4']);
+    for (const { cover } of rows) {
+      expect(cover).not.toHaveProperty('ingestion');
+      expect(cover).not.toHaveProperty('blockedFor');
+    }
+  });
+});

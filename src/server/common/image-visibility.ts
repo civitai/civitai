@@ -182,7 +182,8 @@ export const imageNotRestrictedSql = ({ alias = 'i', viewerId }: RestrictedImage
 };
 
 // Non-positive ids are placeholders (system accounts), never a real uploader.
-const isUploaderId = (viewerId?: number | null): viewerId is number => !!viewerId && viewerId > 0;
+export const isUploaderId = (viewerId?: number | null): viewerId is number =>
+  !!viewerId && viewerId > 0;
 
 /**
  * `imageNotRestrictedSql` as a Prisma `Image` filter. `nsfwLevel` holds a single level, so
