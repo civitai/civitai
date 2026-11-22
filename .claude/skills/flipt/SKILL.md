@@ -17,20 +17,31 @@ node .claude/skills/flipt/flipt.mjs <command> [options]
 
 ### Commands
 
-| Command | Description |
-|---------|-------------|
-| `list` | List all flags |
-| `get <key>` | Get details for a specific flag |
-| `create` / `enable` / `disable` / `delete` | Refuse with exit 2 and print the GitOps steps — see below |
-| `add-variant` / `remove-variant` / `set-rollout` | Same |
+| Command                                                                                       | Description                                                                 |
+| --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `list`                                                                                        | List flag DEFINITIONS from flipt-state git                                  |
+| `get <key>`                                                                                   | One flag's DEFINITION from git (not found = absent from git)                |
+| `get <key> --live`                                                                            | Refuses and names the supported path (below) unless `FLIPT_LIVE_URL` is set |
+| `create` / `enable` / `disable` / `delete` / `add-variant` / `remove-variant` / `set-rollout` | Refuse with exit 2 and print the GitOps steps                               |
 
-**Reads work over the API; writes are deliberately refused.** This Flipt is
-**v2**, GitOps-backed by a private state repo, so a merged change becomes visible
-within about a poll interval.
+**`list` and `get` read the DEFINITION in git, not live state.** They read
+`civitai-app/default/features.yaml` in `civitai/flipt-state` (private) through `gh api`, or from a
+local clone when `FLIPT_STATE_DIR` is set, and print the commit read. The live Flipt loads that
+file, so they agree except for the sync interval; they say nothing about `FLIPT_LOCAL_OVERRIDES` or
+`FEATURE_FLAG_*` overrides below.
 
-**Never write through the API.** Flag state is reviewed material — change flags by
-opening a PR against the state repo, never by calling the API. This skill refuses
-writes for that reason.
+**Live state is not readable from this skill.** The public Flipt host answers every path with a
+GitHub OAuth login on purpose (since 11-02), so no token reaches it. The old behavior, "Flag not
+found" and HTML from `list`, was this skill parsing that login page. For a live value, ask the
+DevOps seat for a gated in-cluster read (or an infra owner). `--live` refuses with that message;
+only an explicit `FLIPT_LIVE_URL` (an endpoint DevOps hands you) is ever called, and an HTML or
+redirect answer from it is reported as "OAuth/HTML answer", never as a missing flag. Never try
+tokens, bypasses or other URLs against the public host.
+
+**Writes are refused.** Flag state is reviewed material: change flags by opening a PR against
+the state repo.
+
+Tests: `node --test .claude/skills/flipt/flipt.test.mjs`.
 
 ## What a key does to the app
 
@@ -42,10 +53,10 @@ skips Flipt for it).
 
 Whether a variable is applied has exactly one rule, and it is not "is the variable set":
 
-| Registry entry | Its `FEATURE_FLAG_<KEY>` variable | Flipt |
-| --- | --- | --- |
-| `availability: []` **with** a `fliptKey` | **ignored** — cannot switch it on | **keeps control** |
-| anything else | **applied** | **skipped entirely** |
+| Registry entry                           | Its `FEATURE_FLAG_<KEY>` variable | Flipt                |
+| ---------------------------------------- | --------------------------------- | -------------------- |
+| `availability: []` **with** a `fliptKey` | **ignored** — cannot switch it on | **keeps control**    |
+| anything else                            | **applied**                       | **skipped entirely** |
 
 🔴 **So a NON-dark flag can carry a `fliptKey`, have that key set `enabled: false`, and still be
 on for everyone.** Toggling it in flag state changes nothing and looks like Flipt is broken.
@@ -76,70 +87,25 @@ To switch on a dark flag **that has a `fliptKey`** locally, set
 `NODE_ENV=production`, and it does not reach `getFliptBoolean` call sites. For a dark flag with
 no key there is nothing to name here — use its `FEATURE_FLAG_<KEY>` variable.
 
-Treat `FLIPT_API_TOKEN` as a live secret: read it from env, never inline it, and
-don't copy it into anything new.
-
-Flags live at `/api/v2/environments/{env}/namespaces/{ns}/resources/flipt.core.Flag`.
-The environment (`civitai-app`) and namespace (`default`) are discovered at
-runtime — the environment marked `default: true`, then its `default` namespace —
-so a second environment can't silently redirect reads. Override with
-`FLIPT_ENVIRONMENT` / `FLIPT_NAMESPACE` if ever needed.
-
-Responses carry a `revision` equal to the `flipt-state` commit SHA, which is the
-quickest way to confirm a flag change has actually synced:
-
-```bash
-node .claude/skills/flipt/flipt.mjs list --json | head -3   # revision == your commit
-```
-
-### Options
-
-| Flag | Description |
-|------|-------------|
-| `--description <text>`, `-d` | Description for new flag |
-| `--enabled` | Create flag as enabled (default: disabled) |
-| `--variant` | Create as variant flag (default: boolean) |
-| `--variants <keys>` | Comma-separated variant keys (first is default) |
-| `--default <key>` | Set default variant key |
-| `--rollout <pct>` | Rollout percentage (default: 100) |
-| `--segment <key>` | Segment key for rules (default: all-users) |
-| `--json` | Output results as JSON |
-| `--quiet`, `-q` | Minimal output |
-| `--force`, `-f` | Skip confirmation prompts |
-
 ### Examples
 
 ```bash
-# List all flags
-node .claude/skills/flipt/flipt.mjs list
-
-# Get a specific flag
-node .claude/skills/flipt/flipt.mjs get gift-card-vendor-waifu-way
-
-# Creating / toggling a flag goes through GitOps — see below.
-# These commands exit 2 and print the steps:
-node .claude/skills/flipt/flipt.mjs disable my-feature
-
-# JSON output for scripting
+node .claude/skills/flipt/flipt.mjs list -q
+node .claude/skills/flipt/flipt.mjs get feed-service-primary
+node .claude/skills/flipt/flipt.mjs get feed-service-primary --live   # refuses, names the path
 node .claude/skills/flipt/flipt.mjs list --json
 ```
 
+Options: `--json`, `--quiet`/`-q`, `--live`.
+
 ## GitOps Integration
 
-Flipt uses GitOps - flags are stored in the `civitai/flipt-state` repository. Changes made via the API are temporary and will be overwritten on the next Git sync (every 30 seconds).
-
-For **permanent changes**, edit the repository directly:
+Flags are stored in the `civitai/flipt-state` repository and synced to Flipt. For **changes**,
+open a PR:
 
 ```bash
-# Clone the state repo
-gh repo clone civitai/flipt-state /tmp/flipt-state
-
-# Edit civitai-app/default/features.yaml
-# Add your flag under the `flags:` section
-
-# Commit and push
-cd /tmp/flipt-state
-git add -A && git commit -m "Add new feature flag" && git push
+gh repo clone civitai/flipt-state <scratch-dir>
+# edit civitai-app/default/features.yaml under `flags:`, then branch, commit, push, PR
 ```
 
 ### Flag Format in YAML
@@ -151,11 +117,7 @@ flags:
     type: BOOLEAN_FLAG_TYPE
     description: Description of what this flag controls
     enabled: false
-    # Optional: rollout rules
     rollouts:
-      - threshold:
-          percentage: 50
-          value: true
       - segment:
           keys:
             - moderators
@@ -165,43 +127,11 @@ flags:
 
 ## Safety Notes
 
-1. **Do not write through the API**: it pushes an unreviewed commit to `flipt-state` main
-2. **Test before enabling**: Use segments for gradual rollout
-3. **Coordinate with team**: Others may be editing the same flags
+1. **Reads are definitions**: say so when you report a value; do not call it live
+2. **Test before enabling**: use segments for gradual rollout
+3. **Coordinate with team**: others may be editing the same flags
 
 ## Environment Setup
 
-Copy `.env.example` to `.env` and configure:
-
-```bash
-cp .claude/skills/flipt/.env.example .claude/skills/flipt/.env
-```
-
-The skill needs `FLIPT_URL` and `FLIPT_API_TOKEN` to connect to Flipt.
-
-🔴 **THE SKILL'S OWN `.env` IS NOT OPTIONAL, AND THE ROOT `.env` IS NOT A SUBSTITUTE.**
-`loadEnv` reads this skill's `.env` and then the project root's, first value winning — so the
-root's `FLIPT_URL` IS picked up when this file is absent, and that is the trap rather than the
-rescue. The root's `FLIPT_URL` is the BROWSER-FACING host: every path under it answers 302 to a
-GitHub OAuth login, so no bearer token will ever work against it. Measured 2026-10-05, after this
-skill's `.env` had been lost: `/meta/info`, `/health`, `/api/v1/namespaces`,
-`/api/v2/environments` and `/evaluate/v1/boolean` all 302 to the OAuth provider.
-
-So adding only a token to the root `.env` leaves the skill broken in a WORSE way than it is
-now: the "FLIPT_URL and FLIPT_API_TOKEN must be set" error disappears and is replaced by HTML
-login pages failing to parse as JSON — a confusing failure instead of a clear one. Both values
-belong in this skill's `.env` together.
-
-`FLIPT_FETCHER_SECRET`, which the root `.env` does carry, is a DIFFERENT credential and is not
-an API token — it does not authenticate these calls.
-
-**Ask an infra owner for the API endpoint and a read/query token.** The specifics are
-deliberately not written here: this repository is public, and how to reach a production service
-past its proxy is exactly what the Security section of `CLAUDE.md` keeps out of it.
-
-Once you have it, protect it — these files are one `git clean` from gone and this one has already
-been lost once:
-
-```bash
-node .claude/skills/dev-server/cli.mjs wt env --backup    # copies skill credentials outside the repo
-```
+Reading needs only `gh` logged in with access to `civitai/flipt-state`. No `.env` is required.
+`FLIPT_URL` is ignored on purpose. Treat `FLIPT_API_TOKEN` as a live secret; it is used only with `FLIPT_LIVE_URL`.
