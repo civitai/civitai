@@ -81,7 +81,7 @@ import type { CsamSupplementalDetails } from '~/server/services/csam-supplementa
 import { supplementalReportText } from '~/server/services/csam-supplemental-text';
 import type { CsamContextText } from '~/server/services/csam-context-text';
 import {
-  CONTEXT_TEXT_OMITTED_LINE,
+  contextTextOmittedLine,
   contextWebPageIncidents,
   unsendableContextText,
 } from '~/server/services/csam-context-text';
@@ -819,10 +819,9 @@ const underClaim = (claim: SendClaim) => ({
   reportSentAt: null,
 });
 
-/** What a sent report went without: never marked as sent, and kept open until a supplemental or Legal. */
+/** The record of captured text a sent report went without; `onlyText` means no text was sent at all. */
 const omittedContext = (report: CsamReportProps, count: number) => ({
   count,
-  // Every captured text was left out: Legal is told the same day.
   onlyText: count === (report.details?.contextText?.length ?? 0),
 });
 
@@ -1183,6 +1182,7 @@ async function sendCyberTip(
     fileDetails,
     sendFiles,
     beforeCancel,
+    onFinished,
     failureSubType = 'archive-data',
   }: {
     /** The details each file will be sent with, but for its fileId. */
@@ -1190,6 +1190,8 @@ async function sendCyberTip(
     /** Resolves to the details keys the report is marked sent with. */
     sendFiles: (ncmecReportId: number) => Promise<Record<string, unknown> | void>;
     beforeCancel?: () => Promise<void>;
+    /** Runs once NCMEC has the finished report, before it is stamped sent here. */
+    onFinished?: () => void;
     failureSubType?: string;
   }
 ) {
@@ -1260,6 +1262,7 @@ async function sendCyberTip(
   }
 
   // Finished at NCMEC from here on: a lost stamp is alerted, and the next run sends a duplicate.
+  onFinished?.();
   if (!isProd) return true;
   try {
     if (
@@ -1382,7 +1385,7 @@ async function reportImages(claim: SendClaim) {
     report.images.filter(({ id }) => !images.some((image) => image.id === id)).length;
   const unsendable = unsendableContextText(report.details?.contextText).length;
   const omitted = [
-    ...Array<string>(unsendable).fill(CONTEXT_TEXT_OMITTED_LINE),
+    unsendable > 0 && contextTextOmittedLine(unsendable),
     failed.length > 0 &&
       `${failed.length} file(s) named in this report could not be read from storage after repeated attempts and are not included.`,
     noLongerStored > 0 &&
@@ -1554,6 +1557,19 @@ async function reportImages(claim: SendClaim) {
         ...(await sendFiles(ncmecReportId)),
         ...(unsendable > 0 && { omittedContext: omittedContext(report, unsendable) }),
       }),
+      // Logged once NCMEC has the report, so a stamp that fails or loses its answer still leaves it.
+      onFinished: () => {
+        if (unsendable > 0)
+          logSendLine(
+            claim,
+            'send-omitted',
+            {
+              message: `report ${report.id} sent without ${unsendable} captured text item(s)`,
+              payload: omittedContext(report, unsendable),
+            },
+            'error'
+          );
+      },
       // A file already being sent finishes before the cancel, so its read failure is counted too.
       beforeCancel: async () => {
         await Promise.allSettled(started);
@@ -1562,18 +1578,6 @@ async function reportImages(claim: SendClaim) {
     }
   );
   if (!sent) return;
-  // Pages the Mod Lead through an Axiom monitor: the text left out needs a supplemental or Legal's
-  // ruling that none is needed.
-  if (unsendable > 0)
-    logSendLine(
-      claim,
-      'send-omitted',
-      {
-        message: `report ${report.id} sent without ${unsendable} captured text item(s)`,
-        payload: omittedContext(report, unsendable),
-      },
-      'error'
-    );
 
   const filesMissing = uploadResult.filter((entry) => entry?.source === 'missing').length;
   if (filesMissing > 0)
