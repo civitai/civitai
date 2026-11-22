@@ -130,6 +130,16 @@ describe('getHiddenImagesForUser', () => {
           scanJobs: { error: { failureClass: 'permanent' } },
         }),
       ],
+      [
+        'case 1',
+        posted(15, {
+          ingestion: ImageIngestionStatus.Error,
+          nsfwLevelLocked: true,
+          metadata: { nsfwLevelReason: 'reviewed' },
+          scanJobs: { error: { failureClass: 'unknown' } },
+          blockedFor: 'moderated',
+        }),
+      ],
       ['an unpublished post', posted(4, {}, { publishedAt: null })],
       ['a scheduled post', posted(5, {}, { publishedAt: future })],
       ['a private post', posted(6, {}, { availability: Availability.Private })],

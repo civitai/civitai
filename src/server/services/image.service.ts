@@ -84,6 +84,7 @@ import {
   liftedNsfwLevelSql,
   liftKeptBlockedSql,
   unblockedMetadataSql,
+  scanKeepsRowSql,
 } from '~/server/common/image-visibility';
 import {
   BLOCKED_IMAGE_DELETE_QUEUE,
@@ -6842,6 +6843,21 @@ async function authorizeImagesAction({
   }
 }
 
+/**
+ * Sends the images still awaiting verification back to Pending for another scan, decided on each
+ * row, and returns the rows it moved.
+ */
+export async function requeueUnverifiedImages(ids: number[]) {
+  if (!ids.length) return [];
+  return dbWrite.$queryRaw<IngestImageInput[]>`
+    UPDATE "Image" i SET ingestion = 'Pending'::"ImageIngestionStatus", "blockedFor" = NULL
+    WHERE i.id IN (${Prisma.join(ids)})
+      AND i."blockedFor" = ${BlockedReason.AiNotVerified}
+      AND NOT ${scanKeepsRowSql('i')}
+    RETURNING i.id, i.url, i.type, i.width, i.height, i.meta->>'prompt' AS prompt
+  `;
+}
+
 export async function addImageTools({
   data,
   user,
@@ -6851,20 +6867,7 @@ export async function addImageTools({
 }) {
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
   await dbWrite.imageTool.createMany({ data, skipDuplicates: true });
-  // Update these images if blocked:
-  const updated = await dbWrite.image.updateManyAndReturn({
-    where: { id: { in: data.map((x) => x.imageId) }, blockedFor: BlockedReason.AiNotVerified },
-    data: {
-      blockedFor: null,
-      // Ensures we do another run:
-      ingestion: 'Pending',
-    },
-    select: {
-      id: true,
-      url: true,
-      type: true,
-    },
-  });
+  const updated = await requeueUnverifiedImages(data.map((x) => x.imageId));
 
   enqueueImageIngestion({
     images: updated,

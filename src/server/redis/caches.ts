@@ -23,6 +23,7 @@ import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { hasBlockMarkerSql } from '~/server/common/image-visibility';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readImageTagsViaKysely } from '~/server/redis/image-tags.reads';
 import { userImageVideoCountQuery } from '~/server/redis/user-image-video-count.sql';
@@ -1576,6 +1577,13 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
   staleWhileRevalidateTtl: CacheTTL.hour,
 });
 
+/** The thumbnail rows `thumbnailCache` hands out. */
+export const thumbnailRowsSql = (thumbnailIds: (number | string)[]) => Prisma.sql`
+  SELECT id, url, width, height, "nsfwLevel", cast(metadata->'parentId' as int) as "parentId"
+  FROM "Image"
+  WHERE id IN (${Prisma.join(thumbnailIds)}) AND NOT ${hasBlockMarkerSql('Image')}
+`;
+
 export const thumbnailCache = createCachedObject<{
   id: number;
   url: string;
@@ -1610,17 +1618,7 @@ export const thumbnailCache = createCachedObject<{
         nsfwLevel: NsfwLevel;
         parentId: number;
       }[]
-    >`
-        SELECT
-          id,
-          url,
-          width,
-          height,
-          "nsfwLevel",
-          cast(metadata->'parentId' as int) as "parentId"
-        FROM "Image"
-        WHERE id IN (${Prisma.join(thumbnailIds)})
-      `;
+    >(thumbnailRowsSql(thumbnailIds));
 
     return Object.fromEntries(thumbnails.filter((x) => !!x.parentId).map((x) => [x.parentId, x]));
   },

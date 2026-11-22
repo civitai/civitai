@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { refreshThumbnailCache, thumbnailCache } from '~/server/redis/caches';
+import { PGlite } from '@electric-sql/pglite';
+import { refreshThumbnailCache, thumbnailCache, thumbnailRowsSql } from '~/server/redis/caches';
 
 describe('refreshThumbnailCache', () => {
   const refresh = vi.spyOn(thumbnailCache, 'refresh');
@@ -42,5 +43,27 @@ describe('refreshThumbnailCache', () => {
 
     expect(refresh).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('thumbnail rows', () => {
+  it('case 1', async () => {
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+      CREATE TABLE "Image" (id int PRIMARY KEY, url text, width int, height int, "nsfwLevel" int NOT NULL,
+        metadata jsonb, ingestion "ImageIngestionStatus", "blockedFor" text);
+      INSERT INTO "Image" VALUES
+        (1, 'a', 1, 1, 1, '{"parentId": 10}', 'Scanned', NULL),
+        (2, 'b', 1, 1, 1, '{"parentId": 11}', 'Error', 'moderated'),
+        (3, 'c', 1, 1, 32, '{"parentId": 12}', 'Error', NULL),
+        (4, 'd', 1, 1, 1, '{"parentId": 13}', 'Blocked', NULL);
+    `);
+    const flat = thumbnailRowsSql([1, 2, 3, 4]);
+    const { rows } = await db.query<{ id: number; parentId: number }>(
+      flat.text,
+      flat.values as unknown[]
+    );
+    expect(rows.map((r) => [r.id, r.parentId])).toEqual([[1, 10]]);
   });
 });

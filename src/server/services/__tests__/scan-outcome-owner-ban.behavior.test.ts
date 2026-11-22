@@ -316,7 +316,7 @@ describe("a clean scan landing on a held owner's or a kept blocked image", () =>
 });
 
 describe('a clean scan that should still lift or leave the image visible', () => {
-  it('lifts an AiNotVerified block with nothing else on it when its owner is not banned', async () => {
+  it('clean scan case 1', async () => {
     // Another owner's banned, blocked image, stored first: the check reads the scanned image.
     await insertImage(10, BANNED, 'Blocked', 'moderated');
     await insertImage(4, ACTIVE, 'Blocked', 'AiNotVerified');
@@ -327,7 +327,7 @@ describe('a clean scan that should still lift or leave the image visible', () =>
     expect(await imageRow(4)).toEqual({ ingestion: 'Scanned', blockedFor: null, nsfwLevel: 1 });
   });
 
-  it('keeps a moderated block when its owner is not banned', async () => {
+  it('clean scan case 2', async () => {
     await insertImage(10, BANNED, 'Blocked', 'moderated');
     await insertImage(40, ACTIVE, 'Blocked', 'moderated');
 
@@ -355,13 +355,13 @@ describe('a feedback page capture', () => {
     expect((await imageRow(30)).ingestion).toBe('Blocked');
   });
 
-  it('lets a clean scan lift an AiNotVerified block nothing holds (control)', async () => {
+  it('capture case 1', async () => {
     await insertImage(31, CAPTURE, 'Blocked', 'AiNotVerified');
     const outcome = await scan(loaded(31, CAPTURE, 'Blocked', 'AiNotVerified'));
     expect(outcome.ingestion).toBe('Scanned');
   });
 
-  it('keeps a moderated block nothing else holds', async () => {
+  it('capture case 2', async () => {
     await insertImage(41, CAPTURE, 'Blocked', 'moderated');
     const outcome = await scan(loaded(41, CAPTURE, 'Blocked', 'moderated'));
     expect(outcome.ingestion).toBe('Blocked');

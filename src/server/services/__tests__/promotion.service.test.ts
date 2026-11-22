@@ -321,6 +321,7 @@ describe('createGalleryPromotion', () => {
       'an errored scan only Knights rated',
       { ingestion: 'Error', nsfwLevelLocked: true, nsfwLevelReason: 'Knights Vote' },
     ],
+    ['case 1', { ingestion: 'Error', nsfwLevelLocked: true, blockedFor: 'moderated' }],
   ])('refuses a post with an image that is %s', async (_label, change) => {
     postImages = [cleanImage(11), { ...cleanImage(12), ...change }];
     await expect(buy()).rejects.toThrow('cannot be promoted');

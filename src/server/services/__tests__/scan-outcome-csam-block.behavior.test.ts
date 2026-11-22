@@ -47,14 +47,24 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
-import { markImageScanError, resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
+import {
+  markImageScanError,
+  resolveScanOutcome,
+  reviewKeyAfterSkipSql,
+  type ScanImage,
+} from '../image-scan-pipeline';
+import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { scanKeepsRowSql } from '~/server/common/image-visibility';
 import { blockImageFromRating } from '../image-scan-result.service';
 import { unblockAccountDeletionImages } from '../account-deletion-images';
 import { blockBannedUserImages } from '~/server/services/user.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { auditPostImageMeta } from '~/utils/metadata/audit';
-import { getImagesModRules } from '~/server/services/image.service';
+import {
+  addImageTools,
+  getImagesModRules,
+  requeueUnverifiedImages,
+} from '~/server/services/image.service';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -253,7 +263,7 @@ describe('a scan of a CSAM-blocked image', () => {
 
     expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
     expect(outcome).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM', nsfwLevel: 32 });
-    // Control: the same clean scan lifts an AiNotVerified block with nothing else on it.
+    // Control.
     await holder.db.exec(`UPDATE "Image" SET "blockedFor" = 'AiNotVerified' WHERE id = ${OTHER}`);
     await scan(OTHER);
     expect(await imageRow(OTHER)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
@@ -912,10 +922,11 @@ describe('scan result writes', () => {
   const W_TAKEN_DOWN = 7;
   const W_AI_FLAGGED = 8;
   const W_PENDING = 9;
-  const sx = { minor: false };
+  const sx = { minor: false, poi: false };
 
   beforeEach(async () => {
     sx.minor = false;
+    sx.poi = false;
     const base = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
     vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
       strings: TemplateStringsArray,
@@ -923,7 +934,7 @@ describe('scan result writes', () => {
     ) => {
       const rows = await (base as (...a: unknown[]) => Promise<unknown>)(strings, ...values);
       const [first] = (rows ?? []) as Record<string, unknown>[];
-      return first && 'hasResource' in first ? [{ ...first, minor: sx.minor }] : rows;
+      return first && 'hasResource' in first ? [{ ...first, minor: sx.minor, poi: sx.poi }] : rows;
     }) as never);
     await holder.db.exec(`
       TRUNCATE "ModActivity";
@@ -1153,6 +1164,259 @@ describe('scan result writes', () => {
         CSAM,
         OTHER,
       ]);
+    });
+  });
+  describe('cases', () => {
+    const queued = async () =>
+      (
+        await holder.db.query<{ entityId: number }>(
+          `SELECT "entityId" FROM "JobQueue" WHERE type = 'CdnAccessSync' ORDER BY "entityId"`
+        )
+      ).rows.map((r) => r.entityId);
+    const set = (id: number, columns: string) =>
+      holder.db.exec(`UPDATE "Image" SET ${columns} WHERE id = ${id}`);
+    const QUEUE_FN = `CREATE OR REPLACE FUNCTION queue_cdn_access_sync(entity_id integer, entity_type text, payload jsonb)
+      RETURNS void AS $q$ BEGIN
+        INSERT INTO "JobQueue" ("entityId", "entityType", type) VALUES (entity_id, entity_type, 'CdnAccessSync')
+        ON CONFLICT DO NOTHING;
+      END; $q$ LANGUAGE plpgsql;`;
+
+    beforeAll(async () => {
+      await holder.db.exec(`
+        ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text, ADD COLUMN IF NOT EXISTS width int,
+          ADD COLUMN IF NOT EXISTS height int, ADD COLUMN IF NOT EXISTS meta jsonb;
+        CREATE TABLE IF NOT EXISTS "JobQueue" ("entityId" int, "entityType" text, type text,
+          UNIQUE ("entityType", "entityId", type));
+      `);
+    });
+
+    beforeEach(async () => {
+      await holder.db.exec(`TRUNCATE "JobQueue"; ${QUEUE_FN}`);
+      await holder.db.exec(
+        `UPDATE "Image" SET url = 'https://example.invalid/' || id || '.jpeg', type = 'image'`
+      );
+      sent.length = 0;
+      const outerExec = vi.mocked(dbMock.dbWrite.$executeRaw).getMockImplementation()!;
+      vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => {
+        const flat = Prisma.sql(strings, ...(values as never[]));
+        const at = /WHERE id = \$(\d+)/.exec(flat.text);
+        // The refused submit's own write: recorded, not applied, so the row stays as the test set it.
+        if (flat.text.includes('"scanRequestedAt" =') && at) {
+          sent.push(flat.values[Number(at[1]) - 1] as number);
+          return 1;
+        }
+        return (outerExec as (...a: unknown[]) => Promise<unknown>)(strings, ...values);
+      }) as never);
+      const outer = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
+      vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => {
+        const text = strings.join('');
+        if (text.includes('queue_cdn_access_sync') || text.includes("meta->>'prompt' as prompt"))
+          return (await runOnPglite(strings, values)).rows;
+        if (text.includes('TagsOnImageDetails')) return [];
+        const rows = await (outer as (...a: unknown[]) => Promise<unknown>)(strings, ...values);
+        if (holdAfterRead.id != null && text.includes('FROM "Image" i WHERE i.id')) {
+          await holder.db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES ($1)`, [
+            holdAfterRead.id,
+          ]);
+          await holder.db.query(
+            `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'AiNotVerified', "nsfwLevel" = 32 WHERE id = $1`,
+            [holdAfterRead.id]
+          );
+          holdAfterRead.id = null;
+        }
+        return rows;
+      }) as never);
+    });
+
+    /** Set to an image id: that row changes right after the fresh read. */
+    const holdAfterRead = { id: null as number | null };
+    const MOD = { id: 1, isModerator: true } as never;
+    const addTools = (imageId: number) =>
+      addImageTools({ data: [{ imageId, toolId: 1 }] as never, user: MOD });
+    /** Ids whose scan submit was reached: the url guard refuses every fixture url before any send. */
+    const sent: number[] = [];
+    const submitted = () => [...sent];
+
+    describe('group 1', () => {
+      it('case 1', async () => {
+        await set(W_AI_UNVERIFIED, 'minor = true');
+        await addTools(W_AI_UNVERIFIED);
+        expect(await imageRow(W_AI_UNVERIFIED)).toMatchObject({
+          ingestion: 'Blocked',
+          blockedFor: 'AiNotVerified',
+        });
+        expect(submitted()).toEqual([]);
+      });
+
+      it('case 2', async () => {
+        await addTools(W_AI_UNVERIFIED);
+        expect(await imageRow(W_AI_UNVERIFIED)).toMatchObject({
+          ingestion: 'Pending',
+          blockedFor: null,
+        });
+        await vi.waitFor(() => expect(submitted()).toEqual([W_AI_UNVERIFIED]));
+      });
+
+      it('case 3', async () => {
+        await set(W_AI_FLAGGED, 'minor = false');
+        await addTools(W_AI_FLAGGED);
+        expect(await imageRow(W_AI_FLAGGED)).toMatchObject({
+          ingestion: 'Pending',
+          blockedFor: null,
+        });
+        await set(W_AI_UNVERIFIED, `"needsReview" = 'appeal'`);
+        expect(await requeueUnverifiedImages([W_AI_UNVERIFIED])).toEqual([]);
+        expect((await imageRow(W_AI_UNVERIFIED)).ingestion).toBe('Blocked');
+      });
+
+      it('case 4', async () => {
+        // Changed after the caller's read.
+        await set(W_AI_UNVERIFIED, `"blockedFor" = 'moderated'`);
+        expect(await requeueUnverifiedImages([W_AI_UNVERIFIED])).toEqual([]);
+        expect(await imageRow(W_AI_UNVERIFIED)).toMatchObject({
+          ingestion: 'Blocked',
+          blockedFor: 'moderated',
+        });
+      });
+    });
+
+    describe('group 2', () => {
+      it('case 1', async () => {
+        await set(W_PENDING, `"blockedFor" = 'moderated'`);
+        await failScan(W_PENDING);
+        expect((await imageRow(W_PENDING)).ingestion).toBe('Error');
+        expect(await queued()).toEqual([W_PENDING]);
+      });
+
+      it('case 2', async () => {
+        await failScan(W_PENDING);
+        expect((await imageRow(W_PENDING)).ingestion).toBe('Error');
+        expect(await queued()).toEqual([]);
+      });
+
+      it('case 3', async () => {
+        await set(W_PENDING, `"blockedFor" = 'moderated'`);
+        await holder.db
+          .exec(`CREATE OR REPLACE FUNCTION queue_cdn_access_sync(entity_id integer, entity_type text, payload jsonb)
+          RETURNS void AS $q$ BEGIN RAISE EXCEPTION 'queue down'; END; $q$ LANGUAGE plpgsql;`);
+        await expect(failScan(W_PENDING)).resolves.toMatchObject({ retryCount: 1 });
+        expect((await imageRow(W_PENDING)).ingestion).toBe('Error');
+        expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'error',
+            name: 'scan-error-cdn-sync',
+            imageId: W_PENDING,
+          })
+        );
+      });
+
+      it('case 4', async () => {
+        await toError(W_MODERATED);
+        await scan(W_MODERATED);
+        expect((await imageRow(W_MODERATED)).ingestion).toBe('Error');
+        expect(await queued()).toEqual([W_MODERATED]);
+      });
+
+      it('case 5', async () => {
+        await set(W_MODERATED, `ingestion = 'Rescan'`);
+        await scan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Scanned',
+          blockedFor: null,
+        });
+        expect(await queued()).toEqual([W_MODERATED]);
+      });
+
+      it('case 6', async () => {
+        await scan(W_PENDING);
+        expect((await imageRow(W_PENDING)).ingestion).toBe('Scanned');
+        expect(await queued()).toEqual([]);
+      });
+    });
+
+    describe('group 3', () => {
+      const keyAfter = async (id: number, key: string | null) => {
+        const frag = reviewKeyAfterSkipSql(key);
+        const flat = Prisma.sql`UPDATE "Image" SET "needsReview" = ${frag} WHERE id = ${id} RETURNING "needsReview"`;
+        return (
+          await holder.db.query<{ needsReview: string | null }>(flat.text, flat.values as unknown[])
+        ).rows[0].needsReview;
+      };
+
+      it.each([
+        ['1', W_PENDING, '', 'minor', 'minor'],
+        ['2', W_PENDING, `"needsReview" = 'appeal'`, 'minor', 'appeal'],
+        ['3', W_PENDING, `"needsReview" = 'poi'`, 'csam', 'poi'],
+        ['4', W_MODERATED, '', 'minor', null],
+        ['5', W_MODERATED, '', 'poi', null],
+        ['6', W_MODERATED, `ingestion = 'Error'`, 'minor', null],
+        ['7', W_FLAGGED, `"needsReview" = NULL, ingestion = 'Blocked'`, 'minor', null],
+        ['8', W_MODERATED, '', 'csam', 'csam'],
+        ['9', W_MODERATED, '', 'appeal', 'appeal'],
+        ['10', W_FLAGGED, `"needsReview" = NULL`, 'poi', 'poi'],
+        ['11', W_PENDING, '', null, null],
+      ])('case %s', async (_label, id, columns, key, expected) => {
+        if (columns) await set(id, columns);
+        expect(await keyAfter(id, key)).toBe(expected);
+      });
+    });
+
+    describe('group 4', () => {
+      it('case 1', async () => {
+        await set(W_MODERATED, `ingestion = 'NotFound'`);
+        await scan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'NotFound',
+          blockedFor: 'moderated',
+          nsfwLevel: 32,
+        });
+      });
+
+      it('case 2', async () => {
+        await set(W_PENDING, 'ingestion = \'Error\', "nsfwLevel" = 32');
+        await holder.db.exec(
+          `INSERT INTO "ModActivity" ("entityType", "entityId", activity) VALUES ('post', ${W_PENDING}, 'review')`
+        );
+        await scan(W_PENDING);
+        expect((await imageRow(W_PENDING)).ingestion).toBe('Scanned');
+      });
+
+      it('case 3', async () => {
+        await toError(W_MODERATED);
+        sx.poi = true;
+        await scan(W_MODERATED);
+        expect(
+          (
+            await holder.db.query<{ poi: boolean }>(`SELECT poi FROM "Image" WHERE id = $1`, [
+              W_MODERATED,
+            ])
+          ).rows[0].poi
+        ).toBe(true);
+      });
+
+      it('case 4', async () => {
+        await set(W_MODERATED, `metadata = '{"${PRIOR_INGESTION_KEY}": "Scanned"}'`);
+        sx.minor = true;
+        await scan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({ ingestion: 'Blocked', minor: false });
+      });
+
+      it('case 5', async () => {
+        holdAfterRead.id = W_PENDING;
+        sx.minor = true;
+        await scan(W_PENDING);
+        expect(await imageRow(W_PENDING)).toMatchObject({
+          ingestion: 'Blocked',
+          blockedFor: 'AiNotVerified',
+          minor: false,
+        });
+      });
     });
   });
 });

@@ -570,7 +570,7 @@ describe('image takedowns', () => {
     expect(calls.map(kind)).toEqual(['deny']);
   });
 
-  it('keeps the deny while the row keeps its block reason', async () => {
+  it('access case 1', async () => {
     await image(1);
     await scannerBlock(1);
     await syncCdnAccess();

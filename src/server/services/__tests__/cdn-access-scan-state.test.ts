@@ -19,6 +19,10 @@ describe('access for a row the scan write keeps', () => {
     ['2', row({ blockedFor: 'moderated', keptRow: true })],
     ['3', row({ blockedFor: 'moderated', keptRow: true, held: true })],
     ['4', row({ keptRow: true })],
+    ['5', row({ ingestion: 'Pending', blockedFor: 'moderated', keptRow: true })],
+    ['6', row({ ingestion: 'Rescan', blockedFor: 'moderated', keptRow: true })],
+    ['7', row({ ingestion: 'PendingManualAssignment', blockedFor: 'moderated', keptRow: true })],
+    ['8', row({ ingestion: 'NotFound', blockedFor: 'moderated', keptRow: true })],
   ])('deny (%s)', (_label, image) => {
     expect(desiredImageAccess(image)).toBe('deny');
     expect(desiredUrlAccess({ images: [image], deletes: [] })).toBe('deny');

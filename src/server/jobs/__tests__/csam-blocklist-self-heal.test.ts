@@ -289,7 +289,7 @@ describe('the candidate SQL, on real Postgres', () => {
     expect(await query(SWEEP_COUNT_SQL)).toEqual([{ sweep: 1 }]);
   });
 
-  it('reads a listed CSAM removal in the hold selection', async () => {
+  it('selection case 1', async () => {
     await pg.exec(`
       INSERT INTO "Image" VALUES (10, 7, 'Error', 'CSAM', 210);
       INSERT INTO "CsamReport" ("userId", images, "createdAt") VALUES (7, '[10]', '2026-11-20');

@@ -611,7 +611,7 @@ describe('remove-blocked-images retention clock', () => {
     expect(queuePruneIds()).not.toContain(6);
   });
 
-  it('keeps a hold-marker owner’s row in the shared hold selection out of the batch', async () => {
+  it('selection case 1', async () => {
     evidenceHeldUserIds.push(777);
     extraImages.push({ id: 12, userId: 777, blockedFor: 'moderated', ingestion: 'Error' });
     extraQueue.push({ entityId: 12, createdAt: EXPIRED });

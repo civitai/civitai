@@ -331,6 +331,13 @@ export async function markImageScanError({
     RETURNING ("scanJobs"->>'retryCount')::int as "retryCount", type as "mediaType",
       "userId"
   `;
+  await queueCdnAccessSyncWhen(
+    imageId,
+    Prisma.sql`"ingestion" = ${
+      ImageIngestionStatus.Error
+    }::"ImageIngestionStatus" AND ${scanKeepsRowSql('Image')}`,
+    'scan-error-cdn-sync'
+  );
   return {
     retryCount: rows[0]?.retryCount ?? null,
     mediaType: rows[0]?.mediaType ?? null,
@@ -529,6 +536,27 @@ export type ScanOutcome = {
   /** Present only when the image was audited (i.e. not the `blocked` short-circuit). */
   audit?: Awaited<ReturnType<typeof auditScanResults>>;
 };
+
+/** The `needsReview` a skipped verdict leaves: it fills only an empty one. */
+export const reviewKeyAfterSkipSql = (
+  reviewKey: string | null
+) => Prisma.sql`COALESCE("needsReview", CASE
+  WHEN COALESCE("ingestion" = 'Blocked'::"ImageIngestionStatus" OR lower("blockedFor") = ${BlockedReason.Moderated}, false)
+    AND ${reviewKey}::text NOT IN ('csam', 'appeal') THEN NULL
+  ELSE ${reviewKey}::text END)`;
+
+/**
+ * Queues a CDN access sync for the image when `condition` holds on its row. A failure is logged and
+ * never thrown: the caller's write has landed, and a retried callback would count twice.
+ */
+async function queueCdnAccessSyncWhen(imageId: number, condition: Prisma.Sql, name: string) {
+  await dbWrite.$queryRaw`
+    SELECT queue_cdn_access_sync(id, 'Image', NULL)::text AS queued
+    FROM "Image" WHERE id = ${imageId} AND ${condition}
+  `.catch((error: Error) => {
+    logToAxiom({ type: 'error', name, imageId, message: error.message });
+  });
+}
 
 /**
  * A block a scan must not lift: the owner is banned or held, or a hold kept the image. The fresh
@@ -763,7 +791,7 @@ export async function resolveScanOutcome({
         ELSE COALESCE("metadata", '{}'::jsonb) || ${metadataJson}::jsonb END`;
   const lifting = toUpdate.ingestion !== ImageIngestionStatus.Blocked;
   // Rows the SET above already re-blocks are left to it.
-  const keptFromScan = Prisma.sql`(COALESCE("ingestion" IN ('Blocked'::"ImageIngestionStatus", 'Error'::"ImageIngestionStatus"), false)
+  const keptFromScan = Prisma.sql`(COALESCE("ingestion" IN ('Blocked'::"ImageIngestionStatus", 'Error'::"ImageIngestionStatus", 'NotFound'::"ImageIngestionStatus"), false)
     AND ${scanKeepsRowSql('Image')} AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM})`;
   let rowsWritten: number | undefined;
   await writeWithNsfwAxes(
@@ -821,7 +849,7 @@ export async function resolveScanOutcome({
       UPDATE "Image" SET
         "minor" = "minor" OR ${(toUpdate.minor as boolean) ?? false},
         "poi" = "poi" OR ${(toUpdate.poi as boolean) ?? false},
-        "needsReview" = COALESCE("needsReview", ${reviewKey})
+        "needsReview" = ${reviewKeyAfterSkipSql(reviewKey)}
       WHERE id = ${image.id} AND ${keptFromScan} AND NOT ${graceBlockedSql}
     `.catch((error: Error) => {
       logToAxiom({
@@ -832,6 +860,7 @@ export async function resolveScanOutcome({
       });
       return 0;
     });
+    await queueCdnAccessSyncWhen(image.id, keptFromScan, 'scan-skip-cdn-sync');
     const rows = await dbWrite.$queryRaw<
       { ingestion: ImageIngestionStatus; blockedFor: string | null; nsfwLevel: number }[]
     >`
@@ -853,6 +882,12 @@ export async function resolveScanOutcome({
       toUpdate.nsfwLevel = scanLevel = kept.nsfwLevel;
     }
   }
+  if (!blocking && rowsWritten && hasBlockMarker(image))
+    await queueCdnAccessSyncWhen(
+      image.id,
+      Prisma.sql`"ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+      'scan-lift-cdn-sync'
+    );
   // The side effects follow the row as written, not the verdict above: a Scanned outcome queues the
   // image for Knights review and signals its owner, though the guard kept the row CSAM-blocked. The
   // verdict has landed, so a failed read must not turn it into a scan error.
