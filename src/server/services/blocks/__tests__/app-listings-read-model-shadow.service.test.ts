@@ -10,7 +10,7 @@
  * The flag's mode (`readReadModelMode`) and serving (`serve`, mode `serve`) are at the end.
  */
 import { instrumentationRegistry } from '@civitai/telemetry/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   ListAppListingsInput,
   ListingCard,
@@ -19,6 +19,7 @@ import {
   createCachedModeGate,
   createListingsReadModelShadow,
   decodeReadModelCursor,
+  quietVariantRead,
   readModelCursor,
   readReadModelMode,
   servedCardOf,
@@ -785,6 +786,51 @@ describe("the flag's mode", () => {
     expect(made).toEqual(['override']);
   });
 
+  it('🔴 a missing (or non-variant) flag reads as the database, and logs nothing', () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const requests: unknown[] = [];
+    const missing = {
+      evaluateVariant: (request: unknown) => {
+        requests.push(request);
+        throw new Error('flag not found: app-listings-read-model');
+      },
+    };
+    const reads: ReadModelFlagReads = {
+      override: () => undefined,
+      ready: () => true,
+      variant: () => quietVariantRead(missing, 'app-listings-read-model', { surface: 'grid' }),
+    };
+    expect(readReadModelMode(reads)).toBe('database');
+    // The evaluation was made (the guard is reached), for the global entity and the surface.
+    expect(requests).toEqual([
+      { flagKey: 'app-listings-read-model', entityId: 'global', context: { surface: 'grid' } },
+    ]);
+    expect(errors).not.toHaveBeenCalled();
+    expect(warnings).not.toHaveBeenCalled();
+    errors.mockRestore();
+    warnings.mockRestore();
+  });
+
+  it('positive control: a variant flag answering serve reads as serve through the same read', () => {
+    const client = {
+      evaluateVariant: () => ({ match: true, variantKey: 'serve' }),
+    };
+    expect(quietVariantRead(client, 'app-listings-read-model', { surface: 'rest_list' })).toEqual({
+      match: true,
+      variantKey: 'serve',
+    });
+    // An unmatched evaluation never names a variant, whatever key the engine carries.
+    expect(
+      quietVariantRead(
+        { evaluateVariant: () => ({ match: false, variantKey: 'serve' }) },
+        'app-listings-read-model',
+        {}
+      )
+    ).toEqual({ match: false, variantKey: null });
+    expect(quietVariantRead(null, 'app-listings-read-model', {})).toBeNull();
+  });
+
   it('the cached gate reads at most once per window, and a throw is the database', () => {
     let t = 1_000;
     let reads = 0;
@@ -1047,6 +1093,60 @@ describe('serving (mode serve)', () => {
     );
     expect(page.items.map((c) => c.id)).toEqual(['al_alpha']);
     expect(db.calls()).toBe(0);
+  });
+
+  it('🔴 a crafted cursor with an empty id is refused before the read model and its breaker', async () => {
+    let t = NOW_MS;
+    let transitions = 0;
+    const breaker = new IndexBreaker(
+      () => ({ threshold: 1, cooldownMs: 60_000 }),
+      () => t,
+      () => {
+        transitions++;
+      }
+    );
+    decoded = { cursorSortKey: 'k', cursorId: '', cursorMean: null };
+    const shadow = makeShadow({ breaker });
+    const db = dbReadOf(DB_SERVED);
+    for (let i = 0; i < 3; i++) {
+      await shadow.serve('grid', { ...INPUT, cursor: 'crafted' }, OPTS, db.read);
+    }
+    // Shadowed too: refused the same way.
+    config.sample = 1;
+    await shadow.shadow('grid', { ...INPUT, cursor: 'crafted' }, OPTS, { items: [A] }, 'shadow');
+    expect(calls).toEqual([]);
+    expect(db.calls()).toBe(3);
+    expect(transitions).toBe(0);
+    expect(await moved()).toEqual([
+      'serve_requests_total{grid/unsupported_input}:3',
+      'shadow_requests_total{grid/unsupported_input}:1',
+    ]);
+    // Positive control: a real position is asked of the read model.
+    config.sample = 0;
+    t += 1;
+    decoded = { cursorSortKey: 'k', cursorId: 'apl_01J9Z3', cursorMean: null };
+    readModelAnswers([rmCard(A)]);
+    await shadow.serve('grid', { ...INPUT, cursor: 'real' }, OPTS, db.read);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('the mode is resolved once per request: an explicit mode wins over the flag read', async () => {
+    readModelAnswers([rmCard(A)]);
+    let reads = 0;
+    const shadow = makeShadow({
+      mode: () => {
+        reads++;
+        return 'shadow';
+      },
+    });
+    const db = dbReadOf(DB_SERVED);
+    // The request resolved serve; the flag now says shadow (its cache expired in between).
+    const page = await shadow.serve('grid', INPUT, OPTS, db.read, 'serve');
+    expect(page.items.map((c) => c.id)).toEqual(['al_alpha']);
+    // The same request's shadow call sees serve too, so it never compares the page it served.
+    expect(shadow.shadow('grid', INPUT, OPTS, page, 'serve')).toBeUndefined();
+    expect(reads).toBe(0);
+    expect(calls).toHaveLength(1);
   });
 
   it('a cursor after a sub-listing card, or no usable key: the database', async () => {

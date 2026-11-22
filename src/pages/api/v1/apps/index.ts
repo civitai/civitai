@@ -159,10 +159,12 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
       '~/server/services/blocks/app-listings-read-model-shadow.service'
     ).catch(() => null);
     const dbRead = () => listAvailableListings(parsed.data, listOpts);
+    // Resolved once, so serving and shadowing cannot see two different answers.
+    const mode = readModel?.listingReadModelMode('rest_list');
     const { items, nextCursor } = readModel
-      ? await readModel.serveListingPage('rest_list', parsed.data, listOpts, dbRead)
+      ? await readModel.serveListingPage('rest_list', parsed.data, listOpts, dbRead, mode)
       : await dbRead();
-    readModel?.shadowListingPage('rest_list', parsed.data, listOpts, { items, nextCursor });
+    readModel?.shadowListingPage('rest_list', parsed.data, listOpts, { items, nextCursor }, mode);
     const { nextPage } = getNextPage({ req, nextCursor });
     return res.status(200).json({
       items: items.map(withoutUndocumentedRestFields),

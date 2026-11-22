@@ -2084,6 +2084,8 @@ export const appListingsRouter = router({
       // the listings read model when it can answer this viewer, else from the database. At
       // `shadow`, the page the database served is asked of the read model, with the same options,
       // off the response path (never awaited, never throws into the request).
+      // The mode is resolved once, so serving and shadowing cannot see two different answers.
+      const mode = readModel?.listingReadModelMode('grid');
       const page = await listStoreGrid(
         input,
         opts,
@@ -2092,13 +2094,17 @@ export const appListingsRouter = router({
           ? {
               ...DB_READS,
               gridPage: (i, o) =>
-                readModel.serveListingPage('grid', i, o, () =>
-                  DB_READS.listAvailableListings(i, o)
+                readModel.serveListingPage(
+                  'grid',
+                  i,
+                  o,
+                  () => DB_READS.listAvailableListings(i, o),
+                  mode
                 ),
             }
           : DB_READS
       );
-      readModel?.shadowListingPage('grid', input, opts, page);
+      readModel?.shadowListingPage('grid', input, opts, page, mode);
       return page;
     }),
 

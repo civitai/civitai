@@ -1,6 +1,6 @@
 # App store listings read model: design
 
-**Status:** slices 1 to 5 of 8 done, and slice 3b, all dark. Slice 1 is the adapter side of
+**Status:** slices 1 to 5 of 9 done, and slice 3b, all dark. Slice 1 is the adapter side of
 `store-listing@v1` (`src/server/registry-adapter/listing-stream.ts`). Slice 2 is the app-index-go
 ingest behind `APP_INDEX_LISTINGS` (`internal/index/listings.go`, `internal/store/listing*.go`;
 README, "Listings read model"). Slice 3 is the read API, `GET /listings` and `GET /listings/{slug}`
@@ -10,7 +10,9 @@ Slice 4 is the site's shadow of the store grid and the public REST list behind t
 `app-listings-read-model` Flipt flag (`src/server/services/blocks/app-listings-read-model-shadow.service.ts`;
 Shadow diff, below). Slice 5 serves the store grid and the public REST list from the read model at
 the flag's `serve` variant (`serveListingPage`, same module; Serving, below), to be set per surface
-only after the gate below. Until then every listing read is served from the database.
+only after the gate below. Until then every listing read is served from the database. The `/apps`
+grid page itself asks for sub-listing cards, so neither slice reaches it yet: that needs slice 6
+(Serving, "What `grid` covers").
 
 The goal: the user-facing app store reads its listings from a read model built from the registry,
 instead of from Prisma reads in `app-listing.service.ts`. The surfaces covered are the store grid
@@ -260,7 +262,7 @@ These match `listAvailableListings`.
 ## Shadow diff
 
 Slice 4 shadows the store grid (`appListings.listAvailable`, every page) and the public REST list
-(`GET /api/v1/apps`). Detail, card and OG are slice 6. With the `app-listings-read-model` Flipt
+(`GET /api/v1/apps`). Detail, card and OG are slice 7. With the `app-listings-read-model` Flipt
 flag at `shadow` (Cutover flags), the site serves the database answer exactly as before, and
 afterwards, off the response path, asks the read model the same query and compares the two
 (`app-listings-read-model-shadow.service.ts`). At `serve`, a page served from the read model is
@@ -355,6 +357,15 @@ page, from `GET /listings` instead of from the database, when the read model can
   it was (`StoreGridReads.gridPage`). Owner, creator and moderator screens, detail, card, OG and
   testers-only or private listings never call it (What stays on the database). Every served
   card's `restrictedAudience` is null: a `public`-floor viewer is told no restricted level.
+- **What `grid` covers.** The `/apps` grid page (`AppListingsMarketplaceBody`) always asks for
+  sub-listing cards (`includeSubListings: true`), and a viewer with `app-store-sub-listings` on gets
+  them (`storeGridRequest`). The read model holds none, so every such page is `unsupported_input`,
+  served and shadowed from the database alike. With that flag on, `serve` (and `shadow`) on the
+  `grid` surface reach only the other callers of `appListings.listAvailable`, which ask for no
+  sub-listing cards: the listing page's related rail and the developer filter ("More by this
+  developer", the profile Apps tab). The `/apps` grid page can be shadowed or served only once
+  sub-listings are in the read model (slice 6). `rest_list` is unaffected: the REST catalog never
+  asks for them.
 - **Fallback.** A timeout (`APP_LISTINGS_READ_MODEL_SERVE_TIMEOUT_MS`, default 400), a 503, any
   other failure, a body that does not parse, a card that cannot be a store card (an on-site card
   without `hasPage` and `liveUrl`, or a `kind` that is not its kind data's), or a next cursor that is
@@ -399,7 +410,11 @@ Each step is reversible by undoing it; nothing before the flag changes what any 
    Cutover flags), and set to `shadow`. The flag lives in the Flipt state repository, not in this
    repo; until it exists every page is read from the database.
 5. Per surface, once the gate above passes for it: the flag at `serve` for that surface (a rule on
-   the `surface` context, `grid` or `rest_list`). Back to `shadow` is the rollback.
+   the `surface` context, `grid` or `rest_list`). Back to `shadow` is the rollback. For `grid` the
+   gate measures, and `serve` serves, only the rail and developer-filter reads while
+   `app-store-sub-listings` is on (Serving, "What `grid` covers").
+6. The `/apps` grid page: after slice 6 puts sub-listings in the read model, the gate again for
+   `grid`, now measured on the grid page itself, then `serve`.
 
 ## Cutover flags
 
@@ -512,9 +527,12 @@ served for a week.
      of every listing per request (README, "Listing API").
 5. **Slice 5 (done): serve grid and REST** at the flag's `serve` variant, per surface and after
    the gate (Serving, above), with the flag reshaped as a variant (Cutover flags).
-6. **Slice 6: shadow, then serve, detail, card and OG.**
-7. **Slice 7: launch and install** via `app-release@v1`.
-8. **Promotion** to the official registry: drop the relay gate, once the registry owner agrees.
+6. **Slice 6: sub-listings in the read model.** Required before the `/apps` grid page can be
+   shadowed or served: it always asks for sub-listing cards, and the read model has none (Serving,
+   "What `grid` covers").
+7. **Slice 7: shadow, then serve, detail, card and OG.**
+8. **Slice 8: launch and install** via `app-release@v1`.
+9. **Promotion** to the official registry: drop the relay gate, once the registry owner agrees.
 
 ## What stays on the database
 

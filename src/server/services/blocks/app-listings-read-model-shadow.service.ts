@@ -35,7 +35,6 @@ import {
   ensureFliptInitialized,
   getFliptClientSync,
   getFliptLocalOverride,
-  getFliptVariantDetailSync,
 } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import type {
@@ -94,6 +93,39 @@ export function readReadModelMode(reads: ReadModelFlagReads): ReadModelMode {
   if (!reads.ready()) return 'database';
   const detail = reads.variant();
   return detail?.match ? readModelModeOfVariant(detail.variantKey) : 'database';
+}
+
+/** The one Flipt client method {@link quietVariantRead} calls. */
+export type VariantEvaluator = {
+  evaluateVariant(request: {
+    flagKey: string;
+    entityId: string;
+    context: Record<string, string>;
+  }): { match: boolean; variantKey?: string | null };
+};
+
+/**
+ * The flag as a variant flag, for the global entity with `context`; null when there is no client,
+ * or the evaluation fails (the flag is absent, or not a variant flag). Calls the client directly,
+ * not `getFliptVariantDetailSync`, which reports every failed evaluation as an error: an absent flag
+ * is the expected state before it is created, and this is read every few seconds per process, so it
+ * must read as `database` quietly. The per-surface mode gate caches it, as the eval cache would.
+ */
+export function quietVariantRead(
+  client: VariantEvaluator | null,
+  flag: string,
+  context: Record<string, string>
+): { match: boolean; variantKey: string | null } | null {
+  if (!client) return null;
+  try {
+    const evaluation = client.evaluateVariant({ flagKey: flag, entityId: 'global', context });
+    return {
+      match: evaluation.match,
+      variantKey: evaluation.match ? evaluation.variantKey ?? null : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -515,13 +547,15 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
   /**
    * The read model's cursor at the database cursor `cursor`'s position: undefined for the first
    * page (no cursor, or one the database also reads as the first page), null for a position the
-   * read model has no row for (after a sub-listing card).
+   * read model has no row for (after a sub-listing card) or that names no listing (an empty id,
+   * which only a crafted cursor carries: refused here, so it never reaches the read model or its
+   * breaker).
    */
   async function readModelCursorOf(cursor: string | undefined): Promise<string | undefined | null> {
     if (!cursor) return undefined;
     const decoded = await deps.decodeCursor(cursor);
     if (decoded.cursorId === null || decoded.cursorSortKey === null) return undefined;
-    if (isAppSubListingId(decoded.cursorId)) return null;
+    if (decoded.cursorId === '' || isAppSubListingId(decoded.cursorId)) return null;
     return readModelCursor(decoded.cursorSortKey, decoded.cursorId, decoded.cursorMean);
   }
 
@@ -702,9 +736,10 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     surface: ReadModelSurface,
     input: ListAppListingsInput,
     opts: ListAvailableListingsOpts,
-    served: { items: readonly StoreGridItem[]; nextCursor?: string; search?: 'index' }
+    served: { items: readonly StoreGridItem[]; nextCursor?: string; search?: 'index' },
+    requestMode: ReadModelMode
   ): Promise<void> | undefined {
-    if (mode(surface) !== 'shadow') return undefined;
+    if (requestMode !== 'shadow') return undefined;
     const cfg = deps.config();
     if (!(deps.random() < cfg.sample)) return undefined;
     const record = (outcome: ReadModelShadowOutcome) => {
@@ -796,9 +831,10 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     surface: ReadModelSurface,
     input: ListAppListingsInput,
     opts: ListAvailableListingsOpts,
-    dbRead: () => Promise<P>
+    dbRead: () => Promise<P>,
+    requestMode: ReadModelMode = mode(surface)
   ): Promise<P | { items: ListingCard[]; nextCursor?: string }> {
-    if (mode(surface) !== 'serve') return dbRead();
+    if (requestMode !== 'serve') return dbRead();
     let attempt: ServeAttempt;
     try {
       attempt = await attemptServe(input, opts);
@@ -826,15 +862,18 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
       surface: ReadModelSurface,
       input: ListAppListingsInput,
       opts: ListAvailableListingsOpts,
-      served: { items: readonly StoreGridItem[]; nextCursor?: string; search?: 'index' }
+      served: { items: readonly StoreGridItem[]; nextCursor?: string; search?: 'index' },
+      requestMode?: ReadModelMode
     ): Promise<void> | undefined {
       try {
-        return decide(surface, input, opts, served);
+        return decide(surface, input, opts, served, requestMode ?? mode(surface));
       } catch {
         return undefined;
       }
     },
     serve,
+    /** The flag's mode for `surface`: resolve it once per request and pass it to both calls. */
+    mode,
     servedComparison: () => servedComparison,
     inFlight: () => inFlight,
   };
@@ -868,7 +907,7 @@ function readFlagMode(surface: ReadModelSurface): ReadModelMode {
       void ensureFliptInitialized().catch(() => undefined);
       return false;
     },
-    variant: () => getFliptVariantDetailSync(flag, 'global', context),
+    variant: () => quietVariantRead(getFliptClientSync(), flag, context),
   });
 }
 
@@ -937,10 +976,11 @@ export function shadowListingPage(
   surface: ReadModelSurface,
   input: ListAppListingsInput,
   opts: ListAvailableListingsOpts,
-  served: { items: readonly StoreGridItem[]; nextCursor?: string; search?: 'index' }
+  served: { items: readonly StoreGridItem[]; nextCursor?: string; search?: 'index' },
+  mode?: ReadModelMode
 ): void {
   try {
-    void getProcessShadow().shadow(surface, input, opts, served);
+    void getProcessShadow().shadow(surface, input, opts, served, mode);
   } catch {
     // A shadow never affects the request.
   }
@@ -956,7 +996,8 @@ export function serveListingPage<P extends ListingPage>(
   surface: ReadModelSurface,
   input: ListAppListingsInput,
   opts: ListAvailableListingsOpts,
-  dbRead: () => Promise<P>
+  dbRead: () => Promise<P>,
+  mode?: ReadModelMode
 ): Promise<P | { items: ListingCard[]; nextCursor?: string }> {
   let processServe: ReturnType<typeof createListingsReadModelShadow>;
   try {
@@ -964,5 +1005,19 @@ export function serveListingPage<P extends ListingPage>(
   } catch {
     return dbRead();
   }
-  return processServe.serve(surface, input, opts, dbRead);
+  return processServe.serve(surface, input, opts, dbRead, mode);
+}
+
+/**
+ * The flag's mode for `surface`, for one request: resolve it once and pass it to both
+ * `serveListingPage` and `shadowListingPage`, so a flip between the two calls (the mode gate's
+ * cache expiring) cannot compare a page the read model served against the read model. Never throws:
+ * `database` on any failure.
+ */
+export function listingReadModelMode(surface: ReadModelSurface): ReadModelMode {
+  try {
+    return getProcessShadow().mode(surface);
+  } catch {
+    return 'database';
+  }
 }
