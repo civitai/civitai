@@ -9790,8 +9790,10 @@ export const blocksRouter = router({
     //     MIGRATIONS, which no zod schema governs.
     //   - `appblk-*` clients get `allowedScopes` written directly by
     //     publish-request.service (also bypassing zod). Safe by construction, not by cap:
-    //     `deriveOauthBitmaskFromBlockScopes` maps only bits below 25, and those clients
-    //     carry `grants: []` so they cannot mint an account bearer token at all.
+    //     `deriveOauthBitmaskFromBlockScopes` maps only bits below 25 (`appBlockOauthCeiling`
+    //     additionally keeps an operator-granted AppDataRead, bit 32, the client already
+    //     holds — never bit 25), and those clients carry `grants: []` so they cannot mint
+    //     an account bearer token at all.
     // 100777985 is not a superset of Full: it carries bits 0, 14, 15, 16, 25 and 26 —
     // UserRead, AIServicesRead, AIServicesWrite, BuzzRead, AppBlocksSubmit,
     // AppBlocksDevTunnel — and NONE of 1..13 or 17..24, so it does not contain Full

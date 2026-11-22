@@ -3241,6 +3241,81 @@ describe('approveRequest', () => {
     expect(ocUpdateArg.data.allowedScopes).toBe(0n);
   });
 
+  // An operator-granted AppDataRead bit (1n << 32n) maps to no manifest scope, so re-deriving the
+  // ceiling from the manifest alone would drop it on every approve. Fixture bits are pairwise
+  // distinct: the manifest derives 4n (models:read:self) | 1n (user:read:self) = 5n; the client also
+  // holds 8n (a bit the manifest no longer declares) and AppsRead 2147483648n (an opt-in bit that is
+  // NOT operator-preserved), both of which must still be dropped.
+  describe('re-deriving an existing app-block client keeps an operator-granted AppDataRead bit', () => {
+    const scopes = ['models:read:self', 'user:read:self'];
+
+    async function approveSubsequentWithClientScopes(allowedScopes: bigint) {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ version: '0.2.0', scopes }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'appblk-hello',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        app: { allowedScopes, allowedOrigins: ['https://hello.civit.ai'] },
+      });
+      // The ceiling approve reads on the primary before re-capping it.
+      mockDbWrite.oauthClient.findUnique.mockResolvedValueOnce({ allowedScopes });
+      mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0', scopes });
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      expect(mockDbWrite.oauthClient.update).toHaveBeenCalledOnce();
+      const arg = mockDbWrite.oauthClient.update.mock.calls[0][0];
+      expect(arg.where).toEqual({ id: 'appblk-hello' });
+      expect(arg.data.grants).toEqual([]);
+      return arg.data.allowedScopes;
+    }
+
+    it('a subsequent version keeps the bit the client holds; stale bits still follow the manifest', async () => {
+      // 4294967296n (AppDataRead) | 2147483648n (AppsRead) | 8n
+      expect(await approveSubsequentWithClientScopes(6442450952n)).toBe(4294967301n);
+    });
+
+    it('a subsequent version does not grant the bit to a client without it', async () => {
+      // 2147483648n (AppsRead) | 8n | 1n
+      expect(await approveSubsequentWithClientScopes(2147483657n)).toBe(5n);
+    });
+
+    async function approveFirstVersionRetryWithClientScopes(allowedScopes: bigint) {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ scopes }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ scopes });
+      // The deterministic client id already exists (an earlier attempt created it).
+      const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+      mockDbWrite.oauthClient.create.mockRejectedValueOnce(p2002);
+      mockDbRead.oauthClient.findUnique.mockResolvedValueOnce({
+        id: 'appblk-hello',
+        allowedScopes,
+      });
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      expect(mockDbWrite.oauthClient.update).toHaveBeenCalledOnce();
+      const arg = mockDbWrite.oauthClient.update.mock.calls[0][0];
+      expect(arg.where).toEqual({ id: 'appblk-hello' });
+      expect(arg.data.grants).toEqual([]);
+      return arg.data.allowedScopes;
+    }
+
+    it('a first-version retry onto an existing client keeps the bit it holds', async () => {
+      expect(await approveFirstVersionRetryWithClientScopes(6442450952n)).toBe(4294967301n);
+    });
+
+    it('a first-version retry onto an existing client without the bit does not grant it', async () => {
+      expect(await approveFirstVersionRetryWithClientScopes(2147483657n)).toBe(5n);
+    });
+  });
+
   // The validator here is the real one, so the padded manifest is accepted, not refused.
   it('writes a padded tagline/repository trimmed into app_blocks.manifest', async () => {
     const { approveRequest } = await import('../publish-request.service');
