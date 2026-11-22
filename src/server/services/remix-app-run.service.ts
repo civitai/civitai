@@ -612,7 +612,8 @@ async function advance({
       : null;
   if (othersApp) {
     const judged = await assertAuthorPartPasses(app.slug, part);
-    await assertWholePromptPasses(app.slug, request.prompt, judged, caller);
+    // Trimmed, as the graph hands it to the viewer's audit.
+    await assertWholePromptPasses(app.slug, request.prompt.trim(), judged, caller);
   }
 
   const tags = remixRunTags({ slug: app.slug, runId, segment: index, runtime: true });
