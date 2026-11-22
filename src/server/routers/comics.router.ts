@@ -54,6 +54,7 @@ import {
   withServableImage,
 } from '~/server/common/image-visibility';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { hasBlockMarker } from '~/server/common/image-block-marker';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
@@ -693,7 +694,17 @@ async function getReferenceImages(referenceId: number) {
       images: {
         orderBy: { position: 'asc' },
         include: {
-          image: { select: { id: true, url: true, width: true, height: true, blockedFor: true } },
+          image: {
+            select: {
+              id: true,
+              url: true,
+              width: true,
+              height: true,
+              blockedFor: true,
+              nsfwLevel: true,
+              ingestion: true,
+            },
+          },
         },
       },
     },
@@ -702,7 +713,7 @@ async function getReferenceImages(referenceId: number) {
   if (!reference) return { referenceName: '', refImages: [], skipped: false };
   // A blocked image is never sent to a generation.
   const refImages = reference.images
-    .filter((ri) => !ri.image.blockedFor)
+    .filter((ri) => !hasBlockMarker(ri.image))
     .map((ri) => ({
       imageId: ri.image.id,
       url: getEdgeUrl(ri.image.url, { original: true }),

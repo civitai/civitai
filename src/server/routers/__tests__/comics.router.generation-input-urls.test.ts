@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
   assertStoredUnblocked: vi.fn(),
   getOrchestratorToken: vi.fn(async () => 'token'),
   submit: vi.fn(),
+  whatIf: vi.fn(async () => {
+    throw new Error('stop');
+  }),
 }));
 
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
@@ -27,9 +30,7 @@ vi.mock('~/server/services/orchestrator/queue-limits', () => ({
 vi.mock('~/server/services/orchestrator/preset-image-gen.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   submitPresetImageGen: mocks.submit,
-  whatIfPresetImageGen: async () => {
-    throw new Error('stop');
-  },
+  whatIfPresetImageGen: mocks.whatIf,
 }));
 vi.mock('~/server/services/generation-input-urls', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -410,5 +411,85 @@ describe('comics generation inputs the server loads', () => {
       expect.objectContaining({ where: { id: { in: [5] }, userId: USER_ID } })
     );
     expect(dbMock.dbRead.comicReference.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('stored reference images', () => {
+  const REF_ID = 21;
+  const refImage = (id: number, over: Record<string, unknown> = {}) => ({
+    image: {
+      id,
+      url: `ref-${id}`,
+      width: 512,
+      height: 512,
+      blockedFor: null,
+      nsfwLevel: 1,
+      ingestion: 'Scanned',
+      ...over,
+    },
+  });
+  const stored = (images: ReturnType<typeof refImage>[]) => {
+    dbMock.dbRead.comicReference.findMany.mockResolvedValue([{ id: REF_ID, name: 'Ref' }] as never);
+    dbMock.dbRead.comicReference.findUnique.mockResolvedValue({ name: 'Ref', images } as never);
+  };
+  const mixed = () => [
+    refImage(1),
+    refImage(2, { nsfwLevel: 32 }),
+    refImage(3, { ingestion: 'Blocked' }),
+    refImage(4, { blockedFor: 'moderated' }),
+    refImage(5, { nsfwLevel: 32, userId: USER_ID }),
+  ];
+
+  const quotedRefIds = async () => {
+    mocks.assertInputs.mockResolvedValue(undefined);
+    await caller()
+      .getGenerationCostEstimate({ referenceIds: [REF_ID] })
+      .catch(() => undefined);
+    const images = (mocks.whatIf.mock.calls[0][0] as { images: { url: string }[] | null }).images;
+    return (images ?? []).map((i) => i.url);
+  };
+
+  const submittedRefUrls = async () => {
+    mocks.assertInputs.mockResolvedValue(undefined);
+    mocks.assertUsable.mockResolvedValue(undefined);
+    dbMock.dbRead.comicChapter.findUnique.mockResolvedValue({
+      project: { id: 11, userId: USER_ID, baseModel: null },
+    } as never);
+    dbMock.dbWrite.comicPanel.create.mockImplementation((async (args: { data: unknown }) => ({
+      id: 1,
+      ...(args.data as object),
+    })) as never);
+    await caller()
+      .createPanel({ projectId: 11, chapterPosition: 0, prompt: 'p', referenceIds: [REF_ID] })
+      .catch(() => undefined);
+    const data = dbMock.dbWrite.comicPanel.create.mock.calls[0]?.[0] as
+      | { data: { metadata: { referenceImages: { url: string }[] } } }
+      | undefined;
+    return (data?.data.metadata.referenceImages ?? []).map((i) => i.url);
+  };
+
+  it('quote and submit carry the same images', async () => {
+    stored(mixed());
+    const quoted = await quotedRefIds();
+    const submitted = await submittedRefUrls();
+    expect(quoted).toHaveLength(1);
+    expect(quoted[0]).toContain('ref-1');
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0]).toContain('ref-1');
+  });
+
+  it('quote carries none and submit refuses before writing when none are usable', async () => {
+    stored(mixed().slice(1));
+    expect(await quotedRefIds()).toEqual([]);
+    mocks.assertUsable.mockResolvedValue(undefined);
+    await expect(
+      caller().createPanel({
+        projectId: 11,
+        chapterPosition: 0,
+        prompt: 'p',
+        referenceIds: [REF_ID],
+      })
+    ).rejects.toThrow('References have no reference images');
+    expect(dbMock.dbWrite.comicPanel.create).not.toHaveBeenCalled();
   });
 });
