@@ -145,8 +145,17 @@ const RESPONSE_HEADER_MAX_CHARS = 1024;
 /** A response's headers as `res.getHeaders()` returns them. */
 export type ShadowResponseHeaders = Record<string, string | string[] | number | undefined>;
 
-/** The route's response, read for its headers once the handler has answered. */
-export type ShadowResponseLike = { getHeaders?: () => ShadowResponseHeaders };
+/**
+ * The route's response, read for its headers once the handler has answered. A REST sample whose
+ * response has not sent its headers yet (`headersSent === false`, with `once`) is read on the
+ * response's `finish` instead: see `finish`.
+ */
+export type ShadowResponseLike = {
+  getHeaders?: () => ShadowResponseHeaders;
+  statusCode?: number;
+  headersSent?: boolean;
+  once?(event: 'finish' | 'close', listener: () => void): unknown;
+};
 
 /**
  * The `names` (default FEED_GO_COMPARED_RESPONSE_HEADERS) a response carries, lowercased, each a
@@ -738,6 +747,16 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
    * response headers (when the route passes them). A response whose headers cannot be read is not
    * sent (`skipped_headers`), so its comparison is not silently lost. Synchronous, returns nothing to
    * await, never throws.
+   *
+   * A REST route calls this from its `finally`, right after `res.json`, but the response may not be
+   * written yet: the endpoint wrappers' `withAxiom` replaces `res.json` with one that flushes the
+   * request's logs first and only then calls Next's, and Next's `res.json` is what sets the ETag
+   * (api-resolver's `sendData`, its `generateETag` over the body string, even with `generateEtags`
+   * off). So when the response has not sent its headers yet, the headers and the status are read
+   * when it emits `finish`, which is exactly what went out (a 304 Next answered to `If-None-Match` is
+   * then `skipped_status`). The in-flight slot is taken first, so the samples waiting on a response
+   * are bounded like the ones in flight; a response that closes without finishing (a client abort)
+   * is `skipped_status`. A tRPC sample is read now, as before.
    */
   function finish(
     sample: FeedGoShadowSample,
@@ -753,6 +772,51 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       }
       if (!sample.captured) {
         record('skipped_no_capture', sample.endpoint);
+        release(sample);
+        return;
+      }
+      if (
+        isRestEndpoint(sample.endpoint) &&
+        response?.headersSent === false &&
+        typeof response.once === 'function'
+      ) {
+        if (!takeSlot(sample)) return;
+        const sent = response;
+        let settled = false;
+        sent.once('finish', () => {
+          if (settled) return;
+          settled = true;
+          complete(
+            sample,
+            typeof sent.statusCode === 'number' ? sent.statusCode : statusCode,
+            sent
+          );
+        });
+        sent.once('close', () => {
+          if (settled) return;
+          settled = true;
+          complete(sample, 0, sent);
+        });
+        return;
+      }
+      complete(sample, statusCode, response);
+    } catch {
+      sample.captured = undefined;
+      release(sample);
+    }
+  }
+
+  /** `finish`'s second half, once the response's headers are final. Never throws. */
+  function complete(
+    sample: FeedGoShadowSample,
+    statusCode: number,
+    response?: ShadowResponseLike
+  ): void {
+    try {
+      if (sample.done) return;
+      if (statusCode !== 200) {
+        record('skipped_status', sample.endpoint);
+        sample.captured = undefined;
         release(sample);
         return;
       }
@@ -776,20 +840,28 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
           sample.responseHeaders = pickShadowResponseHeaders(headers);
         }
       }
-      if (!sample.holdsSlot) {
-        // A REST sample is bounded here, after the handler: it held nothing while it ran.
-        if (!admit(sample.endpoint)) {
-          sample.captured = undefined;
-          release(sample);
-          return;
-        }
-        inFlight++;
-        sample.holdsSlot = true;
-      }
+      if (!takeSlot(sample)) return;
       schedule(() => send(sample));
     } catch {
+      sample.captured = undefined;
       release(sample);
     }
+  }
+
+  /**
+   * A REST sample is bounded after the handler (it held nothing while it ran): take its in-flight
+   * slot and token now, unless it holds one. False (and the sample released) when dropped.
+   */
+  function takeSlot(sample: FeedGoShadowSample): boolean {
+    if (sample.holdsSlot) return true;
+    if (!admit(sample.endpoint)) {
+      sample.captured = undefined;
+      release(sample);
+      return false;
+    }
+    inFlight++;
+    sample.holdsSlot = true;
+    return true;
   }
 
   return {
