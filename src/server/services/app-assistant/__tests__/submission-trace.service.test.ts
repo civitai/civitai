@@ -18,6 +18,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 const {
   buildSubmissionTrace,
   bundleSignalFiles,
+  deleteAssistantTracesOfAccount,
   MAX_TRACED_SESSIONS,
   recordSubmissionTrace,
   transcriptKey,
@@ -272,5 +273,90 @@ describe('bundleSignalFiles', () => {
     zip.file('README.md', '# hi');
     const files = await bundleSignalFiles(await zip.generateAsync({ type: 'nodebuffer' }));
     expect([...files.keys()].sort()).toEqual(['package.json', 'src/app.css']);
+  });
+});
+
+describe('deleteAssistantTracesOfAccount (retention: deleted with the account)', () => {
+  const P = (request: string) => `${TRANSCRIPT_PREFIX}/${request}/`;
+  function world(failKey?: string) {
+    const objects = new Set([
+      `${P('pubreq_one')}a.json`,
+      `${P('pubreq_one')}stray.json`, // in the store, but no longer named by the row
+      `${P('pubreq_two')}b.json`,
+      `${P('pubreq_other_user')}c.json`,
+    ]);
+    const rowsDeleted: number[] = [];
+    const deps = {
+      traces: async () => [
+        {
+          publishRequestId: 'pubreq_one',
+          snapshots: [{ conversationId: 'c1', key: `${P('pubreq_one')}a.json` }],
+        },
+        {
+          publishRequestId: 'pubreq_two',
+          // A key outside this request's prefix is never deleted through it.
+          snapshots: [
+            { conversationId: 'c2', key: `${P('pubreq_other_user')}c.json` },
+            { conversationId: 'c3', error: 'not-found' },
+          ],
+        },
+      ],
+      listKeys: async (prefix: string) => [...objects].filter((key) => key.startsWith(prefix)),
+      deleteObject: async (key: string) => {
+        if (key === failKey) throw new Error('store refused');
+        objects.delete(key);
+      },
+      deleteRows: async (userId: number) => {
+        rowsDeleted.push(userId);
+        return { traces: 2, links: 5 };
+      },
+    };
+    return { objects, rowsDeleted, deps };
+  }
+
+  it('deletes every frozen transcript under the user’s requests, then their trace and link rows', async () => {
+    const { objects, rowsDeleted, deps } = world();
+    expect(await deleteAssistantTracesOfAccount(SUBMITTER, deps)).toEqual({
+      objects: 3,
+      failedObjects: 0,
+      traces: 2,
+      links: 5,
+    });
+    expect([...objects]).toEqual([`${P('pubreq_other_user')}c.json`]);
+    expect(rowsDeleted).toEqual([SUBMITTER]);
+  });
+
+  it('an object it cannot delete keeps the rows, so they still name what is left', async () => {
+    const { objects, rowsDeleted, deps } = world(`${P('pubreq_two')}b.json`);
+    expect(await deleteAssistantTracesOfAccount(SUBMITTER, deps)).toEqual({
+      objects: 2,
+      failedObjects: 1,
+      traces: 0,
+      links: 0,
+    });
+    expect(objects.has(`${P('pubreq_two')}b.json`)).toBe(true);
+    expect(rowsDeleted).toEqual([]);
+  });
+
+  it('a listing that fails still deletes the keys the rows name, and keeps the rows', async () => {
+    const { objects, rowsDeleted, deps } = world();
+    deps.listKeys = async () => {
+      throw new Error('list refused');
+    };
+    const outcome = await deleteAssistantTracesOfAccount(SUBMITTER, deps);
+    expect(outcome).toMatchObject({ objects: 1, failedObjects: 2 });
+    expect(objects.has(`${P('pubreq_one')}a.json`)).toBe(false);
+    expect(rowsDeleted).toEqual([]);
+  });
+
+  it('never throws: a trace read that fails is a failure counted, nothing deleted', async () => {
+    const { rowsDeleted, deps } = world();
+    deps.traces = async () => {
+      throw new Error('db down');
+    };
+    await expect(deleteAssistantTracesOfAccount(SUBMITTER, deps)).resolves.toMatchObject({
+      failedObjects: 1,
+    });
+    expect(rowsDeleted).toEqual([]);
   });
 });

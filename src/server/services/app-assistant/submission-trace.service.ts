@@ -276,6 +276,150 @@ export async function recordSubmissionTrace(input: SubmissionTraceInput): Promis
   }
 }
 
+// ─── retention: deleted with the account ───────────────────────────────────────────────────
+//
+// A trace is kept as long as its publish request exists, whatever the user does to the chat itself,
+// and is deleted when the user's ACCOUNT is: the frozen transcripts in the bundle store, the trace
+// rows and the chat ↔ app link rows. Account deletion here is a SOFT delete (`deleteUser` scrubs the
+// User row and keeps it), so the tables' ON DELETE CASCADE never fires for it; `deleteUser` calls
+// `deleteAssistantTracesOfAccount` instead. No code path deletes a publish request row today; if one
+// is ever added, the trace row cascades with it, and its frozen transcripts must be deleted there
+// too (`deleteTraceSnapshots`), since the store has no cascade.
+
+export interface TraceDeletionDeps {
+  /** The traces of submissions this user made. */
+  traces(userId: number): Promise<Array<{ publishRequestId: string; snapshots: unknown }>>;
+  /** Every key in the bundle store under `prefix`. */
+  listKeys(prefix: string): Promise<string[]>;
+  deleteObject(key: string): Promise<void>;
+  /** Deletes the user's trace rows and link rows; how many of each. */
+  deleteRows(userId: number): Promise<{ traces: number; links: number }>;
+}
+
+export interface TraceDeletion {
+  objects: number;
+  failedObjects: number;
+  traces: number;
+  links: number;
+}
+
+/**
+ * Deletes one request's frozen transcripts: every key its trace names, and every key under the
+ * request's own prefix (a snapshot whose row entry was lost is found that way). Returns how many
+ * were deleted and how many could not be.
+ */
+export async function deleteTraceSnapshots(
+  trace: { publishRequestId: string; snapshots: unknown },
+  deps: Pick<TraceDeletionDeps, 'listKeys' | 'deleteObject'>
+): Promise<{ deleted: number; failed: number }> {
+  const prefix = `${TRANSCRIPT_PREFIX}/${trace.publishRequestId}/`;
+  const keys = new Set<string>();
+  for (const entry of Array.isArray(trace.snapshots) ? (trace.snapshots as SnapshotEntry[]) : [])
+    if (typeof entry?.key === 'string' && entry.key.startsWith(prefix)) keys.add(entry.key);
+  let failed = 0;
+  try {
+    for (const key of await deps.listKeys(prefix)) keys.add(key);
+  } catch {
+    // The listing failing still leaves the row's own keys to delete; counted as one failure.
+    failed++;
+  }
+  let deleted = 0;
+  for (const key of keys) {
+    try {
+      await deps.deleteObject(key);
+      deleted++;
+    } catch {
+      failed++;
+    }
+  }
+  return { deleted, failed };
+}
+
+/**
+ * Everything App Assistant tracing holds about one account, deleted: frozen transcripts first, then
+ * the rows. If any transcript could not be deleted the ROWS ARE KEPT, so the trace still names what
+ * is left for the next attempt (and the failure is logged); otherwise rows and objects go together.
+ * Never throws.
+ */
+export async function deleteAssistantTracesOfAccount(
+  userId: number,
+  deps: TraceDeletionDeps
+): Promise<TraceDeletion> {
+  const outcome: TraceDeletion = { objects: 0, failedObjects: 0, traces: 0, links: 0 };
+  try {
+    for (const trace of await deps.traces(userId)) {
+      const { deleted, failed } = await deleteTraceSnapshots(trace, deps);
+      outcome.objects += deleted;
+      outcome.failedObjects += failed;
+    }
+    if (outcome.failedObjects === 0) Object.assign(outcome, await deps.deleteRows(userId));
+  } catch (err) {
+    outcome.failedObjects++;
+    logToAxiom({
+      type: 'error',
+      name: 'app-assistant.tracing.account-delete-failed',
+      message: 'App Assistant traces of a deleted account were not all deleted',
+      userId,
+      error: safeError(err),
+    });
+    return outcome;
+  }
+  if (outcome.failedObjects > 0)
+    logToAxiom({
+      type: 'error',
+      name: 'app-assistant.tracing.account-delete-partial',
+      message: 'Some frozen App Assistant transcripts of a deleted account were not deleted',
+      userId,
+      payload: { failedObjects: outcome.failedObjects, deletedObjects: outcome.objects },
+    });
+  return outcome;
+}
+
+/** The real dependencies of `deleteAssistantTracesOfAccount`. */
+export async function liveTraceDeletionDeps(): Promise<TraceDeletionDeps> {
+  const [{ dbWrite }, s3, { ListObjectsV2Command, DeleteObjectCommand }] = await Promise.all([
+    import('~/server/db/client'),
+    import('~/utils/bundle-s3'),
+    import('@aws-sdk/client-s3'),
+  ]);
+  return {
+    traces: (userId) =>
+      // primary: the account was deleted this request; its newest trace must not be missed.
+      dbWrite.appPublishRequestTrace.findMany({
+        where: { userId },
+        select: { publishRequestId: true, snapshots: true },
+      }),
+    listKeys: async (prefix) => {
+      const keys: string[] = [];
+      let token: string | undefined;
+      do {
+        const page = await s3.getBundleS3Client().send(
+          new ListObjectsV2Command({
+            Bucket: s3.getBundleBucket(),
+            Prefix: prefix,
+            ...(token ? { ContinuationToken: token } : {}),
+          })
+        );
+        for (const object of page.Contents ?? []) if (object.Key) keys.push(object.Key);
+        token = page.IsTruncated ? page.NextContinuationToken : undefined;
+      } while (token);
+      return keys;
+    },
+    deleteObject: async (key) => {
+      await s3
+        .getBundleS3Client()
+        .send(new DeleteObjectCommand({ Bucket: s3.getBundleBucket(), Key: key }));
+    },
+    deleteRows: async (userId) => {
+      const [traces, links] = await dbWrite.$transaction([
+        dbWrite.appPublishRequestTrace.deleteMany({ where: { userId } }),
+        dbWrite.appAssistantSessionLink.deleteMany({ where: { userId } }),
+      ]);
+      return { traces: traces.count, links: links.count };
+    },
+  };
+}
+
 // ─── reads (moderator-only: every caller is a moderator endpoint) ────────────────────────────
 
 const traceSelect = {

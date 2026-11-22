@@ -45,6 +45,18 @@ describe('personal-data-export column policy, over every planned read', () => {
     expect(selected('Session')).toContain('expires');
   });
 
+  it('App Assistant tracing: the trace row’s ids are exported, its moderation analysis is not', () => {
+    // Invariant guard (JSON is withheld by default), named literally. The frozen transcripts are
+    // bundle-store objects, which no export source reads.
+    expect(selected('AppPublishRequestTrace')).toEqual(
+      expect.arrayContaining(['publishRequestId', 'slug', 'conversationIds', 'createdAt'])
+    );
+    expect(selected('AppPublishRequestTrace')).not.toContain('signals');
+    expect(selected('AppAssistantSessionLink')).toEqual(
+      expect.arrayContaining(['conversationId', 'appSlug', 'turnCount', 'lastModel'])
+    );
+  });
+
   /**
    * Named literally, not through the policy's own lists and patterns: a check that judges the plan
    * with the same rules that made it moves with them, and stays green when one is weakened.

@@ -79,7 +79,10 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   AppBlockPublishRequest: { subject: ['submittedByUserId'], staff: ['reviewedByUserId'] },
   // Which of the user's App Assistant chats worked on which of their apps.
   AppAssistantSessionLink: { subject: ['userId'] },
-  // What a submission of theirs was traced to: their chats' ids, snapshot keys and the signals.
+  // What a submission of theirs was traced to: the request, slug and chat ids. Its `signals` and
+  // `snapshots` are JSON, so withheld (not in JSON_ALLOWED). The frozen chat transcripts are
+  // bundle-store objects, which no export source reads; they are a copy of the user's own App
+  // Assistant chats.
   AppPublishRequestTrace: { subject: ['userId'] },
   AppListing: { subject: ['userId'] },
   PostIntentManifest: { subject: ['userId'] },
