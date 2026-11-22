@@ -128,6 +128,20 @@ describe('saveRemixApp', () => {
     expect(dbMock.dbWrite.appBlock.create).not.toHaveBeenCalled();
   });
 
+  it('🔴 refuses a save whose row stopped being a remix app (P2025), and bumps nothing', async () => {
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(stored(pixelArt, 2) as never);
+    dbMock.dbWrite.appBlock.update.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+        code: 'P2025',
+        clientVersion: 'test',
+      })
+    );
+    await expect(saveRemixApp({ ...pixelArt, name: 'Pixels' })).rejects.toMatchObject({
+      code: 'P2025',
+    });
+    expect(redisMock.redis.set).not.toHaveBeenCalled();
+  });
+
   it('saves a stored video.remix row on its own slot, so a mod can still edit it', async () => {
     const video = { ...pixelArt, target: 'video.remix' as const };
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(stored(video, 2) as never);

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import JSZip from 'jszip';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
@@ -1053,6 +1054,26 @@ describe('approveRequest — a remix app row', () => {
       expect(forgejo.commitFiles).not.toHaveBeenCalled();
     }
   );
+
+  it('🔴 refuses when the status-guarded write matches nothing (P2025), re-capping and committing nothing', async () => {
+    db.read.appBlock.findFirst.mockResolvedValue({ ...existingAppBlock(), status: 'approved' });
+    // The row became a remix app after the guard read it: only the guarded write misses.
+    db.write.appBlock.update.mockImplementation((async (a: { where?: { status?: unknown } }) => {
+      if (a?.where?.status)
+        throw new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+          code: 'P2025',
+          clientVersion: 'test',
+        });
+      return {};
+    }) as never);
+    const forgejo = await import('~/server/services/blocks/forgejo.service');
+
+    await expect(
+      approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+    ).rejects.toMatchObject({ code: 'P2025' });
+    expect(db.write.oauthClient.update).not.toHaveBeenCalled();
+    expect(forgejo.commitFiles).not.toHaveBeenCalled();
+  });
 
   it('CONTROL: the same request on an approved store app replaces its manifest', async () => {
     db.read.appBlock.findFirst.mockResolvedValue({ ...existingAppBlock(), status: 'approved' });

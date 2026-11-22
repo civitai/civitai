@@ -195,7 +195,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       },
     });
     if (!count) {
-      // primary: why the write above matched nothing, as of now.
+      // primary: a replica may not yet show the status that made the write match nothing.
       const now = await dbWrite.appBlock.findUnique({
         where: { id: existing.id },
         select: { status: true },

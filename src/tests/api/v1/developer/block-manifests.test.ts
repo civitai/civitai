@@ -368,6 +368,7 @@ describe('POST /api/v1/developer/block-manifests', () => {
       });
     });
 
+    // The primary read is the point: a replica can lag behind the status that refuses the upload.
     it('reads the row from the primary, never a replica', async () => {
       mockDbRead.appBlock.findUnique.mockResolvedValue(row('approved', { something: 'old' }));
       const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');

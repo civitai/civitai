@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The on-site approve's last step runs after the code is committed, so its hold check must be
@@ -62,6 +63,29 @@ describe('finaliseOnsiteApprove', () => {
       expect.anything(),
       expect.objectContaining({ slug: 'app-a', actorUserId: 901, afterSideEffects: true })
     );
+  });
+
+  it('🔴 a late hold on a row that matches no store status (P2025) fails the transaction: no token revoke, no ceiling restore', async () => {
+    resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [12] });
+    const tx = fakeTx();
+    tx.appBlock.update.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+        code: 'P2025',
+        clientVersion: 'test',
+      })
+    );
+    await expect(
+      finaliseOnsiteApprove(
+        tx as never,
+        {
+          ...input,
+          priorVersion: { block: {}, oauthClientId: 'oc_1', allowedScopes: 5n },
+        } as never
+      )
+    ).rejects.toMatchObject({ code: 'P2025' });
+    expect(tx.apiKey.deleteMany).not.toHaveBeenCalled();
+    expect(tx.oauthClient.update).not.toHaveBeenCalled();
+    expect(tx.appListing.updateMany).not.toHaveBeenCalled();
   });
 
   it('🔴 a late hold re-suspends the block in the same transaction and leaves the request pending', async () => {
