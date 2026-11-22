@@ -30,7 +30,16 @@ that sends nothing gets SFW results. With it, an app rated one of the listed rat
 too. Every other rating, an unknown one or none included, is answered to every caller: the site's
 database rule for the store (`matureRatingAllowed`), which the listing API applies too
 (`store.Mature.Admits`). Ratings compare case-insensitively. Any other element answers 400. The filter is in the store query, before
-`limit`, so a page is never short for it. The caller is trusted to send its viewer's own set: the
+`limit`, so a page is never short for it.
+
+The rating filtered on is the listing's own, `listingContentRating` in the app entity's body, the
+column the site's database search filters on (`listingMatureFilter`), never the entity's
+`contentRating`, which falls back to the block's rating when the listing has none or one the
+adapter does not know: such an app (listing null, unknown or `pg-13`, block mature) is answered to
+every caller, as on the database path. A body without the field (an adapter that predates it) is
+filtered on its `contentRating`, as before (`store.App.GateRating`). The `rating` a result carries
+is still the entity's `contentRating`. The field rides on the app stream itself, so this does not
+depend on the listings read model (`APP_INDEX_LISTINGS`). The caller is trusted to send its viewer's own set: the
 index checks no identity, so any caller, a browser included, may ask for any set. The web tier
 derives it from the viewer's browsing level and host (`indexMature` in
 `app-index-search.service.ts`). The parameter is part of the URL, so a shared cache keys on it.
@@ -61,7 +70,10 @@ once it treats the path as cacheable: the TTL lives here, and the CDN rule only 
   starts over.
 - `cursor_expired`, a `LayoutVersion` bump (`internal/index`), or a serving generation whose cursor
   is empty builds a new generation from an empty cursor while the old one keeps answering; the switch
-  happens in one transaction at the new one's `Live`, and the old one is dropped.
+  happens in one transaction at the new one's `Live`, and the old one is dropped. Layout 2 added the
+  listing's own rating (`listing_rating`, `listing_rated`): the columns are added at startup, a
+  layout 1 row reads `listing_rated` false and is filtered on its `contentRating` as before, and the
+  rebuild replaces it with a row read from its body.
 - Any other end of the stream reconnects with the same cursor after an exponential backoff with
   jitter (`APP_INDEX_BACKOFF_*_MS`). A quiet stream is never treated as lost (the spec: a live
   stream may be silent for any length of time); there is no response-header or idle timeout. A dead

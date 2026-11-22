@@ -414,6 +414,10 @@ export function buildEntities(
         name: listing.name,
         kind: listing.kind,
         contentRating: appContentRating(app),
+        // The listing's own rating, which the store's database search filters on
+        // (`listingMatureFilter`): app-index-go's /search filters on it too, not on the block
+        // fallback `contentRating` takes.
+        listingContentRating: listing.contentRating,
         tagline: listing.tagline,
         category: listing.category,
         iconUrl: listing.iconUrl,
