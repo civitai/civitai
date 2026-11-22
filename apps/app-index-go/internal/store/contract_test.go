@@ -137,8 +137,9 @@ func listedApp(slug, appRating string, listingRating any) App {
 // listedCatalog: what the adapter publishes for an app whose listing has no known rating, so that
 // its app entity's contentRating fell back to the block's (b1-b3), beside listings rated mature
 // (a1, a2), and bodies without the field (a3, b4), which fall back to the app's rating. a2's app
-// rating admits what its listing rating does not, so a filter on either rating alone, or on the
-// laxer of the two, answers it wrongly. Every hidden row sorts before every shown one, so a filter
+// rating admits what its listing rating does not, so a filter on the app rating, or on the laxer
+// of the two, answers it wrongly; a3 and b4 catch a filter on the listing rating alone, which
+// reads an absent field as unrated. Every hidden row sorts before every shown one, so a filter
 // applied after the limit would leave a short page.
 var listedCatalog = []struct {
 	slug, appRating string
