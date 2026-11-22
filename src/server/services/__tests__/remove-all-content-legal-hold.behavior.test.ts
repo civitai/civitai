@@ -2081,12 +2081,16 @@ describe('removeAllContent and the profile archive', () => {
 
     await removeAllContent({ id: OLD_REPORT, actorUserId: 9, archive });
 
+    expect(archive).toHaveBeenCalledTimes(1);
     expect(archive).toHaveBeenCalledWith(
       expect.objectContaining({ userId: OLD_REPORT, actorId: 9, profile: PROFILE, links: LINKS })
     );
     expect(await remaining(OLD_REPORT)).toEqual(all(0));
     const archivedAt = archive.mock.invocationCallOrder[0];
+    // From the wipe's first read of what it deletes to its last delete.
     for (const del of [
+      dbMock.dbWrite.model.findMany,
+      deleteImages,
       dbMock.dbWrite.imageReaction.deleteMany,
       dbMock.dbWrite.userLink.deleteMany,
       dbMock.dbWrite.userProfile.deleteMany,
