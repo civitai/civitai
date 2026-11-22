@@ -713,7 +713,7 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     if (!cursor) return undefined;
     const decoded = await deps.decodeCursor(cursor);
     if (decoded.cursorId === null || decoded.cursorSortKey === null) return undefined;
-    if (decoded.cursorId === '') return null;
+    if (decoded.cursorId === '' || isAppSubListingId(decoded.cursorId)) return null;
     return readModelCursor(decoded.cursorSortKey, decoded.cursorId, decoded.cursorMean);
   }
 
@@ -948,7 +948,7 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     const viewer = appIndexViewerFor(opts);
     if (!viewer) return record('unsupported_viewer');
     // A page the app index's search answered is a search result, not a grid page.
-    if (served.search === 'index') return record('unsupported_input');
+    if (opts.includeSubListings === true || served.search === 'index') return record('unsupported_input');
     if (inFlight >= cfg.maxInFlight) return record('saturated');
     // Checked without taking the half-open probe (that is taken just before the first read-model
     // call): while the breaker is open, a page does no database work either.
@@ -972,6 +972,7 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
     if (opts.viewer?.isModerator === true) return { fallback: 'unsupported_viewer' };
     const viewer = appIndexViewerFor(opts);
     if (!viewer) return { fallback: 'unsupported_viewer' };
+    if (opts.includeSubListings === true) return { fallback: 'unsupported_input' };
     const subListings = opts.includeSubListings === true;
     const cursor = input.cursor ? await readModelCursorOf(input.cursor) : undefined;
     if (cursor === null) return { fallback: 'unsupported_input' };
