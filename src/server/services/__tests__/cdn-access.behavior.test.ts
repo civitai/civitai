@@ -581,6 +581,15 @@ describe('image takedowns', () => {
     expect(await stateOf(u(1))).toBe('Denied');
   });
 
+  it('access case 2', async () => {
+    await sql`INSERT INTO "Image" (id, "userId", url, ingestion, "blockedFor")
+              VALUES (1, ${OWNER}, ${u(1)}, 'Error', 'moderated')`;
+    await sql`SELECT queue_cdn_access_sync(1, 'Image', NULL)`;
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(await stateOf(u(1))).toBe('Denied');
+  });
+
   it('an AiNotVerified block makes no call', async () => {
     await image(1);
     await sql`UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'AiNotVerified' WHERE id = 1`;
