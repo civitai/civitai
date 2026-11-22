@@ -25,11 +25,11 @@ With the listings read model on, two more routes answer for the web tier: `GET /
 `GET /listings/{slug}` (below, "Listing API").
 
 `mature` is the mature content ratings the caller asks for: a comma-separated list of `r`, `x` and
-`xxx` (`mature=r,x`). Absent or empty, `/search` answers only apps rated `g`, `pg` or `pg13`, what
-the anonymous registry audience reads, so a caller that sends nothing gets SFW results. With it, an
-app rated one of the listed ratings is answered too; an app whose rating is none of the six (or
-missing) only with all three listed, the registry's own audience rule (`audienceAdmits`). Ratings
-compare case-insensitively. Any other element answers 400. The filter is in the store query, before
+`xxx` (`mature=r,x`). Absent or empty, `/search` answers no app rated `r`, `x` or `xxx`, so a caller
+that sends nothing gets SFW results. With it, an app rated one of the listed ratings is answered
+too. Every other rating, an unknown one or none included, is answered to every caller: the site's
+database rule for the store (`matureRatingAllowed`), which the listing API applies too
+(`store.Mature.Admits`). Ratings compare case-insensitively. Any other element answers 400. The filter is in the store query, before
 `limit`, so a page is never short for it. The caller is trusted to send its viewer's own set: the
 index checks no identity, so any caller, a browser included, may ask for any set. The web tier
 derives it from the viewer's browsing level and host (`indexMature` in
@@ -104,11 +104,10 @@ others it needs, refuses to start. Unset, nothing changes: no token is fetched a
 1. The auth hub: the index's service client, and `serviceSubjects` and relay listings on the
    resources its token is exchanged for.
 2. The apps origin: `REGISTRY_ADAPTER_SERVICE_CLIENTS` names the index's client.
-3. Only then this service's client settings. Search already filters mature apps per request: a
-   `/search` that does not ask for mature ratings answers SFW apps only; any caller may ask for
-   mature ratings with `mature` and get those apps' metadata. The web tier still routes no viewer
-   who may see a mature rating to the index (`viewerNotRoutable`, reason `mature_viewer`); lift that
-   once the index holds mature apps, and each such call carries the viewer's `mature`
+3. Only then this service's client settings. With them the index holds every rating, and search
+   filters mature apps per request: a `/search` that does not ask for mature ratings answers SFW
+   apps only; any caller may ask for mature ratings with `mature` and get those apps' metadata. The
+   web tier routes a viewer who may see a mature rating to the index with that viewer's `mature`
    (`indexMature`).
 
 Configured before steps 1 and 2, every token is refused: the index stops taking in changes and

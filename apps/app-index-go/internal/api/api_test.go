@@ -254,7 +254,7 @@ func TestParseQueryMature(t *testing.T) {
 	}
 }
 
-// The default (no `mature`) answers what the anonymous audience reads: g, pg and pg13 only.
+// The default (no `mature`) answers no app rated r, x or xxx.
 func TestSearchMature(t *testing.T) {
 	rated := func(slug, rating string) store.App {
 		body, _ := json.Marshal(map[string]any{"slug": slug, "name": slug, "kind": "onsite", "contentRating": rating})

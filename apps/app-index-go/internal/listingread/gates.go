@@ -9,7 +9,7 @@
 // src/server/services/blocks/__tests__/listing-media-parity.test.ts on the site).
 package listingread
 
-import "strings"
+import "github.com/civitai/civitai/apps/app-index-go/internal/store"
 
 // NsfwLevel bits (src/server/common/enums.ts NsfwLevel).
 const (
@@ -78,31 +78,15 @@ func scopeAdmitsKind(scope, kind string) bool {
 	return false
 }
 
-// matureAllowed is MatureRatingsAllowed: which mature ratings a request may be shown.
-type matureAllowed struct{ r, x, xxx bool }
-
 // matureRatingsAllowed mirrors matureRatingsAllowed (app-listing-store-gate.ts): none off a
-// red-capable host; on one, each of R, X and XXX when the viewer's level includes its bit.
-func matureRatingsAllowed(redCapable bool, browsingLevel int64) matureAllowed {
+// red-capable host; on one, each of R, X and XXX when the viewer's level includes its bit. Its
+// rating rule (matureRatingAllowed) is store.Mature.Admits, the one search applies too.
+func matureRatingsAllowed(redCapable bool, browsingLevel int64) store.Mature {
 	if !redCapable {
-		return matureAllowed{}
+		return store.Mature{}
 	}
 	level := browsingLevel & allLevels // onlySelectableLevels
-	return matureAllowed{r: level&levelR != 0, x: level&levelX != 0, xxx: level&levelXXX != 0}
-}
-
-// matureRatingAllowed mirrors matureRatingAllowed: true unless rating is r, x or xxx (any case)
-// and that rating is not allowed.
-func matureRatingAllowed(rating string, allowed matureAllowed) bool {
-	switch strings.ToLower(rating) {
-	case "r":
-		return allowed.r
-	case "x":
-		return allowed.x
-	case "xxx":
-		return allowed.xxx
-	}
-	return true
+	return store.Mature{R: level&levelR != 0, X: level&levelX != 0, XXX: level&levelXXX != 0}
 }
 
 // listingMediaCeiling mirrors listingMediaCeiling: SFW ∩ the levels up to the listing's rating,

@@ -99,6 +99,7 @@ var ratedCatalog = []struct{ slug, rating string }{
 	{"s1-g", "g"},
 	{"s2-pg", "PG"},
 	{"s3-pg13", "pg13"},
+	{"s4-pg-13", "pg-13"},
 }
 
 // ratedApp is an app named its slug, rated rating ("" sends a null contentRating).
@@ -381,8 +382,8 @@ func runContract(t *testing.T, newStore func(t *testing.T) testStore) {
 	t.Run("SearchMatureRatings", func(t *testing.T) {
 		s := newStore(t)
 		g := mustBuilding(t, s)
-		// The mature, unknown and missing ratings sort first by name, so a filter applied after the
-		// limit would leave a short page (the limit cases below).
+		// The mature ratings sort first by name, so a filter applied after the limit would leave a
+		// short page (the limit cases below).
 		for _, c := range ratedCatalog {
 			mustApply(t, s, g.ID, Change{Kind: ChangeUpsert, App: ratedApp(c.slug, c.rating)})
 		}
@@ -392,18 +393,21 @@ func runContract(t *testing.T, newStore func(t *testing.T) testStore) {
 			limit int
 			want  []string
 		}{
-			{Mature{}, 0, []string{"s1-g", "s2-pg", "s3-pg13"}},
-			{Mature{R: true}, 0, []string{"m1-r", "s1-g", "s2-pg", "s3-pg13"}},
-			{Mature{X: true}, 0, []string{"m2-x", "s1-g", "s2-pg", "s3-pg13"}},
-			{Mature{XXX: true}, 0, []string{"m3-xxx", "s1-g", "s2-pg", "s3-pg13"}},
-			{Mature{R: true, X: true}, 0, []string{"m1-r", "m2-x", "s1-g", "s2-pg", "s3-pg13"}},
-			{Mature{X: true, XXX: true}, 0, []string{"m2-x", "m3-xxx", "s1-g", "s2-pg", "s3-pg13"}},
-			// Only all three admit a rating this index does not know, or none.
+			// Only r, x and xxx are mature (Mature.Admits, the site's matureRatingAllowed): an unknown
+			// rating, none, and pg-13 are answered whatever the viewer allows.
+			{Mature{}, 0, []string{"m4-unknown", "m5-none", "s1-g", "s2-pg", "s3-pg13", "s4-pg-13"}},
+			{Mature{R: true}, 0, []string{"m1-r", "m4-unknown", "m5-none", "s1-g", "s2-pg", "s3-pg13", "s4-pg-13"}},
+			{Mature{X: true}, 0, []string{"m2-x", "m4-unknown", "m5-none", "s1-g", "s2-pg", "s3-pg13", "s4-pg-13"}},
+			{Mature{XXX: true}, 0, []string{"m3-xxx", "m4-unknown", "m5-none", "s1-g", "s2-pg", "s3-pg13", "s4-pg-13"}},
+			{Mature{R: true, X: true}, 0,
+				[]string{"m1-r", "m2-x", "m4-unknown", "m5-none", "s1-g", "s2-pg", "s3-pg13", "s4-pg-13"}},
+			{Mature{X: true, XXX: true}, 0,
+				[]string{"m2-x", "m3-xxx", "m4-unknown", "m5-none", "s1-g", "s2-pg", "s3-pg13", "s4-pg-13"}},
 			{Mature{R: true, X: true, XXX: true}, 0,
-				[]string{"m1-r", "m2-x", "m3-xxx", "m4-unknown", "m5-none", "s1-g", "s2-pg", "s3-pg13"}},
-			// Filtered before the limit: the first two names are both mature.
-			{Mature{}, 2, []string{"s1-g", "s2-pg"}},
-			{Mature{X: true}, 2, []string{"m2-x", "s1-g"}},
+				[]string{"m1-r", "m2-x", "m3-xxx", "m4-unknown", "m5-none", "s1-g", "s2-pg", "s3-pg13", "s4-pg-13"}},
+			// Filtered before the limit: the first three names are all mature.
+			{Mature{}, 2, []string{"m4-unknown", "m5-none"}},
+			{Mature{X: true}, 2, []string{"m2-x", "m4-unknown"}},
 		}
 		for _, tc := range cases {
 			if got := slugs(t, s, Query{Mature: tc.m, Limit: tc.limit}); !slices.Equal(got, tc.want) {
@@ -460,6 +464,50 @@ func TestAppFromEntity(t *testing.T) {
 	} {
 		if _, err := AppFromEntity("u", "r", json.RawMessage(body)); err == nil {
 			t.Errorf("%s: accepted %s", name, body)
+		}
+	}
+}
+
+// TestMatureAdmits pins Mature.Admits to the site's matureRatingAllowed (app-listing-store-gate.ts)
+// rating by rating: only r, x and xxx in any case are mature; pg-13, an unknown rating and none are
+// admitted to every viewer, the SFW one included.
+func TestMatureAdmits(t *testing.T) {
+	none := Mature{}
+	rOnly := Mature{R: true}
+	xOnly := Mature{X: true}
+	xxxOnly := Mature{XXX: true}
+	all := Mature{R: true, X: true, XXX: true}
+	for _, c := range []struct {
+		rating                      string
+		none, rOnly, xOnly, xxxOnly bool
+	}{
+		{"", true, true, true, true},
+		{"mystery", true, true, true, true},
+		{"g", true, true, true, true},
+		{"PG", true, true, true, true},
+		{"pg13", true, true, true, true},
+		{"pg-13", true, true, true, true},
+		{"PG-13", true, true, true, true},
+		{"r", false, true, false, false},
+		{"R", false, true, false, false},
+		{"x", false, false, true, false},
+		{"X", false, false, true, false},
+		{"xxx", false, false, false, true},
+		{"XXX", false, false, false, true},
+		// Not trimmed, as the site does not trim: " r" is not the rating r.
+		{" r", true, true, true, true},
+	} {
+		for _, v := range []struct {
+			name string
+			m    Mature
+			want bool
+		}{
+			{"none", none, c.none}, {"r", rOnly, c.rOnly}, {"x", xOnly, c.xOnly}, {"xxx", xxxOnly, c.xxxOnly},
+			{"all", all, true},
+		} {
+			if got := v.m.Admits(c.rating); got != v.want {
+				t.Errorf("Mature %s admits %q = %v, want %v", v.name, c.rating, got, v.want)
+			}
 		}
 	}
 }
