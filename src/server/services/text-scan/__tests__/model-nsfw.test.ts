@@ -766,7 +766,7 @@ describe('applyComFaceHeldVerdict', () => {
       level: NsfwLevel.X,
       title: 'LoRA',
       url: '/models/1',
-      workflowId: 'com-face-held-2026-11-20T00:00:00Z',
+      workflowId: 'com-face-held-2026-11-20T00:00:00.000Z',
     });
   });
 
@@ -780,7 +780,7 @@ describe('applyComFaceHeldVerdict', () => {
     expect(createNotification).toHaveBeenLastCalledWith(
       expect.objectContaining({
         userId: 99,
-        key: expect.stringContaining('com-face-held-2026-11-20T00:00:00Z'),
+        key: expect.stringContaining('com-face-held-2026-11-20T00:00:00.000Z'),
         details: expect.objectContaining({ entityId: 1, level: NsfwLevel.X }),
       })
     );

@@ -66,7 +66,11 @@ import type {
   SelectedImage,
 } from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
-import { auditTrainingTriggerWord, labelAsTrained } from '~/utils/metadata/training-trigger-word';
+import {
+  auditTrainingTriggerWord,
+  labelAsTrained,
+  type TriggerWordAudit,
+} from '~/utils/metadata/training-trigger-word';
 import { getProfanityFilter } from '~/libs/profanity-simple';
 import {
   blankTagStr,
@@ -297,8 +301,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const isVideo = thisMediaType === 'video';
   const isAudio = thisMediaType === 'audio';
   const thisDefaultTrainingState = getDefaultTrainingStateFor(thisMediaType);
-  const domainColor = useDomainColor();
-  const isGreen = domainColor === 'green';
 
   const {
     updateImage,
@@ -351,6 +353,17 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const theme = useMantineTheme();
   const queryUtils = trpc.useUtils();
+  const isGreen = useDomainColor() === 'green';
+  // The server's verdict, so the browser holds no copy of the managed list. When the call fails
+  // (offline, rate limited) the shipped list decides, as it did before the server answered.
+  const auditTriggerWord = async (
+    word: string
+  ): Promise<Pick<TriggerWordAudit, 'severity'> | null> => {
+    if (!word.trim()) return null;
+    return queryUtils.training.auditTriggerWord
+      .fetch({ triggerWord: word })
+      .catch(() => auditTrainingTriggerWord(word, isGreen ? getProfanityFilter() : undefined));
+  };
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
   const { connected } = useSignalContext();
   const features = useFeatureFlags();
@@ -1294,23 +1307,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      const audit = auditTrainingTriggerWord(
-        triggerWord,
-        isGreen ? getProfanityFilter() : undefined
-      );
-      if (triggerWordInvalid !== (audit.severity !== 'clean')) {
-        setTriggerWordInvalid(model.id, thisMediaType, audit.severity !== 'clean');
+      const audit = await auditTriggerWord(triggerWord);
+      const severity = audit?.severity ?? 'clean';
+      if (triggerWordInvalid !== (severity !== 'clean')) {
+        setTriggerWordInvalid(model.id, thisMediaType, severity !== 'clean');
       }
 
-      if (audit.severity === 'hard') {
+      if (audit && severity === 'hard') {
         showNotification({
           icon: <IconX size={18} />,
           autoClose: false,
           color: 'red',
           title: 'Inappropriate trigger word',
-          message: `This trigger word has been blocked. Please review it and resubmit. Reason: ${audit.offendingWords.join(
-            ', '
-          )}`,
+          message: 'This trigger word has been blocked. Please review it and resubmit.',
         });
         return;
       }
@@ -1334,7 +1343,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         await handleNextAfterCheck();
       };
 
-      if (audit.severity === 'soft') {
+      if (audit && severity === 'soft') {
         return openConfirmModal({
           title: (
             <Group gap="xs">
@@ -1344,10 +1353,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           ),
           children: (
             <Stack gap="xs">
-              <Text size="sm">
-                {`These look like they might be inappropriate: ${audit.offendingWords.join(', ')}.`}
-              </Text>
-              <Text size="sm">If they are legitimate for your dataset, you can continue.</Text>
+              <Text size="sm">This trigger word looks like it might be inappropriate.</Text>
+              <Text size="sm">If it is legitimate for your dataset, you can continue.</Text>
             </Stack>
           ),
           labels: { cancel: 'Review trigger word', confirm: 'Continue anyway' },
@@ -1650,12 +1657,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     onChange={(event) =>
                       setTriggerWord(model.id, thisMediaType, event.currentTarget.value)
                     }
-                    onBlur={() => {
-                      const audit = auditTrainingTriggerWord(
-                        triggerWord,
-                        isGreen ? getProfanityFilter() : undefined
-                      );
-                      if (audit.severity !== 'clean') {
+                    onBlur={async () => {
+                      const audit = await auditTriggerWord(triggerWord);
+                      if (audit && audit.severity !== 'clean') {
                         if (!triggerWordInvalid) {
                           setTriggerWordInvalid(model.id, thisMediaType, true);
                           const soft = audit.severity === 'soft';
@@ -1665,12 +1669,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                             color: soft ? 'yellow' : 'red',
                             title: soft ? 'Check this trigger word' : 'Inappropriate trigger word',
                             message: soft
-                              ? `This trigger word looks like it might be inappropriate: ${audit.offendingWords.join(
-                                  ', '
-                                )}. You can still continue if it is legitimate.`
-                              : `This trigger word has been blocked. Please review. Reason: ${audit.offendingWords.join(
-                                  ', '
-                                )}`,
+                              ? 'This trigger word looks like it might be inappropriate. You can still continue if it is legitimate.'
+                              : 'This trigger word has been blocked. Please review it.',
                           });
                         }
                       } else {

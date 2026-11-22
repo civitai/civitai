@@ -1025,6 +1025,7 @@ function DisplayMessages({
                         ) : (
                           <ChatMessageContent
                             content={tReplyData.data?.content ?? ''}
+                            masked={tReplyData.data?.maskedContent}
                             blur={replaceBadWords || domainColor === 'green'}
                             stickerSize={STICKER_SIZE.preview}
                             fallback={<em>Could not load message.</em>}
@@ -1074,6 +1075,7 @@ function DisplayMessages({
                       >
                         <ChatMessageContent
                           content={c.content}
+                          masked={c.maskedContent}
                           blur={replaceBadWords || domainColor === 'green'}
                         />
                       </div>
@@ -1098,14 +1100,22 @@ function ChatMessageContent({
   blur,
   stickerSize,
   fallback,
+  masked,
 }: {
   content: string;
   blur: boolean;
   stickerSize?: number;
   fallback?: React.ReactNode;
+  /** The server's masked copy (`maskedContent`); `undefined` leaves masking to the browser. */
+  masked?: string | null;
 }) {
+  const serverMasked = blur && masked !== undefined;
   const scannable = stripStickerTokens(content);
-  const cleaned = useCleanText(scannable, { enabled: blur, replacementStyle: 'asterisk' });
+  const browserCleaned = useCleanText(scannable, {
+    enabled: blur && !serverMasked,
+    replacementStyle: 'asterisk',
+  });
+  const cleaned = serverMasked ? masked ?? scannable : browserCleaned;
   const { ownHosts } = useCurrentDomainHosts();
 
   if (!content.length) return <>{fallback ?? null}</>;

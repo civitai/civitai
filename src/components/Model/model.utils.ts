@@ -351,7 +351,7 @@ export const useSemanticModelFeed = (
     enabled: !!query,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     ...withPlaceholderData({ keepPreviousData: true }),
-    // The feed's retry banner and its fall-back to the plain feed drive every attempt.
+    // The feed's retry banner drives every attempt; a failure never falls back to the keyword feed.
     retry: 0,
     trpc: { context: { skipBatch: true }, abortOnUnmount: true },
   });

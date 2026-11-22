@@ -4,6 +4,16 @@ import type { Logger } from '../core/interfaces';
 
 /** civitai's endpoints the runner opens, keeps and closes a run's dev tunnel at, relative to `CIVITAI_URL`. */
 export const DEV_TUNNEL_PATH = 'api/internal/app-assistant/dev-tunnel';
+/** civitai's endpoint the runner asks first how to open a preview (`preview/open`), relative to `CIVITAI_URL`. */
+export const PREVIEW_OPEN_PATH = 'api/internal/app-assistant/preview/open';
+/**
+ * How many times `open` asks while civitai answers `unavailable`: it does so while another open of
+ * the same app holds its lock (the page's Restart preview and a run's start at once), and for a
+ * moment's failure. Each ask waits up to `REQUEST_TIMEOUT_MS`, and the asks are `OPEN_RETRY_MS`
+ * apart.
+ */
+export const OPEN_ATTEMPTS = 4;
+export const OPEN_RETRY_MS = 1_000;
 /** How long a keep-alive or a stop waits for civitai. */
 export const REQUEST_TIMEOUT_MS = 15_000;
 /**
@@ -48,17 +58,60 @@ export class DevTunnelError extends Error {
   }
 }
 
+export interface PreviewOpenInput {
+  blockId: string;
+  /** The app's sandbox's current preview id (32 lowercase hex). */
+  previewId: string;
+  declaredScopes?: string[];
+  declaredAuth?: 'block-token' | 'oauth';
+}
+
+/**
+ * What civitai's `preview/open` answers:
+ * - `tunnel`: direct preview is off for this user (or not deployed): open a dev tunnel as before;
+ * - `direct` with a session: the preview's session, written now or one already open for that
+ *   preview id. A session already open keeps the scopes and auth it was opened with, whatever
+ *   this open declared. civitai answers only `{ mode, sessionId }`: never the session host, which
+ *   is the preview's credential;
+ * - `fresh`: that preview id's session has ended, and nothing was opened: rotate the id and ask
+ *   once more.
+ */
+export type PreviewOpenAnswer =
+  | { mode: 'tunnel' }
+  | { mode: 'direct'; fresh: true }
+  | { mode: 'direct'; sessionId: string };
+
 /** One run's dev-tunnel calls to civitai. */
 export interface DevTunnels {
   start(input: DevTunnelStartInput, signal?: AbortSignal): Promise<StartedTunnel>;
   /**
-   * Stamps the idle clock (never the 8 h cap) of the run's user's tunnel at `host`, whoever opened
-   * it (this run, the page's Restart preview, an earlier reply): the host the app's sandbox is
-   * connected to. civitai answers 404 `NOT_FOUND` when no tunnel of that user's is there.
+   * Asks civitai how to open the preview, and opens it when it is a direct one (no tunnel): see
+   * `PreviewOpenAnswer`. civitai judges the same gates as `start`. `once`: ask a single time, with
+   * no retry of `unavailable` (a start with a deadline, the page's Restart preview).
    */
-  keepalive(target: { host: string }, signal?: AbortSignal): Promise<void>;
+  open(
+    input: PreviewOpenInput,
+    signal?: AbortSignal,
+    options?: { once?: boolean }
+  ): Promise<PreviewOpenAnswer>;
+  /**
+   * Stamps the idle clock (never the 8 h cap) of one of the run's user's previews, whoever opened
+   * it (this run, the page's Restart preview, an earlier reply): the tunnel at `host`, the host the
+   * app's sandbox is connected to, or the direct preview of the app `blockId` (which no sandbox-side
+   * tunnel names). By block it is sent with `transport: "direct"`, so civitai keeps only a direct
+   * session and never a tunnel the sandbox has let go. civitai answers 404 `NOT_FOUND` when the
+   * user has none there. A civitai without the by-block route (it refuses that body with a codeless
+   * 400 or 404) is answered as none too: 404, code `no_route`.
+   */
+  keepalive(target: { host: string } | { blockId: string }, signal?: AbortSignal): Promise<void>;
   /** Idempotent: a tunnel already gone is no error. */
   stop(sessionId: string, signal?: AbortSignal): Promise<void>;
+  /**
+   * Ends the run's user's direct preview of the app `blockId`, whichever run opened it. Sent with
+   * `transport: "direct"`: a tunnel of that app is left alone, as if there were none. Whether one
+   * was open to end: `false` too from a civitai without the by-block route.
+   */
+  stopBlock(blockId: string, signal?: AbortSignal): Promise<boolean>;
 }
 
 export interface CivitaiDevTunnelsOptions {
@@ -129,13 +182,77 @@ export class CivitaiDevTunnels {
           throw error;
         }
       },
-      keepalive: async ({ host }, signal) => {
-        await post('keepalive', { host }, signal);
+      open: (input, signal, options) => this.#open(grant, input, signal, options?.once === true),
+      keepalive: async (target, signal) => {
+        if ('host' in target) {
+          await post('keepalive', { host: target.host }, signal);
+          return;
+        }
+        try {
+          await post('keepalive', { blockId: target.blockId, transport: 'direct' }, signal);
+        } catch (error) {
+          if (isNoRoute(error))
+            throw new DevTunnelError('Civitai keeps no preview by block here.', 404, 'no_route');
+          throw error;
+        }
       },
       stop: async (sessionId, signal) => {
         await post('stop', { sessionId }, signal);
       },
+      stopBlock: async (blockId, signal) => {
+        let answer: { stopped?: unknown } | null;
+        try {
+          answer = (await post('stop', { blockId, transport: 'direct' }, signal)) as {
+            stopped?: unknown;
+          } | null;
+        } catch (error) {
+          // A civitai without the by-block route has no direct preview to end.
+          if (isNoRoute(error)) return false;
+          throw error;
+        }
+        return answer?.stopped === true;
+      },
     };
+  }
+
+  /**
+   * `preview/open`, asked again (up to `OPEN_ATTEMPTS` times) while civitai answers `unavailable`,
+   * which it does while another open of the same app holds its lock: nothing was written then. A
+   * civitai without the endpoint (a 404 with no code: an older deployment) means the dev tunnel.
+   */
+  async #open(
+    grant: () => Promise<string | null>,
+    input: PreviewOpenInput,
+    signal?: AbortSignal,
+    once = false
+  ): Promise<PreviewOpenAnswer> {
+    const attempts = once ? 1 : OPEN_ATTEMPTS;
+    for (let attempt = 1; ; attempt++) {
+      let answer: unknown;
+      try {
+        answer = await this.#post(
+          PREVIEW_OPEN_PATH,
+          grant,
+          { ...input },
+          signal,
+          REQUEST_TIMEOUT_MS
+        );
+      } catch (error) {
+        if (error instanceof DevTunnelError && error.status === 404 && error.code === undefined)
+          return { mode: 'tunnel' };
+        const again = error instanceof DevTunnelError && error.code === 'unavailable';
+        if (!again || attempt >= attempts || signal?.aborted) throw error;
+        await sleep(OPEN_RETRY_MS, signal);
+        continue;
+      }
+      // Only `mode` and `sessionId` (or `fresh`): civitai never sends the session host (`PreviewOpenAnswer`).
+      const { mode, fresh, sessionId } = (answer ?? {}) as Record<string, unknown>;
+      if (mode === 'tunnel') return { mode: 'tunnel' };
+      if (mode === 'direct' && fresh === true) return { mode: 'direct', fresh: true };
+      if (mode === 'direct' && typeof sessionId === 'string' && sessionId)
+        return { mode: 'direct', sessionId };
+      throw new DevTunnelError('Civitai answered the preview open oddly.', 503, 'unavailable');
+    }
   }
 
   /**
@@ -162,14 +279,17 @@ export class CivitaiDevTunnels {
     }
   }
 
+  /** `actionOrPath`: a dev-tunnel endpoint's name (`start`, `stop`, …), or another endpoint's path. */
   async #post(
-    action: string,
+    actionOrPath: string,
     grant: () => Promise<string | null>,
     body: Record<string, unknown>,
     signal: AbortSignal | undefined,
     timeoutMs: number
   ): Promise<unknown> {
     const { civitaiUrl, secret, log } = this.#options;
+    const path = actionOrPath.includes('/') ? actionOrPath : `${DEV_TUNNEL_PATH}/${actionOrPath}`;
+    const action = path.slice(path.lastIndexOf('/') + 1);
     const token = await grant();
     if (!token)
       throw new DevTunnelError(
@@ -181,7 +301,7 @@ export class CivitaiDevTunnels {
     const timeout = AbortSignal.timeout(timeoutMs);
     let response: Response;
     try {
-      response = await doFetch(`${civitaiUrl.replace(/\/+$/, '')}/${DEV_TUNNEL_PATH}/${action}`, {
+      response = await doFetch(`${civitaiUrl.replace(/\/+$/, '')}/${path}`, {
         method: 'POST',
         headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
         body: JSON.stringify({ grant: token, ...body }),
@@ -208,4 +328,29 @@ export class CivitaiDevTunnels {
       code ?? (response.status >= 500 ? 'unavailable' : undefined)
     );
   }
+}
+
+/**
+ * civitai refused a by-block body as it does not know it (a deployment from before the by-block
+ * keepalive and stop): a 400 or 404 with no code. The runner is
+ * released apart from civitai, so this is answered as "no such preview", never as a refusal.
+ */
+function isNoRoute(error: unknown): boolean {
+  return (
+    error instanceof DevTunnelError &&
+    (error.status === 400 || error.status === 404) &&
+    error.code === undefined
+  );
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    }
+    signal?.addEventListener('abort', done, { once: true });
+  });
 }

@@ -277,6 +277,7 @@ import {
 import {
   pickModerationOwnedMeta,
   pickServerOwnedMeta,
+  readComFaceHeldVerdict,
   readSystemNsfwLockAt,
   SCAN_RATING_SOURCES,
   RESTORE_CANNOT_PROMOTE_KEY,
@@ -4095,10 +4096,17 @@ export async function leavePrivateWithHeldVerdict(
  * The private flow's locks: the stored ones, plus nsfw while the text scan's rating holds it. That
  * rating carries no lock, but this flow keeps it, dropping the owner's nsfw as for a locked setting.
  */
-function locksWithScanRating(row: { meta: unknown; lockedProperties: string[] | null }) {
+function locksWithScanRating(row: {
+  meta: unknown;
+  lockedProperties: string[] | null;
+  nsfw: boolean;
+}) {
   const locks = row.lockedProperties ?? [];
   const source = (row.meta as ModelMeta | null)?.systemNsfwLock?.source;
-  return source && SCAN_RATING_SOURCES.includes(source) ? uniq([...locks, 'nsfw']) : locks;
+  const scanRated =
+    (!!source && SCAN_RATING_SOURCES.includes(source)) ||
+    (row.nsfw && !!readComFaceHeldVerdict(row.meta));
+  return scanRated ? uniq([...locks, 'nsfw']) : locks;
 }
 
 /**
@@ -4138,11 +4146,15 @@ async function assertScanRatingKept({
     sfwOnly?: boolean;
   };
 }) {
-  const ratedAt = readSystemNsfwLockAt(before.meta);
-  if (!ratedAt || before.lockedProperties?.includes('nsfw')) return;
+  if (before.lockedProperties?.includes('nsfw')) return;
   // Only a text check's rating, which a clean read of edited text releases.
   const source = (before.meta as ModelMeta | null)?.systemNsfwLock?.source;
-  if (!source || !SCAN_RATING_SOURCES.includes(source)) return;
+  const markedAt =
+    source && SCAN_RATING_SOURCES.includes(source) ? readSystemNsfwLockAt(before.meta) : null;
+  // A verdict the scan held for a clean .com face is the same mature reading with no marker yet. It
+  // holds the rating only: removing the face applies the verdict in the save itself.
+  const held = markedAt ? null : readComFaceHeldVerdict(before.meta);
+  if (!markedAt && !held) return;
   const after = <K extends keyof typeof data>(key: K) =>
     (data[key] !== undefined ? data[key] : before[key as keyof typeof before]) as
       | (typeof data)[K]
@@ -4160,8 +4172,10 @@ async function assertScanRatingKept({
   });
   if (after('nsfw')) return;
   // A row already not mature (an older one): only removing the face that listed it.
-  if (!before.nsfw && (faceAfter || !hasFace(before))) return;
-  if (await moderatorRuledNsfwSince(modelId, ratedAt, { db })) return;
+  if (!before.nsfw && (held || faceAfter || !hasFace(before))) return;
+  // A held verdict whose time cannot be read has no ruling to compare against: it holds.
+  const ratedAt = markedAt ?? held?.at;
+  if (ratedAt && (await moderatorRuledNsfwSince(modelId, ratedAt, { db }))) return;
   // The versions the scan reads, for the explanation: published ones only.
   const versions = await (db ?? dbWrite).modelVersion.findMany({
     where: { modelId, status: { in: PUBLIC_MODEL_STATUSES } },
@@ -4599,21 +4613,30 @@ export const upsertModel = async (
             data.nsfw = true;
             data.lockedProperties = uniq([...locked.lockedProperties, 'nsfw']);
           }
+          // A verdict the scan held for a clean .com face is its rating too, with no marker yet.
+          const heldVerdict = prevMeta?.systemNsfwLock ? null : readComFaceHeldVerdict(prevMeta);
           const raisedOverScanLock = applyRaisedRestrictions(locked, data, {
-            scanRated: !!prevMeta?.systemNsfwLock,
+            scanRated: !!prevMeta?.systemNsfwLock || !!heldVerdict,
           });
           const ownerFlagOverride = raisedOverScanLock ?? withRaisedFlags(locked, data);
           if (ownerFlagOverride) meta = { ...(meta ?? {}), ownerFlagOverride };
           // The owner's flag clears a rating a scan set: the scan's verdict waits for a moderator,
           // as one held on a model already flagged does, rather than going with the rating.
           const scanLock = prevMeta?.systemNsfwLock;
+          const restriction = raisedOverScanLock?.flags.includes('minor') ? 'minor' : 'poi';
           if (raisedOverScanLock && scanLock && !prevMeta?.restrictedNsfwVerdict)
             meta = {
               ...(meta ?? {}),
+              restrictedNsfwVerdict: { source: scanLock.source, at: scanLock.at, restriction },
+            };
+          else if (raisedOverScanLock && heldVerdict && !prevMeta?.restrictedNsfwVerdict)
+            meta = {
+              ...(meta ?? {}),
               restrictedNsfwVerdict: {
-                source: scanLock.source,
-                at: scanLock.at,
-                restriction: raisedOverScanLock.flags.includes('minor') ? 'minor' : 'poi',
+                source: 'text-scan',
+                at: (heldVerdict.at ?? new Date()).toISOString(),
+                restriction,
+                level: heldVerdict.level,
               },
             };
         }
@@ -7795,6 +7818,7 @@ export const privateModelFromTraining = async ({
       availability: true,
       minor: true,
       poi: true,
+      nsfw: true,
     },
   });
 

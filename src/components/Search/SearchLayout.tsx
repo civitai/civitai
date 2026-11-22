@@ -50,7 +50,11 @@ const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
     withSemanticComicSearch(withSemanticArticleSearch(withSemanticImageSearch(meilisearch))),
     {
       onError: () => searchAvailability.setUnavailable(true),
-      onSuccess: () => searchAvailability.setUnavailable(false),
+      onSuccess: () => {
+        searchAvailability.setUnavailable(false);
+        searchAvailability.setRefusedQuery(null);
+      },
+      onRefused: (query) => searchAvailability.setRefusedQuery(query ?? null),
     }
   )
 );
@@ -144,8 +148,18 @@ export function SearchLayout({
   }, []);
 
   // The search pages refuse only these two, as they always have; the feed refuses more.
-  const { refusal, profanityMatches } = useSearchRefusal(searchQuery, parsedQuery?.sortBy);
-  const shownRefusal = refusal === 'illegal' || refusal === 'profanity' ? refusal : undefined;
+  const { refusal, profanityMatches } = useSearchRefusal(
+    searchQuery,
+    parsedQuery?.sortBy,
+    'siteSearch'
+  );
+  const refusedQuery = useSearchAvailabilityStore((state) => state.refusedQuery);
+  const shownRefusal =
+    refusal === 'illegal' || refusal === 'profanity'
+      ? refusal
+      : !!searchQuery && refusedQuery?.trim() === searchQuery.trim()
+      ? 'profanity'
+      : undefined;
   const isSearchUnavailable = useSearchAvailabilityStore((state) => state.unavailable);
 
   return (

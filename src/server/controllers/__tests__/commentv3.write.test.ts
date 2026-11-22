@@ -201,33 +201,26 @@ const runsOn = async (
   return tx.$queryRawUnsafe.mock.calls.length === 1;
 };
 
-describe('the masked copy on a saved comment', () => {
+// The author's own write response never carries a masked copy: diffing it against what they just
+// wrote would say which of their words are on the managed list, in one round trip. Other viewers
+// get it on the read path.
+describe('the write response to the author', () => {
   afterEach(() => setProfanityListReaderForTests());
 
-  // The comment is already saved: a masking failure must not turn the write into an error.
-  it('is left absent, and the create and the edit still answer, when masking fails', async () => {
-    setProfanityListReaderForTests({ read: () => Promise.reject(new Error('list down')) });
-    const saved = await create(STRANGER, {});
-    expect(saved.id).toBe(300);
-    expect(saved.maskedContent).toBeUndefined();
-    const edited = await update(AUTHOR, 101);
-    expect(edited).toMatchObject({ id: 101, maskedContent: undefined });
-  });
-
-  // Synthetic managed entries, on no real list, so a mask can only come from the list read.
-  it('carries the masked copy on the create and the edit, and null for clean text', async () => {
+  // Synthetic managed entries, on no real list.
+  it('carries no masked copy on the create or the edit, even for text the list masks', async () => {
     setProfanityListReaderForTests({
       read: async () => ({ blocked: ['zqvoxblat', 'zqvoxcrud'], allowed: null, source: 'managed' }),
     });
     m.insertComment.mockResolvedValueOnce(row(300, { content: '<p>well zqvoxblat then</p>' }));
     const saved = await create(STRANGER, {});
-    expect(saved.maskedContent).toMatch(/^<p>well \*+ then<\/p>$/);
+    expect(saved.id).toBe(300);
+    expect(saved).not.toHaveProperty('maskedContent');
 
     m.updateCommentContent.mockResolvedValueOnce(row(101, { content: '<p>zqvoxcrud</p>' }));
-    expect((await update(AUTHOR, 101)).maskedContent).toMatch(/^<p>\*+<\/p>$/);
-
-    m.updateCommentContent.mockResolvedValueOnce(row(101, { content: '<p>all clean</p>' }));
-    expect(await update(AUTHOR, 101)).toHaveProperty('maskedContent', null);
+    const edited = await update(AUTHOR, 101);
+    expect(edited).toMatchObject({ id: 101 });
+    expect(edited).not.toHaveProperty('maskedContent');
   });
 });
 

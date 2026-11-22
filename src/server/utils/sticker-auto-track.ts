@@ -19,7 +19,7 @@ import { throwRateLimited } from '~/server/utils/rate-limit-error';
 // the image's and only runs on that image.
 const COMFY_IMAGE = 'urn:air:oci:image:ghcr:civitai/civitai-spine-comfy@v2.7.60';
 const NODE_PACK_LAYER =
-  'urn:air:comfy:nodepacklayer:comfyregistry:civitai/civitai-sticker-track@1.1.0+75726e3a6169723a6f63693a696d6167653a676863723a636976697461692f636976697461692d7370696e652d636f6d66794076322e372e3630';
+  'urn:air:comfy:nodepacklayer:comfyregistry:civitai/civitai-sticker-track@1.2.0+75726e3a6169723a6f63693a696d6167653a676863723a636976697461692f636976697461692d7370696e652d636f6d66794076322e372e3630';
 const SAM_CHECKPOINT =
   'urn:air:other:checkpoint:huggingface:Comfy-Org/sam3.1@7bb8374780a725b4353ed31f3a9395c9742b5621/checkpoints/sam3.1_multiplex_fp16.safetensors';
 const TAPNEXT_CHECKPOINT =
@@ -174,7 +174,6 @@ export function buildStickerAutoTrackWorkflow({
   const underSticker = frame
     ? JSON.stringify([{ x: pixel(pose.x, frame.width), y: pixel(pose.y, frame.height) }])
     : null;
-  // Whatever is under the sticker, picked only when no head holds the point.
   const fallback = underSticker
     ? {
         '12': {
@@ -260,6 +259,7 @@ export function buildStickerAutoTrackWorkflow({
             reid_threshold: 0.4,
             // Off when no head holds the sticker, so after a cut it hides instead of jumping onto a person.
             reid: ['6', 1],
+            hide_when_eye_lost: true,
             eyes: ['11', 0],
           },
         },

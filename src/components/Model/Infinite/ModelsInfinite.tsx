@@ -19,6 +19,7 @@ import { normalizeFeedQuery } from '~/components/Image/Infinite/image-feed-searc
 import { FeedSearchSummary } from '~/components/Search/FeedSearchSummary';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
+import { isSearchRefusedError } from '~/components/Search/search-refusal';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -70,10 +71,12 @@ function SearchableModelsFeed(props: InfiniteModelsProps) {
   const browsingLevel = useBrowsingLevelDebounced();
   const text = normalizeFeedQuery(filters.query);
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
-  const { refusal, profanityMatches } = useSearchRefusal(text, 'models_semantic');
+  const { refusal, profanityMatches } = useSearchRefusal(text, 'models_semantic', 'semantic');
   const search = useSemanticModelFeed({ ...filters, browsingLevel }, refusal ? undefined : text);
   useScrollToTopOnChange(search.searchKey);
-  if (refusal) return <SearchRefusalNotice refusal={refusal} profanityMatches={profanityMatches} />;
+  const shownRefusal = refusal ?? (isSearchRefusedError(search.error) ? 'profanity' : undefined);
+  if (shownRefusal)
+    return <SearchRefusalNotice refusal={shownRefusal} profanityMatches={profanityMatches} />;
   return <ModelsFeed {...props} feedSearch={text ? { text, search } : undefined} />;
 }
 
@@ -89,12 +92,15 @@ function ModelsFeed({
   const filters = useInfiniteModelFilters(props);
   const browsingLevel = useBrowsingLevelDebounced();
   const search = feedSearch?.search;
-  // A search that fails falls back to the keyword search with a banner, never an empty page.
+  // A failed search must not show or page the keyword feed (no server profanity check): its
+  // fetchNextPage runs even while the query is disabled.
   const searchFailed = !!search?.isError;
   const searching = !!search && !searchFailed;
-  const feed = useQueryModels({ ...filters, browsingLevel }, { enabled: !searching });
-  const { models, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    search && searching ? search : feed;
+  const feed = useQueryModels({ ...filters, browsingLevel }, { enabled: !search });
+  const shown = search && searching ? search : feed;
+  const { fetchNextPage, isRefetching, isFetching } = shown;
+  const models = searchFailed ? [] : shown.models;
+  const hasNextPage = !searchFailed && shown.hasNextPage;
   const modelIds = models.map((m) => m.id);
   const salesByModelId = useModelSaleBadges(modelIds);
   useEngagedModelsPrefetch(modelIds);

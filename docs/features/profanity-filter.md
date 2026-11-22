@@ -60,9 +60,12 @@ Automatically integrated in:
 ### Managed blocked list
 
 - **Where moderators edit it**: the `ProfanityWord` tab of the moderator app's Blocklists page (a `Blocklist` row, seeded by hand from `blocked-words.json`; the tab refuses edits until the row exists).
-- **Who reads it**: `getClientBenignLists` adds it to `system.getBenignPhrases` as `profanityBlockedWords` plus a `profanityListVersion` that keys the filter and RenderHtml sanitize caches. `useCheckProfanity` (search, `BlurText`) and `RenderHtml` use it in place of the shipped list.
-- **When it is not used**: flag off, no row, a row with no usable entry, a failed read (served uncached), a list the filter cannot build, or before the query resolves (including server-rendered HTML) all mean the shipped list. RenderHtml reads it through `ProfanityBlocklistProvider`, once for the app. Model, bounty and app checks on the server still read the shipped list.
-- **Propagation**: the response is edge-cached for 10 minutes and refetched every 10, so an edit reaches users in about 20.
+- **Who reads it**: the server only, through `getServerProfanityFilter`, while `profanity-managed-list` is on. The browser never receives it:
+  - comment, review and chat responses carry `maskedContent` / `maskedDetails` for other viewers: a string when masking changed the text, `null` when it is clean, absent when it was not computed (the browser then masks with the shipped list). The author's own write response carries none;
+  - `/api/search` and the model, article, bounty, comic and image semantic search procedures refuse a profane query themselves (`search_refused`, verdict only, `refuse-profane-search.ts`);
+  - the trainer's trigger-word warning comes from `training.auditTriggerWord`, which answers with a severity only;
+  - those searches check every query on civitai.com whatever the flag says (flag off or Flipt unreachable: the browser's own list, the shipped words and the moderators' benign words; a failed check: the shipped list), so the browser leaves those searches to the server (`browserChecksProfanity`). `system.getBenignPhrases` carries no profanity list;
+- **When it is not used**: flag off (the browser checks and masks with the shipped list, as before), no row, a row below the floor, a failed read, or a list the filter cannot build all mean the shipped list.
 
 ### Whitelist Words List
 

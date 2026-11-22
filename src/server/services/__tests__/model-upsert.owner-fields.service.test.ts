@@ -1925,8 +1925,14 @@ describe('a .com face going away', () => {
       strings: TemplateStringsArray,
       ...values: unknown[]
     ) =>
-      Array.isArray(strings) && strings.join('?').includes("'comFaceHeldVerdict'->>'at'")
-        ? [{ name: 'Test Model', userId: OWNER_ID, at: 'x', level: 16 }]
+      Array.isArray(strings) && strings.join('?').includes('SELECT m.name, m."userId", m.meta')
+        ? [
+            {
+              name: 'Test Model',
+              userId: OWNER_ID,
+              meta: { comFaceHeldVerdict: { at: '2026-11-20T00:00:00.000Z', level: 16 } },
+            },
+          ]
         : original?.(strings, ...values)) as never);
   };
   it('tells the owner, after the save, when the held verdict rates the model', async () => {
@@ -1944,7 +1950,7 @@ describe('a .com face going away', () => {
         entityId: MODEL_ID,
         userId: OWNER_ID,
         level: 16,
-        workflowId: 'com-face-held-x',
+        workflowId: 'com-face-held-2026-11-20T00:00:00.000Z',
       }),
     ]);
     expect(mockNotifyHeld).toHaveBeenCalledTimes(1);
@@ -1994,5 +2000,110 @@ describe('a .com face going away', () => {
     mockStored(stored);
     await upsert({ id: MODEL_ID, userId: OWNER_ID, ...change });
     expect(mockRescanTextAfterFaceLoss).not.toHaveBeenCalled();
+  });
+});
+
+describe('a mature rating the text scan held back for a clean .com face', () => {
+  const face = {
+    sfwName: 'Retro Style',
+    sfwDescription: '<p>A retro poster style.</p>',
+    sfwCoverImageId: 5,
+  };
+  const held = { comFaceHeldVerdict: { at: '2026-11-20T00:00:00.000Z', level: 16 } };
+  const untick = () => upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false });
+  // No moderator ruling unless a test adds one; the guard asks on both reads of the row.
+  beforeEach(() => {
+    mockDbWrite.modActivity.findFirst.mockReset();
+  });
+
+  // The held verdict is the scan's own mature reading: the owner may not lower it while it stands.
+  it("refuses the owner's untick of mature while the held verdict stands", async () => {
+    mockStored({ nsfw: true, ...face, meta: held });
+    await expect(untick()).rejects.toThrow(/marked mature because of/);
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses it when the held verdict has no readable time or level', async () => {
+    mockStored({ nsfw: true, ...face, meta: { comFaceHeldVerdict: { at: 'x', level: 'R' } } });
+    await expect(untick()).rejects.toThrow(/marked mature because of/);
+  });
+
+  it('refuses it when the held verdict is not even an object', async () => {
+    mockStored({ nsfw: true, ...face, meta: { comFaceHeldVerdict: null } });
+    await expect(untick()).rejects.toThrow(/marked mature because of/);
+  });
+
+  it('lets the owner untick when nothing is held (control)', async () => {
+    mockStored({ nsfw: true, ...face, meta: {} });
+    await untick();
+    expect(updateData()).toMatchObject({ nsfw: false });
+  });
+
+  // The owner's way out is the same as for the scan's marker: a rescan that reads the edited text
+  // as not mature drops the held verdict, and the untick then saves.
+  it('lets the untick save once a clean rescan has dropped the held verdict', async () => {
+    mockStored({ nsfw: true, ...face, meta: held });
+    await expect(untick()).rejects.toThrow(/marked mature because of/);
+    vi.mocked(mockDbWrite.model.update).mockClear();
+    const { comFaceHeldVerdict: _spent, ...afterCleanRescan } = held;
+    mockStored({ nsfw: true, ...face, meta: afterCleanRescan });
+    await untick();
+    expect(updateData()).toMatchObject({ nsfw: false });
+  });
+
+  it('lets the untick save once a moderator has ruled on the rating since the verdict was held', async () => {
+    mockStored({ nsfw: true, ...face, meta: held });
+    mockDbWrite.modActivity.findFirst.mockResolvedValue({ id: 1 } as never);
+    await untick();
+    expect(updateData()).toMatchObject({ nsfw: false });
+  });
+
+  // An owner marking their own model minor is never refused: the scan's reading goes to a moderator
+  // as a lead, with the locks the flag brings, so a later save cannot quietly lower it.
+  it('hands the held verdict to a moderator as a lead when the same save marks the model minor', async () => {
+    mockStored({ nsfw: true, ...face, meta: held });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: true });
+    const data = updateData();
+    expect(data.lockedProperties).toEqual(expect.arrayContaining(['minor', 'nsfw', 'sfwOnly']));
+    expect((data.meta as ModelMeta).restrictedNsfwVerdict).toEqual({
+      source: 'text-scan',
+      at: '2026-11-20T00:00:00.000Z',
+      restriction: 'minor',
+      level: 16,
+    });
+    expect((data.meta as ModelMeta).ownerFlagOverride).toMatchObject({
+      flags: ['minor'],
+      prevNsfw: true,
+    });
+  });
+
+  it('hands it to a moderator when the same save marks the model a real person', async () => {
+    mockStored({ nsfw: true, ...face, meta: held });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, poi: true });
+    expect((updateData().meta as ModelMeta).restrictedNsfwVerdict).toMatchObject({
+      restriction: 'poi',
+      level: 16,
+    });
+  });
+
+  it('leaves a moderator-locked rating to the lock (control)', async () => {
+    mockStored({ nsfw: true, ...face, lockedProperties: ['nsfw'], meta: held });
+    await untick();
+    expect(updateData()).not.toHaveProperty('nsfw', false);
+  });
+
+  // A model the scan left unrated holds nothing to lower; removing its face is how the verdict
+  // applies, in the same save.
+  it('lets the owner remove the face from a model that is not mature', async () => {
+    mockStored({ nsfw: false, ...face, meta: held });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
+    expect(updateData()).toMatchObject({ sfwName: null });
+  });
+
+  it('lets the owner keep mature and edit the face', async () => {
+    mockStored({ nsfw: true, ...face, meta: held });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style Two' });
+    expect(updateData()).toMatchObject({ sfwName: 'Retro Style Two' });
+    expect(updateData()).not.toHaveProperty('nsfw', false);
   });
 });

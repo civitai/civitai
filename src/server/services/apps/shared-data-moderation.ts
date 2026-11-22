@@ -196,11 +196,8 @@ async function auditLeaf(
   const stripped = await stripBenignPhrases(normalizeText(text), BlocklistType.PromptBenignPhrase);
   const input = stripped || text;
   if (input.length > MAX_AUDIT_PROMPT_LENGTH) return LEAF_TOO_LONG;
-  // The full audit takes the profanity step only when the same filter already finds profanity in
-  // the same normalised input. That prefilter reads a SUPERSET of what the audit
-  // reads (the audit additionally blanks booru rating/score/source tags first), so it can only send
-  // extra leaves down the full path, never fewer — and the verdict always comes from the audit
-  // itself. `shared-data-moderation.test.ts` pins fast-path ≡ full-audit over a corpus.
+  // Only a leaf the filter already flags takes the full audit. The audit's input is a subset of
+  // this one (it also blanks booru tags), so this can add full audits, never drop one.
   const mayBeProfane = profanity.filter.analyze(normalizeText(input)).isProfane;
   if (mayBeProfane) profanity.countHit('appdata');
   const fullAudit = mayBeProfane && budget.remaining > 0;

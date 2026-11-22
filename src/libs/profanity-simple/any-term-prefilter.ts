@@ -1,7 +1,7 @@
 import type { RegExpMatcher } from 'obscenity';
 
-// obscenity keeps these private; read them so the prefilter runs the matcher's own regexes on
-// the matcher's own transformed text, rather than a re-derivation that could drift from them.
+// obscenity keeps these private; read them so the prefilter runs the matcher's own regexes on its
+// own transformed text.
 type MatcherInternals = {
   blacklistedTerms: { regExp: RegExp }[];
   blacklistMatcherTransformers: unknown;
@@ -44,8 +44,7 @@ export function createAnyTermPrefilter(matcher: RegExpMatcher): ((text: string) 
   };
   let anyTerm: RegExp;
   try {
-    // The terms compile with 'gs' and no backreferences, so the alternation matches
-    // somewhere exactly when one of them does. Without 'g', test() keeps no lastIndex.
+    // No 'g' flag: with it, test() would keep lastIndex between calls.
     anyTerm = new RegExp(
       internals.blacklistedTerms.map(({ regExp }) => `(?:${regExp.source})`).join('|'),
       's'

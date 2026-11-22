@@ -2,7 +2,6 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { MIN_MANAGED_PROFANITY_ENTRIES } from '@civitai/mod-utils/profanity/word-rules';
 import { TRPCError } from '@trpc/server';
 import type * as FliptClient from '~/server/flipt/client';
-import type * as WordRules from '@civitai/mod-utils/profanity/word-rules';
 
 // getBlocklistData -> getBlocklistDTO reads redis.get first and, when a cached
 // value is present, returns it WITHOUT touching the DB. So stubbing redis.get to
@@ -33,20 +32,6 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
         : // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (original.isFlipt as any)(flag, ...rest)
     ),
-  };
-});
-
-// The floor rule must be decided by `managedProfanityEntries` alone: this override makes it refuse a
-// full list, and the test that sets it goes red if this caller writes the rule out inline again.
-const managedRule = vi.hoisted(() => ({ refuseAll: false }));
-vi.mock('@civitai/mod-utils/profanity/word-rules', async (importOriginal) => {
-  const original = await importOriginal<typeof WordRules>();
-  return {
-    ...original,
-    managedProfanityEntries: (entries: readonly string[]) => {
-      const result = original.managedProfanityEntries(entries);
-      return managedRule.refuseAll ? { ...result, enforced: false } : result;
-    },
   };
 });
 
@@ -547,66 +532,24 @@ describe('getClientBenignLists', () => {
       managedListFlag.on = false;
     });
 
-    it('is served with a version naming its row when the flag is on', async () => {
-      const result = await getClientBenignLists();
-      expect(result.profanityBlockedWords).toEqual(atFloor);
-      expect(result.profanityListVersion).toMatch(/^31:/);
+    it('never carries a managed word, whatever the row holds', async () => {
+      const served = JSON.stringify(await getClientBenignLists());
+      expect(atFloor.filter((word) => served.includes(word))).toEqual([]);
     });
 
-    // The server's filter falls back below the floor; the browser must enforce the same list.
-    it('falls back to the shipped list below the floor, and serves only usable entries', async () => {
-      blockedRow = { id: 31, data: [...atFloor.slice(1), 'zq'] };
-      expect((await getClientBenignLists()).profanityBlockedWords).toBeNull();
-      blockedRow = { id: 31, data: [...atFloor, 'zq'] };
-      expect((await getClientBenignLists()).profanityBlockedWords).toEqual(atFloor);
+    it('carries the benign lists and nothing about the managed one', async () => {
+      expect(Object.keys(await getClientBenignLists()).sort()).toEqual([
+        'available',
+        'profanityWords',
+        'prompt',
+      ]);
     });
 
-    it('decides the floor through managedProfanityEntries', async () => {
-      managedRule.refuseAll = true;
-      try {
-        expect((await getClientBenignLists()).profanityBlockedWords).toBeNull();
-      } finally {
-        managedRule.refuseAll = false;
-      }
-    });
-
-    it('is withheld while the flag is off, so the browser keeps the shipped list', async () => {
-      managedListFlag.on = false;
-      const result = await getClientBenignLists();
-      expect(result.profanityBlockedWords).toBeNull();
-      expect(result.profanityListVersion).toBeNull();
-    });
-
-    it('falls back to the shipped list for an emptied row, unlike the benign words', async () => {
-      blockedRow = { id: 31, data: [] };
-      const result = await getClientBenignLists();
-      expect(result.profanityBlockedWords).toBeNull();
-    });
-
-    it('falls back on a failed read without emptying the benign lists, uncacheable', async () => {
+    it('stays cacheable when the managed row cannot be read, since it no longer reads it', async () => {
       blockedReadFails = true;
       const result = await getClientBenignLists();
-      expect(result.profanityBlockedWords).toBeNull();
+      expect(result.available).toBe(true);
       expect(result.profanityWords).toEqual(['spreadsheet']);
-      expect(result.available).toBe(false);
-    });
-
-    it('is cacheable when the managed list read succeeds', async () => {
-      expect((await getClientBenignLists()).available).toBe(true);
-    });
-
-    it('falls back when no entry in the row is one the filter can use', async () => {
-      blockedRow = { id: 31, data: ['z', '42', 'zq'] };
-      expect((await getClientBenignLists()).profanityBlockedWords).toBeNull();
-    });
-
-    it('changes version when either profanity list changes', async () => {
-      const first = (await getClientBenignLists()).profanityListVersion;
-      whitelist = ['spreadsheet', 'cockpit'];
-      const afterWhitelistEdit = (await getClientBenignLists()).profanityListVersion;
-      blockedRow = { id: 31, data: [...atFloor, 'quaxle'] };
-      const afterBlockedEdit = (await getClientBenignLists()).profanityListVersion;
-      expect(new Set([first, afterWhitelistEdit, afterBlockedEdit]).size).toBe(3);
     });
   });
 });
