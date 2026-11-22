@@ -97,6 +97,7 @@ describe('semantic search with the flag off, or the list unreadable', () => {
   });
 });
 
+// The refusal applies on civitai.com only (docs/features/profanity-filter.md, Managed blocked list).
 describe('semantic search, the domain', () => {
   it('off civitai.com a profane query goes on to the search', async () => {
     const probe = router({
