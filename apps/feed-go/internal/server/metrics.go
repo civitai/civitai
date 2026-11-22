@@ -258,9 +258,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}, []string{EndpointLabel})
 	// A pod that never shed reads 0 rather than an absent series, on each served endpoint.
 	m.ServeInFlight = map[string]prometheus.Gauge{}
-	for _, e := range []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite} {
+	for _, e := range ServedEndpoints {
 		m.ServeInFlight[e] = serveInFlight.WithLabelValues(e)
 		m.Fallbacks.WithLabelValues(e, "serve", "bulkhead")
+	}
+	for _, e := range []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite} {
 		for _, r := range []string{DevalueWriteDevalue, DevalueWriteFallback, DevalueWriteSuperjson} {
 			m.DevalueWrites.WithLabelValues(e, r)
 		}
@@ -316,6 +318,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}
 	return m
 }
+
+// ServedEndpoints are the endpoints with a public route (each takes its serve slot from the one
+// shared pool): the three tRPC procedures and the two REST model routes.
+var ServedEndpoints = []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite, EndpointV1Models, EndpointV1ModelsID}
 
 // ErrorModes are the `mode` values of feed_go_errors_total: a compute error on the public route, in a
 // shadow sample or in a Go-first probe, and a fallback-proxy error.

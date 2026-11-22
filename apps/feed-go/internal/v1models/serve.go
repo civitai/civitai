@@ -22,6 +22,8 @@ type Answer struct {
 	Trivial bool
 	// Cached: the `[id]` body came from the origin response cache, as Node's did (no build).
 	Cached bool
+	// NotFound: the `[id]` body is the not-found answer, which Node sends with a 404.
+	NotFound bool
 }
 
 // NodeBuiltWindow is how recent an origin cache entry must be to count as the one Node built for the
@@ -40,10 +42,14 @@ type DetailRequest struct {
 	ID string
 	// RegionRestricted: the caller's region holds the level to PG/PG-13 (apiBrowsingLevel).
 	RegionRestricted bool
+	// Serving: a public request, not a shadow sample. Every fresh origin cache entry is read, as Node
+	// reads it; a sample ignores one younger than NodeBuiltWindow.
+	Serving bool
 	// Host is the request's Host header (isRedCapableHost, for the Training Data listing).
 	Host string
 	// TrainingDataSQL is Node's Training Data rule-set id the sample carried
-	// (TrainingDataSQLHeader); "" = none.
+	// (TrainingDataSQLHeader); "" = none (always so for a public request: the server never reads the
+	// header off one, so a Training Data candidate there falls back as drift).
 	TrainingDataSQL string
 }
 
@@ -62,7 +68,7 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 		level = browsing.SFWLevels
 	}
 	if d.Config.ResponseCacheTTL > 0 {
-		if body, age, ok := d.cachedDetail(ctx, id, level); ok && age >= NodeBuiltWindow {
+		if body, age, ok := d.cachedDetail(ctx, id, level); ok && (req.Serving || age >= NodeBuiltWindow) {
 			// withListableTrainingData runs after the cache, which keys on neither the host nor a
 			// restriction placed since the entry was written.
 			out, err := d.withListableTrainingData(ctx, body, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL})
@@ -83,7 +89,7 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 		return nil, err
 	}
 	if len(res.items) == 0 {
-		return &Answer{Body: superjson.Object{{Key: "error", Val: "No model with id " + strconv.Itoa(id)}}, Trivial: true}, nil
+		return &Answer{Body: superjson.Object{{Key: "error", Val: "No model with id " + strconv.Itoa(id)}}, Trivial: true, NotFound: true}, nil
 	}
 	// buildPublicModelResponse lists every Public file (Training Data too, without its metadata); the
 	// listing is applied to the built body as to a cached one.

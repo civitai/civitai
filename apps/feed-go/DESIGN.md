@@ -19,9 +19,9 @@ last sections list what is **not** at parity and what a deployment needs.
 Five more ports run in **shadow only** (nothing routes public traffic to them): the public REST
 endpoint `GET /api/v1/images` (§13), the tRPC procedures `image.getInfinite`, the flat image feed
 (§14), and `model.getAll`, the model browse feed (§15), and the REST model endpoints
-`GET /api/v1/models` and `GET /api/v1/models/[id]` (§16). (`image.getInfinite` and `model.getAll` each
-also have a public route that computes nothing unless its own serve switch is on, default off: §14.8,
-§15.8.) They share the hydration readers, the caches
+`GET /api/v1/models` and `GET /api/v1/models/[id]` (§16). (`image.getInfinite`, `model.getAll` and the
+two REST model endpoints each also have a public route that computes nothing unless its own serve
+switch is on, default off: §14.8, §15.8, §16.8.) They share the hydration readers, the caches
 (and the images ports the feed-service client), the shadow queue and the metric families, told
 apart by a `feed_endpoint` label (not `endpoint`: that is a reserved scrape target label, which would
 overwrite ours).
@@ -599,8 +599,9 @@ principal-cache fill (the app fills it on its next read), no `lastUsedAt`, no cl
 - The REST routes (`/api/v1/images`, `/api/v1/models`, `/api/v1/models/[id]`) keep every API
   credential a `bearer-token` fallback: `PublicEndpoint` shapes the cache headers on whether a
   credential was presented, `/api/v1/images` applies `REST_SCOPE_ENFORCE`, and the models routes have
-  their own block-scope middleware, none of it ported. They are shadow-only and the sampler never sends
-  a credential.
+  their own block-scope middleware, none of it ported. The sampler never sends a credential, and the
+  model routes' public serve path (§16.8) hands every credentialed request (an Authorization header of
+  any value, or `?token=`) to the Node app before anything is computed.
 - Shadow and probe samples: the sampler forwards `authorization: present`, never the key, so a sample's
   API credential stays `bearer-token` (`auth.WithRedactedCredentials`).
 
@@ -901,9 +902,10 @@ path as serving, and compares decoded values:
   - A sample without the fields (a sampler that predates them) is `uncompared`.
   - X-Handled-By (the pod), Content-Type/Length and Date (transport), and the rate-limit,
     Retry-After and site-alerts headers (per caller or per moment) are never compared.
-  - On the REST endpoints (`v1-images`, `v1-models`, `v1-models-id`) the response is `uncompared`:
-    their ports write no headers of their own yet, so a comparison would only count Node's as
-    missing here.
+  - On `v1-images` the response is `uncompared`: that port writes no headers of its own yet, so a
+    comparison would only count Node's as missing here. The model routes (`v1-models`,
+    `v1-models-id`) compare the headers their public route writes, over a longer list when the
+    sampler sends it (§16.8).
   - **The status is not compared.** Node posts only the samples it answered 200, and an answer
     computed here is a 200 by construction (a constant, not a status this service decided), so a
     status compare could never fire. Comparing a status needs a sampler that posts its non-200
@@ -2196,14 +2198,15 @@ with `sum by (feed_endpoint) (feed_go_serve_in_flight)`. A gallery `bulkhead` ra
 model.getAll is served means the shared pool is too small for both: turn the switch off and size it
 first.
 
-## 16. `GET /api/v1/models` and `GET /api/v1/models/[id]` (REST, shadow only)
+## 16. `GET /api/v1/models` and `GET /api/v1/models/[id]` (REST, shadow; served only behind `FEED_GO_SERVE_V1_MODELS`, default off)
 
 The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`) → `runModelSearch`
 (`src/server/services/model-search.service.ts`), and `src/pages/api/v1/models/[id].ts` (a
 `PublicEndpoint` behind `withBlockScope`) → `buildPublicModelResponse`. Both build on
 `getModelsWithVersions` over `getModelsRaw` (`src/server/services/model.service.ts`). Ported in
 `internal/v1models`; compared at `POST /internal/shadow/api/v1/models` and
-`POST /internal/shadow/api/v1/models/id`. Nothing serves them publicly.
+`POST /internal/shadow/api/v1/models/id`. The public routes exist but compute nothing unless
+`FEED_GO_SERVE_V1_MODELS` is on (§16.8).
 
 ### 16.1 What the Node path does
 
@@ -2297,13 +2300,17 @@ in-flight cap. A request with an API credential is counted (`skipped_credential`
 The list route does not sample a text `query` or a signed-in caller: feed-go answers every one of
 them with a fallback (`v1-models-query`, `v1-models-session`). An empty `query` is falsy to the
 sampler's `query || user` test as to the handler, so it is sampled, and answered here. Both routes finish every sampled
-request in a `finally`, so one that answers other than 200 is counted `skipped_status`.
+request in a `finally`, so one that answers other than 200 is counted `skipped_status`. The sample
+carries the response's headers of `FEED_GO_COMPARED_REST_RESPONSE_HEADERS`, marked
+`responseHeaderSet: "rest"` (§16.8).
 Outcomes are `civitai_app_feed_go_shadow_samples_total{feed_endpoint="v1-models"|"v1-models-id"}`.
 
 ### 16.5 Comparison and measurement
 
 `shadow.CompareJSON` as in §13.5. The list classifies by `items[].id` (models); `[id]` has one model,
-so a difference is `fields`, and a not-found answer against Node's 200 is `membership`.
+so a difference is `fields`, and a not-found answer against Node's 200 is `membership`. The response
+headers compare as their own result (§7, `feed_go_shadow_response_total`), against the headers the
+public route writes (§16.8).
 
 The `[id]` origin cache: on a miss Node builds the body and awaits its write before answering, and
 the sample is posted only after the answer, so reading the cache here would mostly find the entry
@@ -2355,6 +2362,10 @@ decisions' behaviour beyond the golden fixtures.
 
 ### 16.7 Known divergences
 
+- response headers (§16.8): the sampler forwards only the `civ-token` session cookies, so a sample
+  whose only session cookie is the legacy next-auth one reads as cookieless here while Node chose its
+  credentialed Vary: a `header:vary` mismatch the shadow cannot avoid (the served path sees the real
+  Cookie header and computes the same Vary as Node, or falls back on the list);
 - the download file name of a model or version name with non-ASCII text falls back
   (`v1-models-filename`): `resolveModelFileName` strips the model name out of the version name with
   `new RegExp(…, 'gi')`, whose case-insensitive match (non-Unicode mode) canonicalizes each UTF-16
@@ -2387,6 +2398,101 @@ decisions' behaviour beyond the golden fixtures.
     metadata (`fetchModelFilesForCache`); no Go port exists;
   - creator membership (`creator-membership-valid`): falls back. Its origin parses subscription
     products with the app's tier key (as model.getAll's does).
+
+### 16.8 Serving (`FEED_GO_SERVE_V1_MODELS`, default off) and the response headers
+
+**Routes and switch.** With `FEED_GO_V1_FALLBACK_URL` set, the public listener routes
+`GET /api/v1/models` to `ServeV1ModelsHTTP` and everything under `/api/v1/models/` to
+`ServeV1ModelsIDHTTP` (`internal/server/v1models_serve.go`); unset, those paths are not mounted.
+With `FEED_GO_SERVE_V1_MODELS` off (the default) every request there is the `v1-models-off` fallback:
+nothing is computed, no serve slot is taken, and the request is proxied as it came
+(`feed_go_fallback_total{feed_endpoint="v1-models"|"v1-models-id",mode="serve",reason="v1-models-off"}`).
+The switch on without `FEED_GO_V1_FALLBACK_URL` fails startup.
+
+**The fallback upstream.** The Node pool that answers `/api/v1` today is not the one behind
+`FEED_GO_FALLBACK_URL` (the tRPC routes'), so the model routes proxy to their own upstream,
+`FEED_GO_V1_FALLBACK_URL`, with the same proxy (`cmd/feed-go/proxy.go`: original Host and query,
+forwarding headers, its own idle pool, `feed_go_fallback_proxy_errors_total`). Its value is
+deployment config. Every answer carries `X-Feed-Go-Served` (`go` or `node`), as on the tRPC routes.
+
+**The gates, in order** (the model.getAll route's, §15.8, for a REST answer):
+
+1. The API request policy (§6.2): a blocked region is `region-blocked` and the Node app answers its
+   own 451; a crawler's user agent is `crawler-user-agent`. There is no origin check: the REST routes
+   answer any origin (`Access-Control-Allow-Origin: *`).
+2. A serve slot from the one shared pool (`FEED_GO_MAX_IN_FLIGHT`, §6.1; `bulkhead` past it), and the
+   request budget (`deadline`), as every public route; `feed_go_serve_in_flight` and the `bulkhead`
+   series are seeded per model endpoint. A client that leaves is `canceled` and not proxied.
+3. The checks no Node read can answer, before the port runs: not a GET (`method`) and any API
+   credential, an Authorization header of any value or a `?token=` (`bearer-token`), in the shadow
+   too (`v1ModelsPreflight`); then, on the public route only (`v1ModelsServeOnly`), a conditional request, `If-None-Match` or `If-Modified-Since`
+   (`v1-models-conditional`: Next's `res.json` answers a matching one 304); on the list, a cookie under
+   any session cookie name, the legacy next-auth one included, valid or not
+   (`v1-models-session-cookie`: the list serves signed-out callers only) and an `etag` query value
+   (`v1-models-etag`: MixedAuthEndpoint checks it against the database and may add X-Expires); on
+   `[id]`, an `Origin` header (`v1-models-origin`: withBlockScope adds its CORS headers for an origin
+   on the block-app allow-list, which lives in the database). Of these the sampler forwards only
+   the session cookie and the query, so in the shadow a list sample with a session cookie or an `etag`
+   query is still computed and its body compared; its headers too, except an `etag` query's (Node may
+   add X-Expires from its database): `uncompared` (`v1ModelsHeadersUnknown`).
+4. The port, with every fallback of §16.2 (unsupported inputs, cache misses, a list session); serving,
+   `[id]` reads every origin cache entry within its TTL as Node's handler does (the shadow alone skips
+   one younger than `NodeBuiltWindow`, §16.5), and a not-found `[id]` falls back
+   (`v1-models-not-found`: Node's answer is a 404, an answer here is a 200). The Training Data
+   listing runs exactly as in the shadow (§16.2, the same compute), with one difference by design: the
+   statement-hash header that vouches for this build's rules (`x-feed-go-training-data-sql`) is read
+   only off a Node sample, never off a public request (there it would be the client's), so a served
+   body with any Training Data candidate falls back (`v1-models-training-data-drift`) and Go never
+   lists a dataset by rules the Node app has not confirmed.
+5. The body as `JSON.stringify` writes it (`v1models.NodeBody`: the plain writer's `\u2028` /
+   `\u2029` escapes written raw); a body holding an escaped U+FFFD (an invalid UTF-8 byte) has no
+   known `JSON.stringify` text and falls back (`v1-models-invalid-utf8`).
+
+An answer is that body with the headers below, Next's `Content-Type: application/json;
+charset=utf-8`, and `X-Feed-Go-Served: go`, counted `served`, `served_empty` (an empty page) or
+`served_cached` (`[id]` from the origin cache).
+
+**The response headers** (`v1models.ResponseHeaders`, the one function the public route writes and the
+shadow compares). They drive Cloudflare's caching of the public API, so each is Node's, from the place
+Node sets it:
+
+| Header | Value | Set by (Node) |
+|---|---|---|
+| `X-Frame-Options` | `DENY` | next.config.mjs `headers()` (`/((?!gift-cards).*)`), applied by the router before the route; `internal/v1models/configheaders.json`, held to the real config by `src/server/__tests__/feed-go-v1-models-config-headers.test.ts` |
+| `Vary` | `Authorization`; `Authorization, Cookie` when the request presented a credential (`requestCarriesCallerCredentials`: Authorization, a session cookie name, `?token=`) | `MixedAuthEndpoint` / `PublicEndpoint`, `src/server/utils/endpoint-helpers.ts` (`ANONYMOUS_VARY` / `CREDENTIALED_VARY`) |
+| `Access-Control-Allow-Origin` | `*` | `addCorsHeaders` (no `allowCredentials`), same file |
+| `Access-Control-Allow-Headers` | `Authorization, Content-Type, *` | `addCorsHeaders` (`CORS_ALLOW_HEADERS`) |
+| `Access-Control-Allow-Methods` | `GET` | `addCorsHeaders` |
+| `Cache-Control` (list) | `public, s-maxage=300, stale-while-revalidate=150` with no credential and no verified crawler, else `max-age=0, private, no-cache`; `private, no-store` with `nsfw` | `MixedAuthEndpoint` (`addPublicCacheHeaders`, `PRIVATE_CACHE_CONTROL`), then `src/pages/api/v1/models/index.ts` (`nsfw`) |
+| `Cache-Control` (`[id]`) | `private, no-store` | `src/pages/api/v1/models/[id].ts`, on every request that parsed, over `PublicEndpoint`'s |
+| `ETag` | Next's `generateETag` over the body string (FNV-1a 52 over its UTF-16 code units, then its length, base 36) | Next's `res.json` → `sendData` (`next/dist/server/api-utils/node/api-resolver.js`) |
+
+The proxy's own default `Cache-Control` (`apiCacheMiddleware`) is always overwritten by the wrapper;
+its `X-Handled-By` (the pod) is not reproduced. A verified crawler is read only on a shadow sample
+(the app's own decision, §6.2); a public request from a crawler's user agent is handed to the app.
+
+**Parity evidence.** `testdata/golden/v1-models-headers` (written by `gen-v1-models-headers.mjs`)
+holds one case per header arm over a §16.6 body fixture, with extra request headers. The Node golden
+test runs each case through the REAL endpoint wrappers (MixedAuthEndpoint, PublicEndpoint,
+withBlockScope) and handlers and requires exactly the headers the route set, plus the ETag Next's own
+function gives the body; `internal/v1models/headers_golden_test.go` requires the same from Go over the
+same world. The ETag is also pinned on literal strings Next's function hashed
+(`TestETagIsNextsGenerateETag`).
+
+**The shadow.** The sampler forwards a REST sample's headers of
+`FEED_GO_COMPARED_REST_RESPONSE_HEADERS` (`shadow.RESTComparedHeaders`: §7's list plus `etag`, the
+three `access-control-allow-*` headers, `access-control-expose-headers`, `x-frame-options` and
+`x-expires`), marked `responseHeaderSet: "rest"`; a sample without the mark (a sampler that predates
+it) is compared over §7's list only. The allow-headers, allow-methods and expose-headers lists compare
+as sets, `x-frame-options` case-insensitively, the ETag exactly. A sample is marked as one, so its
+verified-crawler header is read (above).
+
+**Kill and routing.** The kill is the switch: `FEED_GO_SERVE_V1_MODELS` off proxies every request
+again, with nothing computed. Routing public traffic to these paths (a weighted ingress route in the
+infrastructure repo) is a separate step from this switch; with the switch on and no route, nothing
+is served. Before the switch goes on and while it is on, read the `bulkhead` fallbacks per endpoint
+as §15.8 says (the pool is shared with the tRPC routes), and `feed_go_shadow_response_total` for both
+model endpoints alongside the body match rate.
 
 ## 17. `model.getAssociatedResourcesCardData` (tRPC, shadow only)
 
