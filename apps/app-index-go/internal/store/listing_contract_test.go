@@ -283,8 +283,13 @@ func runListingsContract(t *testing.T, newStore func(t *testing.T) listingsTestS
 		}
 		slices.SortFunc(keys, func(a, b Listing) int { return strings.Compare(a.URN, b.URN) })
 		want := mustListing("alpha", "Alpha")
-		// Keys carries the columns only: no body, media or detail fields.
+		// Keys carries the columns only: no body, media or detail fields, and each sub-listing's key
+		// fields (id, title, own rating, sort time) and nothing else of it.
 		want.Body, want.Media, want.Detail = nil, nil, ListingDetail{}
+		ta := time.Date(2026, 3, 5, 1, 2, 3, 654321000, time.UTC)
+		tb := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
+		want.SubListings = []SubListing{{ID: subA, Title: "Gen Alpha", ContentRating: "x", SortTime: &ta},
+			{ID: subB, Title: "Gen Beta", SortTime: &tb}}
 		if len(keys) != 2 || !reflect.DeepEqual(keys[0], want) || keys[1].Slug != "beta" {
 			t.Fatalf("keys\n got %+v\nwant [%+v beta]", keys, want)
 		}
