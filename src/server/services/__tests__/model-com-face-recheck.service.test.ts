@@ -278,7 +278,9 @@ describe('the .com face listing re-check', () => {
         $executeRaw: vi.fn(async (strings: unknown) =>
           Array.isArray(strings) && strings.join('?').includes('SET nsfw = TRUE') ? flipped : 1
         ),
-        $queryRaw: vi.fn(async () => [{ name: 'LoRA', userId: 99, at: 'h', level: R }]),
+        $queryRaw: vi.fn(async () => [
+          { name: 'LoRA', userId: 99, meta: { comFaceHeldVerdict: { at: 'h', level: R } } },
+        ]),
         modActivity: { create: vi.fn() },
       };
       db.$transaction.mockImplementationOnce((async (fn: (client: typeof tx) => unknown) => {
