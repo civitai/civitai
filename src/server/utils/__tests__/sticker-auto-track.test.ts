@@ -553,7 +553,13 @@ describe('buildStickerAutoTrackWorkflow', () => {
     expect(JSON.parse(workflow['12'].inputs.positive_coords as string)).toEqual([
       { x: 512, y: 144 },
     ]);
-    expect(workflow['6'].inputs.masks).toEqual(['16', 0]);
+    expect(workflow['6'].inputs).toMatchObject({ masks: ['5', 0], fallback_masks: ['12', 0] });
+  });
+
+  it('turns re-id off for a sticker that is not on a head', () => {
+    // Wired to a constant true, a lantern sticker jumps onto a person after a cut. The node pack's
+    // own tests cover what reid does; this graph is the only place the app can get the wiring wrong.
+    expect(graph({ width: 1920, height: 1080 })['9'].inputs.reid).toEqual(['6', 1]);
   });
 
   it('keeps a sticker on the bottom-right corner inside the frame', () => {
@@ -567,5 +573,6 @@ describe('buildStickerAutoTrackWorkflow', () => {
     const workflow = graph();
     expect(workflow['12']).toBeUndefined();
     expect(workflow['6'].inputs.masks).toEqual(['5', 0]);
+    expect(workflow['6'].inputs.fallback_masks).toBeUndefined();
   });
 });
