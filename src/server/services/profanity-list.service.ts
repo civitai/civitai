@@ -14,7 +14,7 @@ import {
   ensureRegisterProfanityListMetrics,
   type ProfanityHitSurface,
 } from '~/server/metrics/profanity-list.metrics';
-import { getBlocklistDTO, readBlocklistWithSource } from '~/server/services/blocklist.service';
+import { readBlocklistWithSource } from '~/server/services/blocklist.service';
 
 /**
  * Which list a server profanity check enforced: `managed` the moderator row; `stale` this pod's
@@ -27,6 +27,8 @@ export type ProfanityListSource = 'managed' | 'stale' | 'fallback' | 'shipped';
 export type ProfanityLists = {
   blocked: string[] | null;
   allowed: string[] | null;
+  /** Flag off only: the moderators' benign words, which a search check allows as the browser does. */
+  benign?: string[] | null;
   source: ProfanityListSource;
 };
 
@@ -71,7 +73,14 @@ export function createProfanityListReader({
         // after the flag returns falls back to them.
         held = { blocked: null, allowed: null };
         metrics().fallback.set(0);
-        return { blocked: null, allowed: null, source: 'shipped' };
+        // Read here so it is shared like the rest; unreadable means the shipped allow list.
+        const benign = await Promise.resolve()
+          .then(() => read(BlocklistType.ProfanityBenignWord))
+          .then(
+            (row) => (row.dto.id == null ? null : row.dto.data),
+            () => null
+          );
+        return { blocked: null, allowed: null, benign, source: 'shipped' };
       }
       let blockedRow, allowedRow;
       try {
@@ -148,6 +157,7 @@ export function setProfanityListReaderForTests(next?: ProfanityListReader, share
 export type ServerProfanityFilter = {
   filter: SimpleProfanityFilter;
   source: ProfanityListSource;
+  benign: string[] | null;
   /** Counts a match against this filter's list source. */
   countHit(surface: ProfanityHitSurface): void;
 };
@@ -198,7 +208,19 @@ export async function getServerProfanityFilter(): Promise<ServerProfanityFilter>
   const source = buildFailed ? 'fallback' : lists.source;
   const metrics = ensureRegisterProfanityListMetrics();
   metrics.reads.inc({ source });
-  return { filter, source, countHit: (surface) => metrics.hits.inc({ surface, source }) };
+  return {
+    filter,
+    source,
+    benign: lists.benign ?? null,
+    countHit: (surface) => metrics.hits.inc({ surface, source }),
+  };
+}
+
+// Keyed on the shared read's array, so a search reuses the filter rather than rebuilding its key.
+let benignSlot: { list: string[] | null; filter: SimpleProfanityFilter } | null = null;
+function benignFilter(list: string[] | null) {
+  if (benignSlot?.list !== list) benignSlot = { list, filter: getProfanityFilter(list) };
+  return benignSlot.filter;
 }
 
 /** The typed query of each search in a site search request body, read leniently. */
@@ -235,10 +257,7 @@ export async function profaneSearchCheck(queries: string[]): Promise<'clean' | '
       : ('clean' as const);
   try {
     const profanity = await getServerProfanityFilter();
-    if (profanity.source === 'shipped') {
-      const benign = await getBlocklistDTO({ type: BlocklistType.ProfanityBenignWord });
-      return verdict(getProfanityFilter(benign.id == null ? null : benign.data));
-    }
+    if (profanity.source === 'shipped') return verdict(benignFilter(profanity.benign));
     const result = verdict(profanity.filter);
     if (result === 'profane') profanity.countHit('search');
     return result;

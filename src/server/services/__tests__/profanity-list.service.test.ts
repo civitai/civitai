@@ -229,6 +229,26 @@ describe('isProfaneSearch', () => {
     expect(await isProfaneSearch(['hello'])).toBe(false);
   });
 
+  it("flag off: allows the moderators' benign words, from the shared read, not a read per search", async () => {
+    h.flagOn = false;
+    // A word that contains a shipped entry and is profane until the moderators allow it.
+    const benignWord = `zq${SHIPPED_WORD}zq`;
+    expect(await isProfaneSearch([benignWord])).toBe(true);
+    h.rows.set(BlocklistType.ProfanityBenignWord, { id: 2, data: [benignWord] });
+    const readRow = vi.fn(async (type: string) => {
+      const row = h.rows.get(type) ?? { data: [] };
+      if (row instanceof Error) throw row;
+      return { dto: { type, ...row }, source: 'cache' as const };
+    });
+    setProfanityListReaderForTests(createProfanityListReader({ readRow: readRow as never }), 5_000);
+    expect([
+      await isProfaneSearch([benignWord]),
+      await isProfaneSearch([benignWord]),
+      await isProfaneSearch([SHIPPED_WORD]),
+    ]).toEqual([false, false, true]);
+    expect(readRow).toHaveBeenCalledTimes(1);
+  });
+
   it('reads the query of a single search and of each search in a multi-search', () => {
     expect(siteSearchQueries({ q: 'one' })).toEqual(['one']);
     expect(siteSearchQueries({ queries: [{ q: 'a' }, { indexUid: 'x' }, { q: 'b' }] })).toEqual([

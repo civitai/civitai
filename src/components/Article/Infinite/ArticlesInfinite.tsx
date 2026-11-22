@@ -74,8 +74,7 @@ function ArticlesFeed({
   ...props
 }: Props & { search?: FeedSearch }) {
   const filters = useInfiniteArticleFilters(props);
-  // A failed search shows its banner over no results, never the keyword feed with the query:
-  // that feed has no server profanity check. Its earlier page is not shown either, nor paged:
+  // A failed search must not show or page the keyword feed (no server profanity check): its
   // fetchNextPage runs even while the query is disabled.
   const searchFailed = !!search?.isError;
   const searching = !!search && !searchFailed;
