@@ -2086,8 +2086,8 @@ export const removeAllContent = async ({
   // held to it. The deletes that destroy evidence check again in their own statements.
   const { markerView } = await assertContentRemovalNotHeld(id);
   const held = contentRemovalHeldSql(Prisma.sql`${id}::int`, markerView);
-  // Before any delete, as in `deleteUser`: a failed archive deletes nothing. The profile and links
-  // go straight after it, so an edit during the rest of the wipe cannot be deleted unarchived.
+  // Before any delete: a failed archive must delete nothing. The profile and links go straight after
+  // it, which narrows (not closes) the window for an owner edit to be deleted unarchived.
   await archiveProfileBeforeModeratorChange({
     userId: id,
     actorId: actorUserId,

@@ -471,8 +471,7 @@ export async function getAccountLegalHoldLegs(userId: number): Promise<AccountHo
 
 /**
  * Whether content owned by `id` (an int SQL expression) must not be removed: any account hold. For
- * every path that deletes a user's media or content. These content-removal names are kept as a seam
- * over the account holds, so a content-only hold changes one place rather than every purge path.
+ * every path that deletes a user's media or content.
  */
 export function contentRemovalHeldSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
   return accountHoldSql(id, markerView);

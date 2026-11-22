@@ -2053,9 +2053,8 @@ describe('an open bounty with supporters, in a content wipe', () => {
   });
 });
 
-// Task 1a1f810917cac202a: a content wipe archives the profile and links of an account any CSAM
-// report names, held or not, before it deletes anything; a failed archive deletes nothing (the
-// 11/20 fail-closed ruling).
+// A wipe archives the profile and links of any account a CSAM report names, held or not, before
+// deleting; a failed archive deletes nothing.
 describe('removeAllContent and the profile archive', () => {
   const OLD_REPORT = 4; // named only on a report sent over a year ago and archived: no hold
   const PROFILE = { bio: 'zzbio', message: null };
@@ -2099,7 +2098,7 @@ describe('removeAllContent and the profile archive', () => {
   });
 
   // The wipe does not ban, so the owner can still add a link while the rest of it runs.
-  it('never deletes a link the archive did not see, when one is added mid-wipe', async () => {
+  it('never deletes a link the archive did not see, when one is added later in the wipe', async () => {
     const live = [...LINKS];
     const archived: number[] = [];
     const deletedUnarchived: number[] = [];
