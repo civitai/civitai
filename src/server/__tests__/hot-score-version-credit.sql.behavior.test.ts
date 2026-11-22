@@ -83,7 +83,18 @@ type Version = {
   downloads?: number;
   generations?: number;
   status?: string;
+  /** "EntityAccess" rows for the version, written before the metrics. */
+  access?: Access[];
 };
+
+type Access = { user: number; meta: Record<string, string> };
+const OWNER = 1;
+const DOWNLOAD_KEY = 'download-buzzTransactionId';
+const GENERATION_KEY = 'generation-buzzTransactionId';
+let nextBuyer = 10_000;
+/** `n` paid buyers of a version, each a different user. */
+const paid = (n: number, key = DOWNLOAD_KEY): Access[] =>
+  Array.from({ length: n }, () => ({ user: nextBuyer++, meta: { [key]: 'tx' } }));
 
 let nextModel = 1;
 /** Writes versions first, as the metrics job does, then the ModelMetric row the trigger scores. */
@@ -94,6 +105,7 @@ async function model(
   opts: { id?: number; uniqueGenerators?: number } = {}
 ) {
   const modelId = opts.id ?? nextModel++;
+  await db.pg.query(`INSERT INTO "Model" (id, "userId") VALUES ($1, $2)`, [modelId, OWNER]);
   for (const [i, v] of versions.entries()) {
     const id = modelId * 100 + i;
     await db.pg.query(
@@ -113,6 +125,12 @@ async function model(
        VALUES ($1, $2, $3, $4)`,
       [id, v.likes, v.downloads ?? 0, v.generations ?? 0]
     );
+    for (const a of v.access ?? [])
+      await db.pg.query(
+        `INSERT INTO "EntityAccess" ("accessToId", "accessToType", "accessorId", "accessorType", meta)
+         VALUES ($1, 'ModelVersion', $2, 'User', $3)`,
+        [id, a.user, JSON.stringify(a.meta)]
+      );
   }
   await db.pg.query(
     `INSERT INTO "ModelMetric" ("modelId", "thumbsUpCount", "publishedAt", "uniqueGeneratorCount")
@@ -152,6 +170,8 @@ let preexisting: number;
 // the full 60-day window, which every other backfill fixture (3 days, likes) would not notice.
 let preexistingByDownloads: number;
 const DAY_45 = daysAgo(45);
+// Under the bar on likes + downloads, over it with its buyers: only the buyer-bar rescore lifts it.
+let preexistingByBuyers: number;
 
 const SCHEMA = `
     CREATE TABLE "ModelMetric" (
@@ -171,6 +191,12 @@ const SCHEMA = `
       "modelId" int NOT NULL, "baseModel" text NOT NULL,
       "thumbsUpCount" int NOT NULL DEFAULT 0, "downloadCount" int NOT NULL DEFAULT 0,
       "hotScore" int, PRIMARY KEY ("modelId", "baseModel")
+    );
+    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "EntityAccess" (
+      "accessToId" int NOT NULL, "accessToType" text NOT NULL,
+      "accessorId" int NOT NULL, "accessorType" text NOT NULL, meta jsonb DEFAULT '{}',
+      PRIMARY KEY ("accessToId", "accessToType", "accessorId", "accessorType")
     );
 `;
 
@@ -194,6 +220,10 @@ beforeAll(async () => {
   preexistingByDownloads = await model(OLD, 3_000, [
     { at: OLD, likes: 3_000 },
     { at: DAY_45, likes: 0, downloads: 192 },
+  ]);
+  preexistingByBuyers = await model(OLD, 3_000, [
+    { at: OLD, likes: 2_970 },
+    { at: RECENT, likes: 19, access: paid(6) },
   ]);
   // #9397's backfill walks ids in 250k ranges: one row opening each later range, the last at the
   // max id, each with a mirrored and a measured slice. The head-start rescore batches by position
@@ -532,6 +562,94 @@ describe("an unmeasured slice follows its model's score", () => {
 });
 
 // Puts the shared database's triggers back to #9397: only fresh databases are used after it.
+const BUYER_BAR_DIR = '20271123120000_model_hot_score_buyer_bar';
+
+describe('paid buyers count toward the head-start bar like likes', () => {
+  // As the head-start fixtures: model 3,000 likes, so a qualifying version of engagement e scores
+  // term(e + 0.01 * (3,000 - e)). The buyers move the bar only, never e.
+  const old = { at: OLD, likes: 2_970 };
+  const headStart = (ev: number) => term(ev + 0.01 * (3_000 - ev), RECENT);
+  const noHeadStart = (ev: number) => term(ev, RECENT);
+  const expectNear = async (id: number, want: number) =>
+    expect(Math.abs((await score(id)) - want)).toBeLessThanOrEqual(1);
+
+  it('lifts a version over the bar on its buyers, download and generation purchases alike', async () => {
+    // 19 likes + 6 buyers = 25. Without either kind of purchase it stays under.
+    const id = await model(OLD, 3_000, [
+      old,
+      { at: RECENT, likes: 19, access: [...paid(5), ...paid(1, GENERATION_KEY)] },
+    ]);
+
+    await expectNear(id, headStart(19));
+    expect(Math.abs((await slice(id, 'SDXL 1.0', 3_000)) - headStart(19))).toBeLessThanOrEqual(1);
+  });
+
+  it('scores a version with no buyers as before', async () => {
+    const id = await model(OLD, 3_000, [old, { at: RECENT, likes: 19 }]);
+
+    await expectNear(id, noHeadStart(19));
+  });
+
+  it("does not count the owner's own purchase", async () => {
+    const id = await model(OLD, 3_000, [
+      old,
+      {
+        at: RECENT,
+        likes: 19,
+        access: [...paid(5), { user: OWNER, meta: { [DOWNLOAD_KEY]: 'tx' } }],
+      },
+    ]);
+
+    await expectNear(id, noHeadStart(19));
+  });
+
+  it('does not count a gift or a revoked purchase, which hold no purchase key', async () => {
+    const id = await model(OLD, 3_000, [
+      old,
+      {
+        at: RECENT,
+        likes: 19,
+        access: [
+          ...paid(5),
+          { user: nextBuyer++, meta: { giftLinkId: 'gift' } },
+          { user: nextBuyer++, meta: { revocations: 'archived' } },
+        ],
+      },
+    ]);
+
+    await expectNear(id, noHeadStart(19));
+  });
+
+  it('counts a buyer in place of a download, not on top of one', async () => {
+    // 18 likes + (7 - 6) / 6.4 + 6 buyers = 24.16. Counting the buyers' downloads too: 25.09.
+    const id = await model(OLD, 3_000, [
+      old,
+      { at: RECENT, likes: 18, downloads: 7, access: paid(6) },
+    ]);
+
+    await expectNear(id, noHeadStart(18 + 7 / 6.4));
+  });
+
+  it('backfills a model scored before the migration', async () => {
+    await expectNear(preexistingByBuyers, headStart(19));
+  });
+
+  it('the rollback returns a buyer-lifted model to the #9928 score, and can be re-run', async () => {
+    const id = await model(OLD, 3_000, [old, { at: RECENT, likes: 19, access: paid(6) }]);
+    await expectNear(id, headStart(19));
+
+    await apply(BUYER_BAR_DIR, 'rollback.sql');
+
+    await expectNear(id, noHeadStart(19));
+    await expectNear(preexistingByBuyers, noHeadStart(19));
+    expect(await slice(id, 'SDXL 1.0', 3_000)).toBe(await score(id));
+    await expect(apply(BUYER_BAR_DIR, 'rollback.sql')).resolves.toBeUndefined();
+    // Back on #9928: a version over the bar on its own still gets its head start.
+    const own = await model(OLD, 3_000, [old, { at: RECENT, likes: 30 }]);
+    await expectNear(own, headStart(30));
+  });
+});
+
 describe('the head-start rollback', () => {
   it('returns a head-started model and its slices to the #9397 score', async () => {
     const at = daysAgo(5);
@@ -672,6 +790,22 @@ describe('the rescore lag watch', () => {
     expect(errors[0]).toContain('no replica lag visible');
     expect(await functionExists(pg, 'hot_version_score')).toBe(false);
     expect(await usesHeadStart(pg)).toBe(false);
+    await pg.close();
+  });
+
+  it('refuses to apply the buyer bar, changing nothing, when it cannot see replica lag', async () => {
+    const pg = await freshDb('20271122120000_model_hot_score_mirror_refresh');
+    const countsBuyers = async () =>
+      (
+        await pg.query(
+          `SELECT 1 FROM pg_proc WHERE proname = 'model_metric_hot_score' AND prosrc LIKE '%EntityAccess%'`
+        )
+      ).rows.length > 0;
+
+    await expect(apply(BUYER_BAR_DIR, 'migration.sql', pg)).rejects.toThrow();
+    await pg.exec('ROLLBACK');
+    expect(await countsBuyers()).toBe(false);
+    expect(await usesHeadStart(pg)).toBe(true);
     await pg.close();
   });
 
