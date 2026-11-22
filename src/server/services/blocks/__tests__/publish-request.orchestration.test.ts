@@ -3258,7 +3258,9 @@ describe('approveRequest', () => {
         id: 'apb_existing',
         appId: 'appblk-hello',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
-        app: { allowedScopes, allowedOrigins: ['https://hello.civit.ai'] },
+        // The replica copy never holds bit 32, so only the primary read below can keep it:
+        // 2147483648n (AppsRead) | 8n | 1n.
+        app: { allowedScopes: 2147483657n, allowedOrigins: ['https://hello.civit.ai'] },
       });
       // The ceiling approve reads on the primary before re-capping it.
       mockDbWrite.oauthClient.findUnique.mockResolvedValueOnce({ allowedScopes });
@@ -3293,7 +3295,7 @@ describe('approveRequest', () => {
       // The deterministic client id already exists (an earlier attempt created it).
       const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
       mockDbWrite.oauthClient.create.mockRejectedValueOnce(p2002);
-      mockDbRead.oauthClient.findUnique.mockResolvedValueOnce({
+      mockDbWrite.oauthClient.findUnique.mockResolvedValueOnce({
         id: 'appblk-hello',
         allowedScopes,
       });
@@ -3568,7 +3570,7 @@ describe('approveRequest', () => {
     const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
     mockDbWrite.oauthClient.create.mockRejectedValueOnce(p2002);
     // The post-P2002 lookup returns the row from approver-1.
-    mockDbRead.oauthClient.findUnique.mockResolvedValueOnce({ id: 'appblk-hello' });
+    mockDbWrite.oauthClient.findUnique.mockResolvedValueOnce({ id: 'appblk-hello' });
     // AppBlock.create for the second approver also hits the (appId,blockId)
     // unique constraint and falls through to findFirst.
     mockDbWrite.appBlock.create.mockRejectedValueOnce(p2002);
@@ -3579,7 +3581,7 @@ describe('approveRequest', () => {
     // materialized (the second was caught + recovered).
     expect(mockDbWrite.oauthClient.create).toHaveBeenCalledTimes(2);
     expect(mockDbWrite.appBlock.create).toHaveBeenCalledTimes(2);
-    expect(mockDbRead.oauthClient.findUnique).toHaveBeenCalled();
+    expect(mockDbWrite.oauthClient.findUnique).toHaveBeenCalled();
     // The second approver UPDATEs the existing AppBlock (refreshes manifest)
     // instead of inserting a new one — converges to a consistent state.
     expect(mockDbWrite.appBlock.update).toHaveBeenCalled();
@@ -3608,7 +3610,7 @@ describe('approveRequest', () => {
     mockDbRead.appBlock.findFirst.mockResolvedValue(null);
     const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
     mockDbWrite.oauthClient.create.mockRejectedValueOnce(p2002);
-    mockDbRead.oauthClient.findUnique.mockResolvedValueOnce({ id: 'appblk-hello' });
+    mockDbWrite.oauthClient.findUnique.mockResolvedValueOnce({ id: 'appblk-hello' });
 
     const result = await approveRequest({
       publishRequestId: 'pubreq_1',
@@ -4013,7 +4015,7 @@ describe('approveRequest', () => {
         .mockResolvedValueOnce({ id: 'apb_first' }); // AppBlock.create P2002 recovery
       const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
       mockDbWrite.oauthClient.create.mockRejectedValueOnce(p2002);
-      mockDbRead.oauthClient.findUnique.mockResolvedValueOnce({ id: 'appblk-hello' });
+      mockDbWrite.oauthClient.findUnique.mockResolvedValueOnce({ id: 'appblk-hello' });
       mockDbWrite.appBlock.create.mockRejectedValueOnce(p2002);
       mockDbRead.appListing.findUnique.mockResolvedValue({ id: 'apl_test_1' }); // now exists
 
