@@ -44,7 +44,7 @@ import type { Prisma } from '@prisma/client';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { CODE_REMIX_APPS } from '~/shared/remix-apps/system-apps';
 import {
-  type RemixQuarantinedError,
+  RemixQuarantinedError,
   userRemixAuthorPrompt,
   userRemixBranchReplayer,
   userRemixFirstRequest,
@@ -421,7 +421,6 @@ export async function getRegisteredRemixApp(
   if (
     entry.author &&
     entry.author.userId === caller.user?.id &&
-    !caller.user.isModerator &&
     (await isRemixAuthorHeld(entry.author.userId))
   )
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_AUTHOR_HELD });
@@ -605,6 +604,9 @@ async function submitUserRemixAppLocked({
   });
   if (existing && (!REMIX_STATUSES.includes(existing.status) || !isUserRow(existing.manifest)))
     throw new TRPCError({ code: 'CONFLICT', message: `${blockId} belongs to another app` });
+  // Again under the lock: the check before it can miss a hold that landed while this waited.
+  if (await isRemixAuthorHeld(authorId))
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_AUTHOR_HELD });
 
   if (!existing) {
     // primary: the cap guards this create.
@@ -647,12 +649,15 @@ async function submitUserRemixAppLocked({
   const reviewLog = kept?.reviewLog;
   const minorThemed = kept?.minorThemed;
   const runnerTrips = kept?.runnerTrips;
+  // Only a mod's clear removes a hold.
+  const runnerHold = kept?.runnerHold;
   const manifest = withReviewLog(
     {
       ...listing,
       ...(reviewLog ? { reviewLog } : {}),
       ...(minorThemed ? { minorThemed } : {}),
       ...(runnerTrips ? { runnerTrips } : {}),
+      ...(runnerHold ? { runnerHold } : {}),
     },
     { by: authorId, action: 'submitted', sha256 }
   );
@@ -960,10 +965,25 @@ export async function holdUserRemixApp(
 }
 
 /** A mod's dry run of a user app down every path, in the sandbox, on the source stored now. */
-export async function validateUserRemixApp(slug: string) {
+export async function validateUserRemixApp(slug: string, moderatorId: number) {
   const { manifest, remix } = await readUserRemixApp(slug);
+  const { author } = manifest;
+  // Authors are moderators too: a dry run of their own app is one of their runs.
+  const own = author?.userId === moderatorId;
+  if (own && (await isRemixAuthorHeld(moderatorId)))
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_AUTHOR_HELD });
+  const replay = userRemixBranchReplayer(slug, remixBlockId(slug), async () => remix.source);
   const { graph, paths, issues } = await validateRemixApp({
-    branches: userRemixBranchReplayer(slug, remixBlockId(slug), async () => remix.source),
+    branches: own
+      ? (...args) =>
+          replay(...args).catch(async (error: unknown) => {
+            if (!(error instanceof RemixQuarantinedError)) throw error;
+            const refusal = await noteRunnerQuarantine({ slug, author }, moderatorId, error);
+            throw refusal
+              ? new TRPCError({ code: 'PRECONDITION_FAILED', message: refusal })
+              : error;
+          })
+      : replay,
   });
   return { sha256: remixReviewHash({ ...manifest, remix }), graph, paths, issues };
 }
@@ -1121,7 +1141,7 @@ async function recordAuthorTrip(slug: string, authorId: number): Promise<boolean
 
 /** Every app an author holds. */
 const authorRows = (authorId: number) =>
-  // primary: a mark set a moment ago must already count.
+  // primary: a mark or hold set a moment ago must already count.
   dbWrite.appBlock.findMany({
     where: { blockId: { startsWith: remixBlockId(userRemixSlugPrefix(authorId)) } },
     select: { id: true, blockId: true, manifest: true },
@@ -1134,7 +1154,7 @@ async function authorHasMinorThemedApp(authorId: number) {
 
 export const REMIX_AUTHOR_HELD = 'Your remix apps are on hold until a moderator reviews them';
 
-/** `true` while the author's runner trips hold them: their own runs and saves wait for a mod. */
+/** `true` while the author's runner trips hold them: their own runs, prices and saves wait for a mod. */
 export async function isRemixAuthorHeld(authorId: number) {
   return (await authorRows(authorId)).some((row) => hasRunnerHold(row.manifest));
 }
@@ -1165,7 +1185,15 @@ export async function clearRemixRunnerHold({
   const rows = manifest.author ? await authorRows(manifest.author.userId) : [];
   if (!rows.some((row) => hasRunnerHold(row.manifest)))
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'This author is not held' });
-  for (const { blockId, manifest: raw } of rows) {
+  // Authors are moderators too.
+  if (manifest.author?.userId === moderatorId)
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'A different moderator must clear a hold on you',
+    });
+  // The hold goes last, so a clear that fails partway is retried rather than refused as not held.
+  const ordered = [...rows].sort((a, b) => +hasRunnerHold(a.manifest) - +hasRunnerHold(b.manifest));
+  for (const { blockId, manifest: raw } of ordered) {
     if (!hasRunnerHold(raw) && !tripsOf(raw).length) continue;
     const { row, manifest: stored } = await readUserRemixApp(
       blockId.slice(REMIX_BLOCK_ID_PREFIX.length)
@@ -1256,6 +1284,16 @@ export async function deleteRemixApp({ slug }: { slug: string }) {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'This app is marked minor-themed; a second moderator must clear the mark first',
+    });
+  // Deleting would drop the author's trips or hold with the row.
+  if (
+    hasRunnerHold(row.manifest) ||
+    tripsOf(row.manifest).some((at) => Date.parse(at) >= Date.now() - QUARANTINE_WINDOW_MS)
+  )
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        "This app records its author's runner trips: a moderator must clear the author's hold, or a trip must be a day old",
     });
 
   // The only record of what was deleted.

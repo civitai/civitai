@@ -547,6 +547,29 @@ describe('user apps: submit, review and enable', () => {
     dbMock.dbWrite.appBlock.findMany.mockResolvedValue([]);
   });
 
+  it("a save carries the author's runner trips and hold over as stored", async () => {
+    const runnerTrips = ['2026-11-21T00:00:00.000Z', '2026-11-21T01:00:00.000Z'];
+    const runnerHold = { at: '2026-11-21T02:00:00.000Z' };
+    // The check before the lock reads no hold (findMany: []); the row read inside it carries one.
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(
+      userRow('submitted', SOURCE, 'remix_disabled', { runnerTrips, runnerHold }) as never
+    );
+    await submitUserRemixApp({ ...submission, authorId: 7, isGreen: false });
+    expect(lastWrite().data.manifest).toMatchObject({ runnerTrips, runnerHold });
+  });
+
+  it('a hold that lands between the check before the lock and the read inside it refuses the save', async () => {
+    const held = userRow('submitted', SOURCE, 'remix_disabled', {
+      runnerHold: { at: '2026-11-21T02:00:00.000Z' },
+    });
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValueOnce([]).mockResolvedValue([held] as never);
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(held as never);
+    await expect(
+      submitUserRemixApp({ ...submission, authorId: 7, isGreen: false })
+    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(dbMock.dbWrite.appBlock.updateMany).not.toHaveBeenCalled();
+  });
+
   it("creates the author's app disabled, awaiting review, on the safe engine only", async () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(null);
     dbMock.dbWrite.appBlock.aggregate.mockResolvedValue({ _max: { featuredOrder: 3 } } as never);

@@ -25,6 +25,7 @@ const u = vi.hoisted(() => ({
   submit: vi.fn(),
   review: vi.fn(),
   clear: vi.fn(),
+  clearHold: vi.fn(),
   validate: vi.fn(),
 }));
 
@@ -38,6 +39,7 @@ vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) =
   submitUserRemixApp: u.submit,
   reviewUserRemixApp: u.review,
   clearRemixMinorThemed: u.clear,
+  clearRemixRunnerHold: u.clearHold,
   validateUserRemixApp: u.validate,
 }));
 vi.mock('~/server/services/remix-app-run.service', async (importOriginal) => ({
@@ -248,7 +250,7 @@ describe('user app code: submit and review', () => {
     expect(u.validate).not.toHaveBeenCalled();
     // POSITIVE CONTROL: a moderator with the flag reaches the service.
     await as(moderator, on).validate({ slug: 'u88-probe' });
-    expect(u.validate).toHaveBeenCalledWith('u88-probe');
+    expect(u.validate).toHaveBeenCalledWith('u88-probe', moderator.id);
   });
 
   it('clears a minor-themed mark only as a moderator with remixAppsUserCode on', async () => {
@@ -262,6 +264,19 @@ describe('user app code: submit and review', () => {
     expect(u.clear).not.toHaveBeenCalled();
     await as(moderator, on).clearMinorThemed({ slug: 'u88-probe' });
     expect(u.clear).toHaveBeenCalledWith({ slug: 'u88-probe', moderatorId: moderator.id });
+  });
+
+  it("clears an author's runner hold only as a moderator with remixAppsUserCode on", async () => {
+    const on = flags({ remixAppsUserCode: true });
+    await expect(as(moderator).clearRunnerHold({ slug: 'u88-probe' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    await expect(as(user, on).clearRunnerHold({ slug: 'u88-probe' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(u.clearHold).not.toHaveBeenCalled();
+    await as(moderator, on).clearRunnerHold({ slug: 'u88-probe' });
+    expect(u.clearHold).toHaveBeenCalledWith({ slug: 'u88-probe', moderatorId: moderator.id });
   });
 
   it("toggles or deletes a user app's row only with remixAppsUserCode on, as a named moderator", async () => {

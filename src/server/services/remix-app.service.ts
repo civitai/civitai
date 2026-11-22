@@ -387,7 +387,6 @@ export async function quoteRemixApps({
   );
   // Pricing a user app runs its source: an author held for runner trips prices none of theirs.
   const ownHeld =
-    !caller.user.isModerator &&
     apps.some((entry) => entry.author?.userId === caller.user.id) &&
     (await isRemixAuthorHeld(caller.user.id));
   const prices = await Promise.all(

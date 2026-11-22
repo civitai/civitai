@@ -154,7 +154,7 @@ const remixAppAdminRouter = router({
   validate: userCodeReviewProcedure
     .use(runStepRateLimit)
     .input(z.object({ slug: remixAppSlugSchema }))
-    .mutation(({ input }) => validateUserRemixApp(input.slug)),
+    .mutation(({ ctx, input }) => validateUserRemixApp(input.slug, ctx.user.id)),
   /** Lifts a minor-themed mark; refused to the moderator who set it. */
   clearMinorThemed: userCodeReviewProcedure
     .input(z.object({ slug: remixAppSlugSchema }))

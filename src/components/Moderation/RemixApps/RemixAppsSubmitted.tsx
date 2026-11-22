@@ -90,7 +90,6 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
   const marked = !!user.minorThemed;
   // The server bars mature on every app of an author with a mark on any of them.
   const authorMarked = marked || others.some((o) => !!o.user.minorThemed);
-  // A runner-trip hold on any of the author's apps holds the author.
   const authorHeld = !!user.runnerHold || others.some((o) => !!o.user.runnerHold);
 
   return (

@@ -1980,8 +1980,8 @@ describe('a user app', () => {
             (args as { data: { status?: string; manifest: Record<string, unknown> } }).data
         );
       const blocks = () => (stored.manifest as { combinationBlocks?: string[] }).combinationBlocks;
-      const runAs = (viewerId: number, { who = 'Ada', green = false } = {}) => {
-        const viewer = flagOn({ id: viewerId });
+      const runAs = (viewerId: number, { who = 'Ada', green = false, mod = false } = {}) => {
+        const viewer = flagOn({ id: viewerId, isModerator: mod });
         return startRemixRun({
           slug: 'u5-mine',
           imageId: SOURCE_ID,
@@ -2459,8 +2459,11 @@ describe('a user app', () => {
           expect(stored.status).toBe('remix_disabled');
         });
 
+        // While user apps are mods-only every author is a moderator, so these authors are too.
         describe("the author's own trips", () => {
           const authorHeld = { code: 'PRECONDITION_FAILED', message: REMIX_AUTHOR_HELD };
+          const author = flagOn({ id: OTHER_AUTHOR, isModerator: true });
+          const runAsAuthor = () => runAs(OTHER_AUTHOR, { mod: true });
           const withSource = async (source: string) => {
             stored = {
               ...stored,
@@ -2469,17 +2472,23 @@ describe('a user app', () => {
             await bumpRemixAppRegistry();
           };
 
-          it('hold the author at the third, a new source each time; until a mod clears it, the author neither runs, prices nor saves', async () => {
-            const { submitUserRemixApp, clearRemixRunnerHold } = await import(
-              '~/server/services/remix-app-registry.service'
-            );
+          it('hold the author at the third, a new source each time; until another mod clears it, the author neither runs, prices, saves nor deletes', async () => {
+            const {
+              submitUserRemixApp,
+              clearRemixRunnerHold,
+              deleteRemixApp,
+              validateUserRemixApp,
+            } = await import('~/server/services/remix-app-registry.service');
+            // A run started before the hold, to advance once it is in place.
+            const started = await runAsAuthor();
+            expect(started).toMatchObject({ status: 'running' });
             quarantine(true);
             for (const source of [ASKING_SOURCE, SUFFIX_SOURCE]) {
               await withSource(source);
-              await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(unavailable);
+              await expect(runAsAuthor()).rejects.toMatchObject(unavailable);
             }
             await withSource(TWO_SOURCE);
-            await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(authorHeld);
+            await expect(runAsAuthor()).rejects.toMatchObject(authorHeld);
             expect(stored.manifest).toMatchObject({ runnerHold: { at: expect.any(String) } });
             expect(reviewLog().at(-1)).toMatchObject({
               action: 'held-runner-quarantine',
@@ -2489,14 +2498,19 @@ describe('a user app', () => {
             // The app itself stays as the mod left it: only its author is held.
             expect(stored.status).toBe('remix');
 
+            // From here the runner answers as a cached quarantine: a call that got past a gate would
+            // be refused as unavailable, not held.
+            quarantine(false);
             const writes = written().length;
-            await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(authorHeld);
+            await expect(runAsAuthor()).rejects.toMatchObject(authorHeld);
+            await expect(validateUserRemixApp('u5-mine', OTHER_AUTHOR)).rejects.toMatchObject(
+              authorHeld
+            );
+            await expect(
+              advanceRemixRun({ runId: started.runId, caller: author })
+            ).rejects.toMatchObject(authorHeld);
             expect(
-              await quoteRemixApps({
-                imageId: SOURCE_ID,
-                slug: 'u5-mine',
-                caller: flagOn({ id: OTHER_AUTHOR }),
-              })
+              await quoteRemixApps({ imageId: SOURCE_ID, slug: 'u5-mine', caller: author })
             ).toEqual({ prices: [{ slug: 'u5-mine', refusal: REMIX_AUTHOR_HELD }] });
             await expect(
               submitUserRemixApp({
@@ -2508,13 +2522,30 @@ describe('a user app', () => {
                 isGreen: false,
               })
             ).rejects.toMatchObject(authorHeld);
+            await expect(
+              clearRemixRunnerHold({ slug: 'u5-mine', moderatorId: OTHER_AUTHOR })
+            ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+            // The hold alone bars a delete, once its trips are over a day old too.
+            const aged = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+            stored = {
+              ...stored,
+              status: 'remix_disabled',
+              manifest: { ...stored.manifest, runnerTrips: [aged] } as typeof stored.manifest,
+            };
+            await expect(deleteRemixApp({ slug: 'u5-mine' })).rejects.toMatchObject({
+              code: 'FORBIDDEN',
+              message: expect.stringContaining('runner trips'),
+            });
             expect(written()).toHaveLength(writes);
+            expect(dbMock.dbWrite.appBlock.deleteMany).not.toHaveBeenCalled();
 
+            stored = { ...stored, status: 'remix' };
             await clearRemixRunnerHold({ slug: 'u5-mine', moderatorId: 88 });
             expect(stored.manifest).not.toHaveProperty('runnerHold');
             expect(stored.manifest).not.toHaveProperty('runnerTrips');
             expect(reviewLog().at(-1)).toMatchObject({ action: 'cleared-runner-hold', by: 88 });
-            await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(unavailable);
+            quarantine(true);
+            await expect(runAsAuthor()).rejects.toMatchObject(unavailable);
             expect(stored.manifest).toMatchObject({ runnerTrips: [expect.any(String)] });
           });
 
@@ -2538,9 +2569,23 @@ describe('a user app', () => {
             );
             await bumpRemixAppRegistry();
             quarantine(true);
-            // One recent trip there and this one make two: the 25 h old one no longer counts.
-            await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(unavailable);
-            await expect(runAs(OTHER_AUTHOR)).rejects.toMatchObject(authorHeld);
+            // One recent trip there and this one, from the author's own dry run, make two: the 25 h
+            // old one no longer counts.
+            const { validateUserRemixApp } = await import(
+              '~/server/services/remix-app-registry.service'
+            );
+            await validateUserRemixApp('u5-mine', OTHER_AUTHOR).catch(() => undefined);
+            expect(stored.manifest).toMatchObject({ runnerTrips: [expect.any(String)] });
+            expect(stored.manifest).not.toHaveProperty('runnerHold');
+            // A trip inside the day bars deleting its row, held or not.
+            const { deleteRemixApp } = await import('~/server/services/remix-app-registry.service');
+            stored = { ...stored, status: 'remix_disabled' };
+            await expect(deleteRemixApp({ slug: 'u5-mine' })).rejects.toMatchObject({
+              code: 'FORBIDDEN',
+              message: expect.stringContaining('runner trips'),
+            });
+            stored = { ...stored, status: 'remix' };
+            await expect(runAsAuthor()).rejects.toMatchObject(authorHeld);
           });
         });
 
@@ -2713,7 +2758,7 @@ describe('a user app', () => {
         const { validateUserRemixApp, remixReviewHash } = await import(
           '~/server/services/remix-app-registry.service'
         );
-        const result = await validateUserRemixApp('u5-mine');
+        const result = await validateUserRemixApp('u5-mine', 88);
         expect(result.sha256).toBe(remixReviewHash(stored.manifest as never));
         expect(result.issues).toEqual([]);
         expect(result.graph).toMatchObject({
@@ -2751,7 +2796,7 @@ describe('a user app', () => {
         const { validateUserRemixApp } = await import(
           '~/server/services/remix-app-registry.service'
         );
-        const { issues, paths } = await validateUserRemixApp('u5-mine');
+        const { issues, paths } = await validateUserRemixApp('u5-mine', 88);
         expect(issues).toEqual([]);
         expect(paths).toBe(1);
       });
