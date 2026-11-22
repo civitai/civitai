@@ -3790,6 +3790,7 @@ async function approveRequestUnderClaim(
       // matches the pattern used by buzz-attribution.service.ts.
       const code = (err as { code?: unknown })?.code;
       if (code !== 'P2002') throw err;
+      // primary: the ceiling re-derived below must keep a bit granted just before this approve.
       const existing = await dbWrite.oauthClient.findUnique({
         where: { id: oauthClientId },
         select: { id: true, allowedScopes: true },
