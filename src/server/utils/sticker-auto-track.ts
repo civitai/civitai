@@ -45,8 +45,14 @@ export function clampStickerTrackScale(track: StickerTrackV1, maxScale: number):
   return { ...track, s: track.s.map(([tick, s]) => [tick, Math.min(s, maxScale)]) };
 }
 
+/** Why a run gave no track: the run ended failed, or its file was missing, unreadable or not a track. */
+export type AutoTrackFailure =
+  | { status: 'failed'; reason: 'run'; runStatus: string }
+  | { status: 'failed'; reason: 'no-file' | 'download' | 'bad-track' };
+
 type WorkflowRead =
-  | { status: 'missing' | 'running' | 'failed' }
+  | { status: 'missing' | 'running' }
+  | AutoTrackFailure
   | { status: 'download'; url: string; imageId: number; startMs: number };
 
 type AutoTrackWorkflow = {
@@ -64,7 +70,7 @@ export function readStickerAutoTrackWorkflow(
   if (!workflow || !meta || meta.userId !== userId) return { status: 'missing' };
 
   const status = workflow.status ?? 'unassigned';
-  if (TERMINAL_FAILURES.has(status)) return { status: 'failed' };
+  if (TERMINAL_FAILURES.has(status)) return { status: 'failed', reason: 'run', runStatus: status };
   if (status !== 'succeeded') return { status: 'running' };
 
   const step = (workflow.steps ?? [])[0] as
@@ -72,7 +78,7 @@ export function readStickerAutoTrackWorkflow(
     | undefined;
   const blob = step?.output?.blobs?.find((b) => b.id?.endsWith('.json'));
   // A run can report success with its file missing.
-  if (!blob?.url || blob.available === false) return { status: 'failed' };
+  if (!blob?.url || blob.available === false) return { status: 'failed', reason: 'no-file' };
   return { status: 'download', url: blob.url, imageId: meta.imageId, startMs: meta.startMs };
 }
 
@@ -423,7 +429,7 @@ export async function startAutoTrack(
 
 export type StickerAutoTrackResult =
   | { status: 'running' }
-  | { status: 'failed' }
+  | AutoTrackFailure
   | { status: 'missing' }
   | { status: 'succeeded'; track: StickerTrackV1; startMs: number };
 
@@ -447,16 +453,19 @@ export async function pollAutoTrack(
   const { data, error, status } = await read();
   if (!data && error && !autoTrackReadIsMissing(status)) return { status: 'running' };
   const run = readStickerAutoTrackWorkflow(data, userId);
-  if (run.status === 'running' || run.status === 'failed') return { status: run.status };
+  if (run.status === 'running') return { status: 'running' };
+  if (run.status === 'failed') return run;
   if (run.status !== 'download') return { status: 'missing' };
 
   const response = await download(run.url);
-  if (!response.ok) return { status: 'failed' };
+  if (!response.ok) return { status: 'failed', reason: 'download' };
   const track = parseStickerAutoTrack(
     await response.json().catch(() => null),
     await maxScale(run.imageId)
   );
-  return track ? { status: 'succeeded', track, startMs: run.startMs } : { status: 'failed' };
+  return track
+    ? { status: 'succeeded', track, startMs: run.startMs }
+    : { status: 'failed', reason: 'bad-track' };
 }
 
 export const STICKER_AUTO_TRACK_MODERATOR_DAILY_RUNS = 25;

@@ -11,6 +11,7 @@ import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHa
 import { usageLimitMessage } from '~/shared/constants/usage-limits';
 import type { SessionUser } from '~/types/session';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
+import { logToAxiom } from '~/server/logging/client';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
 import type {
   StickerAutoTrackPose,
@@ -80,7 +81,9 @@ export async function startStickerAutoTrack(input: {
   );
 }
 
-export type { StickerAutoTrackResult };
+export type StickerAutoTrackPoll =
+  | Exclude<StickerAutoTrackResult, { status: 'failed' | 'missing' }>
+  | { status: 'failed' };
 
 export async function getStickerAutoTrack({
   userId,
@@ -88,7 +91,7 @@ export async function getStickerAutoTrack({
 }: {
   userId: number;
   workflowId: string;
-}): Promise<StickerAutoTrackResult> {
+}): Promise<StickerAutoTrackPoll> {
   const result = await pollAutoTrack(
     {
       read: async () => {
@@ -115,5 +118,18 @@ export async function getStickerAutoTrack({
     userId
   );
   if (result.status === 'missing') throw throwNotFoundError('placement: auto-track run not found');
+  if (result.status === 'failed') {
+    // The client gets no detail, so this log is where the run and its failure reason live.
+    logToAxiom({
+      name: 'sticker-auto-track',
+      type: 'warning',
+      message: 'auto-track run gave no track',
+      workflowId,
+      userId,
+      reason: result.reason,
+      payload: { runStatus: result.reason === 'run' ? result.runStatus : undefined },
+    });
+    return { status: 'failed' };
+  }
   return result;
 }
