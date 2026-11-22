@@ -83,7 +83,7 @@ beforeAll(async () => {
        id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
        type text NOT NULL DEFAULT 'image', "nsfwLevel" integer NOT NULL DEFAULT 1,
        ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "postId" integer,
-       poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false
+       poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "modelRestricted" boolean NOT NULL DEFAULT false
      );`
   );
   await pg.exec(migration('20261210120000_knights_v2_tables'));
@@ -154,6 +154,30 @@ describe('enqueueKnightsItems', () => {
       { imageId: 99, outcome: 'refused', reason: 'image-not-found' },
     ]);
     expect((await items()).map((i) => i.imageId)).toEqual([3]);
+  });
+
+  it('refuses an image imageNotRestricted refuses as not-servable, and queues one it allows', async () => {
+    await pg.exec(`
+      INSERT INTO "Post" (id, "publishedAt") VALUES (10, '2026-01-01');
+      UPDATE "Image" SET "postId" = 10, "modelRestricted" = true WHERE id IN (1, 2);
+      UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = 1;
+    `);
+
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'dataset-import',
+        questionKey: Q,
+        items: [1, 2].map((imageId) => ({ imageId, priority: 1 as const })),
+      },
+      NOW,
+      { servableOnly: true }
+    );
+
+    expect(outcomes).toMatchObject([
+      { imageId: 1, outcome: 'refused', reason: 'not-servable' },
+      { imageId: 2, outcome: 'enqueued' },
+    ]);
   });
 
   it('refuses a video when the caller asks for still images only, and queues still images', async () => {

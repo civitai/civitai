@@ -270,6 +270,7 @@ describe('grading hidden checks', () => {
   it.each([
     ['unpublished', `UPDATE "Post" SET "publishedAt"=NULL WHERE id=10`],
     ['blocked', `UPDATE "Image" SET "ingestion"='Blocked' WHERE id=10`],
+    ['refused by imageNotRestricted', `UPDATE "Image" SET "modelRestricted"=true WHERE id=10`],
   ])(
     'grades a check inconclusive, with no cost, when its image was %s since',
     async (_label, change) => {

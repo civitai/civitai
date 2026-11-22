@@ -65,7 +65,8 @@ describe('servableImage', () => {
         id INTEGER PRIMARY KEY, type TEXT NOT NULL DEFAULT 'image', "nsfwLevel" INTEGER NOT NULL DEFAULT 4,
         ingestion TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT, "needsReview" TEXT,
         "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, poi BOOLEAN NOT NULL DEFAULT false,
-        minor BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER NOT NULL
+        minor BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER NOT NULL,
+        "modelRestricted" BOOLEAN NOT NULL DEFAULT false
       );
       CREATE TABLE "Post" (id INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP);
       INSERT INTO "Post" (id, "publishedAt") VALUES (1, now() - interval '1 day');
@@ -74,6 +75,9 @@ describe('servableImage', () => {
         (990000202, 1, true, false, NULL),
         (990000203, 1, false, true, NULL),
         (990000204, 1, false, false, 'minor');
+      INSERT INTO "Image" (id, "postId", "nsfwLevel", "modelRestricted") VALUES
+        (990000205, 1, 4, true),
+        (990000206, 1, 1, true);
     `);
   });
 
@@ -84,7 +88,7 @@ describe('servableImage', () => {
       .select('img.id')
       .where(servableImage)
       .execute();
-    expect(rows.map((r) => r.id)).toEqual([990000201]);
+    expect(rows.map((r) => r.id)).toEqual([990000201, 990000206]);
   });
 });
 

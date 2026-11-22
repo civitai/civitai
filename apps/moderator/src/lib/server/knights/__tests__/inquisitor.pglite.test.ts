@@ -320,6 +320,15 @@ describe('getInquisitorQueue held votes', () => {
   });
 });
 
+describe('getInquisitorQueue and imageNotRestricted', () => {
+  it('lists an item whatever imageNotRestricted says', async () => {
+    await db.query(`UPDATE "Image" SET "modelRestricted"=true WHERE id=1`);
+    await insertItem(1, 1, 'Inquisitor');
+
+    expect((await getInquisitorQueue()).map((i) => i.imageId)).toEqual([1]);
+  });
+});
+
 describe('getInquisitorQueue block markers', () => {
   it('marks an image that is blocked or carries a block reason', async () => {
     await db.query(`UPDATE "Image" SET "ingestion"='Blocked', "blockedFor"='tos' WHERE id=1`);

@@ -123,6 +123,15 @@ describe('what a player is offered', () => {
     expect(await pick(3, { rank: 'Inquisitor' })).toBeNull();
   });
 
+  it('is never an image imageNotRestricted refuses', async () => {
+    await seed([row('flagged', 11)]);
+    await seedPlayer(pg, 1);
+    await pg.query(`UPDATE "Image" SET "modelRestricted"=true, "nsfwLevel"=4 WHERE id=11`);
+    expect(await pick(1)).toBeNull();
+    await pg.query(`UPDATE "Image" SET "nsfwLevel"=1 WHERE id=11`);
+    expect(await pick(1)).toMatchObject({ prompt: 'Question flagged?' });
+  });
+
   it('does not offer a question the player skipped', async () => {
     const ids = await seed([row('a', 10), row('b', 11)]);
     await seedPlayer(pg, 1);

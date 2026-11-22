@@ -1150,6 +1150,10 @@ describe('what the feed serves', () => {
       () => pg.query(`UPDATE "Image" SET "poi"=true WHERE id=10`),
     ],
     ['an image flagged as a minor', () => pg.query(`UPDATE "Image" SET "minor"=true WHERE id=10`)],
+    [
+      'an image imageNotRestricted refuses',
+      () => pg.query(`UPDATE "Image" SET "modelRestricted"=true WHERE id=10`),
+    ],
   ])('hides %s and refuses a vote on it', async (_label, hide) => {
     await player(1, 'Knight');
     await image(10);
@@ -1160,6 +1164,14 @@ describe('what the feed serves', () => {
     expect(await getFeed(db, 1)).toBeNull();
     expect(await vote(1, id, '4')).toMatchObject({ status: 'rejected', reason: 'unavailable' });
     expect(await verdicts(id)).toEqual([]);
+  });
+
+  it('serves an image imageNotRestricted allows with the flag set', async () => {
+    await player(1, 'Knight');
+    await image(10, 1);
+    await pg.query(`UPDATE "Image" SET "modelRestricted"=true WHERE id=10`);
+    const id = await item(10);
+    expect((await getFeed(db, 1))?.items.map((i) => i.id)).toEqual([id]);
   });
 });
 
@@ -2003,6 +2015,17 @@ describe('closeUnservableItems', () => {
       ['Open', null],
       ['Open', null],
     ]);
+  });
+
+  it('leaves open an item whose image imageNotRestricted refuses: it is only no longer served', async () => {
+    await fiveKnights();
+    const id = await queued(78);
+    expect((await vote(1, id, '4')).status).toBe('recorded');
+    await pg.query(`UPDATE "Image" SET "nsfwLevel"=4, "modelRestricted"=true WHERE id=78`);
+
+    expect((await sweep()).imageUnservable).toBe(0);
+    expect(await statusOf([id])).toEqual([['Open', null]]);
+    expect((await verdicts(id)).map((v) => v.verdict)).toEqual(['pending']);
   });
 
   it('closes an open item whose image became blocked, held, flagged or unrated on a live post, votes set aside, at the next tick', async () => {

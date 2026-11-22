@@ -8,7 +8,8 @@ CREATE TABLE "Image" (
   "mimeType" TEXT, ingestion TEXT NOT NULL DEFAULT 'Scanned', "needsReview" TEXT, "blockedFor" TEXT,
   minor BOOLEAN NOT NULL DEFAULT false, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false,
-  "pHash" BIGINT, "userId" INTEGER NOT NULL DEFAULT 1, "postId" INTEGER
+  "pHash" BIGINT, "userId" INTEGER NOT NULL DEFAULT 1, "postId" INTEGER,
+  "modelRestricted" BOOLEAN NOT NULL DEFAULT false
 );
 CREATE TABLE "Post" (id INTEGER PRIMARY KEY, metadata JSONB, "modelVersionId" INTEGER);
 CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, meta JSONB, "modelId" INTEGER);

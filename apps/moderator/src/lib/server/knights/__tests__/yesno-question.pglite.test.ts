@@ -110,7 +110,7 @@ beforeAll(async () => {
     "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT,
     "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER,
     "poi" BOOLEAN NOT NULL DEFAULT false,
-    "minor" BOOLEAN NOT NULL DEFAULT false
+    "minor" BOOLEAN NOT NULL DEFAULT false, "modelRestricted" BOOLEAN NOT NULL DEFAULT false
   );`);
   await db.exec(
     readFileSync(path.join(MIGRATIONS, '20261210120000_knights_v2_tables', 'migration.sql'), 'utf8')
