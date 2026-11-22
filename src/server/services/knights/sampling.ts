@@ -1,5 +1,9 @@
 import { sql, type Kysely } from 'kysely';
-import { countOpenServableKnightItems, servableImageContent } from '@civitai/db/knights';
+import {
+  countOpenServableKnightItems,
+  imageNotRestricted,
+  servableImageContent,
+} from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
@@ -156,6 +160,7 @@ export async function sampleNewlyLivePostsForKnights(
     .select(['img.id', 'img.nsfwLevel'])
     .where('img.postId', 'in', postIds)
     .where(servableImageContent)
+    .where(imageNotRestricted)
     .where('img.ingestion', '=', 'Scanned')
     .where('img.userId', '!=', FEEDBACK_CAPTURE_OWNER_ID)
     .orderBy('img.id', 'asc')

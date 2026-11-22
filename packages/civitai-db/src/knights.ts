@@ -6,7 +6,7 @@ import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 
 // tsx loads CommonJS-scoped workspace packages as one `default` object when an ES module imports them.
 // Checked with `in`, not read: reading a missing `default` off a vitest module mock throws.
-const { NsfwLevel } =
+const { NsfwLevel, nsfwBrowsingLevelsFlag } =
   'default' in shared ? (shared as { default?: typeof shared }).default ?? shared : shared;
 
 export const REFERENCE_POOL = { trials: 'trials', hiddenCheck: 'hiddenCheck' } as const;
@@ -65,13 +65,21 @@ export const servableImageContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>)
     eb('img.minor', '=', false),
   ]);
 
+/** Kysely twin of the main app's `imageNotRestrictedSql`, without its viewer option; a parity test holds them together. */
+export const imageNotRestricted = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
+  eb.or([
+    eb(sql<number>`${eb.ref('img.nsfwLevel')} & ${sql.lit(nsfwBrowsingLevelsFlag)}`, '=', 0),
+    eb('img.modelRestricted', '=', false),
+  ]);
+
 /**
- * Images Knights may show players: `servableImageContent` on a published post. Expects `Image as img` joined to
- * `Post as p`.
+ * Images Knights may show players: `servableImageContent` and `imageNotRestricted` on a published post.
+ * Expects `Image as img` joined to `Post as p`.
  */
 export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
   eb.and([
     servableImageContent(eb),
+    imageNotRestricted(eb),
     eb('p.publishedAt', 'is not', null),
     eb('p.publishedAt', '<', sql<Date>`(now() AT TIME ZONE 'utc')`),
   ]);

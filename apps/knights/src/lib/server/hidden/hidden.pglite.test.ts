@@ -133,6 +133,15 @@ describe('serving a hidden check', () => {
     expect(await pick(2)).toBeNull();
   });
 
+  it('skips a check imageNotRestricted refuses, and serves it once allowed', async () => {
+    await seedPlayer(pg, 2);
+    const check = await reference(11);
+    await pg.query(`UPDATE "Image" SET "modelRestricted"=true WHERE id=11`);
+    expect(await pick(2)).toBeNull();
+    await pg.query(`UPDATE "Image" SET "nsfwLevel"=1 WHERE id=11`);
+    expect((await pick(2))?.referenceId).toBe(check);
+  });
+
   it('finds the one check left whichever end of the pool the start point falls on', async () => {
     const ids: number[] = [];
     for (let i = 10; i < 20; i++) ids.push(await reference(i));

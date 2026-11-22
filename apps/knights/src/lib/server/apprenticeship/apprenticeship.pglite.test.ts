@@ -283,6 +283,15 @@ describe('the stream', () => {
     expect(item.referenceId).toBe(good);
   });
 
+  it('skips a reference imageNotRestricted refuses, and serves it once allowed', async () => {
+    await player(1);
+    const ref = await rating(5);
+    await pg.query(`UPDATE "Image" SET "modelRestricted"=true WHERE "id"=5`);
+    expect((await getApprentice(db, 1)).kind).toBe('exhausted');
+    await pg.query(`UPDATE "Image" SET "nsfwLevel"=1 WHERE "id"=5`);
+    expect(question(await getApprentice(db, 1)).item.referenceId).toBe(ref);
+  });
+
   it('is for Acolytes only', async () => {
     await player(1, { rank: 'Knight' });
     await rating(1);

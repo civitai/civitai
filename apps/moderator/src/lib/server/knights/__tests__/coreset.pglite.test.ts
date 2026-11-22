@@ -107,7 +107,7 @@ beforeAll(async () => {
       "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
       "blockedFor" TEXT, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER,
       "poi" BOOLEAN NOT NULL DEFAULT false,
-      "minor" BOOLEAN NOT NULL DEFAULT false
+      "minor" BOOLEAN NOT NULL DEFAULT false, "modelRestricted" BOOLEAN NOT NULL DEFAULT false
     );`);
   await db.exec(
     readFileSync(path.join(MIGRATIONS, '20261210120000_knights_v2_tables', 'migration.sql'), 'utf8')
@@ -201,6 +201,14 @@ describe('addCoreImage', () => {
     expect(await addCoreImage({ imageId: 1, level: 4, explanation: 'why' })).toMatchObject({
       ok: false,
       error: expect.stringContaining('review hold'),
+    });
+  });
+
+  it('refuses an image imageNotRestricted refuses', async () => {
+    await seedImage(1);
+    await db.query(`UPDATE "Image" SET "modelRestricted" = true WHERE "id" = 1`);
+    expect(await addCoreImage({ imageId: 1, level: 4, explanation: 'why' })).toMatchObject({
+      ok: false,
     });
   });
 

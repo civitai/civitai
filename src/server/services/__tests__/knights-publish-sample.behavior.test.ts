@@ -59,7 +59,7 @@ beforeAll(async () => {
        type text NOT NULL DEFAULT 'image', "nsfwLevel" integer NOT NULL DEFAULT 1,
        ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "postId" integer,
        poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
-       "userId" integer NOT NULL DEFAULT 1
+       "userId" integer NOT NULL DEFAULT 1, "modelRestricted" boolean NOT NULL DEFAULT false
      );`
   );
   await pg.exec(
@@ -130,6 +130,20 @@ describe('sampleNewlyLivePostsForKnights', () => {
     expect(result).toMatchObject({ posts: 1, enqueued: 2, capped: false });
     // Nothing more was due, so the next run starts where this window ended, a minute behind the clock.
     expect(result.cursor).toEqual(at(minutesAgo(1)));
+  });
+
+  it('skips an image imageNotRestricted refuses, and queues one it allows', async () => {
+    await post(1, minutesAgo(5));
+    await images(1, [11], { nsfwLevel: 8 });
+    await images(1, [12]);
+    await pg.query(`UPDATE "Image" SET "modelRestricted" = true WHERE id IN (11, 12)`);
+
+    const result = await sweep(minutesAgo(10), { sfwRate: 1, nsfwRate: 1 });
+
+    expect(await queued()).toEqual([
+      { imageId: 12, source: 'scan-sample', priority: 1, status: 'Open' },
+    ]);
+    expect(result).toMatchObject({ enqueued: 1 });
   });
 
   it('leaves a post published within the last minute to the next run', async () => {
