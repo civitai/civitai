@@ -360,12 +360,12 @@ func BuildImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.Time) []
 				continue
 			}
 		}
-		out = append(out, buildImage(r, hy))
+		out = append(out, buildImage(r, hy, viewer))
 	}
 	return out
 }
 
-func buildImage(r RawImage, hy *Hydrated) Image {
+func buildImage(r RawImage, hy *Hydrated, viewer Viewer) Image {
 	thumb, hasThumb := hy.Thumbs[r.ID]
 	nsfw := r.NsfwLevel
 	if hasThumb && thumb.NsfwLevel > nsfw {
@@ -418,8 +418,10 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 	if d, ok := hy.Decorations[r.ID]; ok {
 		decoration = d
 	}
+	// feedThumbnailFields: the level counts either way; the url only for a servable thumbnail, the
+	// creator or a moderator.
 	var thumbURL any = superjson.Undefined{}
-	if hasThumb {
+	if hasThumb && (thumb.Servable || (viewer.ID != 0 && r.UserID == viewer.ID) || viewer.IsModerator) {
 		thumbURL = thumb.URL // `thumbnail?.url`: a thumbnail without a url is null, not undefined
 	}
 

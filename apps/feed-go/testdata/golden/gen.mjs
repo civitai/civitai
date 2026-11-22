@@ -395,8 +395,8 @@ const metaOf = (id) => (IMAGES[id].hideMeta ? null : prismaJson(META[id] ?? null
 
 // Video thumbnails (thumbnailCache, keyed by the video's id).
 const THUMBNAILS = {
-  8005: { id: 8905, url: uuid(8905), width: 640, height: 360, nsfwLevel: 1, parentId: 8005 },
-  8009: { id: 8909, url: uuid(8909), width: 640, height: 360, nsfwLevel: 2, parentId: 8009 },
+  8005: { id: 8905, url: uuid(8905), width: 640, height: 360, nsfwLevel: 1, blockMarked: false, parentId: 8005 },
+  8009: { id: 8909, url: uuid(8909), width: 640, height: 360, nsfwLevel: 2, blockMarked: false, parentId: 8009 },
 };
 // Tag ids per image (tagIdsForImagesCache). None are tags the addons exclude.
 const tagIdsOf = (id) => [501 + (id % 3), 520 + (id % 7)];
@@ -1431,7 +1431,11 @@ function getAllImagesUncaptured(input) {
       tagIds: tagIdsVar?.[i.id]?.tags,
       cosmetic: frames?.[i.id] ?? null,
       eventDecoration: eventDecorations?.[i.id] ?? null,
-      thumbnailUrl: thumbnail?.url,
+      // feedThumbnailFields
+      thumbnailUrl:
+        thumbnail && (thumbnail.blockMarked === false || creatorId === userId || isModerator)
+          ? thumbnail.url
+          : undefined,
       judgeScore: parseJudgeScore(collectionItemNote ?? null),
     };
   });
@@ -2022,7 +2026,10 @@ function runV1(spec) {
     imageMetas = cacheFetch(K.meta, result.items.map((img) => img.id), { lookup: lookupImageMeta, idKey: 'id', ttl: 5 * HOUR });
   }
   const videoIds = result.items.filter((i) => i.type === 'video').map((i) => i.id);
-  const customThumbnails = videoIds.length ? cacheFetch(K.thumbs, videoIds) : {};
+  // servableThumbnails
+  const customThumbnails = videoIds.length
+    ? Object.fromEntries(Object.entries(cacheFetch(K.thumbs, videoIds)).filter(([, t]) => t.blockMarked === false))
+    : {};
   const shaped = result.items.map((image) => {
     const nsfwName = REVERSE_DEPRECATED[image.nsfwLevel] ?? 'None';
     return {
