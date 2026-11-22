@@ -33,12 +33,12 @@ const updatePanel = (input: Record<string, unknown>) =>
     .createCaller(fakeCtx() as never)
     .updatePanel({ panelId: PANEL_ID, ...input } as never);
 
-const storedPanel = (imageUrl: string | null, ownerId = USER_ID) =>
-  dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue({
-    id: PANEL_ID,
-    imageUrl,
-    chapter: { project: { userId: ownerId } },
-  } as never);
+// Both clients hold the same row, so a refusal comes from the rule and not from a missing row.
+const storedPanel = (imageUrl: string | null, ownerId = USER_ID) => {
+  const row = { id: PANEL_ID, imageUrl, chapter: { project: { userId: ownerId } } };
+  dbMock.dbWrite.comicPanel.findUnique.mockResolvedValue(row as never);
+  dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(row as never);
+};
 
 const written = () => dbMock.dbWrite.comicPanel.update.mock.calls[0][0].data;
 
@@ -71,6 +71,12 @@ describe('comics.updatePanel image url', () => {
   it('writes null', async () => {
     await updatePanel({ imageUrl: null });
     expect(written().imageUrl).toBeNull();
+  });
+
+  it('reads the panel it compares against from the primary', async () => {
+    await updatePanel({ imageUrl: CURRENT_URL });
+    expect(dbMock.dbWrite.comicPanel.findUnique).toHaveBeenCalled();
+    expect(dbMock.dbRead.comicPanel.findUnique).not.toHaveBeenCalled();
   });
 
   it("leaves the url unwritten when the panel's current url is sent", async () => {
