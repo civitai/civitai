@@ -472,7 +472,7 @@ const submits = () => h.workflows;
 const whatIfs = () =>
   h.submitWorkflow.mock.calls.filter(([args]) => (args as { query?: object }).query);
 
-/** Lands a workflow's outputs in the shape the orchestrator returns for its graph, sized unless `unsized`. */
+/** Lands a workflow's outputs in the shape the orchestrator returns for its graph. */
 function finish(
   workflowId: string,
   urls: string[],
@@ -481,11 +481,13 @@ function finish(
 ) {
   const workflow = h.workflows.find((w) => w.id === workflowId)!;
   workflow.status = 'succeeded';
+  // An imageGen step's blobs carry their size; a comfy step's (the upscaler's) never do.
+  const sized = !workflow.tags.includes('img2img:upscale');
   const blobs = urls.map((url) => ({
     url,
     available: true,
     nsfwLevel: nsfwLevel[url],
-    ...(unsized.includes(url) ? {} : { width: 1024, height: 1536 }),
+    ...(sized && !unsized.includes(url) ? { width: 1024, height: 1536 } : {}),
   }));
   workflow.steps = [
     // img2img:upscale runs as a comfy step, whose output is `blobs`, not `images`.
