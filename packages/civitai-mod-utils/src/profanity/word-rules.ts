@@ -1,3 +1,5 @@
+import { blockedWords } from './lists';
+
 /**
  * Normalise a blocked-list entry: strip regex syntax but keep the `|` word-boundary markers.
  */
@@ -27,13 +29,23 @@ export function isValidWord(word: string): boolean {
 /** The filter adds only words at least this long to its dataset, pipes included. */
 export const MIN_DATASET_WORD_LENGTH = 3;
 
-/** An entry with no `|` at either end matches inside any word, so it needs more letters. */
+/**
+ * An entry with no `|` at either end matches inside any word, so it needs more letters, unless
+ * aligned with the shipped list.
+ */
 export const MIN_UNBOUNDED_LETTERS = 4;
 
+// Keeps a managed copy of the shipped list aligned with it.
+let shippedEntries: ReadonlySet<string> | undefined;
+function isShippedEntry(cleaned: string): boolean {
+  shippedEntries ??= new Set(blockedWords.map(cleanWord));
+  return shippedEntries.has(cleaned);
+}
+
 /**
- * Whether a moderator entry would take effect in the filter and is long enough to be safe to
- * apply everywhere. Stricter than the filter on short boundary-marked entries, and refuses a
- * `|` anywhere but the ends, which the filter's pattern parser throws on.
+ * Whether a moderator entry is usable in a managed list. Stricter than the filter on short
+ * boundary-marked entries, and refuses a `|` anywhere but the ends, which the filter's pattern
+ * parser throws on.
  */
 export function isUsableBlockedEntry(entry: string): boolean {
   const cleaned = cleanWord(entry);
@@ -42,7 +54,7 @@ export function isUsableBlockedEntry(entry: string): boolean {
     !cleaned.slice(1, -1).includes('|') &&
     cleaned.length >= MIN_DATASET_WORD_LENGTH &&
     cleaned.replace(/[^a-z]/g, '').length >=
-      (cleaned.startsWith('|') || cleaned.endsWith('|')
+      (cleaned.startsWith('|') || cleaned.endsWith('|') || isShippedEntry(cleaned)
         ? MIN_DATASET_WORD_LENGTH
         : MIN_UNBOUNDED_LETTERS)
   );
@@ -57,8 +69,8 @@ export const MIN_MANAGED_PROFANITY_ENTRIES = 192;
 
 /**
  * The usable entries of a managed profanity block list, and whether there are enough of them for
- * the list to be enforced. The server filter, the browser's copy and the moderator app's removal
- * guard all decide through this, so a change to the rule reaches every one of them.
+ * the list to be enforced. The server filter and the moderator app's removal guard both decide
+ * through this, so a change to the rule reaches each of them.
  */
 export function managedProfanityEntries(entries: readonly string[]): {
   usable: string[];
