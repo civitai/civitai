@@ -2019,18 +2019,18 @@ describe('a mature rating the text scan held back for a clean .com face', () => 
   // The held verdict is the scan's own mature reading: the owner may not lower it while it stands.
   it("refuses the owner's untick of mature while the held verdict stands", async () => {
     mockStored({ nsfw: true, ...face, meta: held });
-    await expect(untick()).rejects.toThrow();
+    await expect(untick()).rejects.toThrow(/marked mature because of/);
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });
 
   it('refuses it when the held verdict has no readable time or level', async () => {
     mockStored({ nsfw: true, ...face, meta: { comFaceHeldVerdict: { at: 'x', level: 'R' } } });
-    await expect(untick()).rejects.toThrow();
+    await expect(untick()).rejects.toThrow(/marked mature because of/);
   });
 
   it('refuses it when the held verdict is not even an object', async () => {
     mockStored({ nsfw: true, ...face, meta: { comFaceHeldVerdict: null } });
-    await expect(untick()).rejects.toThrow();
+    await expect(untick()).rejects.toThrow(/marked mature because of/);
   });
 
   it('lets the owner untick when nothing is held (control)', async () => {
@@ -2043,7 +2043,7 @@ describe('a mature rating the text scan held back for a clean .com face', () => 
   // as not mature drops the held verdict, and the untick then saves.
   it('lets the untick save once a clean rescan has dropped the held verdict', async () => {
     mockStored({ nsfw: true, ...face, meta: held });
-    await expect(untick()).rejects.toThrow();
+    await expect(untick()).rejects.toThrow(/marked mature because of/);
     vi.mocked(mockDbWrite.model.update).mockClear();
     const { comFaceHeldVerdict: _spent, ...afterCleanRescan } = held;
     mockStored({ nsfw: true, ...face, meta: afterCleanRescan });
@@ -2058,10 +2058,32 @@ describe('a mature rating the text scan held back for a clean .com face', () => 
     expect(updateData()).toMatchObject({ nsfw: false });
   });
 
-  it('hands the rating to a moderator when the same save marks the model minor', async () => {
+  // An owner marking their own model minor is never refused: the scan's reading goes to a moderator
+  // as a lead, with the locks the flag brings, so a later save cannot quietly lower it.
+  it('hands the held verdict to a moderator as a lead when the same save marks the model minor', async () => {
     mockStored({ nsfw: true, ...face, meta: held });
     await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: true });
-    expect(mockDbWrite.model.update).toHaveBeenCalled();
+    const data = updateData();
+    expect(data.lockedProperties).toEqual(expect.arrayContaining(['minor', 'nsfw', 'sfwOnly']));
+    expect((data.meta as ModelMeta).restrictedNsfwVerdict).toEqual({
+      source: 'text-scan',
+      at: '2026-11-20T00:00:00.000Z',
+      restriction: 'minor',
+      level: 16,
+    });
+    expect((data.meta as ModelMeta).ownerFlagOverride).toMatchObject({
+      flags: ['minor'],
+      prevNsfw: true,
+    });
+  });
+
+  it('hands it to a moderator when the same save marks the model a real person', async () => {
+    mockStored({ nsfw: true, ...face, meta: held });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, poi: true });
+    expect((updateData().meta as ModelMeta).restrictedNsfwVerdict).toMatchObject({
+      restriction: 'poi',
+      level: 16,
+    });
   });
 
   it('leaves a moderator-locked rating to the lock (control)', async () => {
@@ -2075,12 +2097,13 @@ describe('a mature rating the text scan held back for a clean .com face', () => 
   it('lets the owner remove the face from a model that is not mature', async () => {
     mockStored({ nsfw: false, ...face, meta: held });
     await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
-    expect(mockDbWrite.model.update).toHaveBeenCalled();
+    expect(updateData()).toMatchObject({ sfwName: null });
   });
 
   it('lets the owner keep mature and edit the face', async () => {
     mockStored({ nsfw: true, ...face, meta: held });
     await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style Two' });
-    expect(mockDbWrite.model.update).toHaveBeenCalled();
+    expect(updateData()).toMatchObject({ sfwName: 'Retro Style Two' });
+    expect(updateData()).not.toHaveProperty('nsfw', false);
   });
 });
