@@ -1,12 +1,17 @@
 // Package api is the service's HTTP surface:
 //
-//	GET /search?q=&kind=&category=&limit=
+//	GET /search?q=&kind=&category=&mature=&limit=
 //	    → {"results":[{urn, slug, name, tagline, kind, category, rating, iconUrl, creator}]}
 //	GET /healthz  the process is up
 //	GET /readyz   200 once a generation is serving (the first Live), 503 before
 //	GET /metrics  Prometheus
 //	GET /listings, GET /listings/{slug}  the listing API, only while the listings read model is on
 //	    (listings.go)
+//
+// `mature` is the mature content ratings the caller's viewer may see, a comma-separated list of
+// r, x and xxx (ParseQuery). Absent or empty, a search answers only apps rated g, pg or pg13: what
+// the anonymous registry audience reads. The caller is trusted to send its viewer's own set; the
+// parameter is part of the URL, so a shared cache keys on it.
 //
 // Results are in relevance order (store.Query), at most `limit` of them. There is one page: no
 // other sort and no paging, since no caller reads either.
@@ -27,6 +32,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -184,7 +190,9 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	writeJSONCache(w, http.StatusOK, res, SearchCacheControl)
 }
 
-// ParseQuery validates the search parameters.
+// ParseQuery validates the search parameters. `mature` names the mature ratings the viewer may
+// see (store.Mature): each comma-separated element must be exactly r, x or xxx (repeats are
+// harmless); absent or empty is none, the SFW audience.
 func ParseQuery(v map[string][]string) (store.Query, error) {
 	get := func(k string) string {
 		if xs := v[k]; len(xs) > 0 {
@@ -203,6 +211,20 @@ func ParseQuery(v map[string][]string) (store.Query, error) {
 	}
 	if len(q.Category) > MaxFilterLen {
 		return store.Query{}, errors.New("category is too long")
+	}
+	if m := get("mature"); m != "" {
+		for _, r := range strings.Split(m, ",") {
+			switch r {
+			case "r":
+				q.Mature.R = true
+			case "x":
+				q.Mature.X = true
+			case "xxx":
+				q.Mature.XXX = true
+			default:
+				return store.Query{}, errors.New("mature must be a comma-separated list of r, x and xxx")
+			}
+		}
 	}
 	if l := get("limit"); l != "" {
 		n, err := strconv.Atoi(l)

@@ -24,6 +24,7 @@ const {
   storeGridRequest,
   APP_INDEX_SEARCH_TIMEOUT_MS,
   IndexBreaker,
+  indexMature,
 } = await import('~/server/services/blocks/app-index-search.service');
 
 // The database reads are passed in (the service's `reads` parameter), never module-mocked, and
@@ -380,6 +381,38 @@ describe('listStoreGrid', () => {
       { indexSearch: true }
     );
     expect(res.search).toBe('index');
+  });
+
+  it('an SFW viewer’s index call carries no mature parameter: the index’s SFW default', async () => {
+    for (const opts of [
+      SFW_OPTS,
+      { ...SFW_OPTS, viewerBrowsingLevel: undefined },
+      { ...SFW_OPTS, redCapable: true, viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.PG13 },
+    ]) {
+      await listStoreGrid(INPUT, opts, { indexSearch: true });
+    }
+    expect(fetchCalls).toHaveLength(3);
+    for (const url of fetchCalls) expect(new URL(url).searchParams.has('mature')).toBe(false);
+  });
+
+  it.each<[string, Partial<ListAvailableListingsOpts>, string | null]>([
+    ['anonymous (no level)', { redCapable: false, viewerBrowsingLevel: undefined }, null],
+    [
+      'an SFW level',
+      { redCapable: true, viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.PG13 },
+      null,
+    ],
+    ['R off a red-capable host', { redCapable: false, viewerBrowsingLevel: NsfwLevel.R }, null],
+    ['R', { redCapable: true, viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.R }, 'r'],
+    ['X without R', { redCapable: true, viewerBrowsingLevel: NsfwLevel.X }, 'x'],
+    ['XXX alone', { redCapable: true, viewerBrowsingLevel: NsfwLevel.XXX }, 'xxx'],
+    [
+      'every mature level',
+      { redCapable: true, viewerBrowsingLevel: NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX },
+      'r,x,xxx',
+    ],
+  ])('the index’s mature parameter for %s', (_, opts, want) => {
+    expect(indexMature({ ...SFW_OPTS, ...opts })).toBe(want);
   });
 
   it.each<[string, Partial<ListAppListingsInput>, () => void, AppIndexSearchReason, boolean]>([

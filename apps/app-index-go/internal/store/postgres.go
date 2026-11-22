@@ -374,6 +374,11 @@ func (p *Postgres) Search(ctx context.Context, q Query) (Page, error) {
 	if q.Category != "" {
 		where = append(where, "a.category = "+arg(q.Category))
 	}
+	// In the query, before the LIMIT, so a page is filled with admitted rows. A null rating never
+	// equals any element, so it is answered only when admitted is nil (Mature.admitted).
+	if ratings := q.Mature.admitted(); ratings != nil {
+		where = append(where, "lower(a.rating) = ANY("+arg(ratings)+"::text[])")
+	}
 	sql := `
 SELECT a.urn, a.slug, a.name, coalesce(a.tagline, ''), a.kind, coalesce(a.category, ''), coalesce(a.rating, ''),
   coalesce(a.icon_url, ''), coalesce(a.creator, '')
