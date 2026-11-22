@@ -29,13 +29,10 @@ export function isValidWord(word: string): boolean {
 /** The filter adds only words at least this long to its dataset, pipes included. */
 export const MIN_DATASET_WORD_LENGTH = 3;
 
-/**
- * An entry with no `|` at either end matches inside any word, so it needs more letters. Entries
- * on the shipped list are exempt down to `MIN_DATASET_WORD_LENGTH`: a managed copy of that list
- * must enforce exactly what the shipped list does.
- */
+/** An entry with no `|` at either end matches inside any word, so it needs more letters. */
 export const MIN_UNBOUNDED_LETTERS = 4;
 
+// Keeps a managed copy of the shipped list aligned with it.
 let shippedEntries: ReadonlySet<string> | undefined;
 function isShippedEntry(cleaned: string): boolean {
   shippedEntries ??= new Set(blockedWords.map(cleanWord));
@@ -43,10 +40,9 @@ function isShippedEntry(cleaned: string): boolean {
 }
 
 /**
- * Whether a moderator entry would take effect in the filter and is long enough to be safe to
- * apply everywhere, or is a shipped entry (see `MIN_UNBOUNDED_LETTERS`). Stricter than the filter
- * on short boundary-marked entries, and refuses a `|` anywhere but the ends, which the filter's
- * pattern parser throws on.
+ * Whether a moderator entry would take effect in the filter and is usable in a managed list.
+ * Stricter than the filter on short boundary-marked entries, and refuses a `|` anywhere but the
+ * ends, which the filter's pattern parser throws on.
  */
 export function isUsableBlockedEntry(entry: string): boolean {
   const cleaned = cleanWord(entry);

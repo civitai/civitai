@@ -35,11 +35,9 @@ describe('managedProfanityEntries', () => {
   });
 });
 
-// Seeding the managed row from the shipped list must not change what is enforced, so shipped
-// short entries are exempt from the unbounded-letters rule (#10081). Before removing that
-// exemption, read #10081: this test goes red when it goes.
+// Pins the managed list's alignment with the shipped list (#10081): this goes red if they drift.
 describe('a managed copy of the shipped list', () => {
-  it('gives the shipped verdict on every entry: alone, in a sentence, inside and starting a word', () => {
+  it('matches the shipped list on every entry', () => {
     const shipped = createProfanityFilter({ moderatorWhitelist: null, moderatorBlocklist: null });
     const managed = createProfanityFilter({
       moderatorWhitelist: null,
@@ -65,10 +63,10 @@ describe('a managed copy of the shipped list', () => {
   });
 });
 
-describe('a moderator-added three-letter entry', () => {
+describe('an entry on no list', () => {
   const ENTRY = 'qzx';
 
-  it('is unusable without a boundary marker, since it would match inside any word', () => {
+  it('is unusable bare', () => {
     expect(blockedWords.map(cleanWord).includes(ENTRY)).toBe(false);
     expect(isUsableBlockedEntry(ENTRY)).toBe(false);
   });
