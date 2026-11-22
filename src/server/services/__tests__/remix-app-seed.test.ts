@@ -165,7 +165,14 @@ describe('remix app seed', () => {
         const [step] = trace;
         if (step?.type !== 'workflow') throw new Error(`${slug} did not start with a workflow`);
 
-        const runtime = buildRuntimeRequest({ app: seeded, image, request: step.request, viewer });
+        const runtime = buildRuntimeRequest({
+          app: seeded,
+          image,
+          request: step.request,
+          viewer,
+          author: undefined,
+          log: [],
+        });
         const oneShot = buildRemixAppRun({ app: old, image, viewer });
         const { submit } = oneShot;
         // The one-shot submit's graph input, as `submitPresetImageGen` builds it.

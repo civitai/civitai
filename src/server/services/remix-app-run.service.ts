@@ -253,6 +253,7 @@ function viewerPick(
  */
 async function optionPrices({
   app,
+  author,
   replay,
   image,
   source,
@@ -262,6 +263,7 @@ async function optionPrices({
   currencies,
 }: {
   app: RemixApp;
+  author: RegisteredRemixApp['author'] | undefined;
   replay: RemixReplayer;
   image: RemixSourceImage;
   source: RemixAppSource;
@@ -285,6 +287,8 @@ async function optionPrices({
           image,
           request: next.request,
           viewer: viewerOf(caller),
+          author,
+          log,
         });
         const { cost } = await whatIfPresetImageGen({
           graphInput: run.graphInput,
@@ -539,6 +543,7 @@ async function advance({
     const prices = await cachedOptionPrices([runId, segments.length, outcome.index], () =>
       optionPrices({
         app,
+        author,
         replay: (...args) =>
           replayer(...args).catch(async (error) => {
             throw error instanceof RemixReplayError ? error : await quarantined(error);
@@ -561,6 +566,8 @@ async function advance({
     image,
     request: outcome.effect.request,
     viewer: viewerOf(caller),
+    author,
+    log,
   });
   // The graph submit skips its own input gate ('checked-by-caller').
   await assertInputsUsable(run.inputUrls, caller, 'remixAppRun');
