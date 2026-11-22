@@ -5763,7 +5763,8 @@ export const getEntityCoverImage = async ({
     exempt: Prisma.sql`(${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean`,
   });
 
-  // A blocked or ToS-violating cover is its owner's and moderators' alone.
+  // A blocked or ToS-violating cover is its owner's and moderators' alone; one at the Blocked
+  // level, as a block normally sets it, is the moderators' alone (coverRated).
   const coverNotBlocked = Prisma.join(
     [
       Prisma.sql`(i."tosViolation" IS NOT TRUE OR (${signedIn}::boolean AND i."userId" = ${viewerId}) OR ${isModerator}::boolean)`,

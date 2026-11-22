@@ -34,11 +34,12 @@ export const isPanelTainted = ({ image }: ReaderPanel) =>
  */
 export function withholdRestrictedPanelImages(
   chapters: { panels: { imageUrl: string | null; image: RestrictableImage | null }[] }[],
-  viewerId?: number
+  viewerId?: number,
+  isModerator?: boolean
 ) {
   for (const { panels } of chapters) {
     for (const panel of panels) {
-      if (panel.image && !isImageServable(panel.image, viewerId)) {
+      if (panel.image && !isImageServable(panel.image, viewerId, isModerator)) {
         panel.imageUrl = null;
         panel.image = null;
       }

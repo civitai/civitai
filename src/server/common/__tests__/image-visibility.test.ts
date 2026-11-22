@@ -162,6 +162,18 @@ describe('withServableImage', () => {
     expect(withServableImage(row(image(16, false)), 'cover', 6).cover).toEqual(image(16, false));
   });
 
+  it('serves an unflagged Blocked image to a moderator when asked to', () => {
+    expect(withServableImage(row(image(32, false)), 'cover', 6, true).cover).toEqual(
+      image(32, false)
+    );
+  });
+
+  it('still withholds a restricted Blocked image from a moderator', () => {
+    expect(withServableImage(row(image(32, true)), 'cover', 6, true).cover).toBeNull();
+    const unknownFlag = { ...image(32), modelRestricted: null as unknown as boolean };
+    expect(withServableImage(row(unknownFlag), 'cover', 6, true).cover).toBeNull();
+  });
+
   it('judges each key on its own when nested', () => {
     const served = withServableImage(withServableImage(row(image(1)), 'cover', 6), 'hero', 6);
     expect([served.cover, served.hero]).toEqual([image(1), null]);

@@ -26,7 +26,7 @@ import { createKeyedTtlMemo } from '~/server/utils/ttl-memoize';
 import { isDefined } from '~/utils/type-guards';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { DomainColor, UserEngagementType } from '~/shared/utils/prisma/enums';
-import { isImageNotRestricted } from '~/server/common/image-visibility';
+import { isImageServable } from '~/server/common/image-visibility';
 
 // Two-arg classed form, as free-placement uses: the one-arg form shares an int4 keyspace
 // with `article.service.ts`, which locks on a bare articleId, so a hashed key could collide
@@ -84,7 +84,7 @@ const toCreatorAnnouncementDTO =
   (viewerId: number | undefined) =>
   <T extends RawCreatorAnnouncement>(announcement: T) => {
     const cover =
-      announcement.cover && isImageNotRestricted(announcement.cover, viewerId)
+      announcement.cover && isImageServable(announcement.cover, viewerId)
         ? announcement.cover
         : null;
     return {

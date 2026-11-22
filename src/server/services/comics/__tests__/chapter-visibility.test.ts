@@ -93,11 +93,11 @@ describe('an image made with a base model that restricts mature images', () => {
     modelRestricted,
     userId: OWNER,
   });
-  const servedPanel = (img: ReturnType<typeof image>, viewerId?: number) => {
+  const servedPanel = (img: ReturnType<typeof image>, viewerId?: number, isModerator?: boolean) => {
     const chapter = {
       panels: [{ imageUrl: 'u' as string | null, image: img as typeof img | null }],
     };
-    withholdRestrictedPanelImages([chapter], viewerId);
+    withholdRestrictedPanelImages([chapter], viewerId, isModerator);
     return chapter.panels[0];
   };
 
@@ -116,6 +116,15 @@ describe('an image made with a base model that restricts mature images', () => {
     ['XXX without the flag', image(16, false)],
   ])('is served to anyone when %s', (_, img) => {
     expect(servedPanel(img, undefined).imageUrl).toBe('u');
+  });
+
+  it('is served to a moderator when rated Blocked, unless it is also restricted', () => {
+    expect(servedPanel(image(32, false), moderator.id, true).imageUrl).toBe('u');
+    expect(servedPanel(image(32, true), moderator.id, true).imageUrl).toBeNull();
+  });
+
+  it('is withheld from a moderator where the caller does not pass the moderator flag', () => {
+    expect(servedPanel(image(32, false), moderator.id).imageUrl).toBeNull();
   });
 
   it('is withheld when rated Blocked, from anyone but its uploader', () => {

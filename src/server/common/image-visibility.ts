@@ -308,17 +308,23 @@ export const isImageNotRestricted = (image: RestrictableImage, viewerId?: number
   !isRestrictedImage(image) || (isUploaderId(viewerId) && image.userId === viewerId);
 
 /** Whether `viewerId` may see `image`: not restricted, and not rated Blocked, unless they uploaded it. */
-export const isImageServable = (image: RestrictableImage, viewerId?: number | null) =>
+export const isImageServable = (
+  image: RestrictableImage,
+  viewerId?: number | null,
+  isModerator?: boolean
+) =>
   isImageNotRestricted(image, viewerId) &&
-  (image.nsfwLevel !== NsfwLevel.Blocked || (isUploaderId(viewerId) && image.userId === viewerId));
+  (image.nsfwLevel !== NsfwLevel.Blocked ||
+    isModerator === true ||
+    (isUploaderId(viewerId) && image.userId === viewerId));
 
 /** `row` with its image at `key` set to null when `viewerId` may not see it. */
 export function withServableImage<
   K extends PropertyKey,
   T extends { [P in K]: RestrictableImage | null | undefined }
->(row: T, key: K, viewerId?: number | null): T & { [P in K]: T[P] | null } {
+>(row: T, key: K, viewerId?: number | null, isModerator?: boolean): T & { [P in K]: T[P] | null } {
   const image = row[key];
-  return { ...row, [key]: image && isImageServable(image, viewerId) ? image : null };
+  return { ...row, [key]: image && isImageServable(image, viewerId, isModerator) ? image : null };
 }
 
 /** The exact complement of `imageNotRestrictedSql`: a NULL flag on a mature image counts as restricted. */
