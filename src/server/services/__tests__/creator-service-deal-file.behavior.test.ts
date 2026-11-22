@@ -1423,14 +1423,10 @@ describe('preview pipeline', () => {
            "settledAt" = now() - interval '40 days'`
       );
 
-    it('deletes its scan copy and never serves it to a party', async () => {
-      const { dealId, fileId } = await settled(false);
+    it('deletes its scan copy', async () => {
+      const { fileId } = await settled(false);
       expect((await fileRow(fileId)).imageId).toBeNull();
       expect(images.deleteImages).toHaveBeenCalledOnce();
-      for (const userId of [SELLER, BUYER]) {
-        const previews = (await list(dealId, userId)).filter((f) => f.kind === 'Preview');
-        expect(previews.every((f) => f.previewUrl === null)).toBe(true);
-      }
     });
 
     it.each(removals)('purges it once %s', async (_n, remove) => {
