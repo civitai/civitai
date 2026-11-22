@@ -70,7 +70,11 @@ const chapterPanels = async (viewer: typeof MODERATOR, blockedFor: string | null
     position: 0,
     panels: panels(blockedFor),
   } as never);
-  return (await callerFor(viewer).getChapter({ projectId: 3, chapterPosition: 0 })).panels;
+  const { panels: returned } = await callerFor(viewer).getChapter({
+    projectId: 3,
+    chapterPosition: 0,
+  });
+  return returned.map(({ id, imageUrl, image }) => ({ id, imageUrl, image }));
 };
 
 const readerPanels = async (viewer: typeof MODERATOR, blockedFor: string | null) => {
