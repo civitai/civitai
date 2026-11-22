@@ -262,16 +262,16 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.ServeInFlight[e] = serveInFlight.WithLabelValues(e)
 		m.Fallbacks.WithLabelValues(e, "serve", "bulkhead")
 	}
+	m.seedOutcomes()
 	for _, e := range []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite} {
 		for _, r := range []string{DevalueWriteDevalue, DevalueWriteFallback, DevalueWriteSuperjson} {
 			m.DevalueWrites.WithLabelValues(e, r)
 		}
 	}
 	// Seed the dropped counter per endpoint, and the panic and refresh counters, so "none" reads 0
-	// rather than an absent series.
+	// rather than an absent series (the shadow results: seedOutcomes).
 	for _, e := range Endpoints {
 		m.ShadowDropped.WithLabelValues(e)
-		m.ShadowResults.WithLabelValues(e, "deadline")
 		for _, r := range []string{"match", "mismatch", "uncompared"} {
 			m.ShadowResponse.WithLabelValues(e, r)
 		}
@@ -317,6 +317,74 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.SessionCookieSlot.WithLabelValues(s)
 	}
 	return m
+}
+
+// ShadowResultValues are the `result` values of feed_go_shadow_compare_total: the classifiers' match,
+// fields, order and membership, the trivial and cached matches, and the compare path's own outcomes.
+var ShadowResultValues = []string{"match", "match_empty", "match_cached", "fields", "order", "membership", "unsupported", "deadline", "go_error", "bad_request"}
+
+// RequestOutcomes are the `outcome` values of feed_go_requests_total.
+var RequestOutcomes = []string{"served", "served_empty", "served_cached", "fallback", "error"}
+
+// computeFallbackReasons are the fallback reasons every compute can end in, whatever its endpoint
+// (Server.within: a panic, a gone client, the budget), so feed_go_fallback_total is seeded with them
+// for each mode that computes. Every other reason is endpoint-specific and stays lazy.
+var computeFallbackReasons = []string{"deadline", "canceled", "panic"}
+
+// cachedEndpoint reports whether endpoint can answer from the origin response cache (served_cached,
+// match_cached): the single-model route only (v1models.Answer.Cached).
+func cachedEndpoint(e string) bool { return e == EndpointV1ModelsID }
+
+// shadowResultReachable reports whether the compare path can count result for endpoint: match_cached
+// needs a cached answer, and the single-model route's classifier (ClassifyV1ModelID) has no order.
+func shadowResultReachable(endpoint, result string) bool {
+	switch result {
+	case "match_cached":
+		return cachedEndpoint(endpoint)
+	case "order":
+		return endpoint != EndpointV1ModelsID
+	}
+	return true
+}
+
+// seedOutcomes creates, at 0, every request outcome, shadow result and generic fallback series the
+// serve, shadow and probe paths can reach, so a new pod's first event is an increase from 0 that
+// rate() over its lifetime counts, rather than the creation of a series at 1 that it does not. The
+// label values are the closed sets above crossed with the endpoints each path serves; the series are
+// the ones those paths create on their own, never more.
+func (m *Metrics) seedOutcomes() {
+	for _, e := range ServedEndpoints {
+		for _, o := range RequestOutcomes {
+			if o != "served_cached" || cachedEndpoint(e) {
+				m.Requests.WithLabelValues(e, "serve", o)
+			}
+		}
+		// An error that is no fallback is counted with reason `error` (serveFallback).
+		m.Fallbacks.WithLabelValues(e, "serve", "error")
+		for _, r := range computeFallbackReasons {
+			m.Fallbacks.WithLabelValues(e, "serve", r)
+		}
+	}
+	for _, e := range Endpoints {
+		for _, o := range RequestOutcomes {
+			if o != "served_cached" || cachedEndpoint(e) {
+				m.Requests.WithLabelValues(e, "shadow", o)
+			}
+		}
+		for _, r := range ShadowResultValues {
+			if shadowResultReachable(e, r) {
+				m.ShadowResults.WithLabelValues(e, r)
+			}
+		}
+		for _, r := range computeFallbackReasons {
+			m.Fallbacks.WithLabelValues(e, "shadow", r)
+		}
+	}
+	for _, e := range ProbeEndpoints {
+		for _, r := range computeFallbackReasons {
+			m.Fallbacks.WithLabelValues(e, "probe", r)
+		}
+	}
 }
 
 // ServedEndpoints are the endpoints with a public route (each takes its serve slot from the one

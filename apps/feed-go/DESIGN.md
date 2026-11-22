@@ -1282,6 +1282,14 @@ sum by (feed_endpoint, result) (rate(feed_go_shadow_compare_total{result=~"unsup
 topk(10, sum by (feed_endpoint, reason) (rate(feed_go_fallback_total{mode="shadow"}[1h])))
 ```
 
+The numerators and denominators above exist at 0 from startup (`seedOutcomes` in
+`internal/server/metrics.go`), so a new pod's first event is an increase `rate()` counts, not the
+creation of a series at 1 that it misses: every `feed_go_requests_total` outcome and
+`feed_go_shadow_compare_total` result a path can reach, per endpoint and mode, and the fallback
+reasons every compute can end in (`deadline`, `canceled`, `panic`; serve's `error` and `bulkhead`).
+The endpoint-specific fallback reasons and `feed_go_errors_total` (its `class` label is a set of about
+70) stay lazy.
+
 ### 10.1 Compute-only CPU: the per-phase series
 
 Each shadow sample runs three phases, each recorded with `{phase, outcome}`:
