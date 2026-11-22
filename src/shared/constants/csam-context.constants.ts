@@ -15,7 +15,11 @@ export const CSAM_CONTEXT_ITEM_SELECT_LIMIT =
 export const CSAM_PRIVATE_ROUTE = 'tell [WHO: pending] privately';
 
 /** A report with no image can't be sent, while filing it still removes the account: never say "file". */
-export const CSAM_CONTEXT_NO_IMAGES_REFUSAL = `Nothing was filed. Text can be attached only to a report with images. Select the images you are reporting; don't add one just to carry text. If there is no image to report, don't file here: ${CSAM_PRIVATE_ROUTE} now. It may still need to be reported.`;
+export const CSAM_CONTEXT_NO_IMAGES_REFUSAL = `Nothing was filed. An image report needs at least one image that still exists. Select only the images you are reporting; don't add one just to file. If there is no image to report, or it no longer exists, don't file here: ${CSAM_PRIVATE_ROUTE} now. It may still need to be reported.`;
+
+/** Opens an edited chat message's text when the record can't show the sender made every edit. */
+export const CHAT_EDITORS_UNCONFIRMED_OPENING =
+  "Text on the reported user's chat message as of capture. It was edited, and Civitai can't confirm who made every edit.";
 
 /** The picker's help. With no image selected it never says "file now". */
 export const csamOutsideFieldsHelp = (hasImages: boolean) =>

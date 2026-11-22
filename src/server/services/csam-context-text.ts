@@ -9,7 +9,10 @@ import type {
 import { xmlSafe } from '~/server/services/ncmec-xml';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import { clickhouse } from '~/server/clickhouse/client';
 import {
+  CHAT_EDITORS_UNCONFIRMED_OPENING,
   CSAM_CONTEXT_ITEM_SEND_BUDGET,
   CSAM_CONTEXT_TEXT_MAX_CHARS,
 } from '~/shared/constants/csam-context.constants';
@@ -83,6 +86,8 @@ export type CsamItemContextText = {
   status?: string;
   deletedAt?: string;
   editedAt?: string;
+  /** Edited, and the record can't show the sender made every edit: never worded as the user's writing. */
+  editorsUnconfirmed?: true;
   /** A profile's address at capture. */
   username?: string;
   capturedAt: string;
@@ -551,33 +556,90 @@ async function readWebItems(source: WebItemSource, ids: number[], ownerId: numbe
   );
 }
 
+/**
+ * Chat messages whose edits might not all be in "ChatMessageEdit": edits before it existed are only in
+ * the "chatAuditEvents" log. Returns those another account edited there, or undefined when the log
+ * can't be read in time. Never fails or holds up a filing.
+ */
+const CHAT_AUDIT_READ_TIMEOUT_MS = 1_500;
+
+async function chatEditsByOthersInAuditLog(
+  messages: { id: number; chatId: number }[],
+  senderId: number
+): Promise<Set<number> | undefined> {
+  if (!messages.length) return new Set();
+  if (!clickhouse) return undefined;
+  // Ints read back from Postgres rows, so nothing user-typed reaches the SQL.
+  const ids = messages.map((m) => m.id);
+  const chatIds = [...new Set(messages.map((m) => m.chatId))];
+  const query = clickhouse
+    .$query<{ messageId: string | number }>(
+      `SELECT DISTINCT messageId FROM chatAuditEvents
+       WHERE type = 'edit' AND chatId IN (${chatIds.join(',')}) AND messageId IN (${ids.join(',')})
+         AND actorId != ${senderId}`
+    )
+    .then((rows) => new Set(rows.map((r) => Number(r.messageId))))
+    .catch(() => undefined);
+  return withTimeoutFallback(query, CHAT_AUDIT_READ_TIMEOUT_MS, undefined);
+}
+
 async function readChatMessages(ids: number[], ownerId: number) {
   if (!ids.length) return [];
   const rows = await kyselyWrite
     .selectFrom('ChatMessage')
-    .select(['id', 'userId', 'content', 'contentType', 'createdAt', 'editedAt', 'deletedAt'])
+    .select([
+      'id',
+      'chatId',
+      'userId',
+      'content',
+      'contentType',
+      'createdAt',
+      'editedAt',
+      'deletedAt',
+    ])
     .where('id', 'in', ids)
     .where('userId', '=', ownerId)
     .execute();
-  const editedByOthers = new Set(
-    rows.length
-      ? (
-          await kyselyWrite
-            .selectFrom('ChatMessageEdit')
-            .select('messageId')
-            .where(
-              'messageId',
-              'in',
-              rows.map((r) => r.id)
-            )
-            .where('editorId', '<>', ownerId)
-            .execute()
-        ).map((e) => e.messageId)
-      : []
+  const edited = rows.filter((r) => r.editedAt);
+  const edits = rows.length
+    ? await kyselyWrite
+        .selectFrom('ChatMessageEdit')
+        .select(['messageId', 'editorId'])
+        .where(
+          'messageId',
+          'in',
+          rows.map((r) => r.id)
+        )
+        .execute()
+    : [];
+  const editedByOthers = new Set(edits.filter((e) => e.editorId !== ownerId).map((e) => e.messageId));
+  const [firstRecorded] = edited.length
+    ? await kyselyWrite
+        .selectFrom('ChatMessageEdit')
+        .select('createdAt')
+        .orderBy('id', 'asc')
+        .limit(1)
+        .execute()
+    : [];
+  const historyIncomplete = new Set(
+    edited
+      .filter(
+        (r) =>
+          !editedByOthers.has(r.id) &&
+          (!edits.some((e) => e.messageId === r.id) ||
+            !firstRecorded ||
+            r.createdAt < firstRecorded.createdAt)
+      )
+      .map((r) => r.id)
+  );
+  const loggedByOthers = await chatEditsByOthersInAuditLog(
+    rows.filter((r) => historyIncomplete.has(r.id)),
+    ownerId
   );
   return rows.map((r): { attachable: boolean; item: ItemRead } => ({
     // A moderator's edit would be sent as the user's words.
-    attachable: r.contentType === 'Markdown' && !editedByOthers.has(r.id),
+    attachable:
+      r.contentType === 'Markdown' && !editedByOthers.has(r.id) && !loggedByOthers?.has(r.id),
     item: {
       source: 'chatMessage',
       id: r.id,
@@ -586,6 +648,7 @@ async function readChatMessages(ids: number[], ownerId: number) {
       createdAt: iso(r.createdAt),
       ...(r.editedAt && { editedAt: iso(r.editedAt) }),
       ...(r.deletedAt && { deletedAt: iso(r.deletedAt) }),
+      ...(historyIncomplete.has(r.id) && { editorsUnconfirmed: true as const }),
     },
   }));
 }
@@ -1048,7 +1111,9 @@ function describeItem(c: CsamItemContextText, base: string) {
 
 // Only a chat message is worded as written by the reported user; the others say whose item it is.
 const capturedLine = (c: CsamItemContextText, noun: string) =>
-  c.source === 'chatMessage'
+  c.editorsUnconfirmed
+    ? `${CHAT_EDITORS_UNCONFIRMED_OPENING} Captured by Civitai on ${formatUtc(c.capturedAt)}.`
+    : c.source === 'chatMessage'
     ? `Text the reported user wrote in this ${noun}, captured by Civitai on ${formatUtc(
         c.capturedAt
       )}.`

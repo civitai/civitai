@@ -23,10 +23,39 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
+type AuditEdit = { chatId: number; messageId: number; actorId: number };
 const holder = vi.hoisted(() => {
   process.env.SERVER_DOMAIN_RED = 'red.example.invalid';
-  return { kysely: null as unknown };
+  return {
+    kysely: null as unknown,
+    clickhouse: undefined as { $query: (sql: string) => Promise<unknown[]> } | undefined,
+  };
 });
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  get clickhouse() {
+    return holder.clickhouse;
+  },
+}));
+/** The audit log's edit rows, answering the one query shape the capture sends. */
+const auditLog = (edits: AuditEdit[]) => {
+  const $query = vi.fn(async (sql: string) => {
+    const list = (col: string) =>
+      (sql.match(new RegExp(`${col} IN \\(([\\d,]+)\\)`))?.[1] ?? '').split(',').map(Number);
+    const notActor = Number(sql.match(/actorId != (\d+)/)?.[1]);
+    expect(sql).toMatch(/type = 'edit'/);
+    return edits
+      .filter(
+        (e) =>
+          list('chatId').includes(e.chatId) &&
+          list('messageId').includes(e.messageId) &&
+          e.actorId !== notActor
+      )
+      .map((e) => ({ messageId: String(e.messageId) }));
+  });
+  holder.clickhouse = { $query };
+  return $query;
+};
 vi.mock('~/server/db/kyselyDb', () => ({
   get kyselyRead() {
     return holder.kysely;
@@ -119,14 +148,17 @@ CREATE TABLE "UserProfile" (
 CREATE TABLE "ChatMessage" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "content" TEXT NOT NULL,
   "contentType" TEXT NOT NULL DEFAULT 'Markdown', "createdAt" TIMESTAMP(3) NOT NULL,
-  "editedAt" TIMESTAMP(3), "deletedAt" TIMESTAMP(3)
+  "editedAt" TIMESTAMP(3), "deletedAt" TIMESTAMP(3), "chatId" INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE "Model" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "name" TEXT NOT NULL, "description" TEXT,
   "status" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL, "deletedAt" TIMESTAMP(3),
   "sfwName" TEXT, "sfwDescription" TEXT
 );
-CREATE TABLE "ChatMessageEdit" ("id" SERIAL PRIMARY KEY, "messageId" INTEGER NOT NULL, "editorId" INTEGER NOT NULL);
+CREATE TABLE "ChatMessageEdit" (
+  "id" SERIAL PRIMARY KEY, "messageId" INTEGER NOT NULL, "editorId" INTEGER NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE "ModelOwnership" (
   "id" SERIAL PRIMARY KEY, "modelId" INTEGER NOT NULL, "userId" INTEGER NOT NULL, "reason" TEXT NOT NULL
 );
@@ -682,6 +714,7 @@ describe('held text items', () => {
 describe('items the reported user wrote', () => {
   const SYSTEM = -1;
   beforeEach(async () => {
+    auditLog([]);
     await db.pg.exec(
       `TRUNCATE "User", "UserProfile", "ChatMessage", "ChatMessageEdit", "Model", "ModelOwnership", "Article", "ServiceOffering";
        INSERT INTO "User" VALUES (${OWNER}, 'owner_name'), (${OTHER}, 'other'), (${SECONDARY}, 'second');
@@ -844,7 +877,13 @@ describe('items the reported user wrote', () => {
   });
 
   it('keeps a deleted, edited message, saying both and that its text may differ from what was sent', async () => {
+    // Its sender's edit is recorded, and the history was recorded from before it was sent.
+    await db.pg.exec(
+      `INSERT INTO "ChatMessageEdit" ("messageId", "editorId", "createdAt") VALUES (905, ${OWNER}, '2026-10-01 14:05')`
+    );
+    const log = auditLog([]);
     const [row] = await capture({ chatMessageIds: [905] });
+    expect(log).not.toHaveBeenCalled();
     expect(row).toMatchObject({ editedAt: at(3).toISOString(), deletedAt: at(4).toISOString() });
 
     const {
@@ -858,6 +897,67 @@ describe('items the reported user wrote', () => {
       additionalInfo:
         'Text the reported user wrote in this chat message, captured by Civitai on 10/08/2026 14:05 UTC.\n' +
         'Chat message 905, sent 10/02/2026 14:05 UTC, deleted 10/04/2026 14:05 UTC, edited 10/03/2026 14:05 UTC: text as of capture; may differ from what was sent.',
+    });
+  });
+
+  describe('an edited message whose recorded history may be incomplete', () => {
+    const unconfirmed =
+      "Text on the reported user's chat message as of capture. It was edited, and Civitai can't confirm who made every edit. Captured by Civitai on 10/08/2026 14:05 UTC.\n" +
+      'Chat message 905, sent 10/02/2026 14:05 UTC, deleted 10/04/2026 14:05 UTC, edited 10/03/2026 14:05 UTC: text as of capture; may differ from what was sent.';
+    const sentInfo = async () => {
+      const { contextText, notAttached: refused } = await filing({ chatMessageIds: [905] });
+      return {
+        info: contextIncidents(contextText).chatImIncidents.map((i) => i.additionalInfo),
+        refused,
+      };
+    };
+
+    it('does not attach it when the audit log shows another account edited it', async () => {
+      auditLog([
+        { chatId: 1, messageId: 905, actorId: OWNER },
+        { chatId: 1, messageId: 905, actorId: MOD },
+      ]);
+      expect(await sentInfo()).toEqual({ info: [], refused: ['chat message 905'] });
+    });
+
+    it('reads the log for a message sent before the history was recorded, even with a sender edit on record', async () => {
+      await db.pg.exec(
+        `INSERT INTO "ChatMessageEdit" ("messageId", "editorId", "createdAt") VALUES (905, ${OWNER}, '2026-10-05 14:05')`
+      );
+      auditLog([{ chatId: 1, messageId: 905, actorId: MOD }]);
+      expect((await sentInfo()).refused).toEqual(['chat message 905']);
+    });
+
+    it('reads the log for an edited message with no recorded edit, even once the history is being recorded', async () => {
+      await db.pg.exec(
+        `INSERT INTO "ChatMessageEdit" ("messageId", "editorId", "createdAt") VALUES (901, ${OWNER}, '2026-09-01 14:05')`
+      );
+      auditLog([{ chatId: 1, messageId: 905, actorId: MOD }]);
+      expect((await sentInfo()).refused).toEqual(['chat message 905']);
+    });
+
+    it("only counts the log's edits in the message's own chat", async () => {
+      auditLog([{ chatId: 2, messageId: 905, actorId: MOD }]);
+      expect(await sentInfo()).toEqual({ info: [unconfirmed], refused: [] });
+    });
+
+    it('attaches it, never worded as written by the user, when the log has no edit by anyone else', async () => {
+      auditLog([{ chatId: 1, messageId: 905, actorId: OWNER }]);
+      expect(await sentInfo()).toEqual({ info: [unconfirmed], refused: [] });
+    });
+
+    it('attaches it the same way when the log fails or is not configured', async () => {
+      holder.clickhouse = { $query: () => Promise.reject(new Error('log down')) };
+      expect(await sentInfo()).toEqual({ info: [unconfirmed], refused: [] });
+      holder.clickhouse = undefined;
+      expect(await sentInfo()).toEqual({ info: [unconfirmed], refused: [] });
+    });
+
+    it('does not wait on a log that never answers', async () => {
+      holder.clickhouse = { $query: () => new Promise<never>(() => {}) };
+      const started = Date.now();
+      expect(await sentInfo()).toEqual({ info: [unconfirmed], refused: [] });
+      expect(Date.now() - started).toBeLessThan(5_000);
     });
   });
 
