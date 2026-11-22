@@ -221,6 +221,16 @@ describe('a preview the server runner started', () => {
     ).toEqual({ show: { blockId: 'my-app', host: HOST } });
   });
 
+  // A direct preview: the runner never reports its session host (the preview's credential); the
+  // page fetches the frame from civitai by block id.
+  it('is shown from the block alone when the runner reported no host (a direct preview)', () => {
+    expect(
+      runnerPreviewAction(
+        reported('start_preview', { shown: true, blockId: 'my-app', next_step: 'x' })
+      )
+    ).toEqual({ show: { blockId: 'my-app', host: '' } });
+  });
+
   it('carries no tunnel id onward, whatever else the result holds', () => {
     const action = runnerPreviewAction(
       reported('start_preview', { blockId: 'my-app', host: HOST, sessionId: 'bki_TEST_ONLY' })
@@ -239,7 +249,6 @@ describe('a preview the server runner started', () => {
     ['a failed stop', reported('stop_preview', { error: 'no' }, true)],
     ['no block id', reported('start_preview', { host: HOST })],
     ['a block id that is not one', reported('start_preview', { blockId: 'My App', host: HOST })],
-    ['no host', reported('start_preview', { blockId: 'my-app' })],
     ['a host that is not one', reported('start_preview', { blockId: 'my-app', host: 'a b/c' })],
     ['a URL for a host', reported('start_preview', { blockId: 'my-app', host: `https://${HOST}` })],
     ['another tool', reported('sandbox__run_command', { blockId: 'my-app', host: HOST })],
