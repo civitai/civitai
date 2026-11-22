@@ -638,7 +638,6 @@ export const needsReviewActions: Actions = {
     });
     if (!parsed.success) return fail(400, { error: 'Missing model or ruling.' });
     const { modelId, ruling, reason, revision } = parsed.data;
-    // The lead as the screen showed it, so the main app refuses a ruling on one that has changed.
     const result = await ruleRestrictedVerdict(
       modelId,
       ruling,

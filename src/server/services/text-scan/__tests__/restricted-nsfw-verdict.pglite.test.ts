@@ -65,6 +65,7 @@ const MODERATOR = 3;
 const SYSTEM_LOCK = { source: 'text-scan', at: '2026-11-01T00:00:00.000Z' };
 
 let db: PGlite;
+const txReads: string[] = [];
 
 beforeAll(async () => {
   db = new PGlite();
@@ -103,7 +104,15 @@ beforeAll(async () => {
   dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
   dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
   dbMock.dbRead.$queryRaw.mockImplementation(raw.queryRaw as never);
-  const tx = { $queryRaw: raw.queryRaw, $executeRaw: raw.executeRaw };
+  // Its own handle, apart from dbWrite and dbRead, so a read off the transaction is seen; it keeps
+  // the text of each read, in order.
+  const tx = {
+    $queryRaw: (strings: TemplateStringsArray, ...values: unknown[]) => {
+      txReads.push(strings.join('?'));
+      return (raw.queryRaw as (...a: unknown[]) => unknown)(strings, ...values);
+    },
+    $executeRaw: raw.executeRaw,
+  };
   dbMock.dbWrite.$transaction.mockImplementation(((fn: (t: typeof tx) => unknown) =>
     fn(tx)) as never);
   dbMock.dbWrite.model.findUnique.mockImplementation(
@@ -688,6 +697,79 @@ describe('resolveRestrictedNsfwVerdict', () => {
     await expectRefusedKeepingLead(seen);
   });
 
+  // Every field the revision covers, changed alone on a full row: each must change the revision.
+  describe('the revision covers each field on its own', () => {
+    const FULL = {
+      restrictedNsfwVerdict: {
+        source: 'text-scan',
+        at: '2026-11-04T00:00:00.000Z',
+        restriction: 'minor',
+        liftedBy: 'moderator',
+        applied: { at: '2026-11-05T00:00:00.000Z' },
+      },
+      restrictedNsfwVerdictRulings: [{ at: '2026-11-03T00:00:00Z' }],
+      systemNsfwLock: { source: 'text-scan', at: '2026-11-05T00:00:00.000Z' },
+      textModeration: { scannedAt: '2026-11-02T00:00:00.000Z' },
+    };
+    const set =
+      (sql: string, ...params: unknown[]) =>
+      () =>
+        db.query(sql.replace('$MODEL', String(MODEL)), params);
+    const meta = (path: string, value: unknown) =>
+      set(`UPDATE "Model" SET meta = jsonb_set(meta, '{${path}}', $1::jsonb) WHERE id = $MODEL`, [
+        JSON.stringify(value),
+      ]);
+    const scan = (column: string, value: unknown) =>
+      set(`UPDATE "EntityModeration" SET ${column} = $1 WHERE "entityId" = $MODEL`, value);
+    const model = (assignment: string) => set(`UPDATE "Model" SET ${assignment} WHERE id = $MODEL`);
+
+    it.each([
+      ['lead at', meta('restrictedNsfwVerdict,at', '2026-11-06T00:00:00.000Z')],
+      ['lead source', meta('restrictedNsfwVerdict,source', 'profanity-filter')],
+      ['lead restriction', meta('restrictedNsfwVerdict,restriction', 'poi')],
+      ['lead liftedBy', meta('restrictedNsfwVerdict,liftedBy', 'appeal')],
+      ['lead applied at', meta('restrictedNsfwVerdict,applied,at', '2026-11-06T00:00:00.000Z')],
+      ['newest ruling', meta('restrictedNsfwVerdictRulings', [{ at: '2026-11-06T00:00:00Z' }])],
+      ['minor', model('minor = NOT minor')],
+      ['poi', model('poi = NOT poi')],
+      ['Private', model(`availability = 'Private'`)],
+      ['nsfw', model('nsfw = NOT nsfw')],
+      ['sfwOnly', model('"sfwOnly" = NOT "sfwOnly"')],
+      ['locks', model(`"lockedProperties" = '{sfwOnly,minor,nsfw}'`)],
+      ['system lock at', meta('systemNsfwLock,at', '2026-11-06T00:00:00.000Z')],
+      ['scan level', scan('"nsfwLevel"', 28)],
+      ['scan labels', scan('"triggeredLabels"', ['nsfw'])],
+      ['scan reason', scan('result', { labels: { nsfw: { reason: 'graphic' } } })],
+      ['scan content hash', scan('"contentHash"', 'h2')],
+      ['forensics time', meta('textModeration,scannedAt', '2026-11-06T00:00:00.000Z')],
+    ])('%s', async (_, change) => {
+      await seed({ sfwOnly: true, minor: true, locked: ['sfwOnly', 'minor'], meta: FULL });
+      await db.query(
+        `INSERT INTO "EntityModeration" ("entityType", "entityId", "triggeredLabels", result, "contentHash", "nsfwLevel")
+         VALUES ('Model', $1, '{nsfw,violence}', $2, 'h1', 16)`,
+        [MODEL, { labels: { nsfw: { reason: 'explicit' } } }]
+      );
+      const before = await screen();
+      await change();
+      expect(await screen()).not.toBe(before);
+    });
+  });
+
+  // In the ruling's transaction, the row lock first, then the revision: never off the transaction.
+  it('locks the model row, then reads the revision, all in the ruling transaction', async () => {
+    await seed({ sfwOnly: true, meta: lead('sfwOnly') });
+    const seen = await screen();
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockClear();
+    vi.mocked(dbMock.dbRead.$queryRaw).mockClear();
+    txReads.length = 0;
+    await ruleSeen('dismiss', seen);
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(txReads[0]).toMatch(/FOR UPDATE/);
+    expect(txReads.findIndex((q) => q.includes('"EntityModeration"'))).toBeGreaterThan(0);
+    expect((await row()).meta).not.toHaveProperty('restrictedNsfwVerdict');
+  });
+
   // The endpoint's body and the ruling it makes: the revision must get through both.
   it('refuses through the endpoint a ruling whose revision is stale', async () => {
     await seed({ sfwOnly: true, meta: lead('sfwOnly') });
@@ -714,8 +796,10 @@ describe('resolveRestrictedNsfwVerdict', () => {
   // The same stored row as the moderator app's list test (restricted-nsfw-verdicts.pglite.test.ts):
   // both must read it into this revision.
   it('reads the stored row into the revision the moderator list gives', async () => {
+    // Booleans that differ, so a field read into another's place is seen.
     await seed({
       sfwOnly: true,
+      minor: true,
       locked: ['sfwOnly', 'minor'],
       meta: {
         restrictedNsfwVerdict: {
@@ -738,6 +822,7 @@ describe('resolveRestrictedNsfwVerdict', () => {
        VALUES ('Model', $1, '{nsfw,violence}', $2, 'h1', 16)`,
       [MODEL, { labels: { nsfw: { reason: 'explicit' } } }]
     );
+    await db.query(`UPDATE "Model" SET availability = 'Private' WHERE id = $1`, [MODEL]);
     expect(await screen()).toBe(
       restrictedLeadRevision({
         lead: {
@@ -749,9 +834,9 @@ describe('resolveRestrictedNsfwVerdict', () => {
         },
         lastRulingAt: '2026-11-03T00:00:00Z',
         model: {
-          minor: false,
+          minor: true,
           poi: false,
-          isPrivate: false,
+          isPrivate: true,
           nsfw: false,
           sfwOnly: true,
           locks: ['minor', 'sfwOnly'],

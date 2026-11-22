@@ -149,8 +149,7 @@ export async function resolveRestrictedNsfwVerdict({
   reason?: string;
   userId: number;
   /** The lead's revision as the moderator's screen showed it: a ruling is refused once the lead, the
-   *  model's flags and locks, or the scan shown have changed. Omitted only while the moderator app
-   *  that sends it deploys. */
+   *  model's flags and locks, or the scan shown have changed. */
   revision?: string;
 }) {
   const note = reason?.trim() || null;

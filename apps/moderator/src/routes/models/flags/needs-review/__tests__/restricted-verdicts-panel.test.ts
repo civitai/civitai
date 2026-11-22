@@ -265,8 +265,7 @@ describe('the restricted-verdict panel above the Needs review queue', () => {
     unmount(app);
   });
 
-  // The main app compares the revision before it rules; a form without it rules on any lead.
-  it('posts the revision of the lead on screen from every ruling form', async () => {
+  it('every ruling form posts the revision shown', async () => {
     const { mount, unmount, flushSync } = await import(/* @vite-ignore */ clientEntry('svelte'));
     document.body.innerHTML = '';
     (globalThis as Record<string, unknown>).__panelSubmits = [];

@@ -81,8 +81,6 @@ export async function getRestrictedVerdicts(limit = 100): Promise<RestrictedVerd
     }) => ({
       ...r,
       comFace: comFaces.get(r.modelId) ?? null,
-      // What the screen shows of the lead, sent back with a ruling: the main app refuses it once
-      // the lead, the model's flags and locks, or the scan have changed.
       revision: restrictedLeadRevision({
         lead: {
           at: r.heldAt,

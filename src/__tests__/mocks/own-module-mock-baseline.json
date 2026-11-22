@@ -67,6 +67,7 @@
   "src/__tests__/pages/api/mod/minor-flag/revert.test.ts": 3,
   "src/__tests__/pages/api/mod/minor-flag/rule.test.ts": 6,
   "src/__tests__/pages/api/mod/model/republish.test.ts": 6,
+  "src/__tests__/pages/api/mod/model/resolve-restricted-nsfw-verdict.test.ts": 3,
   "src/__tests__/pages/api/mod/nowpayments-credit-deposit.test.ts": 2,
   "src/__tests__/pages/api/mod/requeue-training-data-scans.test.ts": 2,
   "src/__tests__/pages/api/mod/restore-images.test.ts": 2,

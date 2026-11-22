@@ -200,8 +200,10 @@ describe('restricted-verdict leads', () => {
   // The same stored row as the main app's ruling test (restricted-nsfw-verdict.pglite.test.ts): both
   // must read it into this revision, or every ruling from this screen is refused.
   it('gives each lead the revision the main app compares before it rules', async () => {
+    // Booleans that differ, so a field read into another's place is seen.
     await model(1, {
       sfwOnly: true,
+      minor: true,
       meta: {
         restrictedNsfwVerdict: {
           source: 'text-scan',
@@ -218,7 +220,9 @@ describe('restricted-verdict leads', () => {
         textModeration: { scannedAt: '2026-11-02T00:00:00.000Z' },
       },
     });
-    await db.query(`UPDATE "Model" SET "lockedProperties" = '{sfwOnly,minor}' WHERE id = 1`);
+    await db.query(
+      `UPDATE "Model" SET "lockedProperties" = '{sfwOnly,minor}', availability = 'Private' WHERE id = 1`
+    );
     await db.query(
       `INSERT INTO "EntityModeration" ("entityType", "entityId", "triggeredLabels", result, "contentHash", "nsfwLevel")
        VALUES ('Model', 1, '{nsfw,violence}', $1, 'h1', 16)`,
@@ -236,9 +240,9 @@ describe('restricted-verdict leads', () => {
         },
         lastRulingAt: '2026-11-03T00:00:00Z',
         model: {
-          minor: false,
+          minor: true,
           poi: false,
-          isPrivate: false,
+          isPrivate: true,
           nsfw: false,
           sfwOnly: true,
           locks: ['minor', 'sfwOnly'],
