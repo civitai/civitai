@@ -53,7 +53,7 @@ vi.mock('../mod-activity', () => ({
 }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 
-const { blockImage } = await import('../image-moderation.service');
+const { blockImage, BLOCKED_REASON_CSAM } = await import('../image-moderation.service');
 
 // Enums as in prod, so a literal outside the enum fails here too.
 const SCHEMA = `
@@ -86,6 +86,7 @@ CREATE TABLE "Appeal" (
 const APPEALED = 41;
 const FLAGGED = 42;
 const DECIDED = 43;
+const CSAM_BLOCKED = 44;
 
 let db: PGlite;
 
@@ -150,5 +151,33 @@ describe('blocking an image that is under appeal', () => {
     await blockImage({ imageId: DECIDED, userId: 2 });
 
     expect(await imageRow(DECIDED)).toEqual({ needsReview: null, ingestion: 'Blocked' });
+  });
+
+  it('never gives an image holding a CSAM block the appeal flag', async () => {
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+       VALUES ($1, 10, NULL, 'CSAM', 'Blocked', 32)`,
+      [CSAM_BLOCKED]
+    );
+    await db.query(
+      `INSERT INTO "Appeal" ("userId", "entityType", "entityId", "status") VALUES (10, 'Image', $1, 'Pending')`,
+      [CSAM_BLOCKED]
+    );
+    await blockImage({ imageId: CSAM_BLOCKED, userId: 2 });
+
+    const { needsReview, blockedFor } = (
+      await db.query<{ needsReview: string | null; blockedFor: string | null }>(
+        `SELECT "needsReview", "blockedFor" FROM "Image" WHERE "id" = $1`,
+        [CSAM_BLOCKED]
+      )
+    ).rows[0];
+    // Control: the block kept the CSAM reason.
+    expect(blockedFor).toBe('CSAM');
+    expect(needsReview).toBeNull();
+  });
+
+  // The main app's csamBlockedSql compares the same literal.
+  it('reads the CSAM block reason the main app reads', () => {
+    expect(BLOCKED_REASON_CSAM).toBe('CSAM');
   });
 });

@@ -29,12 +29,15 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
 
 import { createEntityAppeal } from '~/server/services/report.service';
 import { keepPendingAppealFlags } from '~/server/services/image-appeal-flag';
+import { csamBlockedSql } from '~/server/common/image-visibility';
 import { EntityType } from '~/shared/utils/prisma/enums';
 import { IMAGE_NOT_APPEALABLE } from '~/shared/utils/appeal';
 
 const FLAGGED = 1;
 const PLAIN = 2;
 const OTHER_FLAG = 3;
+const CSAM_BLOCKED = 4;
+const MODERATED_BLOCKED = 5;
 
 const runOnStandIn = async (strings: TemplateStringsArray, ...values: unknown[]) => {
   const flat = Prisma.sql(strings, ...(values as never[]));
@@ -45,7 +48,7 @@ const tx = { $executeRaw: vi.fn(runOnStandIn), appeal: { create: vi.fn(async () 
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "Image" (id int PRIMARY KEY, "needsReview" text, "updatedAt" timestamp(3));
+    CREATE TABLE "Image" (id int PRIMARY KEY, "needsReview" text, "blockedFor" text, "updatedAt" timestamp(3));
     CREATE TABLE "Appeal" (
       id serial PRIMARY KEY,
       "entityType" text NOT NULL,
@@ -66,8 +69,11 @@ beforeEach(async () => {
     TRUNCATE "Image", "Appeal";
     INSERT INTO "Image" (id, "needsReview") VALUES
       (${FLAGGED}, 'csam'), (${PLAIN}, NULL), (${OTHER_FLAG}, 'minor');
+    INSERT INTO "Image" (id, "needsReview", "blockedFor") VALUES
+      (${CSAM_BLOCKED}, 'minor', 'CSAM'), (${MODERATED_BLOCKED}, NULL, 'moderated');
     INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
-      ('Image', ${FLAGGED}, 'Pending'), ('Image', ${PLAIN}, 'Pending'), ('Image', ${OTHER_FLAG}, 'Pending');
+      ('Image', ${FLAGGED}, 'Pending'), ('Image', ${PLAIN}, 'Pending'), ('Image', ${OTHER_FLAG}, 'Pending'),
+      ('Image', ${CSAM_BLOCKED}, 'Pending'), ('Image', ${MODERATED_BLOCKED}, 'Pending');
   `);
 });
 
@@ -97,9 +103,17 @@ describe('creating an image appeal', () => {
     expect(mockRefundMultiAccountTransaction).toHaveBeenCalledTimes(1);
   });
 
+  it('refuses an image holding a CSAM block, with the same answer, and keeps its review', async () => {
+    await expect(appeal(CSAM_BLOCKED)).rejects.toThrow(IMAGE_NOT_APPEALABLE);
+
+    expect(await flagOf(CSAM_BLOCKED)).toBe('minor');
+    expect(tx.appeal.create).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['no flag', PLAIN],
     ['another review flag', OTHER_FLAG],
+    ['a moderator block', MODERATED_BLOCKED],
   ])('flags an image with %s for the appeals queue', async (_, id) => {
     await appeal(id);
 
@@ -115,5 +129,19 @@ describe('keepPendingAppealFlags', () => {
     expect(await flagOf(FLAGGED)).toBe('csam');
     expect(await flagOf(PLAIN)).toBe('appeal');
     expect(await flagOf(OTHER_FLAG)).toBe('appeal');
+  });
+
+  it('never restores the appeal flag on an image holding a CSAM block', async () => {
+    await keepPendingAppealFlags([CSAM_BLOCKED, PLAIN, MODERATED_BLOCKED]);
+
+    expect(await flagOf(CSAM_BLOCKED)).toBe('minor');
+    // Controls: the same call restores it on an image with no block, and with another block.
+    expect(await flagOf(PLAIN)).toBe('appeal');
+    expect(await flagOf(MODERATED_BLOCKED)).toBe('appeal');
+  });
+
+  // The moderator app's keepPendingAppealFlags compares the same literal.
+  it('reads the CSAM block reason the moderator app reads', () => {
+    expect(csamBlockedSql().sql).toBe(`"blockedFor" = 'CSAM'`);
   });
 });
