@@ -31,6 +31,13 @@ vi.mock('~/server/signals/wrapper', async (importOriginal) => ({
 }));
 
 const { updateMessageHandler } = await import('../chat.controller');
+const { setProfanityListReaderForTests } = await import('~/server/services/profanity-list.service');
+
+// A synthetic token on no real list, enforced as the managed list: this repository is public.
+const TOKEN = 'zqvoxmaskedtoken';
+const maskingList = {
+  read: async () => ({ blocked: [TOKEN], allowed: null, source: 'managed' as const }),
+};
 
 const SENDER = 5;
 const chatAudit = vi.fn(async () => undefined);
@@ -56,6 +63,22 @@ describe('updateMessageHandler', () => {
       content: 'stale read',
       deletedAt: null,
     } as never);
+  });
+
+  // Viewers get the masked copy from the chat signal and reads; the write response has none.
+  it('returns the edit with no masked copy, even when the list masks it', async () => {
+    setProfanityListReaderForTests(maskingList);
+    try {
+      editChatMessageContent.mockResolvedValue('old');
+      const result = await updateMessageHandler({
+        input: { messageId: 1, content: `a ${TOKEN} b` } as never,
+        ctx: ctx(),
+      });
+      expect(result).toMatchObject({ content: `a ${TOKEN} b` });
+      expect(result).not.toHaveProperty('maskedContent');
+    } finally {
+      setProfanityListReaderForTests();
+    }
   });
 
   it('logs the text the locked write replaced, not an earlier read of it', async () => {

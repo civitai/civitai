@@ -26,7 +26,7 @@ vi.mock('../search-index', () => ({ syncSearchIndexBulk: vi.fn() }));
 vi.mock('../cache', () => ({ bustImageTagCaches: vi.fn() }));
 vi.mock('../axiom', () => ({ logAxiomError: vi.fn(async () => undefined) }));
 vi.mock('../image-models-reindex', () => ({
-  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
 }));
 vi.mock('../thumbnail-cache', () => ({
   invalidateThumbnails: vi.fn(async () => {
@@ -42,7 +42,7 @@ vi.mock('../profile-picture-cache', () => ({
 const { upsertTagsOnImageNew } = await import('../tags-on-image.service');
 const { bustImageTagCaches } = await import('../cache');
 const { logAxiomError } = await import('../axiom');
-const { queueModelsForImageChildTagChanges } = await import('../image-models-reindex');
+const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
 
 const flat = (i: number) => h.sql[i].replace(/\s+/g, ' ').trim();
 
@@ -106,30 +106,24 @@ describe('upsertTagsOnImageNew', () => {
 });
 
 describe('upsertTagsOnImageNew: models index', () => {
-  it('hands the written tags and the re-rated images over', async () => {
-    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+  it('hands only the re-rated images over, not the written tags', async () => {
+    vi.mocked(queueDocumentsForImageMinorChanges).mockClear();
     await upsertTagsOnImageNew([
       { imageId: 1, tagId: 2 },
       { imageId: 3, tagId: 4 },
     ]);
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({
-      tagWrites: [
-        expect.objectContaining({ imageId: 1, tagId: 2 }),
-        expect.objectContaining({ imageId: 3, tagId: 4 }),
-      ],
-      levelImageIds: [1, 3],
-    });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [1, 3] });
   });
 
   it('still hands them over when the level recompute throws', async () => {
     h.failRecompute = true;
-    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+    vi.mocked(queueDocumentsForImageMinorChanges).mockClear();
 
     await expect(upsertTagsOnImageNew([{ imageId: 1, tagId: 2 }])).rejects.toThrow('lock timeout');
     h.failRecompute = false;
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith(
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith(
       expect.objectContaining({ levelImageIds: [1] })
     );
   });

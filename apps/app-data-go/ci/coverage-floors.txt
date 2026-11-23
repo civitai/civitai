@@ -1,0 +1,15 @@
+# Statement-coverage floors for the unit run (`go test -race -coverprofile`, each package measured by
+# its own tests), checked by ci/coverage_gate.py in .github/workflows/app-data-go.yml.
+#
+# Ratchet: each floor is a measured value rounded DOWN to a whole percent. To raise one, read the
+# measured value the "Coverage floors" step prints and set the floor to it. Never lower a floor to
+# get a red run green. Packages without unit tests (cmd/app-data-go, metrics) are not listed; they
+# count in the total.
+total 89
+internal/api 99
+internal/config 98
+internal/exchange 100
+internal/registry 98
+internal/rest 90
+internal/session 94
+internal/urn 100

@@ -49,9 +49,11 @@ vi.mock('~/components/CreatorShop/Services/ServiceOfferingMenu', () => ({
 vi.mock('~/components/CreatorShop/Services/deals/ServiceRequestModal', () => ({
   ServiceRequestModal: () => null,
 }));
-vi.mock('~/hooks/useDomainColor', async (importOriginal) => ({
+// The storefront reads the domain and creatorServicesNext from the flag context, which these
+// static renders do not mount.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  useDomainColor: () => 'green',
+  useFeatureFlags: () => ({ isGreen: true, creatorServicesNext: false }),
 }));
 
 const { ServicesSection } = await import('~/components/CreatorShop/Storefront/ServicesSection');

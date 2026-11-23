@@ -107,9 +107,17 @@ export default defineNextConfig(
     // Turbopack is the default bundler as of Next 16. The OpenTelemetry packages
     // that produced the `require-in-the-middle` webpack warnings are listed in
     // `serverExternalPackages` below, so Turbopack externalizes them and never
-    // emits those warnings — an empty config just acknowledges we're on Turbopack
-    // and silences Next's "webpack config with no turbopack config" build error.
-    turbopack: {},
+    // emits those warnings. Having a turbopack config also silences Next's
+    // "webpack config with no turbopack config" build error.
+    turbopack: {
+      // Production builds import the tRPC routers statically (one module graph used less than
+      // half the peak build memory of a loader chunk per router). Dev keeps the dynamic imports in
+      // ./loaders so a service edit rebuilds only its router's chunk.
+      resolveAlias:
+        process.env.NODE_ENV === 'production'
+          ? { '~/server/routers/loaders': './src/server/routers/loaders.static.ts' }
+          : {},
+    },
     // Per-branch build dir. Turbopack's dev filesystem cache (~8GB) is invalidated
     // wholesale by an in-place branch switch, so the dev daemon points each branch at
     // its own dir and keeps them warm instead of purging. Unset -> stock `.next`.
@@ -179,6 +187,7 @@ export default defineNextConfig(
       '@civitai/db',
       '@civitai/db-queries',
       '@civitai/shared',
+      '@civitai/storage',
       '@civitai/post-planner',
       '@civitai/buzz',
       '@civitai/redis',
@@ -220,6 +229,7 @@ export default defineNextConfig(
       // is the runtime signal if one ever appears.
       '@pyroscope/nodejs',
       '@datadog/pprof',
+      '@contentauth/c2pa-wasm',
     ],
     // Several entry points read markdown from src/static-content at runtime via fs
     // (dynamic string paths that @vercel/nft can't trace). With output:'standalone'
@@ -249,6 +259,11 @@ export default defineNextConfig(
         './node_modules/next/dist/compiled/@vercel/og/**/*',
         './node_modules/.pnpm/next@*/node_modules/next/dist/compiled/@vercel/og/**/*',
         ...swcHelpersRuntimeFiles,
+      ],
+      // content-credentials.service reads the .wasm from disk, which nft cannot trace.
+      '/api/v1/verify': [
+        './node_modules/@contentauth/c2pa-wasm/**/*',
+        './node_modules/.pnpm/@contentauth+c2pa-wasm@*/node_modules/@contentauth/c2pa-wasm/**/*',
       ],
     },
     experimental: {

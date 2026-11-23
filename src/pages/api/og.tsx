@@ -3,13 +3,22 @@ import path from 'path';
 import { ImageResponse } from 'next/og';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
+import {
+  bountyNsfwFlagLevel,
+  getTextRatedBountyLevels,
+  mayBeTextRated,
+} from '~/server/services/bounty-rated-level';
 import { getImageMetricsObject } from '~/server/services/image.service';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { getChallengeDetail } from '~/server/services/challenge.service';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
-import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import {
+  assertImageVisibleToViewer,
+  entityImageVisibilityConditions,
+} from '~/server/services/image-visibility.service';
 import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -36,6 +45,7 @@ import {
 import { parseMilestoneShareId } from '~/shared/constants/creator-journey.constants';
 import { decorationFrameBox } from '~/components/UserAvatar/decoration-frame.util';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { imageNotFlaggedWhere, isImageNotFlagged } from '~/server/common/image-visibility';
 
 // --- Schema & Types ---
 
@@ -99,6 +109,15 @@ const ogImageSelect = {
   height: true,
 } as const;
 
+const ogArticleImageSelect = {
+  ...ogImageSelect,
+  ingestion: true,
+  needsReview: true,
+  modelRestricted: true,
+  acceptableMinor: true,
+  minor: true,
+} as const;
+
 // --- Static app assets (inlined) ---
 //
 // The card embeds a couple of small app PNGs (the logo placeholder / stats-bar
@@ -140,6 +159,13 @@ function formatStat(n: number): string {
 function getAspectRatio(img: { width?: number | null; height?: number | null }): number {
   if (img.width && img.height && img.height > 0) return img.width / img.height;
   return 1;
+}
+
+// Link previews have no viewer, so they pick images as getEntityCoverImage does for a signed-out one.
+const ogImageNotFlagged = imageNotFlaggedWhere();
+
+function notFlagged<T extends Parameters<typeof isImageNotFlagged>[0]>(image: T | null): T | null {
+  return image && isImageNotFlagged(image) ? image : null;
 }
 
 function getSafeImage(image: OgImage | null | undefined): OgImage | null {
@@ -226,6 +252,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
     tosViolation: false,
     needsReview: null,
     ingestion: 'Scanned' as const,
+    ...ogImageNotFlagged,
   };
   const heldLevel = (
     await getShowcaseHeldLevels([{ modelId: id, minor: model.minor, sfwOnly: model.sfwOnly }])
@@ -256,9 +283,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
               availability: Availability.Public,
               ...(model.userId !== -1 ? { userId: model.userId } : {}),
             },
-            tosViolation: false,
-            needsReview: null,
-            ingestion: 'Scanned',
+            ...previewableImage,
             ...withinHeldLevel,
           },
           select: ogImageSelect,
@@ -318,16 +343,17 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
         status: ArticleStatus.Published,
         tosViolation: false,
         ingestion: ArticleIngestionStatus.Scanned,
+        availability: { not: Availability.Private },
       },
       select: {
         title: true,
         content: true,
         user: { select: { username: true } },
         coverImage: {
-          select: { ...ogImageSelect, ingestion: true, needsReview: true, modelRestricted: true },
+          select: ogArticleImageSelect,
         },
         bannerImage: {
-          select: { ...ogImageSelect, ingestion: true, needsReview: true, modelRestricted: true },
+          select: ogArticleImageSelect,
         },
       },
     }),
@@ -363,7 +389,8 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
     creator: article.user.username ?? 'Unknown',
     ...buildEntityImage(
       getSafeImage(
-        servableArticleImage(article.coverImage) ?? servableArticleImage(article.bannerImage)
+        notFlagged(servableArticleImage(article.coverImage)) ??
+          notFlagged(servableArticleImage(article.bannerImage))
       )
     ),
     stats,
@@ -408,6 +435,7 @@ async function fetchPostData(id: number): Promise<EntityData | null> {
         tosViolation: false,
         needsReview: null,
         ingestion: 'Scanned',
+        ...ogImageNotFlagged,
       },
       select: ogImageSelect,
       orderBy: [{ index: 'asc' }, { id: 'asc' }],
@@ -495,12 +523,15 @@ async function fetchImageData(id: number): Promise<EntityData | null> {
 }
 
 async function fetchBountyData(id: number): Promise<EntityData | null> {
-  const [bounty, metric, connection] = await Promise.all([
+  const [bounty, metric, images] = await Promise.all([
     dbRead.bounty.findFirst({
       where: { id, availability: { not: 'Private' } },
       select: {
         name: true,
         description: true,
+        nsfw: true,
+        nsfwLevel: true,
+        moderatorNsfwLevel: true,
         user: { select: { username: true } },
       },
     }),
@@ -515,16 +546,29 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
         },
       })
       .catch(() => null),
-    dbRead.imageConnection.findFirst({
-      where: {
-        entityType: 'Bounty',
-        entityId: id,
-        image: { tosViolation: false, needsReview: null, ingestion: 'Scanned' },
-      },
-      select: { image: { select: ogImageSelect } },
-    }),
+    // An image a signed-out visitor is served on the bounty page.
+    dbRead.$queryRaw<OgImage[]>`
+      SELECT i.url, i."nsfwLevel", i.type, i.width, i.height
+      FROM "ImageConnection" ic
+      JOIN "Image" i ON i.id = ic."imageId"
+      WHERE ic."entityType" = 'Bounty' AND ic."entityId" = ${id}
+        AND i."tosViolation" IS NOT TRUE
+        AND ${Prisma.join(entityImageVisibilityConditions({}), ' AND ')}
+      LIMIT 1
+    `,
   ]);
   if (!bounty) return null;
+
+  // A flagged bounty's images are raised to its flag level, as the bounty list does (an unrated
+  // flag counts as XXX).
+  const textRated = mayBeTextRated(bounty)
+    ? await getTextRatedBountyLevels([id])
+    : new Map<number, number>();
+  const flagLevel = bountyNsfwFlagLevel(bounty, textRated.get(id));
+  const image =
+    images[0] && flagLevel != null
+      ? { ...images[0], nsfwLevel: Math.max(images[0].nsfwLevel, flagLevel) }
+      : images[0];
 
   const stats: StatItem[] = metric
     ? [
@@ -541,7 +585,7 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
     title: bounty.name,
     description: cleanDescription(bounty.description ?? ''),
     creator: bounty.user?.username ?? 'Unknown',
-    ...buildEntityImage(getSafeImage(connection?.image)),
+    ...buildEntityImage(getSafeImage(image)),
     stats,
   };
 }

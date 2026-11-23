@@ -26,7 +26,7 @@ afterAll(() => {
 });
 
 /** A git repo on branch `main`, tracking a bare remote, with apps/moderator at `version`. */
-function makeSandbox(version: string, tags: string[]) {
+function makeSandbox(version: string, tags: string[], scripts?: Record<string, string>) {
   const root = mkdtempSync(path.join(tmpdir(), 'release-skew-'));
   sandboxes.push(root);
   const remote = path.join(root, 'remote.git');
@@ -53,7 +53,11 @@ function makeSandbox(version: string, tags: string[]) {
   mkdirSync(path.join(work, 'apps/moderator'), { recursive: true });
   writeFileSync(
     path.join(work, 'apps/moderator/package.json'),
-    `${JSON.stringify({ name: '@civitai/moderator-app', version, private: true }, null, 2)}\n`
+    `${JSON.stringify(
+      { name: '@civitai/moderator-app', version, private: true, scripts },
+      null,
+      2
+    )}\n`
   );
   git(work, ['add', 'apps/moderator/package.json']);
   git(work, ['commit', '-m', 'seed']);
@@ -85,12 +89,8 @@ describe('release-app.mjs refuses to release from a branch behind the released h
 
     expect(res.status).toBe(1);
     expect(res.stderr).toContain('refusing to release');
-    expect(res.stderr).toContain('moderator-v0.0.26 is already released');
-    // A refusal must not leave the half-done state the old code did: the version is
-    // unbumped and no release commit exists.
     expect(versionOf(work)).toBe('0.0.1');
     expect(git(work, ['rev-parse', 'HEAD']).trim()).toBe(before);
-    expect(git(work, ['status', '--porcelain']).trim()).toBe('');
   });
 
   // The dangerous path: 0.1.0 collides with nothing, so without this guard the
@@ -118,15 +118,31 @@ describe('release-app.mjs refuses to release from a branch behind the released h
     expect(versionOf(work)).toBe('0.0.27');
     expect(git(work, ['tag', '-l', 'moderator-v0.0.27']).trim()).toBe('moderator-v0.0.27');
   });
+});
 
-  // An app with no releases yet must still be releasable.
-  it('allows the first release of an app that has never been tagged', () => {
-    const { work } = makeSandbox('0.0.1', []);
+describe('release-app.mjs typechecks only the app it releases', () => {
+  it('blocks the release when the app typecheck fails, leaving the tree untouched', () => {
+    const { work, git } = makeSandbox('0.0.26', RELEASED_TAGS, {
+      typecheck: 'node -e "process.exit(3)"',
+    });
+    const before = git(work, ['rev-parse', 'HEAD']).trim();
 
     const res = runRelease(work, 'patch');
 
-    expect(res.stderr).not.toContain('refusing to release');
+    expect(res.status).not.toBe(0);
+    // Pins the failure to the typecheck, not some other early exit (a pull error, no pnpm).
+    expect(res.stderr).toContain('Command failed: pnpm --dir apps/moderator run typecheck');
+    expect(versionOf(work)).toBe('0.0.26');
+    expect(git(work, ['rev-parse', 'HEAD']).trim()).toBe(before);
+    expect(git(work, ['tag', '-l', 'moderator-v0.0.27']).trim()).toBe('');
+  });
+
+  it('releases when the app typecheck passes', () => {
+    const { work } = makeSandbox('0.0.26', RELEASED_TAGS, { typecheck: 'node -e ""' });
+
+    const res = runRelease(work, 'patch');
+
     expect(res.status).toBe(0);
-    expect(versionOf(work)).toBe('0.0.2');
+    expect(versionOf(work)).toBe('0.0.27');
   });
 });

@@ -25,7 +25,7 @@ import { createJob } from './job';
  */
 
 const LISTED_IDS = `ARRAY(SELECT l.id::bigint FROM (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) l WHERE l.id ~ '^[0-9]{1,18}$')`;
-const CSAM_BLOCKED = `ingestion = 'Blocked' AND "blockedFor" = 'CSAM' AND "pHash" IS NOT NULL`;
+const CSAM_BLOCKED = `ingestion IN ('Blocked', 'Error') AND "blockedFor" = 'CSAM' AND "pHash" IS NOT NULL`;
 
 /** With each image's earliest report, which decides whether a never-listed hash may be healed. */
 export const REPORTED_CANDIDATES_SQL = `WITH listed AS (

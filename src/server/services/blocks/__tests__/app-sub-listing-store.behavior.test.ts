@@ -2,8 +2,9 @@ import { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 
 // Booting PGlite (WASM Postgres) can exceed the default 10s hook timeout on a contended runner.
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -18,7 +19,10 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   bustCacheTag: vi.fn(async () => undefined),
 }));
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
-import type { ListingSort } from '~/server/schema/blocks/app-listing-read.schema';
+import type {
+  ListAppListingsInput,
+  ListingSort,
+} from '~/server/schema/blocks/app-listing-read.schema';
 // The beta columns are a separate manual-apply concern; these stand-in tables do not carry them.
 vi.mock('~/server/services/blocks/app-listing-beta.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BetaService>()),
@@ -152,14 +156,17 @@ dbMock.dbWrite.appSubListing.updateMany.mockImplementation(
   }
 );
 
-const { listAvailableListings } = await import('~/server/services/blocks/app-listing.service');
+const { listAvailableListings, listStoreSubListingsByIds } = await import(
+  '~/server/services/blocks/app-listing.service'
+);
 const { listAppListingsSchema, getAppListingsListQuery } = await import(
   '~/server/schema/blocks/app-listing-read.schema'
 );
 const { moderateSubListing } = await import('~/server/services/blocks/app-sub-listing.service');
-const { hydrateSubListingCards } = await import(
+const { hydrateSubListingCards, readStoreSubListingsOfParents } = await import(
   '~/server/services/blocks/app-sub-listing-store.service'
 );
+const { registrySubListing } = await import('~/server/registry-adapter/catalog-media');
 
 const OWNER = 7001;
 const AUTHOR = 7002;
@@ -847,6 +854,62 @@ describe('store catalog with sub-listings, executed', () => {
   });
 });
 
+/**
+ * A store search the app index answers, with sub-listing cards on the page: the apps come from
+ * the index, the sub-listing cards from the real catalog read above, so every gate that read
+ * applies to a child still applies. The index is the only stand-in.
+ */
+describe('a store search answered by the app index, executed', () => {
+  const SEARCH = { kind: 'all', sort: 'name', limit: 48, query: 'gen' } as const;
+  const SFW_VIEWER = { ...BASE_OPTS, viewerBrowsingLevel: 1 };
+
+  beforeEach(() => {
+    setEnv({ APP_INDEX_URL: 'http://app-index.invalid/', APP_INDEX_SEARCH_COMPARE_SAMPLE: 0 });
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    // The index answers both on-site apps, in its own order.
+    vi.stubGlobal('fetch', async () =>
+      Response.json({
+        results: ['other-app', 'custom-generators'].map((slug) => ({
+          slug,
+          name: slug,
+          tagline: '',
+          iconUrl: '',
+          rating: 'g',
+        })),
+      })
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('merges the children the viewer may see, after the index apps', async () => {
+    const { listStoreGrid } = await import('~/server/services/blocks/app-index-search.service');
+    const res = await listStoreGrid(SEARCH, SFW_VIEWER, { indexSearch: true });
+    expect(res.search).toBe('index');
+    expect(ids(res.items).slice(0, 2)).toEqual([OTHER, PARENT]);
+    expect(childIds(res.items).sort()).toEqual([CHILD_A, CHILD_B]);
+  });
+
+  it('a child too mature for the viewer stays out of the merged page', async () => {
+    await holder.db.exec(
+      `UPDATE app_sub_listings SET content_rating = 'x' WHERE id = '${CHILD_A}'`
+    );
+    const { listStoreGrid } = await import('~/server/services/blocks/app-index-search.service');
+    const res = await listStoreGrid(SEARCH, SFW_VIEWER, { indexSearch: true });
+    expect(res.search).toBe('index');
+    expect(ids(res.items)).toEqual([OTHER, PARENT, CHILD_B]);
+  });
+
+  it('a child that does not match the search stays out of the merged page', async () => {
+    await holder.db.exec(`UPDATE app_sub_listings SET title = 'Moon Shot' WHERE id = '${CHILD_B}'`);
+    const { listStoreGrid } = await import('~/server/services/blocks/app-index-search.service');
+    const res = await listStoreGrid(SEARCH, SFW_VIEWER, { indexSearch: true });
+    expect(ids(res.items)).toEqual([OTHER, PARENT, CHILD_A]);
+  });
+});
+
 describe('an off-site parent before the link_template migration', () => {
   it('serves on-site children as before and no off-site child', async () => {
     await seedOffsiteChild();
@@ -1034,5 +1097,176 @@ describe("store catalog — R/X apps follow the viewer's browsing level, execute
     expect(
       childIds(await page({ redCapable: true, viewerBrowsingLevel: PG_PG13_R })).sort()
     ).toEqual([CHILD_A, CHILD_B]);
+  });
+});
+
+/**
+ * The seam between the listing stream and the store grid (LISTINGS-READ-MODEL.md, slice 6): the
+ * stream's read (`readStoreSubListingsOfParents`), asked for the public catalog's listings, must
+ * carry exactly the items the grid's child arm shows a viewer who may see every rating, in every
+ * item state the arm checks, and each item's card fields must be the grid card's. Executed on the
+ * same rows, so a condition one side applies and the other does not shows up as a different set.
+ * Runs after the link_template migration (applied above), so off-site items are in play.
+ */
+describe('the listing stream read is the grid’s child arm, executed', () => {
+  // The shared mock's dbRead, as the raw-query client the read takes; its `$queryRaw` runs on PGlite.
+  const rawDb = dbMock.dbRead as unknown as Parameters<typeof readStoreSubListingsOfParents>[0];
+  const EVERY_RATING = { redCapable: true, viewerBrowsingLevel: 31 } as const;
+  const streamed = async () =>
+    (await readStoreSubListingsOfParents(rawDb, [PARENT, OTHER, OFFSITE])).map((r) => r.id).sort();
+  const shown = async () => childIds(await page(EVERY_RATING)).sort();
+  const withTemplate = async () => {
+    await seedOffsiteChild();
+    await holder.db.query(
+      'UPDATE app_sub_listing_parents SET link_template = $1 WHERE parent_listing_id = $2',
+      [TEMPLATE, OFFSITE]
+    );
+  };
+
+  it.each<[string, string | null, string[]]>([
+    ['every item shown', null, [CHILD_A, CHILD_B, GAME]],
+    [
+      'an item pending',
+      `UPDATE app_sub_listings SET status = 'pending' WHERE id = '${CHILD_A}'`,
+      [CHILD_B, GAME],
+    ],
+    [
+      'an item hidden',
+      `UPDATE app_sub_listings SET status = 'hidden' WHERE id = '${CHILD_A}'`,
+      [CHILD_B, GAME],
+    ],
+    [
+      'an item withdrawn',
+      `UPDATE app_sub_listings SET status = 'withdrawn' WHERE id = '${GAME}'`,
+      [CHILD_A, CHILD_B],
+    ],
+    ['its author banned', `UPDATE "User" SET "bannedAt" = now() WHERE id = ${AUTHOR}`, []],
+    ['its author deleted', `UPDATE "User" SET "deletedAt" = now() WHERE id = ${AUTHOR}`, []],
+    [
+      'the parent switch off',
+      `UPDATE app_sub_listing_parents SET enabled = false WHERE parent_listing_id = '${PARENT}'`,
+      [GAME],
+    ],
+    [
+      'the on-site parent block suspended',
+      `UPDATE app_blocks SET status = 'suspended' WHERE id = 'ab_PARENT'`,
+      [GAME],
+    ],
+    [
+      'the off-site parent template cleared',
+      `UPDATE app_sub_listing_parents SET link_template = NULL WHERE parent_listing_id = '${OFFSITE}'`,
+      [CHILD_A, CHILD_B],
+    ],
+    // Rated X: the grid shows it to a viewer who may see X, so the stream carries it; the read
+    // model gates it per request.
+    [
+      'an item rated x',
+      `UPDATE app_sub_listings SET content_rating = 'x' WHERE id = '${CHILD_B}'`,
+      [CHILD_A, CHILD_B, GAME],
+    ],
+  ])('%s: the stream carries what the grid shows', async (_name, sql, want) => {
+    await withTemplate();
+    if (sql) await holder.db.exec(sql);
+    expect(await shown()).toEqual(want.slice().sort());
+    expect(await streamed()).toEqual(want.slice().sort());
+  });
+
+  it("each streamed item's card fields are the grid card's", async () => {
+    await withTemplate();
+    await holder.db.exec(
+      `UPDATE app_sub_listings SET content_rating = 'r' WHERE id = '${CHILD_A}';
+       UPDATE app_sub_listings SET image_id = 2 WHERE id = '${GAME}';`
+    );
+    const cards = new Map((await page(EVERY_RATING)).map((c) => [c.id, c] as const));
+    const rows = await readStoreSubListingsOfParents(rawDb, [PARENT, OFFSITE]);
+    expect(rows.map((r) => r.id).sort()).toEqual([CHILD_A, CHILD_B, GAME].sort());
+    for (const row of rows) {
+      const item = registrySubListing(row);
+      const card = cards.get(row.id) as Record<string, unknown> | undefined;
+      expect(card, row.id).toBeDefined();
+      expect(
+        {
+          name: item?.title,
+          tagline: item?.tagline,
+          contentRating: item?.cardContentRating,
+          creatorId: item?.author.id,
+          creatorUsername: item?.author.username,
+          runHref: item?.runHref,
+          external: item?.external,
+        },
+        row.id
+      ).toEqual({
+        name: card?.name,
+        tagline: card?.tagline,
+        contentRating: card?.contentRating,
+        creatorId: (card?.creator as { id: number }).id,
+        creatorUsername: (card?.creator as { username: string | null }).username,
+        runHref: card?.runHref,
+        external: card?.external === true,
+      });
+    }
+    // The newest key, to the microsecond, as the grid sorts on it.
+    const a = rows.find((r) => r.id === CHILD_A);
+    expect(a?.sort_time).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/);
+  });
+});
+
+/**
+ * `listStoreSubListingsByIds`, the shadow's by-id check of a sub-listing card one page shows and the
+ * other does not: exactly the items this viewer could find in the grid with sub-listings on and the
+ * same filters, in the order asked.
+ */
+describe('listStoreSubListingsByIds, executed', () => {
+  const INPUT: Pick<ListAppListingsInput, 'kind' | 'category' | 'userId'> = { kind: 'all' };
+  const byIds = async (
+    want: string[],
+    input: Partial<Pick<ListAppListingsInput, 'kind' | 'category' | 'userId'>> = {},
+    opts: Partial<NonNullable<ListOpts>> = {}
+  ) =>
+    ids(await listStoreSubListingsByIds(want, { ...INPUT, ...input }, { ...BASE_OPTS, ...opts }));
+
+  it('the items asked for that the grid shows, in the order asked, each once; never a listing', async () => {
+    expect(
+      await byIds([CHILD_B, 'asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z9Z', CHILD_A, CHILD_B, PARENT])
+    ).toEqual([CHILD_B, CHILD_A]);
+  });
+
+  it('the cards are the grid page’s', async () => {
+    const [card] = await listStoreSubListingsByIds([CHILD_A], INPUT, BASE_OPTS);
+    expect(card).toEqual((await page()).find((c) => c.id === CHILD_A));
+  });
+
+  it.each<[string, string | null, Parameters<typeof byIds>[1], Parameters<typeof byIds>[2]]>([
+    [
+      'a removed parent',
+      `UPDATE app_listings SET status = 'removed' WHERE id = '${PARENT}'`,
+      {},
+      {},
+    ],
+    [
+      'a pending item',
+      `UPDATE app_sub_listings SET status = 'pending' WHERE id = '${CHILD_A}'`,
+      {},
+      {},
+    ],
+    [
+      'an X item on a SFW host',
+      `UPDATE app_sub_listings SET content_rating = 'x' WHERE id = '${CHILD_A}'`,
+      {},
+      {},
+    ],
+    ['the off-site kind filter', null, { kind: 'offsite' }, {}],
+    ['another category', null, { category: 'games' }, {}],
+    ['another developer', null, { userId: AUTHOR }, {}],
+    ['the external-only scope', null, {}, { scope: 'public-external' }],
+  ])('🔴 hidden by %s', async (_name, sql, input, opts) => {
+    // Positive control: found before the one change.
+    expect(await byIds([CHILD_A])).toEqual([CHILD_A]);
+    if (sql) await holder.db.exec(sql);
+    expect(await byIds([CHILD_A], input, opts)).toEqual([]);
+  });
+
+  it('the developer filter names the parent owner, not the item author', async () => {
+    expect(await byIds([CHILD_A], { userId: OWNER })).toEqual([CHILD_A]);
   });
 });

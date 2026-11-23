@@ -151,6 +151,14 @@ describe('an answer', () => {
     expect(await vote(1, 9999, 'yes')).toEqual({ status: 'rejected', reason: 'not-open' });
   });
 
+  it('is refused for a question on a Private post', async () => {
+    const ids = await seed([row('p')]);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 10`);
+    await knights(1);
+    expect(await vote(1, ids.p, 'yes')).toEqual({ status: 'rejected', reason: 'unavailable' });
+    expect(await votes(ids.p)).toHaveLength(0);
+  });
+
   it('is not asked twice: the same words about the same image under another id count as answered', async () => {
     const ids = await seed([
       row('a', { prompt: 'Same words?' }),
@@ -483,5 +491,21 @@ describe('escalation', () => {
       reason: 'no-consensus',
       minRank: 'Knight',
     });
+  });
+});
+
+describe("a yes/no question on the player's own image", () => {
+  it('is never offered to the player who posted it, and their answer is refused', async () => {
+    const ids = await seed([row('a')]);
+    await knights(2);
+    await pg.query(`UPDATE "Image" SET "userId"=1 WHERE id=10`);
+    const offer = (userId: number) =>
+      pickYesNo(db, { userId, rank: 'Knight', secret: 's', share: 1, stretch: 10, force: true });
+
+    expect(await offer(1)).toBeNull();
+    expect((await offer(2))?.itemId).toBe(ids.a);
+
+    expect(await vote(1, ids.a, 'yes')).toEqual({ status: 'rejected', reason: 'own-image' });
+    expect(await votes(ids.a)).toEqual([]);
   });
 });

@@ -133,6 +133,15 @@ describe('serving a hidden check', () => {
     expect(await pick(2)).toBeNull();
   });
 
+  it('skips a check on a Private post, and serves it once the post is not', async () => {
+    await seedPlayer(pg, 2);
+    const check = await reference(11);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 11`);
+    expect(await pick(2)).toBeNull();
+    await pg.query(`UPDATE "Post" SET availability = 'EarlyAccess' WHERE id = 11`);
+    expect((await pick(2))?.referenceId).toBe(check);
+  });
+
   it('finds the one check left whichever end of the pool the start point falls on', async () => {
     const ids: number[] = [];
     for (let i = 10; i < 20; i++) ids.push(await reference(i));
@@ -302,6 +311,14 @@ describe('answering a hidden check', () => {
     expect((await pg.query(`SELECT 1 FROM "KnightsVote"`)).rows).toHaveLength(0);
   });
 
+  it('refuses an answer to a check on a Private post', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await reference(10);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 10`);
+    expect(await answer(1, ref, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
+    expect((await pg.query(`SELECT 1 FROM "KnightsVote"`)).rows).toHaveLength(0);
+  });
+
   it('refuses like a vote while a career reset is pending', async () => {
     await seedPlayer(pg, 1);
     await pg.query(`INSERT INTO "NewOrderSmite" ("targetPlayerId") VALUES (1),(1),(1)`);
@@ -409,5 +426,20 @@ describe('parseNoticeKeys', () => {
     ]);
     expect(parseNoticeKeys(Array.from({ length: 50 }, (_, i) => `${i}:1`))).toHaveLength(20);
     expect(parseNoticeKeys([`${Number.MAX_SAFE_INTEGER}0:1`])).toEqual([]);
+  });
+});
+
+describe("a hidden check on the player's own image", () => {
+  it('is never served to the player who posted it, and their answer is refused', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    const ref = await reference(10);
+    await pg.query(`UPDATE "Image" SET "userId"=1 WHERE id=10`);
+
+    expect(await pick(1)).toBeNull();
+    expect((await pick(2))?.referenceId).toBe(ref);
+
+    expect(await answer(1, ref, '4')).toMatchObject({ status: 'rejected', reason: 'own-image' });
+    expect((await pg.query(`SELECT 1 FROM "KnightsVote" WHERE "playerId"=1`)).rows).toHaveLength(0);
   });
 });

@@ -23,6 +23,7 @@ import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { hasBlockMarkerSql } from '~/server/common/image-visibility';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readImageTagsViaKysely } from '~/server/redis/image-tags.reads';
 import { userImageVideoCountQuery } from '~/server/redis/user-image-video-count.sql';
@@ -846,7 +847,7 @@ const createUserContentCountCache = <T extends Record<string, any>>(
 
 // Individual cache objects for each user content counter
 type UserModelCount = { id: number; modelCount: number };
-export const userModelCountCache = createUserContentCountCache<UserModelCount>(
+const userModelCountAllCache = createUserContentCountCache<UserModelCount>(
   'modelCount',
   async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
@@ -877,7 +878,7 @@ export const userModelCountSfwCache = createUserContentCountCache<UserModelCount
 );
 export const userModelCountPublicCache = createUserContentCountCache<UserModelCount>(
   'modelCount:public',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COUNT(*)::INT as "modelCount"
@@ -890,6 +891,18 @@ export const userModelCountPublicCache = createUserContentCountCache<UserModelCo
     GROUP BY "userId"
   `
 );
+// A rating change can move a model in or out of the sfw/public counts while 'all' stays put,
+// so every model-count refresh covers all three variants.
+export const userModelCountCache = {
+  ...userModelCountAllCache,
+  refresh: async (userIds: number | number[]) => {
+    await Promise.all([
+      userModelCountAllCache.refresh(userIds),
+      userModelCountSfwCache.refresh(userIds),
+      userModelCountPublicCache.refresh(userIds),
+    ]);
+  },
+};
 
 type UserPostCount = { id: number; postCount: number };
 export const userPostCountCache = createUserContentCountCache<UserPostCount>(
@@ -1450,8 +1463,6 @@ export const userContentOverviewCache = {
     const ids = Array.isArray(userIds) ? userIds : [userIds];
     await Promise.all([
       userModelCountCache.refresh(ids),
-      userModelCountSfwCache.refresh(ids),
-      userModelCountPublicCache.refresh(ids),
       userPostCountCache.refresh(ids),
       userPostCountSfwCache.refresh(ids),
       userPostCountPublicCache.refresh(ids),
@@ -1566,14 +1577,31 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
   staleWhileRevalidateTtl: CacheTTL.hour,
 });
 
-export const thumbnailCache = createCachedObject<{
+/** The thumbnail rows `thumbnailCache` hands out. */
+export const thumbnailRowsSql = (thumbnailIds: (number | string)[]) => Prisma.sql`
+  SELECT id, url, width, height, "nsfwLevel", cast(metadata->'parentId' as int) as "parentId",
+    ${hasBlockMarkerSql('Image')} AS "blockMarked"
+  FROM "Image"
+  WHERE id IN (${Prisma.join(thumbnailIds)})
+`;
+
+export type ThumbnailCacheItem = {
   id: number;
   url: string;
   width: number | null;
   height: number | null;
   nsfwLevel: NsfwLevel;
+  blockMarked: boolean;
   parentId?: number;
-}>({
+};
+
+/** Drops block-marked thumbnails: list readers must not serve them. */
+export const servableThumbnails = <T extends { blockMarked?: boolean }>(
+  thumbnails: Record<number, T>
+): Record<number, T> =>
+  Object.fromEntries(Object.entries(thumbnails).filter(([, t]) => t.blockMarked === false));
+
+export const thumbnailCache = createCachedObject<ThumbnailCacheItem>({
   key: REDIS_KEYS.CACHES.THUMBNAILS,
   idKey: 'parentId',
   lookupFn: async (ids, fromWrite) => {
@@ -1598,19 +1626,10 @@ export const thumbnailCache = createCachedObject<{
         width: number | null;
         height: number | null;
         nsfwLevel: NsfwLevel;
+        blockMarked: boolean;
         parentId: number;
       }[]
-    >`
-        SELECT
-          id,
-          url,
-          width,
-          height,
-          "nsfwLevel",
-          cast(metadata->'parentId' as int) as "parentId"
-        FROM "Image"
-        WHERE id IN (${Prisma.join(thumbnailIds)})
-      `;
+    >(thumbnailRowsSql(thumbnailIds));
 
     return Object.fromEntries(thumbnails.filter((x) => !!x.parentId).map((x) => [x.parentId, x]));
   },

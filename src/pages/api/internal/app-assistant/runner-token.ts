@@ -68,7 +68,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       });
       return res.status(refusal.status).json({ error: refusal.error, code: 'refused' });
     }
-    const minted = await mintAppAssistantToken(grant.userId, purpose);
+    const minted = await mintAppAssistantToken(grant.userId, purpose, null);
     if (!minted)
       return res
         .status(403)

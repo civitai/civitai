@@ -3,7 +3,6 @@ package v1models
 import (
 	"strconv"
 
-	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
@@ -24,6 +23,9 @@ type shapeOptions struct {
 	// primaryFileOnly: the list's file trim.
 	primaryFileOnly bool
 	imageLocation   string
+	// listing is the list's trainingDataListing (`file.visibility === Public && listed(file)`); `[id]`
+	// applies its own to the shaped body (withListableTrainingData), so it lists every Public file here.
+	listing *trainingDataFilter
 }
 
 // creatorObject is `{ username, image: publicAvatarUrl(user, level) }`.
@@ -314,13 +316,8 @@ func shapeVersion(v superjson.Object, model nameModel, mode string, o shapeOptio
 	outFiles := []any{}
 	if includeDownloadURL {
 		for _, f := range files {
-			if f.vis != "Public" {
+			if f.vis != "Public" || !o.listing.listed(f.obj) {
 				continue
-			}
-			if f.typ == "Training Data" {
-				// trainingDataListing reads the replica (legal hold, CSAM reports, content flags,
-				// scan state): not ported.
-				return nil, fallback.New("v1-models-training-data")
 			}
 			isPrimary := f.id == primary.id
 			fileName, err := resolveFileName(model, ver, f.nameFile(), nameFiles)
@@ -328,8 +325,10 @@ func shapeVersion(v superjson.Object, model nameModel, mode string, o shapeOptio
 				return nil, err
 			}
 			rest := omit(f.obj, "hashes", "metadata", "modelVersionId")
+			// publicFileMetadata: a Training Data file carries no metadata (its server-only rating
+			// and archive keys included).
 			var meta any = superjson.Object{}
-			if f.metadata != nil {
+			if f.metadata != nil && f.typ != trainingDataType {
 				meta = f.metadata
 			}
 			var url string

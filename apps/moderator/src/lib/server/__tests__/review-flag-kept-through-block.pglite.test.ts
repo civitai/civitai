@@ -77,6 +77,7 @@ const {
 } = await import('../image-moderation.service');
 
 const SCHEMA = `
+CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
 CREATE TABLE "Image" (
@@ -111,7 +112,7 @@ CREATE TABLE "Appeal" (
   "buzzTransactionId" TEXT,
   "entityRemovedAt" TIMESTAMP(3)
 );
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "deletedAt" TIMESTAMP(3));
 -- Rates a restored image as its tags would: an untagged one would go back to the scanner.
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$
   UPDATE "Image" SET "nsfwLevel" = 1
@@ -768,5 +769,34 @@ describe('approving an appeal whose image turns held after the close', () => {
 
     expect(await appealStatus()).toBe('Approved');
     await nothingPaidOrTold();
+  });
+});
+
+describe('an explicit unblock of an image an account deletion blocked', () => {
+  it.each([
+    ['minor', 'minor'],
+    ['appeal', null],
+    ['csam', null],
+  ])('a recorded %s leaves the review flag %s, and the breadcrumbs go', async (review, flag) => {
+    await db.query(
+      `UPDATE "Image" SET "metadata" = jsonb_build_object(
+         'accountDeletionPriorIngestion', 'Scanned',
+         'accountDeletionPriorBlockedFor', NULL,
+         'accountDeletionPriorNeedsReview', $2::text,
+         'keep', 1)
+       WHERE "id" = $1`,
+      [OTHER_FLAG_REMOVED, review]
+    );
+
+    await acceptImage({ imageId: OTHER_FLAG_REMOVED, userId: 2, restoreRemoved: true });
+
+    const { rows } = await db.query<{
+      needsReview: string | null;
+      ingestion: string;
+      metadata: unknown;
+    }>(`SELECT "needsReview", "ingestion", "metadata" FROM "Image" WHERE "id" = $1`, [
+      OTHER_FLAG_REMOVED,
+    ]);
+    expect(rows[0]).toEqual({ needsReview: flag, ingestion: 'Scanned', metadata: { keep: 1 } });
   });
 });

@@ -3,19 +3,17 @@ import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/b
 import { trpc } from '~/utils/trpc';
 
 /**
- * The moderator benign lists, for gates that run in the browser. Search queries Meili
- * from the client, so the POI / minor / profanity checks there have no server hop to
- * strip on — see `getClientBenignLists`. Edge-cached for an hour server-side and refetched
- * hourly per session, so both an addition and a REMOVAL reach an open search box in about
- * that.
+ * The moderator benign lists for gates that run in the browser: the POI / minor checks, and the
+ * profanity check where the server runs none (see `getClientBenignLists`). Edge-cached and
+ * refetched, so an addition and a removal both reach an open search box within minutes.
  */
 export function useBenignPhrases() {
   // Finite staleTime, deliberately. The reason a moderator DELETES a benign phrase is that it
   // stripped too much — under `staleTime: Infinity` that deletion never reaches an open tab,
   // so a revocation had no propagation bound at all while an addition was capped at the
-  // edge's hour.
+  // edge's TTL.
   const { data, isFetched } = trpc.system.getBenignPhrases.useQuery(undefined, {
-    staleTime: 60 * 60 * 1000,
+    staleTime: 10 * 60 * 1000,
     gcTime: Infinity,
   });
 
@@ -28,7 +26,7 @@ export function useBenignPhrases() {
       // moderator row, use the list shipped in the bundle", `[]` is "a moderator deleted every
       // entry, honour that". Collapsing them here would re-read three ordinary states — before
       // the query resolves, after a failed fetch, and before the seed migration is applied —
-      // as a deliberate emptying, dropping the ~450 shipped words on every one of them.
+      // as a deliberate emptying, dropping the shipped words on every one of them.
       profanityWords: profanityWords ?? null,
       /**
        * Whether the fetch has SETTLED — not whether it succeeded. Until it settles, `strip` is

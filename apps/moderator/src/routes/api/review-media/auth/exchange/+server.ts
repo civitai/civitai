@@ -5,6 +5,7 @@ import {
   reviewBatchesEnabled,
   reviewCookie,
 } from '$lib/server/held-sheet';
+import { auditSheetExchange } from '$lib/server/sheet-audit';
 
 // No web session here: hooks.server.ts skips auth for the sheet exchange paths, so `locals.user` is unset.
 export const POST: RequestHandler = async ({ request, cookies }) => {
@@ -14,7 +15,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   if (type !== 'application/json') return new Response(null, { status: 400, headers });
 
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  const token = await exchangeReviewCode(
+  const result = await exchangeReviewCode(
     body?.code,
     body?.code_verifier,
     cookies.get(REVIEW_SHEET_COOKIE)
@@ -22,11 +23,25 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     console.error('[review-sheet] code exchange failed');
     return undefined;
   });
-  if (token === undefined) return new Response(null, { status: 503, headers });
-  if (!token) return new Response(null, { status: 400, headers });
+  if (result === undefined) {
+    auditSheetExchange({ tier: 'general', outcome: 'error' });
+    return new Response(null, { status: 503, headers });
+  }
+  const { userId: moderatorId, batch } = result;
+  if (result.token === null) {
+    auditSheetExchange({
+      tier: 'general',
+      outcome: 'refused',
+      reason: result.reason,
+      moderatorId,
+      batch,
+    });
+    return new Response(null, { status: 400, headers });
+  }
+  auditSheetExchange({ tier: 'general', outcome: 'ok', moderatorId, batch });
 
   return new Response(null, {
     status: 204,
-    headers: { ...headers, 'set-cookie': reviewCookie(token) },
+    headers: { ...headers, 'set-cookie': reviewCookie(result.token) },
   });
 };

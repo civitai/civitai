@@ -11,6 +11,9 @@ import { isNonCommercialBaseModel, stopsCreatorEarnings } from '~/server/common/
 import { dbRead, dbWrite } from '~/server/db/client';
 import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import {
+  gatedVersionIds,
+  getGateRuleState,
+  getGateSubjects,
   getShouldChargeForResources,
   resolveCanGenerateForVersions,
 } from '~/server/services/generation/generation.service';
@@ -35,12 +38,12 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type {
   LicensingFeeSettlementCurrency,
-  LicensingFeeType,
   ModelType,
   ModelHashType,
 } from '~/shared/utils/prisma/enums';
 import {
   Availability,
+  LicensingFeeType,
   ModelFileVisibility,
   type ModelUsageControl,
   type ScanResultCode,
@@ -128,6 +131,7 @@ type VersionRow = {
   licensingFee: number | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  licensingFeeMarkup: number | null;
   isLicensingRoot: boolean;
   licensingSourceVersionId: number | null;
   sourceLicensingFeeRecipientUserId: number | null;
@@ -136,6 +140,7 @@ type VersionRow = {
   sourceLicensingFee: number | null;
   sourceLicensingFeeType: LicensingFeeType | null;
   sourceLicensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  sourceLicensingFeeMarkup: number | null;
   versionFlags: number;
   userFlags: number;
   ownerDeletedAt: Date | null;
@@ -226,6 +231,7 @@ async function handler(
       mv."licensingFee"::float8 AS "licensingFee",
       mv."licensingFeeType",
       mv."licensingFeeSettlementCurrency",
+      mv."licensingFeeMarkup"::float8 AS "licensingFeeMarkup",
       (lr.id IS NOT NULL) AS "isLicensingRoot",
       mv."licensingSourceVersionId",
       lsm."userId" AS "sourceLicensingFeeRecipientUserId",
@@ -234,6 +240,7 @@ async function handler(
       lsv."licensingFee"::float8 AS "sourceLicensingFee",
       lsv."licensingFeeType" AS "sourceLicensingFeeType",
       lsv."licensingFeeSettlementCurrency" AS "sourceLicensingFeeSettlementCurrency",
+      lsv."licensingFeeMarkup"::float8 AS "sourceLicensingFeeMarkup",
       mv."flags" AS "versionFlags",
       u."flags" AS "userFlags",
       u."deletedAt" AS "ownerDeletedAt",
@@ -586,28 +593,52 @@ async function handler(
   }
   const { format } = targetFile.metadata;
 
-  const genStates = await resolveCanGenerateForVersions(
-    [
+  // Gate rules decide per generating user, which only the permission check knows: a gated version
+  // asks for it (checkPermission), and canGenerate leaves the gate out. The same answer for every
+  // caller, so the orchestrator's account can't change what a gate does.
+  const [genStates, gateRuleState, gateSubjects] = await Promise.all([
+    resolveCanGenerateForVersions(
+      [
+        {
+          id: modelVersion.id,
+          status: modelVersion.status,
+          availability: modelVersion.availability,
+          usageControl: modelVersion.usageControl,
+          baseModel: modelVersion.baseModel,
+          covered: modelVersion.covered ?? false,
+          coveredLive: modelVersion.coveredLive ?? false,
+          modelUserId: modelVersion.modelUserId,
+          modelType: modelVersion.type,
+          flags: modelVersion.versionFlags,
+          modelVersionAlias: modelVersion.generationAlias,
+        },
+      ],
+      {
+        user: { id: user?.id, isModerator: user?.isModerator },
+        sfwOnly: false,
+        wildcardsEnabled: false,
+        ignoreGateRules: true,
+      }
+    ),
+    getGateRuleState(),
+    getGateSubjects([
       {
         id: modelVersion.id,
-        status: modelVersion.status,
-        availability: modelVersion.availability,
-        usageControl: modelVersion.usageControl,
         baseModel: modelVersion.baseModel,
-        covered: modelVersion.covered ?? false,
-        coveredLive: modelVersion.coveredLive ?? false,
-        modelUserId: modelVersion.modelUserId,
-        modelType: modelVersion.type,
-        flags: modelVersion.versionFlags,
-        modelVersionAlias: modelVersion.generationAlias,
+        generationAlias: modelVersion.generationAlias,
       },
-    ],
-    {
-      user: { id: user?.id, isModerator: user?.isModerator },
-      sfwOnly: false,
-      wildcardsEnabled: false,
-    }
-  );
+    ]),
+  ]);
+  const gateAsksPermission = gatedVersionIds(gateSubjects, gateRuleState).has(modelVersion.id);
+  // A kill switch (available to nobody) refuses everyone, so it stays a hard refusal here: the
+  // permission check's "no" could otherwise fall through to an early-access free trial.
+  const gateRefusesEveryone =
+    gateRuleState.known &&
+    gatedVersionIds(gateSubjects, gateRuleState, {
+      isModerator: true,
+      isMember: true,
+      hasTestingAccess: true,
+    }).has(modelVersion.id);
   const moderation = getMiniModerationState({
     versionStatus: modelVersion.status,
     versionAvailability: modelVersion.availability,
@@ -621,6 +652,7 @@ async function handler(
   });
   const canGenerate =
     !moderationBlocksGeneration(moderation) &&
+    !gateRefusesEveryone &&
     (genStates.get(modelVersion.id)?.canGenerate ?? false);
 
   // Check if should charge
@@ -688,6 +720,7 @@ async function handler(
     settlementCurrency: string;
     recipientModelVersionId: number;
     recipientUserId: number;
+    markup?: number;
   }> = [];
   if (isLicensingRoot) {
     fees.push({
@@ -697,6 +730,7 @@ async function handler(
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,
       recipientUserId: modelVersion.modelUserId,
+      ...feeMarkup(modelVersion.licensingFeeType, modelVersion.licensingFeeMarkup),
     });
   } else if (hasSourceRule) {
     fees.push({
@@ -706,6 +740,7 @@ async function handler(
       settlementCurrency: lowerFirst(modelVersion.sourceLicensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.licensingSourceVersionId!,
       recipientUserId: modelVersion.sourceLicensingFeeRecipientUserId!,
+      ...feeMarkup(modelVersion.sourceLicensingFeeType, modelVersion.sourceLicensingFeeMarkup),
     });
   }
   if (hasOwnFee) {
@@ -716,6 +751,7 @@ async function handler(
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,
       recipientUserId: modelVersion.modelUserId,
+      ...feeMarkup(modelVersion.licensingFeeType, modelVersion.licensingFeeMarkup),
     });
   }
 
@@ -804,9 +840,12 @@ async function handler(
     // Computed, not written to the flag, so the pin lifts by itself when the promotion ends.
     evictable: !modelVersion.isPromoted && isEvictable(modelVersion.versionFlags),
     requireAuth: modelVersion.requireAuth,
-    checkPermission: modelVersion.checkPermission,
+    checkPermission: modelVersion.checkPermission || gateAsksPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
-    freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
+    // Without readable rules a kill switch can't be told apart, so no trial may stand in for the
+    // permission check's refusal.
+    freeTrialLimit:
+      modelVersion.checkPermission && gateRuleState.known ? modelVersion.freeTrialLimit : undefined,
     additionalResourceCharge: shouldChargeResult[modelVersion.modelId],
     minor: modelVersion.minor,
     sfwOnly: modelVersion.sfwOnly,
@@ -819,9 +858,16 @@ async function handler(
   logMiniModerationCaller(req, user, modelVersion, includeModeration);
   if (includeModeration || downloadLink) res.setHeader('Cache-Control', 'private, no-store');
   const preset = res.getHeader?.('X-Expires');
+  const presetAt = typeof preset === 'string' ? Date.parse(preset) : undefined;
+  // Built while the gate rules are unreadable (every version marked gated): kept briefly, so
+  // ungated versions don't pay a permission check for the orchestrator's whole refresh interval.
+  const unknownRulesAt = gateRuleState.known ? undefined : Date.now() + 60_000;
   const expiresAt = miniResponseExpiresAt({
     now: Date.now(),
-    alreadySet: typeof preset === 'string' ? Date.parse(preset) : undefined,
+    alreadySet:
+      presetAt !== undefined && unknownRulesAt !== undefined
+        ? Math.min(presetAt, unknownRulesAt)
+        : presetAt ?? unknownRulesAt,
     moderation: includeModeration,
     epochUrl: resignedEpochUrl,
     downloadLinkExpiresAt: downloadLink ? Date.parse(downloadLink.expiresAt) : undefined,
@@ -829,6 +875,19 @@ async function handler(
   // Read by the orchestrator as the absolute time its cached copy of this response expires.
   if (expiresAt !== undefined) res.setHeader('X-Expires', new Date(expiresAt).toISOString());
   res.status(200).json(data);
+}
+
+/**
+ * A percent-of-compute fee's markup: charged with the fee, logged apart from it, never paid to the
+ * recipient. A per-image fee carries none, whatever the column holds.
+ */
+function feeMarkup(
+  type: LicensingFeeType | null,
+  markup: number | null
+): { markup: number } | Record<string, never> {
+  return type === LicensingFeeType.PercentOfCompute && markup != null && markup > 0
+    ? { markup }
+    : {};
 }
 
 /**

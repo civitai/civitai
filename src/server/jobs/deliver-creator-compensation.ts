@@ -8,6 +8,7 @@ import { withRetries } from '~/server/utils/errorHandling';
 import dayjs from 'dayjs';
 import { formatDate } from '~/utils/date-helpers';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import { PLATFORM_REVENUE_SOURCES } from '@civitai/buzz';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import {
@@ -106,7 +107,12 @@ export async function payDueCompensation(now: Date) {
   }
 }
 
-type UserVersions = { userId: number; modelVersionIds: number[]; baseModels?: string[] };
+type UserVersions = {
+  userId: number;
+  modelVersionIds: number[];
+  baseModels?: string[];
+  paidByInvoice?: boolean[];
+};
 // Orchestrator ships PascalCase accountType (e.g. 'Yellow', 'CashSettled'); the
 // buzz API tolerates the aliases so we forward them as-is and only branch on
 // cashSettled below for the pennies conversion.
@@ -114,13 +120,32 @@ type ResourceRow = {
   modelVersionId: number;
   amount: number;
   accountType: BuzzAccountType;
-  source: 'tip' | 'compensation' | 'licenseFee';
+  source: string;
 };
 
 const BATCH_SIZE = 100;
 const COMP_START_DATE = new Date('2024-08-01');
 
 type PayoutSource = 'compensation' | 'tip' | 'licenseFee';
+const KNOWN_SOURCES = new Set<string>([
+  'compensation',
+  'tip',
+  'licenseFee',
+  ...PLATFORM_REVENUE_SOURCES,
+] satisfies string[]);
+
+/** Rows by source for the sources this job does not recognise; they are paid as compensation. */
+export function unknownSourceTotals(rows: { source: string; amount: number }[]) {
+  const totals: Record<string, { rows: number; amount: number }> = {};
+  for (const { source, amount } of rows) {
+    if (KNOWN_SOURCES.has(source)) continue;
+    const total = (totals[source] ??= { rows: 0, amount: 0 });
+    total.rows++;
+    total.amount += Number(amount);
+  }
+  return totals;
+}
+
 export type PayoutTransaction = {
   fromAccountId: number;
   toAccountId: number;
@@ -160,6 +185,8 @@ export function buildPayoutTransactions(
       const licenseTotals: Partial<Record<BuzzAccountType, number>> = {};
 
       for (const row of userRows) {
+        // Platform revenue is never paid; any other source, one-off recoveries included, pays below.
+        if (PLATFORM_REVENUE_SOURCES.has(row.source)) continue;
         const isCash = CASH_SETTLED_ALIASES.has(row.accountType);
         const amount =
           row.source === 'licenseFee' && isCash ? Math.floor(row.amount / 10) : row.amount;
@@ -255,6 +282,20 @@ export async function runPayout(lastUpdate: Date) {
     return;
   }
 
+  const unknown = unknownSourceTotals(rows);
+  if (!isEmpty(unknown)) {
+    const message = `Creator compensation for ${dateStr} pays sources it does not recognise as compensation: ${Object.keys(
+      unknown
+    ).join(', ')}`;
+    log(`⚠️ ${message}`);
+    logToAxiom({
+      type: 'warning',
+      name: 'creator-compensation-unknown-source',
+      message,
+      payload: { date: dateStr, sources: unknown },
+    });
+  }
+
   const creatorsToPay: Record<number, ResourceRow[]> = {};
   const batches = chunk(rows, BATCH_SIZE);
   log(`Processing ${batches.length} batches (batch size: ${BATCH_SIZE})`);
@@ -267,14 +308,15 @@ export async function runPayout(lastUpdate: Date) {
         SELECT
           m."userId" as "userId",
           array_agg(mv.id::int ORDER BY mv.id) as "modelVersionIds",
-          array_agg(mv."baseModel" ORDER BY mv.id) as "baseModels"
+          array_agg(mv."baseModel" ORDER BY mv.id) as "baseModels",
+          array_agg(mv."licensingFeePaidByInvoice" ORDER BY mv.id) as "paidByInvoice"
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
         WHERE mv.id IN (${Prisma.join(versionIds)})
         GROUP BY m."userId";
       `;
 
-    for (const { userId, modelVersionIds, baseModels = [] } of userVersions) {
+    for (const { userId, modelVersionIds, baseModels = [], paidByInvoice = [] } of userVersions) {
       if (!modelVersionIds.length || userId === -1) continue;
 
       if (!creatorsToPay[userId]) creatorsToPay[userId] = [];
@@ -285,11 +327,14 @@ export async function runPayout(lastUpdate: Date) {
       const earningsStoppedIds = modelVersionIds.filter((_, i) =>
         stopsCreatorEarnings(baseModels[i])
       );
+      // Licence fee is paid by invoice; minting it too would pay twice.
+      const invoicedIds = modelVersionIds.filter((_, i) => paidByInvoice[i] === true);
       creatorsToPay[userId].push(
         ...batch.filter(
           (r) =>
             modelVersionIds.includes(r.modelVersionId) &&
-            !(r.source !== 'tip' && earningsStoppedIds.includes(r.modelVersionId))
+            !(r.source !== 'tip' && earningsStoppedIds.includes(r.modelVersionId)) &&
+            !(r.source === 'licenseFee' && invoicedIds.includes(r.modelVersionId))
         )
       );
     }

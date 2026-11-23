@@ -10,6 +10,7 @@ import { isAppBlocksDevTunnelEnabled } from '~/server/services/app-blocks-flag';
 import { oauthScopeBitsFor } from '~/server/services/blocks/block-oauth-scope';
 import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 import { resolveDevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
+import { stampDirectPreviewActivity } from '~/server/services/blocks/dev-tunnel.service';
 import { writeOauthConsent } from '~/server/services/blocks/oauth-consent-sync.service';
 import { getFeatureFlagsAsync, isFliptDecisive } from '~/server/services/feature-flags.service';
 import {
@@ -282,13 +283,15 @@ export async function enableAppAssistant(userId: number): Promise<void> {
  */
 export async function mintAppAssistantToken(
   userId: number,
-  purpose: AppAssistantTokenPurpose
+  purpose: AppAssistantTokenPurpose,
+  impersonatedBy: number | null
 ): Promise<AppAssistantToken | null> {
   if (!(await hasAppAssistantConsent(userId, purpose))) return null;
   const minted = await mintAppToken({
     userId,
     clientId: appAssistantClientId(userId),
     scope: scopeFor(purpose),
+    impersonatedBy,
   });
   return { token: minted.accessToken, expiresAt: minted.expiresAt };
 }
@@ -324,7 +327,15 @@ export async function getAppAssistantPreview({
   user,
   req,
   blockId,
-}: GateContext & { blockId: string }): Promise<AppAssistantPreview> {
+  check = false,
+}: GateContext & {
+  blockId: string;
+  /**
+   * The pane's liveness poll, not a (re)mint of the frame: a direct preview's idle clock is not
+   * moved, so an open tab alone cannot keep a session from idling out.
+   */
+  check?: boolean;
+}): Promise<AppAssistantPreview> {
   const features = await getFeatureFlagsAsync({ user, req });
   if (!features.appBlocksAuthor || !(await isAppBlocksDevTunnelEnabled({ user })))
     return { status: 'forbidden', error: 'Live preview is not available on this account' };
@@ -332,5 +343,8 @@ export async function getAppAssistantPreview({
   if (!frame) return { status: 'not-found' };
   if (frame.dnsPending) return { status: 'preparing' };
   if (!frame.iframeSrc) return { status: 'no-tunnel' };
+  // A direct preview's activity: the frame (re)mint is its entry-document load (a tunnel's gate
+  // stamps on that). Never on the liveness poll.
+  if (frame.transport === 'direct' && !check) await stampDirectPreviewActivity(user.id, blockId);
   return { status: 'ok', frame: { ...frame, iframeSrc: frame.iframeSrc } };
 }

@@ -13,7 +13,12 @@ import {
 import { PROGRESSION } from '../progression/config';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
 import { settleAndMirror, settleItemVotes } from '../progression/progression';
-import { servableImage } from '@civitai/db/knights';
+import {
+  ESCALATED_FROM_LEVEL_META_KEY,
+  postNotPrivate,
+  servableImage,
+  servableImageContent,
+} from '@civitai/db/knights';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
 import { votePartitionName } from './vote-partition';
 import { RANKS, rankIndex, type Rank } from '../ranks';
@@ -46,6 +51,7 @@ import {
   isBlockedLevel,
   isExcessiveDownRating,
   moderatorRuling,
+  mostVotedLevel,
   type ImageState,
   type WeightedAnswer,
   type WritebackDecision,
@@ -84,6 +90,9 @@ export const backoffMinutes = (attempts: number) =>
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
+/** An item as it stood before a step moved it off its stage: what the live queue drops are worked out from. */
+export type MovedItem = { id: number; status: string; minRank: string };
+
 export type QuestionOption = { value: string; label: string };
 
 export type Feed = {
@@ -99,6 +108,7 @@ export type RejectReason =
   | 'bad-answer'
   | 'bad-block-reason'
   | 'already-voted'
+  | 'own-image'
   | 'no-weight'
   | 'reset-pending';
 
@@ -185,6 +195,7 @@ async function stageWindow(
   const eligible = () =>
     servableItems(db)
       .where('i.minRank', '=', stage)
+      .where('img.userId', 'is distinct from', userId)
       .$if(exclude.length > 0, (qb) => qb.where('i.id', 'not in', exclude))
       .where((eb) =>
         eb.not(
@@ -451,12 +462,21 @@ export async function staffedRanks(db: Executor, now: Date): Promise<Set<string>
   return new Set();
 }
 
+/** `reason` of a rating item re-rated to its most-voted level because its last stage reached no consensus (`rerate`). */
+export const NO_CONSENSUS_RERATE_REASON = 'no-consensus-rerate';
+
+type SplitItem = { id: number; minRank: string; questionKey: string; imageId: number };
+
+/** Only the rating question is re-rated at the end of the path; any other choice question still goes to the Inquisitors. */
+const reratesAtEnd = (item: Pick<SplitItem, 'questionKey'>) =>
+  item.questionKey === KNIGHTS_NSFW_LEVEL_QUESTION;
+
 async function escalate(
-  trx: Executor,
-  item: { id: number; minRank: string },
+  trx: Transaction<DB>,
+  item: SplitItem,
   now: Date,
   staffed: ReadonlySet<string>
-): Promise<'escalated' | 'inquisitor'> {
+): Promise<'escalated' | 'inquisitor' | 'rerated'> {
   const next = nextStaffedRank(item.minRank, staffed);
   if (next && next !== 'Inquisitor') {
     await trx
@@ -473,8 +493,62 @@ async function escalate(
     metrics.escalation('next-stage');
     return 'escalated';
   }
+  if (reratesAtEnd(item)) return rerate(trx, item, now);
   await toInquisitor(trx, item.id, now, 'no-consensus');
   return 'inquisitor';
+}
+
+/**
+ * Re-rates a no-consensus rating to its most-voted level, down as well as up (the pushed-down check is skipped). A Blocked pick
+ * goes to the Inquisitors. Leaves the item Resolved and unwritten for `settleResolved`; the caller guarantees a counted vote at
+ * its stage.
+ */
+async function rerate(
+  trx: Transaction<DB>,
+  item: SplitItem,
+  now: Date
+): Promise<'inquisitor' | 'rerated'> {
+  const votes = await trx
+    .selectFrom('KnightsVote')
+    .select(['answer', 'weight', 'playerId'])
+    .where('itemId', '=', item.id)
+    .where('stage', '=', item.minRank)
+    .orderBy('createdAt', 'desc')
+    .orderBy('playerId', 'desc')
+    .execute();
+  const level = mostVotedLevel(votes);
+  if (level === null) throw new Error(`item ${item.id} has no counted vote to re-rate by`);
+  if (isBlockedLevel(Number(level))) {
+    await toInquisitor(trx, item.id, now, 'blocked');
+    return 'inquisitor';
+  }
+
+  const image = await trx
+    .selectFrom('Image')
+    .select('nsfwLevel')
+    .where('id', '=', item.imageId)
+    .executeTakeFirst();
+  // The write-back's actor: the latest counted voter who gave the level (the backfill picks the same one).
+  const actor = votes.find(
+    (vote) => vote.weight > 0 && vote.answer === level
+  ) as (typeof votes)[number];
+  await trx
+    .updateTable('KnightsQueueItem')
+    .set({
+      status: 'Resolved',
+      resolvedValue: level,
+      resolvedAt: utc(now),
+      resolvedBy: actor.playerId,
+      resolvedFromLevel: image?.nsfwLevel ?? null,
+      appliedAt: null,
+      reason: NO_CONSENSUS_RERATE_REASON,
+      updatedAt: utc(now),
+    })
+    .where('id', '=', item.id)
+    .execute();
+  await setVotesAside(trx, [item.id]);
+  metrics.escalation(NO_CONSENSUS_RERATE_REASON);
+  return 'rerated';
 }
 
 async function regradeVotes(
@@ -508,6 +582,10 @@ async function toInquisitor(
       escalationReason,
       expiresAt: null,
       updatedAt: utc(now),
+      // A moderator ruling elsewhere can move the level later; the card shows what the Knights saw.
+      meta: sql`COALESCE("meta", '{}'::jsonb) || jsonb_build_object(${sql.lit(
+        ESCALATED_FROM_LEVEL_META_KEY
+      )}, (SELECT "nsfwLevel" FROM "Image" WHERE "Image"."id" = "KnightsQueueItem"."imageId"))`,
     })
     .where('id', '=', itemId)
     .execute();
@@ -638,10 +716,9 @@ export async function castVote(
 
         if (decision.kind === 'pending') return { result: { status: 'recorded' }, xp: [voted] };
         if (decision.kind === 'split') {
-          return {
-            result: { status: await escalate(trx, item, now, await staffedRanks(trx, now)) },
-            xp: [voted],
-          };
+          const outcome = await escalate(trx, item, now, await staffedRanks(trx, now));
+          if (outcome !== 'rerated') return { result: { status: outcome }, xp: [voted] };
+          return { result: { status: 'resolved' }, settledItemId: item.id, xp: [voted] };
         }
 
         if (writesBack) {
@@ -791,20 +868,44 @@ async function applyReroute(
 }
 
 /**
- * Closes Open rating items whose image a moderator has since locked at a level, the way the write-back closes a settled one on
- * finding that lock (`moderatorRuling`). A blocked image, a lock without a level, and items no longer Open are left to their own paths.
- * Status and image are read again under the item row lock (the lock `castVote` takes), so the close uses the level as it is then.
+ * Closes Open and Inquisitor rating items whose image a moderator has locked at a level (in any queue or tool), the way the
+ * write-back closes a settled one on finding that lock (`moderatorRuling`). A blocked image, a lock without a level, a Blocked
+ * consensus (a moderator must see that report whatever the lock says), and items in any other status (an Inquisitor ruling under
+ * way is `Ruling`) are left to their own paths. Status and image are read again under the item row lock (the lock `castVote` and
+ * the Inquisitor claim take), so the close uses the level as it is then. `sweptForRuling` is the TypeScript form of `sweptForRulingSql`.
  */
+type SweptFields = { status: string; escalationReason: string | null; reason: string | null };
+const sweptForRuling = (item: SweptFields) =>
+  item.status === 'Open' ||
+  (item.status === 'Inquisitor' &&
+    item.escalationReason !== 'blocked' &&
+    item.reason !== 'blocked');
+
+const sweptForRulingSql = (eb: ExpressionBuilder<DB & { i: DB['KnightsQueueItem'] }, 'i'>) =>
+  eb.or([
+    eb('i.status', '=', 'Open'),
+    eb.and([
+      eb('i.status', '=', 'Inquisitor'),
+      eb('i.escalationReason', 'is distinct from', 'blocked'),
+      eb('i.reason', 'is distinct from', 'blocked'),
+    ]),
+  ]);
+
 export async function closeModeratorRuledItems(
   db: Kysely<DB>,
-  { now, limit = 200, mirror }: { now: Date; limit?: number; mirror?: XpMirror }
+  {
+    now,
+    limit = 200,
+    mirror,
+    moved,
+  }: { now: Date; limit?: number; mirror?: XpMirror; moved?: (items: MovedItem[]) => void }
 ): Promise<{ closed: number; failed: number }> {
   // Narrowed to rows the rule closes, so rows it skips cannot fill the limit every tick.
   const candidates = await db
     .selectFrom('KnightsQueueItem as i')
     .innerJoin('Image as img', 'img.id', 'i.imageId')
-    .select(['i.id', 'i.imageId'])
-    .where('i.status', '=', 'Open')
+    .select(['i.id', 'i.imageId', 'i.minRank'])
+    .where(sweptForRulingSql)
     .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
     .where('i.audience', 'is', null)
     .where('i.isHiddenCheck', '=', false)
@@ -814,24 +915,26 @@ export async function closeModeratorRuledItems(
     .execute();
 
   const counts = { closed: 0, failed: 0 };
-  for (const { id, imageId } of candidates) {
+  const closed: MovedItem[] = [];
+  for (const { id, imageId, minRank } of candidates) {
     try {
-      const xp = await db.transaction().execute(async (trx) => {
+      const result = await db.transaction().execute(async (trx) => {
         const item = await trx
           .selectFrom('KnightsQueueItem')
-          .select('status')
+          .select(['status', 'escalationReason', 'reason'])
           .where('id', '=', id)
           .forUpdate()
           .executeTakeFirst();
-        if (item?.status !== 'Open') return null;
+        if (!item || !sweptForRuling(item)) return null;
         const image = await readImageState(trx, imageId);
         const ruling = image && !hasBlockMarker(image) ? moderatorRuling(image) : null;
         if (ruling?.kind !== 'moderator') return null;
-        return applyReroute(trx, id, ruling, now);
+        return { status: item.status, xp: await applyReroute(trx, id, ruling, now) };
       });
-      if (!xp) continue;
+      if (!result) continue;
       counts.closed++;
-      await mirrorXp(mirror, xp);
+      closed.push({ id, status: result.status, minRank });
+      await mirrorXp(mirror, result.xp);
     } catch (error) {
       counts.failed++;
       console.error('knights: could not close an item a moderator ruled, it will be retried', {
@@ -840,6 +943,7 @@ export async function closeModeratorRuledItems(
       });
     }
   }
+  moved?.(closed);
   return counts;
 }
 
@@ -993,20 +1097,30 @@ export async function applyPendingResolutions(
 }
 
 /**
- * Moves items whose stage window lapsed. An item with votes is handed up: to the next stage someone can serve, or to the Inquisitors.
+ * Moves items whose stage window lapsed. An item with votes is handed up to the next stage someone can serve. At the end of the
+ * path a rating is re-rated, or closes as `expired` below quorum (a Blocked pick goes to the Inquisitors).
  * An item with no counted vote (a held player's weighs 0; an earlier stage's does not count) at its stage may have had no one to answer
  * it, so it gets one more window at the same stage, until two stage windows after it entered the stage. After that it closes as
  * `expired`: unvoted overflow must not become moderator work. At a stage nobody serves there is no extension; such an item is handed up
  * when a later stage is served, and expires when the hand-up would reach the Inquisitors.
+ * An item whose post is Private goes to the Inquisitors as `blocked` instead when the plurality of the latest stage with counted
+ * votes, the current one if it has any, is Blocked.
  */
 export async function escalateExpired(
   db: Kysely<DB>,
-  { now, limit = 200 }: { now: Date; limit?: number }
-): Promise<{ escalated: number; toInquisitor: number; extended: number; expired: number }> {
+  { now, limit = 200, moved }: { now: Date; limit?: number; moved?: (items: MovedItem[]) => void }
+): Promise<{
+  escalated: number;
+  toInquisitor: number;
+  extended: number;
+  expired: number;
+  rerated: number;
+}> {
+  let left: MovedItem[] = [];
   const result = await db.transaction().execute(async (trx) => {
     const due = await trx
       .selectFrom('KnightsQueueItem')
-      .select(['id', 'minRank', 'escalatedAt', 'createdAt'])
+      .select(['id', 'minRank', 'escalatedAt', 'createdAt', 'questionKey', 'imageId'])
       .where('status', '=', 'Open')
       .where('expiresAt', '<=', utc(now))
       .orderBy('expiresAt', 'asc')
@@ -1015,40 +1129,91 @@ export async function escalateExpired(
       .skipLocked()
       .execute();
 
-    const counts = { escalated: 0, toInquisitor: 0, extended: 0, expired: 0 };
+    const counts = { escalated: 0, toInquisitor: 0, extended: 0, expired: 0, rerated: 0 };
     if (due.length === 0) return counts;
 
-    const voted = new Set(
+    const onPrivatePost = new Set(
       (
         await trx
-          .selectFrom('KnightsVote as v')
-          .innerJoin('KnightsQueueItem as i', (join) =>
-            join.onRef('i.id', '=', 'v.itemId').onRef('i.minRank', '=', 'v.stage')
-          )
-          .select('v.itemId')
-          .distinct()
-          // A held player's vote (weight 0) decides nothing, so an item with only those had no vote.
-          .where('v.weight', '>', 0)
+          .selectFrom('Image as img')
+          .innerJoin('Post as p', 'p.id', 'img.postId')
+          .select('img.id')
           .where(
-            'v.itemId',
+            'img.id',
             'in',
-            due.map((item) => item.id)
+            due.map((item) => item.imageId)
           )
+          .where((eb) => eb.not(postNotPrivate(eb)))
           .execute()
-      ).map((row) => row.itemId)
+      ).map((row) => row.id)
     );
+
+    // Counted votes at each item's stage. A held player's vote (weight 0) decides nothing, so an item with only those had no vote.
+    const counted = new Map<number, WeightedAnswer[]>();
+    const stageVotes = await trx
+      .selectFrom('KnightsVote as v')
+      .innerJoin('KnightsQueueItem as i', (join) =>
+        join.onRef('i.id', '=', 'v.itemId').onRef('i.minRank', '=', 'v.stage')
+      )
+      .select(['v.itemId', 'v.answer', 'v.weight'])
+      .where('v.weight', '>', 0)
+      .where(
+        'v.itemId',
+        'in',
+        due.map((item) => item.id)
+      )
+      .execute();
+    for (const { itemId, ...vote } of stageVotes) {
+      counted.set(itemId, [...(counted.get(itemId) ?? []), vote]);
+    }
     const staffed = await staffedRanks(trx, now);
+
+    // Kept apart from `counted`, which `extend` and `expire` read as votes at the current stage.
+    const latestStageVotes = new Map<number, WeightedAnswer[]>();
+    const unvotedPrivate = due
+      .filter((item) => onPrivatePost.has(item.imageId) && !counted.has(item.id))
+      .map((item) => item.id);
+    if (unvotedPrivate.length > 0) {
+      const earlier = await trx
+        .selectFrom('KnightsVote')
+        .select(['itemId', 'stage', 'answer', 'weight'])
+        .where('weight', '>', 0)
+        .where('itemId', 'in', unvotedPrivate)
+        .execute();
+      const latestStage = new Map<number, string>();
+      for (const { itemId, stage } of earlier) {
+        const seen = latestStage.get(itemId);
+        if (seen === undefined || rankIndex(stage) > rankIndex(seen))
+          latestStage.set(itemId, stage);
+      }
+      for (const { itemId, stage, ...vote } of earlier) {
+        if (latestStage.get(itemId) !== stage) continue;
+        latestStageVotes.set(itemId, [...(latestStageVotes.get(itemId) ?? []), vote]);
+      }
+    }
+
+    // A Private post's Blocked plurality, from the latest stage with counted votes, goes to the Inquisitors.
+    const routed = due.filter((item) => {
+      if (!onPrivatePost.has(item.imageId)) return false;
+      const votes = counted.get(item.id) ?? latestStageVotes.get(item.id) ?? [];
+      return votes.length > 0 && isBlockedLevel(Number(mostVotedLevel(votes)));
+    });
+    for (const item of routed) {
+      await toInquisitor(trx, item.id, now, 'blocked');
+      counts.toInquisitor++;
+    }
+    const live = due.filter((item) => !routed.includes(item));
 
     // An item extends only until two stage windows after it entered the stage (a custom shorter first `expiresAt` can extend
     // twice within that): one that sat that long with no vote is not coming back, and must not wait here forever (the one
     // player who could serve it may have judged it already).
     const enteredSince = addHours(now, -KNIGHTS_STAGE_MAX_HOURS);
     const extend = (item: (typeof due)[number]) =>
-      !voted.has(item.id) &&
+      !counted.has(item.id) &&
       staffed.has(item.minRank) &&
       (item.escalatedAt ?? item.createdAt) > enteredSince;
 
-    const idle = due.filter(extend);
+    const idle = live.filter(extend);
     if (idle.length > 0) {
       await trx
         .updateTable('KnightsQueueItem')
@@ -1062,13 +1227,26 @@ export async function escalateExpired(
       counts.extended = idle.length;
     }
 
-    const expire = (item: (typeof due)[number]) => {
-      if (voted.has(item.id) || extend(item)) return false;
-      if (staffed.has(item.minRank)) return true;
+    const leavesPlayers = (item: (typeof due)[number]) => {
       const next = nextStaffedRank(item.minRank, staffed);
       return !next || next === 'Inquisitor';
     };
-    const lapsed = due.filter(expire);
+    const expire = (item: (typeof due)[number]) => {
+      if (extend(item)) return false;
+      const votes = counted.get(item.id) ?? [];
+      // A re-rate needs the stage's quorum: fewer counted votes than that decide nothing, as none would, unless they point at
+      // Blocked, which `rerate` hands to the Inquisitors whatever the count.
+      if (votes.length > 0) {
+        return (
+          reratesAtEnd(item) &&
+          leavesPlayers(item) &&
+          votes.length < votesNeededAt(item.minRank) &&
+          !isBlockedLevel(Number(mostVotedLevel(votes)))
+        );
+      }
+      return staffed.has(item.minRank) || leavesPlayers(item);
+    };
+    const lapsed = live.filter(expire);
     if (lapsed.length > 0) {
       // Votes are only graded here: `settleFinalItems`, next in the tick, pays them one item at a time, so one bad settlement
       // cannot roll back this batch, and player rows are not locked while every item lock is held.
@@ -1081,22 +1259,35 @@ export async function escalateExpired(
       counts.expired = lapsed.length;
     }
 
-    for (const item of due) {
+    left = due
+      .filter((item) => routed.includes(item) || !extend(item))
+      .map((item) => ({ id: item.id, status: 'Open', minRank: item.minRank }));
+    for (const item of live) {
       if (extend(item) || expire(item)) continue;
       const outcome = await escalate(trx, item, now, staffed);
       if (outcome === 'escalated') counts.escalated++;
+      else if (outcome === 'rerated') counts.rerated++;
       else counts.toInquisitor++;
     }
     return counts;
   });
   for (let i = 0; i < result.expired; i++) metrics.escalation('expired');
+  moved?.(left);
   return result;
 }
 
 /** `reason` of an item closed because its image, or the image's post, is gone (`closeUnservableItems`). */
 export const UNSERVABLE_REASON = 'unservable';
+/** `reason` of an open item closed because its image on a live post stopped being servable (`closeUnservableItems`). */
+export const IMAGE_UNSERVABLE_REASON = 'image-unservable';
 /** `reason` of an item closed because its post publishes only after the item would have expired (`closeUnservableItems`). */
 export const PUBLISHES_AFTER_EXPIRY_REASON = 'publishes-after-expiry';
+/** `reason` of an item closed because its post is still a draft long after queueing (`closeUnservableItems`). */
+export const UNPUBLISHED_DRAFT_REASON = 'unpublished-draft';
+/** Hours after queueing an item on a draft post (`publishedAt` null) is given to publish before `closeUnservableItems` closes it. */
+export const UNPUBLISHED_DRAFT_HOURS = 24;
+/** The main app's scan-sampling `source`: the only items `unpublished-draft` closes. */
+export const SCAN_SAMPLE_SOURCE = 'scan-sample';
 
 const hours = (n: number) => sql`${sql.lit(`${n} hours`)}::interval`;
 
@@ -1114,33 +1305,88 @@ END`;
 /**
  * Closes open rating items Knights can never serve, so they stop filling the queue until they expire. Each closes like `expired`:
  * no label, no write-back, leftover votes inconclusive (`settleFinalItems`, next in the tick, settles them unpaid).
- * - `unservable`: the image row is gone, or its post is (`Image.post` is `onDelete: SetNull`). Neither comes back.
+ * - `unservable`: the image row is gone, or its post is (`Image.post` is `onDelete: SetNull`). Neither comes back. Also an item
+ *   waiting on the Inquisitors (`Inquisitor`, or `Ruling` whose moderator lease has lapsed) whose image row is gone, which no
+ *   moderator can rule on; an image an evidence hold kept with its post deleted still can, and so a ruling in progress, or an
+ *   Inquisitor item whose image is merely blocked, is left alone.
+ * - `image-unservable`: the post is live (published, not later than `now`) but the image fails `servableImageContent`: blocked,
+ *   held for review, flagged poi/minor, or unrated, once scanned (ingestion `Scanned` or `Blocked`: a scan still to land may make
+ *   it servable). The feed skips it, so it would only wait out its windows. A level a
+ *   moderator locked is left to `closeModeratorRuledItems`, which runs first and grades the votes against it.
  * - `publishes-after-expiry`: the post is scheduled to publish after the latest moment the item could still be open
  *   (`latestStageEndSql`), so it would close as `expired` before any player could be served it. Only for an item still at the
  *   stage it was queued at (never escalated, `minRank` Knight, where nobody serving the stage means nobody serves any stage, so
  *   it expires instead of being handed up) with no counted vote there (a voted item is handed up, not expired). A draft has no
- *   date and is left alone, as is an item that never expires.
- * Hidden checks and yes/no items are never touched. At most `limit` items per call; rows another transaction holds are skipped.
+ *   date and is left to the next reason, as is an item that never expires.
+ * - `unpublished-draft`: a scan sample (`SCAN_SAMPLE_SOURCE`) whose post is still a draft (`publishedAt` null) more than
+ *   `UNPUBLISHED_DRAFT_HOURS` after the item was queued. Many drafts never publish, and until then the item only fills the
+ *   queue; nothing re-queues it if the post publishes later. At any stage. An owner's rating on a draft is left open.
+ * Hidden checks and yes/no items are never touched. At most `limit` items per call, shared by every reason, oldest item id
+ * first; rows another transaction holds are skipped. `moved` gets the open items closed, after commit, so live updates drop
+ * them from players' buffers.
  */
 export async function closeUnservableItems(
   db: Kysely<DB>,
-  { now, limit = 200 }: { now: Date; limit?: number }
-): Promise<{ unservable: number; publishesAfterExpiry: number }> {
+  { now, limit = 200, moved }: { now: Date; limit?: number; moved?: (items: MovedItem[]) => void }
+): Promise<{
+  unservable: number;
+  publishesAfterExpiry: number;
+  unpublishedDrafts: number;
+  imageUnservable: number;
+}> {
+  const closedOpen: MovedItem[] = [];
   const result = await db.transaction().execute(async (trx) => {
-    // Primary-key lookups into Image and Post from the open items: never a scan of either table.
+    // Primary-key lookups into Image and Post from the open and Inquisitor items: never a scan of either table.
     const due = await trx
       .selectFrom('KnightsQueueItem as i')
       .leftJoin('Image as img', 'img.id', 'i.imageId')
       .leftJoin('Post as p', 'p.id', 'img.postId')
-      .select(['i.id', sql<boolean>`"p"."id" IS NULL`.as('gone')])
-      .where('i.status', '=', 'Open')
+      .select([
+        'i.id',
+        'i.status',
+        'i.minRank',
+        sql<boolean>`"p"."id" IS NULL`.as('gone'),
+        sql<boolean>`"p"."id" IS NOT NULL AND "p"."publishedAt" IS NULL`.as('draft'),
+        sql<boolean>`"p"."publishedAt" IS NOT NULL AND "p"."publishedAt" <= ${utc(now)}`.as('live'),
+      ])
+      // Narrows to the status index before the per-reason rules below.
+      .where('i.status', 'in', ['Open', 'Inquisitor', 'Ruling'])
       .where('i.isHiddenCheck', '=', false)
       .where('i.audience', 'is', null)
       .where((eb) =>
         eb.or([
           // Also true when the image is gone: the Post join then has nothing to match.
-          eb('p.id', 'is', null),
+          eb.and([eb('i.status', '=', 'Open'), eb('p.id', 'is', null)]),
+          // Only the image row: an evidence hold keeps an image with its post deleted, and a moderator can still rule on it.
           eb.and([
+            eb('img.id', 'is', null),
+            eb.or([
+              eb('i.status', '=', 'Inquisitor'),
+              // The moderator app's claim (`RULING_LEASE_MS`): a lapsed lease is free to reclaim, a live one is a ruling in progress.
+              eb.and([
+                eb('i.status', '=', 'Ruling'),
+                eb.or([eb('i.nextAttemptAt', 'is', null), eb('i.nextAttemptAt', '<=', utc(now))]),
+              ]),
+            ]),
+          ]),
+          eb.and([
+            eb('i.status', '=', 'Open'),
+            eb('p.publishedAt', 'is not', null),
+            eb('p.publishedAt', '<=', utc(now)),
+            // A scan still to land (or a rescan) may yet make it servable: an owner rating can be queued before it.
+            eb('img.ingestion', 'in', ['Scanned', 'Blocked']),
+            eb.not(servableImageContent(eb)),
+            eb.not(moderatorRuledImageSql(eb)),
+          ]),
+          eb.and([
+            eb('i.status', '=', 'Open'),
+            eb('i.source', '=', SCAN_SAMPLE_SOURCE),
+            eb('p.id', 'is not', null),
+            eb('p.publishedAt', 'is', null),
+            eb('i.createdAt', '<', utc(addHours(now, -UNPUBLISHED_DRAFT_HOURS))),
+          ]),
+          eb.and([
+            eb('i.status', '=', 'Open'),
             eb('i.minRank', '=', 'Knight'),
             eb('i.escalatedAt', 'is', null),
             eb('i.expiresAt', 'is not', null),
@@ -1166,14 +1412,33 @@ export async function closeUnservableItems(
       .execute();
 
     const gone = due.filter((item) => item.gone).map((item) => item.id);
-    const late = due.filter((item) => !item.gone).map((item) => item.id);
+    const drafts = due.filter((item) => item.draft).map((item) => item.id);
+    const live = due
+      .filter((item) => !item.gone && !item.draft && item.live)
+      .map((item) => item.id);
+    const late = due
+      .filter((item) => !item.gone && !item.draft && !item.live)
+      .map((item) => item.id);
     if (gone.length > 0) await closeItems(trx, gone, now, UNSERVABLE_REASON);
     if (late.length > 0) await closeItems(trx, late, now, PUBLISHES_AFTER_EXPIRY_REASON);
-    return { unservable: gone.length, publishesAfterExpiry: late.length };
+    if (drafts.length > 0) await closeItems(trx, drafts, now, UNPUBLISHED_DRAFT_REASON);
+    if (live.length > 0) await closeItems(trx, live, now, IMAGE_UNSERVABLE_REASON);
+    for (const item of due)
+      if (item.status === 'Open')
+        closedOpen.push({ id: item.id, status: 'Open', minRank: item.minRank });
+    return {
+      unservable: gone.length,
+      publishesAfterExpiry: late.length,
+      unpublishedDrafts: drafts.length,
+      imageUnservable: live.length,
+    };
   });
   for (let i = 0; i < result.unservable; i++) metrics.escalation(UNSERVABLE_REASON);
   for (let i = 0; i < result.publishesAfterExpiry; i++)
     metrics.escalation(PUBLISHES_AFTER_EXPIRY_REASON);
+  for (let i = 0; i < result.unpublishedDrafts; i++) metrics.escalation(UNPUBLISHED_DRAFT_REASON);
+  for (let i = 0; i < result.imageUnservable; i++) metrics.escalation(IMAGE_UNSERVABLE_REASON);
+  moved?.(closedOpen);
   return result;
 }
 
@@ -1184,6 +1449,11 @@ async function closeItems(trx: Transaction<DB>, itemIds: number[], now: Date, re
     .set({ status: 'Closed', updatedAt: utc(now), ...(reason ? { reason } : {}) })
     .where('id', 'in', itemIds)
     .execute();
+  await setVotesAside(trx, itemIds);
+}
+
+/** Pending votes on the items become `inconclusive`: they never grade or pay beyond their XP at cast. */
+async function setVotesAside(trx: Transaction<DB>, itemIds: number[]) {
   await trx
     .updateTable('KnightsVote')
     .set({ verdict: 'inconclusive' })

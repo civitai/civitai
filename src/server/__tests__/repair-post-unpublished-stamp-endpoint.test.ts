@@ -38,7 +38,8 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   userImageVideoCountCaches: { refresh: refreshImageVideoCount },
 }));
 
-const handler = (await import('~/pages/api/admin/temp/repair-post-unpublished-stamp')).default;
+const handler = (await import('~/server/api-routes/admin/temp/repair-post-unpublished-stamp'))
+  .default;
 
 type Payload = {
   dryRun: boolean;

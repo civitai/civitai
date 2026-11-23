@@ -74,13 +74,16 @@ func TestShadowHandlerQueueBeforeBody(t *testing.T) {
 	}
 }
 
-// fallbackCount reads feed_go_fallback_total{mode="serve",reason=<reason>} from the registry.
+// fallbackCount reads feed_go_fallback_total{mode="serve",reason=<reason>} from the registry, summed
+// over every endpoint: the generic reasons are seeded at 0 on each served endpoint, so the first
+// matching series alone would be whichever endpoint Gather sorts first.
 func fallbackCount(t *testing.T, reg *prometheus.Registry, reason string) float64 {
 	t.Helper()
 	mfs, err := reg.Gather()
 	if err != nil {
 		t.Fatal(err)
 	}
+	sum := 0.0
 	for _, mf := range mfs {
 		if mf.GetName() != "feed_go_fallback_total" {
 			continue
@@ -91,11 +94,11 @@ func fallbackCount(t *testing.T, reg *prometheus.Registry, reason string) float6
 				labels[l.GetName()] = l.GetValue()
 			}
 			if labels["mode"] == "serve" && labels["reason"] == reason {
-				return m.GetCounter().GetValue()
+				sum += m.GetCounter().GetValue()
 			}
 		}
 	}
-	return 0
+	return sum
 }
 
 func TestServeHTTPHandsOffOriginsTheAppWouldRefuse(t *testing.T) {

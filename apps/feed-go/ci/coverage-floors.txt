@@ -15,11 +15,14 @@ internal/browsing 98
 internal/chread 93
 internal/config 78
 internal/dbpool 95
+internal/devalue 91
 internal/feed 76
 internal/fallback 91
+internal/flipt 88
 internal/feedsvc 92
 internal/hydrate 86
 internal/inputschema 80
+internal/jskeys 100
 internal/jspack 88
 internal/modelfeed 92
 internal/safe 100

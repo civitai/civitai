@@ -5,12 +5,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * reap/skip/guard logic is covered in dev-tunnel.service.test.ts.
  */
 
-const { mockReap } = vi.hoisted(() => ({
+const { mockReap, mockRecordRun } = vi.hoisted(() => ({
   mockReap: vi.fn(),
+  mockRecordRun: vi.fn(),
 }));
 
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   reapExpiredDevTunnels: (...a: unknown[]) => mockReap(...a),
+}));
+vi.mock('~/server/prom/dev-tunnel.metrics', () => ({
+  recordDevTunnelReaperRun: (...a: unknown[]) => mockRecordRun(...a),
 }));
 // createJob wraps the handler in metadata/lock machinery we don't need here —
 // stub it to hand back the bare handler (mirrors the sibling block-job tests).
@@ -32,6 +36,7 @@ const runJob = reapDevTunnelsJob as unknown as () => Promise<{
 
 beforeEach(() => {
   mockReap.mockReset();
+  mockRecordRun.mockReset();
 });
 
 describe('reapDevTunnelsJob', () => {
@@ -42,6 +47,7 @@ describe('reapDevTunnelsJob', () => {
 
     expect(mockReap).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ swept: 3, reaped: 1, skipped: 0, listOk: true });
+    expect(mockRecordRun).toHaveBeenCalledWith('ok');
   });
 
   it('surfaces a LIST failure in its result (not a silent no-op)', async () => {
@@ -50,6 +56,8 @@ describe('reapDevTunnelsJob', () => {
     const result = await runJob();
 
     expect(result).toMatchObject({ listOk: false, status: 403 });
+    expect(mockRecordRun).toHaveBeenCalledWith('list_failed');
+    expect(mockRecordRun).not.toHaveBeenCalledWith('ok');
   });
 
   it('swallows a thrown reaper failure and returns a benign result', async () => {
@@ -59,5 +67,6 @@ describe('reapDevTunnelsJob', () => {
     const result = await runJob();
 
     expect(result).toMatchObject({ swept: 0, reaped: 0, skipped: 0, listOk: false, error: true });
+    expect(mockRecordRun).toHaveBeenCalledWith('error');
   });
 });

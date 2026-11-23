@@ -14,7 +14,13 @@ import { getTeamWaiverStanding } from '~/server/services/remix-gallery.service';
 import {
   getEnabledRemixApps,
   getRemixAppRegistry,
+  isRunnableBy,
+  noteRunnerQuarantine,
+  REMIX_APP_HELD,
+  visibleRemixApps,
+  type RegisteredRemixApp,
 } from '~/server/services/remix-app-registry.service';
+import { RemixQuarantinedError } from '~/server/services/remix-app-runner';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { bustQueriedWorkflowsCache } from '~/server/services/orchestrator/orchestration-new.service';
 import {
@@ -35,7 +41,7 @@ import {
 import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
 import type { RemixApp, RemixImage, RemixWorkflowRequest } from '~/shared/remix-apps/define';
 import { firstAnswer } from '~/shared/remix-apps/mock-host';
-import { type RemixLogEntry, RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
+import { type RemixLogEntry, RemixReplayError, remixLogSize } from '~/shared/remix-apps/replay';
 import { remixRunTags } from '~/shared/remix-apps/tags';
 import {
   getRemixSourceUrl,
@@ -63,15 +69,17 @@ const ASPECT_BUCKETS: GenerationAspectRatio[] = [
 const MAX_REFERENCE_IMAGES = 1;
 
 /** Every remix app, disabled ones too, so the tray can name a run of one; the menu lists `enabled`. */
-export async function listRemixApps() {
-  return (await getRemixAppRegistry()).map(
-    ({ slug, name, icon, description, target, enabled, app }) => ({
+export async function listRemixApps(caller: Parameters<typeof visibleRemixApps>[1]) {
+  return visibleRemixApps(await getRemixAppRegistry(), caller).map(
+    ({ slug, name, icon, description, target, enabled, app, author, review }) => ({
       slug,
       name,
       icon,
       description,
       target,
       enabled,
+      /** The caller's own app, runnable by them alone until a mod approves it. */
+      inReview: !enabled && isRunnableBy({ enabled, author, review }, caller),
       engine: app.engine,
       output: 'image' as const,
     })
@@ -121,20 +129,65 @@ export function buildRemixAppRun({
   };
 }
 
+/** An upscale input at the size the host knows: the source row's, or the run's recorded output's. */
+function hostSized(url: string, image: RemixSourceImage, log: readonly RemixLogEntry[]) {
+  if (url === getRemixSourceUrl(image)) {
+    if (!image.width || !image.height) throw unsizedUpscale('user');
+    return { url, width: image.width, height: image.height };
+  }
+  const made = log
+    .flatMap((entry) => (entry.type === 'workflow' ? entry.result.images : []))
+    .find((output) => output.url === url);
+  if (made?.width && made.height) return { url, width: made.width, height: made.height };
+  throw new TRPCError({
+    code: 'BAD_REQUEST',
+    message: 'This upscale names an image of unknown size',
+  });
+}
+
+/**
+ * A built-in app's upscale input, at the size it names. The upscaler prices by that size, so an
+ * input of unknown size, or the source when its row has none, is refused rather than guessed.
+ */
+function builtInSized({ url, width, height }: RemixImage, image: RemixSourceImage) {
+  const sourceUnsized = url === getRemixSourceUrl(image) && !(image.width && image.height);
+  if (!width || !height || sourceUnsized) throw unsizedUpscale('built-in');
+  return { url, width, height };
+}
+
+const REMIX_UPSCALE_UNAVAILABLE = 'Upscale unavailable for this image';
+
+function unsizedUpscale(app: 'built-in' | 'user') {
+  logToAxiom({
+    name: 'remix-app-run',
+    type: 'warning',
+    message: 'Refused an upscale of an image of unknown size',
+    payload: { app },
+  });
+  return new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_UPSCALE_UNAVAILABLE });
+}
+
 /**
  * The graph input for one workflow a runtime app asks for. Throws when the source may not reach
  * the app's engines, for an upscale too: the app's mature rule covers every step it runs.
+ * A user app's claims are its author's: its upscale is sized from the source row or the outputs
+ * of the run so far (`log`), never the size the app names.
  */
 export function buildRuntimeRequest({
   app,
   image,
   request,
   viewer,
+  author,
+  log,
 }: {
   app: Pick<RemixApp, 'name' | 'engine'>;
   image: RemixSourceImage;
   request: RemixWorkflowRequest;
   viewer: { isGreen: boolean; showNsfw: boolean };
+  /** Required, so no caller can leave a user app's sizes to its claim. */
+  author: RegisteredRemixApp['author'] | undefined;
+  log: readonly RemixLogEntry[];
 }) {
   const resolved = resolveRemixAppEngine(app, image, viewer);
   if ('refusal' in resolved) throw new TRPCError({ code: 'FORBIDDEN', message: resolved.refusal });
@@ -146,7 +199,9 @@ export function buildRuntimeRequest({
   });
 
   if (request.kind === 'upscale') {
-    const input = sized(request.image);
+    const input = author
+      ? hostSized(request.image.url, image, log)
+      : builtInSized(request.image, image);
     return {
       tier,
       // The upscaler prices by the output size, so by the input's.
@@ -180,11 +235,20 @@ export function buildRuntimeRequest({
 }
 
 /** The first workflow the app runs, through any asks before it on their first answers; `null` if none is reached. */
-export async function firstRuntimeRequest(app: RemixApp, image: RemixSourceImage) {
+export async function firstRuntimeRequest(
+  { replay, firstRequest }: Pick<RegisteredRemixApp, 'replay' | 'firstRequest'>,
+  image: RemixSourceImage
+) {
+  // A user app's runner answers them all in one call.
+  if (firstRequest)
+    return firstRequest(runtimeSourceOf(image)).catch((error) => {
+      if (error instanceof RemixReplayError) return null;
+      throw error;
+    });
   const log: RemixLogEntry[] = [];
   // Bounded: an app that only ever asks has no first workflow to price.
   for (let asked = 0; asked <= 8; asked++) {
-    const outcome = await replayRemixApp(app, runtimeSourceOf(image), log).catch((error) => {
+    const outcome = await replay(runtimeSourceOf(image), log).catch((error) => {
       if (error instanceof RemixReplayError) return null;
       throw error;
     });
@@ -200,8 +264,8 @@ export function runtimeSourceOf(image: RemixSourceImage) {
   return {
     imageId: image.id,
     url: getRemixSourceUrl(image),
-    width: image.width || REMIX_FALLBACK_DIMENSIONS.width,
-    height: image.height || REMIX_FALLBACK_DIMENSIONS.height,
+    width: remixLogSize(image.width) ?? REMIX_FALLBACK_DIMENSIONS.width,
+    height: remixLogSize(image.height) ?? REMIX_FALLBACK_DIMENSIONS.height,
   };
 }
 
@@ -321,21 +385,48 @@ export async function assertInputsUsable(
   });
 }
 
-/** Prices every system app this source can run, from one source load. */
+/**
+ * Prices every system app this source can run, from one source load; with `slug`, that one app,
+ * which is how a user app is priced: when its modal opens, never in the menu's quote.
+ */
 export async function quoteRemixApps({
   imageId,
+  slug,
   caller,
 }: {
   imageId: number;
+  slug?: string;
   caller: RemixAppCaller;
 }) {
   const image = await loadSource(imageId, caller, false);
   await assertInputsUsable([getRemixSourceUrl(image)], caller, 'remixAppQuote');
   const pricing = await pricingFor(caller);
 
-  const apps = (await getEnabledRemixApps()).filter((entry) => entry.target === 'image.remix');
+  const apps = (await getEnabledRemixApps(caller)).filter(
+    (entry) =>
+      entry.target === 'image.remix' && (slug === undefined ? !entry.author : entry.slug === slug)
+  );
   const prices = await Promise.all(
-    apps.map(({ app }) => quoteRuntimeApp(app, image, caller, pricing))
+    apps.map((entry) =>
+      // One app that can't be priced refuses only itself.
+      quoteRuntimeApp(entry, image, caller, pricing).catch(async (error) => {
+        // Pricing a user app runs its source, so a quarantine here counts as a run's does.
+        if (error instanceof RemixQuarantinedError) {
+          const held = await noteRunnerQuarantine(entry, caller.user.id, error);
+          return { slug: entry.slug, refusal: held ? REMIX_APP_HELD : PRICE_UNAVAILABLE };
+        }
+        logToAxiom({
+          name: 'remix-app-quote',
+          type: 'warning',
+          message: 'Could not price a remix app',
+          payload: {
+            slug: entry.slug,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
+        return { slug: entry.slug, refusal: PRICE_UNAVAILABLE };
+      })
+    )
   );
   return { prices };
 }
@@ -386,20 +477,28 @@ async function quoteApp(
 }
 
 async function quoteRuntimeApp(
-  app: RemixApp,
+  {
+    app,
+    author,
+    replay,
+    firstRequest,
+  }: Pick<RegisteredRemixApp, 'app' | 'author' | 'replay' | 'firstRequest'>,
   image: RemixSourceImage,
   caller: RemixAppCaller,
   pricing: Pricing
 ) {
   const resolved = resolveRemixAppEngine(app, image, viewerOf(caller));
   if ('refusal' in resolved) return { slug: app.slug, refusal: resolved.refusal };
-  const request = await firstRuntimeRequest(app, image);
+  const request = await firstRuntimeRequest({ replay, firstRequest }, image);
   if (!request) return { slug: app.slug, refusal: PRICE_UNAVAILABLE };
   const { tier, shape, graphInput } = buildRuntimeRequest({
     app,
     image,
     request,
     viewer: viewerOf(caller),
+    author,
+    // A first workflow follows no other: only the source is known.
+    log: [],
   });
   const run = { tier, shape, submit: { graphInput } };
   return {

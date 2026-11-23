@@ -117,7 +117,9 @@
           <strong>Correct</strong> matches the Order's final verdict: it pays gold and the extra XP.
           <strong>Wrong</strong> pays no gold or extra XP and counts against your accuracy.
           <strong>Inconclusive</strong> means the Order could not settle the image: no gold, and it does
-          not count against your accuracy.
+          not count against your accuracy. When the Order stays split on an image to the last rank, the
+          image takes the highest of the ratings given most often, and every judgment on it is set aside
+          as inconclusive.
         </p>
       </article>
     </div>

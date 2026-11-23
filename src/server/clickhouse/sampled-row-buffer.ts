@@ -28,6 +28,16 @@ export function parseCaptureConfig(raw: Record<string, string> | null | undefine
   };
 }
 
+/** FNV-1a over the key, scaled to [0, 1): stable for a key across pods and restarts. */
+export function hashToUnit(key: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0) / 0x1_0000_0000;
+}
+
 type Counter = { inc: (labels: { outcome: string }) => void };
 
 export type SampledRowBufferDeps<Row> = {
@@ -45,12 +55,16 @@ export type SampledRowBufferDeps<Row> = {
 export type SampledRowBuffer<Row> = {
   /**
    * Samples, then builds and buffers one row. `build` gets the time and the active OTEL traceId.
-   * `unsampled` rows skip the rate roll but not the switch, `until` or the cap. Never throws.
+   * `unsampled` rows skip the rate roll but not the switch, `until` or the cap. A `sampleKey`
+   * replaces the roll with a hash of the key, so the rate decision is the same for every row sharing
+   * it (the cap still applies per row). Never throws.
    */
   push: (
     build: (at: number, traceId: string) => Row,
-    opts?: { unsampled?: boolean }
+    opts?: { unsampled?: boolean; sampleKey?: string }
   ) => Promise<void>;
+  /** Whether a row with this `sampleKey` would pass the switch, `until` and the rate. Never throws. */
+  keeps: (sampleKey: string) => Promise<boolean>;
   flush: () => Promise<void>;
   readonly pending: number;
   readonly dropped: number;
@@ -119,14 +133,15 @@ export function createSampledRowBuffer<Row>(
 
   async function push(
     build: (at: number, traceId: string) => Row,
-    { unsampled = false }: { unsampled?: boolean } = {}
+    { unsampled = false, sampleKey }: { unsampled?: boolean; sampleKey?: string } = {}
   ) {
     const traceId = trace.getActiveSpan()?.spanContext().traceId ?? '';
     const at = now();
     try {
       const config = await deps.getConfig();
       if (config.sampleRate <= 0 || at > config.until) return;
-      if (!unsampled && random() >= config.sampleRate) return;
+      const draw = sampleKey === undefined ? random() : hashToUnit(sampleKey);
+      if (!unsampled && draw >= config.sampleRate) return;
       if (buffer.length >= MAX_BUFFERED_ROWS) {
         dropped++;
         deps.counters.rows.inc({ outcome: 'dropped' });
@@ -141,8 +156,20 @@ export function createSampledRowBuffer<Row>(
     }
   }
 
+  async function keeps(sampleKey: string) {
+    try {
+      const config = await deps.getConfig();
+      return (
+        config.sampleRate > 0 && now() <= config.until && hashToUnit(sampleKey) < config.sampleRate
+      );
+    } catch {
+      return false;
+    }
+  }
+
   return {
     push,
+    keeps,
     flush,
     get pending() {
       return buffer.length;

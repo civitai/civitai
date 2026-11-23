@@ -64,11 +64,12 @@ import {
   type AssetSlotDrift,
 } from '~/components/Apps/listingRevisionDrift';
 import { ConnectScopesPanel } from '~/components/Apps/ConnectScopesPanel';
+import { AgentReviewPanel } from '~/components/Apps/AgentReviewPanel';
 import { getReportReasonLabel } from '~/components/Apps/appListingReportView';
 import {
   isDestructiveAction,
   listingStatusChip,
-  moderationActionChip,
+  moderationHistoryTarget,
   reportActionLabel,
   reportRowActions,
   reportStatusChip,
@@ -103,10 +104,13 @@ import {
   summarizeListingRating,
 } from '~/shared/utils/listing-rating-display';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { formatDate as formatDateHelper } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { withLiveNote } from '~/components/Apps/appListingDetailModActions';
+import { showOfflineCutFailureWarning } from '~/components/Apps/offlineCutNotice';
+import { openListingModerationHistory } from '~/components/Apps/ListingModerationHistoryModal';
 import type { ReviewSubmitterChip } from '~/components/Apps/unifiedReviewRow';
 import {
   holdOverrideSatisfied,
@@ -416,6 +420,26 @@ export function OffsiteReviewModal({
  * `busyRef` (optional) is written each render so a hosting modal shell can refuse an
  * in-flight close (the pre-split close-guard); the combined surface uses it too.
  */
+/**
+ * The agent review for a PENDING OAuth-connect listing request — the connect lane of the same
+ * panel the on-site modal mounts. Advisory: it never approves or rejects. Hidden on history
+ * (read-only) views, on external-link and on-site media rows, and unless the mod-only
+ * `app-listings-agentic-review` client flag resolves (absent ⇒ nothing renders).
+ */
+function ConnectAgentReviewSection({
+  request,
+  readOnly,
+}: {
+  request: OffsitePendingRow;
+  readOnly: boolean;
+}) {
+  const features = useFeatureFlags();
+  if (readOnly || request.status !== 'pending' || request.kind === 'onsite') return null;
+  if (!request.appListing?.connectClientId) return null;
+  if (!features?.appListingsAgenticReview) return null;
+  return <AgentReviewPanel publishRequestId={request.id} slug={request.slug} />;
+}
+
 export function OffsiteReviewModalBody({
   request,
   onClose,
@@ -779,6 +803,8 @@ export function OffsiteReviewModalBody({
           justifications={request.appListing?.connectScopeJustifications ?? null}
         />
       )}
+
+      <ConnectAgentReviewSection request={request} readOnly={readOnly} />
 
       <Stack gap={4}>
         <Text size="sm" fw={600}>
@@ -1461,11 +1487,11 @@ type ReportStatusFilter = 'pending' | 'resolved' | 'dismissed';
 
 export function OffsiteReportsQueue() {
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
   const [statusFilter, setStatusFilter] = useState<ReportStatusFilter>('pending');
   const [pending, setPending] = useState<{ action: ReportRowAction; report: ReportRow } | null>(
     null
   );
-  const [historyFor, setHistoryFor] = useState<ReportRow | null>(null);
 
   const queue = trpc.appListings.listListingReports.useQuery(
     { status: statusFilter, limit: 50 },
@@ -1570,6 +1596,10 @@ export function OffsiteReportsQueue() {
                   reportStatus: r.status,
                   listingStatus: r.appListing?.status,
                 });
+                const historyTarget = moderationHistoryTarget(currentUser, {
+                  appListingId: r.appListingId,
+                  slug: r.appListing?.slug ?? r.appListingId,
+                });
                 return (
                   <Table.Tr key={r.id}>
                     <Table.Td>
@@ -1635,14 +1665,16 @@ export function OffsiteReportsQueue() {
                             {reportActionLabel(action)}
                           </Button>
                         ))}
-                        <Button
-                          size="xs"
-                          variant="subtle"
-                          leftSection={<IconHistory size={12} />}
-                          onClick={() => setHistoryFor(r)}
-                        >
-                          History
-                        </Button>
+                        {historyTarget && (
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            leftSection={<IconHistory size={12} />}
+                            onClick={() => openListingModerationHistory(historyTarget)}
+                          >
+                            History
+                          </Button>
+                        )}
                       </Group>
                     </Table.Td>
                   </Table.Tr>
@@ -1654,7 +1686,6 @@ export function OffsiteReportsQueue() {
       )}
 
       <ReportActionModal pending={pending} onClose={() => setPending(null)} />
-      <ModerationHistoryModal report={historyFor} onClose={() => setHistoryFor(null)} />
     </Stack>
   );
 }
@@ -1691,7 +1722,16 @@ function ReportActionModal({
   }
 
   const delistMut = trpc.appListings.delistListing.useMutation({
-    onSuccess: (result) => afterSuccess(withLiveNote('Listing delisted.', result)),
+    onSuccess: (result, vars) => {
+      showOfflineCutFailureWarning(result, {
+        appListingId: vars.appListingId,
+        slug:
+          pending?.report.appListingId === vars.appListingId
+            ? pending.report.appListing?.slug ?? ''
+            : '',
+      });
+      return afterSuccess(withLiveNote('Listing delisted.', result));
+    },
     onError: onError('Delist failed'),
   });
   const relistMut = trpc.appListings.relistListing.useMutation({
@@ -1831,120 +1871,5 @@ function ReportActionModal({
       submitTestId="apps-report-action-confirm"
       onSubmit={submit}
     />
-  );
-}
-
-type ModEvent = {
-  id: string;
-  appListingId: string | null;
-  slug: string;
-  action: string;
-  reason: string | null;
-  detail: string | null;
-  before: unknown;
-  after: unknown;
-  reportId: string | null;
-  createdAt: string | Date;
-  actor: { id: number; username: string | null; image: string | null } | null;
-};
-
-type ModEventList = { items: ModEvent[]; nextCursor: string | null };
-
-/**
- * The ownership transfer carried by a `claim` event's `{userId}`-shaped before/after.
- * Returns null for any non-claim event (delist/relist/purge/report-* carry a
- * `{status}`-shaped before/after instead), so the history row only renders the
- * transfer for claims — it never mis-reads a status event's payload. before/after are
- * typed `unknown` (JSON columns), so each userId is narrowed to a number defensively.
- */
-function claimOwnerTransfer(e: ModEvent): { from: number | null; to: number | null } | null {
-  if (e.action !== 'claim') return null;
-  const before = (e.before ?? null) as { userId?: unknown } | null;
-  const after = (e.after ?? null) as { userId?: unknown } | null;
-  const from = typeof before?.userId === 'number' ? before.userId : null;
-  const to = typeof after?.userId === 'number' ? after.userId : null;
-  if (from === null && to === null) return null;
-  return { from, to };
-}
-
-/** Read-only per-listing moderation history (newest-first audit trail). */
-function ModerationHistoryModal({
-  report,
-  onClose,
-}: {
-  report: ReportRow | null;
-  onClose: () => void;
-}) {
-  const features = useFeatureFlags();
-  const query = trpc.appListings.listModerationEvents.useQuery(
-    { appListingId: report?.appListingId ?? '', limit: 50 },
-    { enabled: !!features?.appBlocks && !!report?.appListingId, retry: false }
-  );
-
-  if (!report) return null;
-  const events = (query.data?.items ?? []) as ModEvent[];
-
-  return (
-    <Modal
-      opened={!!report}
-      onClose={onClose}
-      title={
-        <Group gap={6}>
-          <IconHistory size={16} />
-          <Text fw={600}>
-            Moderation history — {report.appListing?.slug ?? report.appListingId}
-          </Text>
-        </Group>
-      }
-      size="lg"
-      centered
-    >
-      {query.isLoading ? (
-        <Group gap="xs">
-          <Loader size="xs" />
-          <Text size="sm" c="dimmed">
-            Loading…
-          </Text>
-        </Group>
-      ) : events.length === 0 ? (
-        <Text size="sm" c="dimmed">
-          No moderation events recorded for this listing yet.
-        </Text>
-      ) : (
-        <Stack gap="xs">
-          {events.map((e) => {
-            const chip = moderationActionChip(e.action);
-            const transfer = claimOwnerTransfer(e);
-            return (
-              <Card key={e.id} withBorder p="sm">
-                <Group justify="space-between" gap="xs">
-                  <Group gap={6}>
-                    <Badge size="sm" color={chip.color} variant="light">
-                      {chip.label}
-                    </Badge>
-                    <Text size="xs" c="dimmed">
-                      by {e.actor?.username ?? `#${e.actor?.id ?? '?'}`}
-                    </Text>
-                  </Group>
-                  <Text size="xs" c="dimmed">
-                    {formatDate(e.createdAt)}
-                  </Text>
-                </Group>
-                {transfer && (
-                  <Text size="xs" c="dimmed" mt={4} data-testid={`apps-mod-event-owner-${e.id}`}>
-                    owner: {transfer.from ?? '?'} → {transfer.to ?? '?'}
-                  </Text>
-                )}
-                {e.reason && (
-                  <Text size="sm" mt={4} style={{ whiteSpace: 'pre-wrap' }}>
-                    {e.reason}
-                  </Text>
-                )}
-              </Card>
-            );
-          })}
-        </Stack>
-      )}
-    </Modal>
   );
 }

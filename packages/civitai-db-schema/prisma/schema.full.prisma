@@ -1367,6 +1367,15 @@ model ModelVersion {
   licensingFee                   Decimal?                        @db.Decimal(10, 2)
   licensingFeeType               LicensingFeeType?               @default(PerImageBuzz)
   licensingFeeSettlementCurrency LicensingFeeSettlementCurrency? @default(Buzz)
+  // Percent points of compute charged on top of a PercentOfCompute fee and logged apart from it, so the
+  // fee alone is what the licensor is owed. Ours, never paid out. Staff set and clear it by hand; it is
+  // read only while the type is PercentOfCompute, so clearing the fee leaves it inert.
+  licensingFeeMarkup             Decimal?                        @db.Decimal(5, 2)
+  // Staff set it by hand: while true only a moderator may change the fee, its type or its currency.
+  licensingFeeLocked             Boolean                         @default(false)
+  // Staff set it by hand: the licensor is paid by invoice, so the daily payout mints none of this
+  // version's licence fee. Its resourceCompensations rows stay as the usage ledger.
+  licensingFeePaidByInvoice      Boolean                         @default(false)
 
   // Licensing lineage: the root version whose fee this version inherits (e.g. a
   // checkpoint built on Anima-Turbo points at the turbo version). Null means NO
@@ -1421,6 +1430,9 @@ model LicensingRoot {
   modelVersionId Int          @unique
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   isDefault      Boolean      @default(false)
+  // Staff set it by hand: kept out of the editor's picker, and a version may only gain it as its source
+  // through a moderator. A version that already holds it keeps it.
+  restricted     Boolean      @default(false)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -1447,6 +1459,8 @@ model PricingSlot {
 
 enum LicensingFeeType {
   PerImageBuzz
+  // licensingFee is a percent of the generation's compute cost (35 = 35%), not Buzz.
+  PercentOfCompute
 }
 
 enum LicensingFeeSettlementCurrency {
@@ -1820,6 +1834,7 @@ model Report {
   gameFrameGame  GameFrameGameReport?
   serviceOffering ServiceOfferingReport?
   postText       PostTextReport?
+  serviceDealReview ServiceDealReviewReport?
   gameFrameReceipts GameFrameReportReceipt[]
 }
 
@@ -2307,6 +2322,7 @@ model Image {
   crucibles              Crucible[]             @relation("CrucibleImage")
   crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
   serviceOfferingCovers  ServiceOffering[]      @relation("ServiceOfferingCover")
+  serviceDealReviewImage ServiceDealReviewImage?
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
@@ -3014,6 +3030,14 @@ model ApiKey {
   /// Set on `Worker` tokens only: the device the token was issued to.
   workerDeviceId Int?
   workerDevice   WorkerDevice? @relation(fields: [workerDeviceId], references: [id], onDelete: Cascade)
+  // OAuth offline grant (auth hub, flag `oauth-offline-grant`), migration
+  // `20271119140000_oauth_offline_grant`. No-type, so the generated clients never name them and the
+  // deploy and the manual migration can land in either order; read and written only by flag-on code
+  // (apps/auth `offline-columns.ts`, src/server/orchestrator/offline-spend-cap.ts). `mintOrigin`: how
+  // an OAuth `Access` row was minted, or on a `Refresh` row the grant that started its chain (CHECK
+  // `ApiKey_mintOrigin_check`). `refreshFamilyId`: the id every rotation of one refresh chain shares.
+  mintOrigin      String? // @no-type
+  refreshFamilyId String? // @no-type
 
   @@index([clientId])
   @@index([workerDeviceId])
@@ -3777,6 +3801,11 @@ model AppListing {
   // guard is the migration's partial-unique index + the app-level P2002 →
   // idempotent-reuse handling in beginListingRevision.
   @@index([revisionOfId], map: "app_listings_revision_of_id_key")
+  // The auth hub reads a client's connect listings (offline access is granted only when one of
+  // its approved listings declares it). Plain here; the REAL index is PARTIAL (WHERE
+  // connect_client_id IS NOT NULL), which Prisma cannot express, and lives only in the
+  // manual-apply migration `20271120150000_app_listing_connect_client_idx`.
+  @@index([connectClientId], map: "app_listings_connect_client_id_idx")
   @@map("app_listings")
 }
 
@@ -4148,6 +4177,8 @@ model AppReviewAgentReport {
   priorReportId    String?               @map("prior_report_id")
   priorReport      AppReviewAgentReport?  @relation("AppReviewAgentReportChain", fields: [priorReportId], references: [id], onDelete: SetNull)
   nextReports      AppReviewAgentReport[] @relation("AppReviewAgentReportChain")
+  // Connect lane only: what Civitai checked itself (see AppReviewAgentReportCheck).
+  civitaiCheck     AppReviewAgentReportCheck?
   // LLM token accounting (provider-shaped Json) + total cost. See costUsd note
   // in the model docstring for the Decimal(12,6) rationale.
   tokenUsage       Json?     @map("token_usage")
@@ -4165,6 +4196,28 @@ model AppReviewAgentReport {
   // (publish_request_id) WHERE status='running' live ONLY in the migration .sql —
   // Prisma cannot express CHECKs or partial-unique indexes.
   @@map("app_review_agent_reports")
+}
+
+/// Agent review, CONNECT lane: the facts Civitai checked itself for one report (offline-access
+/// reachability, whether server source was provided and reviewed) plus a fingerprint of the
+/// listing fields the review read. Written ONLY by the dispatch, never by the runner's callback,
+/// so nothing the runner reports can add to, edit or imitate it. The panel renders it as its own
+/// "Checked by Civitai" block and marks the review stale when the live listing's fingerprint
+/// differs. One row per connect report; on-site reports have none. Cascades with its report.
+/// MANUAL-APPLY migration `20271120120000_app_review_agent_report_checks`; the lane is dark until
+/// it is applied and the flag is on.
+model AppReviewAgentReportCheck {
+  reportId         String               @id @map("report_id")
+  report           AppReviewAgentReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  publishRequestId String               @map("publish_request_id")
+  // `ConnectCivitaiChecks` (connect-agent-review.logic.ts).
+  checks           Json
+  // `connectListingFingerprint` of the listing as reviewed.
+  fingerprint      String
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([publishRequestId], map: "app_review_agent_report_checks_publish_request_idx")
+  @@map("app_review_agent_report_checks")
 }
 
 // App review holds: a moderator or agent's open check on an app's pending publish requests;
@@ -5290,6 +5343,9 @@ model OauthConsent {
   buzzLimit Json?
   createdAt DateTime    @default(now())
   updatedAt DateTime    @default(now()) @updatedAt
+  // When the user approved "stay connected while you're away" (the OAuth offline grant, flag
+  // `oauth-offline-grant`); null = none. No-type for the reason `ApiKey.mintOrigin` gives.
+  offlineGrantedAt DateTime? // @no-type
 
   @@unique([userId, clientId])
 }
@@ -7387,6 +7443,7 @@ model ModelVersionGiftLink {
 
   @@index([modelVersionId, createdAt(sort: Desc)])
   @@index([batchId])
+  @@index([createdById])
 }
 
 model ModelVersionGiftRedemption {
@@ -7853,7 +7910,7 @@ enum JobQueueType {
   ImageScan
   ReplacedImageDelete
   ImageStorageDelete
-  /// An image whose parent's delete orphaned it; `image-deletes` retries one its caller left.
+  /// Retired: replaced by `PendingDelete`; nothing drains it.
   ImageDelete
   CdnAccessSync
   ImageCdnPersistRetry
@@ -7861,6 +7918,9 @@ enum JobQueueType {
   /// by that service's own database functions. No job in this app processes these rows; the
   /// moderator queue-health panel only counts them.
   CsamArchive
+  /// A delete that has to wait: an owner's own delete a child-safety case keeps, or a parent's cleanup
+  /// of an image something still keeps. `pending-deletes` carries it out once nothing blocks it.
+  PendingDelete
 }
 
 /// What the image CDN has been told about one stored url: `Denied`, or `Retracted` (denied, with
@@ -11488,6 +11548,14 @@ enum ServicePreviewKind {
   None
 }
 
+/// The license an offering grants its buyers. Wording per preset: creator-service-license.constants.ts.
+enum ServiceLicensePreset {
+  Personal
+  CommercialCredit
+  CommercialNoCredit
+  Custom
+}
+
 /// The Buzz a deal is paid in. One per deal, fixed at request time, so every leg
 /// draws from and returns to the same account type.
 enum ServiceBuzzType {
@@ -11531,6 +11599,8 @@ enum ServiceDealEventType {
   Held
   Released
   Refunded
+  /// The buyer's happy review, which pays the seller now instead of after the dispute window.
+  ReviewedHappy
 }
 
 /// Preview and Final are the seller's delivery. An Attachment is a file the buyer gives the seller
@@ -11598,6 +11668,11 @@ model ServiceOffering {
   deliveryDays      Int
   revisionsIncluded Int                   @default(0)
   maxOpenDeals      Int?
+  /// Null: no license terms set. Copied onto each deal at request time.
+  licensePreset      ServiceLicensePreset?
+  /// The seller's own terms; set only with the Custom preset.
+  licenseCustomText  String?
+  licenseAllowResale Boolean               @default(false)
   status            ServiceOfferingStatus @default(Draft)
   /// Set only when a moderator removes the offering: a key of the moderator reason list in code.
   /// Null on a seller's own remove, which is how the two are told apart.
@@ -11608,10 +11683,20 @@ model ServiceOffering {
   /// The seller's agreement to the services terms when they published: userId, offeringId,
   /// affirmedAt, version and the statement verbatim. Null until first published.
   sellerAffirmation Json?
+  /// The seller lets buyers attach delivered work to their review. Off until the seller opts in.
+  allowReviewWork   Boolean               @default(false)
+  /// Counted reviews only (one per distinct buyer, priced and aged per the counting bar). Changed
+  /// only in the transaction that publishes or hides a review; the deals job compares them to rows.
+  happyCount        Int                   @default(0)
+  reviewCount       Int                   @default(0)
+  /// happyCount / reviewCount once reviewCount >= 3, else -1. Never null, so the feed pages by it with an id cursor.
+  happySortKey      Float                 @default(-1)
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
   deals             ServiceDeal[]
   reports           ServiceOfferingReport[]
+  reviews           ServiceDealReview[]
+  reviewReports     ServiceDealReviewReport[]
 
   /// Target of the deal's composite FK that binds `ServiceDeal.sellerId` to the offering's seller.
   @@unique([id, sellerId])
@@ -11649,6 +11734,12 @@ model ServiceDeal {
   revisionsUsed             Int                     @default(0)
   deliveryDays              Int
   previewKind               ServicePreviewKind
+  /// The offering's license when requested, as the buyer agreed to it; never re-read from it.
+  licensePreset             ServiceLicensePreset?
+  licenseCustomText         String?
+  licenseAllowResale        Boolean                 @default(false)
+  /// When the buyer ticked the license checkbox. Null on a deal whose offering had no license.
+  licenseAgreedAt           DateTime?
   /// The offering's maxNsfwLevel when requested; never re-read from the offering.
   maxNsfwLevel              Int                     @default(2)
   status                    ServiceDealStatus       @default(Requested)
@@ -11680,9 +11771,13 @@ model ServiceDeal {
   disputeResolvedById       Int?
   closedAt                  DateTime?
   closeReason               String?
+  /// Set at accept when the buyer had the review flag: the deal ends in a review card, and a happy
+  /// review may release the Buzz early.
+  reviewEnabledAt           DateTime?
   createdAt                 DateTime                @default(now())
   updatedAt                 DateTime                @updatedAt
   events                    ServiceDealEvent[]
+  review                    ServiceDealReview?
   files                     ServiceDealFile[]
   transactions              ServiceDealTransaction[]
   disputeReviews            ServiceDisputeReview[]
@@ -11724,6 +11819,73 @@ model ServiceDisputeReview {
   createdAt    DateTime                  @default(now())
 
   @@index([dealId])
+}
+
+enum ServiceDealReviewVerdict {
+  Happy
+  NotQuite
+}
+
+/// The buyer's review of a completed deal, one per deal. A Happy review releases the Buzz at once.
+/// Public only once its text passed its check and (Happy, or the deal has settled), and while not hidden.
+model ServiceDealReview {
+  id                       Int                            @id @default(autoincrement())
+  dealId                   Int                            @unique
+  deal                     ServiceDeal                    @relation(fields: [dealId], references: [id], onDelete: Restrict)
+  offeringId               Int
+  offering                 ServiceOffering                @relation(fields: [offeringId], references: [id], onDelete: Restrict)
+  sellerId                 Int
+  buyerId                  Int
+  verdict                  ServiceDealReviewVerdict
+  comment                  String?
+  /// The content check of `comment`; reset to Pending on every edit.
+  scanStatus               ServiceOfferingIngestionStatus @default(Pending)
+  scanWorkflowId           String?
+  publishedAt              DateTime?
+  /// The buyer may edit until then.
+  editableUntil            DateTime
+  sellerReply              String?
+  sellerReplyAt            DateTime?
+  sellerReplyScanStatus    ServiceOfferingIngestionStatus?
+  sellerReplyScanWorkflowId String?
+  hiddenAt                 DateTime?
+  hiddenById               Int?
+  createdAt                DateTime                       @default(now())
+  updatedAt                DateTime                       @updatedAt
+  images                   ServiceDealReviewImage[]
+  reports                  ServiceDealReviewReport[]
+
+  @@index([offeringId, publishedAt])
+  @@index([sellerId, publishedAt])
+}
+
+/// A report on one buyer review. The offering is kept so the review's reports join the service
+/// queue under it.
+model ServiceDealReviewReport {
+  reportId            Int               @id
+  report              Report            @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  serviceDealReviewId Int
+  serviceDealReview   ServiceDealReview @relation(fields: [serviceDealReviewId], references: [id], onDelete: Restrict)
+  serviceOfferingId   Int
+  serviceOffering     ServiceOffering   @relation(fields: [serviceOfferingId], references: [id], onDelete: Restrict)
+
+  @@index([serviceDealReviewId], type: Hash)
+  @@index([serviceOfferingId], type: Hash)
+}
+
+/// Delivered work a buyer attached to their review: a fresh upload, owned by the buyer and scanned
+/// as any upload. Also the takedown list for review images.
+model ServiceDealReviewImage {
+  reviewId Int
+  review   ServiceDealReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  imageId  Int               @unique
+  image    Image             @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  /// The final it was copied from; one copy per final per review.
+  sourceFileId Int?
+  sourceFile   ServiceDealFile? @relation(fields: [sourceFileId], references: [id], onDelete: SetNull)
+
+  @@id([reviewId, imageId])
+  @@unique([reviewId, sourceFileId])
 }
 
 /// The deal's accountability sheet. Append-only. `actorId` -1 is the system.
@@ -11806,6 +11968,7 @@ model ServiceDealFile {
   removedAt      DateTime?
   createdAt      DateTime                  @default(now())
   entries        ServiceDealFileEntry[]
+  reviewImages   ServiceDealReviewImage[]
 
   @@index([dealId, round, kind])
 }

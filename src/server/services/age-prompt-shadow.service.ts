@@ -29,7 +29,7 @@ export function withoutMinorAge(prompt: string): string | undefined {
   let text = prompt;
   for (let i = 0; i < MAX_AGE_SPANS; i++) {
     // The age check runs first in the audit, so any age match is the first trigger.
-    const [first] = auditPromptEnriched(text, undefined, false).triggers;
+    const [first] = auditPromptEnriched(text).triggers;
     if (first?.category !== 'minor_age') return text;
     // The age rule is also reported under the minor rule, with the same regex.
     const otherRule = first.matches?.some(

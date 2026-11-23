@@ -1,3 +1,4 @@
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import { Prisma } from '@prisma/client';
 import { updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
@@ -14,13 +15,12 @@ import { bountiesFilterableAttributes } from '~/server/search-index/filterable-a
 import { bountiesSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
-import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import type { ImageModelWithIngestion } from '../selectors/image.selector';
-import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
 import { isMinorMatureImage, withoutMinorFlag } from '~/server/common/image-visibility';
 import { NsfwLevel } from '~/server/common/enums';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
+import { entityImageVisibilityConditions } from '~/server/services/image-visibility.service';
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import type { profileImageSelect } from '../selectors/image.selector';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -188,10 +188,7 @@ export const transformData = async ({
         .filter((i) => {
           const nsfwLevel = nsfw ? NsfwLevel.XXX : i.nsfwLevel;
           // The index has no viewer, so a restricted minor image is left out for everyone.
-          return (
-            !isTaggedMatureImage({ nsfwLevel, tags: i.tags.map((tag) => tag.id) }) &&
-            !isMinorMatureImage({ minor: i.minor, nsfwLevel })
-          );
+          return !isMinorMatureImage({ minor: i.minor, nsfwLevel });
         })
         .map(withoutMinorFlag);
       const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
@@ -253,7 +250,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       endId,
     };
   },
-  pullData: async ({ db, logger }, batch) => {
+  pullData: async ({ db, logger, indexName }, batch) => {
     logger(`PullData :: Pulling data for batch: ${batch}`);
     const where = [
       ...WHERE,
@@ -335,7 +332,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
               'mimeType', i."mimeType",
               'scannedAt', i."scannedAt",
               'type', i."type",
-              'meta', i."meta",
+              'meta', CASE WHEN i."hideMeta" THEN NULL ELSE i."meta" END,
               'generationProcess', i."generationProcess",
               'needsReview', i."needsReview",
               'minor', i."minor",
@@ -344,9 +341,11 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
           ) images
         FROM "Image" i
         JOIN "ImageConnection" ic ON ic."imageId" = i.id AND ic."entityId" IN (SELECT "id" FROM target) AND ic."entityType" = 'Bounty'
-        WHERE i."ingestion" = 'Scanned'
-          AND i."needsReview" IS NULL
-          AND ${imageNotRestrictedSql()}
+        -- No viewer: the images a signed-out visitor is served on the bounty page, less ToS removals
+        -- and images listed on a CSAM report.
+        WHERE ${Prisma.join(entityImageVisibilityConditions({}), ' AND ')}
+          AND i."tosViolation" IS NOT TRUE
+          AND (i.id)::text NOT IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})
         GROUP BY ic."entityId"
       ), tags AS MATERIALIZED (
         SELECT
@@ -385,6 +384,10 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       `;
     logger(`PullData :: Pulled bounties`);
 
+    // transformData leaves these out, which would leave their earlier documents in place.
+    const imageless = bounties.filter((b) => !b.images?.length).map((b) => b.id);
+    if (imageless.length) await onSearchIndexDocumentsCleanup({ indexName, ids: imageless });
+
     if (bounties.length === 0) {
       return {
         bounties: [],
@@ -398,11 +401,15 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       .filter(isDefined)
       .map((i) => i.id);
 
-    const imageTags = await dbRead.$queryRaw<{
-      imageId: number;
-      tagId: number;
-      tag: { name: string };
-    }>`
+    const imageTags = !imageIds.length
+      ? []
+      : await dbRead.$queryRaw<
+          {
+            imageId: number;
+            tagId: number;
+            tag: { name: string };
+          }[]
+        >`
       SELECT
       toi."imageId",
       toi."tagId",

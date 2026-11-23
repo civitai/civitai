@@ -10,7 +10,7 @@
  */
 import type { ServerResponse } from 'node:http';
 import type { AppContext } from 'next/app';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
 
 const h = vi.hoisted(() => ({
@@ -76,5 +76,53 @@ describe('_app auth guard: one redirect per response', () => {
     const { writeHead } = await renderTwice('/models');
 
     expect(writeHead).not.toHaveBeenCalled();
+  });
+});
+
+// `_app` passes the resolved session to the shared-slot sync: a shared cookie that resolved no session must not be
+// sent to the hub, which answers it with its sign-in page on every page view. The helper's own rules are in
+// session-cookie-roll.test.ts.
+describe('_app shared-slot sync in host mode', () => {
+  beforeEach(() => {
+    vi.stubEnv('AUTH_SESSION_COOKIE_MODE', 'host');
+    vi.stubEnv('AUTH_JWT_ISSUER', 'https://auth.civitai.com');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  async function navigate() {
+    const { req, res } = createRealApiPair({
+      url: '/models',
+      headers: {
+        host: 'civitai.com',
+        'sec-fetch-mode': 'navigate',
+        cookie: '__Secure-civ-token=shared-token',
+      },
+      cookies: { '__Secure-civ-token': 'shared-token' },
+    });
+    const writeHead = vi.spyOn(res as unknown as ServerResponse, 'writeHead');
+    const noop = () => null;
+    await getInitialProps({
+      Component: noop,
+      AppTree: noop,
+      router: {},
+      ctx: { req, res, pathname: '/models', query: {}, asPath: '/models', AppTree: noop },
+    } as unknown as AppContext);
+    return { res: res as unknown as ServerResponse, writeHead };
+  }
+
+  it('does not send a shared-slot cookie that resolved no session to the hub', async () => {
+    const { writeHead } = await navigate();
+    expect(writeHead).not.toHaveBeenCalled();
+  });
+
+  it('sends a shared-slot cookie that resolved a session through the sync, with its marker', async () => {
+    h.bootstrap.mockImplementation(async () => ({ session: { user: { id: 1 } } }));
+    const { res, writeHead } = await navigate();
+    expect(writeHead).toHaveBeenCalledWith(302, {
+      Location: '/api/auth/authorize?returnUrl=%2Fmodels',
+    });
+    expect(String(res.getHeader('Set-Cookie'))).toContain('civ_slot_sync=');
   });
 });

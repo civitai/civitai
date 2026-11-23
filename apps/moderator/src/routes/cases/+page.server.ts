@@ -5,16 +5,21 @@ import { importBatch, undoImport } from '$lib/server/cases/backlog-import';
 import { pauseSends, readBrake, resumeSends } from '$lib/server/cases/brake';
 import { caseActionFailure, withCaseData } from '$lib/server/cases/case-routes';
 import { BATCH_ID } from '$lib/server/cases/cases.db';
-import { caseDataBlocked, listBatches } from '$lib/server/cases/cases.service';
+import { caseDataBlocked, listBatches, listFiledCases } from '$lib/server/cases/cases.service';
 import { parseForm } from '$lib/server/query';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
-  const [brake, batches] = await Promise.all([readBrake(), withCaseData(() => listBatches())]);
+  const [brake, batches, filed] = await Promise.all([
+    readBrake(),
+    withCaseData(() => listBatches()),
+    withCaseData(() => listFiledCases()),
+  ]);
   return {
     brake,
     batches: batches.ok ? batches.value : [],
-    storeError: batches.ok ? null : batches.message,
+    filed: filed.ok ? filed.value : [],
+    storeError: batches.ok ? (filed.ok ? null : filed.message) : batches.message,
     grants: {
       act: !!locals.grants['cases.act'],
       pii: !!locals.grants['cases.pii'],

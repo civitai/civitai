@@ -47,6 +47,9 @@ type Entity struct {
 	Schemas []string        `json:"schemas"`
 	Rev     string          `json:"rev"`
 	Body    json.RawMessage `json:"body"`
+	// Key is a private document's storage key, sent beside its body by the adapter's private feed only
+	// (src/server/registry-adapter/private-feed.ts); empty on every other entity.
+	Key string `json:"key,omitempty"`
 }
 
 // Event is one protocol event. Cursor is empty on End, and on any event a registry cannot resume
@@ -104,6 +107,8 @@ func CodeOf(err error) Code {
 type Request struct {
 	Schema string
 	Cursor string
+	// Token, when set, is this subscription's bearer token, in place of Client.Token.
+	Token string
 }
 
 // MaxLine bounds one SSE line. The largest app entity is a few KiB.
@@ -187,8 +192,12 @@ func (c *Client) Subscribe(ctx context.Context, req Request) (*Stream, error) {
 		return nil, &Error{Code: BadRequest, Message: err.Error()}
 	}
 	hr.Header.Set("Accept", "text/event-stream")
-	if c.Token != "" {
-		hr.Header.Set("Authorization", "Bearer "+c.Token)
+	token := c.Token
+	if req.Token != "" {
+		token = req.Token
+	}
+	if token != "" {
+		hr.Header.Set("Authorization", "Bearer "+token)
 	}
 	if c.UserAgent != "" {
 		hr.Header.Set("User-Agent", c.UserAgent)

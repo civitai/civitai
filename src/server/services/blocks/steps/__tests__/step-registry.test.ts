@@ -33,6 +33,7 @@ import {
 } from '~/server/services/blocks/steps';
 import type { OrchestratorBlobLike } from '~/server/services/blocks/steps/output';
 import { isPlatformInternalStepType } from '~/server/services/blocks/steps/orchestrator-denylist';
+import { findStepPositionProblem } from '~/server/services/blocks/app-step-positions';
 
 /**
  * Coverage for the App Blocks step-type registry (RFC #3515 migration step 1).
@@ -189,6 +190,40 @@ describe('block step registry — the shipped population', () => {
     for (const [id, step] of listRegisteredSteps()) {
       expect(() => assertStepInvariants(id, step)).not.toThrow();
     }
+  });
+
+  // The position rule the router applies at request time, held at CI for every entry's canonical
+  // build: an entry that places a url or reference outside a media input fails here first.
+  const canonicalPositionProblem = (step: {
+    variants: readonly string[];
+    canonicalParamsFor(variant: string): unknown;
+    buildStep(params: never): { $type: string; input: unknown };
+  }) => {
+    for (const variant of step.variants) {
+      const built = step.buildStep(step.canonicalParamsFor(variant) as never);
+      const problem = findStepPositionProblem(built.input, 1, undefined, built.$type);
+      if (problem) return problem;
+    }
+    return null;
+  };
+
+  it("every registered entry's canonical build passes the step position rule", () => {
+    for (const [id, step] of listRegisteredSteps()) {
+      expect(canonicalPositionProblem(step), `step '${id}'`).toBeNull();
+    }
+  });
+
+  it('CONTROL: an entry whose canonical build puts a url outside a media input is caught', () => {
+    const entry = (key: string) => ({
+      variants: ['default'],
+      canonicalParamsFor: () => ({}),
+      buildStep: () => ({ $type: 'fixtureType', input: { [key]: 'https://files.example/a' } }),
+    });
+    expect(canonicalPositionProblem(entry('weightsUrl'))).toMatchObject({
+      form: 'url',
+      key: 'weightsUrl',
+    });
+    expect(canonicalPositionProblem(entry('image'))).toBeNull();
   });
 
   it("every registered entry's paramSchema is .strict() — an unknown param is REJECTED", () => {

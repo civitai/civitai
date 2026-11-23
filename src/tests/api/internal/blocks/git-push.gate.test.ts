@@ -95,6 +95,10 @@ vi.mock('~/env/server', () => ({
       FORGEJO_WEBHOOK_SECRET: SECRET,
       APPS_DOMAIN: 'civit.ai',
       DISCORD_WEBHOOK_MOD_ALERTS: 'https://discord.test/webhook',
+      // The schema default (server-schema.ts: `.default([]).catch([])`), which the real env always
+      // carries. Without it the automatic preview dies on `undefined.includes` before it ever
+      // reaches the budget counter the autodeploy test means to exercise.
+      APP_REVIEW_AUTO_BUILD_FIXTURE_USER_IDS: [],
     } as Record<string, unknown>,
     {
       get(t, p: string) {
@@ -110,6 +114,9 @@ vi.mock('~/env/server', () => ({
 // `app-blocks-enabled`. Only the pipeline key reflects the toggle; the user flag
 // is hard-false so a regression that repointed back to it would 503.
 vi.mock('~/server/flipt/client', () => ({
+  // The permission-hook cohort gate reads its flag key from this table. (The real module cannot be
+  // spread here: it loads `~/env/server`, whose mock above reads a constant not yet initialised.)
+  FLIPT_FEATURE_FLAGS: { APP_BLOCKS_STORAGE_HOOKS: 'app-blocks-storage-hooks' },
   isFlipt: vi.fn(async (flag: string) =>
     flag === 'app-blocks-pipeline-enabled'
       ? mockFlag.enabled
@@ -153,11 +160,20 @@ vi.mock('~/server/services/blocks/forgejo.service', () => ({
   getBlobContent: vi.fn(),
 }));
 vi.mock('~/server/utils/app-block-ids', () => ({ newUlid: mockNewUlid }));
+// The permission-hook cohort gate resolves its actor through the session hub. Every id resolves to
+// a user of that id, so the id the gate evaluates is visible in the Flipt call.
+vi.mock('~/server/auth/session-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof SessionClientModule>()),
+  sessionClient: {
+    getSessionUserById: vi.fn(async (id: number) => ({ id, username: `u${id}`, onboarding: 0 })),
+  },
+}));
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerBuild: mockTriggerBuild,
 }));
 
 import { isFlipt } from '~/server/flipt/client';
+import type * as SessionClientModule from '~/server/auth/session-client';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { appDeveloperTermsRefusalMessage } from '~/shared/constants/app-developer-terms.constants';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
@@ -173,6 +189,14 @@ vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOri
 }));
 
 const mockedIsFlipt = vi.mocked(isFlipt);
+
+/**
+ * Reads of `app-blocks-review-autodeploy` so far in this test. Only the new-submission announcement
+ * reads it (review-autodeploy.service: once in onNewPendingSubmission, again in the automatic
+ * preview), and the Flipt mock above evaluates `state.autodeployEnabled` at the call.
+ */
+const autodeployFlagReads = () =>
+  mockedIsFlipt.mock.calls.filter(([flag]) => flag === 'app-blocks-review-autodeploy').length;
 
 function validManifest(sha = NEW_SHA) {
   return {
@@ -257,6 +281,18 @@ describe('git-push webhook — no-trust-on-push gate', () => {
   });
 
   afterEach(async () => {
+    // A parked push announces itself fire-and-forget after the 202, and the announcement reads the
+    // autodeploy flag only once its lazy import of review-autodeploy.service resolves. Left running,
+    // a flag-OFF test's announcement could read the NEXT test's flag-ON state and post a second
+    // "New app submission" into that test's mockFetch (a cold import under CI load resolves both
+    // tests' announcements together). So: every new pending request has been announced once after
+    // its create; wait until each has read the flag under THIS test's state. Off, that read is where
+    // it ends; the flag-ON test waits for the rest of its own chain itself.
+    await vi.waitFor(
+      () =>
+        expect(autodeployFlagReads()).toBeGreaterThanOrEqual(mockPubReqCreate.mock.calls.length),
+      { timeout: 15_000 }
+    );
     await flush();
     vi.unstubAllGlobals();
   });
@@ -309,8 +345,16 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     const res = makeRes();
     await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
     expect(res._status).toBe(202);
-    // The alert is fire-and-forget after the response.
-    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalled(), { timeout: 15_000 });
+    // The alert is fire-and-forget after the response. Wait for both halves of this push's
+    // announcement to reach their last step: the alert's post, and the automatic preview's budget
+    // take on system Redis (the read this test leaves unreadable, so no preview is queued).
+    await vi.waitFor(
+      () => {
+        expect(mockFetch).toHaveBeenCalled();
+        expect(redisMock.sysRedis.multi).toHaveBeenCalled();
+      },
+      { timeout: 15_000 }
+    );
     const titles = mockFetch.mock.calls.map(
       (c) =>
         (
@@ -590,7 +634,8 @@ describe('git-push webhook — no-trust-on-push gate', () => {
 
   it('🔴 refuses a pushed permission hook (400 + storageHookErrors), parks nothing and pings no one', async () => {
     // The manifest validator is stubbed valid here, so the refusal is the push-path hook pin's:
-    // the hooks storage feature ships off, so the declaration is not available yet.
+    // the hooks feature is on, but this pusher maps to no user, so the new hook fails the
+    // author cohort gate closed.
     state.manifest = {
       ...validManifest(NEW_SHA),
       storage: {
@@ -607,7 +652,7 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     expect(res._status).toBe(400);
     expect(res._body).toEqual({
       error: 'Storage hook refused',
-      storageHookErrors: [{ collection: 'cards', file: 'hooks/cards.js', reason: 'not_available' }],
+      storageHookErrors: [{ collection: 'cards', file: 'hooks/cards.js', reason: 'not_in_cohort' }],
     });
     expect(mockSetCommitStatus).toHaveBeenCalledWith(
       expect.objectContaining({ state: 'failure', context: 'civitai/manifest-validation' })
@@ -616,6 +661,42 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     expect(mockPubReqCreate).not.toHaveBeenCalled();
     expect(mockTriggerBuild).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  // 🔴 THE PUSHER-TO-COHORT SEAM. The service tests hand `pusherUserId` in directly, so a handler
+  // (or service) that put the OWNER's id on the cohort gate instead would leave all of them green,
+  // and a pusher outside the cohort could add a hook to an app whose owner is in it. Driven here
+  // from the Forgejo login, through the real handler and the real pin.
+  it('🔴 a pushed hook is cohort-gated on the PUSHER resolved from the dev-<id> login, not the owner', async () => {
+    state.manifest = {
+      ...validManifest(NEW_SHA),
+      storage: {
+        collections: {
+          cards: {
+            visibility: 'private',
+            hook: { file: 'hooks/cards.js', sha256: 'a'.repeat(64) },
+          },
+        },
+      },
+    };
+    const body = {
+      ...pushBody({ after: NEW_SHA }),
+      pusher: { login: 'dev-42', username: 'dev-42' },
+    };
+    const res = makeRes();
+    await invoke(signedReq(body), res);
+    const cohortCalls = mockedIsFlipt.mock.calls.filter(
+      ([flag]) => flag === 'app-blocks-storage-hooks'
+    );
+    // Exactly one cohort evaluation, for user 42 (the pusher), never 77 (the owner).
+    expect(cohortCalls.map(([, entityId]) => entityId)).toEqual(['42']);
+    // The cohort answered no (the Flipt mock), so the push is refused as not in the cohort.
+    expect(res._status).toBe(400);
+    expect(res._body).toEqual({
+      error: 'Storage hook refused',
+      storageHookErrors: [{ collection: 'cards', file: 'hooks/cards.js', reason: 'not_in_cohort' }],
+    });
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
   });
 
   it('ignores non-main branch pushes (200 skipped)', async () => {

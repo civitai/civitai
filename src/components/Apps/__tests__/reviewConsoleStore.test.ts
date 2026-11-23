@@ -1,12 +1,12 @@
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { assetsWithImageLevel, previewWithImageLevel } from '~/components/Apps/reviewImageLevels';
 import {
   createReviewConsoleStore,
   formatReviewConsoleLog,
-  reviewConsoleFrameLabel,
+  reviewConsoleFrameLabels,
   orderReviewConsoleEntries,
   parseBlockReadySdk,
-  REVIEW_CONSOLE_MIN_SDK,
+  REVIEW_CONSOLE_NOTIFY_MS,
   sdkForwardsReviewErrors,
 } from '~/components/Apps/reviewConsoleStore';
 import {
@@ -21,14 +21,6 @@ import { reviewConsoleSdkNotice } from '~/components/Apps/reviewConsoleStore';
  */
 
 describe('the SDK cut-off', () => {
-  test('🔴 is @civitai/sdk 0.29.0, the first release that forwards to a review preview', () => {
-    expect(REVIEW_CONSOLE_MIN_SDK).toEqual({
-      name: 'sdk',
-      packageName: '@civitai/sdk',
-      version: '0.29.0',
-    });
-  });
-
   test.each([
     ['sdk', '0.29.0', true],
     ['sdk', '0.29.1', true],
@@ -41,7 +33,14 @@ describe('the SDK cut-off', () => {
     ['sdk', '0.29.0-beta.1', false],
     ['sdk', 'latest', false],
     ['sdk', null, false],
-    ['blocks-react', '0.99.0', false],
+    ['blocks-react', '0.85.0', true],
+    ['blocks-react', '0.85.1', true],
+    ['blocks-react', '1.0.0', true],
+    ['blocks-react', '0.84.0', false],
+    ['blocks-react', '0.85.0-next.1', false],
+    ['blocks-react', '0.29.0', false],
+    ['sdk', '0.85.0', true],
+    ['some-other-sdk', '9.9.9', false],
     [null, '0.29.0', false],
   ] as const)('%s %s → %s', (name, version, expected) => {
     expect(sdkForwardsReviewErrors({ name, version })).toBe(expected);
@@ -67,20 +66,34 @@ describe('the SDK notice, pinned whole', () => {
       "This app's SDK (@civitai/sdk 0.28.0) is too old to report other errors, so only fatal crashes show here. Apps report every error from @civitai/sdk 0.29.0."
     );
     expect(reviewConsoleSdkNotice({ name: null, version: null })).toBe(
-      "This app's SDK (an SDK that does not name itself) is too old to report other errors, so only fatal crashes show here. Apps report every error from @civitai/sdk 0.29.0."
+      "This app's SDK (an SDK that does not name itself) is too old to report other errors, so only fatal crashes show here. Apps report every error from @civitai/sdk 0.29.0 or @civitai/blocks-react 0.85.0."
     );
   });
 
-  test('🔴 @civitai/blocks-react is not called too old: it forwards none at any version', () => {
+  test('🔴 @civitai/blocks-react below ITS cut-off is too old, and is told its own version', () => {
     expect(reviewConsoleSdkNotice({ name: 'blocks-react', version: '0.84.0' })).toBe(
-      'This app uses @civitai/blocks-react 0.84.0, which does not report other errors, so only fatal crashes show here. Apps on @civitai/sdk 0.29.0 or later report every error.'
+      "This app's SDK (@civitai/blocks-react 0.84.0) is too old to report other errors, so only fatal crashes show here. Apps report every error from @civitai/blocks-react 0.85.0."
     );
+  });
+
+  test('an app-sent name that is an Object.prototype key is an unknown SDK, not a lookup hit', () => {
+    expect(reviewConsoleSdkNotice({ name: 'constructor', version: '1.0.0' })).toBe(
+      "This app's SDK (constructor 1.0.0) is too old to report other errors, so only fatal crashes show here. Apps report every error from @civitai/sdk 0.29.0 or @civitai/blocks-react 0.85.0."
+    );
+  });
+
+  test('🔴 @civitai/blocks-react at its cut-off gets no notice', () => {
+    expect(reviewConsoleSdkNotice({ name: 'blocks-react', version: '0.85.0' })).toBeNull();
   });
 
   test('no notice at or above the cut-off, nor before BLOCK_READY', () => {
     expect(reviewConsoleSdkNotice({ name: 'sdk', version: '0.29.0' })).toBeNull();
     expect(reviewConsoleSdkNotice(null)).toBeNull();
   });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('the store', () => {
@@ -94,7 +107,8 @@ describe('the store', () => {
     expect(store.getState().entries.map((e) => e.message)).toEqual(['crash', 'b', 'c']);
   });
 
-  test('ignores a payload with no message, and notifies on each kept report', () => {
+  test('ignores a payload with no message, and notifies once one is kept', () => {
+    vi.useFakeTimers();
     const store = createReviewConsoleStore();
     let calls = 0;
     store.subscribe(() => (calls += 1));
@@ -102,9 +116,33 @@ describe('the store', () => {
     frame.report({ fatal: false });
     frame.report('not an object');
     frame.report({ message: '   ', fatal: false });
+    vi.runAllTimers();
     expect(store.getState().entries).toEqual([]);
+    expect(calls).toBe(0);
     frame.report({ message: 'kept', fatal: false, at: 5 });
+    vi.runAllTimers();
     expect(calls).toBe(1);
+  });
+
+  test('🔴 a burst of reports notifies subscribers ONCE, not once per report', () => {
+    // An app can post BLOCK_ERROR in a loop without the SDK's rate limit; each notification
+    // re-renders every mounted console view.
+    vi.useFakeTimers();
+    const store = createReviewConsoleStore();
+    let calls = 0;
+    store.subscribe(() => (calls += 1));
+    const frame = store.openFrame();
+    for (let i = 0; i < 200; i += 1) frame.report({ message: `e${i}`, fatal: false, at: i });
+    // The state is current at once, for any reader that renders before the notification.
+    expect(store.getState().entries).toHaveLength(200);
+    expect(calls).toBe(0);
+    vi.advanceTimersByTime(REVIEW_CONSOLE_NOTIFY_MS);
+    expect(calls).toBe(1);
+    // And the next burst gets its own single notification.
+    frame.report({ message: 'later', fatal: true, at: 999 });
+    frame.ready({ sdkName: 'sdk', sdkVersion: '0.29.0' });
+    vi.advanceTimersByTime(REVIEW_CONSOLE_NOTIFY_MS);
+    expect(calls).toBe(2);
   });
 
   test('display order: fatal first, then the rest, each oldest first', () => {
@@ -142,11 +180,10 @@ describe('two preview frames', () => {
     const overview = store.openFrame();
     const previewTab = store.openFrame();
     overview.report({ message: 'boom', fatal: false, at: 1_000 });
-    const [first] = store.getState().entries;
-    expect(reviewConsoleFrameLabel(store.getState().entries, first!)).toBeNull();
+    expect(reviewConsoleFrameLabels(store.getState().entries)).toEqual(new Map());
     previewTab.report({ message: 'boom', fatal: false, at: 2_000 });
     const entries = store.getState().entries;
-    expect(entries.map((e) => reviewConsoleFrameLabel(entries, e))).toEqual([
+    expect(entries.map((e) => reviewConsoleFrameLabels(entries).get(e.frame))).toEqual([
       'Preview 1',
       'Preview 2',
     ]);
@@ -156,6 +193,22 @@ describe('two preview frames', () => {
         '[1970-01-01T00:00:01.000Z] Preview 1 error: boom',
         '[1970-01-01T00:00:02.000Z] Preview 2 error: boom',
       ].join('\n')
+    );
+  });
+
+  test('frames are numbered by their FIRST report, not by when they opened', () => {
+    const store = createReviewConsoleStore();
+    const opened1 = store.openFrame();
+    store.openFrame(); // frame 2 never reports
+    const opened3 = store.openFrame();
+    opened3.report({ message: 'a', fatal: false, at: 1 });
+    opened1.report({ message: 'b', fatal: false, at: 2 });
+    opened3.report({ message: 'c', fatal: false, at: 3 });
+    expect(reviewConsoleFrameLabels(store.getState().entries)).toEqual(
+      new Map([
+        [3, 'Preview 1'],
+        [1, 'Preview 2'],
+      ])
     );
   });
 

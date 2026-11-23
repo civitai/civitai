@@ -232,6 +232,26 @@ func TestSubscribeWithoutCursorOrTokenSendsNeither(t *testing.T) {
 	}
 }
 
+// A request's own token is sent in place of the client's, with or without one on the client.
+func TestSubscribeRequestTokenReplacesTheClientToken(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "text/event-stream")
+	}))
+	defer srv.Close()
+	for _, c := range []*Client{{BaseURL: srv.URL, Token: "static-1"}, {BaseURL: srv.URL}} {
+		s, err := c.Subscribe(context.Background(), Request{Schema: "s", Token: "own-2"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = s.Close()
+	}
+	if len(got) != 2 || got[0] != "Bearer own-2" || got[1] != "Bearer own-2" {
+		t.Fatalf("Authorization %q, want Bearer own-2 twice", got)
+	}
+}
+
 func TestSubscribeErrorBeforeStream(t *testing.T) {
 	cases := []struct {
 		status int
@@ -376,4 +396,17 @@ func FuzzNext(f *testing.F) {
 		}
 		t.Fatal("stream never ended")
 	})
+}
+
+// A private document's storage key, sent beside its body, is read; an entity without one has none.
+func TestNextReadsAPrivateDocumentsKey(t *testing.T) {
+	s := streamOf("" +
+		"event: upsert\ndata: {\"entity\":{\"urn\":\"urn:apps.civitai.com:app/notes/r1\",\"schemas\":[\"s\"],\"rev\":\"r1\",\"body\":{\"t\":1},\"key\":\"note-7e3\"},\"cursor\":\"\"}\n\n" +
+		"event: upsert\ndata: {\"entity\":{\"urn\":\"urn:apps.civitai.com:app/a\",\"schemas\":[\"s\"],\"rev\":\"r2\",\"body\":{\"slug\":\"a\"}},\"cursor\":\"\"}\n\n")
+	for _, want := range []string{"note-7e3", ""} {
+		got, err := s.Next()
+		if err != nil || got.Type != Upsert || got.Entity.Key != want {
+			t.Fatalf("got %+v, %v; want key %q", got, err, want)
+		}
+	}
 }

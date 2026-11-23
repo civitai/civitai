@@ -1,11 +1,17 @@
 import { TRPCError } from '@trpc/server';
+import { FLIPT_FEATURE_FLAGS, readFliptBoolean } from '~/server/flipt/client';
 import { toPublicApiVersionFlags } from '~/shared/constants/model-version-flags.constants';
 import {
   coverageAudience,
   coveragePairForUser,
 } from '~/server/services/generation/coverage-source';
 
-import { licensingFeeBlockedFor, paidAccessBlockedFor } from '@civitai/buzz';
+import {
+  licensingFeeBlockedFor,
+  lockedLicensingFeeRefusal,
+  paidAccessBlockedFor,
+  percentOfComputeFeeRefusal,
+} from '@civitai/buzz';
 import { recordPricingSlot, releasePricingSlot } from '~/server/services/pricing-slot.service';
 import {
   assertMonetizationWrite,
@@ -32,6 +38,7 @@ import {
   baseModelLicenses,
   constants,
   hasAdditionalLicensePermissions,
+  isNonCommercialBaseModel,
 } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
@@ -103,9 +110,11 @@ import {
 } from '~/server/utils/errorHandling';
 import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
-import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
 import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
-import { getViewableModelVersionIds } from '~/server/services/model-version-visibility.service';
+import {
+  canViewModelVersion,
+  getViewableModelVersionIds,
+} from '~/server/services/model-version-visibility.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import {
@@ -120,7 +129,7 @@ import { dbRead, dbWrite } from '../db/client';
 import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
 import { getMetaMetricVisibility } from '~/server/utils/model-metric-privacy';
 import { modelFileSelect } from '../selectors/modelFile.selector';
-import { getFilesByEntity } from '../services/file.service';
+import { getDownloadFilename, getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
 import { getLinkedFileData } from '~/server/services/linked-file-data.service';
 import { assertBountyEntryFileUrlAllowed } from '~/server/utils/model-file-url-bound';
@@ -227,6 +236,7 @@ const loadModelVersion = async ({
         licensingFee: true,
         licensingFeeType: true,
         licensingFeeSettlementCurrency: true,
+        licensingFeeLocked: true,
         licensingSourceVersionId: true,
         flags: true,
         meta: true,
@@ -275,21 +285,26 @@ const loadModelVersion = async ({
       },
     });
     const ownerViewer = ownerOrModeratorViewer(ctx);
-    const hiddenByStatus =
-      publicRead &&
+    const hidden =
       !!version &&
-      !canViewModelVersionStatus({
-        viewer: ownerViewer,
-        ownerId: version.model.user.id,
-        modelStatus: version.model.status as ModelStatus,
-        versionStatus: version.status as ModelStatus,
-        publishedAt: version.publishedAt,
-      });
-    if (
-      hiddenByStatus ||
-      (version && !canViewPoiModel(version.model.poi, version.model.user.id, ownerViewer))
-    )
-      throw throwNotFoundError(`No version with id ${input.id}`);
+      (publicRead
+        ? !(await canViewModelVersion(
+            {
+              id: version.id,
+              status: version.status as ModelStatus,
+              publishedAt: version.publishedAt,
+              availability: version.availability,
+              model: {
+                userId: version.model.user.id,
+                status: version.model.status as ModelStatus,
+                availability: version.model.availability,
+                poi: version.model.poi,
+              },
+            },
+            ownerViewer
+          ))
+        : !canViewPoiModel(version.model.poi, version.model.user.id, ownerViewer));
+    if (hidden) throw throwNotFoundError(`No version with id ${input.id}`);
 
     // Separate linked components from regular recommended resources
     const isLinkedComponent = (settings: unknown): settings is LinkedComponentSettings =>
@@ -430,12 +445,23 @@ const loadModelVersion = async ({
       baseModelType: version.baseModelType as BaseModelType,
       trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
       // Training data keeps its own public view (the router's strip); other non-Public files are the
-      // owner's and moderators'.
-      files: (isOwnerOrMod || !version.files
-        ? version.files
-        : version.files.filter(
+      // owner's and moderators'. Only they get downloadName, which the editor shows in place of a
+      // trainer blob id: it is built from the real model name, which a .com face hides.
+      files: (isOwnerOrMod
+        ? version.files?.map((file) => ({
+            ...file,
+            downloadName: getDownloadFilename({
+              model,
+              modelVersion: version,
+              file,
+              versionFiles: version.files,
+            }),
+          }))
+        : version.files?.filter(
             (file) => file.visibility === 'Public' || file.type === 'Training Data'
-          )) as unknown as Array<Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }>,
+          )) as unknown as Array<
+        Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata; downloadName?: string }
+      >,
       settings: version.settings as RecommendedSettingsSchema | undefined,
       recommendedResources: generationResources,
       linkedComponents,
@@ -546,7 +572,9 @@ export const upsertModelVersionHandler = async ({
           select: {
             usageControl: true,
             licensingFee: true,
+            licensingFeeType: true,
             licensingFeeSettlementCurrency: true,
+            licensingFeeLocked: true,
             licensingSourceVersionId: true,
             baseModel: true,
           },
@@ -684,6 +712,25 @@ export const upsertModelVersionHandler = async ({
 
     // The service migrates the price onto the surviving tier; nothing to reject here.
 
+    // A null type means "keep the stored one", as an omitted one does: written through, it would turn a
+    // staff-set percent into Buzz per image.
+    if (input.licensingFeeType === null) input.licensingFeeType = undefined;
+    // Fails closed: an unreadable flag refuses, since a percent charged early is charged as Buzz per image.
+    if (
+      input.licensingFeeType === LicensingFeeType.PercentOfCompute &&
+      storedVersion?.licensingFeeType !== LicensingFeeType.PercentOfCompute &&
+      (await readFliptBoolean(FLIPT_FEATURE_FLAGS.LICENSING_FEE_PERCENT_OF_COMPUTE)) !== true
+    )
+      throw throwBadRequestError('Percentage license fees are not available yet.');
+    const percentRefusal = percentOfComputeFeeRefusal({
+      isModerator: !!ctx.user.isModerator,
+      requestedType: input.licensingFeeType,
+      storedType: storedVersion?.licensingFeeType,
+      fee: input.licensingFee !== undefined ? input.licensingFee : storedFee,
+      storedFee,
+    });
+    if (percentRefusal) throw throwBadRequestError(percentRefusal);
+
     if (input.licensingFee != null && input.licensingFee > 0) {
       const hadExistingFee = storedFee > 0;
       if (!ctx.features.licensingFee && !ctx.user.isModerator && !hadExistingFee) {
@@ -696,9 +743,32 @@ export const upsertModelVersionHandler = async ({
       ) {
         throw throwBadRequestError('Cash settlement is restricted; please contact support.');
       }
-      if (!input.licensingFeeType) input.licensingFeeType = LicensingFeeType.PerImageBuzz;
+      if (!input.licensingFeeType)
+        input.licensingFeeType = storedVersion?.licensingFeeType ?? LicensingFeeType.PerImageBuzz;
       if (!input.licensingFeeSettlementCurrency)
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
+    }
+
+    // Skipped when a policy clear (POI/private owner, a version already on a non-commercial base model)
+    // strips the fee: refusing it would strand the owner's save. Keyed on the STORED base model, so an
+    // owner cannot clear a locked fee by choosing a non-commercial one.
+    if (policyKeepsFee && !isNonCommercialBaseModel(storedVersion?.baseModel)) {
+      const lockRefusal = lockedLicensingFeeRefusal({
+        isModerator: !!ctx.user.isModerator,
+        locked: storedVersion?.licensingFeeLocked,
+        stored: {
+          fee: storedFee,
+          type: storedVersion?.licensingFeeType ?? null,
+          currency: storedVersion?.licensingFeeSettlementCurrency ?? null,
+        },
+        next: {
+          // The service clears the fee on a non-commercial base model even when the write omits it.
+          fee: isNonCommercialBaseModel(input.baseModel) ? 0 : input.licensingFee,
+          type: input.licensingFeeType,
+          currency: input.licensingFeeSettlementCurrency,
+        },
+      });
+      if (lockRefusal) throw throwBadRequestError(lockRefusal);
     }
 
     // Set when the block below repairs the payload, so the audit can attribute the change to the rule
@@ -755,7 +825,7 @@ export const upsertModelVersionHandler = async ({
         // `'not-a-root'`, which silently clears a legitimate source with no error to the creator.
         dbWrite.licensingRoot.findUnique({
           where: { modelVersionId: input.licensingSourceVersionId },
-          select: { baseModel: true, modelType: true },
+          select: { baseModel: true, modelType: true, restricted: true },
         }),
         // 🔴 The model this save LANDS the version on, which is `input.modelId` — always, on a create
         // and on an update alike. `modelId` is not destructured in `upsertModelVersion`, so it rides
@@ -795,6 +865,10 @@ export const upsertModelVersionHandler = async ({
         ? 'model-not-found'
         : destinationModel.type !== source.modelType
         ? 'model-type-mismatch'
+        : source.restricted &&
+          !ctx.user.isModerator &&
+          input.licensingSourceVersionId !== storedVersion?.licensingSourceVersionId
+        ? 'restricted-root'
         : null;
       if (rejectedReason) {
         // A coercion leaves no trace in the row it corrected, so emit the deciding branch. This is

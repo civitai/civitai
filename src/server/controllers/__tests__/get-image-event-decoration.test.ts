@@ -14,7 +14,7 @@ import type * as MediaVisibility from '~/server/utils/image-media-visibility';
  * moderator), the route must stay uncached per URL, and an image whose media the viewer may not see
  * carries no hat either.
  */
-const { getImage, decorations, canSee } = vi.hoisted(() => ({
+const { getImage, decorations, canSee, pendingDeletion } = vi.hoisted(() => ({
   getImage: vi.fn(async () => ({
     id: 1,
     postId: 30,
@@ -25,11 +25,13 @@ const { getImage, decorations, canSee } = vi.hoisted(() => ({
   })),
   decorations: vi.fn(),
   canSee: vi.fn(async () => true),
+  pendingDeletion: vi.fn(async (ids: number[]) => new Set(ids)),
 }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getImage,
+  imagesPendingDeletion: pendingDeletion,
 }));
 vi.mock('~/server/services/cosmetic.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CosmeticService>()),
@@ -108,6 +110,29 @@ describe('getImageHandler event hat', () => {
     });
     expect(result.url).toBeNull();
     expect(result.eventDecoration).toBeNull();
+  });
+});
+
+// Whether the image's delete waits on a review its owner can see is the owner's to know alone.
+describe('getImageHandler pending deletion', () => {
+  it('tells the owner', async () => {
+    const result = await getImageHandler({ input: { id: 1 }, ctx: ctxFor({ user: { id: 7 } }) });
+    expect(result.deleteAfterReview).toBe(true);
+  });
+
+  it.each([
+    ['another member', { user: { id: 5 } }],
+    ['a moderator', { user: { id: 5, isModerator: true } }],
+    ['a signed-out viewer', {}],
+  ])('tells %s nothing', async (_, viewer) => {
+    const result = await getImageHandler({ input: { id: 1 }, ctx: ctxFor(viewer) });
+    expect(result.deleteAfterReview).toBe(false);
+  });
+
+  it('tells the owner nothing when no delete of theirs waits on a review they can see', async () => {
+    pendingDeletion.mockResolvedValueOnce(new Set());
+    const result = await getImageHandler({ input: { id: 1 }, ctx: ctxFor({ user: { id: 7 } }) });
+    expect(result.deleteAfterReview).toBe(false);
   });
 });
 

@@ -108,7 +108,7 @@ import {
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { createProfanityFilter } from '~/libs/profanity-simple';
+import { getServerProfanityFilter } from '~/server/services/profanity-list.service';
 import {
   filterSensitiveProfanityData,
   keepStoredProfanityData,
@@ -903,7 +903,7 @@ export const upsertBounty = async ({
   const addLockedProperties: string[] = [];
   if (!isModerator && (await legacyProfanityAutoNsfwApplies('Bounty', id))) {
     // Check bounty name and description for profanity using threshold-based evaluation
-    const profanityFilter = createProfanityFilter();
+    const profanityFilter = (await getServerProfanityFilter()).filter;
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
     const evaluation = profanityFilter.evaluateContent(textToCheck);
 
@@ -1020,12 +1020,14 @@ export async function applyBountyContentChange({
   // published bounty while it keeps the SFW rating it earned with the old text. Evaluated
   // unconditionally: there is no acting moderator here to exempt, only the owner whose blurb
   // changed.
+  const profanity = await getServerProfanityFilter();
   const evaluate = (row: typeof stored) =>
     evaluateAutoNsfw({
       name: row.name,
       description,
       alreadyNsfw: row.nsfw,
       lockedProperties: row.lockedProperties,
+      profanity,
     });
   // The unlocked read only decides whether to open the transaction; the write is decided again
   // under the row lock, as `updateBountyById` does, so a moderator rating written in between is
@@ -1251,6 +1253,15 @@ async function getVisibleBountyImageIds({
   return rows.map(({ imageId }) => imageId);
 }
 
+/** Generation data its uploader hid goes only to the uploader and moderators. */
+const withVisibleMeta = <T extends { meta: unknown; hideMeta: boolean; userId: number }>(
+  image: T,
+  viewer: { userId?: number; isModerator?: boolean }
+) =>
+  image.hideMeta && !viewer.isModerator && image.userId !== viewer.userId
+    ? { ...image, meta: null }
+    : image;
+
 export const getBountyImages = async ({
   id,
   userId,
@@ -1259,12 +1270,13 @@ export const getBountyImages = async ({
   const imageIds = await getVisibleBountyImageIds({ bountyIds: [id], userId, isModerator });
 
   const connections = await dbRead.imageConnection.findMany({
+    // image-connection-orphan-safe: imageIds were read from Image just above.
     where: { entityId: id, entityType: 'Bounty', imageId: { in: imageIds } },
     select: { image: { select: { ...imageSelect, poi: true, minor: true } } },
   });
 
   return connections.map(({ image }) => ({
-    ...image,
+    ...withVisibleMeta(image, { userId, isModerator }),
     nsfwLevel: image.nsfwLevel as NsfwLevel,
     tags: image.tags.map((t) => t.tag),
   }));
@@ -1404,6 +1416,7 @@ export const getImagesForBounties = async ({
   const imageIds = await getVisibleBountyImageIds({ bountyIds, userId, isModerator });
 
   const connections = await dbRead.imageConnection.findMany({
+    // image-connection-orphan-safe: imageIds were read from Image just above.
     where: { entityType: 'Bounty', entityId: { in: bountyIds }, imageId: { in: imageIds } },
     select: {
       entityId: true,
@@ -1413,7 +1426,7 @@ export const getImagesForBounties = async ({
 
   const groupedImages = groupBy(
     connections.map(({ entityId, image }) => ({
-      ...image,
+      ...withVisibleMeta(image, { userId, isModerator }),
       nsfwLefel: image.nsfwLevel as NsfwLevel,
       tags: image.tags.map((t) => ({ id: t.tag.id, name: t.tag.name })),
       entityId,

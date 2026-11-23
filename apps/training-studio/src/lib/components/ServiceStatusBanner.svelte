@@ -4,6 +4,10 @@
   import { browser } from '$lib/host';
   import { messageSegments } from '$lib/service-status-core';
   import { serviceStatus } from '$lib/service-status.svelte';
+  import '$lib/civitai-elements';
+  import { useElementsUi } from '$lib/elements-ui';
+
+  const elementsUi = useElementsUi();
 
   // The classic trainer's TrainStatusMessage: training off → a fixed warning; on with a moderator
   // notice → a "Status Alert" the user can dismiss until the message changes.
@@ -27,7 +31,30 @@
   }
 </script>
 
-{#if visible && message}
+{#snippet text(message: string)}
+  {#each messageSegments(message) as segment, i (i)}
+    {#if segment.kind === 'strong'}<strong>{segment.text}</strong
+      >{:else if segment.kind === 'link'}<a
+        href={segment.href}
+        target="_blank"
+        rel="noreferrer"
+        class="text-primary hover:underline">{segment.text}</a
+      >{:else}{segment.text}{/if}
+  {/each}
+{/snippet}
+
+{#if visible && message && elementsUi()}
+  <civitai-alert
+    role="alert"
+    color="warning"
+    heading={disabled ? '' : 'Status Alert'}
+    closable={!disabled}
+    close-label="Dismiss"
+    onclose={dismiss}
+  >
+    {@render text(message)}
+  </civitai-alert>
+{:else if visible && message}
   <div
     role="alert"
     class="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-dark-0"
@@ -35,17 +62,7 @@
     <IconAlertTriangle size={18} stroke={2} class="mt-px shrink-0 text-amber-400" />
     <div class="min-w-0 flex-1">
       {#if !disabled}<p class="font-semibold text-amber-400">Status Alert</p>{/if}
-      <p class="leading-snug">
-        {#each messageSegments(message) as segment, i (i)}
-          {#if segment.kind === 'strong'}<strong>{segment.text}</strong
-            >{:else if segment.kind === 'link'}<a
-              href={segment.href}
-              target="_blank"
-              rel="noreferrer"
-              class="text-primary hover:underline">{segment.text}</a
-            >{:else}{segment.text}{/if}
-        {/each}
-      </p>
+      <p class="leading-snug">{@render text(message)}</p>
     </div>
     {#if !disabled}
       <button

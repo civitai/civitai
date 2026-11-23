@@ -16,19 +16,25 @@ vi.mock('~/utils/faro/feedDrop', () => ({ emitFeedNoImagesDrop: vi.fn() }));
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
   useBrowsingLevelDebounced: () => 1,
 }));
-vi.mock('~/components/HiddenPreferences/HiddenPreferencesProvider', () => ({
-  useHiddenPreferencesContext: () => ({
-    hiddenUsers: new Map(),
-    hiddenTags: new Map(),
-    hiddenModels: new Map(),
-    hiddenModel3Ds: new Map(),
-    hiddenImages: new Map(),
-    hiddenLoading: false,
-    moderatedTags: [],
-    systemHiddenTags: new Map(),
-  }),
+const viewer = vi.hoisted(() => ({
+  user: null as { id: number } | null,
+  prefs: null as Record<string, unknown> | null,
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+vi.mock('~/components/HiddenPreferences/HiddenPreferencesProvider', () => ({
+  useHiddenPreferencesContext: () =>
+    viewer.prefs ?? {
+      hiddenUsers: new Map(),
+      hiddenTags: new Map(),
+      hiddenModels: new Map(),
+      hiddenModel3Ds: new Map(),
+      hiddenImages: new Map(),
+      hiddenLoading: false,
+      moderatedTags: [],
+      systemHiddenTags: new Map(),
+      moderatedHiddenImages: new Map(),
+    },
+}));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.user }));
 vi.mock('~/providers/BrowsingSettingsAddonsProvider', () => ({
   useBrowsingSettingsAddons: () => ({ settings: { disablePoi: false, disableMinor: false } }),
 }));
@@ -70,6 +76,7 @@ const emptyPrefs = (): HiddenPreferencesState => ({
   hiddenLoading: false,
   moderatedTags: [],
   systemHiddenTags: new Map(),
+  moderatedHiddenImages: new Map(),
 });
 
 let nextId = 1;
@@ -226,6 +233,7 @@ const prefsWith = (
   hiddenUsers: new Map((o.users ?? []).map((id): [number, boolean] => [id, true])),
   hiddenTags: new Map((o.tags ?? []).map((id): [number, boolean] => [id, true])),
   systemHiddenTags: new Map((o.systemTags ?? []).map((id): [number, boolean] => [id, true])),
+  moderatedHiddenImages: new Map(),
 });
 
 type RunImagesOpts = {
@@ -481,5 +489,131 @@ describe('filterPreferences — collection covers', () => {
   it('keeps them when every image is within the viewer level (control)', () => {
     const [hit] = run([collection([{ id: 10, nsfwLevel: 1 }])]);
     expect(hit.srcs).toEqual(['a', 'b']);
+  });
+});
+
+describe("filterPreferences — 'comics' applies the system hidden tags to the cover", () => {
+  const SYSTEM_TAG = 9911;
+  const comic = (id: number, coverImageTagIds: number[]) => ({
+    id,
+    nsfwLevel: 4,
+    name: 'comic',
+    userId: 77,
+    coverImageTagIds,
+  });
+  const ids = (r: { items: unknown[] }) => (r.items as { id: number }[]).map((c) => c.id);
+  const asMap = (ids: number[]) => new Map(ids.map((id): [number, boolean] => [id, true]));
+  const run = (systemTags: number[], o: { userTags?: number[]; viewerId?: number } = {}) =>
+    filterPreferences({
+      type: 'comics',
+      data: [comic(1, [5, SYSTEM_TAG]), comic(2, [5])],
+      hiddenPreferences: {
+        ...emptyPrefs(),
+        hiddenTags: asMap(o.userTags ?? []),
+        systemHiddenTags: asMap(systemTags),
+        moderatedHiddenImages: new Map(),
+      },
+      browsingLevel: 31,
+      currentUser: (o.viewerId ? { id: o.viewerId } : null) as never,
+      canViewNsfw: true,
+    });
+
+  it('hides a comic whose cover carries a system-hidden tag, keeping the control', () => {
+    const result = run([SYSTEM_TAG]);
+    expect(ids(result)).toEqual([2]);
+    expect(result.hidden.tags).toBe(1);
+  });
+
+  it('shows both when the add-on hides no tags', () => {
+    expect(ids(run([]))).toEqual([1, 2]);
+  });
+
+  it('shows the owner their own comic despite a system-hidden cover tag', () => {
+    expect(ids(run([SYSTEM_TAG], { viewerId: 77 }))).toEqual([1, 2]);
+  });
+
+  it("hides a comic whose cover carries one of the viewer's own hidden tags, even for the owner", () => {
+    expect(ids(run([], { userTags: [SYSTEM_TAG], viewerId: 77 }))).toEqual([2]);
+  });
+});
+
+// Show anyway (#10115) sets the viewer's own hides aside only when a caller asks; every other feed keeps them.
+describe('useApplyHiddenPreferences without ignoreViewerHidden', () => {
+  it("still drops a signed-in viewer's hidden user and hidden tag", () => {
+    viewer.user = { id: 1 };
+    viewer.prefs = {
+      ...emptyPrefs(),
+      hiddenUsers: new Map([[9, true]]),
+      hiddenTags: new Map([[500, true]]),
+    };
+    const images = [
+      { id: 1, userId: 9, nsfwLevel: 1, tagIds: [], prompt: '' },
+      { id: 2, userId: 2, nsfwLevel: 1, tagIds: [500], prompt: '' },
+      { id: 3, userId: 2, nsfwLevel: 1, tagIds: [], prompt: '' },
+    ];
+    try {
+      const { result, unmount } = renderHook(() =>
+        useApplyHiddenPreferences({ type: 'images', data: images as never })
+      );
+      expect((result.current.items as { id: number }[]).map((i) => i.id)).toEqual([3]);
+      unmount();
+    } finally {
+      viewer.user = null;
+      viewer.prefs = null;
+    }
+  });
+});
+
+describe('useApplyHiddenPreferences with ignoreViewerHidden (#10115)', () => {
+  const MATURE = 501;
+  const image = (id: number, userId: number, tagIds: number[] = []) => ({
+    id,
+    userId,
+    nsfwLevel: 1,
+    tagIds,
+    prompt: '',
+  });
+  // 1 by a user the viewer hid, 2 with a tag they hid, 3 by a creator who blocked them,
+  // 4 with a moderated tag they hid.
+  const images = [image(1, 9), image(2, 2, [500]), image(3, 7), image(4, 2, [MATURE])];
+  const run = (user: { id: number } | null) => {
+    viewer.user = user;
+    viewer.prefs = {
+      ...emptyPrefs(),
+      hiddenUsers: new Map([
+        [9, true],
+        [7, true],
+      ]),
+      blockRelations: new Map([[7, true]]),
+      blockedByUsers: new Map([[7, true]]),
+      hiddenTags: new Map([
+        [500, true],
+        [MATURE, true],
+      ]),
+      moderatedTags: [{ id: MATURE, name: 'mature', nsfwLevel: 4 }],
+    };
+    try {
+      const { result, unmount } = renderHook(() =>
+        useApplyHiddenPreferences({
+          type: 'images',
+          data: images as never,
+          ignoreViewerHidden: true,
+        })
+      );
+      const ids = (result.current.items as { id: number }[]).map((i) => i.id);
+      unmount();
+      return ids;
+    } finally {
+      viewer.user = null;
+      viewer.prefs = null;
+    }
+  };
+
+  it("sets aside a signed-in viewer's hidden user and ordinary tag, but not a blocker or a moderated tag", () => {
+    expect(run({ id: 1 })).toEqual([1, 2]);
+  });
+
+  it('sets nothing aside for a signed-out viewer', () => {
+    expect(run(null)).toEqual([]);
   });
 });

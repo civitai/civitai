@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -15,9 +16,14 @@ import (
 type Config struct {
 	// RegistryURL is the registry the index subscribes to (APP_INDEX_REGISTRY_URL, required).
 	RegistryURL string
-	// RegistryToken is sent as a bearer token when set (APP_INDEX_REGISTRY_TOKEN). Unset, the
-	// subscription is anonymous: the registry serves the audience anyone may read.
+	// RegistryToken is sent as a bearer token when set (APP_INDEX_REGISTRY_TOKEN). Unset, and no
+	// client below, the subscription is anonymous: the registry serves the audience anyone may read.
 	RegistryToken string
+	// Client is the index's own OAuth client, whose client-credentials token every subscription
+	// carries (APP_INDEX_CLIENT_ID, APP_INDEX_CLIENT_SECRET, APP_INDEX_TOKEN_URL,
+	// APP_INDEX_TOKEN_RESOURCE, and optionally APP_INDEX_TOKEN_SCOPE). Nil when APP_INDEX_CLIENT_ID
+	// is unset.
+	Client *Client
 	// Schema is the subscribed schema (APP_INDEX_SCHEMA, default the app entity schema).
 	Schema string
 	// DatabaseURL is the index's own Postgres database (APP_INDEX_DATABASE_URL, required).
@@ -32,6 +38,29 @@ type Config struct {
 	BackoffBase, BackoffMax time.Duration
 	// SearchTimeout bounds one search query (APP_INDEX_SEARCH_TIMEOUT_MS, default 2000).
 	SearchTimeout time.Duration
+	// Listings switches on the second consumer, of the store listing schema into the listings read
+	// model (APP_INDEX_LISTINGS: on/true/1, or off/false/0; unset is off). Off, nothing changes: no
+	// subscription, no tables, no series. It holds a second consumer lock, so it needs
+	// APP_INDEX_DB_MAX_CONNS of at least 3.
+	Listings bool
+	// ListingsInvalid is a value of APP_INDEX_LISTINGS that is neither on nor off. It is read as
+	// off, never as a reason to refuse to start: a typo in a dark feature's switch must not take
+	// down the search the process already serves. The process logs it as an error at start.
+	ListingsInvalid string
+	// ViewerKey verifies the viewer token the web tier signs on every listing API request
+	// (APP_INDEX_VIEWER_KEY, at least 32 bytes; internal/listingread ParseViewer). Read only with
+	// listings on. Unset or short, the process still starts and the listing routes answer 503:
+	// like APP_INDEX_LISTINGS itself, a dark feature's setting never takes /search down.
+	ViewerKey string
+	// ViewerKeyNext is a second key the viewer token may be signed with, during a rotation
+	// (APP_INDEX_VIEWER_KEY_NEXT, optional, at least 32 bytes when set). Set short, the listing
+	// routes answer 503, as with a short current key: never silently ignored.
+	ViewerKeyNext string
+}
+
+// Client is the index's OAuth client for the client credentials grant.
+type Client struct {
+	ID, Secret, TokenURL, Resource, Scope string
 }
 
 // DefaultSchema is the app entity schema of the civitai registry adapter
@@ -49,6 +78,8 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 		Schema:        getenv("APP_INDEX_SCHEMA"),
 		DatabaseURL:   getenv("APP_INDEX_DATABASE_URL"),
 		Addr:          getenv("APP_INDEX_ADDR"),
+		ViewerKey:     getenv("APP_INDEX_VIEWER_KEY"),
+		ViewerKeyNext: getenv("APP_INDEX_VIEWER_KEY_NEXT"),
 	}
 	if c.RegistryURL == "" {
 		return nil, errors.New("APP_INDEX_REGISTRY_URL is required")
@@ -59,13 +90,20 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 	if c.DatabaseURL == "" {
 		return nil, errors.New("APP_INDEX_DATABASE_URL is required")
 	}
+	client, err := clientFromEnv(getenv)
+	if err != nil {
+		return nil, err
+	}
+	if client != nil && c.RegistryToken != "" {
+		return nil, errors.New("set APP_INDEX_REGISTRY_TOKEN or APP_INDEX_CLIENT_ID, not both")
+	}
+	c.Client = client
 	if c.Schema == "" {
 		c.Schema = DefaultSchema
 	}
 	if c.Addr == "" {
 		c.Addr = ":8080"
 	}
-	var err error
 	ms := func(name string, def int) time.Duration {
 		if err != nil {
 			return 0
@@ -87,8 +125,60 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	switch raw := getenv("APP_INDEX_LISTINGS"); strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "off", "false", "0":
+	case "on", "true", "1":
+		c.Listings = true
+	default:
+		c.ListingsInvalid = raw
+	}
+	// Only when listings are actually on: off (or an invalid value, read as off) runs one consumer.
+	if c.Listings && conns < 3 {
+		// Each consumer holds one connection for its lock; searches and writes need another.
+		return nil, errors.New("APP_INDEX_DB_MAX_CONNS must be at least 3 with APP_INDEX_LISTINGS on")
+	}
 	c.DBMaxConns = int32(conns) //nolint:gosec // bounded to [2, 64] above
 	return c, nil
+}
+
+// clientFromEnv reads the client credentials settings: all unset is nil; APP_INDEX_CLIENT_ID set
+// needs the secret, a token URL (https, or http only to a cluster-local host) and the resource the
+// token is for (the hub issues a service token only for a named resource: without one every fetch
+// would be refused and the index would retry forever instead of failing at start); any of the
+// others without the id is an error, so a half-configured client never silently falls back to an
+// anonymous subscription.
+func clientFromEnv(getenv func(string) string) (*Client, error) {
+	cl := &Client{
+		ID:       getenv("APP_INDEX_CLIENT_ID"),
+		Secret:   getenv("APP_INDEX_CLIENT_SECRET"),
+		TokenURL: getenv("APP_INDEX_TOKEN_URL"),
+		Resource: getenv("APP_INDEX_TOKEN_RESOURCE"),
+		Scope:    getenv("APP_INDEX_TOKEN_SCOPE"),
+	}
+	if cl.ID == "" {
+		if cl.Secret != "" || cl.TokenURL != "" || cl.Resource != "" || cl.Scope != "" {
+			return nil, errors.New("APP_INDEX_CLIENT_ID is required with any other APP_INDEX_CLIENT_* or APP_INDEX_TOKEN_* setting")
+		}
+		return nil, nil
+	}
+	if cl.Secret == "" {
+		return nil, errors.New("APP_INDEX_CLIENT_SECRET is required with APP_INDEX_CLIENT_ID")
+	}
+	u, err := url.Parse(cl.TokenURL)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && (u.Scheme != "http" || !clusterLocal(u.Hostname()))) {
+		return nil, errors.New("APP_INDEX_TOKEN_URL must be an https URL (http only to a cluster-local *.svc host) with APP_INDEX_CLIENT_ID")
+	}
+	if cl.Resource == "" {
+		return nil, errors.New("APP_INDEX_TOKEN_RESOURCE is required with APP_INDEX_CLIENT_ID")
+	}
+	return cl, nil
+}
+
+// clusterLocal reports whether host is a Kubernetes service name: `*.svc` or `*.svc.cluster.local`.
+// The client secret crosses this hop, so plain http is allowed only inside the cluster.
+func clusterLocal(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	return strings.HasSuffix(host, ".svc") || strings.HasSuffix(host, ".svc.cluster.local")
 }
 
 func intEnv(getenv func(string) string, name string, def, lo, hi int) (int, error) {

@@ -1,4 +1,4 @@
-import { auditPromptEnriched, isSoftBlock } from '~/utils/metadata/audit';
+import { auditPromptEnriched, isSoftBlock, type ProfanityMatcher } from '~/utils/metadata/audit';
 
 export type TriggerWordAudit = { severity: 'clean' | 'soft' | 'hard'; offendingWords: string[] };
 
@@ -9,11 +9,11 @@ export type TriggerWordAudit = { severity: 'clean' | 'soft' | 'hard'; offendingW
  */
 export function auditTrainingTriggerWord(
   triggerWord: string,
-  checkProfanity: boolean
+  profanity?: ProfanityMatcher
 ): TriggerWordAudit {
   const text = triggerWord.replace(/\p{Cf}/gu, '').trim();
   if (!text) return { severity: 'clean', offendingWords: [] };
-  const { success, blockedFor, triggers } = auditPromptEnriched(text, undefined, checkProfanity);
+  const { success, blockedFor, triggers } = auditPromptEnriched(text, undefined, profanity);
   if (success) return { severity: 'clean', offendingWords: [] };
   return {
     severity: isSoftBlock(triggers) ? 'soft' : 'hard',

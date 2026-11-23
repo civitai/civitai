@@ -19,7 +19,9 @@ name: feed-go
 # (`Package unit tests`). The workflow also triggers on packages/civitai-flipt/parity/** for it.
 #
 # A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
-# dispatches this workflow when the label is added. A push to `main` is unfiltered.
+# dispatches this workflow when the label is added to a draft PR (on a ready PR, the PR's own run
+# here is not draft-gated, so nothing is dispatched).
+# A push to `main` has its own `push` paths filter below, and no draft gate.
 on:
   pull_request:
     branches: [main, release]
@@ -444,6 +446,8 @@ jobs:
       FUZZ_TARGETS: >-
         internal/auth:FuzzTokenFromCookieHeader:170000
         internal/auth:FuzzVerify:95000
+        internal/devalue:FuzzRoundTrip:200000
+        internal/devalue:FuzzString:600000
         internal/feed:FuzzParse:180000
         internal/feed:FuzzParseInfinite:140000
         internal/hydrate:FuzzMetaEntry:150000

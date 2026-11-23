@@ -60,7 +60,8 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "userId" int DEFAULT ${OWNER}, status text,
-      "publishedAt" timestamp, ingestion text DEFAULT 'Scanned', "bannerId" int
+      "publishedAt" timestamp, ingestion text DEFAULT 'Scanned', "bannerId" int,
+      availability "Availability" DEFAULT 'Public'
     );
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int DEFAULT ${OWNER}, status text,
@@ -106,6 +107,11 @@ beforeAll(async () => {
     INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES
       (301, 311, 'Published', now()), (302, 312, 'Draft', null), (303, null, 'Draft', null);
     INSERT INTO "ImageConnection" VALUES (313, 303, 'Article');
+    -- 308 and 309 follow the article availability rule: one by its cover, one by a content image.
+    INSERT INTO "Image" (id) VALUES (318), (319);
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt", availability) VALUES
+      (308, 318, 'Published', now(), 'Private'), (309, null, 'Published', now(), 'Private');
+    INSERT INTO "ImageConnection" VALUES (319, 309, 'Article');
 
     -- Models: 401 public, 402 Private, 403 draft. One version and owner post each.
     INSERT INTO "Model" (id, status, availability) VALUES
@@ -362,6 +368,8 @@ const hidden: [string, string, number, number][] = [
   ['a Private post', 'Post', 204, 214],
   ['a draft article', 'Article', 302, 312],
   ['a draft article with content images only', 'Article', 303, 313],
+  ['an article following the availability rule, by its cover', 'Article', 308, 318],
+  ['an article following the availability rule, by a content image', 'Article', 309, 319],
   ['a Private model', 'Model', 402, 432],
   ['a draft model', 'Model', 403, 433],
   ['a version of a Private model', 'ModelVersion', 412, 432],
@@ -681,5 +689,52 @@ describe('a minor-flagged cover rated R or above', () => {
     it.each(['owner', 'moderator'] as const)('is kept for the %s', async (who) => {
       expect(await coverOf(entityType, entityId, viewers[who])).toBe(ownerSees);
     });
+  });
+});
+
+describe('a blocked or ToS-violating bounty image', () => {
+  beforeAll(async () => {
+    // Bounty 3001 leads with a blocked image, then a clean one; bounty 3002's only image violates
+    // the ToS. Entry 3003, on public bounty 2, leads with a blocked image, then a clean one.
+    await db.exec(`
+      INSERT INTO "Image" (id, "blockedFor", "tosViolation") VALUES
+        (3011, 'tos', false), (3012, NULL, false), (3013, NULL, true),
+        (3014, 'tos', false), (3015, NULL, false);
+      INSERT INTO "Bounty" VALUES (3001, ${OWNER}, 'Public'), (3002, ${OWNER}, 'Public');
+      INSERT INTO "BountyEntry" VALUES (3003, 2, ${OWNER});
+      INSERT INTO "ImageConnection" VALUES
+        (3011, 3001, 'Bounty'), (3012, 3001, 'Bounty'), (3013, 3002, 'Bounty'),
+        (3014, 3003, 'BountyEntry'), (3015, 3003, 'BountyEntry');
+    `);
+  });
+
+  // [label, entityType, entityId, cover for anonymous/stranger, cover for owner/moderator]
+  const cases: [string, string, number, number | null, number][] = [
+    ["a bounty's first connected image, blocked", 'Bounty', 3001, 3012, 3011],
+    ["a bounty's only image, violating the ToS", 'Bounty', 3002, null, 3013],
+    ["an entry's first connected image, blocked", 'BountyEntry', 3003, 3015, 3014],
+  ];
+
+  describe.each(cases)('as %s', (_, entityType, entityId, othersSee, ownerSees) => {
+    it.each(['anonymous', 'stranger'] as const)('is passed over for a %s viewer', async (who) => {
+      expect(await coverOf(entityType, entityId, viewers[who])).toBe(othersSee);
+    });
+
+    it.each(['owner', 'moderator'] as const)('is kept for the %s', async (who) => {
+      expect(await coverOf(entityType, entityId, viewers[who])).toBe(ownerSees);
+    });
+  });
+});
+
+describe('a cover at the Blocked level with no block recorded', () => {
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, "blockedFor", "nsfwLevel") VALUES (3022, NULL, ${NsfwLevel.Blocked});
+      INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (3032, 3022, 'Published', now());
+    `);
+  });
+
+  it.each(['anonymous', 'stranger', 'owner'] as const)('is no cover for the %s', async (who) => {
+    expect(await coverOf('Article', 3032, viewers[who])).toBeNull();
   });
 });

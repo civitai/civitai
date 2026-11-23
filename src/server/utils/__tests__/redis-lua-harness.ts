@@ -1,3 +1,4 @@
+import { pack, unpack } from 'msgpackr';
 import { LuaFactory } from 'wasmoon';
 
 /**
@@ -5,7 +6,7 @@ import { LuaFactory } from 'wasmoon';
  * with a settable clock, so a script's arithmetic and its redis.call sequence are tested rather
  * than mocked. CI has no Redis server.
  *
- * Supports only the commands the scripts under test use: TIME, EXISTS, GET, SET (NX, EX, PX), HGET, HEXISTS, HLEN, HMGET, HSET, HDEL, HINCRBY, PEXPIRE,
+ * Supports only the commands the scripts under test use: TIME, EXISTS, GET, SET (NX, EX, PX), INCR, HGET, HEXISTS, HLEN, HMGET, HSET, HDEL, HINCRBY, PEXPIRE,
  * HPEXPIRE, EXPIRE, TTL, DEL, LRANGE, LSET, SADD, SCARD, SISMEMBER, SREM, SMEMBERS, ZADD, ZREM,
  * ZRANGE (BYSCORE, REV, LIMIT, WITHSCORES), ZUNIONSTORE (sum), and redis.error_reply (thrown, as the client would). It is deliberately stricter than Redis in two places that would otherwise hide a 5.1/5.4 divergence:
  * every redis.call argument must already be a string (so a script must format its own numbers),
@@ -85,6 +86,9 @@ export function createLuaRedis(
         await engine.doString('unpack = table.unpack');
         engine.global.set('KEYS', keys);
         engine.global.set('ARGV', argv);
+        engine.global.set('__cmsgpack', cmsgpack);
+        // Lists cross as comma-joined numbers, so scripts get real Lua tables, not JS proxies.
+        await engine.doString(CMSGPACK_SHIM);
         engine.global.set('redis', {
           call: redisCall,
           error_reply: (message: string) => {
@@ -210,6 +214,14 @@ export function createLuaRedis(
         else if (px !== -1) expiresAt.set(key, state.nowMs + Number(strArgs[2 + px + 1]));
         else expiresAt.delete(key);
         return { ok: 'OK' };
+      }
+      case 'INCR': {
+        const current = strings.get(key) ?? '0';
+        if (!/^-?\d+$/.test(current))
+          throw new Error('ERR value is not an integer or out of range');
+        const next = String(Number(current) + 1);
+        strings.set(key, next);
+        return Number(next);
       }
       case 'EXISTS':
         return exists(key) ? 1 : 0;
@@ -419,3 +431,46 @@ export function hashTicketFrom(lua: LuaRedis, next: () => number) {
     return ticket;
   };
 }
+
+/**
+ * Redis's `cmsgpack` for arrays of numbers, backed by msgpackr. Like Redis's, `pack` writes an
+ * integral number as an integer (int64 above 2^32), which msgpackr reads back as a bigint; `unpack`
+ * hands Lua plain numbers. Packed bytes travel as base64 strings: wasmoon passes strings through C,
+ * where a NUL byte would cut them short. Scripts only move packed values, never read their bytes.
+ */
+const cmsgpack = {
+  pack: (list: string) =>
+    pack(
+      (list === '' ? [] : list.split(',')).map((s) => {
+        const v = Number(s);
+        return Number.isInteger(v) ? BigInt(v) : v;
+      })
+    ).toString('base64'),
+  unpack: (packed: string) => {
+    const value = unpack(Buffer.from(packed, 'base64'));
+    if (!Array.isArray(value)) throw new Error('cmsgpack.unpack: only arrays are supported');
+    return value.map((v) => String(v)).join(',');
+  },
+};
+
+const CMSGPACK_SHIM = `
+local js = __cmsgpack
+__cmsgpack = nil
+cmsgpack = {
+  pack = function(t)
+    local parts = {}
+    for i = 1, #t do parts[i] = string.format('%d', t[i]) end
+    return js.pack(table.concat(parts, ','))
+  end,
+  unpack = function(s)
+    local out = {}
+    for x in string.gmatch(js.unpack(s), '[^,]+') do out[#out + 1] = tonumber(x) end
+    return out
+  end,
+}
+`;
+
+/** A packed value in the harness's string form, as the JS writer (msgpackr `pack`) stored it. */
+export const packedForHarness = (value: unknown) => pack(value).toString('base64');
+/** Decodes a harness hash value written by a script's `cmsgpack.pack`. */
+export const unpackFromHarness = (value: string) => unpack(Buffer.from(value, 'base64'));

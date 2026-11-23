@@ -47,15 +47,32 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
-import { markImageScanError, resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
+import {
+  markImageScanError,
+  resolveScanOutcome,
+  reviewKeyAfterSkipSql,
+  type ScanImage,
+} from '../image-scan-pipeline';
+import { rescanImageById } from '../image-rescan.service';
+import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
+import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
+import { scanKeepsRowSql } from '~/server/common/image-visibility';
 import { blockImageFromRating } from '../image-scan-result.service';
 import { unblockAccountDeletionImages } from '../account-deletion-images';
 import { blockBannedUserImages } from '~/server/services/user.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { auditPostImageMeta } from '~/utils/metadata/audit';
-import { getImagesModRules } from '~/server/services/image.service';
+import { auditPostImageMeta, includesInappropriate } from '~/utils/metadata/audit';
+import {
+  addImageTools,
+  getImagesModRules,
+  feedThumbnailFields,
+  feedViewer,
+  ingestImageById,
+  requeueUnverifiedImages,
+} from '~/server/services/image.service';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { ModerationRuleAction } from '~/shared/utils/prisma/enums';
 
 const holder = vi.hoisted(() => ({
@@ -80,6 +97,7 @@ beforeAll(async () => {
   await holder.db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3) DEFAULT now());
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       "userId" int NOT NULL REFERENCES "User"(id),
@@ -97,6 +115,14 @@ beforeAll(async () => {
       "scannedAt" timestamp(3),
       metadata jsonb,
       "scanJobs" jsonb
+    );
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" (
+      id serial PRIMARY KEY,
+      "entityType" "EntityType" NOT NULL,
+      "entityId" int NOT NULL,
+      status "AppealStatus" NOT NULL DEFAULT 'Pending'
     );
     CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
@@ -242,7 +268,8 @@ describe('a scan of a CSAM-blocked image', () => {
 
     expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
     expect(outcome).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM', nsfwLevel: 32 });
-    // Control: the same clean scan lifts a block with any other reason.
+    // Control.
+    await holder.db.exec(`UPDATE "Image" SET "blockedFor" = 'AiNotVerified' WHERE id = ${OTHER}`);
     await scan(OTHER);
     expect(await imageRow(OTHER)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
   });
@@ -518,47 +545,126 @@ const restore = async () => {
 };
 
 describe('a restore and the recorded review flag, on the real statement', () => {
-  it('puts back a recorded minor hold over any flag set since but csam, and nothing else', async () => {
-    const crumbs = (review: string) =>
-      `'{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null, "accountDeletionPriorNeedsReview": "${review}"}'`;
+  const crumbs = (review: string | null) =>
+    `'{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null, "accountDeletionPriorNeedsReview": ${
+      review === null ? 'null' : `"${review}"`
+    }}'`;
+  const reviewsOf = async (ids: number[]) =>
+    (
+      await holder.db.query<{ id: number; needsReview: string | null; ingestion: string }>(
+        `SELECT id, "needsReview", ingestion FROM "Image" WHERE id = ANY($1) ORDER BY id`,
+        [ids]
+      )
+    ).rows;
+
+  it('keeps the higher of the current and the recorded review, and logs the one it drops', async () => {
     await holder.db.exec(`
       INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview", metadata) VALUES
-        (81, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')}),
-        (82, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs('minor')}),
-        (83, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('poi')}),
-        (84, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('not-a-review')}),
-        (85, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('csam')}),
-        (86, ${OWNER}, 'Blocked', 'moderated', 32, 'appeal', ${crumbs('minor')}),
-        (87, ${OWNER}, 'Blocked', 'moderated', 32, 'csam', ${crumbs('minor')}),
-        (88, ${OTHER_OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')});
-      UPDATE "User" SET "deletedAt" = now() WHERE id = ${OTHER_OWNER};
+        (81, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('poi')}),
+        (82, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')}),
+        (83, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('appeal')}),
+        (84, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('modRule')}),
+        (85, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('tag')}),
+        (86, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('remixSource')}),
+        (87, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('newUser')}),
+        (88, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('not-a-review')}),
+        (89, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('csam')}),
+        (90, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs(null)}),
+        (91, ${OWNER}, 'Blocked', 'moderated', 32, 'csam', ${crumbs('minor')}),
+        (92, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs('minor')}),
+        (93, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', ${crumbs('newUser')}),
+        (94, ${OWNER}, 'Blocked', 'moderated', 32, 'newUser', ${crumbs('poi')}),
+        (95, ${OWNER}, 'Blocked', 'moderated', 32, 'tag', ${crumbs('tag')}),
+        (96, ${OWNER}, 'Blocked', 'moderated', 32, 'appeal', ${crumbs('csam')}),
+        (98, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', '{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null}'),
+        (99, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs(null)}),
+        (100, ${OWNER}, 'Blocked', 'moderated', 32, 'tag', ${crumbs('not-a-review')}),
+        (101, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', ${crumbs('appeal')}),
+        (102, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs('appeal')}),
+        (103, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('appeal')});
+      -- 83's and 101's appeals are still Pending; 102's and 103's were decided during the window.
+      INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
+        ('Image', 83, 'Pending'), ('Image', 101, 'Pending'), ('Image', 102, 'Approved'), ('Image', 103, 'Rejected');
     `);
-    await unblockAccountDeletionImages(OTHER_OWNER);
-    // An account deleted again keeps its grace block.
-    expect(
-      (await holder.db.query<{ ingestion: string }>(`SELECT ingestion FROM "Image" WHERE id = 88`))
-        .rows[0]
-    ).toEqual({ ingestion: 'Blocked' });
+    dbMock.dbWrite.appeal.findMany.mockImplementation(
+      (async ({ where }: { where: { entityId: { in: number[] } } }) =>
+        (
+          await holder.db.query<{ entityId: number }>(
+            `SELECT "entityId" FROM "Appeal" WHERE status = 'Pending' AND "entityId" = ANY($1)`,
+            [where.entityId.in]
+          )
+        ).rows) as never
+    );
 
     await unblockAccountDeletionImages(OWNER);
 
-    const { rows } = await holder.db.query<{
-      id: number;
-      needsReview: string | null;
-      ingestion: string;
-    }>(`SELECT id, "needsReview", ingestion FROM "Image" WHERE id BETWEEN 81 AND 87 ORDER BY id`);
-    // Control: every row was restored, so the review flags below are the restore's doing.
-    expect(rows.map((row) => row.ingestion)).toEqual(Array(7).fill('Scanned'));
-    expect(rows.map((row) => [row.id, row.needsReview])).toEqual([
-      [81, 'minor'],
-      // A recorded minor hold beats a flag set since; a current csam one is kept.
-      [82, 'minor'],
-      [83, null],
-      [84, null],
-      [85, null],
-      [86, 'minor'],
-      [87, 'csam'],
+    const rows = await reviewsOf([
+      81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 98, 99, 100, 101, 102, 103,
     ]);
+    // Control: every row was restored, so the review flags below are the restore's doing.
+    expect(rows.map((row) => row.ingestion)).toEqual(Array(22).fill('Scanned'));
+    expect(rows.map((row) => [row.id, row.needsReview])).toEqual([
+      // Nothing set since: every listed review but csam comes back.
+      [81, 'poi'],
+      [82, 'minor'],
+      [83, 'appeal'],
+      [84, 'modRule'],
+      [85, 'tag'],
+      [86, 'remixSource'],
+      [87, 'newUser'],
+      // A value outside the list, a recorded csam (dismissed, or the block would have kept it) and
+      // a JSON null write nothing.
+      [88, null],
+      [89, null],
+      [90, null],
+      // A current csam is never overwritten.
+      [91, 'csam'],
+      // Otherwise the higher of the two stays.
+      [92, 'minor'],
+      [93, 'minor'],
+      [94, 'poi'],
+      [95, 'tag'],
+      [96, 'appeal'],
+      // Nothing usable recorded (no key, JSON null, a value outside the list): the current flag stays.
+      [98, 'minor'],
+      [99, 'poi'],
+      [100, 'tag'],
+      // An approval must not publish an image a minor or poi review is still owed on.
+      [101, 'minor'],
+      [102, 'poi'],
+      // A recorded appeal decided during the window has no queue left to clear it.
+      [103, null],
+    ]);
+
+    const logged = loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry as { message?: string; payload?: { reviews: { imageId: number }[] } })
+      .filter((entry) => entry.message === 'kept the higher of two competing review flags')
+      .flatMap((entry) => entry.payload?.reviews ?? []);
+    expect(logged.sort((a, b) => a.imageId - b.imageId)).toEqual([
+      { imageId: 91, kept: 'csam', dropped: 'minor' },
+      { imageId: 92, kept: 'minor', dropped: 'poi' },
+      { imageId: 93, kept: 'minor', dropped: 'newUser' },
+      { imageId: 94, kept: 'poi', dropped: 'newUser' },
+      { imageId: 101, kept: 'minor', dropped: 'appeal', pendingAppeal: true },
+    ]);
+  });
+
+  it('leaves an account deleted again blocked, and restores it once it is not', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview", metadata) VALUES
+        (97, ${OTHER_OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')});
+      UPDATE "User" SET "deletedAt" = now() WHERE id = ${OTHER_OWNER};
+    `);
+
+    const deleted = await unblockAccountDeletionImages(OTHER_OWNER);
+    // The claim finds nothing, so the reversal reads as drained: restore-user-images then drops the
+    // worklist entry, and a later restore queues it again.
+    expect(deleted).toMatchObject({ unblocked: 0, drained: true });
+    expect(await reviewsOf([97])).toEqual([{ id: 97, needsReview: null, ingestion: 'Blocked' }]);
+
+    await holder.db.exec(`UPDATE "User" SET "deletedAt" = NULL WHERE id = ${OTHER_OWNER}`);
+    await unblockAccountDeletionImages(OTHER_OWNER);
+    expect(await reviewsOf([97])).toEqual([{ id: 97, needsReview: 'minor', ingestion: 'Scanned' }]);
   });
 });
 
@@ -788,10 +894,8 @@ describe('the account-deletion grace block', () => {
     });
 
     it('a scan error', async () => {
-      // Blocked without breadcrumbs: only the grace block is kept. Pins the existing error write on
-      // other blocked rows, not a judgement on it.
       await holder.db.exec(
-        `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = ${PLAIN}`
+        `UPDATE "Image" SET ingestion = 'Pending', "blockedFor" = NULL WHERE id = ${PLAIN}`
       );
       const fail = (imageId: number) =>
         markImageScanError({
@@ -806,8 +910,695 @@ describe('the account-deletion grace block', () => {
       await fail(PLAIN);
 
       expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
-      // Control: the error write does reach a blocked row that is not grace-blocked.
+      // Control: the error write does reach a row that is not grace-blocked.
       expect((await graceRow(PLAIN)).ingestion).toBe('Error');
+    });
+  });
+});
+
+describe('scan result writes', () => {
+  // One owner per row (100 + its id), so no row's state reaches another through its owner.
+  const W_CSAM = 1;
+  const W_MODERATED = 2;
+  const W_HELD_OWNER = 3;
+  const W_AI_UNVERIFIED = 4;
+  const W_FLAGGED = 5;
+  const W_LEVEL_ONLY = 6;
+  const W_TAKEN_DOWN = 7;
+  const W_AI_FLAGGED = 8;
+  const W_PENDING = 9;
+  const sx = { minor: false, poi: false };
+
+  beforeEach(async () => {
+    sx.minor = false;
+    sx.poi = false;
+    const base = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const rows = await (base as (...a: unknown[]) => Promise<unknown>)(strings, ...values);
+      const [first] = (rows ?? []) as Record<string, unknown>[];
+      return first && 'hasResource' in first ? [{ ...first, minor: sx.minor, poi: sx.poi }] : rows;
+    }) as never);
+    await holder.db.exec(`
+      TRUNCATE "ModActivity";
+      INSERT INTO "User" (id) SELECT 100 + g FROM generate_series(1, 9) g;
+      INSERT INTO "EvidenceHeldUser" ("userId") VALUES (100 + ${W_HELD_OWNER});
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview", minor) VALUES
+        (${W_CSAM}, 100 + ${W_CSAM}, 'Blocked', 'CSAM', 32, NULL, false),
+        (${W_MODERATED}, 100 + ${W_MODERATED}, 'Blocked', 'moderated', 32, NULL, false),
+        (${W_HELD_OWNER}, 100 + ${W_HELD_OWNER}, 'Blocked', 'moderated', 32, NULL, false),
+        (${W_AI_UNVERIFIED}, 100 + ${W_AI_UNVERIFIED}, 'Blocked', 'AiNotVerified', 32, NULL, false),
+        (${W_FLAGGED}, 100 + ${W_FLAGGED}, 'Error', NULL, 32, 'minor', false),
+        (${W_TAKEN_DOWN}, 100 + ${W_TAKEN_DOWN}, 'Error', NULL, 32, NULL, false),
+        (${W_AI_FLAGGED}, 100 + ${W_AI_FLAGGED}, 'Error', 'AiNotVerified', 32, NULL, true),
+        (${W_PENDING}, 100 + ${W_PENDING}, 'Pending', NULL, 0, NULL, false);
+      INSERT INTO "ModActivity" ("entityType", "entityId", activity) VALUES ('image', ${W_TAKEN_DOWN}, 'review');
+    `);
+  });
+
+  type Row = {
+    ingestion: string;
+    blockedFor: string | null;
+    nsfwLevel: number;
+    needsReview: string | null;
+    minor: boolean;
+    scanJobs: { retryCount?: number; error?: unknown } | null;
+  };
+  const imageRow = async (id: number) =>
+    (
+      await holder.db.query<Row>(
+        `SELECT ingestion, "blockedFor", "nsfwLevel", "needsReview", minor, "scanJobs" FROM "Image" WHERE id = $1`,
+        [id]
+      )
+    ).rows[0];
+
+  const loaded = async (id: number) => {
+    const row = (
+      await holder.db.query(
+        `SELECT "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", "needsReview" FROM "Image" WHERE id = $1`,
+        [id]
+      )
+    ).rows[0] as Record<string, unknown>;
+    return {
+      id,
+      createdAt: new Date('2025-12-01T00:00:00.000Z'),
+      scannedAt: null,
+      type: 'image',
+      meta: { prompt: 'a landscape' },
+      metadata: {},
+      postId: null,
+      ...row,
+    } as unknown as ScanImage;
+  };
+
+  const toError = (...ids: number[]) =>
+    holder.db.query(`UPDATE "Image" SET ingestion = 'Error' WHERE id = ANY($1::int[])`, [ids]);
+
+  const scan = async (id: number) =>
+    resolveScanOutcome({ image: await loaded(id), workflowId: 'wf', prompt: 'a landscape' });
+
+  const failScan = (imageId: number) =>
+    markImageScanError({
+      workflowId: 'wf',
+      imageId,
+      status: 'failed',
+      failureType: 'job-failed',
+      failedSteps: ['scan'],
+    });
+
+  describe('an error result', () => {
+    it.each([
+      ['1', W_CSAM],
+      ['2', W_MODERATED],
+      ['3', W_HELD_OWNER],
+      ['4', W_AI_UNVERIFIED],
+    ])('keeps the stored ingestion and counts the attempt (%s)', async (_label, id) => {
+      const before = await imageRow(id);
+      await failScan(id);
+      const after = await imageRow(id);
+      expect(after.ingestion).toBe('Blocked');
+      expect({ blockedFor: after.blockedFor, nsfwLevel: after.nsfwLevel }).toEqual({
+        blockedFor: before.blockedFor,
+        nsfwLevel: before.nsfwLevel,
+      });
+      expect(after.scanJobs?.retryCount).toBe(1);
+      expect(after.scanJobs?.error).toMatchObject({ failureType: 'job-failed' });
+    });
+
+    it('still writes as before for a plain row', async () => {
+      await failScan(W_PENDING);
+      expect(await imageRow(W_PENDING)).toMatchObject({ ingestion: 'Error' });
+    });
+  });
+
+  describe('a clean result', () => {
+    it.each([
+      ['1', W_MODERATED, true],
+      ['2', W_MODERATED, false],
+      ['3', W_FLAGGED, false],
+      ['4', W_TAKEN_DOWN, false],
+      ['5', W_AI_FLAGGED, false],
+    ])('leaves the row as it was (%s)', async (_label, id, errored) => {
+      if (errored) await toError(id);
+      const before = await imageRow(id);
+      const outcome = await scan(id);
+      const after = await imageRow(id);
+      expect({ ...after, scanJobs: null }).toEqual({ ...before, scanJobs: null });
+      expect(outcome.ingestion).toBe(before.ingestion);
+    });
+
+    it('matches the existing write (1)', async () => {
+      await toError(W_CSAM);
+      const outcome = await scan(W_CSAM);
+      expect(await imageRow(W_CSAM)).toMatchObject({
+        ingestion: 'Blocked',
+        blockedFor: 'CSAM',
+        nsfwLevel: 32,
+      });
+      expect(outcome).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM' });
+    });
+
+    it('matches the existing write (2)', async () => {
+      await toError(W_HELD_OWNER);
+      await scan(W_HELD_OWNER);
+      expect(await imageRow(W_HELD_OWNER)).toMatchObject({
+        ingestion: 'Blocked',
+        blockedFor: 'moderated',
+      });
+    });
+
+    it('matches the existing write (3)', async () => {
+      await holder.db.exec(
+        `INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel") VALUES (${W_LEVEL_ONLY}, 100 + ${W_LEVEL_ONLY}, 'Error', 32)`
+      );
+      dbMock.dbWrite.appeal.findMany.mockResolvedValue([{ entityId: W_LEVEL_ONLY }] as never);
+      await holder.db.exec(
+        `INSERT INTO "Appeal" ("entityType", "entityId") VALUES ('Image', ${W_LEVEL_ONLY})`
+      );
+      await scan(W_LEVEL_ONLY);
+      expect(await imageRow(W_LEVEL_ONLY)).toMatchObject({
+        ingestion: 'Blocked',
+        needsReview: 'appeal',
+      });
+      await holder.db.exec('TRUNCATE "Appeal"');
+    });
+
+    it.each([['1', W_AI_UNVERIFIED]])(
+      'writes a clean result as before (%s)',
+      async (_label, id) => {
+        await toError(id);
+        const outcome = await scan(id);
+        expect(await imageRow(id)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+        expect(outcome.ingestion).toBe('Scanned');
+      }
+    );
+
+    it('still lands a stricter result', async () => {
+      await toError(W_MODERATED);
+      holder.tagNsfwLevel = 16;
+      vi.mocked(auditPostImageMeta).mockReturnValue({
+        success: false,
+        blockedFor: ['tos-term'],
+      } as never);
+      await scan(W_MODERATED);
+      expect(await imageRow(W_MODERATED)).toMatchObject({
+        ingestion: 'Blocked',
+        blockedFor: 'tos-term',
+      });
+    });
+
+    it('adds what the scan found and clears nothing', async () => {
+      await toError(W_MODERATED, W_FLAGGED);
+      sx.minor = true;
+      await scan(W_MODERATED);
+      await scan(W_FLAGGED);
+      expect(await imageRow(W_MODERATED)).toMatchObject({
+        ingestion: 'Error',
+        blockedFor: 'moderated',
+        nsfwLevel: 32,
+        minor: true,
+      });
+      expect(await imageRow(W_FLAGGED)).toMatchObject({
+        ingestion: 'Error',
+        needsReview: 'minor',
+        minor: true,
+      });
+    });
+
+    it('writes nothing to the attempt count', async () => {
+      await toError(W_MODERATED);
+      await holder.db.exec(
+        `UPDATE "Image" SET "scanJobs" = '{"retryCount": 2}' WHERE id = ${W_MODERATED}`
+      );
+      await scan(W_MODERATED);
+      await scan(W_MODERATED);
+      expect((await imageRow(W_MODERATED)).scanJobs).toEqual({ retryCount: 2 });
+    });
+  });
+
+  describe('the shared definition', () => {
+    it('matches exactly the rows the write keeps', async () => {
+      await toError(W_CSAM, W_MODERATED, W_HELD_OWNER, W_AI_UNVERIFIED);
+      await holder.db.exec(`
+        INSERT INTO "User" (id) VALUES (120), (121), (122), (123);
+        INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel", "needsReview", "nsfwLevelLocked") VALUES
+          (20, 120, 'Error', 32, 'csam', false),
+          (21, 121, 'Error', 32, 'appeal', false),
+          (22, 122, 'Error', 32, NULL, true),
+          (23, 123, 'Error', 32, NULL, false);
+        INSERT INTO "ModActivity" ("entityType", "entityId", activity) VALUES ('image', 23, 'bulkRemove');
+      `);
+      const flat = scanKeepsRowSql('i');
+      const { rows } = await holder.db.query<{ id: number }>(
+        `SELECT i.id FROM "Image" i WHERE ${flat.text} ORDER BY i.id`,
+        flat.values as unknown[]
+      );
+      expect(rows.map((r) => r.id)).toEqual([
+        W_CSAM,
+        W_MODERATED,
+        W_HELD_OWNER,
+        W_FLAGGED,
+        W_TAKEN_DOWN,
+        W_AI_FLAGGED,
+        20,
+        21,
+        22,
+        23,
+        CSAM,
+        OTHER,
+      ]);
+    });
+  });
+  describe('cases', () => {
+    const queued = async () =>
+      (
+        await holder.db.query<{ entityId: number }>(
+          `SELECT "entityId" FROM "JobQueue" WHERE type = 'CdnAccessSync' ORDER BY "entityId"`
+        )
+      ).rows.map((r) => r.entityId);
+    const set = (id: number, columns: string) =>
+      holder.db.exec(`UPDATE "Image" SET ${columns} WHERE id = ${id}`);
+    const QUEUE_FN = `CREATE OR REPLACE FUNCTION queue_cdn_access_sync(entity_id integer, entity_type text, payload jsonb)
+      RETURNS void AS $q$ BEGIN
+        INSERT INTO "JobQueue" ("entityId", "entityType", type) VALUES (entity_id, entity_type, 'CdnAccessSync')
+        ON CONFLICT DO NOTHING;
+      END; $q$ LANGUAGE plpgsql;`;
+
+    beforeAll(async () => {
+      await holder.db.exec(`
+        ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text, ADD COLUMN IF NOT EXISTS width int,
+          ADD COLUMN IF NOT EXISTS height int, ADD COLUMN IF NOT EXISTS meta jsonb;
+        CREATE TABLE IF NOT EXISTS "JobQueue" ("entityId" int, "entityType" text, type text,
+          UNIQUE ("entityType", "entityId", type));
+      `);
+    });
+
+    beforeEach(async () => {
+      await holder.db.exec(`TRUNCATE "JobQueue"; ${QUEUE_FN}`);
+      await holder.db.exec(
+        `UPDATE "Image" SET url = 'https://example.invalid/' || id || '.jpeg', type = 'image'`
+      );
+      sent.length = 0;
+      const outerExec = vi.mocked(dbMock.dbWrite.$executeRaw).getMockImplementation()!;
+      vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => {
+        const flat = Prisma.sql(strings, ...(values as never[]));
+        const at = /WHERE id = \$(\d+)/.exec(flat.text);
+        // The refused submit's own write: recorded, not applied, so the row stays as the test set it.
+        if (flat.text.includes('"scanRequestedAt" =') && at) {
+          sent.push(flat.values[Number(at[1]) - 1] as number);
+          return 1;
+        }
+        return (outerExec as (...a: unknown[]) => Promise<unknown>)(strings, ...values);
+      }) as never);
+      const outer = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
+      vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => {
+        const text = strings.join('');
+        if (text.includes('queue_cdn_access_sync') || text.includes("meta->>'prompt' as prompt"))
+          return (await runOnPglite(strings, values)).rows;
+        if (text.includes('TagsOnImageDetails')) return [];
+        const rows = await (outer as (...a: unknown[]) => Promise<unknown>)(strings, ...values);
+        if (holdAfterRead.id != null && text.includes('FROM "Image" i WHERE i.id')) {
+          await holder.db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES ($1)`, [
+            holdAfterRead.id,
+          ]);
+          await holder.db.query(
+            `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'AiNotVerified', "nsfwLevel" = 32 WHERE id = $1`,
+            [holdAfterRead.id]
+          );
+          holdAfterRead.id = null;
+        }
+        return rows;
+      }) as never);
+    });
+
+    /** Set to an image id: that row changes right after the fresh read. */
+    const holdAfterRead = { id: null as number | null };
+    const MOD = { id: 1, isModerator: true } as never;
+    const addTools = (imageId: number) =>
+      addImageTools({ data: [{ imageId, toolId: 1 }] as never, user: MOD });
+    /** Ids whose scan submit was reached: the url guard refuses every fixture url before any send. */
+    const sent: number[] = [];
+    const submitted = () => [...sent];
+
+    describe('group 1', () => {
+      it('case 1', async () => {
+        await set(W_AI_UNVERIFIED, 'minor = true');
+        await addTools(W_AI_UNVERIFIED);
+        expect(await imageRow(W_AI_UNVERIFIED)).toMatchObject({
+          ingestion: 'Blocked',
+          blockedFor: 'AiNotVerified',
+        });
+        expect(submitted()).toEqual([]);
+      });
+
+      it('case 2', async () => {
+        await addTools(W_AI_UNVERIFIED);
+        expect(await imageRow(W_AI_UNVERIFIED)).toMatchObject({
+          ingestion: 'Pending',
+          blockedFor: null,
+        });
+        await vi.waitFor(() => expect(submitted()).toEqual([W_AI_UNVERIFIED]));
+      });
+
+      it('case 3', async () => {
+        await set(W_AI_FLAGGED, 'minor = false');
+        await addTools(W_AI_FLAGGED);
+        expect(await imageRow(W_AI_FLAGGED)).toMatchObject({
+          ingestion: 'Pending',
+          blockedFor: null,
+        });
+        await set(W_AI_UNVERIFIED, `"needsReview" = 'appeal'`);
+        expect(await requeueUnverifiedImages([W_AI_UNVERIFIED])).toEqual([]);
+        expect((await imageRow(W_AI_UNVERIFIED)).ingestion).toBe('Blocked');
+      });
+
+      it('case 4', async () => {
+        // Changed after the caller's read.
+        await set(W_AI_UNVERIFIED, `"blockedFor" = 'moderated'`);
+        expect(await requeueUnverifiedImages([W_AI_UNVERIFIED])).toEqual([]);
+        expect(await imageRow(W_AI_UNVERIFIED)).toMatchObject({
+          ingestion: 'Blocked',
+          blockedFor: 'moderated',
+        });
+      });
+    });
+
+    describe('group 2', () => {
+      it('case 1', async () => {
+        await set(W_PENDING, `"blockedFor" = 'moderated'`);
+        await failScan(W_PENDING);
+        expect((await imageRow(W_PENDING)).ingestion).toBe('Error');
+        expect(await queued()).toEqual([W_PENDING]);
+      });
+
+      it('case 2', async () => {
+        await failScan(W_PENDING);
+        expect((await imageRow(W_PENDING)).ingestion).toBe('Error');
+        expect(await queued()).toEqual([]);
+      });
+
+      it('case 3', async () => {
+        await set(W_PENDING, `"blockedFor" = 'moderated'`);
+        await holder.db
+          .exec(`CREATE OR REPLACE FUNCTION queue_cdn_access_sync(entity_id integer, entity_type text, payload jsonb)
+          RETURNS void AS $q$ BEGIN RAISE EXCEPTION 'queue down'; END; $q$ LANGUAGE plpgsql;`);
+        await expect(failScan(W_PENDING)).resolves.toMatchObject({ retryCount: 1 });
+        expect((await imageRow(W_PENDING)).ingestion).toBe('Error');
+        expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'error',
+            name: 'scan-error-cdn-sync',
+            imageId: W_PENDING,
+          })
+        );
+      });
+
+      it('case 4', async () => {
+        await toError(W_MODERATED);
+        await scan(W_MODERATED);
+        expect((await imageRow(W_MODERATED)).ingestion).toBe('Error');
+        expect(await queued()).toEqual([W_MODERATED]);
+      });
+
+      it('case 5', async () => {
+        await set(W_MODERATED, `ingestion = 'Rescan'`);
+        await scan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Scanned',
+          blockedFor: null,
+        });
+        expect(await queued()).toEqual([W_MODERATED]);
+      });
+
+      it('case 6', async () => {
+        await scan(W_PENDING);
+        expect((await imageRow(W_PENDING)).ingestion).toBe('Scanned');
+        expect(await queued()).toEqual([]);
+      });
+    });
+
+    describe('group 3', () => {
+      const keyAfter = async (id: number, key: string | null) => {
+        const frag = reviewKeyAfterSkipSql(key);
+        const flat = Prisma.sql`UPDATE "Image" SET "needsReview" = ${frag} WHERE id = ${id} RETURNING "needsReview"`;
+        return (
+          await holder.db.query<{ needsReview: string | null }>(flat.text, flat.values as unknown[])
+        ).rows[0].needsReview;
+      };
+
+      it.each([
+        ['1', W_PENDING, '', 'minor', 'minor'],
+        ['2', W_PENDING, `"needsReview" = 'appeal'`, 'minor', 'appeal'],
+        ['3', W_PENDING, `"needsReview" = 'poi'`, 'csam', 'poi'],
+        ['4', W_MODERATED, '', 'minor', null],
+        ['5', W_MODERATED, '', 'poi', null],
+        ['6', W_MODERATED, `ingestion = 'Error'`, 'minor', null],
+        ['7', W_FLAGGED, `"needsReview" = NULL, ingestion = 'Blocked'`, 'minor', null],
+        ['8', W_MODERATED, '', 'csam', 'csam'],
+        ['9', W_MODERATED, '', 'appeal', 'appeal'],
+        ['10', W_FLAGGED, `"needsReview" = NULL`, 'poi', 'poi'],
+        ['11', W_PENDING, '', null, null],
+      ])('case %s', async (_label, id, columns, key, expected) => {
+        if (columns) await set(id, columns);
+        expect(await keyAfter(id, key)).toBe(expected);
+      });
+    });
+
+    describe('group 4', () => {
+      it('case 1', async () => {
+        await set(W_MODERATED, `ingestion = 'NotFound'`);
+        await scan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'NotFound',
+          blockedFor: 'moderated',
+          nsfwLevel: 32,
+        });
+      });
+
+      it('case 2', async () => {
+        await set(W_PENDING, 'ingestion = \'Error\', "nsfwLevel" = 32');
+        await holder.db.exec(
+          `INSERT INTO "ModActivity" ("entityType", "entityId", activity) VALUES ('post', ${W_PENDING}, 'review')`
+        );
+        await scan(W_PENDING);
+        expect((await imageRow(W_PENDING)).ingestion).toBe('Scanned');
+      });
+
+      it('case 3', async () => {
+        await toError(W_MODERATED);
+        sx.poi = true;
+        await scan(W_MODERATED);
+        expect(
+          (
+            await holder.db.query<{ poi: boolean }>(`SELECT poi FROM "Image" WHERE id = $1`, [
+              W_MODERATED,
+            ])
+          ).rows[0].poi
+        ).toBe(true);
+      });
+
+      it('case 4', async () => {
+        await set(W_MODERATED, `metadata = '{"${PRIOR_INGESTION_KEY}": "Scanned"}'`);
+        sx.minor = true;
+        await scan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({ ingestion: 'Blocked', minor: false });
+      });
+
+      it('case 6', async () => {
+        await set(W_AI_FLAGGED, `"needsReview" = NULL`);
+        vi.mocked(includesInappropriate).mockReturnValue('poi' as never);
+        try {
+          await scan(W_AI_FLAGGED);
+        } finally {
+          vi.mocked(includesInappropriate).mockReturnValue(false as never);
+        }
+        expect(await imageRow(W_AI_FLAGGED)).toMatchObject({
+          ingestion: 'Error',
+          blockedFor: 'AiNotVerified',
+          needsReview: 'poi',
+        });
+      });
+
+      it('case 5', async () => {
+        holdAfterRead.id = W_PENDING;
+        sx.minor = true;
+        await scan(W_PENDING);
+        expect(await imageRow(W_PENDING)).toMatchObject({
+          ingestion: 'Blocked',
+          blockedFor: 'AiNotVerified',
+          minor: false,
+        });
+      });
+    });
+
+    describe('group 5', () => {
+      const rescan = async (id: number) => {
+        await rescanImageById({ id });
+        expect(submitted()).toContain(id);
+      };
+
+      it('case 1', async () => {
+        await rescan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Rescan',
+          blockedFor: 'moderated',
+          nsfwLevel: 32,
+        });
+        await scan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Scanned',
+          blockedFor: null,
+        });
+      });
+
+      it('case 2', async () => {
+        await toError(W_MODERATED);
+        await rescan(W_MODERATED);
+        expect((await imageRow(W_MODERATED)).ingestion).toBe('Rescan');
+      });
+
+      it.each([
+        ['1', W_CSAM, ''],
+        ['2', W_HELD_OWNER, ''],
+        ['3', W_AI_UNVERIFIED, ''],
+        ['4', W_MODERATED, 'minor = true'],
+        ['5', W_MODERATED, `"needsReview" = 'appeal'`],
+        ['6', W_MODERATED, `metadata = '{"${PRIOR_INGESTION_KEY}": "Scanned"}'`],
+        ['7', W_FLAGGED, ''],
+        ['8', W_MODERATED, `ingestion = 'Pending'`],
+        ['9', CSAM, ''],
+      ])('case 3.%s', async (_label, id, columns) => {
+        if (columns) await set(id, columns);
+        const before = await imageRow(id);
+        await rescan(id);
+        expect((await imageRow(id)).ingestion).toBe(before.ingestion);
+      });
+
+      it('case 4', async () => {
+        await ingestImageById({ id: W_MODERATED });
+        expect(submitted()).toEqual([W_MODERATED]);
+        expect((await imageRow(W_MODERATED)).ingestion).toBe('Blocked');
+      });
+
+      it('case 5', async () => {
+        await rescan(W_MODERATED);
+        await failScan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({ ingestion: 'Rescan' });
+        await scan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Scanned',
+          blockedFor: null,
+        });
+      });
+
+      it('case 6', async () => {
+        await rescan(W_MODERATED);
+        await set(W_MODERATED, `"scanJobs" = '{"retryCount": ${IMAGE_RESCAN_RETRY_LIMIT - 2}}'`);
+        await failScan(W_MODERATED);
+        expect((await imageRow(W_MODERATED)).ingestion).toBe('Rescan');
+        await holder.db.exec('TRUNCATE "JobQueue"');
+        await failScan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Error',
+          blockedFor: 'moderated',
+        });
+        expect(await queued()).toEqual([W_MODERATED]);
+        await scan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Error',
+          blockedFor: 'moderated',
+        });
+      });
+
+      it('case 8', async () => {
+        await set(
+          W_MODERATED,
+          `"scanJobs" = '{"retryCount": ${IMAGE_RESCAN_RETRY_LIMIT}, "workflowId": "w0"}'`
+        );
+        await rescan(W_MODERATED);
+        expect((await imageRow(W_MODERATED)).scanJobs).toEqual({ retryCount: 0, workflowId: 'w0' });
+        await scan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Scanned',
+          blockedFor: null,
+        });
+      });
+
+      it('case 9', async () => {
+        await set(W_MODERATED, `"scanJobs" = '{"retryCount": ${IMAGE_RESCAN_RETRY_LIMIT}}'`);
+        await rescan(W_MODERATED);
+        await failScan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({ ingestion: 'Rescan' });
+      });
+
+      it('case 10', async () => {
+        await set(
+          W_MODERATED,
+          `minor = true, "scanJobs" = '{"retryCount": ${IMAGE_RESCAN_RETRY_LIMIT}}'`
+        );
+        await rescan(W_MODERATED);
+        expect(await imageRow(W_MODERATED)).toMatchObject({
+          ingestion: 'Blocked',
+          scanJobs: { retryCount: IMAGE_RESCAN_RETRY_LIMIT },
+        });
+      });
+
+      it('case 7', async () => {
+        await set(W_PENDING, `ingestion = 'Rescan', "blockedFor" = 'AiNotVerified'`);
+        await failScan(W_PENDING);
+        expect((await imageRow(W_PENDING)).ingestion).toBe('Error');
+      });
+    });
+  });
+});
+
+describe('feed thumbnail fields', () => {
+  const CREATOR = 5;
+  const marked = { url: 't', nsfwLevel: 16, blockMarked: true };
+  const viewers = {
+    signedOut: {},
+    other: { user: { id: 6 }, asOwner: true },
+    owner: { user: { id: CREATOR }, asOwner: true },
+    moderator: { user: { id: 7, isModerator: true }, asModerator: true },
+    ownerNarrow: { user: { id: CREATOR }, asOwner: false },
+  };
+  const fields = (
+    viewer: Parameters<typeof feedViewer>[0],
+    thumbnail = marked as typeof marked | object
+  ) => {
+    const v = feedViewer(viewer);
+    return feedThumbnailFields(thumbnail as typeof marked, 1, CREATOR, {
+      ownerId: v.id,
+      isModerator: v.isModerator,
+    });
+  };
+
+  it.each([
+    ['1', viewers.signedOut, undefined],
+    ['2', viewers.other, undefined],
+    ['3', viewers.owner, 't'],
+    ['4', viewers.moderator, 't'],
+    ['5', viewers.ownerNarrow, undefined],
+  ])('case %s', (_label, viewer, url) => {
+    expect(fields(viewer)).toEqual({ nsfwLevel: 16, thumbnailUrl: url });
+  });
+
+  it('case 6', () => {
+    expect(fields(viewers.signedOut, { url: 't', nsfwLevel: 16 })).toEqual({
+      nsfwLevel: 16,
+      thumbnailUrl: undefined,
+    });
+    expect(fields(viewers.signedOut, { url: 't', nsfwLevel: 16, blockMarked: false })).toEqual({
+      nsfwLevel: 16,
+      thumbnailUrl: 't',
     });
   });
 });

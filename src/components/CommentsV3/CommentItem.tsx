@@ -164,6 +164,11 @@ export function CommentItem({
               <LineClamp className="my-[5px] text-sm" lineClamp={3} variant="block">
                 <RenderHtml
                   html={stripTrailingEmpty(comment.content)}
+                  maskedHtml={
+                    comment.maskedContent == null
+                      ? comment.maskedContent
+                      : stripTrailingEmpty(comment.maskedContent)
+                  }
                   allowCustomStyles={false}
                   withMentions
                   withProfanityFilter

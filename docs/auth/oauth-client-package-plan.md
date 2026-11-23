@@ -21,7 +21,8 @@ library can sign in against it. What a generic library doesn't know is how the h
 - **Refresh rotates the pair with no grace period.** Two refreshes racing with the same refresh token (two pods,
   two tabs) leave one of them holding a dead token, and the user is signed out. Every client has to coordinate
   refreshes, and none does it the same way today.
-- **A throttled request is a bare `429 {"error":"rate_limited"}`** with no `Retry-After`.
+- **A throttled request is `429 {"error":"rate_limited", "retry_after": <seconds>}`** with a matching `Retry-After`
+  header.
 - **Token claims are Civitai's own:** `isModerator`, `roles`, tier, and the `BuzzBudget[]` spend limits.
 
 `@civitai/oauth` packages that knowledge once, for any app outside the repo: our own (advertising, the CLI,

@@ -41,7 +41,7 @@ export async function canViewerOpenModel(modelId: number, viewer?: Viewer): Prom
   const model = await getModelVisibleToViewer(modelId, viewer);
   if (!model) return false;
   if (!viewer?.id || !model.userId || model.userId === viewer.id) return true;
-  // Dynamic import: avoids an import cycle (user.service → image.service → post.service → tag.service).
+  // Dynamic import, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
   const { amIBlockedByUser } = await import('~/server/services/user.service');
   return !(await amIBlockedByUser({ userId: viewer.id, targetUserId: model.userId }));
 }

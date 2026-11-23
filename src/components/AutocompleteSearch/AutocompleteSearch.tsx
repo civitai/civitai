@@ -28,6 +28,7 @@ import { InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsear
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { slugit } from '~/utils/string-helpers';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
+import { isSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
 import {
   isImageSearchIndex,
   withSemanticImageSearch,
@@ -69,7 +70,7 @@ import {
   feedSearchPathname,
   pageSearchFor,
   profileFeedSection,
-  searchSectionFromPath,
+  searchSectionFor,
   searchesFeedInPlace,
 } from '~/components/Search/search-target';
 import {
@@ -83,7 +84,7 @@ import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tool
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { getSearchRefusal } from '~/components/Search/search-refusal';
+import { browserChecksProfanity, getSearchRefusal } from '~/components/Search/search-refusal';
 import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { truncate } from 'lodash-es';
@@ -134,7 +135,11 @@ const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
     ),
     {
       onError: () => autocompleteAvailability.setUnavailable(true),
-      onSuccess: () => autocompleteAvailability.setUnavailable(false),
+      onSuccess: () => {
+        autocompleteAvailability.setUnavailable(false);
+        autocompleteAvailability.setRefusedQuery(null);
+      },
+      onRefused: (query) => autocompleteAvailability.setRefusedQuery(query ?? null),
     }
   )
 );
@@ -170,7 +175,7 @@ const IndexSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref)
   // their pick — so the category selector would only ever "work" when it picked what the URL
   // already said.
   const pathname = usePathname();
-  const currentSection = searchSectionFromPath(pathname) || 'models';
+  const currentSection = searchSectionFor(pathname, features) || 'models';
   // Default only: an explicit selector pick is not routed through here (see resolveSearchTarget).
   const imageSearchOn = offersImageSearch(features);
   const searchTarget = resolveSearchTarget(
@@ -386,12 +391,22 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   );
   const isIllegalSearch = refusal === 'illegal';
 
-  // Check profanity in search query (only if not illegal and domain is green)
+  // Profanity (green domain only): the server's verdict where every request reaches it, else the
+  // browser's own check with the shipped list.
+  const refusedQuery = useAutocompleteAvailabilityStore((state) => state.refusedQuery);
+  const serverChecksProfanity = !browserChecksProfanity({
+    via: 'siteSearch',
+    proxyEnabled: isSiteSearchProxyEnabled(),
+  });
   const profanityAnalysis = useCheckProfanity(debouncedSearch, {
-    enabled: domainColor === 'green' && !isIllegalSearch && !!debouncedSearch,
+    enabled:
+      domainColor === 'green' && !isIllegalSearch && !!debouncedSearch && !serverChecksProfanity,
   });
 
-  const isProfaneSearch = profanityAnalysis.hasProfanity;
+  // Keyed to the query, so a refusal never blocks a different one.
+  const isProfaneSearch = serverChecksProfanity
+    ? !!debouncedSearch && refusedQuery?.trim() === debouncedSearch.trim()
+    : profanityAnalysis.hasProfanity;
 
   const items = useMemo(() => {
     if (refusal === 'illegal') {

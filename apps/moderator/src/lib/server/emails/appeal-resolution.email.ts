@@ -1,4 +1,5 @@
-import { createEmail } from '@civitai/email';
+import { createEmail, renderEmailShell } from '@civitai/email';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { env } from '$env/dynamic/private';
 import { siteAppealDecisionText, type SiteAppealCategory } from '@civitai/shared/site-appeal';
 
@@ -10,13 +11,14 @@ export type AppealResolutionEmailData = {
   items: { url?: string; label: string }[];
 };
 
-const escapeHtml = (s: string) =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const tosFooter =
+  'For more information, see our <a href="https://civitai.com/content/tos">Terms of Service</a>.';
 
 // Appeal-resolution email — the spoke's own copy of the two appeal kinds from the main app's
 // moderationAction email (per the @civitai/email convention, branded copy lives in each app; the package
-// owns the SMTP transport). The moderator's free-text `resolvedMessage` is intentionally NOT emailed — it's
-// shown only in-app — so the email carries only the decision + the affected items.
+// owns the SMTP transport and the shared layout, renderEmailShell). The moderator's free-text
+// `resolvedMessage` is intentionally NOT emailed — it's shown only in-app — so the email carries only
+// the decision + the affected items.
 export const appealResolutionEmail = createEmail<AppealResolutionEmailData, never>({
   header: ({ to, approved }) => ({
     to,
@@ -36,17 +38,17 @@ export const appealResolutionEmail = createEmail<AppealResolutionEmailData, neve
           }</li>`
       )
       .join('');
-    return `
-      <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #111;">
-        <h2 style="color: ${approved ? '#12b886' : '#e03131'};">${heading}</h2>
-        <p>Hi ${escapeHtml(username)},</p>
-        <p>${intro}</p>
-        ${items.length ? `<p>Affected content:</p><ul>${list}</ul>` : ''}
-        <p style="color: #666; font-size: 13px;">
-          For more information, see our
-          <a href="https://civitai.com/content/tos">Terms of Service</a>.
-        </p>
-      </div>`;
+    return renderEmailShell({
+      header: heading,
+      body: `<p style="margin: 0 0 16px 0;">Hi ${escapeHtml(username)},</p>
+        <p style="margin: 0 0 16px 0;">${intro}</p>
+        ${
+          items.length
+            ? `<p style="margin: 0 0 8px 0;">Affected content:</p><ul style="margin: 0; padding-left: 24px;">${list}</ul>`
+            : ''
+        }`,
+      footer: tosFooter,
+    });
   },
   text: ({ username, approved, items }) => {
     const intro = approved
@@ -80,17 +82,13 @@ export const siteAppealResolutionEmail = createEmail<SiteAppealResolutionEmailDa
   html: ({ username, category, approved, restored, appealUrl }) => {
     const heading = approved ? 'Appeal Approved' : 'Appeal Decision';
     const text = siteAppealDecisionText({ category, approved, restored });
-    return `
-      <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #111;">
-        <h2 style="color: ${approved ? '#12b886' : '#e03131'};">${heading}</h2>
-        <p>Hi ${escapeHtml(username)},</p>
-        <p>${escapeHtml(text)}</p>
-        <p><a href="${escapeHtml(appealUrl)}">See the decision</a></p>
-        <p style="color: #666; font-size: 13px;">
-          For more information, see our
-          <a href="https://civitai.com/content/tos">Terms of Service</a>.
-        </p>
-      </div>`;
+    return renderEmailShell({
+      header: heading,
+      body: `<p style="margin: 0 0 16px 0;">Hi ${escapeHtml(username)},</p>
+        <p style="margin: 0 0 16px 0;">${escapeHtml(text)}</p>
+        <p style="margin: 0;"><a href="${escapeHtml(appealUrl)}">See the decision</a></p>`,
+      footer: tosFooter,
+    });
   },
   text: ({ username, category, approved, restored, appealUrl }) =>
     `Hi ${username},\n\n${siteAppealDecisionText({

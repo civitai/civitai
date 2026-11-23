@@ -19,7 +19,11 @@ import { moderatorApp } from '~/server/services/moderator-app.service';
 export type FeedbackTriageOutcome = 'changed' | 'conflict' | 'gone';
 
 export async function setFeedbackTriage(
-  input: FeedbackTriageRequest & { actorId: number; expectedHandledById?: number | null },
+  input: FeedbackTriageRequest & {
+    actorId: number;
+    expectedHandledById?: number | null;
+    expectedUnheld?: boolean;
+  },
   send: (input: FeedbackTriageInput) => Promise<unknown> = (i) => moderatorApp.feedbackTriage(i)
 ): Promise<FeedbackTriageOutcome> {
   const { actorId, ...request } = input;

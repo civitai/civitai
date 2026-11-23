@@ -47,6 +47,42 @@ func TestOverrides(t *testing.T) {
 	}
 }
 
+// APP_INDEX_LISTINGS is off unless set on; any other value refuses to start, as does on with too
+// few connections for a second consumer lock.
+func TestListings(t *testing.T) {
+	for v, want := range map[string]bool{"": false, "off": false, "false": false, "0": false, "on": true, "TRUE": true, "1": true} {
+		m := base()
+		m["APP_INDEX_LISTINGS"] = v
+		c, err := FromEnv(env(m))
+		if err != nil || c.Listings != want {
+			t.Errorf("APP_INDEX_LISTINGS=%q: listings %v err %v, want %v", v, c != nil && c.Listings, err, want)
+		}
+	}
+	m := base()
+	m["APP_INDEX_LISTINGS"], m["APP_INDEX_DB_MAX_CONNS"] = "on", "2"
+	want := "APP_INDEX_DB_MAX_CONNS must be at least 3 with APP_INDEX_LISTINGS on"
+	if _, err := FromEnv(env(m)); err == nil || err.Error() != want {
+		t.Errorf("on with 2 connections: err %v, want %q", err, want)
+	}
+	// A value that is neither on nor off is read as off and never refuses to start, even with a
+	// connection count only listings would reject.
+	for _, v := range []string{"yes", "onn", " enable "} {
+		for _, conns := range []string{"4", "2"} {
+			m := base()
+			m["APP_INDEX_LISTINGS"], m["APP_INDEX_DB_MAX_CONNS"] = v, conns
+			c, err := FromEnv(env(m))
+			if err != nil || c.Listings || c.ListingsInvalid != v {
+				t.Errorf("APP_INDEX_LISTINGS=%q conns %s: err %v, config %+v; want off, invalid %q", v, conns, err, c, v)
+			}
+		}
+	}
+	m = base()
+	m["APP_INDEX_DB_MAX_CONNS"] = "2"
+	if c, err := FromEnv(env(m)); err != nil || c.ListingsInvalid != "" {
+		t.Errorf("listings unset with 2 connections: %v %+v", err, c)
+	}
+}
+
 func TestInvalid(t *testing.T) {
 	cases := map[string]map[string]string{
 		"APP_INDEX_REGISTRY_URL":    {"APP_INDEX_REGISTRY_URL": ""},

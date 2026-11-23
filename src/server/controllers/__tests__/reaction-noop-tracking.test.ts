@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as PrismaSqlKysely from '~/server/db/prisma-sql-kysely';
 import type { ProtectedContext } from '~/server/createContext';
 import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 
@@ -16,6 +17,8 @@ const {
   mockCreateNotification: vi.fn(async () => undefined),
   mockExcludedUserIds: vi.fn(async () => [] as number[]),
   mockDbRead: {
+    // The viewer's block list, read by the image visibility check: nobody.
+    $queryRaw: vi.fn(async () => []),
     image: {
       findFirst: vi.fn(async () => ({
         nsfwLevel: 1,
@@ -57,6 +60,14 @@ vi.mock('~/server/services/notification.service', () => ({
 }));
 vi.mock('~/server/services/metric-excluded-users.service', () => ({
   getMetricExcludedUserIds: mockExcludedUserIds,
+}));
+// The image visibility check admits every image here; its rule is pinned in
+// image-thread-visibility.behavior.test.ts.
+vi.mock('~/server/db/prisma-sql-kysely', async (importOriginal) => ({
+  ...(await importOriginal<typeof PrismaSqlKysely>()),
+  queryPrismaSql: vi.fn(async () => [
+    { id: 1, userId: 1, nsfwLevel: 1, postId: 1, visibleSignedOut: null },
+  ]),
 }));
 
 import { toggleReactionHandler } from '~/server/controllers/reaction.controller';

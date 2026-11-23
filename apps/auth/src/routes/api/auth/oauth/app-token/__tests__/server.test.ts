@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import { TokenScope } from '@civitai/auth/token-scope';
 
 // The db mock routes selectFrom by table so the client and consent lookups are controlled independently, and
@@ -59,7 +60,10 @@ vi.mock('@civitai/auth/secret-hash', () => ({
 }));
 vi.mock('$lib/server/auth/internal', () => ({ isInternalRequest: h.isInternalRequest }));
 vi.mock('$lib/server/auth/request', () => ({ getClientIp: () => '203.0.113.9' }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: h.checkOAuthRateLimit }));
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
+  checkOAuthRateLimit: h.checkOAuthRateLimit,
+}));
 vi.mock('$lib/server/auth/session-producer', () => ({
   getOrProduceSessionUser: h.getOrProduceSessionUser,
 }));
@@ -111,6 +115,16 @@ describe('oauth/app-token +server', () => {
     // POSITIVE CONTROL: with scopes and access, the same request mints.
     h.rows.OauthClient = { allowedScopes: REQUESTED, accessMode: 'open', grants: [] };
     expect((await call({ ...body, clientId: 'civitai-remix-apps' })).status).toBe(200);
+  });
+
+  it('mints nothing for an impersonation', async () => {
+    const res = await call({ ...body, impersonatedBy: 3 });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe('impersonation_refused');
+    expect(h.inserts).toHaveLength(0);
+    // Control: the same request with no impersonation mints.
+    expect((await call({ ...body, impersonatedBy: null })).status).toBe(200);
+    expect(h.inserts).toHaveLength(1);
   });
 
   it('mints nothing for a service client, which acts only as itself', async () => {

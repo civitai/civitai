@@ -184,12 +184,18 @@ export function rateLimit<TInput = any>(
       req: ctx.req,
     });
 
-    // When onlyCountSuccess is set, defer recording until the procedure succeeds
-    // so failed calls don't burn a slot.
+    // When onlyCountSuccess is set, a call that does not succeed releases its slot. The slot is
+    // held while the procedure runs, so a concurrent call at the limit is refused meanwhile.
     if (options?.onlyCountSuccess) {
-      const result = await next();
-      if (result.ok) await recordAttempt();
-      return result;
+      let succeeded = false;
+      try {
+        const result = await next();
+        succeeded = result.ok;
+        if (succeeded) await recordAttempt();
+        return result;
+      } finally {
+        if (!succeeded) await recordAttempt.refund();
+      }
     }
 
     await recordAttempt();
@@ -376,6 +382,18 @@ export function purgeOnSuccess(tags: string[]) {
       );
 
     return result;
+  });
+}
+
+/** `noEdgeCache` for the inputs `when` matches. It mutates `ctx.cache` in place, which the response headers read. */
+export function noEdgeCacheWhen(when: (input: Record<string, unknown>) => boolean) {
+  return middleware(async ({ next, ctx, getRawInput }) => {
+    const input = await getRawInput();
+    if (ctx.cache && input && typeof input === 'object' && when(input as Record<string, unknown>)) {
+      ctx.cache.edgeTTL = 0;
+      ctx.cache.browserTTL = 0;
+    }
+    return next();
   });
 }
 

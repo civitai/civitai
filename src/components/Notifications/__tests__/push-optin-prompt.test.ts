@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PushPromptState } from '~/components/Notifications/pushPrompt';
 import { decidePushPrompt, isPushAskSnoozed } from '~/components/Notifications/pushPrompt';
-import { EXCLUDED_ROUTE } from '~/components/Notifications/PushOptInPrompt';
+import { EXCLUDED_ROUTE, isPushRouteExcluded } from '~/components/Notifications/PushOptInPrompt';
 import { rowsForPushTypes } from '~/components/Notifications/pushPromptRows';
 import { trackActionSchema } from '~/server/schema/track.schema';
 
@@ -117,6 +117,16 @@ describe('another-device rows', () => {
   });
 });
 
+describe('deal pages', () => {
+  it('keep the visit prompt only for viewers without creatorServicesNext, who get no inline ask', () => {
+    for (const route of ['/services/deals', '/services/deals/[id]']) {
+      expect(isPushRouteExcluded(route, false)).toBe(false);
+      expect(isPushRouteExcluded(route, true)).toBe(true);
+    }
+    expect(isPushRouteExcluded('/services', true)).toBe(false);
+  });
+});
+
 describe('Push_Prompt tracking', () => {
   const action = {
     type: 'Push_Prompt',
@@ -125,6 +135,11 @@ describe('Push_Prompt tracking', () => {
 
   it('accepts a funnel step from the browser', () => {
     expect(trackActionSchema.safeParse(action).success).toBe(true);
+  });
+
+  it('accepts the inline ask on deal pages', () => {
+    const details = { ...action.details, surface: 'deal-flow' };
+    expect(trackActionSchema.safeParse({ ...action, details }).success).toBe(true);
   });
 
   it('rejects a step or surface outside the closed set', () => {

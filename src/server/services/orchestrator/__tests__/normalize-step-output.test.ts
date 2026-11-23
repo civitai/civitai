@@ -57,8 +57,6 @@ describe('normalizeStepOutput — preprocessVideo', () => {
     expect(await normalize({ $type: 'preprocessVideo', output: {} })).toEqual([]);
   });
 
-  // Guards the case that produced the bug: the image sibling was handled and the
-  // video one silently fell through the switch to [].
   it('classifies preprocessImage as image, not video', async () => {
     const result = await normalize({
       $type: 'preprocessImage',

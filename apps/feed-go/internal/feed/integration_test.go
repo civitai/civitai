@@ -84,7 +84,7 @@ func integRun(t *testing.T, pool *pgxpool.Pool, q ImagesQuery) []RawImage {
 	if err != nil {
 		t.Fatalf("query: %v\n%s", err, b.SQL)
 	}
-	out, err := scanRows(rows)
+	out, err := scanRows(rows, b.Collection)
 	if err != nil {
 		t.Fatalf("scan: %v\n%s", err, b.SQL)
 	}
@@ -698,7 +698,7 @@ func TestIntegrationGalleryPromotions(t *testing.T) {
 		ts(-24*time.Hour), ts(-8*24*time.Hour), live))
 	ctx := integtest.Ctx(t)
 
-	rows, err := g.LiveGalleryPromotions(ctx, 2104001, now.Add(-maxRun))
+	rows, err := g.LiveGalleryPromotions(ctx, 2104001, now.Add(-MaxPromotionRun))
 	if err != nil {
 		t.Fatal(err)
 	}

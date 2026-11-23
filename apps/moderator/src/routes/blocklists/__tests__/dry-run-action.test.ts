@@ -78,3 +78,42 @@ describe('blocklists dry-run action', () => {
     });
   });
 });
+
+describe('blocklists profanity dry-run action', () => {
+  const profanityDryRun = (text: string) => {
+    const body = new FormData();
+    body.set('text', text);
+    const request = new Request('http://localhost/blocklists?/profanityDryRun', {
+      method: 'POST',
+      body,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return actions.profanityDryRun({ request, locals: { user: { id: 1 } } } as any);
+  };
+
+  beforeEach(() => {
+    callModEndpoint.mockReset();
+    callModEndpoint.mockResolvedValue({ ok: true, body: { flagged: true, listSource: 'managed' } });
+  });
+
+  it('sends the trimmed text and returns only the verdict and list source', async () => {
+    callModEndpoint.mockResolvedValue({
+      ok: true,
+      body: { flagged: true, listSource: 'managed', matched: 'zqvoxtoken' },
+    });
+    const result = await profanityDryRun('  some text  ');
+    expect(callModEndpoint).toHaveBeenCalledWith(
+      'profanity-dry-run',
+      { text: 'some text' },
+      'Dry run'
+    );
+    expect(result).toEqual({
+      profanityDryRun: { text: 'some text', flagged: true, listSource: 'managed' },
+    });
+  });
+
+  it('refuses empty text without calling the main app', async () => {
+    expect(await profanityDryRun('   ')).toMatchObject({ status: 400 });
+    expect(callModEndpoint).not.toHaveBeenCalled();
+  });
+});

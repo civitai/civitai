@@ -25,7 +25,8 @@ const OWNER = 10;
 const viewers = {
   anonymous: {},
   stranger: { userId: 20 },
-  owner: { userId: OWNER },
+  owner: { userId: OWNER, ownerSeesHeld: true },
+  ownerOnScopedKey: { userId: OWNER },
   moderator: { userId: 30, isModerator: true },
 };
 
@@ -38,6 +39,7 @@ const UNFLAGGED_R = 105;
 const HELD_CSAM = 106;
 const HELD_MINOR = 107;
 const OTHER_REVIEW = 108;
+const ACCEPTABLE_MINOR = 9001;
 
 let db: PGlite;
 
@@ -51,7 +53,8 @@ beforeAll(async () => {
       "mimeType" text, type text DEFAULT 'image', metadata jsonb, "scannedAt" timestamp,
       "needsReview" text, "blockedFor" text, "userId" int DEFAULT ${OWNER}, index int DEFAULT 0,
       poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
-      "modelRestricted" boolean NOT NULL DEFAULT false
+      "modelRestricted" boolean NOT NULL DEFAULT false,
+      "acceptableMinor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     INSERT INTO "Image" (id, "nsfwLevel", ingestion) VALUES
@@ -62,7 +65,9 @@ beforeAll(async () => {
     INSERT INTO "ImageConnection" VALUES
       (${RATED}, 1, 'BountyEntry'), (${UNRATED}, 2, 'BountyEntry'), (${UNRATED_PENDING}, 3, 'BountyEntry'),
       (${MINOR_R}, 4, 'BountyEntry'), (${UNFLAGGED_R}, 5, 'BountyEntry'),
-      (${HELD_CSAM}, 6, 'BountyEntry'), (${HELD_MINOR}, 7, 'BountyEntry'), (${OTHER_REVIEW}, 8, 'BountyEntry');
+      (${HELD_CSAM}, 6, 'BountyEntry'), (${HELD_MINOR}, 7, 'BountyEntry'), (${OTHER_REVIEW}, 8, 'BountyEntry'),
+      (${ACCEPTABLE_MINOR}, 9, 'BountyEntry');
+    INSERT INTO "Image" (id, "acceptableMinor") VALUES (${ACCEPTABLE_MINOR}, true);
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -120,11 +125,25 @@ describe('getImagesByEntity', () => {
   it.each([
     ['held for csam review', 6],
     ['held for minor review', 7],
-  ])(
-    'withholds from the owner their own image %s, and serves it to a moderator',
-    async (_l, entry) => {
-      expect(await imageOf(entry, viewers.owner)).toEqual([]);
-      expect(await imageOf(entry, viewers.moderator)).toHaveLength(1);
+  ])('serves the owner their own image %s, and a moderator; nobody else', async (_l, entry) => {
+    expect(await imageOf(entry, viewers.owner)).toHaveLength(1);
+    expect(await imageOf(entry, viewers.ownerOnScopedKey)).toEqual([]);
+    expect(await imageOf(entry, viewers.moderator)).toHaveLength(1);
+    expect(await imageOf(entry, viewers.stranger)).toEqual([]);
+    expect(await imageOf(entry, viewers.anonymous)).toEqual([]);
+  });
+
+  it.each(['anonymous', 'stranger'] as const)(
+    'withholds an image marked acceptable-minor from the %s',
+    async (who) => {
+      expect(await imageOf(9, viewers[who])).toEqual([]);
+    }
+  );
+
+  it.each(['owner', 'moderator'] as const)(
+    'serves an image marked acceptable-minor to the %s',
+    async (who) => {
+      expect(await imageOf(9, viewers[who])).toEqual([ACCEPTABLE_MINOR]);
     }
   );
 

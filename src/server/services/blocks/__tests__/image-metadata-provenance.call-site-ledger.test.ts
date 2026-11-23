@@ -85,7 +85,7 @@ const WRITE_SITE_LEDGER: Record<string, { decision: Decision; sites: number }> =
     decision: 'no-metadata',
     sites: 1,
   },
-  'src/pages/api/admin/temp/migrate-article-images.ts#processBatch': {
+  'src/server/api-routes/admin/temp/migrate-article-images.ts#processBatch': {
     decision: 'no-metadata',
     sites: 1,
   },
@@ -523,7 +523,7 @@ function rawMetadataAssignment(sql: string): string | null {
     if (sql[i] === '$' && sql[i + 1] === '{') i = interpolationEnd(sql, i + 2);
     else if (sql[i] === '(') depth++, i++;
     else if (sql[i] === ')') depth--, i++;
-    else if (depth === 0 && (sql[i] === ',' || /^\s+WHERE\b/i.test(sql.slice(i, i + 20))))
+    else if (depth === 0 && (sql[i] === ',' || /^\s+(WHERE|FROM)\b/i.test(sql.slice(i, i + 20))))
       return sql.slice(start, i).trim();
     else i++;
   }
@@ -549,6 +549,12 @@ type UpdateDecision =
   | 'raw-server-keys'
   /** Raw SET to exactly `withoutGraceMarkersSql()`: the stored value minus two fixed server keys. */
   | 'raw-grace-marker-strip'
+  /**
+   * Raw SET to exactly `liftedMetadataSql` or `unblockedMetadataSql`: the stored value minus fixed
+   * keys, or, while the owner is deleted, that plus the grace breadcrumbs under fixed keys with
+   * server-computed values.
+   */
+  | 'raw-grace-marker-lift'
   /**
    * Raw SET merging exactly one literal, non-provenance key whose value is a `::text` parameter: a
    * string under a fixed key cannot add or replace any other key.
@@ -593,7 +599,7 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'stored-merge-server-keys',
     sites: 1,
   },
-  'src/pages/api/admin/temp/backfill-block-image-blurhash.ts#backfillOne': {
+  'src/server/api-routes/admin/temp/backfill-block-image-blurhash.ts#backfillOne': {
     decision: 'stored-merge-server-keys',
     sites: 1,
   },
@@ -618,6 +624,11 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     sites: 1,
   },
   'src/server/services/image.service.ts#handleUnblockImages': {
+    decision: 'raw-grace-marker-lift',
+    sites: 1,
+  },
+  // A moderator's block drops a moderation rule's keys: the removal is the moderator's now.
+  'src/server/services/image.service.ts#writeModeratorBlock': {
     decision: 'raw-server-keys',
     sites: 1,
   },
@@ -639,6 +650,10 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
   },
   'src/server/services/image-scan-result.service.ts#blockImageFromRating': {
     decision: 'raw-grace-marker-strip',
+    sites: 1,
+  },
+  'src/server/services/report.service.ts#settleResolvedAppeals': {
+    decision: 'raw-grace-marker-lift',
     sites: 1,
   },
   'src/server/services/user.service.ts#blockBannedUserImages': {
@@ -693,6 +708,12 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
       const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
       if (expr !== '${withoutGraceMarkersSql()}')
         return 'metadata is no longer the stored value minus the grace-block breadcrumbs';
+      return null;
+    }
+    case 'raw-grace-marker-lift': {
+      const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
+      if (expr !== '${liftedMetadataSql}' && expr !== '${unblockedMetadataSql}')
+        return 'metadata is no longer a lifted value from image-visibility';
       return null;
     }
     case 'raw-server-keys': {

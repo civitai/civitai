@@ -10,6 +10,20 @@ export const DEVICE_POLL_INTERVAL = 5; // seconds
 export const APP_TOKEN_DEFAULT_TTL = 15 * 60; // 15 minutes
 export const APP_TOKEN_MAX_TTL = ACCESS_TOKEN_TTL;
 
+/** The Flipt flag that makes offline access a separate grant (offline-grant.ts). Off: today's tokens. */
+export const OFFLINE_GRANT_FLAG = 'oauth-offline-grant';
+/**
+ * How long a rotated refresh token's tombstone lasts, at most (it never outlives the token's own
+ * expiry). Long enough for a client that sleeps for days to come back with its old token after a
+ * thief rotated it; short enough that one tombstone per rotation stays bounded. See offline-grant.ts.
+ */
+export const REFRESH_TOMBSTONE_TTL = 7 * 24 * 60 * 60; // 7 days
+/**
+ * How long after a rotation presenting the rotated refresh token is plain invalid_grant rather than
+ * reuse: a client that retried a refresh, or two tabs refreshing at once, is not a thief.
+ */
+export const REFRESH_REUSE_GRACE = 60; // seconds
+
 // Worker identity: a workload client's worker trades a device credential for a short-lived `Worker` token
 // through the token-exchange grant (RFC 8693). No refresh token; the worker exchanges again before expiry.
 export const WORKER_TOKEN_TTL = 15 * 60; // 15 minutes
@@ -17,6 +31,8 @@ export const TOKEN_EXCHANGE_GRANT = 'urn:ietf:params:oauth:grant-type:token-exch
 export const DEVICE_CODE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
 export const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
 export const DEVICE_ID_TOKEN_TYPE = 'urn:civitai:token-type:device-id';
+/** An App Block token (the site's RS256 block JWT) as `subject_token`, for the block token exchange. */
+export const BLOCK_TOKEN_TYPE = 'urn:civitai:token-type:block-token';
 export const JWT_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:jwt';
 /** The only grant a service client holds: it gets resource tokens from the token route, nothing else. */
 export const SERVICE_GRANT = 'urn:civitai:grant:service';

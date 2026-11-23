@@ -18,6 +18,12 @@ import type {
 } from '~/server/schema/site-search.schema';
 import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
+import {
+  allBrowsingLevelsFlag,
+  effectiveBrowsingCeiling,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import { Availability } from '~/shared/utils/prisma/enums';
 
 const SITE_SEARCH_TIMEOUT_MS = 5_000;
@@ -43,9 +49,35 @@ export type SiteSearchViewer = {
   isModerator?: boolean | null;
   /** The most this request may be served; `undefined` where the site caps nothing. */
   browsingLevelCap?: number;
+  /**
+   * Where the site caps nothing: the signed-in viewer's own level, which collection covers and
+   * item images are capped to (a collection's level is its items' combined level, so the doc
+   * filter does not reach each picture). `undefined` for moderators and under a cap.
+   */
+  collectionImageLevel?: number;
   /** Model hits carry their civitai.com face instead of the civitai.red title. */
   showSfwFace: boolean;
 };
+
+/**
+ * `SiteSearchViewer.collectionImageLevel`: the signed-in, non-moderator viewer's own level where the
+ * site caps nothing, and `undefined` where it would change nothing (a viewer on every level).
+ */
+export function collectionImageLevelFor({
+  browsingLevelCap,
+  signedIn,
+  isModerator,
+  viewerBrowsingLevel,
+}: {
+  browsingLevelCap: number | undefined;
+  signedIn: boolean;
+  isModerator: boolean | null | undefined;
+  viewerBrowsingLevel: number;
+}) {
+  if (browsingLevelCap !== undefined || !signedIn || isModerator) return undefined;
+  const level = effectiveBrowsingCeiling(allBrowsingLevelsFlag, viewerBrowsingLevel);
+  return Flags.hasFlag(level, allBrowsingLevelsFlag) ? undefined : level;
+}
 
 /** A refusal the site-search endpoint sends as-is, so its message must be safe to show. */
 export class SiteSearchError extends Error {
@@ -162,12 +194,14 @@ export function shapeModelHit(
 ) {
   const { sfwName, ...rest } = hit;
   const useFace = viewer.showSfwFace && typeof sfwName === 'string' && sfwName.length > 0;
-  if (useFace) rest.name = sfwName;
+  // Only where the caller asked for the title: `sfwName` is fetched for every models query, so
+  // its presence says nothing about whether `name` was wanted.
+  if (useFace && 'name' in rest) rest.name = sfwName;
   if ('images' in rest) rest.images = capImages(rest.images, viewer.browsingLevelCap);
 
   if (rest._formatted) {
     const { sfwName: formattedSfwName, ...formatted } = rest._formatted;
-    if (useFace) formatted.name = formattedSfwName ?? sfwName;
+    if (useFace && 'name' in formatted) formatted.name = formattedSfwName ?? sfwName;
     if ('images' in formatted && viewer.browsingLevelCap !== undefined)
       formatted.images = keepCopiesOf(formatted.images, rest.images);
     rest._formatted = formatted;
@@ -224,16 +258,19 @@ type CollectionHit = Record<string, unknown> & { _formatted?: Record<string, unk
  */
 function shapeCollectionHit(
   hit: CollectionHit,
-  browsingLevelCap: number | undefined
+  browsingLevelCap: number | undefined,
+  { keepSrcs = false }: { keepSrcs?: boolean } = {}
 ): CollectionHit {
   if (browsingLevelCap === undefined) return hit;
-  const { srcs: _srcs, ...shaped }: CollectionHit = { ...hit };
+  const { srcs, ...shaped }: CollectionHit = { ...hit };
+  if (keepSrcs && srcs !== undefined) shaped.srcs = srcs;
   if ('images' in shaped) shaped.images = capImages(shaped.images, browsingLevelCap);
   const cover = shaped.image as RatedImage | null | undefined;
   const coverKept = !!cover && isRatingWithinCap(cover.nsfwLevel, browsingLevelCap);
   if ('image' in shaped && cover) shaped.image = coverKept ? cover : null;
   if (shaped._formatted) {
-    const { srcs: _formattedSrcs, ...formatted } = shaped._formatted;
+    const { srcs: formattedSrcs, ...formatted } = shaped._formatted;
+    if (keepSrcs && formattedSrcs !== undefined) formatted.srcs = formattedSrcs;
     if ('images' in formatted) formatted.images = keepCopiesOf(formatted.images, shaped.images);
     if ('image' in formatted && formatted.image && !coverKept) formatted.image = null;
     shaped._formatted = formatted;
@@ -250,13 +287,14 @@ function shapeCollectionHit(
  */
 export function hitsNeedShaping(
   indexUid: string | undefined,
-  viewer: Pick<SiteSearchViewer, 'browsingLevelCap'>
+  viewer: Pick<SiteSearchViewer, 'browsingLevelCap' | 'collectionImageLevel'>
 ) {
   if (indexUid === MODELS_SEARCH_INDEX) return true;
+  if (indexUid === COLLECTIONS_SEARCH_INDEX)
+    return viewer.browsingLevelCap !== undefined || viewer.collectionImageLevel !== undefined;
   if (
     indexUid === COMICS_SEARCH_INDEX ||
     indexUid === BOUNTIES_SEARCH_INDEX ||
-    indexUid === COLLECTIONS_SEARCH_INDEX ||
     indexUid === ARTICLES_SEARCH_INDEX ||
     indexUid === USERS_SEARCH_INDEX
   )
@@ -307,7 +345,10 @@ const AVATAR_INDEXES = [
 function shapeHits(indexUid: string | undefined, hits: unknown, viewer: SiteSearchViewer) {
   if (!hitsNeedShaping(indexUid, viewer)) return hits;
   const cap = viewer.browsingLevelCap;
-  if (!Array.isArray(hits)) return cap === undefined ? hits : [];
+  const capped =
+    cap !== undefined ||
+    (indexUid === COLLECTIONS_SEARCH_INDEX && viewer.collectionImageLevel !== undefined);
+  if (!Array.isArray(hits)) return capped ? [] : hits;
   if (cap === undefined || !indexUid || !AVATAR_INDEXES.includes(indexUid))
     return shapeIndexHits(indexUid, hits, viewer);
   const shaped = shapeIndexHits(indexUid, hits, viewer);
@@ -324,7 +365,17 @@ function shapeIndexHits(indexUid: string | undefined, hits: unknown, viewer: Sit
   if (indexUid === BOUNTIES_SEARCH_INDEX)
     return hits.map((hit: BountyHit) => shapeBountyHit(hit, viewer.browsingLevelCap));
   if (indexUid === COLLECTIONS_SEARCH_INDEX)
-    return hits.map((hit: CollectionHit) => shapeCollectionHit(hit, viewer.browsingLevelCap));
+    return hits.map((hit: CollectionHit) =>
+      viewer.browsingLevelCap !== undefined
+        ? shapeCollectionHit(hit, viewer.browsingLevelCap)
+        : shapeCollectionHit(hit, viewer.collectionImageLevel, {
+            // The index keeps a src only for an SFW article cover (collectionItemCoversSql's
+            // srcImageLevels), so a viewer on every SFW level may have it.
+            keepSrcs:
+              viewer.collectionImageLevel !== undefined &&
+              Flags.hasFlag(viewer.collectionImageLevel, sfwBrowsingLevelsFlag),
+          })
+    );
   return hits;
 }
 
@@ -337,15 +388,30 @@ function assertSiteSearchIndex(indexUid: string) {
     );
 }
 
-function withViewer<T extends { filter?: Filter }>(
+/**
+ * The attributes a hit is fetched with. A model hit can only be shown under its civitai.com face if
+ * it arrives with `sfwName`, and the caller chooses what a hit carries, so a models query that lists
+ * its attributes always gets `sfwName` added. `shapeModelHit` removes it again, so the caller's
+ * response holds exactly the attributes it listed.
+ */
+function attributesToFetch(indexUid: string, attributes: string[] | undefined) {
+  if (indexUid !== MODELS_SEARCH_INDEX || attributes === undefined) return attributes;
+  if (attributes.includes('sfwName') || attributes.includes('*')) return attributes;
+  return [...attributes, 'sfwName'];
+}
+
+function withViewer<T extends { filter?: Filter; attributesToRetrieve?: string[] }>(
   indexUid: string,
   params: T,
   viewer: SiteSearchViewer
 ): T {
-  return {
+  const shaped: T = {
     ...params,
     filter: withViewerClauses(params.filter, viewerSearchClauses(indexUid, viewer)),
   };
+  if (params.attributesToRetrieve !== undefined)
+    shaped.attributesToRetrieve = attributesToFetch(indexUid, params.attributesToRetrieve);
+  return shaped;
 }
 
 const searchUnavailable = () =>

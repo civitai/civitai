@@ -14,7 +14,10 @@ the placement rules you review against.
 
 **Look across apps as well as within one.** The SvelteKit apps share `@civitai/ui`, `@civitai/shared`
 and `@civitai/db` — a helper written twice in two apps belongs in a package, and a primitive
-hand-rolled in an app belongs in `@civitai/ui`.
+hand-rolled in an app belongs in `@civitai/ui`. Grep the main app's `src/server/` and
+`packages/civitai-*` too: a predicate, limiter or reader copied from `src/` (which an app cannot
+import) is a finding whose fix is moving it into a package, and the same decision (an access check, a
+visibility rule) written separately in two apps is a finding even when both copies agree today.
 
 **Never run `pnpm check`, `pnpm build`, `svelte-kit sync`, or any repo-wide `prettier`** — they fight
 the dev server's watcher. Read and grep only.

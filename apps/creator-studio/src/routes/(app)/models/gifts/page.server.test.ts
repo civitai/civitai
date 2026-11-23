@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { callMainApp, flag } = vi.hoisted(() => ({
+const { callMainApp, flag, loadUsageLimits } = vi.hoisted(() => ({
   callMainApp: vi.fn(),
   flag: { on: true },
+  loadUsageLimits: vi.fn(),
 }));
 vi.mock('$lib/server/main-app', () => ({ callMainApp }));
+vi.mock('$lib/server/usage-limits', () => ({ loadUsageLimits, USAGE_LIMITS_URL: 'u' }));
 vi.mock('$lib/server/main-app-flags', () => ({ darkFlagEnabled: vi.fn(async () => flag.on) }));
 vi.mock('$lib/server/session-cookies', () => ({ sessionCookies: () => 'cookie' }));
 
@@ -40,6 +42,21 @@ beforeEach(() => {
   flag.on = true;
   callMainApp.mockReset();
   callMainApp.mockResolvedValue({ ok: true, data: { items: [], nextCursor: null, revoked: 1 } });
+  loadUsageLimits.mockReset();
+  loadUsageLimits.mockResolvedValue(null);
+});
+
+const row = (id: string, used: number) => ({
+  id,
+  area: id.split('.')[0],
+  label: id,
+  limit: 15,
+  used,
+  remaining: 15 - used,
+  windowSeconds: null,
+  window: 'utc-month',
+  nextAt: null,
+  resetAt: '2026-12-01T00:00:00.000Z',
 });
 
 describe('/models/gifts', () => {
@@ -48,6 +65,28 @@ describe('/models/gifts', () => {
     await expect(loadAt('https://studio.test/models/gifts')).rejects.toMatchObject({ status: 404 });
     await expect(revoke({ versionId: '5', id: '9' })).rejects.toMatchObject({ status: 404 });
     expect(callMainApp).not.toHaveBeenCalled();
+  });
+
+  it("streams the creator's gifts.monthly row, and lists links without waiting for it", async () => {
+    loadUsageLimits.mockResolvedValueOnce([row('posts.daily', 9), row('gifts.monthly', 4)]);
+    const data = (await loadAt('https://studio.test/models/gifts')) as {
+      giftLimit: Promise<unknown>;
+    };
+    expect(await data.giftLimit).toMatchObject({ id: 'gifts.monthly', used: 4, limit: 15 });
+    expect(loadUsageLimits).toHaveBeenCalledWith('cookie');
+
+    // A limits read that never answers must not hold the list.
+    loadUsageLimits.mockReturnValueOnce(new Promise(() => {}));
+    callMainApp.mockResolvedValueOnce({ ok: true, data: { items: [{ id: 1 }], nextCursor: null } });
+    expect(await loadAt('https://studio.test/models/gifts')).toMatchObject({
+      page: { items: [{ id: 1 }] },
+    });
+
+    loadUsageLimits.mockResolvedValueOnce(null);
+    const failed = (await loadAt('https://studio.test/models/gifts')) as {
+      giftLimit: Promise<unknown>;
+    };
+    expect(await failed.giftLimit).toBeNull();
   });
 
   it('asks the main app for the page the cursor names', async () => {

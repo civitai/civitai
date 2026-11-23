@@ -20,6 +20,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
 )
 
@@ -372,6 +373,24 @@ func TestComputeWithinParentDeadlineIsADeadline(t *testing.T) {
 	}
 }
 
+// Every computation runs under one write-back budget (hydrate.WithWriteBudget), so its
+// cache writes share one bound however many caches it fills; the probe and shadow paths go through
+// within too. Fails on: within not installing it (each write would take its own bound).
+func TestWithinInstallsOneWriteBudget(t *testing.T) {
+	s := &Server{Metrics: NewMetrics(prometheus.NewRegistry()), Log: quietLog(), RequestBudget: time.Minute}
+	var marked bool
+	_, err := s.computeWithin(context.Background(), publicRequest(), "serve", func(ctx context.Context, _ *http.Request) (*computed, error) {
+		marked = hydrate.WithWriteBudget(ctx) == ctx
+		return &computed{payload: []byte(`{}`)}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !marked {
+		t.Fatal("the computation's context carries no write-back budget")
+	}
+}
+
 // Served computes are the site's traffic; shadow computes are marked so the feed service tells them
 // apart (feedsvc.IsShadow drives the request-source headers).
 func TestShadowModeReachesTheFeedClientOnlyFromTheShadowPath(t *testing.T) {
@@ -634,6 +653,8 @@ func TestCacheMissCounter(t *testing.T) {
 		"model-data/computed": 0, "model-data/error": 0, "model-tags/computed": 0, "model-tags/error": 0,
 		"official-models/computed": 0, "official-models/error": 0,
 		"metrics/computed": 0, "metrics/error": 0,
+		"image-tags/computed": 0, "image-tags/error": 0,
+		"user-follows/computed": 0, "user-follows/error": 0,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("series %v, want %v", got, want)
@@ -695,8 +716,10 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	if checked != 19 {
-		t.Fatalf("checked %d per-endpoint families, want 19 (a family was renamed or lost)", checked)
+	// 21: feed_go_shadow_compare_viewer_total (model-associated's per-viewer-class results) and
+	// feed_go_devalue_write_total included.
+	if checked != 21 {
+		t.Fatalf("checked %d per-endpoint families, want 21 (a family was renamed or lost)", checked)
 	}
 }
 

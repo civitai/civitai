@@ -10,7 +10,6 @@ export {
   tagData,
   cosmeticData,
   userCosmetics,
-  profilePictures,
 } from './imageData.cache';
 
 // Export types
@@ -21,6 +20,5 @@ export type {
   TagData,
   CosmeticData,
   UserCosmeticData,
-  ProfilePictureData,
 } from './imageData.cache';
 export type { CacheContext, CacheConfig, Cache } from './base';

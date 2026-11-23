@@ -138,7 +138,7 @@ var SignedOutTTL = CacheTTL{Browser: 60, Edge: 60, StaleWhileRevalidate: 30}
 // `public, max-age=<browser>, s-maxage=<edge>, stale-while-revalidate=<swr>` for a cacheable answer,
 // else the app's private default (PRIVATE_CACHE_CONTROL).
 func ResultCacheControl(ttl *CacheTTL) string {
-	if ttl != nil && ttl.Edge > 0 {
+	if EdgeCached(ttl) {
 		return "public, max-age=" + strconv.Itoa(ttl.Browser) + ", s-maxage=" + strconv.Itoa(ttl.Edge) +
 			", stale-while-revalidate=" + strconv.Itoa(ttl.StaleWhileRevalidate)
 	}

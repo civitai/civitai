@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { type Kysely, sql } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
 /**
@@ -27,5 +27,96 @@ export async function listModelEngagements(
     .select(['modelId', 'type'])
     .where('userId', '=', input.userId)
     .where('modelId', 'in', input.modelIds)
+    .execute();
+}
+
+/**
+ * A viewer's stake in models, for the personalised Hot lead: the models they liked (a thumbs-up
+ * review) and their Favorite / Notify / Mute engagements, with each model's owner and the time of
+ * the touch. Likes, Favorites and Notifies are each capped at `limit`. Notify is the type heavy users
+ * pile up, so it reads newest first, served by the partial notify (userId, createdAt) index. Likes and
+ * Favorites have no such index, and ordering them by time sorts every row a user has before the limit
+ * applies, so past the cap they keep an arbitrary `limit`. A liked model can come back once per
+ * review; the caller keeps its latest touch. Mutes are not capped, so one cannot fall out behind
+ * newer favourites.
+ */
+export async function listModelStake(db: Kysely<DB>, input: { userId: number; limit: number }) {
+  const [likes, favorites, notifies, mutes] = await Promise.all([
+    db
+      .selectFrom('ResourceReview as rr')
+      .innerJoin('Model as m', 'm.id', 'rr.modelId')
+      .select(['rr.modelId', 'm.userId', 'rr.createdAt as touchedAt'])
+      .where('rr.userId', '=', input.userId)
+      .where('rr.recommended', '=', true)
+      .where('rr.exclude', '=', false)
+      .where('rr.tosViolation', '=', false)
+      .limit(input.limit)
+      .execute(),
+    db
+      .selectFrom('ModelEngagement as e')
+      .innerJoin('Model as m', 'm.id', 'e.modelId')
+      .select(['e.modelId', 'm.userId', 'e.type', 'e.createdAt as touchedAt'])
+      .where('e.userId', '=', input.userId)
+      .where('e.type', '=', 'Favorite')
+      .limit(input.limit)
+      .execute(),
+    db
+      .selectFrom('ModelEngagement as e')
+      .innerJoin('Model as m', 'm.id', 'e.modelId')
+      .select(['e.modelId', 'm.userId', 'e.type', 'e.createdAt as touchedAt'])
+      .where('e.userId', '=', input.userId)
+      .where('e.type', '=', 'Notify')
+      .orderBy('e.createdAt', 'desc')
+      .limit(input.limit)
+      .execute(),
+    db
+      .selectFrom('ModelEngagement as e')
+      .innerJoin('Model as m', 'm.id', 'e.modelId')
+      .select(['e.modelId', 'm.userId', 'e.type', 'e.createdAt as touchedAt'])
+      .where('e.userId', '=', input.userId)
+      .where('e.type', '=', 'Mute')
+      .execute(),
+  ]);
+  return { likes, engagements: [...favorites, ...notifies, ...mutes] };
+}
+
+/**
+ * Every model with a version that counts as new since `since`: Published, Public or EarlyAccess
+ * (a paid version keeps EarlyAccess for good), and not a paid-gate re-date: a version whose
+ * publishedAt moved more than a day past its first publish is the same version, not a new one. The
+ * re-date clause mirrors the one in the hot_version_score() SQL function (#9928); change both together.
+ * One row per model, its newest such version, hottest first and capped at `limit`. Not per viewer:
+ * the personalised Hot lead filters this list in memory on every compute, so the cap bounds that work.
+ */
+export async function listRecentlyVersionedModels(
+  db: Kysely<DB>,
+  input: { since: Date; limit: number }
+) {
+  const newestPerModel = db
+    .selectFrom('ModelMetric as mm')
+    .innerJoin('ModelVersion as mv', 'mv.modelId', 'mm.modelId')
+    .select([
+      'mm.modelId',
+      'mm.userId',
+      'mm.hotScore',
+      'mv.publishedAt as versionPublishedAt',
+      'mv.nsfwLevel as versionNsfwLevel',
+    ])
+    .distinctOn('mm.modelId')
+    .where('mm.status', '=', 'Published')
+    .where('mm.lastVersionAt', '>', input.since)
+    .where('mv.status', '=', 'Published')
+    .where('mv.availability', 'in', ['Public', 'EarlyAccess'])
+    .where('mv.publishedAt', '>', input.since)
+    .where(
+      sql<boolean>`mv."publishedAt" < coalesce(mv."initialPublishedAt", mv."publishedAt") + interval '1 day'`
+    )
+    .orderBy('mm.modelId')
+    .orderBy('mv.publishedAt', 'desc');
+  return db
+    .selectFrom(newestPerModel.as('c'))
+    .selectAll()
+    .orderBy('c.hotScore', sql`desc nulls last`)
+    .limit(input.limit)
     .execute();
 }

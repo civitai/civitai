@@ -64,6 +64,10 @@ import {
 import { auditPromptEnriched } from '~/utils/metadata/audit';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { normalizeText } from '~/utils/normalize-text';
+import { createProfanityFilter } from '~/libs/profanity-simple';
+
+/** The shipped lists, as the server uses with `profanity-managed-list` off. */
+const SHIPPED = createProfanityFilter();
 
 // `~/server/logging/client` has a canonical mock registered globally (docs/testing/shared-module-mocks.md).
 const mockLog = loggingMock.logToAxiom;
@@ -269,14 +273,14 @@ describe('the profanity prefilter never changes the audit verdict', () => {
     'dick van dyke',
   ];
   it.each(corpus)('%s', async (text) => {
-    const full = auditPromptEnriched(normalizeText(text), undefined, true).success === false;
+    const full = auditPromptEnriched(normalizeText(text), undefined, SHIPPED).success === false;
     const hits = await classifySharedTexts([leaf(text)]);
     expect(hits.some((h) => h.category === 'audit_regex')).toBe(full);
   });
 
   it('positive control: the corpus contains both verdicts', () => {
     const verdicts = corpus.map(
-      (t) => auditPromptEnriched(normalizeText(t), undefined, true).success
+      (t) => auditPromptEnriched(normalizeText(t), undefined, SHIPPED).success
     );
     expect(verdicts).toContain(true);
     expect(verdicts).toContain(false);

@@ -73,6 +73,10 @@ type Input struct {
 	// is [] and every image's `cosmetic` null. The gallery refuses it (Parse); image.getInfinite
 	// serves it (the model page's showcase carousel sends `include: []`).
 	IncludeCosmetics bool
+	// IncludeTags is `include` holding 'tags': getAllImagesUncaptured attaches each image's votable
+	// tags (imageTagsCache, with the viewer's own votes). Only image.getInfinite reads it (ParseInfinite);
+	// the gallery still falls back on it (Parse: input-include).
+	IncludeTags bool
 }
 
 // imagesSchema is getInfiniteImagesSchema's allow-list and defaults (why: the inputschema package doc).
@@ -126,7 +130,7 @@ var knownPeriods = map[string]bool{"AllTime": true, "Day": true, "Week": true, "
 // Parse validates the decoded input map. A shape outside the supported subset is a fallback; a value
 // the schema itself rejects is also a fallback (the Node app answers it with its own BAD_REQUEST).
 func Parse(m map[string]any) (*Input, error) {
-	in, err := parseInput(m, unsupportedKeys, trpcTransportKeys)
+	in, err := parseInput(m, unsupportedKeys, trpcTransportKeys, false)
 	if err != nil {
 		return nil, err
 	}
@@ -136,9 +140,10 @@ func Parse(m map[string]any) (*Input, error) {
 	return in, nil
 }
 
-// parseInput is Parse with the procedure's own list of keys that fall back when present, and its own
-// set of keys outside the schema that zod strips, read as absent.
-func parseInput(m map[string]any, unsupported []string, absent map[string]bool) (*Input, error) {
+// parseInput is Parse with the procedure's own list of keys that fall back when present, its own set
+// of keys outside the schema that zod strips, read as absent, and whether an `include` of 'tags' is
+// answered (IncludeTags) rather than a fallback.
+func parseInput(m map[string]any, unsupported []string, absent map[string]bool, includeTags bool) (*Input, error) {
 	for _, k := range unsupported {
 		if v, ok := m[k]; ok && !isEmpty(v) {
 			return nil, fallback.Newf("input-"+k, "%v", v)
@@ -247,8 +252,9 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 	}
 	if v, ok := m["include"]; ok && v != nil {
 		// The default is ['cosmetics']; 'meta' is what withMeta adds. Anything else falls back here:
-		// 'tags' and 'metaSelect' hydrate more and are not ported; image.getInfinite removes the
-		// 'count'/'report' it never reads before this runs (withoutUnreadIncludes).
+		// 'metaSelect' hydrates more and is not ported, nor is 'tags' for the gallery (image.getInfinite
+		// answers it: includeTags); image.getInfinite removes the 'count'/'report' it never reads
+		// before this runs (withoutUnreadIncludes).
 		list, ok := v.([]any)
 		if !ok {
 			return nil, fallback.New("input-invalid")
@@ -264,6 +270,11 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 				in.IncludeProfilePictures = true
 			case "tagIds":
 				// Both handlers add it.
+			case "tags":
+				if !includeTags {
+					return nil, fallback.NewfSafe("input-include", includeToken(e), "%v", e)
+				}
+				in.IncludeTags = true
 			default:
 				return nil, fallback.NewfSafe("input-include", includeToken(e), "%v", e)
 			}
@@ -273,26 +284,36 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 	return in, nil
 }
 
-// ApplyDomainCap is applyDomainFeature: the input's levels clamped in place to the domain cap BEFORE
-// the schema default applies (an absent level under a cap becomes the cap; uncapped, it becomes 31).
-func (in *Input) ApplyDomainCap(cap int) (browsingLevel int, preCap *int) {
+// ApplyDomainCap is applyDomainFeature: the input's levels held to the viewer
+// (stripBlockedForNonModerator), then clamped to the domain cap BEFORE the schema default applies (an
+// absent level under a cap becomes the cap; uncapped, it becomes 31).
+func (in *Input) ApplyDomainCap(cap int, isModerator bool) (browsingLevel int, preCap *int) {
+	var level, pre *int
+	if in.BrowsingLevel != nil {
+		v := browsing.ForViewer(*in.BrowsingLevel, isModerator)
+		level = &v
+	}
+	if in.PreCapBrowsingLevel != nil {
+		v := browsing.ForViewer(*in.PreCapBrowsingLevel, isModerator)
+		pre = &v
+	}
 	if cap != 0 {
 		raw := 0
-		if in.BrowsingLevel != nil {
-			raw = *in.BrowsingLevel
+		if level != nil {
+			raw = *level
 		}
 		browsingLevel = browsing.ClampToCap(raw, cap)
-		if in.PreCapBrowsingLevel != nil {
-			v := browsing.ClampToCap(*in.PreCapBrowsingLevel, cap)
+		if pre != nil {
+			v := browsing.ClampToCap(*pre, cap)
 			preCap = &v
 		}
 		return browsingLevel, preCap
 	}
 	browsingLevel = browsing.AllLevels
-	if in.BrowsingLevel != nil {
-		browsingLevel = *in.BrowsingLevel
+	if level != nil {
+		browsingLevel = *level
 	}
-	return browsingLevel, in.PreCapBrowsingLevel
+	return browsingLevel, pre
 }
 
 func mapKeys(m map[string]any) []string {

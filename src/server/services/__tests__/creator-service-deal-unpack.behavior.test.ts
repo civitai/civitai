@@ -1,3 +1,4 @@
+import { constants } from '~/server/common/constants';
 import { crc32 } from 'zlib';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -87,7 +88,7 @@ vi.mock('~/utils/s3-utils', () => ({
   getGetUrlByKey: s3.getGetUrlByKey,
   uploadImageBufferToStore: s3.uploadImageBufferToStore,
 }));
-vi.mock('~/utils/s3-purge-versions', () => ({
+vi.mock('@civitai/storage/s3-purge-versions', () => ({
   purgeObjectVersions: async ({ bucket, key }: { bucket: string; key: string }) => {
     await s3.deleteObject(bucket, key);
     return { versionsDeleted: 1, remaining: 0 };
@@ -166,7 +167,6 @@ const { PreviewRejectedError } = await import('~/server/utils/service-deal-previ
 const {
   SERVICE_FINAL_OVER_LEVEL_REASON,
   SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR,
-  SERVICE_FINAL_VIDEO_MAX_BYTES,
   SERVICE_FINAL_VIDEO_TOO_LONG,
   SERVICE_FINAL_SCAN_GIVE_UP_MS,
   SERVICE_FINAL_SCAN_MAX_ATTEMPTS,
@@ -191,6 +191,9 @@ const MIGRATIONS = [
   '20270106120000_service_offering_content_scan',
   '20271118230000_service_deal_file_purge',
   '20271119070000_service_deal_file_scanned_etag',
+  '20271120030000_service_license_presets',
+  '20271120100000_service_deal_reviewed_happy',
+  '20271120100100_service_deal_reviews',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -437,7 +440,7 @@ beforeEach(async () => {
     await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
   });
   await holder.db.exec(`
-    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    TRUNCATE "ServiceDealReviewImage", "ServiceDealReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
@@ -2776,9 +2779,10 @@ describe('a video Final', () => {
     expect((await entries(fileId))[0].failReason).toMatch(/rejected/);
   });
 
-  it('refuses a video longer than the scan covers, and drops its copy unscanned', async () => {
-    probe.video.mockResolvedValue({ width: 640, height: 360, duration: 50.5 });
-    const { fileId } = await videoFinal(4, mp4Clip({ seconds: 50.5 }));
+  it('refuses a video longer than site uploads allow, and drops its copy unscanned', async () => {
+    const seconds = constants.mediaUpload.maxVideoDurationSeconds + 0.5;
+    probe.video.mockResolvedValue({ width: 640, height: 360, duration: seconds });
+    const { fileId } = await videoFinal(4, mp4Clip({ seconds }));
     expect(await fileRow(fileId)).toMatchObject({
       scanStatus: 'Failed',
       failReason: SERVICE_FINAL_VIDEO_TOO_LONG,
@@ -2800,10 +2804,21 @@ describe('a video Final', () => {
     const { fileId } = await videoFinal(4, clip(), name);
     expect(await fileRow(fileId)).toMatchObject({
       scanStatus: 'Failed',
-      failReason: SERVICE_FINAL_VIDEO_TOO_LONG,
+      failReason: SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR,
     });
     expect(images.createImage).not.toHaveBeenCalled();
     expect(s3.deleteObject).toHaveBeenCalledWith('image-store', 'scan-key-1', expect.anything());
+  });
+
+  it('refuses as too long a video whose header claims a short length over a stream past the limit', async () => {
+    probe.video.mockResolvedValue({ width: 640, height: 360, duration: 20 });
+    const seconds = constants.mediaUpload.maxVideoDurationSeconds + 20;
+    const { fileId } = await videoFinal(4, mp4Clip({ seconds, headerSeconds: 20 }));
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: SERVICE_FINAL_VIDEO_TOO_LONG,
+    });
+    expect(images.createImage).not.toHaveBeenCalled();
   });
 
   it('refuses a short video whose stated and real lengths disagree', async () => {
@@ -2819,7 +2834,7 @@ describe('a video Final', () => {
     const dealId = await accepted();
     const fileId = await final(dealId, 'clip.mp4', CLIP);
     await q(`UPDATE "ServiceDealFile" SET size = $1 WHERE id = $2`, [
-      SERVICE_FINAL_VIDEO_MAX_BYTES + 1,
+      constants.mediaUpload.maxVideoFileSize + 1,
       fileId,
     ]);
     serveClip();
@@ -2853,9 +2868,10 @@ describe('a video Final', () => {
     expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Pending', failReason: null });
   });
 
-  it('takes a video of exactly 50 seconds, and a .webm as video/webm', async () => {
-    probe.video.mockResolvedValue({ width: 640, height: 360, duration: 50 });
-    const clip = webmClip({ declared: 50, blocks: [0, 25, 49.96] });
+  it('takes a video of exactly the site upload length, and a .webm as video/webm', async () => {
+    const max = constants.mediaUpload.maxVideoDurationSeconds;
+    probe.video.mockResolvedValue({ width: 640, height: 360, duration: max });
+    const clip = webmClip({ declared: max, blocks: [0, max / 2, max - 0.04] });
     const dealId = await accepted();
     const fileId = await final(dealId, 'clip.webm', clip);
     serveClip('"v1"', clip);

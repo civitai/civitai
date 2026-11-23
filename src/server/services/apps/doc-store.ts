@@ -50,6 +50,9 @@
 //   - rate limits;
 //   - content moderation of shared writes;
 //   - a collection's `ownedModelVersions` rule on create and put (`doc-store-ownership.ts`);
+//   - call a collection's permission hook (`doc-store-hook.ts`). The store's part is to REFUSE a
+//     viewer write to a hooked collection that does not carry a HookPass for exactly that write,
+//     and to write only at the document version the pass carries (`requireHookPass`);
 //   - map `DocStoreError` codes to HTTP statuses and envelopes;
 //   - resolve `author.uid` to a username (and never forward the uid).
 //
@@ -103,11 +106,17 @@
 // order equals commit order, which is what a future change-feed poller needs.
 
 import { escapeLiteral } from 'pg';
+import { POOLER_TRANSIENT_08P01_MESSAGE } from '@civitai/db/db-errors';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { newUlid } from '~/server/utils/app-block-ids';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { validateDocAgainstCollectionSchema } from '~/server/services/apps/doc-store-schema';
+import {
+  spendHookPass,
+  type HookOp,
+  type HookPass,
+} from '~/server/services/apps/doc-store-hook-pass';
 import type { StorageHoldings } from '~/shared/utils/app-storage-usage';
 import type {
   AccountWipeNamespaceResult,
@@ -332,6 +341,79 @@ function requireShared(coll: DocCollection, what: string): void {
   }
 }
 
+/**
+ * The request checks of an increment: a shared collection, a declared counter, `by` from 1 to
+ * {@link B.incrementMax}. Exported so the permission-hook gate (`gateHook`) runs them before it
+ * calls a hook (an invalid request never reaches a hook); the store runs them on every increment
+ * itself.
+ */
+export function assertIncrementRequest(coll: DocCollection, counter: string, by: number): void {
+  requireShared(coll, 'counters');
+  if (!TALLY_NAME_SHAPE.test(counter) || !(coll.config.counters ?? []).includes(counter)) {
+    throw invalid(`counter ${counter} is not declared`, { counter });
+  }
+  if (!Number.isSafeInteger(by) || by < 1 || by > B.incrementMax) {
+    throw invalid(`by must be an integer from 1 to ${B.incrementMax}`);
+  }
+}
+
+/**
+ * The request checks of a mark or unmark: a shared collection, a declared mark or `report`. The
+ * hook gate runs them before a hook, as for an increment; the store runs them itself.
+ */
+export function assertMarkRequest(coll: DocCollection, name: string): void {
+  requireShared(coll, 'marks');
+  if (name === REPORT_MARK) return;
+  if (!TALLY_NAME_SHAPE.test(name) || !(coll.config.marks ?? []).includes(name)) {
+    throw invalid(`mark ${name} is not declared`, { mark: name });
+  }
+}
+
+/**
+ * PERMISSION HOOKS. A viewer write to a collection whose declaration has a `hook` runs only with
+ * a HookPass for exactly this write (`doc-store-hook-pass.ts`), which only the hook gate mints
+ * once the hook allowed it. Returns the document version the write is pinned to (the version the
+ * hook was shown), or `undefined` for a collection with no hook. The `report` mark is exempt: a
+ * hook must never be able to silence moderation reports. The maintenance, moderation and
+ * migration writers do not come through here: they are platform operations, not viewer writes
+ * (`doc-store-hook.ledger.test.ts` lists every write entry point).
+ */
+function requireHookPass(
+  ctx: DocStoreContext,
+  coll: DocCollection,
+  op: HookOp,
+  key: string,
+  pass: HookPass | undefined,
+  markName?: string
+): number | undefined {
+  if (!coll.config.hook) return undefined;
+  if (op === 'mark' && markName === REPORT_MARK) return undefined;
+  return spendHookPass(pass, { appId: ctx.appId, ns: ctx.ns, collection: coll.name, key, op });
+}
+
+/**
+ * The version a write is checked against: the hook's pinned one when there is a hook, else the
+ * caller's own `ifVersion`. Both given and different is a conflict (the gate refuses that before
+ * calling the hook, so this is a backstop).
+ */
+function effectiveIfVersion(
+  callerIfVersion: number | undefined,
+  pinned: number | undefined
+): number | undefined {
+  if (pinned === undefined) return callerIfVersion;
+  if (callerIfVersion !== undefined && callerIfVersion !== pinned) {
+    throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: null });
+  }
+  return pinned;
+}
+
+/** A tally op pinned to a version: the locked document's version must still be it. */
+function assertTallyVersion(ifVersion: number | undefined, current: number): void {
+  if (ifVersion !== undefined && ifVersion !== current) {
+    throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: current });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Server-side publish: the rules both the route and the store apply
 // ---------------------------------------------------------------------------
@@ -373,6 +455,22 @@ export function assertPublishPair(from: DocCollection, to: DocCollection): void 
     });
   }
   assertShareWritable(to);
+  assertNotHooked(to, 'publish');
+}
+
+/**
+ * Publish and unpublish write a whole batch of shared documents in one transaction, and a
+ * permission hook decides ONE write (`doc-store-hook.ts`), so a collection with a `hook` refuses
+ * both (`invalid_request`, `reason: 'hooked_collection'`): its documents are written one at a time
+ * through create / put / delete, each decided by the hook. Refusing is the fail-closed answer; a
+ * batch that skipped the hook would fail open. Exported for the route; the store runs it itself.
+ */
+export function assertNotHooked(coll: DocCollection, what: 'publish' | 'unpublish'): void {
+  if (!coll.config.hook) return;
+  throw invalid(
+    `${what} is not available for a collection with a permission hook; write each document`,
+    { reason: 'hooked_collection', collection: coll.name }
+  );
 }
 
 /**
@@ -843,8 +941,9 @@ const SQL_TOMBSTONE = `INSERT INTO appdata.doc_tomb AS tb (app_id, ns, coll, sco
 
 // Counters and marks: shared documents only. KEY SHARE blocks a concurrent
 // delete of the document until this transaction ends, without blocking other
-// counter/mark writers. $1 app, $2 ns, $3 coll, $4 key
-const SQL_SHARE_LOCK_DOC = `SELECT 1 AS ok FROM appdata.doc d
+// counter/mark writers. Returns the document's version, which a tally pinned by a
+// permission hook (`ifVersion`) is checked against. $1 app, $2 ns, $3 coll, $4 key
+const SQL_SHARE_LOCK_DOC = `SELECT d.version FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
     AND ${VISIBLE}
   FOR KEY SHARE`;
@@ -925,6 +1024,25 @@ const SQL_FEED_WITNESS_DOC = `SELECT d.seq FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
 const SQL_FEED_WITNESS_TOMB = `SELECT tb.seq FROM appdata.doc_tomb tb
   WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.coll = $3 AND tb.scope_uid = 0 AND tb.key = $4`;
+
+// PRIVATE FEED (`createDocStorePrivateFeed`): ONE user's private documents (`scope_uid` = that
+// user, never 0, never another user's) of one collection of one app's production namespace, for
+// the registry adapter's authorized private streams. Only rows that carry a `record_id` (the id
+// in a private record's URN) and that moderation has not hidden. Keyset by key.
+// $1 app, $2 ns, $3 coll, $4 user, $5 after key, $6 limit
+const SQL_PRIVATE_FEED_VERSIONS = `SELECT d.key, d.version, d.record_id::text AS record_id
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
+    AND d.hidden_at IS NULL AND d.record_id IS NOT NULL AND d.key > $5::text
+  ORDER BY d.key
+  LIMIT $6::int`;
+// Its full twin: the same rows with their data.
+const SQL_PRIVATE_FEED_DOCS = `SELECT d.key, d.data, d.version, d.record_id::text AS record_id
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
+    AND d.hidden_at IS NULL AND d.record_id IS NOT NULL AND d.key > $5::text
+  ORDER BY d.key
+  LIMIT $6::int`;
 
 // The kind is a literal: this statement can only ever write a counter row.
 // $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 by
@@ -1580,6 +1698,24 @@ export function createDocStoreFeed(deps: DocStoreDeps) {
 }
 export type DocStoreFeed = ReturnType<typeof createDocStoreFeed>;
 
+/**
+ * PRIVATE FEED — ONE user's private documents of one collection of an app's production namespace,
+ * read only, for the registry adapter's authorized private streams (`private-feed.ts`). It never
+ * decides who may read: its caller passes the user only after the one collection-read predicate
+ * (`data-read-grant.ts`) granted that user the collection. A separate object, so neither the
+ * public feed nor the block-token store carries a read keyed on a caller-supplied user id; its
+ * importers are pinned by `__tests__/doc-store-private-feed.ledger.test.ts`.
+ */
+export function createDocStorePrivateFeed(deps: DocStoreDeps) {
+  return buildDocStore(deps).privateFeed;
+}
+export type DocStorePrivateFeed = ReturnType<typeof createDocStorePrivateFeed>;
+
+/** One private document's identity and version, as `privateVersions` reads it. */
+export type PrivateFeedVersion = { key: string; recordId: string; version: number };
+/** One private document, as `privateDocuments` reads it. */
+export type PrivateFeedDocument = PrivateFeedVersion & { data: Record<string, unknown> };
+
 /** Most rows one feed page may ask for. */
 export const FEED_MAX_PAGE = 1000;
 
@@ -2046,7 +2182,7 @@ function buildDocStore(deps: DocStoreDeps) {
     coll: DocCollection,
     key: string,
     data: unknown,
-    opts: { ifVersion?: number }
+    opts: { ifVersion?: number; op: 'create' | 'put'; hookPass?: HookPass }
   ): Promise<DocRecord> {
     const policy = assertCollection(coll);
     assertKey(key);
@@ -2062,6 +2198,11 @@ function buildDocStore(deps: DocStoreDeps) {
     // Here, not only in the REST layer, so that every write of a document body is checked
     // whoever calls the store. `data` is the whole body the row will hold.
     validateDocAgainstCollectionSchema(ctx, coll, data);
+    // After every check of the body, so a malformed write never spends a pass.
+    const ifVersion = effectiveIfVersion(
+      opts.ifVersion,
+      requireHookPass(ctx, coll, opts.op, key, opts.hookPass)
+    );
     const indexRows = indexRowsFor(coll, data as Record<string, unknown>);
     const scope = scopeUid(ctx, coll);
     const base = [ctx.appId, ctx.ns, coll.name, scope, key];
@@ -2077,7 +2218,7 @@ function buildDocStore(deps: DocStoreDeps) {
           // See VISIBLE: refusing a write to a hidden key reveals that it exists.
           if (existing.hidden) throw new DocStoreError('not_found', 'document not found');
           const current = Number(existing.version);
-          if (opts.ifVersion !== undefined && opts.ifVersion !== current) {
+          if (ifVersion !== undefined && ifVersion !== current) {
             throw new DocStoreError('version_conflict', 'version conflict', {
               currentVersion: current,
             });
@@ -2092,7 +2233,7 @@ function buildDocStore(deps: DocStoreDeps) {
           });
         }
 
-        if (opts.ifVersion !== undefined && opts.ifVersion !== 0) {
+        if (ifVersion !== undefined && ifVersion !== 0) {
           throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: 0 });
         }
         const ins = await c.query(SQL_INSERT_DOC, [...base, json, viewer]);
@@ -2194,17 +2335,27 @@ function buildDocStore(deps: DocStoreDeps) {
     coll: DocCollection,
     key: string,
     data: Record<string, unknown>,
-    opts: { ifVersion?: number } = {}
+    opts: { ifVersion?: number; hookPass?: HookPass } = {}
   ): Promise<DocRecord> {
-    return writeDoc(ctx, coll, key, data, opts);
+    return writeDoc(ctx, coll, key, data, { ...opts, op: 'put' });
   }
 
+  /**
+   * Create a document under a new key: `opts.key` when the caller generated it (the permission
+   * hook is shown the key before the write), else a fresh ULID. Never overwrites: the write is
+   * pinned to "no document" (`ifVersion: 0`) either way.
+   */
   async function create(
     ctx: DocStoreContext,
     coll: DocCollection,
-    data: Record<string, unknown>
+    data: Record<string, unknown>,
+    opts: { key?: string; hookPass?: HookPass } = {}
   ): Promise<DocRecord> {
-    return writeDoc(ctx, coll, newUlid(), data, { ifVersion: 0 });
+    return writeDoc(ctx, coll, opts.key ?? newUlid(), data, {
+      ifVersion: 0,
+      op: 'create',
+      hookPass: opts.hookPass,
+    });
   }
 
   /**
@@ -2220,7 +2371,7 @@ function buildDocStore(deps: DocStoreDeps) {
    * Otherwise `null`, having written nothing; the caller then makes the ordinary write, which
    * refuses (or writes) exactly as it always did. So a stale `ifVersion`, someone else's or a hidden
    * document, an absent key, a private collection and a body the store would refuse are all
-   * `null`, never a refusal of their own.
+   * `null`, never a refusal of their own. A collection with a permission hook is always `null`.
    *
    * ONE unlocked read (SQL_UNCHANGED_PROBE), no lock: nothing is written on its answer, so a
    * concurrent write is simply before or after it, and a body that differs from what the read saw
@@ -2239,6 +2390,10 @@ function buildDocStore(deps: DocStoreDeps) {
     const viewer = requireViewer(ctx);
     assertShareWritable(coll, policy);
     if (coll.config.visibility !== 'shared') return null;
+    // A collection with a permission hook: every put is the hook's to decide, unchanged or not, so
+    // it always takes the ordinary (hooked) write. Answering here would return 200 for a put the
+    // hook refuses.
+    if (coll.config.hook) return null;
     let json: string;
     let indexRows: IndexRow[];
     try {
@@ -2281,24 +2436,28 @@ function buildDocStore(deps: DocStoreDeps) {
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
-    opts: { ifVersion?: number } = {}
+    opts: { ifVersion?: number; hookPass?: HookPass } = {}
   ): Promise<{ deleted: boolean }> {
     const policy = assertCollection(coll);
     assertKey(key);
     const viewer = requireViewer(ctx);
     assertShareWritable(coll, policy);
     const scope = scopeUid(ctx, coll);
+    const ifVersion = effectiveIfVersion(
+      opts.ifVersion,
+      requireHookPass(ctx, coll, 'delete', key, opts.hookPass)
+    );
     return withTx(ctx, async (c) => {
       const row = (await c.query(SQL_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, scope, key])).rows[0];
       // Missing and hidden are indistinguishable to the caller here.
       if (!row || row.hidden) {
-        if (opts.ifVersion !== undefined && opts.ifVersion !== 0) {
+        if (ifVersion !== undefined && ifVersion !== 0) {
           throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: 0 });
         }
         return { deleted: false };
       }
       const current = Number(row.version);
-      if (opts.ifVersion !== undefined && opts.ifVersion !== current) {
+      if (ifVersion !== undefined && ifVersion !== current) {
         throw new DocStoreError('version_conflict', 'version conflict', {
           currentVersion: current,
         });
@@ -2326,24 +2485,27 @@ function buildDocStore(deps: DocStoreDeps) {
    * `write: 'none'` collection the first increment of an absent key CREATES the
    * document (empty, unowned, charged to the incrementer); under any other
    * policy an absent key is `not_found`, so nobody can squat keys by counting.
+   *
+   * `opts.ifVersion` (a permission hook's pin, or a caller's own) refuses the increment with
+   * `version_conflict` unless the document is still at that version (0: still absent). A tally
+   * never changes the version, so concurrent increments never conflict with each other.
    */
   async function increment(
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
     counter: string,
-    by = 1
+    by = 1,
+    opts: { ifVersion?: number; hookPass?: HookPass } = {}
   ): Promise<{ value: number }> {
     const policy = assertCollection(coll);
     assertKey(key);
-    requireShared(coll, 'counters');
-    if (!TALLY_NAME_SHAPE.test(counter) || !(coll.config.counters ?? []).includes(counter)) {
-      throw invalid(`counter ${counter} is not declared`, { counter });
-    }
-    if (!Number.isSafeInteger(by) || by < 1 || by > B.incrementMax) {
-      throw invalid(`by must be an integer from 1 to ${B.incrementMax}`);
-    }
+    assertIncrementRequest(coll, counter, by);
     const viewer = requireViewer(ctx);
+    const ifVersion = effectiveIfVersion(
+      opts.ifVersion,
+      requireHookPass(ctx, coll, 'increment', key, opts.hookPass)
+    );
     await resolveCeilings(ctx, [viewer]);
     return withTx(ctx, async (c) => {
       const bump = async () =>
@@ -2357,8 +2519,12 @@ function buildDocStore(deps: DocStoreDeps) {
       for (let attempt = 0; attempt < 2; attempt++) {
         // Existing visible doc: KEY SHARE only, so increments never serialise on it.
         const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
-        if (doc.rows.length > 0) return { value: await bump() };
+        if (doc.rows.length > 0) {
+          assertTallyVersion(ifVersion, Number(doc.rows[0].version));
+          return { value: await bump() };
+        }
         if (policy !== 'none') throw new DocStoreError('not_found', 'document not found');
+        assertTallyVersion(ifVersion, 0);
 
         const existing = (await c.query(SQL_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, 0, key]))
           .rows[0];
@@ -2393,28 +2559,28 @@ function buildDocStore(deps: DocStoreDeps) {
     });
   }
 
-  function assertMarkName(coll: DocCollection, name: string) {
-    requireShared(coll, 'marks');
-    if (name === REPORT_MARK) return;
-    if (!TALLY_NAME_SHAPE.test(name) || !(coll.config.marks ?? []).includes(name)) {
-      throw invalid(`mark ${name} is not declared`, { mark: name });
-    }
-  }
+  const assertMarkName = assertMarkRequest;
 
   /** `count` is null for `report`, whose count is never exposed. */
   async function mark(
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
-    name: string
+    name: string,
+    opts: { ifVersion?: number; hookPass?: HookPass } = {}
   ): Promise<{ marked: true; count: number | null }> {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
     const viewer = requireViewer(ctx);
+    const ifVersion = effectiveIfVersion(
+      opts.ifVersion,
+      requireHookPass(ctx, coll, 'mark', key, opts.hookPass, name)
+    );
     return withTx(ctx, async (c) => {
       const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
       if (doc.rows.length === 0) throw new DocStoreError('not_found', 'document not found');
+      assertTallyVersion(ifVersion, Number(doc.rows[0].version));
       const args = [ctx.appId, ctx.ns, coll.name, key, name];
       const ins = await c.query(SQL_INSERT_MARK, [...args, viewer]);
       const res =
@@ -2430,16 +2596,22 @@ function buildDocStore(deps: DocStoreDeps) {
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
-    name: string
+    name: string,
+    opts: { ifVersion?: number; hookPass?: HookPass } = {}
   ): Promise<{ marked: false; count: number | null }> {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
     refuseReportWithdrawal(name);
     const viewer = requireViewer(ctx);
+    const ifVersion = effectiveIfVersion(
+      opts.ifVersion,
+      requireHookPass(ctx, coll, 'unmark', key, opts.hookPass, name)
+    );
     return withTx(ctx, async (c) => {
       const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
       if (doc.rows.length === 0) throw new DocStoreError('not_found', 'document not found');
+      assertTallyVersion(ifVersion, Number(doc.rows[0].version));
       const args = [ctx.appId, ctx.ns, coll.name, key, name];
       const del = await c.query(SQL_DELETE_MARK, [...args, viewer]);
       const res =
@@ -3516,6 +3688,7 @@ function buildDocStore(deps: DocStoreDeps) {
     assertCollection(to);
     requireShared(to, 'unpublish targets');
     assertShareWritable(to);
+    assertNotHooked(to, 'unpublish');
     const viewer = requireViewer(ctx);
     const sorted = assertPublishKeys(keys).sort();
     return retryOnDeadlock(() =>
@@ -3719,10 +3892,69 @@ function buildDocStore(deps: DocStoreDeps) {
     });
   }
 
+  /** The private feed's bound values, checked before any of them reaches SQL. */
+  function privateFeedParams(
+    appId: string,
+    coll: string,
+    userId: number,
+    afterKey: string,
+    limit: number
+  ) {
+    const ctx = feedCtx(appId, coll);
+    assertWipeUserId(userId);
+    if (afterKey !== '' && !B.key.test(afterKey)) throw invalid('feed: malformed key');
+    return {
+      ctx,
+      params: [ctx.appId, ctx.ns, coll, userId, afterKey, feedLimit(limit)],
+    };
+  }
+
+  /** One page of `userId`'s private documents in `coll`, by key: key, record id and version. */
+  async function privateVersions(
+    appId: string,
+    coll: string,
+    userId: number,
+    afterKey: string,
+    limit: number
+  ): Promise<PrivateFeedVersion[]> {
+    const { ctx, params } = privateFeedParams(appId, coll, userId, afterKey, limit);
+    const rows = await withTx(
+      ctx,
+      async (c) => (await c.query(SQL_PRIVATE_FEED_VERSIONS, params)).rows
+    );
+    return rows.map((r) => ({
+      key: r.key as string,
+      recordId: String(r.record_id),
+      version: Number(r.version),
+    }));
+  }
+
+  /** {@link privateVersions} with each document's data. */
+  async function privateDocuments(
+    appId: string,
+    coll: string,
+    userId: number,
+    afterKey: string,
+    limit: number
+  ): Promise<PrivateFeedDocument[]> {
+    const { ctx, params } = privateFeedParams(appId, coll, userId, afterKey, limit);
+    const rows = await withTx(
+      ctx,
+      async (c) => (await c.query(SQL_PRIVATE_FEED_DOCS, params)).rows
+    );
+    return rows.map((r) => ({
+      key: r.key as string,
+      recordId: String(r.record_id),
+      version: Number(r.version),
+      data: r.data as Record<string, unknown>,
+    }));
+  }
+
   return {
     store,
     lookup: { findSharedByKey },
     feed: { feedHead, feedChanges, feedDocuments, feedWitness },
+    privateFeed: { privateVersions, privateDocuments },
     moderation: createModeration({ withTx, charge }),
     rater: createRater({ withTx, charge, raterLookupTx }),
     maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp, migrateDocuments },
@@ -3736,16 +3968,6 @@ function buildDocStore(deps: DocStoreDeps) {
  * matched by prefix in `isPgConnectionFault`, except 08P01 (below).
  */
 const PG_CONNECTION_SQLSTATES = new Set(['53300', '57P01', '57P02', '57P03']);
-/**
- * 08P01 protocol_violation is retryable ONLY with one of these PgBouncer messages. Postgres also
- * raises 08P01 for a malformed message from US (e.g. "bind message supplies 1 parameters, but
- * prepared statement requires 2") — a bug, which must stay a 500 — and PgBouncer uses it for
- * permanent refusals too ("unsupported startup parameter"). Trade-off: a PgBouncer outage
- * message not listed here is a 500 rather than a retryable 503; widen the list when one is seen,
- * rather than matching 08P01 by code alone.
- */
-const PGBOUNCER_TRANSIENT_08P01 =
-  /server conn crashed\?|no more connections allowed|pgbouncer cannot connect to server|query_wait_timeout/i;
 /**
  * Node socket errors a broken or unreachable database connection surfaces as. Name-resolution
  * failures (ENOTFOUND, EAI_AGAIN) are deliberately absent: they are a wrong host far more often
@@ -3778,7 +4000,11 @@ function isPgConnectionFault(err: unknown): boolean {
     const { code, message } = e as { code?: unknown; message?: unknown };
     if (typeof code === 'string') {
       if (code === '08P01') {
-        if (typeof message === 'string' && PGBOUNCER_TRANSIENT_08P01.test(message)) return true;
+        // 08P01 is also Postgres's answer to a malformed message from US, a bug that must stay a
+        // 500, so it is retryable only with one of PgBouncer's outage messages. A message not
+        // listed in POOLER_TRANSIENT_08P01_MESSAGE is a 500: widen the list when one is seen.
+        if (typeof message === 'string' && POOLER_TRANSIENT_08P01_MESSAGE.test(message))
+          return true;
       } else if (PG_CONNECTION_SQLSTATES.has(code) || /^08[0-9A-Z]{3}$/.test(code)) {
         // A SQLSTATE is exactly five characters; class 08 is its first two.
         return true;

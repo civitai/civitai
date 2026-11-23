@@ -30,16 +30,43 @@ import {
   saveRemixApp,
   setRemixAppEnabled,
   deleteRemixApp,
+  submitUserRemixApp,
+  reviewUserRemixApp,
+  clearRemixMinorThemed,
+  validateUserRemixApp,
 } from '~/server/services/remix-app-registry.service';
-import { remixAppInputSchema, remixAppSlugSchema } from '~/shared/remix-apps/row.schema';
+import {
+  remixAppInputSchema,
+  remixAppSlugSchema,
+  remixAppSubmitSchema,
+  REMIX_REJECT_REASONS,
+  REMIX_REVIEW_STATES,
+  USER_REMIX_SLUG,
+} from '~/shared/remix-apps/row.schema';
+import { TRPCError } from '@trpc/server';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
+import { REMIX_RUN_LIMITS } from '~/shared/remix-apps/replay';
 
 const remixAppProcedure = protectedProcedure.use(isFlagProtected('remixApps'));
 const remixAppAdminProcedure = moderatorProcedure.use(isFlagProtected('remixApps'));
+const userCodeReviewProcedure = remixAppAdminProcedure.use(isFlagProtected('remixAppsUserCode'));
+// Guarded: a submit publishes code and listing text, so muted or unverified accounts may not.
+const remixAppBuilderProcedure = guardedProcedure
+  .use(isFlagProtected('remixApps'))
+  .use(isFlagProtected('remixAppsUserCode'))
+  .use(isFlagProtected('remixAppBuilder'));
+
+/** A user app's row is only acted on with its flag, like its review. */
+function assertUserCodeAccess(slug: string, features: { remixAppsUserCode?: boolean }) {
+  if (USER_REMIX_SLUG.test(slug) && !features.remixAppsUserCode)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'User remix apps are not enabled for you' });
+}
 
 const imageId = z.number().int().positive();
 
+/** Each submit rewrites the shared registry cache. */
+const submitRateLimit = rateLimit({ limit: 20, period: CacheTTL.hour });
 /** Each uncached quote is an orchestrator what-if. */
 const quoteRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
 /** Called on every image view; it only reaches a what-if for an image the viewer can team-remix. */
@@ -65,7 +92,10 @@ const gallery = z
       });
   });
 
-const answer = z.union([z.string().max(1000), z.number().int().nonnegative()]);
+const answer = z.union([
+  z.string().max(REMIX_RUN_LIMITS.answerLength),
+  z.number().int().nonnegative(),
+]);
 
 function callerOf(ctx: Context & { user: SessionUser }): Omit<RemixAppCaller, 'token'> {
   return {
@@ -83,16 +113,53 @@ export async function getCaller(ctx: Context & { user: SessionUser }): Promise<R
 
 /** Mod-only: the remix app rows, and a test run that spends only on a confirmed quote. */
 const remixAppAdminRouter = router({
-  list: remixAppAdminProcedure.query(() => listRemixAppsForAdmin()),
+  list: remixAppAdminProcedure.query(async ({ ctx }) => {
+    const rows = await listRemixAppsForAdmin();
+    // By slug: a user row whose manifest no longer validates carries no `user`.
+    return ctx.features.remixAppsUserCode
+      ? rows
+      : rows.filter((row) => !USER_REMIX_SLUG.test(row.slug));
+  }),
   save: remixAppAdminProcedure
     .input(remixAppInputSchema)
     .mutation(({ input }) => saveRemixApp(input)),
   setEnabled: remixAppAdminProcedure
     .input(z.object({ slug: remixAppSlugSchema, enabled: z.boolean() }))
-    .mutation(({ input }) => setRemixAppEnabled(input)),
+    .mutation(({ ctx, input }) => {
+      assertUserCodeAccess(input.slug, ctx.features);
+      return setRemixAppEnabled({ ...input, moderatorId: ctx.user.id });
+    }),
   delete: remixAppAdminProcedure
     .input(z.object({ slug: remixAppSlugSchema }))
-    .mutation(({ input }) => deleteRemixApp(input)),
+    .mutation(({ ctx, input }) => {
+      assertUserCodeAccess(input.slug, ctx.features);
+      return deleteRemixApp(input);
+    }),
+  /** Approves or rejects the source whose hash the mod read. */
+  review: userCodeReviewProcedure
+    .input(
+      z.object({
+        slug: remixAppSlugSchema,
+        sha256: z.string().regex(/^[a-f0-9]{64}$/),
+        seenReview: z.enum(REMIX_REVIEW_STATES),
+        decision: z.enum(['approved', 'rejected']),
+        mature: z.boolean().optional(),
+        reason: z.enum(REMIX_REJECT_REASONS).optional(),
+        note: z.string().trim().max(200).optional(),
+      })
+    )
+    .mutation(({ ctx, input }) => reviewUserRemixApp({ ...input, moderatorId: ctx.user.id })),
+  /** Runs a user app down every path in the sandbox, on a placeholder image: what review reads. */
+  validate: userCodeReviewProcedure
+    .use(runStepRateLimit)
+    .input(z.object({ slug: remixAppSlugSchema }))
+    .mutation(({ input }) => validateUserRemixApp(input.slug)),
+  /** Lifts a minor-themed mark; refused to the moderator who set it. */
+  clearMinorThemed: userCodeReviewProcedure
+    .input(z.object({ slug: remixAppSlugSchema }))
+    .mutation(({ ctx, input }) =>
+      clearRemixMinorThemed({ slug: input.slug, moderatorId: ctx.user.id })
+    ),
   order: remixAppAdminProcedure
     .input(z.object({ slugs: remixAppSlugSchema.array().max(100) }))
     .mutation(({ input }) => orderRemixApps(input.slugs)),
@@ -123,13 +190,20 @@ const remixAppAdminRouter = router({
 
 export const remixAppRouter = router({
   admin: remixAppAdminRouter,
+  /** Creates or replaces the caller's own app, which waits for a mod's review out of menus. */
+  submit: remixAppBuilderProcedure
+    .use(submitRateLimit)
+    .input(remixAppSubmitSchema)
+    .mutation(({ ctx, input }) =>
+      submitUserRemixApp({ ...input, authorId: ctx.user.id, isGreen: !!ctx.features.isGreen })
+    ),
   list: remixAppProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
-    .query(() => listRemixApps()),
+    .query(({ ctx }) => listRemixApps(ctx)),
   quote: remixAppProcedure
     .use(quoteRateLimit)
     .meta({ requiredScope: TokenScope.AIServicesRead })
-    .input(z.object({ imageId }))
+    .input(z.object({ imageId, slug: remixAppSlugSchema.optional() }))
     .query(async ({ ctx, input }) => quoteRemixApps({ ...input, caller: await getCaller(ctx) })),
   teamQuote: remixAppProcedure
     .use(teamQuoteRateLimit)

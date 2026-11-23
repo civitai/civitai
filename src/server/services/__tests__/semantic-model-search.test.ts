@@ -188,7 +188,12 @@ describe('name and keyword matches', () => {
       candidateSource: ranking([1, 2, 3, 9], undefined, [9]),
     });
     expect(result.items.map((m) => m.id)).toEqual([9, 1, 2, 3]);
-    expect(sent[0].allWords).toEqual({ key: 'name', text: 'civetai' });
+    // A model tagged with a query word is in the same first tier as a name match.
+    expect(sent[0].allWords).toEqual({
+      key: 'name',
+      text: 'civetai',
+      orAnyOf: { key: 'tags', values: ['civetai'] },
+    });
   });
 });
 

@@ -9,6 +9,7 @@ import {
   searchSectionFromPath,
   profileFeedSection,
   searchesFeedInPlace,
+  searchSectionFor,
 } from '~/components/Search/search-target';
 
 describe('resolveSearchTarget', () => {
@@ -172,5 +173,38 @@ describe('the bounties feed search', () => {
     expect(searchesFeedInPlace(bountiesOnly, 'bounties', '/bounties')).toBe(true);
     expect(searchesFeedInPlace({}, 'bounties', '/bounties')).toBe(false);
     expect(feedSearchPathname(bountiesOnly, 'bounties')).toBe('/bounties');
+  });
+});
+
+// /videos searches the video index, which has its own flag on top of the feed search's two.
+describe('the videos feed search', () => {
+  const all = { feedSearch: true, videoFeedSearch: true, semanticVideoSearch: true };
+
+  it('filters /videos in place only with all three flags', () => {
+    expect(searchesFeedInPlace(all, 'images', '/videos')).toBe(true);
+    expect(searchesFeedInPlace(all, 'models', '/videos')).toBe(false);
+    expect(searchesFeedInPlace({ ...all, feedSearch: false }, 'images', '/videos')).toBe(false);
+    expect(searchesFeedInPlace({ ...all, videoFeedSearch: false }, 'images', '/videos')).toBe(
+      false
+    );
+    expect(searchesFeedInPlace({ ...all, semanticVideoSearch: false }, 'images', '/videos')).toBe(
+      false
+    );
+  });
+
+  it('points the header bar at images on /videos, and leaves other sections alone', () => {
+    expect(searchSectionFor('/videos', all)).toBe('images');
+    expect(searchSectionFor('/videos', { ...all, semanticVideoSearch: false })).toBe('videos');
+    expect(searchSectionFor('/models', all)).toBe('models');
+  });
+});
+
+describe('page search on tools and downloads', () => {
+  it('gives /tools and /user/downloads the header bar under pageSearch', () => {
+    expect(pageSearchFor({ pageSearch: true }, '/tools')).toEqual({ placeholder: 'Search tools' });
+    expect(pageSearchFor({ pageSearch: true }, '/user/downloads')).toEqual({
+      placeholder: 'Search your downloads',
+    });
+    expect(pageSearchFor({}, '/tools')).toBeUndefined();
   });
 });

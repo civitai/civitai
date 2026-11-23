@@ -23,7 +23,7 @@ import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { BlockedReason, NsfwLevel, SignalMessages } from '~/server/common/enums';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { ComicPanelStatus } from '~/shared/utils/prisma/enums';
+import type { ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
@@ -35,6 +35,7 @@ import { CandidateImageModal, isUnlockableSlot } from '~/components/Comics/Candi
 import { PanelUnlockActions } from '~/components/Comics/PanelUnlockActions';
 import { IconEyeOff } from '@tabler/icons-react';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
+import { candidateSlotsFromMetadata } from '~/components/Comics/panel-source';
 
 const nsfwBadgeColors: Record<number, string> = {
   [NsfwLevel.PG]: 'green',
@@ -172,28 +173,9 @@ export function PanelCard({
         nsfwLevel?: number | null;
       };
 
-  const metaCandidates = panel.metadata?.candidateImages as
-    | Array<{
-        key?: string;
-        requiresUnlock?: boolean;
-        blockedReason?: string;
-        nsfwLevel?: number | null;
-      }>
-    | undefined;
-  const initialSlots: CandidateSlot[] | null = Array.isArray(metaCandidates)
-    ? metaCandidates.map((c) =>
-        c?.requiresUnlock
-          ? {
-              requiresUnlock: true as const,
-              blockedReason: c.blockedReason ?? 'canUpgrade',
-              nsfwLevel: c.nsfwLevel ?? null,
-            }
-          : {
-              key: typeof c === 'string' ? (c as unknown as string) : c?.key ?? '',
-              nsfwLevel: typeof c === 'string' ? null : c?.nsfwLevel ?? null,
-            }
-      )
-    : null;
+  const initialSlots: CandidateSlot[] | null = candidateSlotsFromMetadata(
+    panel.metadata?.candidateImages
+  );
   const [candidateSlots, setCandidateSlots] = useState<CandidateSlot[] | null>(
     initialSlots && initialSlots.length > 0 ? initialSlots : null
   );

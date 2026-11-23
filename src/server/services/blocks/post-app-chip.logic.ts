@@ -736,7 +736,7 @@ export function projectPostAppChipItem(
  * EXIST: `app-listings`, `app-blocks-enabled`, `app-listings-public-external`.
  * All three exist today. If one is deleted or renamed, `evaluateBoolean` THROWS,
  * and the throw bypasses the boolean eval cache so the result is never memoised —
- * so the default `onEvalError` would `console.error` on EVERY post-detail read,
+ * so `onEvalError` would log an error record on EVERY post-detail read,
  * indefinitely. That failure mode is recorded twice elsewhere in this repo; what
  * changed here is its blast radius, which used to be the `/apps` store and is now
  * the busiest public page on the site. Nothing enforces the dependency.

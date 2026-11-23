@@ -447,12 +447,12 @@ describe("'ceiling' and 'unrated': never charged", () => {
     expectNothingSpent(f);
   });
 
-  it("'unrated' on an SFW domain is treated exactly like 'ceiling': link out, no charge", async () => {
+  it("'unrated' on an SFW domain is never linked out, since no domain can show it, and nothing is charged", async () => {
     const plan = planBlockOutputUnlock(unratedSample(), SFW_DOMAIN, 0, NO_VIEW);
     expect(plan).toStrictEqual({
-      kind: 'link-out',
+      kind: 'unavailable',
       position: 0,
-      message: OUTPUT_UNLOCK_LINK_OUT_MESSAGE,
+      message: 'This output cannot be shown here.',
     });
     const f = fakes([unratedSample]);
     await rejection(unlockBlockOutput({ ...request(SFW_DOMAIN, 0), expectedTotal: TOTAL }, f));
@@ -474,11 +474,11 @@ describe("'ceiling' and 'unrated': never charged", () => {
     expectNothingSpent(f);
   });
 
-  it("'unrated' with the viewer's own level cutting it on red: the same settings pointer", () => {
+  it("'unrated' with the viewer's own level cutting it on red: no settings pointer, since no level shows it", () => {
     expect(planBlockOutputUnlock(unratedSample(), RED_VIEWER_SFW, 0, NO_VIEW)).toStrictEqual({
       kind: 'unavailable',
       position: 0,
-      message: OUTPUT_UNLOCK_SETTINGS_MESSAGE,
+      message: 'This output cannot be shown here.',
     });
   });
 
@@ -620,16 +620,16 @@ describe('🔴 serving on: the unlock decides on the released output, not on its
     expect(f.liftRestriction).not.toHaveBeenCalled();
   });
 
-  it('CONTROL: with serving off the same output is released and charged as before', async () => {
+  it('with serving off the same output is not offered for pay either, and nothing is charged', async () => {
     expect(planBlockOutputUnlock(neverRatedR(), RED_MATURE, 0, NO_VIEW)).toMatchObject({
-      kind: 'pay',
+      kind: 'unavailable',
+      message: 'This output cannot be shown here.',
     });
-    const released = () => ({ ...neverRatedR(), allowMatureContent: true } as Wf);
-    const f = fakes([neverRatedR, neverRatedR, released]);
-    const result = await unlockBlockOutput({ ...request(RED_MATURE, 0), expectedTotal: TOTAL }, f);
-    expect(result.outcome).toBe('unlocked');
-    expect(result.charged).toStrictEqual({ unlockBuzz: UNLOCK_PRICE });
-    expect(f.liftRestriction).toHaveBeenCalledTimes(1);
+    const f = fakes([neverRatedR]);
+    await expect(
+      unlockBlockOutput({ ...request(RED_MATURE, 0), expectedTotal: TOTAL }, f)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(f.liftRestriction).not.toHaveBeenCalled();
   });
 
   it('a lift the orchestrator did not release reports the charge, never 0', async () => {

@@ -29,6 +29,8 @@ export const YESNO_QUESTION_MAX = 600;
 export const MODERATOR_RETIRED = 'moderator-retired';
 export const MODERATION_META_KEY = 'moderation';
 export const REWORD_OF_META_KEY = 'rewordOf';
+/** The image's level when a rating item went to the Inquisitors: what "pushed down" was measured from. */
+export const ESCALATED_FROM_LEVEL_META_KEY = 'escalatedFromLevel';
 
 export type ModerationNote = { action: string; by: number; note: string; at: string };
 
@@ -48,10 +50,10 @@ export const isModeratedSql = sql<SqlBool>`COALESCE("KnightsQueueItem"."meta" ? 
 type Joined = DB & { img: DB['Image']; p: DB['Post'] };
 
 /**
- * Images Knights may show players: a published post, a rated image with no block marker, no review hold, and no
- * real-person or minor flag (those go to the moderators' own queues). Expects `Image as img` joined to `Post as p`.
+ * The image half of `servableImage`, whatever its post's state: a rated still image with no block marker, no review hold,
+ * and no real-person or minor flag (those go to the moderators' own queues). Expects `Image as img` joined to `Post as p`.
  */
-export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
+export const servableImageContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
   eb.and([
     eb('img.type', '=', 'image'),
     eb('img.nsfwLevel', 'not in', [0, NsfwLevel.Blocked]),
@@ -61,9 +63,30 @@ export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
     eb('img.acceptableMinor', '=', false),
     eb('img.poi', '=', false),
     eb('img.minor', '=', false),
+  ]);
+
+/** The post is not Private. Unsearchable and EarlyAccess posts stay served, as the site serves them. */
+export const postNotPrivate = (eb: ExpressionBuilder<Joined, 'p'>) =>
+  eb('p.availability', '!=', 'Private');
+
+/**
+ * `servableImageContent` on a published post, without the rules that must only hide an image (`postNotPrivate`): for
+ * sweeps that would otherwise retire a reference or close a question over them. Expects `Image as img` joined to
+ * `Post as p`.
+ */
+export const servableImageForSweeps = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
+  eb.and([
+    servableImageContent(eb),
     eb('p.publishedAt', 'is not', null),
     eb('p.publishedAt', '<', sql<Date>`(now() AT TIME ZONE 'utc')`),
   ]);
+
+/**
+ * Images Knights may show players: `servableImageForSweeps` on a post that is not Private. Expects `Image as img`
+ * joined to `Post as p`.
+ */
+export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
+  eb.and([servableImageForSweeps(eb), postNotPrivate(eb)]);
 
 /**
  * Open Knight-stage rating items that players can be served, counted up to `limit` (the intake cap reads `maxOpen + 1`).

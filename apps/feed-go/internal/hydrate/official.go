@@ -82,7 +82,7 @@ func (s *Sources) OfficialModels(ctx context.Context) ([]OfficialModel, error) {
 		case !got:
 			return []OfficialModel{}, nil
 		}
-		defer s.releaseLocks(context.WithoutCancel(ctx), []string{lockKey})
+		defer s.releaseLocks(ctx, []string{lockKey}) // detached from the request by releaseLocks itself
 		list, err := s.officialFetch(ctx)
 		if err != nil {
 			return nil, err
@@ -200,6 +200,10 @@ func parseOfficialEntry(raw []byte) ([]OfficialModel, float64, bool) {
 	}
 	return list, at, true
 }
+
+// Float is toFloat for the other packages reading a fetchThroughCache entry (its `cachedAt`, its
+// numbers).
+func Float(v any) (float64, bool) { return toFloat(v) }
 
 // toFloat is a msgpack number as a float64 (`typeof cachedAt === 'number'`; NaN is one, and never
 // expires, as `x > NaN` is false in Node too).

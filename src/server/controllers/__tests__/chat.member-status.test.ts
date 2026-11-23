@@ -226,6 +226,45 @@ describe('modifyUser: asking for the status a member already has', () => {
   });
 });
 
+describe('modifyUser: accepting a conversation they deleted', () => {
+  // A message after a delete re-arms filteredAt on a member who stays Joined.
+  beforeEach(() => {
+    member().filteredAt = new Date(0);
+  });
+
+  it('clears filteredAt, with no join notice and joinedAt untouched', async () => {
+    await expect(setStatus(MEMBER, ChatMemberStatus.Joined)).resolves.toMatchObject({
+      status: ChatMemberStatus.Joined,
+      filteredAt: null,
+    });
+    expect(member().filteredAt).toBeNull();
+    expect(member().joinedAt).toBeNull();
+    expect(notices).toEqual([]);
+  });
+
+  it('cannot be done for them by the owner', async () => {
+    await expect(setStatus(OWNER, ChatMemberStatus.Joined)).rejects.toThrow(
+      'Cannot modify chat status for another user'
+    );
+    expect(member().filteredAt).toEqual(new Date(0));
+  });
+
+  it('does not clear it for a member kicked after the read', async () => {
+    const read = dbMock.dbWrite.chatMember.findFirst.getMockImplementation()!;
+    dbMock.dbWrite.chatMember.findFirst.mockImplementationOnce((async (...args: never[]) => {
+      const snapshot = await read(...args);
+      member().status = ChatMemberStatus.Kicked;
+      return snapshot;
+    }) as never);
+
+    await expect(setStatus(MEMBER, ChatMemberStatus.Joined)).rejects.toThrow(
+      'This membership changed'
+    );
+    expect(member().status).toBe(ChatMemberStatus.Kicked);
+    expect(member().filteredAt).toEqual(new Date(0));
+  });
+});
+
 describe('modifyUser: the owner', () => {
   it('can still kick a member', async () => {
     await setStatus(OWNER, ChatMemberStatus.Kicked);

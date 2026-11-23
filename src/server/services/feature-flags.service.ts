@@ -10,6 +10,7 @@ import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 import { KNIGHTS_APP_FLIPT_FLAG } from '~/shared/constants/knights.constants';
+import { APP_LISTINGS_AGENTIC_REVIEW_FLAG } from '~/shared/constants/connect-agent-review.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 import { CLASSIC_TRAINER_RETIRES_AT } from '~/shared/constants/training.constants';
@@ -112,6 +113,12 @@ const featureFlags = createFeatureFlags({
   // gallery feed; its own flag, so each can be turned on or killed alone. Enable only once the edge
   // routes `/api/trpc-go/image.getInfinite`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
   feedGoTransportInfinite: { availability: [], fliptKey: 'feed-go-transport-infinite' },
+  // Client shadow compare (`~/utils/faro/shadowCompare`): a signed-in browser sends an allowlisted
+  // feed query to both the `/api/trpc` route and the Go transport path and beacons whether the two
+  // raw responses were byte-identical; the app uses the `/api/trpc` answer. Only for a procedure
+  // whose own Go-transport flag is also on for the user. Every compare is one extra request, so ramp
+  // it slowly. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  clientShadowCompare: { availability: [], fliptKey: 'client-shadow-compare' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
@@ -351,6 +358,8 @@ const featureFlags = createFeatureFlags({
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
+  // The public takedown forms (/requests) and the case links they send.
+  takedownRequests: { availability: ['mod'], fliptKey: 'takedown-requests' },
   // Every entity except Article, which keeps `articleRatingDispute`. Flipt-down falls back to off.
   ratingDispute: { availability: [], fliptKey: 'rating-dispute' },
   // The on-site appeal form (`/appeal`) and the appeal box on the banned screen.
@@ -412,6 +421,8 @@ const featureFlags = createFeatureFlags({
   },
   // Training Studio's Kohya engine; `kohyaTraining` gates the old trainer's.
   trainingStudioKohya: { availability: ['mod'], fliptKey: 'training-studio-kohya' },
+  // Training Studio's Civitai Elements redesign (the embed's answer for `training-studio-elements-ui`).
+  trainingStudioElementsUi: { availability: ['mod'], fliptKey: 'training-studio-elements-ui' },
   // Training Studio's Manage tags find-and-replace row.
   trainingStudioTagFindReplace: {
     availability: ['mod'],
@@ -491,6 +502,8 @@ const featureFlags = createFeatureFlags({
   // It answers from the semantic search, never Meilisearch. Mods until the Flipt flag exists; once it
   // does, Flipt decides both ways, so keep mods in its rule.
   imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
+  // Mods until the Flipt flag exists; once it does, Flipt decides both ways, so keep mods in its rule.
+  semanticVideoSearch: { availability: ['mod'], fliptKey: 'semantic-video-search' },
   // Search v3: the header bar filters the feed you are on (?query=) instead of opening /search/*.
   // Images first. It switches between the old and the new search on its own (it opens the semantic
   // search procedure without `imageSearch`), so a Flipt rollout moves people over; off is the old UI.
@@ -547,6 +560,9 @@ const featureFlags = createFeatureFlags({
   // moderators at deploy: an absent Flipt key falls through to ['mod']. Create
   // `mod-retracted-media` in Flipt, disabled, to turn it off.
   modRetractedMedia: { availability: ['mod'], fliptKey: 'mod-retracted-media' },
+  // The retracted-media route's CDN-refusal leg and its tile fallback. DARK, fails CLOSED when the
+  // Flipt key is absent or Flipt is down. Only takes effect within modRetractedMedia.
+  modRetractedMediaCdnLeg: { availability: [], fliptKey: 'mod-retracted-media-cdn-leg' },
   appealReports: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
   chat: {
@@ -574,11 +590,17 @@ const featureFlags = createFeatureFlags({
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
+  creatorServicesNext: { availability: [], fliptKey: 'creator-services-next' },
   // The header bar filters the /services feed in place (`?query=`).
   servicesFeedSearch: { availability: ['public'], fliptKey: 'creator-services-feed-search' },
   // Search v3 on pages that filter their own list (PAGE_SEARCH in search-target.ts): the header bar
   // writes the page's ?query= and the page filters by it, instead of a search box of its own.
   pageSearch: { availability: [], fliptKey: 'search-v3-pages' },
+  // Image search by the model versions an image used. Off until the image collection's
+  // modelVersionIds payload is backfilled and indexed: an unindexed filter scans every point.
+  imageSearchResources: { availability: [], fliptKey: 'image-search-resources' },
+  // Only takes effect with `feedSearch` on too.
+  videoFeedSearch: { availability: [], fliptKey: 'video-feed-search' },
   // Whether Creator Services Finals go to the malware scan. Read once per file by the jobs, never per
   // user (see `isFinalsMalwareScanOn`). Off, or missing from Flipt, skips that one step; Flipt
   // unreachable keeps it.
@@ -620,6 +642,7 @@ const featureFlags = createFeatureFlags({
   // Stickers that follow a video's time. Gates sending a track on create, reading tracks
   // (`getStickerTracks`) and the pin control. Without it a track sticker draws at its `data` pose.
   stickerVideoTracks: { availability: ['mod'], fliptKey: 'sticker-video-tracks' },
+  stickerAutoTrack: { availability: ['mod'], fliptKey: 'sticker-auto-track' },
   // The sticker book profile tab. Its own flag rather than riding `stickers`:
   // the tab publishes what a creator owns and what their work has collected on a
   // PUBLIC profile, which is a disclosure decision separate from whether
@@ -893,6 +916,10 @@ const featureFlags = createFeatureFlags({
   appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
   // Remix Apps P1: one-tap remix apps from the Remix menu (`remixApp` router).
   remixApps: { availability: ['mod'], fliptKey: 'remix-apps' },
+  // Remix Apps v2-C: apps whose code a user wrote (rows with an `author`). Dark until their runner ships.
+  remixAppsUserCode: { availability: [], fliptKey: 'remix-apps-user-code' },
+  // Who may submit a user app's code.
+  remixAppBuilder: { availability: [], fliptKey: 'remix-app-builder' },
   // App Blocks — "App builders" get-started pitch, now state A of the
   // consolidated `/apps/build` (`/apps/get-started` 301s into it). Scope A soft
   // launch: a single marketing/funnel page that explains the platform to
@@ -936,6 +963,10 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  // The agent review's CONNECT lane: the `AgentReviewPanel` in the off-site review modal, for an
+  // OAuth-connect listing request. `[]` for the `appBlocksAgenticReview` reason; the server half
+  // is `isAppListingsAgenticReviewEnabled`, on the same key.
+  appListingsAgenticReview: { availability: [], fliptKey: APP_LISTINGS_AGENTIC_REVIEW_FLAG },
   appDeveloperRateCard: { availability: [], fliptKey: 'app-developer-rate-card' },
   // App Assistant (on `/apps/build`); read only through `canAccessAppAssistant`. `[]` rather than
   // `['mod']` for the `appBlocksAgenticReview` reason: client and server agree while the flag is absent.
@@ -1066,6 +1097,9 @@ const featureFlags = createFeatureFlags({
     fliptKey: 'storyline-text',
     fliptKeyRequired: true,
   },
+  // Keep the Flipt flag's `enabled` false until public launch, so removing the tester rollout
+  // turns the page off rather than on for everyone.
+  featurePages: { availability: [], fliptKey: 'feature-pages', fliptKeyRequired: true },
   // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
   // with the phone header change it needs (support pill and Civitai Link move into the account
   // menu). Off = the toast and the old header. `['mod', 'granted']` is the Flipt-down fallback.

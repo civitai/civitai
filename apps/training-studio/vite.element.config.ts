@@ -2,6 +2,7 @@ import { svelte, vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'node:path';
 import { defineConfig } from 'vite';
+import { kitElementResetExemption } from './kit-element-reset-exemption';
 
 const SCOPE = 'civitai-training-studio';
 const PORTAL = '[data-cts-portal]';
@@ -117,7 +118,7 @@ export default defineConfig({
     }),
   ],
   css: {
-    postcss: { plugins: [scopeToElement] },
+    postcss: { plugins: [kitElementResetExemption(), scopeToElement] },
   },
   resolve: {
     alias: { $lib: path.resolve(__dirname, 'src/lib') },

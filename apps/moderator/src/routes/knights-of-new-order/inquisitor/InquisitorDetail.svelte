@@ -40,6 +40,8 @@
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import ReasonPicker from '$lib/components/triage/ReasonPicker.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import TriageColumns from '$lib/components/triage/TriageColumns.svelte';
@@ -159,14 +161,30 @@
   {/snippet}
 
   {#snippet evidence()}
-    <EdgeMedia
-      src={row.imageKey}
-      name={row.imageName}
-      type={row.imageType === 'video' ? 'video' : 'image'}
-      width={900}
-      alt="Image {row.imageId}"
-      class="mx-auto max-h-[75svh] w-auto rounded-md object-contain"
-    />
+    {#if row.media === 'cdn'}
+      <EdgeMedia
+        src={row.imageKey}
+        name={row.imageName}
+        type={row.imageType === 'video' ? 'video' : 'image'}
+        width={900}
+        alt="Image {row.imageId}"
+        class="mx-auto max-h-[75svh] w-auto rounded-md object-contain"
+      />
+    {:else if row.media === 'retracted'}
+      <CdnOrRetractedMedia
+        item={{
+          id: row.imageId,
+          url: row.imageKey,
+          type: row.imageType === 'video' ? 'video' : 'image',
+          name: row.imageName,
+        }}
+        width={900}
+        alt="Image {row.imageId}"
+        class="mx-auto max-h-[75svh] w-auto rounded-md object-contain"
+      />
+    {:else}
+      <div class="p-4 text-center text-sm text-dark-2">{RETRACTED_REFUSED}</div>
+    {/if}
   {/snippet}
 
   {#snippet info()}

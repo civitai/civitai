@@ -413,6 +413,8 @@ export type RestrictedNsfwVerdict = {
   source: string;
   at: string;
   restriction: 'minor' | 'poi' | 'sfwOnly';
+  /** The level the scan read, where the lead came from a verdict it held for a clean .com face. */
+  level?: number;
   /** On an SFW-only model the scan applied the rating at once (SFW-only cleared); what it replaced. */
   applied?: { at: string; prior: RestrictedNsfwPrior };
   /** The flag was lifted other than by the owner's save; the lead waits for a moderator's ruling. */
@@ -526,6 +528,12 @@ export type ModelMeta = Partial<{
   /** A moderator lifted an nsfw lock that was not the intent check's: the check still gates the
    *  face, but does not lock this listing text (`textHash`) again. Server-owned. */
   comFaceIntentRelockSuppressed: { textHash: string; at: string };
+  /** The .com face text passed the face check. `hash` covers everything the check read (see
+   *  `sfwFaceStampHash`), so any edit to it makes the stamp stale. Server-owned. */
+  sfwFaceCheckedAt: { at: string; promptId: number | null; hash: string };
+  /** The text scan read the listing as R+ (`level`) and left the model unrated because of its .com
+   *  face. A write that takes the face away applies it in the same transaction. Server-owned. */
+  comFaceHeldVerdict: { at: string; level: number };
   /** The listing re-check took the model off civitai.com: its .com cover was cleared, kept here so a
    *  moderator can restore it. `reason` says whether the check flagged the listing or never got a
    *  verdict; `detail` is the check's own reason, for moderators only. A save that sets a .com

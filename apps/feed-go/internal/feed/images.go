@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
@@ -56,6 +57,9 @@ type RawImage struct {
 	// CursorNull: the cursor column was NULL (only an index-ordered query's, ImagesQuery.IndexOrder,
 	// can be: `i."index"` is nullable).
 	CursorNull bool `json:"cursorNull,omitempty"`
+	// Collection is the row's collection item columns: set exactly on a collection page's rows
+	// (ImagesQuery.CollectionID), nil on every other query's.
+	Collection *CollectionItem `json:"collection,omitempty"`
 }
 
 // Querier runs the page query.
@@ -91,6 +95,10 @@ var statementTimeout = 20 * time.Second
 // empty page (never cached) unless the query asks to throw, as Node answers a statement timeout (getAllImages: "feeds can accept an
 // empty page after a timeout"), so a slow replica is not handed on to the Node app to run again. Only
 // this query's own deadline does that: a cancelled or expired caller context is still an error.
+//
+// A personalized page (Built.PersonalizedViewerID) is the `statement-timeout` fallback instead: an
+// empty page there reads as "you have none", so it is logged, counted and handed to the Node app,
+// which errors on the same timeout (getAllImages' throwOnStatementTimeout).
 func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]RawImage, error) {
 	useCache := cache != nil && cache.Enabled && cache.Redis != nil && b.CacheTTL > 0
 	var key string
@@ -105,22 +113,22 @@ func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]R
 	}
 	qctx, cancel := context.WithTimeout(ctx, statementTimeout)
 	defer cancel()
-	timedOut := func() bool {
-		return !b.ThrowOnStatementTimeout && ctx.Err() == nil && errors.Is(qctx.Err(), context.DeadlineExceeded)
+	onError := func(err error) ([]RawImage, error) {
+		if b.ThrowOnStatementTimeout || ctx.Err() != nil || !errors.Is(qctx.Err(), context.DeadlineExceeded) {
+			return nil, err
+		}
+		if b.PersonalizedViewerID != 0 {
+			return nil, fallback.Safef("statement-timeout", "viewer %d", b.PersonalizedViewerID)
+		}
+		return []RawImage{}, nil
 	}
 	rows, err := db.Query(qctx, b.SQL, b.Args...)
 	if err != nil {
-		if timedOut() {
-			return []RawImage{}, nil
-		}
-		return nil, err
+		return onError(err)
 	}
-	out, err := scanRows(rows)
+	out, err := scanRows(rows, b.Collection)
 	if err != nil {
-		if timedOut() {
-			return []RawImage{}, nil
-		}
-		return nil, err
+		return onError(err)
 	}
 	if useCache && !cache.ReadOnly {
 		if raw, err := json.Marshal(out); err == nil {
@@ -138,21 +146,31 @@ func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]R
 	return out, nil
 }
 
-func scanRows(rows pgx.Rows) ([]RawImage, error) {
+// scanRows reads the page query's rows. collection: the query selects the three collection item
+// columns after "cursorId" (Built.Collection).
+func scanRows(rows pgx.Rows, collection bool) ([]RawImage, error) {
 	defer rows.Close()
 	var out []RawImage
 	for rows.Next() {
 		var r RawImage
 		var remix, meta []byte
 		var cursorID *int
-		if err := rows.Scan(
+		dest := []any{
 			&r.ID, &r.Name, &r.URL, &r.NsfwLevel, &r.Width, &r.Height, &r.Hash, &r.HideMeta, &r.HasMeta,
 			&r.HasPositivePrompt, &r.OnSite, &remix, &r.CreatedAt, &r.SortAt, &r.MimeType, &r.Type, &meta,
 			&r.Ingestion, &r.BlockedFor, &r.ScannedAt, &r.NeedsReview, &r.UserID, &r.PostID, &r.PostTitle,
 			&r.Index, &r.PublishedAt, &r.UnpublishedAt, &r.ModelVersionID, &r.Model3DID, &r.Availability,
 			&r.Minor, &r.Poi, &r.AcceptableMinor, &r.Restricted, &cursorID,
-		); err != nil {
+		}
+		var item CollectionItem
+		if collection {
+			dest = append(dest, &item.Note, &item.Status, &item.AddedByID)
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return nil, err
+		}
+		if collection {
+			r.Collection = &item
 		}
 		if cursorID != nil {
 			r.CursorID = *cursorID
@@ -178,10 +196,24 @@ type Image struct {
 	Index       int
 	NsfwLevel   int
 	SortAt      time.Time
-	PublishedAt any // time.Time (= sortAt) or Undefined
+	PublishedAt any // the wire's sortAt Date (*time.Time, see SortAtWire) or Undefined
 	ModelVerID  any
 	User        superjson.Object
 	Stats       superjson.Object
+	// sortAt is the image's one `sortAt` Date as the wire holds it: getAllImagesUncaptured writes
+	// `publishedAt: i.publishedAt ? i.sortAt : undefined`, and the gallery handler copies both onto the
+	// post, so the Node answer holds ONE Date at up to four places. A shared pointer is that one Date to
+	// the devalue writer (written once, referenced after); the superjson writer reads through it.
+	sortAt *time.Time
+}
+
+// SortAtWire is the image's sortAt as it goes on the wire: the Date buildImage shared between the
+// image's sortAt and publishedAt, or SortAt itself for an Image built without it.
+func (img Image) SortAtWire() any {
+	if img.sortAt != nil {
+		return img.sortAt
+	}
+	return img.SortAt
 }
 
 // Page is one getAllImages result.
@@ -205,15 +237,18 @@ type Hydrator interface {
 
 // Hydrated is everything the per-image transform joins in.
 type Hydrated struct {
-	Basic          map[int]hydrate.BasicUser
-	UserCosmetics  map[int][]any
-	ProfilePics    map[int]superjson.Object
-	Frames         map[int]superjson.Object
-	Thumbs         map[int]hydrate.Thumbnail
-	Metrics        map[int]hydrate.Metrics
-	TagIDs         map[int]any
-	Decorations    map[int]superjson.Object
-	Reactions      map[int][]any
+	Basic         map[int]hydrate.BasicUser
+	UserCosmetics map[int][]any
+	ProfilePics   map[int]superjson.Object
+	Frames        map[int]superjson.Object
+	Thumbs        map[int]hydrate.Thumbnail
+	Metrics       map[int]hydrate.Metrics
+	TagIDs        map[int]any
+	Decorations   map[int]superjson.Object
+	Reactions     map[int][]any
+	// Tags is each image's votable tags (include 'tags', image.getInfinite only); an image absent has
+	// `tags: undefined`.
+	Tags           map[int][]any
 	VisibleModel3D map[int]bool
 }
 
@@ -221,21 +256,28 @@ type Hydrated struct {
 // profilePictures] (what the gallery handler always passes): every lookup of the page in one
 // Hydrator.Page call, then the Model3D visibility of the linked models.
 func Hydrate(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool) (*Hydrated, error) {
-	return hydrateRows(ctx, h, rows, viewer, visibleEvents, true, true)
+	return hydrateRows(ctx, h, rows, viewer, visibleEvents, includes{profilePictures: true, cosmetics: true})
 }
 
-// hydrateRows is Hydrate; profilePictures is whether the include list holds 'profilePictures'
-// (without it every creator's profilePicture is null, and its cache is not read), cosmetics whether
-// it holds 'cosmetics' (without it every creator's cosmetics are [] and every image's frame null, and
-// neither cache is read).
-func hydrateRows(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool, profilePictures, cosmetics bool) (*Hydrated, error) {
+// includes is what an `include` list asks getAllImagesUncaptured to hydrate beyond the default: the
+// creators' profile pictures, the cosmetics (user cosmetics and image frames) and the votable tags.
+type includes struct {
+	profilePictures, cosmetics, tags bool
+}
+
+// hydrateRows is Hydrate for the include list inc: without 'profilePictures' every creator's
+// profilePicture is null, and its cache is not read; without 'cosmetics' every creator's cosmetics
+// are [] and every image's frame null, and neither cache is read; with 'tags' the votable tags (and
+// the viewer's votes on them) are read, without them every image's `tags` is undefined.
+func hydrateRows(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool, inc includes) (*Hydrated, error) {
 	req := hydrate.PageRequest{
 		UserIDs:           make([]int, 0, len(rows)),
 		ImageIDs:          make([]int, 0, len(rows)),
 		VisibleEvents:     visibleEvents,
 		ViewerID:          viewer.ID,
-		NoProfilePictures: !profilePictures,
-		NoCosmetics:       !cosmetics,
+		NoProfilePictures: !inc.profilePictures,
+		NoCosmetics:       !inc.cosmetics,
+		Tags:              inc.tags,
 	}
 	var model3dIDs []int
 	for _, r := range rows {
@@ -255,6 +297,9 @@ func hydrateRows(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer
 	out := &Hydrated{
 		Basic: p.Basic, UserCosmetics: p.UserCosmetics, ProfilePics: p.ProfilePics, Frames: p.Frames,
 		Thumbs: p.Thumbs, Metrics: p.Metrics, TagIDs: p.TagIDs, Decorations: p.Decorations, Reactions: p.Reactions,
+	}
+	if inc.tags {
+		out.Tags = p.Tags
 	}
 	if len(model3dIDs) > 0 {
 		vis, err := h.VisibleModel3DIDs(ctx, model3dIDs, viewer.ID, viewer.IsModerator)
@@ -315,12 +360,12 @@ func BuildImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.Time) []
 				continue
 			}
 		}
-		out = append(out, buildImage(r, hy))
+		out = append(out, buildImage(r, hy, viewer))
 	}
 	return out
 }
 
-func buildImage(r RawImage, hy *Hydrated) Image {
+func buildImage(r RawImage, hy *Hydrated, viewer Viewer) Image {
 	thumb, hasThumb := hy.Thumbs[r.ID]
 	nsfw := r.NsfwLevel
 	if hasThumb && thumb.NsfwLevel > nsfw {
@@ -330,9 +375,12 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 	if r.Model3DID != nil && hy.VisibleModel3D[*r.Model3DID] {
 		model3d = int64(*r.Model3DID)
 	}
+	// One Date for sortAt and publishedAt (`publishedAt: i.publishedAt ? i.sortAt : undefined`).
+	sortAt := new(time.Time)
+	*sortAt = r.SortAt
 	var publishedAt any = superjson.Undefined{}
 	if r.PublishedAt != nil {
-		publishedAt = r.SortAt
+		publishedAt = sortAt
 	}
 
 	basic, hasBasic := hy.Basic[r.UserID]
@@ -361,6 +409,7 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 		reactions = rs
 	}
 	tagIDs, hasTagIDs := hy.TagIDs[r.ID]
+	tags, hasTags := hy.Tags[r.ID]
 	var frame any
 	if f, ok := hy.Frames[r.ID]; ok {
 		frame = f
@@ -369,8 +418,10 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 	if d, ok := hy.Decorations[r.ID]; ok {
 		decoration = d
 	}
+	// feedThumbnailFields: the level counts either way; the url only for a servable thumbnail, the
+	// creator or a moderator.
 	var thumbURL any = superjson.Undefined{}
-	if hasThumb {
+	if hasThumb && (thumb.Servable || (viewer.ID != 0 && r.UserID == viewer.ID) || viewer.IsModerator) {
 		thumbURL = thumb.URL // `thumbnail?.url`: a thumbnail without a url is null, not undefined
 	}
 
@@ -390,7 +441,7 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 		{Key: "onSite", Val: boolOrNil(r.OnSite)},
 		{Key: "remixOfId", Val: rawOrNil(r.RemixOfID)},
 		{Key: "createdAt", Val: r.CreatedAt},
-		{Key: "sortAt", Val: r.SortAt},
+		{Key: "sortAt", Val: sortAt},
 		{Key: "type", Val: r.Type},
 		{Key: "metadata", Val: rawOrNil(r.Metadata)},
 		{Key: "ingestion", Val: r.Ingestion},
@@ -409,10 +460,11 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 		{Key: "user", Val: user},
 		{Key: "stats", Val: stats},
 		{Key: "reactions", Val: reactions},
-		// `tagsByImageId?.get(i.id)`: only built for include 'tags' (withTags, a fallback shape here),
-		// so always undefined. Node's wire carries it as `null` + ["undefined"]; the comparator
-		// decodes both the same (internal/shadow applyUndefined).
-		{Key: "tags", Val: superjson.Undefined{}},
+		// `tagsByImageId?.get(i.id)`: only built for include 'tags' (image.getInfinite; the gallery
+		// falls back on it), and then undefined for an image with no tag. Node's wire carries an
+		// undefined as `null` + ["undefined"]; the comparator decodes both the same (internal/shadow
+		// applyUndefined).
+		{Key: "tags", Val: orUndefined(any(tags), hasTags)},
 		{Key: "tagIds", Val: orUndefined(tagIDs, hasTagIDs)},
 		{Key: "cosmetic", Val: frame},
 		{Key: "eventDecoration", Val: decoration},
@@ -425,6 +477,7 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 	return Image{
 		Wire: wire, ID: r.ID, PostID: r.PostID, Index: idx, NsfwLevel: nsfw, SortAt: r.SortAt,
 		PublishedAt: publishedAt, ModelVerID: intOrNil(r.ModelVersionID), User: user, Stats: stats,
+		sortAt: sortAt,
 	}
 }
 

@@ -434,9 +434,12 @@ export function requiresImageDbPath(input: {
   publishedOnly?: boolean | null;
   userId?: number | null;
   hidden?: boolean | null;
+  requiringMeta?: boolean | null;
 }) {
   return (
     !!input.hidden ||
+    // The feed service has no filter for images blocked until their metadata is verified.
+    (!!input.requiringMeta && !!input.userId) ||
     !!input.postId ||
     !!input.postIds?.length ||
     !!input.collectionId ||
@@ -446,6 +449,52 @@ export function requiresImageDbPath(input: {
     (!!input.modelId && !input.modelVersionId) ||
     (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId)) ||
     (!!input.publishedOnly && !!input.userId)
+  );
+}
+
+/**
+ * Feed inputs whose answer depends on the viewer (signed out, each is ignored or reads as nobody's),
+ * so the answer is not edge-cached.
+ */
+export function isViewerScopedImageFeed(input: {
+  reactions?: unknown[] | null;
+  followed?: boolean | null;
+  hidden?: boolean | null;
+  pending?: boolean | null;
+  notPublished?: boolean | null;
+  scheduled?: boolean | null;
+  poiOnly?: boolean | null;
+  minorOnly?: boolean | null;
+  pendingReviewOnly?: boolean | null;
+}) {
+  return (
+    !!input.reactions?.length ||
+    !!input.followed ||
+    !!input.hidden ||
+    !!input.pending ||
+    !!input.notPublished ||
+    !!input.scheduled ||
+    !!input.poiOnly ||
+    !!input.minorOnly ||
+    !!input.pendingReviewOnly
+  );
+}
+
+/** `isViewerScopedImageFeed` plus the Hat Turf inputs, which only image.getInfinite reads. */
+export function isViewerScopedInfiniteFeed(
+  input: Parameters<typeof isViewerScopedImageFeed>[0] & {
+    hatSort?: unknown;
+    hatTurfMine?: boolean | null;
+    hideTurfHats?: boolean | null;
+    hideWornHats?: boolean | null;
+  }
+) {
+  return (
+    isViewerScopedImageFeed(input) ||
+    !!input.hatSort ||
+    !!input.hatTurfMine ||
+    !!input.hideTurfHats ||
+    !!input.hideWornHats
   );
 }
 

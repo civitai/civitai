@@ -22,6 +22,7 @@ import {
   MAX_LEG_ATTEMPTS,
 } from '~/server/services/placement-escrow.service';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
+import { syncDealReviewPublication } from '~/server/services/creator-service-deal-review-publish';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
@@ -174,6 +175,8 @@ async function holdForReview(
   await tx.$executeRaw`
     INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type", "comment")
     VALUES (${dealId}::int, -1, 'Disputed'::"ServiceDealEventType", ${reason}::text)`;
+  // A happy review shown before the hold is unshown until it resolves.
+  await syncDealReviewPublication(tx, dealId);
   return true;
 }
 
@@ -384,6 +387,23 @@ async function markHeld(tx: Db, dealId: number) {
   return marked?.status ?? null;
 }
 
+/**
+ * A settled deal's review is published, unless it is a happy review of a refunded deal. Outside the receipt's transaction, so a
+ * recount that fails never rolls back the record of a payout; the deals job retries a missed one.
+ */
+const syncReviewAfterSettle = (dealId: number) =>
+  dbWrite
+    .$transaction((tx) => syncDealReviewPublication(tx, dealId))
+    .catch((error) =>
+      logToAxiom({
+        name: 'creator-service-deal-review',
+        type: 'error',
+        message: 'review publication after settlement failed; the deals job will retry',
+        payload: { dealId },
+        error: (error as Error)?.message,
+      })
+    );
+
 async function markSettled(tx: Db, dealId: number, event: 'Refunded' | 'Released') {
   const marked = await tx.$executeRaw`
     UPDATE "ServiceDeal" SET "settledAt" = now(), "updatedAt" = now()
@@ -519,6 +539,7 @@ export async function refundDeal(dealId: number) {
     },
     (tx) => markSettled(tx, dealId, 'Refunded')
   );
+  if (paid !== null) await syncReviewAfterSettle(dealId);
   return paid !== null;
 }
 
@@ -743,7 +764,10 @@ export async function releaseDeal(dealId: number) {
       settled = await markSettled(tx, dealId, 'Released');
     }
   );
-  if (settled) await notifyServiceDeal({ dealId, notice: 'paidOut', to: 'seller' });
+  if (settled) {
+    await notifyServiceDeal({ dealId, notice: 'paidOut', to: 'seller' });
+    await syncReviewAfterSettle(dealId);
+  }
   return paid !== null;
 }
 

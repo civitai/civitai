@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import type { EntityMetric_MetricType_Type, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { NotificationCategory } from '~/server/common/enums';
 import type { ProtectedContext } from '~/server/createContext';
@@ -37,6 +38,7 @@ import { toggleReaction } from './../services/reaction.service';
 import type { EventPointGrant } from '~/server/events/points/award';
 import { loadEvents } from '~/server/events/load-events';
 import { hasEntityAccess } from '~/server/services/common.service';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { assertCommentActionable } from '~/server/controllers/commentv3.controller';
 
 /**
@@ -234,6 +236,15 @@ export const toggleReactionHandler = async ({
     if (input.entityType === 'comment') await assertCommentActionable(input.entityId, ctx);
 
     if (input.entityType === 'image') {
+      // A reaction the user already holds stays removable on an image hidden from them since.
+      await assertImageVisibleToViewer({
+        id: input.entityId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      }).catch(async (error: unknown) => {
+        const hidden = error instanceof TRPCError && error.code === 'NOT_FOUND';
+        if (!hidden || !(await holdsReaction({ ...input, userId: ctx.user.id }))) throw error;
+      });
       // We are only doing this for image contests for now. Because the user
       // gets an instant feedback, this shouldn't have too bad an impact if any at all.
       const contests = await getContestsFromEntity({

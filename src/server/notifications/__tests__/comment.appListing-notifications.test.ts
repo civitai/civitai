@@ -484,7 +484,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND NOT EXISTS (
       SELECT 1 FROM "Article" da
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
-      AND da.status <> 'Published' AND da."userId" <> pc."userId"
+      AND (da.status <> 'Published' OR da.availability = 'Private') AND da."userId" <> pc."userId"
       )
       AND NOT EXISTS (
       SELECT 1 FROM "PostText" ht JOIN "Post" hp ON hp.id = ht."postId"
@@ -630,7 +630,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND NOT EXISTS (
       SELECT 1 FROM "Article" da
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
-      AND da.status <> 'Published'
+      AND (da.status <> 'Published' OR da.availability = 'Private')
       )
       AND NOT EXISTS (
       SELECT 1 FROM "Model" hm
@@ -721,7 +721,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LIMIT 1
       ) pti ON true
       WHERE c."createdAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '1 day'
-      AND (c."createdAt" > '2026-01-01T00:00:00.000Z' OR c."updatedAt" > '2026-01-01T00:00:00.000Z')
+      AND (c."createdAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '5 minutes' OR c."updatedAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '5 minutes')
       AND c."tosViolation" = false
       AND c.hidden IS NOT TRUE
       AND c."deletedAt" IS NULL
@@ -731,7 +731,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND NOT EXISTS (
       SELECT 1 FROM "Article" da
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
-      AND da.status <> 'Published'
+      AND (da.status <> 'Published' OR da.availability = 'Private')
       )
       AND NOT EXISTS (
       SELECT 1 FROM "Model" hm
@@ -760,7 +760,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       FROM "Model" m
       JOIN "User" u ON m."userId" = u.id
       WHERE m."userId" > 0
-      AND (m."publishedAt" > '2026-01-01T00:00:00.000Z' OR m."updatedAt" > '2026-01-01T00:00:00.000Z')
+      AND (m."publishedAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '5 minutes' OR m."updatedAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '5 minutes')
       AND m.description LIKE '%"mention:%'
       AND m.status = 'Published'
       UNION
@@ -796,7 +796,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       ORDER BY x.first_at
       LIMIT 10
       ) am
-      WHERE GREATEST(a."publishedAt", a."updatedAt", a."contentScannedAt") > '2026-01-01T00:00:00.000Z'
+      WHERE GREATEST(a."publishedAt", a."updatedAt", a."contentScannedAt") > '2026-01-01T00:00:00.000Z'::timestamp - interval '5 minutes'
       AND a.status = 'Published'
       AND a.ingestion = 'Scanned'
       AND a."publishedAt" > now() - interval '30 days'

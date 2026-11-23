@@ -1,13 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   blockedForSignal,
+  cachedBlockedForPatterns,
+  createScannerReader,
   imageAuditContentHash,
-  isReviewBatchId,
-  newReviewBatchId,
   parseBlockedForPatterns,
-  parseReviewBatchRecord,
-  scannerHeldIds,
-} from '../review-batch';
+  SCANNER_HITS_SQL,
+  scannerCsamVerdict,
+  type ScannerClient,
+} from '../media-signals';
+import { isReviewBatchId, newReviewBatchId, parseReviewBatchRecord } from '../review-batch';
 
 // Wire contract: ClickHouse already holds scan rows under these hashes. Changing the function
 // orphans every stored row, and each image then reads as unscanned.
@@ -19,19 +21,20 @@ describe('imageAuditContentHash', () => {
   });
 });
 
-describe('scannerHeldIds', () => {
-  const rows = [
-    { contentHash: imageAuditContentHash(1), hit: 1 },
-    { contentHash: imageAuditContentHash(2), hit: 0 },
-    { contentHash: imageAuditContentHash(4), hit: '1' },
-  ];
-
-  it('routing holds a hit and an image with no rows, and passes only a clean row', () => {
-    expect([...scannerHeldIds([1, 2, 3, 4], rows)].sort()).toEqual([1, 3, 4]);
+describe('scannerCsamVerdict', () => {
+  it('reads the CSAM label alone: a minor-only hit is clear, no rows is none', () => {
+    const rows = [
+      { contentHash: imageAuditContentHash(1), csamHit: 1 },
+      { contentHash: imageAuditContentHash(2), csamHit: 0 },
+    ];
+    expect(scannerCsamVerdict(1, rows)).toBe('hit');
+    expect(scannerCsamVerdict(2, rows)).toBe('clear');
+    expect(scannerCsamVerdict(3, rows)).toBe('none');
   });
 
-  it('a label-presence reader counts only hits, never an image with no rows', () => {
-    expect([...scannerHeldIds([1, 2, 3, 4], rows, false)].sort()).toEqual([1, 4]);
+  it('refuses a row read without the CSAM column', () => {
+    expect(scannerCsamVerdict(1, [{ contentHash: imageAuditContentHash(1) }])).toBe('hit');
+    expect(SCANNER_HITS_SQL).toMatch(/AS csamHit/);
   });
 });
 
@@ -64,6 +67,18 @@ describe('blockedForSignal', () => {
     expect(blockedForSignal('bene', both)).toBe(true);
   });
 
+  it('a minor-only reason is clean, unless a signal pattern also matches it', () => {
+    const minor = parseBlockedForPatterns('# signal\n^sig.*$\n# minor\n^minor-.*$\n^sig-minor$')!;
+    expect(blockedForSignal('minor-a', minor)).toBe(false);
+    expect(blockedForSignal('minor-a, moderated', minor)).toBe(false);
+    expect(blockedForSignal('sig-minor', minor)).toBe(true);
+    expect(blockedForSignal('minor-a,never seen', minor)).toBe(true);
+  });
+
+  it('a minor-only reason is a signal while the patterns have no minor section', () => {
+    expect(blockedForSignal('minor-a', PATTERNS)).toBe(true);
+  });
+
   it('without patterns, every value but the fixed reasons is a signal', () => {
     expect(blockedForSignal('benign', null)).toBe(true);
     expect(blockedForSignal('moderated', null)).toBe(false);
@@ -73,6 +88,13 @@ describe('blockedForSignal', () => {
     expect(parseBlockedForPatterns(undefined)).toBeNull();
     expect(parseBlockedForPatterns('^no header$')).toBeNull();
     expect(parseBlockedForPatterns('# signal\n(unclosed')).toBeNull();
+  });
+
+  it('refuses a list with no signal patterns, so every reason stays a signal', () => {
+    expect(parseBlockedForPatterns('# minor\n^minor-.*$')).toBeNull();
+    expect(parseBlockedForPatterns('# known-non-minor\n^benign$')).toBeNull();
+    expect(parseBlockedForPatterns('# known-non-minor\n^benign$\n# minor\n^minor-.*$')).toBeNull();
+    expect(blockedForSignal('minor-a', parseBlockedForPatterns('# minor\n^minor-.*$'))).toBe(true);
   });
 });
 
@@ -103,5 +125,71 @@ describe('review batch ids and records', () => {
     expect(parseReviewBatchRecord(JSON.stringify({ ...record, declared: 'no' }))).toBeNull();
     expect(parseReviewBatchRecord('{')).toBeNull();
     expect(parseReviewBatchRecord(null)).toBeNull();
+  });
+});
+
+describe('cachedBlockedForPatterns', () => {
+  it('parses once per value, and again when the value changes', () => {
+    let raw = '# signal\n^a$';
+    const read = cachedBlockedForPatterns(() => raw);
+    const first = read();
+    expect(read()).toBe(first);
+    raw = '# signal\n^b$';
+    expect(read()).not.toBe(first);
+    expect(read()?.signal[0].source).toBe('^b$');
+  });
+});
+
+describe('createScannerReader', () => {
+  const rowsFor = (hits: Record<number, number>) =>
+    Object.entries(hits).map(([id, csamHit]) => ({
+      contentHash: imageAuditContentHash(Number(id)),
+      csamHit,
+    }));
+  const client = (rows: unknown[] | Error) => {
+    const query = vi.fn(async () => {
+      if (rows instanceof Error) throw rows;
+      return { json: async () => rows };
+    });
+    return { client: { query } as unknown as ScannerClient, query };
+  };
+
+  it('reads each verdict in one bounded query, telling a hit, a clear and no rows apart', async () => {
+    const { client: c, query } = client(rowsFor({ 1: 1, 2: 0 }));
+    const deadline = vi.fn(() => undefined);
+    const reader = createScannerReader(() => c, { onError: vi.fn(), deadline });
+    expect(await reader.readScannerCsamVerdicts([1, 2, 3])).toEqual(
+      new Map([
+        [1, 'hit'],
+        [2, 'clear'],
+        [3, 'none'],
+      ])
+    );
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledWith(
+      expect.objectContaining({ clickhouse_settings: { max_execution_time: 3 } })
+    );
+    expect(deadline).toHaveBeenCalledWith(4000);
+  });
+
+  it('answers null, never a verdict, when the client is missing or fails', async () => {
+    const onError = vi.fn();
+    const failing = client(new Error('timeout'));
+    const reader = createScannerReader(() => failing.client, {
+      onError,
+      deadline: () => undefined,
+    });
+    expect(await reader.readScannerCsamVerdict(1)).toBeNull();
+    expect(await reader.readScannerCsamVerdicts([1])).toBeNull();
+    expect(onError).toHaveBeenCalled();
+    const missing = createScannerReader(() => undefined, { onError, deadline: () => undefined });
+    expect(await missing.readScannerCsamVerdict(1)).toBeNull();
+  });
+
+  it('sends no query for no images', async () => {
+    const { client: c, query } = client([]);
+    const reader = createScannerReader(() => c, { onError: vi.fn(), deadline: () => undefined });
+    expect(await reader.readScannerCsamVerdicts([])).toEqual(new Map());
+    expect(query).not.toHaveBeenCalled();
   });
 });

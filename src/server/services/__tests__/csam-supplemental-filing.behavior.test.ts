@@ -352,7 +352,7 @@ describe('a supplemental report', () => {
     ).resolves.toEqual({
       priorReportNumbers: [900],
       unreviewed: 1,
-      text: 'A Civitai reviewer confirmed the attached image(s). The account has 1 further image that was flagged for review and not individually reviewed. It is preserved and available in response to legal process.',
+      text: "A Civitai reviewer confirmed the reported image(s). Where a file is reported as not viewed, Civitai can't confirm that it is identical to the copy the reviewer saw. The account has 1 further image that was flagged for review and not individually reviewed. It is preserved and available in response to legal process.",
     });
   });
 });

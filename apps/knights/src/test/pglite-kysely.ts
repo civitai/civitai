@@ -43,6 +43,8 @@ CREATE TABLE "Image" (
   "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
   "blockedFor" TEXT,
   "needsReview" TEXT,
+  "scanJobs" JSONB,
+  "modelRestricted" BOOLEAN NOT NULL DEFAULT false,
   "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
   "poi" BOOLEAN NOT NULL DEFAULT false,
   "minor" BOOLEAN NOT NULL DEFAULT false,
@@ -50,7 +52,8 @@ CREATE TABLE "Image" (
 );
 CREATE TABLE "Post" (
   "id" INTEGER PRIMARY KEY,
-  "publishedAt" TIMESTAMP(3)
+  "publishedAt" TIMESTAMP(3),
+  "availability" TEXT NOT NULL DEFAULT 'Public'
 );
 CREATE TABLE "NewOrderPlayer" (
   "userId" INTEGER PRIMARY KEY,

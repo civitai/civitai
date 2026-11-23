@@ -643,6 +643,7 @@ export default function UserProfileEditModal() {
             <HighlightedBadgesInput
               badges={allBadges}
               value={highlightedBadgeIds}
+              hiddenIds={hiddenBadgeIds}
               onChange={(nextHighlighted) =>
                 form.setValue('privacySettings', {
                   ...privacySettings,

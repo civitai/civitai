@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { showcaseHiddenOnMask } from '~/shared/constants/profile-showcase.constants';
 import { constants } from '~/server/common/constants';
 import { imageReferenceInputSchema } from '~/server/schema/image.schema';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
@@ -99,6 +100,13 @@ export const showcaseSectionSchema = z.object({
         message: 'Link must be a civitai.com path or an https:// URL',
       }),
     })
+    .optional(),
+  /** `ShowcaseHiddenOn` bits: the sites this section is not shown on. */
+  hiddenOn: z
+    .number()
+    .int()
+    .min(0)
+    .refine((bits) => (bits & ~showcaseHiddenOnMask) === 0, 'Unknown site')
     .optional(),
 });
 
