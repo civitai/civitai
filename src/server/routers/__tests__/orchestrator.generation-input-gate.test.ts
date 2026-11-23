@@ -186,6 +186,19 @@ describe('orchestrator generation inputs', () => {
     }
   );
 
+  // DEMO: `remixSnapshot` is server-set; a client cannot put one on the public procedure's call.
+  it('generateFromGraph never forwards a remixSnapshot from client input', async () => {
+    await caller()
+      .generateFromGraph({
+        input: { prompt: 'x', remixSnapshot: 'forged' },
+        remixSnapshot: 'forged',
+      } as never)
+      .catch(() => undefined);
+    const [[args]] = h.generateFromGraph.mock.calls as unknown as [[Record<string, unknown>]];
+    // A key inside `input` is graph input, which generateFromGraph never reads it from.
+    expect(args).not.toHaveProperty('remixSnapshot');
+  });
+
   // Boost-to-load lets a free account past the members gate; API callers must never opt in to it.
   it.each([
     ['a session', null, true],
