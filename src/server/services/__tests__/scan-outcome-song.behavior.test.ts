@@ -79,6 +79,7 @@ beforeAll(async () => {
       "entityId" int NOT NULL,
       status "AppealStatus" NOT NULL DEFAULT 'Pending'
     );
+    CREATE TABLE "ModActivity" ("entityType" text, "entityId" int, activity text);
     CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
     CREATE TABLE "CsamReport" (
