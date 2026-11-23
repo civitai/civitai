@@ -536,6 +536,11 @@ describe('end-of-event cleanup', () => {
 
   it('keeps the cleanup open, to retry the next day, while the end-of-event prizes cannot be awarded', async () => {
     sysStore[winnerMarker] = 'Blue';
+    // Not configured yet.
+    await eventEngine.dailyReset(secondReset);
+    expect(setKeys()).toEqual([]);
+
+    // Configured, but invalid.
     sysStore[flagRaceConfigKey(BIRTHDAY_2026_EVENT)] = JSON.stringify({
       prizes: { comeback: { mode: 'live' } },
     });

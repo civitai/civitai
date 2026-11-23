@@ -179,8 +179,8 @@ async function countScorers(event: PrizeEvent, badge: ScorerBadge) {
 }
 
 /**
- * The end-of-event prizes, run by the event cleanup once the winner is named. An invalid config throws
- * and `pending` means a prize is in shadow: either way the cleanup stays open and runs again the next day.
+ * The end-of-event prizes, run by the event cleanup once the winner is named. An invalid config throws;
+ * `pending` means a prize is in shadow or none is configured yet. Either way the cleanup stays open.
  */
 export async function awardEventPrizes(event: PrizeEvent, winner: string, flagRaceJson: unknown) {
   const prizes = parseEventPrizes(flagRaceJson);
