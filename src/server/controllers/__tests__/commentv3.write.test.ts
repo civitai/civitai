@@ -610,6 +610,27 @@ describe('commentv3 hide and pin', () => {
     }
   );
 
+  it('hide toggles from the row read under its lock, not an earlier read', async () => {
+    // Read hidden by the check, then hidden by someone else before the toggle's lock.
+    m.getStored.mockImplementation(async (_db: unknown, id: number, lock?: string) =>
+      lock === 'FOR UPDATE' ? { ...m.stored.get(id)!, hidden: true } : m.stored.get(id)
+    );
+    await expect(
+      toggleHideCommentV3Handler({ ctx: ctx(ARTICLE_OWNER), input: { id: 101 } })
+    ).resolves.toEqual({ id: 101, hidden: false });
+    expect(m.setCommentFlags).toHaveBeenCalledWith(expect.anything(), [101], { hidden: false });
+  });
+
+  it('hide answers not found when the comment is deleted before its lock', async () => {
+    m.getStored.mockImplementation(async (_db: unknown, id: number, lock?: string) =>
+      lock === 'FOR UPDATE' ? { ...m.stored.get(id)!, deletedAt: new Date() } : m.stored.get(id)
+    );
+    await expect(
+      toggleHideCommentV3Handler({ ctx: ctx(ARTICLE_OWNER), input: { id: 101 } })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(m.setCommentFlags).not.toHaveBeenCalled();
+  });
+
   it('turns them back off', async () => {
     m.stored.set(105, row(105, { hidden: true, pinnedAt: new Date() }));
     await toggleHideCommentV3Handler({ ctx: ctx(ARTICLE_OWNER), input: { id: 105 } });

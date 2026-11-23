@@ -1,10 +1,5 @@
-import dynamic from 'next/dynamic';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-
-const StorylineManageModal = dynamic(
-  () => import('~/components/Storyline/manage/StorylineManageModal')
-);
+import { openDialog } from '~/components/Dialog/openDialog';
 
 export function openStorylineManageModal(props: { storylineId: number }) {
-  dialogStore.trigger({ component: StorylineManageModal, props });
+  openDialog(() => import('~/components/Storyline/manage/StorylineManageModal'), props);
 }

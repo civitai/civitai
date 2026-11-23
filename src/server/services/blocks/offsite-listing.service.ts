@@ -3388,11 +3388,13 @@ async function resolveApprovalContentRating(
  * its store art happens to be tame — an under-rating of the runtime, produced by looking at
  * a picture. So the app's declaration is a FLOOR that is raised by mature media and never
  * lowered by tame media: exactly {@link resolveListingRatingFloorInTx}, the same helper
- * `approveRequest`'s draft→approved transition and `republishOwnListing` use, so all three
- * on-site rating sites have ONE spelling.
+ * `approveRequest`'s draft→approved transition, reset restore and subsequent-version
+ * re-sync and `republishOwnListing` use, so the on-site rating sites have ONE spelling.
  *
  * A moderator override may still RAISE above the floor (a mod may always rate up) and is
- * ignored when it would lower.
+ * ignored when it would lower. It is stored only as the listing's `contentRating`; the next
+ * approved version's re-sync (`resolveVersionListingRating`) keeps it by recognising a rating
+ * above what the previous version's declaration gives.
  *
  * 🔴 NOT quite "the same discipline as the off-site clamp above" — that sentence used to
  * live here and it is inaccurate AT EQUAL LEVEL, which is a reachable case rather than a

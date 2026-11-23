@@ -15,16 +15,44 @@ export type ScamCleanupRecord = {
 
 type IdRow = { id: number };
 
-/** Hides, or shows again, the user's live comments, optionally only those of `among`. */
-async function setCommentsHidden(userId: number, hidden: boolean, among?: number[]) {
+/** Hides the user's live comments, stamping each with `at`, the record's time. */
+async function hideUserComments(userId: number, at: Date) {
   const ids = (
     await dbWrite.$queryRaw<IdRow[]>`
       SELECT id FROM "CommentV3"
-      WHERE "userId" = ${userId} AND "deletedAt" IS NULL AND hidden = ${!hidden}
-        AND (${!among}::boolean OR id = ANY(${among ?? []}::int[]))`
+      WHERE "userId" = ${userId} AND "deletedAt" IS NULL AND NOT hidden`
   ).map((r) => r.id);
   // One transaction: a partial hide would leave comments hidden with no record to restore them by.
-  return dbWrite.$transaction((tx) => setCommentFlags(prismaRunner(tx), ids, { hidden }));
+  return dbWrite.$transaction((tx) =>
+    setCommentFlags(prismaRunner(tx), ids, { hidden: true }, { hiddenAt: at })
+  );
+}
+
+/**
+ * Shows again those of `among` whose hide is the cleanup recorded at `at`: stamped with exactly
+ * `at`. A row hidden before stamps existed has none, so it counts only if its last write is the
+ * cleanup's own, which lands within minutes of `at`.
+ */
+async function restoreComments(userId: number, among: number[], at: Date) {
+  if (!among.length) return [];
+  return dbWrite.$transaction(async (tx) => {
+    const db = prismaRunner(tx);
+    const { rows } = await db.query<IdRow>(
+      `SELECT id FROM "CommentV3"
+       WHERE "userId" = $1 AND id = ANY(string_to_array($2, ',')::int[])
+         AND "deletedAt" IS NULL AND hidden
+         AND ("hiddenAt" = $3::timestamptz
+           OR ("hiddenAt" IS NULL
+             AND "updatedAt" BETWEEN $3::timestamptz AND $3::timestamptz + interval '10 minutes'))
+       ORDER BY id FOR UPDATE`,
+      [userId, among.join(','), at]
+    );
+    return setCommentFlags(
+      db,
+      rows.map((r) => r.id),
+      { hidden: false }
+    );
+  });
 }
 
 function affectedRows(kind: Exclude<ScamCleanup, 'none'>, userId: number, at: Date) {
@@ -40,7 +68,7 @@ function affectedRows(kind: Exclude<ScamCleanup, 'none'>, userId: number, at: Da
     case 'comments':
       // `hidden`, not the ToS removal: that is the ban path, which notifies and settles rewards per
       // comment. This one has to be undone by id when a moderator overturns the mute.
-      return setCommentsHidden(userId, true);
+      return hideUserComments(userId, at);
   }
 }
 
@@ -83,12 +111,17 @@ async function restore(userId: number, record: StoredCleanup, triggerType: unkno
           AND "userId" = ${userId} AND "deletedAt" = ${new Date(record.at)}
       `;
     case 'comments':
-      return (await setCommentsHidden(userId, false, await storedCommentIds(record, triggerType)))
-        .length;
+      return (
+        await restoreComments(
+          userId,
+          await storedCommentIds(record, triggerType),
+          new Date(record.at)
+        )
+      ).length;
     default:
       // `commentsV2`, no longer written, also holds CommentV3 ids.
       if ((record.kind as string) === 'commentsV2')
-        return (await setCommentsHidden(userId, false, record.ids)).length;
+        return (await restoreComments(userId, record.ids, new Date(record.at))).length;
       return 0;
   }
 }

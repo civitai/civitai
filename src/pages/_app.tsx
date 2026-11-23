@@ -104,7 +104,6 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
-import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 import {
   ShellBootstrapProvider,
   useShellBootstrap,
@@ -407,11 +406,9 @@ function MyApp(props: CustomAppProps) {
                                                     <AuctionContextProvider>
                                                       <BaseLayout>
                                                         {isProd && <TrackPageView />}
-                                                        <CustomModalsProvider>
-                                                          {getLayout(<Component {...pageProps} />)}
-                                                          <DialogProvider />
-                                                          <RoutedDialogProvider />
-                                                        </CustomModalsProvider>
+                                                        {getLayout(<Component {...pageProps} />)}
+                                                        <DialogProvider />
+                                                        <RoutedDialogProvider />
                                                       </BaseLayout>
                                                     </AuctionContextProvider>
                                                   </ToursProvider>

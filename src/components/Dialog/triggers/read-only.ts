@@ -1,10 +1,5 @@
-import dynamic from 'next/dynamic';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-
-const ReadOnlyModal = dynamic(() => import('~/components/Modals/ReadOnlyModal'), {
-  ssr: false,
-});
+import { openDialog } from '~/components/Dialog/openDialog';
 
 export function openReadOnlyModal() {
-  dialogStore.trigger({ component: ReadOnlyModal });
+  openDialog(() => import('~/components/Modals/ReadOnlyModal'));
 }

@@ -12,7 +12,6 @@ import {
   Title,
   UnstyledButton,
 } from '@mantine/core';
-import { modals, openConfirmModal } from '@mantine/modals';
 import { useRouter } from 'next/router';
 import {
   IconArrowRight,
@@ -50,6 +49,8 @@ import { storylineContinueUrl } from '~/components/Storyline/storyline-routes';
 import { storylinePriceLabel } from '~/components/Storyline/storyline-ui';
 import { useHasCoarsePointer, useIsMobile } from '~/hooks/useIsMobile';
 import { STORYLINE_PATH_LIMIT } from '~/shared/utils/storyline';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
+import { openContentDialog } from '~/components/Dialog/Common/ContentDialog';
 
 export function openStorylineEarlyAccess({
   chapterId,
@@ -112,9 +113,9 @@ export function StorylineEndOfChapter({
     child.tombstone !== 'removed' &&
     child.tombstone !== 'deleted'
       ? () =>
-          openConfirmModal({
+          openConfirm({
             title: 'Make this the main path',
-            children: (
+            message: (
               <Text size="sm">
                 Make <strong>{getStorylineChapterName(child, { inSentence: true })}</strong> the
                 main path after chapter {chapterDepth + 1}? Readers are sent this way first. The
@@ -155,24 +156,24 @@ export function StorylineEndOfChapter({
   const endTerms = useStorylineContinueTerms(isOwner ? undefined : endTarget?.post.id);
   const mainWay = endTarget && (isOwner || endTerms?.open) ? endTarget : undefined;
   const router = useRouter();
-  // Three actions, so not openConfirmModal: its footer has two.
+  // Three actions, so not openConfirm: its footer has two.
   const confirmBranch = (postId: number) =>
-    modals.open({
+    openContentDialog({
       title: 'Start a branch?',
-      children: (
+      children: ({ close }) => (
         <div className="flex flex-col gap-4">
           <Text size="sm">
             Start a side path after chapter {chapterDepth + 1}? Readers will see it as one of the
             other paths.
           </Text>
           <Group justify="flex-end" gap="xs">
-            <Button variant="default" onClick={() => modals.closeAll()}>
+            <Button variant="default" onClick={() => close()}>
               Cancel
             </Button>
             <Button
               variant="default"
               onClick={() => {
-                modals.closeAll();
+                close();
                 openStorylineContinueModal(
                   isOwner
                     ? { parentPostId: postId, parentChapterId: chapterId, branch: true }
@@ -186,7 +187,7 @@ export function StorylineEndOfChapter({
             <Button
               color="violet"
               onClick={() => {
-                modals.closeAll();
+                close();
                 tracking.trackCreateClick({ chapterId });
                 router.push(
                   storylineContinueUrl({

@@ -72,7 +72,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       # The Dockerfile's install: only the app and its workspace deps, no root postinstall.
       - name: Install

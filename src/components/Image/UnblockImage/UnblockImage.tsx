@@ -1,6 +1,7 @@
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
-import { closeModal, openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { imageStore } from '~/store/image.store';
 
@@ -30,7 +31,7 @@ export function UnblockImage({
     async onSuccess(_, { ids: [id] }) {
       imageStore.setImage(imageId, { ingestion: 'Scanned', blockedFor: undefined });
       await onSuccess?.(id);
-      closeModal('unblock-confirm');
+      dialogStore.closeById('unblock-confirm');
     },
     onError(error: any) {
       showErrorNotification({ error: new Error(error.message) });
@@ -41,18 +42,16 @@ export function UnblockImage({
     if (skipConfirm) {
       mutate({ ids: [imageId], reviewAction: 'unblock' });
     } else {
-      openConfirmModal({
-        modalId: 'unblock-confirm',
-        centered: true,
+      openConfirm({
+        id: 'unblock-confirm',
         title: 'Unblock image',
-        children: 'Are you sure you want to unblock this image?',
+        message: 'Are you sure you want to unblock this image?',
         labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
         closeOnConfirm,
         onConfirm: () => {
           mutate({ ids: [imageId], reviewAction: 'unblock' });
           onUnblock?.(imageId);
         },
-        zIndex: 1000,
       });
     }
   };

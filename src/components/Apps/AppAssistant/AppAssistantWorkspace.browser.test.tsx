@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
-import { ModalsProvider } from '@mantine/modals';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { ReactNode } from 'react';
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
 import { gateToolSet } from '@civitai/components-chat/core';
@@ -650,9 +651,10 @@ const ctx = { signal: new AbortController().signal, conversationId: 'c', files: 
 const conv = { conversationId: 'c', reply: 1 };
 
 const Workspace = () => (
-  <ModalsProvider>
+  <>
     <AppAssistantWorkspace canPreview sandboxUrl={BASE} />
-  </ModalsProvider>
+    <DialogProvider />
+  </>
 );
 
 async function mount() {
@@ -794,6 +796,9 @@ beforeEach(() => {
   m.exportAuth = [];
   m.downloads = [];
 });
+
+// Each test renders its own DialogProvider; the store is global, so empty it between tests.
+afterEach(() => dialogStore.closeAll());
 
 describe('AppAssistantWorkspace with no apps', () => {
   test('shows only the chat: no app switcher, no preview and no Chat/Preview switch', async () => {
@@ -1914,9 +1919,10 @@ describe('AppAssistantWorkspace subagents', () => {
     const { APP_ASSISTANT_SUBAGENTS } = await import('./assistantSubagents');
     await page.viewport(1440, 900);
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <AppAssistantWorkspace canPreview sandboxUrl={BASE} subagents />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
     expect(m.chat!.subagents).toBe(APP_ASSISTANT_SUBAGENTS);
@@ -2026,9 +2032,10 @@ describe('AppAssistantWorkspace chats follow the app', () => {
       m.newChat.mockReset();
       await page.viewport(1440, 900);
       const screen = renderWithProviders(
-        <ModalsProvider>
+        <>
           <AppAssistantWorkspace canPreview sandboxUrl={BASE} userId={userId} />
-        </ModalsProvider>
+          <DialogProvider />
+        </>
       );
       await expect.element(page.getByTestId('chat')).toBeInTheDocument();
       return screen;
@@ -2592,9 +2599,10 @@ describe('AppAssistantWorkspace preview after a reload on the server runner', ()
     ];
     await page.viewport(1440, 900);
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner={remoteRunner} />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
     await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-aaaa,/);
@@ -2812,9 +2820,10 @@ describe('AppAssistantWorkspace preview after a reload on the server runner', ()
   async function mountRunnerEmpty() {
     await page.viewport(1440, 900);
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
   }
@@ -2823,9 +2832,10 @@ describe('AppAssistantWorkspace preview after a reload on the server runner', ()
 describe('AppAssistantWorkspace preview on the server runner', () => {
   const HOST = 'dev-0123456789abcdef.civit.ai';
   const RunnerWorkspace = () => (
-    <ModalsProvider>
+    <>
       <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner />
-    </ModalsProvider>
+      <DialogProvider />
+    </>
   );
   async function mountRunner(width = 1440) {
     await page.viewport(width, 900);
@@ -3651,9 +3661,10 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await page.viewport(1440, 900);
     m.list = kept();
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
     await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Running');
@@ -3684,9 +3695,10 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await page.viewport(1440, 900);
     m.list = kept();
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
     await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Running');
@@ -3758,9 +3770,10 @@ describe('AppAssistantWorkspace keeps the app awake while the user works in its 
   test('on the server runner too', async () => {
     await page.viewport(1440, 900);
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
     await openFirst();
@@ -3856,9 +3869,10 @@ describe('AppAssistantWorkspace Submit for review', () => {
     );
     await page.viewport(1440, 900);
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
     await openFirst();
@@ -3978,9 +3992,10 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
   async function mountHibernate(hibernate: boolean) {
     await page.viewport(1440, 900);
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <AppAssistantWorkspace canPreview sandboxUrl={BASE} hibernate={hibernate} />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
   }
@@ -4232,9 +4247,10 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     localStorage.clear();
     await page.viewport(1440, 900);
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner hibernate />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
     // The runner woke it: the page hears of the call, and its list now has the woken sandbox.
@@ -4267,9 +4283,10 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     localStorage.clear();
     await page.viewport(1440, 900);
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner hibernate />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
     m.list = [...m.list, sandbox('sbx-woken-garden-log', { app: 'garden-log', state: 'starting' })];
@@ -4379,9 +4396,10 @@ describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the s
     m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
     await page.viewport(1440, 900);
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <AppAssistantWorkspace canPreview sandboxUrl={BASE} hibernate />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
     goneFromService('app-bbbb');
@@ -4406,9 +4424,10 @@ describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the s
     hib.sleeping = [];
     await page.viewport(1440, 900);
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner hibernate />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
     await switcher().click();
@@ -4445,9 +4464,10 @@ describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the s
     m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
     await page.viewport(1440, 900);
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <AppAssistantWorkspace canPreview sandboxUrl={BASE} hibernate />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
     goneFromService('app-bbbb');
@@ -4518,9 +4538,10 @@ describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the s
   async function mountHibernateFor() {
     await page.viewport(1440, 900);
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <AppAssistantWorkspace canPreview sandboxUrl={BASE} hibernate />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
   }

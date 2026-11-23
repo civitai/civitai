@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.549",
+  "version": "5.1.550",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -210,7 +210,6 @@
     "@mantine/dates": "^7.17.7",
     "@mantine/dropzone": "^7.17.7",
     "@mantine/hooks": "^7.17.7",
-    "@mantine/modals": "^7.17.7",
     "@mantine/notifications": "^7.17.7",
     "@mantine/nprogress": "^7.17.7",
     "@mantine/tiptap": "^7.17.7",

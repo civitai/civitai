@@ -1,5 +1,5 @@
 import { Menu } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconTrash } from '@tabler/icons-react';
 import React from 'react';
 import type { CreatorAnnouncement as CreatorAnnouncementModel } from '~/components/Announcements/creator-announcement.types';
@@ -30,9 +30,9 @@ export function DeleteCreatorAnnouncementButton({
   if (!canDelete) return null;
 
   const handleDelete = () =>
-    openConfirmModal({
+    openConfirm({
       title: 'Delete announcement',
-      children: 'Are you sure you want to delete this announcement? This cannot be undone.',
+      message: 'Are you sure you want to delete this announcement? This cannot be undone.',
       labels: { cancel: "No, don't delete it", confirm: 'Delete announcement' },
       confirmProps: { color: 'red' },
       onConfirm: () => deleteAnnouncement(announcement.id),
