@@ -10,9 +10,9 @@ import { describe, expect, it } from 'vitest';
 // Actions caches are scoped to a ref: a run reads its own ref's entries and the default branch's,
 // and saves into its own ref. An entry saved by a pull request (refs/pull/<n>/merge) or by a
 // dispatch on a branch is readable by that ref alone, and still counts against the repo's 10 GB
-// cap, where GitHub evicts the least recently used entries, `main`'s included. Measured
-// 2026-11-23: nine pnpm-store copies saved by PR and branch runs, ~5 GB, from setup-node's
-// `cache: pnpm`, which saves on every run that misses and has no input to stop it.
+// cap, where GitHub evicts the least recently used entries, `main`'s included. The case that
+// prompted this: setup-node's `cache: pnpm`, which saves on every run that misses, on any ref, and
+// has no input to stop it, so PR and branch runs each saved their own copy of the pnpm store.
 //
 // THE RULE, for every step in .github/workflows/*.yml and .github/actions/*/action.yml:
 //   a step that SAVES a cache must be gated, by its own `if` or its job's, to a push, dispatch or
@@ -44,8 +44,8 @@ import { describe, expect, it } from 'vitest';
 // line where it is not needed.
 //
 // NOT COVERED, stated so this does not read as wider than it is: any other action with a built-in
-// cache. The list above is every cache-saving action this repo used on 2026-11-23; a new one needs
-// a branch in savesCache.
+// cache. The list above is every cache-saving action this repo used when the guard was written; a
+// new one needs a branch in savesCache.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');

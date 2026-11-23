@@ -72,7 +72,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          # No Go cache: setup-go's saves on every ref, and this key's entry is tiny (~175 KB), not worth a step that can fail the job.
+          # No Go cache: setup-go's saves on every ref, and this key's entry is too small to be worth a step that can fail the job.
           cache: false
 
       - name: Install
@@ -124,7 +124,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          # No Go cache: setup-go's saves on every ref, and this key's entry is tiny (~175 KB), not worth a step that can fail the job.
+          # No Go cache: setup-go's saves on every ref, and this key's entry is too small to be worth a step that can fail the job.
           cache: false
 
       # For `typescript`, which the Node dependency walk parses with.
