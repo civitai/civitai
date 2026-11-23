@@ -6,8 +6,7 @@ import {
 } from '~/server/jobs/text-moderation-retry.constants';
 import { logToAxiom } from '~/server/logging/client';
 import { getModerationAdapter } from '~/server/services/moderation-adapters';
-import { SERVICE_DEAL_REVIEW_PROFILES } from '~/server/services/text-scan/profiles/service-deal-review.profile';
-import { textScanCanAskEveryLabel } from '~/server/services/text-scan/submit';
+import { unaskableServiceDealReviewTypes } from '~/server/services/service-deal-review-moderation.adapter';
 import {
   TEXT_SCAN_ENTITY_GONE,
   TEXT_SCAN_ENTITY_NOT_PUBLIC,
@@ -93,15 +92,12 @@ export const retryFailedTextModeration = createJob(
       else byType.delete(entityType);
     }
 
-    // Likewise review text while its scan cannot ask every label: each submit would be refused and
-    // spend a retry, and the row would drop out for good before the labels came back.
-    const unaskable: string[] = [];
-    for (const [entityType, profile] of Object.entries(SERVICE_DEAL_REVIEW_PROFILES)) {
-      const items = byType.get(entityType);
-      if (!items || (await textScanCanAskEveryLabel(profile).catch(() => false))) continue;
-      skipped += items.length;
-      byType.delete(entityType);
-      unaskable.push(entityType);
+    // Skip review text while its scan cannot ask every label: a refused submit spends a retry, and
+    // the row would drop out for good.
+    const unaskable = (await unaskableServiceDealReviewTypes()).filter((type) => byType.has(type));
+    for (const type of unaskable) {
+      skipped += byType.get(type)?.length ?? 0;
+      byType.delete(type);
     }
     if (unaskable.length)
       logToAxiom({

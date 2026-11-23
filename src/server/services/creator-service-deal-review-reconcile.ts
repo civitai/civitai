@@ -8,28 +8,22 @@ import {
   reviewPublic,
   syncDealReviewPublication,
 } from '~/server/services/creator-service-deal-review-publish';
-import { scanServiceDealReviewText } from '~/server/services/service-deal-review-moderation.adapter';
-import { SERVICE_DEAL_REVIEW_PROFILES } from '~/server/services/text-scan/profiles/service-deal-review.profile';
-import { textScanCanAskEveryLabel } from '~/server/services/text-scan/submit';
+import {
+  scanServiceDealReviewText,
+  unaskableServiceDealReviewTypes,
+} from '~/server/services/service-deal-review-moderation.adapter';
 import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-services.constants';
 
 /**
  * Review texts whose check was never recorded: its submit failed, or a dismissed csam hold sent
- * the text back. The wait lets a submit in progress record its check first. A recorded check
- * that fails is retried by the moderation retry cron, not here, and so is text whose check row that
- * cron holds, including one past its limit. A hidden review's scan is skipped, so it is left out
- * rather than resent every run.
+ * the text back. The wait lets a submit in progress record its check first. A recorded check that
+ * fails, or whose row the cron holds (Failed/Expired/Canceled), is the retry cron's, not here. A
+ * hidden review's scan is skipped, so it is left out rather than resent every run.
  */
 async function rescanUnsubmittedTexts(limit: number) {
   // Every text would be refused at submit while a required label cannot be asked, and reselected on
   // every run ahead of the rows behind it.
-  const askable = await Promise.all(
-    // A failed read counts as cannot ask, so the publication and read-back steps still run.
-    Object.values(SERVICE_DEAL_REVIEW_PROFILES).map((profile) =>
-      textScanCanAskEveryLabel(profile).catch(() => false)
-    )
-  );
-  if (askable.includes(false)) {
+  if ((await unaskableServiceDealReviewTypes()).length) {
     logToAxiom({
       type: 'warning',
       name: 'service-deal-review-reconcile',

@@ -464,7 +464,7 @@ describe('a csam verdict on review text', () => {
   });
 });
 
-describe('a verdict that does not answer every label the profile requires', () => {
+describe('a verdict that does not answer every label the profile requires (civitai/civitai#10118)', () => {
   const TYPES = ['ServiceDealReview', 'ServiceDealReviewReply'] as const;
   const cols = {
     ServiceDealReview: { status: 'scanStatus', workflow: 'scanWorkflowId', wf: 'wf-c' },
@@ -599,7 +599,7 @@ describe('a verdict that does not answer every label the profile requires', () =
   );
 });
 
-describe('a verdict that cannot settle its text is left to the retry job, within its limit', () => {
+describe('a verdict that cannot settle its text is left to the retry job, within its limit (civitai/civitai#10118)', () => {
   const TYPES = ['ServiceDealReview', 'ServiceDealReviewReply'] as const;
   const cols = {
     ServiceDealReview: { status: 'scanStatus', workflow: 'scanWorkflowId', text: 'comment' },
@@ -932,6 +932,37 @@ describe('a verdict that cannot settle its text is left to the retry job, within
        WHERE "workflowId" = 'wf-c'`
     );
     expect(await checkRow('ServiceDealReview')).toEqual({ status: 'Failed', retryCount: 2 });
+  });
+
+  it('a check lost in flight half an hour ago is sent again by the reconcile, its row keeping its age', async () => {
+    await seed(R);
+    await q(
+      `UPDATE "ServiceDealReview" SET "scanWorkflowId" = NULL, "sellerReplyScanWorkflowId" = NULL,
+         "updatedAt" = now() - interval '1 hour'`
+    );
+    // Marked Pending, then the process died before the check was recorded on the text.
+    await q(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", status, "retryCount", "updatedAt")
+       VALUES ('ServiceDealReview', $1, 'Pending', 1, now() - interval '31 minutes')`,
+      [REVIEW]
+    );
+    const real = adapter.scanServiceDealReviewText;
+    const scans = vi
+      .spyOn(adapter, 'scanServiceDealReviewText')
+      .mockImplementation((t, id) => real(t, id, submitCheck));
+    try {
+      await rescanUnsubmitted();
+      expect(scans.mock.calls).toContainEqual(['ServiceDealReview', REVIEW]);
+    } finally {
+      scans.mockRestore();
+    }
+    // The submit's in-flight dedupe and the retry job's Pending timeout both read this age: a
+    // row made younger here would be skipped as in flight on every run.
+    const [row] = await q<{ minutesOld: number; retryCount: number }>(
+      `SELECT floor(extract(epoch FROM now() - "updatedAt") / 60)::int AS "minutesOld", "retryCount"
+       FROM "EntityModeration" WHERE "entityType" = 'ServiceDealReview'`
+    );
+    expect(row).toEqual({ minutesOld: 31, retryCount: 0 });
   });
 
   it('an edit to text past its limit is scanned again', async () => {

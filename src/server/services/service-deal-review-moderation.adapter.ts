@@ -23,6 +23,8 @@ import {
   type ServiceDealReviewTextType,
 } from '~/server/services/text-scan/profiles/service-deal-review.profile';
 import { spendTextScanRetry } from '~/server/services/text-scan/adapter';
+import { rearmTextScanRetries } from '~/server/services/text-scan/record';
+import { textScanCanAskEveryLabel } from '~/server/services/text-scan/submit';
 import { unansweredTextScanLabels } from '~/server/services/text-scan/profiles';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import type { TextScanOutput } from '~/server/services/text-scan/types';
@@ -68,10 +70,7 @@ async function settleReviewText(
   if (type === 'ServiceDealReview') await syncReviewPublication(reviewId);
 }
 
-/**
- * Text whose verdict cannot settle it stays unshown: Pending, with no check recorded. The retry job
- * sends it again when its check row was handed over, the reconcile in the deals job otherwise.
- */
+/** Puts a text back to Pending with no check recorded, so it stays unshown until a check is sent again. */
 async function resendReviewText(
   type: TextType,
   reviewId: number,
@@ -213,6 +212,20 @@ async function trackSubmit(
  * Queues a review's text (the buyer's comment or the seller's reply) for the content check; the
  * adapters below apply the result. Every writer of either text resets its status to Pending first.
  */
+/**
+ * The review text types whose scan cannot ask every required label right now; a failed read counts
+ * as cannot. Sending such text is refused and spends a retry.
+ */
+export async function unaskableServiceDealReviewTypes() {
+  const types = Object.keys(SERVICE_DEAL_REVIEW_PROFILES) as TextType[];
+  const askable = await Promise.all(
+    types.map((type) =>
+      textScanCanAskEveryLabel(SERVICE_DEAL_REVIEW_PROFILES[type]).catch(() => false)
+    )
+  );
+  return types.filter((_, i) => !askable[i]);
+}
+
 export async function scanServiceDealReviewText(
   type: TextType,
   reviewId: number,
@@ -221,12 +234,8 @@ export async function scanServiceDealReviewText(
   // The primary: called right after a write, and a lagging replica would scan the old text.
   const text = (await loadSubject(type, reviewId))?.fields[0]?.text;
   if (!text) return;
-  // Re-arms the check row, as a submit does: a scan refused before submitting spends a retry on
-  // whatever row is there, even one still in flight, and an edit or restore is how text comes back.
-  await dbWrite.$executeRaw`
-    UPDATE "EntityModeration" SET "retryCount" = 0, "updatedAt" = now()
-    WHERE "entityType" = ${type} AND "entityId" = ${reviewId}::int
-      AND "status" <> 'Succeeded'`;
+  // An edit or restore is how text whose check ran out of retries comes back.
+  await rearmTextScanRetries({ entityType: type, entityId: reviewId });
   try {
     await trackSubmit(type, reviewId, text, () =>
       submitCheck({
