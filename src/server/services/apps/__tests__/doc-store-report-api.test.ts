@@ -91,10 +91,6 @@ import { DOC_STORE_REPORT_RATE_LIMIT_MAX } from '~/server/utils/shared-storage-r
 import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
 import reportRoute from '~/pages/api/v1/blocks/moderation/reports';
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
 const SCOPES = ['apps:storage', 'apps:storage:publish'];
 // Distinctive ids, none of which appears in any fixture value or constant below.
 const UID = { v1: 847_013, v2: 847_029, v3: 847_031, v4: 847_043, newbie: 847_057 } as const;
@@ -352,10 +348,6 @@ const reportBucketKey = (app: AppRow, who: Viewer) =>
 // PGlite's clock ticks in milliseconds; step past a tick around a dismissal.
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
-// ---------------------------------------------------------------------------
-// Lifecycle
-// ---------------------------------------------------------------------------
-
 let harness: Harness;
 
 beforeAll(async () => {
@@ -381,10 +373,6 @@ afterEach(() => {
   expect(lua.errors).toEqual([]);
 });
 
-// ---------------------------------------------------------------------------
-// The report and its answer
-// ---------------------------------------------------------------------------
-
 describe('POST /moderation/reports', () => {
   it("lands in the moderators' queue as one report row, with no report tally", async () => {
     const app = freshApp();
@@ -397,7 +385,7 @@ describe('POST /moderation/reports', () => {
     expect(h.reportFlagEntities).toEqual([app.id]);
   });
 
-  it('answers exactly {reported: true}, never a count, however many have reported', async () => {
+  it('answers exactly {reported: true}, never a count; the same viewer twice is one row', async () => {
     const app = freshApp();
     await putPost(app, 'q2');
     const answers = [];
@@ -406,18 +394,10 @@ describe('POST /moderation/reports', () => {
       answers.push({ status: r.status, body: r.body });
     }
     expect(answers).toEqual(Array(4).fill({ status: 200, body: { reported: true } }));
-    // Three distinct reporters really are stored, so a count was there to leak.
+    // Three distinct reporters really are stored (v2's repeat added no row), so a count was
+    // there to leak.
     expect((await reportRows(app, 'q2')).reporters).toEqual([UID.v2, UID.v3, UID.v4]);
     expect(await openQueue(app)).toEqual(['posts/q2:3']);
-  });
-
-  it('the same viewer twice is one row and one report in the queue', async () => {
-    const app = freshApp();
-    await putPost(app, 'q3');
-    expect((await reportAs(app, 'v3', 'q3')).body).toEqual({ reported: true });
-    expect((await reportAs(app, 'v3', 'q3')).body).toEqual({ reported: true });
-    expect(await reportRows(app, 'q3')).toEqual({ reporters: [UID.v3], tally: null });
-    expect(await openQueue(app)).toEqual(['posts/q3:1']);
   });
 
   it('anonymous is refused 401 sign_in_required, and nothing is written', async () => {
@@ -501,11 +481,9 @@ describe('POST /moderation/reports', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The rate limit
-// ---------------------------------------------------------------------------
-
 describe('the reports-per-day limit', () => {
+  // docs/app-storage-generic-core.md ("The report moderation API"): the `report` bucket as today,
+  // under the same key, so the mark and the API spend one daily budget.
   it('is 20 per viewer per app, and ONE budget shared with the report mark', async () => {
     // The literal, so a changed constant cannot change what this asserts.
     expect(DOC_STORE_REPORT_RATE_LIMIT_MAX).toBe(20);
@@ -538,10 +516,6 @@ describe('the reports-per-day limit', () => {
     expect((await reportAs(app, 'v4', 'rl2')).status).toBe(200);
   });
 });
-
-// ---------------------------------------------------------------------------
-// The moderator queue across both paths (the compat window)
-// ---------------------------------------------------------------------------
 
 describe('the moderator queue with old-path and new-path reports', () => {
   it('counts every report exactly once: open, total, queue and the audit total', async () => {
@@ -592,10 +566,6 @@ describe('the moderator queue with old-path and new-path reports', () => {
     expect({ open: doc.reports, total: doc.reportsTotal }).toEqual({ open: 1, total: 3 });
   });
 });
-
-// ---------------------------------------------------------------------------
-// Imports
-// ---------------------------------------------------------------------------
 
 describe('reports through an import keep the report mark’s rule', () => {
   const PUBLISH = 'apps:storage:publish';
