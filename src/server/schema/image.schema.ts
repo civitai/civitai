@@ -2,7 +2,8 @@ import * as z from 'zod';
 import { HAT_SORTS } from '~/shared/constants/hat-turf-feed.constants';
 import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
-import { constants } from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
+import type { RateLimit } from '~/server/middleware.trpc';
 import {
   baseQuerySchema,
   infiniteQuerySchema,
@@ -730,6 +731,11 @@ export const updateImageAcceptableMinorSchema = z.object({
   collectionId: z.number(),
   acceptableMinor: z.boolean(),
 });
+
+/** Each change purges shared caches; moderators are not limited. */
+export const updateImageAcceptableMinorRateLimits: RateLimit[] = [
+  { limit: 30, period: CacheTTL.hour },
+];
 
 export type SetTosViolationSchema = z.infer<typeof setTosViolationSchema>;
 export const setTosViolationSchema = z.object({

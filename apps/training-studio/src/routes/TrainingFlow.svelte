@@ -12,7 +12,9 @@
   import DataStep from './DataStep.svelte';
   import DataStepElements from './DataStepElements.svelte';
   import EditDataStep from './EditDataStep.svelte';
+  import EditDataStepElements from './EditDataStepElements.svelte';
   import ReviewStep from './ReviewStep.svelte';
+  import ReviewStepElements from './ReviewStepElements.svelte';
   import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
   import {
     buildTrainingRuns,
@@ -59,6 +61,8 @@
   const elementsUi = $derived(useElements());
   const Select = $derived(elementsUi ? SelectStepElements : SelectStep);
   const Data = $derived(elementsUi ? DataStepElements : DataStep);
+  const Review = $derived(elementsUi ? ReviewStepElements : ReviewStep);
+  const EditData = $derived(elementsUi ? EditDataStepElements : EditDataStep);
 
   const STEPS = [
     { n: 1, label: 'Select' },
@@ -457,7 +461,7 @@
       }}
     />
   {:else if step === 2 && selection && trainsPairs}
-    <EditDataStep
+    <EditData
       bind:pairs
       bind:reuseItems={reusePairItems}
       onContinue={enterReview}
@@ -487,7 +491,7 @@
       }}
     />
   {:else if step === 3 && selection}
-    <ReviewStep
+    <Review
       {selection}
       trigger={runTrigger}
       {labelMode}

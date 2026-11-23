@@ -116,6 +116,9 @@ export const removeReplacedImages = createJob(
       const rows = await deleteImages(deletableIds, {
         actor: { system: 'remove-replaced-images' },
         onlyWhere: replacedImageHoldGuard(markerView),
+        // A row its child-safety case keeps stays in this queue, so the re-adoption check above runs
+        // again before it goes; a pending delete would take it unchecked.
+        queueKept: false,
       });
       deleted.push(...rows.map((x) => x.id));
     }

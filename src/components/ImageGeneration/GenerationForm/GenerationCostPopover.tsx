@@ -2,7 +2,7 @@ import type { TransactionInfo, WorkflowCost } from '@civitai/orchestration-clien
 import type { PopoverProps } from '@mantine/core';
 import { Anchor, Group, Loader, NumberInput, Text, UnstyledButton } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
-import { openModal } from '@mantine/modals';
+import { openContentDialog } from '~/components/Dialog/Common/ContentDialog';
 import { IconInfoCircle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import type { RefundSummary } from '~/components/ImageGeneration/refund-summary';
@@ -15,7 +15,6 @@ import classes from './GenerationCostPopover.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { overMobileSheetZIndex } from '~/shared/constants/app-layout.constants';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useGenerationFormStore } from '~/store/generation-form.store';
 import { startCase } from 'lodash-es';
@@ -247,10 +246,9 @@ export function GenerationCostPopoverDetail({
     e.preventDefault();
     e.stopPropagation();
 
-    openModal({
+    openContentDialog({
       title: 'Generation Cost Breakdown',
       centered: true,
-      zIndex: overMobileSheetZIndex,
       children: <BreakdownExplanation />,
     });
   };
@@ -341,10 +339,9 @@ export function GenerationCostPopoverDetail({
                     onClick={(e: React.MouseEvent) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      openModal({
+                      openContentDialog({
                         title: 'Licensing Fees',
                         centered: true,
-                        zIndex: overMobileSheetZIndex,
                         children: (
                           <LicensingFeeDetail
                             fees={workflowCost.fees ?? {}}

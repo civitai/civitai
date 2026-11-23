@@ -8,6 +8,7 @@ import {
   TrainingSubmitError,
   type SubmittedBatch,
 } from '$lib/train-core';
+import { DATASET_TOO_LARGE_MESSAGE } from '$lib/submit-limits';
 import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
 import { datasetRatingFor } from '$lib/server/dataset-rating';
 import { isKohyaAllowed } from '$lib/server/flipt';
@@ -26,7 +27,13 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     'Training is unavailable right now — no orchestrator token.'
   );
 
-  const body = (await request.json().catch(() => null)) as { runs?: TrainingRunInput[] } | null;
+  let body: { runs?: TrainingRunInput[] } | null = null;
+  try {
+    body = (await request.json()) as { runs?: TrainingRunInput[] } | null;
+  } catch (err) {
+    // Over BODY_SIZE_LIMIT the server errors the body, and an empty batch would be the wrong reason.
+    if ((err as { status?: number } | null)?.status === 413) error(413, DATASET_TOO_LARGE_MESSAGE);
+  }
   const runs = body?.runs;
   // A continuation starts only through /api/continue-training, which checks its source run.
   if (Array.isArray(runs) && runs.some((r) => r && typeof r === 'object' && 'continueFrom' in r))

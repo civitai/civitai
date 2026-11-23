@@ -18,7 +18,7 @@ Closed/clean items are in the buckets below; this table is only what's still **o
 | # | Gap | Surface | Severity | Status |
 |---|---|---|---|---|
 | 1 | Rating-locked **Blocked** rows never unblocked on accept (`resetBlockedNsfwLevel` missing) | shared `acceptImage` (minor-review, comics-review, appeals, delegated `image.moderate`) | **BLOCKER** (regression vs `c371fcbc16`) | ✅ **DONE** — reset UPDATE before recompute in `acceptImage` |
-| 2 | **KoNO finalize** dropped (vote finalize, smites, counters, pool-reset, signals) | `/images/ratings` + `/images/downleveled` `setLevel` | **BLOCKER** (downleveled) | ✅ **DONE** — delegated: spoke `syncKonoFinalize` (`kono.ts`) → new main `/api/internal/kono-finalize` runs `updatePendingImageRatings` + pool reset |
+| 2 | **KoNO finalize** dropped (vote finalize, smites, counters, pool-reset, signals) | `/images/ratings` + `/images/downleveled` `setLevel` | **BLOCKER** (downleveled) | ✅ **RETIRED** — the delegate (`kono.ts` → `/api/internal/kono-finalize`) was removed with the old Knights game |
 | 3 | Comic **project/chapter** mod tools not ported (TOS toggle, set project/chapter nsfw, unpublish chapter) | comic detail mod UI (not the queue) | BLOCKER-if-expected | 🅿️ **Deferred** — NOT a migrated page (this surface was never in the spoke); revisit if comic project/chapter moderation moves here. Every *migrated* page is at parity. |
 | 4 | **User moderation** (ban / mute / strikes / restrictions) unbuilt | `/users` still a placeholder; `/users/newest` is read-only | BLOCKER-if-expected | 🅿️ **Out of scope for now** (user decision) — stays main-app until session-revoke is designed |
 | 5 | `metadata.nsfwLevelReason` not written (+ `IMAGE_METADATA` bust) | `setLevel` (ratings/downleveled) | DEGRADED | ✅ **DONE** — reason + Model3D rollup + cache bust in `updateImageNsfwLevel` |
@@ -53,7 +53,12 @@ deferred), #4 (user moderation, out of scope), #8 (dispute auto-resolve, needs a
         same statement, `ImageStorageDelete` (the main app's `image-storage-deletes` job deletes the file, with URL
         dedup), `UpdateNsfwLevel` for the post and, when asked, `CdnAccessSync`; the helper then removes the image's collection
         links. After commit, `finishImageDeletes`:
-        `IMAGE_EXISTS` sysRedis false → bust `imageMeta`/`imageMetadata` → `syncSearchIndex('image', delete)`
+        `IMAGE_EXISTS` sysRedis false → bust `imageMeta`/`imageMetadata` → `syncSearchIndex('image', delete)`.
+        An image the hold check refuses (CSAM review or block) is left untouched and returned as `review`, with
+        nothing queued. One that reaches the delete in an open child-safety case is left in place, queued by
+        the same statement as a `PendingDelete` for the main app's `pending-deletes` job, and also returned as
+        `review`. Either way it keeps its search entry. Once the holds are removed, every in-case image takes
+        the second path.
   - [x] Wire into `deleteArticle`: capture `coverId` + content image ids before deleting connections; hand
         cover, banner and content images to the shared `queueImageDeletes` in the delete's transaction, which
         queues the author's images nothing else uses, the same rule as `deleteArticleById`; the main app's

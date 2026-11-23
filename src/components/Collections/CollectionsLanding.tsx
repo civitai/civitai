@@ -1,12 +1,9 @@
 import { Button } from '@mantine/core';
 import { IconFolders, IconPlus } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NoContent } from '~/components/NoContent/NoContent';
-
-const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));
 
 const WHAT_ARE_COLLECTIONS =
   'Collections let you save models, images, posts and articles into lists you can organize and share with others.';
@@ -43,7 +40,7 @@ export function CollectionsLanding({
       {signedIn ? (
         <Button
           leftSection={<IconPlus size={16} />}
-          onClick={() => dialogStore.trigger({ component: CollectionEditModal })}
+          onClick={() => openDialog(() => import('~/components/Collections/CollectionEditModal'))}
         >
           Create collection
         </Button>

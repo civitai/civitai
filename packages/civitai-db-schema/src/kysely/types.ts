@@ -2761,6 +2761,7 @@ export type CommentV3 = {
   deletedAt: Timestamp | null;
   tosViolation: Generated<boolean>;
   hidden: Generated<boolean>;
+  hiddenAt: Timestamp | null;
   locked: Generated<boolean>;
   pinnedAt: Timestamp | null;
   reactionCount: Generated<number>;
@@ -3987,6 +3988,10 @@ export type KnightsHarvestCursor = {
   name: string;
   lastActivityId: Generated<number>;
   updatedAt: Timestamp;
+};
+export type KnightsLegacyPlayerDay = {
+  playerId: number;
+  day: Timestamp;
 };
 export type KnightsNotificationSend = {
   playerId: number;
@@ -7333,6 +7338,7 @@ export type DB = {
   KnightsApprenticeAnswer: KnightsApprenticeAnswer;
   KnightsGoldConversion: KnightsGoldConversion;
   KnightsHarvestCursor: KnightsHarvestCursor;
+  KnightsLegacyPlayerDay: KnightsLegacyPlayerDay;
   KnightsNotificationSend: KnightsNotificationSend;
   KnightsPlayer: KnightsPlayer;
   KnightsPlayerDay: KnightsPlayerDay;

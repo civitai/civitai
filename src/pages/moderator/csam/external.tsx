@@ -12,7 +12,6 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
 import { IconFolder, IconUpload } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
 import * as z from 'zod';
@@ -34,6 +33,7 @@ import { csamContentsDictionary } from '~/server/schema/csam.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 type Evidence = { bucketKey: string; filename: string };
 
@@ -215,11 +215,10 @@ function ExternalCsamReportPage() {
   };
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
-    openConfirmModal({
-      modalId: 'external-csam-confirm',
-      centered: true,
+    openConfirm({
+      id: 'external-csam-confirm',
       title: 'Confirm CSAM report',
-      children: (
+      message: (
         <Text size="sm">
           This will queue a CyberTipline report to NCMEC for user <b>{data.userId}</b> ({data.email}
           ). Are you sure?
@@ -271,7 +270,12 @@ function ExternalCsamReportPage() {
               <Stack>
                 <Text fw={600}>Reported user (required)</Text>
                 <Group grow align="flex-start">
-                  <InputNumber name="userId" label="Civitai user id" format="default" withAsterisk />
+                  <InputNumber
+                    name="userId"
+                    label="Civitai user id"
+                    format="default"
+                    withAsterisk
+                  />
                   <InputText name="email" label="Email" withAsterisk />
                 </Group>
               </Stack>

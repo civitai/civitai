@@ -259,19 +259,39 @@ const TOKENS: Record<string, VerifiedToken> = {
   // host (every level = 31), through the source app's own client or the importing consumer's.
   'owner-own-block-sfw': userToken(OWNER, SOURCE_CLIENT, {
     user: { showNsfw: true, browsingLevel: 31 },
-    block: { appBlockId: SOURCE_ID, blockInstanceId: INSTALL_SFW, maxBrowsingLevel: 3 },
+    block: {
+      appBlockId: SOURCE_ID,
+      blockInstanceId: INSTALL_SFW,
+      maxBrowsingLevel: 3,
+      viewerBrowsingLevel: null,
+    },
   }),
   'owner-own-block-xxx': userToken(OWNER, SOURCE_CLIENT, {
     user: { showNsfw: true, browsingLevel: 31 },
-    block: { appBlockId: SOURCE_ID, blockInstanceId: INSTALL_XXX, maxBrowsingLevel: 31 },
+    block: {
+      appBlockId: SOURCE_ID,
+      blockInstanceId: INSTALL_XXX,
+      maxBrowsingLevel: 31,
+      viewerBrowsingLevel: null,
+    },
   }),
   'owner-grantee-block-sfw': userToken(OWNER, CONSUMER_CLIENT, {
     user: { showNsfw: true, browsingLevel: 31 },
-    block: { appBlockId: CONSUMER_ID, blockInstanceId: INSTALL_CON_SFW, maxBrowsingLevel: 3 },
+    block: {
+      appBlockId: CONSUMER_ID,
+      blockInstanceId: INSTALL_CON_SFW,
+      maxBrowsingLevel: 3,
+      viewerBrowsingLevel: null,
+    },
   }),
   'owner-grantee-block-xxx': userToken(OWNER, CONSUMER_CLIENT, {
     user: { showNsfw: true, browsingLevel: 31 },
-    block: { appBlockId: CONSUMER_ID, blockInstanceId: INSTALL_CON_XXX, maxBrowsingLevel: 31 },
+    block: {
+      appBlockId: CONSUMER_ID,
+      blockInstanceId: INSTALL_CON_XXX,
+      maxBrowsingLevel: 31,
+      viewerBrowsingLevel: null,
+    },
   }),
   // A user-exchange token for the same user, client and settings: no block binding.
   'owner-grantee-full': userToken(OWNER, CONSUMER_CLIENT, {

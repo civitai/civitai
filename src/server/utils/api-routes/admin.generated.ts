@@ -80,6 +80,8 @@ export const routes: ApiRoutes = {
   'temp/clamp-publishedat-bumps': () =>
     import('~/server/api-routes/admin/temp/clamp-publishedat-bumps'),
   'temp/convert-model-rules': () => import('~/server/api-routes/admin/temp/convert-model-rules'),
+  'temp/knights-v1-final-settle': () =>
+    import('~/server/api-routes/admin/temp/knights-v1-final-settle'),
   'temp/merge-moss-image-base': () =>
     import('~/server/api-routes/admin/temp/merge-moss-image-base'),
   'temp/migrate-article-images': () =>

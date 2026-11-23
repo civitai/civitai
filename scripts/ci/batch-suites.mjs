@@ -15,6 +15,16 @@
 //         error    a suite was not dispatched, its run was never found at this commit, or it
 //                  did not finish (cancelled, still running at the deadline): no verdict, so it
 //                  reads as undecided, never as green.
+//       A suite with an `ownContext` (apps.yml: `App tests (main batch)`) posts that status itself,
+//       from its own run, and is left out of the verdict above. Once it is posted on this commit,
+//       this job RE-POSTS it unchanged (state and description) with this lint run as its
+//       target_url (repostStatuses), so every `(main batch)` verdict on this commit names the
+//       same run: the one CI-watch lists. A suite whose paths did not change is not dispatched,
+//       so nothing is posted or re-posted for it at this commit. When a dispatched own-context
+//       suite does NOT post (its dispatch failed, its run was cancelled or failed at startup, or
+//       it finished without posting, or it was not found by the deadline), this job posts `error`
+//       in THAT context itself (ownContextErrors): a missing verdict never reads as green, and the
+//       wait for it ends as soon as its run has finished.
 //
 // NOTHING IS BISECTED HERE. A red names the suites and the range (last green batch .. this
 // commit); the CI-watch item it opens carries that range, and whoever holds the item bisects.
@@ -33,7 +43,10 @@
 // that cannot list every file, an unreadable workflow, or a workflow with no paths all mean RUN:
 // the filter only ever skips a suite whose inputs provably did not change since a commit where it
 // was green. feed-go's benchmarks get a different base: the newest GREEN batch commit, even after
-// a red one (decideBase).
+// a red one (decideBase). An own-context suite (apps.yml) has its OWN base, decided the same way
+// from that context's verdicts on the earlier batch runs (the re-posts naming those runs), so a red
+// or errored app verdict re-runs the app suites on the next batch whether or not their paths
+// changed again.
 
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
@@ -83,9 +96,19 @@ export function decideBase(candidates) {
  * scripts/ci/full-ci-paths.mjs's `decide`, the same matcher full-ci.yml uses, so the batch and the
  * label never disagree on what a workflow's filter selects. It fails open.
  */
-export function selectSuites({ entries, base, baseReason, files }) {
+export function selectSuites({
+  entries,
+  base: batchBase,
+  baseReason: batchReason,
+  files: batchFiles,
+}) {
   return entries.map((e) => {
     const out = { workflow: e.workflow, ownContext: e.ownContext ?? null };
+    // An own-context entry carries its own base (see the header); every other uses the batch's.
+    const own = 'base' in e;
+    const base = own ? e.base : batchBase;
+    const baseReason = own ? e.baseReason : batchReason;
+    const files = own ? e.files : batchFiles;
     if (!base) return { ...out, run: true, reason: `no base: ${baseReason}` };
     if (!files) return { ...out, run: true, reason: 'the changed files could not all be listed' };
     const d = decide(files, e.on);
@@ -158,13 +181,67 @@ export function verdict({ suites, base }) {
   };
 }
 
-/** Is the wait over? Every dispatched run finished, and every awaited own context is posted. */
-export function waitDone({ suites, postedContexts }) {
+/**
+ * The own-context statuses to re-post with this run as target_url (see the header). `statuses`:
+ * the commit's statuses, newest first. For each dispatched suite with an ownContext, the newest
+ * status in that context, when it is a verdict (success / failure / error) and does not already
+ * name `runUrl`. Returns [{ context, state, description }].
+ */
+export function repostStatuses({ suites, statuses, runUrl }) {
+  const out = [];
+  for (const s of suites) {
+    if (!s.ownContext || !s.run || s.state === 'not-dispatched') continue;
+    const newest = (statuses ?? []).find((st) => st.context === s.ownContext);
+    if (!newest || !['success', 'failure', 'error'].includes(newest.state)) continue;
+    if ((newest.target_url ?? '').replace(/\/$/, '') === runUrl) continue;
+    out.push({ context: s.ownContext, state: newest.state, description: newest.description ?? '' });
+  }
+  return out;
+}
+
+/**
+ * Is the wait over? Every dispatched run finished. An own context posted while its run is still
+ * going does not end the wait early, and one never posted does not hold it once the run has
+ * finished: ownContextErrors then posts `error` for it.
+ */
+export function waitDone({ suites }) {
   return suites.every((s) => {
     if (!s.run || s.state === 'not-dispatched') return true;
-    if (s.state === 'missing' || s.state === 'running') return false;
-    return !s.ownContext || postedContexts.has(s.ownContext);
+    return s.state !== 'missing' && s.state !== 'running';
   });
+}
+
+/**
+ * The `error` statuses to post for dispatched own-context suites whose context was NOT posted on
+ * this commit by this batch. Returns [{ context, state: 'error', description }].
+ */
+export function ownContextErrors({ suites, postedContexts }) {
+  const why = {
+    'not-dispatched': 'its dispatch failed',
+    missing: 'its run was not found at this commit by the deadline',
+    running: 'its run did not finish by the deadline',
+    red: 'its run failed before posting',
+    undecided: 'its run was cancelled or skipped before posting',
+    green: 'its run finished without posting',
+  };
+  return suites
+    .filter((s) => s.ownContext && s.run && !postedContexts.has(s.ownContext))
+    .map((s) => ({
+      context: s.ownContext,
+      state: 'error',
+      description: statusLine(`No verdict: ${short(s.workflow)} `, [
+        why[s.state] ?? `ended ${s.state}`,
+      ]),
+    }));
+}
+
+/** Contexts with a verdict (success / failure / error) created at or after `since` (ms). */
+export function postedSince(statuses, since) {
+  const out = new Set();
+  for (const st of statuses ?? [])
+    if (['success', 'failure', 'error'].includes(st.state) && Date.parse(st.created_at) >= since)
+      out.add(st.context);
+  return out;
 }
 
 // ── I/O ─────────────────────────────────────────────────────────────────────────────────────────
@@ -182,7 +259,10 @@ function readOn(workflow) {
   }
 }
 
-function postStatus(repoName, sha, { state, description }) {
+const runUrl = (repoName) =>
+  `${process.env.GITHUB_SERVER_URL}/${repoName}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+
+function postStatus(repoName, sha, { state, description, context = SUITES_CONTEXT }) {
   gh(
     'api',
     '-X',
@@ -191,11 +271,11 @@ function postStatus(repoName, sha, { state, description }) {
     '-f',
     `state=${state}`,
     '-f',
-    `context=${SUITES_CONTEXT}`,
+    `context=${context}`,
     '-f',
     `description=${description}`,
     '-f',
-    `target_url=${process.env.GITHUB_SERVER_URL}/${repoName}/actions/runs/${process.env.GITHUB_RUN_ID}`
+    `target_url=${runUrl(repoName)}`
   );
 }
 
@@ -204,7 +284,7 @@ function postStatus(repoName, sha, { state, description }) {
  * newest posted verdict for the path filter and the newest green one for the benchmarks), at most
  * the 10 newest.
  */
-function baseCandidates(repoName) {
+function baseCandidates(repoName, ownContexts = []) {
   const q = new URLSearchParams({
     branch: 'main',
     event: 'workflow_dispatch',
@@ -213,17 +293,25 @@ function baseCandidates(repoName) {
     per_page: '10',
   });
   const runs = api(`repos/${repoName}/actions/workflows/lint.yml/runs?${q}`).workflow_runs ?? [];
-  const out = [];
+  // Per context: [{ sha, state }], newest first. Read until every context has met a GREEN verdict
+  // (decideBase needs the newest posted one and the newest green one), at most the 10 newest.
+  const contexts = [SUITES_CONTEXT, ...ownContexts];
+  const out = Object.fromEntries(contexts.map((c) => [c, []]));
+  const greenSeen = new Set();
   for (const r of runs) {
     if (String(r.id) === process.env.GITHUB_RUN_ID) continue;
     const statuses = api(`repos/${repoName}/commits/${r.head_sha}/statuses?per_page=100`);
-    const s = statuses.find(
-      (x) =>
-        x.context === SUITES_CONTEXT &&
-        (x.target_url ?? '').replace(/\/$/, '').endsWith(`/actions/runs/${r.id}`)
-    );
-    out.push({ sha: r.head_sha, state: s?.state ?? null });
-    if (s?.state === 'success') break;
+    for (const c of contexts) {
+      if (greenSeen.has(c)) continue;
+      const s = statuses.find(
+        (x) =>
+          x.context === c &&
+          (x.target_url ?? '').replace(/\/$/, '').endsWith(`/actions/runs/${r.id}`)
+      );
+      out[c].push({ sha: r.head_sha, state: s?.state ?? null });
+      if (s?.state === 'success') greenSeen.add(c);
+    }
+    if (greenSeen.size === contexts.length) break;
   }
   return out;
 }
@@ -277,9 +365,12 @@ function run() {
     return;
   }
 
+  const ownContexts = BATCH_WORKFLOWS.filter((e) => e.ownContext).map((e) => e.ownContext);
   let decided;
+  let candidates = {};
   try {
-    decided = decideBase(baseCandidates(repoName));
+    candidates = baseCandidates(repoName, ownContexts);
+    decided = decideBase(candidates[SUITES_CONTEXT]);
   } catch (err) {
     decided = {
       base: null,
@@ -302,7 +393,22 @@ function run() {
         : 'The changed files could not all be listed: every suite runs.'
     );
 
-  const entries = BATCH_WORKFLOWS.map((e) => ({ ...e, on: readOn(e.workflow) }));
+  const entries = BATCH_WORKFLOWS.map((e) => {
+    const entry = { ...e, on: readOn(e.workflow) };
+    if (!e.ownContext) return entry;
+    const own = candidates[e.ownContext]
+      ? decideBase(candidates[e.ownContext])
+      : { base: null, reason: 'its earlier verdicts could not be read' };
+    lines.push(
+      `${short(e.workflow)} base: ${own.base ? own.base.slice(0, 10) : 'none'} (${own.reason}).`
+    );
+    return {
+      ...entry,
+      base: own.base,
+      baseReason: own.reason,
+      files: own.base ? (own.base === base ? files : changedFiles(repoName, own.base, sha)) : null,
+    };
+  });
   const ons = Object.fromEntries(entries.map((e) => [e.workflow, e.on]));
   const since = Date.now() - 5_000;
   const suites = selectSuites({ entries, base, baseReason, files }).map((s) => {
@@ -336,13 +442,13 @@ function run() {
         s.url = r?.html_url ?? '';
       }
       if (suites.some((s) => s.run && s.ownContext)) {
-        for (const st of api(`repos/${repoName}/commits/${sha}/statuses?per_page=100`))
-          if (['success', 'failure', 'error'].includes(st.state)) posted.add(st.context);
+        const st = api(`repos/${repoName}/commits/${sha}/statuses?per_page=100`);
+        for (const c of postedSince(st, since)) posted.add(c);
       }
     } catch (err) {
       console.log(`poll failed, retrying: ${String(err.message).split('\n')[0]}`);
     }
-    if (waitDone({ suites, postedContexts: posted }) || Date.now() > deadline) break;
+    if (waitDone({ suites }) || Date.now() > deadline) break;
   }
 
   lines.push('', '| Suite | Dispatched | State | Run |', '| --- | --- | --- | --- |');
@@ -352,9 +458,34 @@ function run() {
         s.run ? 'yes' : 'no'
       }: ${s.reason} | ${s.state} | ${s.url} |`
     );
-  for (const s of suites)
-    if (s.ownContext && s.run && !posted.has(s.ownContext))
-      lines.push(`\`${s.ownContext}\` was not posted on this commit before the deadline.`);
+  if (suites.some((s) => s.run && s.ownContext)) {
+    // One last read: a status posted between the last poll and the run's completion counts.
+    try {
+      const st = api(`repos/${repoName}/commits/${sha}/statuses?per_page=100`);
+      for (const c of postedSince(st, since)) posted.add(c);
+    } catch (err) {
+      lines.push(`Could not re-read the statuses: ${String(err.message).split('\n')[0]}`);
+    }
+    for (const e of ownContextErrors({ suites, postedContexts: posted })) {
+      lines.push(`Posting \`${e.context}\` = error: ${e.description}`);
+      try {
+        postStatus(repoName, sha, e);
+      } catch (err) {
+        lines.push(`Could not post it: ${String(err.message).split('\n')[0]}`);
+      }
+    }
+    try {
+      const statuses = api(`repos/${repoName}/commits/${sha}/statuses?per_page=100`);
+      for (const r of repostStatuses({ suites, statuses, runUrl: runUrl(repoName) })) {
+        lines.push(`Re-posting \`${r.context}\` = ${r.state} with this run as its target.`);
+        postStatus(repoName, sha, r);
+      }
+    } catch (err) {
+      lines.push(
+        `Could not re-post the own-context statuses: ${String(err.message).split('\n')[0]}`
+      );
+    }
+  }
   done(verdict({ suites, base }));
 }
 

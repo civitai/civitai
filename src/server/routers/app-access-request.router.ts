@@ -16,7 +16,7 @@ export const appAccessRequestRouter = router({
   // No rate limiter: the one-pending-row index already caps a person at one open request.
   submit: protectedProcedure
     .input(submitAppAccessRequestSchema)
-    .mutation(({ ctx, input }) => submitAppAccessRequest({ userId: ctx.user.id, input })),
+    .mutation(({ ctx, input }) => submitAppAccessRequest({ user: ctx.user, input })),
 
   getMine: protectedProcedure.query(({ ctx }) => getMyAppAccessRequest({ userId: ctx.user.id })),
 

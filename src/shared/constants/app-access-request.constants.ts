@@ -10,8 +10,7 @@ export type AppAccessRequestStatus = (typeof APP_ACCESS_REQUEST_STATUSES)[number
 export const APP_ACCESS_REQUEST_DECISIONS = ['approved', 'declined'] as const;
 export type AppAccessRequestDecision = (typeof APP_ACCESS_REQUEST_DECISIONS)[number];
 
-/** "What do you want to build?" — long enough to say something, short enough to read in a queue. */
-export const APP_ACCESS_WHAT_TO_BUILD_MIN = 20;
+/** "What do you want to build?" — optional, and short enough to read in a queue. */
 export const APP_ACCESS_WHAT_TO_BUILD_MAX = 2000;
 
 /**
