@@ -10,7 +10,10 @@ import {
   withdrawRequest,
   WithdrawRequestError,
 } from '~/server/services/blocks/publish-request.service';
-import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
+import {
+  APP_BLOCKS_CLI_KEY_REFUSED,
+  checkAppBlocksCliCredential,
+} from '~/server/auth/bearer-scope-tighten';
 import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 import {
   appRateLimitMeta,
@@ -43,7 +46,8 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *   - `Authorization: Bearer <civitai API key>` resolved via
  *     `getSessionFromBearerToken` (the same helper backing all `/api/v1/*` REST
  *     auth) — NO new key system.
- *   - A PERSONAL key always passes the token-type gate.
+ *   - A Full Access PERSONAL key passes the token-type gate; any other personal key
+ *     passes unless `bearer-scope-tighten` enforces (`checkAppBlocksCliCredential`).
  *   - An OAUTH-client-issued token passes ONLY if it carries the dedicated
  *     `TokenScope.AppBlocksSubmit` bit (the same gate submit-version + the
  *     submissions read use; the first-party `civitai-cli` client is provisioned
@@ -123,20 +127,21 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   }
   const user = session.user as SessionUser;
 
-  // 1b. Token-type gate — IDENTICAL to submit-version / submissions: accept a
-  // PERSONAL key always; accept an OAUTH-client-issued token ONLY if it carries
+  // 1b. Token-type gate — IDENTICAL to submit-version / submissions: accept a Full Access
+  // PERSONAL key (a narrower one unless `bearer-scope-tighten` enforces); accept an OAUTH-client-issued token ONLY if it carries
   // the dedicated `TokenScope.AppBlocksSubmit` bit (opt-in, off-by-default,
   // EXCLUDED from `TokenScope.Full`). So the SAME token that could submit can
   // withdraw its own submission; an un-scoped OAuth token → 403 (before the
   // flag/db/work, no leak).
-  if (session.subject?.type === 'oauth') {
-    if (!hasScope(session.tokenScope, TokenScope.AppBlocksSubmit)) {
-      res.status(403).json({
-        message:
-          'Withdrawing an App requires a personal API key or an OAuth token with the Apps submit scope',
-      });
-      return;
-    }
+  const credentialCheck = await checkAppBlocksCliCredential('/api/v1/blocks/withdraw', session);
+  if (credentialCheck !== 'ok') {
+    res.status(403).json({
+      message:
+        credentialCheck === 'oauth-refused'
+          ? 'Withdrawing an App requires a personal API key or an OAuth token with the Apps submit scope'
+          : APP_BLOCKS_CLI_KEY_REFUSED,
+    });
+    return;
   }
 
   // 2. Author gate — App Blocks AUTHORING is mod OR the app-dev-testers cohort

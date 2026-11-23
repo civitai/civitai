@@ -11,7 +11,6 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconArchive,
@@ -48,6 +47,7 @@ import { openReportModal } from '~/components/Dialog/triggers/report';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { ReportEntity } from '~/shared/utils/report-helpers';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export type Model3DActionsMenuModel = {
   id: number;
@@ -213,46 +213,42 @@ export function Model3DActionsMenu({
   };
 
   const confirmPublish = () =>
-    openConfirmModal({
+    openConfirm({
       title: 'Publish 3D Model',
-      children: 'Publish this 3D model so others can discover and download it?',
-      centered: true,
+      message: 'Publish this 3D model so others can discover and download it?',
       labels: { confirm: 'Publish', cancel: 'Cancel' },
       confirmProps: { color: 'green', loading: publishMutation.isPending },
       onConfirm: () => publishMutation.mutate({ id: model3d.id }),
     });
 
   const confirmUnpublish = () =>
-    openConfirmModal({
+    openConfirm({
       title: 'Unpublish 3D Model',
-      children: isOwner
+      message: isOwner
         ? 'Unpublish this 3D model? You can republish it later.'
         : 'Unpublish this 3D model? Owner can republish later.',
-      centered: true,
       labels: { confirm: 'Unpublish', cancel: 'Cancel' },
       confirmProps: { color: 'yellow', loading: unpublishMutation.isPending },
       onConfirm: () => unpublishMutation.mutate({ id: model3d.id }),
     });
 
   const confirmRestore = () =>
-    openConfirmModal({
+    openConfirm({
       title: 'Restore 3D Model',
-      children: isDeleted
+      message: isDeleted
         ? 'Restore this 3D model to Unpublished?'
         : 'Restore this 3D model to Published?',
-      centered: true,
       labels: { confirm: 'Restore', cancel: 'Cancel' },
       confirmProps: { color: 'blue', loading: restoreMutation.isPending },
       onConfirm: () => restoreMutation.mutate({ id: model3d.id }),
     });
 
   const confirmDelete = () =>
-    openConfirmModal({
+    openConfirm({
       title: 'Delete 3D Model',
-      children: isOwner
+      message: isOwner
         ? 'Delete this 3D model? It will be soft-deleted and removed from your gallery.'
         : 'Soft-delete this 3D model? It can be restored later from the moderator tools.',
-      centered: true,
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red', loading: deleteMutation.isPending },
       onConfirm: () => deleteMutation.mutate({ id: model3d.id }),

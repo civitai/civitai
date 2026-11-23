@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * Handler-level coverage for GET /api/v1/blocks/submissions — the token-auth,
@@ -117,6 +118,14 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_SYS_KEYS: { BLOCKS: { SUBMISSIONS_RATE_LIMIT: 'system:blocks:submissions-rate-limit' } },
 }));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
+
+const { mockFliptVariant } = vi.hoisted(() => ({
+  mockFliptVariant: vi.fn(),
+}));
+vi.mock('~/server/flipt/client', () => ({
+  FLIPT_FEATURE_FLAGS: { BEARER_SCOPE_TIGHTEN: 'bearer-scope-tighten' },
+  getFliptVariant: mockFliptVariant,
+}));
 
 import handler from '~/pages/api/v1/blocks/submissions';
 import { Prisma } from '@prisma/client';
@@ -737,5 +746,86 @@ describe('GET /api/v1/blocks/submissions', () => {
       'system:blocks:submissions-rate-limit:u:7',
       60
     );
+  });
+});
+
+describe('/api/v1/blocks/submissions under bearer-scope-tighten', () => {
+  beforeEach(() => {
+    mockFliptVariant.mockReset();
+  });
+
+  // A personal key narrower than Full.
+  const NARROW_KEY_SESSION = {
+    ...MOD_SESSION,
+    apiKeyType: 'User',
+    tokenScope: TokenScope.UserRead | TokenScope.ModelsRead,
+  };
+  const FULL_KEY_SESSION = { ...MOD_SESSION, apiKeyType: 'User' };
+
+  it('enforce: 403s a narrow personal key before any other work', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(403);
+    expect((res._getJSONData() as { message: string }).message).toContain('Full Access');
+    expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
+    expect(mockFliptVariant).toHaveBeenCalledWith('bearer-scope-tighten');
+  });
+
+  it('log: lets a narrow personal key through and logs it', async () => {
+    mockFliptVariant.mockResolvedValue('log');
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockFindMany).toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'bearer-scope-refused',
+        payload: expect.objectContaining({
+          mode: 'log',
+          route: '/api/v1/blocks/submissions',
+          credentialKind: 'apiKey',
+          apiKeyId: NARROW_KEY_SESSION.apiKeyId,
+        }),
+      })
+    );
+  });
+
+  it('off (any unknown variant): lets a narrow personal key through without logging', async () => {
+    mockFliptVariant.mockResolvedValue('bogus');
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'bearer-scope-refused' })
+    );
+  });
+
+  it('off when the flag read fails', async () => {
+    mockFliptVariant.mockRejectedValue(new Error('flipt down'));
+    mockGetSession.mockResolvedValueOnce(NARROW_KEY_SESSION);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+  });
+
+  it('enforce: a Full Access personal key passes without reading the flag', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(FULL_KEY_SESSION);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockFliptVariant).not.toHaveBeenCalled();
+  });
+
+  it('enforce: an OAuth token carrying AppBlocksSubmit passes', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    mockGetSession.mockResolvedValueOnce(OAUTH_SCOPED_SESSION);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
   });
 });

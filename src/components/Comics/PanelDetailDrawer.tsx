@@ -15,7 +15,7 @@ import {
 import clsx from 'clsx';
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getNsfwLabel } from '~/components/Comics/PanelCard';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -452,9 +452,9 @@ export function PanelDetailDrawer({
                 <button
                   className={styles.dangerBtn}
                   onClick={() => {
-                    openConfirmModal({
+                    openConfirm({
                       title: 'Delete Panel',
-                      children: <Text size="sm">Are you sure you want to delete this panel?</Text>,
+                      message: <Text size="sm">Are you sure you want to delete this panel?</Text>,
                       labels: { confirm: 'Delete', cancel: 'Cancel' },
                       confirmProps: { color: 'red' },
                       onConfirm: () => onDelete(detailPanel.id),

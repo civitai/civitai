@@ -16,7 +16,7 @@ import {
 } from '@mantine/core';
 import { IconInfoCircle, IconPencil, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { GateAvailableTo, GatePresentation, GateRule } from '~/shared/generation/gates';
@@ -301,20 +301,17 @@ export function GateRulesSection() {
   });
 
   const confirmDelete = (rule: GateRule) =>
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Delete gate rule?',
-        message: (
-          <Text size="sm">
-            <b>{rule.name || 'Unnamed rule'}</b> stops applying as soon as caches refresh.
-          </Text>
-        ),
-        labels: { cancel: 'Cancel', confirm: 'Delete' },
-        confirmProps: { color: 'red' },
-        // ConfirmDialog awaits this and never catches; onError already reports it.
-        onConfirm: () => deleteMutation.mutateAsync({ id: rule.id }).catch(() => undefined),
-      },
+    openConfirm({
+      title: 'Delete gate rule?',
+      message: (
+        <Text size="sm">
+          <b>{rule.name || 'Unnamed rule'}</b> stops applying as soon as caches refresh.
+        </Text>
+      ),
+      labels: { cancel: 'Cancel', confirm: 'Delete' },
+      confirmProps: { color: 'red' },
+      // onError reports the failure; the catch lets the confirm close either way.
+      onConfirm: () => deleteMutation.mutateAsync({ id: rule.id }).catch(() => undefined),
     });
 
   const rules = [...(data ?? [])].sort((a, b) => a.name.localeCompare(b.name));

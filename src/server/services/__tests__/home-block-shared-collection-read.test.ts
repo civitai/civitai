@@ -23,7 +23,8 @@ vi.mock('~/server/jobs/refresh-featured-collections-eligibility', () => ({
 }));
 
 const packedSet = redisMock.redis.packed.set;
-const { getHomeBlockData } = await import('~/server/services/home-block.service');
+const homeBlockSource = await import('~/server/services/home-block.service');
+const { getHomeBlockData } = homeBlockSource;
 const { getHomeBlockCached } = await import('~/server/services/home-block-cache.service');
 
 beforeEach(() => {
@@ -60,14 +61,14 @@ describe('the shared rendered entry', () => {
     'keeps a %s collection block for every viewer (control)',
     async (read) => {
       reads.set(90, read);
-      await getHomeBlockCached(block, undefined, block.metadata);
+      await getHomeBlockCached(block, undefined, block.metadata, homeBlockSource);
       expect(packedSet).toHaveBeenCalledTimes(1);
     }
   );
 
   it('never writes a Private collection block to it', async () => {
     reads.set(90, 'Private');
-    const served = await getHomeBlockCached(block, undefined, block.metadata);
+    const served = await getHomeBlockCached(block, undefined, block.metadata, homeBlockSource);
     // It is still rendered (a system block may point at one); it is only not kept.
     expect((served as { collection?: { read: string } }).collection?.read).toBe('Private');
     expect(packedSet).not.toHaveBeenCalled();

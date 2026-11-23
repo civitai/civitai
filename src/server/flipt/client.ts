@@ -544,6 +544,9 @@ export enum FLIPT_FEATURE_FLAGS {
   MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
   // Variant: `log` | `enforce`; any other answer is off. Read by download-credential-gate.ts.
   DOWNLOAD_SCOPE_GATE = 'download-scope-gate',
+  // Variant: `log` | `enforce`; any other answer, a missing flag or an error included, is off.
+  // Read by bearer-scope-tighten.ts.
+  BEARER_SCOPE_TIGHTEN = 'bearer-scope-tighten',
   // Variant: `log` | `enforce`; any other answer is off. Read by pass-through-prompt-audit.ts.
   APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT = 'app-block-pass-through-prompt-audit',
   // Variant: `off` | `log`; any other answer, a missing flag included, enforces. Read by

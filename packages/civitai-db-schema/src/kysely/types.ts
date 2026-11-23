@@ -2761,6 +2761,7 @@ export type CommentV3 = {
   deletedAt: Timestamp | null;
   tosViolation: Generated<boolean>;
   hidden: Generated<boolean>;
+  hiddenAt: Timestamp | null;
   locked: Generated<boolean>;
   pinnedAt: Timestamp | null;
   reactionCount: Generated<number>;

@@ -1,10 +1,10 @@
 import { Alert, Button, Group, Stack, Text } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
 import { IconEye, IconEyeOff, IconTrash } from '@tabler/icons-react';
 import { useForgetStickerPlacement } from '~/components/Sticker/placement.util';
 import { moderatorTakedownConsequence } from '~/components/Sticker/payout-copy';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 /**
  * The moderator's action on a sticker report.
@@ -73,9 +73,9 @@ export function RemoveReportedPlacement({
     );
 
   const confirm = () =>
-    openConfirmModal({
+    openConfirm({
       title: 'Remove this placement',
-      children: (
+      message: (
         <Stack gap="xs">
           <Text size="sm">
             {placement.sticker?.name ?? 'This sticker'}, placed by{' '}

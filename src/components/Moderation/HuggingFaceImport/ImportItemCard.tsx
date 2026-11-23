@@ -1,11 +1,11 @@
 import { ActionIcon, Anchor, Badge, Card, Group, Progress, Stack, Text } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import { IconPlayerStop, IconRefresh, IconTrash, IconUnlink } from '@tabler/icons-react';
 import { AttachControl } from '~/components/Moderation/HuggingFaceImport/AttachControl';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import type { HuggingFaceImportView } from '~/server/services/huggingface-import.service';
 import { formatBytes } from '~/utils/number-helpers';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 const STATUS_COLOR: Record<string, string> = {
   Queued: 'gray',
@@ -118,12 +118,11 @@ export function ImportItemCard({
                   aria-label="Delete import"
                   loading={busy(remove)}
                   onClick={() =>
-                    openConfirmModal({
+                    openConfirm({
                       title: 'Delete this import?',
-                      centered: true,
                       labels: { confirm: 'Delete', cancel: 'Cancel' },
                       confirmProps: { color: 'red' },
-                      children: (
+                      message: (
                         <Text size="sm">
                           Removes what is stored for{' '}
                           <Text span ff="monospace" size="sm">

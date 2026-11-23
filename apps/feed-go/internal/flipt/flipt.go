@@ -13,6 +13,9 @@
 // engine Node runs, so only a flag's plain on/off is claimed to answer both runtimes alike; a
 // percentage rollout or segment rule on a flag read here is not parity-checked. Use it for global
 // boolean switches only, and move to the shared client when feed-go adopts it.
+//
+// The one exception is UserFlag (user.go), a per-viewer boolean read for a fallback decision only:
+// it may answer a viewer differently from Node, and the caller must make either answer safe.
 package flipt
 
 import (
@@ -100,9 +103,18 @@ type booleanRequest struct {
 // Boolean evaluates flag for the global entity with no context. Anything but a 200 whose body
 // carries a boolean `enabled` is an error; an unknown flag (Flipt answers it 404) is ErrFlagNotFound.
 func (c *Client) Boolean(ctx context.Context, flag string) (bool, error) {
+	return c.BooleanFor(ctx, flag, GlobalEntityID, nil)
+}
+
+// BooleanFor is Boolean for one entity id and context (nil: an empty context), as Node's
+// isFlipt(flag, entityId, context) asks. One request per call: UserFlag caches the answers.
+func (c *Client) BooleanFor(ctx context.Context, flag, entityID string, evalCtx map[string]string) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	body, err := json.Marshal(booleanRequest{NamespaceKey: "default", FlagKey: flag, EntityID: GlobalEntityID, Context: map[string]string{}})
+	if evalCtx == nil {
+		evalCtx = map[string]string{}
+	}
+	body, err := json.Marshal(booleanRequest{NamespaceKey: "default", FlagKey: flag, EntityID: entityID, Context: evalCtx})
 	if err != nil {
 		return false, err
 	}

@@ -1,8 +1,8 @@
 import { IconBell } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import {
   formatBellCount,
   useQueryNotificationsCount,
@@ -10,10 +10,7 @@ import {
 import { CountIndicator } from '~/components/AppLayout/AppHeader/CountIndicator';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
-const NotificationsDrawer = dynamic(
-  () => import('~/components/Notifications/NotificationsDrawer'),
-  { ssr: false }
-);
+const NOTIFICATIONS_DRAWER_ID = 'notifications-drawer';
 
 export function NotificationBell() {
   const router = useRouter();
@@ -23,11 +20,15 @@ export function NotificationBell() {
   const count = useQueryNotificationsCount();
 
   function toggleDrawer() {
-    dialogStore.toggle({
-      component: NotificationsDrawer,
-      props: { toggleNode: toggle },
-      id: 'notifications-drawer',
-    });
+    if (useDialogStore.getState().dialogs.some((d) => d.id === NOTIFICATIONS_DRAWER_ID)) {
+      dialogStore.closeById(NOTIFICATIONS_DRAWER_ID);
+      return;
+    }
+    openDialog(
+      () => import('~/components/Notifications/NotificationsDrawer'),
+      { toggleNode: toggle },
+      { id: NOTIFICATIONS_DRAWER_ID }
+    );
   }
 
   if (hideBell) return null;

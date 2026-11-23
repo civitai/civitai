@@ -27,10 +27,10 @@ import { MantineReactTable } from 'mantine-react-table';
 import { ActionIconSelect } from '~/components/ActionIconSelect/ActionIconSelect';
 import { ActionIconInput } from '~/components/ActionIconInput.tsx/ActionIconInput';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { openConfirmModal } from '@mantine/modals';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 const tagColor: Record<TagsOnTagsType, MantineColor> = {
   Parent: 'gray',
@@ -275,15 +275,14 @@ export default function Tags() {
 
             const handleAddTagToSelected = (tag: number | string, relationship: TagsOnTagsType) => {
               const selectedNames = getSelectedName();
-              openConfirmModal({
+              openConfirm({
                 title: `Add Tag ${relationship}`,
-                children: (
+                message: (
                   <Text size="sm">
                     Are you sure you want to add <strong>{tag}</strong> as a{' '}
                     <strong>{relationship}</strong> to {selectedNames.join(', ')}?
                   </Text>
                 ),
-                centered: true,
                 labels: { confirm: 'Yes', cancel: 'No' },
                 onConfirm: () => {
                   addTagMutation.mutate({
