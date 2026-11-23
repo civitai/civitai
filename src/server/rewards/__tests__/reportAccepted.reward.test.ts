@@ -21,6 +21,7 @@ vi.mock('~/server/services/buzz.service', () => ({
   getTransactionByExternalId: vi.fn(async () => null),
 }));
 
+import { fakeClickhouse } from '~/server/events/points/__tests__/clickhouse-wire';
 import type { BuzzEventLog } from '~/server/rewards/base.reward';
 import { reportAcceptedReward } from '~/server/rewards/passive/reportAccepted.reward';
 
@@ -52,26 +53,27 @@ type Row = { type: string; toUserId: number; forId: number; status: string; vers
 let table: Row[] = [];
 const ch = {
   // Applies the type and status filters only when the SQL asks for them, so a query that loses
-  // one is seen to. The key filter only bounds the read: the reward looks each event up by key.
+  // one is seen to. The id filters only bound the read: the reward looks each event up by key.
   query: vi.fn(
     async ({
       query,
-      query_params: { type, keys },
+      query_params: { type, toUserIds, forIds },
     }: {
       query: string;
-      query_params: { type: string; keys: [number, number][] };
+      query_params: { type: string; toUserIds: number[]; forIds: number[] };
     }) => {
       const sql = query.replace(/\s+/g, ' ');
       const byType = sql.includes('type = {type:String}');
       const settledOnly = sql.includes("status != 'pending'");
-      const byKey = sql.includes('(toUserId, forId) IN {keys:Array(Tuple(Int32, Int32))}');
-      const wanted = new Set(keys.map(([toUserId, forId]) => `${toUserId}:${forId}`));
+      const byUser = sql.includes('toUserId IN {toUserIds:Array(Int32)}');
+      const byFor = sql.includes('forId IN {forIds:Array(Int32)}');
       const latest = new Map<string, { toUserId: number; forId: number; version: number }>();
       for (const row of table) {
         const key = `${row.toUserId}:${row.forId}`;
         if (byType && row.type !== type) continue;
         if (settledOnly && row.status === 'pending') continue;
-        if (byKey && !wanted.has(key)) continue;
+        if (byUser && !toUserIds.includes(row.toUserId)) continue;
+        if (byFor && !forIds.includes(row.forId)) continue;
         if ((latest.get(key)?.version ?? -1) < row.version) latest.set(key, { ...row });
       }
       return { json: async () => [...latest.values()] };
@@ -173,5 +175,25 @@ describe('paying an accepted report', () => {
     await run([pending(10, 3)]);
 
     expect(paid()).toEqual(['reportAccepted:10-42-42']);
+  });
+});
+
+// The lookup's params as the real client puts them on the wire. ClickHouse rejects a nested JS
+// array bound to a tuple type, and a lookup that throws stops the whole rewards job.
+describe('the settled-row lookup on the wire', () => {
+  it('sends each param in a form ClickHouse accepts for its type', async () => {
+    const fake = await fakeClickhouse();
+    try {
+      await reportAcceptedReward.process({
+        ch: fake.client,
+        db: {} as never,
+        lastUpdate: new Date(0),
+        toProcess: [pending(10, 1), pending(11, 1)],
+      });
+    } finally {
+      await fake.close();
+    }
+
+    expect(fake.sent[0]).toEqual({ type: 'reportAccepted', toUserIds: '[42]', forIds: '[10,11]' });
   });
 });

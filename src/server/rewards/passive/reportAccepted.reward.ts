@@ -31,12 +31,17 @@ export const reportAcceptedReward = createBuzzEvent({
           FROM buzzEvents
           WHERE type = {type:String}
             AND status != 'pending'
-            AND (toUserId, forId) IN {keys:Array(Tuple(Int32, Int32))}
+            AND toUserId IN {toUserIds:Array(Int32)}
+            AND forId IN {forIds:Array(Int32)}
           GROUP BY toUserId, forId
         `,
+        // Two flat arrays, not one Array(Tuple) param: the client sends a nested JS array as
+        // [[a,b]], which ClickHouse rejects for a tuple type. The pairs this over-reads are dropped
+        // by the exact-key lookup below.
         query_params: {
           type,
-          keys: toProcess.map((event) => [Number(event.toUserId), Number(event.forId)]),
+          toUserIds: [...new Set(toProcess.map((event) => Number(event.toUserId)))],
+          forIds: [...new Set(toProcess.map((event) => Number(event.forId)))],
         },
         format: 'JSONEachRow',
       })
