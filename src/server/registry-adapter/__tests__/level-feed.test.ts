@@ -694,6 +694,12 @@ describe('the bound: a board past it keeps each stream’s newest documents by k
     // A document written below the window stays beyond it.
     put(key(0), { t: 'doc-0-v2' }, 4);
     expect(keysOf(await poll(run))).toEqual([]);
+    // In one poll, a delete inside the window and a write below it (beyond key(1), the
+    // next-newest): the backfill takes key(1), never the written key(0) out of key order.
+    remove(key(500));
+    put(key(0), { t: 'doc-0-v3' }, 4);
+    const mixed = await poll(run);
+    expect([deleted(mixed), keysOf(mixed)]).toEqual([[urnOf(key(500))], [key(1)]]);
 
     // The fill: the stream is at its bound, for the 75% alert.
     const registry = new Registry();

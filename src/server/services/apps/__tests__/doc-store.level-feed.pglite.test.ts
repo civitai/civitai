@@ -231,8 +231,9 @@ describe('the level streams over the store (rls on)', () => {
       body: { t: 'body-p04-r' },
       version: 1,
       seq: await docSeq('p04-r'),
-      tallies: { counters: { vote: 0, views: 0 }, marks: { vote: 2, star: 1 } },
     });
+    // Exactly these: the report mark (one is held on this document) is never a key.
+    expect(e.tallies).toEqual({ counters: { vote: 0, views: 0 }, marks: { vote: 2, star: 1 } });
     expect(Object.keys(e).sort()).toEqual(
       [
         'body',
