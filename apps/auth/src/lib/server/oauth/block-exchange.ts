@@ -247,7 +247,7 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
   const refuseUnauthenticated = async (error: ExchangeError, reason: string) => {
     if (!(await chargeTokenExchangeFailure(input.clientIp))) {
       return rateLimitedResponse(
-        oauthRetryAfter('token-exchange'),
+        oauthRetryAfter('token-exchange-ip'),
         new Headers(NO_STORE),
         DESCRIPTION.rate_limited,
         { limit: oauthRateLimitRef('token-exchange-ip') }
