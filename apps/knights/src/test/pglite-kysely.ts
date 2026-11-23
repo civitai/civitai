@@ -18,6 +18,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 const MIGRATIONS = [
   '20261209120000_knights_new_order_player_and_link_review',
   '20261210120000_knights_v2_tables',
+  '20271125120000_knights_legacy_player_days',
 ].map((name) =>
   fileURLToPath(
     new URL(

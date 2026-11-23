@@ -8809,6 +8809,15 @@ model KnightsPlayer {
   recapPopupOptOut Boolean @default(false)
 }
 
+/// A UTC day on which the player voted in the original Knights game, filled once from its vote history. Counted with
+/// `KnightsPlayerDay` toward Paladin's days-played bar; nothing writes it after the backfill.
+model KnightsLegacyPlayerDay {
+  playerId Int
+  day      DateTime @db.Date
+
+  @@id([playerId, day])
+}
+
 /// One row per player per UTC day on which they voted. `goldRecorded` counts against the daily cap;
 /// `bonusGold` (the streak bonus) is paid straight to goldEarned and does not.
 model KnightsPlayerDay {
