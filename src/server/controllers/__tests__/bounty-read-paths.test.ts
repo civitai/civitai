@@ -1365,10 +1365,10 @@ describe('who the bounty reads treat as a held-media viewer', () => {
       ctx,
     });
     expect(mockBountyImages).toHaveBeenLastCalledWith(
-      expect.objectContaining({ seesReportListed: sees })
+      expect.objectContaining({ seesReportListed: sees, ownerSeesReportListed: !credential })
     );
     expect(mockImagesForBounties).toHaveBeenLastCalledWith(
-      expect.objectContaining({ seesReportListed: sees })
+      expect.objectContaining({ seesReportListed: sees, ownerSeesReportListed: !credential })
     );
   });
 });

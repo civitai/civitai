@@ -28,7 +28,7 @@ const OTHER_UPLOADER = 40;
 const viewers = {
   anonymous: {},
   stranger: { userId: 20 },
-  owner: { userId: OWNER },
+  owner: { userId: OWNER, ownerSeesReportListed: true },
   moderator: { userId: 30, isModerator: true },
   grantHolder: { userId: 31, isModerator: true, seesReportListed: true },
 };
@@ -229,6 +229,10 @@ describe.each(Object.keys(readers) as (keyof typeof readers)[])('%s', (reader) =
       expect(await imagesOf(REPORT_LISTED, viewers[who])).toEqual([]);
     }
   );
+
+  it('withholds an image listed on a report from its uploader on a scoped credential', async () => {
+    expect(await imagesOf(REPORT_LISTED, { userId: OWNER })).toEqual([]);
+  });
 
   it.each(['owner', 'grantHolder'] as const)(
     'serves an image listed on a report to the %s',
