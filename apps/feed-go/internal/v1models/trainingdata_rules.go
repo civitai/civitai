@@ -13,7 +13,6 @@ import (
 // src/server/services/feed-go-training-data-rules.ts.
 const KeyTrainingDataRulesLive = "feed-go:training-data-rules-live"
 
-// trainingDataRulesReadTimeout bounds the read, within the caller's own context.
 const trainingDataRulesReadTimeout = 2 * time.Second
 
 // TrainingDataRules vouches, on the public serve path, for this build's Training Data rules: a

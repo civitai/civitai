@@ -14,7 +14,7 @@ import { trainingDataListingRulesId } from '~/server/services/training-data-rest
  * rollout, a canary) still answering, or none having said, makes it hand the request to Node.
  *
  * Fire and forget: never awaited, never throws. A process writes at most once per
- * FEED_GO_TRAINING_DATA_RULES_EVERY_MS.
+ * FEED_GO_TRAINING_DATA_RULES_EVERY_MS, or FEED_GO_TRAINING_DATA_RULES_RETRY_MS after a failed write.
  */
 
 /** How long a build's field lives after its last write: well past the write interval. */

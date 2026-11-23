@@ -2456,8 +2456,8 @@ deployment config. Every answer carries `X-Feed-Go-Served` (`go` or `node`), as 
    request the vouch is what the Node app publishes instead: every Node process answering either
    model route writes its rule set id (`trainingDataListingRulesId`) as a field of the cache-cluster
    hash `feed-go:training-data-rules-live` (`REDIS_KEYS.FEED_GO.TRAINING_DATA_RULES_LIVE`,
-   `src/server/services/feed-go-training-data-rules.ts`), at most once a minute per process, each
-   field expiring 5 minutes after its last write (HPEXPIRE), so the live fields are the builds still
+   `src/server/services/feed-go-training-data-rules.ts`), at most once a minute per process (5 s
+   after a failed write), each field expiring 5 minutes after its last write (HPEXPIRE), so the live fields are the builds still
    answering. A served body with a Training Data candidate is listed only while those fields are
    exactly `v1models.TrainingDataSQLHash` (`v1models.TrainingDataRules`: one HGETALL, bounded at
    2 s, per served request whose body has a Training Data candidate, read once its versions are known

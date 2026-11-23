@@ -128,12 +128,9 @@ func sampledRequest(r *http.Request) bool {
 	return isSampled(r.Context())
 }
 
-// trainingDataVouch is what vouches for this request's Training Data listing: on a sample, the
-// Node rule set id it carries (v1models.TrainingDataSQLHeader); on a public request, where that
-// header would be a client's and is never read, the rule sets the Node builds now answering
-// published (V1ModelsDeps.Rules, read only for a body with a Training Data candidate). A body with a
-// Training Data candidate that neither vouches for falls back (`v1-models-training-data-drift`)
-// rather than list a file the Node app might refuse.
+// trainingDataVouch picks what vouches for the Training Data rules: a sample's header, or on a
+// public request (where that header would be the client's and is never read) the rule sets the
+// Node builds now answering published (DESIGN.md §16.8).
 func (s *Server) trainingDataVouch(r *http.Request) (string, *v1models.TrainingDataRules) {
 	if sampledRequest(r) {
 		return r.Header.Get(v1models.TrainingDataSQLHeader), nil
