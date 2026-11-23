@@ -99,7 +99,10 @@ describe('with the schema_major column applied', () => {
     await store.increment(c, at(TALLIES, 17), 'song-1', 'plays');
     expect(await stamps(h, app)).toEqual({ 'song-1': 17 });
     // The body was not written again, so the major it was written under stands.
-    expect(await store.increment(c, at(TALLIES, 19), 'song-1', 'plays')).toEqual({ value: 2 });
+    expect(await store.increment(c, at(TALLIES, 19), 'song-1', 'plays')).toEqual({
+      value: 2,
+      markSeq: 2,
+    });
     expect(await stamps(h, app)).toEqual({ 'song-1': 17 });
   });
 
@@ -211,7 +214,12 @@ describe('without the schema_major column', () => {
     expect(updated.version).toBe(2);
     const created = await store.create(ctx(app, NS_PROD, BOB), at(BOARD, 47), { title: 'hi' });
     expect(created.data).toEqual({ title: 'hi' });
-    expect(await store.increment(c, at(TALLIES, 53), 'song-1', 'plays')).toEqual({ value: 1 });
+    // Three document writes before it (seq 1–3); its create is the fourth.
+    expect(await store.increment(c, at(TALLIES, 53), 'song-1', 'plays')).toEqual({
+      value: 1,
+      markSeq: 1,
+      seq: 4,
+    });
     const migrated = await createDocStoreMaintenance({ db: h.db }).migrateDocuments(
       app,
       at(PREFS, 59),

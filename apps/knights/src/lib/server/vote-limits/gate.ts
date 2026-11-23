@@ -7,8 +7,11 @@ export type GateClient = {
   pTTL: (key: string) => Promise<number>;
 };
 
-/** `busy` marks a refusal for too many votes at once, as opposed to a limit being reached: the vote can simply be sent again. */
-export type Limited = { status: 'limited'; until: Date; busy?: true };
+/**
+ * `busy` marks a refusal for too many votes at once, as opposed to a limit being reached: the vote can simply be sent again.
+ * `tripped` marks the refusal that started a cooldown, as opposed to one refused while a cooldown runs.
+ */
+export type Limited = { status: 'limited'; until: Date; busy?: true; tripped?: true };
 
 export type GateEntry = { status: 'open'; release: () => Promise<void> } | Limited;
 
@@ -36,7 +39,7 @@ const keyOf = (userId: number, part: string) => `knights:vote-limit:{${userId}}:
  * The whole check in one atomic step, so no interleaving of requests (or a command that fails halfway) can leave a counter
  * without its expiry or shorten a cooldown. KEYS: cooldown, in-flight slot, then one counter per window. ARGV: slot cap,
  * slot ttl, then per window its length, its max and the cooldown a trip sets (all ms). Returns {0, 0} entered, {1, ms}
- * limited for `ms`, {2, 0} too many in flight.
+ * limited for `ms` by a running cooldown, {3, ms} limited for `ms` by a window this vote tripped, {2, 0} too many in flight.
  * Keep both scripts Lua 5.1-compatible: Redis runs 5.1 but the wasmoon test engine is 5.4, so tests cannot catch a 5.4-only construct.
  */
 export const ENTER_SCRIPT = `
@@ -64,7 +67,17 @@ if running < wanted then
   running = wanted
 end
 redis.call('DECR', KEYS[2])
-return {1, running}`;
+return {3, running}`;
+
+/** Makes the cooldown (KEYS[1]) run at least ARGV[1] ms, never shortening it; returns the ms it runs. */
+export const FREEZE_SCRIPT = `
+local running = redis.call('PTTL', KEYS[1])
+local wanted = tonumber(ARGV[1])
+if running < wanted then
+  redis.call('SET', KEYS[1], '1', 'PX', ARGV[1])
+  return wanted
+end
+return running`;
 
 /** Gives a slot back, never going below zero. */
 export const RELEASE_SCRIPT = `
@@ -108,6 +121,9 @@ export function createVoteGate({ client, limits, timeoutMs = REDIS_TIMEOUT_MS }:
       ],
     })) as [number, number];
     if (code === 1) return { status: 'limited', until: new Date(now.getTime() + Number(ms)) };
+    if (code === 3) {
+      return { status: 'limited', until: new Date(now.getTime() + Number(ms)), tripped: true };
+    }
     if (code === 2) {
       return { status: 'limited', until: new Date(now.getTime() + BUSY_RETRY_MS), busy: true };
     }
@@ -156,6 +172,30 @@ export function createVoteGate({ client, limits, timeoutMs = REDIS_TIMEOUT_MS }:
         return await work();
       } finally {
         await entry.release();
+      }
+    },
+
+    /**
+     * Freezes a pause the player is about to be shown: the cooldown runs until at least `until`, so every later answer
+     * reads that end, and votes refused meanwhile stop at the cooldown instead of counting toward a window (and tripping a
+     * longer one). Returns the end in force; `until` itself when Redis is down.
+     */
+    async freeze(userId: number, now: Date, until: Date): Promise<Date> {
+      const ms = until.getTime() - now.getTime();
+      if (ms <= 0 || now.getTime() < downUntil) return until;
+      try {
+        const left = await within(
+          client().eval(FREEZE_SCRIPT, {
+            keys: [keyOf(userId, 'cooldown')],
+            arguments: [String(ms)],
+          }),
+          timeoutMs
+        );
+        return new Date(now.getTime() + Number(left));
+      } catch (error) {
+        downUntil = now.getTime() + DOWN_FOR_MS;
+        console.error('knights: could not freeze the vote pause', { userId, error });
+        return until;
       }
     },
 
