@@ -2866,10 +2866,9 @@ async function listingFactsForRequests(
     );
     const target = pickPublishTarget<Candidate>(draft, reset);
     if (!target) return null;
-    // A draft is rated from the request's manifest; a reset listing keeps the rating it has.
-    const declared = target.firstGoLive
-      ? manifestRatingOrDefault(req.manifest)
-      : target.listing.contentRating ?? null;
+    // Both are rated from the request's manifest: a draft by (3b-transition), a reset
+    // listing by (3b-sync), which writes it before (3b-reset) floors it again at the media.
+    const declared = manifestRatingOrDefault(req.manifest);
     return { ...target, declared };
   };
   const approveRatingFor = (req: ListingJoinSubject): RequestListingFacts['approveRating'] => {
@@ -4275,8 +4274,9 @@ async function approveRequestUnderClaim(
       // changes without re-review.
       //
       // WHAT WE DO NOT TOUCH (curated / mod-owned): assets (icon / cover /
-      // screenshots), `featured` / `featuredOrder`, `contentRating` (mod override,
-      // floored at the derived rating), `status`, `slug`, `externalUrl`.
+      // screenshots), `featured` / `featuredOrder`, `status`, `slug`, `externalUrl`.
+      // `contentRating` IS written: the manifest's declared rating floored at the
+      // store media (see 🔴 RATING SYNC below).
       //
       // `category` comes from `AppBlock.category` — NOT the manifest — because
       // step (3a) writes the manifest category onto that column ONLY when it is
@@ -4304,18 +4304,62 @@ async function approveRequestUnderClaim(
       } else {
         const ab = await dbWrite.appBlock.findUnique({
           where: { id: appBlockId },
-          select: { blockId: true, manifest: true, category: true },
+          select: { blockId: true, manifest: true, category: true, contentRating: true },
         });
         if (ab) {
+          // 🔴 RATING SYNC. The approved manifest's declared rating (`AppBlock.contentRating`,
+          // written from it above), raised to the store media's rating when that is more
+          // mature: the floor the first approve applies, so the listing reads as if this
+          // version had been its first. It LOWERS as well as raises (an app that drops
+          // `x` → `pg13` is re-rated `pg13`), and that is covered by the moderator who just
+          // approved the new manifest. The media is re-derived here, so mature art keeps the
+          // rating up. A split a moderator granted is kept, as on every path that does not
+          // publish the listing (`readListingMediaSplit`).
+          //
+          // 🔴 NO MODERATOR OVERRIDE SURVIVES THIS, because none is stored. An on-site
+          // listing's rating lives in one column; a review's override
+          // (`resolveOnsiteApprovalContentRating`) and a live-edit raise write that column and
+          // nothing else, so they cannot be told apart from the rating the last approve set.
+          //
+          // Read on the PRIMARY. A missing row leaves the column out of the write.
+          const ratingListing = await dbWrite.appListing.findFirst({
+            where: { appBlockId, kind: 'onsite' },
+            select: { id: true, contentRating: true },
+          });
+          let syncedRating: string | null = null;
+          if (ratingListing) {
+            const { resolveListingRatingFloorInTx } = await import(
+              '~/server/services/blocks/app-listing-assets.service'
+            );
+            const { readListingMediaSplit } = await import('./listing-media-split.service');
+            syncedRating = await resolveListingRatingFloorInTx(
+              dbWrite,
+              ratingListing.id,
+              ab.contentRating,
+              await readListingMediaSplit(dbWrite, ratingListing.id)
+            );
+          }
           const synced = await dbWrite.appListing.updateMany({
             where: { appBlockId, kind: 'onsite' },
-            data: buildListingScalarSync({
-              manifest: ab.manifest,
-              blockId: ab.blockId,
-              category: ab.category,
-              sourceRepoAvailable,
-            }),
+            data: {
+              ...buildListingScalarSync({
+                manifest: ab.manifest,
+                blockId: ab.blockId,
+                category: ab.category,
+                sourceRepoAvailable,
+              }),
+              ...(ratingListing ? { contentRating: syncedRating } : {}),
+            },
           });
+          if (ratingListing && synced.count > 0) {
+            await recordListingRatingChangeAfterCommit({
+              appListingId: ratingListing.id,
+              slug: request.slug,
+              before: ratingListing.contentRating,
+              after: syncedRating,
+              actorUserId: params.reviewerUserId,
+            });
+          }
           // Re-synced from the manifest on every approved version, like `repository`: removing
           // `bugs` clears the link.
           const tracker = buildListingIssueTrackerSync({
@@ -4392,8 +4436,10 @@ async function approveRequestUnderClaim(
   // count 0) does NOT touch the block, and a delisted-then-resubmitted app is never
   // auto-un-suspended here (its listing is `removed`, not `pending`, so count 0 too).
   // Both flips are status-guarded (never clobber a drifted/curated state) — the listing
-  // flip touches `status` and the go-live rating floor (see the 🔴 note at the flip; the
-  // floor is raise-only, so it can never lower a curated rating). Same log-and-continue
+  // flip touches `status` and the go-live rating floor (see the 🔴 note at the flip). The
+  // floor here is raise-only, but it starts from the rating (3b-sync) above has just
+  // written from the manifest, so the restored listing carries this version's declared
+  // rating, raised by its media. Same log-and-continue
   // posture: the store listing +
   // block restore are a convenience and must NEVER gate the approve/deploy.
   try {

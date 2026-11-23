@@ -33,8 +33,9 @@ vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOri
  *      scalars — and NEVER a create.
  *   3. `category` comes from `AppBlock.category` (mod curation survives), not
  *      straight from the manifest.
- *   4. Curated / mod-owned columns (assets, featured, contentRating, status,
- *      slug) are NOT in the update payload.
+ *   4. Curated / mod-owned columns (assets, featured, status, slug) are NOT in
+ *      the update payload. `contentRating` is, floored at the media, when the
+ *      primary read finds the listing: publish-request.listingRatingSync.test.ts.
  *   5. The re-sync is BEST-EFFORT: a failing write is swallowed and the
  *      approve/deploy still succeeds.
  *
@@ -365,7 +366,6 @@ describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-gove
       'coverId',
       'featured',
       'featuredOrder',
-      'contentRating',
       'status',
       'slug',
       'externalUrl',

@@ -1009,7 +1009,9 @@ export async function assertListingAssetsScanCleanInTx(
 
 /**
  * Go-live RATING FLOOR for a listing whose media was attached while it was directly
- * asset-editable (a pre-approval `draft` / reset `pending` listing). Re-derives the
+ * asset-editable (a pre-approval `draft` / reset `pending` listing), and the rating
+ * `approveRequest`'s (3b-sync) writes on every later approved version, passing the new
+ * manifest's rating as `declaredRating` (so that caller lowers when the app does). Re-derives the
  * rating from the current assets' max `nsfwLevel` — the icon, cover and screenshots, and the
  * civitai.red icon / cover overrides — and returns `declaredRating` RAISED
  * to the derived value when the media is more mature — never lowered. With `mediaSplit`
