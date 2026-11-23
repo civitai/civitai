@@ -97,7 +97,7 @@ Knights reads them, with `yesNoShare`, through one cached source (`apps/knights/
 The two kill switches follow the same rule, so a store outage never flips the shop or conversion away from the last known state.
 
 The moderator Config page (`/knights-of-new-order/config`) is one column: the queue counts, then cards for Queue sources (switch,
-both rates, yes/no share), Skill checks, Yes/no questions, Acolytes, Harvest, and a "Shop and conversion" danger-zone card. Each
+both rates, the yes/no questions switch), Skill checks, Yes/no questions, Acolytes, Harvest, and a "Shop and conversion" danger-zone card. Each
 setting with a Knights default carries a "Default" or "Custom" badge (its tooltip names the variable behind the default), and a
 custom number has a "Reset" button that removes the saved value. Toggles are segmented with the default first and positive labels:
 Shop Default / Open / Closed, Gold to Buzz conversion Default / On / Off, Acolyte wrong-answer smites Default / On / Off, Harvest
