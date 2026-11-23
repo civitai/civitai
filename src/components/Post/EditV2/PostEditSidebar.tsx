@@ -32,7 +32,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import type { PostDetailEditable } from '~/server/services/post.service';
 import { CollectionType, MediaType } from '~/shared/utils/prisma/enums';
-import { readSongGenre, SONG_GENRE_REQUIRED_PUBLISH_REASON } from '~/shared/constants/song-genres';
+import { SONG_GENRE_REQUIRED_PUBLISH_REASON } from '~/shared/constants/song-genres';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -118,8 +118,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // As on the server: a post already public is left alone, so older songs never lock its edits.
   const isPublic = !!post.publishedAt && post.publishedAt.getTime() <= Date.now();
   const songsMissingGenre =
-    !isPublic &&
-    addedImages.some((image) => image.type === MediaType.audio && !readSongGenre(image.metadata));
+    !isPublic && addedImages.some((image) => image.type === MediaType.audio && !image.genre);
 
   const canPublish =
     hasImages &&

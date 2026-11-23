@@ -5,6 +5,7 @@ import {
   FeedSongMenuItems,
   FeedSongPlayButton,
   useFeedSongCover,
+  useFeedSongGenre,
   useFeedSongPlays,
 } from '~/components/Music/FeedSongList';
 import { songTextBright, songTextDimmed } from '~/components/Music/song-styles';
@@ -12,7 +13,6 @@ import { SongArt, songCreatorHref } from '~/components/MusicPlayer/MusicPlayerPa
 import { songTrack } from '~/components/MusicPlayer/PostSong';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
-import { readSongGenre } from '~/shared/constants/song-genres';
 import { formatPlaybackTime } from '~/utils/audio-player';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import clsx from 'clsx';
@@ -39,7 +39,7 @@ export function SongStat({
 export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const track = songTrack(data);
   const title = track.title || UNTITLED_SONG;
-  const genre = readSongGenre(data.metadata);
+  const genre = useFeedSongGenre(data);
   const cover = useFeedSongCover(data.id);
   const plays = useFeedSongPlays(data.id);
   return (

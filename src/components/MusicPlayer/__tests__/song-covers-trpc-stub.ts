@@ -112,7 +112,8 @@ function useSongLyricsQuery(input: { id: number }, options?: { enabled?: boolean
 /**
  * `trpc` with `image.getSongCovers` and `image.getSongPlays` (single and through `useQueries`)
  * answered by `songCovers` and `songPlays`, `image.get` and `image.getSongLyrics` by `songDetails`,
- * and `commentv3.getTimed` by `timedComments`; for a `vi.mock('~/utils/trpc')` factory.
+ * `image.getSongGenreTags` with no genre tags, and `commentv3.getTimed` by `timedComments`; for a
+ * `vi.mock('~/utils/trpc')` factory.
  */
 export function withSongCoversStub<T extends object>(trpc: T): T {
   answers = new WeakMap();
@@ -121,6 +122,8 @@ export function withSongCoversStub<T extends object>(trpc: T): T {
     getSongPlays: { useQuery: readSongPlays },
     get: { useQuery: useSongImageQuery },
     getSongLyrics: { useQuery: useSongLyricsQuery },
+    // The feed's genre map (`FeedSongsProvider`); no song here carries a genre tag.
+    getSongGenreTags: { useQuery: () => ({ data: {} }) },
   };
   const commentv3 = { getTimed: { useQuery: useTimedCommentsQuery } };
   // The sheet's like: inert, as no test here presses it.

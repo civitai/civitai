@@ -67,7 +67,7 @@ const song = (id: number, title: string) =>
     id,
     url: `song-${id}.mp3`,
     type: 'audio',
-    metadata: { title, duration: 185, genre: 'Synthwave' },
+    metadata: { title, duration: 185 },
     user: { id: 100 + id, username: `artist${id}` },
     stats: { likeCountAllTime: 3, commentCountAllTime: 1 },
   } as unknown as ImagesInfiniteModel);

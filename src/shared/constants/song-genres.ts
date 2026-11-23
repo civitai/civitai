@@ -36,14 +36,32 @@ export const SONG_TAG_LIMIT_MESSAGE = `A song can have up to ${SONG_TAG_LIMIT} t
 export const SONG_TAG_UNAVAILABLE_MESSAGE = "This tag can't be added to a song.";
 export const SONG_TAG_NOT_REMOVABLE_MESSAGE = "This tag can't be removed.";
 
-/** The genre stored on a song's metadata, when it is one from the list. */
-export function readSongGenre(metadata: unknown): SongGenre | undefined {
-  const genre = (metadata as { genre?: unknown } | null | undefined)?.genre;
-  return (SONG_GENRES as readonly unknown[]).includes(genre) ? (genre as SongGenre) : undefined;
+/** A stored genre (`Track.genre`), when it is one from the list. */
+export function toSongGenre(value: unknown): SongGenre | undefined {
+  return (SONG_GENRES as readonly unknown[]).includes(value) ? (value as SongGenre) : undefined;
 }
 
 /** The image tag a genre is mirrored as (tag names are stored lowercase). */
 export const songGenreTagName = (genre: SongGenre) => genre.toLowerCase();
+
+const GENRE_TAG_NAMES = new Set<string>(SONG_GENRES.map(songGenreTagName));
+/** Whether a tag name is a genre's mirror tag: only the genre select attaches those. */
+export const isSongGenreTagName = (name: string) => GENRE_TAG_NAMES.has(name.toLowerCase());
+
+/**
+ * A feed song's genre, from its tag ids and each genre's mirror tag id (`image.getSongGenreTags`):
+ * the first genre in list order whose tag the song carries.
+ */
+export function songGenreFromTagIds(
+  tagIds: readonly number[] | null | undefined,
+  genreTagIds: Partial<Record<SongGenre, number>> | undefined
+): SongGenre | undefined {
+  if (!tagIds?.length || !genreTagIds) return undefined;
+  return SONG_GENRES.find((genre) => {
+    const tagId = genreTagIds[genre];
+    return tagId !== undefined && tagIds.includes(tagId);
+  });
+}
 
 /** `tags` without the genre's own tag: the genre select shows that one. */
 export function withoutGenreTag<T extends { name: string }>(

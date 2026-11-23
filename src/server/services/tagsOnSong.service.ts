@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { pgDbWrite } from '~/server/db/pgDb';
 import { getModeratedTags } from '~/server/services/system-cache';
+import type { TagWriteTransaction } from '~/server/services/tagsOnImageNew.service';
 import {
   deleteTagsOnImageNew,
   insertTagsOnImageNew,
@@ -97,19 +99,45 @@ export async function hasSongTagRow(imageId: number, tagId: number) {
 }
 
 /** Insert only: an existing row (a disabled one included) is never changed. */
-export function attachSongTag(imageId: number, tagId: number) {
-  return insertTagsOnImageNew([
-    {
-      imageId,
-      tagId,
-      source: TagSource.User,
-      automated: false,
-      disabled: false,
-      needsReview: false,
-    },
-  ]);
+export function attachSongTag(imageId: number, tagId: number, tx?: TagWriteTransaction) {
+  return insertTagsOnImageNew(
+    [
+      {
+        imageId,
+        tagId,
+        source: TagSource.User,
+        automated: false,
+        disabled: false,
+        needsReview: false,
+      },
+    ],
+    tx
+  );
 }
 
-export function detachSongTag(imageId: number, tagId: number) {
-  return deleteTagsOnImageNew([{ imageId, tagId }]);
+export function detachSongTag(imageId: number, tagId: number, tx?: TagWriteTransaction) {
+  return deleteTagsOnImageNew([{ imageId, tagId }], tx);
+}
+
+/**
+ * Runs `write` in one transaction on a primary connection. Tag rows written through its `tx` commit
+ * or roll back with everything else `write` does on `tx.client`; the writers' follow-up work runs
+ * only after the commit.
+ */
+export async function inSongTagTransaction<T>(write: (tx: TagWriteTransaction) => Promise<T>) {
+  const client = await pgDbWrite.connect();
+  const tx: TagWriteTransaction = { client, afterCommit: [] };
+  let result: T;
+  try {
+    await client.query('BEGIN');
+    result = await write(tx);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+  for (const run of tx.afterCommit) await run();
+  return result;
 }

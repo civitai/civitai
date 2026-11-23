@@ -45,11 +45,13 @@ vi.mock('~/components/Post/EditV2/PostEditProvider', async (orig) => ({
 // eslint-disable-next-line import/first
 import { SongGenreTags } from '~/components/Post/EditV2/PostImageCards/SongGenreTags';
 
-const song = (metadata: object, songTags: { id: number; name: string }[] = []) =>
+/** A song in the editor: its genre is the payload's `genre` (Track.genre), not its metadata. */
+const song = ({ genre }: { genre?: string }, songTags: { id: number; name: string }[] = []) =>
   ({
     id: 7,
     type: 'audio',
-    metadata: { duration: 120, ...metadata },
+    metadata: { duration: 120 },
+    genre: genre ?? null,
     songTags,
   } as unknown as PostEditImageDetail);
 

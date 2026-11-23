@@ -7,7 +7,9 @@ import {
 } from '../tagsOnImageNew.service';
 import * as systemCache from '../system-cache';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { refreshThumbnailCache } from '~/server/redis/caches';
+import { pgDbWrite } from '~/server/db/pgDb';
+import { imageTagsCache, refreshThumbnailCache, tagIdsForImagesCache } from '~/server/redis/caches';
+import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { refreshProfilePicturesForImages } from '~/server/services/user.service';
 import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
 
@@ -358,4 +360,64 @@ describe('models-index queue on a tag write', () => {
       expect.objectContaining({ levelImageIds: [] })
     );
   });
+});
+
+/**
+ * A song's genre change writes its tag rows inside the caller's transaction (setSongGenre): the rows
+ * go on the caller's connection, and nothing that reads or announces them runs before the commit.
+ * Every other caller passes no transaction and gets the writer as it always was.
+ */
+describe("tag writes in a caller's transaction", () => {
+  const R_TAG = 401;
+  const rows = [{ imageId: 81, tagId: R_TAG }];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(systemCache.getTagRules).mockResolvedValue([]);
+    vi.mocked(systemCache.getModeratedTags).mockResolvedValue([
+      { id: R_TAG, name: 'r-tag', nsfwLevel: 4 },
+    ]);
+  });
+
+  /** Everything a tag write does besides the row write itself. */
+  const followUps = () => [
+    vi.mocked(tagIdsForImagesCache.bust).mock.calls.length,
+    vi.mocked(imageTagsCache.bust).mock.calls.length,
+    vi.mocked(dbMock.dbWrite.$executeRawUnsafe).mock.calls.length,
+    vi.mocked(queueDocumentsForImageMinorChanges).mock.calls.length,
+    vi.mocked(queueImageSearchIndexUpdate).mock.calls.length,
+  ];
+
+  it.each([
+    ['insert', insertTagsOnImageNew],
+    ['delete', deleteTagsOnImageNew],
+  ] as const)(
+    '%s without one writes on the pool and runs everything after it',
+    async (_, write) => {
+      await write(rows);
+
+      expect(pgDbWrite.query).toHaveBeenCalledTimes(1);
+      expect(followUps()).toEqual([1, 1, 1, 1, 1]);
+      expect(queueImageSearchIndexUpdate).toHaveBeenCalledWith({ ids: [81], action: 'Update' });
+    }
+  );
+
+  it.each([
+    ['insert', insertTagsOnImageNew],
+    ['delete', deleteTagsOnImageNew],
+  ] as const)(
+    '%s in one writes on its client and defers the rest to the commit',
+    async (_, write) => {
+      const tx = { client: { query: vi.fn() }, afterCommit: [] as (() => Promise<void>)[] };
+
+      await write(rows, tx as never);
+
+      expect(tx.client.query).toHaveBeenCalledTimes(1);
+      expect(pgDbWrite.query).not.toHaveBeenCalled();
+      expect(followUps()).toEqual([0, 0, 0, 0, 0]);
+
+      for (const run of tx.afterCommit) await run();
+      expect(followUps()).toEqual([1, 1, 1, 1, 1]);
+    }
+  );
 });

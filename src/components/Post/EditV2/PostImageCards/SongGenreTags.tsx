@@ -3,10 +3,8 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { withMetadata } from '~/components/Post/EditV2/PostImageCards/song-metadata';
 import type { PostEditImageDetail } from '~/server/services/post.service';
 import {
-  readSongGenre,
   SONG_GENRE_REQUIRED_MESSAGE,
   SONG_GENRES,
   SONG_TAG_LIMIT,
@@ -23,7 +21,7 @@ type SongTagRow = PostEditImageDetail['songTags'][number];
 /** A song's genre (required to publish) and its own tags. */
 export function SongGenreTags({ image }: { image: PostEditImageDetail }) {
   const { id } = image;
-  const genre = readSongGenre(image.metadata);
+  const genre = image.genre ?? undefined;
   // An upload's result can reach the store before the editor read that carries the tags.
   const songTags = image.songTags ?? [];
   const updateImage = usePostEditStore((state) => state.updateImage);
@@ -34,8 +32,7 @@ export function SongGenreTags({ image }: { image: PostEditImageDetail }) {
 
   const setStored = (changes: { genre?: SongGenre; tags?: SongTagRow[] }) =>
     updateImage(id, (draft) => {
-      if ('genre' in changes)
-        draft.metadata = withMetadata(draft.metadata, { genre: changes.genre });
+      if ('genre' in changes) draft.genre = changes.genre ?? null;
       if (changes.tags) draft.songTags = changes.tags;
     });
 
