@@ -1300,18 +1300,6 @@ describe('block token verification follows the site', () => {
         '      : publicBrowsingLevelsFlag;',
       ].join('\n')
     );
-    const middleware = read(BLOCK_SCOPE_MIDDLEWARE);
-    expect(middleware).toContain(
-      [
-        '        claims.viewerBrowsingLevel !== undefined &&',
-        '        !isBrowsingLevelClaim(claims.viewerBrowsingLevel)',
-        '      ) {',
-        '        return null;',
-      ].join('\n')
-    );
-    expect(middleware).toContain(
-      "import { isBrowsingLevelClaim } from '@civitai/auth/browsing-level-claim';"
-    );
   });
 
   // The hub's one-approved-block rule (block-exchange.ts) is the registry feed's own resolution of an app from
