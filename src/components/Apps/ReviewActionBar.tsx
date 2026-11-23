@@ -6,7 +6,10 @@ import {
   MEDIA_SPLIT_NO_DECISION,
   type ListingMediaSplitResolution,
 } from '~/components/Apps/ListingMediaSplitControl';
-import { OnsiteApproveRatingWarning } from '~/components/Apps/ListingRatingNotices';
+import {
+  OnsiteApproveRatingWarning,
+  VersionListingRatingNotice,
+} from '~/components/Apps/ListingRatingNotices';
 import {
   ReasonGatedField,
   ReasonGatedSubmitButton,
@@ -329,6 +332,7 @@ export function ReviewActionBar({
             {listingFloorApproveRefusal(floorMissing)}
           </Alert>
         )}
+        {mode === 'pending' && <VersionListingRatingNotice publishRequestId={request.id} />}
         {request.approveRating && (
           <OnsiteApproveRatingWarning
             listingId={request.approveRating.listingId}
