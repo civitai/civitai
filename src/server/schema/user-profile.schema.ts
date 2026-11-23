@@ -163,7 +163,7 @@ const profileAboutAllowedTags = [
 ];
 export const profileCardOpacityDefault = 80;
 
-/** Profile tabs an owner may hide; Overview and Shop always show. */
+/** Profile tabs an owner may hide; Overview, About and Shop always show. */
 export const profileHideableTabs = [
   'models',
   'posts',
