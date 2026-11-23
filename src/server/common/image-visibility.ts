@@ -523,7 +523,7 @@ export const isMinorMatureImage = (image: { minor?: boolean | null; nsfwLevel: n
 
 /** A minor-flagged image the minor content rule restricts, as this viewer sees it: hidden unless they uploaded it or moderate. */
 export const minorMatureHidden = (
-  image: { userId?: number | null; minor?: boolean | null; nsfwLevel: number } | null | undefined,
+  image: { userId: number; minor?: boolean | null; nsfwLevel: number } | null | undefined,
   viewerId?: number,
   isModerator?: boolean
 ) => !!image && !isModerator && image.userId !== viewerId && isMinorMatureImage(image);

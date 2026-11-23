@@ -56,7 +56,7 @@ import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.s
 /** Run after a bounty's flag raises an image's nsfwLevel: the SQL rule saw the stored level. */
 const keepsMinorRule =
   (viewer: { id: number; isModerator?: boolean } | undefined) =>
-  (image: { minor?: boolean | null; nsfwLevel: number; userId?: number | null }) =>
+  (image: { minor?: boolean | null; nsfwLevel: number; userId: number }) =>
     !minorMatureHidden(image, viewer?.id, viewer?.isModerator);
 
 export const getInfiniteBountiesHandler = async ({
