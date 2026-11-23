@@ -54,6 +54,24 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
   images (scanned, unlocked, and servable: published, level not 0 or Blocked, no block marker, no review hold; default 50, max 1000) as source `dev-backfill`. It reads `DATABASE_URL` from
   `apps/knights/.env`, is safe to repeat, and refuses to run unless the host is `localhost` or `127.0.0.1`.
 
+## Paladin tag review
+
+A Knights-side source: Paladins answer the moderator tag review queue as yes/no questions and their consensus is written back
+through the moderator app (detail: [yes/no questions](knights-yesno-questions.md#moderator-tag-review-source-tag-reviewts-tag-writebackts)).
+It is off until the moderator Config page's "Paladin tag review" switch turns it on (`modTagReview`, audited like every save);
+off means no new items, nothing served and nothing written back, while items whose tag a moderator ruled still close.
+
+Switch-on checklist, in order:
+
+1. Both apps released with the source (Knights and the moderator app; either order is inert while the switch is off).
+2. `KNIGHTS_TAG_REVIEW_TOKEN` set to the same value on both apps, and `MODERATOR_APP_INTERNAL_URL` (or `MODERATOR_APP_URL`) on
+   Knights, by an infra owner. Knights' database user also needs `SELECT` on the tables this source reads beyond Knights'
+   own: `TagsOnImageNew`, `TagsOnImageDetails` and `Tag` (the flagged tags and the rating check), and `CsamReport`,
+   `EvidenceHeldUser`, `ImageReport` and `Report` (the eligibility predicate). Knights only reads them. Without the grants
+   the source fails closed: nothing is created or served, and the tick logs the permission errors.
+3. The moderation team's sign-off: moderators keep their full queue, and items only leave it sooner.
+4. Then the switch. With no Paladin active it creates nothing.
+
 ## Game settings
 
 The game-tuning variables Knights read from its environment can also be saved under the optional `game` object of the same
@@ -79,7 +97,7 @@ Knights reads them, with `yesNoShare`, through one cached source (`apps/knights/
 The two kill switches follow the same rule, so a store outage never flips the shop or conversion away from the last known state.
 
 The moderator Config page (`/knights-of-new-order/config`) is one column: the queue counts, then cards for Queue sources (switch,
-both rates, yes/no share), Skill checks, Yes/no questions, Acolytes, Harvest, and a "Shop and conversion" danger-zone card. Each
+both rates, the yes/no questions switch), Skill checks, Yes/no questions, Acolytes, Harvest, and a "Shop and conversion" danger-zone card. Each
 setting with a Knights default carries a "Default" or "Custom" badge (its tooltip names the variable behind the default), and a
 custom number has a "Reset" button that removes the saved value. Toggles are segmented with the default first and positive labels:
 Shop Default / Open / Closed, Gold to Buzz conversion Default / On / Off, Acolyte wrong-answer smites Default / On / Off, Harvest

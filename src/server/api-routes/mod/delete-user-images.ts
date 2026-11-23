@@ -66,7 +66,7 @@ export default ModEndpoint(
       if (postIds.length) {
         // Only delete posts owned by the target user to avoid touching other users' posts
         // that may have referenced these images.
-        const deleted = await deletePostRows(kyselyOver(dbWrite), {
+        const { deleted } = await deletePostRows(kyselyOver(dbWrite), {
           ids: postIds,
           actor: { system: 'mod-delete-user-images' },
           where: fromPrismaSql(Prisma.sql`"userId" = ${userId} AND ${unlessHeld}

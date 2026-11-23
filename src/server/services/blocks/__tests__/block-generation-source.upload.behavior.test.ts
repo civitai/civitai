@@ -233,6 +233,16 @@ beforeAll(async () => {
       metadata jsonb
     );
     CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean);
+    -- What the held-url check in the gated read reads, as minimal stand-ins.
+    ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "modelVersionId" int;
+    ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS metadata jsonb;
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, meta jsonb);
+    CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
+    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]', "reportSentAt" timestamp(3));
+    CREATE TABLE "ImageCdnModeratorDelete" (url text, "userId" int, "imageId" int, "csamReview" boolean NOT NULL DEFAULT false);
+    CREATE TABLE "ImageCdnShopTakedown" (url text, "userId" int);
   `);
 });
 
@@ -480,7 +490,7 @@ describe('🔴 the written row: the viewer’s own, private, at a fresh key', ()
     expect({ width: out.width, height: out.height }).toEqual({ width: 640, height: 320 });
   });
 
-  it('the app’s shared grid read never returns it — not to the viewer, not to anyone else', async () => {
+  it('the app’s shared grid read returns it to its owner only, never to anyone else', async () => {
     const out = await persistAfterScan();
     // Positive control: a scanned image this app PUBLISHED, by another viewer, IS returned.
     await holder.db.query(
@@ -488,14 +498,17 @@ describe('🔴 the written row: the viewer’s own, private, at a fresh key', ()
        VALUES (77, $1, 'published-key', 1, 'Scanned', 512, 512, $2::jsonb)`,
       [OTHER_USER, JSON.stringify({ blockPublishedAppId: APP })]
     );
-    for (const userId of [VIEWER, OTHER_USER]) {
+    for (const [userId, expected] of [
+      [VIEWER, [out.imageId, 77]],
+      [OTHER_USER, [77]],
+    ] as const) {
       const { images } = await getBlockGatedImagesByIds({
         imageIds: [out.imageId, 77],
         browsingLevel: 1,
         appId: APP,
         userId,
       });
-      expect(images.map((i) => i.imageId)).toEqual([77]);
+      expect(images.map((i) => i.imageId)).toEqual(expected);
     }
   });
 

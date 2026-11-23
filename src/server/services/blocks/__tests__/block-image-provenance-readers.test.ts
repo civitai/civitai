@@ -58,7 +58,7 @@ type Role =
   | 'writer'
   /** Reads Image provenance to decide what an app may POST — bound to the image's owner. */
   | 'post-reader'
-  /** Reads Image provenance for the CROSS-USER gated read. */
+  /** Reads Image provenance for the CROSS-USER gated read (a generation source for its owner only). */
   | 'gated-reader'
   /** `Post.metadata` attribution (a different table), never Image provenance. */
   | 'post-attribution'
@@ -236,15 +236,18 @@ describe('App Blocks image provenance-key sites', () => {
     }
   });
 
-  it('🔴 the ONE gated reader names the published and the SHARED-upload key, never the bytes key', () => {
+  it('🔴 the ONE gated reader names the published, SHARED-upload and owner-bound source keys, never the bytes key', () => {
     // An app may show a viewer-picked upload to its other viewers only when it opted in for that
     // upload (`blockSharedUploadAppId`). Its own bytes uploads (`blockUploadedAppId`) carry no
-    // share and no dialog, so the gated read must not name that key or the postable set. The
-    // limits on shared rows are pinned in block-image-provenance.behavior.test.ts.
+    // share and no dialog, so the gated read must not name that key or the postable set. It reads
+    // a generation source (`blockGenerationSourceAppId`) for that row's owner only. The limits on
+    // shared and source rows are pinned in block-image-provenance.behavior.test.ts.
     const gated = Object.entries(LEDGER).filter(([, r]) => r === 'gated-reader');
     expect(gated.length).toBe(1);
     for (const [site] of gated) {
-      expect([...(sites.get(site) ?? [])].sort()).toEqual([PUBLISHED, SHARED_UPLOAD].sort());
+      expect([...(sites.get(site) ?? [])].sort()).toEqual(
+        [PUBLISHED, SHARED_UPLOAD, GENERATION_SOURCE].sort()
+      );
     }
   });
 
@@ -291,9 +294,10 @@ describe('App Blocks image provenance-key sites', () => {
     ]);
   });
 
-  it('🔴 the private generation-source key is named only by its declaration, its writer, its owner-bound reader and the server-owned list', () => {
-    // A private source must never reach the shared grid, a post or the "Published with" credit.
-    // Every site that names it, by constant or by spelling, is one of these four.
+  it('🔴 the private generation-source key is named only by its declaration, its writer, its owner-bound readers and the server-owned list', () => {
+    // A private source must never reach another viewer, a post or the "Published with" credit.
+    // Every site that names it, by constant or by spelling, is one of these five; the gated read
+    // admits it for its owner only (pinned in block-image-provenance.behavior.test.ts).
     const naming = [...sites.entries()]
       .filter(
         ([, tokens]) => tokens.has(GENERATION_SOURCE) || tokens.has("'blockGenerationSourceAppId'")
@@ -301,6 +305,7 @@ describe('App Blocks image provenance-key sites', () => {
       .map(([site]) => site)
       .sort();
     expect(naming).toEqual([
+      'src/server/services/blocks/block-gated-images.service.ts#getBlockGatedImagesByIds',
       'src/server/services/blocks/block-generation-source.service.ts#findBlockGenerationSourceImage',
       'src/server/services/blocks/block-image-upload.service.ts#persistBlockGenerationSourceImage',
       'src/shared/utils/block-provenance-metadata.ts#BLOCK_GENERATION_SOURCE_APP_ID_META_KEY',

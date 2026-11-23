@@ -4,6 +4,11 @@ import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { FIXTURE, migration } from '~/server/services/__tests__/comment-v3-fixture';
+import {
+  TEST_DATABASE_URL,
+  holdAt,
+  openScratch,
+} from '~/server/services/commentv3/__tests__/two-connection-pg';
 
 // ToS removal and restore for comments, against real Postgres with the production triggers: which
 // reports they action and reopen, and who is paid and told.
@@ -39,6 +44,7 @@ beforeAll(async () => {
   await pg.exec(migration('20261217120000_comment_v3_removed_by_author'));
   await pg.exec(migration('20270101120000_comment_v3_old_table_triggers_off'));
   await pg.exec(migration('20270102120000_comment_v3_teardown'));
+  await pg.exec(migration('20271125130000_comment_v3_hidden_at'));
 
   const toSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
     Array.isArray(first)
@@ -138,6 +144,18 @@ describe('removing CommentV3 comments as ToS violations', () => {
     expect(await status()).toMatchObject({ 1: 'Actioned' });
   });
 
+  it('actions a report once per removal: a repeat actions nothing, a later removal actions it again', async () => {
+    const paid = () =>
+      reward.mock.calls.filter(([e]) => (e as { reportId: number }).reportId === 1);
+    await bulkSetCommentV3TosViolation({ ids: [41], actor: { id: 1 } });
+    expect(paid()).toHaveLength(1);
+    await bulkSetCommentV3TosViolation({ ids: [41], actor: { id: 1 } });
+    expect(paid()).toHaveLength(1);
+    await bulkClearCommentV3TosViolation({ ids: [41] });
+    await bulkSetCommentV3TosViolation({ ids: [41], actor: { id: 1 } });
+    expect(paid()).toHaveLength(2);
+  });
+
   it('restores them and reopens their actioned ToS reports, and no other', async () => {
     await bulkSetCommentV3TosViolation({ ids: [41, 42], actor: { id: 1 } });
     // 7: a ToS report on 41 a moderator dismissed after the removal.
@@ -213,5 +231,55 @@ describe('removing CommentV3 comments as ToS violations', () => {
         46: false,
       });
     });
+  });
+});
+
+// On separate connections of real Postgres: a lock is invisible to the single-connection PGlite.
+describe.skipIf(!TEST_DATABASE_URL)('ToS set and clear on two connections', () => {
+  let db: Awaited<ReturnType<typeof openScratch>>;
+  beforeAll(async () => {
+    db = await openScratch('comment_tos_races');
+  }, 60_000);
+  afterAll(() => db?.close());
+  beforeEach(() => db.reset());
+
+  // However the clear lands, the comment's flag and its report agree afterwards.
+  it.each([
+    {
+      name: 'waits for a removal of an already-flagged comment, then reopens its report',
+      tos: true,
+      at: /SELECT id, "userId" FROM "CommentV3"/,
+      expected: { tosViolation: false, status: 'Pending', clearWaited: true },
+    },
+    {
+      // Uncommitted, the removal is not visible to the clear, which clears nothing.
+      name: 'during a new removal’s report actioning leaves the removal standing',
+      tos: false,
+      at: /UPDATE "Report"/,
+      expected: { tosViolation: true, status: 'Actioned', clearWaited: false },
+    },
+  ])('a clear $name', async ({ tos, at, expected }) => {
+    await db.q(`
+      INSERT INTO "CommentV3" (id, "userId", "tosViolation") VALUES (2, 10, ${tos});
+      INSERT INTO "Report" (id, "userId", status, reason) VALUES (20, 99, 'Pending', 'TOSViolation');
+      INSERT INTO "CommentV3Report" VALUES (2, 20);`);
+    const held = holdAt(at);
+    const set = bulkSetCommentV3TosViolation({ ids: [2], actor: { id: 1 } });
+    await held.reachedAt;
+    const clear = bulkClearCommentV3TosViolation({ ids: [2] });
+    let outcome = 'unknown';
+    try {
+      outcome = await db.lockWaitOrFinish(clear);
+    } finally {
+      held.release();
+      await Promise.allSettled([set, clear]);
+    }
+    expect({
+      ...(await db.one<{ tosViolation: boolean }>(
+        `SELECT "tosViolation" FROM "CommentV3" WHERE id = 2`
+      )),
+      ...(await db.one<{ status: string }>(`SELECT status FROM "Report" WHERE id = 20`)),
+      clearWaited: outcome === 'waiting',
+    }).toEqual(expected);
   });
 });

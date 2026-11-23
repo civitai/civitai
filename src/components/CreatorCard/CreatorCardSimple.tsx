@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { creatorCardSectionStyle } from '~/components/CreatorCard/section-style';
 import { uniqBy } from 'lodash-es';
 import { memo } from 'react';
 import type { CardProps } from '@mantine/core';
@@ -53,6 +54,7 @@ const CreatorCardSimpleContent = ({
   statDisplayOverwrite,
   subText,
   actions,
+  footer,
   ...cardProps
 }: CreatorCardSimpleProps) => {
   const theme = useMantineTheme();
@@ -251,9 +253,7 @@ const CreatorCardSimpleContent = ({
         <Card.Section
           withBorder
           inheritPadding
-          style={{
-            background: colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          }}
+          style={creatorCardSectionStyle(theme, colorScheme)}
           py={5}
         >
           <Group gap={4}>
@@ -273,6 +273,16 @@ const CreatorCardSimpleContent = ({
           </Group>
         </Card.Section>
       ) : null}
+      {footer ? (
+        <Card.Section
+          withBorder
+          inheritPadding
+          style={creatorCardSectionStyle(theme, colorScheme)}
+          py="xs"
+        >
+          {footer}
+        </Card.Section>
+      ) : null}
     </ElementInView>
   );
 };
@@ -284,6 +294,8 @@ export type CreatorCardSimpleProps = {
   useEquippedCosmetics?: boolean;
   statDisplayOverwrite?: string[];
   actions?: (creator: UserCreator) => React.ReactElement;
+  /** Extra content in its own section under a divider, below the links. Nothing renders without it. */
+  footer?: React.ReactNode;
 } & Omit<CardProps, 'children'>;
 
 type CreatorStats = NonNullable<UserCreator['stats']>;

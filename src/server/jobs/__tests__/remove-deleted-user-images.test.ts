@@ -531,10 +531,11 @@ function seed(next: Record<number, Fixture>) {
     }
   );
 
-  /** `deletePostRows`: its id list comes first, then the owner the job's condition names. */
+  /** `deletePostRows`: its id list comes first; the first number after it is the owner the job's
+   *  condition names (the child-safety case's parameters are text). */
   function deletePosts(sql: string, values: unknown[]) {
     const ids = values[0] as number[];
-    const fixture = fixtures[values[1] as number];
+    const fixture = fixtures[values.find((v, i) => i > 0 && typeof v === 'number') as number];
     if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored) return [];
     if (!passesPrimaryChoice(sql, fixture)) return [];
     // The hold arrives inlined in the text, opening `(<id> = <placeholder owner> OR`; what decides

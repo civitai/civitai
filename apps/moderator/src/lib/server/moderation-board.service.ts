@@ -81,6 +81,7 @@ const MOD_ACTIVITY_LABELS: Record<string, string> = {
   review: 'reviews',
   setNsfwLevel: 'ratings',
   setNsfwLevelKono: 'ratings (KoNO)',
+  moderateTagKono: 'tag reviews (KoNO)',
   resolveAppeal: 'appeals',
   ratingReview: 'rating disputes',
   clearMinor: 'minor flags cleared',
@@ -361,7 +362,7 @@ const MIN_RECENTLY_ACTIVE = 3;
 const RECENTLY_ACTIVE_DAYS = 2;
 
 /** Rating-game (KoNO) votes: a moderator who plays is not working a queue. */
-const NON_MODERATOR_ACTIVITIES = ['setNsfwLevelKono'];
+const NON_MODERATOR_ACTIVITIES = ['setNsfwLevelKono', 'moderateTagKono'];
 /** The preserved-file review is a hidden page: who works it, and when, stays off the shared board. */
 const HIDDEN_ACTIVITY_PREFIX = 'preservedFile:%';
 

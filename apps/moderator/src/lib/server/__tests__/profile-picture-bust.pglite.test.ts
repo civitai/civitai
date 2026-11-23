@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import {
@@ -59,7 +60,6 @@ vi.mock('../mod-activity', () => ({
   recordModActivity: vi.fn(async () => undefined),
 }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn(), syncSearchIndexBulk }));
-vi.mock('../kono', () => ({ syncKonoFinalize: vi.fn(async () => undefined) }));
 
 const { blockImage, acceptImage } = await import('../image-moderation.service');
 const { updateImageNsfwLevel } = await import('../image-nsfw-level');
@@ -99,7 +99,7 @@ CREATE TABLE "Appeal" ("id" SERIAL, "entityType" TEXT, "entityId" INTEGER, "stat
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
 CREATE TYPE "JobQueueType" AS ENUM (
-  'BlockedImageDelete', 'ImageScan', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync', 'ImageDelete'
+  'PendingDelete', 'BlockedImageDelete', 'ImageScan', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync', 'ImageDelete'
 );
 CREATE TABLE "JobQueue" ("type" "JobQueueType", "entityType" "EntityType", "entityId" INTEGER,
   "data" JSONB, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
@@ -149,6 +149,7 @@ beforeEach(async () => {
   syncSearchIndexBulk.mockClear();
   db = await freshPglite();
   await db.exec(SCHEMA);
+  await db.exec(imageUseTablesSql);
   await db.query(
     `INSERT INTO "Image" ("id", "url", "type", "userId", "nsfwLevel") VALUES
       ($1, 'avatar-key', 'image', $3, 1), ($2, 'other-key', 'image', $3, 1)`,

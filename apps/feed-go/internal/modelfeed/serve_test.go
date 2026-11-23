@@ -154,6 +154,10 @@ type env struct {
 	args    [][]any
 	gates   map[int]*time.Time
 	covers  [][]any
+	// community are the community-cover guard's rows (modelId, imageId); communityArgs each read's
+	// arguments.
+	community     [][]any
+	communityArgs [][]any
 }
 
 func newEnv(pages ...[]testRow) *env {
@@ -198,6 +202,12 @@ func newEnv(pages ...[]testRow) *env {
 		}},
 		{Match: `FROM "Image" i`, Rows: func(_ []any) (*testkit.Rows, error) {
 			return testkit.NewRows([]string{"id", "userId", "modelVersionId", "modelId"}, e.covers...), nil
+		}},
+		{Match: `FROM "ModelVersionShowcaseItem" s`, Rows: func(args []any) (*testkit.Rows, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			e.communityArgs = append(e.communityArgs, args)
+			return testkit.NewRows([]string{"modelId", "imageId"}, e.community...), nil
 		}},
 		{Match: `SELECT id FROM "Tag" WHERE name = $1`, Rows: func(args []any) (*testkit.Rows, error) {
 			if args[0] == "anime" {
@@ -356,9 +366,13 @@ func TestServeWholeAnswer(t *testing.T) {
 		t.Fatal("a loaded page is not trivial")
 	}
 	// One page: two items fill the limit. The cover 9999 was looked up on the replica (not on the
-	// shown version) and not found.
-	if len(e.queries) != 1 || len(e.db.Calls) != 3 {
+	// shown version) and not found, then among the model's featured community images, where it is
+	// not either (Node's withCommunityCovers finds no row and answers the same).
+	if len(e.queries) != 1 || len(e.db.Calls) != 4 {
 		t.Fatalf("queries %d, db calls %d (%v)", len(e.queries), len(e.db.Calls), e.db.Calls)
+	}
+	if !reflect.DeepEqual(e.communityArgs, [][]any{{[]int{9999}, []int{5002}}}) {
+		t.Fatalf("community-cover reads %v, want the one missing cover", e.communityArgs)
 	}
 }
 
@@ -799,6 +813,149 @@ func TestServeCoverFromAnotherVersion(t *testing.T) {
 		if strings.Contains(c, `FROM "Image" i`) {
 			t.Fatal("sameVersionOnly: no cover lookup")
 		}
+	}
+}
+
+// A chosen cover the owner lookup does not find can be a community image the creator featured in a
+// version showcase, which Node's withCommunityCovers (model-cover.service.ts) serves as the cover.
+// Not ported: a cover that has a featured, not-removed Community showcase row on one of the model's
+// versions falls back, on every path getCoverImages takes to withCommunityCovers.
+func TestServeCommunityCoverFallsBack(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		row  testRow
+		edit func(e *env, in *Input)
+	}{
+		// Not on the shown version, and the replica places it in another user's post.
+		{"a foreign image", testRow{id: 1, owner: 9, cover: 777, cursor: "x"}, func(e *env, _ *Input) {
+			e.covers = [][]any{{777, 55, 12, 1}}
+		}},
+		// No Image row at all for the owner lookup (its post is gone): Node still asks.
+		{"no image row", testRow{id: 1, owner: 9, cover: 777, cursor: "x"}, nil},
+		// The owner's image, but the version's cached images do not hold it.
+		{"an owner image not cached", testRow{id: 1, owner: 9, cover: 777, cursor: "x"}, func(e *env, _ *Input) {
+			e.covers = [][]any{{777, 9, 11, 1}}
+		}},
+		// Under a base-model filter the owner lookup is skipped; withCommunityCovers still runs.
+		{"a base-model filter", testRow{id: 1, owner: 9, cover: 777, cursor: "x"}, func(_ *env, in *Input) {
+			in.BaseModels = []string{"Pony"}
+		}},
+		{"hide paid", testRow{id: 1, owner: 9, cover: 777, cursor: "x"}, func(_ *env, in *Input) { in.HidePaid = true }},
+		// A .com viewer of a model with a .com face: the .com cover is the chosen one.
+		{"the .com cover", testRow{id: 1, owner: 9, sfwName: "Safe", cover: 101, sfwCover: 777, nsfw: true, nsfwLevel: 1 | 4, cursor: "x"}, nil},
+	} {
+		e := newEnv([]testRow{c.row})
+		e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+		e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil), image(101, 9, 4, nil)}
+		e.community = [][]any{{1, 777}}
+		in := baseInput()
+		if c.edit != nil {
+			c.edit(e, in)
+		}
+		_, err := serve(t, e, in, nil)
+		if got := fallback.Reason(err); got != "model-community-cover" {
+			t.Errorf("%s: %v (%q), want model-community-cover", c.name, err, got)
+		}
+		if !reflect.DeepEqual(e.communityArgs, [][]any{{[]int{777}, []int{1}}}) {
+			t.Errorf("%s: community-cover reads %v, want [[[777] [1]]]", c.name, e.communityArgs)
+		}
+	}
+}
+
+// A cover Node's withCommunityCovers cannot change is served as before: found on the shown version
+// or as the owner's image on another (no community read), or missing with no featured row for that
+// model and image (the read finds none, or only another model's or another image's).
+func TestServeCommunityCoverServed(t *testing.T) {
+	// On the shown version.
+	e := newEnv([]testRow{{id: 1, owner: 9, cover: 101, cursor: "x"}})
+	e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+	e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil), image(101, 9, 1, nil)}
+	e.community = [][]any{{1, 101}}
+	a, err := serve(t, e, baseInput(), nil)
+	if err != nil {
+		t.Fatalf("shown version: %v (%q)", err, fallback.Reason(err))
+	}
+	if id, _ := field(t, items(t, a)[0], "images").([]any)[0].(superjson.Object).Get("id"); id != int64(101) {
+		t.Fatalf("shown version: the cover first: %v", items(t, a)[0])
+	}
+	if len(e.communityArgs) != 0 {
+		t.Fatalf("shown version: community-cover reads %v, want none", e.communityArgs)
+	}
+
+	// The owner's image on another version.
+	e = newEnv([]testRow{{id: 1, owner: 9, cover: 777, cursor: "x"}})
+	e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+	e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil)}
+	e.sources.images[11] = []superjson.Object{image(777, 9, 1, nil)}
+	e.covers = [][]any{{777, 9, 11, 1}}
+	e.community = [][]any{{1, 777}}
+	a, err = serve(t, e, baseInput(), nil)
+	if err != nil {
+		t.Fatalf("another version: %v (%q)", err, fallback.Reason(err))
+	}
+	if id, _ := field(t, items(t, a)[0], "images").([]any)[0].(superjson.Object).Get("id"); id != int64(777) {
+		t.Fatalf("another version: the cover first: %v", items(t, a)[0])
+	}
+	if len(e.communityArgs) != 0 {
+		t.Fatalf("another version: community-cover reads %v, want none", e.communityArgs)
+	}
+
+	// Missing, and no featured row for this model and image.
+	for name, rows := range map[string][][]any{
+		"no row":          nil,
+		"another model's": {{2, 777}},
+		"another image's": {{1, 778}},
+	} {
+		e = newEnv([]testRow{{id: 1, owner: 9, cover: 777, cursor: "x"}})
+		e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+		e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil)}
+		e.community = rows
+		a, err = serve(t, e, baseInput(), nil)
+		if err != nil {
+			t.Fatalf("%s: %v (%q)", name, err, fallback.Reason(err))
+		}
+		if imgs := field(t, items(t, a)[0], "images").([]any); len(imgs) != 1 {
+			t.Fatalf("%s: images %v, want the version's own", name, imgs)
+		}
+		if len(e.communityArgs) != 1 {
+			t.Fatalf("%s: community-cover reads %v, want one", name, e.communityArgs)
+		}
+	}
+
+	// A failed read is an error, never a served default.
+	e = newEnv([]testRow{{id: 1, owner: 9, cover: 777, cursor: "x"}})
+	e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+	e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil)}
+	e.db.Routes = append([]testkit.Route{{Match: `FROM "ModelVersionShowcaseItem" s`, Rows: func(_ []any) (*testkit.Rows, error) {
+		return nil, errors.New("replica down")
+	}}}, e.db.Routes...)
+	if _, err := serve(t, e, baseInput(), nil); err == nil {
+		t.Fatal("a failed community-cover read served")
+	}
+}
+
+// Under Hide Paid getCoverImages keeps the cover on the shown version (sameVersionOnly), as under a
+// base-model filter: no replica lookup of another version.
+func TestServeHidePaidCoverSameVersionOnly(t *testing.T) {
+	e := newEnv([]testRow{{id: 1, owner: 9, cover: 777, cursor: "x"}})
+	e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+	e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil)}
+	e.sources.images[11] = []superjson.Object{image(777, 9, 1, nil)}
+	e.covers = [][]any{{777, 9, 11, 1}}
+	in := baseInput()
+	in.HidePaid = true
+	a, err := serve(t, e, in, nil)
+	if err != nil {
+		t.Fatalf("%v (%q)", err, fallback.Reason(err))
+	}
+	for _, c := range e.db.Calls {
+		if strings.Contains(c, `FROM "Image" i`) {
+			t.Fatal("hide paid: no cover lookup on another version")
+		}
+	}
+	imgs := field(t, items(t, a)[0], "images").([]any)
+	if id, _ := imgs[0].(superjson.Object).Get("id"); len(imgs) != 1 || id != int64(100) {
+		t.Fatalf("hide paid: images %v, want the shown version's own", imgs)
 	}
 }
 
