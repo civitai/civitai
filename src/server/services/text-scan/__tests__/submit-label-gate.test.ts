@@ -30,10 +30,13 @@ const { getActiveTextScanPrompts, getTextScanConfig } = await import(
   '~/server/services/text-scan/prompt'
 );
 const { settleSkippedScan } = await import('~/server/services/text-scan/actions/settle-skipped');
-const { getTextScanProfile } = await import('~/server/services/text-scan/profiles');
+const { getTextScanProfile, unansweredTextScanLabels } = await import(
+  '~/server/services/text-scan/profiles'
+);
 // The real profiles, so each type's own setting is what is under test; only their loads are faked.
 await import('~/server/services/text-scan/profiles/service-deal-review.profile');
 await import('~/server/services/text-scan/profiles/service-offering.profile');
+await import('~/server/services/text-scan/profiles/article.profile');
 
 const PROMPTS = {
   base: { id: 1, key: 'base', content: 'BASE' },
@@ -300,7 +303,7 @@ describe('resolveTextScanProfileLabels', () => {
 
 describe('a scan settles only on a verdict that answers every label its profile requires', () => {
   const REQUIRING = ['ServiceDealReview', 'ServiceDealReviewReply'] as const;
-  const NOT_REQUIRING = 'ServiceOffering' as const;
+  const NOT_REQUIRING = ['ServiceOffering', 'Article'] as const;
 
   const reviewLoad = async (ids: number[]) =>
     new Map(
@@ -309,7 +312,7 @@ describe('a scan settles only on a verdict that answers every label its profile 
         { fields: [{ heading: 'Body', text: 'placeholder text' }], declared: { nsfwLevel: 1 } },
       ])
     );
-  for (const type of [...REQUIRING, NOT_REQUIRING])
+  for (const type of [...REQUIRING, ...NOT_REQUIRING])
     registerTextScanProfile({ ...getTextScanProfile(type)!, load: reviewLoad });
 
   const EVERY_PROMPT = {
@@ -318,9 +321,10 @@ describe('a scan settles only on a verdict that answers every label its profile 
     'label:csam': { id: 3, key: 'label:csam', content: 'CSAM DEF' },
   };
 
-  const lastLabels = () =>
+  // The first submit is the scan; a profile with a category hook submits its category call after it.
+  const scanLabels = () =>
     (
-      vi.mocked(submitWorkflow).mock.calls.at(-1)![0].body as unknown as {
+      vi.mocked(submitWorkflow).mock.calls[0][0].body as unknown as {
         metadata: { labels: string[] };
       }
     ).metadata.labels;
@@ -361,7 +365,7 @@ describe('a scan settles only on a verdict that answers every label its profile 
         status: 'submitted',
         workflowId: 'wf-1',
       });
-      expect(lastLabels()).toEqual(['nsfw', 'csam']);
+      expect(scanLabels()).toEqual(['nsfw', 'csam']);
     });
 
     describe.each(REQUIRING)('%s', (entityType) => {
@@ -389,16 +393,26 @@ describe('a scan settles only on a verdict that answers every label its profile 
    * Control: only a profile that opts in changes. If this fails, the requirement has spread to a type
    * that did not ask for it; that is a behavior change for that type, not a fix.
    */
-  describe('a profile that does not require every label', () => {
+  describe.each(NOT_REQUIRING)('%s, which does not require every label', (entityType) => {
     it.each(CAUSES)('submits what it can ask for %s, as before', async (_, cause) => {
       cause();
-      expect(await scanEntity({ entityType: NOT_REQUIRING, entityId: 1 })).toEqual({
+      expect(await scanEntity({ entityType, entityId: 1 })).toEqual({
         status: 'submitted',
         workflowId: 'wf-1',
       });
-      expect(lastLabels()).toEqual(['nsfw']);
+      expect(scanLabels()).toEqual(['nsfw']);
     });
 
+    it('counts a stored verdict that answers only some labels as complete', () => {
+      expect(
+        unansweredTextScanLabels(getTextScanProfile(entityType)!, {
+          nsfw: { level: 'none', reason: '' },
+        })
+      ).toEqual([]);
+    });
+  });
+
+  describe('a profile that does not require every label', () => {
     it('settles on a stored verdict that answers only some labels', async () => {
       em.findUnique.mockResolvedValue({
         status: 'Succeeded',
@@ -407,12 +421,12 @@ describe('a scan settles only on a verdict that answers every label its profile 
       } as never);
       const apply = vi.fn(async () => undefined);
       await settleSkippedScan(
-        NOT_REQUIRING,
+        'ServiceOffering',
         1,
         'unchanged',
         apply,
         {},
-        getTextScanProfile(NOT_REQUIRING)
+        getTextScanProfile('ServiceOffering')
       );
       expect(apply).toHaveBeenCalledWith(1, { stored: true });
     });
