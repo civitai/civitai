@@ -67,6 +67,9 @@ beforeAll(async () => {
       "collectionId" int NOT NULL,
       "imageId" int REFERENCES "Image"(id)
     );
+    -- Read by a blocking scan's write: a pending appeal keeps its review.
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
   `);
   raw = pgliteRaw(db);
 });

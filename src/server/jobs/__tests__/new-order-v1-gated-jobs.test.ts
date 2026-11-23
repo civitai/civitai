@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// After the cutover (`newOrderGame` off) the v1-only jobs do nothing. grant-bless-buzz and
-// change-rate-target keep running: they settle and pay out what players earned in v1.
+// After the cutover (`newOrderGame` off) the v1-only jobs do nothing.
 
 const { v1Live, setActiveSlot, getActiveSlot } = vi.hoisted(() => ({
   v1Live: vi.fn(),
@@ -69,19 +68,5 @@ describe('v1-only jobs', () => {
     v1Live.mockResolvedValue(false);
     await run('new-order-change-fill-target');
     expect(setActiveSlot).not.toHaveBeenCalled();
-  });
-});
-
-describe('v1 jobs that outlive the cutover', () => {
-  beforeEach(() => v1Live.mockResolvedValue(false));
-
-  it('change-rate-target still rotates the rating slot', async () => {
-    await run('new-order-change-rate-target');
-    expect(setActiveSlot).toHaveBeenCalledWith('Knight', 'rating', 'b');
-  });
-
-  it('grant-bless-buzz still looks for players to pay', async () => {
-    await run('new-order-grant-bless-buzz');
-    expect(dbMock.dbRead.newOrderPlayer.findMany).toHaveBeenCalled();
   });
 });

@@ -26,7 +26,6 @@ import {
 } from '~/server/services/bounty-rated-level';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
 import { entityImageVisibilityConditions } from '~/server/services/image-visibility.service';
-import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import type { profileImageSelect } from '../selectors/image.selector';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { publicBountyDetails } from '~/server/utils/bounty-details';
@@ -142,9 +141,9 @@ type BountyForSearchIndex = {
   } | null;
   user: {
     id: number;
-    image: string | null;
     username: string | null;
     deletedAt: Date | null;
+    image: null;
     profilePictureId: number | null;
     profilePicture: ImageModelWithIngestion | null;
   };
@@ -296,7 +295,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
             'id', u.id,
             'username', u.username,
             'deletedAt', u."deletedAt",
-            'image', ${Prisma.raw(fallbackUserImageColumn)},
+            'image', NULL,
             'profilePictureId', u."profilePictureId"
           ) user
         FROM "User" u

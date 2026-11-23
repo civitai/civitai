@@ -35,6 +35,7 @@ import {
   captureFeedGoShadowRest,
   finishFeedGoShadow,
 } from '~/server/trpc/feed-go-shadow';
+import { publishTrainingDataRulesLive } from '~/server/services/feed-go-training-data-rules';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -227,6 +228,7 @@ const baseHandler = PublicEndpoint(async function handler(
   // with an API credential (a block token included) is never mirrored. See
   // `~/server/trpc/feed-go-shadow`.
   const shadow = beginFeedGoShadowV1Models(req, 'id');
+  publishTrainingDataRulesLive();
   try {
     // Cache only when enabled (IS_DATAPACKET) AND this is the pure-public path.
     const shouldCache = PUBLIC_MODEL_RESPONSE_TTL > 0 && !isBlockScoped;

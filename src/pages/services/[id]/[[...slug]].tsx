@@ -1,26 +1,22 @@
 import { Accordion, Badge, Button, Container, Group, Stack, Text, Title } from '@mantine/core';
-import {
-  IconChecks,
-  IconClock,
-  IconFlag,
-  IconInfoCircle,
-  IconMoodHappy,
-  IconShare3,
-} from '@tabler/icons-react';
+import { IconChecks, IconClock, IconMoodHappy, IconShare3 } from '@tabler/icons-react';
 import type { InferGetServerSidePropsType } from 'next';
 import type { ComponentProps } from 'react';
 import * as z from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
-import { pluralize } from '~/components/CreatorShop/Services/creator-service.util';
+import {
+  pluralize,
+  sellerRecordLine,
+} from '~/components/CreatorShop/Services/creator-service.util';
 import {
   ServiceOfferingLicense,
   ServiceRequestModal,
 } from '~/components/CreatorShop/Services/deals/ServiceRequestModal';
+import { useServiceBuzzType } from '~/components/CreatorShop/Services/useServiceBuzzType';
 import { SERVICE_LICENSE_PRESET_LABELS } from '~/shared/constants/creator-service-license.constants';
 import {
   BlurCaption,
@@ -33,8 +29,9 @@ import { servicePageHref } from '~/components/CreatorShop/section-meta';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { openReportModal } from '~/components/Dialog/triggers/report';
+import { DetailsAccordion } from '~/components/DetailsAccordion/DetailsAccordion';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -46,11 +43,9 @@ import {
   SERVICE_PREVIEW_KIND_LABELS,
   serviceHappyShare,
 } from '~/shared/constants/creator-service.constants';
-import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-services.constants';
 import { Currency, ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
-import { ReportEntity } from '~/shared/utils/report-helpers';
 import { trpc } from '~/utils/trpc';
 
 const querySchema = z.object({
@@ -74,10 +69,9 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const disputeWindowHours = SERVICE_DEAL_DISPUTE_WINDOW_MS / 3_600_000;
-
 function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
+  const buzzType = useServiceBuzzType();
   const { data: offering, isLoading } = trpc.creatorService.getById.useQuery({ id });
 
   if (isLoading) return <PageLoader />;
@@ -90,14 +84,14 @@ function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSidePro
   const isActive = offering.status === ServiceOfferingStatus.Active;
   const happy = serviceHappyShare([offering]);
   const full = offering.slotsOpen === 0;
-  const onTimePct = record.completed ? Math.round((record.onTime / record.completed) * 100) : null;
+  const recordLine = sellerRecordLine(record);
   const href = servicePageHref(offering.id, offering.title);
 
   const details: ComponentProps<typeof DescriptionTable>['items'] = [
     {
       label: 'Price',
       value: (
-        <Group gap={4} justify="flex-end" wrap="nowrap">
+        <Group gap={4} wrap="nowrap">
           <CurrencyIcon currency={Currency.BUZZ} size={14} />
           {offering.price.toLocaleString()} Buzz
         </Group>
@@ -137,15 +131,30 @@ function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSidePro
       <Container size="xl" className="pb-8">
         <Stack gap="md">
           <Stack gap="xs">
-            <Group gap="xs" align="center" wrap="wrap">
-              <Title order={1} lineClamp={2} className="break-words">
-                {offering.title}
-              </Title>
-              {!isActive && (
-                <Badge color="yellow" variant="light">
-                  {offering.status}
-                </Badge>
-              )}
+            <Group gap="xs" align="flex-start" justify="space-between" wrap="nowrap">
+              <Group gap="xs" align="center" wrap="wrap" className="min-w-0">
+                <Title order={1} lineClamp={2} className="break-words">
+                  {offering.title}
+                </Title>
+                {!isActive && (
+                  <Badge color="yellow" variant="light">
+                    {offering.status}
+                  </Badge>
+                )}
+              </Group>
+              <Group gap={8} wrap="nowrap" className="shrink-0">
+                <ShareButton url={href} title={offering.title}>
+                  <LegacyActionIcon variant="light" w={32} h={32} aria-label="Share">
+                    <IconShare3 size={16} />
+                  </LegacyActionIcon>
+                </ShareButton>
+                <ServiceOfferingMenu
+                  offering={offering}
+                  isOwner={isOwner}
+                  isModerator={isModerator}
+                  placement="title"
+                />
+              </Group>
             </Group>
             <Group gap="xs">
               <IconBadge radius="sm" size="lg" icon={<IconChecks size={18} />}>
@@ -202,8 +211,9 @@ function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSidePro
                 </Button>
               ) : (
                 <LoginRedirect reason="perform-action">
+                  {/* No funds check: the hold is placed in the popup. */}
                   <Button
-                    color="yellow"
+                    color={buzzType}
                     size="lg"
                     fullWidth
                     disabled={!isActive || full}
@@ -219,68 +229,27 @@ function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSidePro
                 </LoginRedirect>
               )}
 
-              <Group gap="xs" grow>
-                <ShareButton url={href} title={offering.title}>
-                  <Button
-                    variant="default"
-                    aria-label="Share"
-                    leftSection={<IconShare3 size={18} />}
-                  >
-                    Share
-                  </Button>
-                </ShareButton>
-                {!isOwner && (
-                  <LoginRedirect reason="report-content">
-                    <Button
-                      variant="default"
-                      aria-label="Report this service"
-                      leftSection={<IconFlag size={18} />}
-                      onClick={() =>
-                        openReportModal({
-                          entityType: ReportEntity.ServiceOffering,
-                          entityId: offering.id,
-                        })
-                      }
-                    >
-                      Report
-                    </Button>
-                  </LoginRedirect>
-                )}
-                {(isOwner || isModerator) && (
-                  <Group justify="center" className="grow-0">
-                    <ServiceOfferingMenu
-                      offering={offering}
-                      isOwner={isOwner}
-                      isModerator={isModerator}
-                    />
-                  </Group>
-                )}
-              </Group>
-
-              <Accordion variant="separated" defaultValue="details">
+              <DetailsAccordion defaultValue="details">
                 <Accordion.Item value="details">
                   <Accordion.Control>Details</Accordion.Control>
-                  <Accordion.Panel>
+                  <Accordion.Panel p={0}>
                     <DescriptionTable items={details} labelWidth="40%" withBorder={false} />
                   </Accordion.Panel>
                 </Accordion.Item>
-              </Accordion>
+              </DetailsAccordion>
 
               <ServiceOfferingLicense offering={offering} />
 
               <SmartCreatorCard
                 user={seller}
-                subText={
-                  onTimePct != null
-                    ? `${pluralize(record.completed, 'deal')} · ${onTimePct}% on time`
-                    : undefined
+                footer={
+                  recordLine ? (
+                    <Text size="sm" c="dimmed">
+                      {recordLine}
+                    </Text>
+                  ) : undefined
                 }
               />
-
-              <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue" radius="md">
-                Your Buzz is held in escrow. The seller is paid {disputeWindowHours} hours after you
-                accept the delivery.
-              </AlertWithIcon>
             </Stack>
           </div>
         </Stack>

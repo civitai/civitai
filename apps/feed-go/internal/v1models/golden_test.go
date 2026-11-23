@@ -391,7 +391,7 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 // golden test answers that lookup's ModelVersionShowcaseItem read with no rows (no fixture curates a
 // showcase), so Node read each of them as uncurated. A fixture's own entry is kept.
 func seedUncuratedShowcases(r *testkit.Redis, fx *goldenFixture) {
-	prefix := KeyImagesForVersion + ":"
+	prefix := hydrate.KeyVersionImages + ":"
 	for key := range fx.Redis {
 		id, ok := strings.CutPrefix(key, prefix)
 		if !ok {

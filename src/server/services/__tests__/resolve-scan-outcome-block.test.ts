@@ -61,6 +61,10 @@ function writtenColumns() {
   for (const [, column, n] of stmt.text.matchAll(/"(\w+)" = \$(\d+)/g)) {
     columns[column] = stmt.values[Number(n) - 1];
   }
+  // A flag the scan only adds: its value is what it ORs in.
+  for (const [, column, n] of stmt.text.matchAll(/"(\w+)" = "\1" OR \$(\d+)/g)) {
+    columns[column] = stmt.values[Number(n) - 1];
+  }
   // The scan's value is the ELSE arm of the stored-CSAM guard.
   for (const [, column, n] of stmt.text.matchAll(
     /"(\w+)" = CASE WHEN "blockedFor" = 'CSAM' THEN [^$]*?ELSE \$(\d+)/g

@@ -28,6 +28,7 @@ describe("an article's search document cover, by tag and level", () => {
           content: '<p>Hi</p>',
           tags: [],
           stats: null,
+          user: { id: 7, username: 'author', image: null, profilePicture: null },
           coverImage,
           bannerImage,
         } as unknown as Input['articles'][number],
