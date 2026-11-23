@@ -23,7 +23,8 @@ const mocks = vi.hoisted(() => ({
   userPostCountRefresh: vi.fn(),
   preventReplicationLag: vi.fn(),
   bustCacheTag: vi.fn(),
-  knightsStatements: [] as { sql: string; values: unknown[] }[],
+  knightsStatements: [] as { sql: string; values: unknown[]; committed: boolean }[],
+  committed: false,
 }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
@@ -40,7 +41,7 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
 vi.mock('~/server/db/kyselyDb', async () => {
   const { fakeKysely } = await import('~/test-utils/kysely-raw-fake');
   const kysely = fakeKysely((strings, ...values) => {
-    mocks.knightsStatements.push({ sql: strings.join('?'), values });
+    mocks.knightsStatements.push({ sql: strings.join('?'), values, committed: mocks.committed });
     return [];
   });
   return { kyselyWrite: kysely, kyselyRead: kysely };
@@ -166,10 +167,22 @@ describe('moveImagesToPost', () => {
     await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, toPostId: 2, userId: USER });
   };
 
-  it('offers the moved images to Knights when they leave a Private post for one that is not', async () => {
+  it('offers the moved images to Knights when they leave a Private post for one that is not, after the move commits', async () => {
+    // The move commits a moment after its callback returns, so a read sent from inside it shows as uncommitted.
+    mocks.committed = false;
+    const run = db.$transaction.getMockImplementation()!;
+    db.$transaction.mockImplementationOnce((async (...args: unknown[]) => {
+      const result = await (run as (...a: unknown[]) => Promise<unknown>)(...args);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      mocks.committed = true;
+      return result;
+    }) as never);
     await moveInto(Availability.Private, Availability.Public);
 
     await vi.waitFor(() => expect(knightsImageReads().length).toBeGreaterThan(0));
+    // One owner-rating read and one sampling read: two images fit one batch each.
+    expect(knightsImageReads()).toHaveLength(2);
+    expect(mocks.knightsStatements.every((s) => s.committed)).toBe(true);
     for (const read of knightsImageReads()) {
       expect(read.sql).toContain('"img"."id" in');
       expect(read.values.filter((v) => typeof v === 'number')).toEqual(

@@ -60,6 +60,7 @@ export const updateEntityAvailabilityHandler = async ({
     const postLeavesPrivate =
       entityType === 'Post' &&
       availability !== Availability.Private &&
+      // primary: the old availability, read before this request overwrites it
       (
         await dbWrite.post.findUnique({
           where: { id: entityId },

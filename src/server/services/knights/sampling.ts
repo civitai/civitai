@@ -17,6 +17,7 @@ import {
   type EnqueueOptions,
 } from '~/server/services/knights/enqueue.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { chunkIds } from '~/utils/array-helpers';
 
 export const KNIGHTS_SOURCE_SCAN_SAMPLE = 'scan-sample';
 export const KNIGHTS_SOURCE_OWNER_RATING = 'owner-rating';
@@ -200,10 +201,8 @@ async function byIds(
 }
 
 /** `ids` in batches for one statement each: posts (a post holds a bounded number of images), or images by id. */
-function* batches({ column, ids }: ReturnType<typeof scopeFilter>) {
-  const size = column === 'img.postId' ? SAMPLE_POST_PAGE : SAMPLE_IMAGE_PAGE;
-  for (let i = 0; i < ids.length; i += size) yield ids.slice(i, i + size);
-}
+const batches = ({ column, ids }: ReturnType<typeof scopeFilter>) =>
+  chunkIds(ids, column === 'img.postId' ? SAMPLE_POST_PAGE : SAMPLE_IMAGE_PAGE);
 
 /**
  * The publish sweep's sampling over `scope`. Images that already had an item are dropped before the `maxOpen` room is

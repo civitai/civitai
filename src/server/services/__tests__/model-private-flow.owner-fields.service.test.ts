@@ -93,7 +93,9 @@ vi.mock('~/server/db/kyselyDb', async () => {
       values,
       postWritesBefore: db.dbWrite.post.updateMany.mock.calls.length,
     });
-    return [];
+    const sql = strings.join('?');
+    // The published versions' posts: one, so the image reads that follow run.
+    return sql.includes('from "Post"') && sql.includes('"modelVersionId" in') ? [{ id: 40 }] : [];
   });
   return { kyselyWrite: kysely, kyselyRead: kysely };
 });
@@ -1045,10 +1047,16 @@ describe('publishPrivateModel', () => {
       await publish(false);
 
       await vi.waitFor(() => expect(knightsImageReads().length).toBeGreaterThan(0));
-      for (const read of knightsImageReads()) {
-        expect(read.sql).toContain('"p"."modelVersionId" in');
-        expect(read.values.filter((v) => typeof v === 'number')).toContain(1);
+      const postReads = knightsStatements.filter((st) => st.sql.includes('from "Post" where'));
+      expect(postReads).toHaveLength(1);
+      expect(postReads[0].sql).toContain('"modelVersionId" in');
+      expect(postReads[0].values).toContain(1);
+      for (const read of [...postReads, ...knightsImageReads()]) {
         expect(read.postWritesBefore).toBeGreaterThan(0);
+      }
+      for (const read of knightsImageReads()) {
+        expect(read.sql).toContain('"img"."postId" in');
+        expect(read.values.filter((v) => typeof v === 'number')).toContain(40);
       }
     });
 
