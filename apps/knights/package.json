@@ -1,6 +1,6 @@
 {
   "name": "@civitai/knights-app",
-  "version": "0.0.23",
+  "version": "0.0.25",
   "private": true,
   "type": "module",
   "scripts": {
@@ -25,6 +25,7 @@
     "@civitai/db-queries": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/flipt": "workspace:*",
+    "@civitai/moderation": "workspace:*",
     "@civitai/notifications": "workspace:*",
     "@civitai/redis": "workspace:*",
     "@civitai/shared": "workspace:*",

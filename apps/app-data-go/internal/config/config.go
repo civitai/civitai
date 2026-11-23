@@ -81,6 +81,10 @@ type Config struct {
 	// timeoutMs, at most 500, plus 450 ms: doc-store-hook.ts hookClientTimeoutMs), plus the rest of
 	// the store's chain; a forward past it answers 504 with its outcome unknown.
 	WritesTimeout time.Duration
+	// AdapterPoll is how long a stream may lag a write (APP_DATA_WRITES_ADAPTER_POLL_SECONDS, default
+	// 60, from 1 to 600), kept at or above the adapter's REGISTRY_ADAPTER_POLL_SECONDS: an overlay lives
+	// this plus 30 s, and a floor reopens a stream at most once per it. Zero with Writes off.
+	AdapterPoll time.Duration
 
 	// ignoredWrites names the APP_DATA_WRITES_* settings set while APP_DATA_WRITES is off
 	// (comma-separated, so Config stays comparable); Warnings reports them.
@@ -225,10 +229,12 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 // other settings removed first.
 func writesFromEnv(getenv func(string) string, c *Config) error {
 	key, site, timeout := getenv("APP_DATA_WRITES_SIGNING_KEY"), getenv("APP_DATA_WRITES_SITE_URL"), getenv("APP_DATA_WRITES_TIMEOUT_MS")
+	poll := getenv("APP_DATA_WRITES_ADAPTER_POLL_SECONDS")
 	switch v := getenv("APP_DATA_WRITES"); v {
 	case "", "false", "0":
 		var set []string
-		for name, v := range map[string]string{"APP_DATA_WRITES_SIGNING_KEY": key, "APP_DATA_WRITES_SITE_URL": site, "APP_DATA_WRITES_TIMEOUT_MS": timeout} {
+		for name, v := range map[string]string{"APP_DATA_WRITES_SIGNING_KEY": key, "APP_DATA_WRITES_SITE_URL": site,
+			"APP_DATA_WRITES_TIMEOUT_MS": timeout, "APP_DATA_WRITES_ADAPTER_POLL_SECONDS": poll} {
 			if v != "" {
 				set = append(set, name)
 			}
@@ -259,6 +265,11 @@ func writesFromEnv(getenv func(string) string, c *Config) error {
 	if err != nil {
 		return err
 	}
+	secs, err := intEnv(getenv, "APP_DATA_WRITES_ADAPTER_POLL_SECONDS", 60, 1, 600)
+	if err != nil {
+		return err
+	}
+	c.AdapterPoll = time.Duration(secs) * time.Second
 	c.Writes, c.WritesSigningKey, c.WritesSiteURL = true, key, site
 	c.WritesTimeout = time.Duration(ms) * time.Millisecond
 	return nil

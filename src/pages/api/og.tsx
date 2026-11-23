@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import {
-  bountyNsfwFlagLevel,
+  bountyImageNsfwLevel,
   getTextRatedBountyLevels,
   mayBeTextRated,
 } from '~/server/services/bounty-rated-level';
@@ -584,7 +584,6 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
       FROM "ImageConnection" ic
       JOIN "Image" i ON i.id = ic."imageId"
       WHERE ic."entityType" = 'Bounty' AND ic."entityId" = ${id}
-        AND i."tosViolation" IS NOT TRUE
         AND ${Prisma.join(entityImageVisibilityConditions({}), ' AND ')}
       LIMIT 1
     `,
@@ -596,11 +595,10 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
   const textRated = mayBeTextRated(bounty)
     ? await getTextRatedBountyLevels([id])
     : new Map<number, number>();
-  const flagLevel = bountyNsfwFlagLevel(bounty, textRated.get(id));
-  const image =
-    images[0] && flagLevel != null
-      ? { ...images[0], nsfwLevel: Math.max(images[0].nsfwLevel, flagLevel) }
-      : images[0];
+  const image = images[0] && {
+    ...images[0],
+    nsfwLevel: bountyImageNsfwLevel(bounty, textRated.get(id), images[0].nsfwLevel),
+  };
 
   const stats: StatItem[] = metric
     ? [

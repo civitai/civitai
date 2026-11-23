@@ -58,8 +58,9 @@ export const countableImageSql = () =>
 
 /**
  * Which images attached to an entity (a bounty, a bounty entry) a viewer is served, as SQL over
- * `"Image" i`. Held, unscanned, unrated, blocked, acceptable-minor and minor-restricted images are
- * the owner's and moderators' alone; base-model restricted images are the owner's alone.
+ * `"Image" i`. Held, unscanned, unrated, blocked, ToS-removed, acceptable-minor and
+ * minor-restricted images are the owner's and moderators' alone; base-model restricted images are
+ * the owner's alone.
  */
 export function entityImageVisibilityConditions({
   userId,
@@ -85,7 +86,10 @@ export function entityImageVisibilityConditions({
         : Prisma.sql`(${Prisma.join([Prisma.sql`i."needsReview" IS NULL`], ' OR ')})`,
       userId
         ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
-        : Prisma.sql`i."acceptableMinor" = FALSE`
+        : Prisma.sql`i."acceptableMinor" = FALSE`,
+      userId
+        ? Prisma.sql`(i."tosViolation" IS NOT TRUE OR i."userId" = ${userId})`
+        : Prisma.sql`i."tosViolation" IS NOT TRUE`
     );
   }
   AND.push(...imageBlockedForConditions({ userId, isModerator }));

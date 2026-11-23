@@ -2,6 +2,7 @@
   import ConfigEditor from './ConfigEditor.svelte';
   import RecentChanges from './RecentChanges.svelte';
   import StatusStrip from './StatusStrip.svelte';
+  import TagReviewSwitch from './TagReviewSwitch.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -18,6 +19,8 @@
   {#key JSON.stringify(data.settings)}
     <ConfigEditor settings={data.settings} />
   {/key}
+
+  <TagReviewSwitch on={data.settings.config.modTagReview === true} />
 
   <RecentChanges lastChange={data.lastChange} />
 </div>

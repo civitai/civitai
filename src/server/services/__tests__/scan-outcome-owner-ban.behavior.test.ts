@@ -99,6 +99,10 @@ beforeAll(async () => {
       "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3)
     );
+    CREATE TYPE "EntityType" AS ENUM ('Image');
+    -- Read by a blocking scan's write: a pending appeal keeps its review.
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
   `);
 });
 

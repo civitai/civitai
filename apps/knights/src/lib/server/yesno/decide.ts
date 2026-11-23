@@ -16,13 +16,29 @@ const offered = new Set<string>(YESNO_ANSWERS.map((a) => a.value));
  */
 export function decideYesNo(
   cast: { answer: string; weight: number }[],
-  stage: string
+  stage: string,
+  {
+    noSettlesAtNeeded = true,
+  }: {
+    /** False for a "no" that needs more than the minimum: at exactly the stage's needed votes it stays pending. */
+    noSettlesAtNeeded?: boolean;
+  } = {}
 ): YesNoDecision {
-  const votes = cast
-    .filter((v) => v.weight > 0 && offered.has(v.answer))
-    .map((v) => ({ answer: v.answer, weight: 1 }));
+  const votes = counted(cast);
   const decision = decideChoice(votes, stageDecisionRule(stage));
-  if (decision.kind === 'resolved')
+  if (decision.kind === 'resolved') {
+    if (!noSettlesAtNeeded && decision.value === 'no' && settledAtNeeded(cast, stage))
+      return { kind: 'pending' };
     return { kind: 'consensus', value: decision.value as 'yes' | 'no' };
+  }
   return decision.kind === 'split' ? { kind: 'exhausted' } : { kind: 'pending' };
 }
+
+const counted = (cast: { answer: string; weight: number }[]) =>
+  cast
+    .filter((v) => v.weight > 0 && offered.has(v.answer))
+    .map((v) => ({ answer: v.answer, weight: 1 }));
+
+/** Whether the stage's counted answers are exactly the votes it needs: a consensus there was reached on the minimum. */
+export const settledAtNeeded = (cast: { answer: string; weight: number }[], stage: string) =>
+  counted(cast).length === stageDecisionRule(stage).votesNeeded;

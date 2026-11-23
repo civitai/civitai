@@ -7,6 +7,7 @@ import type { DatasetRatingCount } from '$lib/dataset-rating';
 import type { EpochArchive } from '$lib/orchestrator-core';
 import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processing';
 import { MatureRepriceError } from '$lib/mature-charge';
+import { DATASET_TOO_LARGE_MESSAGE } from '$lib/submit-limits';
 
 /** A request to one of the Studio's /api routes: `path` is the route's path and query. */
 export type StudioServerFetch = (path: string, init?: RequestInit) => Promise<Response>;
@@ -69,7 +70,14 @@ export function studioServerCalls(
   return {
     submitTraining: async (runs: TrainingRunPayload[]) => {
       const res = await server('/api/train', postJson({ runs }));
-      if (!res.ok) throw await startFailure(res, `Training could not start (${res.status})`);
+      if (!res.ok)
+        throw await startFailure(
+          res,
+          // A size refusal from a proxy in front of the Studio carries no message of its own.
+          res.status === 413
+            ? DATASET_TOO_LARGE_MESSAGE
+            : `Training could not start (${res.status})`
+        );
       const { workflowIds, failure } = (await res.json()) as SubmittedBatch;
       return { workflowIds, failure };
     },
