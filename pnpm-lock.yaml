@@ -1253,6 +1253,9 @@ importers:
       '@civitai/flipt':
         specifier: workspace:*
         version: link:../../packages/civitai-flipt
+      '@civitai/moderation':
+        specifier: workspace:*
+        version: link:../../packages/civitai-moderation
       '@civitai/notifications':
         specifier: workspace:*
         version: link:../../packages/civitai-notifications

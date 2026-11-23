@@ -323,6 +323,14 @@ export function changeSummary(
         : `Yes/no share: ${show(after.yesNoShare)}`
     );
   }
+  if (before?.modTagReview !== after.modTagReview && (before || after.modTagReview !== undefined)) {
+    const show = (v: boolean | undefined) => (v ? 'on' : 'off');
+    parts.push(
+      before
+        ? `Paladin tag review: ${show(before.modTagReview)} to ${show(after.modTagReview)}`
+        : `Paladin tag review: ${show(after.modTagReview)}`
+    );
+  }
   if (before?.maxOpen !== after.maxOpen && (before || after.maxOpen !== undefined)) {
     const show = (v: number | undefined) =>
       v === undefined ? 'Default' : v.toLocaleString('en-US');

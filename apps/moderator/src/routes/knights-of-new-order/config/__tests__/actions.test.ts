@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { save, saveGame, requireAccess } = vi.hoisted(() => ({
+const { save, saveGame, saveTagReview, requireAccess } = vi.hoisted(() => ({
   save: vi.fn(),
   saveGame: vi.fn(),
+  saveTagReview: vi.fn(),
   requireAccess: vi.fn(),
 }));
 
@@ -12,6 +13,7 @@ vi.mock('$lib/server/knights/sources-config.service', () => ({
   getSourcesSettings: vi.fn(),
   saveSourcesConfig: save,
   saveGameSettings: saveGame,
+  saveModTagReview: saveTagReview,
 }));
 vi.mock('$lib/server/access', () => ({ requireAccess }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
@@ -293,5 +295,25 @@ describe('Knights of New Order config access', () => {
     denied();
     await expect(load(formEvent({}) as never)).rejects.toThrow('forbidden');
     expect(requireAccess).toHaveBeenCalledWith({ id: 77 }, '/knights-of-new-order/config');
+  });
+});
+
+describe('the tagReview action', () => {
+  beforeEach(() => saveTagReview.mockReset().mockResolvedValue({ ok: true, changed: true }));
+
+  it('saves the switch as the posting moderator', async () => {
+    expect(await actions.tagReview(formEvent({ modTagReview: 'on' }))).toEqual({
+      success: true,
+      changed: true,
+    });
+    expect(saveTagReview).toHaveBeenCalledWith(true, 77);
+    await actions.tagReview(formEvent({ modTagReview: 'off' }));
+    expect(saveTagReview).toHaveBeenLastCalledWith(false, 77);
+  });
+
+  it('refuses anything but on or off, saving nothing', async () => {
+    const result = await actions.tagReview(formEvent({ modTagReview: 'true' }));
+    expect(result).toMatchObject({ status: 400 });
+    expect(saveTagReview).not.toHaveBeenCalled();
   });
 });

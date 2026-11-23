@@ -33,8 +33,9 @@ export async function pickItem(
   const secret = feedSecret();
 
   const yesNo = await yesNoConfig();
+  // The tag review source is served on the same cadence when it is switched on, whatever the yes/no share.
   const due =
-    yesNo.share > 0 &&
+    (yesNo.share > 0 || yesNo.tagReview) &&
     (!feed || burstDue(await servedHistory(db, userId, served), burstRoller(secret, userId)));
   const offer = due
     ? await pickYesNo(db, {
@@ -42,6 +43,7 @@ export async function pickItem(
         rank,
         secret,
         share: yesNo.share,
+        tagReview: yesNo.tagReview,
         stretch: yesNo.stretch,
         force: true,
         exclude: skipped?.yesno,
