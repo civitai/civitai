@@ -330,18 +330,18 @@ describe('a scan settles only on a verdict that answers every label its profile 
     resetTextScanRolloutCache();
   }
 
-  /** Each way a scan can lose a label its profile asks for, everything else in place. */
+  /** Cases where a required label is not asked. */
   const CAUSES: [string, () => void][] = [
-    ['a label switched off', () => gate(undefined)],
+    ['case 1', () => gate(undefined)],
     [
-      "a label's switch that cannot be read",
+      'case 2',
       () => {
         redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
         resetTextScanRolloutCache();
       },
     ],
     [
-      'a label with a blank prompt',
+      'case 3',
       () =>
         vi.mocked(getActiveTextScanPrompts).mockResolvedValue({
           ...EVERY_PROMPT,
