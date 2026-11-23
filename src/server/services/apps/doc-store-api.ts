@@ -321,7 +321,7 @@ const CLIENT_MESSAGE: Partial<Record<StorageApiCode, string>> = {
   service_unavailable: 'storage is temporarily unavailable',
 };
 
-function envelope(code: StorageApiCode, message: string, details?: Record<string, unknown>) {
+export function envelope(code: StorageApiCode, message: string, details?: Record<string, unknown>) {
   const body: StorageErrorBody = { code, message, error: message };
   if (details) body.details = details;
   return body;
@@ -331,13 +331,14 @@ function envelope(code: StorageApiCode, message: string, details?: Record<string
  * Every error envelope this route sends leaves through here or `storageRefusalBody`, and both
  * count it in `civitai_app_block_doc_store_errors_total` under the envelope's own code.
  */
-function sendEnvelope(
+export function sendEnvelope(
   req: NextApiRequest,
   res: NextApiResponse,
   status: number,
-  body: StorageErrorBody
+  body: StorageErrorBody,
+  endpoint: DocStoreEndpoint = storageEndpointLabel(req)
 ): void {
-  recordDocStoreError(storageEndpointLabel(req), body.code);
+  recordDocStoreError(endpoint, body.code);
   res.status(status).json(body);
 }
 
@@ -346,7 +347,13 @@ export function isDocumentReadMiss(req: NextApiRequest, code: StorageApiCode): b
   return code === 'not_found' && storageEndpointLabel(req) === 'storage_read';
 }
 
-function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): void {
+/** `endpoint`: the metrics label, for a route other than the storage catch-all (the report API). */
+export function sendError(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  err: unknown,
+  endpoint: DocStoreEndpoint = storageEndpointLabel(req)
+): void {
   if (!(err instanceof DocStoreError)) {
     logToAxiom(
       {
@@ -357,7 +364,7 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
       },
       'app-blocks'
     );
-    sendEnvelope(req, res, 500, envelope('internal_error', GENERIC_SERVER_ERROR_MESSAGE));
+    sendEnvelope(req, res, 500, envelope('internal_error', GENERIC_SERVER_ERROR_MESSAGE), endpoint);
     return;
   }
   const body = envelope(err.code, CLIENT_MESSAGE[err.code] ?? err.message, err.details);
@@ -374,13 +381,13 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
   // query answers "what is this app being refused"). Every document-store refusal leaves through
   // here, so this is the one place.
   if (err.code === 'rate_limited' || err.code === 'version_conflict') {
-    recordRefusal(req, err, retryAfter);
+    recordRefusal(req, err, retryAfter, endpoint);
   }
   if (typeof retryAfter === 'number') {
     res.setHeader('Retry-After', String(retryAfter));
     if (err.code === 'rate_limited') body.rateLimit = rateLimitMetaFor(retryAfter);
   }
-  sendEnvelope(req, res, STORAGE_ERROR_STATUS[err.code], body);
+  sendEnvelope(req, res, STORAGE_ERROR_STATUS[err.code], body, endpoint);
 }
 
 /**
@@ -431,13 +438,18 @@ function refusalBucket(err: DocStoreError): AppBlockRefusalBucket {
   return err.details?.reason === 'contention' ? 'contention' : 'unattributed';
 }
 
-function recordRefusal(req: NextApiRequest, err: DocStoreError, retryAfter: unknown): void {
+function recordRefusal(
+  req: NextApiRequest,
+  err: DocStoreError,
+  retryAfter: unknown,
+  endpoint: DocStoreEndpoint
+): void {
   const claims = (req as BlockScopedNextApiRequest).blockClaims;
   recordAppBlockRateLimitRefusal({
     appBlockId: requestAppLabel(req),
     surface: 'doc_store',
     bucket: refusalBucket(err),
-    endpoint: storageEndpointLabel(req),
+    endpoint,
     retryAfterSeconds: typeof retryAfter === 'number' ? retryAfter : undefined,
     userId: claims ? blockSubjectUserId(claims.sub) : null,
     status: STORAGE_ERROR_STATUS[err.code],
@@ -463,11 +475,12 @@ const MIDDLEWARE_REFUSAL: Record<BlockScopeRefusalKind, { code: StorageApiCode; 
 
 export function storageRefusalBody(
   refusal: BlockScopeRefusal,
-  req: NextApiRequest
+  req: NextApiRequest,
+  endpoint: DocStoreEndpoint = storageEndpointLabel(req)
 ): StorageErrorBody {
   const { code, reason } = MIDDLEWARE_REFUSAL[refusal.kind];
   // The middleware sends this body; it is counted here, the one place it is built.
-  recordDocStoreError(storageEndpointLabel(req), code);
+  recordDocStoreError(endpoint, code);
   return envelope(code, refusal.error, reason ? { reason } : undefined);
 }
 
@@ -528,7 +541,7 @@ async function readJsonBody(req: NextApiRequest): Promise<unknown> {
   }
 }
 
-function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
+export function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   const value = body === undefined ? {} : body;
   const parsed = schema.safeParse(value);
   if (!parsed.success) {
@@ -815,7 +828,7 @@ function presentDeclaration(decl: DeclaredStorageCollection) {
 // Gates
 // ---------------------------------------------------------------------------
 
-function collectionOf(access: StorageAccess, name: string): DocCollection {
+export function collectionOf(access: StorageAccess, name: string): DocCollection {
   const decl = APP_STORAGE_COLLECTION_NAME_RE.test(name) ? access.collections.get(name) : undefined;
   if (!decl) {
     throw new DocStoreError('collection_not_declared', `collection ${name} is not declared`, {
@@ -844,7 +857,7 @@ async function withSchemaMajor(access: StorageAccess, coll: DocCollection): Prom
   return { ...coll, schemaMajor };
 }
 
-function requireViewer(access: StorageAccess): number {
+export function requireViewer(access: StorageAccess): number {
   if (access.ctx.viewerUid === null) {
     throw new DocStoreError('sign_in_required', 'sign in required');
   }
@@ -868,7 +881,7 @@ function assertPublishScope(access: StorageAccess, coll: DocCollection): void {
  * as a create or put does — whatever the collection's write policy, `none` included. An app's
  * own tallies are unchanged (`apps:storage` covers them); a private collection has none.
  */
-function assertImportTallyPublishScope(access: StorageAccess, shared: boolean): void {
+export function assertImportTallyPublishScope(access: StorageAccess, shared: boolean): void {
   if (access.importedFrom === undefined || !shared) return;
   if (access.scopes.includes(APP_STORAGE_PUBLISH_SCOPE)) return;
   throw publishRefusal(access);
@@ -893,7 +906,7 @@ function publishRefusal(access: StorageAccess): DocStoreError {
 }
 
 /** The min-trust gate, on every viewer write into a shared collection. Returns the subject. */
-async function assertTrusted(uid: number): Promise<SessionUser> {
+export async function assertTrusted(uid: number): Promise<SessionUser> {
   const user = (await sessionClient.getSessionUserById(uid)) as SessionUser | null;
   const linked = user ? await hasLinkedOAuthAccount(user) : false;
   const refusal = sharedWriteTrustRefusal(user, linked);
@@ -903,7 +916,7 @@ async function assertTrusted(uid: number): Promise<SessionUser> {
   return user as SessionUser;
 }
 
-async function charge(
+export async function charge(
   bucket: DocStoreRateBucket,
   access: StorageAccess,
   req: NextApiRequest
@@ -1650,7 +1663,10 @@ function importSourceOf(req: NextApiRequest): string | null {
  * that always names its source (the shared app-data service's REST fallback) then reads the app it
  * names, whichever app the token is.
  */
-function otherAppSource(from: string | null, own: Pick<StorageAccess, 'blockId'>): string | null {
+export function otherAppSource(
+  from: string | null,
+  own: Pick<StorageAccess, 'blockId'>
+): string | null {
   return from !== null && from === own.blockId ? null : from;
 }
 

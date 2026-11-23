@@ -442,6 +442,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-store-api.unchanged-writes.test.ts',
     // Seeds report times and counts the rows a moderator delete must remove.
     'server/services/apps/__tests__/doc-store-moderation.pglite.test.ts',
+    // The report API suite reads back the report rows a report wrote and the tallies it must not.
+    'server/services/apps/__tests__/doc-store-report-api.test.ts',
     // Reads every column that can hold a user id, to prove an account wipe left none.
     'server/services/apps/__tests__/doc-store.account-wipe.test.ts',
     // Counts an app's rows in every table, to prove an app purge left none and touched no other app.

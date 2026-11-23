@@ -51,6 +51,7 @@ const LEDGER = {
     increment: 'hooked',
     mark: 'hooked',
     unmark: 'hooked',
+    report: 'reportExempt',
     putIfUnchanged: 'unchangedProbe',
     previewPublish: 'refusesHooked',
     publishCopies: 'refusesHooked',
@@ -138,6 +139,7 @@ describe('every store entry point is classified', () => {
     expect(filesMatching(/\bgetDocStore\b|\bcreateDocStore\(/)).toEqual([
       'src/server/services/apps/doc-store-api.ts',
       'src/server/services/apps/doc-store-owner-usage.service.ts',
+      'src/server/services/apps/doc-store-report-api.ts',
       'src/server/services/apps/doc-store-viewer-usage.service.ts',
       'src/server/services/apps/doc-store.instance.ts',
       'src/server/services/apps/doc-store.ts',
@@ -251,6 +253,17 @@ describe('a hooked collection refuses every hooked write without a HookPass', ()
 
   it('the report mark is exempt: no pass needed on a hooked collection', async () => {
     expect(await outcome(store.mark(ctx, hooked, KEY, 'report'))).toBe('reached the transaction');
+  });
+
+  // The report API's write takes no HookPass at all: a hook must never be able to silence a
+  // report. It is the one `reportExempt` entry.
+  it('the report API write is exempt: it reaches the transaction on a hooked collection', async () => {
+    expect(
+      Object.entries(LEDGER.store)
+        .filter(([, v]) => v === 'reportExempt')
+        .map(([k]) => k)
+    ).toEqual(['report']);
+    expect(await outcome(store.report(ctx, hooked, KEY))).toBe('reached the transaction');
   });
 
   // Publish and unpublish write a batch no single hook call decides: a hooked target refuses

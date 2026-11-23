@@ -847,6 +847,8 @@ describe('the moderation operations are reachable from the moderator service onl
         'list',
         'mark',
         'unmark',
+        // The report API's write: the VIEWER's own report row, which moderators then read.
+        'report',
         'put',
         // A shared put that would change nothing: the caller's OWN document only.
         'putIfUnchanged',
