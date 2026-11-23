@@ -306,7 +306,7 @@ async function handler(
   `;
   // Same answer as an unknown id, so the response does not reveal that the version exists.
   if (!modelVersion || !canViewPoiModel(modelVersion.poi, modelVersion.modelUserId, user))
-    return res.status(404).json({ error: 'Model not found' });
+    return modelNotFound(res);
   // A deleted, unpublished or not yet released model is shown only to its owner and moderators, as
   // on the model page. The orchestrator's service token has no user: it reads this to decide what
   // may generate.
@@ -320,7 +320,7 @@ async function handler(
       publishedAt: modelVersion.publishedAt,
     })
   )
-    return res.status(404).json({ error: 'Model not found' });
+    return modelNotFound(res);
 
   // A Private model or version goes through the caller gate.
   let privateCaller: { callerClass: MiniEpochCallerClass } | undefined;
@@ -342,7 +342,7 @@ async function handler(
       });
       // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
       // 404 to a caller who would be served.
-      if (caller.withhold) return res.status(404).json({ error: 'Model not found' });
+      if (caller.withhold) return modelNotFound(res);
       privateCaller = caller;
     }
   }
@@ -361,7 +361,7 @@ async function handler(
     servedLevel !== allBrowsingLevelsFlag &&
     !Flags.intersects(modelVersion.nsfwLevel, servedLevel)
   )
-    return res.status(404).json({ error: 'Model not found' });
+    return modelNotFound(res);
   const modelName = resolveModelFace(
     { name: modelVersion.modelName, sfwName: modelVersion.sfwName },
     showsSfwFace(servedLevel)
@@ -999,4 +999,13 @@ async function resignEpochBlob(
     unknown,
     () => controller.abort()
   );
+}
+
+/**
+ * The answer to an unknown id and to a version the caller may not see, headers included, so the two
+ * cannot be told apart. Never in a shared cache: the same id can be visible to another caller.
+ */
+function modelNotFound(res: NextApiResponse) {
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.status(404).json({ error: 'Model not found' });
 }

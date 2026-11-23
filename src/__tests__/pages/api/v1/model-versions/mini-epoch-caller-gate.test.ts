@@ -233,14 +233,11 @@ describe('mini/[id] epoch arm, enforce', () => {
     expect(body.downloadUrls).toEqual([]);
   });
 
-  it('answers a refused caller with the same status and body as an unknown id', async () => {
+  it('answers a refused caller with the same status, body and cache header as an unknown id', async () => {
     const refused = await request(anonymous);
     const unknown = await request(anonymous, {}, TRAINING_FILE, []);
     expect(refused.status).toBe(404);
-    expect({ status: refused.status, body: refused.body }).toEqual({
-      status: unknown.status,
-      body: unknown.body,
-    });
+    expect(refused).toEqual(unknown);
   });
 
   it('keeps the refused 404 out of shared caches', async () => {
@@ -652,6 +649,14 @@ describe('mini/[id] a Private parent outside the epoch arm', () => {
           ]);
       });
 
+  it('answers a refused caller exactly as an unknown id, cache header included', async () => {
+    h.variant.value = 'enforce';
+    const refused = await request(stranger, shapes[0][1], PLAIN_FILE);
+    const unknown = await request(stranger, shapes[0][1], PLAIN_FILE, []);
+    expect(refused.status).toBe(404);
+    expect(refused).toEqual(unknown);
+  });
+
   it('logs nothing for a Public version of a Public model', async () => {
     h.variant.value = 'enforce';
     const { status } = await request(anonymous, { availability: 'Public' }, PLAIN_FILE);
@@ -696,6 +701,13 @@ describe('mini/[id] a deleted or unpublished parent, whatever the gate', () => {
           expect(body).toHaveProperty('defaultFileId', PLAIN_FILE.id);
         });
       });
+
+  it('answers a hidden parent exactly as an unknown id, cache header included', async () => {
+    const hidden = await request(stranger, rows[0][1], PLAIN_FILE);
+    const unknown = await request(stranger, rows[0][1], PLAIN_FILE, []);
+    expect(hidden.status).toBe(404);
+    expect(hidden).toEqual(unknown);
+  });
 
   it('control: a published model is served to another user', async () => {
     const { status, body } = await request(stranger, { availability: 'Public' }, PLAIN_FILE);
