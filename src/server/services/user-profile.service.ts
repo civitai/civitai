@@ -67,6 +67,7 @@ import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { isShowcaseHiddenOn } from '~/shared/constants/profile-showcase.constants';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { assertPageCustomizationAllowed } from '~/server/services/profile-customization.service';
 
 export type UserContentOverviewVariant = 'public' | 'sfw' | 'all';
 
@@ -522,16 +523,21 @@ export const updateUserProfile = async ({
   userId,
   coverImage,
   sfwCoverImage,
+  backgroundImage,
+  sfwBackgroundImage,
   // leaderboardShowcase,
   // profilePicture,
   creatorCardStatsPreferences,
   domain,
   sessionUserId,
+  profileRedesign = false,
   ...profile
 }: UserProfileUpdateSchema & {
   userId: number;
   isModerator?: boolean;
   domain?: ColorDomain;
+  /** Without it the redesign's settings are kept as stored, whatever the input says. */
+  profileRedesign?: boolean;
   /** Who saved it: a moderator may save another user's profile, and is answered as a viewer. */
   sessionUserId: number;
 }) => {
@@ -551,6 +557,7 @@ export const updateUserProfile = async ({
       profile.message,
       profile.sfwMessage,
       profile.location,
+      profile.about,
       ...(socialLinks?.map((link) => link.url) ?? []),
       ...(sponsorshipLinks?.map((link) => link.url) ?? []),
     ],
@@ -561,6 +568,21 @@ export const updateUserProfile = async ({
   // withheld from anyone who can't edit the profile. Drop it and both read back null, so every
   // save looks like a changed announcement and re-stamps `messageAddedAt`.
   const current = await getUserWithProfile({ id: userId, sessionUserId: userId }); // Ensures user exists && has a profile record.
+
+  await assertPageCustomizationAllowed({
+    userId,
+    profileRedesign,
+    backgroundImage,
+    sfwBackgroundImage,
+    cardColor: profile.cardColor,
+    cardOpacity: profile.cardOpacity,
+    about: profile.about,
+  });
+
+  if (profile.privacySettings && !profileRedesign) {
+    const stored = current.profile?.privacySettings as PrivacySettingsSchema | undefined;
+    profile.privacySettings = { ...profile.privacySettings, hiddenTabs: stored?.hiddenTabs };
+  }
 
   // A `custom:<id>` row only places a section that exists. A user who never had the flag has
   // none, so none of their rows survive.
@@ -586,8 +608,8 @@ export const updateUserProfile = async ({
 
   // A cover with no `id` is created from its client url below. Checked before any write, so a
   // refused cover leaves the whole save unapplied.
-  const newCoverUrls = [coverImage, sfwCoverImage].map((image) =>
-    image && !image.id ? image.url : null
+  const newCoverUrls = [coverImage, sfwCoverImage, backgroundImage, sfwBackgroundImage].map(
+    (image) => (image && !image.id ? image.url : null)
   );
   await assertClientImageUrlsUsable({ urls: newCoverUrls, userId });
   await assertClientKeysIssuedToCaller({
@@ -616,7 +638,10 @@ export const updateUserProfile = async ({
     userUpdateCounter?.inc({ location: 'user-profile.service:updateProfile' });
   }
 
-  const buildCoverImageUpdate = (image: UserProfileUpdateSchema['coverImage']) =>
+  const buildCoverImageUpdate = (
+    image: UserProfileUpdateSchema['coverImage'],
+    purpose: 'coverImage' | 'profileBackground' = 'coverImage'
+  ) =>
     image !== undefined && !image?.id
       ? image === null
         ? { disconnect: true }
@@ -629,7 +654,7 @@ export const updateUserProfile = async ({
                   (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
                     | Prisma.JsonObject
                     | undefined) ?? Prisma.JsonNull,
-                metadata: { coverImage: true, userId },
+                metadata: { [purpose]: true, userId },
                 userId,
                 resources: undefined,
               },
@@ -730,6 +755,8 @@ export const updateUserProfile = async ({
           userId: true,
           coverImage: { select: { id: true, url: true, ingestion: true, type: true } },
           sfwCoverImage: { select: { id: true, url: true, ingestion: true, type: true } },
+          backgroundImage: { select: { id: true, url: true, ingestion: true, type: true } },
+          sfwBackgroundImage: { select: { id: true, url: true, ingestion: true, type: true } },
         },
         where: { userId },
         data: {
@@ -748,6 +775,8 @@ export const updateUserProfile = async ({
               : null,
           coverImage: buildCoverImageUpdate(coverImage),
           sfwCoverImage: buildCoverImageUpdate(sfwCoverImage),
+          backgroundImage: buildCoverImageUpdate(backgroundImage, 'profileBackground'),
+          sfwBackgroundImage: buildCoverImageUpdate(sfwBackgroundImage, 'profileBackground'),
         },
       });
 
@@ -771,7 +800,12 @@ export const updateUserProfile = async ({
   // trigger enqueues an ImageScan JobQueue row on the Pending insert, which the
   // `ingest-images` sweeper drains, so the cover image still gets scanned even
   // if this inline enqueue fails.
-  const pendingCoverImages = [updatedCoverImages.coverImage, updatedCoverImages.sfwCoverImage]
+  const pendingCoverImages = [
+    updatedCoverImages.coverImage,
+    updatedCoverImages.sfwCoverImage,
+    updatedCoverImages.backgroundImage,
+    updatedCoverImages.sfwBackgroundImage,
+  ]
     .filter(isDefined)
     .filter((image) => image.ingestion === ImageIngestionStatus.Pending);
   if (pendingCoverImages.length) {
@@ -784,7 +818,9 @@ export const updateUserProfile = async ({
 
   await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
   if (
-    [profile.bio, profile.message, profile.sfwBio, profile.sfwMessage].some((v) => v !== undefined)
+    [profile.bio, profile.message, profile.sfwBio, profile.sfwMessage, profile.about].some(
+      (v) => v !== undefined
+    )
   )
     queueScamScan({ entityType: 'UserProfile', entityId: userId });
 

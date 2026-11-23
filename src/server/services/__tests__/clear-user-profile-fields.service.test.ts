@@ -55,8 +55,9 @@ const stored = {
   location: 'l',
   showcaseSections: [{ key: 'k' }],
   showcaseItems: [{ entityType: 'Model', entityId: 1 }],
+  about: 'a',
 };
-const ALL_FIELDS: ProfileClearField[] = ['location', 'bio', 'message', 'showcaseSections'];
+const ALL_FIELDS: ProfileClearField[] = ['location', 'bio', 'message', 'showcaseSections', 'about'];
 let archive: ReturnType<typeof vi.fn<(s: ProfileClearSnapshot) => Promise<unknown>>>;
 
 beforeEach(() => {

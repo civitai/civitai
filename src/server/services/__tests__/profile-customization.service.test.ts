@@ -1,0 +1,200 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { NsfwLevel } from '~/server/common/enums';
+
+/**
+ * The redesign's members-only page customisation: who may set it, what a visitor is shown, and
+ * "Set as background". Membership is read from the subscription and override tables, so these
+ * answer from those rows.
+ */
+
+const { assertPageCustomizationAllowed, getProfileCustomization, setProfileBackground } =
+  await import('~/server/services/profile-customization.service');
+
+const OWNER = 5;
+const VISITOR = 6;
+
+const subscription = (tier: string, status = 'active') => ({
+  id: 's1',
+  status,
+  metadata: null,
+  buzzType: 'yellow',
+  product: { id: 'p', name: 'p', description: null, metadata: { tier }, provider: 'Civitai' },
+  price: { id: 'pr', unitAmount: 1000, interval: 'month', currency: 'usd', active: true },
+});
+
+let subscriptions: ReturnType<typeof subscription>[];
+let override: { tier: string } | null;
+
+const scannedImage = (nsfwLevel: number, over: Record<string, unknown> = {}) => ({
+  id: 70,
+  url: 'bg.jpg',
+  type: 'image',
+  hash: 'h',
+  width: 1,
+  height: 1,
+  nsfwLevel,
+  ingestion: 'Scanned',
+  needsReview: null,
+  modelRestricted: false,
+  ...over,
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  subscriptions = [];
+  override = null;
+  dbMock.dbWrite.customerSubscription.findMany.mockImplementation(
+    (async () => subscriptions) as never
+  );
+  dbMock.dbWrite.userMembershipOverride.findUnique.mockImplementation(
+    (async () => override) as never
+  );
+  dbMock.dbWrite.userProfile.findUnique.mockResolvedValue({
+    backgroundImageId: null,
+    sfwBackgroundImageId: null,
+    cardColor: null,
+    cardOpacity: null,
+  } as never);
+});
+
+describe('assertPageCustomizationAllowed', () => {
+  const save = (input: Record<string, unknown>, profileRedesign = true) =>
+    assertPageCustomizationAllowed({ userId: OWNER, profileRedesign, ...input });
+
+  it('refuses a non-member setting a colour, opacity or background', async () => {
+    await expect(save({ cardColor: '#112233' })).rejects.toThrow(/for members/);
+    await expect(save({ cardOpacity: 70 })).rejects.toThrow(/for members/);
+    await expect(save({ backgroundImage: { url: 'new.jpg' } })).rejects.toThrow(/for members/);
+  });
+
+  it('lets a paying member, and a comped member, set them', async () => {
+    subscriptions = [subscription('gold')];
+    await expect(save({ cardColor: '#112233' })).resolves.toBeUndefined();
+    subscriptions = [];
+    override = { tier: 'silver' };
+    await expect(save({ cardColor: '#112233' })).resolves.toBeUndefined();
+  });
+
+  it('does not count a free override as a membership', async () => {
+    override = { tier: 'free' };
+    await expect(save({ cardColor: '#112233' })).rejects.toThrow(/for members/);
+  });
+
+  it('lets a lapsed member re-save the values they already have, and clear them', async () => {
+    dbMock.dbWrite.userProfile.findUnique.mockResolvedValue({
+      backgroundImageId: 70,
+      sfwBackgroundImageId: null,
+      cardColor: '#112233',
+      cardOpacity: 70,
+    } as never);
+    await expect(
+      save({ cardColor: '#112233', cardOpacity: 70, backgroundImage: { id: 70, url: 'bg.jpg' } })
+    ).resolves.toBeUndefined();
+    await expect(save({ cardColor: null, backgroundImage: null })).resolves.toBeUndefined();
+    await expect(save({ cardColor: '#445566' })).rejects.toThrow(/for members/);
+  });
+
+  it('refuses any redesign field without the flag, and passes a save that touches none', async () => {
+    subscriptions = [subscription('gold')];
+    await expect(save({ about: '<p>hi</p>' }, false)).rejects.toThrow(/not available/);
+    await expect(save({}, false)).resolves.toBeUndefined();
+  });
+});
+
+describe('getProfileCustomization', () => {
+  const stored = (over: Record<string, unknown> = {}) =>
+    dbMock.dbWrite.userProfile.findUnique.mockResolvedValue({
+      backgroundImageId: 70,
+      sfwBackgroundImageId: null,
+      cardColor: '#112233',
+      cardOpacity: 70,
+      backgroundImage: scannedImage(NsfwLevel.PG),
+      sfwBackgroundImage: null,
+      ...over,
+    } as never);
+
+  it("shows a member's background and colours to a visitor", async () => {
+    subscriptions = [subscription('gold')];
+    stored();
+    const result = await getProfileCustomization({ userId: OWNER, viewerId: VISITOR });
+    expect(result).toMatchObject({ background: { id: 70 }, cardColor: '#112233', cardOpacity: 70 });
+    expect(result.stored).toBeNull();
+  });
+
+  it('hides them while the owner is not a member, but keeps them for the owner to edit', async () => {
+    stored();
+    const visitor = await getProfileCustomization({ userId: OWNER, viewerId: VISITOR });
+    expect(visitor).toMatchObject({ background: null, cardColor: null, cardOpacity: null });
+    const owner = await getProfileCustomization({ userId: OWNER, viewerId: OWNER });
+    expect(owner.background).toBeNull();
+    expect(owner.stored).toMatchObject({ cardColor: '#112233' });
+  });
+
+  it('hides them when the membership lookup fails', async () => {
+    stored();
+    dbMock.dbWrite.customerSubscription.findMany.mockRejectedValue(new Error('down'));
+    const result = await getProfileCustomization({ userId: OWNER, viewerId: VISITOR });
+    expect(result.cardColor).toBeNull();
+  });
+
+  it('never sends a mature background on civitai.com, even to its owner', async () => {
+    subscriptions = [subscription('gold')];
+    stored({ backgroundImage: scannedImage(NsfwLevel.R) });
+    for (const viewerId of [VISITOR, OWNER]) {
+      const result = await getProfileCustomization({ userId: OWNER, viewerId, domain: 'green' });
+      expect(result.background).toBeNull();
+    }
+    const red = await getProfileCustomization({ userId: OWNER, viewerId: VISITOR, domain: 'red' });
+    expect(red.background).toMatchObject({ id: 70 });
+  });
+
+  it('uses the civitai.com override there', async () => {
+    subscriptions = [subscription('gold')];
+    stored({
+      sfwBackgroundImageId: 71,
+      sfwBackgroundImage: scannedImage(NsfwLevel.PG, { id: 71 }),
+    });
+    const result = await getProfileCustomization({ userId: OWNER, domain: 'green' });
+    expect(result.background).toMatchObject({ id: 71 });
+  });
+
+  it('withholds an unscanned background from visitors but not from its owner', async () => {
+    subscriptions = [subscription('gold')];
+    stored({ backgroundImage: scannedImage(NsfwLevel.PG, { ingestion: 'Pending' }) });
+    expect(
+      (await getProfileCustomization({ userId: OWNER, viewerId: VISITOR })).background
+    ).toBeNull();
+    expect(
+      (await getProfileCustomization({ userId: OWNER, viewerId: OWNER })).background
+    ).toMatchObject({ id: 70 });
+  });
+});
+
+describe('setProfileBackground', () => {
+  it("refuses another user's image, also for a moderator, and writes nothing", async () => {
+    subscriptions = [subscription('gold')];
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ isModerator: true } as never);
+    dbMock.dbRead.image.findUnique.mockResolvedValue({ userId: VISITOR } as never);
+    await expect(setProfileBackground({ userId: OWNER, imageId: 70 })).rejects.toThrow(
+      /not found/i
+    );
+    expect(dbMock.dbWrite.userProfile.upsert).not.toHaveBeenCalled();
+  });
+
+  it("sets the owner's own image, as the civitai.com override on civitai.com", async () => {
+    subscriptions = [subscription('gold')];
+    dbMock.dbRead.image.findUnique.mockResolvedValue({ userId: OWNER } as never);
+    await setProfileBackground({ userId: OWNER, imageId: 70, domain: 'green' });
+    expect(dbMock.dbWrite.userProfile.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: { sfwBackgroundImageId: 70 } })
+    );
+  });
+
+  it('refuses a non-member', async () => {
+    dbMock.dbRead.image.findUnique.mockResolvedValue({ userId: OWNER } as never);
+    await expect(setProfileBackground({ userId: OWNER, imageId: 70 })).rejects.toThrow(
+      /for members/
+    );
+  });
+});

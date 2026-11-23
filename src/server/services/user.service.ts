@@ -570,6 +570,7 @@ export type ProfileClearSnapshot = {
     location: string | null;
     showcaseSections: Prisma.JsonValue;
     showcaseItems: Prisma.JsonValue;
+    about: string | null;
   };
 };
 export type ProfileClearField = (typeof PROFILE_CLEAR_FIELDS)[number];
@@ -582,10 +583,11 @@ const PROFILE_CLEAR_SNAPSHOT_SELECT = {
   location: true,
   showcaseSections: true,
   showcaseItems: true,
+  about: true,
 } as const;
 
 /**
- * Mod-driven: clear the named public profile fields (location/bio/message/showcaseSections) on
+ * Mod-driven: clear the named public profile fields (location/bio/message/showcaseSections/about) on
  * UserProfile. Throws on an empty list. No-op if no UserProfile row exists yet.
  *
  * Clearing bio/message also clears its SFW (civitai.com) override — otherwise the
@@ -625,6 +627,7 @@ export async function clearUserProfileFields({
     data.sfwMessageAddedAt = null;
   }
   if (fields.includes('showcaseSections')) data.showcaseSections = [];
+  if (fields.includes('about')) data.about = null;
   const updated = await dbWrite.$transaction(async (tx) => {
     const { count } = await tx.userProfile.updateMany({ where: { userId }, data });
     if (count > 0)
@@ -2594,6 +2597,10 @@ export async function deleteBasicDataForUser(userId: number) {
   await userBasicCache.refresh(userId);
 }
 
+/**
+ * The cosmetics each user wears, for every surface that draws a user beside content (feeds, cards,
+ * search). A `SidebarBackground` is left out: only the profile page draws it, from its own read.
+ */
 export async function getCosmeticsForUsers(userIds: number[]) {
   const userCosmetics = await userCosmeticCache.fetch(userIds);
   const cosmeticIds = [
@@ -2603,10 +2610,12 @@ export async function getCosmeticsForUsers(userIds: number[]) {
   return Object.fromEntries(
     Object.values(userCosmetics).map((x) => [
       x.userId,
-      x.cosmetics.map((y) => ({
-        ...y,
-        cosmetic: cosmetics[y.cosmeticId],
-      })),
+      x.cosmetics
+        .map((y) => ({
+          ...y,
+          cosmetic: cosmetics[y.cosmeticId],
+        }))
+        .filter((y) => y.cosmetic?.type !== CosmeticType.SidebarBackground),
     ])
   );
 }

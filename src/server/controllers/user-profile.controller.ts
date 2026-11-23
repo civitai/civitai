@@ -1,4 +1,9 @@
 import { bustUserCreator } from '~/server/services/user-creator.service';
+import {
+  getProfileAbout,
+  getProfileCustomization,
+  setProfileBackground,
+} from '~/server/services/profile-customization.service';
 import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandling';
 import {
   addToShowcaseSection,
@@ -9,7 +14,9 @@ import {
 } from '~/server/services/user-profile.service';
 import type {
   AddToShowcaseSectionSchema,
+  GetProfilePartSchema,
   GetUserProfileSchema,
+  SetProfileBackgroundSchema,
   PrivacySettingsSchema,
   ProfileSectionSchema,
   SetShowcaseSectionsSchema,
@@ -161,6 +168,7 @@ export const updateUserProfileHandler = async ({
       isModerator: sessionUser.isModerator,
       sessionUserId: sessionUser.id,
       domain: ctx.domain,
+      profileRedesign: ctx.features.profileRedesign,
     });
 
     await bustUserCreator(userId);
@@ -259,6 +267,67 @@ export const addEntityToShowcaseHandler = async ({
     await bustUserCreator(ctx.user.id);
 
     return result;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+/** Nothing for a viewer the owner blocked, as the profile itself is a stub for them. */
+const blockedViewer = async (ctx: Context, userId: number) =>
+  !!ctx.user &&
+  !ctx.user.isModerator &&
+  ctx.user.id !== userId &&
+  (await amIBlockedByUser({ userId: ctx.user.id, targetUserId: userId }));
+
+export const getProfileCustomizationHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetProfilePartSchema;
+  ctx: Context;
+}) => {
+  try {
+    if (await blockedViewer(ctx, input.userId))
+      return { background: null, cardColor: null, cardOpacity: null, stored: null };
+    return await getProfileCustomization({
+      userId: input.userId,
+      viewerId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+      domain: ctx.domain,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const getProfileAboutHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetProfilePartSchema;
+  ctx: Context;
+}) => {
+  try {
+    if (await blockedViewer(ctx, input.userId)) return { about: null };
+    return await getProfileAbout({ userId: input.userId });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const setProfileBackgroundHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetProfileBackgroundSchema;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    if (ctx.user.muted) throw throwAuthorizationError();
+    await setProfileBackground({ userId: ctx.user.id, imageId: input.imageId, domain: ctx.domain });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

@@ -475,6 +475,21 @@ export const getCapTierViaKysely = async (userId: number): Promise<string | null
   return capTierOf(rows.map(toUserSubscription).filter((sub) => sub !== null));
 };
 
+/**
+ * Whether the user is a paying or comped member, as their session counts it: a good-standing
+ * subscription (`getCapTier`) or a non-free `UserMembershipOverride`, which the session ranks
+ * alongside subscriptions. Reading subscriptions alone would show a comped member the member
+ * controls and then refuse their save.
+ */
+export const isMemberTier = async (userId: number): Promise<boolean> => {
+  const [capTier, override] = await Promise.all([
+    getCapTier(userId),
+    // primary: a comp granted moments ago must already count, as it does on the session.
+    dbWrite.userMembershipOverride.findUnique({ where: { userId }, select: { tier: true } }),
+  ]);
+  return (!!capTier && capTier !== 'free') || (!!override && override.tier !== 'free');
+};
+
 const capTierOf = (subscriptions: NonNullable<ReturnType<typeof toUserSubscription>>[]) =>
   pickHighestTier(subscriptions.filter((s) => !s.isBadState))?.tier ?? null;
 
