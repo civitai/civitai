@@ -101,7 +101,7 @@ describe('splitPassThroughStepOutput', () => {
   // branch and pin nothing.
   it.each(['audioBlob', 'frames'])('lifts media out of the `%s` property', (key) => {
     const { media, rest } = splitPassThroughStepOutput({
-      [key]: [{ url: BLOB_URL, available: true }],
+      [key]: [{ url: BLOB_URL, available: true, nsfwLevel: 'pg' }],
       keep: 1,
     });
     expect(media).toHaveLength(1);
@@ -138,8 +138,8 @@ describe('splitPassThroughStepOutput', () => {
   it('lifts a blob NESTED inside a non-blob sibling of a blob element', () => {
     const { media, rest } = splitPassThroughStepOutput({
       items: [
-        { url: `${BLOB_URL}#a`, available: true },
-        { label: 'wrapper', inner: { url: `${BLOB_URL}#b`, available: true } },
+        { url: `${BLOB_URL}#a`, available: true, nsfwLevel: 'pg' },
+        { label: 'wrapper', inner: { url: `${BLOB_URL}#b`, available: true, nsfwLevel: 'pg' } },
       ],
     });
     expect(media.map((m) => m.url)).toEqual([`${BLOB_URL}#a`, `${BLOB_URL}#b`]);
@@ -148,7 +148,7 @@ describe('splitPassThroughStepOutput', () => {
 
   it('lifts a TOP-LEVEL blob LIST, forwarding nothing', () => {
     const { media, rest } = splitPassThroughStepOutput([
-      { url: BLOB_URL, available: true },
+      { url: BLOB_URL, available: true, nsfwLevel: 'pg' },
       // 🔴 `id`, NOT a bare `{available:false}`. Without an identity field this
       // element is not blob-shaped at all, so the test would pass under a
       // predicate that had never been widened — it would pin nothing it looks
@@ -221,10 +221,10 @@ describe('splitPassThroughStepOutput', () => {
   // per-viewer gated read.
   it('reaches blobs nested inside a plain object (polyGen.basicAnimations)', () => {
     const { media, rest } = splitPassThroughStepOutput({
-      model: { url: `${BLOB_URL}#m`, available: true },
+      model: { url: `${BLOB_URL}#m`, available: true, nsfwLevel: 'pg' },
       basicAnimations: {
-        walkingModel: { url: `${BLOB_URL}#w`, available: true },
-        runningModel: { url: `${BLOB_URL}#r`, available: true },
+        walkingModel: { url: `${BLOB_URL}#w`, available: true, nsfwLevel: 'pg' },
+        runningModel: { url: `${BLOB_URL}#r`, available: true, nsfwLevel: 'pg' },
       },
     });
     expect(media.map((m) => m.url)).toEqual([`${BLOB_URL}#m`, `${BLOB_URL}#w`, `${BLOB_URL}#r`]);
@@ -234,8 +234,8 @@ describe('splitPassThroughStepOutput', () => {
   it('reaches blobs nested inside an array of objects (training.epochs[])', () => {
     const { media, rest } = splitPassThroughStepOutput({
       epochs: [
-        { epochNumber: 1, model: { url: `${BLOB_URL}#1`, available: true } },
-        { epochNumber: 2, samples: [{ url: `${BLOB_URL}#2`, available: true }] },
+        { epochNumber: 1, model: { url: `${BLOB_URL}#1`, available: true, nsfwLevel: 'pg' } },
+        { epochNumber: 2, samples: [{ url: `${BLOB_URL}#2`, available: true, nsfwLevel: 'pg' }] },
       ],
     });
     expect(media.map((m) => m.url)).toEqual([`${BLOB_URL}#1`, `${BLOB_URL}#2`]);
@@ -249,7 +249,7 @@ describe('splitPassThroughStepOutput', () => {
   // makes any object carrying an `available` key vanish from the forwarded
   // output — measured as a surviving mutant before this test existed.
   it('does NOT strip an object with `available` but no identity field', () => {
-    const capacity = { available: true, queueDepth: 3 };
+    const capacity = { available: true, nsfwLevel: 'pg', queueDepth: 3 };
     expect(splitPassThroughStepOutput({ capacity })).toEqual({
       media: [],
       rest: { capacity },
@@ -265,7 +265,7 @@ describe('splitPassThroughStepOutput', () => {
   // and sent the url straight out through `stepOutputs`.
   it('descends into an array nested directly inside an array', () => {
     const { media, rest } = splitPassThroughStepOutput({
-      frames: [[{ url: BLOB_URL, available: true }]],
+      frames: [[{ url: BLOB_URL, available: true, nsfwLevel: 'pg' }]],
     });
     expect(media.map((m) => m.url)).toEqual([BLOB_URL]);
     expect(rest).toEqual({ frames: [[]] });
@@ -284,7 +284,13 @@ describe('splitPassThroughStepOutput', () => {
       : viaArrays && levels % 2
       ? [nest(levels - 1, leaf, viaArrays)]
       : { k: nest(levels - 1, leaf, viaArrays) };
-  const blob = { id: 'b1', url: BLOB_URL, available: true, blockedReason: 'Blocked' };
+  const blob = {
+    id: 'b1',
+    url: BLOB_URL,
+    available: true,
+    nsfwLevel: 'pg',
+    blockedReason: 'Blocked',
+  };
 
   it('reaches a blob at exactly the deepest level the cap examines', () => {
     for (const viaArrays of [false, true]) {
@@ -366,7 +372,8 @@ describe('splitPassThroughStepOutput', () => {
 
   it('handles the SINGULAR `blob` key and a non-object output', () => {
     expect(
-      splitPassThroughStepOutput({ blob: { url: BLOB_URL, available: true } }).media
+      splitPassThroughStepOutput({ blob: { url: BLOB_URL, available: true, nsfwLevel: 'pg' } })
+        .media
     ).toHaveLength(1);
     expect(splitPassThroughStepOutput('just text')).toEqual({
       media: [],
@@ -389,7 +396,7 @@ describe('snapshotFromWorkflow — pass-through step', () => {
   it('routes image blobs to imageUrls and forwards the REST as stepOutputs', () => {
     const snap = snapshotFromWorkflow(
       workflowWithPassThroughStep({
-        blobs: [{ url: BLOB_URL, available: true }],
+        blobs: [{ url: BLOB_URL, available: true, nsfwLevel: 'pg' }],
         text: 'a model reply',
       }) as never,
       TEST_OUTPUT_CEILING
@@ -420,7 +427,7 @@ describe('snapshotFromWorkflow — pass-through step', () => {
   // channel with no moderation posture.
   it('DROPS a foreign step with the same $type but a different name', () => {
     const wf = workflowWithPassThroughStep(
-      { blobs: [{ url: BLOB_URL, available: true }], text: 'secret' },
+      { blobs: [{ url: BLOB_URL, available: true, nsfwLevel: 'pg' }], text: 'secret' },
       'some-other-step'
     );
     const snap = snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING);
@@ -456,12 +463,12 @@ describe('snapshotFromWorkflow — pass-through step', () => {
           {
             $type: 'textToImage',
             name: 't',
-            output: { images: [{ url: 'https://i/x.png', available: true }] },
+            output: { images: [{ url: 'https://i/x.png', available: true, nsfwLevel: 'pg' }] },
           },
           {
             $type: PASS_THROUGH_TYPE,
             name: 'orchestrator-added',
-            output: { blobs: [{ url: BLOB_URL, available: true }] },
+            output: { blobs: [{ url: BLOB_URL, available: true, nsfwLevel: 'pg' }] },
           },
         ],
       } as never,
@@ -490,7 +497,7 @@ describe('snapshotFromWorkflow — pass-through step', () => {
         steps: [
           {
             $type: 'textToImage',
-            output: { images: [{ url: 'https://i/x.png', available: true }] },
+            output: { images: [{ url: 'https://i/x.png', available: true, nsfwLevel: 'pg' }] },
           },
         ],
       } as never,
@@ -508,7 +515,7 @@ describe('snapshotFromWorkflow — pass-through step', () => {
         steps: [
           {
             $type: 'customComfy',
-            output: { blobs: [{ url: 'https://i/c.png', available: true }] },
+            output: { blobs: [{ url: 'https://i/c.png', available: true, nsfwLevel: 'pg' }] },
           },
         ],
       } as never,
@@ -595,7 +602,7 @@ describe('the gated read over an Image row a pass-through publish would produce'
   function projectedOutput() {
     const projected = projectAppWorkflow(
       workflowWithPassThroughStep({
-        blobs: [{ url: BLOB_URL, available: true, width: 512, height: 384 }],
+        blobs: [{ url: BLOB_URL, available: true, nsfwLevel: 'pg', width: 512, height: 384 }],
       }) as never,
       TEST_OUTPUT_CEILING
     );
@@ -717,7 +724,7 @@ describe('3D output labels (Model3dBlob format + variant)', () => {
     model: m3d('a', 'glb'),
     fbxModel: m3d('b', 'fbx'),
     // An IMAGE blob beside them: lifted to media, never labelled.
-    thumbnail: { id: 'blob_t', type: 'image', url: u('t'), available: true },
+    thumbnail: { id: 'blob_t', type: 'image', url: u('t'), available: true, nsfwLevel: 'pg' },
     riggedModel: m3d('c', 'usdz'),
     riggedFbxModel: m3d('d', 'obj'),
     // Not available → dropped from media, so it gains no label either.
@@ -767,7 +774,14 @@ describe('3D output labels (Model3dBlob format + variant)', () => {
 
   it('keys on the blob’s own discriminator: no `model3d` type or no format → no label', () => {
     const { media, model3d } = splitPassThroughStepOutput({
-      notA3d: { id: 'k', type: 'image', format: 'glb', url: u('k'), available: true },
+      notA3d: {
+        id: 'k',
+        type: 'image',
+        format: 'glb',
+        url: u('k'),
+        available: true,
+        nsfwLevel: 'pg',
+      },
       noFormat: { id: 'l', type: 'model3d', url: u('l'), available: true },
     });
     // Both still lifted to media exactly as before…

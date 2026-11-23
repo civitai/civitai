@@ -3,6 +3,7 @@ import type { ComponentProps } from 'react';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
 import {
   ServiceBuyerDisclosure,
+  ServiceOfferingLicense,
   ServiceOfferingTerms,
 } from '~/components/CreatorShop/Services/deals/ServiceRequestModal';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -23,6 +24,7 @@ export default function ServiceBuyerPreviewModal(
         </div>
         <ServiceOfferingTerms offering={card.offering} sellerUsername={card.sellerUsername} />
         <ServiceBuyerDisclosure offering={card.offering} />
+        <ServiceOfferingLicense offering={card.offering} />
       </Stack>
     </Modal>
   );

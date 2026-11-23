@@ -667,12 +667,12 @@ export async function sweepOrphanedArchives(
   deps: Pick<HibernationDeps, 'repo' | 'store' | 'now' | 'report'> & {
     isMissingTable: (err: unknown) => boolean;
     /**
-     * Whether the account is under a legal hold (`isAccountUnderLegalHold`): `null` means it could
+     * Whether the account's content is held (`isContentRemovalHeld`): `null` means it could
      * not be read, and counts as held.
      */
     isUnderLegalHold: (userId: number) => Promise<boolean | null>;
     /**
-     * The same check for many users in one lookup (`areAccountsUnderLegalHold`): `true` is held.
+     * The same check for many users, batched (`areContentRemovalsHeld`): `true` is held.
      * A user it leaves out, or a lookup that throws, counts as held.
      */
     areUnderLegalHold: (userIds: number[]) => Promise<Map<number, boolean>>;

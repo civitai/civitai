@@ -1,5 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as UserService from '~/server/services/user.service';
@@ -73,7 +74,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text,
-      "bannerId" int
+      "bannerId" int, availability "Availability" DEFAULT 'Public', "userId" int
     );
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
@@ -102,19 +103,31 @@ beforeAll(async () => {
     INSERT INTO "Image" (id, "postId") VALUES (105, 1);
     -- 106 is rated R on a restricted base model.
     INSERT INTO "Image" (id, "postId", "nsfwLevel", "modelRestricted") VALUES (106, 1, 4, true);
+    -- 107 and 108 are held for review.
+    INSERT INTO "Image" (id, "postId", "needsReview") VALUES (107, 1, 'csam'), (108, 1, 'minor');
     INSERT INTO "Model" (id, status, "sfwName") VALUES (2, 'Published', 'Safe name');
     INSERT INTO "ImageResourceHelper" ("imageId", "modelVersionId", "modelId", "modelName") VALUES
       (105, 12, 2, 'm');
     INSERT INTO "ImageResourceHelper" ("imageId", "modelVersionId", "modelId", "modelName") VALUES
-      (101, 11, 1, 'm'), (102, 11, 1, 'm'), (103, 11, 1, 'm'), (104, 11, 1, 'm'), (106, 11, 1, 'm');
+      (101, 11, 1, 'm'), (102, 11, 1, 'm'), (103, 11, 1, 'm'), (104, 11, 1, 'm'), (106, 11, 1, 'm'),
+      (107, 11, 1, 'm'), (108, 11, 1, 'm');
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
 });
 
-const call = async (id: number, who: Who) => {
+// `scoped`: a personal key limited to reading media; without it the call is a browser session.
+const call = async (id: number, who: Who, { scoped = false } = {}) => {
   const cache = { canCache: true, skip: false };
-  const ctx = { user: viewers[who], features: { canViewNsfw: true }, cache };
+  const key = scoped
+    ? {
+        apiKeyId: 9,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 9 },
+        tokenScope: TokenScope.MediaRead,
+      }
+    : {};
+  const ctx = { ...key, user: viewers[who], features: { canViewNsfw: true }, cache };
   const resources = await getImageResourcesHandler({ input: { id }, ctx: ctx as never });
   return { versionIds: resources.map((r) => r.modelVersionId), skip: cache.skip };
 };
@@ -124,6 +137,8 @@ const hidden: [string, number][] = [
   ['a blocked image', 103],
   ['an image on a Private post', 104],
   ['an R image on a restricted base model', 106],
+  ['an image held for csam review', 107],
+  ['an image held for minor review', 108],
 ];
 
 describe('image.getResources follows by-id image visibility', () => {
@@ -138,6 +153,19 @@ describe('image.getResources follows by-id image visibility', () => {
       }
     );
   });
+
+  it.each([
+    ['csam', 107],
+    ['minor', 108],
+  ])(
+    'returns an image held for %s review to its owner on a session, not on a scoped key',
+    async (_l, id) => {
+      expect(await call(id, 'owner')).toEqual({ versionIds: [11], skip: true });
+      await expect(call(id, 'owner', { scoped: true })).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      });
+    }
+  );
 
   it.each(Object.keys(viewers) as Who[])(
     'returns a clean image’s resources to a %s viewer, edge-cacheable',

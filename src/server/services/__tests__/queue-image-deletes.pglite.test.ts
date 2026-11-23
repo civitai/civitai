@@ -1,11 +1,13 @@
 import { PGlite } from '@electric-sql/pglite';
 import {
+  cleanupBlocked,
   deleteImageRows,
-  dequeueImageDeletes,
   IMAGE_USES,
+  imageNotUsed,
   queueImageDeletes,
   queueImageStorageDelete,
-  unusedImage,
+  readDueDeletes,
+  settleDeletes,
 } from '@civitai/db-queries/content-deletion';
 import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { Prisma } from '@prisma/client';
@@ -27,7 +29,7 @@ beforeAll(async () => {
   await pg.exec(`
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
     CREATE TYPE "JobQueueType" AS ENUM (
-      'ImageDelete', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync'
+      'PendingDelete', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync'
     );
     CREATE TABLE "JobQueue" (
       "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
@@ -47,6 +49,7 @@ beforeEach(async () => {
     'ImageReport',
     'Report',
     'CsamReport',
+    'CsamQueueSetAside',
     'Cosmetic',
     'CosmeticShopItem',
     'ItemDefinition',
@@ -74,9 +77,11 @@ const addImage = (id: number, over: Record<string, unknown> = {}) => {
 const queued = async () =>
   (
     await pg.query<{ entityId: number; data: unknown }>(
-      `SELECT "entityId", data FROM "JobQueue" WHERE type = 'ImageDelete' ORDER BY "entityId"`
+      `SELECT "entityId", data FROM "JobQueue" WHERE type = 'PendingDelete' ORDER BY "entityId"`
     )
   ).rows;
+
+const CLEANUP = { cleanup: true };
 
 const queue = (ids: number[], moderatorDelete?: boolean) =>
   queueImageDeletes(db, ids, { ownerId: OWNER, moderatorDelete });
@@ -87,16 +92,12 @@ describe('queueImageDeletes', () => {
 
     await queue([1]);
 
-    expect(await queued()).toEqual([{ entityId: 1, data: {} }]);
+    expect(await queued()).toEqual([{ entityId: 1, data: CLEANUP }]);
   });
 
   it.each([
     ["someone else's", { userId: SOMEONE_ELSE }],
     ['in a post', { postId: 500 }],
-    ['awaiting review', { needsReview: 'minor' }],
-    ['blocked', { ingestion: 'Blocked' }],
-    ['rated blocked', { nsfwLevel: 32 }],
-    ['blocked for a reason', { blockedFor: 'tos' }],
   ])('skips an image %s', async (_, over) => {
     await addImage(1, over);
 
@@ -105,13 +106,17 @@ describe('queueImageDeletes', () => {
     expect(await queued()).toEqual([]);
   });
 
-  it('skips a reported image', async () => {
-    await addImage(1);
-    await pg.exec(`INSERT INTO "ImageReport" ("imageId") VALUES (1)`);
+  // The job waits on moderation (`cleanupBlocked`); the queue only says the parent is done with it.
+  it('queues an image under moderation', async () => {
+    await addImage(1, { needsReview: 'csam' });
+    await addImage(2, { blockedFor: 'tos' });
 
-    await queue([1]);
+    await queue([1, 2]);
 
-    expect(await queued()).toEqual([]);
+    expect(await queued()).toEqual([
+      { entityId: 1, data: CLEANUP },
+      { entityId: 2, data: CLEANUP },
+    ]);
   });
 
   it.each(Object.entries(IMAGE_USES))(
@@ -154,7 +159,7 @@ describe('queueImageDeletes', () => {
 
     await queue([1]);
 
-    expect(await queued()).toEqual([{ entityId: 1, data: {} }]);
+    expect(await queued()).toEqual([{ entityId: 1, data: CLEANUP }]);
   });
 
   it("queues each image once, adding a moderator's flag but never taking it off", async () => {
@@ -166,119 +171,160 @@ describe('queueImageDeletes', () => {
     await queue([1]);
 
     expect(await queued()).toEqual([
-      { entityId: 1, data: { moderatorDelete: true } },
-      { entityId: 2, data: {} },
+      { entityId: 1, data: { ...CLEANUP, moderatorDelete: true } },
+      { entityId: 2, data: CLEANUP },
     ]);
   });
 
-  describe("a moderator's delete", () => {
-    it.each([
-      ['awaiting review', { needsReview: 'minor' }],
-      ['blocked', { ingestion: 'Blocked', blockedFor: 'tos', nsfwLevel: 32 }],
-    ])('queues an image %s', async (_, over) => {
-      await addImage(1, over);
-
-      await queue([1], true);
-
-      expect(await queued()).toEqual([{ entityId: 1, data: { moderatorDelete: true } }]);
-    });
-
-    it('queues an image reported for something other than CSAM', async () => {
-      await addImage(1);
-      await pg.exec(`INSERT INTO "Report" (id, reason) VALUES (1, 'TOSViolation');
-        INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (1, 1)`);
-
-      await queue([1], true);
-
-      expect(await queued()).toEqual([{ entityId: 1, data: { moderatorDelete: true } }]);
-    });
-
-    it.each<[string, () => Promise<unknown>]>([
-      ['under CSAM review', () => addImage(1, { needsReview: 'csam' })],
-      ['blocked for CSAM', () => addImage(1, { blockedFor: 'CSAM' })],
-      [
-        'reported for CSAM',
-        async () => {
-          await addImage(1);
-          await pg.exec(`INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
-            INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (1, 1)`);
-        },
-      ],
-      ...['[{"id": 1}]', '[1]', '["1"]'].map(
-        (images) =>
-          [
-            `listed in a CSAM report as ${images}`,
-            async () => {
-              await addImage(1);
-              await pg.exec(`INSERT INTO "CsamReport" (images) VALUES ('${images}')`);
-            },
-          ] as [string, () => Promise<unknown>]
-      ),
-    ])('skips an image %s', async (_, setup) => {
-      await setup();
-      // A malformed report holds nothing back, and does not stop the rest.
-      await pg.exec(`INSERT INTO "CsamReport" (images) VALUES ('{}'), ('[null]')`);
-      await addImage(2);
-
-      await queue([1, 2], true);
-
-      expect(await queued()).toEqual([{ entityId: 2, data: { moderatorDelete: true } }]);
-    });
-
-    it('still skips an image someone else uses', async () => {
-      await addImage(1, { postId: 500 });
-      await addImage(2);
-      await pg.exec(`INSERT INTO "ImageConnection" ("imageId") VALUES (2)`);
-
-      await queue([1, 2], true);
-
-      expect(await queued()).toEqual([]);
-    });
-  });
-
-  // The image-deletes job's DELETE re-checks it, with no owner: the queue already chose the owner's.
-  describe('re-checked when the delete runs', () => {
-    const stillUnused = async (moderatorDelete = false) =>
-      (
-        await sql<{ id: number }>`SELECT id FROM "Image" WHERE ${unusedImage({
-          moderatorDelete,
-        })}`.execute(db)
-      ).rows.map((row) => row.id);
-
-    it('leaves an image linked again after it was queued', async () => {
-      await addImage(1);
-      await addImage(2);
-      await queue([1, 2]);
-      await pg.exec(`INSERT INTO "Article" ("coverId") VALUES (1)`);
-
-      const deleted = await deleteImageRows(db, {
-        ids: [1, 2],
-        actor: { system: 'test' },
-        where: unusedImage({ moderatorDelete: false }),
-      });
-
-      expect(deleted.map((row) => row.id)).toEqual([2]);
-    });
-
-    it("keeps the moderator's rule", async () => {
-      await addImage(1, { ingestion: 'Blocked' });
-      await addImage(2, { needsReview: 'csam' });
-
-      expect([await stillUnused(), await stillUnused(true)]).toEqual([[], [1]]);
-    });
-  });
-
-  it("dequeues only the listed images' delete rows", async () => {
+  it('leaves an image linked again after it was queued to the delete', async () => {
     await addImage(1);
     await addImage(2);
     await queue([1, 2]);
+    await pg.exec(`INSERT INTO "Article" ("coverId") VALUES (1)`);
+
+    const deleted = await deleteImageRows(db, {
+      ids: [1, 2],
+      actor: { system: 'test' },
+      where: imageNotUsed(),
+    });
+
+    expect(deleted.map((row) => row.id)).toEqual([2]);
+  });
+});
+
+// Every part of the child-safety case: pending-deletes.pglite.test.ts.
+describe('cleanupBlocked', () => {
+  const waits = async (moderatorDelete: boolean) =>
+    (
+      await sql<{ id: number }>`SELECT id FROM "Image" WHERE ${cleanupBlocked(
+        moderatorDelete,
+        sql<boolean>`false`
+      )} ORDER BY id`.execute(db)
+    ).rows.map((row) => row.id);
+  const report = (id: number, reason: string, status = 'Pending') =>
+    pg.exec(`INSERT INTO "Report" (id, reason, status) VALUES (${id}, '${reason}', '${status}');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (${id}, ${id})`);
+
+  it.each([
+    ['awaiting review', { needsReview: 'minor' }, false],
+    ['blocked', { ingestion: 'Blocked' }, false],
+    ['rated blocked', { nsfwLevel: 32 }, false],
+    ['blocked for a reason', { blockedFor: 'tos' }, false],
+    ['under CSAM review', { needsReview: 'csam' }, true],
+  ])(
+    "keeps an owner's cleanup of an image %s, and a moderator's only for CSAM",
+    async (_, over, csam) => {
+      await addImage(1, over);
+
+      expect(await waits(false)).toEqual([1]);
+      expect(await waits(true)).toEqual(csam ? [1] : []);
+    }
+  );
+
+  it("keeps an owner's cleanup while any report is open, and only until it is ruled on", async () => {
+    await addImage(1);
+    await addImage(2);
+    await addImage(3);
+    await report(1, 'TOSViolation');
+    await report(2, 'TOSViolation', 'Actioned');
+    await report(3, 'CSAM', 'Processing');
+
+    expect(await waits(false)).toEqual([1, 3]);
+    expect(await waits(true)).toEqual([3]);
+  });
+
+  it('lets a cleanup of an image the CSAM queue dismissed go', async () => {
+    await addImage(1, { needsReview: 'csam' });
+    await pg.exec(`INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES (1, 'Dismissed')`);
+
+    expect([await waits(false), await waits(true)]).toEqual([[], []]);
+  });
+});
+
+describe('readDueDeletes and settleDeletes', () => {
+  const QUEUE = 'Image';
+  const rows = async () =>
+    (
+      await pg.query<{ entityId: number; type: string; data: Record<string, unknown> }>(
+        `SELECT "entityId", type::text AS type, CASE WHEN "createdAt" > now() THEN data || '{"waiting": true}' ELSE data END AS data
+         FROM "JobQueue" ORDER BY "entityId", type`
+      )
+    ).rows;
+
+  beforeEach(async () => {
+    for (const id of [1, 2, 3, 4]) await addImage(id);
+    await queue([1, 2, 3, 4]);
     await queueImageStorageDelete(db, { id: 1, url: 'a' });
+  });
 
-    await dequeueImageDeletes(db, [1]);
+  it("settles each delete one way and leaves other queues' rows alone", async () => {
+    await settleDeletes(db, QUEUE, { done: [1], waiting: [2], failed: [3] });
 
-    expect(await queued()).toEqual([{ entityId: 2, data: {} }]);
-    const storage = await pg.query(`SELECT 1 FROM "JobQueue" WHERE type = 'ImageStorageDelete'`);
-    expect(storage.rows).toHaveLength(1);
+    const after = await rows();
+    expect(after.map((row) => [row.entityId, row.type])).toEqual([
+      [1, 'ImageStorageDelete'],
+      [2, 'PendingDelete'],
+      [3, 'PendingDelete'],
+      [4, 'PendingDelete'],
+    ]);
+    expect(after[1].data).toEqual({ ...CLEANUP, waiting: true });
+    expect(after[2].data).toEqual({ ...CLEANUP, attempted: true });
+  });
+
+  it('holds back a waiting delete until its time comes, and takes retries after first attempts', async () => {
+    await settleDeletes(db, QUEUE, { waiting: [2], failed: [1] });
+
+    expect((await readDueDeletes(db, QUEUE, 10)).map((row) => [row.id, row.attempted])).toEqual([
+      [3, false],
+      [4, false],
+      [1, true],
+    ]);
+
+    await pg.exec(`UPDATE "JobQueue" SET "createdAt" = now()
+      WHERE "entityId" = 2 AND type = 'PendingDelete'`);
+    expect((await readDueDeletes(db, QUEUE, 10)).map((row) => row.id)).toContain(2);
+  });
+
+  it("waits an hour for a cleanup, and one run for an owner's delete", async () => {
+    // Four minutes: due again by the next run of a job every five.
+    await pg.exec(`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+      VALUES (9, 'Image', 'PendingDelete', '{"ownerId": 7}')`);
+
+    await settleDeletes(db, QUEUE, { waiting: [2, 9] });
+
+    const { rows: due } = await pg.query<{ entityId: number; minutes: number }>(
+      `SELECT "entityId", round(extract(epoch FROM "createdAt" - now()) / 60)::int AS minutes
+       FROM "JobQueue" WHERE "entityId" IN (2, 9) AND type = 'PendingDelete' ORDER BY "entityId"`
+    );
+    expect(due).toEqual([
+      { entityId: 2, minutes: 60 },
+      { entityId: 9, minutes: 4 },
+    ]);
+  });
+
+  it('retries a once-waiting delete that then fails on the next run, not after another wait', async () => {
+    await settleDeletes(db, QUEUE, { waiting: [2] });
+    // Due, and taken.
+    await pg.exec(`UPDATE "JobQueue" SET "createdAt" = now() WHERE "entityId" = 2`);
+    await settleDeletes(db, QUEUE, { failed: [2] });
+
+    expect((await readDueDeletes(db, QUEUE, 10)).find((row) => row.id === 2)).toEqual({
+      id: 2,
+      data: { ...CLEANUP, attempted: true },
+      attempted: true,
+    });
+  });
+
+  it('takes a failed delete that then waits as a first attempt again', async () => {
+    await settleDeletes(db, QUEUE, { failed: [2] });
+    await settleDeletes(db, QUEUE, { waiting: [2] });
+    await pg.exec(`UPDATE "JobQueue" SET "createdAt" = now() WHERE "entityId" = 2`);
+
+    expect((await readDueDeletes(db, QUEUE, 10)).find((row) => row.id === 2)).toEqual({
+      id: 2,
+      data: CLEANUP,
+      attempted: false,
+    });
   });
 });
 
@@ -289,7 +335,7 @@ describe('queueImageDeletes', () => {
 const NOT_A_USE: Record<string, string> = {
   user: 'the owner, checked by userId',
   post: 'checked by postId',
-  reports: 'a reported image is skipped on its own',
+  reports: 'an open report makes the cleanup wait on its own',
   reactions: 'reactions to this image',
   thread: 'comments on this image',
   tags: 'its tags',

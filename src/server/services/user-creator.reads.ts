@@ -34,6 +34,7 @@ const userCreatorSelect = {
   settings: true,
   excludeFromLeaderboards: true,
   links: {
+    where: { user: { bannedAt: null } },
     select: {
       url: true,
       type: true,

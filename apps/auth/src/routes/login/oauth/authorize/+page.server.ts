@@ -30,6 +30,7 @@ import {
   parseOfflineBuzzCap,
   readConsentForOffline,
 } from '$lib/server/oauth/offline-grant';
+import { offlineAllowedForClient } from '$lib/server/oauth/listing-offline';
 
 // Consent screen for the OAuth authorization_code flow. The §D /authorize endpoint redirects here
 // (303) when a user has no stored consent for the requested (client, scope). Approve POSTs straight
@@ -101,7 +102,13 @@ export const load: PageServerLoad = async ({ url, locals, cookies, setHeaders })
   // user sets one). Off, the page is unchanged.
   let offline: { cap: SimpleBuzzLimit | null; custom: boolean; granted: boolean } | null = null;
   const offlineParams: Record<string, string> = {};
-  if (requested.offlineAccess && (await isOfflineGrantOn())) {
+  // A listed connect client whose approved listing does not declare offline access gets no line
+  // (listing-offline.ts), matching what /authorize will do with the request.
+  if (
+    requested.offlineAccess &&
+    (await isOfflineGrantOn()) &&
+    (await offlineAllowedForClient(clientId))
+  ) {
     const proposed = parseOfflineBuzzCap(
       url.searchParams.get('offline_buzz_limit') ?? undefined,
       url.searchParams.get('offline_buzz_period') ?? undefined

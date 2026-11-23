@@ -6,6 +6,7 @@ import { ThreadSort } from '~/server/common/enums';
 import type { kyselyV3Read } from '~/server/db/kyselyDb';
 import { emptyReactionCounts } from '~/shared/utils/comment-reactions';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
+import { maskProfanityInHtml, type MaskedText } from '~/server/services/profanity-mask.service';
 
 /**
  * Comment reads on CommentV3 for the v3 comment suite (`docs/plans/comments-v3-article-flip.md`).
@@ -43,6 +44,11 @@ export type CommentV3Item = {
   replyToId: number | null;
   depth: number;
   content: string;
+  /**
+   * `content` with profanity masked, or null when it is clean. See `MaskedText`. Absent only when
+   * masking failed after a write was saved.
+   */
+  maskedContent?: MaskedText;
   createdAt: Date;
   updatedAt: Date;
   pinnedAt: Date | null;
@@ -238,14 +244,18 @@ async function decorate(
   const myReactions = new Map<number, ReviewReactions[]>();
   for (const r of mine.rows)
     myReactions.set(r.commentId, [...(myReactions.get(r.commentId) ?? []), r.reaction]);
+  const masked = await maskProfanityInHtml(
+    rows.map((r) => (r.deletedAt === null ? r.content : ''))
+  );
 
-  return rows.map((r) => ({
+  return rows.map((r, i) => ({
     id: r.id,
     deleted: r.deletedAt !== null,
     parentId: r.parentId,
     replyToId: r.replyToId,
     depth: r.depth,
     content: r.deletedAt === null ? r.content : '',
+    maskedContent: masked[i],
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
     pinnedAt: r.pinnedAt,

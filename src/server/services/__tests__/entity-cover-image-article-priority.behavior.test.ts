@@ -49,7 +49,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "publishedAt" timestamp, "userId" int DEFAULT 1,
-      status text DEFAULT 'Published', ingestion text DEFAULT 'Scanned', "bannerId" int
+      status text DEFAULT 'Published', ingestion text DEFAULT 'Scanned', "bannerId" int, availability "Availability" DEFAULT 'Public'
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     CREATE TABLE "Model" (

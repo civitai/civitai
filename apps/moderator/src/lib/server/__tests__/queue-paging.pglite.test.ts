@@ -26,6 +26,7 @@ const { getImageTagReviewQueue } = await import('../image-tags.service');
 const { getImageRatingRequests } = await import('../image-rating-review.service');
 
 const SCHEMA = `
+CREATE TABLE "JobQueue" ("entityId" INTEGER, "entityType" TEXT, "type" TEXT, data JSONB);
 CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'PendingManualAssignment');
 CREATE TABLE "User" (
   "id" INTEGER PRIMARY KEY, "username" TEXT, "image" TEXT,
@@ -147,6 +148,36 @@ describe('keyset queues reach every item exactly once', () => {
 
     expect(seen).toEqual(NEWEST_FIRST);
   });
+
+  it.each(LIMITS)(
+    'reported image queue at %i per page, an image its owner deleted first',
+    async (limit) => {
+      await insertImages(`"nsfwLevel"`, () => `1`);
+      for (const [n, imageId] of NEWEST_FIRST.entries()) {
+        await db.exec(`INSERT INTO "Report" ("id") VALUES (${501 + n})`);
+        await db.exec(`INSERT INTO "ImageReport" VALUES (${imageId}, ${501 + n})`);
+      }
+      const requested = NEWEST_FIRST.at(-1)!;
+      await db.exec(
+        `INSERT INTO "JobQueue" VALUES (${requested}, 'Image', 'PendingDelete', '{"ownerId": 1}')`
+      );
+      // Not a parent's cleanup, another queue's row, or a post's request with an image's id.
+      await db.exec(`INSERT INTO "JobQueue" VALUES
+        (${NEWEST_FIRST[0]}, 'Image', 'PendingDelete', '{"cleanup": true}'),
+        (${NEWEST_FIRST[1]}, 'Image', 'ImageStorageDelete', NULL),
+        (${NEWEST_FIRST[2]}, 'Post', 'PendingDelete', '{"ownerId": 1}')`);
+
+      const seen = await walkPages<number>((cursor) =>
+        getReportedImageQueue({ browsingLevel: 1, cursor, limit })
+      );
+
+      expect(seen).toEqual([requested, ...NEWEST_FIRST.slice(0, -1)]);
+      const { items } = await getReportedImageQueue({ browsingLevel: 1, limit });
+      expect(items.map((item) => item.deleteRequested)).toEqual(
+        items.map((item) => item.id === requested)
+      );
+    }
+  );
 
   it.each(LIMITS)('comic panel queue at %i per page', async (limit) => {
     await insertImages(`"needsReview"`, () => `'minor'`);

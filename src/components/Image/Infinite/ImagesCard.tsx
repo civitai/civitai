@@ -47,7 +47,7 @@ import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
-import { retractedMediaUrl } from '~/components/RetractedMedia/retracted-media';
+import { useRetractedMedia } from '~/components/RetractedMedia/retracted-media';
 import { useStorylineForPost } from '~/components/Storyline/StorylineBatchProvider';
 import { StorylinePill } from '~/components/Storyline/StorylinePill';
 import clsx from 'clsx';
@@ -107,7 +107,13 @@ function ImagesCardContent({
   const isPending = image.ingestion === ImageIngestionStatus.Pending;
   const isScanned = image.ingestion === ImageIngestionStatus.Scanned;
   const isModerator = currentUser?.isModerator;
-  const retractedSrc = features.modRetractedMedia ? retractedMediaUrl(image, currentUser) : null;
+  const {
+    src: retractedSrc,
+    onCdnError,
+    mediaRef,
+  } = useRetractedMedia(image, features.modRetractedMedia ? currentUser : null, {
+    cdnLeg: features.modRetractedMediaCdnLeg,
+  });
 
   const tags = useMemo(() => {
     if (!image.tags) return undefined;
@@ -176,7 +182,7 @@ function ImagesCardContent({
                       src={retractedSrc}
                       type={image.type}
                       alt={image.name ?? undefined}
-                      className={clsx(cardClasses.image, 'opacity-30')}
+                      className={clsx(cardClasses.image, { ['opacity-30']: isBlocked })}
                     />
                   ) : safe ? (
                     <EdgeMedia2
@@ -196,6 +202,9 @@ function ImagesCardContent({
                       contain
                       loading="lazy"
                       imageId={image.id}
+                      onError={onCdnError}
+                      mediaRef={mediaRef}
+                      videoProps={{ onError: onCdnError }}
                       // fadeIn
                     />
                   ) : (

@@ -631,6 +631,17 @@
     "Wan Video 3.0",
     "YuE2"
   ],
+  "generationDisabled": [
+    "Ideogram 4.0",
+    "SD 3",
+    "SD 3.5",
+    "SD 3.5 Large",
+    "SD 3.5 Large Turbo",
+    "SD 3.5 Medium",
+    "SDXL Turbo",
+    "SVD",
+    "SVD XT"
+  ],
   "matureRestrictedModels": [
     "fibo 2.0",
     "fibo 2.0 turbo",

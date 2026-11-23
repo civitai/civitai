@@ -104,6 +104,12 @@ func (s *Server) NoteProxyError(r *http.Request, reason string, err error) {
 
 // PublicEndpoint is the feed_endpoint of a public path ("" for any other).
 func PublicEndpoint(path string) string {
+	switch {
+	case path == V1ModelsPath:
+		return EndpointV1Models
+	case strings.HasPrefix(path, V1ModelsPath+"/"):
+		return EndpointV1ModelsID
+	}
 	switch strings.TrimPrefix(path, "/api/trpc/") {
 	case Procedure:
 		return EndpointAsPosts
@@ -118,11 +124,16 @@ func PublicEndpoint(path string) string {
 // proxy hands r to the fallback proxy, inside a client span `fallback-proxy <endpoint>` when tracing
 // is on, so the proxy's injected traceparent makes the Node app's span its child.
 func (s *Server) proxy(w http.ResponseWriter, r *http.Request, endpoint string) {
+	s.proxyVia(s.Fallback, w, r, endpoint)
+}
+
+// proxyVia is proxy to upstream (Fallback, or V1Fallback for the REST model routes).
+func (s *Server) proxyVia(upstream http.Handler, w http.ResponseWriter, r *http.Request, endpoint string) {
 	if s.Tracer == nil {
-		s.Fallback.ServeHTTP(w, r)
+		upstream.ServeHTTP(w, r)
 		return
 	}
 	ctx, span := s.Tracer.Start(r.Context(), "fallback-proxy "+endpoint, trace.WithSpanKind(trace.SpanKindClient))
 	defer span.End()
-	s.Fallback.ServeHTTP(w, r.WithContext(ctx))
+	upstream.ServeHTTP(w, r.WithContext(ctx))
 }

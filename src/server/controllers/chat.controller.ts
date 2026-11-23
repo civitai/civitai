@@ -1,4 +1,9 @@
 import { Prisma } from '@prisma/client';
+import {
+  maskProfanityInChat,
+  withMaskedChatContent,
+  withMaskedChatPreviews,
+} from '~/server/services/profanity-mask.service';
 import { getModerationAccountId } from '~/server/auth/moderation-account';
 import { getMessageAuthors } from '~/server/services/message-as-civitai.service';
 import { TRPCError } from '@trpc/server';
@@ -212,7 +217,8 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: ProtectedContext })
       const clearedAt = chat.chatMembers.find((cm) => cm.userId === userId)?.clearedAt;
       return !clearedAt || chat.messages.some((msg) => msg.createdAt > clearedAt);
     });
-    return (await scopeChatPreviews(listed, userId)).map((chat) => ({
+    const scoped = await scopeChatPreviews(listed, userId);
+    return (await withMaskedChatPreviews(scoped)).map((chat) => ({
       ...chat,
       chatMembers: chat.chatMembers.map(scopeMemberPrivacy(userId)),
     }));
@@ -532,6 +538,7 @@ export const modifyUserHandler = async ({
         status: true,
         leftAt: true,
         isOwner: true,
+        filteredAt: true,
         user: {
           select: {
             username: true,
@@ -628,9 +635,19 @@ export const modifyUserHandler = async ({
 
     // TODO if a moderator rejoins, auto-rejoin other users
 
-    // Already there (a stale tab, a double click): nothing to write. Rewriting
-    // kickedAt or leftAt would also move the point a member's reads stop at.
+    // Already there (a stale tab, a double click): nothing to write but the accept
+    // below. Rewriting kickedAt or leftAt would move the point a member's reads stop at.
     if (status === existing.status) {
+      // Joined but filtered: a message after they deleted the chat put it back in
+      // Requests, and accepting it is this Join.
+      if (status === ChatMemberStatus.Joined && existing.filteredAt) {
+        const { count } = await dbWrite.chatMember.updateMany({
+          where: { id: chatMemberId, status: ChatMemberStatus.Joined },
+          data: { filteredAt: null },
+        });
+        if (count === 0) throw throwConflictError('This membership changed; reload and try again.');
+        await signalChatMembersUpdated({ chatId: existing.chat.id, userIds: [existing.userId] });
+      }
       // primary: the row this request is about, read back as it stands
       return await dbWrite.chatMember.findUniqueOrThrow({ where: { id: chatMemberId } });
     }
@@ -969,7 +986,7 @@ export const getInfiniteMessagesHandler = async ({
 
     return {
       nextCursor,
-      items,
+      items: await withMaskedChatContent(items),
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -1029,8 +1046,10 @@ export const getMessageByIdHandler = async ({
       throw throwNotFoundError(`No message found for ID (${input.messageId})`);
     }
 
+    const [maskedContent] = await maskProfanityInChat([msg.content]);
     return {
       content: msg.content,
+      maskedContent,
       contentType: msg.contentType,
       user: msg.user,
     };
@@ -1122,6 +1141,8 @@ export const updateMessageHandler = async ({
     // Deleted between the check above and the write.
     if (previousContent === null) throw throwBadRequestError('Deleted messages cannot be edited');
     if (isOwn) queueScamScan({ entityType: 'ChatMessage', entityId: existing.id });
+    // The edit is saved; a masking failure leaves the copy absent rather than failing it.
+    const [maskedContent] = await maskProfanityInChat([trimmed]).catch(() => [undefined]);
 
     const before = truncateAuditValue(previousContent);
     const after = truncateAuditValue(trimmed);
@@ -1150,12 +1171,14 @@ export const updateMessageHandler = async ({
             messageId: existing.id,
             chatId: existing.chatId,
             content: trimmed,
+            maskedContent,
             editedAt,
           }),
         }
       )
     ).catch(() => undefined);
 
+    // No masked copy in the write response; viewers get theirs from the chat signal and reads.
     return { messageId: existing.id, chatId: existing.chatId, content: trimmed };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

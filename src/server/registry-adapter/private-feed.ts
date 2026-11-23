@@ -13,6 +13,24 @@
  * Gates 1–4 are fixed for the token's life; gate 5 re-runs on every poll, which is what turns a
  * revocation into `Delete`s within one {@link PrivateFeedOptions.pollMs}.
  *
+ * A BLOCK-EXCHANGE TOKEN (`VerifiedToken.block`: the hub minted it from an App Block token, and it
+ * carries that token's block, install and ceiling; `auth.jwt.ts`) is held, on every poll, to what
+ * the site's document store would serve the block token itself:
+ *   - its ceiling: a source app whose rating the viewer's audience admits is read only when
+ *     `ratingAllowedForCeiling` (`rating-ceiling.ts`) also admits it for the token's
+ *     `civitai_max_browsing_level`. That is the store's own rule for a block token's import
+ *     (`resolveImportAccess` in `doc-store-access.ts`), the same function: a mature rating (`r`,
+ *     `x`, `xxx`) only under a ceiling with a mature bit, so an SFW host's token reads no mature-rated
+ *     app's records, its own app's or an import's;
+ *   - its block: `decideCollectionRead` is passed the token's `civitai_app_block_id`
+ *     (`DataReader.appBlockId`), and refuses unless that block is still its client's one approved
+ *     block, by the predicate's own resolution (`clientIsOnlySource` / `resolveConsumer`);
+ *   - its install: refused while the install is revoked (uninstalled, turned off, or its publisher
+ *     banned), by the markers the store's `withBlockScope` reads
+ *     ({@link PrivateFeedOptions.instanceRevoked}).
+ * A refusal is a stream that holds nothing, as for gate 5: `Delete`s on the next poll. Any other
+ * token (a user-exchange token included) has no `block`, and none of this applies to it.
+ *
  * A refusal is believed only when it was read: an `apps_disabled` while the run gate's flag cannot
  * be read (a Flipt outage refuses everyone) ends the stream `unavailable` instead of sending
  * `Delete`s ({@link PrivateFeedOptions.runGateReadable}), and so does any failed read.
@@ -25,7 +43,11 @@
  * that subject check.
  *
  * A record's URN carries its stored `record_id`, not its key: a private key is unique only within
- * one user's key space.
+ * one user's key space. The key itself travels beside the body, as the entity's `key`
+ * ({@link PRIVATE_BODY_FORMAT}): the body stays the document its schemas claim, and a private stream
+ * belongs to one user's token, so the key never reaches another user. The public feeds carry none.
+ * The HTTP binding sends it (an SSE upsert is the whole entity); the gRPC binding's `Entity` message
+ * has no field for it.
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import { audienceAdmits, contextAudience } from '~/server/registry-adapter/audience';
@@ -37,6 +59,7 @@ import type { AdapterContext, Change, Entity } from '~/server/registry-adapter/p
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
 import { sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
 import { registryUrn } from '~/server/registry-adapter/urn';
+import { ratingAllowedForCeiling } from '~/server/utils/rating-ceiling';
 import type {
   CollectionReadDecision,
   CollectionReadTarget,
@@ -58,6 +81,14 @@ export function parsePrivateRelays(raw: string | undefined): ReadonlySet<string>
   return new Set((raw ?? '').split(/[\s,]+/).filter(Boolean));
 }
 
+/** Whether the token was presented by one of `relays` (its `act.sub`). */
+export function isListedRelay(
+  relays: ReadonlySet<string>,
+  reader: AdapterContext['reader']
+): boolean {
+  return !!reader?.actor && relays.has(reader.actor);
+}
+
 /** Why gates 1–4 refuse a subscription; null when they pass. */
 export type PrivateGateRefusal = 'anonymous' | 'not_user' | 'relay_not_listed' | 'scope_missing';
 
@@ -68,7 +99,7 @@ export function privateTokenGate(
 ): PrivateGateRefusal | null {
   if (!reader) return 'anonymous';
   if (reader.userId === null) return 'not_user';
-  if (reader.actor === null || !relays.has(reader.actor)) return 'relay_not_listed';
+  if (!isListedRelay(relays, reader)) return 'relay_not_listed';
   if (!hasScope(reader, 'AppDataRead')) return 'scope_missing';
   return null;
 }
@@ -123,6 +154,13 @@ export type PrivateFeedOptions = {
    */
   runGateReadable: (userId: number) => Promise<boolean>;
   /**
+   * Whether a block-exchange token's install is revoked for `userId`'s block token: uninstalled,
+   * turned off, or its publisher banned (`BlockRevocation.isRevoked`, the check `withBlockScope`
+   * runs on every REST call). Asked only for a token with a `block`. Like the store's, a marker
+   * that cannot be read is not a revocation (it answers false).
+   */
+  instanceRevoked: (blockInstanceId: string, userId: number) => Promise<boolean>;
+  /**
    * The private states' store: the same key space as the public feed's, with a retention of its
    * own ({@link PRIVATE_STATE_RETENTION_SECONDS}).
    */
@@ -135,6 +173,23 @@ export type PrivateFeedOptions = {
 
 export const PRIVATE_PAGE = 500;
 const STATE_FORMAT = 'p1';
+/**
+ * The version of what a private entity carries: `k1` is the body plus the record's storage `key`.
+ * It is folded into every private `rev` and into the poll's read digest, so a cursor saved before
+ * keys were carried resumes as a change: its read digest no longer matches, every record's rev
+ * differs, and each is sent again, now with its key. No cursor has to be expired for it.
+ */
+export const PRIVATE_BODY_FORMAT = 'k1';
+
+/** A private entity's rev: the document feed's `docRev`, under {@link PRIVATE_BODY_FORMAT} and the key. */
+export const privateRev = (
+  d: Pick<PrivateFeedDocument, 'key' | 'version' | 'data'>,
+  schemas: readonly string[]
+) =>
+  sha256Hex(sortedKeyJson({ f: PRIVATE_BODY_FORMAT, key: d.key, rev: docRev(d, schemas) })).slice(
+    0,
+    16
+  );
 /** The cursor of a private stream that holds nothing; it names no stored state. */
 export const PRIVATE_EMPTY_CURSOR = `${STATE_FORMAT}.empty`;
 const CURSOR_RE = /^p1\.([0-9a-f]{32})$/;
@@ -147,7 +202,10 @@ type PrivateState = {
   audience: string;
   appId: string | null;
   family: string | null;
-  /** A digest of every (record id, version) read, sent or not: what an unchanged poll compares. */
+  /**
+   * A digest of every (record id, version) read, sent or not, under {@link PRIVATE_BODY_FORMAT}:
+   * what an unchanged poll compares.
+   */
   read: string | null;
   /** When the state was saved, ms: its cursor expires {@link PRIVATE_CURSOR_TTL_MS} after. */
   issuedAt: number;
@@ -244,12 +302,22 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
   ): Promise<{ next: PrivateState; entities: Map<string, Entity> }> {
     const nothing = () => ({ next: emptyState(schema, audience), entities: new Map() });
     if (privateTokenGate(opts.relays, reader) !== null) return nothing();
-    const { subject, userId, clientId } = reader as Reader & { userId: number };
+    const { subject, userId, clientId, block } = reader as Reader & { userId: number };
     const stream = await opts.resolve(schema);
     if (!stream) return nothing();
     const { appId, slug, collection, family } = stream;
+    // A block-exchange token's install, revoked since it was exchanged (see the file comment).
+    if (block && (await opts.instanceRevoked(block.blockInstanceId, userId))) return nothing();
     const decision = await opts.decide(
-      { userId, clientId, matureAllowed: (rating) => audienceAdmits(audience, rating) },
+      {
+        userId,
+        clientId,
+        // The viewer's audience, and for a block-exchange token also its ceiling: the store's rule.
+        matureAllowed: (rating) =>
+          audienceAdmits(audience, rating) &&
+          (block === undefined || ratingAllowedForCeiling(rating, block.maxBrowsingLevel)),
+        ...(block ? { appBlockId: block.appBlockId } : {}),
+      },
       { sourceBlockId: slug, collection }
     );
     if (!decision.ok) {
@@ -273,7 +341,10 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
       opts.source.versions(appId, collection, userId, after, PRIVATE_PAGE)
     );
     const read = sha256Hex(
-      sortedKeyJson(versions.map((v) => [v.recordId, v.version]).sort())
+      sortedKeyJson({
+        f: PRIVATE_BODY_FORMAT,
+        read: versions.map((v) => [v.recordId, v.version]).sort(),
+      })
     ).slice(0, 32);
     if (prev && prev.appId === appId && prev.family === digest && prev.read === read) {
       return { next: prev, entities: new Map() };
@@ -288,7 +359,7 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
       const schemas = claims(d.data);
       if (!schemas.includes(schema)) continue;
       const urn = registryUrn({ kind: 'document', slug, collection, key: d.recordId });
-      entities.set(urn, { urn, schemas, rev: docRev(d, schemas), body: d.data });
+      entities.set(urn, { urn, schemas, rev: privateRev(d, schemas), body: d.data, key: d.key });
     }
     return {
       next: {

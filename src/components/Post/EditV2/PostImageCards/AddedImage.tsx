@@ -275,7 +275,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
     onDelete: handleDelete,
     removeFromEditor,
     isDeleting,
-  } = useDeletePostImage(image.id, image.type);
+  } = useDeletePostImage(image.id, image.type, isBlocked);
   // #endregion
 
   // #region [move image]

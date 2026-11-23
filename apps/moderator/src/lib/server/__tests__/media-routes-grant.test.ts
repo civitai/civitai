@@ -12,7 +12,7 @@ const MEDIA = { url: KEY, type: 'image', mimeType: null };
 const h = vi.hoisted(() => ({
   grants: new Set<string>(),
   getHeldMedia: vi.fn(),
-  getRetractedMedia: vi.fn(),
+  getModeratorMedia: vi.fn(),
   insertModActivity: vi.fn(async (_row: Record<string, unknown>) => {}),
   recordRetractedView: vi.fn(async () => {}),
 }));
@@ -33,7 +33,7 @@ vi.mock('$lib/server/held-media', async (importOriginal) => ({
   getHeldMedia: h.getHeldMedia,
 }));
 vi.mock('$lib/server/retracted-media', () => ({
-  getRetractedMedia: h.getRetractedMedia,
+  getModeratorMedia: h.getModeratorMedia,
   recordRetractedView: h.recordRetractedView,
   retractedMediaEnabled: () => true,
 }));
@@ -80,7 +80,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.grants = new Set();
   h.getHeldMedia.mockResolvedValue(MEDIA);
-  h.getRetractedMedia.mockResolvedValue({ ...MEDIA });
+  h.getModeratorMedia.mockResolvedValue({ ...MEDIA, kind: 'retracted' });
   vi.stubGlobal(
     'fetch',
     vi.fn(
@@ -114,18 +114,18 @@ describe('held media without the CSAM page', () => {
 describe('blocked media without the CSAM page', () => {
   it('goes through the eligibility read without the CSAM tier', async () => {
     expect(await call(retracted, '/api/retracted-media/7')).toBe(200);
-    expect(h.getRetractedMedia).toHaveBeenCalledWith(7, { csamReview: false });
+    expect(h.getModeratorMedia).toHaveBeenCalledWith(7, { csamReview: false });
     expect(h.recordRetractedView).toHaveBeenCalledWith(42, 7);
   });
 
   it('is refused when that read refuses', async () => {
-    h.getRetractedMedia.mockResolvedValue(null);
+    h.getModeratorMedia.mockResolvedValue(null);
     expect(await call(retracted, '/api/retracted-media/7')).toBe(404);
   });
 
   it('asks for the CSAM tier with the CSAM page', async () => {
     h.grants.add(HELD_MEDIA_PAGE);
     expect(await call(retracted, '/api/retracted-media/7')).toBe(200);
-    expect(h.getRetractedMedia).toHaveBeenCalledWith(7, { csamReview: true });
+    expect(h.getModeratorMedia).toHaveBeenCalledWith(7, { csamReview: true });
   });
 });

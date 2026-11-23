@@ -17,7 +17,7 @@ import { isExternalHref } from '~/utils/external-link';
 import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import { ProfileSection, ProfileSectionPreview } from '~/components/Profile/ProfileSection';
 import classes from '~/components/Profile/ProfileSection.module.css';
-import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
+import { ShowcaseGrid, useShowcaseViewAll } from '~/components/Profile/Sections/ShowcaseGrid';
 import { ImageSort } from '~/server/common/enums';
 import type { ShowcaseSectionSchema } from '~/server/schema/user-profile.schema';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -166,6 +166,7 @@ function ShowcaseShell({
   rows: number;
   children: React.ReactNode;
 }) {
+  const viewAll = useShowcaseViewAll({ rows, itemCount: count });
   if (inView && !isLoading && !count) return null;
 
   return (
@@ -189,9 +190,10 @@ function ShowcaseShell({
             icon={<IconLayoutGrid />}
             action={section.button && <ShowcaseButton {...section.button} />}
           >
-            <ShowcaseGrid itemCount={count} rows={rows}>
+            <ShowcaseGrid itemCount={count} {...viewAll.gridProps}>
               {children}
             </ShowcaseGrid>
+            {viewAll.toggle}
           </ProfileSection>
         ))}
     </div>

@@ -25,6 +25,7 @@ const { holder, recorded } = vi.hoisted(() => ({
 vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
+  assertContentRemovalNotHeld: async () => ({ markerView: false }),
 }));
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
   getDocStoreMaintenance: () => ({

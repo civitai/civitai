@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { setProfanityListReaderForTests } from '~/server/services/profanity-list.service';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { createCommentV3Schema } from '~/server/schema/commentv3.schema';
 import type * as Surfaces from '~/server/services/commentv3/surfaces';
 import type * as TimedComments from '~/server/services/commentv3/timed-comments.service';
+import type * as FliptClient from '~/server/flipt/client';
 import type * as WriteService from '~/server/services/commentv3/write.service';
 import type { StoredCommentV3 } from '~/server/services/commentv3/write.service';
 import { SONGS_UNAVAILABLE_MESSAGE } from '~/shared/form-graph/generation/audio/song-metadata';
@@ -38,6 +40,20 @@ const m = vi.hoisted(() => ({
     async () => null
   ),
 }));
+
+// `profanity-managed-list` per test; every other flag as the real client answers it.
+const profanityFlag = vi.hoisted(() => ({ on: true }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const original = await importOriginal<typeof FliptClient>();
+  return {
+    ...original,
+    isFlipt: async (flag: string, ...rest: unknown[]) =>
+      flag === original.FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST
+        ? profanityFlag.on
+        : // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (original.isFlipt as any)(flag, ...rest),
+  };
+});
 
 vi.mock('~/server/services/commentv3/write.service', async (importOriginal) => {
   const actual = await importOriginal<typeof WriteService>();
@@ -195,6 +211,29 @@ const runsOn = async (
   await runner.query('SELECT 1');
   return tx.$queryRawUnsafe.mock.calls.length === 1;
 };
+
+// The author's own write response never carries a masked copy: diffing it against what they just
+// wrote would say which of their words are on the managed list, in one round trip. Other viewers
+// get it on the read path.
+describe('the write response to the author', () => {
+  afterEach(() => setProfanityListReaderForTests());
+
+  // Synthetic managed entries, on no real list.
+  it('carries no masked copy on the create or the edit, even for text the list masks', async () => {
+    setProfanityListReaderForTests({
+      read: async () => ({ blocked: ['zqvoxblat', 'zqvoxcrud'], allowed: null, source: 'managed' }),
+    });
+    m.insertComment.mockResolvedValueOnce(row(300, { content: '<p>well zqvoxblat then</p>' }));
+    const saved = await create(STRANGER, {});
+    expect(saved.id).toBe(300);
+    expect(saved).not.toHaveProperty('maskedContent');
+
+    m.updateCommentContent.mockResolvedValueOnce(row(101, { content: '<p>zqvoxcrud</p>' }));
+    const edited = await update(AUTHOR, 101);
+    expect(edited).toMatchObject({ id: 101 });
+    expect(edited).not.toHaveProperty('maskedContent');
+  });
+});
 
 describe('commentv3 create', () => {
   it('answers the saved comment with its author as the cache has them', async () => {
@@ -809,6 +848,41 @@ describe('a comment in a section the caller may not see', () => {
     expect(m.updateCommentContent).not.toHaveBeenCalled();
     expect(m.deleteComments3).not.toHaveBeenCalled();
     expect(m.setCommentFlags).not.toHaveBeenCalled();
+  });
+});
+
+describe('commentv3 delete on an article', () => {
+  beforeEach(() => {
+    m.visible.mockRejectedValue(new Error('hidden'));
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({ availability: 'Private' } as never);
+  });
+  afterEach(() => {
+    m.visible.mockImplementation(async () => undefined);
+    dbMock.dbWrite.article.findUnique.mockReset();
+  });
+
+  it('case 1', async () => {
+    await expect(deleteCommentV3Handler({ ctx: ctx(AUTHOR), input: { id: 101 } })).resolves.toEqual(
+      { id: 101 }
+    );
+    expect(m.deleteComments3).toHaveBeenCalled();
+  });
+
+  it('case 2', async () => {
+    await expect(
+      deleteCommentV3Handler({ ctx: ctx(STRANGER), input: { id: 101 } })
+    ).rejects.toThrow('hidden');
+    await expect(update(AUTHOR, 101)).rejects.toThrow('hidden');
+    expect(m.deleteComments3).not.toHaveBeenCalled();
+    expect(m.updateCommentContent).not.toHaveBeenCalled();
+  });
+
+  it.each([['Public'], ['Unsearchable']])('case 3 %s', async (availability) => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({ availability } as never);
+    await expect(deleteCommentV3Handler({ ctx: ctx(AUTHOR), input: { id: 101 } })).rejects.toThrow(
+      'hidden'
+    );
+    expect(m.deleteComments3).not.toHaveBeenCalled();
   });
 });
 

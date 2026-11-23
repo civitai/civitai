@@ -169,8 +169,7 @@ export function MediaFiltersDropdown({
     return overrides;
   }, [query, routeParams]);
 
-  // `?tags=` is the feed's tag filter (the tag bar writes it too) and has no store field: it is staged
-  // here with the rest and written back to the URL.
+  // `?tags=` has no store field: it is staged with the other filters and written back to the URL.
   const committedFilters = useMemo(
     () =>
       query || {

@@ -15,9 +15,10 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"sort"
 	"strconv"
 	"time"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/jskeys"
 )
 
 // Obj is a JS object: its members in property order, as msgpackr walks them (for…in).
@@ -55,47 +56,10 @@ func (o Obj) Get(k string) (any, bool) {
 // Undefined is the JS `undefined` value.
 type Undefined struct{}
 
-// arrayIndex reports whether k is a canonical array index ("0", "17", never "01" or "-1"), the keys
-// a JS object lists first, in ascending numeric order (OrdinaryOwnPropertyKeys).
-func arrayIndex(k string) (uint64, bool) {
-	if k == "" || len(k) > 10 || (len(k) > 1 && k[0] == '0') {
-		return 0, false
-	}
-	n, err := strconv.ParseUint(k, 10, 64)
-	if err != nil || n >= math.MaxUint32 {
-		return 0, false
-	}
-	return n, true
-}
-
-// Order returns o in JS property order: integer-like keys ascending, then the rest in insertion order.
+// Order returns o in JS property order: integer-like keys ascending, then the rest in insertion order
+// (jskeys.Order).
 func Order(o Obj) Obj {
-	idx := 0
-	for _, kv := range o {
-		if _, ok := arrayIndex(kv.K); ok {
-			idx++
-		}
-	}
-	if idx == 0 {
-		return o
-	}
-	out := make(Obj, 0, len(o))
-	for _, kv := range o {
-		if _, ok := arrayIndex(kv.K); ok {
-			out = append(out, kv)
-		}
-	}
-	sort.SliceStable(out, func(a, b int) bool {
-		x, _ := arrayIndex(out[a].K)
-		y, _ := arrayIndex(out[b].K)
-		return x < y
-	})
-	for _, kv := range o {
-		if _, ok := arrayIndex(kv.K); !ok {
-			out = append(out, kv)
-		}
-	}
-	return out
+	return jskeys.Order(o, func(kv KV) string { return kv.K })
 }
 
 // set assigns o[k] = v as JS does: an existing member keeps its position.

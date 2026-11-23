@@ -30,6 +30,7 @@ import {
 } from '~/server/utils/legal-hold';
 import {
   accountHoldSql,
+  contentRemovalHeldSql,
   captureImageKeptSql,
   holdMarkerViewExists,
 } from '~/server/services/legal-hold.service';
@@ -773,7 +774,7 @@ export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: b
     AND "Image"."needsReview" IS DISTINCT FROM 'csam'
     AND "Image"."blockedFor" IS DISTINCT FROM 'CSAM'
     AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
-    AND NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}
+    AND NOT ${contentRemovalHeldSql(Prisma.raw('"Image"."userId"'), true)}
     AND NOT ${captureImageKeptSql('"Image"')}
     ${
       holdForTrainingCopy

@@ -1,12 +1,16 @@
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { notifyDeleteNotice } from '~/components/Image/hooks/useDeleteImage';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
-/** Deletes a post's image after a confirmation and drops it from the editor and the cached post. */
-export function useDeletePostImage(imageId: number, mediaType?: MediaType) {
+/**
+ * Deletes a post's image and drops it from the editor and the cached post. A blocked image goes
+ * without a confirmation; any other asks first.
+ */
+export function useDeletePostImage(imageId: number, mediaType?: MediaType, isBlocked?: boolean) {
   const noun = mediaType === MediaType.audio ? 'song' : 'image';
   const queryUtils = trpc.useUtils();
   const [postId, setImages] = usePostEditStore((state) => [state.post?.id, state.setImages]);
@@ -22,11 +26,15 @@ export function useDeletePostImage(imageId: number, mediaType?: MediaType) {
   };
 
   const deleteImageMutation = trpc.image.delete.useMutation({
-    onSuccess: (_, { id }) => removeFromEditor(id),
+    onSuccess: (result, { id }) => {
+      removeFromEditor(id);
+      notifyDeleteNotice(result);
+    },
     onError: (error) => showErrorNotification({ error: new Error(error.message) }),
   });
 
-  const onDelete = () =>
+  const onDelete = () => {
+    if (isBlocked) return deleteImageMutation.mutate({ id: imageId });
     dialogStore.trigger({
       component: ConfirmDialog,
       props: {
@@ -37,6 +45,7 @@ export function useDeletePostImage(imageId: number, mediaType?: MediaType) {
         onConfirm: async () => await deleteImageMutation.mutateAsync({ id: imageId }),
       },
     });
+  };
 
   return { onDelete, removeFromEditor, isDeleting: deleteImageMutation.isPending };
 }

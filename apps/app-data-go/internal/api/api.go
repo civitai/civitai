@@ -1,6 +1,6 @@
 // Package api is the service's HTTP surface.
 //
-//	GET /v1/apps/{slug}/collections/{collection}/records[?major=N]
+//	GET /v1/apps/{slug}/collections/{collection}/records[?major=N][&keyPrefix=P]
 //	    Authorization: Bearer <the app's hub access token for the signed-in user>
 //
 // Every private record of one collection of the app `slug` names that the token's user may read
@@ -9,11 +9,20 @@
 // name the source by slug and leave the basis to the server (the adapter on the registry path, the
 // site on REST). The answer is
 //
-//	{"source":"registry"|"rest","items":[{"urn"|"key":…,"rev":…,"data":{…}}]}
+//	{"source":"registry"|"rest","items":[{"urn"?:…,"key":…,"rev":…,"data":{…}}]}
+//
+// `keyPrefix` keeps only the records whose storage key starts with it, on both paths (the
+// document store's own `keyPrefix` on REST). A registry item carries its key beside its URN, as the
+// adapter's private feed sends it; a stream whose records carry none cannot be filtered, and a
+// `keyPrefix` read of it goes to REST (`unkeyed`).
 //
 // `source: registry` items come from the user's stream (named by URN: the record core's
 // `urn:apps.civitai.com:<slug>/<collection>/<record_id>`); `source: rest` items from the
 // document store's list (named by key). See DESIGN.md, "Depends on site changes", on the two names.
+//
+// With `X-App-Data-Registry-Only: 1` (RegistryOnlyHeader) a read that the registry cannot answer is
+// not read from REST: the answer is `{"source":"none","reason":<the fallback reason>,"items":[]}`.
+// The site's shadow caller sends it (DESIGN.md, "P4: the site's shadow read").
 //
 // Also /healthz, /readyz and /metrics.
 package api
@@ -24,6 +33,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -31,12 +41,20 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
 	"github.com/civitai/civitai/apps/app-data-go/internal/metrics"
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
 	"github.com/civitai/civitai/apps/app-data-go/internal/rest"
 	"github.com/civitai/civitai/apps/app-data-go/internal/session"
 	"github.com/civitai/civitai/apps/app-data-go/internal/urn"
 )
+
+// RegistryOnlyHeader, set to "1", asks for the registry's answer only. The site sends it from its
+// storage route, which is itself the REST read this service would fall back to: following the
+// fallback would read the site again from inside its own read, for an answer it already holds. It
+// can only make a read do less, so it needs no trust. Browsers never send it: the preflight does not
+// allow it.
+const RegistryOnlyHeader = "X-App-Data-Registry-Only"
 
 // Streams answers a read from a per-user stream (session.Manager).
 type Streams interface {
@@ -45,24 +63,22 @@ type Streams interface {
 
 // Lister is the REST fallback (rest.Client).
 type Lister interface {
-	List(ctx context.Context, token, collection, from string) ([]rest.Doc, error)
+	List(ctx context.Context, token, collection, from, keyPrefix string) ([]rest.Doc, error)
 }
-
-// HubTokenPrefix starts every OAuth access token the hub issues (apps/auth OAUTH_TOKEN_PREFIX). Only
-// such a token can reach a private stream: this service exchanges it at the hub, which looks the
-// subject token up among its own access tokens (apps/auth/src/lib/server/oauth/user-exchange.ts,
-// step 5), so a block token, or a token the hub already exchanged, never can. Any other token reads
-// REST only, and is never sent to the hub.
-const HubTokenPrefix = "civitai_"
 
 // Server serves the API.
 type Server struct {
 	// Streams is nil when the registry path is off: every read is the REST read.
-	Streams  Streams
-	REST     Lister
-	Metrics  *metrics.Metrics
-	Gatherer prometheus.Gatherer
-	Log      *slog.Logger
+	Streams Streams
+	// Exchangeable reports whether a token can reach a stream: the streams' own exchange.Router's
+	// Accepts, so the handler and the exchange cannot disagree about which tokens are exchanged. Nil
+	// is hub tokens only (exchange.KindHub). Any other token reads REST only
+	// (`token_not_exchangeable`) and is never sent to the hub.
+	Exchangeable func(token string) bool
+	REST         Lister
+	Metrics      *metrics.Metrics
+	Gatherer     prometheus.Gatherer
+	Log          *slog.Logger
 	// Deadline bounds one read; LiveWait bounds how long of it a new stream may take to reach Live.
 	Deadline, LiveWait time.Duration
 	// RESTSlots bounds concurrent REST reads: a read takes one without waiting, or answers 503.
@@ -111,6 +127,8 @@ type item struct {
 
 type answer struct {
 	Source string `json:"source"`
+	// Reason is why the registry did not answer, on a registry-only read (source "none") only.
+	Reason string `json:"reason,omitempty"`
 	Items  []item `json:"items"`
 }
 
@@ -133,6 +151,11 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		}
 		major = n
 	}
+	keyPrefix := q.Get("keyPrefix")
+	if _, given := q["keyPrefix"]; given && !keyPrefixRE.MatchString(keyPrefix) {
+		s.refuse(w, start, http.StatusBadRequest, "bad_request", "invalid keyPrefix", "bad_request")
+		return
+	}
 	schema, err := urn.CollectionSchema(slug, collection, major)
 	if err != nil {
 		s.refuse(w, start, http.StatusBadRequest, "bad_request", "invalid app, collection or major", "bad_request")
@@ -151,7 +174,7 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 	reason := "registry_off"
 	switch {
 	case s.Streams == nil:
-	case !strings.HasPrefix(token, HubTokenPrefix):
+	case !s.exchangeable(token):
 		reason = "token_not_exchangeable"
 	default:
 		lctx, lcancel := context.WithTimeout(ctx, s.LiveWait)
@@ -159,15 +182,26 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		lcancel()
 		// An empty answer is not trusted: the origin answers a token it refuses with an empty
 		// snapshot, exactly as a user who holds nothing, so only REST can tell the two apart.
-		if err == nil && len(ents) > 0 {
+		switch {
+		case err != nil || len(ents) == 0:
+			reason = fallbackReason(err)
+		case keyPrefix != "" && !allKeyed(ents):
+			reason = "unkeyed"
+		default:
+			// The stream holds records, so it was not refused: a prefix that keeps none is an empty answer.
 			out := answer{Source: "registry", Items: make([]item, 0, len(ents))}
 			for _, e := range ents {
-				out.Items = append(out.Items, item{URN: e.URN, Rev: e.Rev, Data: e.Body})
+				if strings.HasPrefix(e.Key, keyPrefix) {
+					out.Items = append(out.Items, item{URN: e.URN, Key: e.Key, Rev: e.Rev, Data: e.Body})
+				}
 			}
 			s.write(w, start, http.StatusOK, out, "registry", "ok")
 			return
 		}
-		reason = fallbackReason(err)
+	}
+	if r.Header.Get(RegistryOnlyHeader) == "1" {
+		s.write(w, start, http.StatusOK, answer{Source: "none", Reason: reason, Items: []item{}}, "none", "registry_only")
+		return
 	}
 	s.Metrics.Fallbacks.WithLabelValues(reason).Inc()
 
@@ -181,7 +215,7 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 	}
 	// Always `from=<slug>`: the site then reads the app the request names, whoever the token's app
 	// is, so a REST answer can never be another app's data under this slug's name.
-	docs, err := s.REST.List(ctx, token, collection, slug)
+	docs, err := s.REST.List(ctx, token, collection, slug, keyPrefix)
 	if err != nil {
 		s.restError(w, start, err)
 		return
@@ -191,6 +225,26 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		out.Items = append(out.Items, item{Key: d.Key, Rev: strconv.FormatInt(d.Version, 10), Data: d.Data})
 	}
 	s.write(w, start, http.StatusOK, out, "rest", "ok")
+}
+
+// keyPrefixRE is a document key's grammar (the store's `[A-Za-z0-9._:-]{1,128}`): a prefix of one.
+var keyPrefixRE = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+// allKeyed reports whether every entity carries its storage key.
+func allKeyed(ents []registry.Entity) bool {
+	for _, e := range ents {
+		if e.Key == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) exchangeable(token string) bool {
+	if s.Exchangeable == nil {
+		return exchange.KindOf(token) == exchange.KindHub
+	}
+	return s.Exchangeable(token)
 }
 
 func fallbackReason(err error) string {
@@ -219,6 +273,10 @@ func fallbackReason(err error) string {
 		return "ended"
 	case errors.Is(err, session.ErrClosed):
 		return "closed"
+	case errors.Is(err, session.ErrBlockSpent):
+		return "block_spent"
+	case errors.Is(err, session.ErrBlockFull):
+		return "block_cache_full"
 	default:
 		return "failed"
 	}

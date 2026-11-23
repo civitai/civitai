@@ -302,6 +302,7 @@ export type ModelVersionMonetizationType =
 
 export const LicensingFeeType = {
   PerImageBuzz: 'PerImageBuzz',
+  PercentOfCompute: 'PercentOfCompute',
 } as const;
 
 export type LicensingFeeType = (typeof LicensingFeeType)[keyof typeof LicensingFeeType];
@@ -964,6 +965,7 @@ export const JobQueueType = {
   CdnAccessSync: 'CdnAccessSync',
   ImageCdnPersistRetry: 'ImageCdnPersistRetry',
   CsamArchive: 'CsamArchive',
+  PendingDelete: 'PendingDelete',
 } as const;
 
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
@@ -1371,6 +1373,15 @@ export const ServicePreviewKind = {
 
 export type ServicePreviewKind = (typeof ServicePreviewKind)[keyof typeof ServicePreviewKind];
 
+export const ServiceLicensePreset = {
+  Personal: 'Personal',
+  CommercialCredit: 'CommercialCredit',
+  CommercialNoCredit: 'CommercialNoCredit',
+  Custom: 'Custom',
+} as const;
+
+export type ServiceLicensePreset = (typeof ServiceLicensePreset)[keyof typeof ServiceLicensePreset];
+
 export const ServiceBuzzType = {
   yellow: 'yellow',
   blue: 'blue',
@@ -1461,6 +1472,14 @@ export const ServiceDealLeg = {
 } as const;
 
 export type ServiceDealLeg = (typeof ServiceDealLeg)[keyof typeof ServiceDealLeg];
+
+export const ServiceDealReviewVerdict = {
+  Happy: 'Happy',
+  NotQuite: 'NotQuite',
+} as const;
+
+export type ServiceDealReviewVerdict =
+  (typeof ServiceDealReviewVerdict)[keyof typeof ServiceDealReviewVerdict];
 
 export const UserHubSourceType = {
   User: 'User',

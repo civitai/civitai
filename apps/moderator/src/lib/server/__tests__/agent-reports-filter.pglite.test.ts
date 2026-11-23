@@ -34,6 +34,7 @@ const AGENT_A = 501;
 const AGENT_B = 502;
 
 const SCHEMA = `
+CREATE TABLE "JobQueue" ("entityId" INTEGER, "entityType" TEXT, "type" TEXT, data JSONB);
 CREATE TABLE "User" (
   "id" INTEGER PRIMARY KEY, "username" TEXT, "email" TEXT, "bannedAt" TIMESTAMP(3),
   "muted" BOOLEAN, "deletedAt" TIMESTAMP(3), "isModerator" BOOLEAN

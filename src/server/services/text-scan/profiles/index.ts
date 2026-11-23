@@ -17,3 +17,4 @@ import './track-lyrics.profile';
 import './service-offering.profile';
 import './post-text.profile';
 import './app-doc.profile';
+import './service-deal-review.profile';

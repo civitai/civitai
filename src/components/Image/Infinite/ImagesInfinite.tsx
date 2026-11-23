@@ -41,7 +41,7 @@ import {
 } from '~/components/Image/Infinite/image-feed-search';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
-import type { SearchRefusal } from '~/components/Search/search-refusal';
+import { isSearchRefusedError, type SearchRefusal } from '~/components/Search/search-refusal';
 import { ImageFeedSearchSummary } from '~/components/Image/Infinite/ImageFeedSearchSummary';
 import {
   useImageFeedSearchQuery,
@@ -136,7 +136,7 @@ function SearchableImagesFeed(props: ImagesInfiniteProps) {
   const similarTo = useImageFeedSimilarTo();
   const { sort } = useImageFeedSearchSort();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
-  const { refusal, profanityMatches } = useSearchRefusal(query, 'images_semantic');
+  const { refusal, profanityMatches } = useSearchRefusal(query, 'images_semantic', 'semantic');
   // A feed with its own filters (a profile tab) keeps its period: the saved one is the images feed's.
   const period = useSearchPeriod(!props.disableStoreFilters && (!!query || !!similarTo));
   return (
@@ -240,7 +240,9 @@ function ImagesFeed({
         : undefined,
     [searchQuery, similarTo, filters, browsingLevel, feedSearch?.sort, excludeOwn, modelVersionIds]
   );
-  const search = useSemanticImageFeed(searchInput);
+  const search = useSemanticImageFeed(searchInput, {
+    videos: filterType === 'videos' && !!features.semanticVideoSearch,
+  });
   useScrollToTopOnChange(searchInput && JSON.stringify(searchInput));
   // A search that fails falls back to the plain feed with a banner, never an empty page.
   const searchFailed = !!searchInput && search.isError;
@@ -370,9 +372,10 @@ function ImagesFeed({
     />
   );
 
-  if (refusal)
+  const shownRefusal = refusal ?? (isSearchRefusedError(search.error) ? 'profanity' : undefined);
+  if (shownRefusal)
     return (
-      <SearchRefusalNotice refusal={refusal} profanityMatches={feedSearch?.profanityMatches} />
+      <SearchRefusalNotice refusal={shownRefusal} profanityMatches={feedSearch?.profanityMatches} />
     );
 
   const masonry = (feedWidth: number) => (

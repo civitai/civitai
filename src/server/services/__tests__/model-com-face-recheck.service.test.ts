@@ -47,8 +47,11 @@ import {
   COM_FACE_RECHECK_GAVE_UP,
   COM_FACE_RECHECK_MAX_DELAY_MS,
   COM_FACE_RECHECK_WINDOW_MS,
+  faceLossNotice,
+  faceLossRescan,
   processComFaceRechecks,
   queueComFaceRecheck,
+  rescanTextAfterFaceLoss,
 } from '~/server/services/model-com-face-recheck.service';
 
 const db = dbMock.dbWrite;
@@ -231,16 +234,106 @@ describe('the .com face listing re-check', () => {
   it('clears the cover and records the removal in one transaction', async () => {
     arrange({ fresh: [MODEL_ID] });
     mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
-    const tx = { $executeRaw: vi.fn(async () => 1), modActivity: { create: vi.fn() } };
+    const tx = {
+      $executeRaw: vi.fn(async () => 1),
+      $queryRaw: vi.fn(async () => []),
+      modActivity: { create: vi.fn() },
+    };
     db.$transaction.mockImplementationOnce((async (fn: (client: typeof tx) => unknown) =>
       fn(tx)) as never);
 
     await processComFaceRechecks(NOW);
 
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    // The removal, then the scan verdict its face held back, rated in the same transaction.
+    const statements = tx.$executeRaw.mock.calls.map((call: unknown[]) => {
+      const [first] = call as [{ sql?: string } | readonly string[]];
+      return Array.isArray(first) ? first.join('?') : (first as { sql: string }).sql;
+    });
+    expect(statements[0]).toMatch(/SET "sfwCoverImageId" = NULL/);
+    const flip = tx.$executeRaw.mock.calls.find((call: unknown[]) => {
+      const [first] = call as [readonly string[]];
+      return Array.isArray(first) && first.join('?').includes('SET nsfw = TRUE');
+    });
+    expect(flip).toBeDefined();
+    expect(flip).toContain(MODEL_ID);
     expect(tx.modActivity.create).toHaveBeenCalledTimes(1);
     expect(db.$executeRaw).not.toHaveBeenCalled();
     expect(db.modActivity.create).not.toHaveBeenCalled();
+  });
+
+  describe("the owner's rating notice after a removal", () => {
+    const realSend = faceLossNotice.send;
+    const send = vi.fn();
+    beforeEach(() => {
+      send.mockReset();
+      faceLossNotice.send = send as never;
+    });
+    afterEach(() => {
+      faceLossNotice.send = realSend;
+    });
+    /** A removal whose held-verdict flip writes `flipped` rows; reports when it committed. */
+    function removal(flipped: number) {
+      let committed = false;
+      const tx = {
+        $executeRaw: vi.fn(async (strings: unknown) =>
+          Array.isArray(strings) && strings.join('?').includes('SET nsfw = TRUE') ? flipped : 1
+        ),
+        $queryRaw: vi.fn(async () => [
+          { name: 'LoRA', userId: 99, meta: { comFaceHeldVerdict: { at: 'h', level: R } } },
+        ]),
+        modActivity: { create: vi.fn() },
+      };
+      db.$transaction.mockImplementationOnce((async (fn: (client: typeof tx) => unknown) => {
+        const result = await fn(tx);
+        committed = true;
+        return result;
+      }) as never);
+      return () => committed;
+    }
+
+    it('tells the owner once, after commit, when the held verdict rates the model', async () => {
+      arrange({ fresh: [MODEL_ID] });
+      mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+      const committed = removal(1);
+      let committedWhenSent: boolean | undefined;
+      let levelRefreshedWhenSent: boolean | undefined;
+      send.mockImplementation(async () => {
+        committedWhenSent = committed();
+        levelRefreshedWhenSent = mockUpdateModelNsfwLevels.mock.calls.length > 0;
+      });
+
+      await processComFaceRechecks(NOW);
+
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledWith([
+        expect.objectContaining({ entityId: MODEL_ID, userId: 99, level: R }),
+      ]);
+      expect(committedWhenSent).toBe(true);
+      // After the level refresh: a slow notice must not keep the old level listed.
+      expect(levelRefreshedWhenSent).toBe(true);
+    });
+
+    it('still tells the owner when the level refresh after the removal throws', async () => {
+      arrange({ fresh: [MODEL_ID] });
+      mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+      removal(1);
+      mockUpdateModelNsfwLevels.mockRejectedValueOnce(new Error('level refresh failed'));
+
+      await processComFaceRechecks(NOW).catch(() => undefined);
+
+      expect(mockUpdateModelNsfwLevels).toHaveBeenCalled();
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends nothing when the held verdict does not rate it', async () => {
+      arrange({ fresh: [MODEL_ID] });
+      mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+      removal(0);
+
+      await processComFaceRechecks(NOW);
+
+      expect(send).not.toHaveBeenCalled();
+    });
   });
 
   it('logs the listing intent verdict on a clean version rating', async () => {
@@ -596,6 +689,45 @@ describe('the .com face listing re-check', () => {
     expect(counts.gaveUp).toBe(0);
     expect(intentLogs()).toEqual([]);
     expect(db.keyValue.deleteMany).toHaveBeenCalledWith({ where: { key: KEY } });
+  });
+});
+
+describe('the text rescan after a face loss', () => {
+  const realLoad = faceLossRescan.loadSubmit;
+  const scan = vi.fn();
+  beforeEach(() => {
+    scan.mockReset();
+    faceLossRescan.loadSubmit = (async () => ({ scanEntityInBackground: scan })) as never;
+  });
+  afterEach(() => {
+    faceLossRescan.loadSubmit = realLoad;
+  });
+
+  it('forces a text rescan of a model the re-check takes off .com', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+    await processComFaceRechecks(NOW);
+    expect(coverCleared()).toBe(true);
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(scan).toHaveBeenCalledWith({ entityType: 'Model', entityId: MODEL_ID, force: true });
+  });
+
+  it('forces none when the face stays (control)', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    await processComFaceRechecks(NOW);
+    expect(scan).not.toHaveBeenCalled();
+  });
+
+  it('never throws when the scan cannot be started', async () => {
+    faceLossRescan.loadSubmit = (async () => {
+      throw new Error('import failed');
+    }) as never;
+    await expect(rescanTextAfterFaceLoss(MODEL_ID)).resolves.toBeUndefined();
+    scan.mockImplementation(() => {
+      throw new Error('scan threw');
+    });
+    faceLossRescan.loadSubmit = (async () => ({ scanEntityInBackground: scan })) as never;
+    await expect(rescanTextAfterFaceLoss(MODEL_ID)).resolves.toBeUndefined();
   });
 });
 

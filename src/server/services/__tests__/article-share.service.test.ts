@@ -95,11 +95,12 @@ const articles = (over: ArticleOver = {}) => {
     select,
   }: {
     where: { id: number };
-    select?: { coverImage?: ImageSelect; bannerImage?: ImageSelect };
+    select?: { coverImage?: ImageSelect; bannerImage?: ImageSelect; availability?: boolean };
   }) => {
-    const row = base(where.id) as Record<string, unknown>;
+    const { availability, ...row } = base(where.id) as Record<string, unknown>;
     return {
       ...row,
+      ...(select?.availability ? { availability } : {}),
       coverImage: asSelected(row.coverImage, select?.coverImage),
       bannerImage: asSelected(row.bannerImage, select?.bannerImage),
     };
@@ -167,6 +168,19 @@ describe('getArticleByShareToken', () => {
   ])('refuses a token that is %s', async (_, row) => {
     dbMock.dbWrite.accessToken.findUnique.mockResolvedValue(row as never);
     expect(await read()).toEqual({ status: 'unavailable' });
+  });
+
+  it.each([
+    ['a draft', ArticleStatus.Draft],
+    ['a published article', ArticleStatus.Published],
+  ])('follows the article availability rule for %s', async (_, status) => {
+    articles({ status, availability: 'Private' });
+    expect(await read()).toEqual({ status: 'unavailable' });
+  });
+
+  it('opens a draft by its link', async () => {
+    articles({ availability: 'Public' });
+    expect((await read()).status).toBe('ok');
   });
 
   it('sends a published article to its public page instead of serving the draft view', async () => {
@@ -768,6 +782,27 @@ describe('comments on a shared draft', () => {
     await expect(
       gate(as(MODERATOR, { cookie: false, isModerator: true }))
     ).resolves.toBeUndefined();
+  });
+
+  it('follows the article availability rule for comments: owner and moderator, no link', async () => {
+    // Answers availability only when the gate selects it.
+    dbMock.dbRead.article.findUnique.mockImplementation((async ({
+      select,
+    }: {
+      select?: { availability?: boolean };
+    }) => ({
+      userId: AUTHOR,
+      status: ArticleStatus.Published,
+      ...(select?.availability ? { availability: 'Private' } : {}),
+    })) as never);
+    await expect(gate(as(STRANGER))).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(gate(as(undefined))).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    const owner = as(AUTHOR, { cookie: false });
+    await expect(gate(owner)).resolves.toBeUndefined();
+    expect(owner.cache).toMatchObject({ edgeTTL: 0, browserTTL: 0, canCache: false });
+    const moderator = as(MODERATOR, { cookie: false, isModerator: true });
+    await expect(gate(moderator)).resolves.toBeUndefined();
+    expect(moderator.cache).toMatchObject({ edgeTTL: 0, browserTTL: 0, canCache: false });
   });
 
   it('leaves a published article open to everyone', async () => {

@@ -1,7 +1,7 @@
 import { decode } from 'he';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { commentTrackTypes } from '~/server/clickhouse/tracker';
-import type { CommentEntityType } from '~/shared/utils/prisma/enums';
+import { Availability, type CommentEntityType } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { kyselyV3Read } from '~/server/db/kyselyDb';
@@ -253,6 +253,7 @@ export async function getCommentThreadHandler({
 }
 
 async function asNewItem(row: StoredCommentV3, metadata?: TimedCommentMetadata) {
+  // No masked copy in the write response; viewers get theirs from the thread read.
   const [author, lookup] = await Promise.all([
     kyselyV3Read
       .selectFrom('User')
@@ -429,7 +430,24 @@ export async function updateCommentV3Handler({
     content: input.content,
     track: ctx.track,
   });
+  // No masked copy in the write response, as on create.
   return { id: comment.id, content: row.content, updatedAt: row.updatedAt };
+}
+
+/** The comment a delete acts on. */
+async function deletableComment(ctx: ProtectedContext, id: number) {
+  const comment = await getV3WriteComment(prismaRunner(dbWrite), id);
+  if (!comment) throw throwNotFoundError('Comment not found');
+  if (comment.entityType === 'article' && comment.userId === ctx.user.id) {
+    // primary: guards the delete below
+    const article = await dbWrite.article.findUnique({
+      where: { id: comment.entityId },
+      select: { availability: true },
+    });
+    if (article?.availability === Availability.Private) return comment;
+  }
+  await assertSectionVisible(comment, ctx);
+  return comment;
 }
 
 /** Deletes a comment; one with replies stays as a placeholder for them (D6). */
@@ -440,7 +458,7 @@ export async function deleteCommentV3Handler({
   ctx: ProtectedContext;
   input: CommentV3IdInput;
 }) {
-  const comment = await writableComment(ctx, input.id);
+  const comment = await deletableComment(ctx, input.id);
   assertAuthorOrModerator(ctx, comment);
   assertNotRemovedForMember(ctx, comment);
   afterCommentsV3Deleted(await dbWrite.$transaction((tx) => deleteCommentsV3(tx, [comment.id])));

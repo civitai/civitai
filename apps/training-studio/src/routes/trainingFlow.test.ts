@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isTextEncoderLockedBase } from '@civitai/shared/training-text-encoder';
+import { kohyaBound, kohyaFamily, kohyaFieldSupported } from '$lib/data/kohya';
 import { parseServiceStatus } from '$lib/service-status-core';
 import {
   LORA_TYPES,
@@ -37,10 +38,14 @@ import {
   recommendedCardFor,
   kohyaSeedCard,
   cardSupportsKohya,
+  restoreRun,
+  runFromPrice,
+  runSupportsKohya,
   runExtraCapabilities,
   runEngine,
   runParamsKey,
   runTrainingParams,
+  runVersion,
   sampleImagesProblem,
   seedPrompts,
   startLabelPass,
@@ -714,11 +719,12 @@ describe('withTags', () => {
 });
 
 describe('tagEntryKey', () => {
-  const key = (k: string, shiftKey = false, isComposing = false, keyCode = 0) => ({
+  const key = (k: string, shiftKey = false, isComposing = false, keyCode = 0, repeat = false) => ({
     key: k,
     shiftKey,
     isComposing,
     keyCode,
+    repeat,
   });
   it('Enter adds the typed tags; Shift+Enter and IME composition leave the newline/text alone', () => {
     expect(tagEntryKey(key('Enter'), '1girl, solo', 0)).toBe('commit');
@@ -730,6 +736,9 @@ describe('tagEntryKey', () => {
     expect(tagEntryKey(key('Backspace'), '', 2)).toBe('removeLast');
     expect(tagEntryKey(key('Backspace'), 'so', 2)).toBeNull();
     expect(tagEntryKey(key('Backspace'), '', 0)).toBeNull();
+  });
+  it('a held Backspace that empties the box does not go on to remove tags', () => {
+    expect(tagEntryKey(key('Backspace', false, false, 0, true), '', 2)).toBeNull();
   });
 });
 
@@ -939,6 +948,34 @@ describe('Kohya engine selection and options', () => {
     expect(kohyaSeedCard('character', 'video', none)).toBeUndefined();
   });
 
+  it('does not offer Flux.1 on Kohya, and still offers Chroma and SDXL', () => {
+    const cardOn = (ecosystem: string) =>
+      MODEL_CARDS.find((c) => c.versions[0]!.ecosystem === ecosystem)!;
+    const runOn = (ecosystem: string) => run(cardOn(ecosystem).type);
+    expect(cardSupportsKohya(cardOn('flux1'))).toBe(false);
+    expect(runSupportsKohya(runOn('flux1'))).toBe(false);
+    for (const ecosystem of ['chroma', 'sdxl']) {
+      expect(cardSupportsKohya(cardOn(ecosystem))).toBe(true);
+      expect(runSupportsKohya(runOn(ecosystem))).toBe(true);
+    }
+    // The family itself stays known: existing Flux.1 runs still validate and replay.
+    expect(kohyaFamily('flux1')).toBe('flux1');
+  });
+
+  it('restores a Flux.1 Kohya run on AI Toolkit, and its quote follows', () => {
+    const type = MODEL_CARDS.find((c) => c.versions[0]!.ecosystem === 'flux1')!.type;
+    const saved = { ...run(type), engine: 'kohya' };
+    const prices = { [type]: 100, [`kohya:${type}`]: 250 };
+    expect(runFromPrice(prices, saved)).toBe(250);
+    const restored = restoreRun(saved, true);
+    expect(runEngine(restored)).toBe('ai-toolkit');
+    expect(runFromPrice(prices, restored)).toBe(100);
+
+    const sdxl = { ...run('sdxl'), engine: 'kohya' };
+    expect(restoreRun(sdxl, true)).toBe(sdxl);
+    expect(runEngine(restoreRun(sdxl, false))).toBe('ai-toolkit');
+  });
+
   it('keeps AI Toolkit as default and isolates parameter drafts by engine', () => {
     const original = run('sdxl');
     const kohya = { ...original, engine: 'kohya' };
@@ -974,6 +1011,29 @@ describe('Kohya engine selection and options', () => {
       expect.objectContaining({ field: 'resolution', value: '768' })
     );
     expect(runTrainingParams(kohya, params, 'tag').resolution).toBe(768);
+  });
+
+  it.each(['sdxl', 'pony', 'illustrious'])(
+    'offers Kohya clip skip for %s, defaulting to 2 with a floor of 2',
+    (type) => {
+      const kohya = { ...run(type), engine: 'kohya' };
+      const { ecosystem } = runVersion(kohya);
+      expect(kohyaFieldSupported('clipSkip', ecosystem)).toBe(true);
+      expect(kohyaBound('clipSkip', ecosystem)).toMatchObject({ min: 2, max: 4 });
+      expect(defaultRunParams(kohya).clipSkip).toBe('2');
+      expect(runTrainingParams(kohya, defaultRunParams(kohya), 'tag').kohya?.clipSkip).toBe(2);
+      const picked = { ...defaultRunParams(kohya), clipSkip: '3' };
+      expect(runTrainingParams(kohya, picked, 'tag').kohya?.clipSkip).toBe(3);
+    }
+  );
+
+  it('keeps SD1 Kohya clip skip at 1-4 and hides it for flow bases', () => {
+    const sd1 = { ...run('sd15', 'realistic'), engine: 'kohya' };
+    expect(kohyaFieldSupported('clipSkip', runVersion(sd1).ecosystem)).toBe(true);
+    expect(kohyaBound('clipSkip', 'sd1')).toMatchObject({ min: 1, max: 4 });
+    expect(defaultRunParams(sd1).clipSkip).toBe('1');
+    expect(kohyaFieldSupported('clipSkip', 'flux1')).toBe(false);
+    expect(kohyaFieldSupported('clipSkip', 'anima')).toBe(false);
   });
 
   it('uses Kohya model defaults for cleared fields in both quotes and submits', () => {

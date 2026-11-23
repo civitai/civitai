@@ -45,6 +45,11 @@ describe('which typechecks go through the queue', () => {
   it('stays direct when the caller overrides the heap', () => {
     expect(typecheckQueueDecision([], { ...ON, TYPECHECK_HEAP_MB: '12288' }).queue).toBe(false);
   });
+
+  // A queued run takes the daemon's environment, so TYPECHECK_COMPILER=5 would be ignored and TS7 would run.
+  it('stays direct when the caller chooses the compiler', () => {
+    expect(typecheckQueueDecision([], { ...ON, TYPECHECK_COMPILER: '5' }).queue).toBe(false);
+  });
 });
 
 describe('which app typechecks go through the queue', () => {

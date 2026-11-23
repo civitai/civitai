@@ -42,7 +42,9 @@ export type TextScanEntityType =
   | 'ServiceOffering'
   | 'PostText'
   | 'ModelRules'
-  | 'AppDoc';
+  | 'AppDoc'
+  | 'ServiceDealReview'
+  | 'ServiceDealReviewReply';
 
 export type TextScanField = { heading: string; text: string | null | undefined };
 

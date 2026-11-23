@@ -32,8 +32,16 @@ export const SERVICE_DEAL_CLOSE_LABELS: Record<string, string> = {
 export const SERVICE_DEAL_AUTO_COMPLETE_NOTICE_MS = 24 * HOUR;
 /** The seller is reminded this long before the due date. */
 export const SERVICE_DEAL_DUE_SOON_NOTICE_MS = 24 * HOUR;
+/** After the buyer accepts a delivery, how long until they are first reminded to review it. */
+export const SERVICE_DEAL_REVIEW_FIRST_NOTICE_MS = 2 * HOUR;
+/** The buyer is reminded again this long before the review window closes at payout. */
+export const SERVICE_DEAL_REVIEW_LAST_NOTICE_MS = 12 * HOUR;
+/** How long a buyer may edit their review after leaving it. */
+export const SERVICE_DEAL_REVIEW_EDIT_MS = 48 * HOUR;
 /** Between completion and payout, so a buyer can report final files that are missing or broken. */
 export const SERVICE_DEAL_DISPUTE_WINDOW_MS = 48 * HOUR;
+/** Delivered images a buyer may attach to one review. */
+export const SERVICE_DEAL_REVIEW_IMAGE_MAX = 4;
 
 /** A declined, expired or canceled deal's files are deleted this long after it closed. */
 export const SERVICE_DEAL_FILE_RETENTION_CLOSED_MS = 30 * 24 * HOUR;

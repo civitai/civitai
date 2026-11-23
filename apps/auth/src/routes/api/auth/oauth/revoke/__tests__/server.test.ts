@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 
 // The db fake FILTERS on every `.where` rather than returning canned rows: the token lookup keys on
 // `key` + `type`, and every authorisation arm turns on `userId` / `clientId`, so a fake that ignored
@@ -56,7 +57,8 @@ vi.mock('$lib/server/db/db', () => {
   return { db: { selectFrom: builder, deleteFrom: builder } };
 });
 
-vi.mock('$lib/server/oauth/rate-limit', () => ({
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
   checkOAuthRateLimit: vi.fn(async (bucket: string, id: string | null | undefined) => {
     h.rateLimitCalls.push([bucket, id]);
     return h.rateLimitAllow;
@@ -417,7 +419,12 @@ describe('revoke — request handling is unchanged', () => {
     const res = await post({ token: 'link_access', client_id: PUBLIC_CLIENT });
 
     expect(res.status).toBe(429);
-    expect(await res.json()).toEqual({ error: 'rate_limited' });
+    expect(res.headers.get('Retry-After')).toBe('60');
+    expect(await res.json()).toEqual({
+      error: 'rate_limited',
+      error_description: 'Too many revocation requests',
+      retry_after: 60,
+    });
     expect(h.rateLimitCalls).toEqual([['revoke', h.clientIp]]);
     expect(stored('link_access')).toBe(true);
   });

@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { userFollowsCache } from '~/server/redis/caches';
 
-const flipt = vi.hoisted(() => ({ isFlipt: vi.fn<(flag?: string) => Promise<boolean>>(async () => false) }));
+const flipt = vi.hoisted(() => ({
+  isFlipt: vi.fn<(flag?: string) => Promise<boolean>>(async () => false),
+}));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   isFlipt: flipt.isFlipt,
@@ -361,5 +363,58 @@ describe('deleteUser — the User row survives', () => {
       >[0])
     );
     expect(dealUploadsCall()).toBe(-1);
+  });
+});
+
+describe('the profile archive before an account deletion', () => {
+  const ACTOR = 7;
+  const named = () =>
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (s: readonly string[]) =>
+      s.join('?').includes('"CsamReport"') ? [{ named: true }] : []) as never);
+  const deleteAs = (archive: () => Promise<unknown>) =>
+    UserService.deleteUser({ id: USER_ID, username: 'gone', actorId: ACTOR, archive });
+
+  beforeEach(() => {
+    named();
+    dbMock.dbWrite.userProfile.findUnique.mockResolvedValue({ bio: 'pay me offsite' });
+    dbMock.dbWrite.userLink.findMany.mockResolvedValue([
+      { id: 1, url: 'https://example.invalid/pay', type: 'Sponsorship' },
+    ]);
+  });
+
+  it('archives the profile and links of a named user before deleting them', async () => {
+    const archive = vi.fn(async () => ({}));
+    await deleteAs(archive);
+
+    expect(archive).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: USER_ID,
+        actorId: ACTOR,
+        clearedFields: ['location', 'bio', 'message', 'showcaseSections', 'links'],
+        profile: { bio: 'pay me offsite' },
+      })
+    );
+    expect(archive.mock.invocationCallOrder[0]).toBeLessThan(
+      dbMock.dbWrite.userProfile.deleteMany.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('archives nothing for a user no report or hold names', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (s: readonly string[]) =>
+      s.join('?').includes('"CsamReport"') ? [{ named: false }] : []) as never);
+    const archive = vi.fn(async () => ({}));
+    await deleteAs(archive);
+
+    expect(archive).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.userProfile.deleteMany).toHaveBeenCalled();
+  });
+
+  it('deletes nothing when the archive fails', async () => {
+    await expect(deleteAs(async () => Promise.reject(new Error('s3 down')))).rejects.toThrow(
+      's3 down'
+    );
+    expect(dbMock.dbWrite.userProfile.deleteMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.userLink.deleteMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
   });
 });

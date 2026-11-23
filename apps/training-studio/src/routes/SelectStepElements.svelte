@@ -12,6 +12,7 @@
   } from '@tabler/icons-svelte';
   import { onMount, untrack } from 'svelte';
   import '$lib/civitai-elements';
+  import type { CivitaiTextInput } from '@civitai/components/civitai-text-input';
   import type { StudioChipGroup } from '$lib/elements/studio-chip-group';
   import { serviceStatus } from '$lib/service-status.svelte';
   import { modelUnavailability, UNAVAILABLE_LABEL } from '$lib/service-status-core';
@@ -48,6 +49,7 @@
     cardSupportsKohya,
     kohyaSeedCard,
     runEngine,
+    restoreRun,
     runSupportsKohya,
     withEngine,
     runFromPrice,
@@ -100,10 +102,7 @@
   let runs = $state<Run[]>(
     untrack(() =>
       initial
-        // A restored Kohya run (Back, Train again) falls back to AI Toolkit for a viewer without the gate.
-        ? initial.runs.map((run) =>
-            kohyaEnabled || runEngine(run) !== 'kohya' ? run : withEngine(run, 'ai-toolkit', enabledFlags)
-          )
+        ? initial.runs.map((run) => restoreRun(run, kohyaEnabled, enabledFlags))
         : [newRun(recommendedCardFor('character', 'image', enabledFlags), enabledFlags)]
     )
   );
@@ -153,7 +152,7 @@
       : undefined
   );
   // A tight, current set is featured up front; the long tail (older / niche models) sits behind a "show
-  // more" toggle so the list isn't a wall of ~20 models. Audio has one card, so it shows everything.
+  // more" toggle. Audio has one card, so it shows everything.
   // `featuredCards` keeps the FEATURED order — the recommended model is first in it.
   const FEATURED: Partial<Record<Media, string[]>> = {
     image: ['zimage', 'mossimage', 'flux3klein', 'anima', 'krea2'],
@@ -506,7 +505,7 @@
         label="Civitai model AIR"
         value={run.customAir ?? ''}
         placeholder="urn:air:sdxl:checkpoint:civitai:…@…"
-        oninput={(e: Event) => setCustomAir(runIndex, (e.currentTarget as HTMLInputElement).value)}
+        oninput={(e: Event) => setCustomAir(runIndex, (e.currentTarget as CivitaiTextInput).value)}
       ></civitai-text-input>
       {#if pickModel()}
         <civitai-button
@@ -690,8 +689,7 @@
                 </span>
               {/if}
             </div>
-            <!-- Own row, never sharing the title's: on the recommended tile the badge was truncating
-                 the model name to "MiniMax …". -->
+            <!-- Own row: sharing the title row truncates the model name. -->
             {#if card.flag}
               <div class="mt-1 {dim}">
                 <civitai-badge variant="filled" size="sm">{card.flag}</civitai-badge>
@@ -703,8 +701,7 @@
                 {#if down.reason}<div class="line-clamp-2 text-dark-2">{down.reason}</div>{/if}
               </div>
             {/if}
-            <!-- Two lines, and always two lines tall: at one line most taglines were clipped mid-sentence,
-                 and letting the height follow the text made the price rows sit at different heights. -->
+            <!-- Fixed two-line height keeps price rows aligned across cards. -->
             <div class="mt-1 line-clamp-2 min-h-[2lh] text-xs leading-snug text-dark-2 {dim}">
               {card.description}
             </div>

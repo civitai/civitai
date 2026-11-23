@@ -58,7 +58,7 @@ vector.
 | `src/components/Post/Detail/PostDetail.tsx` | "Post unpublished" alert at top of content column, visible to owner/mod when `wasPublished && !publishedAt`; link to parent model |
 | `src/components/Post/EditV2/PostEditSidebar.tsx` | Restore-only state (no Publish/Schedule buttons) when `isUnpublishedByParent`; View Post button no longer gated by `publishedAt`; same alert + link |
 | `src/components/Model/ModelVersions/ModelVersionDetails.tsx` | CTA toggles `Publish` ↔ `Republish` based on unpublished status; Schedule (clock) button hidden once unpublished |
-| `src/pages/api/admin/temp/clamp-publishedat-bumps.ts` | Op 3 gated on `publishedAt <= NOW()` to skip scheduled-future posts; STASH keys renamed |
+| `src/server/api-routes/admin/temp/clamp-publishedat-bumps.ts` | Op 3 gated on `publishedAt <= NOW()` to skip scheduled-future posts; STASH keys renamed |
 
 ## Selector design
 

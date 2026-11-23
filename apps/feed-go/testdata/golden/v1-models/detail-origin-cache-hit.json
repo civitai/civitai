@@ -6,7 +6,9 @@
     "baseUrl": "https://site.example.test",
     "coverageNext": false,
     "baseModelFeedMetrics": false,
-    "regionRestricted": false
+    "regionRestricted": false,
+    "serverDomainRed": "red.example.test",
+    "serverDomainRedAliases": " Mirror.Red.Example.Test ,"
   },
   "request": {
     "path": "/api/v1/models/5004",
@@ -109,6 +111,9 @@
     },
     "vaeFiles": [],
     "usernames": {},
+    "tagIdsByName": {},
+    "blockedTags": [],
+    "trainingData": [],
     "responseCache": {
       "packed:caches:public-model-response:v2:5004:31": {
         "data": {
@@ -272,6 +277,9 @@
         "cachedAt": 1781524740000
       },
       "packed": "3gACpGRhdGHeAAaiaWTNE4ykbmFtZaxDYWNoZWQgTW9kZWykdHlwZapDaGVja3BvaW50p2NyZWF0b3LeAAKodXNlcm5hbWWqYXJ0aXN0X29uZaVpbWFnZcCkdGFnc5Glc3R5bGWtbW9kZWxWZXJzaW9uc5HeAAWiaWTNF4+kbmFtZaJ2MatwdWJsaXNoZWRBdNb/afhgEKVmaWxlc5HeAASiaWTNG3ekbmFtZbJjYWNoZWQuc2FmZXRlbnNvcnOkdHlwZaVNb2RlbKZzaXplS0LLP/gAAAAAAACrZG93bmxvYWRVcmzZMmh0dHBzOi8vc2l0ZS5leGFtcGxlLnRlc3QvYXBpL2Rvd25sb2FkL21vZGVscy82MDMxqGNhY2hlZEF0y0J57LJjegAA"
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[]"
     }
   },
   "sysRedis": {

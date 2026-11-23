@@ -183,39 +183,18 @@ export const NO_FORK_PROVENANCE: ListingForkProvenance = Object.freeze({
 });
 
 /**
- * Read one listing's fork facts. Degrades to {@link NO_FORK_PROVENANCE} on a missing column only;
- * everything else propagates. Use {@link readListingForkProvenanceForRender} on a page.
+ * Read one listing's fork facts: {@link readListingForkProvenanceMany} for that one listing, so the
+ * store page and the registry adapter's listing stream read them by one predicate. Degrades to
+ * {@link NO_FORK_PROVENANCE} on a missing column only; everything else propagates. Use
+ * {@link readListingForkProvenanceForRender} on a page.
  */
 export async function readListingForkProvenance(
   listingId: string,
   db: ForkReadClient
 ): Promise<ListingForkProvenance> {
-  try {
-    const rows = (await db.$queryRaw`SELECT
-          al."forkable" AS "forkable",
-          al."fork_of_listing_id" AS "forkOfListingId",
-          (al."fork_of_listing_id" IS NOT NULL
-            OR ab."fork_of_app_block_id" IS NOT NULL
-            OR ab."fork_of_commit_sha" IS NOT NULL) AS "isFork"
-        FROM "app_listings" al
-        LEFT JOIN "app_blocks" ab ON ab."id" = al."app_block_id"
-        WHERE al."id" = ${listingId}
-        LIMIT 1`) as Array<{
-      forkable: boolean | null;
-      forkOfListingId: string | null;
-      isFork: boolean | null;
-    }>;
-    const row = rows[0];
-    if (!row) return NO_FORK_PROVENANCE;
-    return {
-      forkable: row.forkable === true,
-      forkOfListingId: row.forkOfListingId ?? null,
-      isFork: row.isFork === true,
-    };
-  } catch (err) {
-    if (isMissingColumnError(err)) return NO_FORK_PROVENANCE;
-    throw err;
-  }
+  return (
+    (await readListingForkProvenanceMany([listingId], db)).get(listingId) ?? NO_FORK_PROVENANCE
+  );
 }
 
 /**
@@ -239,6 +218,48 @@ export async function readListingForkParents(
         forkOfListingId: string;
       }>;
     return new Map(rows.map((r) => [r.id, r.forkOfListingId]));
+  } catch (err) {
+    if (isMissingColumnError(err)) return new Map();
+    throw err;
+  }
+}
+
+/**
+ * {@link readListingForkProvenance} for many listings in one query: listing id → its provenance,
+ * for every listing given that has a row. Degrades to an empty map (every listing reads as
+ * {@link NO_FORK_PROVENANCE}) on a missing column only; everything else propagates.
+ */
+export async function readListingForkProvenanceMany(
+  listingIds: readonly string[],
+  db: ForkReadClient
+): Promise<Map<string, ListingForkProvenance>> {
+  if (listingIds.length === 0) return new Map();
+  try {
+    const rows = (await db.$queryRaw`SELECT
+          al."id" AS "id",
+          al."forkable" AS "forkable",
+          al."fork_of_listing_id" AS "forkOfListingId",
+          (al."fork_of_listing_id" IS NOT NULL
+            OR ab."fork_of_app_block_id" IS NOT NULL
+            OR ab."fork_of_commit_sha" IS NOT NULL) AS "isFork"
+        FROM "app_listings" al
+        LEFT JOIN "app_blocks" ab ON ab."id" = al."app_block_id"
+        WHERE al."id" = ANY(${[...listingIds]}::text[])`) as Array<{
+      id: string;
+      forkable: boolean | null;
+      forkOfListingId: string | null;
+      isFork: boolean | null;
+    }>;
+    return new Map(
+      rows.map((row) => [
+        row.id,
+        {
+          forkable: row.forkable === true,
+          forkOfListingId: row.forkOfListingId ?? null,
+          isFork: row.isFork === true,
+        },
+      ])
+    );
   } catch (err) {
     if (isMissingColumnError(err)) return new Map();
     throw err;

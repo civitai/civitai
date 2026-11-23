@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import type * as PromClient from '~/server/prom/client';
 
 // getImageMetricsObject is the metric leg of the getAllImages 12-way Promise.all
 // fan-out on the image feed / SSR hot path. It reads counts from ClickHouse via
@@ -14,7 +15,20 @@ import { join } from 'path';
 // so importing image.service doesn't boot real infra (the established pattern in
 // the other service tests, e.g. block-registry.subscriptions.test.ts).
 
-const { fetch: fetchMock } = vi.hoisted(() => ({ fetch: vi.fn() }));
+const { fetch: fetchMock, counterIncMock } = vi.hoisted(() => ({
+  fetch: vi.fn(),
+  counterIncMock: vi.fn(),
+}));
+
+vi.mock('~/server/prom/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof PromClient>();
+  return {
+    ...actual,
+    registerCounter: ({ name }: { name: string }) => ({
+      inc: name === 'image_metrics_clickhouse_timeout_total' ? counterIncMock : vi.fn(),
+    }),
+  };
+});
 
 // event-engine-common is a git submodule, not checked out by default — stub the
 // value imports image.service pulls from it. MetricService
@@ -85,6 +99,7 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
       buzz: 100,
       play: null,
     });
+    expect(counterIncMock).not.toHaveBeenCalled();
     // The happy path must not touch the cache: reading it unconditionally would add N round
     // trips to the SSR hot path.
     expect(redisMock.redis.hGetAll).not.toHaveBeenCalled();
@@ -108,6 +123,7 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
     // and the outer catch) now leave the id absent.
     expect(result).toEqual({});
     expect(result[1]).toBeUndefined();
+    expect(counterIncMock).toHaveBeenCalledTimes(1);
   });
 
   it('leaves every id ABSENT when the metric read THROWS and the cache is COLD', async () => {
@@ -120,6 +136,7 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
     const result = await getImageMetricsObject([{ id: 1 }, { id: 2 }]);
 
     expect(result).toEqual({});
+    expect(counterIncMock).not.toHaveBeenCalled();
   });
 
   it('CONTROL: a read that ANSWERS with no rows keeps every id present, so a real zero stays known', async () => {

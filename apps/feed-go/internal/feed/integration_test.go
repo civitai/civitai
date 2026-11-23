@@ -698,7 +698,7 @@ func TestIntegrationGalleryPromotions(t *testing.T) {
 		ts(-24*time.Hour), ts(-8*24*time.Hour), live))
 	ctx := integtest.Ctx(t)
 
-	rows, err := g.LiveGalleryPromotions(ctx, 2104001, now.Add(-maxRun))
+	rows, err := g.LiveGalleryPromotions(ctx, 2104001, now.Add(-MaxPromotionRun))
 	if err != nil {
 		t.Fatal(err)
 	}

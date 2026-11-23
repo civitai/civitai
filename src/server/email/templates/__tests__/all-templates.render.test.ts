@@ -148,7 +148,13 @@ describe('app-review emails', () => {
     const { notificationEmail } = await import('~/server/email/templates/notification.email');
     const prepared = getNotificationMessage({
       type,
-      details: { slug: 'pixel-pal', name: 'Pixel Pal', reason: 'Broken build', hasPage: true },
+      details: {
+        slug: 'pixel-pal',
+        name: 'Pixel Pal',
+        reason: 'Broken build',
+        hasPage: true,
+        canOpenRunPage: true,
+      },
     });
     expect(prepared?.message).toBeTruthy();
     const data = {

@@ -88,6 +88,10 @@ import {
   type StorageAccess,
 } from '~/server/services/apps/doc-store-access';
 import { getDocStore } from '~/server/services/apps/doc-store.instance';
+import {
+  shadowAppDataList,
+  type AppDataShadowInput,
+} from '~/server/services/apps/app-data-shadow.service';
 import { gateHook } from '~/server/services/apps/doc-store-hook';
 import { assertOwnedModelVersions } from '~/server/services/apps/doc-store-ownership';
 import { validateDocAgainstCollectionSchema } from '~/server/services/apps/doc-store-schema';
@@ -1635,9 +1639,48 @@ function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute): void {
 // The handler
 // ---------------------------------------------------------------------------
 
-export type StorageApiDeps = { store: () => DocStore };
+export type StorageApiDeps = {
+  store: () => DocStore;
+  /**
+   * Handed every list the route answered 200, after the response is sent (`app-data-shadow.service.ts`,
+   * the shared app-data service's shadow read). Unset: the process shadow. It decides on its own
+   * whether to read anything; whatever it does or throws, the response is already the store's.
+   */
+  shadow?: (input: AppDataShadowInput) => void;
+};
+
+/**
+ * The shadow's view of one list the route answered (`AppDataShadowInput`). `access` is the access
+ * the list ran with, and `from` the import source after `otherAppSource` (null: the app's own).
+ */
+function appDataShadowInput(
+  req: NextApiRequest,
+  collection: string,
+  from: string | null,
+  access: StorageAccess,
+  body: unknown
+): AppDataShadowInput {
+  const served = body as { items: { key: string; data: unknown }[]; nextCursor: string | null };
+  const keyPrefix = req.query.keyPrefix;
+  return {
+    authorization: req.headers.authorization,
+    own: from === null,
+    published: access.ctx.ns === PUBLISHED_NS,
+    tokenKind: access.tokenKind,
+    signedIn: access.ctx.viewerUid !== null,
+    visibility: access.collections.get(collection)?.visibility,
+    queryKeys: Object.keys(req.query).filter((k) => k !== 'path' && k !== FROM_PARAM),
+    keyPrefix: typeof keyPrefix === 'string' ? keyPrefix : undefined,
+    appBlockId: access.ctx.appId,
+    blockId: access.blockId,
+    collection,
+    head: access.enforcedManifest,
+    served: { items: served.items, nextCursor: served.nextCursor ?? null },
+  };
+}
 
 export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore }) {
+  const shadow = deps.shadow ?? shadowAppDataList;
   return async function storageHandler(req: NextApiRequest, res: NextApiResponse) {
     try {
       const match = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
@@ -1691,6 +1734,14 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       const gated = await withDocLevelGate(access, claims);
       const reply = await run(req, body, op, gated, deps.store());
       res.status(reply.status).json(reply.body);
+      if (op.op === 'list' && reply.status === 200) {
+        // After the response: the shadow only compares, and nothing it does reaches the caller.
+        try {
+          shadow(appDataShadowInput(req, op.collection, from, gated, reply.body));
+        } catch {
+          // A shadow never affects the request.
+        }
+      }
     } catch (err) {
       if (err instanceof BodyAbortedError) {
         // A client abort is not a server fault: no error log, and nothing written to a

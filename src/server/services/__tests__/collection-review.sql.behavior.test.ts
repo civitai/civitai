@@ -48,7 +48,8 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, status "ArticleStatus", "publishedAt" timestamp(3),
-      ingestion "ArticleIngestionStatus", "nsfwLevel" int DEFAULT 1
+      ingestion "ArticleIngestionStatus", "nsfwLevel" int DEFAULT 1,
+      availability "Availability" DEFAULT 'Public'
     );
     CREATE TABLE "ModelMetric" (
       "modelId" int PRIMARY KEY, status "ModelStatus", "nsfwLevel" int DEFAULT 1, mode "ModelModifier",
@@ -95,6 +96,9 @@ beforeAll(async () => {
       (22, 100, 0, 'Scanned');                -- scanned, not yet rated, ACCEPTED
 
     INSERT INTO "Article" VALUES (200, 'Published', now(), 'Scanned', 1), (201, 'Published', now(), 'Pending', 1);
+    -- 202 follows the article availability rule.
+    INSERT INTO "Article" (id, status, "publishedAt", ingestion, "nsfwLevel", availability)
+      VALUES (202, 'Published', now(), 'Scanned', 1, 'Private');
     INSERT INTO "ModelMetric" VALUES (300, 'Published', 1, NULL, 'Public'), (301, 'Published', 1, NULL, 'Private');
 
     INSERT INTO "CollectionItem" ("collectionId", status, "imageId") VALUES
@@ -106,7 +110,7 @@ beforeAll(async () => {
     INSERT INTO "CollectionItem" ("collectionId", status, "imageId", "addedById") VALUES
       (1, 'REVIEW', 17, ${OWNER}), (1, 'REVIEW', 18, ${OWNER});
     INSERT INTO "CollectionItem" ("collectionId", status, "postId") VALUES (1, 'REVIEW', 100), (1, 'REVIEW', 101);
-    INSERT INTO "CollectionItem" ("collectionId", status, "articleId") VALUES (1, 'REVIEW', 200), (1, 'REVIEW', 201);
+    INSERT INTO "CollectionItem" ("collectionId", status, "articleId") VALUES (1, 'REVIEW', 200), (1, 'REVIEW', 201), (1, 'REVIEW', 202);
     INSERT INTO "CollectionItem" ("collectionId", status, "modelId") VALUES (1, 'REVIEW', 300), (1, 'REVIEW', 301);
   `);
 });

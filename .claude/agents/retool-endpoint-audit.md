@@ -20,19 +20,18 @@ PreToolUse hook blocks some outright. Read and grep only.
 ## The surface to check against
 
 ```bash
-ls src/pages/api/mod/ src/pages/api/mod/retool/
-# every retool endpoint documents its actions in a header comment:
-for f in src/pages/api/mod/retool/*.ts; do echo "--- $f"; sed -n '/^ \* Actions:/,/^ \*\//p' "$f"; done
+ls src/server/api-routes/mod/ src/pages/api/mod/
+grep -rn "summary:" src/server/api-routes/mod | head -50
 ```
 
-**Read the zod schema, not the header.** The header lists action names; the schema is the contract and
+**Read the zod schema, not the summary.** The summary names the action; the schema is the contract and
 is usually richer than the Retool query that called it.
 
 ## What to look for
 
 ### 1. A local write that duplicates an endpoint
 
-The slice writes a table directly where `/api/mod/*` or `/api/mod/retool/*` already owns that write.
+The slice writes a table directly where `/api/mod/*` already owns that write.
 Report the endpoint, and what the local path is missing — that list is the actual finding, not the
 duplication itself.
 

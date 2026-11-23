@@ -89,6 +89,7 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
           <ClampedContent commentId={comment.id}>
             <RenderHtml
               html={comment.content}
+              maskedHtml={comment.maskedContent}
               className="text-sm"
               withMentions
               withProfanityFilter

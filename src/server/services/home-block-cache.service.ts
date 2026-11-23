@@ -1,4 +1,9 @@
+import { Prisma } from '@prisma/client';
+import { chunk } from 'lodash-es';
 import { LRUCache } from 'lru-cache';
+import { env } from '~/env/server';
+import { dbRead } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
@@ -13,12 +18,13 @@ import {
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { HomeBlockWithData } from '~/server/services/home-block.service';
 import { isCollectionReadShared } from '~/server/services/collection-item-access';
+import { coverIndexExists } from '~/server/services/collection-cover-index';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { colorDomainNames } from '~/shared/constants/domain.constants';
 import { createLogger } from '~/utils/logging';
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const homeBlockService = () => import('~/server/services/home-block.service');
 
 const CACHE_EXPIRY = {
@@ -291,6 +297,131 @@ export async function homeBlockCacheBust(type: HomeBlockType, entityId: number |
   // outlive a bust if it is turned on again within the TTL.
   for (const key of keys) homeBlockL1.delete(key);
   await Promise.all(keys.map((key) => redis.del(key as typeof base)));
+}
+
+const EVICT_IMAGE_BATCH = 1000;
+const EVICT_BUST_BATCH = 100;
+// The refill reads a replica, so the entry is refreshed again once replicas have caught up.
+export const evictRetryDelayMs = () => Math.max(5, env.REPLICATION_LAG_DELAY) * 1000;
+
+const logEvictFailure = (error: unknown) =>
+  logToAxiom({
+    type: 'error',
+    name: 'home-block-evict-images',
+    message: error instanceof Error ? error.message : String(error),
+    error,
+  });
+
+type EvictTarget = { imageIds: number[] } | { userId: number } | { collectionIds: number[] };
+
+// Only a collection anyone may read has a shared entry (see `isCollectionReadShared`); the others
+// have nothing to refresh.
+async function collectionsHolding(target: EvictTarget) {
+  if ('collectionIds' in target)
+    return readCollectionIds(
+      chunk(target.collectionIds, EVICT_IMAGE_BATCH).map(
+        (ids) => Prisma.sql`SELECT c.id AS "collectionId" FROM "Collection" c
+          WHERE c.id = ANY(${ids}::int[]) AND c.read IN ('Public', 'Unlisted')`
+      )
+    );
+  if ('imageIds' in target && !target.imageIds.length) return [];
+  // Without that index the cover lookup would scan every collection; the items are still found.
+  const withCovers = await coverIndexExists().catch((error: unknown) => {
+    logEvictFailure(error);
+    return false;
+  });
+  if ('userId' in target)
+    return readCollectionIds([
+      Prisma.sql`SELECT DISTINCT ci."collectionId" FROM "CollectionItem" ci
+        JOIN "Image" i ON i.id = ci."imageId"
+        JOIN "Collection" c ON c.id = ci."collectionId"
+        WHERE i."userId" = ${target.userId} AND c.read IN ('Public', 'Unlisted')`,
+      ...(withCovers
+        ? [
+            Prisma.sql`SELECT c.id AS "collectionId" FROM "Collection" c
+              JOIN "Image" i ON i.id = c."imageId"
+              WHERE i."userId" = ${target.userId} AND c.read IN ('Public', 'Unlisted')`,
+          ]
+        : []),
+    ]);
+  return readCollectionIds(
+    chunk(target.imageIds, EVICT_IMAGE_BATCH).map(
+      (ids) => Prisma.sql`SELECT ci."collectionId" FROM "CollectionItem" ci
+        JOIN "Collection" c ON c.id = ci."collectionId"
+        WHERE ci."imageId" = ANY(${ids}::int[]) AND c.read IN ('Public', 'Unlisted')${
+        withCovers
+          ? Prisma.sql`
+        UNION
+        SELECT c.id FROM "Collection" c
+        WHERE c."imageId" = ANY(${ids}::int[]) AND c.read IN ('Public', 'Unlisted')`
+          : Prisma.empty
+      }`
+    )
+  );
+}
+
+async function readCollectionIds(queries: Prisma.Sql[]) {
+  const collectionIds = new Set<number>();
+  for (const query of queries) {
+    const rows = await dbRead.$queryRaw<{ collectionId: number }[]>(query);
+    for (const { collectionId } of rows) collectionIds.add(collectionId);
+  }
+  return [...collectionIds];
+}
+
+/** The system FeaturedCollections blocks whose pool includes one of these collections. */
+async function featuredBlocksShowing(collectionIds: number[]) {
+  const ids = new Set(collectionIds);
+  const blocks = await dbRead.homeBlock.findMany({
+    where: { userId: -1, type: HomeBlockType.FeaturedCollections },
+    select: { id: true, metadata: true },
+  });
+  return blocks
+    .filter((block) =>
+      (
+        (block.metadata as HomeBlockMetaSchema | null)?.featuredCollections?.collectionIds ?? []
+      ).some((id) => ids.has(id))
+    )
+    .map((block) => block.id);
+}
+
+async function bustHomeBlocksShowing(collectionIds: number[], featuredBlockIds: number[]) {
+  const busts = [
+    ...collectionIds.map((id) => () => homeBlockCacheBust(HomeBlockType.Collection, id)),
+    ...featuredBlockIds.map(
+      (id) => () => homeBlockCacheBust(HomeBlockType.FeaturedCollections, id)
+    ),
+  ];
+  // Settled, so one failed bust does not leave the rest of the list in place.
+  for (const batch of chunk(busts, EVICT_BUST_BATCH))
+    for (const result of await Promise.allSettled(batch.map((bust) => bust())))
+      if (result.status === 'rejected') logEvictFailure(result.reason);
+}
+
+/**
+ * Refreshes every Collection and FeaturedCollections home block holding one of these images (as an
+ * item, or as the collection's cover), now and again once replicas catch up. Call it after any
+ * write that sets an image Blocked, once that write has committed. A delete passes the
+ * `collectionIds` it resolved before the delete, since the delete takes the items with it.
+ * Never throws: the write stands either way.
+ * shortcut: the second refresh is an in-process timer, so it needs the process to keep running;
+ * every caller today runs in the app's server process.
+ */
+export async function evictHomeBlocksForImages(target: EvictTarget) {
+  let collectionIds: number[];
+  let featuredBlockIds: number[];
+  try {
+    collectionIds = await collectionsHolding(target);
+    if (!collectionIds.length) return;
+    featuredBlockIds = await featuredBlocksShowing(collectionIds);
+  } catch (error) {
+    logEvictFailure(error);
+    return;
+  }
+  await bustHomeBlocksShowing(collectionIds, featuredBlockIds);
+  setTimeout(() => {
+    bustHomeBlocksShowing(collectionIds, featuredBlockIds).catch(logEvictFailure);
+  }, evictRetryDelayMs()).unref?.();
 }
 
 export async function bustFeaturedModelsHomeBlockCache() {

@@ -62,7 +62,7 @@ import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
  *
  * ⚠️ SCOPE OF "nothing is delivered that is not first recorded": it is a property of
  * THIS procedure, not of the `app-moderator-message` notification type. The
- * webhook-token-gated `src/pages/api/mod/send-mod-notification.ts` can emit any type —
+ * webhook-token-gated `src/server/api-routes/mod/send-mod-notification.ts` can emit any type —
  * this one included — with arbitrary `userIds` and text, no audit row and no rate limit.
  * That is not moderator-reachable and is equally true of the eleven existing app types,
  * but the claim above is about the proc.

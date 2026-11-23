@@ -3,9 +3,11 @@ import { findTrigger, withTrigger } from '$lib/training-trigger';
 export { findTrigger, promptHasTrigger, withTrigger } from '$lib/training-trigger';
 import {
   KOHYA_PARAM_FIELDS,
+  kohyaClipSkip,
   kohyaDefaults,
   kohyaFieldSupported,
   kohyaFamily,
+  kohyaSelectable,
   isKohyaFlow,
 } from '$lib/data/kohya';
 import {
@@ -149,10 +151,10 @@ export function runVersion(run: Run): ModelVersionInfo {
 }
 
 export const runEngine = (run: Run): string => run.engine ?? runVersion(run).engine ?? 'ai-toolkit';
-export const runSupportsKohya = (run: Run): boolean => !!kohyaFamily(runVersion(run).ecosystem);
+export const runSupportsKohya = (run: Run): boolean => kohyaSelectable(runVersion(run).ecosystem);
 /** A card's versions share one ecosystem, so its first decides whether the card trains on Kohya. */
 export const cardSupportsKohya = (card: ModelCard): boolean =>
-  !!kohyaFamily(card.versions[0]!.ecosystem);
+  kohyaSelectable(card.versions[0]!.ecosystem);
 
 /** The run on `engine`, moved to the card's first version when its pick isn't offered there (Custom
  *  exists for some cards only under Kohya). */
@@ -161,6 +163,18 @@ export function withEngine(run: Run, engine: string, enabledFlags?: ReadonlySet<
   return options.some((v) => v.key === run.versionKey)
     ? { ...run, engine }
     : { ...run, engine, versionKey: options[0]!.key, customAir: undefined, customName: undefined };
+}
+
+/** A selection re-entering Select: a Kohya run falls back to AI Toolkit for a viewer without the gate,
+ *  or on a model Kohya isn't offered for. */
+export function restoreRun(
+  run: Run,
+  kohyaEnabled: boolean,
+  enabledFlags?: ReadonlySet<string>
+): Run {
+  return runEngine(run) !== 'kohya' || (kohyaEnabled && runSupportsKohya(run))
+    ? run
+    : withEngine(run, 'ai-toolkit', enabledFlags);
 }
 
 /** The key a version is blocked under: its checkpoint's, as a submit resolves it (an edit card reuses
@@ -220,7 +234,7 @@ export function versionOptions(
 ): { key: string; label: string }[] {
   return [
     ...visibleVersions(card, enabledFlags).map((v) => ({ key: v.key, label: v.label })),
-    ...(allowsCustomBase(card) || (engine === 'kohya' && cardSupportsKohya(card))
+    ...(allowsCustomBase(card) || (engine === 'kohya' && kohyaFamily(card.versions[0]!.ecosystem))
       ? [{ key: CUSTOM_VERSION_KEY, label: 'Custom' }]
       : []),
   ];
@@ -525,7 +539,7 @@ export const PARAM_HELP: Record<keyof RunParams, string> = {
     'Repeats each image within a dataset epoch. The Steps field still sets the total training budget.',
   enableBucket: 'Groups images with similar aspect ratios to reduce cropping.',
   clipSkip:
-    'Text encoder layer skip for SD 1.5. Anime defaults to 2; other SD 1.5 models default to 1.',
+    'Text encoder layer skip. SD 1.5 defaults to 1 (anime 2); SDXL-family models default to 2 and need at least 2.',
   lrSchedulerNumCycles:
     'Number of cycles for cosine_with_restarts. Other schedulers ignore this value.',
   seed: 'Random seed for training and preview samples.',
@@ -684,7 +698,7 @@ export function defaultRunParams(run: Run, trigger = '', loraType = ''): RunPara
     negativePrompt: '',
     numRepeats: '1',
     enableBucket: true,
-    clipSkip: version.key === 'anime' ? '2' : '1',
+    clipSkip: String(version.key === 'anime' ? 2 : kohyaClipSkip(version.ecosystem)?.default ?? 1),
     lrSchedulerNumCycles: '3',
     seed: '42',
     fp8Base: true,
@@ -727,7 +741,10 @@ export function runExtraCapabilities(
     steps: params.steps,
   });
   if (runEngine(run) === 'kohya' && isKohyaFlow(runVersion(run).ecosystem))
-    caps.noiseOffset = { supported: false, reason: 'Flux and Chroma do not use noise offset.' };
+    caps.noiseOffset = {
+      supported: false,
+      reason: 'Flux, Chroma and Anima do not use noise offset.',
+    };
   return caps;
 }
 
@@ -1021,15 +1038,16 @@ export function withTags(tags: string[], text: string): string[] {
 }
 
 /** What a key does in the tag-entry box: Enter adds the typed tags, Shift+Enter keeps a newline (it splits
- *  like a comma), and Backspace in an empty box removes the last tag. */
+ *  like a comma), and a fresh Backspace press in an empty box removes the last tag. Auto-repeat is ignored so
+ *  holding Backspace to clear the draft stops at the empty box instead of eating the assigned tags. */
 export function tagEntryKey(
-  e: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'isComposing' | 'keyCode'>,
+  e: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'isComposing' | 'keyCode' | 'repeat'>,
   draft: string,
   tagCount: number
 ): 'commit' | 'removeLast' | null {
   // keyCode 229: Safari reports the Enter that confirms an IME conversion with isComposing false.
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) return 'commit';
-  if (e.key === 'Backspace' && draft === '' && tagCount > 0) return 'removeLast';
+  if (e.key === 'Backspace' && !e.repeat && draft === '' && tagCount > 0) return 'removeLast';
   return null;
 }
 

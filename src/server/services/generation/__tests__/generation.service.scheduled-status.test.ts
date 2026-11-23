@@ -86,6 +86,24 @@ describe('getResourceCanGenerate — unpublished training versions (epochs)', ()
   });
 });
 
+describe('getResourceCanGenerate — Private versions', () => {
+  const canGeneratePrivate = (user: { id?: number; isModerator?: boolean }) =>
+    getResourceCanGenerate({
+      resource: { ...baseResource, status: 'Published', availability: 'Private' },
+      user,
+      hiddenGates: noHiddenGates,
+    });
+
+  it('lets the owner and a moderator generate with a Private version', () => {
+    expect(canGeneratePrivate(owner)).toBe(true);
+    expect(canGeneratePrivate(mod)).toBe(true);
+  });
+
+  it("refuses another user's Private version", () => {
+    expect(canGeneratePrivate(normalUser)).toBe(false);
+  });
+});
+
 describe('getResourceCanGenerate — Scheduled status', () => {
   it('lets a moderator generate with a scheduled version', () => {
     expect(canGenerate('Scheduled', mod)).toBe(true);

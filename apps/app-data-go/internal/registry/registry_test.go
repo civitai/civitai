@@ -397,3 +397,16 @@ func FuzzNext(f *testing.F) {
 		t.Fatal("stream never ended")
 	})
 }
+
+// A private document's storage key, sent beside its body, is read; an entity without one has none.
+func TestNextReadsAPrivateDocumentsKey(t *testing.T) {
+	s := streamOf("" +
+		"event: upsert\ndata: {\"entity\":{\"urn\":\"urn:apps.civitai.com:app/notes/r1\",\"schemas\":[\"s\"],\"rev\":\"r1\",\"body\":{\"t\":1},\"key\":\"note-7e3\"},\"cursor\":\"\"}\n\n" +
+		"event: upsert\ndata: {\"entity\":{\"urn\":\"urn:apps.civitai.com:app/a\",\"schemas\":[\"s\"],\"rev\":\"r2\",\"body\":{\"slug\":\"a\"}},\"cursor\":\"\"}\n\n")
+	for _, want := range []string{"note-7e3", ""} {
+		got, err := s.Next()
+		if err != nil || got.Type != Upsert || got.Entity.Key != want {
+			t.Fatalf("got %+v, %v; want key %q", got, err, want)
+		}
+	}
+}

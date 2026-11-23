@@ -8,8 +8,11 @@ import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 // every flag shows, and the header links to the flag Crucible open for entries, when there is one.
 
 const h = vi.hoisted(() => ({
-  items: [] as { type: 'image'; data: { id: number } }[],
+  items: [] as { type: 'image'; data: { id: number; user?: { id: number } } }[],
   open: null as { id: number; endAt: Date } | null,
+  summary: null as unknown,
+  // Creators who have blocked the viewer: the hidden-preferences filter drops their images.
+  blockedBy: new Set<number>(),
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
@@ -28,7 +31,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           isLoading: false,
         }),
       },
-      'hatTurf.getFlags': { useQuery: () => ({ data: null }) },
+      'hatTurf.getFlags': { useQuery: () => ({ data: h.summary }) },
+      'event.getData': { useQuery: () => ({ data: undefined }) },
       'hatTurf.getOpenFlagCrucible': {
         useQuery: () => ({ data: h.open, refetch: async () => undefined }),
       },
@@ -36,8 +40,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
 });
 vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', () => ({
-  useApplyHiddenPreferences: ({ data }: { data: unknown[] }) => ({
-    items: data,
+  useApplyHiddenPreferences: ({ data }: { data: { user?: { id: number } }[] }) => ({
+    items: data.filter((item) => !h.blockedBy.has(item.user?.id ?? 0)),
     loadingPreferences: false,
   }),
 }));
@@ -77,7 +81,34 @@ const enter = () => document.querySelector<HTMLAnchorElement>('[data-testid="fla
 afterEach(() => {
   cleanup();
   h.open = null;
+  h.summary = null;
+  h.blockedBy = new Set();
 });
+
+// Today's summary for the given flags: the same for every viewer, whatever they may see.
+const day = (ids: number[]) => ({
+  flagDayId: 1,
+  closed: false,
+  cutAt: null,
+  closesAt: new Date(Date.now() + 3_600_000),
+  frozen: false,
+  teamPoints: {},
+  // Each flag its own pot and leader, so a badge shows which flag it was built for.
+  flags: ids.map((imageId, i) => ({
+    imageId,
+    hatsByTeam: { [['Green', 'Blue', 'Pink', 'Yellow'][i % 4]]: 3 + i },
+    players: 3 + i,
+    pot: 1000 * (i + 1),
+    winners: [],
+  })),
+  nextCrucible: null,
+});
+const BLOCKER = 77;
+const byCreator = (ids: number[], creatorOf: (id: number) => number) =>
+  ids.map((id) => ({ type: 'image' as const, data: { id, user: { id: creatorOf(id) } } }));
+const cards = () => document.querySelectorAll('[data-testid="flag-card"]').length;
+const hiddenCards = () => document.querySelectorAll('[data-testid="flag-hidden-for-you"]').length;
+const panel = () => document.querySelector('[data-testid="flag-race-panel"]');
 
 describe('the Flag Race home row', () => {
   test('hides entirely, title included, on a day with no flags', async () => {
@@ -134,5 +165,44 @@ describe('the Flag Race home row', () => {
       expect(document.querySelectorAll('[data-testid="flag-card"]').length).toBe(2)
     );
     expect(enter()).toBeNull();
+  });
+});
+
+describe('the Flag Race home row for a viewer a flag creator has blocked', () => {
+  test("keeps the race panel, pot and holders, and stands a hidden card in for the blocker's flag", async () => {
+    h.summary = day([101, 102, 103]);
+    h.items = byCreator([101, 102, 103], (id) => (id === 102 ? BLOCKER : 5));
+    h.blockedBy = new Set([BLOCKER]);
+    block();
+    await vi.waitFor(() => expect(cards()).toBe(2));
+    expect(hiddenCards()).toBe(1);
+    // The hidden flag's own points and holder, from the day's summary (102 is the second flag).
+    const hidden = document.querySelector('[data-testid="flag-hidden-for-you"]')!;
+    expect(hidden.querySelector('[data-testid="flag-badge-pot"]')?.textContent).toBe('2k pts');
+    expect(hidden.querySelector('[data-testid="flag-badge"]')?.getAttribute('data-leader')).toBe(
+      'Blue'
+    );
+    expect(panel()).not.toBeNull();
+    expect(panel()?.textContent).toContain('6k points up for grabs');
+    expect(panel()?.querySelector('[aria-label="Blue holds 1 flag"]')).not.toBeNull();
+  });
+
+  test('keeps the race panel even when every flag is by a creator who blocked the viewer', async () => {
+    h.summary = day([101, 102]);
+    h.items = byCreator([101, 102], () => BLOCKER);
+    h.blockedBy = new Set([BLOCKER]);
+    block();
+    await vi.waitFor(() => expect(panel()).not.toBeNull());
+    expect(cards()).toBe(0);
+    expect(hiddenCards()).toBe(2);
+  });
+
+  test('a flag the collection no longer serves (removed by a moderator) gets no hidden card', async () => {
+    h.summary = day([101, 102, 103]);
+    h.items = byCreator([101, 102], () => 5);
+    block();
+    await vi.waitFor(() => expect(cards()).toBe(2));
+    expect(hiddenCards()).toBe(0);
+    expect(panel()).not.toBeNull();
   });
 });

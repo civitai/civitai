@@ -1,0 +1,82 @@
+{
+  "description": "Shared test vector for the App Assistant preview session-host label. Label = 's' + unpadded lowercase RFC 4648 base32 of 38 bytes: [0] (version << 4) | kid, version 1; [1..16] preview id (16 bytes); [17..21] user id (40-bit big-endian); [22..25] exp (uint32 big-endian Unix seconds); [26..37] HMAC-SHA256(K[kid], 'sandbox-preview:v1:' || bytes 0..25) truncated to 12 bytes. A label is valid only if re-encoding its decoded bytes reproduces it exactly (no spare bit, no upper case), its kid is in the accepted key set, its MAC matches, and now < exp. A copy of the preview gateway's own vector: every field but this description is byte-identical to it; never edit one without the other. TEST-ONLY keys.",
+  "now": 1795046400,
+  "keys": {
+    "current": {
+      "kid": 2,
+      "keyHex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"
+    },
+    "previous": {
+      "kid": 1,
+      "keyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    }
+  },
+  "valid": [
+    {
+      "name": "current key (kid 2), 40-bit user id using all 5 bytes",
+      "label": "sckpynuebrbgh2zm2f7vkbrk22akqcaqdaqcwv7vmqcbzawxned4cvl4enkzes",
+      "kid": 2,
+      "previewId": "9f86d081884c7d659a2feaa0c55ad015",
+      "userId": 4328719365,
+      "exp": 1795075200,
+      "signedBytesHex": "129f86d081884c7d659a2feaa0c55ad01501020304056afeac80",
+      "macInputHex": "73616e64626f782d707265766965773a76313a129f86d081884c7d659a2feaa0c55ad01501020304056afeac80",
+      "macHex": "83905aed20f82aaf846ab249",
+      "labelBytesHex": "129f86d081884c7d659a2feaa0c55ad01501020304056afeac8083905aed20f82aaf846ab249"
+    },
+    {
+      "name": "previous key (kid 1), expires one second after now",
+      "label": "sceasgrlhrgv433763s5jq5sugiiaaaaaccjgv7r4afkmwqqhnt4ou7wi4efig",
+      "kid": 1,
+      "previewId": "0123456789abcdeffedcba9876543210",
+      "userId": 4242,
+      "exp": 1795046401,
+      "signedBytesHex": "110123456789abcdeffedcba987654321000000010926afe3c01",
+      "macInputHex": "73616e64626f782d707265766965773a76313a110123456789abcdeffedcba987654321000000010926afe3c01",
+      "macHex": "54cb42076cf8ea7ec8e10a83",
+      "labelBytesHex": "110123456789abcdeffedcba987654321000000010926afe3c0154cb42076cf8ea7ec8e10a83"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "spare (lowest) bit of the last character set",
+      "label": "sckpynuebrbgh2zm2f7vkbrk22akqcaqdaqcwv7vmqcbzawxned4cvl4enkzet",
+      "reason": "non_canonical"
+    },
+    {
+      "name": "upper case",
+      "label": "SCKPYNUEBRBGH2ZM2F7VKBRK22AKQCAQDAQCWV7VMQCBZAWXNED4CVL4ENKZES",
+      "reason": "non_canonical"
+    },
+    {
+      "name": "one character of the preview id changed",
+      "label": "sckpynuebrcgh2zm2f7vkbrk22akqcaqdaqcwv7vmqcbzawxned4cvl4enkzes",
+      "reason": "bad_mac"
+    },
+    {
+      "name": "kid 7 is not in the key set",
+      "label": "sc6pynuebrbgh2zm2f7vkbrk22akqaaaaccjgv7skcd43u6plt2io4mxwczqre",
+      "reason": "unknown_kid"
+    },
+    {
+      "name": "kid 2 but MAC'd with kid 1's key",
+      "label": "sckpynuebrbgh2zm2f7vkbrk22akqaaaaccjgv7skcdon5hyaustluzfb2b654",
+      "reason": "bad_mac"
+    },
+    {
+      "name": "exp == now",
+      "label": "sckpynuebrbgh2zm2f7vkbrk22akqaaaaccjgv7r4aagcagxigsuaqo5hz3mzo",
+      "reason": "expired"
+    },
+    {
+      "name": "version 2",
+      "label": "sekpynuebrbgh2zm2f7vkbrk22akqaaaaccjgv7skcc6b66kqg3fq66ok45hog",
+      "reason": "bad_version"
+    },
+    {
+      "name": "60 base32 characters",
+      "label": "sckpynuebrbgh2zm2f7vkbrk22akqcaqdaqcwv7vmqcbzawxned4cvl4enkze",
+      "reason": "malformed"
+    }
+  ]
+}

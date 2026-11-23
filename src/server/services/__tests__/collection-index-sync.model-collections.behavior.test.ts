@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
-/** Runs `getCollectionIdsCoveredByModels`' real query against an in-process Postgres. */
+/** Runs the model-to-collections lookups' real queries against an in-process Postgres. */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -13,11 +13,9 @@ vi.mock('~/server/services/collection-media-index', async (importOriginal) => ({
   enqueueCollectionRebuild: mockEnqueue,
 }));
 
-const {
-  getCollectionIdsCoveredByModels,
-  getCollectionIdsWithWithheldLegacyCover,
-  queueModelCollectionsReindex,
-} = await import('~/server/services/collection-index-sync');
+const { getCollectionIdsWithWithheldLegacyCover, queueModelCollectionsReindex } = await import(
+  '~/server/services/collection-index-sync'
+);
 
 beforeAll(async () => {
   const db = new PGlite();
@@ -82,18 +80,6 @@ beforeAll(async () => {
     (client.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       pgliteRaw(db).queryRaw
     );
-});
-
-describe('getCollectionIdsCoveredByModels', () => {
-  it("finds every collection whose cover may come from the model's posts, and no other", async () => {
-    expect((await getCollectionIdsCoveredByModels([1])).sort()).toEqual([1, 18, 19, 2, 3, 4]);
-  });
-
-  it('asks nothing for no models', async () => {
-    (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockClear();
-    expect(await getCollectionIdsCoveredByModels([])).toEqual([]);
-    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
-  });
 });
 
 describe('queueModelCollectionsReindex', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler';
+import { createPerSecondBuckets, envNumber, rateLimited } from '~/server/utils/shadow-sampler';
 
 describe('createPerSecondBuckets', () => {
   it('starts full, spends one token per take, and refills continuously up to one second', () => {
@@ -42,5 +42,21 @@ describe('envNumber', () => {
     expect(envNumber('99', 7, 0, 10)).toBe(10);
     expect(envNumber('-1', 7, 0, 10)).toBe(0);
     expect(envNumber(' 2.5 ', 7, 0, 10)).toBe(2.5);
+  });
+});
+
+describe('rateLimited', () => {
+  it('passes at most N a minute, then N again in the next minute', () => {
+    let t = 0;
+    const seen: number[] = [];
+    const log = rateLimited(
+      (n: number) => seen.push(n),
+      2,
+      () => t
+    );
+    for (const n of [1, 2, 3]) log(n);
+    t = 60_000;
+    for (const n of [4, 5, 6]) log(n);
+    expect(seen).toEqual([1, 2, 4, 5]);
   });
 });

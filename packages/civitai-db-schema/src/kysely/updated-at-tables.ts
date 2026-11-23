@@ -87,6 +87,7 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'Role',
   'SavedModel',
   'ServiceDeal',
+  'ServiceDealReview',
   'ServiceOffering',
   'Storyline',
   'StorylineBranchChoice',

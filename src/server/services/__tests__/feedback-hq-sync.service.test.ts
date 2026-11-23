@@ -36,9 +36,10 @@ function deps(over: {
   deadlineMs?: number;
   maxTaskReads?: number;
 }) {
-  /** The write as asked for, without the handler guard (asserted separately in `handlers`). */
-  const calls: Omit<Call, 'expectedHandledById'>[] = [];
+  /** The write as asked for, without the two guards (asserted separately: `handlers`, `unheld`). */
+  const calls: Omit<Call, 'expectedHandledById' | 'expectedUnheld'>[] = [];
   const handlers: (number | null | undefined)[] = [];
+  const unheld: unknown[] = [];
   const counted: Record<string, number> = {};
   const reads: string[] = [];
   const d: SyncDeps = {
@@ -56,9 +57,10 @@ function deps(over: {
       return t === undefined ? null : t;
     }),
     triage: vi.fn(async (call: Call) => {
-      const { expectedHandledById, ...rest } = call;
+      const { expectedHandledById, expectedUnheld, ...rest } = call;
       calls.push(rest);
       handlers.push(expectedHandledById);
+      unheld.push(expectedUnheld);
       return over.triage ? over.triage(call) : 'changed';
     }),
     actorId: ACTOR,
@@ -70,7 +72,7 @@ function deps(over: {
     ...(over.deadlineMs !== undefined ? { deadlineMs: over.deadlineMs } : {}),
     ...(over.maxTaskReads !== undefined ? { maxTaskReads: over.maxTaskReads } : {}),
   };
-  return { d, calls, handlers, counted, reads };
+  return { d, calls, handlers, unheld, counted, reads };
 }
 
 const open: HqTaskRow = { status: 'to do' };
@@ -306,6 +308,83 @@ describe('runFeedbackHqSync: a status a human set', () => {
     expect(calls.map((c) => c.id)).toEqual([990000260, 990000261]);
     expect(counted).toMatchObject({ conflict: 1, moved_reviewed: 1 });
     expect(summary).toMatchObject({ conflicts: 1, moved: { reviewed: 1 } });
+  });
+});
+
+describe('runFeedbackHqSync: a row a moderator moved back to new (held)', () => {
+  it('🔴 leaves a held row alone: no write, no task read, counted as held', async () => {
+    const { d, calls, counted, reads } = deps({
+      links: [{ feedbackId: 990000700, taskId: 't_open' }],
+      rows: [{ id: 990000700, status: 'new', handledById: null, hqTaskId: null, held: true }],
+      tasks: { t_open: open },
+    });
+    const summary = await runFeedbackHqSync(d);
+    expect(calls).toEqual([]);
+    expect(reads).toEqual([]);
+    expect(counted).toEqual({ held: 1 });
+    expect(summary.held).toBe(1);
+  });
+
+  it('🔴 scopes every write, a move and a link stamp alike, on the row still being unheld', async () => {
+    const { d, calls, unheld } = deps({
+      links: [
+        { feedbackId: 990000704, taskId: 't_open' },
+        { feedbackId: 990000705, taskId: 't_open' },
+      ],
+      rows: [
+        { id: 990000704, status: 'new', handledById: null, hqTaskId: null },
+        { id: 990000705, status: 'actioned', handledById: HUMAN, hqTaskId: null },
+      ],
+      tasks: { t_open: open },
+    });
+    await runFeedbackHqSync(d);
+    expect(calls).toHaveLength(2);
+    expect(unheld).toEqual([true, true]);
+  });
+
+  it('works an unheld neighbour as before in the same run', async () => {
+    const { d, calls, counted } = deps({
+      links: [
+        { feedbackId: 990000701, taskId: 't_open' },
+        { feedbackId: 990000702, taskId: 't_open' },
+      ],
+      rows: [
+        { id: 990000701, status: 'new', handledById: null, hqTaskId: null, held: true },
+        { id: 990000702, status: 'new', handledById: null, hqTaskId: null, held: false },
+      ],
+      tasks: { t_open: open },
+    });
+    await runFeedbackHqSync(d);
+    expect(calls).toEqual([
+      { id: 990000702, status: 'reviewed', expectedStatus: 'new', hqTaskUrl: url('t_open') },
+    ]);
+    expect(counted).toMatchObject({ held: 1, moved_reviewed: 1 });
+  });
+
+  it('🔴 once a moderator moves it forward (the hold removed), the sync works it again', async () => {
+    const link = { feedbackId: 990000703, taskId: 't_done' };
+    // Held at new: skipped.
+    const before = deps({
+      links: [link],
+      rows: [{ id: 990000703, status: 'new', handledById: null, hqTaskId: null, held: true }],
+      tasks: { t_done: complete },
+    });
+    await runFeedbackHqSync(before.d);
+    expect(before.calls).toEqual([]);
+    // The moderator reviewed it, which removed the hold: the completed task now actions it.
+    const after = deps({
+      links: [link],
+      rows: [
+        { id: 990000703, status: 'reviewed', handledById: HUMAN, hqTaskId: null, held: false },
+      ],
+      tasks: { t_done: complete },
+    });
+    await runFeedbackHqSync(after.d);
+    expect(after.calls).toEqual([
+      { id: 990000703, status: 'actioned', expectedStatus: 'reviewed', hqTaskUrl: url('t_done') },
+    ]);
+    expect(after.counted).toMatchObject({ moved_actioned: 1 });
+    expect(after.counted.held).toBeUndefined();
   });
 });
 

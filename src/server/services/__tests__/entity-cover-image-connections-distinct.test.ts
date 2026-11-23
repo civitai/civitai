@@ -280,7 +280,8 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         `OR ( e."entityType" IN ('Bounty', 'BountyEntry') ` +
         `AND (b.availability <> 'Private' OR (?::boolean AND b."userId" = ?)) ) ` +
         `OR ( e."entityType" = 'Article' AND ( ` +
-        `(a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned') ` +
+        `(a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned' ` +
+        `AND a.availability != 'Private') ` +
         'OR (?::boolean AND a."userId" = ?) ) ) ) ' +
         'ORDER BY e."entityId", e."entityType", i.id ' +
         ') t ) t'
