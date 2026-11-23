@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  CSAM_IMAGE_FILING_NO_IMAGE_REFUSAL,
+  CSAM_PRIVATE_ROUTE,
+} from '~/shared/constants/csam-context.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as CsamContextTextService from '~/server/services/csam-context-text';
 import type * as CsamService from '~/server/services/csam.service';
@@ -92,6 +96,7 @@ beforeEach(() => {
   createSupplementalCsamReport.mockClear();
   snapshotCsamContextText.mockReset();
   dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
+  dbMock.dbWrite.image.count.mockResolvedValue(1 as never);
   dbMock.dbWrite.imageReport.findMany.mockImplementation((async ({
     where,
   }: {
@@ -106,6 +111,64 @@ beforeEach(() => {
 
 const file = (userId: number, imageIds: number[]) =>
   fileCsamReport({ userId, imageIds, type: 'Image', reportedById: MOD } as never);
+
+describe('an image report with no image that still exists', () => {
+  it.each([
+    ['no image ids', [] as number[], 0],
+    ['ids whose images are gone', [IMAGE], 0],
+  ])(
+    'is refused with %s, before anything is filed or the account removed',
+    async (_label, ids, rows) => {
+      dbMock.dbWrite.image.count.mockResolvedValue(rows as never);
+
+      await expect(file(OWNER, ids)).rejects.toThrow(CSAM_IMAGE_FILING_NO_IMAGE_REFUSAL);
+      expect(createCsamReport).not.toHaveBeenCalled();
+      expect(createSupplementalCsamReport).not.toHaveBeenCalled();
+      expect(softDeleteUser).not.toHaveBeenCalled();
+    }
+  );
+
+  it('is refused as a supplemental too, when every id lost its row', async () => {
+    dbMock.dbWrite.image.count.mockResolvedValue(0 as never);
+
+    await expect(
+      fileCsamReport({
+        userId: OWNER,
+        imageIds: [IMAGE, OTHER_IMAGE],
+        type: 'Image',
+        reportedById: MOD,
+        supplementalOf: 77,
+      } as never)
+    ).rejects.toThrow(CSAM_IMAGE_FILING_NO_IMAGE_REFUSAL);
+    expect(createSupplementalCsamReport).not.toHaveBeenCalled();
+    expect(softDeleteUser).not.toHaveBeenCalled();
+  });
+
+  it('is the cleared refusal text, word for word', () => {
+    expect(CSAM_IMAGE_FILING_NO_IMAGE_REFUSAL).toBe(
+      "Nothing was filed. An image report needs at least one image that still exists. Select only the images you are reporting; don't add one just to file. If there is no image to report, or it no longer exists, don't file here: " +
+        CSAM_PRIVATE_ROUTE +
+        ' now. It may still need to be reported.'
+    );
+  });
+
+  // Fails until the private route names who to tell: the PR stays a draft until then.
+  it('names who a moderator tells privately', () => {
+    expect(CSAM_PRIVATE_ROUTE).not.toContain('[WHO');
+  });
+
+  it('leaves a report of another type with no images alone', async () => {
+    await expect(
+      fileCsamReport({
+        userId: OWNER,
+        imageIds: [],
+        type: 'TrainingData',
+        reportedById: MOD,
+      } as never)
+    ).resolves.toBeDefined();
+    expect(createCsamReport).toHaveBeenCalled();
+  });
+});
 
 describe('fileCsamReport', () => {
   it('closes the filed images’ Pending image appeals silently, before the flag comes off', async () => {
