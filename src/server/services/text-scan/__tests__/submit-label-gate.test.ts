@@ -50,7 +50,7 @@ const load = async (ids: number[]) =>
 
 const em = dbMock.dbWrite.entityModeration;
 const lastBody = () =>
-  vi.mocked(submitWorkflow).mock.calls.at(-1)![0].body as unknown as {
+  vi.mocked(submitWorkflow).mock.calls.at(-1)![0]!.body! as unknown as {
     metadata: { labels: string[]; promptIds: Record<string, number> };
     steps: { input: { messages: { content: string }[] } }[];
   };
@@ -76,6 +76,7 @@ beforeEach(() => {
   vi.mocked(getTextScanConfig).mockResolvedValue({
     model: 'air:test',
     maxInputChars: 1000,
+    maxSegments: 10,
     thinking: false,
   });
   em.findUnique.mockResolvedValue(null);
@@ -324,7 +325,7 @@ describe('a scan settles only on a verdict that answers every label its profile 
   // The first submit is the scan; a profile with a category hook submits its category call after it.
   const scanLabels = () =>
     (
-      vi.mocked(submitWorkflow).mock.calls[0][0].body as unknown as {
+      vi.mocked(submitWorkflow).mock.calls[0][0]!.body! as unknown as {
         metadata: { labels: string[] };
       }
     ).metadata.labels;
