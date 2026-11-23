@@ -167,7 +167,8 @@ that version goes to a teammate, to your user or to build:
    Resume that critic to check fixes to its own findings: those fixes don't start another re-read.
    The re-read and each check count on from the plan's earlier rounds toward the same stop: a thumbs
    down at round 4 or later stops, and the split goes to your user.
-4. The plan's review line names both: `plan-review: lanes thumbs up on vN, re-read thumbs up on vM`.
+4. The plan's tier 2 review line (tier 1 keeps `plan-review: R thumbs up on vN`) names both:
+   `plan-review: lanes thumbs up on vN, re-read thumbs up on vM`.
    It covers no later version. If your user has said go, build what the change doesn't touch meanwhile.
 
 A wording or formatting fix needs no re-read.
