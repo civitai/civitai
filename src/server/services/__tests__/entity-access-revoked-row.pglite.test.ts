@@ -13,13 +13,14 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const mocks = vi.hoisted(() => ({
   fetch: vi.fn(),
   lookup: vi.fn(),
+  getPaidAccess: vi.fn(async (..._a: unknown[]): Promise<Record<number, unknown>> => ({})),
 }));
 vi.mock('~/server/redis/caches', () => ({
   modelVersionAccessCache: { fetch: mocks.fetch },
   lookupModelVersionAccess: mocks.lookup,
 }));
 vi.mock('~/server/services/paid-access.service', () => ({
-  getPaidAccess: vi.fn(async () => ({})),
+  getPaidAccess: mocks.getPaidAccess,
   bustModelSaleCache: vi.fn(),
 }));
 
@@ -52,6 +53,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  mocks.getPaidAccess.mockResolvedValue({});
   await db.exec(`TRUNCATE "EntityAccess"`);
   dbMock.dbWrite.$queryRaw.mockImplementation(pgliteRaw(db).queryRaw as never);
   const privateEntity = { entityId: ENTITY_ID, userId: OWNER, availability: 'Private' };
@@ -91,5 +93,35 @@ describe('hasEntityAccess with no permissions named', () => {
   it('still reads any other entity type by the row alone', async () => {
     await grant('Post', 0);
     expect(await access('Post')).toBe(true);
+  });
+});
+
+// A paid-download version is Public with an active PaidAccess row. Reviews ignore the purchase gate
+// (Justin, 2026-11-23); downloads, which call without the option, must stay gated.
+describe('hasEntityAccess with ignorePaidAccess', () => {
+  const asVersion = (availability: string) => {
+    const entity = { entityId: ENTITY_ID, userId: OWNER, availability };
+    mocks.lookup.mockResolvedValue({ [ENTITY_ID]: entity });
+    mocks.getPaidAccess.mockResolvedValue({ [ENTITY_ID]: { endsAt: null } });
+  };
+  const check = async (ignorePaidAccess?: boolean) =>
+    (
+      await hasEntityAccess({
+        entityType: 'ModelVersion',
+        entityIds: [ENTITY_ID],
+        userId: VIEWER,
+        ignorePaidAccess,
+      })
+    )[0].hasAccess;
+
+  it('opens a Public paid version to a non-buyer only when asked to', async () => {
+    asVersion('Public');
+    expect(await check()).toBe(false);
+    expect(await check(true)).toBe(true);
+  });
+
+  it('still refuses a non-owner a Private version', async () => {
+    asVersion('Private');
+    expect(await check(true)).toBe(false);
   });
 });
