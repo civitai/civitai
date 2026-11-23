@@ -20,7 +20,6 @@ import {
   getImageGenerationData,
   getImagesByUserIdForModeration,
   getMyImages,
-  ingestImageById,
   removeImageResource,
   removeImageTechniques,
   removeImageTools,
@@ -30,6 +29,7 @@ import {
   updateImageTools,
   refreshImageResources,
 } from '~/server/services/image.service';
+import { rescanImageById } from '~/server/services/image-rescan.service';
 import {
   middleware,
   heavyProcedure,
@@ -172,7 +172,7 @@ export const imageRouter = router({
   removeResource: moderatorProcedure
     .input(removeImageResourceSchema)
     .mutation(({ input }) => removeImageResource(input)),
-  rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => ingestImageById(input)),
+  rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanImageById(input)),
   getEntitiesCoverImage: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getEntitiesCoverImage)

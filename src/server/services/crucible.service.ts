@@ -148,6 +148,7 @@ import { visibleEntryImageSql } from '~/server/services/crucible-entry-sql';
 import {
   imageNotRestrictedSql,
   imageNotRestrictedWhere,
+  noBlockMarkerWhere,
   isImageServable,
   withServableImage,
 } from '~/server/common/image-visibility';
@@ -4321,6 +4322,7 @@ const rankableEntryWhere = (
         nsfwLevel: { in: levelsIntersecting(nsfwLevel) },
       },
       imageNotRestrictedWhere(),
+      noBlockMarkerWhere(),
     ],
   },
 });

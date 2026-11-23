@@ -1,8 +1,12 @@
 import type { DB } from '@civitai/db-schema/kysely';
 import type { Selectable } from 'kysely';
 import { Prisma } from '@prisma/client';
-import { NsfwLevel } from '~/server/common/enums';
-import { ImageScanFailureClass } from '~/server/services/image-scan-failure';
+import { BlockedReason, NsfwLevel } from '~/server/common/enums';
+import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedown-activities';
+import {
+  IMAGE_RESCAN_RETRY_LIMIT,
+  ImageScanFailureClass,
+} from '~/server/services/image-scan-failure';
 import {
   allBrowsingLevelsFlag,
   nsfwBrowsingLevelsArray,
@@ -77,6 +81,41 @@ export const hasBlockMarkerSql = (alias = 'i') => {
     ${t}."ingestion" = ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
     OR ${t}."nsfwLevel" = ${NsfwLevel.Blocked}
     OR ${t}."blockedFor" IS NOT NULL
+  )`;
+};
+
+/** `NOT hasBlockMarkerSql` as a Prisma `Image` filter. */
+export const noBlockMarkerWhere = (): Prisma.ImageWhereInput => ({
+  ingestion: { not: ImageIngestionStatus.Blocked },
+  nsfwLevel: { not: NsfwLevel.Blocked },
+  blockedFor: null,
+});
+
+/** The second arm of `scanKeepsRowSql`, never NULL. */
+export const scanKeepsByMarkerSql = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`COALESCE(
+    ${hasBlockMarkerSql(alias)} AND (
+      ${t}."needsReview" IN ('csam', 'minor', 'appeal')
+      OR ${t}."minor"
+      OR (${t}."nsfwLevelLocked" AND ${t}."nsfwLevel" = ${NsfwLevel.Blocked})
+      OR EXISTS (
+        SELECT 1 FROM "ModActivity" ma
+        WHERE ma."entityType" = 'image' AND ma."entityId" = ${t}.id
+          AND ma.activity = ANY(${[...MODERATOR_TAKEDOWN_ACTIVITIES]}::text[])
+      )
+    ),
+    false
+  )`;
+};
+
+/** Decides scan writes, CDN access and requeue of unverified images: change them together. */
+export const scanKeepsRowSql = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`COALESCE(
+    (${t}."blockedFor" IS NOT NULL AND ${t}."blockedFor" <> ${BlockedReason.AiNotVerified})
+    OR ${scanKeepsByMarkerSql(alias)},
+    false
   )`;
 };
 
@@ -454,8 +493,13 @@ export const unblockedMetadataSql = liftedUnderGraceSql(
   Prisma.sql`"metadata" - 'ruleId' - 'ruleReason' - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text`
 );
 
+/** The `ingestion` a scan error writes. Reads the row before the error's retry count is added. */
 export const ingestionAfterScanErrorSql = () => Prisma.sql`(CASE
-  WHEN "ingestion" = 'NotFound'::"ImageIngestionStatus" OR ${graceBlockedSql} THEN "ingestion"
+  WHEN "ingestion" = 'NotFound'::"ImageIngestionStatus" OR "ingestion" = 'Blocked'::"ImageIngestionStatus" THEN "ingestion"
+  WHEN "ingestion" = 'Rescan'::"ImageIngestionStatus"
+    AND "blockedFor" IS NOT NULL AND "blockedFor" <> ${BlockedReason.AiNotVerified}
+    AND COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1 < ${IMAGE_RESCAN_RETRY_LIMIT}
+    THEN "ingestion"
   ELSE ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
 END)`;
 
