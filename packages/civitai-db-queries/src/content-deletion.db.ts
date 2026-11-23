@@ -273,6 +273,7 @@ export const IMAGE_USES = {
   storylineHeroes: ['Storyline', 'heroImageId'],
   storylineSparks: ['Storyline', 'sparkImageId'],
   storylineCoverUploads: ['StorylineCoverUpload', 'imageId'],
+  trackCover: ['Track', 'coverImageId'],
 } as const satisfies Record<string, readonly [string, string]>;
 
 /**

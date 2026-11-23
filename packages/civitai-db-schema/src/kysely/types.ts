@@ -6654,6 +6654,17 @@ export type Tool = {
   metadata: Generated<unknown>;
   alias: string | null;
 };
+export type Track = {
+  imageId: number;
+  /**
+   * The song's cover: its owner's own image, outside any post.
+   */
+  coverImageId: number | null;
+  /**
+   * One of `SONG_GENRES` (src/shared/constants/song-genres.ts), checked in code.
+   */
+  genre: string | null;
+};
 export type TrackLyrics = {
   imageId: number;
   text: string;
@@ -7532,6 +7543,7 @@ export type DB = {
   TextScanPrompt: TextScanPrompt;
   TipConnection: TipConnection;
   Tool: Tool;
+  Track: Track;
   TrackLyrics: TrackLyrics;
   TrustedSpokeDomain: TrustedSpokeDomain;
   User: User;

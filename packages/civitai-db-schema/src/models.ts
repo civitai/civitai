@@ -1819,6 +1819,8 @@ export interface Image {
   storylineCoverUploads?: StorylineCoverUpload[];
   caption?: ImageCaption | null;
   trackLyrics?: TrackLyrics | null;
+  track?: Track | null;
+  trackCover?: Track | null;
 }
 
 export interface ImageTagForReview {
@@ -5070,6 +5072,14 @@ export interface TrackLyrics {
   language: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface Track {
+  imageId: number;
+  image?: Image;
+  coverImageId: number | null;
+  coverImage?: Image | null;
+  genre: string | null;
 }
 
 export interface ScanLabelVote {
