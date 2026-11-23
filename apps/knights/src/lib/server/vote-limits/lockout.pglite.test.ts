@@ -22,9 +22,9 @@ const at = (seconds: number) => new Date(NOW.getTime() + seconds * 1000);
 
 let pg: PGlite;
 let db: Kysely<DB>;
-const deps = (voteLimits: VoteLimit[]): QueueDeps => ({
+const deps = (voteLimits: VoteLimit[], now = NOW): QueueDeps => ({
   applyConsensus: async () => ({ outcome: 'applied' }),
-  now: () => NOW,
+  now: () => now,
   voteLimits,
 });
 
@@ -41,7 +41,7 @@ beforeEach(async () => {
 });
 
 let nextImage = 100;
-async function vote(limits: VoteLimit[], gate?: ReturnType<typeof createVoteGate>) {
+async function vote(limits: VoteLimit[], gate?: ReturnType<typeof createVoteGate>, now = NOW) {
   const id = nextImage++;
   await pg.query(`INSERT INTO "Post" ("id","publishedAt") VALUES ($1,'2020-01-01')`, [id]);
   await pg.query(`INSERT INTO "Image" ("id","url","nsfwLevel","postId") VALUES ($1,$2,4,$1)`, [
@@ -53,8 +53,8 @@ async function vote(limits: VoteLimit[], gate?: ReturnType<typeof createVoteGate
     { questionKey: Q, imageId: id, source: 'test', minRank: 'Knight' },
     NOW
   );
-  const cast = () => castVote(db, { userId: 1, itemId, answer: '4' }, deps(limits));
-  return gate ? gate.guard(1, NOW, cast) : cast();
+  const cast = () => castVote(db, { userId: 1, itemId, answer: '4' }, deps(limits, now));
+  return gate ? gate.guard(1, now, cast) : cast();
 }
 
 const gateWith = (cooldown: Date | null) => ({ cooldownUntil: async () => cooldown });
@@ -128,5 +128,82 @@ describe('the ledger limit behind the Redis gate', () => {
     expect((await pg.query(`SELECT count(*)::int AS n FROM "KnightsVote"`)).rows[0]).toEqual({
       n: 2,
     });
+  });
+});
+
+// HQ knights_pace_limit_b6kj: "a running 22 minute lockout kept ticking back up".
+describe('a pause the player is shown', () => {
+  const HOUR: VoteLimit[] = [{ windowSeconds: 3600, max: 3 }];
+  const HOUR_COUNTER = 'knights:vote-limit:{1}:w3600';
+  const ledgerRows = async () =>
+    (await pg.query<{ n: number }>(`SELECT count(*)::int AS n FROM "KnightsVote"`)).rows[0].n;
+
+  function redisGate() {
+    const redis = fakeRedis();
+    redis.clock.now = NOW.getTime();
+    const gate = createVoteGate({
+      client: () => redis.client,
+      limits: async () => HOUR,
+      timeoutMs: 2000,
+    });
+    return {
+      redis,
+      gate,
+      shown: (now = NOW) => voteLockout(db, 1, now, { gate, limits: limits(HOUR) }),
+    };
+  }
+
+  it('never ends later while refused votes keep arriving', async () => {
+    const { redis, gate, shown } = redisGate();
+    // Three votes 38 minutes ago, in a fixed Redis hour that has since rolled over: the ledger's
+    // trailing hour is full, the Redis hour counter is empty.
+    for (let i = 0; i < 3; i++) await vote(HOUR, undefined, at(-38 * 60));
+    expect(await shown()).toEqual(at(22 * 60));
+
+    for (let i = 0; i < 6; i++) {
+      expect(await vote(HOUR, gate)).toMatchObject({ status: 'limited' });
+      expect(await shown()).toEqual(at(22 * 60));
+    }
+    // No vote is recorded during the pause, and the refused ones are not counted against the next hour.
+    expect(await ledgerRows()).toBe(3);
+    expect(redis.get(HOUR_COUNTER)).toBeUndefined();
+  });
+
+  it('ends at the time it showed, and voting resumes', async () => {
+    const { redis, gate, shown } = redisGate();
+    for (let i = 0; i < 3; i++) await vote(HOUR, undefined, at(-38 * 60));
+    expect(await shown()).toEqual(at(22 * 60));
+    expect(await vote(HOUR, gate)).toMatchObject({ status: 'limited', until: at(22 * 60) });
+
+    redis.clock.now = at(22 * 60).getTime();
+    expect(await shown(at(22 * 60))).toBeNull();
+    expect(await vote(HOUR, gate, at(22 * 60))).toMatchObject({ status: 'recorded' });
+  });
+
+  // H3, the sliding limit working as configured (limit values are moderator config, out of scope):
+  // when a pause ends the window holds max - 1 votes, so the next vote fills it and a new, shorter
+  // pause runs until the next-oldest vote leaves.
+  it('starts a new, shorter pause after the next vote at the cap', async () => {
+    const { redis, gate, shown } = redisGate();
+    await vote(HOUR, undefined, at(-50 * 60));
+    await vote(HOUR, undefined, at(-40 * 60));
+    await vote(HOUR, undefined, at(-30 * 60));
+    expect(await shown()).toEqual(at(10 * 60));
+
+    redis.clock.now = at(10 * 60).getTime();
+    expect(await vote(HOUR, gate, at(10 * 60))).toMatchObject({ status: 'recorded' });
+    expect(await shown(at(10 * 60))).toEqual(at(20 * 60));
+  });
+
+  it('shows the ledger end when Redis is down', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const down: GateClient = new Proxy({} as GateClient, {
+      get: () => async () => Promise.reject(new Error('down')),
+    });
+    const gate = createVoteGate({ client: () => down, limits: async () => HOUR, timeoutMs: 50 });
+    for (let i = 0; i < 3; i++) await vote(HOUR, undefined, at(-38 * 60));
+
+    expect(await voteLockout(db, 1, NOW, { gate, limits: limits(HOUR) })).toEqual(at(22 * 60));
+    expect(await vote(HOUR, gate)).toEqual({ status: 'limited', until: at(22 * 60) });
   });
 });

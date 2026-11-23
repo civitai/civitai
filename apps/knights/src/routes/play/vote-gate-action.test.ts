@@ -34,11 +34,12 @@ vi.mock('$lib/server/queue/queue.service', () => ({ castVote, getFeed: vi.fn() }
 vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote }));
 vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo: vi.fn() }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ share: 0, stretch: 8 }) }));
+const lockoutFor = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/vote-limits/runtime', async () => {
   const { createVoteGate } = await import('$lib/server/vote-limits/gate');
   const { limitsFromConfig } = await import('$lib/server/vote-limits/config');
   return {
-    lockoutFor: vi.fn(),
+    lockoutFor,
     voteGate: createVoteGate({
       client: () => redis.current as never,
       limits: async () => limitsFromConfig(live.config),
@@ -67,7 +68,8 @@ beforeEach(() => {
   store = fakeRedis();
   redis.current = store.client;
   live.config = null;
-  for (const mock of [castVote, answerHiddenCheck, castYesNoVote, getStanding]) mock.mockReset();
+  for (const mock of [castVote, answerHiddenCheck, castYesNoVote, getStanding, lockoutFor])
+    mock.mockReset();
   getStanding.mockResolvedValue({ banned: false, muted: false });
   for (const mock of [castVote, answerHiddenCheck, castYesNoVote])
     mock.mockResolvedValue(recorded());
@@ -151,5 +153,52 @@ describe('vote action Redis limits', () => {
     redis.current = new Proxy({}, { get: () => async () => Promise.reject(new Error('down')) });
     expect(await submit()).toEqual({ success: true });
     expect(castVote).toHaveBeenCalledOnce();
+  });
+});
+
+// HQ knights_pace_limit_b6kj: the countdown went back up during a pause.
+describe('vote action pause end', () => {
+  const MINUTE = 60_000;
+  const ledgerLimited = (minutes: number) => ({
+    status: 'limited',
+    until: new Date(NOW.getTime() + minutes * MINUTE),
+  });
+
+  it('answers every refused vote with the end of the first refusal, and stops counting them', async () => {
+    // A ledger-only pause: the trailing hour is full, the fixed Redis hour is not.
+    live.config = { perMinute: 1000, perHour: 3, perDay: 3000 };
+    castVote.mockResolvedValue(ledgerLimited(22));
+
+    for (let i = 0; i < 6; i++) {
+      expect(await submit()).toMatchObject({ status: 429, data: { lockoutSeconds: 22 * 60 } });
+    }
+    expect(castVote).toHaveBeenCalledOnce();
+    expect(store.get('knights:vote-limit:{7}:w3600')).toBe('1');
+  });
+
+  it('answers a ledger refusal with a longer cooldown already running', async () => {
+    castVote.mockImplementation(async () => {
+      // Another of the player's votes tripped an hour's cooldown while this one was in flight.
+      store.seed('knights:vote-limit:{7}:cooldown', '1', 60 * MINUTE);
+      return ledgerLimited(22);
+    });
+    expect(await submit()).toMatchObject({ status: 429, data: { lockoutSeconds: 60 * 60 } });
+  });
+
+  it('answers a window that trips inside a longer ledger lock with the ledger end, and keeps it', async () => {
+    live.config = { perMinute: 2, perHour: 600, perDay: 3000 };
+    lockoutFor.mockResolvedValue(new Date(NOW.getTime() + 22 * MINUTE));
+    await submit();
+    await submit();
+
+    expect(await submit()).toMatchObject({ status: 429, data: { lockoutSeconds: 22 * 60 } });
+    expect(await submit()).toMatchObject({ status: 429, data: { lockoutSeconds: 22 * 60 } });
+  });
+
+  it('answers the ledger end when Redis is down', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    redis.current = new Proxy({}, { get: () => async () => Promise.reject(new Error('down')) });
+    castVote.mockResolvedValue(ledgerLimited(22));
+    expect(await submit()).toMatchObject({ status: 429, data: { lockoutSeconds: 22 * 60 } });
   });
 });
