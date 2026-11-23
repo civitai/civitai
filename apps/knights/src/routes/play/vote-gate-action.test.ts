@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { limitsFromConfig } from '$lib/server/vote-limits/config';
 import { fakeRedis } from '$lib/server/vote-limits/fake-redis';
+import { createVoteGate, type VoteGate } from '$lib/server/vote-limits/gate';
 
 const NOW = new Date('2026-12-15T12:00:00Z');
 const redis = vi.hoisted(() => ({ current: null as unknown }));
@@ -35,18 +36,12 @@ vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote }));
 vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo: vi.fn() }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ share: 0, stretch: 8 }) }));
 const lockoutFor = vi.hoisted(() => vi.fn());
-vi.mock('$lib/server/vote-limits/runtime', async () => {
-  const { createVoteGate } = await import('$lib/server/vote-limits/gate');
-  const { limitsFromConfig } = await import('$lib/server/vote-limits/config');
-  return {
-    lockoutFor,
-    voteGate: createVoteGate({
-      client: () => redis.current as never,
-      limits: async () => limitsFromConfig(live.config),
-      timeoutMs: 2000,
-    }),
-  };
-});
+// A fresh gate per test: the clock never moves, so a Redis-down breaker would otherwise outlive its test.
+const gate = vi.hoisted(() => ({ current: null as unknown as VoteGate }));
+vi.mock('$lib/server/vote-limits/runtime', () => ({
+  lockoutFor,
+  voteGate: new Proxy({}, { get: (_, key) => gate.current[key as keyof VoteGate] }),
+}));
 
 const { sealItem } = await import('$lib/server/feed-token');
 const { actions } = await import('./+page.server');
@@ -67,6 +62,11 @@ let store: ReturnType<typeof fakeRedis>;
 beforeEach(() => {
   store = fakeRedis();
   redis.current = store.client;
+  gate.current = createVoteGate({
+    client: () => redis.current as never,
+    limits: async () => limitsFromConfig(live.config),
+    timeoutMs: 2000,
+  });
   live.config = null;
   for (const mock of [castVote, answerHiddenCheck, castYesNoVote, getStanding, lockoutFor])
     mock.mockReset();

@@ -97,7 +97,7 @@ describe('vote gate windows', () => {
     }
 
     const tripped = await gate.guard(7, at(), async () => 'ok');
-    expect(tripped).toEqual({ status: 'limited', until: new Date(10 * MINUTE) });
+    expect(tripped).toEqual({ status: 'limited', until: new Date(10 * MINUTE), tripped: true });
 
     // Well after the minute window has rolled over, the cooldown still holds.
     clock.now += 5 * MINUTE;

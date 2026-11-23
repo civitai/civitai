@@ -57,7 +57,10 @@ async function vote(limits: VoteLimit[], gate?: ReturnType<typeof createVoteGate
   return gate ? gate.guard(1, now, cast) : cast();
 }
 
-const gateWith = (cooldown: Date | null) => ({ cooldownUntil: async () => cooldown });
+const gateWith = (cooldown: Date | null) => ({
+  cooldownUntil: async () => cooldown,
+  freeze: async (_userId: number, _now: Date, until: Date) => until,
+});
 const limits = (live: VoteLimit[]) => ({ load: async () => live });
 
 describe('voteLockout', () => {
