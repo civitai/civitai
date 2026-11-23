@@ -101,3 +101,17 @@ export async function lockImage(
     [id, level, reason]
   );
 }
+
+/** The player's engagement with a creator (one row per pair), as the main app writes it when they follow, hide or block them. */
+export async function engage(
+  pg: PGlite,
+  userId: number,
+  targetUserId: number,
+  type: 'Follow' | 'Hide' | 'Block'
+) {
+  await pg.query(
+    `INSERT INTO "UserEngagement" ("userId","targetUserId","type") VALUES ($1,$2,$3)
+     ON CONFLICT ("userId","targetUserId") DO UPDATE SET "type" = EXCLUDED."type"`,
+    [userId, targetUserId, type]
+  );
+}

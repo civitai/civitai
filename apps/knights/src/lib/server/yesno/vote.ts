@@ -8,6 +8,7 @@ import {
   ensureMonthPartition,
   lockItemVoters,
   lockPlayerVoting,
+  notHiddenCreator,
   pacingGate,
   staffedRanks,
   type QueueDeps,
@@ -63,6 +64,7 @@ export async function castYesNoVote(
       const tagReview = locked.source === MOD_TAG_REVIEW_SOURCE;
       const item = await playableItems(trx, { tagReview })
         .where('i.id', '=', input.itemId)
+        .where(notHiddenCreator(input.userId))
         .select(['i.id', 'i.questionKey', 'i.imageId', 'i.minRank', 'i.prompt', 'i.meta'])
         .executeTakeFirst();
       if (!item) return rejected('unavailable');

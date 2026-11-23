@@ -6,6 +6,7 @@ import {
   KNIGHTS_STAGE_RANKS,
   KNIGHTS_WRITEBACK_REASONS,
 } from '@civitai/shared/new-order';
+import type { PressTiming } from '$lib/press';
 import { logToAxiom } from './axiom';
 import { loadGaugeSnapshot, registerGauges } from './metrics/gauges';
 
@@ -51,6 +52,7 @@ const REFUSAL_KINDS = [...VOTE_KINDS, 'unknown'] as const;
 const REFUSAL_ACTIONS = ['vote', 'skip'] as const;
 export type RefusalKind = (typeof REFUSAL_KINDS)[number];
 export type RefusalAction = (typeof REFUSAL_ACTIONS)[number];
+
 const TICK_FAILURE_STEPS = [
   'writeback',
   'moderator_ruled',
@@ -208,13 +210,14 @@ export const metrics = {
       if (count > 0) notificationsSent.inc({ kind: bounded(kind, NOTIFY_KINDS) }, count);
     }),
   // No table records a refused vote or skip, so each also leaves an Axiom event naming the player and the ledger item id
-  // (negative for a hidden check; null before the token is opened).
+  // (negative for a hidden check; null before the token is opened). `press` adds the client's press timing to the row.
   voteRefused: (
     reason: string,
     kind: RefusalKind,
     playerId: number,
     itemId: number | null,
-    action: RefusalAction
+    action: RefusalAction,
+    press?: PressTiming
   ) => {
     safely(() => voteRefusals.inc({ reason: bounded(reason, REFUSAL_REASONS), kind, action }));
     void logToAxiom({
@@ -222,7 +225,7 @@ export const metrics = {
       name: 'knights-vote-refused',
       message: `A ${action} was refused`,
       details: { reason, playerId },
-      payload: { kind, itemId, action },
+      payload: { kind, itemId, action, ...press },
     });
   },
   // No table records these three, so each also leaves one Axiom event.

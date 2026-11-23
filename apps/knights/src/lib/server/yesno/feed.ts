@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { slotOf, unit } from '../hidden/hidden.service';
+import { notHiddenCreator } from '../queue/queue.service';
 import { stagesWorkedBy } from '../queue/ranks';
 import { isRank } from '../ranks';
 import { headingOf } from './headings';
@@ -38,6 +39,7 @@ function unanswered(
       .where('i.questionKey', '=', axis)
       .where('i.minRank', 'in', stages)
       .where('img.userId', 'is distinct from', userId)
+      .where(notHiddenCreator(userId))
       .$if(exclude.length > 0, (qb) => qb.where('i.id', 'not in', exclude))
       .where((eb) =>
         eb.not(

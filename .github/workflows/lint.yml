@@ -103,6 +103,11 @@ name: Lint
 # within about one cadence interval plus the run, instead of within minutes; that is the trade.
 # scripts/__tests__/main-branch-ci-coverage.test.ts pins this path instead of a push-reachable one.
 #
+# The same batch dispatch also runs the `batch-suites` job, which dispatches the suites that left
+# pull requests and pushes (Go fuzz / govulncheck / go.mod tidy / benchmarks, moderator boot, ports
+# manifest, both image builds, Windows dev-env) on `main` when their paths changed, and posts their
+# verdict as the `Batch suites (main batch)` commit status. See that job.
+#
 # The push path deliberately does NOT run every job here. `eslint` is diff-vs-
 # base by construction and is skipped; so are the sibling workflows schema-drift
 # and submodule-pin-guard, which are base-relative gates with nothing to compare
@@ -156,7 +161,8 @@ name: Lint
 #
 # WANT A VERDICT ON A DRAFT? Dispatch the job on your branch:
 #   gh workflow run lint.yml -R civitai/civitai --ref <branch> -f only=<job>
-# (`only` choices below; `all` runs everything but ESLint). The app suites live
+# (`only` choices below; `all` runs everything but ESLint and the whole-repo
+# typecheck, which a dispatch runs only as `only=typecheck`). The app suites live
 # in apps.yml: `gh workflow run apps.yml -R civitai/civitai --ref <branch>`.
 #
 # ── THE `full-ci` LABEL RUNS THE FULL SUITE ON A PR ─────────────────────────
@@ -208,7 +214,7 @@ on:
     inputs:
       only:
         description: >-
-          Run only this suite. all = every suite (default). typecheck,
+          Run only this suite. all = every suite but typecheck (default). typecheck,
           typecheck-tests (test files only), unit (all 6 shards), unit-1 .. unit-6
           (one shard), packages, geometry, component.
           App suites: dispatch apps.yml.
@@ -590,32 +596,44 @@ jobs:
     # The honest way to retire this job entirely is to widen Tekton's coverage
     # first and prove it on a real PR of each shape.
     #
-    # ⚠️ `github.event.pull_request` is null on a push event, so BOTH PR
-    # disjuncts evaluate to `null != <string>` — which is TRUE. The push arm is
-    # therefore already implied and the explicit `github.event_name == 'push'`
-    # below is redundant *today*. It is written anyway because the redundancy is
-    # an accident of null-comparison semantics rather than a decision, and the
-    # next person to tighten these disjuncts (e.g. by pinning
-    # `github.event_name == 'pull_request' && ...`) would silently drop main
-    # coverage with no test naming it. The guard test asserts the push arm.
+    # ⚠️ `github.event.pull_request` is null on a push event, so an UNPINNED PR
+    # disjunct evaluates to `null != <string>`, which is TRUE. The PR disjuncts
+    # below are now pinned away from dispatches (see the dispatch note), and the
+    # explicit `github.event_name == 'push'` arm is what keeps this job on a push
+    # to `main`. scripts/__tests__/lint-typecheck-gate.test.ts evaluates this `if`
+    # for push, PR and dispatch events and asserts each arm.
     #
     # The name changed with the gate so the checks list explains its own absence.
     # Safe: neither `main` nor `release` has any required_status_checks (verified
     # 2026-08-07 via the branch-protection API, re-verified 2026-08-21), so no
     # merge gate keys on the old name.
     #
-    # The `only` clause is the workflow_dispatch selector (see `on:`); it is true
-    # on every other event, so the three disjuncts above are unchanged. The next
-    # clause skips draft PRs unless they carry the `full-ci` label (see the header);
-    # it is true on push and dispatch. It does not widen the three disjuncts:
-    # `full-ci` does not make an internal PR into `main` run this job on the PR
-    # run. (The full-ci.yml DISPATCH does run it: on workflow_dispatch the PR
-    # disjuncts compare null, which is true, as the note below explains.)
+    # The last clause skips draft PRs unless they carry the `full-ci` label (see the
+    # header); it is true on push and dispatch. It does not widen the three
+    # disjuncts: `full-ci` does not make an internal PR into `main` run this job on
+    # the PR run.
+    #
+    # ── ON A DISPATCH, ONLY WHEN ASKED FOR BY NAME (`only: typecheck`) ──
+    #
+    # Unpinned, the two PR disjuncts compared null with a string on a
+    # workflow_dispatch too, which is TRUE (the note above), so every `only: all`
+    # dispatch ran this job: every full-ci.yml dispatch and every hand dispatch, on
+    # branches whose PR the Tekton `tekton / typecheck` status already covers. A
+    # second full-repo typecheck of the same tree, and over 30 days of merged PRs it
+    # caught nothing `tekton / typecheck` did not. So the PR disjuncts now apply to
+    # every event but a dispatch, and a dispatch runs this job only with
+    # `only: typecheck`, which is how to ask for one on a branch Tekton does not
+    # watch. (Written `!= 'workflow_dispatch'` rather than `== 'pull_request'`:
+    # main-branch-ci-coverage.test.ts reads an `if` containing
+    # `github.event_name == 'pull_request'` as unreachable on a push, and this job
+    # is the push path's typecheck. The events here are push, pull_request and
+    # workflow_dispatch only, so the two spellings select the same runs.)
     if: >-
       (github.event_name == 'push'
-      || github.event.pull_request.head.repo.full_name != github.repository
-      || github.event.pull_request.base.ref != 'main')
-      && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck')
+      || (github.event_name != 'workflow_dispatch'
+          && (github.event.pull_request.head.repo.full_name != github.repository
+              || github.event.pull_request.base.ref != 'main'))
+      || (github.event_name == 'workflow_dispatch' && inputs.only == 'typecheck'))
       && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     # event-engine-common is public and fetched over HTTPS, so this needs no
     # secret — which is why the ssh-agent step is gone rather than merely unused.
@@ -1852,3 +1870,76 @@ jobs:
             say "**Could not remove the \`full-ci\` label** from #$PR (${out//[$'\r\n']/ }); remove it by hand, or later pushes keep running the unit shards."
           fi
           say "To run the full suite again, re-add it: \`gh pr edit $PR --add-label full-ci\`"
+
+  # ── THE MAIN BATCH'S OTHER SUITES, AS ONE COMMIT STATUS ──────────────────────────────────────
+  #
+  # Only on the batch dispatch on `main` (unit-batched.yml dispatches this workflow as
+  # github-actions[bot] with `only: unit`); a person's dispatch, full-ci.yml's `only: all` dispatch
+  # and any other branch never reach it. It needs nothing from `unit`, so it runs beside it.
+  #
+  # The suites that do not run on pull requests or pushes any more (Go fuzz / govulncheck /
+  # go.mod tidy / benchmarks, moderator boot, ports manifest, both image builds, Windows dev-env;
+  # the list is BATCH_WORKFLOWS in scripts/ci/unit-batched.mjs): it dispatches each one whose
+  # paths changed since the last green batch on `main` with `batch: true`, waits for their runs at
+  # this commit, and posts `Batch suites (main batch)` on it (scripts/ci/batch-suites.mjs):
+  # success, failure naming the red suites, or error when a run was not found or did not finish.
+  # A red opens a CI-watch item naming the commit range; nothing bisects it automatically.
+  # If a step here fails, the last step posts `error` naming it, so a crash is not read as green.
+  batch-suites:
+    name: Batch suites verified (main batch)
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' && github.ref == 'refs/heads/main' }}
+    # The slowest suite (Windows) takes minutes; the rest is queueing behind other jobs.
+    timeout-minutes: 90
+    permissions:
+      # Dispatching a workflow needs actions: write; reading the runs, actions: read.
+      actions: write
+      contents: read
+      statuses: write
+    steps:
+      # The script, its imports, and the workflow files whose paths it reads. No credentials kept.
+      - id: checkout
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/ci/batch-suites.mjs
+            scripts/ci/full-ci-paths.mjs
+            scripts/ci/unit-batched.mjs
+            .github/workflows/
+            .nvmrc
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - id: node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Dispatch the batch suites, wait, post the verdict
+        id: verdict
+        # Under the job's 90: a step timeout FAILS the step, so the crash step below still runs.
+        timeout-minutes: 85
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BATCH_WAIT_MINUTES: '75'
+        run: node scripts/ci/batch-suites.mjs run
+
+      - name: Post error on HEAD if this job crashed
+        # cancelled() too: a job-level timeout cancels the job, and failure() is then false.
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOMES: >-
+            checkout=${{ steps.checkout.outcome }}
+            setup-node=${{ steps.node.outcome }}
+            post-verdict=${{ steps.verdict.outcome }}
+        run: |
+          step=unknown
+          for pair in $OUTCOMES; do
+            if [ "${pair#*=}" = failure ]; then step=${pair%%=*}; break; fi
+          done
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=error -f "context=Batch suites (main batch)" \
+            -f "description=Batch suites verification crashed at step: $step. No verdict at this commit." \
+            -f "target_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          echo "::error title=Batch suites verification crashed::step $step failed; posted error on ${GITHUB_SHA:0:10}"

@@ -53,6 +53,8 @@ export type ImageModActivity = {
     | 'setNsfwLevelKono'
     | 'heldMedia:view'
     | 'retractedMedia:view'
+    // A version showcase removal: the version it was removed from.
+    | `versionShowcaseRemove:${number}`
     | ReturnType<typeof shownActivity>;
 };
 

@@ -306,6 +306,29 @@ describe('EdgeVideo — fullscreen', () => {
 
     expect(pause.mock.contexts).not.toContain(video);
   });
+
+  test('the fullscreen button opens the native player where only the video can go fullscreen', async () => {
+    // iPhone Safari: no Element.requestFullscreen, only HTMLVideoElement.webkitEnterFullscreen.
+    const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'requestFullscreen')!;
+    delete (Element.prototype as Partial<Element>).requestFullscreen;
+    try {
+      await renderWithProviders(<EdgeVideo src={SRC} controls />);
+      await vi.waitFor(() => expect(document.querySelector('video')).toBeTruthy());
+      const video = document.querySelector('video')!;
+      const webkitEnterFullscreen = vi.fn();
+      Object.assign(video, { webkitEnterFullscreen });
+      video.dispatchEvent(new Event('canplay'));
+      await vi.waitFor(() =>
+        expect(document.querySelector('svg.tabler-icon-maximize')).toBeTruthy()
+      );
+
+      await userEvent.click(document.querySelector('svg.tabler-icon-maximize')!.closest('button')!);
+
+      expect(webkitEnterFullscreen).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(Element.prototype, 'requestFullscreen', descriptor);
+    }
+  });
 });
 
 describe('EdgeVideo — autoplay', () => {

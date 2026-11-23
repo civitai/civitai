@@ -13,6 +13,7 @@ import { getReviewImages } from '~/server/services/creator-service-deal-review-i
 import { scanServiceDealReviewText } from '~/server/services/service-deal-review-moderation.adapter';
 import { liveCsamTextHoldText } from '@civitai/shared/held-url';
 import { csamQueueClearSql } from '~/server/services/text-scan/csam-hold-state';
+import { textModerationRetryStatusSql } from '~/server/jobs/text-moderation-retry.constants';
 import { SERVICE_DEAL_REVIEW_EDIT_MS } from '~/shared/constants/creator-services.constants';
 import type { ServiceDealReviewVerdict } from '~/shared/utils/prisma/enums';
 
@@ -208,7 +209,7 @@ export async function setServiceDealReviewHidden({
   moderatorId: number;
   hidden: boolean;
 }) {
-  return dbWrite.$transaction(async (tx) => {
+  const outcome = await dbWrite.$transaction(async (tx) => {
     const [target] = await tx.$queryRaw<{ dealId: number }[]>`
       SELECT "dealId" FROM "ServiceDealReview" WHERE "id" = ${reviewId}::int`;
     if (!target) return false;
@@ -230,21 +231,43 @@ export async function setServiceDealReviewHidden({
       WHERE "id" = ${reviewId}::int AND ("hiddenAt" IS NULL) = ${hidden}
       RETURNING "dealId"`;
     if (!review) return false;
-    // A scan skipped while hidden failed its text to Error: a restore sends it back to its check. A
-    // check still in flight is left to land.
-    if (!hidden)
-      await tx.$executeRaw`
+    // A scan skipped while hidden failed its text to Error, and a verdict dropped while hidden failed
+    // its check: a restore sends either back to its check. A check still in flight is left to land.
+    const [unchecked] = hidden
+      ? []
+      : await tx.$queryRaw<{ comment: boolean; reply: boolean }[]>`
         UPDATE "ServiceDealReview" SET
           "scanStatus" = CASE WHEN "scanStatus" = 'Error' THEN 'Pending' ELSE "scanStatus" END,
-          "scanWorkflowId" = CASE WHEN "scanStatus" = 'Error' THEN NULL ELSE "scanWorkflowId" END,
+          "scanWorkflowId" = CASE WHEN "scanStatus" = 'Error' OR "scanStatus" = 'Pending' AND EXISTS (SELECT 1
+              FROM "EntityModeration" em WHERE em."entityType" = 'ServiceDealReview'
+                AND em."entityId" = "ServiceDealReview"."id"
+                AND em."workflowId" = "ServiceDealReview"."scanWorkflowId"
+                AND em."status" IN ${textModerationRetryStatusSql})
+            THEN NULL ELSE "scanWorkflowId" END,
           "sellerReplyScanStatus" = CASE WHEN "sellerReplyScanStatus" = 'Error'
             THEN 'Pending' ELSE "sellerReplyScanStatus" END,
           "sellerReplyScanWorkflowId" = CASE WHEN "sellerReplyScanStatus" = 'Error'
+            OR "sellerReplyScanStatus" = 'Pending' AND EXISTS (SELECT 1
+              FROM "EntityModeration" em WHERE em."entityType" = 'ServiceDealReviewReply'
+                AND em."entityId" = "ServiceDealReview"."id"
+                AND em."workflowId" = "ServiceDealReview"."sellerReplyScanWorkflowId"
+                AND em."status" IN ${textModerationRetryStatusSql})
             THEN NULL ELSE "sellerReplyScanWorkflowId" END
-        WHERE "id" = ${reviewId}::int`;
+        WHERE "id" = ${reviewId}::int
+        RETURNING
+          ("scanStatus" = 'Pending' AND "scanWorkflowId" IS NULL AND "comment" IS NOT NULL)
+            AS "comment",
+          ("sellerReplyScanStatus" = 'Pending' AND "sellerReplyScanWorkflowId" IS NULL
+            AND "sellerReply" IS NOT NULL) AS "reply"`;
     await syncDealReviewPublication(tx, review.dealId);
-    return true;
+    return { unchecked };
   });
+  if (typeof outcome !== 'object') return outcome;
+  // Sent here, after the commit, as an edit sends its text: the retry job does not resend a check
+  // row it parked while the review was hidden, and the reconcile leaves a row the retry job holds.
+  if (outcome.unchecked?.comment) await scanServiceDealReviewText('ServiceDealReview', reviewId);
+  if (outcome.unchecked?.reply) await scanServiceDealReviewText('ServiceDealReviewReply', reviewId);
+  return true;
 }
 
 /**

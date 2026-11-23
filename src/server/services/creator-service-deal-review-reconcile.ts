@@ -1,5 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
+import {
+  TEXT_MODERATION_EXHAUSTED_RESEND_AFTER_HOURS,
+  TEXT_MODERATION_RETRY_LIMIT,
+} from '~/server/jobs/text-moderation-retry.constants';
 import { logToAxiom } from '~/server/logging/client';
 import {
   happySortKey,
@@ -8,31 +12,55 @@ import {
   reviewPublic,
   syncDealReviewPublication,
 } from '~/server/services/creator-service-deal-review-publish';
-import { scanServiceDealReviewText } from '~/server/services/service-deal-review-moderation.adapter';
+import {
+  scanServiceDealReviewText,
+  unaskableServiceDealReviewTypes,
+} from '~/server/services/service-deal-review-moderation.adapter';
+import {
+  SERVICE_DEAL_REVIEW_TEXTS,
+  type ServiceDealReviewTextType,
+} from '~/server/services/text-scan/profiles/service-deal-review.profile';
 import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-services.constants';
 
 /**
- * Review texts whose check was never recorded: its submit failed, or a dismissed csam hold sent
- * the text back. The wait lets a submit in progress record its check first. A recorded check
- * that fails is retried by the moderation retry cron, not here. A hidden review's scan is skipped,
- * so it is left out rather than resent every run.
+ * A review text the reconcile sends: one whose check was never recorded (its submit failed, or a
+ * dismissed csam hold sent it back) and whose row is not the retry job's, or one whose row spent its
+ * retries a day ago, e.g. through an outage. The wait lets a submit in progress record its check
+ * first. A hidden review's scan is skipped, so it is left out rather than resent every run.
  */
-async function rescanUnsubmittedTexts(limit: number) {
-  const rows = await dbWrite.$queryRaw<
-    { id: number; type: 'ServiceDealReview' | 'ServiceDealReviewReply' }[]
-  >`
-    (SELECT "id", 'ServiceDealReview' AS "type" FROM "ServiceDealReview"
-      WHERE "scanStatus" = 'Pending' AND "scanWorkflowId" IS NULL AND "comment" IS NOT NULL
-        AND "hiddenAt" IS NULL
-        AND "updatedAt" < now() - interval '15 minutes'
-      ORDER BY "id" LIMIT ${limit})
+function unsentTexts(type: ServiceDealReviewTextType, limit: number) {
+  const cols = SERVICE_DEAL_REVIEW_TEXTS[type];
+  const unsettledRow = Prisma.sql`SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = ${type}
+    AND em."entityId" = r."id" AND em."status" <> 'Succeeded'`;
+  return Prisma.sql`(SELECT r."id", ${type}::text AS "type" FROM "ServiceDealReview" r
+    WHERE r.${cols.status} IN ('Pending', 'Error') AND r.${cols.text} IS NOT NULL
+      AND r."hiddenAt" IS NULL AND r."updatedAt" < now() - interval '15 minutes'
+      AND ((r.${cols.status} = 'Pending' AND r.${cols.workflow} IS NULL
+          AND NOT EXISTS (${unsettledRow}))
+        OR EXISTS (${unsettledRow} AND em."retryCount" >= ${TEXT_MODERATION_RETRY_LIMIT}::int
+          AND em."updatedAt" < now() - ${TEXT_MODERATION_EXHAUSTED_RESEND_AFTER_HOURS}::int
+            * interval '1 hour'))
+    ORDER BY r."id" LIMIT ${limit})`;
+}
+
+async function rescanUnsentTexts(
+  limit: number,
+  submitCheck?: Parameters<typeof scanServiceDealReviewText>[2]
+) {
+  // In active mode every text would be refused at submit, each refusal spending a retry.
+  if ((await unaskableServiceDealReviewTypes()).length) {
+    logToAxiom({
+      type: 'warning',
+      name: 'service-deal-review-reconcile',
+      message: 'review text scan cannot ask every required label; no texts rescanned',
+    });
+    return 0;
+  }
+  const rows = await dbWrite.$queryRaw<{ id: number; type: ServiceDealReviewTextType }[]>`
+    ${unsentTexts('ServiceDealReview', limit)}
     UNION ALL
-    (SELECT "id", 'ServiceDealReviewReply' AS "type" FROM "ServiceDealReview"
-      WHERE "sellerReplyScanStatus" = 'Pending' AND "sellerReplyScanWorkflowId" IS NULL
-        AND "sellerReply" IS NOT NULL AND "hiddenAt" IS NULL
-        AND "updatedAt" < now() - interval '15 minutes'
-      ORDER BY "id" LIMIT ${limit})`;
-  for (const { id, type } of rows) await scanServiceDealReviewText(type, id);
+    ${unsentTexts('ServiceDealReviewReply', limit)}`;
+  for (const { id, type } of rows) await scanServiceDealReviewText(type, id, submitCheck);
   return rows.length;
 }
 
@@ -125,11 +153,14 @@ async function recountDriftedOfferings(limit: number) {
 export async function reconcileServiceDealReviews({
   limit,
   counters = false,
+  submitCheck,
 }: {
   limit: number;
   counters?: boolean;
+  /** The content check's submit; the text scan's by default. */
+  submitCheck?: Parameters<typeof scanServiceDealReviewText>[2];
 }) {
-  const rescanned = await rescanUnsubmittedTexts(limit);
+  const rescanned = await rescanUnsentTexts(limit, submitCheck);
   const synced = await syncDriftedPublications(limit);
   const recounted = counters ? await recountDriftedOfferings(limit) : 0;
   const readBack = await readBackServiceDealReviews();

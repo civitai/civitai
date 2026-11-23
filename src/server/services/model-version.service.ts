@@ -1,3 +1,7 @@
+import {
+  bustPublicModelResponseCache,
+  publicModelResponseKey,
+} from '~/server/services/public-model-response-cache';
 import { Prisma } from '@prisma/client';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import { keepHeldReviewsCte, reviewsOnVersionsSql } from '~/server/services/held-review.service';
@@ -3236,38 +3240,7 @@ export const modelVersionDonationGoal = async ({
   return (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null;
 };
 
-// Public-response cache (origin-side cache for GET /api/v1/models/[id]) toggle —
-// only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler).
-const PUBLIC_MODEL_RESPONSE_CACHE_ENABLED = env.IS_DATAPACKET;
-
-export function publicModelResponseKey(
-  modelId: number,
-  browsingLevel: number
-): RedisKeyTemplateCache {
-  // `v2`: bodies whose card images are held to the level. Bump when the body's filtering changes,
-  // so entries built by the previous code are not read.
-  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:v2:${modelId}:${browsingLevel}`;
-}
-
-// Best-effort, fail-open invalidation of the origin-side public response cache for
-// GET /api/v1/models/[id] (see the handler). Called from bustMvCache so an
-// unpublish / takedown / update / delete drops the cached 200 immediately rather
-// than serving stale for up to the cache TTL globally. Busts BOTH browsing-level
-// keys the handler can write (all-levels for unrestricted regions, sfw-only for
-// region-restricted ones). Deletes the physical key — the handler's read keys off
-// key PRESENCE, so a clean delete forces a rebuild. A Redis error here must NOT
-// throw into the mutation path, so it is swallowed (the entry otherwise expires
-// via its TTL).
-export async function bustPublicModelResponseCache(modelId: number | number[]) {
-  if (!PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) return;
-  const modelIds = Array.isArray(modelId) ? modelId : [modelId];
-  if (modelIds.length === 0) return;
-  const keys = modelIds.flatMap((id) => [
-    publicModelResponseKey(id, allBrowsingLevelsFlag),
-    publicModelResponseKey(id, sfwBrowsingLevelsFlag),
-  ]);
-  await redis.del(keys).catch(() => undefined);
-}
+export { bustPublicModelResponseCache, publicModelResponseKey };
 
 /**
  * The model-level caches that carry a version's data. Both callers below reach it: `bustMvCache`
@@ -4200,6 +4173,9 @@ export const mergeVersions = async ({
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);
+  // A showcase failure never fails the merge.
+  const { repointVersionShowcases } = await import('~/server/services/version-showcase.service');
+  await repointVersionShowcases(targetVersionId, sourceVersionIds);
   // Then the AIRs read before the write, and the file-pinned AIRs, which version busts never reach: a
   // pinned AIR names its version, so a moved file is cached under its source's AIR, and the target's
   // coverage now counts the moved files.

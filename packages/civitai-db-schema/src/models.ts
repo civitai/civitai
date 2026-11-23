@@ -738,6 +738,7 @@ export interface User {
   blockGoodPurchasesAsAppOwner?: BlockGoodPurchase[];
   blockGoodEntitlements?: BlockGoodEntitlement[];
   publishRequestsSubmitted?: AppBlockPublishRequest[];
+  appAssistantSessionLinks?: AppAssistantSessionLink[];
   publishRequestsReviewed?: AppBlockPublishRequest[];
   blockScopeInvocations?: BlockScopeInvocation[];
   appUserScopeGrants?: AppUserScopeGrant[];
@@ -1128,6 +1129,7 @@ export interface ModelVersionShowcaseItem {
   source: string;
   position: number | null;
   excluded: boolean;
+  removed: boolean;
   addedById: number;
   createdAt: Date;
 }
@@ -2450,6 +2452,7 @@ export interface AppBlockPublishRequest {
   deployUpdatedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  assistantTrace?: AppPublishRequestTrace | null;
 }
 
 export interface AppBlockBuildAttempt {
@@ -2463,6 +2466,34 @@ export interface AppBlockBuildAttempt {
   failedStep: string | null;
   failedReason: string | null;
   failureClass: string | null;
+  createdAt: Date;
+}
+
+export interface AppAssistantSessionLink {
+  id: number;
+  userId: number;
+  user?: User;
+  conversationId: string;
+  appSlug: string;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  turnCount: number;
+  lastModel: string | null;
+  buzzTotal: number;
+  lastRunId: string | null;
+}
+
+export interface AppPublishRequestTrace {
+  id: number;
+  publishRequestId: string;
+  publishRequest?: AppBlockPublishRequest;
+  slug: string;
+  userId: number;
+  conversationIds: string[];
+  snapshots: JsonValue;
+  signals: JsonValue;
+  signalsVersion: number;
+  snapshotError: string | null;
   createdAt: Date;
 }
 

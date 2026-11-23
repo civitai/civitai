@@ -41,6 +41,7 @@ beforeAll(async () => {
     CREATE TABLE "PostText" (
       id int PRIMARY KEY, "postId" int NOT NULL, index int NOT NULL, "updatedAt" timestamp(3)
     );
+    CREATE TABLE "ModelVersionShowcaseItem" ("modelVersionId" int NOT NULL, "imageId" int NOT NULL);
   `);
   const { prisma } = harness;
   // The service's own where and data; only the returned columns are narrowed to this schema.

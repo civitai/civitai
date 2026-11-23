@@ -46,6 +46,7 @@
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import ReviewStatusPanel from '$lib/components/ReviewStatusPanel.svelte';
+  import HelpTip from '$lib/components/HelpTip.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
   import {
@@ -68,7 +69,6 @@
   import { MatureRepriceError } from '$lib/mature-charge';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { buzzMode } from '$lib/buzz-mode.svelte';
-  import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
 
   let {
@@ -747,14 +747,10 @@
         <div class="flex items-center gap-1.5">
           <dt class="text-dark-2">Expires</dt>
           <dd class="m-0 {expiresSoon ? 'text-buzz' : 'text-dark-0'}">
-            <Tooltip.Provider>
-              <Tooltip.Root>
-                <Tooltip.Trigger class="cursor-default">{expiresLabel}</Tooltip.Trigger>
-                <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
-                  Download or publish anything you want to keep.
-                </Tooltip.Content>
-              </Tooltip.Root>
-            </Tooltip.Provider>
+            <HelpTip class="cursor-default">
+              {expiresLabel}
+              {#snippet content()}Download or publish anything you want to keep.{/snippet}
+            </HelpTip>
           </dd>
         </div>
       {/if}
@@ -1048,20 +1044,17 @@
           <div class="flex items-baseline gap-2">
             <h2 class="m-0 text-lg font-semibold text-white">Epoch {featured.number}</h2>
             {#if featured === recommended}
-              <Tooltip.Provider>
-                <Tooltip.Root>
-                  <Tooltip.Trigger
-                    class="cursor-default rounded bg-buzz/15 px-2 py-0.5 text-xs font-semibold text-buzz"
-                  >
-                    <IconStarFilled size={10} class="mr-0.5 inline" />Recommended
-                  </Tooltip.Trigger>
-                  <Tooltip.Content class="max-w-[280px] text-xs" portalProps={portalProps()}>
-                    This epoch has had the most training time applied to it and, in most cases, is
-                    the best choice. Models made with smaller datasets may overbake at high training
-                    time, so a lower epoch can be better.
-                  </Tooltip.Content>
-                </Tooltip.Root>
-              </Tooltip.Provider>
+              <HelpTip
+                class="cursor-default rounded bg-buzz/15 px-2 py-0.5 text-xs font-semibold text-buzz"
+                contentClass="max-w-[280px] text-xs"
+              >
+                <IconStarFilled size={10} class="mr-0.5 inline" />Recommended
+                {#snippet content()}
+                  This epoch has had the most training time applied to it and, in most cases, is
+                  the best choice. Models made with smaller datasets may overbake at high training
+                  time, so a lower epoch can be better.
+                {/snippet}
+              </HelpTip>
             {/if}
           </div>
           {#if featured.modelUrl}
