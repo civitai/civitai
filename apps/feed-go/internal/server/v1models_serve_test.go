@@ -242,8 +242,9 @@ func TestServeV1ModelsFallsBackBeforeComputing(t *testing.T) {
 		{"list legacy session cookie", http.MethodGet, "/api/v1/models?limit=2", map[string]string{"Cookie": "civitai-token=t"}, "v1-models-session-cookie"},
 		{"list etag value", http.MethodGet, "/api/v1/models?limit=2&etag=abc", nil, "v1-models-etag"},
 		{"list etag repeated", http.MethodGet, "/api/v1/models?etag=&etag=", nil, "v1-models-etag"},
-		{"list If-None-Match", http.MethodGet, "/api/v1/models?limit=2", map[string]string{"If-None-Match": `"x"`}, "v1-models-conditional"},
-		{"[id] If-Modified-Since", http.MethodGet, "/api/v1/models/42", map[string]string{"If-Modified-Since": "Sat, 21 Nov 2026 00:00:00 GMT"}, "v1-models-conditional"},
+		{"list non-ASCII If-None-Match", http.MethodGet, "/api/v1/models?limit=2", map[string]string{"If-None-Match": "\"\xc3\xa9\""}, "v1-models-conditional"},
+		{"[id] non-ASCII If-Modified-Since", http.MethodGet, "/api/v1/models/42", map[string]string{"If-Modified-Since": "Sat, 21 Nov 2026 00:00:00 GMT\xa0"}, "v1-models-conditional"},
+		{"list non-ASCII Cache-Control on a conditional request", http.MethodGet, "/api/v1/models?limit=2", map[string]string{"If-None-Match": v1ListETag, "Cache-Control": "no-cache\xa0"}, "v1-models-conditional"},
 		{"[id] Origin", http.MethodGet, "/api/v1/models/42", map[string]string{"Origin": "https://block.example.test"}, "v1-models-origin"},
 		{"list POST", http.MethodPost, "/api/v1/models", nil, "method"},
 		{"[id] HEAD", http.MethodHead, "/api/v1/models/42", nil, "method"},
@@ -294,6 +295,144 @@ func TestServeV1ModelsFallsBackBeforeComputing(t *testing.T) {
 		v1Handler(s, c.target)(w, v1Request(c.target, c.headers))
 		if w.Code != http.StatusOK || up.count() != 0 || *computes != 1 {
 			t.Errorf("%s: code=%d proxied=%d computes=%d, want 200, 0, 1", c.name, w.Code, up.count(), *computes)
+		}
+	}
+}
+
+// A conditional request is answered as Next's res.json answers it (fresh over the answer's ETag;
+// DESIGN.md §16.8): a matching If-None-Match (exact, weak on the request side, or `*`) is a 304 with
+// no body; a mismatch, any If-Modified-Since (Next sets no Last-Modified, so even with a matching
+// If-None-Match), or a request Cache-Control naming no-cache is the normal 200. Both are Go's answer
+// (computed once, counted served); none is proxied. A header fresh reads that is not one ASCII line
+// falls back (TestServeV1ModelsFallsBackBeforeComputing and below).
+func TestServeV1ModelsConditionalRequests(t *testing.T) {
+	const ims = "Sat, 21 Nov 2026 00:00:00 GMT"
+	for _, c := range []struct {
+		name, target string
+		headers      map[string]string
+		code         int
+	}{
+		{"list, exact", "/api/v1/models?limit=2", map[string]string{"If-None-Match": v1ListETag}, http.StatusNotModified},
+		{"list, weak", "/api/v1/models?limit=2", map[string]string{"If-None-Match": "W/" + v1ListETag}, http.StatusNotModified},
+		{"list, star", "/api/v1/models?limit=2", map[string]string{"If-None-Match": "*"}, http.StatusNotModified},
+		{"list, in a list", "/api/v1/models?limit=2", map[string]string{"If-None-Match": `"x", ` + v1ListETag}, http.StatusNotModified},
+		{"[id], exact", "/api/v1/models/42", map[string]string{"If-None-Match": v1DetailETag}, http.StatusNotModified},
+		{"list, mismatch", "/api/v1/models?limit=2", map[string]string{"If-None-Match": v1DetailETag}, http.StatusOK},
+		{"[id], another model's ETag", "/api/v1/models/42", map[string]string{"If-None-Match": v1ListETag}, http.StatusOK},
+		{"list, If-Modified-Since", "/api/v1/models?limit=2", map[string]string{"If-Modified-Since": ims}, http.StatusOK},
+		{"[id], If-Modified-Since", "/api/v1/models/42", map[string]string{"If-Modified-Since": ims}, http.StatusOK},
+		{"list, both headers", "/api/v1/models?limit=2", map[string]string{"If-None-Match": v1ListETag, "If-Modified-Since": ims}, http.StatusOK},
+		{"[id], star and If-Modified-Since", "/api/v1/models/42", map[string]string{"If-None-Match": "*", "If-Modified-Since": ims}, http.StatusOK},
+		{"list, no-cache", "/api/v1/models?limit=2", map[string]string{"If-None-Match": v1ListETag, "Cache-Control": "no-cache"}, http.StatusOK},
+		{"[id], max-age=0, no-cache", "/api/v1/models/42", map[string]string{"If-None-Match": v1DetailETag, "Cache-Control": "max-age=0, no-cache"}, http.StatusOK},
+	} {
+		reg := prometheus.NewRegistry()
+		s, up, computes := serveV1Server(t, reg, true)
+		w := httptest.NewRecorder()
+		v1Handler(s, c.target)(w, v1Request(c.target, c.headers))
+		if w.Code != c.code || up.count() != 0 || *computes != 1 {
+			t.Errorf("%s: code=%d proxied=%d computes=%d, want %d, 0, 1", c.name, w.Code, up.count(), *computes, c.code)
+			continue
+		}
+		wantBody, wantType := v1ListBody, "application/json; charset=utf-8"
+		if strings.HasPrefix(c.target, V1ModelsPath+"/") {
+			wantBody = v1DetailBody
+		}
+		if c.code == http.StatusNotModified {
+			wantBody, wantType = "", ""
+		}
+		if got := w.Body.String(); got != wantBody {
+			t.Errorf("%s: body %q, want %q", c.name, got, wantBody)
+		}
+		if got := w.Header().Get("Content-Type"); got != wantType {
+			t.Errorf("%s: Content-Type %q, want %q", c.name, got, wantType)
+		}
+		if n := v1Count(t, reg, v1Endpoint(c.target), "feed_go_requests_total", map[string]string{"outcome": "served"}); n != 1 {
+			t.Errorf("%s: served = %v, want 1", c.name, n)
+		}
+	}
+	// Repeated lines of a header fresh reads: Node joins them, Fresh does not; handed to the app.
+	for _, h := range []http.Header{
+		{"If-None-Match": {`"x"`, v1ListETag}},
+		{"If-Modified-Since": {ims, ims}},
+		{"If-None-Match": {v1ListETag}, "Cache-Control": {"max-age=0", "no-cache"}},
+	} {
+		reg := prometheus.NewRegistry()
+		s, up, computes := serveV1Server(t, reg, true)
+		r := v1Request("/api/v1/models?limit=2", nil)
+		for k, v := range h {
+			r.Header[k] = v
+		}
+		w := httptest.NewRecorder()
+		s.ServeV1ModelsHTTP(w, r)
+		if w.Code != http.StatusTeapot || up.count() != 1 || *computes != 0 ||
+			v1Count(t, reg, EndpointV1Models, "feed_go_fallback_total", map[string]string{"reason": "v1-models-conditional"}) != 1 {
+			t.Errorf("%v: code=%d proxied=%d computes=%d, want a v1-models-conditional fallback", h, w.Code, up.count(), *computes)
+		}
+	}
+}
+
+// The 304 on the wire (a real server, whose net/http writes the status line): every header the 200
+// carries except Content-Type and Content-Length, which net/http drops from a 304 (Node's 304 keeps
+// the Content-Type res.json set: the one divergence, DESIGN.md §16.8), plus net/http's Date; no body.
+func TestServeV1ModelsNotModifiedHeaderSet(t *testing.T) {
+	for _, c := range []struct {
+		target, etag string
+		want         map[string]string
+	}{
+		{"/api/v1/models?limit=2", v1ListETag, map[string]string{
+			"X-Frame-Options":              "DENY",
+			"Vary":                         "Authorization",
+			"Access-Control-Allow-Origin":  "*",
+			"Access-Control-Allow-Headers": "Authorization, Content-Type, *",
+			"Access-Control-Allow-Methods": "GET",
+			"Cache-Control":                "public, s-maxage=300, stale-while-revalidate=150",
+			"Etag":                         `"vi1v4hbjily"`,
+			"X-Feed-Go-Served":             "go",
+		}},
+		{"/api/v1/models/42", v1DetailETag, map[string]string{
+			"X-Frame-Options":              "DENY",
+			"Vary":                         "Authorization",
+			"Access-Control-Allow-Origin":  "*",
+			"Access-Control-Allow-Headers": "Authorization, Content-Type, *",
+			"Access-Control-Allow-Methods": "GET",
+			"Cache-Control":                "private, no-store",
+			"Etag":                         `"ueot6baeh9k"`,
+			"X-Feed-Go-Served":             "go",
+		}},
+	} {
+		s, _, _ := serveV1Server(t, prometheus.NewRegistry(), true)
+		srv := httptest.NewServer(v1Handler(s, c.target))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+c.target, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("If-None-Match", c.etag)
+		// No User-Agent, as the recorder tests send (Go's default one must not read as a crawler's).
+		req.Header.Set("User-Agent", "")
+		res, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		_ = res.Body.Close()
+		srv.Close()
+		if res.StatusCode != http.StatusNotModified || len(body) != 0 {
+			t.Fatalf("%s: %d with %d body bytes, want 304 with none", c.target, res.StatusCode, len(body))
+		}
+		got := map[string]string{}
+		for k, v := range res.Header {
+			if len(v) != 1 {
+				t.Fatalf("%s: %s sent %d times: %q", c.target, k, len(v), v)
+			}
+			got[k] = v[0]
+		}
+		if got["Date"] == "" {
+			t.Errorf("%s: no Date", c.target)
+		}
+		delete(got, "Date")
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: 304 headers:\n got  %v\n want %v", c.target, got, c.want)
 		}
 	}
 }

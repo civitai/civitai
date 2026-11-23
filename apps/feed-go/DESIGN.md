@@ -2435,8 +2435,11 @@ deployment config. Every answer carries `X-Feed-Go-Served` (`go` or `node`), as 
    series are seeded per model endpoint. A client that leaves is `canceled` and not proxied.
 3. The checks no Node read can answer, before the port runs: not a GET (`method`) and any API
    credential, an Authorization header of any value or a `?token=` (`bearer-token`), in the shadow
-   too (`v1ModelsPreflight`); then, on the public route only (`v1ModelsServeOnly`), a conditional request, `If-None-Match` or `If-Modified-Since`
-   (`v1-models-conditional`: Next's `res.json` answers a matching one 304); on the list, a cookie under
+   too (`v1ModelsPreflight`); then, on the public route only (`v1ModelsServeOnly`), a conditional request (`If-None-Match` or
+   `If-Modified-Since`) whose `If-None-Match`, `If-Modified-Since` or `Cache-Control` is sent on
+   more than one line or holds a byte outside ASCII (`v1-models-conditional`: Node joins repeated
+   lines, and JS reads non-ASCII text by rules not ported; every other conditional request is
+   answered here, below); on the list, a cookie under
    any session cookie name, the legacy next-auth one included, valid or not
    (`v1-models-session-cookie`: the list serves signed-out callers only) and an `etag` query value
    (`v1-models-etag`: MixedAuthEndpoint checks it against the database and may add X-Expires); on
@@ -2461,6 +2464,37 @@ deployment config. Every answer carries `X-Feed-Go-Served` (`go` or `node`), as 
 An answer is that body with the headers below, Next's `Content-Type: application/json;
 charset=utf-8`, and `X-Feed-Go-Served: go`, counted `served`, `served_empty` (an empty page) or
 `served_cached` (`[id]` from the origin cache).
+
+**Conditional requests (304).** Next's `res.json` (`sendData`, then `sendEtagResponse` in
+`next/dist/server/send-payload.js`) sets the ETag and answers 304 with no body when
+`fresh(req.headers, { etag })` holds, after the handler has built the answer. That `fresh` is the
+package Next bundles (`next/dist/compiled/fresh/index.js`, Next 16.4.5), ported as `v1models.Fresh`
+and applied to the computed answer's ETag:
+
+- neither `If-None-Match` nor `If-Modified-Since` (an empty value is absent): 200;
+- a request `Cache-Control` matching `/(?:^|,)\s*?no-cache\s*?(?:,|$)/` (case-sensitive): 200;
+- an `If-None-Match` other than `*`: 304 only if one of its comma-separated tokens (spaces around
+  each dropped) is the ETag, `W/` + the ETag, or the ETag with its `W/` dropped; else 200;
+- any `If-Modified-Since`: 200. Node passes no Last-Modified, so `fresh` never treats one as
+  satisfied, whatever `If-None-Match` says (both headers: 200);
+- otherwise (a matching or `*` `If-None-Match` alone): 304.
+
+The 304 carries every header of the 200 above (the ETag included) and `X-Feed-Go-Served: go`, with
+no body, and is counted under the outcome of the answer it was computed from (`served`,
+`served_empty` or `served_cached`). A request that falls back for any other reason is handed to the
+app as before, which decides its own 304. **The one known divergence:** Node's 304 also carries the
+`Content-Type: application/json; charset=utf-8` that `res.json` set before `sendData`, while Go's
+`net/http` removes `Content-Type`, `Content-Length` and `Transfer-Encoding` from every 304 it
+writes, so Go's 304 has no `Content-Type`. A 304 has no body for that header to describe.
+
+The shadow cannot observe a 304. The sampler forwards no `If-None-Match`, `If-Modified-Since` or
+`Cache-Control` request header (only the headers of §16.4 and the session cookies), so every sample
+is computed as an unconditional 200. A Node answer that is a 304 is never posted: it finishes with
+status 304, so it is counted `skipped_status`. `Content-Type` is also not in the compared REST
+header list. The 304 path is therefore verified by the unit tests
+(`internal/v1models/fresh_test.go`; `TestServeV1ModelsConditionalRequests` and
+`TestServeV1ModelsNotModifiedHeaderSet` in `internal/server`) and by a direct probe of the served
+route, not by the shadow.
 
 **The response headers** (`v1models.ResponseHeaders`, the one function the public route writes and the
 shadow compares). They drive Cloudflare's caching of the public API, so each is Node's, from the place
