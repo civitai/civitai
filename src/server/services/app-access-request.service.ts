@@ -92,7 +92,8 @@ async function isAutoApproveOn(user: SessionUser): Promise<boolean> {
 
 /**
  * The basic account checks an instant approval needs: the account exists and is not deleted, is
- * not banned, is not muted, and has a verified email. Read from the PRIMARY at submit time rather
+ * not banned, is not muted, and has a verified email; and the person has no declined request, so
+ * a moderator's decline or revoke is never undone by the next submit. Read from the PRIMARY at submit time rather
  * than from the session, which can be hours old: a ban or a mute applied since must count. A
  * person who fails any check still gets a request, pending, for a moderator to decide.
  */
@@ -103,6 +104,9 @@ async function isEligibleForAutoApproval(userId: number): Promise<boolean> {
       AND "bannedAt" IS NULL
       AND "muted" = FALSE
       AND "emailVerified" IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM "AppAccessRequest" WHERE "userId" = ${userId} AND "status" = 'declined'
+      )
     ) AS "eligible"
     FROM "User" WHERE "id" = ${userId}
   `);
@@ -119,8 +123,8 @@ async function isEligibleForAutoApproval(userId: number): Promise<boolean> {
  * request is written APPROVED instead — the grant, with a review time and no reviewer — and their
  * session is busted so the next page load has builder access. A pending request they already have
  * is NOT approved by a submit: it stays for a moderator, and the submit is the same "waiting for
- * review" CONFLICT as with the flag off. After a revoke a new submit is approved again: a revoke
- * removes access until the person asks again, not for good. No
+ * review" CONFLICT as with the flag off. Someone with a declined request (a decline or a revoke)
+ * gets a pending request, for a moderator. No
  * "approved" notification is sent for it: the person is looking at the page that shows the
  * result. Off, unreadable or failing a check: the pending insert below, exactly as before.
  */
