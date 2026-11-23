@@ -65,6 +65,9 @@ const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
 const { loadServiceDealReviewSubjects } = await import(
   '~/server/services/text-scan/profiles/service-deal-review.profile'
 );
+const { getTextScanProfile, registerTextScanProfile } = await import(
+  '~/server/services/text-scan/profiles'
+);
 const loadSubject = async (
   type: 'ServiceDealReview' | 'ServiceDealReviewReply' = 'ServiceDealReview'
 ) => (await loadServiceDealReviewSubjects(type, [REVIEW])).get(REVIEW);
@@ -483,6 +486,41 @@ describe('a verdict that does not answer every label the profile requires', () =
     });
     await adapter.scanServiceDealReviewText(type, REVIEW, unchanged as never);
     expect(await state(type)).toEqual(RESENDABLE);
+  });
+
+  it.each(TYPES)('%s: the requirement holds whatever the profile registry holds', async (type) => {
+    const registered = getTextScanProfile(type)!;
+    // A registry entry without the requirement, as if the review profile had never loaded.
+    registerTextScanProfile({ entityType: type, labels: ['nsfw'], load: registered.load });
+    try {
+      await seed(R);
+      await textScan({ type, everyLabel: false });
+      expect(await state(type)).toEqual(RESENDABLE);
+
+      await q(
+        `INSERT INTO "EntityModeration" ("entityType", "entityId", result, "nsfwLevel")
+           VALUES ($1, $2, $3::jsonb, 1)`,
+        [
+          type,
+          REVIEW,
+          JSON.stringify({
+            version: 1,
+            textHash: textScanTextHash((await loadSubject(type))!),
+            labels: NSFW_ONLY,
+          }),
+        ]
+      );
+      const unchanged = vi.fn(
+        async (args: { onActiveSkip?: (r: 'unchanged') => Promise<void> }) => {
+          await args.onActiveSkip?.('unchanged');
+          return null;
+        }
+      );
+      await adapter.scanServiceDealReviewText(type, REVIEW, unchanged as never);
+      expect(await state(type)).toEqual(RESENDABLE);
+    } finally {
+      registerTextScanProfile(registered);
+    }
   });
 
   it.each(TYPES)(

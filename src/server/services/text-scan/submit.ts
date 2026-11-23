@@ -389,7 +389,7 @@ export async function scanEntity({
   // on it instead of being sent again.
   if (mode === 'active') {
     const unanswerable = unansweredTextScanLabels(
-      entityType,
+      profile,
       Object.fromEntries(labels.map((label) => [label, true]))
     );
     if (unanswerable.length) {

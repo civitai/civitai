@@ -3,7 +3,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { unansweredTextScanLabels } from '~/server/services/text-scan/profiles';
 import type { ScanEntityResult } from '~/server/services/text-scan/submit';
-import type { TextScanOutput } from '~/server/services/text-scan/types';
+import type { TextScanOutput, TextScanProfile } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 export type SkipReason = Extract<ScanEntityResult, { status: 'skipped' }>['reason'];
@@ -22,7 +22,9 @@ export async function settleSkippedScan(
   entityId: number,
   reason: SkipReason,
   apply: ApplySkippedVerdict,
-  logContext: Record<string, unknown>
+  logContext: Record<string, unknown>,
+  /** The caller's own profile, when a stored verdict must answer every label it requires. */
+  profile?: Pick<TextScanProfile, 'labels' | 'requireEveryLabel'>
 ) {
   if (reason === 'missing' || reason === 'in-flight') return;
   if (reason === 'too-short') {
@@ -38,7 +40,7 @@ export async function settleSkippedScan(
     if (
       live?.status === EntityModerationStatus.Succeeded &&
       stored?.version != null &&
-      !unansweredTextScanLabels(entityType, stored.labels).length
+      !(profile && unansweredTextScanLabels(profile, stored.labels).length)
     ) {
       await apply(live.nsfwLevel ?? NsfwLevel.PG, { stored: true });
       return;

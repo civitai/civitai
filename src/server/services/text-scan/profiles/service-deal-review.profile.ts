@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
-import type { TextScanSubject } from '~/server/services/text-scan/types';
+import type { TextScanProfile, TextScanSubject } from '~/server/services/text-scan/types';
 
 /**
  * A buyer's review of a service deal and the seller's one reply to it: two texts on one row, by two
@@ -56,10 +56,17 @@ export const loadServiceDealReviewSubjects = async (
   );
 };
 
-for (const entityType of Object.keys(SERVICE_DEAL_REVIEW_TEXTS) as ServiceDealReviewTextType[])
-  registerTextScanProfile({
-    entityType,
-    labels: ['nsfw', 'csam'],
-    requireEveryLabel: true,
-    load: (ids) => loadServiceDealReviewSubjects(entityType, ids),
-  });
+const reviewTextProfile = (entityType: ServiceDealReviewTextType): TextScanProfile => ({
+  entityType,
+  labels: ['nsfw', 'csam'],
+  requireEveryLabel: true,
+  load: (ids) => loadServiceDealReviewSubjects(entityType, ids),
+});
+
+/** Read directly by the review adapter, so what it requires never depends on what is registered. */
+export const SERVICE_DEAL_REVIEW_PROFILES: Record<ServiceDealReviewTextType, TextScanProfile> = {
+  ServiceDealReview: reviewTextProfile('ServiceDealReview'),
+  ServiceDealReviewReply: reviewTextProfile('ServiceDealReviewReply'),
+};
+
+for (const profile of Object.values(SERVICE_DEAL_REVIEW_PROFILES)) registerTextScanProfile(profile);

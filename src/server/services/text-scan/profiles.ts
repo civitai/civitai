@@ -21,15 +21,15 @@ export function isTextScanEntityType(value: string): value is TextScanEntityType
 }
 
 /**
- * The labels of `entityType`'s profile that `answers` has no answer for, when that profile requires
- * every label; empty for every other profile.
+ * The labels of `profile` that `answers` has no answer for, when it requires every label; empty for
+ * every other profile. Takes the profile itself, not a registry lookup, so an unregistered profile
+ * cannot read as complete.
  */
 export function unansweredTextScanLabels(
-  entityType: string,
+  profile: Pick<TextScanProfile, 'labels' | 'requireEveryLabel'>,
   answers: Partial<Record<TextScanLabel, unknown>> | null | undefined
 ): TextScanLabel[] {
-  const profile = profiles.get(entityType);
-  if (!profile?.requireEveryLabel) return [];
+  if (!profile.requireEveryLabel) return [];
   return profile.labels.filter((label) => answers?.[label] == null);
 }
 

@@ -17,6 +17,7 @@ import {
 } from '~/server/services/text-scan/csam-hold-state';
 import {
   loadServiceDealReviewSubjects,
+  SERVICE_DEAL_REVIEW_PROFILES,
   SERVICE_DEAL_REVIEW_TEXTS,
   type ServiceDealReviewTextType,
 } from '~/server/services/text-scan/profiles/service-deal-review.profile';
@@ -119,7 +120,8 @@ const settleSkipped = (type: TextType, reviewId: number, reason: SkipReason, tex
           stored
             ? settleStored(type, reviewId, text, level)
             : settleUnlessHeld(type, reviewId, { text }, { level }),
-        { reviewId }
+        { reviewId },
+        SERVICE_DEAL_REVIEW_PROFILES[type]
       );
 
 /**
@@ -160,7 +162,10 @@ async function trackSubmit(
   });
   if (!early || (!early.blocked && early.nsfwLevel === null)) return workflow;
   const answers = (early.result as { labels?: TextScanOutput } | null)?.labels;
-  if (!early.blocked && unansweredTextScanLabels(type, answers).length)
+  if (
+    !early.blocked &&
+    unansweredTextScanLabels(SERVICE_DEAL_REVIEW_PROFILES[type], answers).length
+  )
     await resendReviewText(type, reviewId, { workflowId });
   else
     await settleUnlessHeld(
@@ -272,7 +277,7 @@ const createReviewTextAdapter = (type: TextType): ModerationAdapter => ({
 const applyVerdict =
   (type: TextType) =>
   async ({ entityId, workflowId, outcome, textHash }: ApplyTextScanArgs) => {
-    const unanswered = unansweredTextScanLabels(type, outcome);
+    const unanswered = unansweredTextScanLabels(SERVICE_DEAL_REVIEW_PROFILES[type], outcome);
     if (unanswered.length || !outcome.nsfw) {
       logToAxiom({
         type: 'error',

@@ -406,7 +406,14 @@ describe('a scan settles only on a verdict that answers every label its profile 
         result: { version: 1, labels: { nsfw: { level: 'none', reason: '' } } },
       } as never);
       const apply = vi.fn(async () => undefined);
-      await settleSkippedScan(NOT_REQUIRING, 1, 'unchanged', apply, {});
+      await settleSkippedScan(
+        NOT_REQUIRING,
+        1,
+        'unchanged',
+        apply,
+        {},
+        getTextScanProfile(NOT_REQUIRING)
+      );
       expect(apply).toHaveBeenCalledWith(1, { stored: true });
     });
   });
@@ -424,14 +431,28 @@ describe('a scan settles only on a verdict that answers every label its profile 
     it.each(REQUIRING)('%s settles on one that answers every label', async (entityType) => {
       stored({ nsfw, csam });
       const apply = vi.fn(async () => undefined);
-      await settleSkippedScan(entityType, 1, 'unchanged', apply, {});
+      await settleSkippedScan(
+        entityType,
+        1,
+        'unchanged',
+        apply,
+        {},
+        getTextScanProfile(entityType)
+      );
       expect(apply).toHaveBeenCalledWith(1, { stored: true });
     });
 
     it.each(REQUIRING)('%s does not settle on one that misses a label', async (entityType) => {
       stored({ nsfw });
       const apply = vi.fn(async () => undefined);
-      await settleSkippedScan(entityType, 1, 'unchanged', apply, {});
+      await settleSkippedScan(
+        entityType,
+        1,
+        'unchanged',
+        apply,
+        {},
+        getTextScanProfile(entityType)
+      );
       expect(apply).not.toHaveBeenCalled();
     });
   });
