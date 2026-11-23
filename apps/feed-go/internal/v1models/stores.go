@@ -310,7 +310,8 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 		}
 		// getImagesForModelVersionCache's appendFn: the images the minor content rule restricts are
 		// dropped for every viewer, before the hold below.
-		cached = hydrate.WithoutMinorMatureImages(cached, getVal)
+		// The appendFn also drops the images at no selectable level.
+		cached = hydrate.WithSelectableLevel(hydrate.WithoutMinorMatureImages(cached, getVal), getVal)
 		imgs := make([]superjson.Object, 0, len(cached))
 		lvl, isHeld := held[modelOf[vid].row.ID]
 		for _, o := range cached {

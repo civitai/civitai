@@ -732,7 +732,7 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		viewer = *req.Viewer
 		viewerUsername = req.ViewerUsername
 	}
-	level, _ := in.ApplyDomainCap(req.Cap)
+	level, _ := in.ApplyDomainCap(req.Cap, viewer.IsModerator)
 
 	// The gallery gates (moderators are exempt from both): a taken-down model's images only to its
 	// owner, a minor or SFW-only model's only at its held level.
@@ -772,7 +772,8 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	if allBlocked {
+	// getAllImagesUncaptured: a level made only of unselectable bits is an empty page too.
+	if allBlocked || (!useIndex && level != 0 && browsing.OnlySelectable(level) == 0) {
 		// getAllImagesIndex's / getAllImagesUncaptured's own `{ nextCursor: undefined, items: [] }`;
 		// the Postgres arm's caller stamps its source on it.
 		v := superjson.Object{{Key: "nextCursor", Val: superjson.Undefined{}}, {Key: "items", Val: []any{}}}
