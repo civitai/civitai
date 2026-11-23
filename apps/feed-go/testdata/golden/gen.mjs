@@ -215,6 +215,7 @@ for (const [id, userId, versionId, publishedAt] of [
   [7008, 1002, 6002, day(3)],
   [7009, 1002, 6001, day(7)],
   [7010, 1001, null, day(6)],
+  [7020, 1002, null, day(6, 6)],
   [7101, 1002, 6301, day(2)],
   [7102, 1001, 6301, day(13)],
   [7103, 1002, 6301, day(1)],
@@ -295,6 +296,16 @@ image(8008, 7009, { minor: true });
 image(8009, 7010, {
   type: 'video',
   metadata: { width: 1280, height: 720, duration: 45, thumbnailId: 8909 },
+});
+// Two videos whose cached thumbnails are not servable: one marked, one cached before the field existed.
+image(8031, 7020, {
+  type: 'video',
+  metadata: { width: 1280, height: 720, duration: 12, thumbnailId: 8931 },
+});
+image(8032, 7020, {
+  index: 1,
+  type: 'video',
+  metadata: { width: 1280, height: 720, duration: 12, thumbnailId: 8932 },
 });
 // A post of eight, its images created on different weekdays (the createdAt string sort) and out of
 // index order (the Newest index sort).
@@ -395,8 +406,10 @@ const metaOf = (id) => (IMAGES[id].hideMeta ? null : prismaJson(META[id] ?? null
 
 // Video thumbnails (thumbnailCache, keyed by the video's id).
 const THUMBNAILS = {
-  8005: { id: 8905, url: uuid(8905), width: 640, height: 360, nsfwLevel: 1, parentId: 8005 },
-  8009: { id: 8909, url: uuid(8909), width: 640, height: 360, nsfwLevel: 2, parentId: 8009 },
+  8005: { id: 8905, url: uuid(8905), width: 640, height: 360, nsfwLevel: 1, blockMarked: false, parentId: 8005 },
+  8009: { id: 8909, url: uuid(8909), width: 640, height: 360, nsfwLevel: 2, blockMarked: false, parentId: 8009 },
+  8031: { id: 8931, url: uuid(8931), width: 640, height: 360, nsfwLevel: 1, blockMarked: true, parentId: 8031 },
+  8032: { id: 8932, url: uuid(8932), width: 640, height: 360, nsfwLevel: 1, parentId: 8032 },
 };
 // Tag ids per image (tagIdsForImagesCache). None are tags the addons exclude.
 const tagIdsOf = (id) => [501 + (id % 3), 520 + (id % 7)];
@@ -1431,7 +1444,11 @@ function getAllImagesUncaptured(input) {
       tagIds: tagIdsVar?.[i.id]?.tags,
       cosmetic: frames?.[i.id] ?? null,
       eventDecoration: eventDecorations?.[i.id] ?? null,
-      thumbnailUrl: thumbnail?.url,
+      // feedThumbnailFields
+      thumbnailUrl:
+        thumbnail && (thumbnail.blockMarked === false || creatorId === userId || isModerator)
+          ? thumbnail.url
+          : undefined,
       judgeScore: parseJudgeScore(collectionItemNote ?? null),
     };
   });
@@ -2022,7 +2039,10 @@ function runV1(spec) {
     imageMetas = cacheFetch(K.meta, result.items.map((img) => img.id), { lookup: lookupImageMeta, idKey: 'id', ttl: 5 * HOUR });
   }
   const videoIds = result.items.filter((i) => i.type === 'video').map((i) => i.id);
-  const customThumbnails = videoIds.length ? cacheFetch(K.thumbs, videoIds) : {};
+  // servableThumbnails
+  const customThumbnails = videoIds.length
+    ? Object.fromEntries(Object.entries(cacheFetch(K.thumbs, videoIds)).filter(([, t]) => t.blockMarked === false))
+    : {};
   const shaped = result.items.map((image) => {
     const nsfwName = REVERSE_DEPRECATED[image.nsfwLevel] ?? 'None';
     return {
@@ -2558,6 +2578,11 @@ const V1 = [
     description: '`type=video`: one custom thumbnail allowed at PG, one rated above the request (the still is cut from the video, past the first seconds of a long one); the thumbnail raises the image’s level.',
     query: 'type=video&limit=5',
     replies: { 'levels=1&excludedTags=9901&types=video&excludeMinor=1&excludePoi=1&sort=reactions&limit=5': { body: { items: [8005, 8009] } } },
+  },
+  {
+    name: 'video-thumbnails-unservable',
+    description: '`ids` of two videos whose cached thumbnails are not servable (one marked, one with no marker field): each falls back to a still cut from the video.',
+    query: 'ids=8031,8032&type=video',
   },
   {
     name: 'signed-in-moderator',
@@ -3155,6 +3180,20 @@ const INFINITE = [
     viewer: null,
     host: HOST.green,
     input: { ids: [8005, 8003, 8001], types: ['image'], browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'ids-video-thumbnails-unservable',
+    description: 'Two videos whose cached thumbnails are not servable (one marked, one with no marker field), signed out: no thumbnailUrl; the thumbnail still counts toward the level.',
+    viewer: null,
+    host: HOST.green,
+    input: { ids: [8031, 8032], types: ['video'], browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'ids-video-thumbnails-unservable-creator',
+    description: 'The same videos for their creator: the thumbnailUrl is served.',
+    viewer: 1002,
+    host: HOST.green,
+    input: { ids: [8031, 8032], types: ['video'], browsingLevel: 1, limit: 10 },
   },
   {
     name: 'ids-and-reactions-empty',

@@ -771,7 +771,8 @@ func publicVideoThumbnail(r RawImage, h V1Hydrated, level int, location string) 
 		return nil, nil
 	}
 	allowed := level & browsing.AllLevels
-	if h.HasThumb && h.Thumb.NsfwLevel != 0 && h.Thumb.NsfwLevel&allowed != 0 {
+	// servableThumbnails: only a servable custom thumbnail is used.
+	if h.HasThumb && h.Thumb.Servable && h.Thumb.NsfwLevel != 0 && h.Thumb.NsfwLevel&allowed != 0 {
 		src, ok := h.Thumb.URL.(string)
 		if !ok {
 			return nil, fallback.New("v1-thumbnail-url") // Node throws on a non-string url

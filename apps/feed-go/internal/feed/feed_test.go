@@ -457,7 +457,7 @@ func TestBuildImagesEventDecoration(t *testing.T) {
 
 func TestBuildImageCarriesRestricted(t *testing.T) {
 	for _, restricted := range []bool{true, false} {
-		img := buildImage(RawImage{ID: 1, Restricted: restricted}, &Hydrated{})
+		img := buildImage(RawImage{ID: 1, Restricted: restricted}, &Hydrated{}, Viewer{})
 		if v, ok := img.Wire.Get("restricted"); !ok || v != restricted {
 			t.Fatalf("restricted on the wire = %v (present %v), want %v", v, ok, restricted)
 		}
