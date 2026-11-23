@@ -6,7 +6,7 @@ import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
 import { canAccess } from '$lib/server/access';
 import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
 import { APPEAL_RULING_REFUSED } from '$lib/held-media';
-import { restrictedImageIds } from '$lib/server/retracted-media';
+import { withheldImageIds } from '$lib/server/retracted-media';
 import {
   getCsamQueueByUser,
   getImageReviewQueue,
@@ -104,13 +104,6 @@ async function withModel3d<T extends { id: number }>(items: T[]) {
     model3d: model3ds[i.id] ?? null,
     approvedAppeal: approvedAppealOf(appeals.get(i.id)),
   }));
-}
-
-/** The images among these that `user` may not rule an appeal on: the ones the appeals queue sends
- *  them without media. Every path that rules on an image appeal asks this. */
-export async function refusedRulings(user: App.Locals['user'] | undefined, imageIds: number[]) {
-  const kept = await restrictedImageIds(imageIds, { csamReview: canAccess(user, HELD_MEDIA_PAGE) });
-  return [...kept];
 }
 
 /**
@@ -450,7 +443,7 @@ export const imageQueueActions = {
         .slice(0, 1000) || undefined;
     const reason = parseResolutionReason(form, status);
     if (typeof reason === 'string') return fail(400, { error: reason, imageId });
-    if ((await refusedRulings(locals.user, [imageId])).length)
+    if ((await withheldImageIds(locals.user, [imageId])).length)
       return fail(403, { error: APPEAL_RULING_REFUSED, imageId });
 
     let closed;
@@ -701,7 +694,7 @@ export const imageQueueActions = {
     const status = form.get('status') === 'Approved' ? 'Approved' : 'Rejected';
     const reason = parseResolutionReason(form, status);
     if (typeof reason === 'string') return fail(400, { error: reason });
-    const kept = await refusedRulings(locals.user, imageIds);
+    const kept = await withheldImageIds(locals.user, imageIds);
     if (kept.length)
       return fail(403, {
         error: `${APPEAL_RULING_REFUSED} Nothing was resolved: ${kept.join(', ')}.`,

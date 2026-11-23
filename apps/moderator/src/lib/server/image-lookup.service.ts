@@ -2,7 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getModActivityFor, type ModActivityRow } from './mod-activity';
 import { usersByIds } from './users.service';
-import { getImagesForPost, type BulkImage } from './bulk-image.service';
+import { getImagesForPost, withholdBatchMedia, type ServedBulkImage } from './bulk-image.service';
 import { restrictedImageIds } from './retracted-media';
 import { getReactions, type ImageReactionRow, type ReactionPage } from './image-reactions.service';
 import type { MediaType } from '../media/edge-url';
@@ -172,9 +172,39 @@ export async function getImageLookup(
 ): Promise<ImageLookupResult | null> {
   const found = await getImage(imageId);
   if (!found) return null;
-  const image = (await restrictedImageIds([imageId], { csamReview })).has(imageId)
-    ? { ...found, ...WITHHELD, hash: null, pHash: null, width: null, height: null }
-    : found;
+  // Withheld: no media, and nothing that says why (as the appeal cards).
+  if ((await restrictedImageIds([imageId], { csamReview })).has(imageId)) {
+    const [reactions, modActivity, appeals] = await Promise.all([
+      getReactions(imageId),
+      getModActivity(imageId),
+      getLatestApprovedImageAppeals(dbRead, [imageId]),
+    ]);
+    return {
+      image: {
+        ...found,
+        ...WITHHELD,
+        hash: null,
+        pHash: null,
+        width: null,
+        height: null,
+        name: null,
+        blockedFor: null,
+        needsReview: null,
+        prompt: null,
+        negativePrompt: null,
+        meta: null,
+        promptHighlight: null,
+        scanJobs: null,
+        ruleReason: null,
+      },
+      tags: [],
+      shadowTags: [],
+      reactions,
+      reports: [],
+      modActivity,
+      approvedAppeal: approvedAppealOf(appeals.get(imageId)),
+    };
+  }
 
   const [tags, shadowTags, reactions, reports, modActivity, appeals] = await Promise.all([
     getTags(imageId),
@@ -185,7 +215,7 @@ export async function getImageLookup(
     getLatestApprovedImageAppeals(dbRead, [imageId]),
   ]);
   const approvedAppeal = approvedAppealOf(appeals.get(imageId));
-  return { image, tags, shadowTags, reactions, reports, modActivity, approvedAppeal };
+  return { image: found, tags, shadowTags, reactions, reports, modActivity, approvedAppeal };
 }
 
 // Post detail for Image Lookup's `?post=` view. There was no Retool "Post Lookup" app: its "Lookup Post"
@@ -214,14 +244,9 @@ export type PostDetail = {
 /** What a withheld image is served with in place of its media. */
 const WITHHELD = { url: '', type: null, restricted: true } as const;
 
-export type PostLookupImage = Omit<BulkImage, 'type'> & {
-  type: BulkImage['type'] | null;
-  restricted: boolean;
-};
-
 export type PostLookupResult = {
   post: PostDetail;
-  images: PostLookupImage[];
+  images: ServedBulkImage[];
   truncated: boolean;
   total: number;
 };
@@ -258,26 +283,26 @@ export async function getPostLookup(
   // The SAME query Bulk Image Manager runs for a post — that page is where this one's images get
   // actioned, and two builders answering "the images in post N" is how they came to show different
   // flags and different orders for the same image.
-  const batch = await getImagesForPost(postId, { limit }, 'index');
-  const withheld = await restrictedImageIds(
-    batch.items.map((i) => i.id),
-    { csamReview }
-  );
+  const batch = await withholdBatchMedia(await getImagesForPost(postId, { limit }, 'index'), {
+    csamReview,
+  });
 
   return {
     post: { ...post, availability: String(post.availability) },
-    images: batch.items.map((i) =>
-      withheld.has(i.id) ? { ...i, ...WITHHELD } : { ...i, restricted: false }
-    ),
+    images: batch.items,
     truncated: batch.truncated,
     total: batch.total,
   };
 }
 
-/** An account's newest images outside one post. Not `getImagesForUser`: its count walks every image
- *  the account has. */
-export async function getRecentImagesOutsidePost(userId: number, postId: number, limit = 12) {
-  return dbRead
+/** An account's newest images outside one post, each withheld (`restrictedImageIds`) as in the post
+ *  view. Not `getImagesForUser`: its count walks every image the account has. */
+export async function getRecentImagesOutsidePost(
+  userId: number,
+  postId: number,
+  { csamReview, limit = 12 }: { csamReview: boolean; limit?: number }
+) {
+  const rows = await dbRead
     .selectFrom('Image as i')
     .where('i.userId', '=', userId)
     .where((eb) => eb.or([eb('i.postId', 'is', null), eb('i.postId', '!=', postId)]))
@@ -285,6 +310,13 @@ export async function getRecentImagesOutsidePost(userId: number, postId: number,
     .orderBy('i.id', 'desc')
     .limit(limit)
     .execute();
+  const withheld = await restrictedImageIds(
+    rows.map((r) => r.id),
+    { csamReview }
+  );
+  return rows.map((r) =>
+    withheld.has(r.id) ? { ...r, ...WITHHELD } : { ...r, restricted: false }
+  );
 }
 
 export type PostSummary = {

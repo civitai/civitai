@@ -1,7 +1,8 @@
 import { dbRead } from '../db';
 import { canAccess } from '../access';
 import { resolveImageAppeal } from '../image-moderation.service';
-import { parseResolutionReason, refusedRulings } from '../image-queue';
+import { parseResolutionReason } from '../image-queue';
+import { withheldImageIds } from '../retracted-media';
 import { IMAGE_APPEALS_PATH } from '$lib/tickets/appeals';
 import { appealsPanelFor } from '$lib/tickets/appeals-panel';
 import { linkedUserFor } from './account-actions';
@@ -15,7 +16,7 @@ export const ticketAppealDeps: AppealWriteDeps = {
     'This ticket no longer lists appeals — nothing was changed.'
   ),
   canAct: (user) => canAccess(user, IMAGE_APPEALS_PATH),
-  withheld: async (user, imageId) => (await refusedRulings(user, [imageId])).length > 0,
+  withheld: async (user, imageId) => (await withheldImageIds(user, [imageId])).length > 0,
   appealOf: async (id) =>
     (await dbRead
       .selectFrom('Appeal')

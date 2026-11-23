@@ -14,7 +14,10 @@ import {
   type UrlSibling,
 } from '@civitai/shared/retracted-media-tier';
 import { blockedForPatterns } from './blocked-for-patterns';
+import { canAccess } from './access';
 import { dbWrite } from './db';
+import { HELD_MEDIA_PAGE } from './held-media';
+import { APPEAL_RULING_REFUSED } from '$lib/held-media';
 import { insertModActivity } from './mod-activity';
 import { readScannerCsamVerdict, readScannerCsamVerdicts } from './review-batch';
 
@@ -132,7 +135,9 @@ export async function restrictedImageIds(
       .execute();
   });
   const patterns = blockedForPatterns();
-  const kept = new Set<number>();
+  // An id the primary no longer has is withheld: its row may still be on the replica a caller read.
+  const found = new Set(rows.map((row) => row.id));
+  const kept = new Set(imageIds.filter((id) => !found.has(id)));
   // The scanner is read only for the rows Postgres has not already refused, as `readRetractedMedia`.
   const candidates = rows.filter((row) => {
     const refused = row.restricted || blockedForSignal(row.blockedFor, patterns);
@@ -152,6 +157,48 @@ export async function restrictedImageIds(
     if (!ok) kept.add(row.id);
   }
   return kept;
+}
+
+/** The images among these withheld from `user` (`restrictedImageIds`), whom every image action
+ *  refuses: an appeal ruling, a restore, a removal or a flag. */
+export async function withheldImageIds(user: App.Locals['user'] | undefined, imageIds: number[]) {
+  return [
+    ...(await restrictedImageIds(imageIds, { csamReview: canAccess(user, HELD_MEDIA_PAGE) })),
+  ];
+}
+
+/** The refusal for a batch with an image withheld from `user`, which acts on none of it; `null`
+ *  when nothing in it is withheld. */
+export async function withheldRefusal(user: App.Locals['user'] | undefined, imageIds: number[]) {
+  const withheld = await withheldImageIds(user, imageIds);
+  return withheld.length
+    ? `${APPEAL_RULING_REFUSED} Nothing was changed: ${withheld.join(', ')}.`
+    : null;
+}
+
+/** The most images of one account `withheldAccountRefusal` reads, a page at a time; an account
+ *  with more is refused to a moderator without the grant rather than read in full. */
+export const ACCOUNT_CHECK_CAP = 1000;
+const ACCOUNT_CHECK_PAGE = 200;
+
+/** The refusal for an action on every image `userId` owns when any of them is withheld from `user`,
+ *  or there are more than `ACCOUNT_CHECK_CAP` to check; `null` otherwise. */
+export async function withheldAccountRefusal(user: App.Locals['user'] | undefined, userId: number) {
+  if (canAccess(user, HELD_MEDIA_PAGE)) return null;
+  const rows = await dbWrite
+    .selectFrom('Image')
+    .select('id')
+    .where('userId', '=', userId)
+    .limit(ACCOUNT_CHECK_CAP + 1)
+    .execute();
+  if (rows.length > ACCOUNT_CHECK_CAP)
+    return `${APPEAL_RULING_REFUSED} This account has too many images to check — nothing was changed.`;
+  const ids = rows.map((r) => r.id);
+  for (let i = 0; i < ids.length; i += ACCOUNT_CHECK_PAGE) {
+    const error = await withheldRefusal(user, ids.slice(i, i + ACCOUNT_CHECK_PAGE));
+    if (error) return error;
+  }
+  return null;
 }
 
 /** Each row's verdict, one read per row: a scanned image can be rescanned, so it is read fresh; a

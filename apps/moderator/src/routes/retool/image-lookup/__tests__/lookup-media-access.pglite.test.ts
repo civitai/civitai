@@ -3,7 +3,7 @@ import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../../test/pglite';
 import { pgliteDialect } from '$lib/server/__tests__/abuse-detection-pglite.harness';
-import { APPEAL_MEDIA_SCHEMA } from '$lib/server/__tests__/appeal-media-schema';
+import { IMAGE_PAGES_SCHEMA as SCHEMA } from '$lib/server/__tests__/appeal-media-schema';
 
 /**
  * What Image Lookup's server load sends for an image the media access rule withholds from this
@@ -25,46 +25,39 @@ vi.mock('$lib/server/db', () => ({
     return dbHandle.current;
   },
 }));
-vi.mock('$lib/server/clickhouse', () => ({
-  getClickhouse: () => ({ query: async () => ({ json: async () => [] }) }),
-}));
+// ClickHouse is the boundary: the scanner's CSAM label on `scanner.hits`.
+const { scanner } = vi.hoisted(() => ({ scanner: { hits: [] as number[] } }));
+vi.mock('$lib/server/clickhouse', async () => {
+  const { imageAuditContentHash } = await import('@civitai/shared/media-signals');
+  return {
+    getClickhouse: () => ({
+      query: async ({ query_params }: { query_params: { hashes?: string[] } }) => {
+        const hit = new Set(scanner.hits.map(imageAuditContentHash));
+        return {
+          json: async () =>
+            (query_params?.hashes ?? [])
+              .filter((h) => hit.has(h))
+              .map((contentHash) => ({ contentHash, csamHit: 1 })),
+        };
+      },
+    }),
+  };
+});
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
 const { load } = await import('../+page.server');
-
-const SCHEMA = `${APPEAL_MEDIA_SCHEMA}
-ALTER TABLE "Image" ADD COLUMN "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
-  ADD COLUMN "updatedAt" TIMESTAMP(3), ADD COLUMN "tosViolation" BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN "scannedAt" TIMESTAMP(3), ADD COLUMN "hideMeta" BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN hash TEXT, ADD COLUMN meta JSONB, ADD COLUMN metadata JSONB, ADD COLUMN "scanJobs" JSONB,
-  ADD COLUMN index INTEGER;
-ALTER TABLE "User" ADD COLUMN "bannedAt" TIMESTAMP(3), ADD COLUMN "profilePictureId" INTEGER,
-  ADD COLUMN "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now();
-ALTER TABLE "Post" ADD COLUMN title TEXT, ADD COLUMN detail TEXT, ADD COLUMN "userId" INTEGER,
-  ADD COLUMN "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(), ADD COLUMN "publishedAt" TIMESTAMP(3),
-  ADD COLUMN "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
-  ADD COLUMN "tosViolation" BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN unlisted BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN availability TEXT NOT NULL DEFAULT 'Public';
-ALTER TABLE "TagsOnImageDetails" ADD COLUMN automated BOOLEAN, ADD COLUMN confidence INTEGER,
-  ADD COLUMN "needsReview" BOOLEAN, ADD COLUMN source TEXT;
-CREATE TABLE "Tag" (id INTEGER PRIMARY KEY, name TEXT, "nsfwLevel" INTEGER, "isCategory" BOOLEAN);
-CREATE TABLE "ShadowTagsOnImage" ("imageId" INTEGER, "tagId" INTEGER, confidence INTEGER);
-ALTER TABLE "Report" ADD COLUMN "internalNotes" TEXT, ADD COLUMN "alsoReportedBy" INTEGER[],
-  ADD COLUMN "previouslyReviewedCount" INTEGER, ADD COLUMN "statusSetAt" TIMESTAMP(3),
-  ADD COLUMN "statusSetBy" INTEGER;
-ALTER TABLE "ModActivity" ADD COLUMN id SERIAL;
-CREATE TABLE "ImageReaction" (
-  id SERIAL PRIMARY KEY, "userId" INTEGER, "imageId" INTEGER, reaction TEXT,
-  "createdAt" TIMESTAMP(3), "updatedAt" TIMESTAMP(3)
-);
-`;
+const { getRecentImagesOutsidePost } = await import('$lib/server/image-lookup.service');
+const { restrictedImageIds } = await import('$lib/server/retracted-media');
 
 const POST = 50;
 const WITHHELD = 401;
 const CONTROL = 402;
 const KEY = 'withheld-key';
+const SCANNER_HIT = 403;
+const HELD_OWNER = 8;
+const HELD_OWNER_OTHER = 405;
+const OWNER_OTHER = 406;
 
 const WITHOUT_GRANT = { id: 2, roles: [] };
 const WITH_GRANT = { id: 3, roles: ['moderator:admin'] };
@@ -72,14 +65,28 @@ const WITH_GRANT = { id: 3, roles: ['moderator:admin'] };
 let db: PGlite;
 
 beforeEach(async () => {
+  scanner.hits = [SCANNER_HIT];
   db = await freshPglite();
   await db.exec(SCHEMA);
   await db.exec(`
-    INSERT INTO "User" (id, username) VALUES (7, 'owner');
-    INSERT INTO "Post" (id, "userId") VALUES (${POST}, 7);
+    INSERT INTO "User" (id, username) VALUES (7, 'owner'), (${HELD_OWNER}, 'held'), (13, 'reporter');
+    INSERT INTO "Post" (id, "userId") VALUES (${POST}, 7), (51, ${HELD_OWNER});
+    INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${HELD_OWNER});
     INSERT INTO "Image" (id, url, type, ingestion, "blockedFor", width, height, hash, "pHash", "userId", "postId", index) VALUES
       (${WITHHELD}, '${KEY}', 'video', 'Blocked', 'CSAM', 512, 768, 'withheld-hash', 1234, 7, ${POST}, 0),
-      (${CONTROL}, 'control-key', 'image', 'Scanned', NULL, 640, 480, 'control-hash', 5678, 7, ${POST}, 1);
+      (${CONTROL}, 'control-key', 'image', 'Scanned', NULL, 640, 480, 'control-hash', 5678, 7, ${POST}, 1),
+      (${SCANNER_HIT}, 'scanner-key', 'image', 'Scanned', NULL, 10, 10, NULL, NULL, 7, NULL, NULL),
+      (404, 'held-post-key', 'image', 'Scanned', NULL, 10, 10, NULL, NULL, ${HELD_OWNER}, 51, 0),
+      (${HELD_OWNER_OTHER}, 'held-other-key', 'image', 'Scanned', NULL, 10, 10, NULL, NULL, ${HELD_OWNER}, NULL, NULL),
+      (${OWNER_OTHER}, 'owner-other-key', 'image', 'Scanned', NULL, 10, 10, NULL, NULL, 7, NULL, NULL);
+    UPDATE "Image" SET name = 'file.mp4', "needsReview" = 'csam', "scanJobs" = '{"job": 1}',
+      meta = '{"prompt": "p", "negativePrompt": "n", "seed": 1}' WHERE id = ${WITHHELD};
+    INSERT INTO "Tag" (id, name) VALUES (1, 'tag');
+    INSERT INTO "TagsOnImageDetails" ("imageId", "tagId") VALUES (${WITHHELD}, 1);
+    INSERT INTO "ShadowTagsOnImage" ("imageId", "tagId", confidence) VALUES (${WITHHELD}, 1, 90);
+    INSERT INTO "Report" (id, "userId", reason, status, details, "createdAt") VALUES
+      (1, 13, 'TOSViolation', 'Pending', '{"comment": "x"}', '2026-09-01');
+    INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (${WITHHELD}, 1);
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -88,6 +95,12 @@ afterEach(async () => {
   dbHandle.current = null;
   await db.close();
 });
+
+const resultFor = async (user: { id: number; roles: string[] }, id: number) => {
+  const { result } = await lookup(user, `q=${id}`);
+  if (!result) throw new Error(`image ${id} was not found`);
+  return result as unknown as Record<string, unknown>;
+};
 
 const lookup = (user: { id: number; roles: string[] }, search: string) =>
   load({
@@ -124,6 +137,28 @@ describe('Image Lookup by id, without the grant', () => {
     expect((await imageFor(WITHOUT_GRANT, WITHHELD))[field]).toEqual(value);
   });
 
+  // Nothing that says why it is withheld, as the appeal cards.
+  it.each([
+    ['name', null],
+    ['blockedFor', null],
+    ['needsReview', null],
+    ['prompt', null],
+    ['negativePrompt', null],
+    ['meta', null],
+    ['promptHighlight', null],
+    ['scanJobs', null],
+  ])('serves no %s for a withheld image', async (field, value) => {
+    expect((await imageFor(WITHOUT_GRANT, WITHHELD))[field]).toEqual(value);
+  });
+
+  it.each(['tags', 'shadowTags', 'reports'])('serves no %s for a withheld image', async (key) => {
+    expect((await resultFor(WITHOUT_GRANT, WITHHELD))[key]).toEqual([]);
+  });
+
+  it('withholds an image only the scanner marks', async () => {
+    expect(await imageFor(WITHOUT_GRANT, SCANNER_HIT)).toMatchObject({ url: '', restricted: true });
+  });
+
   it('serves the storage key in no field', async () => {
     expect(JSON.stringify(await imageFor(WITHOUT_GRANT, WITHHELD))).not.toContain(KEY);
   });
@@ -151,6 +186,37 @@ describe("Image Lookup's post view, without the grant", () => {
       url: 'control-key',
       restricted: false,
     });
+  });
+});
+
+describe("a post report's recent images of the owner", () => {
+  const recent = (userId: number, postId: number, csamReview: boolean) =>
+    getRecentImagesOutsidePost(userId, postId, { csamReview });
+
+  it("withholds a held owner's other image without the grant", async () => {
+    const [image] = await recent(HELD_OWNER, 51, false);
+    expect(image).toMatchObject({ id: HELD_OWNER_OTHER, url: '', type: null, restricted: true });
+  });
+
+  it('serves it to a grant holder', async () => {
+    const [image] = await recent(HELD_OWNER, 51, true);
+    expect(image).toMatchObject({ id: HELD_OWNER_OTHER, url: 'held-other-key', restricted: false });
+  });
+
+  it("serves an unrestricted owner's other image", async () => {
+    const images = await recent(7, POST, false);
+    expect(images.find((i) => i.id === OWNER_OTHER)).toMatchObject({
+      url: 'owner-other-key',
+      restricted: false,
+    });
+  });
+});
+
+describe('the media access rule', () => {
+  it('withholds an id the primary does not have', async () => {
+    expect(await restrictedImageIds([990_000_999, CONTROL], { csamReview: false })).toEqual(
+      new Set([990_000_999])
+    );
   });
 });
 

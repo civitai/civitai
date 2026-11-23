@@ -8,7 +8,7 @@ export const retractedMediaUrl = (imageId: number) => `/api/retracted-media/${im
 export const RETRACTED_REFUSED =
   'Not viewable here. It may need CSAM-queue access or be unavailable; ask a lead.';
 
-/** What an appeal card shows in place of the ruling form, and every appeal ruling answers, when the
+/** What an appeal card shows in place of the ruling form, and every image action answers, when the
  *  image is kept from this moderator. It names no reason. */
 export const APPEAL_RULING_REFUSED = 'Not ruled on here. Ask a lead.';
 

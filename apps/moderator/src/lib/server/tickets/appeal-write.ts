@@ -26,7 +26,7 @@ export type AppealWriteDeps = TicketActionDeps & {
   /** The `/images/appeals` page grant: the queue this ruling would otherwise be made in. */
   canAct: (user: App.Locals['user']) => boolean;
   appealOf: (id: number) => Promise<AppealWriteRow | null>;
-  /** Whether `user` may not rule on this image's appeal (`refusedRulings`). */
+  /** Whether `user` may not rule on this image's appeal (`withheldImageIds`). */
   withheld: (user: App.Locals['user'], imageId: number) => Promise<boolean>;
   /** The image's `needsReview` flag, read from the database. */
   needsReviewOf: (imageId: number) => Promise<string | null>;

@@ -17,8 +17,9 @@ import type { PostTab } from './tabs';
  * no owner to look up until it has been read, hence the second round trip.
  */
 export async function loadPostItem(postId: number, tab: PostTab, locals: App.Locals) {
+  const csamReview = canAccess(locals.user, HELD_MEDIA_PAGE);
   const [lookup, reports, storylineChapter] = await Promise.all([
-    getPostLookup(postId, { csamReview: canAccess(locals.user, HELD_MEDIA_PAGE) }),
+    getPostLookup(postId, { csamReview }),
     loadItemReports(ReportEntity.Post, postId),
     getPostStorylineChapter(postId),
   ]);
@@ -29,7 +30,7 @@ export async function loadPostItem(postId: number, tab: PostTab, locals: App.Loc
     ownerId && tab === 'owner' ? loadAccountHistory(ownerId, locals.user.username ?? null) : null,
     // Whether the post looks like the rest of the account's work is often the whole ruling, and at
     // queue volume nobody opens the profile to check.
-    ownerId && tab === 'images' ? getRecentImagesOutsidePost(ownerId, postId) : [],
+    ownerId && tab === 'images' ? getRecentImagesOutsidePost(ownerId, postId, { csamReview }) : [],
   ]);
   return {
     postId,
