@@ -1,14 +1,14 @@
-import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { runGrantBlessedBuzz } from '~/server/jobs/new-order-jobs';
-import { processFinalRatings } from '~/server/services/games/new-order.service';
 import { throwInternalServerError } from '~/server/utils/errorHandling';
 import dayjs from '~/shared/utils/dayjs';
 
-// The old in-app Knights game's last settlement, run once after its nightly grant and its
-// moderator-rating hooks were removed. Deleted with the rest of the v1 code.
+// The old in-app Knights game's last payout, run once after its nightly grant and its
+// moderator-rating hooks were removed. Deleted with the rest of the v1 code. Pending votes are left
+// as they are: settling one re-inserts its row dated today, and the table keeps only the last row
+// per (userId, imageId), so the vote's own day would be lost to the Paladin active-days count.
 
 const pendingVotes = `
   SELECT imageId, userId
@@ -72,31 +72,6 @@ function heldFrom(blockedAt: Date, from?: Date) {
   return from && dayjs(from).isBefore(nightlyHeldFrom)
     ? dayjs(from).startOf('day').toDate()
     : nightlyHeldFrom.toDate();
-}
-
-/** Settles every vote still Pending as Inconclusive, as the daily rating-slot purge did. Those pay
- *  nothing: only Correct and Failed judgments earn Buzz. */
-export async function voidPendingV1Votes() {
-  const ch = requireClickhouse();
-  // A moderator rating still waiting in the batch would lose to the later NULL row and settle as
-  // Inconclusive, so it has to be processed first.
-  const flushed = await processFinalRatings();
-  if (flushed.status !== 'processed' && flushed.status !== 'no-new-data')
-    return { images: 0, processed: flushed, retry: true };
-
-  const rows = await ch.$query<{ imageId: number }>`
-    SELECT DISTINCT imageId FROM (${pendingVotes})
-  `;
-  const imageIds = rows.map((r) => Number(r.imageId));
-  for (const batch of chunk(imageIds, 10000)) {
-    await ch.insert({
-      table: 'knights_rating_updates_buffer',
-      values: batch.map((imageId) => ({ imageId, rating: null })),
-      format: 'JSONEachRow',
-    });
-  }
-  const processed = imageIds.length ? await processFinalRatings() : { status: 'nothing-pending' };
-  return { images: imageIds.length, processed, retry: false };
 }
 
 /** Pays each day from `from` through today, oldest first. */

@@ -2,15 +2,12 @@
  * Knights v1 retirement: the old in-app game's last settlement, once its nightly grant and its
  * moderator-rating hooks are gone. Deleted with the rest of the v1 code.
  *
- * Run after both the main app and the moderator app have finished rolling out, in this order.
+ * Run after the main app has finished rolling out: status, then pay.
  *
  * POST /api/admin/temp/knights-v1-final-settle   (moderator session or `Authorization: Bearer <moderator API key>`)
  *   { "action": "status", "from"?: "2026-11-21" }
  *       v1 votes still Pending, and payout-blocked players whose held v1 Buzz nothing pays any more.
  *       Pass the `from` you will give `pay`, and run it right before `pay`.
- *   { "action": "void" }
- *       Settles every Pending vote as Inconclusive, which pays nothing. With `retry: true`, run it
- *       again a minute later. Done when `status` reports no Pending votes.
  *   { "action": "pay", "from": "2026-11-21" }
  *       Pays every day from `from` through today. Use the first day the nightly grant had not paid:
  *       an already-paid day is rejected as a duplicate, but a player unbanned since would be paid it.
@@ -20,7 +17,6 @@ import {
   countHeldV1Players,
   countPendingV1Votes,
   payV1Days,
-  voidPendingV1Votes,
 } from '~/server/games/new-order/v1-final-settle';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import dayjs from '~/shared/utils/dayjs';
@@ -31,14 +27,13 @@ const from = z.coerce
 
 const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('status'), from: from.optional() }),
-  z.object({ action: z.literal('void') }),
   z.object({ action: z.literal('pay'), from }),
 ]);
 
 export default defineModeratorEndpoint('knights.v1FinalSettle', {
   method: 'POST',
-  summary: 'Knights v1 retirement: void the still-Pending v1 votes and pay the last days.',
-  returns: '{ pending, held } for status, { images, processed, retry } for void, { days } for pay',
+  summary: 'Knights v1 retirement: pay the last days of v1 judgments.',
+  returns: '{ pending, held } for status, { days } for pay',
   rateLimit: { max: 10, windowSeconds: 60 },
   input: schema,
   async handler(input) {
@@ -49,7 +44,6 @@ export default defineModeratorEndpoint('knights.v1FinalSettle', {
       ]);
       return { pending, held };
     }
-    if (input.action === 'void') return voidPendingV1Votes();
     return payV1Days(input.from);
   },
 });
