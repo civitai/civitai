@@ -8,8 +8,12 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 /**
  * Every 404 of `GET /api/v1/model-versions/mini/[id]` is answered, on the wire, exactly as an unknown id: status, body
  * and the whole response header map. The real wrapper (`MixedAuthEndpoint`: Vary, CORS, Cache-Control, X-Expires) and
- * Next's API resolver (Content-Type, Content-Length, ETag) run over a real HTTP socket, for one caller. A header one
- * path adds and another does not would let a client tell a hidden version from a missing one.
+ * Next's API resolver (Content-Type, Content-Length; ETag here, which the app's `generateEtags: false` drops) run over a
+ * real HTTP socket, per caller. A header one path adds and another does not would let a client tell a hidden version
+ * from a missing one.
+ *
+ * Not observed: the proxy layer (`apiCacheMiddleware`: X-Handled-By, a default Cache-Control), which depends on the path
+ * only, and CDN headers.
  */
 
 const h = vi.hoisted(() => ({
@@ -99,20 +103,19 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-11-23T12:00:00Z'));
   h.variant.value = 'enforce';
-  h.session.value = { user: { id: 9001 } };
   h.restricted.value = true;
   setEnv({ ORCHESTRATOR_SERVICE_TOKEN: SERVICE_TOKEN });
 });
 
-/** One caller (another signed-in user, by bearer, from a restricted region) asks for the version. */
-async function wire(versionRows: object[]) {
+/** One caller, from a restricted region, asks for the version: signed in by bearer, or anonymous. */
+async function wire(versionRows: object[], signedIn: boolean) {
   dbMock.dbWrite.$queryRaw.mockReset();
   dbMock.dbWrite.$queryRaw
     .mockResolvedValueOnce(versionRows)
     .mockResolvedValueOnce([structuredClone(PLAIN_FILE)])
     .mockResolvedValue([]);
   const response = await fetch(`${base}/api/v1/model-versions/mini/${VERSION_ID}?etag=1`, {
-    headers: { authorization: 'Bearer k', 'cf-ipcountry': 'GB' },
+    headers: { ...(signedIn ? { authorization: 'Bearer k' } : {}), 'cf-ipcountry': 'GB' },
   });
   const headers = Object.fromEntries(
     // Set by Node's HTTP server per connection and second, not by the route.
@@ -127,7 +130,7 @@ describe('mini/[id] every 404 is an unknown id on the wire', () => {
   // `servedWhen`: who IS served this row, so each case proves the row reached the route and the 404 is its own.
   const asOwner = () => (h.session.value = { user: { id: OWNER_ID } });
   const unrestricted = () => (h.restricted.value = false);
-  it.each<[string, object, () => void]>([
+  const cases: [string, object, () => void][] = [
     ['a person-of-interest model', { ...PUBLIC_ROW, poi: true }, asOwner],
     ['a deleted model', { ...PUBLIC_ROW, modelStatus: 'Deleted' }, asOwner],
     ['an unpublished version', { ...PUBLIC_ROW, status: 'Unpublished' }, asOwner],
@@ -138,13 +141,29 @@ describe('mini/[id] every 404 is an unknown id on the wire', () => {
     ],
     ['a Private version the gate withholds', { ...PUBLIC_ROW, availability: 'Private' }, asOwner],
     ['a level the region is not served', { ...PUBLIC_ROW, nsfwLevel: 16 }, unrestricted],
-  ])('%s', async (_shape, row, servedWhen) => {
-    const unknown = await wire([]);
-    expect(unknown.status).toBe(404);
-    expect(unknown.headers).toHaveProperty('x-expires');
-    expect(await wire([row])).toEqual(unknown);
+  ];
+  describe.each([
+    ['another signed-in user', true],
+    ['an anonymous caller', false],
+  ])('%s', (_caller, signedIn) => {
+    beforeEach(() => {
+      h.session.value = signedIn ? { user: { id: 9001 } } : null;
+    });
+    it.each(cases)('%s', async (_shape, row, servedWhen) => {
+      const unknown = await wire([], signedIn);
+      expect(unknown.status).toBe(404);
+      expect(unknown.headers).toHaveProperty('x-expires');
+      expect(await wire([row], signedIn)).toEqual(unknown);
 
-    servedWhen();
-    expect((await wire([row])).status).toBe(200);
+      servedWhen();
+      expect((await wire([row], signedIn)).status).toBe(200);
+    });
+  });
+
+  it('control: Vary differs by credential, so the two callers above are distinct', async () => {
+    h.session.value = null;
+    const anonymous = await wire([], false);
+    h.session.value = { user: { id: 9001 } };
+    expect((await wire([], true)).headers.vary).not.toBe(anonymous.headers.vary);
   });
 });
