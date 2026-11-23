@@ -101,7 +101,11 @@ type Exclusion = { permanent: PermanentExclusion } | 'held' | 'unreadable' | nul
 const MODERATOR_RULING_ACTIVITY = 'setNsfwLevel';
 const CLOCK_SKEW_MS = 30_000;
 
-/** The closing moderator's own ruling at `level`, recorded after `since` (their claim): their override landing, no one else's. */
+/**
+ * The closing moderator's own ruling at `level`, recorded after `since` (their claim): their override landing, no one else's.
+ * Assumes each write adds a fresh row: `trackModActivity` inserts with `ON CONFLICT DO NOTHING`, so if a unique key ever
+ * dropped a repeat ruling this reads false and the review closes excluded (level written, no check added).
+ */
 async function ownRuling(
   db: Executor,
   imageId: number,

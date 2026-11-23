@@ -40,7 +40,8 @@ ordinary vote in every way a player can see.
   `skillCheckPoolCap` active checks (Config page, default 500) and retires the oldest when a new one comes in. An image under
   a review or hold never enters, checked again at every serve: the shared safety predicates, listed in
   `skill-check/eligible.ts`. A check that cannot be read keeps the image out (fail closed): the serve skips the pool rather than
-  failing. The pool is served only while the inquisitor queue is switched on. These checks have no age limit; they leave by the cap, by Knights' own
+  failing. An answered check's image is shown again (notices, the Acolyte recap, `/judgments`) only while it still passes
+  them, and is hidden when they cannot be read. The pool is served only while the inquisitor queue is switched on. These checks have no age limit; they leave by the cap, by Knights' own
   failures (below), or when a moderator moves the image off their level (the harvest job's stale sweep).
 
 - The draw (`pickHiddenCheck`) is balanced across level buckets: each bucket (the reference's `answer`: PG, PG-13, R, X,

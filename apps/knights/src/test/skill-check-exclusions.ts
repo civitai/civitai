@@ -190,6 +190,21 @@ export const extraExclusionCases = (
       );
     },
   ],
+  [
+    'text-scan-hold, image leg',
+    (id) =>
+      pg().query(
+        `INSERT INTO "TextScanHold" ("entityType","entityId","status") VALUES ('Image',$1,'Pending')`,
+        [id]
+      ),
+  ],
+  [
+    'uploader-banned-or-muted, deleted leg',
+    async (id) => {
+      await pg().query(`INSERT INTO "User" ("id","username","deletedAt") VALUES (43,'d',now())`);
+      await pg().query(`UPDATE "Image" SET "userId"=43 WHERE id=$1`, [id]);
+    },
+  ],
 ];
 
 /** Every table the exclusion cases write, for a test's TRUNCATE. */

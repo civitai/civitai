@@ -12,6 +12,7 @@ import {
 import { ACOLYTE_WRONG_ANSWER_SMITE } from '../smites/config';
 import { DEFAULT_HIDDEN_CHECKS } from '../hidden/config';
 import { answerHiddenCheck, pickHiddenCheck, readHiddenNotices } from '../hidden/hidden.service';
+import { listJudgments } from '../progression/judgments';
 import {
   castVote,
   enqueueItem,
@@ -263,6 +264,47 @@ describe('showing an answered mod-confirmed image again', () => {
     expect(await recap()).toBe('key-10');
     await pg.query(`UPDATE "Image" SET "tosViolation"=true WHERE id=10`);
     expect(await recap()).toBeNull();
+  });
+
+  const judgedKey = async (playerId: number, imageId: number) =>
+    (await listJudgments(db, playerId, { page: 1 })).judgments.find((j) => j.imageId === imageId)
+      ?.imageKey;
+
+  it("hides it in a Knight's judgment history once it comes under a hold", async () => {
+    await seedPlayer(pg, 1);
+    const id = await skillCheck(10, '4');
+    await answer(1, id, '16');
+    expect(await judgedKey(1, 10)).toBe('key-10');
+    await pg.query(`UPDATE "Image" SET "tosViolation"=true WHERE id=10`);
+    expect(await judgedKey(1, 10)).toBeNull();
+  });
+
+  it("hides it in an Acolyte's judgment history once it comes under a hold", async () => {
+    await seedPlayer(pg, 1, 'Acolyte');
+    const check = await skillCheck(10, '4');
+    await answerApprentice(
+      db,
+      { userId: 1, kind: 'rating', referenceId: check, answer: '4' },
+      { now: () => NOW, skillCheckRate: 1 }
+    );
+    expect(await judgedKey(1, 10)).toBe('key-10');
+    await pg.query(`UPDATE "Image" SET "tosViolation"=true WHERE id=10`);
+    expect(await judgedKey(1, 10)).toBeNull();
+  });
+
+  it('keeps a mod-confirmed image out of the judgment history, and the rest in, when a safety check cannot be read', async () => {
+    await seedPlayer(pg, 1);
+    const check = await skillCheck(10, '4');
+    const hidden = await hiddenRef(11);
+    await answer(1, check, '4');
+    await answer(1, hidden, '4');
+    await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
+    try {
+      expect(await judgedKey(1, 10)).toBeNull();
+      expect(await judgedKey(1, 11)).toBe('key-11');
+    } finally {
+      await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
+    }
   });
 });
 

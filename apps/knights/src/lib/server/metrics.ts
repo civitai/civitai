@@ -44,6 +44,7 @@ const SKILL_CHECK_READ_SITES = [
   'review-sweep',
   'notice',
   'recap',
+  'judgments',
 ] as const;
 export type SkillCheckReadSite = (typeof SKILL_CHECK_READ_SITES)[number];
 export type ReviewOutcome = (typeof REVIEW_OUTCOMES)[number];
