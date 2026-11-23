@@ -17,7 +17,8 @@ const PersonalHotLeadFlag = "personal-hot-lead"
 
 // The personal Hot lead's fallbacks (temporary, until the experiment is decided: DESIGN.md §15.2.3).
 const (
-	// ReasonPersonalHotLead is a viewer the flag is on for, on a page Node would lead.
+	// ReasonPersonalHotLead is a viewer the flag is on for, on any page of a feed Node leads (page 1
+	// carries the lead; later pages drop its ids).
 	ReasonPersonalHotLead = "model-getall-personal-hot-lead"
 	// ReasonPersonalHotLeadUnknown is the same page when the flag could not be read (no Flipt
 	// configured, unreachable, an error, a key Flipt does not know): never served without the lead.
@@ -30,10 +31,10 @@ type UserFlagReader interface {
 }
 
 // personalHotLead is the personal Hot lead's gate on model.getAll: nil to serve, else the fallback.
-// The flag is read only for a signed-in viewer (a banned one has none, as Node's ctx.user) on a page
-// Node would lead (modelfeed.Input.PersonalHotLeadEligible), with the entity id and context Node's
+// The flag is read only for a signed-in viewer (a banned one has none, as Node's ctx.user) on any page
+// of a feed Node leads (modelfeed.Input.PersonalHotLeadEligible), with the entity id and context Node's
 // isFlipt is called with (the user id, buildFliptContext(user)). It fails closed: a flag it cannot
-// read falls back, so a viewer in the cohort is never served Go's page without their lead.
+// read falls back, so a viewer in the cohort is never served a page that differs from Node's.
 func (s *Server) personalHotLead(ctx context.Context, req modelfeed.Request, user *auth.SessionUser) error {
 	if req.Viewer == nil || user == nil || req.Input == nil || !req.Input.PersonalHotLeadEligible() {
 		return nil

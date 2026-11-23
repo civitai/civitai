@@ -59,8 +59,10 @@ var ErrBackoff = errors.New("flipt: backing off after a failed read")
 // that is not parity-checked here, so the caller must make a disagreement safe in both directions.
 //
 // Every failure is returned (never cached, never read as off): an unreachable server, a non-200, a
-// flag Flipt does not know (ErrFlagNotFound). After one, for Backoff, every uncached read answers
-// ErrBackoff without a request, so an outage costs one timeout per Backoff rather than one per call.
+// flag Flipt does not know (ErrFlagNotFound), the client's per-read timeout. After one, for Backoff,
+// every uncached read answers ErrBackoff without a request, so an outage costs one timeout per
+// Backoff rather than one per call. A read that failed because the caller's own context ended starts
+// no backoff: the next viewer is still asked.
 // Safe for concurrent use.
 type UserFlag struct {
 	read func(ctx context.Context, entityID string, evalCtx map[string]string) (bool, error)
@@ -125,7 +127,12 @@ func (f *UserFlag) Enabled(ctx context.Context, entityID string, evalCtx map[str
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err != nil {
-		f.failedAt = now
+		// The caller's own context ended (its request was cancelled or ran out of budget): that says
+		// nothing about Flipt, so it starts no backoff. The client's own per-read timeout is a
+		// child of ctx, so ctx is still live when that one fires: it backs off.
+		if ctx.Err() == nil {
+			f.failedAt = now
+		}
 		return false, err
 	}
 	f.failedAt = time.Time{}

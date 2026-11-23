@@ -61,7 +61,41 @@ func leadViewer() *auth.SessionUser {
 		AppBuilderApproved: true, Onboarding: 1 | 16 | 64}
 }
 
-const leadHotPage1 = `{"json":{"sort":"Hot","period":"Week","limit":20,"browsingLevel":3}}`
+const (
+	leadHotPage1 = `{"json":{"sort":"Hot","period":"Week","limit":20,"browsingLevel":3}}`
+	leadHotPage2 = `{"json":{"sort":"Hot","period":"Week","limit":20,"browsingLevel":3,"cursor":"812|7301"}}`
+)
+
+// Every Hot page falls back for a flagged viewer, a later one included: Node drops the cached lead's
+// ids from it. An unflagged viewer's page 1 and page 2 are both served, and page 2 reads the answer
+// page 1 cached (one Flipt read for the two).
+func TestPersonalHotLeadEveryPage(t *testing.T) {
+	flagged := &Server{Models: &modelfeed.Deps{}, PersonalHotLead: &stubUserFlag{on: true}}
+	ctx, r := leadRequest(t, leadHotPage2, leadViewer())
+	if _, err := flagged.computeModelGetAll(ctx, r); fallback.Reason(err) != ReasonPersonalHotLead {
+		t.Fatalf("flagged, page 2: %v, want %q", err, ReasonPersonalHotLead)
+	}
+
+	reads := 0
+	uf := flipt.NewUserFlagFunc(func(context.Context, string, map[string]string) (bool, error) {
+		reads++
+		return false, nil
+	})
+	s := &Server{Models: &modelfeed.Deps{}, PersonalHotLead: uf}
+	for i, input := range []string{leadHotPage1, leadHotPage2} {
+		ctx, r := leadRequest(t, input, leadViewer())
+		req, user, err := s.prepareModelGetAllViewer(ctx, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.personalHotLead(ctx, req, user); err != nil {
+			t.Fatalf("unflagged, page %d: %v, want served", i+1, err)
+		}
+	}
+	if reads != 1 {
+		t.Fatalf("unflagged pages 1 and 2: %d Flipt reads, want 1 (page 2 reads the cached answer)", reads)
+	}
+}
 
 // A viewer the flag is on for, on signed-in Hot page 1, falls back with the lead's reason before
 // anything is computed; the flag is read once, with the user id as the entity and Node's
@@ -100,8 +134,7 @@ func TestPersonalHotLeadUnknownFallsBack(t *testing.T) {
 	}
 }
 
-// Every request Node would not lead is never asked about and passes the gate: a later page, another
-// sort (the schema default included), signed out, banned, and each input that turns the lead off in
+// Every request Node would not lead is never asked about and passes the gate: another sort (the schema default included), signed out, banned, and each input that turns the lead off in
 // getPersonalLeadIdsForFeed. The flag is on, so a request that wrongly reached it would fall back.
 func TestPersonalHotLeadNotEvaluated(t *testing.T) {
 	banned := leadViewer()
@@ -110,7 +143,6 @@ func TestPersonalHotLeadNotEvaluated(t *testing.T) {
 		name, input string
 		user        *auth.SessionUser
 	}{
-		{"page 2", `{"json":{"sort":"Hot","limit":20,"browsingLevel":3,"cursor":"812|7301"}}`, leadViewer()},
 		{"newest", `{"json":{"sort":"Newest","limit":20,"browsingLevel":3}}`, leadViewer()},
 		{"schema default sort", `{"json":{"limit":20,"browsingLevel":3}}`, leadViewer()},
 		{"signed out", leadHotPage1, nil},
@@ -148,9 +180,9 @@ func TestPersonalHotLeadNotEvaluated(t *testing.T) {
 	}
 }
 
-// End to end over a golden fixture (signed-in Hot page 1, a session with `tier: null`): flag off, the
-// page is computed and served after one read with the default-tier context; on, it falls back. Page 2
-// of the same feed and the signed-out fixture are served without a read.
+// End to end over the golden fixtures (signed-in Hot pages 1 and 2, a session with `tier: null`): flag
+// off, each page is computed and served after one read with the default-tier context; on, each falls
+// back. The signed-out fixture is served without a read.
 func TestPersonalHotLeadGolden(t *testing.T) {
 	load := func(name string) *goldenFixture {
 		return goldenLoad(t, filepath.Join(goldenDir, "model-getall", name+".json"))
@@ -169,29 +201,29 @@ func TestPersonalHotLeadGolden(t *testing.T) {
 		}
 		return err
 	}
-	page1 := load("hot-official-pin-page1")
-	off := &stubUserFlag{}
-	if err := run(page1, off); err != nil {
-		t.Fatalf("page 1, flag off: %v (reason %q), want served", err, fallback.Reason(err))
-	}
 	want := []stubFlagCall{{"1003", map[string]string{
 		"userId": "1003", "isModerator": "false", "tier": "free", "isLoggedIn": "true", "isMember": "false",
 		"isEarlyAdopter": "false", "appBuilderApproved": "false", "isInCreatorProgram": "false",
 	}}}
-	if got := off.asked(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("page 1, flag off: asked %v, want %v", got, want)
-	}
-	if err := run(page1, &stubUserFlag{on: true}); fallback.Reason(err) != ReasonPersonalHotLead {
-		t.Fatalf("page 1, flag on: %v, want %q", err, ReasonPersonalHotLead)
-	}
-	for _, name := range []string{"hot-official-pin-page2", "hot-official-pin-signed-out"} {
-		on := &stubUserFlag{on: true}
-		if err := run(load(name), on); err != nil {
-			t.Fatalf("%s: %v (reason %q), want served", name, err, fallback.Reason(err))
+	for _, name := range []string{"hot-official-pin-page1", "hot-official-pin-page2"} {
+		fx := load(name)
+		off := &stubUserFlag{}
+		if err := run(fx, off); err != nil {
+			t.Fatalf("%s, flag off: %v (reason %q), want served", name, err, fallback.Reason(err))
 		}
-		if n := len(on.asked()); n != 0 {
-			t.Fatalf("%s: flag asked %d times, want 0", name, n)
+		if got := off.asked(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s, flag off: asked %v, want %v", name, got, want)
 		}
+		if err := run(fx, &stubUserFlag{on: true}); fallback.Reason(err) != ReasonPersonalHotLead {
+			t.Fatalf("%s, flag on: %v, want %q", name, err, ReasonPersonalHotLead)
+		}
+	}
+	on := &stubUserFlag{on: true}
+	if err := run(load("hot-official-pin-signed-out"), on); err != nil {
+		t.Fatalf("signed out: %v (reason %q), want served", err, fallback.Reason(err))
+	}
+	if n := len(on.asked()); n != 0 {
+		t.Fatalf("signed out: flag asked %d times, want 0", n)
 	}
 }
 

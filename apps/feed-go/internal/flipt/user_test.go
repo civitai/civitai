@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -189,5 +191,67 @@ func TestUserContext(t *testing.T) {
 		if got := UserContext(c.u, c.dep); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// A read that failed because the CALLER's context ended (cancelled, or past its deadline) is returned
+// but starts no backoff: the next viewer is still asked. Control: an ordinary failure does back off.
+func TestUserFlagCallerContextStartsNoBackoff(t *testing.T) {
+	reads := 0
+	f := NewUserFlagFunc(func(ctx context.Context, _ string, _ map[string]string) (bool, error) {
+		reads++
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		return true, nil
+	})
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	expired, cancel2 := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel2()
+	for name, ctx := range map[string]context.Context{"cancelled": cancelled, "past its deadline": expired} {
+		if _, err := f.Enabled(ctx, "4101", nil); err == nil || errors.Is(err, ErrBackoff) {
+			t.Fatalf("%s caller: %v, want the context's error", name, err)
+		}
+	}
+	before := reads
+	if on, err := f.Enabled(context.Background(), "5202", nil); !on || err != nil || reads != before+1 {
+		t.Fatalf("next viewer: %v, %v, reads %d -> %d; want a read answering true (no backoff)", on, err, before, reads)
+	}
+	// Control: the same flag after a failure the caller did not cause backs off.
+	g := NewUserFlagFunc(func(context.Context, string, map[string]string) (bool, error) {
+		return false, errors.New("flipt: lead-flag: http 502")
+	})
+	_, _ = g.Enabled(context.Background(), "6303", nil)
+	if _, err := g.Enabled(context.Background(), "7404", nil); !errors.Is(err, ErrBackoff) {
+		t.Fatalf("control: %v, want ErrBackoff", err)
+	}
+}
+
+// The client's own per-read timeout (Config.Timeout) is a Flipt failure, not the caller's: it backs
+// off, and the next viewer within Backoff is answered without a request.
+func TestUserFlagClientTimeoutBacksOff(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c, err := New(Config{URL: srv.URL, Timeout: 30 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := NewUserFlag(c, "lead-flag")
+	if _, err := f.Enabled(context.Background(), "4101", nil); err == nil || errors.Is(err, ErrBackoff) {
+		t.Fatalf("slow server: %v, want the timeout", err)
+	}
+	if _, err := f.Enabled(context.Background(), "5202", nil); !errors.Is(err, ErrBackoff) {
+		t.Fatalf("next viewer after the timeout: %v, want ErrBackoff", err)
+	}
+	if n := hits.Load(); n != 1 {
+		t.Fatalf("server asked %d times, want 1", n)
 	}
 }

@@ -6,7 +6,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 )
 
-// The inputs getPersonalLeadIdsForFeed leads (Hot, no cursor) and each one that turns it off.
+// The inputs getPersonalLeadIdsForFeed shapes (Hot, any page) and each one that turns it off.
 func TestPersonalHotLeadEligible(t *testing.T) {
 	for raw, want := range map[string]bool{
 		`{"json":{"sort":"Hot","browsingLevel":3}}`:                                   true,
@@ -14,7 +14,7 @@ func TestPersonalHotLeadEligible(t *testing.T) {
 		`{"json":{"sort":"Hot","username":"!!!"}}`:                                    true, // slugifies to nothing
 		`{"json":{"sort":"Hot","favorites":false,"archived":false,"collectionId":0}}`: true,
 		`{"json":{"sort":"Hot","cursor":""}}`:                                         true,
-		`{"json":{"sort":"Hot","cursor":"812|7301"}}`:                                 false,
+		`{"json":{"sort":"Hot","cursor":"812|7301"}}`:                                 true, // later pages drop the lead ids
 		`{"json":{"sort":"Newest"}}`:                                                  false,
 		`{"json":{}}`:                                                                 false, // the schema default is Highest Rated
 		`{"json":{"sort":"Hot","username":"creator_nine"}}`:                           false,

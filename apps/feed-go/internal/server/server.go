@@ -429,7 +429,7 @@ func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.Inf
 // Cache policy is createContext's, not edgeCacheIt's (model.router.ts's skipEdgeCache hands it a copy
 // of ctx.cache): public TTL signed out, none for a session.
 //
-// A viewer the `personal-hot-lead` flag is on for falls back on a page Node would lead
+// A viewer the `personal-hot-lead` flag is on for falls back on every page of a feed Node leads
 // (personalHotLead), here and so in the shadow too (an `unsupported` sample, never a diff). The
 // Go-first probe does not run that gate: it measures cache presence, which the gate does not read.
 func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*computed, error) {
