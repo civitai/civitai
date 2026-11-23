@@ -3,6 +3,10 @@ import { agentReportFilterOf, agentReportWhere } from '$lib/server/agent-reporte
 import { FEEDBACK_CAPTURE_OWNER_REFUSAL } from '@civitai/shared/feedback-capture';
 import { z } from 'zod';
 import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
+import { canAccess } from '$lib/server/access';
+import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
+import { APPEAL_RULING_REFUSED } from '$lib/held-media';
+import { restrictedImageIds } from '$lib/server/retracted-media';
 import {
   getCsamQueueByUser,
   getImageReviewQueue,
@@ -102,11 +106,18 @@ async function withModel3d<T extends { id: number }>(items: T[]) {
   }));
 }
 
+/** The images among these that `user` may not rule an appeal on: the ones the appeals queue sends
+ *  them without media. */
+async function refusedRulings(user: App.Locals['user'] | undefined, imageIds: number[]) {
+  const kept = await restrictedImageIds(imageIds, { csamReview: canAccess(user, HELD_MEDIA_PAGE) });
+  return [...kept];
+}
+
 /**
  * One image queue's cards, for `view`. Shared by `/images/[slug]` (the review queues) and
  * `/reports/image` (the reported-image queue, which moved there from `/images/reported`).
  */
-export async function loadImageQueue(view: ImageViewSlug, url: URL) {
+export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.Locals['user']) {
   const { cursor, limit, level, userId, captures } = parseQuery(url, querySchema);
   const capturesOnly = captures ?? false;
   const tagIds = parseIds(url.searchParams.get('tags'));
@@ -150,8 +161,13 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
       browsingLevel: level,
       cursor,
       limit,
+      csamReview: canAccess(user, HELD_MEDIA_PAGE),
     });
-    return { ...base, view, kind: 'appeal' as const, items: await withModel3d(items), nextCursor };
+    // A restricted image's 3D model parent shows the image on the site.
+    const cards = (await withModel3d(items)).map((item) =>
+      item.restricted ? { ...item, model3d: null } : item
+    );
+    return { ...base, view, kind: 'appeal' as const, items: cards, nextCursor };
   }
 
   if (view === 'minor' || view === 'remixSource') {
@@ -434,6 +450,8 @@ export const imageQueueActions = {
         .slice(0, 1000) || undefined;
     const reason = parseResolutionReason(form, status);
     if (typeof reason === 'string') return fail(400, { error: reason, imageId });
+    if ((await refusedRulings(locals.user, [imageId])).length)
+      return fail(403, { error: APPEAL_RULING_REFUSED, imageId });
 
     let closed;
     try {
@@ -683,6 +701,11 @@ export const imageQueueActions = {
     const status = form.get('status') === 'Approved' ? 'Approved' : 'Rejected';
     const reason = parseResolutionReason(form, status);
     if (typeof reason === 'string') return fail(400, { error: reason });
+    const kept = await refusedRulings(locals.user, imageIds);
+    if (kept.length)
+      return fail(403, {
+        error: `${APPEAL_RULING_REFUSED} Nothing was resolved: ${kept.join(', ')}.`,
+      });
     const refused: number[] = [];
     const closed = await Promise.all(
       imageIds.map((imageId) =>

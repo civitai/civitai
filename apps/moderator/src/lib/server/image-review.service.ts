@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { isAgentReporter, type AgentReportWhere } from './agent-reporters';
 import { dbRead } from './db';
+import { restrictedImageIds } from './retracted-media';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
 import { getFlagClearHolds, holdMarkerState, type FlagClearHoldLeg } from './csam-flag-clear';
@@ -595,7 +596,9 @@ export type AppealImageItem = {
   nsfwLevel: number;
   width: number | null;
   height: number | null;
-  type: MediaType;
+  type: MediaType | null;
+  /** Kept to moderators with the CSAM grant: served without `url`, `width`, `height` or `type`. */
+  restricted: boolean;
   needsReview: string | null;
   minor: boolean;
   poi: boolean;
@@ -611,14 +614,17 @@ export type AppealImageItem = {
 };
 
 // needsReview='appeal' with no ingestion gate — blocked images stay visible so they can be appealed.
+// A row `restrictedImageIds` keeps from this moderator stays listed, with no media.
 export async function getAppealImageQueue({
   browsingLevel,
   cursor,
   limit,
+  csamReview,
 }: {
   browsingLevel: number;
   cursor?: number;
   limit: number;
+  csamReview: boolean;
 }): Promise<{ items: AppealImageItem[]; nextCursor?: number }> {
   const fetched = await dbRead
     .selectFrom('Image as i')
@@ -693,6 +699,7 @@ export async function getAppealImageQueue({
   const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.appealId);
 
   const ids = rows.map((r) => r.id);
+  const restricted = await restrictedImageIds(ids, { csamReview });
   const tosByImage = new Map<number, string>();
   const reportsByImage = new Map<number, AppealReportRow[]>();
   if (ids.length) {
@@ -743,11 +750,10 @@ export async function getAppealImageQueue({
 
   const items: AppealImageItem[] = rows.map((r) => ({
     id: r.id,
-    url: r.url,
+    ...(restricted.has(r.id)
+      ? { url: '', width: null, height: null, type: null, restricted: true }
+      : { url: r.url, width: r.width, height: r.height, type: r.type, restricted: false }),
     nsfwLevel: r.nsfwLevel,
-    width: r.width,
-    height: r.height,
-    type: r.type,
     needsReview: r.needsReview,
     minor: r.minor,
     poi: r.poi,

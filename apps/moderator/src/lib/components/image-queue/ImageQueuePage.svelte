@@ -15,6 +15,7 @@
   import QueueSelectionBar from './QueueSelectionBar.svelte';
   import ReviewActions from './ReviewActions.svelte';
   import AppealActions from './AppealActions.svelte';
+  import { APPEAL_RULING_REFUSED } from '$lib/held-media';
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
@@ -102,10 +103,12 @@
     selected.clear();
   });
 
-  const itemKeys = $derived(data.items.map((i) => ('report' in i ? i.report.id : i.id)));
+  // A restricted card cannot be selected, so Select all leaves it out.
+  const selectable = $derived(data.items.filter((i) => !('restricted' in i && i.restricted)));
+  const itemKeys = $derived(selectable.map((i) => ('report' in i ? i.report.id : i.id)));
 
   const selectedItems = $derived(
-    data.items.filter((i) => selected.has('report' in i ? i.report.id : i.id))
+    selectable.filter((i) => selected.has('report' in i ? i.report.id : i.id))
   );
   // Deduped: two selected reports on one image are two cards but one image, and the action would
   // otherwise be posted `5,5` and report twice the work it did.
@@ -520,7 +523,11 @@
           </div>
         {/if}
       </div>
-      <AppealActions {item} verdict={verdictOf(item)} {selected} {messages} {drafts} {submit} />
+      {#if item.restricted}
+        <p class="text-xs text-dark-2">{APPEAL_RULING_REFUSED}</p>
+      {:else}
+        <AppealActions {item} verdict={verdictOf(item)} {selected} {messages} {drafts} {submit} />
+      {/if}
       {@render model3dAffordance(item)}
       {@render appealHistory(item)}
     {/snippet}

@@ -106,6 +106,37 @@ export async function readRetractedMedia(
   return { eligible, viewable };
 }
 
+/**
+ * Which of these images a moderator without `csamReview` is refused on Postgres alone, as
+ * `readRetractedMedia` refuses them: `retractedAccessColumnsSql`'s `restricted`, or a `blockedFor`
+ * signal. Not the scanner: a caller that lists the row without its media needs no verdict. Read on
+ * the primary for the same reason as `readRetractedMedia`. None for a moderator with the grant; a
+ * read that fails throws.
+ */
+export async function restrictedImageIds(
+  imageIds: number[],
+  { csamReview }: { csamReview: boolean }
+): Promise<Set<number>> {
+  if (csamReview || !imageIds.length) return new Set();
+  const { restricted } = retractedAccessColumnsSql('i', { csamReview });
+  const rows = await dbWrite.transaction().execute(async (trx) => {
+    await sql.raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`).execute(trx);
+    return trx
+      .selectFrom((eb) =>
+        eb.selectFrom('Image').selectAll().where('id', 'in', imageIds).offset(0).as('i')
+      )
+      .select(['i.id', 'i.blockedFor'])
+      .select(sql<boolean>`${sql.raw(restricted)}`.as('restricted'))
+      .execute();
+  });
+  const patterns = blockedForPatterns();
+  return new Set(
+    rows
+      .filter((row) => row.restricted || blockedForSignal(row.blockedFor, patterns))
+      .map((row) => row.id)
+  );
+}
+
 /** Each row's verdict, one read per row: a scanned image can be rescanned, so it is read fresh; a
  *  blocked one from the cache. For the single-image readers. */
 const verdictOf = async (rows: ScannerRow[]) =>

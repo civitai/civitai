@@ -92,11 +92,13 @@ afterEach(async () => {
 });
 
 const walk = (limit: number) =>
-  walkPages((cursor?: number) => getAppealImageQueue({ browsingLevel: 1, cursor, limit }));
+  walkPages((cursor?: number) =>
+    getAppealImageQueue({ browsingLevel: 1, cursor, limit, csamReview: true })
+  );
 
 describe('appeal queue order', () => {
   it('serves the oldest appeal first, not the newest image', async () => {
-    const { items } = await getAppealImageQueue({ browsingLevel: 1, limit: 10 });
+    const { items } = await getAppealImageQueue({ browsingLevel: 1, limit: 10, csamReview: true });
 
     expect(items.map((i) => i.id)).toEqual(IMAGES_BY_APPEAL_AGE);
   });
