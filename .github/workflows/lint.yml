@@ -1165,9 +1165,12 @@ jobs:
   # Measured on a shard: store restore ~14 s, then `pnpm install` 41.6 s (link ~13 s, workspace
   # prepare scripts ~5 s, postinstall ~23 s). These jobs restore the installed tree instead:
   # every `node_modules` plus the gitignored slim schema the postinstall writes, keyed on the
-  # lockfile, the workspace and package manifests, `.nvmrc`, `patches/` and the postinstall's
+  # runner image, the lockfile, the workspace file, the workspace members' manifests WITHOUT their
+  # `version` (scripts/ci/related-install-key.mjs: most commits to `main` are release bumps, and
+  # hashing raw manifests made each one a new entry), `.nvmrc`, `patches/` and the postinstall's
   # inputs (the full schema and its generator scripts), so a key can only ever hold what an
-  # install of those inputs produces. An exact hit skips setup-node's store cache and the install
+  # install of those inputs produces. The cached paths follow pnpm-workspace.yaml's includes;
+  # scripts/__tests__/related-install-key.test.ts fails when they drift apart. An exact hit skips setup-node's store cache and the install
   # and runs only the apps' `prepare` (it writes from the checkout); a miss installs as before.
   #
   # 🔴 SAVED ONLY ON `main`, by `related-cache` on the batch dispatch, the rule the `unit` job's
@@ -1211,6 +1214,17 @@ jobs:
 
       - uses: pnpm/action-setup@v6
 
+      # The key's inputs that are not plain files: the workspace members' manifests with `version`
+      # stripped (scripts/ci/related-install-key.mjs: a release bump changes no install), and the
+      # runner image (`ImageOS`, e.g. ubuntu24, which the expression `env` context does not see),
+      # so a new Ubuntu release never restores a tree built against another one's libraries.
+      - &related-nm-key-step
+        name: Cache key inputs
+        id: key
+        run: |
+          node scripts/ci/related-install-key.mjs .related-install-manifests.txt
+          echo "image=${ImageOS:?}" >> "$GITHUB_OUTPUT"
+
       - name: Restore the installed tree
         id: nm
         uses: actions/cache/restore@v6
@@ -1220,7 +1234,7 @@ jobs:
             apps/*/node_modules
             packages/*/node_modules
             packages/civitai-db-schema/prisma/schema.prisma
-          key: &related-nm-key related-nm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json', 'apps/*/package.json', 'packages/*/package.json', '.nvmrc', '.npmrc', 'patches/**', 'packages/civitai-db-schema/prisma/schema.full.prisma', 'scripts/generate-slim-schema.js', 'scripts/prisma-*-generator.mjs') }}
+          key: &related-nm-key related-nm-${{ runner.os }}-${{ steps.key.outputs.image }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', '.related-install-manifests.txt', '.nvmrc', '.npmrc', 'patches/**', 'packages/civitai-db-schema/prisma/schema.full.prisma', 'scripts/generate-slim-schema.js', 'scripts/prisma-*-generator.mjs') }}
 
       # The store cache only matters to an install, which an exact hit skips.
       - uses: actions/setup-node@v7
@@ -1312,6 +1326,11 @@ jobs:
     name: Related tests install cache (main batch)
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' && github.ref == 'refs/heads/main' }}
+    # Best-effort infrastructure: a failed install or save must never paint the batch run red,
+    # where a red means a suite. An expression, not a literal `true`: this job runs only on that
+    # dispatch, so it reads true wherever it runs, and the push-path guard in
+    # main-branch-ci-coverage.test.ts (no unconditional report-only job) keeps its meaning.
+    continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -1319,6 +1338,8 @@ jobs:
           persist-credentials: false
 
       - uses: pnpm/action-setup@v6
+
+      - *related-nm-key-step
 
       - name: Is it saved already?
         id: nm
