@@ -1009,8 +1009,9 @@
     rank={shown.progress.rank}
     level={shown.progress.level}
     levels={shown.progress.levels}
+    voteWeight={shown.progress.voteWeight}
     goldMultiplier={shown.progress.goldMultiplier}
-    previous={shown.progress.previous}
+    dailyGoldCap={shown.progress.dailyGoldCap}
     badge={shown.badges.large[shown.progress.rank]}
     message={form?.progressFailed && progress.failed ? form.message : null}
     submit={progress.submit}

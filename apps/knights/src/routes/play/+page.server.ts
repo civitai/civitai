@@ -15,7 +15,7 @@ import {
 import { DISMISS_FAILED } from '$lib/notice-copy';
 import { consented, consentFailure, requireConsent, requireMember } from '$lib/server/membership';
 import { getPlayerStatus } from '$lib/server/player-status';
-import { isRank, RANK_RULES } from '$lib/server/ranks';
+import type { RankPerks } from '$lib/rank-up';
 import { getStanding, mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
 import { ratingGuide } from '$lib/server/rules';
@@ -81,20 +81,15 @@ const APPRENTICE_REJECTION_TEXT = {
   'bad-answer': 'That answer is not on offer.',
 } as const;
 
-type Perks = { goldMultiplier: number };
-type RankPerks = {
-  levels?: string;
-  goldMultiplier?: number;
-  /** The perks of the rank the player held before, for the rank-up's "what changed". */
-  previous?: Perks;
-};
 type Notice = ProgressNotice &
-  RankPerks & { milestone?: string; milestoneLevel?: number; levelGold?: number };
+  Partial<RankPerks> & {
+    levels?: string;
+    milestone?: string;
+    milestoneLevel?: number;
+    levelGold?: number;
+  };
 
-const perksOf = (rank: string): Perks | undefined =>
-  isRank(rank) ? { goldMultiplier: RANK_RULES[rank].goldMultiplier } : undefined;
-
-// A rank-up notice says what the rank brings and what it replaces; a level-up carries nothing more.
+// A rank-up notice says what the new rank brings; a level-up carries nothing more.
 function withRankPerks(progress: ProgressNotice | null): Notice | null {
   if (progress?.kind !== 'rank') return progress;
   const perks = rankTable().find((entry) => entry.rank === progress.rank);
@@ -102,8 +97,9 @@ function withRankPerks(progress: ProgressNotice | null): Notice | null {
   return {
     ...progress,
     levels: perks.levels,
+    voteWeight: perks.voteWeight,
     goldMultiplier: perks.goldMultiplier,
-    previous: perksOf(progress.fromRank),
+    dailyGoldCap: perks.dailyGoldCap,
   };
 }
 
