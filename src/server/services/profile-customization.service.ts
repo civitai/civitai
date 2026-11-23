@@ -200,3 +200,30 @@ export async function getProfileAbout({ userId, viewerId }: { userId: number; vi
   });
   return { about: profile?.about ?? null };
 }
+
+/**
+ * Which of a profile's images a moderator editing it is not shown (restricted, as the cover and
+ * background reads withhold them). Their editor holds null for those, so a null saved back from it
+ * means "unchanged", not "cleared".
+ */
+export async function imagesHiddenFromModerator(userId: number) {
+  const select = { select: { nsfwLevel: true, modelRestricted: true } } as const;
+  // primary: compared with the save that follows it.
+  const profile = await dbWrite.userProfile.findUnique({
+    where: { userId },
+    select: {
+      coverImage: select,
+      sfwCoverImage: select,
+      backgroundImage: select,
+      sfwBackgroundImage: select,
+    },
+  });
+  const hidden = (image: { nsfwLevel: number; modelRestricted: boolean | null } | null) =>
+    !!image && isRestrictedImage(image);
+  return {
+    coverImage: hidden(profile?.coverImage ?? null),
+    sfwCoverImage: hidden(profile?.sfwCoverImage ?? null),
+    backgroundImage: hidden(profile?.backgroundImage ?? null),
+    sfwBackgroundImage: hidden(profile?.sfwBackgroundImage ?? null),
+  };
+}

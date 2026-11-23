@@ -67,7 +67,10 @@ import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { isShowcaseHiddenOn } from '~/shared/constants/profile-showcase.constants';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
-import { assertPageCustomizationAllowed } from '~/server/services/profile-customization.service';
+import {
+  assertPageCustomizationAllowed,
+  imagesHiddenFromModerator,
+} from '~/server/services/profile-customization.service';
 
 export type UserContentOverviewVariant = 'public' | 'sfw' | 'all';
 
@@ -638,6 +641,13 @@ export const updateUserProfile = async ({
     userUpdateCounter?.inc({ location: 'user-profile.service:updateProfile' });
   }
 
+  const hiddenFromEditor =
+    isModerator && sessionUserId !== userId ? await imagesHiddenFromModerator(userId) : null;
+  const asEdited = (
+    image: UserProfileUpdateSchema['coverImage'],
+    field: keyof NonNullable<typeof hiddenFromEditor>
+  ) => (image === null && hiddenFromEditor?.[field] ? undefined : image);
+
   const buildCoverImageUpdate = (
     image: UserProfileUpdateSchema['coverImage'],
     purpose: 'coverImage' | 'profileBackground' = 'coverImage'
@@ -773,10 +783,16 @@ export const updateUserProfile = async ({
               : profile.sfwMessage
               ? new Date()
               : null,
-          coverImage: buildCoverImageUpdate(coverImage),
-          sfwCoverImage: buildCoverImageUpdate(sfwCoverImage),
-          backgroundImage: buildCoverImageUpdate(backgroundImage, 'profileBackground'),
-          sfwBackgroundImage: buildCoverImageUpdate(sfwBackgroundImage, 'profileBackground'),
+          coverImage: buildCoverImageUpdate(asEdited(coverImage, 'coverImage')),
+          sfwCoverImage: buildCoverImageUpdate(asEdited(sfwCoverImage, 'sfwCoverImage')),
+          backgroundImage: buildCoverImageUpdate(
+            asEdited(backgroundImage, 'backgroundImage'),
+            'profileBackground'
+          ),
+          sfwBackgroundImage: buildCoverImageUpdate(
+            asEdited(sfwBackgroundImage, 'sfwBackgroundImage'),
+            'profileBackground'
+          ),
         },
       });
 
