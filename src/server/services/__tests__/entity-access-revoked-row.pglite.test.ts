@@ -96,8 +96,8 @@ describe('hasEntityAccess with no permissions named', () => {
   });
 });
 
-// A paid-download version is Public with an active PaidAccess row. Reviews ignore the purchase gate
-// (Justin, 2026-11-23); downloads, which call without the option, must stay gated.
+// A paid-download version is Public with an active PaidAccess row. Reviews ignore the purchase gate;
+// downloads, which omit the option, must stay gated (#10205).
 describe('hasEntityAccess with ignorePaidAccess', () => {
   const asVersion = (availability: string) => {
     const entity = { entityId: ENTITY_ID, userId: OWNER, availability };

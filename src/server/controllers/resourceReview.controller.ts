@@ -43,7 +43,7 @@ export const upsertResourceReviewHandler = async ({
       entityIds: [input.modelVersionId],
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
-      // Anyone may review a paid version (Justin, 2026-11-23); Private versions stay refused.
+      // Reviews are not gated by purchase.
       ignorePaidAccess: true,
     });
 
@@ -74,7 +74,7 @@ export const createResourceReviewHandler = async ({
       entityIds: [input.modelVersionId],
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
-      // Anyone may review a paid version (Justin, 2026-11-23); Private versions stay refused.
+      // Reviews are not gated by purchase.
       ignorePaidAccess: true,
     });
 

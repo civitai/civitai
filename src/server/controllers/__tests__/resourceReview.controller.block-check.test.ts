@@ -105,7 +105,6 @@ describe('resource review handlers — who the guard is told is acting', () => {
   });
 });
 
-// Anyone may review a paid version (Justin, 2026-11-23): the handlers ask past the purchase gate.
 describe('resource review handlers — paid versions', () => {
   it('ask for access without the paid-access gate', async () => {
     await upsertResourceReviewHandler({ input: createInput, ctx: ctx() });
