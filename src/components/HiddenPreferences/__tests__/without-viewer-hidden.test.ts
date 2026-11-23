@@ -66,7 +66,7 @@ const kept = (hiddenPreferences: HiddenPreferencesState) =>
     canViewNsfw: true,
   }).items.map((x) => (x as { id: number }).id);
 
-describe('withoutViewerHidden', () => {
+describe('withoutViewerHidden: what Flag Race Show anyway may set aside (#10115)', () => {
   it("lets through what only the viewer's own hidden users, blocks, images and tags hid", () => {
     expect(kept(prefs)).toEqual([]);
     expect(kept(withoutViewerHidden(prefs, signedIn))).toEqual([1, 2, 3, 4]);

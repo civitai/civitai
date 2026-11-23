@@ -7,16 +7,20 @@ export type HiddenFlagReason = 'preferences' | 'browsingLevel';
 type FlagImage = { id: number; nsfwLevel?: number };
 
 /**
- * For today's flags the viewer's hidden preferences took out (`hidden`): which ones only their own
- * hidden users, images or tags hid (`revealable`, from `ignoreViewerHidden`), which they may show
- * anyway for this page only, and which ones they have. A flag a creator's block or the browsing
- * level hides is never revealable.
+ * Show anyway on the Flag Race row (#10115): only a `revealable` flag (see useRevealableImages) can be
+ * shown. A flag hidden by a creator's block or the browsing level is never revealable.
  */
-export function useFlagReveal<T extends FlagImage>(hidden: T[], revealable: FlagImage[]) {
+export function useFlagReveal<T extends FlagImage>(
+  served: T[],
+  kept: { id: number }[],
+  revealable: { id: number }[]
+) {
   const browsingLevel = useBrowsingLevelDebounced();
   const [revealedIds, setRevealedIds] = useState<ReadonlySet<number>>(new Set());
 
   return useMemo(() => {
+    const keptIds = new Set(kept.map((image) => image.id));
+    const hidden = served.filter((image) => !keptIds.has(image.id));
     const revealableIds = new Set(revealable.map((image) => image.id));
     const reasons = new Map<number, HiddenFlagReason | undefined>(
       hidden.map((image) => [
@@ -38,5 +42,5 @@ export function useFlagReveal<T extends FlagImage>(hidden: T[], revealable: Flag
       stillHidden: hidden.filter((image) => !revealedSet.has(image.id)),
       reveal: (id: number) => setRevealedIds((ids) => new Set(ids).add(id)),
     };
-  }, [hidden, revealable, revealedIds, browsingLevel]);
+  }, [served, kept, revealable, revealedIds, browsingLevel]);
 }

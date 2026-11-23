@@ -7,6 +7,7 @@ import { isEqual } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useRevealableImages } from '~/components/HiddenPreferences/useRevealableImages';
 import type { BaseDataTypeMap } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
@@ -139,6 +140,8 @@ export function useFeedImageItems<TItem extends BaseDataTypeMap['images'][number
   return { flatData, items, loadingPreferences, hiddenCount };
 }
 
+const noImages: never[] = [];
+
 export const useQueryImages = (
   filters?: GetInfiniteImagesInput,
   options?: {
@@ -199,16 +202,7 @@ export const useQueryImages = (
     disabled: !applyHiddenPreferences,
     isRefetching: rest.isRefetching,
   });
-  const viewerHidden = useMemo(() => {
-    if (!withRevealable) return undefined;
-    const kept = new Set(items.map((image) => image.id));
-    return flatData.filter((image) => !kept.has(image.id));
-  }, [withRevealable, flatData, items]);
-  const { items: revealable } = useApplyHiddenPreferences({
-    type: 'images',
-    data: viewerHidden,
-    ignoreViewerHidden: true,
-  });
+  const revealable = useRevealableImages(withRevealable ? flatData : noImages, items);
 
   // Debug-mode override so the retry UI can be exercised without a real
   // backend failure. The parent combines this with React Query's isError to

@@ -44,13 +44,7 @@ export function FlagRaceEventSection({
     },
     { enabled: ids.length > 0, withRevealable: true }
   );
-  // Flags the server served but the viewer's hidden preferences took out (a block, a hidden user
-  // or tag): hidden for them, unless only their own preferences hid one and they show it anyway.
-  const hiddenServed = useMemo(() => {
-    const kept = new Set(images.map((image) => image.id));
-    return (flatData ?? []).filter((image) => !kept.has(image.id));
-  }, [images, flatData]);
-  const { reasons, revealed, reveal } = useFlagReveal(hiddenServed, revealable);
+  const { reasons, revealed, reveal } = useFlagReveal(flatData ?? [], images, revealable);
   // In the day's flag order, not the feed's. A flag the server did not serve (removed by a
   // moderator, deleted) has no slot at all.
   const { slots, flags } = useMemo(() => {

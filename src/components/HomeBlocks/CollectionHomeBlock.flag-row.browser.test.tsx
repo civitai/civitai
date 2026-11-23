@@ -219,6 +219,7 @@ describe('the Flag Race home row for a viewer a flag creator has blocked', () =>
   });
 });
 
+// Show anyway (#10115): only the viewer's own hides may be set aside; a creator's block never.
 describe('the Flag Race home row for a viewer whose own settings hide a flag', () => {
   const HID = 88;
   const showAnyway = (card: Element) =>
