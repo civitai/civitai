@@ -3,6 +3,7 @@ import { IconAlertTriangle } from '@tabler/icons-react';
 import { useMemo, type ReactNode } from 'react';
 import { AppStorageCard } from '~/components/Account/AppStorageCard';
 import { UsageLimitCard } from '~/components/Account/usage/UsageLimitCard';
+import { memberLimitNote } from '~/components/Account/usage/usage-limit-tiers';
 import { formatWhen, type UsageLimitRow } from '@civitai/shared/usage-limit-view';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useNowTick } from '~/components/Apps/reviewRelativeTime';
@@ -18,6 +19,15 @@ export function UsageLimitsPane() {
   const currentUser = useCurrentUser();
   const limits = trpc.user.getUsageLimits.useQuery(undefined, { staleTime: STALE_MS });
   const active = trpc.user.getActiveLimits.useQuery(undefined, { staleTime: STALE_MS });
+  const limitTiers = trpc.user.getUsageLimitTiers.useQuery(undefined, { staleTime: 5 * 60_000 });
+  const memberNotes = useMemo(() => {
+    const notes: Record<string, string> = {};
+    for (const entry of limitTiers.data ?? []) {
+      const note = memberLimitNote(entry, currentUser?.tier);
+      if (note) notes[entry.id] = note;
+    }
+    return notes;
+  }, [limitTiers.data, currentUser?.tier]);
   const appBuzz = trpc.user.getAppBuzzUsage.useQuery(undefined, {
     staleTime: STALE_MS,
     retry: false,
@@ -38,6 +48,7 @@ export function UsageLimitsPane() {
       limits={limits.data?.limits}
       status={limits.isLoading ? 'loading' : limits.isError ? 'error' : 'ready'}
       active={active.data ?? []}
+      memberNotes={memberNotes}
       appBuzz={appBuzz.data ?? undefined}
       appStorage={<AppStorageCard flat />}
       freeUsage={freeUsage.data ?? undefined}
@@ -56,6 +67,8 @@ export type UsageLimitsViewProps = {
   appBuzz?: UsageLimitRow;
   /** The per-app storage card, which loads and gates itself. */
   appStorage?: ReactNode;
+  /** Per limit id, what membership raises it to (free accounts only). */
+  memberNotes?: Record<string, string>;
   /** Free generation allowance per model; absent when it failed to load or no token is issued. */
   freeUsage?: UsageLimitRow[];
 };
@@ -69,6 +82,7 @@ export function UsageLimitsView({
   active,
   appBuzz,
   appStorage,
+  memberNotes,
   freeUsage,
 }: UsageLimitsViewProps) {
   const areas = useMemo(() => {
@@ -104,7 +118,14 @@ export function UsageLimitsView({
         </Text>
       ) : (
         areas.map(([area, rows]) => (
-          <UsageLimitCard key={area} area={area} rows={rows} now={now} timeZone={timeZone} />
+          <UsageLimitCard
+            key={area}
+            area={area}
+            rows={rows}
+            now={now}
+            timeZone={timeZone}
+            notes={memberNotes}
+          />
         ))
       )}
       {appBuzz && <UsageLimitCard area="apps" rows={[appBuzz]} now={now} timeZone={timeZone} />}

@@ -7,6 +7,8 @@ import {
   defaultUsageLimitConfig,
   getUsageLimitDef,
   resolveUsageLimitValues,
+  usageLimitDefs,
+  usageLimitTiers,
   usageLimitApplies,
   usageLimitMessage,
   USAGE_LIMITS_KEY,
@@ -17,6 +19,8 @@ import {
   type UsageLimitResolution,
   type UsageLimitRef,
   type UsageLimitSubject,
+  type UsageLimitTier,
+  type UsageLimitValues,
 } from '~/shared/constants/usage-limits';
 
 export const USAGE_LIMIT_CONFIG_TTL_MS = 60_000;
@@ -142,4 +146,34 @@ export async function resolveUsageLimitRules(
 export async function getDailyPostLimit(subject: UsageLimitSubject): Promise<number> {
   const resolved = await resolveUsageLimit('posts.daily', subject);
   return resolved.applies ? resolved.limit : Number.POSITIVE_INFINITY;
+}
+
+export type UsageLimitTierEntry = {
+  id: string;
+  area: string;
+  label: string;
+  /** Per tier at Creator Score 0; `multiplier` when the tier's rule scales the base. */
+  tiers: Record<UsageLimitTier, { limit: number; multiplier?: number }>;
+};
+
+/**
+ * The product limits a membership tier changes, from the live config, so the plan page and the
+ * Usage pane show the numbers enforcement uses. Abuse limits are never listed: this is public.
+ */
+export async function getUsageLimitTierTable(): Promise<UsageLimitTierEntry[]> {
+  const config = await getUsageLimitConfig();
+  return usageLimitDefs.flatMap((def): UsageLimitTierEntry[] => {
+    if (def.kind !== 'product') return [];
+    const values: UsageLimitValues = config.get(def.id) ?? def;
+    if (values.disabled || !values.byTier) return [];
+    const tiers = Object.fromEntries(
+      usageLimitTiers.map((tier) => {
+        const { limit, tierRule } = resolveUsageLimitValues(values, { tier });
+        const multiplier = tierRule && 'multiplier' in tierRule ? tierRule.multiplier : undefined;
+        return [tier, multiplier ? { limit, multiplier } : { limit }];
+      })
+    ) as UsageLimitTierEntry['tiers'];
+    if (usageLimitTiers.every((tier) => tiers[tier].limit === tiers.free.limit)) return [];
+    return [{ id: def.id, area: def.area, label: def.label, tiers }];
+  });
 }
