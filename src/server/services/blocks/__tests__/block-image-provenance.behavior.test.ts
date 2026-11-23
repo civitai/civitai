@@ -87,6 +87,7 @@ const SOURCE_CSAM_OWN = 305; // viewer's, kept by APP, CSAM-blocked
 const SOURCE_FLAGGED_OWN = 306; // viewer's, kept by APP, scanned but flagged for review
 const SOURCE_MATURE_OWN = 307; // viewer's, kept by APP, R (above the PG-only ceiling)
 const SOURCE_HELD_OWNER = 308; // HELD_VIEWER's, kept by APP, clean on its own flags
+const SOURCE_SHARED_PENDING_OTHER = 309; // ANOTHER viewer's, kept AND shared by APP, scan not finished
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -212,6 +213,12 @@ beforeEach(async () => {
         ),
         row(SOURCE_MATURE_OWN, VIEWER, { blockGenerationSourceAppId: APP }, { nsfwLevel: MATURE }),
         row(SOURCE_HELD_OWNER, HELD_VIEWER, { blockGenerationSourceAppId: APP }),
+        row(
+          SOURCE_SHARED_PENDING_OTHER,
+          OTHER_USER,
+          { blockGenerationSourceAppId: APP, blockSharedUploadAppId: APP },
+          { nsfwLevel: 0, ingestion: 'Pending' }
+        ),
       ].join(',\n')};
   `);
 });
@@ -483,6 +490,18 @@ describe('gated read: an app’s private generation sources, for their owner onl
         width: null,
         height: null,
       },
+    ]);
+  });
+
+  // Mutant: the owner check dropped from the source branch, so a row that also carries the shared
+  // key is read by other viewers with the owner-only treatment.
+  it('🔴 another viewer’s row carrying both the source and shared keys gets the shared treatment', async () => {
+    const { images } = await gatedRead([SOURCE_SHARED_PENDING_OTHER]);
+    expect(images).toEqual([{ imageId: SOURCE_SHARED_PENDING_OTHER, status: 'hidden' }]);
+    // Control: its owner gets the source treatment.
+    const own = await gatedReadAs([SOURCE_SHARED_PENDING_OTHER], { userId: OTHER_USER });
+    expect(own.images).toEqual([
+      expect.objectContaining({ imageId: SOURCE_SHARED_PENDING_OTHER, ratingPending: true }),
     ]);
   });
 

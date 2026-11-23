@@ -229,7 +229,7 @@ export async function getBlockGatedImagesByIds(input: {
   for (const id of orderedIds) {
     const row = byId.get(id);
     if (!row) continue;
-    if (row.viaPublished !== true && row.viaSource === true) {
+    if (row.viaPublished !== true && row.viaSource === true && row.userId === input.userId) {
       const source = ownSourceImage(row, input.browsingLevel);
       if (source) images.push(source);
       continue;
