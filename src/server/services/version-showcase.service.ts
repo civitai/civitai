@@ -1,6 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { CacheTTL, CAROUSEL_LIMIT } from '~/server/common/constants';
-import { imageBlockedForConditions, imageReviewedSql } from '~/server/common/image-visibility';
+import {
+  imageBlockedForConditions,
+  imageReviewedSql,
+  minorMatureImageVisibleSql,
+} from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLagBatch, preventReplicationLagBatch } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -59,6 +63,8 @@ export function showcaseImageConditions(): Prisma.Sql[] {
     Prisma.sql`i."nsfwLevel" != 0`,
     imageReviewedSql(),
     Prisma.sql`((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT i."modelRestricted")`,
+    // Shown to nobody but its owner and moderators, so never in a showcase.
+    minorMatureImageVisibleSql({}),
   ];
 }
 

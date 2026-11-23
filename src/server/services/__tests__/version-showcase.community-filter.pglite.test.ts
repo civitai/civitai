@@ -597,6 +597,7 @@ describe('the community filter and the owner showcase drop the same images', () 
     ['not yet scanned', `ingestion = 'Pending'`],
     ['a TOS violation', `"tosViolation" = true`],
     ['mature on a restricted base model', `"nsfwLevel" = 4, "modelRestricted" = true`],
+    ['flagged minor at a restricted level', `minor = true, "nsfwLevel" = 4`],
   ];
 
   it.each(cases)('%s', async (_name, change) => {

@@ -15,6 +15,7 @@ describe('parseImageId', () => {
   it('refuses anything else', () => {
     expect(parseImageId('https://civitai.com/models/12')).toBeNull();
     expect(parseImageId('not an image')).toBeNull();
+    expect(parseImageId('https://example.com/images/12')).toBeNull();
     expect(parseImageId('')).toBeNull();
   });
 });

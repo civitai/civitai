@@ -4312,11 +4312,15 @@ export const upsertModel = async (
   if (coverChanged) {
     if (!beforeUpdate || !id)
       throw throwBadRequestError('Covers can be picked once the model has published images.');
+    // Only the cover this save changes: an unchanged one may be a featured image a reader skips
+    // for now (waiting on a review, showcases paused), and must not refuse the rest of the edit.
+    const changed = (next: number | null | undefined, stored: number | null | undefined) =>
+      next !== undefined && next !== (stored ?? null) ? next : undefined;
     await assertCoverImagesValid({
       modelId: id,
       ownerId: beforeUpdate.userId,
-      coverImageId: data.coverImageId,
-      sfwCoverImageId: data.sfwCoverImageId,
+      coverImageId: changed(data.coverImageId, beforeUpdate.coverImageId),
+      sfwCoverImageId: changed(data.sfwCoverImageId, beforeUpdate.sfwCoverImageId),
     });
   }
 

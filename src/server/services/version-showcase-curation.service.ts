@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { imageBlockedForConditions } from '~/server/common/image-visibility';
+import {
+  imageBlockedForConditions,
+  minorMatureImageVisibleSql,
+} from '~/server/common/image-visibility';
 import { bustPublicModelResponseCache } from '~/server/services/public-model-response-cache';
 import {
   communityImageConditions,
@@ -140,6 +143,7 @@ async function heldOnlyByImageState(covers: { modelId: number; imageId: number; 
       AND ${Prisma.join(imageBlockedForConditions({}), ' AND ')}
       AND i."acceptableMinor" = FALSE
       AND i.ingestion NOT IN ('Blocked', 'NotFound')
+      AND ${minorMatureImageVisibleSql({})}
       AND ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT i."modelRestricted")
       AND ${Prisma.join(communityImageConditions(), ' AND ')}
   `;
@@ -335,7 +339,7 @@ export async function setVersionShowcase({
     }),
   ]);
 
-  // Before the refresh: a failure after it would leave the rows saved, and a retry notifies no one.
+  // Before the refresh: a retry finds these rows saved and would notify no one.
   const before = new Set(existing.map((row) => row.imageId));
   const added = eligible.filter((image) => allowed.has(image.id) && !before.has(image.id));
   await notifyFeaturedAuthors({ version, actorUserId: userId, images: added });

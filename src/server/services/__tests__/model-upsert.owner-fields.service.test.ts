@@ -1195,6 +1195,18 @@ describe('cover gate', () => {
       expect.objectContaining({ modelId: MODEL_ID, ownerId: OWNER_ID, coverImageId: 9 })
     );
   });
+
+  // The form sends both covers; an unchanged featured one a reader skips for now must not refuse
+  // the edit to the other.
+  it('validates only the cover the save changes', async () => {
+    mockStored({ coverImageId: null, sfwCoverImageId: 7 });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, coverImageId: 9, sfwCoverImageId: 7 });
+
+    expect(mockAssertCoverImagesValid).toHaveBeenCalledWith(
+      expect.objectContaining({ coverImageId: 9, sfwCoverImageId: undefined })
+    );
+  });
 });
 
 describe('a change in maturity', () => {

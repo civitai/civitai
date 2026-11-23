@@ -1,6 +1,7 @@
 import type { RouterOutput } from '~/types/router';
 import type { VersionShowcaseSite } from '~/shared/constants/version-showcase.constants';
 import { isComSafeLevel } from '~/shared/utils/model-sfw-face';
+import { parseCivitaiImageId } from '~/utils/civitai-url';
 
 type EditorData = RouterOutput['versionShowcase']['getEditor'];
 
@@ -82,10 +83,9 @@ export function buildShowcaseItems(data: EditorData, site: VersionShowcaseSite):
   return [...positioned, ...all.filter((item) => position(item) === null)];
 }
 
-/** The image id in a pasted image link or a bare number. */
+/** The image id in a pasted link to an image on the site, or a bare number. */
 export function parseImageId(value: string) {
   const trimmed = value.trim();
   if (/^\d+$/.test(trimmed)) return Number(trimmed);
-  const match = trimmed.match(/\/images\/(\d+)\/?(?:[?#].*)?$/);
-  return match ? Number(match[1]) : null;
+  return parseCivitaiImageId(trimmed) ?? null;
 }

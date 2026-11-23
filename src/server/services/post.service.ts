@@ -1872,7 +1872,8 @@ export async function bustCachesForPosts(postIds: number | number[]) {
   const showcaseVersionIds = results
     .filter((x) => x.isShowcase && x.modelVersionId != null)
     .map((x) => x.modelVersionId as number);
-  // Community images are always someone else's posts, so this runs before the owner-only return.
+  // Before the return below, which covers only the owner showcase: a featured image is in someone
+  // else's post.
   await bustVersionShowcasesForPosts(ids);
   if (!showcaseVersionIds.length) return;
 
