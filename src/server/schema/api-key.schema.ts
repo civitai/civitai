@@ -64,58 +64,13 @@ export type BuzzBudget = z.infer<typeof buzzBudgetSchema>;
 export const buzzLimitSchema = z.array(buzzBudgetSchema);
 export type BuzzLimit = z.infer<typeof buzzLimitSchema>;
 
-/**
- * Simplified single-budget representation used by the current UI. Maps to a
- * `sliding` budget with the period collapsed onto a `day` window.
- */
-export type SimpleBuzzLimit = {
-  limit: number;
-  period: 'day' | 'week' | 'month';
-};
-
-const PERIOD_DAYS: Record<SimpleBuzzLimit['period'], number> = {
-  day: 1,
-  week: 7,
-  month: 30,
-};
-
-/**
- * Convert the UI's simple {limit, period} form into the canonical
- * `BuzzLimit` budgets array.
- */
-export function simpleBuzzLimitToBudgets(simple: SimpleBuzzLimit | null): BuzzLimit | null {
-  if (!simple) return null;
-  return [
-    {
-      type: 'sliding',
-      limit: simple.limit,
-      window: 'day',
-      unit: PERIOD_DAYS[simple.period],
-    },
-  ];
-}
-
-/**
- * Reverse mapping. Returns the simple representation if and only if the
- * budgets array is exactly one currency-unscoped sliding budget that matches
- * one of the simple periods. Otherwise null (treat as either "no limit" or
- * "custom" depending on caller).
- */
-export function budgetsToSimpleBuzzLimit(
-  budgets: BuzzLimit | null | undefined
-): SimpleBuzzLimit | null {
-  if (!budgets || budgets.length !== 1) return null;
-  const b = budgets[0];
-  if (b.type !== 'sliding') return null;
-  if (b.currencies && b.currencies.length > 0) return null;
-
-  if (b.window === 'day' && b.unit === 1) return { limit: b.limit, period: 'day' };
-  if (b.window === 'day' && b.unit === 7) return { limit: b.limit, period: 'week' };
-  if (b.window === 'day' && b.unit === 30) return { limit: b.limit, period: 'month' };
-  if (b.window === 'week' && b.unit === 1) return { limit: b.limit, period: 'week' };
-  if (b.window === 'month' && b.unit === 1) return { limit: b.limit, period: 'month' };
-  return null;
-}
+// The simple single-budget form and its mapping to `BuzzLimit` are shared with the auth hub's consent
+// screen, so both write the same shape.
+export {
+  budgetsToSimpleBuzzLimit,
+  simpleBuzzLimitToBudgets,
+  type SimpleBuzzLimit,
+} from '@civitai/auth/buzz-limit';
 
 export const addApiKeyInputSchema = z.object({
   // Server-authoritative bound matching the UI input's maxLength (the name can be

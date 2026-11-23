@@ -1,3 +1,5 @@
+@use './image-layout' as layout;
+
 .mention {
   color: var(--mantine-color-blue-4);
 }
@@ -27,31 +29,26 @@
     max-width: 100%;
   }
 
-  img[data-width] {
+  img[data-width],
+  img[data-align] {
     display: block;
-    margin-inline: auto;
     width: auto;
   }
 
-  img[data-width='33'] {
-    max-width: 33%;
+  img {
+    @include layout.image-layout;
   }
+}
 
-  img[data-width='50'] {
-    max-width: 50%;
-  }
+.htmlRenderer,
+.sizedImages :global(.ProseMirror) {
+  @include layout.image-float-container;
+}
 
-  img[data-width='75'] {
-    max-width: 75%;
-  }
-
-  // S and M are too small on a phone; L and Full stay as set. 640px: no theme breakpoint matches.
-  @media (max-width: 640px) {
-    img[data-width='33'],
-    img[data-width='50'] {
-      max-width: 60%;
-    }
-  }
+// RenderRichText wraps the doc in one div.
+.htmlRenderer > div,
+.sizedImages :global(.ProseMirror) {
+  @include layout.blank-line-clears-float;
 }
 
 .bubbleTooltip {

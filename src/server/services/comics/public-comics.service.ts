@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 import * as z from 'zod';
+import { NsfwLevel } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import {
   imageNotRestrictedWhere,
@@ -517,6 +518,7 @@ export async function getPublicComicProjects({
                 ingestion: ImageIngestionStatus.Scanned,
                 needsReview: null,
                 tosViolation: false,
+                nsfwLevel: { not: NsfwLevel.Blocked },
                 ...imageNotRestrictedWhere({ viewerId: ctx.user?.id }),
               },
             },

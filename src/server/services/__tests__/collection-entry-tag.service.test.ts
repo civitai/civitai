@@ -139,22 +139,6 @@ describe('re-saving an entry with a different tag', () => {
     expect(writtenTag()).toBe(TAG_B);
   });
 
-  it('has the upsert change the tag only for the row author or a managed collection', async () => {
-    await resave(OWNER_ID, TAG_B);
-    const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls[0] as [string[], ...unknown[]];
-    const sql = strings.join('?').replace(/\s+/g, ' ');
-    expect(sql).toContain(
-      'DO UPDATE SET "tagId" = EXCLUDED."tagId" WHERE ( "CollectionItem"."addedById" = EXCLUDED."addedById" OR "CollectionItem"."collectionId" = ANY(?::int[]) ) AND ( "CollectionItem"."tagId" IS NULL OR EXISTS ('
-    );
-    expect(sql).toContain('AND NOT tc."filterableOnly"');
-    expect(values.at(-1)).toEqual([COLLECTION_ID]);
-
-    mockDbWrite.$executeRaw.mockClear();
-    await resave(OTHER_ID, TAG_B);
-    const [, ...strangerValues] = mockDbWrite.$executeRaw.mock.calls[0] as unknown[];
-    expect(strangerValues.at(-1)).toEqual([]);
-  });
-
   it('keeps a tag the collection does not list when its author re-saves the entry', async () => {
     mockDbRead.collection.findMany.mockResolvedValue([collectionRow({ disableTagRequired: true })]);
     mockDbRead.collectionItem.findMany.mockResolvedValue([
@@ -381,6 +365,24 @@ describe('the existing entry, read right after a write', () => {
     );
   });
 
+  it('still saves when the just-written flag cannot be set', async () => {
+    redisMock.redis.get.mockResolvedValue(null as never);
+    redisMock.redis.set.mockImplementation((async (key: string) => {
+      if (String(key).includes('collectionItem:')) throw new Error('redis unavailable');
+      return 'OK';
+    }) as never);
+    try {
+      await expect(resave(AUTHOR_ID, TAG_B)).resolves.toBe('added');
+      expect(redisMock.redis.set).toHaveBeenCalledWith(
+        expect.stringContaining(`collectionItem:${COLLECTION_ID}:imageId:${IMAGE_ID}`),
+        expect.anything(),
+        expect.anything()
+      );
+    } finally {
+      redisMock.redis.set.mockImplementation((async () => 'OK') as never);
+    }
+  });
+
   it('is read from the replica otherwise (control)', async () => {
     redisMock.redis.get.mockResolvedValue(null as never);
     await resave(AUTHOR_ID, SYSTEM_TAG);
@@ -411,14 +413,18 @@ describe('the entry write itself, run on Postgres', () => {
   afterAll(() => pg.close());
 
   // The save as the service builds it, then that statement run on the given table state.
-  const runSave = async (tagId: number, stored: { tagId: number | null } | null) => {
+  const runSave = async (
+    tagId: number,
+    stored: { tagId: number | null } | null,
+    saverId = AUTHOR_ID
+  ) => {
     await pg.exec('DELETE FROM "CollectionItem"');
     if (stored)
       await pg.query(
         'INSERT INTO "CollectionItem" ("collectionId", "addedById", status, "imageId", "tagId") VALUES ($1, $2, $3, $4, $5)',
         [COLLECTION_ID, AUTHOR_ID, 'ACCEPTED', IMAGE_ID, stored.tagId]
       );
-    await resave(AUTHOR_ID, tagId);
+    await resave(saverId, tagId);
     const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls[0] as [
       TemplateStringsArray,
       ...unknown[]
@@ -447,6 +453,51 @@ describe('the entry write itself, run on Postgres', () => {
   it('writes a category tag (control)', async () => {
     mockDbRead.collectionItem.findMany.mockResolvedValue([]);
     expect(await runSave(TAG_B, null)).toEqual([{ tagId: TAG_B }]);
+  });
+
+  // The read is stale (a category tag); the entry now holds a system tag.
+  it("keeps an entry's system tag when its author re-saves it with a category tag", async () => {
+    mockDbRead.collectionItem.findMany.mockResolvedValue([
+      { id: 7, collectionId: COLLECTION_ID, tagId: TAG_A, addedById: AUTHOR_ID, note: null },
+    ]);
+    expect(await runSave(TAG_B, { tagId: SYSTEM_TAG })).toEqual([{ tagId: SYSTEM_TAG }]);
+  });
+
+  describe('an entry holding no tag', () => {
+    beforeEach(() => {
+      mockDbRead.collectionItem.findMany.mockResolvedValue([
+        { id: 7, collectionId: COLLECTION_ID, tagId: null, addedById: AUTHOR_ID, note: null },
+      ]);
+    });
+
+    it("is tagged by its author's re-save", async () => {
+      expect(await runSave(TAG_B, { tagId: null })).toEqual([{ tagId: TAG_B }]);
+    });
+
+    it("is tagged by the collection's manager", async () => {
+      expect(await runSave(TAG_B, { tagId: null }, OWNER_ID)).toEqual([{ tagId: TAG_B }]);
+    });
+  });
+
+  describe('an entry holding a category tag', () => {
+    beforeEach(() => {
+      mockDbRead.collectionItem.findMany.mockResolvedValue([
+        { id: 7, collectionId: COLLECTION_ID, tagId: TAG_A, addedById: AUTHOR_ID, note: null },
+      ]);
+    });
+
+    it("has its tag changed by the collection's manager", async () => {
+      expect(await runSave(TAG_B, { tagId: TAG_A }, OWNER_ID)).toEqual([{ tagId: TAG_B }]);
+    });
+
+    // The read is stale (TAG_A); the entry's author has since changed it to TAG_B.
+    it('keeps its tag when someone else re-saves it', async () => {
+      expect(await runSave(TAG_B, { tagId: TAG_B }, OTHER_ID)).toEqual([{ tagId: TAG_B }]);
+    });
+
+    it("has its tag changed by the entry's author (control)", async () => {
+      expect(await runSave(TAG_B, { tagId: TAG_A })).toEqual([{ tagId: TAG_B }]);
+    });
   });
 
   it('does not re-create a removed entry with a stored tag the collection does not list', async () => {

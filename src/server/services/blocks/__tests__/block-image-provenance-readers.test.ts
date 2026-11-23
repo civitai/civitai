@@ -106,7 +106,8 @@ const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
   'src/server/services/blocks/post-app-chip.logic.ts#readBlockPublishedSubListingId':
     'post-attribution',
   'src/server/services/blocks/image-app-chip.service.ts#readImageAppChip': 'image-attribution',
-  'src/pages/api/admin/temp/backfill-block-image-blurhash.ts#selectCandidates': 'backfill-selector',
+  'src/server/api-routes/admin/temp/backfill-block-image-blurhash.ts#selectCandidates':
+    'backfill-selector',
   // The server-owned key list `createImage` and the image input schemas strip client copies
   // against. It decides what is DROPPED, never what an app may read.
   'src/shared/utils/block-provenance-metadata.ts#BLOCK_PROVENANCE_METADATA_KEYS': 'declaration',

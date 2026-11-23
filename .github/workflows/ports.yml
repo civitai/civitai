@@ -7,11 +7,20 @@ name: Node→Go ports
 # are filtered to their own app. The path filter is that wide because it is everything a port can
 # depend on: the Node deps reach src/ and packages/ (and the event-engine-common pin), the Go deps
 # the Go apps that hold ports, and a change to any of them can change which ports a PR touches.
+#
+# ── `manifest` RUNS IN THE 2-HOUR MAIN BATCH, NOT ON PULL REQUESTS OR PUSHES ─────────────────
+#
+# Across 39 recent runs on PRs and `main` it caught nothing, so it runs only on a dispatch: the
+# 2-hour main batch (lint.yml's `batch-suites` job dispatches this workflow with `batch: true` when
+# a path below changed since the last green batch; a red run turns the `Batch suites (main batch)`
+# commit status red, which opens a CI-watch item naming the commit range, and nothing bisects it
+# automatically), or a hand dispatch (`gh workflow run ports.yml -R civitai/civitai --ref <branch>`).
+# `touched` is a report on the PR, so it stays there; the push trigger went with `manifest`.
 on:
   pull_request:
     branches: [main, release]
     types: [opened, synchronize, reopened, ready_for_review]
-    paths: &ports-inputs
+    paths:
       - '.github/workflows/ports.yml'
       - 'ports/**'
       - 'scripts/ports/**'
@@ -26,22 +35,27 @@ on:
       - '.gitmodules'
       - 'package.json'
       - 'pnpm-lock.yaml'
-  push:
-    branches: [main]
-    paths: *ports-inputs
+  workflow_dispatch:
+    inputs:
+      # Set by the main batch (lint.yml, `batch-suites`), which keys the concurrency group on it.
+      batch:
+        description: Set by the main batch. Leave unset.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ports-${{ github.ref }}
+  group: ports-${{ github.event_name == 'workflow_dispatch' && inputs.batch && format('batch-{0}', github.run_id) || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   manifest:
     name: Ports manifest and markers
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    # Dispatch only: the 2-hour main batch (see the header), a hand dispatch, or the `full-ci` dispatcher.
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7

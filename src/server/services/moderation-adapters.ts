@@ -5,6 +5,10 @@ import { challengeModerationAdapter } from '~/server/services/challenge-moderati
 import { crucibleModerationAdapter } from '~/server/services/crucible-moderation.adapter';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { modelModerationAdapter } from '~/server/services/model-moderation.adapter';
+import {
+  serviceDealReviewModerationAdapter,
+  serviceDealReviewReplyModerationAdapter,
+} from '~/server/services/service-deal-review-moderation.adapter';
 import { serviceOfferingModerationAdapter } from '~/server/services/service-offering-moderation.adapter';
 import {
   textScanShadowAdapters,
@@ -44,6 +48,8 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   Storyline: storylineTextScanAdapter,
   ImageCaption: imageCaptionTextScanAdapter,
   ServiceOffering: serviceOfferingModerationAdapter,
+  ServiceDealReview: serviceDealReviewModerationAdapter,
+  ServiceDealReviewReply: serviceDealReviewReplyModerationAdapter,
   PostText: postTextTextScanAdapter,
   AppDoc: appDocTextScanAdapter,
   ...textScanShadowAdapters(),

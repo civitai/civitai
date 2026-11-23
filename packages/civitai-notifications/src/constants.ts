@@ -52,6 +52,7 @@ export const emailNotificationTypes: readonly string[] = [
   'service-deal-auto-complete-soon',
   'service-deal-due-soon',
   'service-deal-overdue',
+  'service-deal-review-due',
   'app-block-approved',
   'app-block-rejected',
   'app-listing-rejected',

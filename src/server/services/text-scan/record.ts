@@ -44,6 +44,20 @@ export async function markTextScanPending({
   });
 }
 
+/**
+ * Re-arms the row as markTextScanPending does, for a scan that may be refused before reaching it:
+ * the refusal spends a retry on whatever row is there, even one still in flight. Raw, not
+ * updateMany: Prisma's @updatedAt would make a Pending row younger, and its age is what the
+ * in-flight dedupe and the retry job's Pending timeout read.
+ */
+export async function rearmTextScanRetries({ entityType, entityId }: RowKey) {
+  await dbWrite.$executeRaw`
+    UPDATE "EntityModeration" SET "retryCount" = 0,
+      "updatedAt" = CASE WHEN "status" = 'Pending' THEN "updatedAt" ELSE now() END
+    WHERE "entityType" = ${entityType} AND "entityId" = ${entityId}::int
+      AND "status" <> 'Succeeded'`;
+}
+
 export async function bindTextScanWorkflowId({
   entityType,
   entityId,
@@ -121,13 +135,23 @@ export async function recordTextScanFailure({
   workflowId,
   marker,
   status,
+  from,
+  db = dbWrite,
 }: RowKey & {
   workflowId: string;
   marker?: string;
   status: Exclude<EntityModerationStatus, 'Pending' | 'Succeeded'>;
+  /** Fails the row only while it is in this status. */
+  from?: EntityModerationStatus;
+  db?: Pick<Prisma.TransactionClient, 'entityModeration'>;
 }) {
-  const updated = await dbWrite.entityModeration.updateMany({
-    where: { entityType, entityId, workflowId: matchWorkflow(workflowId, marker) },
+  const updated = await db.entityModeration.updateMany({
+    where: {
+      entityType,
+      entityId,
+      workflowId: matchWorkflow(workflowId, marker),
+      ...(from ? { status: from } : {}),
+    },
     data: { workflowId, status, retryCount: { increment: 1 } },
   });
   return updated.count > 0;

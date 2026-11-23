@@ -1235,8 +1235,8 @@ function blockOutputClamp(capOutput: boolean, allowMatureContent: boolean | unde
 // DO NOT remove that belt assuming this pre-spend gate already covers
 // early-access / Private — it does not.
 //
-// Pass the REAL viewer context (their id + real isModerator + the request's
-// sfwOnly/wildcards flags) — never an elevated context.
+// Pass the REAL viewer id and the request's sfwOnly/wildcards flags — never an
+// elevated context. The viewer is checked without moderator rights.
 //
 // 🔴 THE VIEWER IS NO LONGER ALWAYS AN APP AUTHOR. This comment used to say they
 // were, and leaned on it ("so they see the appropriate access"); the author gate
@@ -1253,7 +1253,7 @@ function blockOutputClamp(capOutput: boolean, allowMatureContent: boolean | unde
 // — a missed entry must deny, never default-allow.
 async function assertViewerCanGeneratePageResources(opts: {
   gates: ReturnType<typeof buildGateVersion>[];
-  viewer: { id: number; isModerator: boolean };
+  viewer: { id: number };
   sfwOnly: boolean;
   wildcardsEnabled: boolean;
 }): Promise<void> {
@@ -1262,7 +1262,9 @@ async function assertViewerCanGeneratePageResources(opts: {
     '~/server/services/generation/generation.service'
   );
   const states = await resolveCanGenerateForVersions(gates, {
-    user: { id: viewer.id, isModerator: viewer.isModerator },
+    // An app names these resources, so the viewer's moderator rights do not apply, as on the
+    // step arms (`checkAppStepResources`).
+    user: { id: viewer.id, isModerator: false },
     sfwOnly,
     wildcardsEnabled,
   });
@@ -3117,6 +3119,10 @@ export const blocksRouter = router({
    * moderatorProcedure + the isModerator belt + enforceAppBlocksFlag) makes the
    * whole feature ship DARK — the flag does not exist in Flipt yet, so
    * isAppBlocksAgenticReviewEnabled fail-closes to false and this rejects.
+   *
+   * CONNECT LANE: an `alpr_` id is an OAuth-connect listing request, gated instead on its own
+   * `app-listings-agentic-review` flag (`isAgentReviewLaneEnabled`), here and on the read and
+   * chat procedures below. Advisory only: no agent-review procedure approves or rejects.
    */
   startAgentReview: moderatorProcedure
     .use(enforceAppBlocksFlag)
@@ -3125,8 +3131,11 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Agentic review is restricted to civitai team');
       }
-      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
-      if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
+      // Per lane: the on-site flag for an on-site request, the connect flag for a listing one.
+      const { isAgentReviewLaneEnabled } = await import(
+        '~/server/services/blocks/agent-review-lane'
+      );
+      if (!(await isAgentReviewLaneEnabled(input.publishRequestId, { user: ctx.user }))) {
         throw throwAuthorizationError('Agentic review is not enabled');
       }
       const { startAgentReview } = await import('~/server/services/blocks/agent-review.service');
@@ -3168,8 +3177,11 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Agentic review is restricted to civitai team');
       }
-      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
-      if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
+      // Per lane: the on-site flag for an on-site request, the connect flag for a listing one.
+      const { isAgentReviewLaneEnabled } = await import(
+        '~/server/services/blocks/agent-review-lane'
+      );
+      if (!(await isAgentReviewLaneEnabled(input.publishRequestId, { user: ctx.user }))) {
         throw throwAuthorizationError('Agentic review is not enabled');
       }
       const { getAgentReport } = await import('~/server/services/blocks/app-review-report.service');
@@ -3197,8 +3209,11 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Agentic review is restricted to civitai team');
       }
-      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
-      if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
+      // Per lane: the on-site flag for an on-site request, the connect flag for a listing one.
+      const { isAgentReviewLaneEnabled } = await import(
+        '~/server/services/blocks/agent-review-lane'
+      );
+      if (!(await isAgentReviewLaneEnabled(input.publishRequestId, { user: ctx.user }))) {
         throw throwAuthorizationError('Agentic review is not enabled');
       }
       const { agentReviewChat } = await import('~/server/services/blocks/agent-review.service');
@@ -6677,9 +6692,10 @@ export const blocksRouter = router({
    * A generation source the viewer PICKED (`OPEN_IMAGE_UPLOAD { purpose: 'generationSource' }`,
    * or a single `OPEN_MEDIA_UPLOAD` image), already uploaded by the host as a consumer blob, kept
    * as a PRIVATE, scanned row and returned as `persistGenerationSource` returns one. The host calls
-   * it only while `app-block-source-scanned-rows` is on (`blockImageUpload.
+   * it while `app-block-source-scanned-rows` is on (`blockImageUpload.
    * generationSourceUsesScannedRows`): the gate then refuses the blob, and accepts this row once it
-   * is scanned. See `persistUploadedGenerationSource` in `block-generation-source.service.ts`.
+   * is scanned. It also calls it when that query FAILS, so a FORBIDDEN here can be a host that
+   * could not read the flag, not a misbehaving one (`toGenerationSource`). See `persistUploadedGenerationSource` in `block-generation-source.service.ts`.
    *
    * GATES: `persistGenerationSource`'s preamble: `ai:write:budgeted`, subject = session user, the
    * runtime flag. Then `app-block-source-scanned-rows` must be on for the token's app (FORBIDDEN
@@ -8266,7 +8282,7 @@ export const blocksRouter = router({
         assertNoRestrictedBaseModels({ baseModels: loraGates.map((g) => g.baseModel) });
         await assertViewerCanGeneratePageResources({
           gates: [buildGateVersion(resolved.gate), ...loraGates],
-          viewer: { id: userId, isModerator: !!user.isModerator },
+          viewer: { id: userId },
           // Unify resource selection with the output clamp: SFW-only iff the
           // authoritative token maturity is SFW (green/blue), not the request
           // domain. `allowMatureContent === false` ⇔ SFW ceiling.
@@ -9774,8 +9790,10 @@ export const blocksRouter = router({
     //     MIGRATIONS, which no zod schema governs.
     //   - `appblk-*` clients get `allowedScopes` written directly by
     //     publish-request.service (also bypassing zod). Safe by construction, not by cap:
-    //     `deriveOauthBitmaskFromBlockScopes` maps only bits below 25, and those clients
-    //     carry `grants: []` so they cannot mint an account bearer token at all.
+    //     `deriveOauthBitmaskFromBlockScopes` maps only bits below 25 (`appBlockOauthCeiling`
+    //     additionally keeps an operator-granted AppDataRead, bit 32, the client already
+    //     holds — never bit 25), and those clients carry `grants: []` so they cannot mint
+    //     an account bearer token at all.
     // 100777985 is not a superset of Full: it carries bits 0, 14, 15, 16, 25 and 26 —
     // UserRead, AIServicesRead, AIServicesWrite, BuzzRead, AppBlocksSubmit,
     // AppBlocksDevTunnel — and NONE of 1..13 or 17..24, so it does not contain Full
@@ -11058,7 +11076,7 @@ async function estimateBlockWorkflowCell(
     assertNoRestrictedBaseModels({ baseModels: loraGates.map((g) => g.baseModel) });
     await assertViewerCanGeneratePageResources({
       gates: [buildGateVersion(resolved.gate), ...loraGates],
-      viewer: { id: userId, isModerator: !!user.isModerator },
+      viewer: { id: userId },
       // SFW-only resource selection unifies with the output clamp: derive
       // from the authoritative token maturity (green/blue → true), not the
       // request domain. `allowMatureContent === false` ⇔ SFW ceiling.
@@ -11507,7 +11525,7 @@ async function submitCustomComfyWorkflow(opts: {
     }
     await assertViewerCanGeneratePageResources({
       gates,
-      viewer: { id: userId, isModerator: !!user.isModerator },
+      viewer: { id: userId },
       sfwOnly: allowMatureContent === false,
       wildcardsEnabled: !!ctx.features.wildcards,
     });
@@ -11529,8 +11547,15 @@ async function submitCustomComfyWorkflow(opts: {
         workflow: inlineBody.workflow,
       }
     : buildCustomComfyWorkflowInput(recipe!, recipeBody!.params, {});
+  await assertStepPositionsAllowed(
+    claims,
+    userId,
+    [{ $type: 'comfy', input: stepInput }],
+    undefined,
+    true
+  );
   // Every resource the graph loads must be a Civitai version; their base models decide the cap.
-  const { capOutput } = await checkAppStepResources(stepInput);
+  const { capOutput } = await checkAppStepResources(stepInput, userId);
 
   const token = await getOrchestratorToken(userId, ctx);
 
@@ -12452,7 +12477,8 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
 /**
  * Build the orchestrator step this registry entry will actually submit, and
  * re-assert on the BUILT value the two properties the registry could only check
- * at load time.
+ * at load time, then hold it to the step position rule every app-built step
+ * gets (`assertStepPositionsAllowed`).
  *
  * 🔴 SHARED BY THE QUOTE AND THE SUBMIT ON PURPOSE. Both the estimate's
  * `whatif:true` quote and the real submit go through here, so neither can be
@@ -12476,10 +12502,11 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
  * `buildStep` that varies a PRICED field breaks this outright. Keep
  * per-request variation confined to fields the quote cannot see.
  */
-function buildStepOrchestratorStep(
+async function buildStepOrchestratorStep(
   step: ReturnType<typeof resolveBlockStep>,
   params: unknown,
-  plan: Pick<ReturnType<typeof planStepSpend>, 'stepTimeoutSeconds'>
+  plan: Pick<ReturnType<typeof planStepSpend>, 'stepTimeoutSeconds'>,
+  auth: { claims: BlockClaims; userId: number }
 ) {
   const built = step.buildStep(params);
 
@@ -12575,6 +12602,10 @@ function buildStepOrchestratorStep(
     });
   }
 
+  await assertStepPositionsAllowed(auth.claims, auth.userId, [
+    { $type: built.$type, input: built.input },
+  ]);
+
   return {
     $type: built.$type,
     name: BLOCK_STEP_NAME,
@@ -12658,7 +12689,7 @@ async function estimateStepWorkflow(opts: {
   // paths — so surfacing them is what makes the estimate honest. A failed
   // orchestrator ROUND-TRIP becomes a coded `step_quote_*` snapshot instead.
   const plan = planStepSpend(step, params, variant);
-  const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
+  const orchestratorStep = await buildStepOrchestratorStep(step, params, plan, { claims, userId });
   // The submit's own call, so the estimate prices the order the submit drains.
   const currencies = resolveBlockCurrenciesForAccount(
     resolveBlockMaturity(claims).isGreen,
@@ -12781,7 +12812,7 @@ async function quoteStepBuzz(opts: {
   ctx: Context;
   claims: BlockClaims;
   step: ReturnType<typeof resolveBlockStep>;
-  orchestratorStep: ReturnType<typeof buildStepOrchestratorStep>;
+  orchestratorStep: Awaited<ReturnType<typeof buildStepOrchestratorStep>>;
   userId: number;
   /** The caller's own submitted params, serialized — see `classifyQuoteFailure`. */
   callerText: string;
@@ -12944,7 +12975,7 @@ async function submitStepWorkflow(opts: {
   // reservation, so a rejection costs nothing and has nothing to refund.
   // (`timeout` is stamped ONLY for a billing mode whose cap IS a timeout; see
   // the helper.)
-  const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
+  const orchestratorStep = await buildStepOrchestratorStep(step, params, plan, { claims, userId });
   // Parameterized tags: emit the step id as both the workflow-type tag and the
   // `baseModel` slot (a registry step has no base model), preserving the
   // `app-block:*` provenance tags the per-app subqueue read depends on.
@@ -13694,7 +13725,8 @@ async function estimatePassThroughStepWorkflow(opts: {
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
   await assertBlockTrainingModelsAllowed([body]);
-  await checkAppStepResources(body.input);
+  await assertStepPositionsAllowed(claims, userId, [body]);
+  await checkAppStepResources(body.input, userId);
   // Before the mint and the quote: a disallowed pick refuses here, as on the submit.
   const currencies = resolveBlockCurrenciesForAccount(
     resolveBlockMaturity(claims).isGreen,
@@ -13923,13 +13955,15 @@ async function submitPassThroughStepWorkflow(opts: {
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
   await assertBlockTrainingModelsAllowed([body]);
   await assertBlockTrainingLicensesAccepted(userId, [body]);
-  const { capOutput } = await checkAppStepResources(body.input);
+  const { capOutput } = await checkAppStepResources(body.input, userId);
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   await auditPassThroughPrompts({
     ...passThroughAuditContext(claims, userId, isGreen),
     steps: [body],
   });
+  // After the audit, whose refusal of a non-literal prompt is the more specific one.
+  await assertStepPositionsAllowed(claims, userId, [body]);
   // The viewer's pick (`body.accountType`) goes first, the rest of the
   // domain-allowed set stays as fallback; absent → Auto (blue-first). The quote
   // below is priced with the same array.
@@ -14518,7 +14552,8 @@ async function estimateMultiStepWorkflow(opts: {
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   await assertBlockTrainingModelsAllowed(prepared.steps);
-  await checkAppStepResources(body);
+  await assertStepPositionsAllowed(claims, userId, prepared.steps, body.arguments);
+  await checkAppStepResources(body, userId, { workflow: true });
   // Per-WORKFLOW pick: the orchestrator takes one `currencies` list per workflow.
   const currencies = resolveBlockCurrenciesForAccount(
     resolveBlockMaturity(claims).isGreen,
@@ -14610,7 +14645,7 @@ async function submitMultiStepWorkflow(opts: {
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   await assertBlockTrainingModelsAllowed(prepared.steps);
   await assertBlockTrainingLicensesAccepted(userId, prepared.steps);
-  const { capOutput } = await checkAppStepResources(body);
+  const { capOutput } = await checkAppStepResources(body, userId, { workflow: true });
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
@@ -14618,6 +14653,8 @@ async function submitMultiStepWorkflow(opts: {
     ...passThroughAuditContext(claims, userId, isGreen),
     steps: prepared.steps,
   });
+  // After the audit, whose refusal of a non-literal prompt is the more specific one.
+  await assertStepPositionsAllowed(claims, userId, prepared.steps, body.arguments);
   // Per-WORKFLOW pick (see the schema): one `currencies` list for every step.
   const currencies = resolveBlockCurrenciesForAccount(isGreen, body.accountType);
 
@@ -16330,7 +16367,8 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
           steps: [body],
         });
         await assertBlockTrainingModelsAllowed([body]);
-        capOutput = (await checkAppStepResources(body.input)).capOutput;
+        await assertStepPositionsAllowed(claims, userId, [body]);
+        capOutput = (await checkAppStepResources(body.input, userId)).capOutput;
         const { isAppConfirmedStepWithinLimitEnabled } = await import(
           '~/server/services/app-blocks-flag'
         );
@@ -16595,6 +16633,25 @@ async function assertBlockTrainingModelsAllowed(
   if (collected.models.length === 0) return;
   const { getTrainingServiceStatus } = await import('~/server/services/training.service');
   const refusal = trainingStepModelRefusal(collected.models, await getTrainingServiceStatus());
+  if (refusal) throw new TRPCError({ code: 'BAD_REQUEST', message: refusal });
+}
+
+/** Which values an app-built step may place outside its media inputs (`app-step-positions`). */
+async function assertStepPositionsAllowed(
+  claims: { appBlockId: string },
+  userId: number,
+  steps: ReadonlyArray<{ $type: string; input: unknown }>,
+  workflowArguments?: unknown,
+  inlineGraph = false
+): Promise<void> {
+  const { stepPositionsRefusal } = await import('~/server/services/blocks/app-step-positions');
+  const refusal = await stepPositionsRefusal({
+    appBlockId: claims.appBlockId,
+    viewerId: userId,
+    steps,
+    workflowArguments,
+    inlineGraph,
+  });
   if (refusal) throw new TRPCError({ code: 'BAD_REQUEST', message: refusal });
 }
 

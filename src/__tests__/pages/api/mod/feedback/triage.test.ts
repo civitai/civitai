@@ -48,7 +48,7 @@ vi.mock('~/server/services/moderator-app.service', () => ({
   moderatorApp: { feedbackTriage: triage },
 }));
 
-import triageHandler from '~/pages/api/mod/feedback/triage';
+import triageHandler from '~/server/api-routes/mod/feedback/triage';
 
 function call(input: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body: input, query: {} } as unknown as Parameters<

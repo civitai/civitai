@@ -7,6 +7,7 @@ import {
 } from '~/components/Search/search-api-key';
 import { isSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
 import { PROXY_ONLY_SEARCH_INDEXES } from '~/server/common/constants';
+import { SEARCH_REFUSED_CODE } from '~/shared/constants/search-refusal.constants';
 
 /**
  * Browser site search, two ways, chosen per request by the `siteSearchProxy` flag:
@@ -39,7 +40,12 @@ async function proxySearchFetch<T>(path: string, init: RequestInit): Promise<T> 
   if (!res.ok) {
     // Named like meilisearch-js's own errors so `resilientSearchClient` classifies them the same
     // way: a 5xx is the backend being unreachable, a 4xx is Meilisearch rejecting the query.
-    const error = new Error(body?.message ?? `Search responded ${res.status}`);
+    // A refusal's code goes in the message too: the Meilisearch adapter rethrows keeping only that.
+    const error = new Error(
+      body?.code === SEARCH_REFUSED_CODE
+        ? SEARCH_REFUSED_CODE
+        : body?.message ?? `Search responded ${res.status}`
+    );
     error.name = res.status >= 500 ? 'MeiliSearchCommunicationError' : 'MeiliSearchApiError';
     Object.assign(error, { code: body?.code, type: body?.type, httpStatus: res.status });
     throw error;

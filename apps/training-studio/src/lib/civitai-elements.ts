@@ -6,6 +6,18 @@ import '@civitai/components/civitai-badge/define';
 import '@civitai/components/civitai-button/define';
 import '@civitai/components/civitai-card/define';
 import '@civitai/components/civitai-text-input/define';
+import '@civitai/components/civitai-alert/define';
+import '@civitai/components/civitai-avatar/define';
+import '@civitai/components/civitai-checkbox/define';
+import '@civitai/components/civitai-confirm-dialog/define';
+import '@civitai/components/civitai-menu/define';
+import '@civitai/components/civitai-menu-item/define';
+import '@civitai/components/civitai-menu-label/define';
+import '@civitai/components/civitai-modal/define';
+import '@civitai/components/civitai-segmented-control/define';
+import '@civitai/components/civitai-textarea/define';
 import { defineStudioChipGroup } from './elements/studio-chip-group';
+import { defineStudioPopover } from './elements/studio-popover';
 
 defineStudioChipGroup();
+defineStudioPopover();

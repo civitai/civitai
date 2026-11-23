@@ -1,8 +1,7 @@
 import { IconBolt, IconSparkles } from '@tabler/icons-react';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { dialogs } from '~/components/Dialog/dialog-registry2';
+import { openRewardsBonusInfo } from '~/components/Dialog/triggers/rewards-bonus-info';
 import { formatMultiplier } from '~/utils/buzz';
 
 export function RewardsBonusBanner() {
@@ -20,17 +19,10 @@ export function RewardsBonusBanner() {
     bonus >= 2 ? `${formatMultiplier(bonus)} BUZZ` : `${((bonus - 1) * 100).toFixed(0)}% MORE BUZZ`;
   const headline = event?.bannerLabel?.trim() || 'BONUS REWARDS ACTIVE';
 
-  const handleClick = () => {
-    dialogStore.trigger({
-      component: dialogs['rewards-bonus-info'].component,
-      id: 'rewards-bonus-info',
-    });
-  };
-
   return (
     <button
       type="button"
-      onClick={handleClick}
+      onClick={openRewardsBonusInfo}
       aria-label="Learn more about active rewards bonus"
       className="relative flex w-full cursor-pointer items-center justify-center gap-2 overflow-hidden border-0 px-4 py-1.5 text-sm font-semibold transition-opacity hover:opacity-90 motion-reduce:animate-none"
     >

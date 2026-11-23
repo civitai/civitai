@@ -16,6 +16,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 vi.mock('~/server/services/image-models-reindex.service', () => ({
   queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
   queueArticlesAndComicsForImages: vi.fn(async () => undefined),
+  queueDocumentsForBlockedImages: vi.fn(async () => undefined),
 }));
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
@@ -29,6 +30,7 @@ import { applyIngestionSideEffects, type ScanImage } from '../image-scan-pipelin
 import { toggleImageFlag, updateImagesFlag } from '~/server/services/image.service';
 import {
   queueArticlesAndComicsForImages,
+  queueDocumentsForBlockedImages,
   queueDocumentsForImageMinorChanges,
 } from '~/server/services/image-models-reindex.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
@@ -61,6 +63,20 @@ describe('a scan result, which writes the minor flag', () => {
         ...(audited !== undefined && { audit: audit(audited) }),
       } as unknown as Outcome,
     });
+
+  it('queues every document showing an image the scan blocked', async () => {
+    await applyIngestionSideEffects({
+      image: { ...image, minor: false } as ScanImage,
+      outcome: { ingestion: ImageIngestionStatus.Blocked } as unknown as Outcome,
+    });
+    expect(queueDocumentsForBlockedImages).toHaveBeenCalledTimes(1);
+    expect(queueDocumentsForBlockedImages).toHaveBeenCalledWith([IMAGE_ID]);
+  });
+
+  it('queues no blocked-image requeue for a clean scan (control)', async () => {
+    await scan(false);
+    expect(queueDocumentsForBlockedImages).not.toHaveBeenCalled();
+  });
 
   it('queues the articles the image covers', async () => {
     await scan(false);

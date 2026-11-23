@@ -7,10 +7,11 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import type { NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   hasBlockMarker,
   isMinorMatureImage,
+  noBlockMarkerWhere,
   withoutMinorFlag,
 } from '~/server/common/image-visibility';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
@@ -231,6 +232,38 @@ export const articleCardCoverIdSql = Prisma.sql`CASE
       AND ${imageAllowedByItsModelSql(Prisma.sql`b.id`)})
 END`;
 
+/**
+ * `?tags=` on an article list. A category id matches the article's assigned category: the system
+ * category when it has one, the author's pick only where it does not. Any other tag id matches the
+ * author's tags. Ids are OR'd, so several ids widen the list.
+ */
+export function articleTagFilterSql(tagIds: number[], categoryIds: number[]) {
+  const categories = tagIds.filter((id) => categoryIds.includes(id));
+  const others = tagIds.filter((id) => !categoryIds.includes(id));
+  const authorTagged = (ids: number[]) =>
+    Prisma.sql`EXISTS (
+      SELECT 1 FROM "TagsOnArticle" toa WHERE toa."articleId" = a.id AND toa."tagId" IN (${Prisma.join(
+        ids
+      )})
+    )`;
+  const parts: Prisma.Sql[] = [];
+  if (categories.length)
+    parts.push(Prisma.sql`(a."systemCategoryId" IN (${Prisma.join(categories)}) OR (
+      a."systemCategoryId" IS NULL AND ${authorTagged(categories)}
+    ))`);
+  if (others.length) parts.push(authorTagged(others));
+  return Prisma.sql`(${Prisma.join(parts, ' OR ')})`;
+}
+
+/** Hidden tags drop an article the author tagged with one, or whose system category is one. */
+export function articleExcludedTagsSql(tagIds: number[]) {
+  return Prisma.sql`NOT EXISTS (
+    SELECT 1 FROM "TagsOnArticle" toa WHERE toa."articleId" = a.id AND toa."tagId" IN (${Prisma.join(
+      tagIds
+    )})
+  ) AND (a."systemCategoryId" IS NULL OR a."systemCategoryId" NOT IN (${Prisma.join(tagIds)}))`;
+}
+
 export const getArticles = async ({
   limit,
   cursor,
@@ -291,14 +324,8 @@ export const getArticles = async ({
       AND.push(Prisma.sql`a."title" ILIKE ${'%' + query + '%'}`);
     }
     if (!!tags?.length) {
-      AND.push(
-        Prisma.sql`EXISTS (
-          SELECT 1 FROM "TagsOnArticle" toa WHERE toa."articleId" = a.id AND toa."tagId" IN (${Prisma.join(
-            tags,
-            ','
-          )})
-        )`
-      );
+      const categoryIds = (await getCategoryTags('article')).map((c) => c.id);
+      AND.push(articleTagFilterSql(tags, categoryIds));
     }
 
     if (!!userIds?.length) {
@@ -384,16 +411,7 @@ export const getArticles = async ({
       if (!!excludedIds?.length) {
         AND.push(Prisma.sql`a.id NOT IN (${Prisma.join(excludedIds, ',')})`);
       }
-      if (!!excludedTagIds?.length) {
-        AND.push(
-          Prisma.sql`NOT EXISTS (
-            SELECT 1 FROM "TagsOnArticle" toa WHERE toa."articleId" = a.id AND toa."tagId" IN (${Prisma.join(
-              excludedTagIds,
-              ','
-            )})
-          )`
-        );
-      }
+      if (!!excludedTagIds?.length) AND.push(articleExcludedTagsSql(excludedTagIds));
     }
 
     if (sessionUser) {
@@ -643,10 +661,7 @@ export const getArticles = async ({
         // This take prio over mod status just so mods can see the same as users.
         if (hidePrivateArticles && a.availability === Availability.Private) return false;
         // Whatever filter is set, a private article is only listed for its owner and staff.
-        if (a.availability === Availability.Private)
-          return !!sessionUser?.isModerator || a.userId === sessionUser?.id;
-
-        return true;
+        return canViewArticle(a, sessionUser);
       })
       .map(({ tags, user, userCosmetics, cursorV, storedCoverId, ...article }) => {
         const { profilePictureId, ...u } = user;
@@ -665,7 +680,9 @@ export const getArticles = async ({
           // The legacy `cover` is the stored cover's key: it goes when that cover is withheld.
           ...(((storedCoverId != null && storedCoverId !== article.coverId) ||
             (article.coverId != null && minorHiddenCoverIds.has(article.coverId)) ||
-            (!!cover && !coverImage && isRestrictedImage(cover))) && {
+            (!!cover &&
+              !coverImage &&
+              (isRestrictedImage(cover) || cover.nsfwLevel === NsfwLevel.Blocked))) && {
             cover: null,
           }),
           tags: tags.map(({ tag }) => ({
@@ -750,6 +767,7 @@ export const getCivitaiNews = async () => {
     WHERE c.name IN ('Newsroom', 'Updates') AND c."userId" = -1 AND a."createdAt" > now() - '1 year'::interval
       AND a."publishedAt" IS NOT NULL AND a.status = 'Published'::"ArticleStatus"
       AND a."ingestion" = 'Scanned'::"ArticleIngestionStatus"
+      AND a.availability != 'Private'
       AND (a."nsfwLevel" & ${publicBrowsingLevelsFlag}) != 0
     ORDER BY a."createdAt" DESC
     LIMIT 10
@@ -869,6 +887,15 @@ function modelHidesArticleImage(
   return withheld.has(image.id) && !(viewerId === articleUserId && image.userId === articleUserId);
 }
 
+/** The article availability rule for reads. */
+export function canViewArticle(
+  article: { availability: Availability; userId: number | null },
+  viewer: { id?: number; isModerator?: boolean } | undefined
+) {
+  if (article.availability !== Availability.Private) return true;
+  return !!viewer?.isModerator || (viewer?.id !== undefined && article.userId === viewer.id);
+}
+
 export const getArticleById = async ({
   id,
   userId,
@@ -905,7 +932,8 @@ export const getArticleById = async ({
       },
     });
 
-    if (!article) throw throwNotFoundError(`No article with id ${id}`);
+    if (!article || !canViewArticle(article, { id: userId, isModerator }))
+      throw throwNotFoundError(`No article with id ${id}`);
     if (userId && !isModerator) {
       const blocked = await amIBlockedByUser({ userId, targetUserId: article.userId });
       if (blocked) throw throwNotFoundError(`No article with id ${id}`);
@@ -985,7 +1013,10 @@ export const getArticleById = async ({
       ...article,
       // The legacy `cover` is the same image's key.
       ...((coverWithheld ||
-        (!!article.coverImage && !coverImage && isRestrictedImage(article.coverImage))) && {
+        (!!article.coverImage &&
+          !coverImage &&
+          (isRestrictedImage(article.coverImage) ||
+            article.coverImage.nsfwLevel === NsfwLevel.Blocked))) && {
         cover: null,
       }),
       nsfwLevel: article.nsfwLevel as NsfwLevel,
@@ -3304,13 +3335,15 @@ const rescanImageSelect = {
   nsfwLevel: true,
   nsfwLevelLocked: true,
   blockedFor: true,
+  needsReview: true,
 } as const;
 
 /**
  * Whether an article rescan may re-queue this image. Skipped: one still in flight; a locked
  * rating, which is a moderator's override; a blocked image, since a clean scan result would lift
- * the block, which only a moderator decides; and an image someone other than the article's author
- * owns, which the author has no say over.
+ * the block, which only a moderator decides; an image awaiting review, whose flag a clean scan
+ * result could clear; and an image someone other than the article's author owns, which the author
+ * has no say over.
  */
 function canRescanArticleImage(
   image: {
@@ -3319,6 +3352,7 @@ function canRescanArticleImage(
     nsfwLevel: number;
     nsfwLevelLocked: boolean;
     blockedFor: string | null;
+    needsReview: string | null;
   },
   articleUserId: number
 ) {
@@ -3326,8 +3360,31 @@ function canRescanArticleImage(
     image.userId === articleUserId &&
     image.ingestion !== ImageIngestionStatus.Pending &&
     !image.nsfwLevelLocked &&
+    image.needsReview === null &&
     !hasBlockMarker(image)
   );
+}
+
+/**
+ * `canRescanArticleImage` as the Rescan write's filter, so a block or review flag that lands after
+ * the row was read is not overwritten: the scan result would then clear it. Change the two together.
+ */
+const rescanArticleImageWhere = (articleUserId: number): Prisma.ImageWhereInput => ({
+  userId: articleUserId,
+  nsfwLevelLocked: false,
+  needsReview: null,
+  AND: [{ ingestion: { not: ImageIngestionStatus.Pending } }, noBlockMarkerWhere()],
+});
+
+/** Flips the images still eligible on the primary to Rescan; returns the ids it flipped. */
+async function markArticleImagesForRescan(imageIds: number[], articleUserId: number) {
+  if (!imageIds.length) return new Set<number>();
+  const flipped = await dbWrite.image.updateManyAndReturn({
+    where: { id: { in: imageIds }, ...rescanArticleImageWhere(articleUserId) },
+    data: { ingestion: ImageIngestionStatus.Rescan },
+    select: { id: true },
+  });
+  return new Set(flipped.map(({ id }) => id));
 }
 
 /**
@@ -3436,17 +3493,15 @@ export async function rescanArticle({
   for (const own of ownImages)
     if (!candidates.some((image) => image.id === own.id)) candidates.push(own);
 
-  const imagesToIngest = candidates.filter((image) => canRescanArticleImage(image, article.userId));
-
   // Mark re-queued images non-terminal so the article reads as in-progress
   // (allComplete=false) and the status poll keeps running until they resolve.
-  const imageIdsToIngest = imagesToIngest.map((image) => image.id);
-  if (imageIdsToIngest.length) {
-    await dbWrite.image.updateMany({
-      where: { id: { in: imageIdsToIngest } },
-      data: { ingestion: ImageIngestionStatus.Rescan },
-    });
-  }
+  const flipped = await markArticleImagesForRescan(
+    candidates
+      .filter((image) => canRescanArticleImage(image, article.userId))
+      .map((image) => image.id),
+    article.userId
+  );
+  const imagesToIngest = candidates.filter((image) => flipped.has(image.id));
 
   enqueueImageIngestion({
     images: imagesToIngest,
@@ -3576,20 +3631,20 @@ export async function rescanArticleImage({
 
   // An image already scanning needs nothing; any other refusal is the caller's to hear, and costs
   // no attempt.
-  if (!canRescanArticleImage(image, article.userId)) {
-    if (image.ingestion === ImageIngestionStatus.Pending) return;
-    throw throwBadRequestError(
+  const refused = () =>
+    throwBadRequestError(
       'This image cannot be rescanned from the article. Remove it from the article if it is not needed.'
     );
+  if (!canRescanArticleImage(image, article.userId)) {
+    if (image.ingestion === ImageIngestionStatus.Pending) return;
+    throw refused();
   }
 
   // Flip to Rescan so the image is no longer terminal: getArticleScanStatus
   // then reports the article as in-progress (allComplete=false), which resumes
   // the 15s status poll so the eventual result loads without a manual refresh.
-  await dbWrite.image.update({
-    where: { id: image.id },
-    data: { ingestion: ImageIngestionStatus.Rescan },
-  });
+  const flipped = await markArticleImagesForRescan([image.id], article.userId);
+  if (!flipped.has(image.id)) throw refused();
   enqueueImageIngestion({
     images: [image],
     name: 'article-rescan-image',

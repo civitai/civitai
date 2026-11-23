@@ -218,9 +218,8 @@ main app already carries most of the privileged writes, and three times in one d
 as "a write surface we never built" turned out to be one call:
 
 ```bash
-ls src/pages/api/mod/ src/pages/api/mod/retool/          # the whole mod surface
-sed -n '1,40p' src/pages/api/mod/retool/user.ts          # the header comment lists every action
-grep -rn "action:" src/pages/api/mod/retool/*.ts | head  # action names per resource
+ls src/server/api-routes/mod/ src/pages/api/mod/     # the whole mod surface (routes, plus those that must stay files)
+grep -rln "defineModeratorEndpoint" src/server/api-routes/mod | head  # one route per action; its `summary` says what it does
 ```
 
 **Read the endpoint's zod schema, not its name.** It is the authoritative contract, and it is usually

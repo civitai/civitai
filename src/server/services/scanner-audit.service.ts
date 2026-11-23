@@ -19,7 +19,7 @@ import type {
 import {
   imageAuditContentHash,
   scannerContentHash as computeContentHash,
-} from '@civitai/shared/review-batch';
+} from '@civitai/shared/media-signals';
 import { clickhouse } from '~/server/clickhouse/client';
 import type { ImageScanningResult } from '~/server/services/image-scanning-result.service';
 import { logToAxiom } from '~/server/logging/client';

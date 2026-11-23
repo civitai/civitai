@@ -117,12 +117,12 @@ const LEDGER: Record<string, { writes: number; busts: number; why: string }> = {
     busts: 0,
     why: 'model rows only; the cache holds image entries',
   },
-  'src/pages/api/admin/migrate-likes.ts': {
+  'src/server/api-routes/admin/migrate-likes.ts': {
     writes: 1,
     busts: 0,
     why: 'one-off migration of model likes; model rows only',
   },
-  'src/pages/api/admin/migrate-likes-models.ts': {
+  'src/server/api-routes/admin/migrate-likes-models.ts': {
     writes: 1,
     busts: 0,
     why: 'one-off migration of model likes; model rows only',

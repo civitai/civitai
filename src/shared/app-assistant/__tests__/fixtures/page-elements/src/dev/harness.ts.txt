@@ -1,0 +1,166 @@
+import type { BlockInitPayload, PageSlotContext } from '@civitai/app-sdk/blocks';
+
+const DEV_TOKEN = 'dev.harness.mock.jwt.NOT.A.REAL.RS256';
+const DEV_INSTANCE_ID = 'bki_dev_starter';
+const DEV_BLOCK_ID = '{{ .Slug }}';
+const DEV_APP_ID = 'app_dev';
+
+interface Outbound {
+  type: string;
+  payload?: unknown;
+}
+
+/**
+ * Local development harness — a stand-in for the civitai.com host page.
+ *
+ * Civitai Apps normally mount inside an iframe that the host page on
+ * civitai.com controls. Locally there is no host, so `npm run dev:harness`
+ * installs this, which:
+ *
+ * 1. Replaces `window.parent` with a stub whose `postMessage` logs every
+ *    outbound block message (`BLOCK_HELLO`, `BLOCK_READY`, `REQUEST_TOKEN`, …)
+ *    into a debug panel instead of posting it anywhere.
+ * 2. Echoes the one host reply the app depends on:
+ *      - `REQUEST_TOKEN` → `TOKEN_REFRESH_RESPONSE` with a fresh mock token
+ * 3. Dispatches a fake `BLOCK_INIT` from the page's own origin, so the bridge
+ *    accepts it only when `VITE_BLOCK_ALLOWED_PARENT_ORIGINS` names that origin
+ *    (`http://localhost:5186`, as `.env.development` sets) — no origin spoofing.
+ *
+ * The mock token is NOT a real RS256 JWT — any call to the orchestrator or to
+ * civitai.com that tries to verify it will fail. The harness is for UI
+ * iteration, not full integration testing.
+ *
+ * Returns an uninstall function that restores the real `window.parent` and
+ * removes the harness chrome.
+ */
+export function installHarness(root: HTMLElement): () => void {
+  const parentOrigin = window.location.origin;
+  const originalParent = window.parent;
+  let tokenSerial = 0;
+  const outbound: Outbound[] = [];
+
+  const { header, count, log, restoreRoot } = mountChrome(root, parentOrigin);
+  const record = (message: Outbound) => {
+    outbound.push(message);
+    count.textContent = `outbound: ${outbound.length}`;
+    log.textContent = outbound
+      .map((m, i) => `${i + 1}. ${m.type} ${JSON.stringify(m.payload ?? {})}`)
+      .join('\n');
+  };
+
+  const dispatchToBlock = (data: unknown) => {
+    window.dispatchEvent(new MessageEvent('message', { data, origin: parentOrigin }));
+  };
+
+  const nextToken = () => {
+    tokenSerial += 1;
+    return {
+      raw: `${DEV_TOKEN}.${tokenSerial}`,
+      scopes: [],
+      expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+    };
+  };
+
+  const parentMock = {
+    postMessage(msg: unknown) {
+      if (typeof msg !== 'object' || msg === null || typeof (msg as Outbound).type !== 'string') return;
+      const typed = msg as { type: string; payload?: { requestId?: string } };
+      record({ type: typed.type, payload: typed.payload });
+
+      // Echo a TOKEN_REFRESH_RESPONSE so a token refresh actually completes.
+      if (typed.type === 'REQUEST_TOKEN') {
+        const requestId = typed.payload?.requestId;
+        dispatchToBlock({
+          type: 'TOKEN_REFRESH_RESPONSE',
+          payload: { ...(requestId ? { requestId } : {}), token: nextToken() },
+        });
+      }
+    },
+  };
+  Object.defineProperty(window, 'parent', { value: parentMock, configurable: true, writable: true });
+
+  // A PageSlotContext — what the host sends this app, because its manifest
+  // declares a `page` and nothing else.
+  const context: PageSlotContext = {
+    slotId: 'app.page',
+    entityType: 'none',
+    slug: DEV_BLOCK_ID,
+    subPath: '',
+    viewerUserId: 2,
+    viewerUsername: 'dev-viewer',
+    theme: 'light',
+  };
+  const payload: BlockInitPayload = {
+    blockInstanceId: DEV_INSTANCE_ID,
+    blockId: DEV_BLOCK_ID,
+    appId: DEV_APP_ID,
+    token: nextToken(),
+    context,
+    settings: { publisherSettings: {}, userSettings: {} },
+    // The viewer the production host sends: `signedIn: true` on every present
+    // viewer, and NO `status` — the platform withholds the viewer's moderation
+    // state from third-party iframes. Anonymous is `viewer: null`.
+    viewer: { id: 2, username: 'dev-viewer', signedIn: true },
+    theme: 'light',
+    renderMode: 'iframe',
+  };
+  // Deferred one tick, so `mountBlock` has created the bridge (and its message
+  // listener) before the message fires.
+  const timer = window.setTimeout(() => dispatchToBlock({ type: 'BLOCK_INIT', payload }), 0);
+
+  return () => {
+    window.clearTimeout(timer);
+    Object.defineProperty(window, 'parent', { value: originalParent, configurable: true, writable: true });
+    header.remove();
+    log.remove();
+    restoreRoot();
+  };
+}
+
+/** The debug chrome around #root: a banner above it and the outbound log below. */
+function mountChrome(root: HTMLElement, parentOrigin: string) {
+  const mono = 'ui-monospace, SFMono-Regular, monospace';
+
+  const header = document.createElement('header');
+  Object.assign(header.style, {
+    padding: '8px 12px',
+    background: '#222',
+    color: '#fff',
+    fontSize: '12px',
+    fontFamily: mono,
+    display: 'flex',
+    gap: '16px',
+    alignItems: 'center',
+  });
+  const title = document.createElement('strong');
+  title.textContent = 'DEV HARNESS';
+  const origin = document.createElement('span');
+  origin.textContent = `mock BLOCK_INIT from ${parentOrigin}`;
+  const count = document.createElement('span');
+  count.style.marginLeft = 'auto';
+  count.textContent = 'outbound: 0';
+  header.append(title, origin, count);
+
+  const log = document.createElement('pre');
+  Object.assign(log.style, {
+    margin: '0',
+    padding: '12px',
+    background: '#111',
+    color: '#7fc',
+    fontSize: '11px',
+    maxHeight: '240px',
+    overflow: 'auto',
+  });
+  log.textContent = '// no outbound messages yet';
+
+  const previousStyle = root.getAttribute('style');
+  Object.assign(root.style, { border: '1px dashed #888', margin: '16px' });
+  root.before(header);
+  root.after(log);
+
+  const restoreRoot = () => {
+    if (previousStyle === null) root.removeAttribute('style');
+    else root.setAttribute('style', previousStyle);
+  };
+  return { header, count, log, restoreRoot };
+}

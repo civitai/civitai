@@ -13,6 +13,9 @@ export const paddleCancellationEmail = createEmail({
   }),
   html({ email }: PaddleCancelationData) {
     return simpleEmailWithTemplate({
+      icon: '📨',
+      accent: 'gray',
+      eyebrow: 'Subscription support',
       header: `Cancellation Support Requested`,
       body: `
       <p>

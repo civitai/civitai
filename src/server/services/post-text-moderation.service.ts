@@ -1,3 +1,4 @@
+import { postTextCsamHeldText } from '@civitai/shared/held-url';
 import { sql } from 'kysely';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -13,10 +14,7 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
  * Whether text `t` may be restored: no csam flag, no csam hold Pending or Confirmed on it, and nothing
  * `post_text_held` holds it for (a CSAM report naming its author or quoting its post, an evidence hold).
  */
-const restorableText = sql<boolean>`NOT t."csamHeld"
-  AND NOT EXISTS (SELECT 1 FROM "TextScanHold" th
-    WHERE th."entityType" = 'PostText' AND th."entityId" = t.id AND th.label = 'csam'
-      AND th.status IN ('Pending', 'Confirmed'))
+const restorableText = sql<boolean>`NOT ${sql.raw(postTextCsamHeldText('t'))}
   AND NOT post_text_held(t.id, t."csamHeld", t."postId", t."userId")`;
 
 export type PostTextModerationResult =

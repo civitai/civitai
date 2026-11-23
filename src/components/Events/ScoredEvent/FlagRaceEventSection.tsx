@@ -3,6 +3,8 @@ import clsx from 'clsx';
 import { useMemo } from 'react';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import { FlagRacePanel } from '~/components/HatTurf/FlagRace/FlagRacePanel';
+import { HiddenFlagCard } from '~/components/HatTurf/FlagRace/HiddenFlagCard';
+import { useFlagReveal } from '~/components/HatTurf/FlagRace/useFlagReveal';
 import { FlagRaceTotals } from '~/components/HatTurf/FlagRace/FlagRaceTotals';
 import flagClasses from '~/components/HatTurf/FlagRace/FlagRacePanel.module.scss';
 import { FlagRowProviders, useFlagRow } from '~/components/HatTurf/FlagRace/FlagRowProviders';
@@ -15,8 +17,9 @@ import { ImageSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
 /**
- * The home row's Flag Race on the event page, signed in or not: while a flag day runs and the viewer
- * may see one of its flags. Under it, each team's race so far.
+ * The home row's Flag Race on the event page, signed in or not, while a flag day runs. Under it, each
+ * team's race so far. The panel and totals come from the day's summary, so they show in full even
+ * when the viewer may not see some or all of the flags; those show as hidden cards.
  */
 export function FlagRaceEventSection({
   event,
@@ -30,7 +33,7 @@ export function FlagRaceEventSection({
   const features = useFeatureFlags();
   const row = useFlagRow(features.flagRace ? event : undefined);
   const ids = useMemo(() => row?.summary.flags.map((f) => f.imageId) ?? [], [row]);
-  const { images, isLoading } = useQueryImages(
+  const { images, flatData, revealable, isLoading } = useQueryImages(
     {
       ids,
       period: MetricTimeframe.AllTime,
@@ -39,16 +42,19 @@ export function FlagRaceEventSection({
       withMeta: false,
       include: ['cosmetics'],
     },
-    { enabled: ids.length > 0 }
+    { enabled: ids.length > 0, withRevealable: true }
   );
-  // In the day's flag order, not the feed's.
-  const flags = useMemo(() => {
-    const byId = new Map(images.map((image) => [image.id, image]));
-    return ids.map((id) => byId.get(id)).filter((image) => !!image);
-  }, [ids, images]);
+  const { reasons, revealed, reveal } = useFlagReveal(flatData ?? [], images, revealable);
+  // In the day's flag order, not the feed's. A flag the server did not serve (removed by a
+  // moderator, deleted) has no slot at all.
+  const { slots, flags } = useMemo(() => {
+    const byId = new Map([...images, ...revealed].map((image) => [image.id, image]));
+    const served = new Set((flatData ?? []).map((image) => image.id));
+    const slots = ids.filter((id) => served.has(id)).map((id) => ({ id, image: byId.get(id) }));
+    return { slots, flags: slots.flatMap((s) => (s.image ? [s.image] : [])) };
+  }, [ids, images, revealed, flatData]);
 
-  // Like the home row: nothing to show when the viewer may see none of the day's flags.
-  if (!row || !ids.length || (!isLoading && !flags.length)) return null;
+  if (!row || !ids.length) return null;
   return (
     <div className={flagClasses.wrap} data-testid="flag-race-event-section">
       <section className={clsx(partyClasses.party, flagClasses.row)}>
@@ -64,9 +70,18 @@ export function FlagRaceEventSection({
             <FlagRowProviders row={row}>
               <RemixFlyoutLayoutProvider layout="side">
                 <ImagesProvider images={flags}>
-                  {flags.map((image) => (
-                    <ImageCard key={image.id} data={image} />
-                  ))}
+                  {slots.map(({ id, image }) =>
+                    image ? (
+                      <ImageCard key={id} data={image} />
+                    ) : (
+                      <HiddenFlagCard
+                        key={id}
+                        imageId={id}
+                        reason={reasons.get(id)}
+                        onShow={() => reveal(id)}
+                      />
+                    )
+                  )}
                 </ImagesProvider>
               </RemixFlyoutLayoutProvider>
             </FlagRowProviders>

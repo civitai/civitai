@@ -52,7 +52,8 @@ CREATE TABLE "Image" (
 );
 CREATE TABLE "Post" (
   "id" INTEGER PRIMARY KEY,
-  "publishedAt" TIMESTAMP(3)
+  "publishedAt" TIMESTAMP(3),
+  "availability" TEXT NOT NULL DEFAULT 'Public'
 );
 CREATE TABLE "NewOrderPlayer" (
   "userId" INTEGER PRIMARY KEY,
@@ -87,6 +88,14 @@ CREATE TABLE "User" (
   "bannedAt" TIMESTAMP(3),
   "deletedAt" TIMESTAMP(3),
   "muted" BOOLEAN NOT NULL DEFAULT false
+);
+CREATE TYPE "UserEngagementType" AS ENUM ('Follow', 'Hide', 'Block');
+CREATE TABLE "UserEngagement" (
+  "userId" INTEGER NOT NULL,
+  "targetUserId" INTEGER NOT NULL,
+  "type" "UserEngagementType" NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY ("userId", "targetUserId")
 );
 CREATE TABLE "Product" (
   "id" TEXT PRIMARY KEY,

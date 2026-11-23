@@ -1,3 +1,4 @@
+import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import {
@@ -19,7 +20,6 @@ import {
   getImageGenerationData,
   getImagesByUserIdForModeration,
   getMyImages,
-  ingestImageById,
   removeImageResource,
   removeImageTechniques,
   removeImageTools,
@@ -29,6 +29,7 @@ import {
   updateImageTools,
   refreshImageResources,
 } from '~/server/services/image.service';
+import { rescanImageById } from '~/server/services/image-rescan.service';
 import {
   middleware,
   heavyProcedure,
@@ -53,7 +54,7 @@ import {
   getInfiniteImagesHandler,
 } from './../controllers/image.controller';
 import { withSharedFeedUsers } from '~/server/utils/feed-shared-users';
-import { cacheIt, edgeCacheIt, rateLimit } from './../middleware.trpc';
+import { cacheIt, edgeCacheIt, noEdgeCacheWhen, rateLimit } from './../middleware.trpc';
 import {
   IMAGE_404_CACHE_TAG,
   imageResourcesEdgeTag,
@@ -65,6 +66,8 @@ import {
   getImageSchema,
   getInfiniteImagesSchema,
   getMyImagesInput,
+  isViewerScopedImageFeed,
+  isViewerScopedInfiniteFeed,
   imageModerationSchema,
   removeImageResourceSchema,
   reportCsamImagesSchema,
@@ -119,7 +122,12 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .query(({ input, ctx }) =>
-      getImageDetail({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator })
+      getImageDetail({
+        ...input,
+        userId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+        ownerSeesHeld: isSessionOrFullUserKey(ctx),
+      })
     ),
   /**
    * @ported-to-go feed-go · status: shadow · see ports/manifest.json (id: image.getInfinite).
@@ -129,6 +137,7 @@ export const imageRouter = router({
   getInfinite: heavyProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteImagesSchema)
+    .use(noEdgeCacheWhen(isViewerScopedInfiniteFeed))
     // One `user` object per creator on the wire (`image-feed-shared-users`, dark). Here rather
     // than in the handler, which `civitai-embed` also calls directly.
     .query(async (opts) => withSharedFeedUsers(await getInfiniteImagesHandler(opts))),
@@ -144,6 +153,7 @@ export const imageRouter = router({
   getImagesAsPostsInfinite: heavyProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteImagesSchema)
+    .use(noEdgeCacheWhen(isViewerScopedImageFeed))
     .query(getImagesAsPostsInfiniteHandler),
   get: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
@@ -168,7 +178,7 @@ export const imageRouter = router({
   removeResource: moderatorProcedure
     .input(removeImageResourceSchema)
     .mutation(({ input }) => removeImageResource(input)),
-  rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => ingestImageById(input)),
+  rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanImageById(input)),
   getEntitiesCoverImage: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getEntitiesCoverImage)

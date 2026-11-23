@@ -2,11 +2,11 @@ import { error, isHttpError, json } from '@sveltejs/kit';
 import { RETRACTED_MEDIA_MAX_BYTES } from '@civitai/shared/retracted-media';
 import type { RequestHandler } from './$types';
 import { canAccess } from '$lib/server/access';
-import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
+import { HELD_MEDIA_PAGE, recordHeldView } from '$lib/server/held-media';
 import { streamStoredMedia } from '$lib/server/held-media-stream';
 import { retractedMediaRetryAfter } from '$lib/server/retracted-media-rate';
 import {
-  getRetractedMedia,
+  getModeratorMedia,
   recordRetractedView,
   retractedMediaEnabled,
 } from '$lib/server/retracted-media';
@@ -16,9 +16,9 @@ const MAX_INT = 2_147_483_647;
 /**
  * A blocked image or video for any moderator, from storage rather than the public CDN, for the
  * moderator pages that show images. The browser names an image id and nothing else: the key comes
- * from this app's own read of the row, and only for an image `getRetractedMedia` allows this
- * moderator. CSAM-restricted media needs the CSAM page's grant; held media is
- * `/api/held-media`'s.
+ * from this app's own read of the row, and only for an image `getModeratorMedia` allows this
+ * moderator. CSAM-restricted media needs the CSAM page's grant. A moderator with that grant is also
+ * served held media here, audited as a held view, so image pages need not know which route holds it.
  */
 const NO_STORE = { 'cache-control': 'private, no-store' };
 
@@ -46,8 +46,7 @@ const serve: RequestHandler = async ({ params, locals, request, url }) => {
     );
   const csamReview = canAccess(locals.user, HELD_MEDIA_PAGE);
 
-  // A read that fails or runs past its timeout refuses, with nothing served.
-  const media = await getRetractedMedia(imageId, { csamReview }).catch(() => {
+  const media = await getModeratorMedia(imageId, { csamReview }).catch(() => {
     error(503, 'Could not check this image; retry.');
   });
   if (!media) error(404, 'Not available here.');
@@ -55,6 +54,17 @@ const serve: RequestHandler = async ({ params, locals, request, url }) => {
   if (url.searchParams.get('probe') === '1')
     return new Response(null, { status: 204, headers: NO_STORE });
 
+  if (media.kind === 'held')
+    return streamStoredMedia({
+      media,
+      imageId,
+      moderatorId,
+      sheet: false,
+      request,
+      audit: () => recordHeldView(moderatorId, imageId, 'web'),
+      // Held files are not size-capped, as on /api/held-media; every range is audited here.
+      auditEveryRange: true,
+    });
   return streamStoredMedia({
     media,
     imageId,

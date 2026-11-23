@@ -76,6 +76,19 @@ vi.mock('~/server/utils/server-domain', () => ({
   isRedCapableHost: () => false,
 }));
 
+// The listings read model's flag at `serve` for this whole file (a boundary module, spread so every
+// other export is real). Serving needs APP_INDEX_URL and a viewer key, which only the read-model
+// case below sets: every other case is `unconfigured` and reads the database exactly as before.
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const original = await importOriginal<typeof FliptClient>();
+  return {
+    ...original,
+    getFliptLocalOverride: (flag: string) =>
+      flag === 'app-listings-read-model' ? 'serve' : original.getFliptLocalOverride(flag),
+  };
+});
+
+import type * as FliptClient from '~/server/flipt/client';
 import { appListingsRouter } from '../app-listings.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -493,3 +506,64 @@ describe('appListings.getAppHiddenState — scope gate', () => {
     );
   });
 });
+
+// The seam between the procedure and the read model: `listAvailable` must hand the store grid
+// `serveListingPage` as its grid read. Dropping it (or passing the plain database read) leaves
+// every grid page on the database at `serve`, with every service test still green.
+describe('appListings.listAvailable — the flag at serve: the read model serves the grid', () => {
+  const READ_MODEL_URL = 'http://read-model.invalid/';
+  let fetched: string[];
+  beforeEach(() => {
+    setEnv({
+      APP_INDEX_URL: READ_MODEL_URL,
+      APP_INDEX_VIEWER_KEY: '0123456789abcdef0123456789abcdef',
+      APP_LISTINGS_READ_MODEL_SHADOW_SAMPLE: 0,
+    });
+    fetched = [];
+    vi.stubGlobal('fetch', async (url: string) => {
+      fetched.push(url);
+      return Response.json({ items: [RM_CARD] });
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setEnv({ APP_INDEX_URL: undefined, APP_INDEX_VIEWER_KEY: undefined });
+  });
+
+  it("a user-facing grid page is the read model's, and the database is not read", async () => {
+    publicExternal = true;
+    const caller = appListingsRouter.createCaller(fakeCtx(normalUser) as never);
+    const res = await caller.listAvailable({ limit: 20 });
+    expect(res.items.map((c) => ('slug' in c ? c.slug : c.id))).toEqual(['rm-only']);
+    expect(fetched).toHaveLength(1);
+    expect(fetched[0].startsWith(`${READ_MODEL_URL}listings?`)).toBe(true);
+    expect(mockListAvailableListings).not.toHaveBeenCalled();
+  });
+
+  it('positive control: a moderator stays on the database, and the read model is not asked', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(modUser) as never);
+    const res = await caller.listAvailable({ limit: 20 });
+    expect(res).toEqual({ items: [{ id: 'apl_1' }], nextCursor: undefined });
+    expect(fetched).toEqual([]);
+  });
+});
+
+const RM_CARD = {
+  id: 'apl_rm_only',
+  slug: 'rm-only',
+  kind: 'offsite',
+  name: 'Read model only',
+  tagline: null,
+  category: 'utility',
+  contentRating: 'pg',
+  iconUrl: null,
+  coverUrl: null,
+  creator: null,
+  recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
+  reviewCount: 0,
+  isBeta: false,
+  isOfficial: false,
+  openCount: null,
+  restrictedAudience: null,
+  kindData: { kind: 'offsite', externalUrl: null },
+};

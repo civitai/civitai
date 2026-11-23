@@ -258,7 +258,7 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         // minor-mature-image-visibility.behavior.test.ts.
         'AND (NOT ((COALESCE(i."minor", FALSE)) AND (i."nsfwLevel" IS NULL OR i."nsfwLevel" = 0 OR i."nsfwLevel" >= ?))) ' +
         // `coverRated`: an unrated image is a cover for moderators only.
-        'AND (i."nsfwLevel" != 0 OR ?::boolean) ' +
+        'AND (i."nsfwLevel" NOT IN (0, ?) OR ?::boolean) ' +
         // `heldGalleryImageSql`, exempting the model owner and moderators; its rows are in
         // entity-cover-image-visibility.behavior.test.ts.
         'AND ( NOT (COALESCE(m.minor, FALSE) OR COALESCE(m."sfwOnly", FALSE)) ' +
@@ -279,7 +279,8 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         `OR ( e."entityType" IN ('Bounty', 'BountyEntry') ` +
         `AND (b.availability <> 'Private' OR (?::boolean AND b."userId" = ?)) ) ` +
         `OR ( e."entityType" = 'Article' AND ( ` +
-        `(a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned') ` +
+        `(a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned' ` +
+        `AND a.availability != 'Private') ` +
         'OR (?::boolean AND a."userId" = ?) ) ) ) ' +
         'ORDER BY e."entityId", e."entityType", i.id ' +
         ') t ) t'

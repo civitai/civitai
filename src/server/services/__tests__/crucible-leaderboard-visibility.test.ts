@@ -8,7 +8,7 @@ import type * as ImageService from '~/server/services/image.service';
 import type * as CrucibleService from '~/server/services/crucible.service';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
-import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
+import { imageNotRestrictedWhere, noBlockMarkerWhere } from '~/server/common/image-visibility';
 
 /**
  * A crucible's ranking is secret until it ends: a live leaderboard tells judges which entry is
@@ -683,6 +683,7 @@ describe('crucible.getMinVotesToPlace', () => {
             post: { publishedAt: { not: null } },
           },
           imageNotRestrictedWhere(),
+          noBlockMarkerWhere(),
         ],
       },
     });

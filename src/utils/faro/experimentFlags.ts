@@ -62,6 +62,8 @@ export const RUM_EXPERIMENT_FLAGS = [
   { flag: 'feedGoTransport', attr: 'exp_feed_go_transport' },
   { flag: 'feedGoTransportModelGetAll', attr: 'exp_feed_go_transport_model_get_all' },
   { flag: 'feedGoTransportInfinite', attr: 'exp_feed_go_transport_infinite' },
+  // Client shadow compare cohort, for `shadow_compare` (~/utils/faro/shadowCompare) and its cost.
+  { flag: 'clientShadowCompare', attr: 'exp_client_shadow_compare' },
 ] as const satisfies ReadonlyArray<{ flag: FeatureFlagKey; attr: string }>;
 
 /**

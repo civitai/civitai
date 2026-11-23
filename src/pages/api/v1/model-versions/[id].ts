@@ -37,6 +37,13 @@ import { modelVersionToAir } from '~/server/utils/resource-air';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import { getBrowsingSettingAddons } from '~/server/services/system-cache';
+import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
+import {
+  hasCuratedShowcase,
+  withCuratedShowcases,
+} from '~/server/services/version-showcase.service';
+import { showcaseSiteForBrowsingLevel } from '~/shared/constants/version-showcase.constants';
 import {
   getShowcaseImageFilter,
   resolveShowcaseExclusions,
@@ -235,6 +242,24 @@ export async function getVersionShowcaseImages(modelVersionIds: number[], browsi
 const aboveSfw = (nsfwLevel: number) => (nsfwLevel & ~sfwBrowsingLevelsFlag) !== 0;
 
 /**
+ * `getShowcaseImageFilter` at `browsingLevel`, except that the minor exclusion applies to an SFW image
+ * only if it is set for some SFW level: it is for mature images. Tag and poi rules still apply at
+ * `browsingLevel`.
+ */
+async function getVersionImageFilter(browsingLevel: number) {
+  const [shows, addonData] = await Promise.all([
+    getShowcaseImageFilter({ browsingLevel }),
+    getBrowsingSettingAddons(),
+  ]);
+  const { disableMinor: minorExcludedWithinSfw } = resolveStrictestPoiMinor(
+    addonData,
+    sfwBrowsingLevelsFlag
+  );
+  return (image: Parameters<typeof shows>[0] & { nsfwLevel: number }) =>
+    shows(aboveSfw(image.nsfwLevel) || minorExcludedWithinSfw ? image : { ...image, minor: false });
+}
+
+/**
  * Whether a caller in a region served only SFW levels could get a different body than one served
  * every level: the version or a showcase image is above SFW, or the exclusions resolved at the two
  * levels keep different images.
@@ -245,8 +270,8 @@ export async function showcaseVariesByRegion(
 ) {
   if (aboveSfw(versionNsfwLevel) || images.some((image) => aboveSfw(image.nsfwLevel))) return true;
   const [withinSfw, withinAll] = await Promise.all([
-    getShowcaseImageFilter({ browsingLevel: sfwBrowsingLevelsFlag }),
-    getShowcaseImageFilter({ browsingLevel: allBrowsingLevelsFlag }),
+    getVersionImageFilter(sfwBrowsingLevelsFlag),
+    getVersionImageFilter(allBrowsingLevelsFlag),
   ]);
   return images.some((image) => withinSfw(image) !== withinAll(image));
 }
@@ -262,7 +287,8 @@ export async function prepareModelVersionResponse(
   // `isRedCapableHost` of the request: decides which training datasets are offered.
   redCapable = false,
   // `apiBrowsingLevel` of the request: the showcase's levels, and the level its exclusions resolve at.
-  browsingLevel = sfwBrowsingLevelsFlag
+  browsingLevel = sfwBrowsingLevelsFlag,
+  curate: typeof withCuratedShowcases = withCuratedShowcases
 ) {
   // `availability` and the owner only decide visibility; they are not part of the response.
   const { files, model: modelRow, metrics, vaeId, availability, ...storedVersion } = modelVersion;
@@ -286,7 +312,10 @@ export async function prepareModelVersionResponse(
   if (!primaryFile) return null;
 
   images ??= await getVersionShowcaseImages([version.id], browsingLevel);
-  const shows = await getShowcaseImageFilter({ browsingLevel });
+  images = (
+    await curate({ [version.id]: { images } }, showcaseSiteForBrowsingLevel(browsingLevel))
+  )[version.id].images;
+  const shows = await getVersionImageFilter(browsingLevel);
   images = images.filter((image) => (image.nsfwLevel & browsingLevel) !== 0 && shows(image));
   images = (
     await holdShowcaseImages(
@@ -444,7 +473,8 @@ export async function resModelVersionDetails(
     isPrivateModelVersion(modelVersion) ||
     browsingLevel !== allBrowsingLevelsFlag ||
     modelVersion.model.sfwName != null ||
-    (await showcaseVariesByRegion(modelVersion.nsfwLevel, images))
+    (await showcaseVariesByRegion(modelVersion.nsfwLevel, images)) ||
+    (await hasCuratedShowcase([modelVersion.id]))
   )
     res.setHeader('Cache-Control', 'private, no-store');
   res.status(200).json(body);

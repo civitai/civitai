@@ -239,7 +239,7 @@ func buildSponsored(images []Image, lazy bool) superjson.Object {
 		{Key: "nsfwLevel", Val: int64(nsfw)},
 		{Key: "modelVersionId", Val: first.ModelVerID},
 		{Key: "publishedAt", Val: first.PublishedAt},
-		{Key: "sortAt", Val: first.SortAt},
+		{Key: "sortAt", Val: first.SortAtWire()},
 		{Key: "createdAt", Val: EarliestByJSDateString(images)},
 		{Key: "user", Val: first.User},
 	}

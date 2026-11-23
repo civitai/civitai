@@ -58,6 +58,10 @@ const IMPORTS: [RegExp, string][] = [
   [/import ComFaceCard from '[^']+';/, "import ComFaceCard from './ComFaceCard.js';"],
   [/import MetaChip from '[^']+';/, "import MetaChip from './MetaChip.js';"],
   [
+    /import RestrictedLeadFields from '\.\/RestrictedLeadFields\.svelte';/,
+    "import RestrictedLeadFields from './RestrictedLeadFields.js';",
+  ],
+  [
     /import \{ leadComCoverBlurred \} from '\$lib\/com-face';/,
     'const { leadComCoverBlurred } = globalThis.__panelLib.comFace;',
   ],
@@ -99,6 +103,13 @@ beforeAll(async () => {
   for (const generate of ['server', 'client'] as const)
     for (const [name, source] of Object.entries(STUBS))
       if (name !== 'Harness') emit(name, source, generate);
+  // The real hidden fields, so the forms are tested with what they actually post.
+  const fields = readFileSync(
+    path.resolve(import.meta.dirname, '../RestrictedLeadFields.svelte'),
+    'utf8'
+  );
+  for (const generate of ['server', 'client'] as const)
+    emit('RestrictedLeadFields', fields, generate);
   let panel = readFileSync(
     path.resolve(import.meta.dirname, '../RestrictedVerdicts.svelte'),
     'utf8'
@@ -138,6 +149,7 @@ const lead = (modelId: number): RestrictedVerdictRow =>
     unticked: false,
     liftedBy: null,
     heldAt: '2026-11-01T00:00:00.000Z',
+    revision: `rev-${modelId}`,
     source: 'text-scan',
     scanLevel: 8,
     scanLabels: [],
@@ -250,6 +262,36 @@ describe('the restricted-verdict panel above the Needs review queue', () => {
     });
     flushSync();
     expect(alert()?.textContent).toContain('A ruling failed');
+    unmount(app);
+  });
+
+  it('every ruling form posts the revision shown', async () => {
+    const { mount, unmount, flushSync } = await import(/* @vite-ignore */ clientEntry('svelte'));
+    document.body.innerHTML = '';
+    (globalThis as Record<string, unknown>).__panelSubmits = [];
+    const app = mount(ClientPanel, {
+      target: document.body,
+      props: {
+        rows: LEADS,
+        total: LEADS.length,
+        civitaiUrl: 'https://civitai.com',
+        queueEmpty: true,
+      },
+    });
+    [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((b) => b.textContent?.trim() === 'Rule')!
+      .click();
+    flushSync();
+    const forms = [
+      ...document.querySelectorAll<HTMLFormElement>('form[action="?/ruleRestrictedVerdict"]'),
+    ];
+    // Keep and Dismiss, and the hidden Rate NSFW form.
+    expect(forms).toHaveLength(2);
+    for (const form of forms)
+      expect(Object.fromEntries(new FormData(form))).toMatchObject({
+        modelId: '990000001',
+        revision: 'rev-990000001',
+      });
     unmount(app);
   });
 

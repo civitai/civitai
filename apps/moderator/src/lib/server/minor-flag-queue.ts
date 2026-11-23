@@ -634,10 +634,16 @@ export const needsReviewActions: Actions = {
       modelId: form.get('modelId'),
       ruling: form.get('ruling'),
       reason: form.get('reason') ?? undefined,
+      revision: form.get('revision') ?? undefined,
     });
     if (!parsed.success) return fail(400, { error: 'Missing model or ruling.' });
-    const { modelId, ruling, reason } = parsed.data;
-    const result = await ruleRestrictedVerdict(modelId, ruling, reason || undefined);
+    const { modelId, ruling, reason, revision } = parsed.data;
+    const result = await ruleRestrictedVerdict(
+      modelId,
+      ruling,
+      reason || undefined,
+      revision || undefined
+    );
     if (!result.ok)
       return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
     await bustMinorQueueCounts();
@@ -649,6 +655,7 @@ const restrictedVerdictForm = z.object({
   modelId: z.coerce.number().int().positive().max(MAX_INT4),
   ruling: z.enum(RESTRICTED_VERDICT_RULINGS),
   reason: z.string().trim().max(1000).optional(),
+  revision: z.string().max(128).optional(),
 });
 
 const reasonFields = z.object(resolutionReasonFields);

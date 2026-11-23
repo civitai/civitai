@@ -26,6 +26,7 @@ const spies = vi.hoisted(() => ({
   logAxiomError: vi.fn(async (_error: unknown, _extra?: Record<string, unknown>) => undefined),
   applyBlockSideEffects: vi.fn(async (..._args: unknown[]) => undefined),
   recordModActivity: vi.fn(async () => undefined),
+  insertModActivity: vi.fn(async () => 1),
   syncSearchIndex: vi.fn(),
   invalidateThumbnails: vi.fn(async () => undefined),
   bustProfilePictures: vi.fn(async () => undefined),
@@ -69,6 +70,7 @@ vi.mock('../removal-hold', () => ({
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../mod-activity', () => ({
   recordModActivity: spies.recordModActivity,
+  insertModActivity: spies.insertModActivity,
   insertModActivityBatch: vi.fn(),
 }));
 vi.mock('../profile-picture-cache', () => ({ bustProfilePictures: spies.bustProfilePictures }));
@@ -357,7 +359,7 @@ describe('a re-block of a removed, held image', () => {
     await reblock(REMOVED_TOS);
 
     expect(spies.applyBlockSideEffects).not.toHaveBeenCalled();
-    expect(spies.recordModActivity).not.toHaveBeenCalled();
+    expect(spies.insertModActivity).not.toHaveBeenCalled();
     expect(spies.syncSearchIndex).not.toHaveBeenCalled();
     expect(spies.invalidateThumbnails).not.toHaveBeenCalled();
     expect(spies.bustProfilePictures).not.toHaveBeenCalled();
@@ -369,7 +371,7 @@ describe('a re-block of a removed, held image', () => {
     await reblock(FLAGGED);
 
     expect(spies.applyBlockSideEffects).toHaveBeenCalledTimes(1);
-    expect(spies.recordModActivity).toHaveBeenCalledTimes(1);
+    expect(spies.insertModActivity).toHaveBeenCalledTimes(1);
     expect(spies.syncSearchIndex).toHaveBeenCalledTimes(1);
     expect(spies.invalidateThumbnails).toHaveBeenCalledTimes(1);
     expect(spies.bustProfilePictures).toHaveBeenCalledTimes(1);

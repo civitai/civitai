@@ -165,6 +165,7 @@ export const ENTITY_JOINS = [
   ['CrucibleReport', 'crucibleId', 'crucible'],
   ['StorylineReport', 'storylineId', 'storyline'],
   ['ServiceOfferingReport', 'serviceOfferingId', 'serviceOffering'],
+  ['ServiceDealReviewReport', 'serviceOfferingId', 'serviceDealReview'],
   ['ChallengeReport', 'challengeId', 'challenge'],
   ['GameFrameGameReport', 'gameFrameGameId', 'gameFrameGame'],
   ['ChatReport', 'chatId', 'chat'],

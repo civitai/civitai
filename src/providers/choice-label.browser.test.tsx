@@ -1,6 +1,6 @@
 import { Checkbox, MantineProvider, Radio } from '@mantine/core';
 import { describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../test/component-setup';
 import { theme } from '~/providers/ThemeProvider';
 
@@ -48,6 +48,48 @@ describe('checkbox and radio descriptions', () => {
     );
     await page.getByRole('link', { name: 'terms' }).click();
     expect(onLink).toHaveBeenCalled();
+    await expect.element(page.getByRole('checkbox')).not.toBeChecked();
+  });
+
+  test('a link in the label itself follows the link, not the checkbox', async () => {
+    const onLink = vi.fn((e: React.MouseEvent) => e.preventDefault());
+    renderWithTheme(
+      <Checkbox
+        label={
+          <>
+            Apply{' '}
+            <a href="/filters" onClick={onLink}>
+              my filters
+            </a>
+          </>
+        }
+      />
+    );
+    await page.getByRole('link', { name: 'my filters' }).click();
+    expect(onLink).toHaveBeenCalledTimes(1);
+    await expect.element(page.getByRole('checkbox')).not.toBeChecked();
+  });
+
+  test('a link in the label is reached by Tab and Enter follows it without toggling', async () => {
+    const onLink = vi.fn((e: React.MouseEvent) => e.preventDefault());
+    renderWithTheme(
+      <Checkbox
+        label={
+          <>
+            Apply{' '}
+            <a href="/filters" onClick={onLink}>
+              my filters
+            </a>
+          </>
+        }
+      />
+    );
+    await userEvent.tab();
+    await expect.element(page.getByRole('checkbox')).toHaveFocus();
+    await userEvent.tab();
+    await expect.element(page.getByRole('link', { name: 'my filters' })).toHaveFocus();
+    await userEvent.keyboard('{Enter}');
+    expect(onLink).toHaveBeenCalledTimes(1);
     await expect.element(page.getByRole('checkbox')).not.toBeChecked();
   });
 });

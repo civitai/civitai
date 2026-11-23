@@ -41,6 +41,7 @@ const image = (id: number, over: Record<string, unknown> = {}) => ({
   nsfwLevel: 1,
   nsfwLevelLocked: false,
   blockedFor: null as string | null,
+  needsReview: null as string | null,
   ...over,
 });
 
@@ -52,6 +53,8 @@ const BLOCK_REASON_ONLY = image(13, { ingestion: 'Error', blockedFor: 'tos' });
 const FOREIGN = image(14, { userId: SOMEONE_ELSE });
 const PENDING = image(15, { ingestion: 'Pending' });
 const LOCKED = image(16, { nsfwLevelLocked: true });
+const AWAITING_MINOR_REVIEW = image(21, { needsReview: 'minor' });
+const AWAITING_SOURCE_REVIEW = image(22, { needsReview: 'remixSource' });
 
 const SKIPPED: [string, Img][] = [
   ['a blocked image', BLOCKED],
@@ -60,6 +63,19 @@ const SKIPPED: [string, Img][] = [
   ["another owner's image", FOREIGN],
   ['an image still in flight', PENDING],
   ['an image whose rating a moderator locked', LOCKED],
+  ['an image awaiting a minor review', AWAITING_MINOR_REVIEW],
+  ['an image awaiting a source review', AWAITING_SOURCE_REVIEW],
+];
+
+const CHANGED_AFTER_READ: [string, Partial<Img>][] = [
+  ['is blocked', { ingestion: 'Blocked' }],
+  ['takes the Blocked level', { nsfwLevel: 32 }],
+  ['takes a block reason', { blockedFor: 'tos' }],
+  ['has its rating locked', { nsfwLevelLocked: true }],
+  ['passes to another owner', { userId: SOMEONE_ELSE }],
+  ['starts scanning', { ingestion: 'Pending' }],
+  ['goes to review', { needsReview: 'minor' }],
+  ['goes to a source review', { needsReview: 'remixSource' }],
 ];
 
 /** The columns a Prisma `select` asked for, so a column the code stops selecting reads undefined. */
@@ -91,7 +107,26 @@ const stale = (img: Img) => ({
   blockedFor: null,
 });
 
+/** The Prisma filter operators the Rescan write uses; any other one fails the test loudly. */
+const matchesWhere = (row: Record<string, unknown>, where: Record<string, any>): boolean =>
+  Object.entries(where).every(([key, cond]) => {
+    if (key === 'AND') return (cond as Record<string, any>[]).every((w) => matchesWhere(row, w));
+    if (cond === null || typeof cond !== 'object') return row[key] === cond;
+    if ('in' in cond) return cond.in.includes(row[key]);
+    if ('notIn' in cond) return !cond.notIn.includes(row[key]);
+    if ('not' in cond) return row[key] !== cond.not;
+    throw new Error(`matchesWhere: unsupported filter on ${key}: ${JSON.stringify(cond)}`);
+  });
+
+/** Changes that land on the primary after the rescan read the row and before it writes. */
+let landedAfterRead: Record<number, Partial<Img>> = {};
+
 const storeImages = ({ connected = [], byId = [] }: { connected?: Img[]; byId?: Img[] }) => {
+  dbMock.dbWrite.image.updateManyAndReturn.mockImplementation((async ({ where }: any) =>
+    [...connected, ...byId]
+      .map((img) => ({ ...img, ...landedAfterRead[img.id] }))
+      .filter((row) => matchesWhere(row, where))
+      .map(({ id }) => ({ id }))) as never);
   for (const [db, view] of [
     [dbMock.dbWrite, (img: Img) => img],
     [dbMock.dbRead, stale],
@@ -114,17 +149,21 @@ const storeImages = ({ connected = [], byId = [] }: { connected?: Img[]; byId?: 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  landedAfterRead = {};
   storeArticle(null);
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
   dbMock.dbRead.imageConnection.findFirst.mockResolvedValue({ imageId: 1 } as never);
 });
 
 /** Ids the rescan flipped to Rescan and the ids it sent to scan; both must agree. */
-const requeued = () => {
-  const flipped = [
-    ...dbMock.dbWrite.image.updateMany.mock.calls.flatMap(([arg]) => arg.where.id.in),
-    ...dbMock.dbWrite.image.update.mock.calls.map(([arg]) => arg.where.id),
-  ];
+const requeued = async () => {
+  expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
+  expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
+  const flipped = (
+    await Promise.all(
+      dbMock.dbWrite.image.updateManyAndReturn.mock.results.map(({ value }) => value)
+    )
+  ).flatMap((rows: { id: number }[]) => rows.map(({ id }) => id));
   const sent = enqueueImageIngestion.mock.calls.flatMap(([arg]) =>
     arg.images.map((img: { id: number }) => img.id)
   );
@@ -138,7 +177,11 @@ describe('rescanArticle', () => {
 
     await rescanArticle({ id: ARTICLE_ID, isModerator: true });
 
-    expect(requeued()).toEqual([CLEAN.id]);
+    expect(await requeued()).toEqual([CLEAN.id]);
+    // Refused on the read, so the write never sees them.
+    expect(dbMock.dbWrite.image.updateManyAndReturn).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: { in: [CLEAN.id] } }) })
+    );
   });
 
   it('re-queues a clean cover that is not among the connected images', async () => {
@@ -148,7 +191,7 @@ describe('rescanArticle', () => {
 
     await rescanArticle({ id: ARTICLE_ID, isModerator: true });
 
-    expect(requeued().sort()).toEqual([CLEAN.id, cover.id]);
+    expect((await requeued()).sort()).toEqual([CLEAN.id, cover.id]);
   });
 
   it('re-queues a clean banner beside the cover', async () => {
@@ -159,7 +202,7 @@ describe('rescanArticle', () => {
 
     await rescanArticle({ id: ARTICLE_ID, isModerator: true });
 
-    expect(requeued().sort()).toEqual([CLEAN.id, cover.id, banner.id]);
+    expect((await requeued()).sort()).toEqual([CLEAN.id, cover.id, banner.id]);
   });
 
   it('leaves a blocked cover alone', async () => {
@@ -168,8 +211,30 @@ describe('rescanArticle', () => {
 
     await rescanArticle({ id: ARTICLE_ID, isModerator: true });
 
-    expect(requeued()).toEqual([CLEAN.id]);
+    expect(await requeued()).toEqual([CLEAN.id]);
   });
+
+  it("leaves the author's images outside the article alone", async () => {
+    const elsewhere = image(20);
+    storeImages({ connected: [CLEAN], byId: [elsewhere] });
+
+    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+
+    expect(await requeued()).toEqual([CLEAN.id]);
+  });
+
+  it.each(CHANGED_AFTER_READ)(
+    'leaves an image alone when it %s between the read and the write',
+    async (_, change) => {
+      const changing = image(19);
+      landedAfterRead[changing.id] = change;
+      storeImages({ connected: [CLEAN, changing] });
+
+      await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+
+      expect(await requeued()).toEqual([CLEAN.id]);
+    }
+  );
 });
 
 describe('rescanArticleImage', () => {
@@ -183,7 +248,8 @@ describe('rescanArticleImage', () => {
 
       await expect(rescan(img)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
-      expect(requeued()).toEqual([]);
+      expect(await requeued()).toEqual([]);
+      expect(dbMock.dbWrite.image.updateManyAndReturn).not.toHaveBeenCalled();
       // A refusal does not use one of the day's attempts.
       expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
     }
@@ -194,7 +260,7 @@ describe('rescanArticleImage', () => {
 
     await rescan(PENDING);
 
-    expect(requeued()).toEqual([]);
+    expect(await requeued()).toEqual([]);
   });
 
   it("re-queues the author's own unblocked image", async () => {
@@ -202,7 +268,7 @@ describe('rescanArticleImage', () => {
 
     await rescan(CLEAN);
 
-    expect(requeued()).toEqual([CLEAN.id]);
+    expect(await requeued()).toEqual([CLEAN.id]);
     expect(redisMock.redis.packed.set).toHaveBeenCalledOnce();
   });
 
@@ -211,7 +277,20 @@ describe('rescanArticleImage', () => {
 
     await rescan(CLEAN, MODERATOR);
 
-    expect(requeued()).toEqual([CLEAN.id]);
+    expect(await requeued()).toEqual([CLEAN.id]);
     expect(enqueueImageIngestion).toHaveBeenCalledWith(expect.objectContaining({ userId: AUTHOR }));
   });
+
+  it.each(CHANGED_AFTER_READ)(
+    'refuses an image that %s between the read and the write',
+    async (_, change) => {
+      landedAfterRead[CLEAN.id] = change;
+      storeImages({ byId: [CLEAN] });
+
+      await expect(rescan(CLEAN)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+      expect(await requeued()).toEqual([]);
+      expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
+    }
+  );
 });

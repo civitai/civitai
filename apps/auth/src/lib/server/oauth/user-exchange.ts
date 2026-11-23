@@ -8,17 +8,22 @@ import { authenticatedConfidentialClient, clientIdMismatch } from './client-auth
 import { ACCESS_TOKEN_TYPE } from './constants';
 import { basicCredentials } from './http';
 import { findExchangeResource } from './exchange-resources';
-import { chargeTokenExchangeFailure, checkTokenExchangeRateLimit } from './rate-limit';
+import {
+  chargeTokenExchangeFailure,
+  checkTokenExchangeRateLimit,
+  oauthRetryAfter,
+  rateLimitedResponse,
+} from './rate-limit';
 import { parseScopeRequest } from './scope';
 import {
   EXCHANGED_TOKEN_MAX_TTL,
   exchangeScopeCeiling,
   findExchangeClient,
   findSubjectTokenByHash,
+  mintExchangedJwt,
   scopeNames,
   subjectTokenRefusal,
   userRefusal,
-  writeExchangeRecord,
 } from './token-exchange';
 
 // RFC 8693 token exchange of a user's OAuth access token for a short-lived RFC 9068 JWT (`typ: at+jwt`)
@@ -37,14 +42,13 @@ type ExchangeError =
   | 'server_error'
   | 'temporarily_unavailable';
 
-const STATUS: Record<ExchangeError, number> = {
+const STATUS: Record<Exclude<ExchangeError, 'rate_limited'>, number> = {
   invalid_request: 400,
   invalid_client: 401,
   invalid_target: 400,
   unauthorized_client: 400,
   invalid_grant: 400,
   invalid_scope: 400,
-  rate_limited: 429,
   server_error: 500,
   temporarily_unavailable: 503,
 };
@@ -100,6 +104,10 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
     log('refused', ctx, error, reason);
     const headers = new Headers({ 'Cache-Control': 'no-store', Pragma: 'no-cache' });
     for (const [k, v] of new Headers(extra)) headers.set(k, v);
+    // token-exchange and token-exchange-ip share this window.
+    if (error === 'rate_limited') {
+      return rateLimitedResponse(oauthRetryAfter('token-exchange'), headers, DESCRIPTION[error]);
+    }
     return json(
       { error, error_description: DESCRIPTION[error] },
       { status: STATUS[error], headers }
@@ -133,7 +141,7 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
     const basicAttempted = /^basic /i.test(request.headers.get('authorization') ?? '');
     const unauthenticated = async (reason: string) => {
       const withinLimit = await chargeTokenExchangeFailure(input.clientIp);
-      if (!withinLimit) return refuse('rate_limited', reason, { 'Retry-After': '60' });
+      if (!withinLimit) return refuse('rate_limited', reason);
       return refuse(
         'invalid_client',
         reason,
@@ -148,7 +156,7 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
     if (!caller) return unauthenticated('client authentication failed');
     ctx.caller = caller.id;
     if (!(await checkTokenExchangeRateLimit(caller.id, caller.tokenRateLimit))) {
-      return refuse('rate_limited', 'client limit', { 'Retry-After': '60' });
+      return refuse('rate_limited', 'client limit');
     }
     if (caller.accessMode === 'disabled') return refuse('unauthorized_client', 'caller disabled');
 
@@ -224,9 +232,10 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
     const jti = randomUUID();
     ctx.jti = jti;
 
-    let accessToken: string;
-    try {
-      accessToken = await tokenSigner.mintAccessTokenJwt({
+    // Introspection reads the record; a token without one would never read as active, so none is issued.
+    const minted = await mintExchangedJwt(
+      tokenSigner,
+      {
         iss: issuer,
         sub: String(subject.userId),
         aud: resource.resource,
@@ -236,39 +245,20 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
         iat,
         exp,
         ...(actor ? { act: { sub: actor } } : {}),
-      });
-    } catch (err) {
-      void logToAxiom({
-        type: 'error',
-        name: 'token-exchange-sign-failed',
-        message: String(err),
-      });
-      return refuse('server_error', 'signing failed');
-    }
-
-    // Introspection reads this record; a token without one would never read as active, so none is issued.
-    try {
-      await writeExchangeRecord(
-        jti,
-        {
-          subjectKeyId: subject.id,
-          userId: subject.userId,
-          clientId: subject.clientId,
-          actor: actor ?? null,
-          resource: resource.resource,
-          scopeBits: scope,
-          exp,
-        },
-        iat
-      );
-    } catch (err) {
-      void logToAxiom({
-        type: 'error',
-        name: 'token-exchange-record-failed',
-        message: String(err),
-      });
-      return refuse('server_error', 'exchange record not stored');
-    }
+      },
+      {
+        subjectKeyId: subject.id,
+        userId: subject.userId,
+        clientId: subject.clientId,
+        actor: actor ?? null,
+        resource: resource.resource,
+        scopeBits: scope,
+        exp,
+      },
+      'token-exchange'
+    );
+    if (!minted.ok) return refuse('server_error', minted.reason);
+    const accessToken = minted.accessToken;
 
     log('issued', ctx);
     return json(

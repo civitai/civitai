@@ -40,11 +40,18 @@ let db: PGlite;
 
 async function seedImage(
   id: number,
-  o: { level?: number; published?: boolean; ingestion?: string; needsReview?: string } = {}
+  o: {
+    level?: number;
+    published?: boolean;
+    ingestion?: string;
+    needsReview?: string;
+    availability?: string;
+  } = {}
 ) {
-  await db.query(`INSERT INTO "Post" ("id","publishedAt") VALUES ($1,$2)`, [
+  await db.query(`INSERT INTO "Post" ("id","publishedAt","availability") VALUES ($1,$2,$3)`, [
     id,
     o.published === false ? null : '2020-01-01',
+    o.availability ?? 'Public',
   ]);
   await db.query(
     `INSERT INTO "Image" ("id","url","type","nsfwLevel","ingestion","needsReview","postId") VALUES ($1,$2,'image',$3,$4,$5,$1)`,
@@ -101,7 +108,7 @@ const row = async (id: number) =>
 
 beforeAll(async () => {
   db = await freshPglite();
-  await db.exec(`CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP);
+  await db.exec(`CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP, "availability" TEXT NOT NULL DEFAULT 'Public');
     CREATE TABLE "Image" (
       "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "name" TEXT, "type" TEXT NOT NULL DEFAULT 'image',
       "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
@@ -201,6 +208,14 @@ describe('addCoreImage', () => {
     expect(await addCoreImage({ imageId: 1, level: 4, explanation: 'why' })).toMatchObject({
       ok: false,
       error: expect.stringContaining('review hold'),
+    });
+  });
+
+  it('refuses an image on a Private post, saying so', async () => {
+    await seedImage(1, { availability: 'Private' });
+    expect(await addCoreImage({ imageId: 1, level: 4, explanation: 'why' })).toMatchObject({
+      ok: false,
+      error: 'Image 1 is on a Private post, so Knights does not show it.',
     });
   });
 

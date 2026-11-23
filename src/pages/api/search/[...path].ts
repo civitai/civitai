@@ -1,5 +1,5 @@
 import type { NextApiRequest } from 'next';
-import { restModeratorViewer } from '~/server/auth/rest-viewer';
+import { restModeratorViewer, restOwnerOrModeratorViewer } from '~/server/auth/rest-viewer';
 import type * as z from 'zod';
 import {
   siteFacetSearchSchema,
@@ -23,6 +23,8 @@ import {
 import { applyApiRequestPolicy } from '~/server/middleware/api-request-policy';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { checkSiteSearchRateLimit } from '~/server/utils/site-search-rate-limit';
+import { isProfaneSearch, siteSearchQueries } from '~/server/services/profanity-list.service';
+import { SEARCH_REFUSED_CODE } from '~/shared/constants/search-refusal.constants';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 
@@ -80,6 +82,13 @@ export default MixedAuthEndpoint(
     }
 
     const features = getFeatureFlagsLazy({ user, req });
+    // civitai.com refuses a profane search. Verdict only: the response never names the words.
+    if (features.isGreen && (await isProfaneSearch(siteSearchQueries(req.body))))
+      return res.status(422).json({
+        message: 'This search is not allowed.',
+        code: SEARCH_REFUSED_CODE,
+        type: 'invalid_request',
+      });
     const isModerator = restModeratorViewer(req, user)?.isModerator;
     const browsingLevelCap = requestDomainBrowsingLevelCap({
       user,
@@ -87,7 +96,7 @@ export default MixedAuthEndpoint(
       req: req as NextApiRequest,
     });
     const viewer: SiteSearchViewer = {
-      userId: user?.id,
+      userId: restOwnerOrModeratorViewer(req, user)?.id,
       isModerator,
       browsingLevelCap,
       collectionImageLevel: collectionImageLevelFor({

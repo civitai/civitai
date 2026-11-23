@@ -60,7 +60,8 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "userId" int DEFAULT ${OWNER}, status text,
-      "publishedAt" timestamp, ingestion text DEFAULT 'Scanned', "bannerId" int
+      "publishedAt" timestamp, ingestion text DEFAULT 'Scanned', "bannerId" int,
+      availability "Availability" DEFAULT 'Public'
     );
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int DEFAULT ${OWNER}, status text,
@@ -106,6 +107,11 @@ beforeAll(async () => {
     INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES
       (301, 311, 'Published', now()), (302, 312, 'Draft', null), (303, null, 'Draft', null);
     INSERT INTO "ImageConnection" VALUES (313, 303, 'Article');
+    -- 308 and 309 follow the article availability rule: one by its cover, one by a content image.
+    INSERT INTO "Image" (id) VALUES (318), (319);
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt", availability) VALUES
+      (308, 318, 'Published', now(), 'Private'), (309, null, 'Published', now(), 'Private');
+    INSERT INTO "ImageConnection" VALUES (319, 309, 'Article');
 
     -- Models: 401 public, 402 Private, 403 draft. One version and owner post each.
     INSERT INTO "Model" (id, status, availability) VALUES
@@ -362,6 +368,8 @@ const hidden: [string, string, number, number][] = [
   ['a Private post', 'Post', 204, 214],
   ['a draft article', 'Article', 302, 312],
   ['a draft article with content images only', 'Article', 303, 313],
+  ['an article following the availability rule, by its cover', 'Article', 308, 318],
+  ['an article following the availability rule, by a content image', 'Article', 309, 319],
   ['a Private model', 'Model', 402, 432],
   ['a draft model', 'Model', 403, 433],
   ['a version of a Private model', 'ModelVersion', 412, 432],
@@ -715,5 +723,18 @@ describe('a blocked or ToS-violating bounty image', () => {
     it.each(['owner', 'moderator'] as const)('is kept for the %s', async (who) => {
       expect(await coverOf(entityType, entityId, viewers[who])).toBe(ownerSees);
     });
+  });
+});
+
+describe('a cover at the Blocked level with no block recorded', () => {
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, "blockedFor", "nsfwLevel") VALUES (3022, NULL, ${NsfwLevel.Blocked});
+      INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (3032, 3022, 'Published', now());
+    `);
+  });
+
+  it.each(['anonymous', 'stranger', 'owner'] as const)('is no cover for the %s', async (who) => {
+    expect(await coverOf('Article', 3032, viewers[who])).toBeNull();
   });
 });

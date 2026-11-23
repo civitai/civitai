@@ -127,7 +127,6 @@ const releasesFor = async (userId: number) =>
   ).rows;
 
 beforeAll(async () => {
-  delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
   db = await freshPglite();
   await db.exec(SCHEMA);
   await db.exec(RELEASE_TABLE_SQL);

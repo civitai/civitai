@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { FEEDBACK_SYNC_HOLD_KEY } from '@civitai/shared/feedback.constants';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
@@ -24,7 +25,9 @@ async function readRows(ids: number[]): Promise<FeedbackSyncRow[]> {
   return dbWrite.$queryRaw<FeedbackSyncRow[]>(Prisma.sql`
     SELECT f."id", f."area", f."status", f."handledById",
            CASE WHEN jsonb_typeof(f."context"->'hq') = 'object'
-             THEN f."context"->'hq'->>'id' END AS "hqTaskId"
+             THEN f."context"->'hq'->>'id' END AS "hqTaskId",
+           -- A hold counts only at status new: one left on a moved row (an older writer) never freezes it.
+           (f."status" = 'new' AND f."context" ? ${FEEDBACK_SYNC_HOLD_KEY}) AS "held"
     FROM "Feedback" f
     WHERE f."id" = ANY(${ids}::int[])
     ORDER BY f."id"

@@ -39,6 +39,7 @@ import { ArticleSort } from '~/server/common/enums';
 import {
   ArticleIngestionStatus,
   ArticleStatus,
+  Availability,
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
 
@@ -334,5 +335,48 @@ describe('getArticleById body images', () => {
     const { images } = await bodyFor(bodyImage(2, true), viewers['a stranger']);
     expect(images).toHaveLength(1);
     expect(images[0]).not.toHaveProperty('minor');
+  });
+});
+
+// Article reads follow the article availability rule: the owner and moderators read, any other
+// viewer gets the not-found answer.
+describe('getArticleById follows the article availability rule', () => {
+  const read = (availability: Availability, viewer: Viewer) => {
+    dbMock.dbRead.article.findFirst.mockResolvedValue({
+      id: 1,
+      userId: OWNER,
+      availability,
+      nsfwLevel: 1,
+      status: ArticleStatus.Published,
+      ingestion: ArticleIngestionStatus.Scanned,
+      tags: [],
+      content: '',
+      metadata: null,
+      cover: null,
+      coverImage: null,
+      bannerImage: null,
+    } as never);
+    dbMock.dbRead.imageConnection.findMany.mockResolvedValue([] as never);
+    return getArticleById({ id: 1, userId: viewer?.id, isModerator: viewer?.isModerator });
+  };
+
+  it.each(['a signed-out viewer', 'a stranger'] as const)(
+    'follows the article availability rule for %s: not found',
+    async (who) => {
+      await expect(read(Availability.Private, viewers[who])).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      });
+    }
+  );
+
+  it.each(['the owner', 'a moderator'] as const)(
+    'follows the article availability rule for %s: readable',
+    async (who) => {
+      await expect(read(Availability.Private, viewers[who])).resolves.toMatchObject({ id: 1 });
+    }
+  );
+
+  it('follows the article availability rule for a public article, signed out', async () => {
+    await expect(read(Availability.Public, undefined)).resolves.toMatchObject({ id: 1 });
   });
 });

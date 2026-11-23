@@ -92,6 +92,14 @@ type MissCompute struct {
 	// nil (no FEED_GO_CLICKHOUSE_HOST / FEED_GO_CLICKHOUSE_USERNAME) leaves those misses falling back
 	// (`metrics-miss`).
 	ClickHouse ClickHouse
+	// MetricsClickHouse is the dedicated ClickHouse for entity metrics (CLICKHOUSE_METRICS_*), and
+	// MetricsClickHouseOn the `image-metrics-dedicated-clickhouse` flag. The populate reads
+	// MetricsClickHouse instead of ClickHouse only while both are set and the flag reads on
+	// (metricsClickHouse); otherwise it reads ClickHouse, as before. Neither turns the computation on:
+	// without ClickHouse the misses fall back (`metrics-miss`) whatever these say. A failed read on
+	// it fails the lookup exactly as a failed ClickHouse read does; it is never retried on ClickHouse.
+	MetricsClickHouse   ClickHouse
+	MetricsClickHouseOn func() bool
 	// MetricsTimeout bounds one page's metrics lookup (FEED_GO_CLICKHOUSE_TIMEOUT_MS), held to at most
 	// metricsTimeoutMax (under Node's own budget); past it the page falls back (`metrics-miss-failed`).
 	MetricsTimeout time.Duration
@@ -479,7 +487,7 @@ func (s *Sources) fill(ctx context.Context, spec lookupSpec, ids []int, got map[
 			val, ttl = append(append(make(jspack.Obj, 0, len(rec)+1), rec...), jspack.KV{K: "cachedAt", V: now}), spec.ttl
 		}
 		b := jspack.Pack(val)
-		e, st := decodeBytes(b, 0, now)
+		e, st := decodeBytes(b, 0, now, orderedCaches[spec.key])
 		if st != stateEntry {
 			return fmt.Errorf("%s: a computed entry for %d does not decode", spec.cache, id)
 		}

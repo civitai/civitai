@@ -129,8 +129,8 @@ export type ResolveOptions = ResolveAttribution & {
    */
   direct?: boolean;
   /**
-   * How long the signed URL should stay valid. Sent to the storage resolver only; the resolver
-   * decides, and the legacy delivery-worker path ignores it, so read the returned expiry.
+   * Ignored today by both paths: the storage resolver sizes a B2 URL's lifetime to the file
+   * itself, and the legacy delivery-worker never reads it. Read the returned expiry.
    */
   expiresInSeconds?: number;
 };

@@ -1,0 +1,130 @@
+{
+  "vectors": [
+    {
+      "slug": "todo-app",
+      "collection": "notes",
+      "major": 1,
+      "urn": "urn:schema:apps.civitai.com:todo-app/notes@v1"
+    },
+    {
+      "slug": "a",
+      "collection": "x",
+      "major": 2,
+      "urn": "urn:schema:apps.civitai.com:a/x@v2"
+    },
+    {
+      "slug": "0",
+      "collection": "a_1",
+      "major": 10,
+      "urn": "urn:schema:apps.civitai.com:0/a_1@v10"
+    },
+    {
+      "slug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "collection": "cccccccccccccccccccccccccccccccc",
+      "major": 999999999,
+      "urn": "urn:schema:apps.civitai.com:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/cccccccccccccccccccccccccccccccc@v999999999"
+    },
+    {
+      "slug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "collection": "notes",
+      "major": 1,
+      "urn": null
+    },
+    {
+      "slug": "todo-app",
+      "collection": "ccccccccccccccccccccccccccccccccc",
+      "major": 1,
+      "urn": null
+    },
+    {
+      "slug": "todo-app",
+      "collection": "notes",
+      "major": 1000000000,
+      "urn": null
+    },
+    {
+      "slug": "todo-app",
+      "collection": "notes",
+      "major": 0,
+      "urn": null
+    },
+    {
+      "slug": "todo-app",
+      "collection": "notes",
+      "major": -1,
+      "urn": null
+    },
+    {
+      "slug": "Todo-App",
+      "collection": "notes",
+      "major": 1,
+      "urn": null
+    },
+    {
+      "slug": "-todo",
+      "collection": "notes",
+      "major": 1,
+      "urn": null
+    },
+    {
+      "slug": "todo-",
+      "collection": "notes",
+      "major": 1,
+      "urn": null
+    },
+    {
+      "slug": "todo/app",
+      "collection": "notes",
+      "major": 1,
+      "urn": null
+    },
+    {
+      "slug": "todo:app",
+      "collection": "notes",
+      "major": 1,
+      "urn": null
+    },
+    {
+      "slug": "todo@app",
+      "collection": "notes",
+      "major": 1,
+      "urn": null
+    },
+    {
+      "slug": "",
+      "collection": "notes",
+      "major": 1,
+      "urn": null
+    },
+    {
+      "slug": "todo-app",
+      "collection": "1notes",
+      "major": 1,
+      "urn": null
+    },
+    {
+      "slug": "todo-app",
+      "collection": "_notes",
+      "major": 1,
+      "urn": null
+    },
+    {
+      "slug": "todo-app",
+      "collection": "Notes",
+      "major": 1,
+      "urn": null
+    },
+    {
+      "slug": "todo-app",
+      "collection": "no-tes",
+      "major": 1,
+      "urn": null
+    },
+    {
+      "slug": "todo-app",
+      "collection": "",
+      "major": 1,
+      "urn": null
+    }
+  ]
+}

@@ -76,6 +76,7 @@ export const reviewQueueVisibleTargetSql = (levels: number) => Prisma.sql`(CASE
       AND rv_a."status" = ${ArticleStatus.Published}::"ArticleStatus"
       AND rv_a."publishedAt" IS NOT NULL
       AND rv_a."ingestion" = 'Scanned'::"ArticleIngestionStatus"
+      AND rv_a."availability" != 'Private'::"Availability"
       AND (rv_a."nsfwLevel" & ${levels}) != 0
   )
   ELSE false
@@ -131,8 +132,10 @@ export const pendingViewerImageSql = ({
 }) => {
   const own = Prisma.sql`i."userId" = ${userId}`;
   const review = reviewCollectionId ? { collectionId: reviewCollectionId, userId } : undefined;
+  // `userId` must be the id of a request that carries the owner's view: their held images show.
   const others = pendingOthersImageConditions(userId, {
     acceptableMinorAlso: review ? reviewSubmissionSql(review) : undefined,
+    ownerSeesHeld: true,
   });
   return Prisma.sql`(${Prisma.join(others, ' AND ')}
     AND ((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND ${own}) OR (p."collectionId" IS NOT NULL AND i."nsfwLevel" NOT IN (0, ${

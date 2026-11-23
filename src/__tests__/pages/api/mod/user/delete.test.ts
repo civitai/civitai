@@ -62,7 +62,7 @@ vi.mock('~/server/services/moderator-grants', () => ({
   hasModeratorGrant: (...a: unknown[]) => hasModeratorGrant(...a),
 }));
 
-import handler from '~/pages/api/mod/user/delete';
+import handler from '~/server/api-routes/mod/user/delete';
 import { LegalHoldError, LegalHoldUnconfirmedError } from '~/server/services/legal-hold.service';
 import {
   GENERIC_SERVER_ERROR_MESSAGE,
@@ -188,6 +188,7 @@ describe('user.delete — it delegates, it does not reimplement', () => {
       removeImages: false,
       // Defaulted, not absent: support-led erasure keeps app data unless it asks.
       removeAppData: false,
+      actorId: 990000007,
     });
     expect(body).toEqual({ deleted: true, userId: TARGET, auditRecorded: true });
   });
@@ -205,6 +206,7 @@ describe('user.delete — it delegates, it does not reimplement', () => {
       removeModels: undefined,
       removeImages: false,
       removeAppData: true,
+      actorId: 990000007,
     });
   });
 
@@ -233,6 +235,7 @@ describe('user.delete — it delegates, it does not reimplement', () => {
       // Defaulted, not absent — see the grace-period case below.
       removeImages: false,
       removeAppData: false,
+      actorId: 990000007,
     });
   });
 

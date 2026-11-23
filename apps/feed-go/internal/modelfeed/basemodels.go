@@ -23,6 +23,9 @@ type baseModelTable struct {
 	Generation map[string][]string `json:"generation"`
 	// ModelLocked is the names isModelLockedBaseModel answers true for.
 	ModelLocked []string `json:"modelLocked"`
+	// GenerationDisabled is the names isBaseModelGenerationDisabled answers true for (a disabled base
+	// model, or any disabled generation override on it).
+	GenerationDisabled []string `json:"generationDisabled"`
 	// MatureRestrictedModels is the lowercased names isMatureRestricted(name, 'models') is true for.
 	MatureRestrictedModels []string `json:"matureRestrictedModels"`
 	Levels                 struct {
@@ -44,6 +47,7 @@ var (
 	modelTypes       = map[string]bool{}
 	generationTypes  = map[string]map[string]bool{}
 	modelLocked      = map[string]bool{}
+	generationOff    = map[string]bool{}
 	matureRestricted = map[string]bool{}
 )
 
@@ -66,6 +70,9 @@ func init() {
 	}
 	for _, n := range table.ModelLocked {
 		modelLocked[n] = true
+	}
+	for _, n := range table.GenerationDisabled {
+		generationOff[n] = true
 	}
 	for _, n := range table.MatureRestrictedModels {
 		matureRestricted[n] = true

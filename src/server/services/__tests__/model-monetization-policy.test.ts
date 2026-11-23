@@ -92,11 +92,17 @@ describe('applyModelMonetizationPolicy', () => {
 // So this guard is structural, and it fails on the omission itself; the same guard the Creator
 // Studio bulk action needed for the same reason.
 describe('upsertModelVersion consumes the policy result', () => {
-  const source = () =>
-    readFileSync(
+  // Scoped to upsertModelVersion's body, so an edit elsewhere in the file can neither hide nor supply a needle.
+  const source = () => {
+    const file = readFileSync(
       fileURLToPath(new URL('../model-version.service.ts', import.meta.url)),
       'utf8'
-    ).slice(0, 40_000);
+    );
+    const start = file.indexOf('export const upsertModelVersion = async');
+    expect(start).toBeGreaterThan(-1);
+    const end = file.indexOf('\nexport ', start + 1);
+    return file.slice(start, end === -1 ? undefined : end);
+  };
 
   it.each([
     // B-2: the goal is written on its own arm, so a gate-only strip leaves it funding nothing.

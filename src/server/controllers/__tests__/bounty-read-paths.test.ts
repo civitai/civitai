@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { imageTagsCache } from '~/server/redis/caches';
 import type * as BountyVisibility from '~/server/services/bounty-visibility';
 import type * as BountyEntryService from '~/server/services/bountyEntry.service';
 import type * as BountyBenefactorService from '~/server/services/bountyBenefactor.service';
@@ -15,6 +18,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { bountyNsfwFlagLevel } from '~/server/services/bounty-rated-level';
 import { upsertBountyEntryInputSchema } from '~/server/schema/bounty-entry.schema';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const {
   mockAssert,
@@ -568,6 +572,7 @@ describe('an nsfw-flagged bounty in the feed', () => {
         hiddenLoading: false,
         moderatedTags: [],
         systemHiddenTags: new Map(),
+        moderatedHiddenImages: new Map(),
       },
       browsingLevel,
       currentUser: { id: 6 } as never,
@@ -835,5 +840,125 @@ describe('bounty images and browsing-tag rules', () => {
     expect(mockImagesByEntity).toHaveBeenCalledWith(
       expect.objectContaining({ id: 3, include: ['tags'] })
     );
+  });
+});
+
+// A session, or a full-access key, carries the owner's view: the entry's own held images show to
+// their uploader. A scoped key or an app token does not.
+describe("bounty entry images and the owner's view", () => {
+  const OWNER = 5;
+  const session = { user: { id: OWNER }, ...uncapped } as never;
+  const scopedKey = {
+    user: { id: OWNER },
+    apiKeyId: 7,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 7 },
+    tokenScope: TokenScope.MediaRead,
+    ...uncapped,
+  } as never;
+
+  beforeEach(() => {
+    mockAssert.mockResolvedValue(undefined);
+    mockGetEntries.mockResolvedValue([{ id: 3, user: { id: OWNER } }] as never);
+  });
+
+  it.each([
+    [
+      'getBountyEntries',
+      (ctx: never) => getBountyEntriesHandler({ input: { id: 9 } as never, ctx }),
+    ],
+    ['getBountyEntry', (ctx: never) => getBountyEntryHandler({ input: { id: 3 }, ctx })],
+  ] as const)('%s asks for the owner view on a session only', async (_name, call) => {
+    await call(session);
+    expect(mockImagesByEntity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ userId: OWNER, ownerSeesHeld: true })
+    );
+    await call(scopedKey);
+    expect(mockImagesByEntity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ userId: OWNER, ownerSeesHeld: false })
+    );
+  });
+});
+
+// The same two reads with getImagesByEntity's real query on an in-process Postgres: an entry's own
+// held image reaches its uploader on a session, not on a MediaRead-scoped key, never a stranger.
+describe("bounty entry images and the owner's view, against the real image query", () => {
+  const OWNER = 5;
+  const CLEAN = 101;
+  const HELD = 106;
+  const session = { user: { id: OWNER }, ...uncapped } as never;
+  const scopedKey = {
+    user: { id: OWNER },
+    apiKeyId: 7,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 7 },
+    tokenScope: TokenScope.MediaRead,
+    ...uncapped,
+  } as never;
+  const otherUser = { user: { id: 20 }, ...uncapped } as never;
+  let pg: PGlite;
+
+  beforeAll(async () => {
+    pg = new PGlite();
+    await pg.exec(`
+      CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+      CREATE TABLE "Image" (
+        id int PRIMARY KEY, name text, url text, "nsfwLevel" int DEFAULT 1, width int, height int,
+        hash text, "hideMeta" boolean DEFAULT false, meta jsonb, "createdAt" timestamp DEFAULT now(),
+        "mimeType" text, type text DEFAULT 'image', metadata jsonb, "scannedAt" timestamp,
+        "needsReview" text, "blockedFor" text, "userId" int DEFAULT ${OWNER}, index int DEFAULT 0,
+        poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
+        "modelRestricted" boolean NOT NULL DEFAULT false,
+        "acceptableMinor" boolean NOT NULL DEFAULT false
+      );
+      CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+      INSERT INTO "Image" (id, "needsReview", index) VALUES (${CLEAN}, NULL, 0), (${HELD}, 'csam', 1);
+      INSERT INTO "ImageConnection" VALUES (${CLEAN}, 3, 'BountyEntry'), (${HELD}, 3, 'BountyEntry');
+    `);
+  });
+  afterAll(() => pg.close());
+
+  beforeEach(async () => {
+    const actual = await vi.importActual<typeof ImageService>('~/server/services/image.service');
+    mockImagesByEntity.mockImplementation(actual.getImagesByEntity as never);
+    (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      pgliteRaw(pg).queryRaw
+    );
+    // The entry's image tags are a cache read beside the image query; they are not under test.
+    vi.spyOn(imageTagsCache, 'fetch').mockResolvedValue({});
+    mockAssert.mockResolvedValue(undefined);
+    mockGetEntries.mockResolvedValue([{ id: 3, user: { id: OWNER } }] as never);
+    mockGetEntryById.mockResolvedValue({ id: 3, user: { id: OWNER } } as never);
+  });
+  afterEach(() => {
+    mockImagesByEntity.mockReset().mockResolvedValue([]);
+    vi.restoreAllMocks();
+  });
+
+  const entryIdsFor = async (ctx: never) =>
+    ((await getBountyEntryHandler({ input: { id: 3 }, ctx })).images as { id: number }[])
+      .map((i) => i.id)
+      .sort();
+  const entriesIdsFor = async (ctx: never) =>
+    (
+      ((await getBountyEntriesHandler({ input: { id: 9 } as never, ctx })).items[0]?.images ??
+        []) as { id: number }[]
+    )
+      .map((i) => i.id)
+      .sort();
+
+  describe.each([
+    ['getBountyEntry', entryIdsFor],
+    ['getBountyEntries', entriesIdsFor],
+  ] as const)('%s', (_name, imageIds) => {
+    it('shows the held image to its uploader on a session', async () => {
+      expect(await imageIds(session)).toEqual([CLEAN, HELD]);
+    });
+    it('keeps it from its uploader on a MediaRead-scoped key', async () => {
+      expect(await imageIds(scopedKey)).toEqual([CLEAN]);
+    });
+    it('keeps it from another signed-in user', async () => {
+      expect(await imageIds(otherUser)).toEqual([CLEAN]);
+    });
   });
 });

@@ -79,11 +79,6 @@ vi.mock('~/server/utils/distributed-lock', () => ({
   withDistributedLock: mockWithDistributedLock,
 }));
 
-vi.mock('~/server/common/enums', () => ({
-  SignalMessages: { CryptoDepositUpdate: 'crypto-deposit:update' },
-  NotificationCategory: { Buzz: 'buzz' },
-}));
-
 vi.mock('~/server/common/constants', () => ({
   CacheTTL: { sm: 180, hour: 3600 },
 }));

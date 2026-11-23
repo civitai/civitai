@@ -23,6 +23,7 @@ import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
 import { classifyBlockOutput, isUnrestrictedOutput } from './block-output-restriction';
 import type { BlockOutputWorkflowFacts } from './block-output-restriction';
 import {
+  applyServingOffRules,
   applyServingRules,
   restrictWhileServingUnknown,
   isPrivateGenerationWorkflow,
@@ -346,7 +347,12 @@ function classifyOutputs(
     }
     return view.serving
       ? applyServingRules(output, m, { neverRatedVideoStep: neverRatedVideo })
-      : output;
+      : applyServingOffRules(
+          output,
+          m,
+          { neverRatedVideoStep: neverRatedVideo },
+          { neverRated: m.neverRated === true }
+        );
   });
 }
 

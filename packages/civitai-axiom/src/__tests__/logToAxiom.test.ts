@@ -560,6 +560,90 @@ describe('logToAxiom injected sink (deps.emitLog)', () => {
     expect(h.ingestEvents).toHaveBeenCalledTimes(1);
   });
 
+  describe('the logger’s own reports', () => {
+    const UNPROVISIONED = 'fixture-unprovisioned';
+    type SinkCall = { body: string; data: Record<string, unknown>; datastream?: string };
+    const reportCalls = (calls: SinkCall[]) =>
+      calls.filter((c) => String(c.data.name).startsWith('axiom-'));
+    const stderrReports = () =>
+      (errorSpy.mock.calls as unknown[][])
+        .map((c) => c[0] as string)
+        .filter((line) => line.startsWith('{"name":"axiom-'));
+
+    async function run(
+      ingest: 'down' | 'recovers' | 'unprovisioned',
+      emitLog: (body: string, data: Record<string, unknown>, datastream?: string) => void
+    ) {
+      const logger = createAxiomLogger(PROD_CONFIGURED, { emitLog });
+      const datastream = ingest === 'unprovisioned' ? UNPROVISIONED : undefined;
+      h.ingestEvents.mockRejectedValue(new Error('down'));
+      await logger.logToAxiom(ERR, datastream);
+      await logger.flush();
+      if (ingest === 'recovers') {
+        h.ingestEvents.mockResolvedValue(undefined);
+        await logger.logToAxiom(ERR);
+        await logger.flush();
+      }
+      return logger;
+    }
+
+    beforeEach(() => {
+      (globalThis as Record<symbol, unknown>)[
+        Symbol.for('@civitai/axiom.unprovisionedDatastreamsReported')
+      ] = new Set<string>();
+    });
+
+    it.each([
+      ['down', ['axiom-ingest-failed']],
+      ['recovers', ['axiom-ingest-failed', 'axiom-ingest-recovered']],
+      ['unprovisioned', ['axiom-datastream-unprovisioned']],
+    ] as const)(
+      'ingest %s: each report reaches the sink with the stderr line as its body',
+      async (ingest, names) => {
+        const calls: SinkCall[] = [];
+        await run(ingest, (body, data, datastream) => calls.push({ body, data, datastream }));
+
+        const reports = reportCalls(calls);
+        expect(reports.map((c) => c.data.name)).toEqual(names);
+        expect(reports.map((c) => c.body)).toEqual(stderrReports());
+        for (const c of reports) {
+          expect(c.datastream).toBe('civitai-errors');
+          expect(JSON.parse(c.body)).not.toHaveProperty('_axiom');
+        }
+      }
+    );
+
+    it('a report adds no Axiom write, and a sink that logs through the logger still terminates', async () => {
+      h.ingestEvents.mockRejectedValue(new Error('down'));
+      let reentries = 0;
+      const deps: { emitLog?: (body: string, data: Record<string, unknown>) => void } = {};
+      const logger = createAxiomLogger(PROD_CONFIGURED, deps);
+      // The worst sink: it logs every report it receives back through the logger.
+      deps.emitLog = (_body, data) => {
+        if (!String(data.name).startsWith('axiom-') || ++reentries > 50) return;
+        void logger.logToAxiom({ name: 'sink-echo', of: data.name });
+      };
+
+      await logger.logToAxiom(ERR);
+      for (let i = 0; i < 5; i++) await logger.flush();
+
+      // One report for the outage; its echo is one more event whose own failure is not reported.
+      expect(stderrReports()).toHaveLength(1);
+      expect(reentries).toBe(1);
+      expect(h.ingestEvents).toHaveBeenCalledTimes(2);
+    });
+
+    it('a sink that throws on a report does not reach the caller or the stderr line', async () => {
+      const logger = await run('down', (_body, data) => {
+        if (String(data.name).startsWith('axiom-')) throw new Error('sink exploded');
+      });
+
+      expect(stderrReports().map((l) => JSON.parse(l).name)).toEqual(['axiom-ingest-failed']);
+      expect(h.ingestEvents).toHaveBeenCalledTimes(1);
+      await expect(logger.logToAxiom(ERR)).resolves.toBeUndefined();
+    });
+  });
+
   it('is NOT called outside prod, where no structured line is written either', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     let called = 0;

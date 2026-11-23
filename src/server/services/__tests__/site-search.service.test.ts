@@ -764,3 +764,147 @@ describe('user avatars in hits', () => {
     expect(userOf(index, hit)).toEqual(userOf(index, doc));
   });
 });
+
+describe('a models query that lists the attributes it wants', () => {
+  const FACED = 1;
+  const UNFACED = 2;
+  const docs: Record<string, unknown>[] = [
+    { id: FACED, name: 'Red Title', sfwName: 'Com Title', type: 'LORA' },
+    { id: UNFACED, name: 'Plain Title', type: 'LORA' },
+  ];
+  type Query = {
+    attributesToRetrieve?: string[];
+    attributesToHighlight?: string[];
+    attributesToCrop?: string[];
+  };
+  const pick = (doc: Record<string, unknown>, attributes: string[] | undefined) =>
+    !attributes || attributes.includes('*')
+      ? { ...doc }
+      : Object.fromEntries(attributes.filter((a) => a in doc).map((a) => [a, doc[a]]));
+  // Meilisearch as measured on v1.11: a hit holds only the retrieved attributes, and `_formatted`
+  // holds the retrieved, highlighted and cropped ones together.
+  const hitsFor = (query: Query) =>
+    docs.map((doc) => {
+      const hit: Record<string, unknown> = pick(doc, query.attributesToRetrieve);
+      const formattedOnly = [
+        ...(query.attributesToHighlight ?? []),
+        ...(query.attributesToCrop ?? []),
+      ];
+      if (formattedOnly.length)
+        hit._formatted = pick(
+          doc,
+          query.attributesToRetrieve?.includes('*') || !query.attributesToRetrieve
+            ? undefined
+            : [...query.attributesToRetrieve, ...formattedOnly]
+        );
+      return hit;
+    });
+  const sent: unknown[] = [];
+  const serve = () =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: { body: string }) => {
+        const body = JSON.parse(init.body);
+        sent.push(body);
+        const response = String(url).endsWith('/multi-search')
+          ? { results: body.queries.map((q: Query) => ({ hits: hitsFor(q) })) }
+          : { hits: hitsFor(body) };
+        return new Response(JSON.stringify(response), { status: 200 });
+      })
+    );
+  const comViewer: SiteSearchViewer = {
+    showSfwFace: true,
+    browsingLevelCap: sfwBrowsingLevelsFlag,
+  };
+  const redViewer: SiteSearchViewer = { showSfwFace: false };
+  const byId = (hits: unknown) =>
+    new Map((hits as Record<string, unknown>[]).map((hit) => [hit.id ?? hit, hit]));
+  const indexHits = async (query: Query, viewer = comViewer) => {
+    const { body } = await siteIndexSearch(MODELS_SEARCH_INDEX, { q: 'Title', ...query }, viewer);
+    return (body as { hits: Record<string, unknown>[] }).hits;
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    sent.length = 0;
+  });
+
+  it('a .com viewer gets the .com title, and an unfaced model keeps its own', async () => {
+    serve();
+    const hits = byId(await indexHits({ attributesToRetrieve: ['id', 'name'] }));
+    expect(hits.get(FACED)).toEqual({ id: FACED, name: 'Com Title' });
+    expect(hits.get(UNFACED)).toEqual({ id: UNFACED, name: 'Plain Title' });
+  });
+
+  it('the same in a multi-search', async () => {
+    serve();
+    const { body } = await siteMultiSearch(
+      {
+        queries: [
+          { indexUid: MODELS_SEARCH_INDEX, q: 'Title', attributesToRetrieve: ['id', 'name'] },
+        ],
+      },
+      comViewer
+    );
+    const hits = byId((body as { results: { hits: unknown }[] }).results[0].hits);
+    expect(hits.get(FACED)).toEqual({ id: FACED, name: 'Com Title' });
+    expect(hits.get(UNFACED)).toEqual({ id: UNFACED, name: 'Plain Title' });
+  });
+
+  it('a title asked for only as a highlight comes back as the .com title', async () => {
+    serve();
+    const hits = byId(
+      await indexHits({ attributesToRetrieve: ['id'], attributesToHighlight: ['name'] })
+    );
+    expect(hits.get(FACED)).toEqual({ id: FACED, _formatted: { id: FACED, name: 'Com Title' } });
+    expect(hits.get(UNFACED)).toEqual({
+      id: UNFACED,
+      _formatted: { id: UNFACED, name: 'Plain Title' },
+    });
+  });
+
+  it('a title asked for only as a crop comes back as the .com title', async () => {
+    serve();
+    const hits = byId(
+      await indexHits({ attributesToRetrieve: ['id'], attributesToCrop: ['name'] })
+    );
+    expect(hits.get(FACED)).toEqual({ id: FACED, _formatted: { id: FACED, name: 'Com Title' } });
+    expect(hits.get(UNFACED)).toEqual({
+      id: UNFACED,
+      _formatted: { id: UNFACED, name: 'Plain Title' },
+    });
+  });
+
+  it('an empty list still gets empty hits', async () => {
+    serve();
+    expect(await indexHits({ attributesToRetrieve: [] })).toEqual([{}, {}]);
+  });
+
+  it('a hit that did not ask for the title is not given one', async () => {
+    serve();
+    const hits = await indexHits({ attributesToRetrieve: ['id', 'type'] });
+    expect(hits).toEqual([
+      { id: FACED, type: 'LORA' },
+      { id: UNFACED, type: 'LORA' },
+    ]);
+  });
+
+  it('a .red viewer keeps the .red title and is not sent the .com one', async () => {
+    serve();
+    const hits = await indexHits({ attributesToRetrieve: ['id', 'name'] }, redViewer);
+    expect(byId(hits).get(FACED)).toEqual({ id: FACED, name: 'Red Title' });
+    expect(JSON.stringify(hits)).not.toContain('Com Title');
+  });
+
+  it('other indexes are queried with the list as sent', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: { body: string }) => {
+        sent.push(JSON.parse(init.body));
+        return new Response(JSON.stringify({ hits: [] }), { status: 200 });
+      })
+    );
+    await siteIndexSearch(TOOLS_SEARCH_INDEX, { q: '', attributesToRetrieve: ['id'] }, comViewer);
+    expect(sent).toEqual([expect.objectContaining({ attributesToRetrieve: ['id'] })]);
+  });
+});

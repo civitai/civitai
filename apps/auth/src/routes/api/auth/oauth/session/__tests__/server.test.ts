@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 
 // Pins the missing-XFF regression fix on the first-party session-exchange endpoint. Under internal routing
 // (AUTH_HUB_INTERNAL_URL → in-cluster ClusterIP) the spoke's server-to-server POST bypasses Traefik and arrives
@@ -26,7 +27,10 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('$lib/server/auth/request', () => ({ getClientIp: h.getClientIp }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: h.checkOAuthRateLimit }));
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
+  checkOAuthRateLimit: h.checkOAuthRateLimit,
+}));
 vi.mock('$lib/server/oauth/model', () => ({
   oauthModel: {
     getAuthorizationCode: h.getAuthorizationCode,

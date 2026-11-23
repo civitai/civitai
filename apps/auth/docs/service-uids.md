@@ -7,6 +7,7 @@ introspection answers with it. A uid names one service everywhere, so every allo
 - Never reuse a uid, including one whose service has been retired.
 - Only hub admins set uids, in the deploy config. Add the row here in the same change.
 
-| uid   | app          | since      |
-| ----- | ------------ | ---------- |
-| -1001 | image cacher | 2026-11-15 |
+| uid   | app                                                        | since      |
+| ----- | ---------------------------------------------------------- | ---------- |
+| -1001 | image cacher                                               | 2026-11-15 |
+| -1101 | app-index-go service identity on the registry-exp resource | 2026-11-22 |

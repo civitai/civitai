@@ -14,8 +14,13 @@ export type OAuthEventType =
   | 'token.issued'
   | 'token.refreshed'
   | 'token.revoked'
+  // A rotated (tombstoned) refresh token was presented again; its chain was revoked (offline-grant.ts).
+  | 'token.reuse_detected'
   | 'origin.rejected'
   | 'worker.token.issued'
+  // The block token exchange (block-exchange.ts): a registry token issued, or a request refused.
+  | 'block_exchange.issued'
+  | 'block_exchange.refused'
   | 'invite.sent'
   | 'invite.used';
 

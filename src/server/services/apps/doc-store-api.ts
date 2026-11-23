@@ -34,11 +34,13 @@
 // merge-patch of `data` is reserved for later. The deprecated routes answer exactly as before,
 // with `Deprecation` and `Link` headers (`LEGACY_TALLY_HEADERS`); no `Sunset` is set yet.
 //
-// IMPORTS. Every collection route takes an optional `?from=<source blockId>`: the call then runs
-// in that SOURCE app, as the same viewer, through an import the caller's manifest declares
-// (`resolveImportAccess` in `doc-store-access.ts`). The call is first charged to the CONSUMER's
-// read bucket for the viewer, before it is resolved. Everything after that — gates, budgets, rate
-// limits, moderation, ceilings — reads the source's access, so it applies as the source.
+// IMPORTS. Every collection route takes an optional `?from=<source blockId>`. A `from` naming the
+// token's OWN app (its blockId) is an own call, exactly as if `from` were omitted: same access,
+// rate bucket and response (`otherAppSource`). Any other `from` runs the call in that SOURCE app,
+// as the same viewer, through an import the caller's manifest declares (`resolveImportAccess` in
+// `doc-store-access.ts`). Such a call is first charged to the CONSUMER's read bucket for the
+// viewer, before it is resolved. Everything after that — gates, budgets, rate limits, moderation,
+// ceilings — reads the source's access, so it applies as the source.
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { sessionClient } from '~/server/auth/session-client';
@@ -54,10 +56,12 @@ import type {
 import {
   blockClaimsAppLabel,
   markBlockRequestReadMiss,
+  recordAppStorageRequest,
   recordDocStoreError,
   recordDocStoreUnchangedWrite,
   recordStorageTallyOp,
   type AppBlockRefusalBucket,
+  type AppStorageVia,
   type DocStoreEndpoint,
   type StorageTallyOp,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -86,6 +90,10 @@ import {
   type StorageAccess,
 } from '~/server/services/apps/doc-store-access';
 import { getDocStore } from '~/server/services/apps/doc-store.instance';
+import {
+  shadowAppDataList,
+  type AppDataShadowInput,
+} from '~/server/services/apps/app-data-shadow.service';
 import { gateHook } from '~/server/services/apps/doc-store-hook';
 import { assertOwnedModelVersions } from '~/server/services/apps/doc-store-ownership';
 import { validateDocAgainstCollectionSchema } from '~/server/services/apps/doc-store-schema';
@@ -97,6 +105,7 @@ import type {
   DocRatingStatus,
   DocRecord,
   DocStoreErrorCode,
+  WrittenDocRecord,
 } from '~/server/services/apps/doc-store.types';
 import { withDocLevelGate } from '~/server/services/apps/doc-levels';
 import {
@@ -248,7 +257,14 @@ function pathSegments(req: NextApiRequest): string[] {
 // The error envelope — the ONE place a code becomes a status
 // ---------------------------------------------------------------------------
 
-export type StorageApiCode = DocStoreErrorCode | 'internal_error' | 'method_not_allowed';
+export type StorageApiCode =
+  | DocStoreErrorCode
+  | 'internal_error'
+  | 'method_not_allowed'
+  /** The signed internal route refuses an import (`from` naming another app), before any write. */
+  | 'not_supported_here'
+  /** The signed internal route: the request named a schema `major` that is not the current one. */
+  | 'stale_major';
 
 export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   invalid_request: 400,
@@ -281,6 +297,8 @@ export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   service_unavailable: 503,
   internal_error: 500,
   method_not_allowed: 405,
+  not_supported_here: 501,
+  stale_major: 409,
 };
 
 export type StorageErrorBody = {
@@ -1136,10 +1154,14 @@ async function run(
   body: unknown,
   route: OperationRoute,
   access: StorageAccess,
-  store: DocStore
+  store: DocStore,
+  via: AppStorageVia
 ): Promise<Reply> {
   const { ctx } = access;
   const ok = (body: unknown, status = 200): Reply => ({ status, body });
+  // The internal route's answers add where each write sits in the app namespace's write order
+  // (WRITES-DESIGN.md, "Its answer adds what the overlay needs"); the public route's are unchanged.
+  const service = via === 'service';
   // Info is signed-in only: its body carries the app-wide usage (documents, bytes) — the app's
   // SHARED documents, which is what `appBytes`/`appDocs` bound; private documents count toward
   // the viewer's own usage and `viewerBytes`/`viewerDocs` only (`DocStoreUsage`).
@@ -1189,6 +1211,10 @@ async function run(
   const coll = collectionOf(access, route.collection);
   const decl = coll.config;
   const shared = decl.visibility === 'shared';
+  const written = async (doc: WrittenDocRecord) => {
+    const presented = await presentDoc(doc, decl);
+    return service ? { ...presented, seq: doc.seq, recordId: doc.recordId } : presented;
+  };
 
   switch (route.op) {
     case 'list': {
@@ -1256,7 +1282,7 @@ async function run(
           });
           landed();
           afterCommit(doc.key);
-          return ok(await presentDoc(doc, decl), 201);
+          return ok(await written(doc), 201);
         }
         if (putIn && route.op === 'put') {
           const { data, ifVersion } = putIn;
@@ -1269,7 +1295,7 @@ async function run(
           });
           landed();
           afterCommit();
-          return ok(await presentDoc(doc, decl));
+          return ok(await written(doc));
         }
         if (route.op !== 'delete') throw new Error('doc-store-api: unreachable write op');
         const result = await store.delete(ctx, coll, route.key, {
@@ -1286,7 +1312,9 @@ async function run(
             authorUserId: uid,
           });
         }
-        return ok(result);
+        // `{ deleted }` only on the public route: the tombstone's `seq` is the internal route's.
+        if (service && result.deleted) return ok({ deleted: true, seq: result.seq });
+        return ok({ deleted: result.deleted });
       };
       if (!shared || route.op === 'delete') {
         await charge('write', access, req);
@@ -1310,7 +1338,7 @@ async function run(
         });
         if (stored) {
           recordDocStoreUnchangedWrite(requestAppLabel(req));
-          return ok(await presentDoc(stored, decl));
+          return ok(await written(stored));
         }
       }
       return withSharedWriteBudget(access, uid, (landed) => write(user, landed));
@@ -1345,7 +1373,16 @@ async function run(
         hookPass: grant?.pass,
       });
       afterCommit();
-      return ok(counted);
+      // `{ value }` only on the public route: the mark sequence (and a creating increment's `seq`)
+      // are the internal route's.
+      if (service) {
+        return ok({
+          value: counted.value,
+          ...(counted.markSeq !== undefined ? { markSeq: counted.markSeq } : {}),
+          ...(counted.seq !== undefined ? { seq: counted.seq } : {}),
+        });
+      }
+      return ok({ value: counted.value });
     }
     case 'mark':
     case 'unmark': {
@@ -1372,11 +1409,12 @@ async function run(
         route.op === 'mark'
           ? await store.mark(ctx, coll, route.key, route.name, opts)
           : await store.unmark(ctx, coll, route.key, route.name, opts);
-      // A report count is never exposed.
+      // A report count is never exposed. The mark sequence is the internal route's only.
+      const markSeq = service && result.markSeq !== undefined ? { markSeq: result.markSeq } : {};
       return ok(
         route.name === REPORT_MARK
-          ? { marked: result.marked }
-          : { marked: result.marked, count: result.count }
+          ? { marked: result.marked, ...markSeq }
+          : { marked: result.marked, count: result.count, ...markSeq }
       );
     }
     case 'publish':
@@ -1580,6 +1618,18 @@ function deleteIfVersion(req: NextApiRequest): number | undefined {
 }
 
 const FROM_PARAM = 'from';
+/** The schema major a write names, on the internal route only (WRITES-DESIGN.md, D2). */
+const MAJOR_PARAM = 'major';
+
+/** The named `major`, or null when none is named. */
+function namedMajorOf(req: NextApiRequest): number | null {
+  const raw = req.query[MAJOR_PARAM];
+  if (raw === undefined) return null;
+  if (Array.isArray(raw) || !/^[1-9][0-9]{0,5}$/.test(raw)) {
+    throw invalid(`${MAJOR_PARAM} must be a positive integer, given once`);
+  }
+  return Number(raw);
+}
 
 const noSuchRoute = () => new DocStoreError('not_found', 'no such storage route');
 
@@ -1589,6 +1639,19 @@ function importSourceOf(req: NextApiRequest): string | null {
   if (raw === undefined) return null;
   if (Array.isArray(raw)) throw invalid(`${FROM_PARAM} must be given once`);
   return raw;
+}
+
+/**
+ * The `from` of a call that reaches ANOTHER app, or null for an own call. `from` is an app's
+ * blockId (`APP_STORAGE_IMPORT_FROM_RE`), and a `from` naming the token's own app (`own.blockId`,
+ * the blockId the token was issued for) is an own call: identical to omitting it, with the same
+ * access, scopes, rate bucket and response, for every token kind. An app never imports from itself
+ * (the manifest validator and the read predicate both refuse it), so no import is lost. A caller
+ * that always names its source (the shared app-data service's REST fallback) then reads the app it
+ * names, whichever app the token is.
+ */
+function otherAppSource(from: string | null, own: Pick<StorageAccess, 'blockId'>): string | null {
+  return from !== null && from === own.blockId ? null : from;
 }
 
 /**
@@ -1603,14 +1666,20 @@ function importOpOf(route: Exclude<StorageRoute, { op: 'info' }>): ImportOp {
   return route.op === 'delete' || route.op === 'unpublish' ? 'delete' : 'author';
 }
 
-/** Query parameters other than the route's own are refused everywhere except a list. */
-function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute): void {
+/**
+ * Query parameters other than the route's own are refused everywhere except a list. On the
+ * internal route `info` also takes `from`: app-data-go names the app on every call, and the
+ * handler refuses it unless it is the token's own (`otherAppSource`).
+ */
+function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute, via: AppStorageVia): void {
   if (route.op === 'list') return;
   const own = route.op === 'delete' ? ['path', 'ifVersion'] : ['path'];
   // A publish names its source in the BODY and runs in this app only: no `?from=` import.
   const allowed =
-    route.op === 'info' || route.op === 'publish' || route.op === 'unpublish'
+    (route.op === 'info' && via === 'direct') || route.op === 'publish' || route.op === 'unpublish'
       ? own
+      : via === 'service' && route.op !== 'info'
+      ? [...own, FROM_PARAM, MAJOR_PARAM]
       : [...own, FROM_PARAM];
   const stray = Object.keys(req.query).find((k) => !allowed.includes(k));
   if (stray) throw invalid(`unknown query parameter ${stray}`);
@@ -1620,12 +1689,93 @@ function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute): void {
 // The handler
 // ---------------------------------------------------------------------------
 
-export type StorageApiDeps = { store: () => DocStore };
+export type StorageApiDeps = {
+  /** The store (default: the process store, `getDocStore`). */
+  store?: () => DocStore;
+  /**
+   * Handed every list the route answered 200, after the response is sent (`app-data-shadow.service.ts`,
+   * the shared app-data service's shadow read). Unset: the process shadow. It decides on its own
+   * whether to read anything; whatever it does or throws, the response is already the store's.
+   */
+  shadow?: (input: AppDataShadowInput) => void;
+  /**
+   * The route this handler serves (`app_storage_requests_total{via}`). `direct`, the default: the
+   * public route. `service`: the signed internal route app-data-go forwards to
+   * (`doc-store-internal-route.ts`), which serves only `SERVICE_OPS`, refuses every import
+   * `501 not_supported_here`, and answers each write's `seq` / `recordId` / `markSeq`.
+   */
+  via?: AppStorageVia;
+};
+
+/**
+ * What the internal route serves: the writes, the tallies and `info` (WRITES-DESIGN.md, "the write
+ * verbs and info only"). Reads stay on the streams. Publish and unpublish wait for the store to
+ * answer each copied key's `seq`; until then they are not routes there.
+ */
+const SERVICE_OPS: ReadonlySet<StorageRoute['op']> = new Set<StorageRoute['op']>([
+  'info',
+  'create',
+  'put',
+  'delete',
+  'patch',
+  'increment',
+  'mark',
+  'unmark',
+]);
+
+/** A route match as the internal route sees it: any op it does not serve is no route at all. */
+function servedMatch(req: NextApiRequest, match: Match, via: AppStorageVia): Match {
+  if (via === 'direct' || !match) return match;
+  if ('route' in match) return SERVICE_OPS.has(match.route.op) ? match : null;
+  const segments = pathSegments(req);
+  const methods = match.methods.filter((m) => {
+    const other = matchStorageRoute(m, segments);
+    return other !== null && 'route' in other && SERVICE_OPS.has(other.route.op);
+  });
+  return methods.length > 0 ? { methods } : null;
+}
+
+/**
+ * The shadow's view of one list the route answered (`AppDataShadowInput`). `access` is the access
+ * the list ran with, and `from` the import source after `otherAppSource` (null: the app's own).
+ */
+function appDataShadowInput(
+  req: NextApiRequest,
+  collection: string,
+  from: string | null,
+  access: StorageAccess,
+  body: unknown
+): AppDataShadowInput {
+  const served = body as { items: { key: string; data: unknown }[]; nextCursor: string | null };
+  const keyPrefix = req.query.keyPrefix;
+  return {
+    authorization: req.headers.authorization,
+    own: from === null,
+    published: access.ctx.ns === PUBLISHED_NS,
+    tokenKind: access.tokenKind,
+    signedIn: access.ctx.viewerUid !== null,
+    visibility: access.collections.get(collection)?.visibility,
+    queryKeys: Object.keys(req.query).filter((k) => k !== 'path' && k !== FROM_PARAM),
+    keyPrefix: typeof keyPrefix === 'string' ? keyPrefix : undefined,
+    appBlockId: access.ctx.appId,
+    blockId: access.blockId,
+    collection,
+    head: access.enforcedManifest,
+    served: { items: served.items, nextCursor: served.nextCursor ?? null },
+  };
+}
 
 export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore }) {
+  const shadow = deps.shadow ?? shadowAppDataList;
+  const via = deps.via ?? 'direct';
+  const getStore = deps.store ?? getDocStore;
   return async function storageHandler(req: NextApiRequest, res: NextApiResponse) {
     try {
-      const match = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
+      const match = servedMatch(
+        req,
+        matchStorageRoute(req.method ?? 'GET', pathSegments(req)),
+        via
+      );
       if (!match) throw noSuchRoute();
       // Off for this app, publish and unpublish are not routes at all: the same refusal as any
       // unknown path, before any other gate (a wrong method's 405 included).
@@ -1649,12 +1799,58 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       }
       const claims = (req as BlockScopedNextApiRequest).blockClaims;
       if (!claims) throw new DocStoreError('unauthenticated', 'a block token is required');
-      assertNoStrayQuery(req, match.route);
+      assertNoStrayQuery(req, match.route, via);
       const own = await resolveStorageAccess(claims, {
         consentUnavailable: (req as BlockScopedNextApiRequest).blockConsentUnavailable === true,
       });
       const route = match.route;
-      const from = route.op === 'info' ? null : importSourceOf(req);
+      recordAppStorageRequest({
+        app: blockClaimsAppLabel(claims),
+        op: route.op,
+        via,
+        viewer: own.ctx.viewerUid === null ? 'signed_out' : 'signed_in',
+        tokenKind: own.tokenKind,
+      });
+      const from =
+        route.op === 'info' && via === 'direct' ? null : otherAppSource(importSourceOf(req), own);
+      if (from !== null && via === 'service') {
+        // Imports are not served through app-data-go yet (WRITES-DESIGN.md, "imports refused"):
+        // only the site knows which app the token was issued for, so the site refuses them, before
+        // anything is charged, read or written. Lifting this is a later turn-on with its own closing.
+        sendEnvelope(
+          req,
+          res,
+          STORAGE_ERROR_STATUS.not_supported_here,
+          envelope('not_supported_here', 'imports are not served on this route')
+        );
+        return;
+      }
+      if (via === 'service' && route.op !== 'info') {
+        // A write naming a schema major must name the collection's current one, the major the
+        // store stamps (`withSchemaMajor`); none named means current. A collection with no
+        // resolved major is at major 1 (apps/app-data-go/DESIGN.md), so a resolution failure can
+        // only refuse a named major, never stamp a wrong one.
+        const named = namedMajorOf(req);
+        if (named !== null && own.ctx.ns === PUBLISHED_NS) {
+          const current =
+            (await resolveSchemaMajor({
+              appBlockId: own.ctx.appId,
+              head: own.enforcedManifest,
+              collection: route.collection,
+            })) ?? 1;
+          if (current !== named) {
+            sendEnvelope(
+              req,
+              res,
+              STORAGE_ERROR_STATUS.stale_major,
+              envelope('stale_major', 'the named schema major is not the current one', {
+                currentMajor: current,
+              })
+            );
+            return;
+          }
+        }
+      }
       if (from !== null) await charge('read', own, req);
       const access =
         from === null || route.op === 'info'
@@ -1674,8 +1870,16 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       // Content levels (`doc-levels.ts`): with the flag on for the app whose documents this
       // reaches, the store gates every shared read on the token's viewer level.
       const gated = await withDocLevelGate(access, claims);
-      const reply = await run(req, body, op, gated, deps.store());
+      const reply = await run(req, body, op, gated, getStore(), via);
       res.status(reply.status).json(reply.body);
+      if (op.op === 'list' && reply.status === 200) {
+        // After the response: the shadow only compares, and nothing it does reaches the caller.
+        try {
+          shadow(appDataShadowInput(req, op.collection, from, gated, reply.body));
+        } catch {
+          // A shadow never affects the request.
+        }
+      }
     } catch (err) {
       if (err instanceof BodyAbortedError) {
         // A client abort is not a server fault: no error log, and nothing written to a

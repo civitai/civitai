@@ -95,17 +95,30 @@
 // exactly those ceilings.
 //
 // LOCK ORDER, which is what makes it deadlock-free: (1) the document row of the
-// one key being written, (1b) that document's tally and mark rows, (2)
-// `usage_app` for (app, ns), (3) the caller's `usage_user` row. Nothing takes a
-// document or tally lock after (2), and (3) is only taken holding (2), so no
-// cycle can form. Incrementing an EXISTING document and marking take only a KEY
-// SHARE lock on the document and the tally row, and no usage lock.
+// one key being written, (1b) that document's tally and mark rows, (1c) the
+// namespace's `mark_head` row, (2) `usage_app` for (app, ns), (3) the caller's
+// `usage_user` row. Nothing takes a document or tally lock it does not already hold
+// after (1c) or (2) (the mark-sequence stamps update rows taken at (1b)), (1c) is
+// never taken holding (2), and (3) is only taken holding (2), so no cycle can
+// form. A mark, an unmark and an increment of an EXISTING document take (1) KEY
+// SHARE, (1b) and (1c), and no usage lock. An increment that CREATES its counter
+// document takes (1), (1b), (1c), then (2) and (3) for the create's accounting. A
+// document write takes (1), (1b) where it deletes tallies, (2) and (3), and never
+// (1c).
+//
+// `markSeq` comes from `mark_head.last_mark_seq` (`SQL_TAKE_MARK_SEQ`), taken by
+// every mark, unmark and increment under (1c) and stamped on the tally row it
+// changed: per-(app, ns) mark order equals commit order, as `seq`'s does. It
+// never moves `doc.seq`, which moderation and the rater check as the document's
+// revision. Until the manual migration that adds `mark_head` is applied, nothing
+// is taken and no `markSeq` is answered (`withMarkHead`).
 //
 // `seq` comes from `usage_app.last_seq`, incremented in the same statement that
 // charges the quota and therefore row-locked until commit: per-(app, ns) seq
 // order equals commit order, which is what a future change-feed poller needs.
 
 import { escapeLiteral } from 'pg';
+import { POOLER_TRANSIENT_08P01_MESSAGE } from '@civitai/db/db-errors';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { newUlid } from '~/server/utils/app-block-ids';
@@ -122,6 +135,7 @@ import type {
   AccountWipeResult,
   DocAuthor,
   DocCollection,
+  DocDeleteResult,
   DocIndexType,
   DocListQuery,
   DocLevelGate,
@@ -137,6 +151,7 @@ import type {
   PublishResult,
   QuotaCeiling,
   UnpublishResult,
+  WrittenDocRecord,
 } from '~/server/services/apps/doc-store.types';
 import {
   DEFAULT_DOC_STORE_LIMITS,
@@ -184,7 +199,15 @@ export type DocStoreDeps = {
    * concurrency test parks every writer here so they all reach the charge
    * together. Never set in production.
    */
-  hooks?: { beforeUsageCharge?: () => Promise<void> };
+  hooks?: {
+    beforeUsageCharge?: () => Promise<void>;
+    /**
+     * Awaited by a mark, unmark or increment holding its (1b) rows, just before it takes the
+     * mark sequence (lock 1c). The concurrency test parks every caller here so they all reach
+     * `mark_head` together. Never set in production.
+     */
+    beforeMarkSeq?: () => Promise<void>;
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -699,6 +722,13 @@ function docColumns(viewerParam: string, rating = false): string {
 }
 
 /**
+ * What a write answers beside `docColumns` (`WrittenDocRecord`): the document's seq and its
+ * record id. Selected only by the statements a write returns its document from, never by a read.
+ */
+const WRITTEN_COLUMNS = `
+    d.seq, d.record_id::text AS record_id`;
+
+/**
  * A document's CURRENT level: the moderator's override when it was given for the document's
  * current `version`, else the rated level when it was rated at that version, else NULL. A rating
  * or override for an older version does not count: every rewrite of the body bumps `version` (a
@@ -805,7 +835,7 @@ const SQL_LOCK_DOC = `SELECT d.version, d.author_uid, d.author_kind, d.size_byte
 // Unlocked: nothing is written on its answer, so the answer is simply as of this read.
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 data, $7 viewer, $8 names, $9 v_text,
 // $10 v_num, $11 v_type
-const SQL_UNCHANGED_PROBE_TAIL = `,
+const SQL_UNCHANGED_PROBE_TAIL = `,${WRITTEN_COLUMNS},
     d.hidden_at IS NOT NULL AS hidden, md5(d.data::text) AS hash,
     md5($6::jsonb::text) AS written_hash,
     NOT EXISTS (
@@ -908,24 +938,25 @@ const SQL_CHARGE_USER = `INSERT INTO appdata.usage_user AS u (app_id, ns, user_i
     AND (EXCLUDED.docs <= 0 OR u.docs + EXCLUDED.docs <= $7::int)
   RETURNING u.bytes`;
 
-// Stamp the seq and return the stored document.
+// Stamp the seq and return the stored document, with its seq and record id
+// (`WrittenDocRecord`, `WRITTEN_COLUMNS`).
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 seq, $7 viewer
 const SQL_STAMP_SEQ = `UPDATE appdata.doc d SET seq = $6::bigint
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
-  RETURNING ${docColumns('$7::int')}`;
+  RETURNING ${docColumns('$7::int')},${WRITTEN_COLUMNS}`;
 // The same, also stamping the schema major the body was written under (NULL = not known). Only
 // once the manual migration `20261106130000_appdata_doc_schema_major.sql` added the column (see
 // `hasSchemaMajorColumn`). $8 the major.
 const SQL_STAMP_SEQ_MAJOR = `UPDATE appdata.doc d SET seq = $6::bigint, schema_major = $8::int
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
-  RETURNING ${docColumns('$7::int')}`;
+  RETURNING ${docColumns('$7::int')},${WRITTEN_COLUMNS}`;
 // The two above, returning the rating too (levels on). The writer's own document: no gate.
 const SQL_STAMP_SEQ_LEVELS = `UPDATE appdata.doc d SET seq = $6::bigint
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
-  RETURNING ${docColumns('$7::int', true)}`;
+  RETURNING ${docColumns('$7::int', true)},${WRITTEN_COLUMNS}`;
 const SQL_STAMP_SEQ_MAJOR_LEVELS = `UPDATE appdata.doc d SET seq = $6::bigint, schema_major = $8::int
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
-  RETURNING ${docColumns('$7::int', true)}`;
+  RETURNING ${docColumns('$7::int', true)},${WRITTEN_COLUMNS}`;
 // Whether `appdata.doc.schema_major` exists: fails with undefined_column (42703) until the manual
 // migration is applied. Reads no row. Run under a savepoint, so that failure leaves the write's
 // transaction usable. $1 app, $2 ns
@@ -1029,14 +1060,14 @@ const SQL_FEED_WITNESS_TOMB = `SELECT tb.seq FROM appdata.doc_tomb tb
 // the registry adapter's authorized private streams. Only rows that carry a `record_id` (the id
 // in a private record's URN) and that moderation has not hidden. Keyset by key.
 // $1 app, $2 ns, $3 coll, $4 user, $5 after key, $6 limit
-const SQL_PRIVATE_FEED_VERSIONS = `SELECT d.key, d.version, d.record_id::text AS record_id
+const SQL_PRIVATE_FEED_VERSIONS = `SELECT d.key, d.version, d.record_id::text AS record_id, d.seq
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
     AND d.hidden_at IS NULL AND d.record_id IS NOT NULL AND d.key > $5::text
   ORDER BY d.key
   LIMIT $6::int`;
 // Its full twin: the same rows with their data.
-const SQL_PRIVATE_FEED_DOCS = `SELECT d.key, d.data, d.version, d.record_id::text AS record_id
+const SQL_PRIVATE_FEED_DOCS = `SELECT d.key, d.data, d.version, d.record_id::text AS record_id, d.seq
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
     AND d.hidden_at IS NULL AND d.record_id IS NOT NULL AND d.key > $5::text
@@ -1073,6 +1104,19 @@ const SQL_MARK_DOWN = `UPDATE appdata.doc_tally t SET count = t.count - 1
 const SQL_MARK_COUNT = `SELECT t.count FROM appdata.doc_tally t
   WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = $3 AND t.key = $4 AND t.kind = 'mark' AND t.name = $5`;
 
+// The namespace's next mark sequence: lock (1c), held until commit, so mark order equals commit
+// order. Taken by every mark, unmark and increment, whether or not it changed a row. Only once the
+// manual migration `20261122120000_appdata_mark_head.sql` created the table and the column (see
+// `withMarkHead`). $1 app, $2 ns
+const SQL_TAKE_MARK_SEQ = `INSERT INTO appdata.mark_head AS mh (app_id, ns, last_mark_seq)
+  VALUES ($1, $2, 1)
+  ON CONFLICT (app_id, ns) DO UPDATE SET last_mark_seq = mh.last_mark_seq + 1
+  RETURNING mh.last_mark_seq`;
+// Stamp the mark sequence on the tally row this transaction changed (and so already holds).
+// $1 app, $2 ns, $3 coll, $4 key, $5 kind, $6 name, $7 mark seq
+const SQL_STAMP_TALLY = `UPDATE appdata.doc_tally t SET mark_seq = $7::bigint
+  WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = $3 AND t.key = $4 AND t.kind = $5 AND t.name = $6`;
+
 // Stored usage. $1 app, $2 ns (+ $3 user). A missing row is zero.
 const SQL_USAGE_APP = `SELECT u.bytes, u.docs FROM appdata.usage_app u
   WHERE u.app_id = $1 AND u.ns = $2`;
@@ -1081,9 +1125,9 @@ const SQL_USAGE_USER = `SELECT u.bytes, u.docs FROM appdata.usage_user u
 
 // Review maintenance (see the module header). Every row of every review namespace of one
 // publish request, table by table, in the store's lock order (document first — its index rows
-// go with it by the foreign-key cascade — then tallies and marks, then usage_app before
-// usage_user), so a write racing the purge cannot deadlock against it. $1 publish request id.
-// Each returns the number of rows it deleted.
+// go with it by the foreign-key cascade — then tallies and marks, then mark_head, then
+// usage_app before usage_user), so a write racing the purge cannot deadlock against it.
+// $1 publish request id. Each returns the number of rows it deleted.
 const SQL_REVIEW_PURGE = [
   `WITH gone AS (DELETE FROM appdata.doc d WHERE d.app_id = $1 AND d.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
@@ -1094,6 +1138,8 @@ const SQL_REVIEW_PURGE = [
   `WITH gone AS (DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.doc_tomb tb WHERE tb.app_id = $1 AND tb.ns LIKE 'rev:%' RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.mark_head mh WHERE mh.app_id = $1 AND mh.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
@@ -1145,6 +1191,8 @@ const SQL_WIPE_NAMESPACE = [
   `WITH gone AS (DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns = $2 RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.doc_tomb tb WHERE tb.app_id = $1 AND tb.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.mark_head mh WHERE mh.app_id = $1 AND mh.ns = $2 RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = $2 RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
@@ -1495,6 +1543,19 @@ function toDocRecord(
   };
 }
 
+/** A row a write returned its document from (`WRITTEN_COLUMNS`), as the write answers it. */
+function toWrittenDocRecord(
+  row: Record<string, unknown>,
+  ctx: DocStoreContext,
+  coll: DocCollection
+): WrittenDocRecord {
+  return {
+    ...toDocRecord(row, ctx, coll),
+    seq: Number(row.seq),
+    recordId: row.record_id === null || row.record_id === undefined ? null : String(row.record_id),
+  };
+}
+
 const RATING_STATUSES: ReadonlySet<string> = new Set<DocRatingStatus>([
   'pending',
   'rated',
@@ -1703,15 +1764,19 @@ export type DocStoreFeed = ReturnType<typeof createDocStoreFeed>;
  * decides who may read: its caller passes the user only after the one collection-read predicate
  * (`data-read-grant.ts`) granted that user the collection. A separate object, so neither the
  * public feed nor the block-token store carries a read keyed on a caller-supplied user id; its
- * importers are pinned by `__tests__/doc-store-private-feed.ledger.test.ts`.
+ * importers are pinned by `__tests__/doc-store-private-feed.ledger.test.ts`. `privateHead` reads
+ * the namespace's write head (`SQL_FEED_HEAD`), which a stream reads before its keyset.
  */
 export function createDocStorePrivateFeed(deps: DocStoreDeps) {
   return buildDocStore(deps).privateFeed;
 }
 export type DocStorePrivateFeed = ReturnType<typeof createDocStorePrivateFeed>;
 
-/** One private document's identity and version, as `privateVersions` reads it. */
-export type PrivateFeedVersion = { key: string; recordId: string; version: number };
+/**
+ * One private document's identity, version and `seq` (where its last write sits in the app
+ * namespace's write order, `usage_app.last_seq` when it was written), as `privateVersions` reads it.
+ */
+export type PrivateFeedVersion = { key: string; recordId: string; version: number; seq: number };
 /** One private document, as `privateDocuments` reads it. */
 export type PrivateFeedDocument = PrivateFeedVersion & { data: Record<string, unknown> };
 
@@ -1814,6 +1879,10 @@ export const PUBLISHED_NS = 'prod';
 const PG_UNDEFINED_COLUMN = '42703';
 /** How long a store trusts "no `schema_major` column" before probing again. */
 const SCHEMA_MAJOR_RECHECK_MS = 60_000;
+/** How often a store that found `appdata.mark_head` absent looks for it again. */
+const MARK_HEAD_RECHECK_MS = 60_000;
+/** undefined_table: `appdata.mark_head` does not exist (its migration is not applied). */
+const PG_UNDEFINED_TABLE = '42P01';
 
 /** One shared document matched by `findSharedByKey`. */
 export type SharedKeyMatch = {
@@ -1826,14 +1895,91 @@ export type SharedKeyMatch = {
   rating?: DocRating;
 };
 
+/**
+ * A relation (a table or a column) that a manual migration adds, which the store uses only once it
+ * exists, without a restart: the one probe `schema_major` and the mark sequence share. Found once
+ * and kept; while absent, tried again at most every `recheckMs`. `codes` are the SQLSTATEs that
+ * mean it is missing (42P01 undefined_table, 42703 undefined_column).
+ */
+function optionalRelationProbe(name: string, codes: readonly string[], recheckMs: number) {
+  let state: { present: boolean; at: number } | undefined;
+  const savepoint = `${name}_probe`;
+  const isMissing = (err: unknown) => codes.includes((err as { code?: string } | null)?.code ?? '');
+  return {
+    /** Known present, with no query: a statement naming it may run as is. */
+    get present(): boolean {
+      return state?.present === true;
+    },
+    /**
+     * After a statement naming it failed while it was known present: a missing-relation failure
+     * (it was dropped since, a rollback of the migration) forgets it, so the next call looks
+     * again. The failing call itself still fails.
+     */
+    forgetIfMissing(err: unknown): void {
+      if (isMissing(err)) state = undefined;
+    },
+    /**
+     * Run `fn`, which names the relation, only where it exists; null where it does not. Known
+     * present: run as is (a missing-relation failure forgets it, and is thrown). Known absent
+     * within `recheckMs`: null, with no query. Otherwise under a savepoint: a missing-relation
+     * failure rolls back to it, the transaction goes on, and the answer is null. Any other failure
+     * is the transaction's own and is thrown.
+     */
+    async run<T>(c: DocStoreClient, fn: () => Promise<T>): Promise<T | null> {
+      if (state?.present) {
+        try {
+          return await fn();
+        } catch (err) {
+          if (isMissing(err)) state = undefined;
+          throw err;
+        }
+      }
+      if (state && Date.now() - state.at < recheckMs) return null;
+      await c.query(`SAVEPOINT ${savepoint}`);
+      try {
+        const out = await fn();
+        await c.query(`RELEASE SAVEPOINT ${savepoint}`);
+        state = { present: true, at: Date.now() };
+        return out;
+      } catch (err) {
+        if (!isMissing(err)) throw err;
+        await c.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        state = { present: false, at: Date.now() };
+        return null;
+      }
+    },
+  };
+}
+
 function buildDocStore(deps: DocStoreDeps) {
   const limits = deps.limits ?? DEFAULT_DOC_STORE_LIMITS;
   // Settled only by a successful role read; a failed read is retried next call.
   let privileges: 'safe' | 'refused' | undefined;
-  // Whether `appdata.doc.schema_major` exists (a manual migration). Found once and kept; while
-  // absent, probed again at most every SCHEMA_MAJOR_RECHECK_MS, so applying the migration starts
-  // the stamping without a restart.
-  let schemaMajorColumn: { present: boolean; at: number } | undefined;
+  // `appdata.doc.schema_major` (a manual migration): stamped only once it exists.
+  const schemaMajorColumn = optionalRelationProbe(
+    'schema_major',
+    [PG_UNDEFINED_COLUMN],
+    SCHEMA_MAJOR_RECHECK_MS
+  );
+  // `appdata.mark_head` and `doc_tally.mark_seq` (a manual migration): the mark sequence is taken
+  // only once they exist.
+  const markHeadTable = optionalRelationProbe(
+    'mark_head',
+    [PG_UNDEFINED_TABLE, PG_UNDEFINED_COLUMN],
+    MARK_HEAD_RECHECK_MS
+  );
+
+  /**
+   * Run `fn`, which names `appdata.mark_head` or `doc_tally.mark_seq`, only where they exist; null
+   * where they do not (`optionalRelationProbe.run`): the call then answers without a sequence.
+   */
+  const withMarkHead = <T>(c: DocStoreClient, fn: () => Promise<T>) => markHeadTable.run(c, fn);
+
+  /** One statement of a purge or wipe; the `mark_head` one only where that table exists. */
+  async function purgeRows(c: DocStoreClient, sql: string, params: unknown[]): Promise<number> {
+    const run = async () => Number((await c.query(sql, params)).rows[0]?.n ?? 0);
+    return /appdata\.mark_head\b/.test(sql) ? (await withMarkHead(c, run)) ?? 0 : run();
+  }
 
   /**
    * Whether this write can stamp `schema_major`. Probed inside the write's own transaction under
@@ -1841,23 +1987,12 @@ function buildDocStore(deps: DocStoreDeps) {
    * without the stamp. Any other failure is the transaction's own and is thrown as it is.
    */
   async function hasSchemaMajorColumn(c: DocStoreClient, ctx: DocStoreContext): Promise<boolean> {
-    if (
-      schemaMajorColumn &&
-      (schemaMajorColumn.present || Date.now() - schemaMajorColumn.at < SCHEMA_MAJOR_RECHECK_MS)
-    ) {
-      return schemaMajorColumn.present;
-    }
-    await c.query('SAVEPOINT schema_major_probe');
-    try {
+    if (schemaMajorColumn.present) return true;
+    const found = await schemaMajorColumn.run(c, async () => {
       await c.query(SQL_SCHEMA_MAJOR_PROBE, [ctx.appId, ctx.ns]);
-      await c.query('RELEASE SAVEPOINT schema_major_probe');
-      schemaMajorColumn = { present: true, at: Date.now() };
-    } catch (err) {
-      if ((err as { code?: string } | null)?.code !== PG_UNDEFINED_COLUMN) throw err;
-      await c.query('ROLLBACK TO SAVEPOINT schema_major_probe');
-      schemaMajorColumn = { present: false, at: Date.now() };
-    }
-    return schemaMajorColumn.present;
+      return true;
+    });
+    return found === true;
   }
 
   /**
@@ -1887,9 +2022,7 @@ function buildDocStore(deps: DocStoreDeps) {
     } catch (err) {
       // The column was dropped after it was found (a rollback of the migration): look again on
       // the next write. This write fails; the next one writes without the stamp.
-      if ((err as { code?: string } | null)?.code === PG_UNDEFINED_COLUMN) {
-        schemaMajorColumn = undefined;
-      }
+      schemaMajorColumn.forgetIfMissing(err);
       throw err;
     }
   }
@@ -2182,7 +2315,7 @@ function buildDocStore(deps: DocStoreDeps) {
     key: string,
     data: unknown,
     opts: { ifVersion?: number; op: 'create' | 'put'; hookPass?: HookPass }
-  ): Promise<DocRecord> {
+  ): Promise<WrittenDocRecord> {
     const policy = assertCollection(coll);
     assertKey(key);
     const viewer = requireViewer(ctx);
@@ -2272,7 +2405,7 @@ function buildDocStore(deps: DocStoreDeps) {
     key: string,
     indexRows: IndexRow[],
     usage: { app: UsageDelta; user: UserCharge }
-  ): Promise<DocRecord> {
+  ): Promise<WrittenDocRecord> {
     // Always, even with no index declared: it then deletes every index row the
     // document has, so an index declared, dropped and declared again never
     // serves values from before it was dropped.
@@ -2289,7 +2422,7 @@ function buildDocStore(deps: DocStoreDeps) {
     ]);
     const seq = await charge(c, ctx, usage.app, usage.user);
     const res = await stampWrittenDoc(c, ctx, coll, scope, key, seq, ctx.viewerUid);
-    return toDocRecord(res.rows[0], ctx, coll);
+    return toWrittenDocRecord(res.rows[0], ctx, coll);
   }
 
   async function getMany(
@@ -2335,7 +2468,7 @@ function buildDocStore(deps: DocStoreDeps) {
     key: string,
     data: Record<string, unknown>,
     opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<DocRecord> {
+  ): Promise<WrittenDocRecord> {
     return writeDoc(ctx, coll, key, data, { ...opts, op: 'put' });
   }
 
@@ -2349,7 +2482,7 @@ function buildDocStore(deps: DocStoreDeps) {
     coll: DocCollection,
     data: Record<string, unknown>,
     opts: { key?: string; hookPass?: HookPass } = {}
-  ): Promise<DocRecord> {
+  ): Promise<WrittenDocRecord> {
     return writeDoc(ctx, coll, opts.key ?? newUlid(), data, {
       ifVersion: 0,
       op: 'create',
@@ -2358,9 +2491,10 @@ function buildDocStore(deps: DocStoreDeps) {
   }
 
   /**
-   * A shared `put` that would change no stored row, answered without writing: the stored document,
-   * untouched (no version, seq or `updated_at` bump, no index sync, no usage charge, no
-   * `markRatingPending`, so a rating given for its version stands), when ALL of:
+   * A shared `put` that would change no stored row, answered without writing: the stored document
+   * with its current seq and record id, untouched (no version, seq or `updated_at` bump, no index
+   * sync, no usage charge, no `markRatingPending`, so a rating given for its version stands), when
+   * ALL of:
    * - a document is stored at `key` and `classifyPublish` calls it `unchanged` against `data` —
    *   the ONE rule a publish uses: the caller's own, not hidden, and the same content hash;
    * - its stored index rows are exactly the rows `indexRowsFor` derives from `data` under the
@@ -2384,7 +2518,7 @@ function buildDocStore(deps: DocStoreDeps) {
     key: string,
     data: Record<string, unknown>,
     opts: { ifVersion?: number } = {}
-  ): Promise<DocRecord | null> {
+  ): Promise<WrittenDocRecord | null> {
     const policy = assertCollection(coll);
     const viewer = requireViewer(ctx);
     assertShareWritable(coll, policy);
@@ -2428,7 +2562,7 @@ function buildDocStore(deps: DocStoreDeps) {
     }
     if (row.index_same !== true) return null;
     if (opts.ifVersion !== undefined && opts.ifVersion !== Number(row.version)) return null;
-    return toDocRecord(row, ctx, coll);
+    return toWrittenDocRecord(row, ctx, coll);
   }
 
   async function remove(
@@ -2436,7 +2570,7 @@ function buildDocStore(deps: DocStoreDeps) {
     coll: DocCollection,
     key: string,
     opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<{ deleted: boolean }> {
+  ): Promise<DocDeleteResult> {
     const policy = assertCollection(coll);
     assertKey(key);
     const viewer = requireViewer(ctx);
@@ -2453,7 +2587,7 @@ function buildDocStore(deps: DocStoreDeps) {
         if (ifVersion !== undefined && ifVersion !== 0) {
           throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: 0 });
         }
-        return { deleted: false };
+        return { deleted: false as const };
       }
       const current = Number(row.version);
       if (ifVersion !== undefined && ifVersion !== current) {
@@ -2475,7 +2609,7 @@ function buildDocStore(deps: DocStoreDeps) {
         ceiling: ceilingFor(coll),
       });
       await c.query(SQL_TOMBSTONE, [ctx.appId, ctx.ns, coll.name, scope, key, seq]);
-      return { deleted: true };
+      return { deleted: true as const, seq };
     });
   }
 
@@ -2488,6 +2622,11 @@ function buildDocStore(deps: DocStoreDeps) {
    * `opts.ifVersion` (a permission hook's pin, or a caller's own) refuses the increment with
    * `version_conflict` unless the document is still at that version (0: still absent). A tally
    * never changes the version, so concurrent increments never conflict with each other.
+   *
+   * Answers the counter's value and the mark sequence it took (`markSeq`, stamped on the counter's
+   * tally row; absent before the mark-sequence migration is applied); an increment that created its
+   * counter document also answers that document's `seq`. An increment of an existing document
+   * never moves its `seq`.
    */
   async function increment(
     ctx: DocStoreContext,
@@ -2496,7 +2635,7 @@ function buildDocStore(deps: DocStoreDeps) {
     counter: string,
     by = 1,
     opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<{ value: number }> {
+  ): Promise<{ value: number; markSeq?: number; seq?: number }> {
     const policy = assertCollection(coll);
     assertKey(key);
     assertIncrementRequest(coll, counter, by);
@@ -2520,7 +2659,8 @@ function buildDocStore(deps: DocStoreDeps) {
         const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
         if (doc.rows.length > 0) {
           assertTallyVersion(ifVersion, Number(doc.rows[0].version));
-          return { value: await bump() };
+          const value = await bump();
+          return { value, ...(await stampMarkSeq(c, ctx, coll, key, 'counter', counter)) };
         }
         if (policy !== 'none') throw new DocStoreError('not_found', 'document not found');
         assertTallyVersion(ifVersion, 0);
@@ -2540,8 +2680,10 @@ function buildDocStore(deps: DocStoreDeps) {
         ]);
         if (ins.rows.length === 0) continue; // lost the race; increment the winner's doc
         // Same accounting as any document create: the app and the creating
-        // viewer's own ceiling (labelled `viewer`: it is the caller's), then the seq.
+        // viewer's own ceiling (labelled `viewer`: it is the caller's), then the seq. The mark
+        // sequence first: (1c) before (2), the lock order.
         const value = await bump();
+        const marked = await stampMarkSeq(c, ctx, coll, key, 'counter', counter);
         const size = Number(ins.rows[0].size_bytes);
         const seq = await charge(
           c,
@@ -2550,7 +2692,7 @@ function buildDocStore(deps: DocStoreDeps) {
           { uid: viewer, bytes: size, docs: 1, ceiling: 'viewer' }
         );
         await stampWrittenDoc(c, ctx, coll, 0, key, seq, ctx.viewerUid);
-        return { value };
+        return { value, ...marked, seq };
       }
       throw new DocStoreError('version_conflict', 'concurrent write; retry', {
         currentVersion: null,
@@ -2560,14 +2702,45 @@ function buildDocStore(deps: DocStoreDeps) {
 
   const assertMarkName = assertMarkRequest;
 
-  /** `count` is null for `report`, whose count is never exposed. */
+  /**
+   * Lock (1c): take the namespace's next mark sequence, and stamp it on the tally row this
+   * transaction changed (a row it already holds), if it changed one. Returns `{ markSeq }`, or `{}`
+   * before the mark-sequence migration is applied (`withMarkHead`), so the caller answers without
+   * one.
+   */
+  async function stampMarkSeq(
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    coll: DocCollection,
+    key: string,
+    kind: 'counter' | 'mark' | null,
+    name: string
+  ): Promise<{ markSeq?: number }> {
+    await deps.hooks?.beforeMarkSeq?.();
+    const markSeq = await withMarkHead(c, async () => {
+      const seq = Number(
+        (await c.query(SQL_TAKE_MARK_SEQ, [ctx.appId, ctx.ns])).rows[0].last_mark_seq
+      );
+      if (kind !== null) {
+        await c.query(SQL_STAMP_TALLY, [ctx.appId, ctx.ns, coll.name, key, kind, name, seq]);
+      }
+      return seq;
+    });
+    return markSeq === null ? {} : { markSeq };
+  }
+
+  /**
+   * `count` is null for `report`, whose count is never exposed. `markSeq` is the mark sequence it
+   * took, stamped on the tally row when it changed it; a mark the viewer already held changes no
+   * row but still takes one. Absent before the mark-sequence migration is applied.
+   */
   async function mark(
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
     name: string,
     opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<{ marked: true; count: number | null }> {
+  ): Promise<{ marked: true; count: number | null; markSeq?: number }> {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
@@ -2582,12 +2755,11 @@ function buildDocStore(deps: DocStoreDeps) {
       assertTallyVersion(ifVersion, Number(doc.rows[0].version));
       const args = [ctx.appId, ctx.ns, coll.name, key, name];
       const ins = await c.query(SQL_INSERT_MARK, [...args, viewer]);
-      const res =
-        ins.rows.length > 0
-          ? await c.query(SQL_MARK_UP, args)
-          : await c.query(SQL_MARK_COUNT, args);
+      const added = ins.rows.length > 0;
+      const res = added ? await c.query(SQL_MARK_UP, args) : await c.query(SQL_MARK_COUNT, args);
       const count = Number(res.rows[0]?.count ?? 0);
-      return { marked: true as const, count: name === REPORT_MARK ? null : count };
+      const marked = await stampMarkSeq(c, ctx, coll, key, added ? 'mark' : null, name);
+      return { marked: true as const, count: name === REPORT_MARK ? null : count, ...marked };
     });
   }
 
@@ -2597,7 +2769,7 @@ function buildDocStore(deps: DocStoreDeps) {
     key: string,
     name: string,
     opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<{ marked: false; count: number | null }> {
+  ): Promise<{ marked: false; count: number | null; markSeq?: number }> {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
@@ -2613,12 +2785,14 @@ function buildDocStore(deps: DocStoreDeps) {
       assertTallyVersion(ifVersion, Number(doc.rows[0].version));
       const args = [ctx.appId, ctx.ns, coll.name, key, name];
       const del = await c.query(SQL_DELETE_MARK, [...args, viewer]);
-      const res =
-        del.rows.length > 0
-          ? await c.query(SQL_MARK_DOWN, args)
-          : await c.query(SQL_MARK_COUNT, args);
+      const removed = del.rows.length > 0;
+      const res = removed
+        ? await c.query(SQL_MARK_DOWN, args)
+        : await c.query(SQL_MARK_COUNT, args);
       const count = Number(res.rows[0]?.count ?? 0);
-      return { marked: false as const, count: name === REPORT_MARK ? null : count };
+      // The tally row it decremented is stamped.
+      const marked = await stampMarkSeq(c, ctx, coll, key, removed ? 'mark' : null, name);
+      return { marked: false as const, count: name === REPORT_MARK ? null : count, ...marked };
     });
   }
 
@@ -2792,9 +2966,7 @@ function buildDocStore(deps: DocStoreDeps) {
   async function purgeReview(publishRequestId: string): Promise<{ rows: number }> {
     return maintenanceTx(publishRequestId, async (c) => {
       let rows = 0;
-      for (const sql of SQL_REVIEW_PURGE) {
-        rows += Number((await c.query(sql, [publishRequestId])).rows[0]?.n ?? 0);
-      }
+      for (const sql of SQL_REVIEW_PURGE) rows += await purgeRows(c, sql, [publishRequestId]);
       return { rows };
     });
   }
@@ -2855,7 +3027,7 @@ function buildDocStore(deps: DocStoreDeps) {
     return withTx(ctx, async (c) => {
       if (result.mode === 'namespace') {
         for (const sql of SQL_WIPE_NAMESPACE)
-          result.namespaceRows += n(await c.query(sql, [appId, ns]));
+          result.namespaceRows += await purgeRows(c, sql, [appId, ns]);
         return result;
       }
       const args = [appId, ns, userId];
@@ -3040,7 +3212,7 @@ function buildDocStore(deps: DocStoreDeps) {
       if (!(await proceed())) return { ...result, stopped: true };
       result.rows += await withTx(ctx, async (c) => {
         let rows = 0;
-        for (const sql of SQL_WIPE_NAMESPACE) rows += n(await c.query(sql, [appId, ns]));
+        for (const sql of SQL_WIPE_NAMESPACE) rows += await purgeRows(c, sql, [appId, ns]);
         return rows;
       });
     }
@@ -3925,6 +4097,7 @@ function buildDocStore(deps: DocStoreDeps) {
       key: r.key as string,
       recordId: String(r.record_id),
       version: Number(r.version),
+      seq: seqOf(r.seq),
     }));
   }
 
@@ -3945,6 +4118,7 @@ function buildDocStore(deps: DocStoreDeps) {
       key: r.key as string,
       recordId: String(r.record_id),
       version: Number(r.version),
+      seq: seqOf(r.seq),
       data: r.data as Record<string, unknown>,
     }));
   }
@@ -3953,7 +4127,9 @@ function buildDocStore(deps: DocStoreDeps) {
     store,
     lookup: { findSharedByKey },
     feed: { feedHead, feedChanges, feedDocuments, feedWitness },
-    privateFeed: { privateVersions, privateDocuments },
+    // `privateHead` is the public feed's head read: the namespace's newest seq, one counter for
+    // every collection of the app, private and shared (`SQL_CHARGE_APP`).
+    privateFeed: { privateVersions, privateDocuments, privateHead: feedHead },
     moderation: createModeration({ withTx, charge }),
     rater: createRater({ withTx, charge, raterLookupTx }),
     maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp, migrateDocuments },
@@ -3967,16 +4143,6 @@ function buildDocStore(deps: DocStoreDeps) {
  * matched by prefix in `isPgConnectionFault`, except 08P01 (below).
  */
 const PG_CONNECTION_SQLSTATES = new Set(['53300', '57P01', '57P02', '57P03']);
-/**
- * 08P01 protocol_violation is retryable ONLY with one of these PgBouncer messages. Postgres also
- * raises 08P01 for a malformed message from US (e.g. "bind message supplies 1 parameters, but
- * prepared statement requires 2") — a bug, which must stay a 500 — and PgBouncer uses it for
- * permanent refusals too ("unsupported startup parameter"). Trade-off: a PgBouncer outage
- * message not listed here is a 500 rather than a retryable 503; widen the list when one is seen,
- * rather than matching 08P01 by code alone.
- */
-const PGBOUNCER_TRANSIENT_08P01 =
-  /server conn crashed\?|no more connections allowed|pgbouncer cannot connect to server|query_wait_timeout/i;
 /**
  * Node socket errors a broken or unreachable database connection surfaces as. Name-resolution
  * failures (ENOTFOUND, EAI_AGAIN) are deliberately absent: they are a wrong host far more often
@@ -4009,7 +4175,11 @@ function isPgConnectionFault(err: unknown): boolean {
     const { code, message } = e as { code?: unknown; message?: unknown };
     if (typeof code === 'string') {
       if (code === '08P01') {
-        if (typeof message === 'string' && PGBOUNCER_TRANSIENT_08P01.test(message)) return true;
+        // 08P01 is also Postgres's answer to a malformed message from US, a bug that must stay a
+        // 500, so it is retryable only with one of PgBouncer's outage messages. A message not
+        // listed in POOLER_TRANSIENT_08P01_MESSAGE is a 500: widen the list when one is seen.
+        if (typeof message === 'string' && POOLER_TRANSIENT_08P01_MESSAGE.test(message))
+          return true;
       } else if (PG_CONNECTION_SQLSTATES.has(code) || /^08[0-9A-Z]{3}$/.test(code)) {
         // A SQLSTATE is exactly five characters; class 08 is its first two.
         return true;

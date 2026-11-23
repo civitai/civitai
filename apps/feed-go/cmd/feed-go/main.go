@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/flipt"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
@@ -128,7 +130,75 @@ func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute, tp *tracing
 		c.MetricsTimeout = cfg.ClickHouseTimeout
 		c.MetricsLockWait = cfg.MetricsLockWait
 	}
+	if err != nil {
+		return err
+	}
+	dedicated, err := dedicatedMetricsReader(cfg, chTracer)
+	if c != nil && c.ClickHouse != nil && dedicated != nil {
+		c.MetricsClickHouse = dedicated
+	}
 	return err
+}
+
+// errDedicatedReader is an attachMetricsReader error about the dedicated reader only: the shared
+// reader, when configured, is attached and still serves every populate.
+type errDedicatedReader struct{ err error }
+
+func (e errDedicatedReader) Error() string { return "dedicated metrics " + e.err.Error() }
+func (e errDedicatedReader) Unwrap() error { return e.err }
+
+// dedicatedMetricsReader is the dedicated ClickHouse for entity metrics (CLICKHOUSE_METRICS_*): nil
+// when it is not configured. Built from its own variables only (URL, login and password alike, so
+// none of the shared reader's credentials can reach it), with the shared reader's read cap and every
+// request bounded by CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS. The error never names the URL or
+// credentials.
+func dedicatedMetricsReader(cfg *config.Config, tracer chread.Tracer) (hydrate.ClickHouse, error) {
+	if cfg.MetricsClickHouseURL == "" {
+		return nil, nil
+	}
+	c, err := chread.New(chread.Config{URL: cfg.MetricsClickHouseURL, Username: cfg.MetricsClickHouseUsername,
+		Password: cfg.MetricsClickHousePassword, MaxInFlight: cfg.ClickHouseMaxInFlight, Tracer: tracer,
+		CredentialEnv: "CLICKHOUSE_METRICS_USERNAME / CLICKHOUSE_METRICS_PASSWORD",
+		HTTP:          &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone(), Timeout: cfg.MetricsClickHouseRequestTimeout}})
+	if err != nil {
+		return nil, errDedicatedReader{err}
+	}
+	return c, nil
+}
+
+// metricsClickHouseFlag is the Flipt flag that moves the image metric-hash populate onto the dedicated
+// ClickHouse: the Node app's FLIPT_FEATURE_FLAGS.IMAGE_METRICS_DEDICATED_CLICKHOUSE, so one switch
+// moves both runtimes.
+const metricsClickHouseFlag = "image-metrics-dedicated-clickhouse"
+
+// attachMetricsSwitch reads metricsClickHouseFlag in the background (every flipt.RefreshInterval,
+// until ctx ends) and hands its answer to c, when c has a dedicated reader (attachMetricsReader).
+// Without one, or without FLIPT_URL, nothing is read and the populate keeps the shared reader. A
+// failed read keeps the last good value (off when none) for up to flipt.DefaultMaxStale, then reads
+// off (flipt.Switch.Refresh); failures are logged at most once a minute, the staleness once per outage.
+func attachMetricsSwitch(ctx context.Context, cfg *config.Config, c *hydrate.MissCompute, log *slog.Logger) (*flipt.Switch, error) {
+	if c == nil || c.MetricsClickHouse == nil || cfg.FliptURL == "" {
+		return nil, nil
+	}
+	fc, err := flipt.New(flipt.Config{URL: cfg.FliptURL, ClientToken: cfg.FliptClientToken, Environment: cfg.FliptEnvironment})
+	if err != nil {
+		return nil, err
+	}
+	sw := flipt.NewSwitch(func(ctx context.Context) (bool, error) { return fc.Boolean(ctx, metricsClickHouseFlag) })
+	var lastLog time.Time
+	sw.OnError = func(err error) {
+		if now := time.Now(); now.Sub(lastLog) >= time.Minute {
+			lastLog = now
+			log.Warn("flag read failed; the last good value holds", "flag", metricsClickHouseFlag, "err", err)
+		}
+	}
+	sw.OnStale = func(age time.Duration) {
+		log.Error("flag unread past its staleness bound; reads as off", "flag", metricsClickHouseFlag,
+			"since_last_good", age.Round(time.Second).String())
+	}
+	c.MetricsClickHouseOn = sw.On
+	sw.Start(ctx)
+	return sw, nil
 }
 
 // opensPrimary is whether run() opens the primary pool (DATABASE_URL): only with the miss computation
@@ -224,8 +294,19 @@ func run(log *slog.Logger) error {
 	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss, blocked, addons.Addons)
 	attachWriteObservers(cfg, sources.Compute, metrics, log)
 	if err := attachMetricsReader(cfg, sources.Compute, tp); err != nil {
-		log.Error("clickhouse reader not configured; metric-hash misses fall back", "err", err)
+		var dedicated errDedicatedReader
+		if errors.As(err, &dedicated) {
+			log.Error("dedicated metrics clickhouse reader not configured; metric-hash populates keep the shared reader", "err", err)
+		} else {
+			log.Error("clickhouse reader not configured; metric-hash misses fall back", "err", err)
+		}
 	}
+	metricsSwitch, err := attachMetricsSwitch(ctx, cfg, sources.Compute, log)
+	if err != nil {
+		log.Error("flag not read; metric-hash populates keep the shared clickhouse", "flag", metricsClickHouseFlag, "err", err)
+	}
+	log.Info("dedicated metrics clickhouse", "configured", sources.Compute != nil && sources.Compute.MetricsClickHouse != nil,
+		"flag_read", metricsSwitch != nil, "CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS", cfg.MetricsClickHouseRequestTimeout.Milliseconds())
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
 	// or with the rollout step (DESIGN.md §3.1) is visible in the startup log.
 	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack.Names(),
@@ -268,6 +349,13 @@ func run(log *slog.Logger) error {
 		OnSlot:              func(slot string) { metrics.SessionCookieSlot.WithLabelValues(slot).Inc() },
 		ModerationAccountID: cfg.ModerationAccountID,
 	}
+	if cfg.BearerAuth {
+		// API keys resolved from the app's principal cache (DESIGN.md §4.2); off, every one falls back.
+		resolver.APIKeys = &auth.APIKeys{Cache: packed, Secret: cfg.APIKeySecret, OrchestratorToken: cfg.OrchestratorServiceToken}
+	}
+	// The secrets themselves are never logged: only whether each is set.
+	log.Info("api keys", "FEED_GO_BEARER_AUTH", cfg.BearerAuth, "NEXTAUTH_SECRET_set", strings.TrimSpace(cfg.APIKeySecret) != "",
+		"ORCHESTRATOR_SERVICE_TOKEN_set", strings.TrimSpace(cfg.OrchestratorServiceToken) != "")
 	deps := &feed.Deps{
 		DB:       pool,
 		Cache:    &feed.QueryCache{Redis: cache, Prefix: cfg.CacheKeyPrefix, Enabled: cfg.ImageQueryCache},
@@ -312,6 +400,8 @@ func run(log *slog.Logger) error {
 		Deps:    deps,
 		Sources: sources,
 		Blocked: blocked,
+		// `newCreators`: the "new & upcoming" boards' cached entries, read-only.
+		NewCreators: &feed.NewCreatorBoards{Cache: cache, Prefix: cfg.CacheKeyPrefix},
 	}
 	// The model.getAll shadow shares the replica, the cache readers, the gallery settings and the
 	// addons; its own flags are mirrored by FEED_GO_* variables (DESIGN.md §15.3).
@@ -329,8 +419,19 @@ func run(log *slog.Logger) error {
 			VisibleDecorationEvents: cfg.DecorationEvents,
 		},
 	}
+	// The model.getAssociatedResourcesCardData shadow shares model.getAll's deps, plus the viewer's
+	// hidden-user caches, the generation gate rules (system redis) and the creator-promotions mirror.
+	associated := &modelfeed.AssocDeps{
+		Deps:       models,
+		Prefs:      &modelfeed.PackedHiddenPrefs{Redis: cache, Prefix: cfg.CacheKeyPrefix},
+		Gates:      &modelfeed.SysGateRules{Sys: sys},
+		Promotions: feed.ParsePromotionAudience(cfg.CreatorPromotion),
+	}
 	// The REST /api/v1/models shadows read the replica and the caches (read-only) the same way.
 	mc := config.LoadV1Models()
+	if err := mc.Validate(); err != nil {
+		return err
+	}
 	v1Models := &server.V1ModelsDeps{
 		Deps: &v1models.Deps{
 			DB:      pool,
@@ -338,6 +439,7 @@ func run(log *slog.Logger) error {
 			Sources: sources,
 			Gallery: deps.Gallery,
 			Addons:  deps.Addons.Addons,
+			Blocked: blocked,
 			Config: v1models.Config{
 				ImageLocation:        cfg.ImageLocation,
 				BaseURL:              mc.BaseURL,
@@ -346,6 +448,7 @@ func run(log *slog.Logger) error {
 				ComputeMisses:        cfg.ComputeMisses,
 				ResponseCacheTTL:     mc.ResponseCacheTTL,
 				Production:           true,
+				RedHosts:             v1models.RedHosts(cfg.HostPrimaries["red"], cfg.Hosts["red"]),
 			},
 		},
 		Users: sources,
@@ -356,7 +459,9 @@ func run(log *slog.Logger) error {
 		Models:           models,
 		ServeModelGetAll: cfg.ServeModelGetAll,
 		ServeInfinite:    cfg.ServeInfinite,
+		WriteDevalue:     cfg.WriteDevalue,
 		Hosts:            cfg.Hosts,
+		HostPrimaries:    cfg.HostPrimaries,
 		RegionRules:      cfg.RegionRules,
 		// REGION_BLOCK_CONFIG, else the app's default list (apipolicy.json).
 		RegionBlockRules: cfg.RegionBlockRules,
@@ -369,6 +474,8 @@ func run(log *slog.Logger) error {
 		V1:             v1,
 		Infinite:       infinite,
 		V1Models:       v1Models,
+		ServeV1Models:  mc.Serve,
+		Associated:     associated,
 		RequestBudget:  cfg.RequestBudget,
 		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
 		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
@@ -388,10 +495,24 @@ func run(log *slog.Logger) error {
 			srv.NoteProxyError(r, reason, err)
 		}, prop)
 	}
+	// The public /api/v1/models routes hand their fallbacks to the Node app that serves /api/v1, a
+	// different upstream from the tRPC routes' (FEED_GO_V1_FALLBACK_URL; unset, the routes are not mounted).
+	if mc.FallbackURL != "" {
+		target, err := url.Parse(mc.FallbackURL)
+		if err != nil {
+			return err
+		}
+		srv.V1Fallback = fallbackProxy(target, fallbackIdleTimeout, func(r *http.Request, reason string, err error) {
+			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
+			srv.NoteProxyError(r, reason, err)
+		}, prop)
+	}
 
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll)
 	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
+	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil)
+	log.Info("public tRPC answers' write format", "TRPC_WRITE_DEVALUE", cfg.WriteDevalue)
 	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
 	// OpenMetrics on request only with tracing on: the exemplars ride in that format alone.
 	internal := server.InternalMux(srv, server.MetricsHandler(reg, tp != nil), cfg.Pprof)
@@ -404,7 +525,7 @@ func run(log *slog.Logger) error {
 	servers := []*http.Server{server.InternalHTTPServer(cfg.InternalAddr, internal)}
 	// Without a fallback the public route could only answer the ported shapes: shadow-only deployments
 	// do not listen publicly at all.
-	if srv.Fallback != nil {
+	if srv.Fallback != nil || srv.V1Fallback != nil {
 		servers = append(servers, server.PublicHTTPServer(cfg.Addr, public, cfg.RequestBudget))
 	}
 	errs := make(chan error, len(servers))

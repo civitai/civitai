@@ -109,12 +109,14 @@ func VisibleEventDecorations(imageIDs []int, got map[int]Entry, visibleEvents ma
 		if e.NotFound {
 			continue
 		}
-		data, _ := e.Value["data"].(map[string]any)
-		event, ok := data["event"].(string)
+		// The ordered record (an ordered cache): `data` keeps the key order Node's answer has.
+		rec := e.Ordered()
+		data, _ := ObjectField(rec, "data").(superjson.Object)
+		event, ok := ObjectField(data, "event").(string)
 		if !ok || !visibleEvents[event] {
 			continue
 		}
-		out[id] = Pick(e.Value, "id", "name", "type", "source", "data", "equippedToId", "equippedToType")
+		out[id] = PickOrdered(rec, "id", "name", "type", "source", "data", "equippedToId", "equippedToType")
 	}
 	return out, nil
 }
@@ -127,7 +129,19 @@ type Thumbnail struct {
 	// Width and Height are the thumbnail's own dimensions (the public images endpoint publishes them).
 	Width  any
 	Height any
+	// Servable is a "blockMarked" field that is exactly false; true, null or no field is not servable.
+	Servable bool
 }
+
+// sqlThumbnailMiss is the thumbnail cache's two lookups as one statement (thumbnailRowsSql over the
+// videos' thumbnailId): every row, with its block marker as "blockMarked".
+var sqlThumbnailMiss = `
+		SELECT t.id, t.url, t.width, t.height, t."nsfwLevel", cast(t.metadata->'parentId' as int) "parentId",
+			` + HasBlockMarkerSQL("t") + ` AS "blockMarked"
+		FROM "Image" t
+		WHERE t.id IN (
+			SELECT cast(metadata->'thumbnailId' as int) FROM "Image" WHERE id = ANY($1::int[]) AND type = 'video'
+		)`
 
 // thumbnailsFrom is getThumbnailsForImages(videoIds) over the cache's answer got for (unique) video ids
 // (stale entries served). The miss path is the cache's own two queries, on the replica.
@@ -142,12 +156,7 @@ func (s *Sources) thumbnailsFrom(ctx context.Context, videoIDs []int, got map[in
 	if len(miss) == 0 {
 		return out, nil
 	}
-	rows, err := s.Replica.Query(ctx, `
-		SELECT t.id, t.url, t.width, t.height, t."nsfwLevel", cast(t.metadata->'parentId' as int) "parentId"
-		FROM "Image" t
-		WHERE t.id IN (
-			SELECT cast(metadata->'thumbnailId' as int) FROM "Image" WHERE id = ANY($1::int[]) AND type = 'video'
-		)`, miss)
+	rows, err := s.Replica.Query(ctx, sqlThumbnailMiss, miss)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +174,8 @@ func (s *Sources) thumbnailsFrom(ctx context.Context, videoIDs []int, got map[in
 
 func thumbFrom(m map[string]any) Thumbnail {
 	n, ok := Int(m["nsfwLevel"])
-	return Thumbnail{URL: m["url"], NsfwLevel: n, HasNsfwKey: ok, Width: Wire(m["width"]), Height: Wire(m["height"])}
+	marked, isBool := m["blockMarked"].(bool)
+	return Thumbnail{URL: m["url"], NsfwLevel: n, HasNsfwKey: ok, Width: Wire(m["width"]), Height: Wire(m["height"]), Servable: isBool && !marked}
 }
 
 // Metrics is one image's metric counts (MetricService over `metrics:Image:<id>` hashes).

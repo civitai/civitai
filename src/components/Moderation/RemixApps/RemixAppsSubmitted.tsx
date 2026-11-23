@@ -17,9 +17,14 @@ import { useState } from 'react';
 import type { AdminRow } from '~/components/Moderation/RemixApps/RemixAppsAdmin';
 import { moderatorAppUrl } from '~/components/Moderation/ModeratorLookupMenuItem';
 import { moderatorUserLookupPath } from '~/shared/constants/moderator-app';
-import { REMIX_REJECT_REASONS, type RemixRejectReason } from '~/shared/remix-apps/row.schema';
+import {
+  REMIX_REJECT_REASONS,
+  REMIX_SYSTEM_ACTOR,
+  type RemixRejectReason,
+} from '~/shared/remix-apps/row.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import type { RemixGraphNode } from '~/shared/remix-apps/validate';
 
 export type SubmittedRow = Extract<AdminRow, { user: unknown }>;
 
@@ -33,8 +38,9 @@ export function RemixAppsSubmitted({ rows }: { rows: SubmittedRow[] }) {
   return (
     <Stack>
       <Alert color="blue">
-        There is no step graph or preview yet: those come when the sandbox runner ships. Review the
-        listing and the code itself. Until then a user app cannot run, approved or not.
+        Review the listing and the code itself. A dry run plays the code down every path in the
+        sandbox, on a placeholder image: code that branches on the image or on what a viewer types
+        can take paths it does not show.
       </Alert>
       {rows.length ? (
         rows.map((row) => (
@@ -77,6 +83,9 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
   });
   const setEnabled = trpc.remixApp.admin.setEnabled.useMutation({ onSuccess, onError });
   const clearMark = trpc.remixApp.admin.clearMinorThemed.useMutation({ onSuccess, onError });
+  const dryRun = trpc.remixApp.admin.validate.useMutation({ onError });
+  // A dry run of a source other than the one on screen is not shown.
+  const run = dryRun.data?.sha256 === seen.sha256 ? dryRun.data : undefined;
   const marked = !!user.minorThemed;
   // The server bars mature on every app of an author with a mark on any of them.
   const authorMarked = marked || others.some((o) => !!o.user.minorThemed);
@@ -129,6 +138,32 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
       <Text size="xs" c="dimmed">
         sha256 {seen.sha256}
       </Text>
+      <Group gap="xs">
+        <Button
+          size="compact-xs"
+          variant="light"
+          loading={dryRun.isPending}
+          onClick={() => dryRun.mutate({ slug: row.slug })}
+        >
+          Dry-run every path
+        </Button>
+        {run && (
+          <Text size="xs" c={run.issues.length ? 'red' : 'dimmed'}>
+            {run.paths} paths · {run.issues.length} issues
+          </Text>
+        )}
+      </Group>
+      {run && (
+        <Stack gap={2} className="max-h-96 overflow-auto">
+          {run.issues.map((issue, i) => (
+            <Text key={i} size="xs" c="red">
+              {issue.kind}: {issue.message}
+              {issue.answers.length ? ` (after ${issue.answers.join(' → ')})` : ''}
+            </Text>
+          ))}
+          <RemixGraphView node={run.graph} />
+        </Stack>
+      )}
       <Group justify="space-between" align="flex-end">
         <Group gap="xs" align="flex-end">
           <Checkbox
@@ -203,7 +238,8 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
             .slice(0, 10)
             .map((entry, i) => (
               <Text key={i} size="xs" c="dimmed">
-                {entry.at} · {entry.action} by {entry.by}
+                {entry.at} · {entry.action} by{' '}
+                {entry.by === REMIX_SYSTEM_ACTOR ? 'the run-time audit' : entry.by}
                 {entry.mature ? ' · mature' : ''}
                 {entry.reason ? ` · ${entry.reason}` : ''}
                 {entry.note ? ` · "${entry.note}"` : ''}
@@ -212,5 +248,49 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
         </Stack>
       )}
     </Stack>
+  );
+}
+
+/** One path per branch: what each step of the code sends, after which answer. */
+function RemixGraphView({ node }: { node: RemixGraphNode }) {
+  if (node.type === 'done')
+    return (
+      <Text size="xs" c="green">
+        Done · {node.outputs} outputs
+      </Text>
+    );
+  if (node.type === 'stop')
+    return (
+      <Text size="xs" c="red">
+        Stopped: {node.issue.message}
+      </Text>
+    );
+  if (node.type === 'workflow') {
+    const { request } = node;
+    return (
+      <>
+        <Text size="xs">
+          {request.kind === 'image'
+            ? `Image ×${request.quantity} from ${request.images.length} input(s): ${request.prompt}`
+            : `Upscale ×${request.scale}`}
+        </Text>
+        <RemixGraphView node={node.next} />
+      </>
+    );
+  }
+  return (
+    <>
+      <Text size="xs">
+        Ask ({node.spec.kind}): {node.spec.prompt}
+      </Text>
+      {node.branches.map(({ answer, next }) => (
+        <div key={String(answer)} className="ml-3 border-l border-gray-4 pl-2 dark:border-dark-4">
+          <Text size="xs" c="dimmed">
+            → {String(answer)}
+          </Text>
+          <RemixGraphView node={next} />
+        </div>
+      ))}
+    </>
   );
 }

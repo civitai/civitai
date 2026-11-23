@@ -121,7 +121,7 @@ export async function applyPendingReviewMute({
   // 🔴 Runtime, not just TypeScript — and it is worth being exact about why, because the obvious
   // justification is not true here. NOTHING crosses an HTTP boundary into this parameter today:
   // neither production caller passes a `type` at all, and the one HTTP route that reaches this
-  // function (`src/pages/api/mod/mute-user-pending-review.ts`) has no `type` key in its zod schema,
+  // function (`src/server/api-routes/mod/mute-user-pending-review.ts`) has no `type` key in its zod schema,
   // so no request body can supply one. Every value arriving here is written by an in-process caller
   // the compiler can see.
   //

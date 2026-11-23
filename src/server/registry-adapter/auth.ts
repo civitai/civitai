@@ -20,9 +20,8 @@
  *     finds the user may now read different ratings ends it with `cursor_expired`, so the
  *     consumer re-snapshots under them.
  *
- * No stream requires a scope, so this source never sends `insufficient_scope`. The one stream
- * that reads a scope, an authorized PRIVATE stream (`private-feed.ts`), reads `AppDataRead` from
- * the principal's {@link PrincipalToken} and, without it, streams nothing rather than refusing.
+ * This source never sends `insufficient_scope`; a stream whose scope is missing sends nothing
+ * instead (`private-feed.ts`).
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import {
@@ -46,6 +45,25 @@ type VerifiedTokenBase = {
   /** Who presents the token on the client's behalf (the JWT's `act.sub`); null when no one does. */
   actor: string | null;
   expiresAt: Date | null;
+  /**
+   * Set only on a token the hub's block exchange minted from an App Block token (`auth.jwt.ts`):
+   * the block, install and maturity ceiling it was minted for, which a private stream holds every
+   * poll to (`private-feed.ts`). Absent on every other token, a user exchange's included.
+   */
+  block?: TokenBlockBinding;
+};
+
+/**
+ * A block-exchange token's binding to its App Block token: its `civitai_app_block_id`,
+ * `civitai_block_instance_id` and `civitai_max_browsing_level` claims.
+ */
+export type TokenBlockBinding = {
+  /** The block token's AppBlock.id. */
+  appBlockId: string;
+  /** The block token's install (`blockInstanceId`), whose revocation markers the feed reads. */
+  blockInstanceId: string;
+  /** The block token's maturity ceiling (`maxBrowsingLevel`), a browsing-level bit flag. */
+  maxBrowsingLevel: number;
 };
 
 /** The user's browsing settings, which set a user token's {@link Audience}. */
@@ -77,7 +95,10 @@ export type VerifiedToken =
 export type VerifyToken = (token: string) => Promise<VerifiedToken | null>;
 
 /** What a private stream's gates read of an accepted token (`private-feed.ts`). */
-export type PrincipalToken = Pick<VerifiedToken, 'userId' | 'clientId' | 'scope' | 'actor'>;
+export type PrincipalToken = Pick<
+  VerifiedToken,
+  'userId' | 'clientId' | 'scope' | 'actor' | 'block'
+>;
 
 export type Principal = {
   /** null: anonymous. */
@@ -87,7 +108,7 @@ export type Principal = {
   /** The token's OAuth client (`client_id`), and who presented it for that client (`act.sub`). */
   clientId?: string;
   actor?: string | null;
-  /** The accepted token's user, client, scope and actor; null for anonymous. */
+  /** The accepted token's user, client, scope, actor and block binding; null for anonymous. */
   token: PrincipalToken | null;
   audience: Audience;
   expiresAt: Date | null;
@@ -156,6 +177,7 @@ export async function authenticate(
       clientId: verified.clientId,
       scope: verified.scope,
       actor: verified.actor,
+      ...(verified.block ? { block: verified.block } : {}),
     },
     audience,
     expiresAt: verified.expiresAt,

@@ -90,8 +90,8 @@ export const blockImageUploadRouter = router({
    * (`blocks.persistUploadedGenerationSource`) before THIS app can generate from it. It is the
    * gate's own read (`appUsesScannedSourceRows`), for the app named by the block token's
    * `appBlockId` claim, the claim the copy and the gate read too, so the host copies the blob
-   * exactly when the gate would refuse it for that app. Off, unknown or unreachable all answer
-   * false, as they do for the gate. The token is verified as every bridge call verifies it
+   * exactly when the gate would refuse it for that app. Off answers false; a flag that cannot be
+   * evaluated answers true, as it does for the gate. The token is verified as every bridge call verifies it
    * (`authorizeBlockBridgeToken`); a refused token answers as that refusal.
    */
   generationSourceUsesScannedRows: protectedProcedure
