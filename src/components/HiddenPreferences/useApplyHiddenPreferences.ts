@@ -161,11 +161,13 @@ export function withoutViewerHidden(
   { signedIn }: { signedIn: boolean }
 ): HiddenPreferencesState {
   if (!signedIn) return { ...preferences };
+  const moderatedIds = new Set(preferences.moderatedTags.map((tag) => tag.id));
   return {
     ...preferences,
     hiddenUsers: new Map(preferences.blockedByUsers ?? preferences.blockRelations),
     hiddenImages: new Map(),
-    hiddenTags: new Map(),
+    // A hidden tag that is also a moderated (mature) tag stays in force.
+    hiddenTags: new Map([...preferences.hiddenTags].filter(([id]) => moderatedIds.has(id))),
   };
 }
 

@@ -16,19 +16,24 @@ vi.mock('~/utils/faro/feedDrop', () => ({ emitFeedNoImagesDrop: vi.fn() }));
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
   useBrowsingLevelDebounced: () => 1,
 }));
-vi.mock('~/components/HiddenPreferences/HiddenPreferencesProvider', () => ({
-  useHiddenPreferencesContext: () => ({
-    hiddenUsers: new Map(),
-    hiddenTags: new Map(),
-    hiddenModels: new Map(),
-    hiddenModel3Ds: new Map(),
-    hiddenImages: new Map(),
-    hiddenLoading: false,
-    moderatedTags: [],
-    systemHiddenTags: new Map(),
-  }),
+const viewer = vi.hoisted(() => ({
+  user: null as { id: number } | null,
+  prefs: null as Record<string, unknown> | null,
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+vi.mock('~/components/HiddenPreferences/HiddenPreferencesProvider', () => ({
+  useHiddenPreferencesContext: () =>
+    viewer.prefs ?? {
+      hiddenUsers: new Map(),
+      hiddenTags: new Map(),
+      hiddenModels: new Map(),
+      hiddenModel3Ds: new Map(),
+      hiddenImages: new Map(),
+      hiddenLoading: false,
+      moderatedTags: [],
+      systemHiddenTags: new Map(),
+    },
+}));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.user }));
 vi.mock('~/providers/BrowsingSettingsAddonsProvider', () => ({
   useBrowsingSettingsAddons: () => ({ settings: { disablePoi: false, disableMinor: false } }),
 }));
@@ -525,5 +530,32 @@ describe("filterPreferences — 'comics' applies the system hidden tags to the c
 
   it("hides a comic whose cover carries one of the viewer's own hidden tags, even for the owner", () => {
     expect(ids(run([], { userTags: [SYSTEM_TAG], viewerId: 77 }))).toEqual([2]);
+  });
+});
+
+// Show anyway (#10115) sets the viewer's own hides aside only when a caller asks; every other feed keeps them.
+describe('useApplyHiddenPreferences without ignoreViewerHidden', () => {
+  it("still drops a signed-in viewer's hidden user and hidden tag", () => {
+    viewer.user = { id: 1 };
+    viewer.prefs = {
+      ...emptyPrefs(),
+      hiddenUsers: new Map([[9, true]]),
+      hiddenTags: new Map([[500, true]]),
+    };
+    const images = [
+      { id: 1, userId: 9, nsfwLevel: 1, tagIds: [], prompt: '' },
+      { id: 2, userId: 2, nsfwLevel: 1, tagIds: [500], prompt: '' },
+      { id: 3, userId: 2, nsfwLevel: 1, tagIds: [], prompt: '' },
+    ];
+    try {
+      const { result, unmount } = renderHook(() =>
+        useApplyHiddenPreferences({ type: 'images', data: images as never })
+      );
+      expect((result.current.items as { id: number }[]).map((i) => i.id)).toEqual([3]);
+      unmount();
+    } finally {
+      viewer.user = null;
+      viewer.prefs = null;
+    }
   });
 });

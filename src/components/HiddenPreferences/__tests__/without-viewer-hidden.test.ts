@@ -13,6 +13,7 @@ const HID = 10; // a user the viewer hid
 const BLOCKED = 11; // a user the viewer blocked
 const BLOCKER = 12; // a creator who blocked the viewer
 const TAG = 500;
+const MATURE_TAG = 501; // a moderated tag the viewer hid
 
 const prefs: HiddenPreferencesState = {
   hiddenUsers: new Map([
@@ -25,12 +26,15 @@ const prefs: HiddenPreferencesState = {
     [BLOCKER, true],
   ]),
   blockedByUsers: new Map([[BLOCKER, true]]),
-  hiddenTags: new Map([[TAG, true]]),
+  hiddenTags: new Map([
+    [TAG, true],
+    [MATURE_TAG, true],
+  ]),
   hiddenModels: new Map(),
   hiddenModel3Ds: new Map(),
   hiddenImages: new Map([[4, true]]),
   hiddenLoading: false,
-  moderatedTags: [],
+  moderatedTags: [{ id: MATURE_TAG, name: 'mature', nsfwLevel: 4 }] as never,
   systemHiddenTags: new Map(),
 };
 
@@ -52,6 +56,7 @@ const images = [
   image(4),
   image(5, { userId: BLOCKER }),
   image(6, { userId: HID, nsfwLevel: 4 }),
+  image(7, { tagIds: [MATURE_TAG] }),
 ];
 
 const signedIn = { signedIn: true };
@@ -86,5 +91,11 @@ describe('withoutViewerHidden: what Flag Race Show anyway may set aside (#10115)
 
   it("sets nothing aside for a signed-out viewer, whose hidden tags are the site's defaults", () => {
     expect(kept(withoutViewerHidden(prefs, { signedIn: false }))).toEqual([]);
+  });
+
+  it('keeps a moderated tag the viewer hid in force, while setting aside an ordinary one', () => {
+    const shown = kept(withoutViewerHidden(prefs, signedIn));
+    expect(shown).toContain(3);
+    expect(shown).not.toContain(7);
   });
 });
