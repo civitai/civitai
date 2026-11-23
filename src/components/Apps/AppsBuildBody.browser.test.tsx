@@ -421,3 +421,21 @@ describe('AppsBuildRequestView — /apps/build for a viewer the build gate refus
     expect(mocks.lastEnabled).toBeDefined();
   });
 });
+
+describe('AppsBuildPitch — the access line follows the auto-approve flag', () => {
+  test.each([
+    [
+      false,
+      /open to a small group while the platform is in beta/,
+      /open to builders who request it/,
+    ],
+    [true, /open to builders who request it/, /open to a small group/],
+  ])('auto-approve %s', async (on, shown, hidden) => {
+    mocks.flags = on ? { appAccessRequestAutoApprove: true } : {};
+    mocks.user = { id: 31, username: 'ordinary', isModerator: false };
+    await renderBody(<AppsBuildRequestView />);
+    const access = page.getByTestId('apps-build-request-access');
+    await expect.element(access.getByText(shown)).toBeInTheDocument();
+    expect(access.getByText(hidden).elements()).toHaveLength(0);
+  });
+});

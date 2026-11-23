@@ -4,6 +4,7 @@ import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 import type * as TrpcMod from '~/utils/trpc';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import type * as RequireLoginMod from '~/components/Login/requireLogin';
 import type * as ToursProviderMod from '~/components/Tours/ToursProvider';
 import { APP_ACCESS_WHAT_TO_BUILD_TOO_SHORT } from '~/server/schema/app-access-request.schema';
@@ -39,6 +40,12 @@ const mocks = vi.hoisted(() => ({
   openLoginHere: vi.fn(),
   onRequest: vi.fn(),
   sessionStatus: 'authenticated' as 'authenticated' | 'unauthenticated' | 'loading',
+  flags: {} as Record<string, boolean>,
+}));
+
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsMod>()),
+  useFeatureFlags: () => mocks.flags,
 }));
 
 vi.mock('~/providers/SessionProvider', () => ({
@@ -63,10 +70,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       useQuery: () => ({ data: mocks.request, isLoading: false }),
     },
     'appAccessRequest.submit': {
-      useMutation: (opts?: { onSuccess?: () => unknown }) => ({
+      useMutation: (opts?: { onSuccess?: (row: { status: string }) => unknown }) => ({
         mutate: (input: unknown) => {
           mocks.submitted.push(input);
-          void opts?.onSuccess?.();
+          void opts?.onSuccess?.({ status: 'pending' });
         },
         isPending: mocks.submitPending,
         error: mocks.submitError,
@@ -126,6 +133,7 @@ beforeEach(() => {
   router.pathname = '/apps/build';
   router.replace.mockClear();
   mocks.sessionStatus = 'authenticated';
+  mocks.flags = {};
 });
 
 describe('AppAccessRequestPanel — a first request', () => {
@@ -352,5 +360,18 @@ describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link',
     await expect.element(page.getByTestId('app-access-request-button')).toBeInTheDocument();
     expect(openDialogIds()).toEqual([]);
     expect(router.replace).not.toHaveBeenCalled();
+  });
+});
+
+describe('AppAccessRequestModal — the review line follows the auto-approve flag', () => {
+  test.each([
+    [false, /A moderator reads every request/, /approved right away/],
+    [true, /Most requests are approved right away/, /A moderator reads/],
+  ])('auto-approve %s', async (on, shown, hidden) => {
+    mocks.flags = on ? { appAccessRequestAutoApprove: true } : {};
+    render();
+    await page.getByRole('button', { name: 'Request access' }).click();
+    await expect.element(page.getByText(shown)).toBeInTheDocument();
+    expect(page.getByText(hidden).elements()).toHaveLength(0);
   });
 });

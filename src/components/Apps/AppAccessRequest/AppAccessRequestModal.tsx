@@ -1,5 +1,6 @@
 import { Alert, Button, Group, Modal, Stack, Text } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Form, InputTextArea, useForm } from '~/libs/form';
 import {
   submitAppAccessRequestSchema,
@@ -12,6 +13,7 @@ import { trpc } from '~/utils/trpc';
 /** "Request access" form: one free-text answer, validated by the same schema the server uses. */
 export default function AppAccessRequestModal() {
   const dialog = useDialogContext();
+  const { appAccessRequestAutoApprove } = useFeatureFlags();
   const utils = trpc.useUtils();
   const form = useForm({
     schema: submitAppAccessRequestSchema,
@@ -40,7 +42,10 @@ export default function AppAccessRequestModal() {
       <Form form={form} onSubmit={onSubmit}>
         <Stack gap="md">
           <Text size="sm" c="dimmed">
-            Tell us what you&apos;d like to make. A moderator reads every request.
+            Tell us what you&apos;d like to make.{' '}
+            {appAccessRequestAutoApprove
+              ? 'Most requests are approved right away.'
+              : 'A moderator reads every request.'}
           </Text>
           <InputTextArea
             name="whatToBuild"

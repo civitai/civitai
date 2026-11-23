@@ -302,6 +302,7 @@ export function AppsBuildBody() {
 
 /** State A's content — the recruiting copy and the Request access panel. */
 function AppsBuildPitch({ onRequest }: { onRequest: () => void }) {
+  const { appAccessRequestAutoApprove } = useFeatureFlags();
   return (
     <Stack gap="xl" data-testid="apps-build-pitch">
       <GetStartedBody />
@@ -314,8 +315,11 @@ function AppsBuildPitch({ onRequest }: { onRequest: () => void }) {
         <Stack gap="sm" align="flex-start">
           <Text size="sm">
             You don&apos;t need to be a developer to build an app: describe what you want and the
-            App Assistant builds it with you. It is open to a small group while the platform is in
-            beta — request access and tell us what you&apos;d like to make.
+            App Assistant builds it with you.{' '}
+            {appAccessRequestAutoApprove
+              ? 'It is open to builders who request it'
+              : 'It is open to a small group while the platform is in beta'}{' '}
+            — request access and tell us what you&apos;d like to make.
           </Text>
           <AppAccessRequestPanel onRequest={onRequest} />
         </Stack>
