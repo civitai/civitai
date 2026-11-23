@@ -95,11 +95,22 @@
 // exactly those ceilings.
 //
 // LOCK ORDER, which is what makes it deadlock-free: (1) the document row of the
-// one key being written, (1b) that document's tally and mark rows, (2)
-// `usage_app` for (app, ns), (3) the caller's `usage_user` row. Nothing takes a
-// document or tally lock after (2), and (3) is only taken holding (2), so no
-// cycle can form. Incrementing an EXISTING document and marking take only a KEY
-// SHARE lock on the document and the tally row, and no usage lock.
+// one key being written, (1b) that document's tally and mark rows, (1c) the
+// namespace's `mark_head` row, (2) `usage_app` for (app, ns), (3) the caller's
+// `usage_user` row. Nothing takes a document or tally lock it does not already hold
+// after (1c) or (2) (the mark-sequence stamps update rows taken at (1b)), (1c) is
+// never taken holding (2), and (3) is only taken holding (2), so no cycle can
+// form. A mark, an unmark and an increment of an EXISTING document take (1) KEY
+// SHARE, (1b) and (1c), and no usage lock. An increment that CREATES its counter
+// document takes (1), (1b), (1c), then (2) and (3) for the create's accounting. A
+// document write takes (1), (1b) where it deletes tallies, (2) and (3), and never
+// (1c).
+//
+// `markSeq` comes from `mark_head.last_mark_seq` (`SQL_TAKE_MARK_SEQ`), taken by
+// every mark, unmark and increment under (1c) and stamped on the tally and mark
+// rows it changed: per-(app, ns) mark order equals commit order, as `seq`'s does.
+// It never moves `doc.seq`, which moderation and the rater check as the
+// document's revision.
 //
 // `seq` comes from `usage_app.last_seq`, incremented in the same statement that
 // charges the quota and therefore row-locked until commit: per-(app, ns) seq
@@ -1074,6 +1085,22 @@ const SQL_MARK_DOWN = `UPDATE appdata.doc_tally t SET count = t.count - 1
 const SQL_MARK_COUNT = `SELECT t.count FROM appdata.doc_tally t
   WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = $3 AND t.key = $4 AND t.kind = 'mark' AND t.name = $5`;
 
+// The namespace's next mark sequence: lock (1c), held until commit, so mark order equals commit
+// order. Taken by every mark, unmark and increment, whether or not it changed a row. $1 app, $2 ns
+const SQL_TAKE_MARK_SEQ = `INSERT INTO appdata.mark_head AS mh (app_id, ns, last_mark_seq)
+  VALUES ($1, $2, 1)
+  ON CONFLICT (app_id, ns) DO UPDATE SET last_mark_seq = mh.last_mark_seq + 1
+  RETURNING mh.last_mark_seq`;
+// Stamp the mark sequence on the tally row this transaction changed (and so already holds).
+// $1 app, $2 ns, $3 coll, $4 key, $5 kind, $6 name, $7 mark seq
+const SQL_STAMP_TALLY = `UPDATE appdata.doc_tally t SET mark_seq = $7::bigint
+  WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = $3 AND t.key = $4 AND t.kind = $5 AND t.name = $6`;
+// And on the viewer's mark row a mark inserted. $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 user,
+// $7 mark seq
+const SQL_STAMP_MARK = `UPDATE appdata.doc_mark mk SET mark_seq = $7::bigint
+  WHERE mk.app_id = $1 AND mk.ns = $2 AND mk.coll = $3 AND mk.key = $4 AND mk.name = $5
+    AND mk.user_id = $6::int`;
+
 // Stored usage. $1 app, $2 ns (+ $3 user). A missing row is zero.
 const SQL_USAGE_APP = `SELECT u.bytes, u.docs FROM appdata.usage_app u
   WHERE u.app_id = $1 AND u.ns = $2`;
@@ -1082,9 +1109,9 @@ const SQL_USAGE_USER = `SELECT u.bytes, u.docs FROM appdata.usage_user u
 
 // Review maintenance (see the module header). Every row of every review namespace of one
 // publish request, table by table, in the store's lock order (document first — its index rows
-// go with it by the foreign-key cascade — then tallies and marks, then usage_app before
-// usage_user), so a write racing the purge cannot deadlock against it. $1 publish request id.
-// Each returns the number of rows it deleted.
+// go with it by the foreign-key cascade — then tallies and marks, then mark_head, then
+// usage_app before usage_user), so a write racing the purge cannot deadlock against it.
+// $1 publish request id. Each returns the number of rows it deleted.
 const SQL_REVIEW_PURGE = [
   `WITH gone AS (DELETE FROM appdata.doc d WHERE d.app_id = $1 AND d.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
@@ -1095,6 +1122,8 @@ const SQL_REVIEW_PURGE = [
   `WITH gone AS (DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.doc_tomb tb WHERE tb.app_id = $1 AND tb.ns LIKE 'rev:%' RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.mark_head mh WHERE mh.app_id = $1 AND mh.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns LIKE 'rev:%' RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
@@ -1146,6 +1175,8 @@ const SQL_WIPE_NAMESPACE = [
   `WITH gone AS (DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns = $2 RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.doc_tomb tb WHERE tb.app_id = $1 AND tb.ns = $2 RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.mark_head mh WHERE mh.app_id = $1 AND mh.ns = $2 RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
   `WITH gone AS (DELETE FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = $2 RETURNING 1)
   SELECT count(*)::int AS n FROM gone`,
@@ -2489,6 +2520,10 @@ function buildDocStore(deps: DocStoreDeps) {
    * `opts.ifVersion` (a permission hook's pin, or a caller's own) refuses the increment with
    * `version_conflict` unless the document is still at that version (0: still absent). A tally
    * never changes the version, so concurrent increments never conflict with each other.
+   *
+   * Answers the counter's value and the mark sequence it took (`markSeq`, stamped on the counter's
+   * tally row); an increment that created its counter document also answers that document's
+   * `seq`. An increment of an existing document never moves its `seq`.
    */
   async function increment(
     ctx: DocStoreContext,
@@ -2497,7 +2532,7 @@ function buildDocStore(deps: DocStoreDeps) {
     counter: string,
     by = 1,
     opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<{ value: number }> {
+  ): Promise<{ value: number; markSeq: number; seq?: number }> {
     const policy = assertCollection(coll);
     assertKey(key);
     assertIncrementRequest(coll, counter, by);
@@ -2521,7 +2556,8 @@ function buildDocStore(deps: DocStoreDeps) {
         const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
         if (doc.rows.length > 0) {
           assertTallyVersion(ifVersion, Number(doc.rows[0].version));
-          return { value: await bump() };
+          const value = await bump();
+          return { value, markSeq: await stampMarkSeq(c, ctx, coll, key, 'counter', counter) };
         }
         if (policy !== 'none') throw new DocStoreError('not_found', 'document not found');
         assertTallyVersion(ifVersion, 0);
@@ -2541,8 +2577,10 @@ function buildDocStore(deps: DocStoreDeps) {
         ]);
         if (ins.rows.length === 0) continue; // lost the race; increment the winner's doc
         // Same accounting as any document create: the app and the creating
-        // viewer's own ceiling (labelled `viewer`: it is the caller's), then the seq.
+        // viewer's own ceiling (labelled `viewer`: it is the caller's), then the seq. The mark
+        // sequence first: (1c) before (2), the lock order.
         const value = await bump();
+        const markSeq = await stampMarkSeq(c, ctx, coll, key, 'counter', counter);
         const size = Number(ins.rows[0].size_bytes);
         const seq = await charge(
           c,
@@ -2551,7 +2589,7 @@ function buildDocStore(deps: DocStoreDeps) {
           { uid: viewer, bytes: size, docs: 1, ceiling: 'viewer' }
         );
         await stampWrittenDoc(c, ctx, coll, 0, key, seq, ctx.viewerUid);
-        return { value };
+        return { value, markSeq, seq };
       }
       throw new DocStoreError('version_conflict', 'concurrent write; retry', {
         currentVersion: null,
@@ -2561,14 +2599,39 @@ function buildDocStore(deps: DocStoreDeps) {
 
   const assertMarkName = assertMarkRequest;
 
-  /** `count` is null for `report`, whose count is never exposed. */
+  /**
+   * Lock (1c): take the namespace's next mark sequence, and stamp it on the tally row this
+   * transaction changed (a row it already holds), if it changed one. Returns the sequence.
+   */
+  async function stampMarkSeq(
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    coll: DocCollection,
+    key: string,
+    kind: 'counter' | 'mark' | null,
+    name: string
+  ): Promise<number> {
+    const markSeq = Number(
+      (await c.query(SQL_TAKE_MARK_SEQ, [ctx.appId, ctx.ns])).rows[0].last_mark_seq
+    );
+    if (kind !== null) {
+      await c.query(SQL_STAMP_TALLY, [ctx.appId, ctx.ns, coll.name, key, kind, name, markSeq]);
+    }
+    return markSeq;
+  }
+
+  /**
+   * `count` is null for `report`, whose count is never exposed. `markSeq` is the mark sequence it
+   * took, stamped on the tally row and the viewer's mark row when it added them; a mark the viewer
+   * already held changes no row but still takes one.
+   */
   async function mark(
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
     name: string,
     opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<{ marked: true; count: number | null }> {
+  ): Promise<{ marked: true; count: number | null; markSeq: number }> {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
@@ -2583,12 +2646,12 @@ function buildDocStore(deps: DocStoreDeps) {
       assertTallyVersion(ifVersion, Number(doc.rows[0].version));
       const args = [ctx.appId, ctx.ns, coll.name, key, name];
       const ins = await c.query(SQL_INSERT_MARK, [...args, viewer]);
-      const res =
-        ins.rows.length > 0
-          ? await c.query(SQL_MARK_UP, args)
-          : await c.query(SQL_MARK_COUNT, args);
+      const added = ins.rows.length > 0;
+      const res = added ? await c.query(SQL_MARK_UP, args) : await c.query(SQL_MARK_COUNT, args);
       const count = Number(res.rows[0]?.count ?? 0);
-      return { marked: true as const, count: name === REPORT_MARK ? null : count };
+      const markSeq = await stampMarkSeq(c, ctx, coll, key, added ? 'mark' : null, name);
+      if (added) await c.query(SQL_STAMP_MARK, [...args, viewer, markSeq]);
+      return { marked: true as const, count: name === REPORT_MARK ? null : count, markSeq };
     });
   }
 
@@ -2598,7 +2661,7 @@ function buildDocStore(deps: DocStoreDeps) {
     key: string,
     name: string,
     opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<{ marked: false; count: number | null }> {
+  ): Promise<{ marked: false; count: number | null; markSeq: number }> {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
@@ -2614,12 +2677,14 @@ function buildDocStore(deps: DocStoreDeps) {
       assertTallyVersion(ifVersion, Number(doc.rows[0].version));
       const args = [ctx.appId, ctx.ns, coll.name, key, name];
       const del = await c.query(SQL_DELETE_MARK, [...args, viewer]);
-      const res =
-        del.rows.length > 0
-          ? await c.query(SQL_MARK_DOWN, args)
-          : await c.query(SQL_MARK_COUNT, args);
+      const removed = del.rows.length > 0;
+      const res = removed
+        ? await c.query(SQL_MARK_DOWN, args)
+        : await c.query(SQL_MARK_COUNT, args);
       const count = Number(res.rows[0]?.count ?? 0);
-      return { marked: false as const, count: name === REPORT_MARK ? null : count };
+      // The viewer's mark row is gone; only the tally row it decremented is stamped.
+      const markSeq = await stampMarkSeq(c, ctx, coll, key, removed ? 'mark' : null, name);
+      return { marked: false as const, count: name === REPORT_MARK ? null : count, markSeq };
     });
   }
 

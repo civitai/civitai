@@ -178,7 +178,7 @@ describe('doc-store.ts SQL', () => {
   it('finds the statements (positive control: the extractor sees the module SQL)', () => {
     const refs = literals.flatMap((l) => [
       ...l.text.matchAll(
-        /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|usage_app|usage_user)\b/g
+        /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|mark_head|usage_app|usage_user)\b/g
       ),
     ]);
     expect(literals.length).toBeGreaterThanOrEqual(25);
@@ -446,6 +446,9 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-store.functional.ts',
     // Sets documents' rating columns directly (no rater yet) and reads back what a write stored.
     'server/services/apps/__tests__/doc-store.levels.pglite.test.ts',
+    // Reads back the mark sequence each mark, unmark and increment stamped, and the order of the
+    // statements that took it.
+    'server/services/apps/__tests__/doc-store.mark-seq.pglite.test.ts',
     'server/services/apps/__tests__/doc-store.pg.test.ts',
     'server/services/apps/__tests__/doc-store.pglite.test.ts',
     // Reads back the rating columns a publish under content levels left on each copy.
@@ -488,11 +491,15 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/migrations/20261119120000_appdata_doc_record_id.sql',
     'server/services/apps/migrations/20261119120100_appdata_doc_record_id_backfill.sql',
     'server/services/apps/migrations/20261119120200_appdata_doc_record_id_unique.sql',
+    // The mark sequence's table and its columns on doc_tally and doc_mark, and their rollback
+    // (DDL and policies only).
+    'server/services/apps/migrations/20261122120000_appdata_mark_head.down.sql',
+    'server/services/apps/migrations/20261122120000_appdata_mark_head.sql',
     // Sets an item's rating columns directly (no rater yet) for the card-path cases.
     'server/services/blocks/__tests__/shared-item-doc-store.pglite.test.ts',
   ];
   const PATTERN =
-    /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|usage_app|usage_user)\b|SCHEMA (IF (NOT )?EXISTS )?appdata\b/;
+    /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|mark_head|usage_app|usage_user)\b|SCHEMA (IF (NOT )?EXISTS )?appdata\b/;
 
   function walk(dir: string, out: string[]) {
     for (const name of readdirSync(dir)) {

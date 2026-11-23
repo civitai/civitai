@@ -78,6 +78,20 @@ export const MIGRATION_RECORD_ID_UNIQUE = path.resolve(
   __dirname,
   '../migrations/20261119120200_appdata_doc_record_id_unique.sql'
 );
+/**
+ * The mark sequence: `appdata.mark_head` and the `mark_seq` columns of `doc_tally` and
+ * `doc_mark`. ON by default: the store takes it on every mark, unmark and increment, so every
+ * suite runs against a datastore that has it, as an environment must before that code ships.
+ */
+export const MIGRATION_MARK_HEAD_UP = path.resolve(
+  __dirname,
+  '../migrations/20261122120000_appdata_mark_head.sql'
+);
+export const MIGRATION_MARK_HEAD_DOWN = path.resolve(
+  __dirname,
+  '../migrations/20261122120000_appdata_mark_head.down.sql'
+);
+
 /** The batched backfill of `doc.record_id` (a data script; never applied by the harness). */
 export const MIGRATION_RECORD_ID_BACKFILL = path.resolve(
   __dirname,
@@ -250,6 +264,8 @@ export async function createPgliteHarness(opts: {
   docRatingId?: boolean;
   /** Apply the `doc.record_id` column and its unique index too (default true). */
   recordId?: boolean;
+  /** Apply the mark-sequence migration too (default true). */
+  markHead?: boolean;
 }): Promise<Harness> {
   const pg = new PGlite();
   await pg.exec(readFileSync(MIGRATION_UP, 'utf8'));
@@ -261,8 +277,10 @@ export async function createPgliteHarness(opts: {
     await pg.exec(readFileSync(MIGRATION_RECORD_ID_UP, 'utf8'));
     await pg.exec(readFileSync(MIGRATION_RECORD_ID_UNIQUE, 'utf8'));
   }
+  if (opts.markHead !== false) await pg.exec(readFileSync(MIGRATION_MARK_HEAD_UP, 'utf8'));
   if (!opts.rls) {
     for (const t of APPDATA_TABLES) {
+      if (t === 'mark_head' && opts.markHead === false) continue;
       await pg.exec(`ALTER TABLE appdata.${t} DISABLE ROW LEVEL SECURITY`);
     }
   }
@@ -347,6 +365,8 @@ export async function createRealPgHarness(): Promise<Harness> {
   // record export reads it). Its unique index is built CONCURRENTLY, which a multi-statement
   // query cannot run, and no suite here needs it.
   await su.query(readFileSync(MIGRATION_RECORD_ID_UP, 'utf8'));
+  // The mark sequence, as on PGlite: every mark, unmark and increment takes it.
+  await su.query(readFileSync(MIGRATION_MARK_HEAD_UP, 'utf8'));
   const open = new Set<Client>();
   // Ends started by release() and not awaited there. close() waits for them before the FORCE drop:
   // a client still closing when its backend is killed gets a FATAL 57P01 with no 'error' listener,

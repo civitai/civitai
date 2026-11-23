@@ -1351,7 +1351,9 @@ async function run(
         hookPass: grant?.pass,
       });
       afterCommit();
-      return ok(counted);
+      // `{ value }` only: the store's `markSeq` (and a creating increment's `seq`) are internal to
+      // its API, not this route's.
+      return ok({ value: counted.value });
     }
     case 'mark':
     case 'unmark': {
