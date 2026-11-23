@@ -199,7 +199,15 @@ export type DocStoreDeps = {
    * concurrency test parks every writer here so they all reach the charge
    * together. Never set in production.
    */
-  hooks?: { beforeUsageCharge?: () => Promise<void> };
+  hooks?: {
+    beforeUsageCharge?: () => Promise<void>;
+    /**
+     * Awaited by a mark, unmark or increment holding its (1b) rows, just before it takes the
+     * mark sequence (lock 1c). The concurrency test parks every caller here so they all reach
+     * `mark_head` together. Never set in production.
+     */
+    beforeMarkSeq?: () => Promise<void>;
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -1887,53 +1895,85 @@ export type SharedKeyMatch = {
   rating?: DocRating;
 };
 
+/**
+ * A relation (a table or a column) that a manual migration adds, which the store uses only once it
+ * exists, without a restart: the one probe `schema_major` and the mark sequence share. Found once
+ * and kept; while absent, tried again at most every `recheckMs`. `codes` are the SQLSTATEs that
+ * mean it is missing (42P01 undefined_table, 42703 undefined_column).
+ */
+function optionalRelationProbe(name: string, codes: readonly string[], recheckMs: number) {
+  let state: { present: boolean; at: number } | undefined;
+  const savepoint = `${name}_probe`;
+  const isMissing = (err: unknown) => codes.includes((err as { code?: string } | null)?.code ?? '');
+  return {
+    /** Known present, with no query: a statement naming it may run as is. */
+    get present(): boolean {
+      return state?.present === true;
+    },
+    /**
+     * After a statement naming it failed while it was known present: a missing-relation failure
+     * (it was dropped since, a rollback of the migration) forgets it, so the next call looks
+     * again. The failing call itself still fails.
+     */
+    forgetIfMissing(err: unknown): void {
+      if (isMissing(err)) state = undefined;
+    },
+    /**
+     * Run `fn`, which names the relation, only where it exists; null where it does not. Known
+     * present: run as is (a missing-relation failure forgets it, and is thrown). Known absent
+     * within `recheckMs`: null, with no query. Otherwise under a savepoint: a missing-relation
+     * failure rolls back to it, the transaction goes on, and the answer is null. Any other failure
+     * is the transaction's own and is thrown.
+     */
+    async run<T>(c: DocStoreClient, fn: () => Promise<T>): Promise<T | null> {
+      if (state?.present) {
+        try {
+          return await fn();
+        } catch (err) {
+          if (isMissing(err)) state = undefined;
+          throw err;
+        }
+      }
+      if (state && Date.now() - state.at < recheckMs) return null;
+      await c.query(`SAVEPOINT ${savepoint}`);
+      try {
+        const out = await fn();
+        await c.query(`RELEASE SAVEPOINT ${savepoint}`);
+        state = { present: true, at: Date.now() };
+        return out;
+      } catch (err) {
+        if (!isMissing(err)) throw err;
+        await c.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        state = { present: false, at: Date.now() };
+        return null;
+      }
+    },
+  };
+}
+
 function buildDocStore(deps: DocStoreDeps) {
   const limits = deps.limits ?? DEFAULT_DOC_STORE_LIMITS;
   // Settled only by a successful role read; a failed read is retried next call.
   let privileges: 'safe' | 'refused' | undefined;
-  // Whether `appdata.doc.schema_major` exists (a manual migration). Found once and kept; while
-  // absent, probed again at most every SCHEMA_MAJOR_RECHECK_MS, so applying the migration starts
-  // the stamping without a restart.
-  let schemaMajorColumn: { present: boolean; at: number } | undefined;
-  // Whether `appdata.mark_head` and `doc_tally.mark_seq` exist (a manual migration), kept the same
-  // way: found once and kept; while absent, tried again at most every MARK_HEAD_RECHECK_MS.
-  let markHeadTable: { present: boolean; at: number } | undefined;
-
-  const isMarkHeadMissing = (err: unknown) => {
-    const code = (err as { code?: string } | null)?.code;
-    return code === PG_UNDEFINED_TABLE || code === PG_UNDEFINED_COLUMN;
-  };
+  // `appdata.doc.schema_major` (a manual migration): stamped only once it exists.
+  const schemaMajorColumn = optionalRelationProbe(
+    'schema_major',
+    [PG_UNDEFINED_COLUMN],
+    SCHEMA_MAJOR_RECHECK_MS
+  );
+  // `appdata.mark_head` and `doc_tally.mark_seq` (a manual migration): the mark sequence is taken
+  // only once they exist.
+  const markHeadTable = optionalRelationProbe(
+    'mark_head',
+    [PG_UNDEFINED_TABLE, PG_UNDEFINED_COLUMN],
+    MARK_HEAD_RECHECK_MS
+  );
 
   /**
    * Run `fn`, which names `appdata.mark_head` or `doc_tally.mark_seq`, only where they exist; null
-   * where they do not. Known present: run as is, and a table dropped since (a rollback of the
-   * migration) fails this one call and is looked for again on the next. Not known: run under a
-   * savepoint, so a missing table or column (42P01, 42703) rolls back to it and the transaction
-   * goes on without the sequence. Any other failure is the transaction's own and is thrown.
+   * where they do not (`optionalRelationProbe.run`): the call then answers without a sequence.
    */
-  async function withMarkHead<T>(c: DocStoreClient, fn: () => Promise<T>): Promise<T | null> {
-    if (markHeadTable?.present) {
-      try {
-        return await fn();
-      } catch (err) {
-        if (isMarkHeadMissing(err)) markHeadTable = undefined;
-        throw err;
-      }
-    }
-    if (markHeadTable && Date.now() - markHeadTable.at < MARK_HEAD_RECHECK_MS) return null;
-    await c.query('SAVEPOINT mark_head_probe');
-    try {
-      const out = await fn();
-      await c.query('RELEASE SAVEPOINT mark_head_probe');
-      markHeadTable = { present: true, at: Date.now() };
-      return out;
-    } catch (err) {
-      if (!isMarkHeadMissing(err)) throw err;
-      await c.query('ROLLBACK TO SAVEPOINT mark_head_probe');
-      markHeadTable = { present: false, at: Date.now() };
-      return null;
-    }
-  }
+  const withMarkHead = <T>(c: DocStoreClient, fn: () => Promise<T>) => markHeadTable.run(c, fn);
 
   /** One statement of a purge or wipe; the `mark_head` one only where that table exists. */
   async function purgeRows(c: DocStoreClient, sql: string, params: unknown[]): Promise<number> {
@@ -1947,23 +1987,12 @@ function buildDocStore(deps: DocStoreDeps) {
    * without the stamp. Any other failure is the transaction's own and is thrown as it is.
    */
   async function hasSchemaMajorColumn(c: DocStoreClient, ctx: DocStoreContext): Promise<boolean> {
-    if (
-      schemaMajorColumn &&
-      (schemaMajorColumn.present || Date.now() - schemaMajorColumn.at < SCHEMA_MAJOR_RECHECK_MS)
-    ) {
-      return schemaMajorColumn.present;
-    }
-    await c.query('SAVEPOINT schema_major_probe');
-    try {
+    if (schemaMajorColumn.present) return true;
+    const found = await schemaMajorColumn.run(c, async () => {
       await c.query(SQL_SCHEMA_MAJOR_PROBE, [ctx.appId, ctx.ns]);
-      await c.query('RELEASE SAVEPOINT schema_major_probe');
-      schemaMajorColumn = { present: true, at: Date.now() };
-    } catch (err) {
-      if ((err as { code?: string } | null)?.code !== PG_UNDEFINED_COLUMN) throw err;
-      await c.query('ROLLBACK TO SAVEPOINT schema_major_probe');
-      schemaMajorColumn = { present: false, at: Date.now() };
-    }
-    return schemaMajorColumn.present;
+      return true;
+    });
+    return found === true;
   }
 
   /**
@@ -1993,9 +2022,7 @@ function buildDocStore(deps: DocStoreDeps) {
     } catch (err) {
       // The column was dropped after it was found (a rollback of the migration): look again on
       // the next write. This write fails; the next one writes without the stamp.
-      if ((err as { code?: string } | null)?.code === PG_UNDEFINED_COLUMN) {
-        schemaMajorColumn = undefined;
-      }
+      schemaMajorColumn.forgetIfMissing(err);
       throw err;
     }
   }
@@ -2689,6 +2716,7 @@ function buildDocStore(deps: DocStoreDeps) {
     kind: 'counter' | 'mark' | null,
     name: string
   ): Promise<{ markSeq?: number }> {
+    await deps.hooks?.beforeMarkSeq?.();
     const markSeq = await withMarkHead(c, async () => {
       const seq = Number(
         (await c.query(SQL_TAKE_MARK_SEQ, [ctx.appId, ctx.ns])).rows[0].last_mark_seq

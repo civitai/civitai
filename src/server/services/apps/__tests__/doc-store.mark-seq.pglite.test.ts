@@ -15,6 +15,7 @@ import {
   MIGRATION_MARK_HEAD_UP,
   type Harness,
 } from './doc-store.harness';
+import { APPDATA_TABLES } from './doc-store.sql-scan';
 import {
   BOARD,
   ctx,
@@ -170,14 +171,29 @@ describe.each([{ rls: true }, { rls: false }])('the mark sequence (rls %o)', (op
 
   describe('🔴 the lock order: (1) document, (1b) tally and mark rows, (1c) mark_head, (2) usage_app, (3) usage_user', () => {
     /** The tables, in order, of the statements one call sent for `app`. */
+    /**
+     * The tables, in order, of the statements one call sent for `app`: each statement's first
+     * appdata table. Statements naming none (a cold store's mark-sequence savepoint) are left out,
+     * so the order does not depend on which case ran first.
+     */
     async function tablesOf(app: string, call: () => Promise<unknown>): Promise<string[]> {
       const from = h.statements.length;
       await call();
       return h.statements
         .slice(from)
         .filter((s) => s.app === app)
-        .map((s) => /appdata\.([a-z_]+)/.exec(s.sql)?.[1] ?? '?');
+        .flatMap((s) => {
+          const t = /appdata\.([a-z_]+)/.exec(s.sql)?.[1];
+          return t && (APPDATA_TABLES as readonly string[]).includes(t) ? [t] : [];
+        });
     }
+
+    // Warm the store's mark-sequence probe before anything is measured, whatever ran before.
+    beforeAll(async () => {
+      const app = freshApp('MSEQWARM');
+      await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'w', { status: 'open' });
+      await store.mark(ctx(app, NS_PROD, VIEWER_1), POSTS, 'w', 'vote');
+    });
 
     it('a mark, an unmark and an increment of an existing document: (1b), then (1c), then the stamps; no usage lock', async () => {
       const app = freshApp('MSEQLOCK');
