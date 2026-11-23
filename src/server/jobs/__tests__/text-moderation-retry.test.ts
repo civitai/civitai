@@ -1,14 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ModerationAdapters from '~/server/services/moderation-adapters';
-import type * as PromptModule from '~/server/services/text-scan/prompt';
 
 vi.mock('~/server/services/moderation-adapters', async (importOriginal) => ({
   ...(await importOriginal<typeof ModerationAdapters>()),
   getModerationAdapter: vi.fn(),
-}));
-vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
-  ...(await importOriginal<typeof PromptModule>()),
-  getActiveTextScanPrompts: vi.fn(),
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -22,7 +17,7 @@ import {
   TEXT_SCAN_ENTITY_NOT_PUBLIC,
 } from '~/server/services/text-scan/route';
 import { resetTextScanRolloutCache } from '~/server/services/text-scan/mode';
-import { getActiveTextScanPrompts } from '~/server/services/text-scan/prompt';
+import { REDIS_KEYS } from '~/server/redis/client';
 
 const submit = vi.fn();
 const adapter = {
@@ -30,8 +25,26 @@ const adapter = {
   submit,
 };
 
+/**
+ * The text-scan prompt store at its boundary: served from its Redis cache, or, with `prompts` an
+ * error, the cache read and the database read both failing.
+ */
+const promptStore = (
+  prompts: Record<string, { id: number; key: string; content: string }> | Error
+) => {
+  redisMock.redis.packed.get.mockImplementation((async (key: string) => {
+    if (key !== REDIS_KEYS.CACHES.TEXT_SCAN_PROMPTS) return null;
+    if (prompts instanceof Error) throw prompts;
+    return { data: prompts, cachedAt: Date.now() };
+  }) as never);
+};
+const CSAM_PROMPT = (content: string) => ({
+  'label:csam': { id: 3, key: 'label:csam', content },
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
+  promptStore(CSAM_PROMPT('CSAM DEF'));
   vi.mocked(getModerationAdapter).mockReturnValue(adapter);
   dbMock.dbRead.entityModeration.findMany.mockResolvedValue([
     { id: 101, entityType: 'Model', entityId: 1, status: 'Pending' },
@@ -98,11 +111,10 @@ describe('review text while its scan cannot ask every label (civitai/civitai#101
   let refused: boolean;
 
   const askable = (cause?: 'gate closed' | 'prompts unreadable') => {
-    vi.mocked(getActiveTextScanPrompts).mockResolvedValue({
-      'label:csam': { id: 3, key: 'label:csam', content: 'CSAM DEF' },
-    } as never);
+    promptStore(cause === 'prompts unreadable' ? new Error('down') : CSAM_PROMPT('CSAM DEF'));
+    // Behind a failed cache read the prompts come from the database, failing too.
     if (cause === 'prompts unreadable')
-      vi.mocked(getActiveTextScanPrompts).mockRejectedValue(new Error('down'));
+      dbMock.dbWrite.$queryRaw.mockRejectedValue(new Error('down'));
     redisMock.sysRedis.hGetAll.mockResolvedValue(
       (cause === 'gate closed' ? {} : { csam: 'review' }) as never
     );

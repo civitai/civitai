@@ -7,15 +7,9 @@ import { NsfwLevel } from '~/server/common/enums';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import type * as PromptModule from '~/server/services/text-scan/prompt';
 import { TEXT_MODERATION_RETRY_LIMIT } from '~/server/jobs/text-moderation-retry.constants';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
-
-vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
-  ...(await importOriginal<typeof PromptModule>()),
-  getActiveTextScanPrompts: vi.fn(),
-}));
 
 /**
  * The content check of a service deal review's two texts, the buyer's comment and the seller's
@@ -93,15 +87,29 @@ const adapter = await import('~/server/services/service-deal-review-moderation.a
 const { setServiceDealReviewHidden } = await import(
   '~/server/services/creator-service-deal-review.service'
 );
-const { getActiveTextScanPrompts } = await import('~/server/services/text-scan/prompt');
+const { REDIS_KEYS } = await import('~/server/redis/client');
+/**
+ * The text-scan prompt store at its boundary: served from its Redis cache, or, with `prompts` an
+ * error, the cache read and the database read both failing.
+ */
+const promptStore = (
+  prompts: Record<string, { id: number; key: string; content: string }> | Error
+) => {
+  redisMock.redis.packed.get.mockImplementation((async (key: string) => {
+    if (key !== REDIS_KEYS.CACHES.TEXT_SCAN_PROMPTS) return null;
+    if (prompts instanceof Error) throw prompts;
+    return { data: prompts, cachedAt: Date.now() };
+  }) as never);
+};
+const CSAM_PROMPT = (content: string) => ({
+  'label:csam': { id: 3, key: 'label:csam', content },
+});
 const { resetTextScanRolloutCache } = await import('~/server/services/text-scan/mode');
 /** The csam gate and its prompt, which decide whether a review scan can ask every label. */
 const csamAskable = ({ gate = 'review', prompt = 'CSAM DEF' } = {}) => {
   redisMock.sysRedis.hGetAll.mockResolvedValue((gate ? { csam: gate } : {}) as never);
   resetTextScanRolloutCache();
-  vi.mocked(getActiveTextScanPrompts).mockResolvedValue({
-    'label:csam': { id: 3, key: 'label:csam', content: prompt },
-  } as never);
+  promptStore(CSAM_PROMPT(prompt));
 };
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
 const { reconcileServiceDealReviews } = await import(
@@ -253,6 +261,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   submitCheck.mockResolvedValue({ id: 'wf-new' });
+  promptStore(CSAM_PROMPT('CSAM DEF'));
   await holder.db.exec(`
     TRUNCATE "ServiceDealReview", "ServiceDeal", "ServiceOffering", "EntityModeration", "TextScanHold"
       RESTART IDENTITY CASCADE;
@@ -763,7 +772,8 @@ describe('a verdict that cannot settle its text is left to the retry job, within
       `UPDATE "ServiceDealReview" SET "scanWorkflowId" = NULL, "sellerReplyScanWorkflowId" = NULL,
          "updatedAt" = now() - interval '1 hour'`
     );
-    vi.mocked(getActiveTextScanPrompts).mockRejectedValue(new Error('prompts unreadable'));
+    // The cache read fails, and so does the database read behind it (no prompt table here).
+    promptStore(new Error('prompts unreadable'));
     const rescans = vi.spyOn(adapter, 'scanServiceDealReviewText').mockResolvedValue(undefined);
     try {
       await expect(rescanUnsubmitted()).resolves.toMatchObject({
