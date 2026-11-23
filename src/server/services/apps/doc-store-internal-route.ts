@@ -22,7 +22,6 @@ import {
   storageRefusalBody,
   type StorageApiDeps,
 } from '~/server/services/apps/doc-store-api';
-import { getDocStore } from '~/server/services/apps/doc-store.instance';
 
 export const INTERNAL_STORAGE_PREFIX = '/api/internal/blocks/storage';
 export const PUBLIC_STORAGE_PREFIX = '/api/v1/blocks/storage';
@@ -34,9 +33,7 @@ export type InternalStorageRouteDeps = Omit<StorageApiDeps, 'via'> & {
   now?: () => number;
 };
 
-export function createInternalStorageRoute(
-  deps: InternalStorageRouteDeps = { store: getDocStore }
-) {
+export function createInternalStorageRoute(deps: InternalStorageRouteDeps = {}) {
   const { signingKey, now, ...storage } = deps;
   return withAppDataSignature(
     // The public route's options, verbatim (`src/pages/api/v1/blocks/storage/[[...path]].ts`).

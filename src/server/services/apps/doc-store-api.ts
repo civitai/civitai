@@ -1673,7 +1673,8 @@ function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute, via: AppSt
 // ---------------------------------------------------------------------------
 
 export type StorageApiDeps = {
-  store: () => DocStore;
+  /** The store (default: the process store, `getDocStore`). */
+  store?: () => DocStore;
   /**
    * Handed every list the route answered 200, after the response is sent (`app-data-shadow.service.ts`,
    * the shared app-data service's shadow read). Unset: the process shadow. It decides on its own
@@ -1750,6 +1751,7 @@ function appDataShadowInput(
 export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore }) {
   const shadow = deps.shadow ?? shadowAppDataList;
   const via = deps.via ?? 'direct';
+  const getStore = deps.store ?? getDocStore;
   return async function storageHandler(req: NextApiRequest, res: NextApiResponse) {
     try {
       const match = servedMatch(
@@ -1825,7 +1827,7 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       // Content levels (`doc-levels.ts`): with the flag on for the app whose documents this
       // reaches, the store gates every shared read on the token's viewer level.
       const gated = await withDocLevelGate(access, claims);
-      const reply = await run(req, body, op, gated, deps.store(), via);
+      const reply = await run(req, body, op, gated, getStore(), via);
       res.status(reply.status).json(reply.body);
       if (op.op === 'list' && reply.status === 200) {
         // After the response: the shadow only compares, and nothing it does reaches the caller.
