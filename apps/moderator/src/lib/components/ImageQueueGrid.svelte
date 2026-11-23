@@ -95,7 +95,6 @@
   });
 
   const key = (item: T) => keyOf?.(item) ?? item.id;
-  // A restricted card cannot be selected, so a shift-click range skips it too.
   const itemKeys = $derived(items.filter((item) => !item.restricted).map(key));
 
   function toggle(item: T, event: MouseEvent) {

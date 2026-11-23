@@ -201,6 +201,7 @@ export async function withheldAccountRefusal(user: App.Locals['user'] | undefine
     .selectFrom('Image')
     .select('id')
     .where('userId', '=', userId)
+    .orderBy('id')
     .limit(ACCOUNT_CHECK_CAP + 1)
     .execute();
   if (rows.length > ACCOUNT_CHECK_CAP)

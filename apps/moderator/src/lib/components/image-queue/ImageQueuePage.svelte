@@ -103,7 +103,6 @@
     selected.clear();
   });
 
-  // A restricted card cannot be selected, so Select all leaves it out.
   const selectable = $derived(data.items.filter((i) => !('restricted' in i && i.restricted)));
   const itemKeys = $derived(selectable.map((i) => ('report' in i ? i.report.id : i.id)));
 

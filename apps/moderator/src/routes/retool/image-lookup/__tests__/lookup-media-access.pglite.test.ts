@@ -6,9 +6,9 @@ import { pgliteDialect } from '$lib/server/__tests__/abuse-detection-pglite.harn
 import { IMAGE_PAGES_SCHEMA as SCHEMA } from '$lib/server/__tests__/appeal-media-schema';
 
 /**
- * Pins the media access rule (`restrictedImageIds` in retracted-media.ts). What Image Lookup's server load sends for an image the media access rule withholds from this
- * moderator, by image id (typed or linked) and in a post's grid: no url, and none of the fields the
- * bytes could be found by. These tests read the load's own return value.
+ * What Image Lookup's server load sends for an image the media access rule (`restrictedImageIds`)
+ * withholds from this moderator, by image id and in a post's grid: no url, and none of the fields
+ * the bytes could be found by.
  */
 
 vi.setConfig({ hookTimeout: 60_000 });

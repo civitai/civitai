@@ -253,6 +253,7 @@ describe("Bulk Image Manager's account-wide removal", () => {
     });
   });
 
+  // Read in id order, so the highest id is on the last page.
   it('refuses an account whose withheld image is past the first page read', async () => {
     await db.exec(`
       INSERT INTO "User" (id, username) VALUES (11, 'paged');

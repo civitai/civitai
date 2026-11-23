@@ -773,7 +773,7 @@ export async function getAppealImageQueue({
     removedAt: r.removedAt,
     tosReason: tosByImage.get(r.id) ?? null,
     reports: reportsByImage.get(r.id) ?? [],
-    // Nor why it was removed: the card must not say why it is withheld.
+    // These would say why it is withheld.
     ...(restricted.has(r.id) && { blockedFor: null, tosReason: null, reports: [] }),
   }));
   return { items, nextCursor };
