@@ -797,7 +797,7 @@ jobs:
     # module reaches most of it), the rest a median 557 of ~3,930 files. What runs on a PR
     # now is the `related-tests` job: the same selection, but with a cap (past it, and on
     # any change the import graph cannot follow, it runs the smoke set alone and says
-    # "Deferred to batch"), next to the smoke set (repo-scan names and every test that reads files). It is a fast signal on the
+    # "Deferred to batch"), next to the smoke set (repo-scan names and the listed tree-scanning tests). It is a fast signal on the
     # PR; this job, in the batch, is still the verdict for every unit file.
     #
     # NO `continue-on-error`, deliberately. It used to be
@@ -1129,10 +1129,11 @@ jobs:
   # What a pull request gets instead of the unit suite (which runs in the main batch, see the
   # `unit` job): the unit tests related to the files the PR changes (vitest's own import-graph
   # selection, the one `vitest related` runs), plus the SMOKE SET: every unit test whose name is a
-  # repo-scan name (`no-*`, `*.ledger`, `*.seam`, `*parity*`, `*.schema-drift`, any case) or whose
-  # text reads files (readFileSync, readdir, glob, fs/promises, ...), since such a test sees a
-  # change no import graph does. The smoke set is derived from the tree on every run, never listed
-  # by hand, and fails the job when it is empty.
+  # repo-scan name (`no-*`, `*.ledger`, `*.seam`, `*parity*`, `*.schema-drift`, any case) or that
+  # is listed in scripts/ci/smoke-scanners.txt (tests that read repo source as text or walk a
+  # source tree; its header says what qualifies), since such a test sees a change no import graph
+  # does. A listed path that is gone or not a unit test fails the job naming it, and so does an
+  # empty smoke set.
   #
   # THE FALLBACK. When the PR changes something the import graph cannot follow or that alters how
   # every test runs (vitest/vite config, the unit setup files and every module they import, read

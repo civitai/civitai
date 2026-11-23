@@ -1,10 +1,17 @@
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_CAP,
+  SCANNERS_FILE,
+  checkManifest,
   forcedReason,
   importClosure,
   isSmoke,
+  parseManifest,
   missingFromReport,
   parseNameStatus,
   planRun,
@@ -142,7 +149,7 @@ describe('importClosure: the setup files and everything they import', () => {
   });
 });
 
-describe('isSmoke: the smoke set, by name or by content', () => {
+describe('isSmoke: the smoke set, by name or by the scanner list', () => {
   it.each([
     'src/server/services/__tests__/no-raw-sql.test.ts',
     'src/server/__tests__/routes.ledger.test.ts',
@@ -151,38 +158,61 @@ describe('isSmoke: the smoke set, by name or by content', () => {
     'scripts/__tests__/feed-go-basemodels.schema-drift.test.ts',
     // case-insensitive: a camelCase `Parity` is a parity test too
     'src/components/AppBlocks/hostHandlerParity.test.ts',
-  ])('%s is in it by name', (f) => expect(isSmoke(f, '')).toBe(true));
+  ])('%s is in it by name', (f) => expect(isSmoke(f)).toBe(true));
 
-  // The content rule: a test that reads files. Mutant: drop READS_FILES from isSmoke and every
-  // case here goes false (killed).
-  it.each([
-    ["readFileSync(path.join(ROOT, 'src/x.ts'), 'utf8')"],
-    ['const files = readdirSync(dir)'],
-    ["await readFile(new URL('../a.ts', import.meta.url))"],
-    ["import { readFile } from 'node:fs/promises';"],
-    ["import fg from 'fast-glob';"],
-    ['const hits = globSync("src/**/*.tsx")'],
-    ['await fs.promises.readdir(SRC)'],
-  ])('a test whose text has %s is in it', (text) =>
-    expect(
-      isSmoke('src/components/Apps/__tests__/appListingDescriptionCallSites.test.ts', text)
-    ).toBe(true)
-  );
+  // Mutant: drop `scanners.has(file)` and the listed file is out (killed).
+  it('a listed scanner is in it; the same file unlisted is not', () => {
+    const f = 'src/components/Apps/__tests__/appListingDescriptionCallSites.test.ts';
+    expect(isSmoke(f, new Set([f]))).toBe(true);
+    expect(isSmoke(f, new Set())).toBe(false);
+  });
 
   it.each([
-    [
-      'src/server/services/__tests__/model.service.test.ts',
-      "import { x } from '../model.service';",
-    ],
-    // `existsSync` and writes are not reads of the tree
-    ['src/server/utils/__tests__/tmp.test.ts', 'writeFileSync(tmp, "x"); existsSync(tmp)'],
-    // the component project, not unit, whatever it reads
-    ['src/components/__tests__/no-overflow.browser.test.tsx', 'readFileSync(x)'],
+    'src/server/services/__tests__/model.service.test.ts',
+    // the component project, not unit, even when listed
+    'src/components/__tests__/no-overflow.browser.test.tsx',
     // apps are not in the unit project's include
-    ['apps/moderator/src/no-thing.test.ts', 'readFileSync(x)'],
+    'apps/moderator/src/no-thing.test.ts',
     // `no-` must start the file name, not a directory
-    ['src/no-dir/__tests__/thing.test.ts', ''],
-  ])('%s is not in it', (f, text) => expect(isSmoke(f, text)).toBe(false));
+    'src/no-dir/__tests__/thing.test.ts',
+  ])('%s is not in it', (f) => expect(isSmoke(f, new Set([f]))).toBe(false));
+});
+
+// The list is checked in, so it can rot: a renamed or deleted scanner would silently leave the
+// smoke set. checkManifest names every bad path, and the job fails on any (see run()).
+describe('the scanner list', () => {
+  const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+
+  it('parses one path per line, dropping comments and blanks', () => {
+    expect(parseManifest('# header\n\nsrc/a.test.ts\n  scripts/b.test.ts  # note\n')).toEqual([
+      'src/a.test.ts',
+      'scripts/b.test.ts',
+    ]);
+  });
+
+  // The guard, shown failing: each bad entry is named. Mutant: return [] and all three go missing.
+  it('names a missing path, a non-test path and a duplicate', () => {
+    const present = new Set(['src/x/a.test.ts']);
+    expect(
+      checkManifest(
+        ['src/x/a.test.ts', 'src/x/gone.test.ts', 'src/x/a.ts', 'src/x/a.test.ts'],
+        (f: string) => present.has(f)
+      )
+    ).toEqual([
+      `${SCANNERS_FILE}: no such file: src/x/gone.test.ts`,
+      `${SCANNERS_FILE}: not a unit-project test file (src|scripts/**/*.test.ts): src/x/a.ts`,
+      `${SCANNERS_FILE}: listed twice: src/x/a.test.ts`,
+    ]);
+  });
+
+  // The real file, against the tree: sound, non-empty, and no entry a name pattern already covers
+  // (those would be listed for nothing).
+  it('the checked-in list is sound', () => {
+    const paths = parseManifest(readFileSync(path.join(ROOT, SCANNERS_FILE), 'utf8'));
+    expect(paths.length).toBeGreaterThan(100);
+    expect(checkManifest(paths, (f: string) => existsSync(path.join(ROOT, f)))).toEqual([]);
+    expect(paths.filter((f) => isSmoke(f))).toEqual([]);
+  });
 });
 
 describe('parseNameStatus', () => {

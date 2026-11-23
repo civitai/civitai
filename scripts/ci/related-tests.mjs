@@ -39,15 +39,12 @@
 //     forced triggers.
 //
 // THE SMOKE SET (isSmoke): a unit test file whose NAME is a repo-scan name (`no-*`, `*.ledger`,
-// `*.seam`, `*parity*`, `*.schema-drift`, case-insensitive), OR whose TEXT calls a file-system
-// read: readFileSync / readFile / readdirSync / readdir / opendir(Sync) / createReadStream /
-// globSync / glob(, or imports fs/promises or a glob library. A test that reads files is assumed to
-// read repo files: the rule cannot tell a repo path from a temp one, so it over-selects rather than
-// miss a scanner. What it cannot see: a test whose read happens inside an imported helper (the
-// helper's text is not the test's); such a test runs when the helper or its imports change (the
-// import graph), and otherwise in the batch.
-// A deleted or renamed source file is forced too: its importers no longer resolve, so the import
-// graph cannot name them.
+// `*.seam`, `*parity*`, `*.schema-drift`, case-insensitive), OR that is listed in
+// scripts/ci/smoke-scanners.txt: the tests that read repo source as text or walk a source tree
+// (that file's header says what qualifies). The list was derived once by review and is checked in;
+// a scanner missing from it is still verified by the main batch. A listed path that no longer
+// exists, or is not a unit-project test file, fails the job naming it (checkManifest), so the list
+// cannot rot silently.
 //
 // THE CAP. A change to a widely imported module reaches most of the suite (when this was rejected
 // as #7199, 7 of 20 sampled PRs selected the whole suite and the median was 557 of ~3,930 files).
@@ -102,18 +99,44 @@ export const SMOKE_NAMES = [
   /\.schema-drift\.test\.ts$/i,
 ];
 
-/** A file-system read in a test's text: the smoke set's content rule. See the header. */
-export const READS_FILES =
-  /\b(readFileSync|readFile|readdirSync|readdir|opendirSync|opendir|createReadStream|globSync|glob)\s*\(|['"](node:)?fs\/promises['"]|\bfs\.promises\b|['"](fast-glob|tinyglobby|glob)['"]/;
+/** The checked-in list of tree-scanning tests. See the header. */
+export const SCANNERS_FILE = 'scripts/ci/smoke-scanners.txt';
+
+/** The manifest's paths: one per line, `#` comments and blank lines dropped. */
+export function parseManifest(text) {
+  return text
+    .split('\n')
+    .map((l) => l.replace(/#.*$/, '').trim())
+    .filter(Boolean);
+}
+
+/**
+ * The manifest's problems, as messages naming each path: a path that does not exist (`exists`),
+ * one that is not a unit-project test file, or one listed twice. Empty when the list is sound.
+ */
+export function checkManifest(paths, exists) {
+  const errors = [];
+  const seen = new Set();
+  for (const f of paths) {
+    if (seen.has(f)) errors.push(`${SCANNERS_FILE}: listed twice: ${f}`);
+    seen.add(f);
+    if (!UNIT_INCLUDE.test(f))
+      errors.push(
+        `${SCANNERS_FILE}: not a unit-project test file (src|scripts/**/*.test.ts): ${f}`
+      );
+    else if (!exists(f)) errors.push(`${SCANNERS_FILE}: no such file: ${f}`);
+  }
+  return errors;
+}
 
 /** The unit project's `include` (vitest.config.mts): `src/**\/*.test.ts`, `scripts/**\/*.test.ts`. */
 const UNIT_INCLUDE = /^(src|scripts)\/.+\.test\.ts$/;
 
-/** Is this tracked file in the smoke set? `text` is its source (the content rule). */
-export function isSmoke(file, text = '') {
+/** Is this tracked file in the smoke set? `scanners`: the manifest's paths (a Set). */
+export function isSmoke(file, scanners = new Set()) {
   if (!UNIT_INCLUDE.test(file)) return false;
   const base = file.slice(file.lastIndexOf('/') + 1);
-  return SMOKE_NAMES.some((re) => re.test(base)) || READS_FILES.test(text);
+  return SMOKE_NAMES.some((re) => re.test(base)) || scanners.has(file);
 }
 
 /**
@@ -259,7 +282,15 @@ async function run(since, outDir) {
   const unitFiles = sh('git', ['ls-files', 'src', 'scripts'])
     .split('\n')
     .filter((f) => UNIT_INCLUDE.test(f));
-  const smoke = unitFiles.filter((f) => isSmoke(f, readFileSync(f, 'utf8')));
+  const manifest = parseManifest(readFileSync(SCANNERS_FILE, 'utf8'));
+  const manifestErrors = checkManifest(manifest, existsSync);
+  if (manifestErrors.length) {
+    for (const e of manifestErrors) console.error(`::error file=${SCANNERS_FILE}::${e}`);
+    console.error(`${manifestErrors.length} problem(s) in ${SCANNERS_FILE}; fix the list.`);
+    process.exit(1);
+  }
+  const scanners = new Set(manifest);
+  const smoke = unitFiles.filter((f) => isSmoke(f, scanners));
   if (!smoke.length) {
     console.error('::error::the smoke set is empty; this job would have checked nothing.');
     process.exit(1);

@@ -27,7 +27,7 @@ gh run list --branch <branch> --json headSha,name,conclusion
 PR), `Unit tests` and `Component + geometry tests` are `skipped` by design: the unit, component and
 geometry suites run in the main batch, on dispatch, and on a PR with the `full-ci` label (skipped,
 each is one check, not its shards). `Related unit tests + smoke (PR)` runs the unit tests related to
-the PR's changes plus the smoke set (repo-scan names and every test that reads files); when its step summary says **Deferred to batch** it
+the PR's changes plus the smoke set (repo-scan names and the tree-scanning tests listed in `scripts/ci/smoke-scanners.txt`); when its step summary says **Deferred to batch** it
 ran the smoke set only (the change was one the import graph cannot follow, or the selection was over
 its cap), and the PR's unit coverage is the next main batch. With the `full-ci` label the
 `Unit tests` check expands to 6 shard check-runs (`Unit tests (1)` .. `(6)`) and the component
