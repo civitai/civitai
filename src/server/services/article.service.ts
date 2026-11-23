@@ -8,6 +8,7 @@ import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
 import { NsfwLevel } from '~/server/common/enums';
+import { TEXT_MODERATION_RETRY_STATUSES } from '~/server/jobs/text-moderation-retry.constants';
 import {
   hasBlockMarker,
   isMinorMatureImage,
@@ -2755,9 +2756,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     articleHasText(article.title, article.content);
   const textTerminalStatuses = new Set<EntityModerationStatus>([
     EntityModerationStatus.Succeeded,
-    EntityModerationStatus.Failed,
-    EntityModerationStatus.Expired,
-    EntityModerationStatus.Canceled,
+    ...TEXT_MODERATION_RETRY_STATUSES,
   ]);
   const textDone = !required || (!!moderation && textTerminalStatuses.has(moderation.status));
 
@@ -3108,11 +3107,7 @@ export async function recomputeArticleIngestionInTx(
   // Also guards blocked/error on any stale EntityModeration row whose
   // content has since been emptied.
   const hasText = articleHasText(current.title, current.content);
-  const textErrorStatuses: string[] = [
-    EntityModerationStatus.Failed,
-    EntityModerationStatus.Expired,
-    EntityModerationStatus.Canceled,
-  ];
+  const textErrorStatuses: string[] = TEXT_MODERATION_RETRY_STATUSES;
   const textSucceeded = hasText && textModeration?.status === EntityModerationStatus.Succeeded;
   // Only on the way into Scanned: an article already there keeps what it has, so rows from before
   // verdicts carried a hash do not take it down on its next recompute.

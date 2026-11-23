@@ -35,9 +35,10 @@ import { raceTimeout } from './timeout';
 // consent-exempt, so it is not the viewer's consent: access is decided by the allowlisted relay, the app's
 // listing and `allowedScopes`, and the private feed's per-poll `decideCollectionRead`.
 //
-// The minted token carries the block token's binding (`@civitai/auth` `AccessTokenJwtClaims.block`), as four
+// The minted token carries the block token's binding (`@civitai/auth` `AccessTokenJwtClaims.block`), as five
 // claims written together: `civitai_token_kind: 'block-exchange'`, `civitai_app_block_id`,
-// `civitai_block_instance_id` and `civitai_max_browsing_level`. With them the registry adapter's private feed
+// `civitai_block_instance_id`, `civitai_max_browsing_level` and `civitai_viewer_browsing_level` (the viewer's
+// own level, read with the ceiling as the site's `resolveViewerBrowsingLevel` reads them). With them the registry adapter's private feed
 // (`src/server/registry-adapter/private-feed.ts`) reads no more than the site's document store would with the
 // block token itself, on every poll: mature ratings within the token's ceiling, only while the token's block
 // is its client's one approved block, and nothing once the install is revoked. The hub still refuses a token
@@ -92,6 +93,13 @@ const NO_STORE = { 'Cache-Control': 'no-store', Pragma: 'no-cache' };
  * ceiling holds all three.
  */
 export const MATURE_BROWSING_LEVELS = 4 | 8 | 16;
+
+/**
+ * The viewer level written for a block token that carries none: PG, the site's `publicBrowsingLevelsFlag`,
+ * which is what `resolveViewerBrowsingLevel` reads an absent `viewerBrowsingLevel` as (pinned by
+ * `block-exchange.test.ts`). The minted token then reads exactly what the block token would on the site.
+ */
+export const ABSENT_VIEWER_BROWSING_LEVEL = 1;
 
 /** The one scope a minted token holds. */
 export const BLOCK_EXCHANGE_SCOPE = TokenScope.AppDataRead;
@@ -432,6 +440,7 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
           appBlockId: block.appBlockId,
           blockInstanceId: block.blockInstanceId,
           maxBrowsingLevel: ceiling,
+          viewerBrowsingLevel: block.viewerBrowsingLevel ?? ABSENT_VIEWER_BROWSING_LEVEL,
         },
       },
       {

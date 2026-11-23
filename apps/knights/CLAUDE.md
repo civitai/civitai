@@ -126,13 +126,13 @@ Tables `KnightsReferenceImage`, `KnightsHarvestCursor` (migration `2026121012000
 
 ## Sources (queue producers)
 
-Queue producers (moderator enqueue endpoint, sampling, which takes an image once its post is live (at scan, or by the main app's `knights-publish-sampling` job) and at most once per image, owner ratings, the `system:knights-v2-sources` switch, the Inquisitor queue, the dev queue): [`docs/features/knights-sources.md`](../../docs/features/knights-sources.md). The enqueue contract is implemented once, in the main app (`src/server/services/knights/enqueue.service.ts`).
+Queue producers (moderator enqueue endpoint, sampling, which takes an image once its post is live (at scan, or by the main app's `knights-publish-sampling` job) and at most once per image, owner ratings, the `system:knights-v2-sources` switch, the Inquisitor queue, the dev queue): [`docs/features/knights-sources.md`](../../docs/features/knights-sources.md). The enqueue contract is implemented once, in the main app (`src/server/services/knights/enqueue.service.ts`). The Paladin tag review source (`yesno/tag-review.ts`, `yesno/tag-writeback.ts`; switch `modTagReview`, off unless saved on) is created by the tick, not by that contract, and writes back through the moderator app's `image-tag-moderate` action with `KNIGHTS_TAG_REVIEW_TOKEN` (`@civitai/moderation`): [`docs/features/knights-yesno-questions.md`](../../docs/features/knights-yesno-questions.md#moderator-tag-review-source-tag-reviewts-tag-writebackts).
 
 ## Wired packages
 
 `@civitai/auth` (guard), `@civitai/axiom` (logging), `@civitai/brand` (favicon), `@civitai/buzz` (gold conversion, Buzz packs), `@civitai/db` + `@civitai/db-schema` (Kysely, one client),
 `@civitai/flipt` (access flag), `@civitai/redis` (a sys client for the guard's session revocation check, the skip sets, the seen-notice records, the legacy XP mirror and the leaderboard cache; a cache client, `getCacheRedis`, for the vote-limit gate, whose keys share the player's `{id}` hash tag; new cached data goes on the cache client, never on the sys client, which holds only durable state),
-`@civitai/shared` (`NsfwLevel`; `new-order-levels` is the original game's level curve, which Knights no longer uses (see Progression), still used by the main app's `game-helpers.ts`). Add others when a task needs them.
+`@civitai/moderation` (the tag review write-back client), `@civitai/shared` (`NsfwLevel`; `new-order-levels` is the original game's level curve, which Knights no longer uses (see Progression), still used by the main app's `game-helpers.ts`). Add others when a task needs them.
 
 ## Deploy
 

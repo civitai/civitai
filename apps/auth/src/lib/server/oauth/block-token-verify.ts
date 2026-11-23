@@ -44,6 +44,12 @@ export interface VerifiedBlockToken {
    * as SFW.
    */
   maxBrowsingLevel: number | null;
+  /**
+   * The viewer's own browsing level (the site's `viewerBrowsingLevel` claim), or null when absent, which
+   * the site reads as PG (`resolveViewerBrowsingLevel`). A present value that is not a non-negative integer
+   * is a shape the site refuses, and so is the token here (`claim shape`).
+   */
+  viewerBrowsingLevel: number | null;
 }
 
 export type BlockTokenRefusal =
@@ -122,6 +128,9 @@ function verificationKeys(): KeySet {
   return result;
 }
 
+const isNonNegativeInteger = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
 /** The verified token, or why it is refused. Never throws. */
 export async function verifyBlockTokenForExchange(
   token: string,
@@ -155,8 +164,19 @@ export async function verifyBlockTokenForExchange(
     return { ok: false, reason: 'signature or claims' };
   }
 
-  const { sub, appId, appBlockId, blockInstanceId, jti, scopes, iat, exp, aud, maxBrowsingLevel } =
-    payload;
+  const {
+    sub,
+    appId,
+    appBlockId,
+    blockInstanceId,
+    jti,
+    scopes,
+    iat,
+    exp,
+    aud,
+    maxBrowsingLevel,
+    viewerBrowsingLevel,
+  } = payload;
   if (
     typeof sub !== 'string' ||
     typeof appId !== 'string' ||
@@ -169,7 +189,9 @@ export async function verifyBlockTokenForExchange(
     !Array.isArray(scopes) ||
     !scopes.every((s) => typeof s === 'string') ||
     typeof iat !== 'number' ||
-    typeof exp !== 'number'
+    typeof exp !== 'number' ||
+    // The site's shape guard (`verifyBlockToken`): optional, but when present a non-negative integer.
+    (viewerBrowsingLevel !== undefined && !isNonNegativeInteger(viewerBrowsingLevel))
   ) {
     return { ok: false, reason: 'claim shape' };
   }
@@ -200,12 +222,8 @@ export async function verifyBlockTokenForExchange(
       scopes: scopes as string[],
       iat,
       exp,
-      maxBrowsingLevel:
-        typeof maxBrowsingLevel === 'number' &&
-        Number.isInteger(maxBrowsingLevel) &&
-        maxBrowsingLevel >= 0
-          ? maxBrowsingLevel
-          : null,
+      maxBrowsingLevel: isNonNegativeInteger(maxBrowsingLevel) ? maxBrowsingLevel : null,
+      viewerBrowsingLevel: isNonNegativeInteger(viewerBrowsingLevel) ? viewerBrowsingLevel : null,
     },
   };
 }

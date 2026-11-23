@@ -153,8 +153,8 @@ export type Draft = {
     enabled: boolean;
     sfw: string;
     nsfw: string;
-    yesNo: string;
-    yesNoReset: boolean;
+    /** Yes/no questions: on, off, or the Knights environment default. Stored as the share Knights reads (1, 0 or none). */
+    yesNo: ToggleChoice;
     /** The open-item cap; blank keeps what is stored. */
     maxOpen: string;
   };
@@ -181,8 +181,7 @@ export function seedDraft(settings: SourcesSettings): Draft {
       enabled: config.enabled,
       sfw: stored ? rateToPercent(config.sfwRate) : '',
       nsfw: stored ? rateToPercent(config.nsfwRate) : '',
-      yesNo: config.yesNoShare === undefined ? '' : rateToPercent(config.yesNoShare),
-      yesNoReset: false,
+      yesNo: yesNoChoice(config.yesNoShare),
       maxOpen: config.maxOpen === undefined ? '' : String(config.maxOpen),
     },
     numbers: Object.fromEntries(
@@ -210,14 +209,13 @@ function numberChange(
   return rate === null ? trimmed : String(rate);
 }
 
-const yesNoChange = (settings: SourcesSettings, draft: Draft): string | 'clear' | null => {
-  const saved = settings.config.yesNoShare;
-  if (draft.sources.yesNoReset) return saved === undefined ? null : 'clear';
-  const trimmed = draft.sources.yesNo.trim();
-  return trimmed === '' || trimmed === (saved === undefined ? '' : rateToPercent(saved))
-    ? null
-    : trimmed;
-};
+// Knights only checks the share against 0 (the rhythm of ratings and yes/no bursts sets how often), so any stored share
+// above 0 is on.
+const yesNoChoice = (share: number | undefined): ToggleChoice =>
+  share === undefined ? 'default' : share > 0 ? 'on' : 'off';
+
+const yesNoChange = (settings: SourcesSettings, draft: Draft): ToggleChoice | null =>
+  draft.sources.yesNo === yesNoChoice(settings.config.yesNoShare) ? null : draft.sources.yesNo;
 
 /** What the cap box would post: the typed text, or null when blank or unchanged (a blank box keeps the stored cap). */
 const maxOpenChange = (settings: SourcesSettings, draft: Draft): string | null => {
@@ -256,8 +254,7 @@ export function sourcesFormData(settings: SourcesSettings, draft: Draft): FormDa
   form.set('sfwPercent', draft.sources.sfw.trim());
   form.set('nsfwPercent', draft.sources.nsfw.trim());
   const yesNo = yesNoChange(settings, draft);
-  if (yesNo === 'clear') form.set('yesNoDefault', 'true');
-  else if (yesNo !== null) form.set('yesNoPercent', yesNo);
+  if (yesNo !== null) form.set('yesNo', yesNo);
   const maxOpen = maxOpenChange(settings, draft);
   if (maxOpen !== null) form.set('maxOpen', maxOpen);
   return form;
@@ -344,11 +341,20 @@ export function changeSummary(
   moved('SFW rate', before?.sfwRate, after.sfwRate, (v) => `${rateToPercent(v)}%`);
   moved('NSFW rate', before?.nsfwRate, after.nsfwRate, (v) => `${rateToPercent(v)}%`);
   if (before?.yesNoShare !== after.yesNoShare && (before || after.yesNoShare !== undefined)) {
-    const show = (v: number | undefined) => (v === undefined ? 'Default' : `${rateToPercent(v)}%`);
+    const show = (v: number | undefined) => (v === undefined ? 'Default' : v > 0 ? 'on' : 'off');
+    if (!before || show(before.yesNoShare) !== show(after.yesNoShare))
+      parts.push(
+        before
+          ? `Yes/no questions: ${show(before.yesNoShare)} to ${show(after.yesNoShare)}`
+          : `Yes/no questions: ${show(after.yesNoShare)}`
+      );
+  }
+  if (before?.modTagReview !== after.modTagReview && (before || after.modTagReview !== undefined)) {
+    const show = (v: boolean | undefined) => (v ? 'on' : 'off');
     parts.push(
       before
-        ? `Yes/no share: ${show(before.yesNoShare)} to ${show(after.yesNoShare)}`
-        : `Yes/no share: ${show(after.yesNoShare)}`
+        ? `Paladin tag review: ${show(before.modTagReview)} to ${show(after.modTagReview)}`
+        : `Paladin tag review: ${show(after.modTagReview)}`
     );
   }
   if (before?.maxOpen !== after.maxOpen && (before || after.maxOpen !== undefined)) {

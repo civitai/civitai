@@ -58,8 +58,7 @@ describe('seedDraft and changeCount', () => {
       enabled: true,
       sfw: '50',
       nsfw: '25',
-      yesNo: '40',
-      yesNoReset: false,
+      yesNo: 'on',
       maxOpen: '',
     });
     expect(draft.numbers.hiddenCheckRate).toEqual({ text: '5', reset: false });
@@ -67,6 +66,12 @@ describe('seedDraft and changeCount', () => {
     expect(draft.toggles.shopDisabled).toBe('on');
     expect(draft.toggles.apprenticeSmites).toBe('default');
     expect(changeCount(seed, draft)).toBe(0);
+  });
+
+  it('seeds the yes/no switch from the stored share: none is Default, 0 is Off, any other share is On', () => {
+    expect(seedDraft(settings({})).sources.yesNo).toBe('default');
+    expect(seedDraft(settings({ yesNoShare: 0 })).sources.yesNo).toBe('off');
+    expect(seedDraft(settings({ yesNoShare: 0.3 })).sources.yesNo).toBe('on');
   });
 
   it('starts the rate boxes empty when nothing is stored', () => {
@@ -77,7 +82,7 @@ describe('seedDraft and changeCount', () => {
     const seed = settings({ yesNoShare: 0.4, game: { yesNoStretch: 4, apprenticeSmites: true } });
     const draft = seedDraft(seed);
     draft.sources.sfw = '60';
-    draft.sources.yesNoReset = true;
+    draft.sources.yesNo = 'default';
     draft.numbers.yesNoStretch.reset = true;
     draft.numbers.yesNoMaxAgeDays.text = '9';
     draft.toggles.apprenticeSmites = 'off';
@@ -91,7 +96,7 @@ describe('seedDraft and changeCount', () => {
     draft.numbers.yesNoMaxAgeDays.reset = true;
     draft.numbers.hiddenCheckRate.text = '  ';
     draft.numbers.yesNoStretch.text = ' 4 ';
-    draft.sources.yesNoReset = true;
+    draft.sources.yesNo = 'default';
     expect(changeCount(seed, draft)).toBe(0);
   });
 });
@@ -113,11 +118,10 @@ describe('form data', () => {
       sfwPercent: '50',
       nsfwPercent: '30',
     });
-    draft.sources.yesNoReset = true;
-    expect(entries(sourcesFormData(seed, draft))).toMatchObject({ yesNoDefault: 'true' });
-    draft.sources.yesNoReset = false;
-    draft.sources.yesNo = '0';
-    expect(entries(sourcesFormData(seed, draft))).toMatchObject({ yesNoPercent: '0' });
+    draft.sources.yesNo = 'default';
+    expect(entries(sourcesFormData(seed, draft))).toMatchObject({ yesNo: 'default' });
+    draft.sources.yesNo = 'off';
+    expect(entries(sourcesFormData(seed, draft))).toMatchObject({ yesNo: 'off' });
   });
 
   it('posts the open-item cap only when it changed, and counts it as a change', () => {
@@ -261,6 +265,21 @@ describe('changeSummary', () => {
     ).toBe(
       'Queue sources: on to off; SFW rate: 100% to 50%; Skill check rate: 5% to 10%; Acolyte wrong-answer smites: Default to Off; Shop: Open to Default'
     );
+  });
+
+  it('names a yes/no change as on, off or Default', () => {
+    expect(
+      changeSummary(
+        { enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0.3 },
+        { enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0 }
+      )
+    ).toBe('Yes/no questions: on to off');
+    expect(
+      changeSummary(
+        { enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0 },
+        { enabled: true, sfwRate: 1, nsfwRate: 0.3 }
+      )
+    ).toBe('Yes/no questions: off to Default');
   });
 
   it('describes a first save and an unchanged record', () => {

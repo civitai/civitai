@@ -77,6 +77,7 @@ const TICK_FAILURE_STEPS = [
   'yesno',
   'reset',
   'buzz_grant',
+  'tag_writeback',
 ] as const;
 
 export type VoteKind = (typeof VOTE_KINDS)[number];

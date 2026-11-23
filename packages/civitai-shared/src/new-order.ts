@@ -69,6 +69,8 @@ export type KnightsSourcesConfig = {
   yesNoShare?: number;
   /** Knights game tuning saved on the moderator Config page. Absent when nothing is stored. */
   game?: KnightsGameSettings;
+  /** Paladins judge the moderator tag review queue as yes/no questions. Absent reads as off. */
+  modTagReview?: boolean;
 };
 
 const isFiniteNumber = (value: unknown): value is number =>
@@ -254,6 +256,7 @@ export function readKnightsSourcesConfig(raw: string | Buffer | null): {
     const maxOpen = readCap(config.maxOpen);
     const yesNoShare = readShare(config.yesNoShare);
     const game = readGame(config.game);
+    const modTagReview = typeof config.modTagReview === 'boolean' ? config.modTagReview : undefined;
     return {
       stored: true,
       config: {
@@ -264,6 +267,7 @@ export function readKnightsSourcesConfig(raw: string | Buffer | null): {
         ...(maxOpen === undefined ? {} : { maxOpen }),
         ...(yesNoShare === undefined ? {} : { yesNoShare }),
         ...(game === undefined ? {} : { game }),
+        ...(modTagReview === undefined ? {} : { modTagReview }),
       },
     };
   } catch {

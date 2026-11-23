@@ -10,6 +10,8 @@ import {
   Title,
 } from '@mantine/core';
 import { useEffect } from 'react';
+import { CorrectedQueryNote } from '~/components/Search/FeedSearchSummary';
+import { setImageSearchAsTyped } from '~/components/Search/semanticImageSearchClient';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useInstantSearch } from 'react-instantsearch';
 import {
@@ -84,7 +86,7 @@ function RenderFilters() {
 }
 
 function ImagesHitList() {
-  const { status, indexUiState, results } = useInstantSearch();
+  const { status, indexUiState, results, refresh } = useInstantSearch();
   const correctedQuery = (results?.userData as { correctedQuery?: string }[] | undefined)?.[0]
     ?.correctedQuery;
 
@@ -217,11 +219,15 @@ function ImagesHitList() {
           </Button>
         </Group>
       )}
-      {correctedQuery && (
-        <Text size="sm">
-          Showing results for <strong>{correctedQuery}</strong>
-        </Text>
-      )}
+      <CorrectedQueryNote
+        query={indexUiState.query ?? ''}
+        correctedQuery={correctedQuery}
+        onSearchAsTyped={() => {
+          setImageSearchAsTyped(indexUiState.query);
+          // The same request again: refresh past InstantSearch's cache.
+          refresh();
+        }}
+      />
       {hiddenCount > 0 && (
         <Text c="dimmed">{hiddenCount} images have been hidden due to your settings.</Text>
       )}

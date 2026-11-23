@@ -7980,8 +7980,10 @@ enum JobQueueType {
   /// by that service's own database functions. No job in this app processes these rows; the
   /// moderator queue-health panel only counts them.
   CsamArchive
-  /// A delete that has to wait: an owner's own delete a child-safety case keeps, or a parent's cleanup
-  /// of an image something still keeps. `pending-deletes` carries it out once nothing blocks it.
+  /// A delete that has to wait: a delete a child-safety case keeps (the owner's, carried out as the
+  /// owner, or anyone else's, carried out as the system; `removeBlockedImages` keeps its own in its own
+  /// queue instead), or a parent's cleanup of an image something still keeps.
+  /// `pending-deletes` carries it out once nothing blocks it.
   PendingDelete
 }
 

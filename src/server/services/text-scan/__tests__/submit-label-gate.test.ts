@@ -404,7 +404,7 @@ describe('a scan settles only on a verdict that answers every label its profile 
       expect(scanLabels()).toEqual(['nsfw']);
     });
 
-    it('can ask every label it requires even while the prompts are unreadable', async () => {
+    it('never reads the prompts to say it can ask, so an unreadable read cannot refuse it', async () => {
       csamMode('review');
       vi.mocked(getActiveTextScanPrompts).mockRejectedValue(new Error('prompts unreadable'));
       await expect(textScanCanAskEveryLabel(getTextScanProfile(entityType)!)).resolves.toBe(true);

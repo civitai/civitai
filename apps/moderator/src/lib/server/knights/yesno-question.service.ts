@@ -5,6 +5,7 @@ import {
   mergeMeta,
   MODERATION_META_KEY,
   moderationMeta,
+  MOD_TAG_REVIEW_SOURCE,
   MODERATOR_RETIRED,
   REWORD_OF_META_KEY,
   YESNO_QUESTION_MAX,
@@ -71,7 +72,9 @@ export async function getYesNoQuestionItems(
     let q = dbWrite
       .selectFrom('KnightsQueueItem as i')
       .innerJoin('Image as img', 'img.id', 'i.imageId')
-      .where('i.audience', '=', 'players');
+      .where('i.audience', '=', 'players')
+      // A tag review item writes its answer back to the tag it names, so it cannot be retired or reworded here.
+      .where('i.source', '<>', MOD_TAG_REVIEW_SOURCE);
     if (query.imageId !== undefined) q = q.where('i.imageId', '=', query.imageId);
     if (query.axis) q = q.where('i.questionKey', '=', query.axis);
     if (query.status === 'open') q = q.where('i.status', '=', 'Open');
@@ -177,6 +180,7 @@ async function lockItem(trx: Trx, id: number) {
     .select(lockColumns)
     .where('id', '=', id)
     .where('audience', '=', 'players')
+    .where('source', '<>', MOD_TAG_REVIEW_SOURCE)
     .forUpdate()
     .executeTakeFirst();
 }

@@ -85,7 +85,8 @@ export type QueueDeps = {
 
 /** A write-back that keeps failing is handed to the Inquisitors after this many tries. */
 export const MAX_APPLY_ATTEMPTS = 8;
-const LEASE_MINUTES = 2;
+/** How long a write-back claim holds an item before another tick may take it. */
+export const LEASE_MINUTES = 2;
 const MAX_BACKOFF_MINUTES = 360;
 /** Minutes to wait after the nth failed try: 5, 10, 20, ... up to six hours. */
 export const backoffMinutes = (attempts: number) =>
@@ -121,7 +122,8 @@ export type CastVoteResult =
   | { status: 'recorded' | 'resolved' | 'escalated' | 'inquisitor' };
 
 const addHours = (date: Date, hours: number) => new Date(date.getTime() + hours * 3_600_000);
-const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60_000);
+export const addMinutes = (date: Date, minutes: number) =>
+  new Date(date.getTime() + minutes * 60_000);
 
 export function servableItems(db: Executor) {
   return (

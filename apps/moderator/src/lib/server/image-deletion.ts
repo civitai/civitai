@@ -89,16 +89,21 @@ async function deleteImageRows(
   const deleted: DeletedImage[] = [];
   // No row came back: already gone, kept by a hold marker's trigger, or held since the check.
   const notReturned: number[] = [];
+  const keptForReview: KeptImage[] = [];
   for (const id of toDelete) {
     // The guard is re-checked here, so a hold placed after the check above still keeps the image.
     // Every delete here is a moderator's, so the file goes with all its versions (see `moderatorPurge`).
-    const [image] = await deleteRows(trx, {
+    const {
+      deleted: [image],
+      kept,
+    } = await deleteRows(trx, {
       ids: [id],
       actor,
       where: deletable,
       files: { allVersions: moderatorPurge },
       recountPosts: true,
       cdnTakedown: true,
+      replay: { moderatorDelete: true },
     });
     // Only once the row is gone (no foreign key cascades these), so a kept image keeps its collections.
     await trx
@@ -106,6 +111,11 @@ async function deleteImageRows(
       .where('imageId', '=', id)
       .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM "Image" WHERE "Image".id = ${id})`)
       .execute();
+    if (kept.length) {
+      // Left and queued for its child-safety case, untouched.
+      keptForReview.push({ id, reason: 'review' });
+      continue;
+    }
     if (!image) {
       notReturned.push(id);
       continue;
@@ -121,7 +131,7 @@ async function deleteImageRows(
     deleted,
     notReturned: notReturned.filter((id) => !untouchedLate.has(id)),
     avatarUserIds,
-    refused: [...untouched, ...heldLate],
+    refused: [...untouched, ...heldLate, ...keptForReview],
   };
 }
 
@@ -180,7 +190,7 @@ async function finishImageDeletes({
 
 /**
  * The only image delete in this app: the rows go, then everything that could still hand a client a
- * deleted image is invalidated. Returns the images a hold kept.
+ * deleted image is invalidated. Returns the images a hold or a child-safety case kept.
  */
 export async function deleteImages(ids: number[], actor: DeleteActor): Promise<KeptImage[]> {
   if (!ids.length) return [];

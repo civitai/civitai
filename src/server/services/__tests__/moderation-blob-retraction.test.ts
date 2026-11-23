@@ -152,6 +152,18 @@ const storeImage = async (
         image.blockedFor ?? null,
       ]
     );
+  // Dismissed and filed, so no open case keeps this image.
+  if (image) {
+    await pg.query(
+      `INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES ($1, 'Dismissed')`,
+      [image.id]
+    );
+    await pg.query(
+      `INSERT INTO "CsamReport" (images, "reportSentAt", details)
+       VALUES (jsonb_build_array($1::int), now(), '{"evidenceVerifiedAt": "2026-11-01T00:00:00Z"}')`,
+      [image.id]
+    );
+  }
   dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
@@ -190,7 +202,7 @@ const row = (id: number, url: string) => ({ id, url, postId: null, nsfwLevel: 1,
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  await pg.exec(`TRUNCATE "Image", "JobQueue"`);
+  await pg.exec(`TRUNCATE "Image", "JobQueue", "CsamQueueSetAside", "CsamReport"`);
   vi.stubGlobal('fetch', mockFetch);
   mockFetch.mockResolvedValue({ ok: true, status: 202 } as any);
   setEnv({
@@ -389,7 +401,7 @@ describe('retraction load on the image-cache service', () => {
       ...values: unknown[]
     ) => {
       if (!strings.join('').includes('DELETE FROM "Image"')) return [];
-      return (values[0] as number[]).map((id) => row(id, `key-${id}`));
+      return (values.find(Array.isArray) as number[]).map((id) => row(id, `key-${id}`));
     }) as never);
     let inFlight = 0;
     let maxInFlight = 0;
@@ -478,7 +490,7 @@ describe('retraction load on the image-cache service', () => {
       ...values: unknown[]
     ) => {
       if (!strings.join('').includes('DELETE FROM "Image"')) return [];
-      return (values[0] as number[]).map((id) => row(id, `key-${id}`));
+      return (values.find(Array.isArray) as number[]).map((id) => row(id, `key-${id}`));
     }) as never);
     mockFetch.mockImplementation(async () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -504,7 +516,7 @@ describe('retraction load on the image-cache service', () => {
       ...values: unknown[]
     ) => {
       if (!strings.join('').includes('DELETE FROM "Image"')) return [];
-      return (values[0] as number[]).map((id) => row(id, `key-${id}`));
+      return (values.find(Array.isArray) as number[]).map((id) => row(id, `key-${id}`));
     }) as never);
   const requestedLogs = () =>
     mockLogToAxiom.mock.calls.filter(
