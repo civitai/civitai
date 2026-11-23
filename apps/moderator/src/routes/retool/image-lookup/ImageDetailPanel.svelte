@@ -97,7 +97,7 @@
     </div>
   {/if}
 
-  {#if canAct}
+  {#if canAct && !image.restricted}
     <!-- Retool had Toggle Minor / Toggle Poi here, ON only. Both directions, because a flag set in
          error is otherwise uncorrectable from the screen that shows it. -->
     <form

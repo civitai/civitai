@@ -6,7 +6,7 @@ import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
 import { canAccess } from '$lib/server/access';
 import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
 import { APPEAL_RULING_REFUSED } from '$lib/held-media';
-import { withheldImageIds } from '$lib/server/retracted-media';
+import { withheldImageIds, withheldRefusal } from '$lib/server/retracted-media';
 import {
   getCsamQueueByUser,
   getImageReviewQueue,
@@ -287,6 +287,8 @@ export const imageQueueActions = {
     const form = await request.formData();
     const imageId = Number(form.get('imageId'));
     if (!imageId) return fail(400, { error: 'Missing image id.' });
+    const withheldAccept = await withheldRefusal(locals.user, [imageId]);
+    if (withheldAccept) return fail(403, { error: withheldAccept, imageId });
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
     const reportId = form.get('reportId') ? Number(form.get('reportId')) : undefined;
     if (reportId && !(await reportIsOnImage(reportId, imageId)))
@@ -476,6 +478,8 @@ export const imageQueueActions = {
     const nsfwLevel = Number(form.get('nsfwLevel'));
     if (!imageIds.length) return fail(400, { error: 'Missing image id.' });
     if (!isRatingLevel(nsfwLevel)) return fail(400, { error: 'Invalid rating level.' });
+    const withheldRating = await withheldRefusal(locals.user, imageIds);
+    if (withheldRating) return fail(403, { error: withheldRating });
 
     // `updateImageNsfwLevel` throws bare Errors (missing image, Redis down). Uncaught, a form action
     // error replaces the queue with an error page, taking the record of what was already actioned
@@ -515,6 +519,8 @@ export const imageQueueActions = {
     const flagValue = parseImageFlagValue(String(form.get('flagValue') ?? ''));
     if (!imageIds.length) return fail(400, { error: 'Missing image id.' });
     if (!flagValue) return fail(400, { error: 'Unknown flag.' });
+    const withheldFlag = await withheldRefusal(locals.user, imageIds);
+    if (withheldFlag) return fail(403, { error: withheldFlag });
 
     const result = await setImageFlag({ ...flagValue, imageIds, moderatorId: locals.user.id });
     if (!result.ok) return fail(400, { error: result.error });
@@ -533,6 +539,8 @@ export const imageQueueActions = {
   bulkAccept: async ({ request, locals }) => {
     const form = await request.formData();
     const imageIds = parseIds(form.get('imageIds'));
+    const withheldBulk = await withheldRefusal(locals.user, imageIds);
+    if (withheldBulk) return fail(403, { error: withheldBulk });
     const posted = parseIds(form.get('reportIds'));
     const { reportIds, notMoved } = await boundReportIds(posted, imageIds);
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';

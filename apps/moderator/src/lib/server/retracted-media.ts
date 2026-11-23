@@ -159,8 +159,9 @@ export async function restrictedImageIds(
   return kept;
 }
 
-/** The images among these withheld from `user` (`restrictedImageIds`), whom every image action
- *  refuses: an appeal ruling, a restore, a removal or a flag. */
+/** The images among these withheld from `user` (`restrictedImageIds`). Asked by the appeal rulings
+ *  (queue and ticket), the report and Bulk Image Manager remove, restore and flag actions, account
+ *  removal, Image Lookup's flag, and the image queues' accept, rating and flag actions. */
 export async function withheldImageIds(user: App.Locals['user'] | undefined, imageIds: number[]) {
   return [
     ...(await restrictedImageIds(imageIds, { csamReview: canAccess(user, HELD_MEDIA_PAGE) })),

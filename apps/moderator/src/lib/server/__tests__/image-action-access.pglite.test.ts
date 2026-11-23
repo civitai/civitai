@@ -41,11 +41,18 @@ vi.mock('../user-actions.service', async (importOriginal) => ({
 vi.mock('../clickhouse', () => ({
   getClickhouse: () => ({ query: async () => ({ json: async () => [] }) }),
 }));
+const { updateImageNsfwLevel } = vi.hoisted(() => ({
+  updateImageNsfwLevel: vi.fn(async (_input: unknown) => undefined),
+}));
+vi.mock('../image-nsfw-level', () => ({ updateImageNsfwLevel }));
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
 const { reportModerationActions } = await import('../report-actions');
 const bulkPage = await import('../../../routes/retool/bulk-image-manager/+page.server');
+const lookupPage = await import('../../../routes/retool/image-lookup/+page.server');
+const queuePage = await import('../../../routes/images/[slug]/+page.server');
+const { collectionImages } = await import('../entity-queue-load');
 
 // A routine block reason, kept by the other row on its url, which has not finished its scan.
 const WITHHELD = 501;
@@ -61,8 +68,12 @@ let db: PGlite;
 
 beforeEach(async () => {
   for (const write of Object.values(writes)) write.mockClear();
+  updateImageNsfwLevel.mockClear();
   db = await freshPglite();
   await db.exec(IMAGE_PAGES_SCHEMA);
+  await db.exec(
+    `CREATE TABLE "CollectionItem" (id SERIAL, "collectionId" INTEGER, "imageId" INTEGER)`
+  );
   await db.exec(`
     INSERT INTO "User" (id, username) VALUES (7, 'owner'), (8, 'other'), (9, 'clean');
     INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
@@ -196,6 +207,12 @@ describe("Bulk Image Manager's account-wide removal", () => {
       `);
     });
 
+    it('checks an account of exactly the cap in full, and removes it when clean', async () => {
+      await db.exec(`DELETE FROM "Image" WHERE id = 990001001`);
+      await removeAll(WITHOUT_GRANT, 10, 'large');
+      expect(writes.removeAllImagesForUser).toHaveBeenCalledOnce();
+    });
+
     it('is refused without the grant', async () => {
       expect((await removeAll(WITHOUT_GRANT, 10, 'large')).status).toBe(403);
       expect(writes.removeAllImagesForUser).not.toHaveBeenCalled();
@@ -210,5 +227,77 @@ describe("Bulk Image Manager's account-wide removal", () => {
   it('removes the account with the withheld image for a grant holder', async () => {
     await removeAll(WITH_GRANT, 7, 'owner');
     expect(writes.removeAllImagesForUser).toHaveBeenCalledOnce();
+  });
+});
+
+describe('an entity report queue', () => {
+  beforeEach(async () => {
+    await db.exec(
+      `INSERT INTO "CollectionItem" ("collectionId", "imageId") VALUES (60, ${WITHHELD}), (60, ${CONTROL})`
+    );
+  });
+
+  const item = async (csamReview: boolean, id: number) =>
+    (await collectionImages(60, 1, csamReview)).items.find((i) => i.id === id);
+
+  it("sends a collection's withheld image without its media", async () => {
+    expect(await item(false, WITHHELD)).toMatchObject({ url: '', type: null, restricted: true });
+  });
+
+  it('sends its unrestricted image as before', async () => {
+    expect(await item(false, CONTROL)).toMatchObject({ url: 'control-key', restricted: false });
+  });
+
+  it('sends a grant holder the withheld image with its media', async () => {
+    expect(await item(true, WITHHELD)).toMatchObject({ url: 'shared-key', restricted: false });
+  });
+});
+
+describe("Image Lookup's flag action", () => {
+  const flag = (user: { id: number; roles: string[] }, imageId: number) =>
+    lookupPage.actions.setFlag(
+      event(user, { imageId: String(imageId), flagValue: 'minor:false' })
+    ) as Promise<Result>;
+
+  it('refuses a withheld image without the grant', async () => {
+    expect((await flag(WITHOUT_GRANT, WITHHELD)).status).toBe(403);
+    expect(writes.setImageFlag).not.toHaveBeenCalled();
+  });
+
+  it('flags it for a grant holder', async () => {
+    await flag(WITH_GRANT, WITHHELD);
+    expect(writes.setImageFlag).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the image queues' flag and rating actions", () => {
+  it('refuse a flag on a batch with a withheld image without the grant', async () => {
+    const result = (await queuePage.actions.setFlag(
+      event(WITHOUT_GRANT, { imageIds: `${CONTROL},${WITHHELD}`, flagValue: 'minor:false' })
+    )) as Result;
+    expect(result.status).toBe(403);
+    expect(writes.setImageFlag).not.toHaveBeenCalled();
+  });
+
+  it('flag it for a grant holder', async () => {
+    await queuePage.actions.setFlag(
+      event(WITH_GRANT, { imageIds: String(WITHHELD), flagValue: 'minor:false' })
+    );
+    expect(writes.setImageFlag).toHaveBeenCalledOnce();
+  });
+
+  it('refuse a rating on a batch with a withheld image without the grant', async () => {
+    const result = (await queuePage.actions.setRating(
+      event(WITHOUT_GRANT, { imageIds: `${CONTROL},${WITHHELD}`, nsfwLevel: '1' })
+    )) as Result;
+    expect(result.status).toBe(403);
+    expect(updateImageNsfwLevel).not.toHaveBeenCalled();
+  });
+
+  it('rate it for a grant holder', async () => {
+    await queuePage.actions.setRating(
+      event(WITH_GRANT, { imageIds: String(WITHHELD), nsfwLevel: '1' })
+    );
+    expect(updateImageNsfwLevel).toHaveBeenCalled();
   });
 });

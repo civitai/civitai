@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, denied } from '$lib/server/access';
 import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
+import { withheldRefusal } from '$lib/server/retracted-media';
 import { setImageFlag } from '$lib/server/user-actions.service';
 import { lookupQuerySchema, parseForm, parseQuery } from '$lib/server/query';
 import {
@@ -105,6 +106,8 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return fail(400, { error: input });
+    const withheld = await withheldRefusal(locals.user, [input.imageId]);
+    if (withheld) return fail(403, { error: withheld });
 
     const result = await setImageFlag({
       ...splitImageFlagValue(input.flagValue),
