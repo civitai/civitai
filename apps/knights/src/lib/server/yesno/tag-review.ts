@@ -84,13 +84,23 @@ export async function runTagReview(
   const deadline = Date.now() + budgetMs;
   for (let pages = 0; pages < pagesPerRun && Date.now() < deadline; pages++) {
     const from = walk.after ?? { imageId: 0, tagId: 0 };
+    // The flagged rows come from the `TagsOnImageNew_needsReview_idx` partial index alone (its predicate copied exactly
+    // in `flaggedSql`), materialized before any join: joining Tag or Image inside that scan makes Postgres walk the
+    // whole table instead (over a minute on prod). The same rule is noted on the moderator queue query.
     const page = await db
-      .selectFrom('TagsOnImageNew as t')
+      .with(
+        (cte) => cte('flagged').materialized(),
+        (qb) =>
+          qb
+            .selectFrom('TagsOnImageNew as f')
+            .select(['f.imageId', 'f.tagId'])
+            .where(flaggedSql('f'))
+      )
+      .selectFrom('flagged as t')
       .innerJoin('Image as img', 'img.id', 't.imageId')
       .innerJoin('Post as p', 'p.id', 'img.postId')
       .innerJoin('Tag as tag', 'tag.id', 't.tagId')
       .select(['t.imageId', 't.tagId', 'tag.name'])
-      .where(flaggedSql('t'))
       .where('tag.type', '=', 'Moderation')
       .where('tag.nsfwLevel', '<', NsfwLevel.Blocked)
       .where(servableImage)
