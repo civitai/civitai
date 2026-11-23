@@ -267,8 +267,9 @@ export async function settleDeletes(
 /**
  * Takes a moderator's delete off these images' pending deletes, for a lift that reverses it (an
  * unblock or an approved appeal). A row only a moderator asked for goes; one the owner also asked for
- * keeps the owner's ask, and a moderator's cleanup stays a cleanup, so it goes only while the image is
- * unused. A plain cleanup the moderator's delete outranked in the merge is gone, and goes with the row.
+ * keeps the owner's ask, and a moderator's cleanup stays queued as a cleanup (the job deletes it only
+ * while the image is unused). A plain cleanup the moderator's delete outranked in the merge is gone,
+ * and goes with the row.
  */
 export async function releaseModeratorPendingDeletes(db: Kysely<DB>, imageIds: number[]) {
   if (!imageIds.length) return;
