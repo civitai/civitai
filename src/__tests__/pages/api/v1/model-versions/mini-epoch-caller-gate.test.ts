@@ -327,14 +327,14 @@ describe('mini/[id] epoch arm, log', () => {
     ['a token that resolved to nothing', { authorization: 'Bearer nope' }, true, 'unrecognized'],
     // getServerAuthSession resolves the service token to no session; the arm still names it.
     ['the service token', service, true, 'orchestrator'],
-  ])('logs %s as its kind, with the version id', async (_label, caller, authHeader, resolvedAs) => {
+  ])('logs %s as its kind', async (_label, caller, authHeader, resolvedAs) => {
     await request(caller);
     expect(callerLogs()).toEqual([
-      expect.objectContaining({ modelVersionId: VERSION_ID, authHeader, resolvedAs }),
+      expect.objectContaining({ payload: { isPrivate: true }, authHeader, resolvedAs }),
     ]);
   });
 
-  it('logs no part of the credential', async () => {
+  it('logs no part of the credential, and no version, model or file', async () => {
     await request(service);
     await request({ authorization: 'Bearer some-user-key-value' });
     const logged = JSON.stringify(callerLogs());
@@ -345,14 +345,13 @@ describe('mini/[id] epoch arm, log', () => {
         'callerClass',
         'enforced',
         'mode',
-        'modelVersionId',
         'name',
         'payload',
         'resolvedAs',
         'type',
         'wouldRefuse',
       ]);
-      expect(Object.keys(entry.payload as object)).toEqual(['pick']);
+      expect(entry.payload).toEqual({ isPrivate: true });
     }
     expect(logged).not.toContain(SERVICE_TOKEN.slice(0, 6));
     expect(logged).not.toContain('some-user');
@@ -580,4 +579,127 @@ describe('mini/[id] ?epoch= from the query string', () => {
       });
     }
   );
+});
+
+/**
+ * Every Private call goes through the gate, not only the epoch arm: a Private MODEL whose version
+ * is Public, and a Private version whose file has no epochs.
+ */
+describe('mini/[id] a Private parent outside the epoch arm', () => {
+  const PLAIN_FILE = {
+    ...TRAINING_FILE,
+    id: 405,
+    visibility: 'Public',
+    metadata: { format: 'SafeTensor' },
+    name: 'plain.safetensors',
+    hashes: { SHA256: 'E'.repeat(64) },
+  };
+  const shapes = [
+    ['a Private model', { availability: 'Public', modelAvailability: 'Private' }],
+    ['a Private version with no epochs', { availability: 'Private', modelAvailability: 'Public' }],
+  ] as const;
+  const otherBySession: Caller = { user: { id: STRANGER_ID } };
+  const callers = [
+    ['the owner', owner],
+    ['a moderator', moderator],
+    ['a grantee', grantee],
+    ['the service token', service],
+    ['an anonymous caller', anonymous],
+    ['another user by OAuth', stranger],
+    ['another user by session', otherBySession],
+  ] as const;
+  // Who is answered as an unknown id, per mode.
+  const refusedIn: Record<string, string[]> = {
+    off: [],
+    log: [],
+    enforce: ['an anonymous caller', 'another user by OAuth', 'another user by session'],
+    'enforce-anon': ['an anonymous caller'],
+  };
+  const classOf: Record<string, string> = {
+    'the owner': 'owner',
+    'a moderator': 'moderator',
+    'a grantee': 'grantee',
+    'the service token': 'orchestrator',
+    'an anonymous caller': 'anonymous',
+    'another user by OAuth': 'other',
+    'another user by session': 'other',
+  };
+
+  for (const [shape, row] of shapes)
+    for (const mode of ['off', 'log', 'enforce', 'enforce-anon'])
+      it.each(callers)(`${shape}, ${mode}: %s`, async (label, caller) => {
+        h.variant.value = mode === 'off' ? null : mode;
+        const result = await request(caller, row, PLAIN_FILE);
+        if (refusedIn[mode].includes(label)) {
+          expect(result).toEqual({
+            status: 404,
+            body: { error: 'Model not found' },
+            cacheControl: 'private, no-store',
+          });
+        } else {
+          expect(result.status ?? 200).toBe(200);
+          expect(JSON.stringify(result.body)).toContain(PLAIN_FILE.hashes.SHA256);
+        }
+        if (mode === 'off') expect(callerLogs()).toEqual([]);
+        else
+          expect(callerLogs()).toEqual([
+            expect.objectContaining({
+              callerClass: classOf[label],
+              payload: { isPrivate: true },
+              wouldRefuse: refusedIn.enforce.includes(label),
+              enforced: refusedIn[mode].includes(label),
+            }),
+          ]);
+      });
+
+  it('logs nothing for a Public version of a Public model', async () => {
+    h.variant.value = 'enforce';
+    const { status } = await request(anonymous, { availability: 'Public' }, PLAIN_FILE);
+    expect(status ?? 200).toBe(200);
+    expect(callerLogs()).toEqual([]);
+  });
+});
+
+describe('mini/[id] a deleted or unpublished parent, whatever the gate', () => {
+  const PLAIN_FILE = { ...TRAINING_FILE, visibility: 'Public', metadata: { format: 'SafeTensor' } };
+  const rows = [
+    ['a deleted model', { availability: 'Public', modelStatus: 'Deleted' }],
+    ['an unpublished model', { availability: 'Public', modelStatus: 'Unpublished' }],
+    [
+      'a version released in the future',
+      { availability: 'Public', publishedAt: new Date(Date.now() + 86_400_000) },
+    ],
+  ] as const;
+
+  for (const [shape, row] of rows)
+    for (const mode of [null, 'enforce'])
+      describe(`${shape}, gate ${mode ?? 'off'}`, () => {
+        beforeEach(() => {
+          h.variant.value = mode;
+        });
+        it.each([
+          ['an anonymous caller', anonymous],
+          ['another user', stranger],
+        ])('is an unknown id to %s', async (_label, caller) => {
+          expect(await request(caller, row, PLAIN_FILE)).toMatchObject({
+            status: 404,
+            body: { error: 'Model not found' },
+          });
+        });
+        it.each([
+          ['the owner', owner],
+          ['a moderator', moderator],
+          ['the service token', service],
+        ])('is served to %s', async (_label, caller) => {
+          const { status, body } = await request(caller, row, PLAIN_FILE);
+          expect(status ?? 200).toBe(200);
+          expect(body).toHaveProperty('defaultFileId', PLAIN_FILE.id);
+        });
+      });
+
+  it('control: a published model is served to another user', async () => {
+    const { status, body } = await request(stranger, { availability: 'Public' }, PLAIN_FILE);
+    expect(status ?? 200).toBe(200);
+    expect(body).toHaveProperty('defaultFileId', PLAIN_FILE.id);
+  });
 });

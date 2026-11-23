@@ -311,12 +311,16 @@ describe('mini/[id] deleted model with Published versions', () => {
     ['only deletedAt set', { modelDeletedAt: at }],
     ['status Deleted and deletedAt set', { modelStatus: 'Deleted', modelDeletedAt: at }],
   ])('refuses generation to every caller when the model has %s', async (_, row) => {
-    for (const authorization of [
-      undefined,
-      'Bearer other-key',
-      'Bearer owner-key',
-      `Bearer ${SERVICE_TOKEN}`,
-    ]) {
+    // A model the shared visibility rule hides (status Deleted) is an unknown id to anyone but its
+    // owner, a moderator and the orchestrator.
+    const hidden = row.modelStatus === 'Deleted';
+    for (const authorization of [undefined, 'Bearer other-key']) {
+      const { status, body } = await call(authorization, row);
+      if (hidden)
+        expect({ status, body }).toEqual({ status: 404, body: { error: 'Model not found' } });
+      else expect([status, body?.canGenerate]).toEqual([200, false]);
+    }
+    for (const authorization of ['Bearer owner-key', `Bearer ${SERVICE_TOKEN}`]) {
       const { status, body } = await call(authorization, row);
       expect(status).toBe(200);
       expect(body?.canGenerate).toBe(false);
