@@ -153,6 +153,12 @@ type Server struct {
 	// route. Off, every request there is the `model-getall-off` fallback (proxied to the Node app)
 	// before anything is computed or a serve slot taken.
 	ServeModelGetAll bool
+	// PersonalHotLead reads the `personal-hot-lead` flag per viewer (personal_lead.go); nil = every
+	// request that flag could lead is the model-getall-personal-hot-lead-unknown fallback.
+	PersonalHotLead UserFlagReader
+	// FliptDeploymentID is FLIPT_DEPLOYMENT_ID: the `deploymentId` targeting property Node's
+	// buildFliptContext adds when it is set.
+	FliptDeploymentID string
 	// WriteDevalue is TRPC_WRITE_DEVALUE, the main app's own switch (default off: every answer is
 	// superjson). On, an answer this service computes on a public route is written as devalue, byte for
 	// byte as the app writes it, exactly when the app would: a web bundle that can read it
@@ -422,11 +428,19 @@ func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.Inf
 // fallback/other error. Viewer, domain cap and region rules are read as for the gallery procedure.
 // Cache policy is createContext's, not edgeCacheIt's (model.router.ts's skipEdgeCache hands it a copy
 // of ctx.cache): public TTL signed out, none for a session.
+//
+// A viewer the `personal-hot-lead` flag is on for falls back on a page Node would lead
+// (personalHotLead), here and so in the shadow too (an `unsupported` sample, never a diff). The
+// Go-first probe does not run that gate: it measures cache presence, which the gate does not read.
 func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*computed, error) {
-	req, signedOut, err := s.prepareModelGetAll(ctx, r)
+	req, user, err := s.prepareModelGetAllViewer(ctx, r)
 	if err != nil {
 		return nil, err
 	}
+	if err := s.personalHotLead(ctx, req, user); err != nil {
+		return nil, err
+	}
+	signedOut := user == nil
 	ans, err := modelfeed.Serve(ctx, s.Models, req)
 	if err != nil {
 		return nil, err
@@ -445,26 +459,32 @@ func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*comp
 // prepareModelGetAll is computeModelGetAll up to the handler call, and whether there is no session
 // user at all; the Go-first probe runs the same steps.
 func (s *Server) prepareModelGetAll(ctx context.Context, r *http.Request) (modelfeed.Request, bool, error) {
+	req, user, err := s.prepareModelGetAllViewer(ctx, r)
+	return req, user == nil, err
+}
+
+// prepareModelGetAllViewer is prepareModelGetAll with the session user it resolved (nil: none).
+func (s *Server) prepareModelGetAllViewer(ctx context.Context, r *http.Request) (modelfeed.Request, *auth.SessionUser, error) {
 	if s.Models == nil {
-		return modelfeed.Request{}, false, fallback.New("model-getall-unconfigured")
+		return modelfeed.Request{}, nil, fallback.New("model-getall-unconfigured")
 	}
 	if r.Method != http.MethodGet {
-		return modelfeed.Request{}, false, fallback.New("method")
+		return modelfeed.Request{}, nil, fallback.New("method")
 	}
 	raw, err := trpc.ParseInput(r)
 	if err != nil {
-		return modelfeed.Request{}, false, fallback.Wrap("input-envelope", err)
+		return modelfeed.Request{}, nil, fallback.Wrap("input-envelope", err)
 	}
 	in, err := modelfeed.Parse(raw)
 	if err != nil {
-		return modelfeed.Request{}, false, err
+		return modelfeed.Request{}, nil, err
 	}
 	if r.Header.Get(verifiedBotHeader) != "" {
-		return modelfeed.Request{}, false, fallback.New("verified-bot")
+		return modelfeed.Request{}, nil, fallback.New("verified-bot")
 	}
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
-		return modelfeed.Request{}, false, err
+		return modelfeed.Request{}, nil, err
 	}
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
@@ -474,7 +494,7 @@ func (s *Server) prepareModelGetAll(ctx context.Context, r *http.Request) (model
 	if authorized {
 		req.Viewer = &modelfeed.Viewer{ID: user.ID, Username: user.Username, IsModerator: isModerator}
 	}
-	return req, user == nil, nil
+	return req, user, nil
 }
 
 // computeV1 answers a REST `/api/v1/images` request (handleImagesRequest), or returns a fallback/other

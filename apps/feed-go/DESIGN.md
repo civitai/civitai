@@ -310,6 +310,7 @@ environment, and they must never switch the reader on. Without a reader the miss
   by `CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS` (default 10000); it shares the read cap's value but has
   its own slots. A populate reads it instead of the reader above only while the Flipt flag
   `image-metrics-dedicated-clickhouse` is on: the Node app's key, so one switch moves both runtimes.
+  Besides the per-viewer `personal-hot-lead` read on model.getAll (§15.2.3, a fallback decision only),
   feed-go evaluates no other Flipt flag (§8): this one is read by `internal/flipt` (stdlib, the
   server's `POST /evaluate/v1/boolean` with `FLIPT_URL`, `FLIPT_FETCHER_SECRET`, `FLIPT_ENVIRONMENT`,
   entity `global`, no context: the arguments Node's global gate passes; the flag's plain on/off only, the server's evaluator is not the engine Node runs) every 5 s in the background, so a
@@ -2033,7 +2034,7 @@ read would see. Serving needs a Go-first miss measurement and Go-side miss filli
 | Area | Ported | Falls back (reason) |
 |---|---|---|
 | Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `hidePaid`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor`, `collectionId` with `collectionTagId` (§15.2.1); Hot with a base-model filter (the official-checkpoint pin, §15.2.2) | `query` (Meilisearch), `hidden`, `followed`, `newCreators`, `ids`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); Recently Added, with or without a collection (`model-sort-recently-added`); a `collectionId` or `collectionTagId` that is not an int4 integer (`model-collection-id`; not a number, `null` included, is `input-invalid`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included (`input-ids`) |
-| Viewer | as §4 | as §4; a signed-in request with no level (`model-level-absent`: the saved level is not read) |
+| Viewer | as §4 | as §4; a signed-in request with no level (`model-level-absent`: the saved level is not read); a viewer the `personal-hot-lead` flag is on for on a page Node would lead, or one it could not be read for (`model-getall-personal-hot-lead`, `model-getall-personal-hot-lead-unknown`; temporary, §15.2.3) |
 | Flags | the state production runs (§15.3) | any model flag mirror off (`flag-off-state`) |
 | Lookups | the tag by name and the creator by name on the replica; the blocked tag list; the collection read permission on the replica | a creator the replica does not hold (`model-username-miss`: Node reads the primary, then 404s); the blocked list absent or unreadable (`blocked-tags-miss`, `blocked-tags-stale`) |
 | Covers | the owner's image on the shown version, or located on another of the model's versions (§15.1 step 4); a chosen cover neither finds and that has no featured community showcase row for the model (Node's `withCommunityCovers` finds nothing either) | a chosen cover neither finds that has a Community, not-removed `ModelVersionShowcaseItem` row on a version of the model (`model-community-cover`: Node may serve that community image as the cover, §16.9) |
@@ -2091,6 +2092,39 @@ this) leads the first page with the official checkpoints and drops them from eve
 - **Every page of the loop** (the first included) drops the pinned ids (`mm."modelId" != ALL(…)`,
   Node's `NOT IN (…)`), so a cursor never re-emits them; a later page (a cursor) runs no pinned page.
   Neither filter relaxes the private-model filter. The answer's `nextCursor` is the main loop's.
+
+### 15.2.3 The personal Hot lead (temporary)
+
+An experiment in the Node app: for a viewer the Flipt flag `personal-hot-lead` is on for, page 1 of
+the default Hot feed leads with models picked for them (`getPersonalLeadIdsForFeed` in
+`src/server/controllers/model.controller.ts`, `getPersonalLeadModelIds` in
+`src/server/services/model.service.ts`). The lead is not ported; such a page falls back
+(`internal/server/personal_lead.go`). This stays until the experiment is decided: then the lead is
+ported, or the fallback and this section are removed.
+
+- **Which pages** (`modelfeed.Input.PersonalHotLeadEligible`): sort Hot, no cursor, and none of
+  `username`, `user`, `collectionId`, `favorites`, `archived` (`query`, `hidden`, `followed` and `ids`
+  already fall back), for a signed-in viewer (a banned one has none). Node also skips a request with
+  no browsing level; that is not checked here, so this side can only ask more often than Node.
+- **The read.** The flag is evaluated per viewer as Node's `isFlipt` is called: entity id the user
+  id, context `buildFliptContext(user)` (`flipt.UserContext`: `userId`, `isModerator`, `tier`,
+  `isLoggedIn`, `isMember`, `isEarlyAdopter`, `appBuilderApproved`, `isInCreatorProgram`, and
+  `deploymentId` when `FLIPT_DEPLOYMENT_ID` is set), against `FLIPT_URL` / `FLIPT_FETCHER_SECRET` /
+  `FLIPT_ENVIRONMENT`. `flipt.UserFlag` asks the Flipt server (`POST /evaluate/v1/boolean`; it holds
+  no rules locally) on a miss, at most 250 ms, and caches each answer per viewer and context for 30 s
+  (at most 10 000 entries); a failed read is not cached, and for 5 s after one every uncached viewer
+  is answered unknown without a request. Only page 1 of a Hot feed for a signed-in viewer ever reads.
+- **Fail closed.** On, the page is `model-getall-personal-hot-lead`. Unknown (no `FLIPT_URL`, an
+  unreachable server, a non-200, a key Flipt does not know, the backoff) is
+  `model-getall-personal-hot-lead-unknown`: either is proxied to the Node app, which answers it
+  correctly. Off, the page is served. The server's evaluator is not the engine Node runs; for a
+  boolean flag both hash the threshold rollout the same way, but that is not parity-checked here.
+- **Where.** `computeModelGetAll`, so on the public route and in the shadow alike: a flagged
+  viewer's sample is `unsupported`, never a diff against Node's led body. The Go-first probe (§7.1)
+  does not run the gate: it reads no cache.
+- **Not covered.** Node also drops the lead's ids from that viewer's later pages while their cached
+  lead lives; a later page served here does not, so a model the lead showed on page 1 can appear
+  again further down.
 
 ### 15.3 Flags
 

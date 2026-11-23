@@ -20,6 +20,14 @@ type SessionUser struct {
 	// APIKey is set when the viewer came from an API key rather than a session cookie: the app then
 	// accepts the request whatever its Origin (createContext's isBearerAuth).
 	APIKey bool
+	// The Flipt targeting properties buildFliptContext reads off the session user (flipt.TargetUser):
+	// Tier is `tier` (nil when absent or not a string), IsEarlyAdopter and AppBuilderApproved are
+	// `isEarlyAdopter` / `appBuilderApproved` (true only when the boolean true), Onboarding is
+	// `onboarding` (0 when absent or not an integer).
+	Tier               *string
+	IsEarlyAdopter     bool
+	AppBuilderApproved bool
+	Onboarding         int
 
 	// raw is the cached session entry, for the bearer checks that read more of it.
 	raw map[string]any
@@ -166,6 +174,14 @@ func SessionUserFrom(id int, m map[string]any) (*SessionUser, error) {
 	u := &SessionUser{ID: id, raw: m}
 	u.Username, _ = m["username"].(string)
 	u.IsModerator, _ = m["isModerator"].(bool)
+	if t, ok := m["tier"].(string); ok {
+		u.Tier = &t
+	}
+	u.IsEarlyAdopter, _ = m["isEarlyAdopter"].(bool)
+	u.AppBuilderApproved, _ = m["appBuilderApproved"].(bool)
+	if v, ok := m["onboarding"]; ok {
+		u.Onboarding, _ = hydrate.Int(v)
+	}
 	if b, ok := m["bannedAt"]; ok && b != nil {
 		u.Banned = true
 	}
