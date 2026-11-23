@@ -3,7 +3,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 
 /**
  * Of the `served` images the viewer's hidden preferences did not keep, the ones only their own
- * hidden users, images or tags took out (see `withoutViewerHidden`).
+ * hidden users, images or non-moderated tags took out (see `withoutViewerHidden`).
  */
 export function useRevealableImages<T extends { id: number }>(served: T[], kept: { id: number }[]) {
   const hidden = useMemo(() => {

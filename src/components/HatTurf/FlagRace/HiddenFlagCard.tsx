@@ -11,8 +11,8 @@ const copy: Record<HiddenFlagReason | 'other', string> = {
 
 /**
  * Stands in for one of today's flags the viewer may not see: the picture stays hidden, but its
- * points and holders still show. One their own hidden users, images or tags hide can be shown
- * anyway (`onShow`); one a creator's block hides cannot.
+ * points and holders still show. One their own hidden users, images or ordinary tags hide can be
+ * shown anyway (`onShow`); one a creator's block, a moderated tag or the browsing level hides cannot.
  */
 export function HiddenFlagCard({
   imageId,

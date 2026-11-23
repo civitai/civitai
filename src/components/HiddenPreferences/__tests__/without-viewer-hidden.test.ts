@@ -39,7 +39,7 @@ const prefs: HiddenPreferencesState = {
   hiddenLoading: false,
   moderatedTags: [{ id: MATURE_TAG, name: 'mature', nsfwLevel: 4 }] as never,
   systemHiddenTags: new Map(),
-  // 8 is hidden by the viewer's vote on a moderated tag they hide, not yet applied to it.
+  // 8 carries no hidden tag; only its moderated-tag vote hides it.
   moderatedHiddenImages: new Map([[8, true]]),
 };
 

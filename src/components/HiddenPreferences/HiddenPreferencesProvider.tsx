@@ -38,6 +38,20 @@ export function deriveHiddenUsers(
   };
 }
 
+/** Hidden images hidden by the viewer's vote on a moderated tag they hide. */
+export function deriveModeratedHiddenImages(
+  hiddenImages: { id: number; tagId?: number | null }[],
+  hiddenTags: Map<number, boolean>,
+  moderatedTags: { id: number }[]
+) {
+  const moderatedIds = new Set(moderatedTags.map((x) => x.id));
+  return new Map(
+    hiddenImages
+      .filter((x) => x.tagId && hiddenTags.get(x.tagId) && moderatedIds.has(x.tagId))
+      .map((x): [number, boolean] => [x.id, true])
+  );
+}
+
 const HiddenPreferencesContext = createContext<HiddenPreferencesState | null>(null);
 export const useHiddenPreferencesContext = () => {
   const context = useContext(HiddenPreferencesContext);
@@ -61,11 +75,10 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
     const images = new Map(
       data.hiddenImages.filter((x) => !x.tagId || tags.get(x.tagId)).map((x) => [x.id, true])
     );
-    const moderatedIds = new Set(moderatedTags.map((x) => x.id));
-    const moderatedHiddenImages = new Map(
-      data.hiddenImages
-        .filter((x) => x.tagId && tags.get(x.tagId) && moderatedIds.has(x.tagId))
-        .map((x): [number, boolean] => [x.id, true])
+    const moderatedHiddenImages = deriveModeratedHiddenImages(
+      data.hiddenImages,
+      tags,
+      moderatedTags
     );
 
     const { hiddenUsers, blockRelations, blockedByUsers } = deriveHiddenUsers(

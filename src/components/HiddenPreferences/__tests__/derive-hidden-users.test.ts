@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { deriveHiddenUsers } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
+import {
+  deriveHiddenUsers,
+  deriveModeratedHiddenImages,
+} from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 
 const HIDDEN = 1;
 const BLOCKED = 2;
@@ -26,5 +29,26 @@ describe('deriveHiddenUsers', () => {
     expect(ids(hiddenUsers)).toEqual([HIDDEN]);
     expect(ids(blockRelations)).toEqual([]);
     expect(ids(blockedByUsers)).toEqual([]);
+  });
+});
+
+describe('deriveModeratedHiddenImages', () => {
+  const MATURE = 10; // moderated, hidden by the viewer
+  const ORDINARY = 11; // hidden by the viewer, not moderated
+  const MATURE_SHOWN = 12; // moderated, not hidden by the viewer
+  const hiddenTags = new Map([
+    [MATURE, true],
+    [ORDINARY, true],
+  ]);
+  const moderatedTags = [{ id: MATURE }, { id: MATURE_SHOWN }];
+
+  it('keeps only images hidden by a vote on a moderated tag the viewer hides', () => {
+    const images = [
+      { id: 1, tagId: MATURE },
+      { id: 2, tagId: ORDINARY },
+      { id: 3 },
+      { id: 4, tagId: MATURE_SHOWN },
+    ];
+    expect(ids(deriveModeratedHiddenImages(images, hiddenTags, moderatedTags))).toEqual([1]);
   });
 });
