@@ -16,7 +16,7 @@ export function planLimitText(entry: UsageLimitTierEntry, tier: string | undefin
   return own.multiplier ? `${own.multiplier}x ${label}` : `${numberWithCommas(own.limit)} ${label}`;
 }
 
-/** What membership would raise this limit to, for a caller on the free tier; null otherwise. */
+/** What membership raises this limit to, for a free-tier caller; null for members or when no paid tier raises it. */
 export function memberLimitNote(entry: UsageLimitTierEntry, tier: string | undefined) {
   if (tier && tier !== 'free') return null;
   const free = entry.tiers.free.limit;
