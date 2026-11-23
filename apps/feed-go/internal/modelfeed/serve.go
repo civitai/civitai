@@ -913,12 +913,9 @@ type coverWant struct {
 // be a COMMUNITY image the creator featured in one of the model's version showcases
 // (getShowcaseCommunityCovers, version-showcase.service.ts), which Node then serves as the cover.
 // That is not ported, so the request falls back (`model-community-cover`) when a cover the owner
-// lookup did not find has a row in the query getShowcaseCommunityCovers starts from: a
-// ModelVersionShowcaseItem of the cover image, Community-sourced and not removed, on a version of
-// the model, whose image exists. With no such row Node's lookup stops there (`if (!rows.length)
-// return found`) and finds nothing, so its answer is the owner lookup's, as here. With one, the
-// community cover also depends on the version-showcase cache, the gallery rules and the
-// `model-version-showcase-serve` flag; whatever they say, a fallback is only a lost answer.
+// lookup did not find has a row in the query getShowcaseCommunityCovers starts from. With no such
+// row Node finds nothing either; with one, whatever else Node checks, a fallback is only a lost
+// answer.
 func communityCoverGuard(ctx context.Context, db Querier, found map[int]superjson.Object, pending []coverWant) error {
 	var missing []coverWant
 	for _, p := range pending {

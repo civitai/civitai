@@ -617,14 +617,10 @@ func (d *Deps) showcaseFilter(ctx context.Context, in RawInput, imageIDs []int) 
 // curatedShowcaseGuard stands in for withCuratedShowcases (src/server/services/version-showcase.service.ts),
 // which getModelsWithVersions runs over the images-for-version entries it read (`curate`): a version
 // whose creator curated its showcase serves that list in place of its own images. That is not ported,
-// so the request falls back when any of those versions (listed: the versions with an images entry
-// that is not a notFound marker, Object.keys of Node's answer) is curated, or the read failed
-// (`v1-models-curated-showcase`), or has no entry Node would read as it is
-// (`v1-models-showcase-miss`: Node's fetch computes it from the database), or is past the cache's
-// hour (`v1-models-showcase-stale`: the Node reader that wins the revalidate lock rebuilds it from
-// the database, hydrate.ShowcaseTTL). The read is not gated
-// on Node's `model-version-showcase-serve` flag: off, Node serves the uncurated list and a fallback
-// here is only a lost answer, never a different one (DESIGN.md §16.9).
+// so the request falls back unless every listed version (an images entry that is not a notFound
+// marker, Object.keys of Node's answer) has a fresh uncurated entry. Not gated on Node's
+// `model-version-showcase-serve` flag: off, a fallback here is only a lost answer, never a different
+// one (DESIGN.md §16.9).
 func curatedShowcaseGuard(r *hydrate.ShowcaseRead, listed []int) error {
 	switch r.State(listed) {
 	case hydrate.ShowcaseCurated:

@@ -16,13 +16,9 @@ import (
 // for, `rows: []` for an uncurated version.
 const KeyVersionShowcase = "packed:caches:version-showcase"
 
-// ShowcaseTTL is getVersionShowcaseCache's `ttl: CacheTTL.hour`. Past it an entry is stale, and
-// Node's fetch (createCachedArray, packages/civitai-redis/src/cached-array.ts) serves it as it is only
-// to a reader that misses the revalidate lock: the lock winner rebuilds it from the database in the
-// request and serves the rebuilt list. A curation whose cache refresh failed leaves exactly such an
-// entry (refresh falls back to invalidate, which backdates `cachedAt` so the entry goes stale once
-// the invalidate window passes), so a stale `rows: []` says nothing about the curation. Inside that
-// window the entry still reads fresh to Node too, and both answer from it.
+// ShowcaseTTL is getVersionShowcaseCache's `ttl: CacheTTL.hour`. Past it the Node reader that wins
+// the revalidate lock rebuilds the entry from the database, so a stale `rows: []` says nothing about
+// the curation (DESIGN.md §16.9).
 const ShowcaseTTL = time.Hour
 
 // Showcase is what the version-showcase cache says about a set of versions, as the guard in front of

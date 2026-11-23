@@ -11,11 +11,8 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
-// The curated-showcase guard on both model routes (DESIGN.md §16.9): getModelsWithVersions puts each
-// version's curated showcase in place of its images (withCuratedShowcases), which is not ported, so a
-// curated version, a failed read, an entry the cache does not hold or one past the cache's hour falls
-// back. The world's one
-// version, 6001, has an uncurated entry (newTestWorld); the cases edit it.
+// The curated-showcase guard on both model routes (DESIGN.md §16.9). The world's one version, 6001,
+// has an uncurated entry (newTestWorld); the cases edit it.
 
 const showcaseKey6001 = hydrate.KeyVersionShowcase + ":6001"
 
