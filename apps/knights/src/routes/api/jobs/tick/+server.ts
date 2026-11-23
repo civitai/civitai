@@ -26,7 +26,12 @@ import { resetDeps } from '$lib/server/smites/runtime';
 import { expireSmites, resetPendingPlayers } from '$lib/server/smites/smites.service';
 import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { closeStrandedYesNo } from '$lib/server/yesno/sweep';
-import { closeIneligibleReviews, sweepMissingReviews } from '$lib/server/inquisitor/review.service';
+import {
+  closeIneligibleReviews,
+  expireBeyondCap,
+  sweepMissingReviews,
+} from '$lib/server/inquisitor/review.service';
+import { skillChecks } from '$lib/server/skill-check/runtime';
 import type { RequestHandler } from './$types';
 
 async function settle<T>(step: string, run: () => Promise<T>) {
@@ -62,8 +67,12 @@ export const POST: RequestHandler = async ({ request }) => {
       ? {
           opened: await sweepMissingReviews(db, { now: new Date() }),
           closed: await closeIneligibleReviews(db, { now: new Date() }),
+          expired: await expireBeyondCap(db, {
+            now: new Date(),
+            maxOpen: (await skillChecks()).maxOpen,
+          }),
         }
-      : { opened: 0, closed: 0 }
+      : { opened: 0, closed: 0, expired: 0 }
   );
   const progression = await settle('progression', () =>
     settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
@@ -174,6 +183,7 @@ export const POST: RequestHandler = async ({ request }) => {
     purchasesRetried: purchases.value.retried,
     reviewsOpened: reviews.value.opened,
     reviewsClosed: reviews.value.closed,
+    reviewsExpired: reviews.value.expired,
     labels: labels.value,
   });
 };

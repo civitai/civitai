@@ -66,6 +66,11 @@ export const NUMBER_ROWS: Record<NumberKey, { unit: string; percent?: true; desc
       percent: true,
       description: 'Share of new moderator rulings used as skill checks instead of trials.',
     },
+    inquisitorMaxOpen: {
+      unit: 'reviews',
+      description:
+        'Open reviews the in-game inquisitor queue keeps. Past it, the oldest ones no moderator has voted on expire, so the queue shows recent images.',
+    },
     skillCheckPoolCap: {
       unit: 'checks',
       description:

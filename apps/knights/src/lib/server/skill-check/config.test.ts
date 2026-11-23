@@ -11,8 +11,13 @@ describe('skillCheckSettings', () => {
           KNIGHTS_SKILL_CHECK_POOL_CAP: '120',
           KNIGHTS_SKILL_CHECK_SERVE_JUDGED: 'on',
         },
-        { inquisitorQueue: false, skillCheckPoolCap: 40, skillCheckServeJudged: false }
+        {
+          inquisitorQueue: false,
+          skillCheckPoolCap: 40,
+          skillCheckServeJudged: false,
+          inquisitorMaxOpen: 300,
+        }
       )
-    ).toEqual({ enabled: false, poolCap: 40, serveJudged: false });
+    ).toEqual({ enabled: false, poolCap: 40, serveJudged: false, maxOpen: 300 });
   });
 });

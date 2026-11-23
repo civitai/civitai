@@ -14,6 +14,7 @@ const retryPendingPurchases = vi.hoisted(() => vi.fn());
 const closeStrandedYesNo = vi.hoisted(() => vi.fn());
 const sweepMissingReviews = vi.hoisted(() => vi.fn());
 const closeIneligibleReviews = vi.hoisted(() => vi.fn());
+const expireBeyondCap = vi.hoisted(() => vi.fn());
 const inquisitorOn = vi.hoisted(() => ({ value: true }));
 vi.mock('$lib/server/db', () => ({ db: {} }));
 const logToAxiom = vi.hoisted(() => vi.fn());
@@ -33,6 +34,10 @@ vi.mock('$lib/server/yesno/sweep', () => ({ closeStrandedYesNo }));
 vi.mock('$lib/server/inquisitor/review.service', () => ({
   sweepMissingReviews,
   closeIneligibleReviews,
+  expireBeyondCap,
+}));
+vi.mock('$lib/server/skill-check/runtime', () => ({
+  skillChecks: async () => ({ enabled: true, poolCap: 500, serveJudged: false, maxOpen: 40 }),
 }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ maxAgeDays: 14 }) }));
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
@@ -98,6 +103,8 @@ beforeEach(() => {
   sweepMissingReviews.mockResolvedValue(0);
   closeIneligibleReviews.mockReset();
   closeIneligibleReviews.mockResolvedValue(0);
+  expireBeyondCap.mockReset();
+  expireBeyondCap.mockResolvedValue(0);
   tickItemFailures.mockReset();
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
@@ -108,6 +115,7 @@ describe('POST /api/jobs/tick', () => {
     applyPendingResolutions.mockResolvedValue({ applied: 1 });
     sweepMissingReviews.mockResolvedValue(2);
     closeIneligibleReviews.mockResolvedValue(3);
+    expireBeyondCap.mockResolvedValue(4);
 
     const response = await run();
 
@@ -131,8 +139,13 @@ describe('POST /api/jobs/tick', () => {
       purchasesRetried: 0,
       reviewsOpened: 2,
       reviewsClosed: 3,
+      reviewsExpired: 4,
       labels: { done: true, labelsWritten: 0, labelFailures: 0 },
     });
+    expect(expireBeyondCap).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ maxOpen: 40 })
+    );
   });
 
   it('runs no review sweep while the inquisitor queue is switched off', async () => {
@@ -140,7 +153,11 @@ describe('POST /api/jobs/tick', () => {
     applyPendingResolutions.mockResolvedValue({ applied: 0 });
     inquisitorOn.value = false;
     try {
-      expect(await (await run()).json()).toMatchObject({ reviewsOpened: 0, reviewsClosed: 0 });
+      expect(await (await run()).json()).toMatchObject({
+        reviewsOpened: 0,
+        reviewsClosed: 0,
+        reviewsExpired: 0,
+      });
       expect(sweepMissingReviews).not.toHaveBeenCalled();
       expect(closeIneligibleReviews).not.toHaveBeenCalled();
     } finally {

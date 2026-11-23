@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS "KnightsInquisitorReview" (
   "imageId" INTEGER NOT NULL,
   "questionKey" TEXT NOT NULL,
   "consensusValue" TEXT NOT NULL,
-  "status" TEXT NOT NULL DEFAULT 'open' CHECK ("status" IN ('open', 'confirmed', 'split', 'excluded')),
+  "status" TEXT NOT NULL DEFAULT 'open',
   "confirmedValue" TEXT,
   "claimedBy" INTEGER,
   "claimExpiresAt" TIMESTAMP(3),
@@ -17,9 +17,16 @@ CREATE TABLE IF NOT EXISTS "KnightsInquisitorReview" (
   "closedAt" TIMESTAMP(3)
 );
 
+-- Added after the first copy of this file; both statements are safe to re-run and upgrade a database that applied it.
+ALTER TABLE "KnightsInquisitorReview" ADD COLUMN IF NOT EXISTS "checkedAt" TIMESTAMP(3);
+ALTER TABLE "KnightsInquisitorReview" DROP CONSTRAINT IF EXISTS "KnightsInquisitorReview_status_check";
+ALTER TABLE "KnightsInquisitorReview" ADD CONSTRAINT "KnightsInquisitorReview_status_check"
+  CHECK ("status" IN ('open', 'confirmed', 'split', 'excluded', 'expired'));
+
 CREATE UNIQUE INDEX IF NOT EXISTS "KnightsInquisitorReview_queueItemId_key" ON "KnightsInquisitorReview" ("queueItemId");
 CREATE INDEX IF NOT EXISTS "KnightsInquisitorReview_status_createdAt_idx" ON "KnightsInquisitorReview" ("status", "createdAt");
 CREATE INDEX IF NOT EXISTS "KnightsInquisitorReview_imageId_idx" ON "KnightsInquisitorReview" ("imageId");
+CREATE INDEX IF NOT EXISTS "KnightsInquisitorReview_status_checkedAt_idx" ON "KnightsInquisitorReview" ("status", "checkedAt");
 
 CREATE TABLE IF NOT EXISTS "KnightsInquisitorVote" (
   "reviewId" INTEGER NOT NULL REFERENCES "KnightsInquisitorReview"("id") ON DELETE CASCADE ON UPDATE CASCADE,

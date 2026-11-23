@@ -72,6 +72,7 @@
         'hiddenCheckRetireMinAnswers',
         'hiddenCheckRetireFailureRate',
         'skillCheckPoolCap',
+        'inquisitorMaxOpen',
       ],
       toggles: ['inquisitorQueue', 'skillCheckServeJudged'],
     },

@@ -31,7 +31,7 @@ const ESCALATION_REASONS = [
 ] as const;
 const HIDDEN_VERDICTS = ['correct', 'failed', 'inconclusive'] as const;
 const SKILL_CHECK_RETIRE_REASONS = ['cap', 'failures'] as const;
-const REVIEW_OUTCOMES = ['confirmed', 'split', 'excluded'] as const;
+const REVIEW_OUTCOMES = ['confirmed', 'split', 'excluded', 'expired'] as const;
 const SKILL_CHECK_READ_SITES = [
   'pool-insert',
   'knight-serve',

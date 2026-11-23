@@ -187,7 +187,7 @@ describe('opening reviews', () => {
 });
 
 describe('serving reviews to moderators', () => {
-  it('serves reviews with one vote before reviews with none, then oldest first, never one the mod voted on', async () => {
+  it('serves reviews with one vote first, oldest first, then unvoted ones, never one the mod voted on', async () => {
     const first = await reviewed(1);
     const second = await reviewed(2);
     const voted = await reviewed(3);
@@ -564,8 +564,9 @@ describe('excluding reviews', () => {
   it.each(permanent)(
     'never serves the review when %s, serves the next one, and has it closed by the next tick at the latest',
     async (_label, cause) => {
-      const id = await reviewed(1);
+      // The newer review is served first, so the one under test (image 1) is reached before the other.
       const next = await reviewed(2);
+      const id = await reviewed(1);
       await cause();
       expect(reviewIdOf(await nextReview(db, { moderatorId: MOD_A }))).toBe(next);
       await closeIneligibleReviews(db, { now: NOW });
@@ -645,7 +646,7 @@ describe('a backlog of held reviews', () => {
       await reviewed(id);
       await pg.query(`UPDATE "Image" SET "tosViolation"=true WHERE id=$1`, [id]);
     }
-    expect(await closeIneligibleReviews(db, { now: NOW, limit: 2 })).toBe(2);
+    expect(await closeIneligibleReviews(db, { now: NOW, batch: 2 })).toBe(2);
     expect(
       (await pg.query(`SELECT id FROM "KnightsInquisitorReview" WHERE status='open'`)).rows
     ).toEqual([{ id: 3 }]);

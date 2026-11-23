@@ -3976,6 +3976,7 @@ export type KnightsInquisitorReview = {
   claimExpiresAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
   closedAt: Timestamp | null;
+  checkedAt: Timestamp | null;
 };
 export type KnightsInquisitorVote = {
   reviewId: number;

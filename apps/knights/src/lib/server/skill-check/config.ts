@@ -8,6 +8,8 @@ export type SkillCheckSettings = {
   enabled: boolean;
   /** Active mod-confirmed checks kept; a new one past it retires the oldest. */
   poolCap: number;
+  /** Open inquisitor reviews kept; the tick expires the oldest unvoted ones past it. */
+  maxOpen: number;
   /** Whether a player may be served a mod-confirmed check on an image they already saw (judged in the queue, or answered as an Acolyte). */
   serveJudged: boolean;
 };
@@ -16,10 +18,16 @@ export type SkillCheckSettings = {
 export const DEFAULT_SKILL_CHECKS: SkillCheckSettings = {
   enabled: false,
   poolCap: 500,
+  maxOpen: 5000,
   serveJudged: false,
 };
 
 const ON_VALUES = ['on', 'true', '1'];
+
+const wholeAbove0 = (raw: string | undefined, fallback: number) => {
+  const n = raw?.trim() ? Number(raw) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+};
 
 /** A value saved on the moderator Config page wins (`stored`); without one, the environment (see `.env.example`), then the default. */
 export function skillCheckSettings(
@@ -35,5 +43,8 @@ export function skillCheckSettings(
       stored.skillCheckPoolCap ??
       (Number.isInteger(cap) && cap > 0 ? cap : DEFAULT_SKILL_CHECKS.poolCap),
     serveJudged: stored.skillCheckServeJudged ?? on(env.KNIGHTS_SKILL_CHECK_SERVE_JUDGED),
+    maxOpen:
+      stored.inquisitorMaxOpen ??
+      wholeAbove0(env.KNIGHTS_INQUISITOR_MAX_OPEN, DEFAULT_SKILL_CHECKS.maxOpen),
   };
 }

@@ -5375,6 +5375,7 @@ export interface KnightsInquisitorReview {
   claimExpiresAt: Date | null;
   createdAt: Date;
   closedAt: Date | null;
+  checkedAt: Date | null;
 }
 
 export interface KnightsInquisitorVote {

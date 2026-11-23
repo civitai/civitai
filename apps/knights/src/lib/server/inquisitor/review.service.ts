@@ -16,7 +16,9 @@ type Executor = Kysely<DB> | Transaction<DB>;
 /** Rating answers a moderator can give; Blocked is not a vote here but "send to the Inquisitors". */
 const BLOCKED_VALUE = '32';
 /** The tick sweep looks this far back for written-back items whose review was never opened. */
-export const REVIEW_SWEEP_WINDOW_HOURS = 48;
+export const REVIEW_SWEEP_WINDOW_HOURS = 2;
+/** Reviews the entry sweep opens at most per run: `markApplied` is the entry, this only catches its misses. */
+export const REVIEW_SWEEP_LIMIT = 500;
 /** Source of the Inquisitor item a moderator opens from a review. */
 export const REVIEW_HANDOFF_SOURCE = 'inquisitor-review';
 
@@ -53,7 +55,11 @@ export async function openReview(db: Executor, itemId: number, now: Date): Promi
 /** Opens the reviews `markApplied` failed to open, for items written back within the window. */
 export async function sweepMissingReviews(
   db: Executor,
-  { now, windowHours = REVIEW_SWEEP_WINDOW_HOURS }: { now: Date; windowHours?: number }
+  {
+    now,
+    windowHours = REVIEW_SWEEP_WINDOW_HOURS,
+    limit = REVIEW_SWEEP_LIMIT,
+  }: { now: Date; windowHours?: number; limit?: number }
 ): Promise<number> {
   const since = new Date(now.getTime() - windowHours * 3_600_000);
   const result = await insertReviews(
@@ -69,7 +75,9 @@ export async function sweepMissingReviews(
               .whereRef('r.queueItemId', '=', 'i.id')
           )
         )
-      ),
+      )
+      .orderBy('i.appliedAt', 'desc')
+      .limit(limit),
     now
   );
   return Number(result.numInsertedOrUpdatedRows ?? 0);
@@ -213,8 +221,6 @@ export type ReviewOffer = {
 };
 
 const SERVE_BATCH_PER_QUEUE = 20;
-/** Reviews the tick closes at most per run. */
-export const INELIGIBLE_SWEEP_BATCH = 100;
 
 /**
  * Open reviews this moderator may vote on: not claimed by another, not their own image, not voted on by them, and on an
@@ -258,45 +264,129 @@ const hasVote = (exists: boolean) => (qb: ReturnType<typeof servableReviews>) =>
     return exists ? voted : eb.not(voted);
   });
 
+/** Open reviews the close sweep checks per run. */
+export const INELIGIBLE_SWEEP_BATCH = 200;
+/** The close sweep's statement timeout: a slow read gives up and closes nothing rather than holding row locks. */
+const SWEEP_STATEMENT_TIMEOUT_MS = 5_000;
+
 /**
- * Closes, oldest first and at most `limit` per run, open reviews whose image fails an exclusion that never lifts on its own:
- * they can never produce a check. Run by the tick; unreadable, it closes nothing (fail closed). Returns how many it closed.
+ * The close sweep's candidates: open reviews no moderator is claiming, least recently checked first, `batch` at most, row
+ * locked with SKIP LOCKED so a review a vote holds is passed over rather than waited on. Exported for its test.
+ */
+export const ineligibleSweepCandidates = (
+  db: Executor,
+  { now, batch }: { now: Date; batch: number }
+) =>
+  db
+    .selectFrom('KnightsInquisitorReview')
+    .select(['id', 'imageId'])
+    .where('status', '=', 'open')
+    .where((eb) => eb.or([eb('claimedBy', 'is', null), eb('claimExpiresAt', '<=', utc(now))]))
+    .orderBy(sql`"checkedAt" asc nulls first`)
+    .orderBy('id', 'asc')
+    .limit(batch)
+    .forUpdate()
+    .skipLocked();
+
+/**
+ * Checks a small batch of open reviews against the safety exclusions that never lift on their own (`skillCheckLasting`),
+ * closes those that fail as `excluded` and stamps the rest `checkedAt`, so the next run takes others. The predicate runs
+ * on the batch only, in one short transaction under a statement timeout; unreadable, it changes nothing (fail closed).
+ * Run by the tick. Returns how many it closed.
  */
 export async function closeIneligibleReviews(
   db: Kysely<DB>,
-  { now, limit = INELIGIBLE_SWEEP_BATCH }: { now: Date; limit?: number }
+  { now, batch = INELIGIBLE_SWEEP_BATCH }: { now: Date; batch?: number }
 ): Promise<number> {
   const closed = await failClosed(
     db,
     'review-sweep',
-    async () =>
-      Number(
-        (
-          await db
+    () =>
+      db.transaction().execute(async (trx) => {
+        await sql.raw(`SET LOCAL statement_timeout = ${SWEEP_STATEMENT_TIMEOUT_MS}`).execute(trx);
+        const candidates = await ineligibleSweepCandidates(trx, { now, batch }).execute();
+        if (candidates.length === 0) return 0;
+        const ids = candidates.map((c) => c.id);
+        const checked = await trx
+          .selectFrom('KnightsInquisitorReview as r')
+          .leftJoin('Image as img', 'img.id', 'r.imageId')
+          .leftJoin('Post as p', 'p.id', 'img.postId')
+          .select((eb) => [
+            'r.id',
+            eb.and([eb('p.id', 'is not', null), skillCheckLasting(eb as never)]).as('lasting'),
+          ])
+          .where('r.id', 'in', ids)
+          .execute();
+        const ineligible = checked.filter((c) => !c.lasting).map((c) => c.id);
+        if (ineligible.length > 0) {
+          await trx
             .updateTable('KnightsInquisitorReview')
             .set({ status: 'excluded', closedAt: utc(now), claimedBy: null, claimExpiresAt: null })
-            .where(
-              'id',
-              'in',
-              db
-                .selectFrom('KnightsInquisitorReview as r')
-                .leftJoin('Image as img', 'img.id', 'r.imageId')
-                .leftJoin('Post as p', 'p.id', 'img.postId')
-                .select('r.id')
-                .where('r.status', '=', 'open')
-                .where((eb) =>
-                  eb.or([eb('p.id', 'is', null), eb.not(skillCheckLasting(eb as never))])
-                )
-                .orderBy('r.createdAt', 'asc')
-                .limit(limit)
-            )
-            .executeTakeFirst()
-        ).numUpdatedRows
-      ),
+            .where('id', 'in', ineligible)
+            .execute();
+        }
+        const keep = ids.filter((id) => !ineligible.includes(id));
+        if (keep.length > 0) {
+          await trx
+            .updateTable('KnightsInquisitorReview')
+            .set({ checkedAt: utc(now) })
+            .where('id', 'in', keep)
+            .execute();
+        }
+        return ineligible.length;
+      }),
     0
   );
   for (let n = closed; n > 0; n--) metrics.reviewClosed('excluded');
   return closed;
+}
+
+/** Reviews the backlog cap expires at most per run. */
+export const EXPIRE_LIMIT = 1_000;
+
+/**
+ * Keeps the open backlog at `maxOpen` (`inquisitorMaxOpen`): the oldest open reviews no moderator voted on beyond it are
+ * closed `expired`, at most `limit` per run. A review with a vote is never expired. Run by the tick. Returns how many.
+ */
+export async function expireBeyondCap(
+  db: Kysely<DB>,
+  { now, maxOpen, limit = EXPIRE_LIMIT }: { now: Date; maxOpen: number; limit?: number }
+): Promise<number> {
+  const { n } = await db
+    .selectFrom('KnightsInquisitorReview')
+    .select(sql<number>`count(*)::int`.as('n'))
+    .where('status', '=', 'open')
+    .executeTakeFirstOrThrow();
+  const excess = Math.min(Number(n) - maxOpen, limit);
+  if (excess <= 0) return 0;
+  const result = await db
+    .updateTable('KnightsInquisitorReview')
+    .set({ status: 'expired', closedAt: utc(now), claimedBy: null, claimExpiresAt: null })
+    .where(
+      'id',
+      'in',
+      db
+        .selectFrom('KnightsInquisitorReview as r')
+        .select('r.id')
+        .where('r.status', '=', 'open')
+        .where((eb) =>
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom('KnightsInquisitorVote as v')
+                .select(sql<number>`1`.as('one'))
+                .whereRef('v.reviewId', '=', 'r.id')
+            )
+          )
+        )
+        .orderBy('r.createdAt', 'asc')
+        .orderBy('r.id', 'asc')
+        .limit(excess)
+    )
+    .executeTakeFirst();
+  const expired = Number(result.numUpdatedRows);
+  for (let k = expired; k > 0; k--) metrics.reviewClosed('expired');
+  return expired;
 }
 
 /**
@@ -327,8 +417,10 @@ export async function nextReview(
             'img.height',
             'img.nsfwLevel',
           ])
-          .orderBy('r.createdAt', 'asc')
-          .orderBy('r.id', 'asc')
+          // Reviews with a vote are few and finish a pair: oldest first. Unvoted ones newest first, so moderators see recent
+          // images; the backlog cap expires the oldest.
+          .orderBy('r.createdAt', voted ? 'asc' : 'desc')
+          .orderBy('r.id', voted ? 'asc' : 'desc')
           .limit(SERVE_BATCH_PER_QUEUE)
           .execute();
         for (const row of batch) {

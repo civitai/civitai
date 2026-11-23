@@ -173,6 +173,13 @@ export const KNIGHTS_GAME_SETTINGS = {
     env: 'KNIGHTS_INQUISITOR_QUEUE',
     label: 'In-game inquisitor queue',
   },
+  inquisitorMaxOpen: {
+    kind: 'number',
+    env: 'KNIGHTS_INQUISITOR_MAX_OPEN',
+    label: 'Open inquisitor reviews kept',
+    range: 'a whole number greater than 0',
+    valid: (n: number) => Number.isInteger(n) && n > 0,
+  },
 } as const;
 
 type GameSettingSpec = (typeof KNIGHTS_GAME_SETTINGS)[keyof typeof KNIGHTS_GAME_SETTINGS];

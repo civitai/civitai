@@ -16,12 +16,16 @@ get the player game on `/play`, the review actions answer 404, and the mod-confi
 Every rating item the players settle opens one review once its level is written to the image (`markApplied`), whether it
 settled by agreement or by a re-rate. A review stores the players' level (`consensusValue`). Opening it never undoes the
 write-back or the payout; if it fails, the tick's sweep (`sweepMissingReviews`, `reviewsOpened` in the tick response) opens it
-for items written back in the last 48 hours. Hidden checks, yes/no items and items rerouted instead of written get none.
+for items written back in the last two hours, a bounded number per run. The open backlog is capped (`inquisitorMaxOpen`,
+Config page, default 5,000): each tick expires the oldest open reviews no moderator has voted on beyond it (status
+`expired`, `reviewsExpired`); a review with a vote is never expired. The queue is played a little each week and is not a
+backlog to clear.
 
 ## Two votes
 
 A moderator is served the open reviews they have not voted on and that are not of their own image and not held by another
-moderator mid-override: reviews another moderator already voted on first, then the oldest, each read as one bounded batch. They answer with a rating level (Blocked is not a vote; see below). The first vote
+moderator mid-override: reviews another moderator already voted on first (oldest first), then the newest unvoted ones, each
+read as one bounded batch. They answer with a rating level (Blocked is not a vote; see below). The first vote
 is recorded. The second closes the review:
 
 - the same level: `confirmed`, and the image enters the skill-check pool at that level;
@@ -41,8 +45,9 @@ Moderator votes earn no XP, gold or Watch, need no player record, and never chan
 ## Excluded and held reviews
 
 A review is closed `excluded`, with no vote recorded, when the image is gone, was blocked, moved off the players' level, was
-ruled on by a moderator, or fails one of the skill-check pool's safety predicates that do not lift on their own (the tick
-closes a bounded batch of these per run, `reviewsClosed` in its response). A review whose image fails one that lifts in time (an open report or appeal, a scan hold, a
+ruled on by a moderator, or fails one of the skill-check pool's safety predicates that do not lift on their own. The tick
+checks a small batch of open reviews per run, least recently checked first (`checkedAt`), in a short transaction that skips
+reviews a moderator holds, closes the ones that fail and stamps the rest (`reviewsClosed` in its response). A review whose image fails one that lifts in time (an open report or appeal, a scan hold, a
 scan still running, an Inquisitor ruling under way) stays open: it is not served, and a vote on it is refused, until that
 clears. Serving reads only reviews whose image passes the predicates now, so held reviews never crowd out servable ones, and
 the waiting count counts only those. If the predicates cannot be read, the page says the queue cannot load and nothing is

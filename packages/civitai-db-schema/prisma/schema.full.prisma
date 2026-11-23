@@ -8818,14 +8818,16 @@ model KnightsInquisitorReview {
   imageId        Int
   questionKey    String
   consensusValue String // the players' settled answer (the item's resolvedValue)
-  status         String    @default("open") // open | confirmed | split | excluded
+  status         String    @default("open") // open | confirmed | split | excluded | expired
   confirmedValue String? // the level both moderators gave, on a confirmed review
   claimedBy      Int? // the moderator whose closing vote is writing the image level
   claimExpiresAt DateTime? // that claim's lease
   createdAt      DateTime  @default(now())
   closedAt       DateTime?
+  checkedAt      DateTime? // when the tick last checked its image against the safety exclusions
 
   @@index([status, createdAt])
+  @@index([status, checkedAt])
   @@index([imageId])
 }
 
