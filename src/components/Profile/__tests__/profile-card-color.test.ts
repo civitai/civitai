@@ -1,6 +1,10 @@
 import { encode } from 'blurhash';
 import { describe, expect, it } from 'vitest';
-import { profileCardBackground, suggestedCardColor } from '~/components/Profile/profile-card-color';
+import {
+  profileBarBackground,
+  profileCardBackground,
+  suggestedCardColor,
+} from '~/components/Profile/profile-card-color';
 
 const solid = (r: number, g: number, b: number) => {
   const pixels = new Uint8ClampedArray(4 * 4 * 4);
@@ -24,5 +28,12 @@ describe('profileCardBackground', () => {
     expect(profileCardBackground('#112233', 60)).toBe('#11223399');
     expect(profileCardBackground('#112233', null)).toBe('#112233cc');
     expect(profileCardBackground(null, 70)).toBeUndefined();
+  });
+});
+
+describe('profileBarBackground', () => {
+  it('is the card colour nearly opaque, and nothing without one', () => {
+    expect(profileBarBackground('#112233')).toBe('#112233ed');
+    expect(profileBarBackground(null)).toBeUndefined();
   });
 });

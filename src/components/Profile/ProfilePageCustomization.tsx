@@ -1,6 +1,9 @@
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { profileCardBackground } from '~/components/Profile/profile-card-color';
+import {
+  profileBarBackground,
+  profileCardBackground,
+} from '~/components/Profile/profile-card-color';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Flags } from '~/shared/utils/flags';
 import { trpc } from '~/utils/trpc';
@@ -24,15 +27,18 @@ export function ProfilePageCustomization({ userId }: { userId: number }) {
       ? data.background
       : null;
   const card = profileCardBackground(data.cardColor, data.cardOpacity);
+  const bar = profileBarBackground(data.cardColor);
   if (!background && !card) return null;
 
   const rules = [
     card &&
       `:root{--profile-card-bg:${card}}[data-profile-card]{background-color:${card}!important}`,
+    bar && `[data-subnav]{background-color:${bar}!important;backdrop-filter:blur(8px)}`,
+    // As in the design: anchored at the top, behind a 50% scrim so the panels stay readable.
     background &&
-      `[data-profile-content]{background-image:url(${JSON.stringify(
+      `[data-profile-content]{background-image:linear-gradient(rgba(14,15,18,.5),rgba(14,15,18,.5)),url(${JSON.stringify(
         getEdgeUrl(background.url, { width: 1920 })
-      )});background-size:cover;background-position:center;background-attachment:fixed}`,
+      )});background-size:cover;background-position:center top;background-attachment:fixed}`,
   ].filter(Boolean);
 
   return <style>{rules.join('')}</style>;

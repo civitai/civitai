@@ -17,3 +17,8 @@ export function profileCardBackground(color: string | null, opacity: number | nu
   const alpha = Math.round(((opacity ?? profileCardOpacityDefault) / 100) * 255);
   return `${color}${alpha.toString(16).padStart(2, '0')}`;
 }
+
+/** The profile tab bar's tint: the card colour, nearly opaque so the tabs stay readable (Ellie's mockup). */
+export function profileBarBackground(color: string | null) {
+  return color ? `${color}ed` : undefined;
+}
