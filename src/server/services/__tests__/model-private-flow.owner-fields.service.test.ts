@@ -79,7 +79,24 @@ vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersionCache: {},
   queueImageSearchIndexUpdate: vi.fn(),
 }));
-vi.mock('~/server/services/knights/sources', () => ({ queueLeftPrivateForKnights: vi.fn() }));
+// The Knights reads, recorded at the database boundary: `postWritesBefore` is how many availability
+// writes on the posts had run when each statement was sent.
+const { knightsStatements } = vi.hoisted(() => ({
+  knightsStatements: [] as { sql: string; values: unknown[]; postWritesBefore: number }[],
+}));
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { fakeKysely } = await import('~/test-utils/kysely-raw-fake');
+  const { dbMock: db } = await import('~/__tests__/mocks/db.mock');
+  const kysely = fakeKysely((strings, ...values) => {
+    knightsStatements.push({
+      sql: strings.join('?'),
+      values,
+      postWritesBefore: db.dbWrite.post.updateMany.mock.calls.length,
+    });
+    return [];
+  });
+  return { kyselyWrite: kysely, kyselyRead: kysely };
+});
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: vi.fn(),
@@ -144,7 +161,8 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import { deleteBidsForModel } from '~/server/services/auction.service';
-import { queueLeftPrivateForKnights } from '~/server/services/knights/sources';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { clearKnightsSourcesConfigCache } from '~/server/services/knights/sources';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
@@ -1010,30 +1028,41 @@ describe('publishPrivateModel', () => {
     await expect(publish(true)).resolves.toEqual({ versionIds: [1], held: false });
   });
 
-  it('offers every post of the published versions to Knights once the publish has committed', async () => {
-    mockPrivateModel({});
-    mockDbWrite.post.findMany.mockImplementation((async (args: { where: { userId?: number } }) =>
-      args.where.userId === undefined
-        ? [
-            { id: 70, userId: OWNER_ID },
-            { id: 71, userId: OWNER_ID + 1 },
-          ]
-        : [{ id: 70, modelVersionId: 1 }]) as never);
+  describe('offering its images to Knights', () => {
+    const knightsImageReads = () =>
+      knightsStatements.filter((st) => st.sql.includes('from "Image"'));
+    beforeEach(() => {
+      knightsStatements.length = 0;
+      clearKnightsSourcesConfigCache();
+      redisMock.sysRedis.get.mockImplementation(async (key: string) =>
+        key === REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES ? JSON.stringify({ enabled: true }) : null
+      );
+    });
 
-    await publish(false);
+    it('offers the images of every post on the published versions once the publish has written them', async () => {
+      mockPrivateModel({});
 
-    expect(vi.mocked(queueLeftPrivateForKnights).mock.calls).toEqual([[{ postIds: [70, 71] }]]);
-    expect(vi.mocked(queueLeftPrivateForKnights).mock.invocationCallOrder[0]).toBeGreaterThan(
-      mockDbWrite.$transaction.mock.invocationCallOrder[0]
-    );
-  });
+      await publish(false);
 
-  it('offers nothing when the versions go back to drafts (control)', async () => {
-    mockPrivateModel({});
+      await vi.waitFor(() => expect(knightsImageReads().length).toBeGreaterThan(0));
+      for (const read of knightsImageReads()) {
+        expect(read.sql).toContain('"p"."modelVersionId" in');
+        expect(read.values.filter((v) => typeof v === 'number')).toContain(1);
+        expect(read.postWritesBefore).toBeGreaterThan(0);
+      }
+    });
 
-    await publish(false, false);
+    it('offers nothing when the versions go back to drafts (control)', async () => {
+      mockPrivateModel({});
 
-    expect(queueLeftPrivateForKnights).not.toHaveBeenCalled();
+      await publish(false, false);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(redisMock.sysRedis.get).not.toHaveBeenCalledWith(
+        REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES
+      );
+      expect(knightsImageReads()).toEqual([]);
+    });
   });
 
   it("republishes only the owner's posts", async () => {

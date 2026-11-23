@@ -19,6 +19,7 @@ import {
   KNIGHTS_SOURCE_SCAN_SAMPLE,
   knightsSampleDraw,
   offerLeftPrivateImagesToKnights,
+  scopeFilter,
   type KnightsSampleScope,
 } from '~/server/services/knights/sampling';
 
@@ -215,7 +216,7 @@ export async function queueLeftPrivateForKnights(scope: KnightsSampleScope): Pro
     logToAxiom(
       {
         type: 'knights-v2-left-private-error',
-        ids: ('postIds' in scope ? scope.postIds : scope.imageIds).slice(0, 20),
+        ids: scopeFilter(scope).ids.slice(0, 20),
         error: safeError(error),
       },
       'knights-v2-sources'

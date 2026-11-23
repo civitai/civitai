@@ -8363,15 +8363,16 @@ export const publishPrivateModel = async (
       description: model.description,
       rules: false,
     }).catch(() => null);
+    // Every post on the versions, not only the owner's: all of them left Private above.
+    void queueLeftPrivateForKnights({ modelVersionIds: versionIds });
     const posts = await dbWrite.post.findMany({
-      where: { modelVersionId: { in: versionIds } },
-      select: { id: true, userId: true },
+      where: { modelVersionId: { in: versionIds }, userId: model.userId },
+      select: { id: true },
     });
     scanEntitiesInBackground(
       'Post',
-      posts.filter((p) => p.userId === model.userId).map((p) => p.id)
+      posts.map((p) => p.id)
     );
-    void queueLeftPrivateForKnights({ postIds: posts.map((p) => p.id) });
   }
 
   return { versionIds, held: false };

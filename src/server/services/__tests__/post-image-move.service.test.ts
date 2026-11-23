@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { clearKnightsSourcesConfigCache } from '~/server/services/knights/sources';
 import type * as ImageService from '~/server/services/image.service';
 import type * as PostService from '~/server/services/post.service';
 import type * as Metrics from '~/server/metrics';
@@ -20,7 +23,7 @@ const mocks = vi.hoisted(() => ({
   userPostCountRefresh: vi.fn(),
   preventReplicationLag: vi.fn(),
   bustCacheTag: vi.fn(),
-  queueLeftPrivateForKnights: vi.fn(),
+  knightsStatements: [] as { sql: string; values: unknown[] }[],
 }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
@@ -33,9 +36,15 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
   bustCachesForPosts: mocks.bustCachesForPosts,
   updatePostNsfwLevel: mocks.updatePostNsfwLevel,
 }));
-vi.mock('~/server/services/knights/sources', () => ({
-  queueLeftPrivateForKnights: mocks.queueLeftPrivateForKnights,
-}));
+// The Knights reads, recorded at the database boundary.
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { fakeKysely } = await import('~/test-utils/kysely-raw-fake');
+  const kysely = fakeKysely((strings, ...values) => {
+    mocks.knightsStatements.push({ sql: strings.join('?'), values });
+    return [];
+  });
+  return { kyselyWrite: kysely, kyselyRead: kysely };
+});
 vi.mock('~/server/metrics', async (importOriginal) => ({
   ...(await importOriginal<typeof Metrics>()),
   postMetrics: { queueUpdate: mocks.postMetricsQueueUpdate },
@@ -143,6 +152,15 @@ beforeEach(() => {
 });
 
 describe('moveImagesToPost', () => {
+  const knightsImageReads = () =>
+    mocks.knightsStatements.filter((s) => s.sql.includes('from "Image"'));
+  beforeEach(() => {
+    mocks.knightsStatements.length = 0;
+    clearKnightsSourcesConfigCache();
+    redisMock.sysRedis.get.mockImplementation(async (key: string) =>
+      key === REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES ? JSON.stringify({ enabled: true }) : null
+    );
+  });
   const moveInto = async (from: Availability, to: Availability) => {
     mockPosts(postRow({ availability: from }), postRow({ id: 2, availability: to }));
     await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, toPostId: 2, userId: USER });
@@ -151,14 +169,24 @@ describe('moveImagesToPost', () => {
   it('offers the moved images to Knights when they leave a Private post for one that is not', async () => {
     await moveInto(Availability.Private, Availability.Public);
 
-    expect(mocks.queueLeftPrivateForKnights.mock.calls).toEqual([[{ imageIds: [100, 101] }]]);
+    await vi.waitFor(() => expect(knightsImageReads().length).toBeGreaterThan(0));
+    for (const read of knightsImageReads()) {
+      expect(read.sql).toContain('"img"."id" in');
+      expect(read.values.filter((v) => typeof v === 'number')).toEqual(
+        expect.arrayContaining([100, 101])
+      );
+    }
   });
 
   it('offers nothing when the images were not on a Private post, or stay Private (controls)', async () => {
     await moveInto(Availability.Public, Availability.Public);
     await moveInto(Availability.Private, Availability.Private);
 
-    expect(mocks.queueLeftPrivateForKnights).not.toHaveBeenCalled();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(redisMock.sysRedis.get).not.toHaveBeenCalledWith(
+      REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES
+    );
+    expect(knightsImageReads()).toEqual([]);
   });
 
   it('repoints the images, appends them after the target images, and queues both posts', async () => {

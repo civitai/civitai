@@ -167,7 +167,17 @@ export async function sampleNewlyLivePostsForKnights(
 }
 
 /** The images a sampler reads: those of some posts, or some images by id. */
-export type KnightsSampleScope = { postIds: number[] } | { imageIds: number[] };
+export type KnightsSampleScope =
+  | { postIds: number[] }
+  | { imageIds: number[] }
+  | { modelVersionIds: number[] };
+
+/** The column a scope filters on (`Image as img` joined to `Post as p`) and its ids. */
+export function scopeFilter(scope: KnightsSampleScope) {
+  if ('postIds' in scope) return { column: 'img.postId' as const, ids: scope.postIds };
+  if ('imageIds' in scope) return { column: 'img.id' as const, ids: scope.imageIds };
+  return { column: 'p.modelVersionId' as const, ids: scope.modelVersionIds };
+}
 
 /**
  * The publish sweep's sampling over `scope`. Images that already had an item are dropped before the `maxOpen` room is
@@ -178,14 +188,14 @@ export async function sampleImagesForKnights(
   { scope, now, config }: { scope: KnightsSampleScope; now: Date; config: KnightsSourcesConfig }
 ): Promise<{ enqueued: number; capped: boolean }> {
   const result = { enqueued: 0, capped: false };
-  const ids = 'postIds' in scope ? scope.postIds : scope.imageIds;
+  const { column, ids } = scopeFilter(scope);
   if (!config.enabled || ids.length === 0) return result;
 
   const images = await db
     .selectFrom('Image as img')
     .innerJoin('Post as p', 'p.id', 'img.postId')
     .select(['img.id', 'img.nsfwLevel'])
-    .where('postIds' in scope ? 'img.postId' : 'img.id', 'in', ids)
+    .where(column, 'in', ids)
     .where(servableImageContent)
     .where(postNotPrivate)
     .where('img.ingestion', '=', 'Scanned')
@@ -250,16 +260,17 @@ export async function offerLeftPrivateImagesToKnights(
   db: Kysely<DB>,
   { scope, now, config }: { scope: KnightsSampleScope; now: Date; config: KnightsSourcesConfig }
 ): Promise<{ ownerRatings: number; enqueued: number; capped: boolean }> {
-  const ids = 'postIds' in scope ? scope.postIds : scope.imageIds;
+  const { column, ids } = scopeFilter(scope);
   if (!config.enabled || ids.length === 0) return { ownerRatings: 0, enqueued: 0, capped: false };
 
   const rated = await db
     .selectFrom('Image as img')
+    .innerJoin('Post as p', 'p.id', 'img.postId')
     .innerJoin('ImageRatingRequest as r', (join) =>
       join.onRef('r.imageId', '=', 'img.id').onRef('r.userId', '=', 'img.userId')
     )
     .select('img.id')
-    .where('postIds' in scope ? 'img.postId' : 'img.id', 'in', ids)
+    .where(column, 'in', ids)
     // As when the owner rates: a moderator-locked level is not asked about.
     .where('img.nsfwLevelLocked', '=', false)
     .where((eb) =>

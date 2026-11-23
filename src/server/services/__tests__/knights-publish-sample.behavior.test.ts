@@ -54,7 +54,7 @@ const range = (from: number, count: number) => Array.from({ length: count }, (_,
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(
-    `CREATE TABLE "Post" (id integer PRIMARY KEY, "publishedAt" timestamp, availability text NOT NULL DEFAULT 'Public');
+    `CREATE TABLE "Post" (id integer PRIMARY KEY, "publishedAt" timestamp, availability text NOT NULL DEFAULT 'Public', "modelVersionId" integer);
      CREATE TABLE "Image" (
        id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
        type text NOT NULL DEFAULT 'image', "nsfwLevel" integer NOT NULL DEFAULT 1,
@@ -430,6 +430,18 @@ describe('offerLeftPrivateImagesToKnights', () => {
     await offer({ imageIds: [22] });
 
     expect((await queued()).map((i) => i.imageId)).toEqual([22]);
+  });
+
+  it("offers the images of a model version's posts by version", async () => {
+    await post(1, minutesAgo(300));
+    await post(2, minutesAgo(300));
+    await images(1, [11]);
+    await images(2, [21]);
+    await pg.query(`UPDATE "Post" SET "modelVersionId" = 9 WHERE id = 1`);
+
+    await offer({ modelVersionIds: [9] });
+
+    expect((await queued()).map((i) => i.imageId)).toEqual([11]);
   });
 
   it("queues the owner's rating as an owner rating, ahead of the draw, unless the image ever had an item or its level is locked", async () => {

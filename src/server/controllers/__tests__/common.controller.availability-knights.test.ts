@@ -1,26 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type { Context } from '~/server/createContext';
 import { updateEntityAvailabilityHandler } from '~/server/controllers/common.controller';
-import { entityAvailabilityUpdate } from '~/server/services/common.service';
-import { queueLeftPrivateForKnights } from '~/server/services/knights/sources';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { clearKnightsSourcesConfigCache } from '~/server/services/knights/sources';
 import { Availability } from '~/shared/utils/prisma/enums';
 
-vi.mock('~/server/services/common.service', () => ({
-  entityAvailabilityUpdate: vi.fn(),
-  hasEntityAccess: vi.fn(),
+// The Knights reads, recorded at the database boundary: `writesBefore` is how many availability
+// writes had run when each statement was sent.
+const { statements } = vi.hoisted(() => ({
+  statements: [] as { sql: string; values: unknown[]; writesBefore: number }[],
 }));
-vi.mock('~/server/services/knights/sources', () => ({ queueLeftPrivateForKnights: vi.fn() }));
-vi.mock('~/server/search-index', () => {
-  const index = () => ({ queueUpdate: vi.fn() });
-  return {
-    articlesSearchIndex: index(),
-    bountiesSearchIndex: index(),
-    collectionsSearchIndex: index(),
-    imagesMetricsSearchIndex: index(),
-    imagesSearchIndex: index(),
-    modelsSearchIndex: index(),
-  };
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { fakeKysely } = await import('~/test-utils/kysely-raw-fake');
+  const { dbMock: db } = await import('~/__tests__/mocks/db.mock');
+  const kysely = fakeKysely((strings, ...values) => {
+    statements.push({
+      sql: strings.join('?'),
+      values,
+      writesBefore: db.dbWrite.$executeRawUnsafe.mock.calls.length,
+    });
+    return [];
+  });
+  return { kyselyWrite: kysely, kyselyRead: kysely };
 });
 
 const setPost = (availability: Availability) =>
@@ -28,9 +31,15 @@ const setPost = (availability: Availability) =>
     ctx: {} as Context,
     input: { entityType: 'Post', entityId: 5, availability },
   });
+const imageReads = () => statements.filter((s) => s.sql.includes('from "Image"'));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  statements.length = 0;
+  clearKnightsSourcesConfigCache();
+  redisMock.sysRedis.get.mockImplementation(async (key: string) =>
+    key === REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES ? JSON.stringify({ enabled: true }) : null
+  );
   dbMock.dbRead.image.findMany.mockResolvedValue([{ id: 50 }]);
 });
 
@@ -38,16 +47,22 @@ describe('updateEntityAvailabilityHandler on a Post', () => {
   it("offers the post's images to Knights after the availability is written", async () => {
     await setPost(Availability.Public);
 
-    expect(vi.mocked(queueLeftPrivateForKnights).mock.calls).toEqual([[{ postIds: [5] }]]);
-    expect(vi.mocked(queueLeftPrivateForKnights).mock.invocationCallOrder[0]).toBeGreaterThan(
-      vi.mocked(entityAvailabilityUpdate).mock.invocationCallOrder[0]
-    );
+    await vi.waitFor(() => expect(imageReads().length).toBeGreaterThan(0));
+    for (const read of imageReads()) {
+      expect(read.sql).toContain('"img"."postId" in');
+      expect(read.values.filter((v) => typeof v === 'number')).toContain(5);
+      expect(read.writesBefore).toBe(1);
+    }
   });
 
   it('offers nothing when the post is set to Private (control)', async () => {
     await setPost(Availability.Private);
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
-    expect(entityAvailabilityUpdate).toHaveBeenCalled();
-    expect(queueLeftPrivateForKnights).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalled();
+    expect(redisMock.sysRedis.get).not.toHaveBeenCalledWith(
+      REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES
+    );
+    expect(imageReads()).toEqual([]);
   });
 });
