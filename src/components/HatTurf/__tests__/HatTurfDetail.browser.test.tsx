@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
     optedIn: boolean;
     left?: boolean;
     ownerOff?: boolean;
+    tooNew?: boolean;
     mode: string;
     cap?: number;
     nextAt?: Date | null;
@@ -400,6 +401,24 @@ describe('Hat Turf on image detail', () => {
     click(q('hat-turf-panel-place'));
     await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
     await vi.waitFor(() => expect(q('hat-turf-panel')).toBeNull());
+  });
+
+  test.each([
+    ['too new to score: the panel says their hats will not add team points', true],
+    ['able to score: no such line', false],
+  ])('%s', async (_, tooNew) => {
+    h.stock = { ...h.stock, tooNew };
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    click(q('hat-turf-detail-badge'));
+    await vi.waitFor(() => expect(q('hat-turf-panel-place')).not.toBeNull());
+    expect(q('hat-turf-panel-too-new')?.textContent ?? null).toBe(
+      tooNew
+        ? "Your account is too new to score in Hat Turf yet. Your hats will show, but they won't add team points."
+        : null
+    );
+    // Still free to place.
+    expect((q('hat-turf-panel-place') as HTMLButtonElement).disabled).toBe(false);
   });
 
   test('the panel shows every team count, hats left of the cap, and Show hats off hides only the hats', async () => {

@@ -6,7 +6,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { flagAudienceAmong } from '~/server/events/event-access';
-import { eventPlayerEligibleSql } from '~/server/events/player-eligibility';
+import { eventPlayerEligibleSql, eventPlayerTooNewSql } from '~/server/events/player-eligibility';
 import { loadEvents } from '~/server/events/load-events';
 import { decodeHat, eventPointKeys } from '~/server/events/points/keys';
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
@@ -284,13 +284,15 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
       left: boolean | null;
       ownerOff: boolean | null;
       liveHats: number | null;
+      tooNew: boolean | null;
     }>(
       kyselyRead,
       Prisma.sql`
       SELECT ${inTurf('u', event.name)} AS "optedIn",
         (u.settings -> ${TURF_SETTING} ->> ${event.name}) = 'false' AS "left",
         (u.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event.name}) = 'true' AS "ownerOff",
-        (SELECT count(*)::int ${ownDrawnStickers(event, userId, now)}) AS "liveHats"
+        (SELECT count(*)::int ${ownDrawnStickers(event, userId, now)}) AS "liveHats",
+        ${eventPlayerTooNewSql(event.startDate)} AS "tooNew"
       FROM "User" u WHERE u.id = ${userId}
     `
     ),
@@ -319,6 +321,8 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
     ownerOff: !!user?.ownerOff,
     /** The viewer's hats still drawn (ownDrawnStickers): the event page links to them in the feed. */
     liveHats: user?.liveHats ?? 0,
+    /** Their hats draw but add no team points until the account qualifies (eventPlayerTooNewSql). */
+    tooNew: !!user?.tooNew,
   };
 }
 // #endregion
