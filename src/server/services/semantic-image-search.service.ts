@@ -301,6 +301,8 @@ export async function searchSemanticImages({
     ? { imageUrl: uploadAnchor.imageUrl }
     : input.imageId
     ? { similarTo: input.imageId }
+    : input.spellcheck === false
+    ? { text: input.query ?? '', spellcheck: false }
     : { text: input.query ?? '' };
 
   const queryTag =

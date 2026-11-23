@@ -3,6 +3,7 @@ import { BountyStatus } from '~/server/common/enums';
 import { baseQuerySchema } from '~/server/schema/base.schema';
 import {
   SEMANTIC_QUERY_MAX_LENGTH,
+  semanticSpellcheckField,
   SEMANTIC_SEARCH_PAGE_SIZE,
 } from '~/server/schema/semantic-image-search.schema';
 import { BountyMode, BountyType } from '~/shared/utils/prisma/enums';
@@ -11,6 +12,7 @@ export type SemanticBountySearchInput = z.infer<typeof semanticBountySearchSchem
 /** The bounty feed's filters (getInfiniteBountySchema) that semantic search can apply. */
 export const semanticBountySearchSchema = baseQuerySchema.extend({
   query: z.string().trim().min(1, 'Enter a query').max(SEMANTIC_QUERY_MAX_LENGTH),
+  spellcheck: semanticSpellcheckField,
   types: z.enum(BountyType).array().optional(),
   mode: z.enum(BountyMode).optional(),
   // Depends on the clock, so applied at hydration rather than in the index.

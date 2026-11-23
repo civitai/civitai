@@ -1,5 +1,6 @@
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { useMemo } from 'react';
+import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 import * as z from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -120,7 +121,11 @@ export const useSemanticArticleFeed = (
   query: string | undefined
 ) => {
   const browsingLevel = useBrowsingLevelDebounced();
-  const input = toSemanticArticleSearchInput(filters, query ?? '', browsingLevel);
+  const { asTyped } = useSearchAsTyped(query);
+  const input = {
+    ...toSemanticArticleSearchInput(filters, query ?? '', browsingLevel),
+    ...spellcheckFor(asTyped),
+  };
   const { data, ...rest } = trpc.semanticArticleSearch.search.useInfiniteQuery(input, {
     enabled: !!query,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
