@@ -3,7 +3,7 @@ import { imageReviewedSql } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
 import type { LyricLine } from '~/server/schema/media.schema';
 import { lyricLineSchema } from '~/server/schema/media.schema';
-import { getImageIdsVisibleToViewer } from '~/server/services/image-visibility.service';
+import { getVisibleSongIds } from '~/server/services/image-visibility.service';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { SONGS_UNAVAILABLE_MESSAGE } from '~/shared/form-graph/generation/audio/song-metadata';
 import { MediaType } from '~/shared/utils/prisma/enums';
@@ -21,12 +21,8 @@ export async function getSongLyrics({
   id: number;
   ctx: { user?: { id: number; isModerator?: boolean | null }; features: { music?: boolean } };
 }): Promise<LyricLine[] | null> {
-  if (!ctx.features.music) throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
-  const visible = await getImageIdsVisibleToViewer({
-    ids: [id],
-    userId: ctx.user?.id,
-    isModerator: ctx.user?.isModerator ?? undefined,
-  });
+  const visible = await getVisibleSongIds({ ids: [id], viewer: ctx });
+  if (!visible) throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
   if (!visible.has(id)) return null;
 
   const [row] = await dbRead.$queryRaw<{ type: MediaType; reviewed: boolean; lines: unknown }[]>`

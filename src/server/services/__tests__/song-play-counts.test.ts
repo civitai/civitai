@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as UserPreferences from '~/server/services/user-preferences.service';
 
 const { fetchMock } = vi.hoisted(() => ({ fetchMock: vi.fn() }));
 
@@ -29,12 +30,16 @@ vi.mock('~/env/server', () => ({
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 const { visibleMock } = vi.hoisted(() => ({ visibleMock: vi.fn() }));
-vi.mock('~/server/services/image-visibility.service', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  getImageIdsVisibleToViewer: visibleMock,
-}));
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof UserPreferences>();
+  return {
+    ...actual,
+    BlockedByUsers: { ...actual.BlockedByUsers, getCached: vi.fn(async () => []) },
+  };
+});
 
-import '~/__tests__/mocks/db.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { answerVisibilityRead } from '~/__tests__/mocks/visibility-read.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import '~/__tests__/mocks/logging.mock';
 import { getSongPlayCounts } from '../image.service';
@@ -46,6 +51,7 @@ describe('getSongPlayCounts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     visibleMock.mockImplementation(async ({ ids }: { ids: number[] }) => new Set(ids));
+    dbMock.dbRead.$queryRaw.mockImplementation(answerVisibilityRead(visibleMock));
   });
 
   it("reads a song's Play from the metric reader, and 0 when it has none", async () => {

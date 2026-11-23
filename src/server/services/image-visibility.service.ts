@@ -296,6 +296,30 @@ export async function getImageIdsVisibleToViewer({
   );
 }
 
+type SongViewer = {
+  user?: { id: number; isModerator?: boolean | null };
+  features: { music?: boolean };
+};
+
+/**
+ * The ids in `ids` the viewer may open; the one read every by-id song procedure goes through. Null
+ * when the music flag is off.
+ */
+export async function getVisibleSongIds({
+  ids,
+  viewer,
+}: {
+  ids: number[];
+  viewer: SongViewer;
+}): Promise<Set<number> | null> {
+  if (!viewer.features.music) return null;
+  return getImageIdsVisibleToViewer({
+    ids,
+    userId: viewer.user?.id,
+    isModerator: viewer.user?.isModerator ?? undefined,
+  });
+}
+
 /** NOT_FOUND unless the viewer may open every image in `ids` (see getImageIdsVisibleToViewer). */
 export async function assertImagesVisibleToViewer(args: {
   ids: number[];

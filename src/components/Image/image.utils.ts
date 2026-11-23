@@ -115,6 +115,41 @@ export function isViewingOwnImages(
   return isViewerUsername(currentUser, filters.username) || isViewer(currentUser, filters.userId);
 }
 
+type FeedAddonFilterInput = {
+  username?: string;
+  userId?: number;
+  excludedTagIds?: number[];
+  disablePoi?: boolean;
+  disableMinor?: boolean;
+};
+
+/**
+ * The viewer's browsing addons as image feed filters, OR-merged with the caller's own. The viewer's
+ * own images skip their excluded tags.
+ */
+export function feedAddonFilters(
+  currentUser: Parameters<typeof isViewingOwnImages>[0],
+  settings: { excludedTagIds?: number[]; disablePoi?: boolean; disableMinor?: boolean },
+  filters: FeedAddonFilterInput
+) {
+  const isOwnImages = isViewingOwnImages(currentUser, filters);
+  return {
+    excludedTagIds: [
+      ...(filters.excludedTagIds ?? []),
+      ...(isOwnImages ? [] : settings.excludedTagIds ?? []),
+    ].filter(isDefined),
+    // Mods always have addon = false (BrowsingSettingsAddonsProvider), so the chip controls them.
+    disablePoi: !!filters.disablePoi || settings.disablePoi,
+    disableMinor: !!filters.disableMinor || settings.disableMinor,
+  };
+}
+
+export function useFeedAddonFilters(filters: FeedAddonFilterInput) {
+  const currentUser = useCurrentUser();
+  const { settings } = useBrowsingSettingsAddons();
+  return feedAddonFilters(currentUser, settings, filters);
+}
+
 /**
  * An image feed's infinite pages as one list: the duplicates offset paging drift leaves across pages
  * dropped, then the viewer's hidden preferences applied. Shared by the feed and the feed's search.
@@ -155,10 +190,9 @@ export const useQueryImages = (
     withRevealable?: boolean;
   }
 ) => {
-  const currentUser = useCurrentUser();
   const { applyHiddenPreferences = true, withRevealable, ...queryOptions } = options ?? {};
   filters ??= {};
-  const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const addonFilters = useFeedAddonFilters(filters);
   // Only the domains that cap browsing (green) get `browsingLevel` backfilled by
   // `applyDomainFeature`; on red/blue an absent level reaches the query as NULL and
   // `(nsfwLevel & NULL)` drops every row. Default from context so a caller that omits
@@ -166,23 +200,11 @@ export const useQueryImages = (
   // this is the forced level, which is what those queries should be asking for.
   const contextBrowsingLevel = useBrowsingLevelDebounced();
 
-  const isOwnImages = isViewingOwnImages(currentUser, filters);
-  const excludedTagIds = [
-    ...(filters.excludedTagIds ?? []),
-    ...(isOwnImages ? [] : browsingSettingsAddons.settings.excludedTagIds ?? []),
-  ].filter(isDefined);
-
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
     {
       ...filters,
       browsingLevel: filters.browsingLevel ?? contextBrowsingLevel,
-      excludedTagIds,
-      // OR-merge with the addon so either source can flag the filter.
-      // Mods always have addon = false (BrowsingSettingsAddonsProvider), so
-      // the chip controls them. Non-mods don't see the chip; the addon
-      // value flows through untouched.
-      disablePoi: !!filters.disablePoi || browsingSettingsAddons.settings.disablePoi,
-      disableMinor: !!filters.disableMinor || browsingSettingsAddons.settings.disableMinor,
+      ...addonFilters,
     },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,

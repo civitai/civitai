@@ -120,7 +120,10 @@ import { Flags } from '~/shared/utils/flags';
 import { hasCompleteSfwFace, imagesForFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { hasBlockMarker } from '~/server/common/image-visibility';
-import { getImageIdsVisibleToViewer } from '~/server/services/image-visibility.service';
+import {
+  getImageIdsVisibleToViewer,
+  getVisibleSongIds,
+} from '~/server/services/image-visibility.service';
 import { getModelIdsVisibleToViewer } from '~/server/services/model-visibility.service';
 import { invalidateHiddenImageMetadata } from '~/server/services/hidden-meta-invalidation.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
@@ -1120,13 +1123,11 @@ export async function getSongCoversForPlayer({
   ctx: MediaCredentialViewer;
 }): Promise<PlayerSongCover[]> {
   const { user } = ctx;
-  if (!getFeatureFlagsLazy({ user }).music)
-    throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
-  const visible = await getImageIdsVisibleToViewer({
-    ids: [...new Set(ids)],
-    userId: user?.id,
-    isModerator: user?.isModerator,
+  const visible = await getVisibleSongIds({
+    ids,
+    viewer: { user, features: getFeatureFlagsLazy({ user }) },
   });
+  if (!visible) throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
   if (!visible.size) return [];
   const songs = await dbRead.image.findMany({
     where: { id: { in: [...visible] } },

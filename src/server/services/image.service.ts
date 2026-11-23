@@ -103,7 +103,7 @@ import {
 import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
-  getImageIdsVisibleToViewer,
+  getVisibleSongIds,
   imageBlockedForConditions,
   reviewedGalleryImageConditions,
   imageVisibilityConditions,
@@ -4406,13 +4406,9 @@ export async function getSongPlayCounts({
   features: { music?: boolean };
   user?: { id: number; isModerator?: boolean | null };
 }): Promise<Record<number, number>> {
-  if (!features.music || !ids.length) return {};
-  const visible = await getImageIdsVisibleToViewer({
-    ids: [...new Set(ids)],
-    userId: user?.id,
-    isModerator: user?.isModerator ?? undefined,
-  });
-  if (!visible.size) return {};
+  if (!ids.length) return {};
+  const visible = await getVisibleSongIds({ ids, viewer: { features, user } });
+  if (!visible?.size) return {};
   const metrics = await getImageMetricsObject([...visible].map((id) => ({ id })));
   return Object.fromEntries(
     Object.values(metrics).flatMap((entry) =>

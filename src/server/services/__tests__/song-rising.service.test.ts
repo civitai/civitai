@@ -1,11 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as UserPreferences from '~/server/services/user-preferences.service';
 
 const { queryMock, visibleMock } = vi.hoisted(() => ({ queryMock: vi.fn(), visibleMock: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: queryMock } }));
-vi.mock('~/server/services/image-visibility.service', () => ({
-  getImageIdsVisibleToViewer: visibleMock,
-}));
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof UserPreferences>();
+  return {
+    ...actual,
+    BlockedByUsers: { ...actual.BlockedByUsers, getCached: vi.fn(async () => []) },
+  };
+});
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { answerVisibilityRead } from '~/__tests__/mocks/visibility-read.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import '~/__tests__/mocks/logging.mock';
 import { CacheTTL } from '~/server/common/constants';
@@ -13,6 +20,7 @@ import { getRisingSongIds } from '../song-rising.service';
 
 const VIEWER = { id: 4, isModerator: false };
 const MUSIC_ON = { features: { music: true }, user: VIEWER };
+
 const sqlOf = () => (queryMock.mock.calls[0][0] as TemplateStringsArray).join('?');
 
 describe('getRisingSongIds', () => {
@@ -27,6 +35,7 @@ describe('getRisingSongIds', () => {
     });
     redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true);
     visibleMock.mockImplementation(async ({ ids }: { ids: number[] }) => new Set(ids));
+    dbMock.dbRead.$queryRaw.mockImplementation(answerVisibilityRead(visibleMock));
   });
 
   it('ranks songs by plays over today and the 6 days before, ties newest first', async () => {
