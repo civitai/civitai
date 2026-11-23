@@ -41,8 +41,14 @@ vi.mock('../user-actions.service', async (importOriginal) => ({
 vi.mock('../clickhouse', () => ({
   getClickhouse: () => ({ query: async () => ({ json: async () => [] }) }),
 }));
-const { updateImageNsfwLevel } = vi.hoisted(() => ({
+const { updateImageNsfwLevel, acceptImage } = vi.hoisted(() => ({
   updateImageNsfwLevel: vi.fn(async (_input: unknown) => undefined),
+  acceptImage: vi.fn(async (_input: unknown) => undefined),
+}));
+vi.mock('../image-moderation.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../image-moderation.service')>()),
+  acceptImage,
+  sendBulkAppealEmails: vi.fn(async () => undefined),
 }));
 vi.mock('../image-nsfw-level', () => ({ updateImageNsfwLevel }));
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
@@ -69,6 +75,7 @@ let db: PGlite;
 beforeEach(async () => {
   for (const write of Object.values(writes)) write.mockClear();
   updateImageNsfwLevel.mockClear();
+  acceptImage.mockClear();
   db = await freshPglite();
   await db.exec(IMAGE_PAGES_SCHEMA);
   await db.exec(
@@ -299,5 +306,33 @@ describe("the image queues' flag and rating actions", () => {
       event(WITH_GRANT, { imageIds: String(WITHHELD), nsfwLevel: '1' })
     );
     expect(updateImageNsfwLevel).toHaveBeenCalled();
+  });
+});
+
+describe("the image queues' accept actions", () => {
+  it('refuse to accept a withheld image without the grant', async () => {
+    const result = (await queuePage.actions.accept(
+      event(WITHOUT_GRANT, { imageId: String(WITHHELD) })
+    )) as Result;
+    expect(result.status).toBe(403);
+    expect(acceptImage).not.toHaveBeenCalled();
+  });
+
+  it('accept it for a grant holder', async () => {
+    await queuePage.actions.accept(event(WITH_GRANT, { imageId: String(WITHHELD) }));
+    expect(acceptImage).toHaveBeenCalledOnce();
+  });
+
+  it('refuse a bulk accept with a withheld image without the grant', async () => {
+    const result = (await queuePage.actions.bulkAccept(
+      event(WITHOUT_GRANT, { imageIds: `${CONTROL},${WITHHELD}` })
+    )) as Result;
+    expect(result.status).toBe(403);
+    expect(acceptImage).not.toHaveBeenCalled();
+  });
+
+  it('bulk accept it for a grant holder', async () => {
+    await queuePage.actions.bulkAccept(event(WITH_GRANT, { imageIds: String(WITHHELD) }));
+    expect(acceptImage).toHaveBeenCalledOnce();
   });
 });
