@@ -80,7 +80,9 @@ export function AppAccessRequestsQueue() {
       <Alert color="blue" variant="light" title="Approving grants access">
         Approve lets the person build apps, including the App Assistant, from their next page load.
         Revoke takes that away again, whether a moderator approved the request or it was approved
-        automatically.
+        automatically. While automatic approval is on, a revoked person who still passes the account
+        checks gets access back the next time they request it: to keep someone out, ban or mute
+        them.
       </Alert>
       <SegmentedControl
         value={filter}
