@@ -23,27 +23,13 @@ const percent = (label: string) =>
     return rate;
   });
 
-// A blank box leaves the stored share as it is (undefined is not sent to the service).
-const optionalPercent = (label: string) =>
-  z
-    .string()
-    .optional()
-    .transform((text, ctx) => {
-      if (text === undefined || text.trim() === '') return undefined;
-      const rate = percentToRate(text);
-      if (rate === null) {
-        ctx.addIssue({ code: 'custom', message: `${label} must be 0 to 100, up to two decimals.` });
-        return z.NEVER;
-      }
-      return rate;
-    });
-
 // The form posts percentages; the transforms turn them into the stored 0–1 rates.
 const sourcesForm = z.object({
   enabled: z.enum(['true', 'false']).transform((value) => value === 'true'),
   sfwPercent: percent('The SFW rate'),
   nsfwPercent: percent('The NSFW rate'),
-  yesNoPercent: optionalPercent('The yes/no share'),
+  // Yes/no questions on (share 1), off (0) or back to Knights' environment default (cleared). Absent keeps what is stored.
+  yesNo: z.enum(['on', 'off', 'default']).optional(),
   // A blank or absent box leaves the stored cap as it is; the service checks the range.
   maxOpen: z
     .string()
@@ -57,8 +43,6 @@ const sourcesForm = z.object({
       }
       return Number(trimmed);
     }),
-  // Ticked: clear the stored share, so Knights uses its environment default; it wins over the box.
-  yesNoDefault: z.enum(['true']).optional(),
 });
 
 export const load: PageServerLoad = async ({ url, locals }) => {
@@ -83,11 +67,9 @@ export const actions: Actions = {
           sfwRate: input.sfwPercent,
           nsfwRate: input.nsfwPercent,
           ...(input.maxOpen === undefined ? {} : { maxOpen: input.maxOpen }),
-          ...(input.yesNoDefault
-            ? { yesNoShare: null }
-            : input.yesNoPercent === undefined
+          ...(input.yesNo === undefined
             ? {}
-            : { yesNoShare: input.yesNoPercent }),
+            : { yesNoShare: input.yesNo === 'default' ? null : input.yesNo === 'on' ? 1 : 0 }),
         },
         locals.user.id
       );
