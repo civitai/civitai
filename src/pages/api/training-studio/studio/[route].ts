@@ -6,8 +6,8 @@ import {
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { allowTrainingStudio } from '~/server/utils/training-studio-access';
 
-// The Studio's own limit on a request body (SvelteKit's default).
-export const config = { api: { bodyParser: { sizeLimit: '512kb' } } };
+// The Studio's own limit on a request body (BODY_SIZE_LIMIT in apps/training-studio/Dockerfile).
+export const config = { api: { bodyParser: { sizeLimit: '16mb' } } };
 
 /**
  * The embedded Training Studio's `studioServer` hook (docs/training-studio-web-component.md):

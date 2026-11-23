@@ -48,12 +48,21 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
   showErrorNotification: mocks.notifyError,
 }));
 vi.mock('~/components/Dialog/triggers/report', () => ({ openReportModal: mocks.openReportModal }));
-vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
-  LoginRedirect: ({ children }: { children: React.ReactNode }) => children,
+// LoginRedirect and requireLogin are the real ones; only the session flag, the router and the tour
+// context, the boundaries they read, are stood in for, and the login popup is a window.open spy.
+vi.mock('~/components/Tours/ToursProvider', () => ({
+  useTourContext: () => ({ running: false, pauseTour: vi.fn(), activeTour: null }),
 }));
+vi.mock('next/router', () => ({ useRouter: () => ({ asPath: '/services/42' }) }));
+
+const openWindow = vi.spyOn(window, 'open').mockReturnValue({ closed: true } as Window);
 
 const offering = { id: 42, title: 'Portrait commission' };
-const open = async (props: { isOwner: boolean; isModerator: boolean }) => {
+const open = async (props: {
+  isOwner: boolean;
+  isModerator: boolean;
+  placement?: 'card' | 'title';
+}) => {
   renderWithProviders(
     <ModalsProvider>
       <ServiceOfferingMenu offering={offering} {...props} />
@@ -64,7 +73,11 @@ const open = async (props: { isOwner: boolean; isModerator: boolean }) => {
 const item = (name: string) => page.getByRole('menuitem', { name });
 
 describe('ServiceOfferingMenu', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.isAuthed = true;
+    openWindow.mockClear();
+  });
 
   test('a visitor can report and not delete', async () => {
     await open({ isOwner: false, isModerator: false });
@@ -76,6 +89,22 @@ describe('ServiceOfferingMenu', () => {
     expect(mocks.openReportModal).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: ReportEntity.ServiceOffering, entityId: 42 })
     );
+  });
+
+  test('a signed-out visitor sees Report too, and clicking it opens the login popup, not the report', async () => {
+    window.isAuthed = false;
+    await open({ isOwner: false, isModerator: false });
+    await expect.element(item('Report this service')).toBeVisible();
+    await item('Report this service').click();
+    expect(openWindow).toHaveBeenCalledTimes(1);
+    expect(mocks.openReportModal).not.toHaveBeenCalled();
+  });
+
+  test('the title-row placement offers the same Report to a visitor', async () => {
+    await open({ isOwner: false, isModerator: false, placement: 'title' });
+    await expect.element(item('Report this service')).toBeVisible();
+    await item('Report this service').click();
+    expect(mocks.openReportModal).toHaveBeenCalledTimes(1);
   });
 
   test('the seller deletes their own service after confirming, and cannot report it', async () => {

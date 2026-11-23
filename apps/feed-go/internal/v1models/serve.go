@@ -47,10 +47,13 @@ type DetailRequest struct {
 	Serving bool
 	// Host is the request's Host header (isRedCapableHost, for the Training Data listing).
 	Host string
-	// TrainingDataSQL is Node's Training Data rule-set id the sample carried
-	// (TrainingDataSQLHeader); "" = none (always so for a public request: the server never reads the
-	// header off one, so a Training Data candidate there falls back as drift).
+	// TrainingDataSQL is the Node Training Data rule-set id a sample carried (TrainingDataSQLHeader);
+	// "" = none (always so on a public request, whose header is never read).
 	TrainingDataSQL string
+	// Rules, on a public request, vouches for this build's rules when the Node builds now answering
+	// published exactly them; read only when the body has a Training Data candidate. With neither
+	// vouching, a Training Data candidate falls back as drift.
+	Rules *TrainingDataRules
 }
 
 // ServeDetail answers `GET /api/v1/models/[id]` (the PublicEndpoint path: no session is read).
@@ -71,7 +74,7 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 		if body, age, ok := d.cachedDetail(ctx, id, level); ok && (req.Serving || age >= NodeBuiltWindow) {
 			// withListableTrainingData runs after the cache, which keys on neither the host nor a
 			// restriction placed since the entry was written.
-			out, err := d.withListableTrainingData(ctx, body, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL})
+			out, err := d.withListableTrainingData(ctx, body, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL, rules: req.Rules})
 			if err != nil {
 				return nil, err
 			}
@@ -99,7 +102,7 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 	if err != nil {
 		return nil, err
 	}
-	out, err := d.withListableTrainingData(ctx, body, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL})
+	out, err := d.withListableTrainingData(ctx, body, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL, rules: req.Rules})
 	if err != nil {
 		return nil, err
 	}
@@ -139,9 +142,9 @@ type ListRequest struct {
 	Query, Path, Host string
 	// RegionRestricted: the caller's region holds the level to PG/PG-13.
 	RegionRestricted bool
-	// TrainingDataSQL is Node's Training Data rule-set id the sample carried
-	// (TrainingDataSQLHeader); "" = none.
+	// TrainingDataSQL and Rules vouch for the listing, as on DetailRequest.
 	TrainingDataSQL string
+	Rules           *TrainingDataRules
 }
 
 // UsernameResolver is the `username` filter's user lookup on the replica.
@@ -249,7 +252,7 @@ func ServeList(ctx context.Context, d *Deps, users UsernameResolver, req ListReq
 	for _, it := range res.items {
 		versions = append(versions, it.versions...)
 	}
-	listing, err := d.trainingDataListing(ctx, versions, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL})
+	listing, err := d.trainingDataListing(ctx, versions, listingRequest{host: req.Host, sqlHash: req.TrainingDataSQL, rules: req.Rules})
 	if err != nil {
 		return nil, err
 	}

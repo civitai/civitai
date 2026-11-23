@@ -3989,6 +3989,10 @@ export type KnightsHarvestCursor = {
   lastActivityId: Generated<number>;
   updatedAt: Timestamp;
 };
+export type KnightsLegacyPlayerDay = {
+  playerId: number;
+  day: Timestamp;
+};
 export type KnightsNotificationSend = {
   playerId: number;
   day: Timestamp;
@@ -7334,6 +7338,7 @@ export type DB = {
   KnightsApprenticeAnswer: KnightsApprenticeAnswer;
   KnightsGoldConversion: KnightsGoldConversion;
   KnightsHarvestCursor: KnightsHarvestCursor;
+  KnightsLegacyPlayerDay: KnightsLegacyPlayerDay;
   KnightsNotificationSend: KnightsNotificationSend;
   KnightsPlayer: KnightsPlayer;
   KnightsPlayerDay: KnightsPlayerDay;

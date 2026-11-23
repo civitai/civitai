@@ -5348,6 +5348,11 @@ export interface KnightsPlayer {
   recapPopupOptOut: boolean;
 }
 
+export interface KnightsLegacyPlayerDay {
+  playerId: number;
+  day: Date;
+}
+
 export interface KnightsPlayerDay {
   playerId: number;
   day: Date;

@@ -20,8 +20,9 @@ import (
 // pin the result against the real Node route (testdata/golden/v1-models-headers, configheaders.json).
 //
 // Not reproduced, so the request falls back instead (internal/server/v1models_serve.go): the list's
-// X-Expires (an `etag` query), `[id]`'s block-scope CORS headers (an Origin), and Next's 304 to a
-// conditional request.
+// X-Expires (an `etag` query), `[id]`'s block-scope CORS headers (an Origin), and a conditional
+// request Fresh does not decide as Next does (ConditionalUnsupported). Next's 304 to the others is
+// these same headers with no body (Fresh, writeV1Models).
 const (
 	corsAllowOrigin  = "*"
 	corsAllowHeaders = "Authorization, Content-Type, *"

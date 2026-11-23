@@ -2,6 +2,7 @@ import { settlePaymentIntentKey, tipIntent } from '~/components/Buzz/payment-int
 import { useRouter } from 'next/router';
 import type React from 'react';
 import { useState } from 'react';
+import { onPurchaseSuccessAction } from '~/components/Buzz/purchase-success';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -112,7 +113,10 @@ export const useBuzzTransaction = (opts?: {
       onBuyBuzz({
         message: typeof message === 'function' ? message(buzzAmount - balance) : message,
         minBuzzAmount: buzzAmount - balance,
-        onPurchaseSuccess: performTransactionOnPurchase ? onPerformTransaction : undefined,
+        onPurchaseSuccess: onPurchaseSuccessAction(
+          performTransactionOnPurchase,
+          onPerformTransaction
+        ),
         purchaseSuccessMessage,
         // At this point, because `canPurchase` is true, we can safely assume the first type is a purchasable type:
         initialBuzzType,

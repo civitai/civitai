@@ -3,8 +3,10 @@ import {
   imageReviewedSql,
   isImageReviewed,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
+  minorMatureHidden,
   withServableImage,
 } from '~/server/common/image-visibility';
+import { NsfwLevel } from '~/server/common/enums';
 
 const render = (alias?: string) => {
   const sql = alias ? imageReviewedSql(alias) : imageReviewedSql();
@@ -165,5 +167,24 @@ describe('withServableImage', () => {
   it('judges each key on its own when nested', () => {
     const served = withServableImage(withServableImage(row(image(1)), 'cover', 6), 'hero', 6);
     expect([served.cover, served.hero]).toEqual([image(1), null]);
+  });
+});
+
+describe('minorMatureHidden', () => {
+  const image = { userId: 5, minor: true, nsfwLevel: NsfwLevel.R };
+
+  it('hides a restricted minor image from a signed-out viewer and a stranger', () => {
+    expect(minorMatureHidden(image)).toBe(true);
+    expect(minorMatureHidden(image, 6)).toBe(true);
+  });
+
+  it('shows it to its uploader and to a moderator', () => {
+    expect(minorMatureHidden(image, 5)).toBe(false);
+    expect(minorMatureHidden(image, 6, true)).toBe(false);
+  });
+
+  it("needs the uploader, so a select without it cannot count as the viewer's own", () => {
+    // @ts-expect-error userId is required
+    minorMatureHidden({ minor: true, nsfwLevel: NsfwLevel.R });
   });
 });
