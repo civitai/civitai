@@ -455,8 +455,9 @@ func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int]
 }
 
 // VersionImageEntries is imagesForModelVersionsCache.fetch's records for versionIDs, before the
-// appendFn (which each reader applies): read, a queued Packed.Queue of KeyVersionImages with
-// versionImagesTTL, answered as VersionImages answers it. With s.Compute a miss is computed and a
+// appendFn, whose minor content filter each caller applies (the caller queued read, the showcase
+// cache's key with versionImagesTTL, and is the cache use the minor-rule ledger counts), answered as
+// VersionImages answers it. With s.Compute a miss is computed and a
 // stale entry revalidated (fillVersionImages: the lookupFn's showcase query, lag-aware with write-back
 // on); a stale entry whose revalidation lock another process holds is kept, marked Stale. Without
 // s.Compute (or with a nil s) the read is answered as it is: a miss absent, a stale entry Stale.
