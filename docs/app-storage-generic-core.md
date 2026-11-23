@@ -57,7 +57,9 @@ Unchanged, minus `write: "none"`. The core is `private` and `shared` with `write
 | `shared`, `write: "own"` | one per app namespace (`scope_uid = 0`)       | eligible viewers create; only a document's author updates or deletes it (`assertMayModify`) |
 
 `write: "none"` is removed: it exists only so counters can create unowned documents
-(`APP_STORAGE_WRITE_POLICIES`, `assertShareWritable` in `doc-store.ts`).
+(`APP_STORAGE_WRITE_POLICIES`, `assertShareWritable` in `doc-store.ts`). A collection whose approved
+manifest still declares it is served **read-only** until a new version drops it (see "Manifest
+fields"): it must never fall back to `own`.
 
 `write: "anyone"` and `write: "owner"` are **out of scope** for this core: both are switched off at
 compile time (`anyoneWrites` and `ownerWrites` are `false` in `APP_STORAGE_ENABLED_FEATURES`) and have
@@ -140,14 +142,17 @@ write answers; `markSeq` goes with the tally ops.
 - Shared collections only, and only with `write: "own"`; the parser refuses it on a private
   collection (already one key space per viewer) and with any other write policy.
 - **Immutable once approved:** submit refuses adding, removing or changing `keyedBy` on a collection
-  the previous approved version declared, because it changes what every stored key means. Declare a
+  that ANY approved version of the app declared (a collection dropped and declared again is still the
+  same stored key space), because it changes what every stored key means. Declare a
   new collection instead. This is a new check beside the schema-migration diff
   (`storage-schema-migrations.ts`).
 
 **Key derivation.** The key is never taken from the request:
 
 - `parent`: 1 to 96 characters of `[A-Za-z0-9._-]` (the key grammar without `:`), not only dots
-  (`DOT_ONLY_KEY`). A document key or a ULID fits, so a parent can name another collection's document.
+  (`DOT_ONLY_KEY`). A ULID, or any document key without `:` of at most 96 characters, fits; a key
+  that has a `:` or is longer does not. `:` is excluded on purpose: were it allowed,
+  `keyPrefix=a:` would also match parent `a:b`'s documents.
 - `d` = the first 128 bits of HMAC-SHA256 over the length-prefixed tuple (app id, namespace,
   collection, mode, parent or empty, viewer user id), under a server-held derivation key, as 26
   characters of lowercase RFC 4648 base32 without padding.
@@ -191,8 +196,10 @@ write answers; `markSeq` goes with the tally ops.
   delete.
 - Rate limits: a `@me` PUT spends the shared-write budget (`DOC_STORE_SHARED_WRITE_BUDGET`: burst 30,
   300 per day per viewer per app); a DELETE spends the `write` bucket.
-- Content scan: the shared-write scan runs on `data` and on the key, as for any put; the parent is the
-  only client text in the key.
+- Content scan: the shared-write scan runs on `data` and on the **parent only**, not on the derived
+  key: the digest is not client text, and scanning random base32 could trip a term list by chance.
+  Today the scan is handed the put's key (`moderate` in `doc-store-api.ts`), so this is a change at
+  that call.
 - Hooks: the hook is called with `op` `put` or `delete` and the derived key, plus one additive request
   field, `parent` (string or null), so a hook can check the parent without parsing the key.
 - Schema and `ownedModelVersions`: checked on every PUT, as any put.
@@ -212,7 +219,10 @@ write answers; `markSeq` goes with the tally ops.
   finds the namespace.
 - Registry export (`registry: "public"`): exported as any document; the key is opaque.
 
-**Errors.** No new code. New `details.reason` values on `400 invalid_request`: `viewer_keyed`
+**Errors.** One new code, `removed` (`410`), for the removed routes during their last release
+(rollout step 5): added to `StorageApiCode` and `STORAGE_ERROR_STATUS` (`doc-store-api.ts`) and to the SDK's
+`StorageErrorCode`, which reports it as "this operation no longer exists" rather than retrying.
+Otherwise no new code. New `details.reason` values on `400 invalid_request`: `viewer_keyed`
 (a raw-key write, or a create), `parent_required` (`/@me` on a `parent+viewer` collection),
 `parent_not_allowed` (`/@me/:parent` on a `viewer` collection), `invalid_parent`; and
 `401 sign_in_required` for an anonymous `@me`. Every other refusal is today's error table
@@ -241,8 +251,20 @@ write answers; `markSeq` goes with the tally ops.
 **These stay parseable forever in approved history.** Approved manifests are replayed for their shape
 with every feature on (`APP_STORAGE_ALL_FEATURES_ON`), and `deriveCollectionMajors` skips a manifest
 whose storage does not parse, which would shift every later major of the app. So submit refuses them
-(a new feature switch, off) while the parser keeps accepting them on replay, and the store ignores them
-once the ops are gone. `v1.json` marks them `deprecated` rather than deleting them.
+(a new feature switch, off) while the parser keeps accepting them on replay. `v1.json` marks them
+`deprecated` rather than deleting them.
+
+🔴 **A declared `write: "none"` is served read-only, never ignored.** The serving path parses the
+approved manifest with every feature on (`declaredStorage` in `doc-store-declared.ts`), and the store
+reads an absent policy as `own` (`coll.config.write ?? 'own'` in `assertCollection`). So dropping
+`none` from the parsed declaration, or mapping it to "absent", would make the collection writable by
+every eligible viewer under `own`: today `live-characters`' `plays` and `custom-generators`' (and its
+fork's) `generator_marks`. And refusing `none` in the serving parse would make the whole app's storage
+answer `503` (`declaredStorage` refuses an unparseable manifest). Instead the parser keeps `none` as a
+policy, and the store keeps refusing every viewer document write to it (create, put, delete, `@me`)
+with `403 write_policy`, exactly as `assertShareWritable` does today, after the counter ops are gone,
+until an approved version drops the declaration. `marks` and `counters` still declared are inert (their
+ops answer `410`), which changes no write policy.
 
 ### Store code, types and tables
 
@@ -298,8 +320,8 @@ the viewer had already reported the document; no count, ever.
 
 **Auth.** The block token, as for the report mark today: a signed-in viewer (`401 sign_in_required`
 for an anonymous one), the `apps:storage` scope every app with collections already holds
-(consent-exempt), and the shared-write trust gate (`assertTrusted`). No publish scope: a report is not
-content other viewers read. A site-session path for host chrome is open question 5.
+(consent-exempt), and the shared-write trust gate (`assertTrusted`). No publish scope for a report on
+the app's own documents, as today; through an import, today's rule applies (open question 8). A site-session path for host chrome is open question 5.
 
 **Rate limit.** The `report` bucket as today, 20 per viewer per app per day
 (`DOC_STORE_REPORT_RATE_LIMIT_MAX`), under the same Redis key shape, so windows in flight carry over at
@@ -339,32 +361,45 @@ with its rollback file beside it; nothing applies one automatically.
 ### `doc_mark` votes to viewer-keyed documents
 
 For each (source collection `c`, mark name `m`) the inventory lists, the app ships a manifest version
-declaring a target collection `t` with `keyedBy: "parent+viewer"` (for model-benchmarking: `votes`,
-from `records` / `vote`). Then:
+declaring **one target collection `t` per mark name**, with `keyedBy: "parent+viewer"` (for
+model-benchmarking: `votes`, from `records` / `vote`). One target per name because two marks by one
+viewer on one document (`dataset-commons`' `up` and `down`) would derive the same key in one
+collection; the app may later fold them into one document of its own shape. The new version's `@me`
+writes stay off for `t` (a per-app flag) until step 5 below. Then, in this order:
 
-1. **Copy.** A new maintenance op, `migrateMarksToDocs(appId, ns, { from: c, mark: m, to: t, data })`,
+1. **Check keys.** Every source key `k` must fit the parent grammar (no `:`, at most 96 characters). If
+   any does not, `migrateMarksToDocs` refuses the whole collection before writing anything, and the
+   app chooses its own mapping first. Every key in today's four apps with marks is checked in the dry
+   run; ULIDs (`records` in `model-benchmarking`) always fit.
+2. **Freeze.** The store refuses `$mark` / `$unmark` of `m` on `c` for that app (`410`), so no mark
+   changes after this point.
+3. **Copy.** A new maintenance op, `migrateMarksToDocs(appId, ns, { from: c, mark: m, to: t, data })`,
    beside `migrateDocuments` (the schema-migration runner). For each `doc_mark` row (c, k, m, u,
    created_at), in primary-key order with a keyset cursor and a batch size, it inserts a document at
-   key `<k>:<d(u, k)>` with body `data` (a constant the person running it gives, checked against `t`'s schema;
-   `{}` for a plain vote), `author_kind = 'user'`, `author_uid = u`, `created_at` = the mark's,
-   `version = 1`, the next `seq`, its index rows, and usage charged to `usage_app` and `u`'s
+   key `<k>:<d(u, k)>` with body `data` (a constant the person running it gives, checked against
+   `t`'s schema; `{}` for a plain vote), `author_kind = 'user'`, `author_uid = u`, `created_at` = the
+   mark's, `version = 1`, the next `seq`, its index rows, and usage charged to `usage_app` and `u`'s
    `usage_user`. `INSERT ... ON CONFLICT DO NOTHING` on the derived key makes a re-run a no-op. It is a
    platform operation like `migrateDocuments`: no hook, trust gate, budget or scan. A mark whose source
-   document is hidden is copied too (the vote existed).
-2. **Freeze.** The store refuses `$mark` / `$unmark` of `m` on `c` for that app (`410`, below), so old
-   clients cannot change a mark the copy already read. Then the copy runs again for marks made since
-   step 1.
-3. **Verify.** Per parent, the count of `doc_mark` rows equals the count of `t` documents with
-   `keyPrefix=<k>:`; per user, the counts agree. A mismatch stops the rollout for that app.
-4. **Rate.** With content levels on, run the app's levels backfill (`app-doc-levels-backfill`) so the
+   document is hidden is copied too (the vote existed). It runs once, after the freeze, so it reads a
+   set that can no longer change.
+4. **Verify,** in the store, by counting rows directly (`doc_mark` rows of (c, m) against `t` documents,
+   per parent and per user), never through the list API, which hides documents still pending a rating
+   from everyone but their author. A mismatch stops the rollout for that app.
+5. **Enable `@me` writes** on `t` for the app. Only now can a viewer add or delete a vote, so a delete
+   is never undone by a copy and a new vote never breaks the verify.
+6. **Rate.** With content levels on, run the app's levels backfill (`app-doc-levels-backfill`) so the
    copied documents are rated before the app's reads move to `t` (otherwise every copied vote is
    pending, visible only to its voter).
-5. **Switch reads.** The app's new version counts by listing `t` with `keyPrefix=<parent>:`.
+7. **Switch reads.** The app's new version counts by listing `t` with `keyPrefix=<parent>:`.
 
-**Rollback** until the final drop: unfreeze (the flag), the app reverts to its previous approved
-version, and the copied documents are deleted by a per-collection purge of `t` in that namespace
-(tombstones and refunds as a moderator delete). `doc_mark` and `doc_tally` were never written, so
-nothing needs restoring.
+**Rollback.** Valid only before step 5. Unfreeze (the flag), revert the app to its previous approved
+version, and delete the copied documents. No per-collection purge exists today (`doc-store-purge.ts`
+has a viewer purge and an app purge only), so this needs new work: a maintenance op that deletes every
+document of one collection in one namespace with tombstones and refunds, as a moderator delete does.
+`doc_mark` and `doc_tally` were never written, so nothing needs restoring. After step 5 a rollback
+would lose every vote made through `@me`, which were never written to `doc_mark`. Past that point the
+only way back is forward: fix the new version.
 
 ### `doc_tally`
 
@@ -426,13 +461,16 @@ Each step names what ends it.
 3. **Deprecate.** Submit refuses new tally and publish declarations; `Deprecation` headers on every
    removed route; developer docs updated. Ends when it is deployed.
 4. **Migrate the apps with data:** `playable-collections`, `model-benchmarking`, `custom-generators`
-   and `dataset-commons` ("Inventory (2026-11-23)"): each one's new manifest version, the copy, freeze,
-   verify, rate, switch. The other apps that declare tallies hold none and only change their manifests.
+   and `dataset-commons` ("Inventory (2026-11-23)"): each one's new manifest version, then key check,
+   freeze, copy, verify, enable `@me` writes, rate, switch. The other apps that declare tallies hold none and only change their manifests.
    Ends per app when its verify step passes and its old calls stop.
 5. **Remove when usage is zero for 7 days.** Zero means: `civitai_app_block_doc_store_tally_ops_total`
    flat (it has no app label), `app_storage_requests_total{op}` flat for `increment`, `mark`, `unmark`,
    `patch`, `publish` and `unpublish` (its `app` label names the app; `recordAppStorageRequest`), and no
-   non-report `doc_mark` or `doc_tally` row written. Then the removed routes answer `410` (code
+   non-report `doc_mark` or `doc_tally` row written, **and** no app's approved manifest head still
+   declares `write: "none"`, `marks` or `counters` (read from the enforced manifests, as the inventory
+   did), so removing the code changes no live collection's meaning. Then the removed routes answer
+   `410` (code
    `removed`, linking the guide) for one release and leave the route table after it; the code, types,
    SDK surface (major release) and Flipt flag go; the final cleanup SQL runs. Seven days and no longer
    because the inventory shows four apps with data and about 56 marks and 37 counter documents, all
@@ -469,7 +507,7 @@ Disposition of the work already done:
 | #10130, the mark sequence and `mark_head` migration                              | merged, dark | all of it: `mark_head`, `doc_tally.mark_seq`, `SQL_TAKE_MARK_SEQ`, `withMarkHead`, lock (1c)                                                                    | keep dark (its probe makes it inert where the migration is absent); do not apply the migration to an environment that has not applied it; remove the code with the tally ops in step 5 and drop the table in the final cleanup |
 | #10128, `seq` and `recordId` in write answers; the private feed's `seq` and head | merged       | nothing                                                                                                                                                         | keep: the record overlay and floors need it                                                                                                                                                                                    |
 | #10142, the signed internal route (answers `seq`, `recordId`, `markSeq`)         | merged, dark | `markSeq` in tally answers                                                                                                                                      | keep; `markSeq` goes with the tally ops in step 5                                                                                                                                                                              |
-| #10143, app-data-go write routes                                                 | merged, dark | the `PATCH` operator forwarding (`patchOp` in `internal/writes/writes.go`) and `publish` / `unpublish` forwarding                                               | remove now if model-benchmarking's votes are migrated before its app-data-go cutover (recommended order); otherwise keep dark until its migration                                                                              |
+| #10143, app-data-go write routes                                                 | merged, dark | the `PATCH` operator forwarding (`patchOp` in `internal/writes/writes.go`); it never built `publish` / `unpublish` forwarding                                   | remove now if model-benchmarking's votes are migrated before its app-data-go cutover (recommended order); otherwise keep dark until its migration                                                                              |
 | #10158, read-your-writes overlay                                                 | merged, dark | nothing: it ships record overlays only, and lists marks overlays and the mark floor as not built                                                                | keep                                                                                                                                                                                                                           |
 
 ## Risks
@@ -495,8 +533,11 @@ Disposition of the work already done:
   fields").
 - **Derivation key loss or leak.** Losing it orphans every viewer-keyed document from its `@me` routes;
   leaking it lets the holder link documents to user ids. Neither grants a write (open question 1).
-- **Migration divergence.** A mark changed between the copy and the freeze is caught only by the
-  re-copy and the verify step; the freeze must precede the last copy.
+- **Migration ordering.** The freeze precedes the one copy, and `@me` writes are enabled only after
+  the verify, so neither an old client's mark nor a new `@me` vote can land between them. Done in any
+  other order, a re-copy can undo a `@me` delete and a new vote breaks the verify.
+- **A `write: "none"` collection read as `own`** would be writable by every viewer; the store serves it
+  read-only until its declaration is dropped ("Manifest fields").
 
 ## Open questions
 
@@ -509,7 +550,8 @@ Disposition of the work already done:
 - **The key digest is keyed (HMAC)** per (collection, parent), not a stable per-app handle and not an
   unkeyed hash.
 - **Report rows stay in `doc_mark`** (`name = 'report'`); no new table.
-- **Removal:** zero usage for 7 days, then `410 removed` for one release.
+- **Removal:** zero usage for 7 days and no approved manifest head still declaring `write: "none"`,
+  `marks` or `counters`, then `410 removed` for one release.
 
 Each question below has a proposed default, which applies unless it is overruled before the step that
 needs it.
@@ -530,8 +572,10 @@ needs it.
    its own scan); the column stays nullable.
 7. **The reporter's own "reported" state** (today `report` in `viewer.marks`). Proposed: not exposed;
    the API answers `{reported: true}` idempotently and an app keeps local state.
-8. **Reports through imports (`from`).** Proposed: accepted, resolved through the declared import
-   (read access suffices), filed against the source app's document.
+8. **Reports through imports (`from`).** Proposed: today's rule, unchanged. A report through an
+   import is an authoring op (`importOpOf`), so it needs a `readwrite` import and the viewer's
+   `apps:storage:publish` grant in the source (`assertImportTallyPublishScope`), and is filed against
+   the source app's document. A read-only import cannot report.
 9. **A reporter's account wipe.** Proposed: their reports are deleted, as today.
 10. **`playable-collections`' replacement shape** (`popular_plays`: `write: "none"`, mark `played`,
     counter `plays`, the only counter data in production). Proposed: a viewer-keyed `plays`
