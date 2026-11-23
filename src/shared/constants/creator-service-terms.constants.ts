@@ -63,7 +63,10 @@ export function buyerDisclosureItems({
     },
     {
       lead: `Delivery within ${pluralize(deliveryDays, 'day')} of acceptance.`,
-      text: `${pluralize(revisionsIncluded, 'revision')} included.`,
+      text:
+        revisionsIncluded === 0
+          ? 'No revisions included.'
+          : `${pluralize(revisionsIncluded, 'revision')} included.`,
     },
     {
       lead: 'Accept or request an included revision.',
