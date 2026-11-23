@@ -1,7 +1,7 @@
 name: Save the pnpm store cache (main only)
 description: >-
   Saves the pnpm store that ./.github/actions/pnpm-store-restore restored, under the same key,
-  ONLY on a non-pull_request run on `main` and only when the restore missed. A no-op everywhere
+  ONLY on a push, workflow_dispatch or schedule run on `main`, and only when the restore missed. A no-op everywhere
   else. Use it right after the install.
 
 # Why `main` only: see the restore action's header. An entry saved on `main` is readable by
@@ -9,7 +9,11 @@ description: >-
 # The batch dispatches run on `main` (ref refs/heads/main) and so save here; a full-ci dispatch on
 # a branch does not.
 #
-# The gate lives HERE, once, so a caller cannot get it wrong. Callers put no `if` on this step.
+# The gate lives HERE, once, so a caller cannot get it wrong. Callers need no `if` on this step.
+#
+# The event is an ALLOWLIST, not `!= 'pull_request'`: `pull_request_target`, `issue_comment` and
+# `workflow_run` all run with `github.ref` = refs/heads/main, so a deny-one check would let a run
+# that a pull request or a comment triggered save into `main`'s scope, readable by every ref.
 #
 # `continue-on-error`: a cache save is best-effort infrastructure, like the Vite and Playwright
 # saves in lint.yml. Two jobs on one commit race the same key and the loser reports "another job
@@ -29,7 +33,7 @@ runs:
         fi
 
     - name: Save pnpm store
-      if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && env.PNPM_STORE_CACHE_HIT != 'true' }}
+      if: ${{ contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main' && env.PNPM_STORE_CACHE_HIT != 'true' }}
       continue-on-error: true
       uses: actions/cache/save@v6
       with:

@@ -15,21 +15,24 @@ import { describe, expect, it } from 'vitest';
 // `cache: pnpm`, which saves on every run that misses and has no input to stop it.
 //
 // THE RULE, for every step in .github/workflows/*.yml and .github/actions/*/action.yml:
-//   a step that SAVES a cache must be gated, by its own `if` or its job's, to a non-PR run on
-//   `main`. The saving steps recognised:
+//   a step that SAVES a cache must be gated, by its own `if` or its job's, to a push, dispatch or
+//   schedule run on `main`. The saving steps recognised:
 //     - `actions/cache/save@*`
 //     - `actions/cache@*` (restores, then saves in a post step)
 //     - `actions/setup-node@*` with a non-empty `cache:` input (saves in a post step; an
 //       expression counts, since it can evaluate to a package manager on a PR)
+//     - `pnpm/action-setup@*` with a truthy `cache:` input (saves the store in a post step)
 //   Restore steps (`actions/cache/restore@*`) are always fine. Use ./.github/actions/pnpm-store-restore
 //   and ./.github/actions/pnpm-store-save for the pnpm store; the save action carries the gate.
 //
 // "Gated" means the `if` is a pure conjunction (no `||`) containing BOTH
 //   `github.ref == 'refs/heads/main'`, and
-//   an event conjunct that excludes pull requests: `github.event_name != 'pull_request'`, or
-//   `github.event_name == 'push' | 'workflow_dispatch' | 'schedule'`.
-// The event conjunct is not redundant with the ref: on `pull_request_target` `github.ref` IS the
-// base branch, so a ref check alone would let a PR-triggered run save into `main`'s scope.
+//   an event ALLOWLIST: `github.event_name == 'push' | 'workflow_dispatch' | 'schedule'`, or
+//   `contains(fromJSON('[...]'), github.event_name)` naming only those.
+// The event conjunct is not redundant with the ref, and a deny-one `!= 'pull_request'` is not
+// enough: `pull_request_target`, `issue_comment` and `workflow_run` all run with `github.ref` =
+// the default branch, so either would let a run that a PR or a comment triggered save into
+// `main`'s scope, which every ref reads.
 // Deliberately stricter than a reachability analysis (which jobs a PR can reach): a misread
 // trigger or job `if` is how such an analysis reports safe over a leak, and the gate costs one
 // line where it is not needed.
@@ -49,12 +52,17 @@ type Step = { uses?: unknown; if?: unknown; with?: Record<string, unknown>; name
 type StepSet = { where: string; jobIf?: unknown; steps: Step[] };
 
 const MAIN_REF = "github.ref == 'refs/heads/main'";
-const NON_PR_EVENT = [
-  "github.event_name != 'pull_request'",
-  "github.event_name == 'push'",
-  "github.event_name == 'workflow_dispatch'",
-  "github.event_name == 'schedule'",
-];
+const ALLOWED_EVENTS = ['push', 'workflow_dispatch', 'schedule'];
+
+/** Is this conjunct an event check admitting only ALLOWED_EVENTS? (quotes already normalised) */
+function allowlistsEvent(c: string): boolean {
+  const eq = /^github\.event_name == '([a-z_]+)'$/.exec(c);
+  if (eq) return ALLOWED_EVENTS.includes(eq[1]);
+  const list = /^contains\(fromJSON\('\[([^\]]*)\]'\), github\.event_name\)$/.exec(c);
+  if (!list) return false;
+  const items = list[1].split(',').map((x) => /^'([a-z_]+)'$/.exec(x.trim())?.[1]);
+  return items.length > 0 && items.every((x) => x !== undefined && ALLOWED_EVENTS.includes(x));
+}
 
 /** The conjuncts of an `if`, or null when it is not a pure conjunction. */
 function conjuncts(cond: unknown): string[] | null {
@@ -66,11 +74,11 @@ function conjuncts(cond: unknown): string[] | null {
   return s.split('&&').map((c) => c.trim());
 }
 
-/** Is this `if` a gate to a non-PR run on `main`? */
+/** Is this `if` a gate to a push / dispatch / schedule run on `main`? */
 function gatedToMain(cond: unknown): boolean {
   const cs = conjuncts(cond);
   if (!cs) return false;
-  return cs.includes(MAIN_REF) && cs.some((c) => NON_PR_EVENT.includes(c));
+  return cs.includes(MAIN_REF) && cs.some(allowlistsEvent);
 }
 
 /** Why this step saves a cache, or null when it does not. */
@@ -82,6 +90,16 @@ function savesCache(step: Step): string | null {
     const cache = step.with?.cache;
     if (cache !== undefined && cache !== null && cache !== false && String(cache).trim() !== '')
       return `actions/setup-node \`cache: ${String(cache)}\` (saves in its post step)`;
+  }
+  if (/^pnpm\/action-setup@/.test(uses)) {
+    const cache = step.with?.cache;
+    if (
+      cache !== undefined &&
+      cache !== null &&
+      cache !== false &&
+      !['', 'false'].includes(String(cache).trim())
+    )
+      return `pnpm/action-setup \`cache: ${String(cache)}\` (saves the store in its post step)`;
   }
   return null;
 }
@@ -148,11 +166,11 @@ describe('no cache is saved outside main', () => {
     expect(saving.length).toBeGreaterThanOrEqual(4);
   });
 
-  it('gates every cache save to a non-PR run on main', () => {
+  it('gates every cache save to a push, dispatch or schedule run on main', () => {
     const found = offenders(sets);
     expect(
       found,
-      `These save an Actions cache on pull requests or branch runs, where the entry is readable only by that ref and spends the repo's 10 GB budget. Gate the save with \`github.event_name != 'pull_request' && github.ref == 'refs/heads/main'\`, or use ./.github/actions/pnpm-store-restore + pnpm-store-save instead of setup-node's \`cache:\`:\n${found.join(
+      `These save an Actions cache on pull requests or branch runs, where the entry is readable only by that ref and spends the repo's 10 GB budget. Gate the save with \`contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main'\`, or use ./.github/actions/pnpm-store-restore + pnpm-store-save instead of setup-node's \`cache:\`:\n${found.join(
         '\n'
       )}`
     ).toEqual([]);
@@ -173,7 +191,7 @@ describe('no cache is saved outside main', () => {
     const set = (steps: Step[], jobIf?: string): StepSet[] => [
       { where: 'fixture:job', jobIf, steps },
     ];
-    const GATE = "${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}";
+    const GATE = `\${{ contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main' }}`;
 
     it.each([
       ['setup-node cache: pnpm', { uses: 'actions/setup-node@v7', with: { cache: 'pnpm' } }],
@@ -184,6 +202,7 @@ describe('no cache is saved outside main', () => {
           with: { cache: "${{ steps.nm.outputs.cache-hit != 'true' && 'pnpm' || '' }}" },
         },
       ],
+      ['pnpm/action-setup cache: true', { uses: 'pnpm/action-setup@v6', with: { cache: true } }],
       ['an ungated save', { uses: 'actions/cache/save@v6', with: { key: 'k', path: 'p' } }],
       [
         'actions/cache (restore + post save)',
@@ -195,20 +214,35 @@ describe('no cache is saved outside main', () => {
       ],
       [
         'a save gated on the event only',
-        { uses: 'actions/cache/save@v6', if: "github.event_name != 'pull_request'" },
+        { uses: 'actions/cache/save@v6', if: "github.event_name == 'push'" },
+      ],
+      [
+        // pull_request_target, issue_comment and workflow_run all run with github.ref = main.
+        "a deny-one event gate (`!= 'pull_request'`)",
+        {
+          uses: 'actions/cache/save@v6',
+          if: "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'",
+        },
+      ],
+      [
+        'an event list that admits pull_request_target',
+        {
+          uses: 'actions/cache/save@v6',
+          if: `contains(fromJSON('["push", "pull_request_target"]'), github.event_name) && github.ref == 'refs/heads/main'`,
+        },
       ],
       [
         'a gate weakened by ||',
         {
           uses: 'actions/cache/save@v6',
-          if: "github.event_name != 'pull_request' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request'",
+          if: "github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request'",
         },
       ],
       [
         'a ref gate to another branch',
         {
           uses: 'actions/cache/save@v6',
-          if: "github.event_name != 'pull_request' && github.ref == 'refs/heads/release'",
+          if: "github.event_name == 'push' && github.ref == 'refs/heads/release'",
         },
       ],
     ])('flags %s', (_label, step) => {
@@ -227,11 +261,25 @@ describe('no cache is saved outside main', () => {
         { uses: 'actions/setup-node@v7', with: { cache: '' } },
         undefined,
       ],
+      ['pnpm/action-setup without cache', { uses: 'pnpm/action-setup@v6' }, undefined],
+      [
+        'pnpm/action-setup cache: false',
+        { uses: 'pnpm/action-setup@v6', with: { cache: false } },
+        undefined,
+      ],
       [
         'a save gated by its own if',
         {
           uses: 'actions/cache/save@v6',
           if: `${GATE.slice(0, -2)} && steps.x.outputs.cache-hit != 'true' }}`,
+        },
+        undefined,
+      ],
+      [
+        'a save gated by == push',
+        {
+          uses: 'actions/cache/save@v6',
+          if: "github.event_name == 'push' && github.ref == 'refs/heads/main'",
         },
         undefined,
       ],

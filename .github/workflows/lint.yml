@@ -747,11 +747,12 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - uses: ./.github/actions/pnpm-store-save
-
       # The gate runs TypeScript 7 from tools/ts7, which a root install does not fetch.
       - name: Install TypeScript 7
         run: pnpm -C tools/ts7 install --ignore-workspace --frozen-lockfile
+
+      # After both installs, so tools/ts7's packages are in the saved store too.
+      - uses: ./.github/actions/pnpm-store-save
 
       - name: Typecheck test files
         run: pnpm run typecheck:tests
@@ -1129,7 +1130,7 @@ jobs:
       #     be creating this cache". That must not red a commit on `main`, where
       #     a red on this job has to mean the code.
       - name: Save Vite pre-bundle cache
-        if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.vite-cache.outputs.cache-hit != 'true' }}
+        if: ${{ !cancelled() && contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main' && steps.vite-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@v6
         with:
@@ -1762,7 +1763,7 @@ jobs:
           echo "system-package cache: $(find "$HOME/playwright-apt-debs" -name '*.deb' 2>/dev/null | wc -l) .deb file(s) after install"
 
       - name: Save Playwright system packages
-        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.apt-cache.outputs.cache-hit != 'true' }}
+        if: ${{ contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main' && steps.apt-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@v6
         with:
@@ -1772,7 +1773,7 @@ jobs:
       # Right after the install, so a red suite later still leaves the entry saved.
       # `continue-on-error`: best-effort infrastructure, like the Vite cache save.
       - name: Save Playwright browsers
-        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.playwright-cache.outputs.cache-hit != 'true' }}
+        if: ${{ contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main' && steps.playwright-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@v6
         with:
