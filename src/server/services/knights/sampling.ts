@@ -183,44 +183,26 @@ export function scopeFilter(scope: KnightsSampleScope) {
 }
 
 /**
- * The sampled images of `scope`, a bounded batch of ids per statement. A model version's posts are read first, by id:
- * filtering `Image` on `p.modelVersionId` lets the planner walk the `Image` primary key.
+ * A scope as the ids its statements filter on. A model version's are its posts' ids, read once through the version's
+ * index: filtering `Image` on `p.modelVersionId`, or paging `Post` by id, lets the planner walk a primary key.
  */
-async function* sampleImagePages(db: Kysely<DB>, scope: KnightsSampleScope) {
-  if ('modelVersionIds' in scope) {
-    let afterPostId = 0;
-    while (true) {
-      const posts = await db
-        .selectFrom('Post as p')
-        .select('p.id')
-        .where('p.modelVersionId', 'in', scope.modelVersionIds)
-        .where(postNotPrivate)
-        .where('p.id', '>', afterPostId)
-        .orderBy('p.id', 'asc')
-        .limit(SAMPLE_POST_PAGE)
-        .execute();
-      if (posts.length === 0) return;
-      afterPostId = posts[posts.length - 1].id;
-      yield* sampleImagePages(db, { postIds: posts.map((p) => p.id) });
-      if (posts.length < SAMPLE_POST_PAGE) return;
-    }
-  }
-  const { column, ids } = scopeFilter(scope);
-  const batch = column === 'img.postId' ? SAMPLE_POST_PAGE : SAMPLE_IMAGE_PAGE;
-  for (let i = 0; i < ids.length; i += batch) {
-    const images = await db
-      .selectFrom('Image as img')
-      .innerJoin('Post as p', 'p.id', 'img.postId')
-      .select(['img.id', 'img.nsfwLevel'])
-      .where(column, 'in', ids.slice(i, i + batch))
-      .where(servableImageContent)
-      .where(postNotPrivate)
-      .where('img.ingestion', '=', 'Scanned')
-      .where('img.userId', '!=', FEEDBACK_CAPTURE_OWNER_ID)
-      .orderBy('img.id', 'asc')
-      .execute();
-    if (images.length > 0) yield images;
-  }
+async function byIds(
+  db: Kysely<DB>,
+  scope: KnightsSampleScope
+): Promise<{ postIds: number[] } | { imageIds: number[] }> {
+  if (!('modelVersionIds' in scope)) return scope;
+  const posts = await db
+    .selectFrom('Post')
+    .select('id')
+    .where('modelVersionId', 'in', scope.modelVersionIds)
+    .execute();
+  return { postIds: posts.map((p) => p.id).sort((a, b) => a - b) };
+}
+
+/** `ids` in batches for one statement each: posts (a post holds a bounded number of images), or images by id. */
+function* batches({ column, ids }: ReturnType<typeof scopeFilter>) {
+  const size = column === 'img.postId' ? SAMPLE_POST_PAGE : SAMPLE_IMAGE_PAGE;
+  for (let i = 0; i < ids.length; i += size) yield ids.slice(i, i + size);
 }
 
 /**
@@ -233,10 +215,22 @@ export async function sampleImagesForKnights(
 ): Promise<{ enqueued: number; capped: boolean }> {
   const result = { enqueued: 0, capped: false };
   if (!config.enabled || scopeFilter(scope).ids.length === 0) return result;
+  const filter = scopeFilter(await byIds(db, scope));
 
   const todo: { imageId: number; nsfw: boolean }[] = [];
   let room: number | undefined;
-  for await (const images of sampleImagePages(db, scope)) {
+  for (const ids of batches(filter)) {
+    const images = await db
+      .selectFrom('Image as img')
+      .innerJoin('Post as p', 'p.id', 'img.postId')
+      .select(['img.id', 'img.nsfwLevel'])
+      .where(filter.column, 'in', ids)
+      .where(servableImageContent)
+      .where(postNotPrivate)
+      .where('img.ingestion', '=', 'Scanned')
+      .where('img.userId', '!=', FEEDBACK_CAPTURE_OWNER_ID)
+      .orderBy('img.id', 'asc')
+      .execute();
     const drawn = images
       .map(({ id, nsfwLevel }) => ({ imageId: id, nsfw: nsfwLevel > sfwBrowsingLevelsFlag }))
       .filter(
@@ -300,29 +294,32 @@ export async function offerLeftPrivateImagesToKnights(
   db: Kysely<DB>,
   { scope, now, config }: { scope: KnightsSampleScope; now: Date; config: KnightsSourcesConfig }
 ): Promise<{ ownerRatings: number; enqueued: number; capped: boolean }> {
-  const { column, ids } = scopeFilter(scope);
-  if (!config.enabled || ids.length === 0) return { ownerRatings: 0, enqueued: 0, capped: false };
+  if (!config.enabled || scopeFilter(scope).ids.length === 0)
+    return { ownerRatings: 0, enqueued: 0, capped: false };
+  const resolved = await byIds(db, scope);
+  const filter = scopeFilter(resolved);
 
-  const rated = await db
-    .selectFrom('Image as img')
-    .innerJoin('Post as p', 'p.id', 'img.postId')
-    .innerJoin('ImageRatingRequest as r', (join) =>
-      join.onRef('r.imageId', '=', 'img.id').onRef('r.userId', '=', 'img.userId')
-    )
-    .select('img.id')
-    .where(column, 'in', ids)
-    // As when the owner rates: a moderator-locked level is not asked about.
-    .where('img.nsfwLevelLocked', '=', false)
-    .orderBy('img.id', 'asc')
-    .execute();
   let ownerRatings = 0;
-  for (let i = 0; i < rated.length; i += ENQUEUE_CHUNK) {
+  for (const ids of batches(filter)) {
+    const rated = await db
+      .selectFrom('Image as img')
+      .innerJoin('Post as p', 'p.id', 'img.postId')
+      .innerJoin('ImageRatingRequest as r', (join) =>
+        join.onRef('r.imageId', '=', 'img.id').onRef('r.userId', '=', 'img.userId')
+      )
+      .select('img.id')
+      .where(filter.column, 'in', ids)
+      // As when the owner rates: a moderator-locked level is not asked about.
+      .where('img.nsfwLevelLocked', '=', false)
+      .orderBy('img.id', 'asc')
+      .execute();
+    if (rated.length === 0) continue;
     const outcomes = await enqueueKnightsItems(
       db,
       {
         source: KNIGHTS_SOURCE_OWNER_RATING,
         questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
-        items: rated.slice(i, i + ENQUEUE_CHUNK).map(({ id }) => ({ imageId: id, priority: 1 })),
+        items: rated.map(({ id }) => ({ imageId: id, priority: 1 })),
       },
       now,
       { ...KNIGHTS_OWNER_RATING_ENQUEUE_OPTIONS, oncePerImage: true }
@@ -330,7 +327,10 @@ export async function offerLeftPrivateImagesToKnights(
     ownerRatings += outcomes.filter((o) => o.outcome === 'enqueued').length;
   }
 
-  return { ownerRatings, ...(await sampleImagesForKnights(db, { scope, now, config })) };
+  return {
+    ownerRatings,
+    ...(await sampleImagesForKnights(db, { scope: resolved, now, config })),
+  };
 }
 
 /**
