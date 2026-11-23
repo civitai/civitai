@@ -33,11 +33,13 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  */
 const SCHEMA = `
   CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending','Scanned','Error','Blocked','NotFound','PendingManualAssignment','Rescan');
+  CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+  CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
   CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
   CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
   CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamp(3));
   CREATE TABLE "Image" (
-    id int PRIMARY KEY, "postId" int, "userId" int NOT NULL,
+    id int PRIMARY KEY, "postId" int, "userId" int NOT NULL, type "MediaType" NOT NULL DEFAULT 'image',
     ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
     "nsfwLevel" int NOT NULL DEFAULT 1, "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
     "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
