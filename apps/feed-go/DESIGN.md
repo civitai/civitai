@@ -2459,14 +2459,16 @@ deployment config. Every answer carries `X-Feed-Go-Served` (`go` or `node`), as 
    `src/server/services/feed-go-training-data-rules.ts`), at most once a minute per process, each
    field expiring 5 minutes after its last write (HPEXPIRE), so the live fields are the builds still
    answering. A served body with a Training Data candidate is listed only while those fields are
-   exactly `v1models.TrainingDataSQLHash` (`v1models.TrainingDataRules`, one HGETALL memoized for
-   15 s, a failed read not memoized); none (no Node build has said, or the Node change is not
-   deployed), another build's (a Node deploy that changed the rules, while it rolls out and for 5
-   minutes after the last old process stops), or a failed read falls back
-   (`v1-models-training-data-drift`), so Go never lists a dataset by rules the Node app answering it
-   does not apply. The one window left is the memo: for up to 15 s after a Node process with new
-   rules first answers, a served body may still list by the old ones, which is what an old Node
-   process still answering in the same rollout does. No deployment setting: the hash is read on the
+   exactly `v1models.TrainingDataSQLHash` (`v1models.TrainingDataRules`: one HGETALL, bounded at
+   2 s, per served request whose body has a Training Data candidate, read once its versions are known
+   and nothing kept in memory; a body without one reads nothing); none (no Node build has said, or
+   the Node change is not deployed), another build's (a Node deploy that changed the rules, while it
+   rolls out and for 5 minutes after the last old process stops), or a failed or timed-out read
+   falls back (`v1-models-training-data-drift`), so Go never lists a dataset by rules the Node app
+   answering it does not apply. The one window left is the publisher's: a Node process with new
+   rules writes its id when it first answers a model route, so a body served in the moment before
+   that write may still list by the old ones, which is what an old Node process still answering in
+   the same rollout does. No deployment setting: the hash is read on the
    cache cluster feed-go already reads, under its `CACHE_KEY_NAMESPACE` prefix.
 5. The body as `JSON.stringify` writes it (`v1models.NodeBody`: the plain writer's `\u2028` /
    `\u2029` escapes written raw); a body holding an escaped U+FFFD (an invalid UTF-8 byte) has no

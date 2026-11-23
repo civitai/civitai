@@ -684,6 +684,64 @@ func TestV1ModelsTrainingDataHashOnlyFromASample(t *testing.T) {
 	}
 }
 
+// The published rule sets are read on a public request only for a body with a Training Data
+// candidate, once per such request, and never kept: a body with no Training Data file reads
+// nothing; each request with one reads the hash again, so a rule set published between two requests
+// decides the second (here another build's starts a rollout: the second falls back as drift).
+func TestV1ModelsTrainingDataRulesReadPerRequestThatNeedsThem(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	cache := testkit.NewRedis()
+	entry := func(id int64, fileType string) []byte {
+		return jspack.Pack(jspack.Obj{
+			{K: "data", V: jspack.Obj{{K: "id", V: id}, {K: "modelVersions", V: []any{jspack.Obj{
+				{K: "id", V: int64(7)},
+				{K: "files", V: []any{jspack.Obj{{K: "id", V: int64(1)}, {K: "type", V: fileType}}}},
+			}}}}},
+			{K: "cachedAt", V: float64(now.Add(-time.Minute).UnixMilli())},
+		})
+	}
+	cache.SetString(v1models.KeyPublicModelResponse+":v2:42:31", entry(42, "Training Data"))
+	cache.SetString(v1models.KeyPublicModelResponse+":v2:43:31", entry(43, "Model"))
+	db := &testkit.DB{}
+	packed := &hydrate.PackedReader{Redis: cache, Now: func() time.Time { return now }}
+	live := testkit.NewRedis()
+	live.SetHash(v1models.KeyTrainingDataRulesLive, map[string]string{v1models.TrainingDataSQLHash: "1"})
+	s := &Server{V1Models: &V1ModelsDeps{Deps: &v1models.Deps{
+		DB: db, Packed: packed, Sources: &hydrate.Sources{Packed: packed, Cache: cache, Replica: db},
+		Gallery: &feed.GalleryStore{Cache: cache, DB: db},
+		Addons:  (&feed.AddonSource{Sys: testkit.NewRedis()}).Addons,
+		Config:  v1models.Config{ImageLocation: "https://i.example", BaseURL: "https://s.example", ResponseCacheTTL: 180 * time.Second},
+		Now:     func() time.Time { return now },
+	}, Rules: &v1models.TrainingDataRules{Redis: live}}}
+	ctx := context.Background()
+
+	if _, err := s.computeV1ModelsID(ctx, v1Request("/api/v1/models/43", nil)); err != nil {
+		t.Fatalf("no Training Data file: %v", err)
+	}
+	if live.Calls != 0 {
+		t.Fatalf("no Training Data file: %d reads of the published rules, want 0", live.Calls)
+	}
+	// Vouched: the listing goes on to the replica (no rows route here).
+	_, err := s.computeV1ModelsID(ctx, v1Request("/api/v1/models/42", nil))
+	if got := fallback.Reason(err); got != "v1-models-training-data-unread" || live.Calls != 1 {
+		t.Fatalf("first Training Data request: %q after %d reads, want %q after 1", got, live.Calls, "v1-models-training-data-unread")
+	}
+	live.SetHash(v1models.KeyTrainingDataRulesLive, map[string]string{
+		v1models.TrainingDataSQLHash: "1",
+		"0000000000000000000000000000000000000000000000000000000000000000;rules=2": "1",
+	})
+	_, err = s.computeV1ModelsID(ctx, v1Request("/api/v1/models/42", nil))
+	if got := fallback.Reason(err); got != "v1-models-training-data-drift" || live.Calls != 2 {
+		t.Fatalf("second Training Data request: %q after %d reads, want %q after 2", got, live.Calls, "v1-models-training-data-drift")
+	}
+	// A sample is vouched for by its own header: the published rules are not read.
+	r := v1Request("/api/v1/models/42", map[string]string{v1models.TrainingDataSQLHeader: v1models.TrainingDataSQLHash})
+	_, err = s.computeV1ModelsID(ctx, r.WithContext(withSampled(ctx)))
+	if got := fallback.Reason(err); got != "v1-models-training-data-unread" || live.Calls != 2 {
+		t.Fatalf("sample: %q after %d reads, want %q after 2", got, live.Calls, "v1-models-training-data-unread")
+	}
+}
+
 // The serve-only checks (v1ModelsServeOnly) do not drop the shadow samples the sampler can send: a
 // list sample with a session cookie or an `etag` query is still computed and its body compared; an
 // `etag` query's response compare is `uncompared` (Node may add X-Expires from its database). The

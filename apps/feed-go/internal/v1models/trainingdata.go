@@ -47,7 +47,7 @@ const TrainingDataRulesVersion = 1
 // (trainingDataListingRulesId, header TrainingDataSQLHeader): the SHA-256 (hex) of
 // trainingDataListingSQL and the decision's version, `<sha256>;rules=<n>`. A body with a Training
 // Data candidate is answered only when the vouching value equals it (a sample's header; on a public
-// request, the Node builds' published rule sets, TrainingDataRules), so a Node deploy that changes
+// request, the Node builds' published rule sets, TrainingDataRules, read for that body only), so a Node deploy that changes
 // the statement or the decision (or a request nothing vouches for) makes feed-go fall back rather
 // than list by rules the Node it answers for no longer has.
 var TrainingDataSQLHash = func() string {
@@ -58,10 +58,12 @@ var TrainingDataSQLHash = func() string {
 // TrainingDataSQLHeader carries Node's rule set id on a model sample (feed-go-shadow.ts).
 const TrainingDataSQLHeader = "x-feed-go-training-data-sql"
 
-// listingRequest is what the listing reads from the request: its Host header (isRedCapableHost) and
-// the Node rule-set id the sample carried ("" = none).
+// listingRequest is what the listing reads from the request: its Host header (isRedCapableHost),
+// the Node rule-set id the sample carried ("" = none), and, on a public request, the Node builds'
+// published rule sets (nil = none), read only for a body with a Training Data candidate.
 type listingRequest struct {
 	host, sqlHash string
+	rules         *TrainingDataRules
 }
 
 // trainingDataFilter is trainingDataListing's predicate: a Training Data file whose row it refused
@@ -113,7 +115,7 @@ func (d *Deps) trainingDataListing(ctx context.Context, versions []superjson.Obj
 	if len(candidates) == 0 {
 		return nil, nil
 	}
-	if req.sqlHash != TrainingDataSQLHash {
+	if req.sqlHash != TrainingDataSQLHash && !req.rules.Vouched(ctx) {
 		// Not the rules the Node this answers for applies (or it did not say): fall back.
 		return nil, fallback.New("v1-models-training-data-drift")
 	}

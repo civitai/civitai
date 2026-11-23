@@ -128,20 +128,20 @@ func sampledRequest(r *http.Request) bool {
 	return isSampled(r.Context())
 }
 
-// trainingDataSQL is the Node Training Data rule set id that vouches for this request's listing: on
-// a sample, the one it carries (v1models.TrainingDataSQLHeader); on a public request, where that
-// header would be a client's and is never read, this build's own id when the Node builds now
-// answering all published it (V1ModelsDeps.Rules), else "". A body with a Training Data candidate
-// and no matching id falls back (`v1-models-training-data-drift`) rather than list a file the Node
-// app might refuse.
-func (s *Server) trainingDataSQL(ctx context.Context, r *http.Request) string {
+// trainingDataVouch is what vouches for this request's Training Data listing: on a sample, the
+// Node rule set id it carries (v1models.TrainingDataSQLHeader); on a public request, where that
+// header would be a client's and is never read, the rule sets the Node builds now answering
+// published (V1ModelsDeps.Rules, read only for a body with a Training Data candidate). A body with a
+// Training Data candidate that neither vouches for falls back (`v1-models-training-data-drift`)
+// rather than list a file the Node app might refuse.
+func (s *Server) trainingDataVouch(r *http.Request) (string, *v1models.TrainingDataRules) {
 	if sampledRequest(r) {
-		return r.Header.Get(v1models.TrainingDataSQLHeader)
+		return r.Header.Get(v1models.TrainingDataSQLHeader), nil
 	}
-	if s.V1Models != nil && s.V1Models.Rules.Vouched(ctx) {
-		return v1models.TrainingDataSQLHash
+	if s.V1Models == nil {
+		return "", nil
 	}
-	return ""
+	return "", s.V1Models.Rules
 }
 
 func (s *Server) regionRestricted(r *http.Request) bool {
@@ -178,9 +178,10 @@ func (s *Server) computeV1Models(ctx context.Context, r *http.Request) (*compute
 	if err != nil {
 		return nil, err
 	}
+	sqlHash, rules := s.trainingDataVouch(r)
 	ans, err := v1models.ServeList(ctx, s.V1Models.Deps, s.V1Models.Users, v1models.ListRequest{
 		Query: r.URL.RawQuery, Path: r.URL.Path, Host: host, RegionRestricted: s.regionRestricted(r),
-		TrainingDataSQL: s.trainingDataSQL(ctx, r),
+		TrainingDataSQL: sqlHash, Rules: rules,
 	})
 	if err != nil {
 		return nil, err
@@ -209,9 +210,10 @@ func (s *Server) computeV1ModelsID(ctx context.Context, r *http.Request) (*compu
 	if err != nil {
 		return nil, err
 	}
+	sqlHash, rules := s.trainingDataVouch(r)
 	ans, err := v1models.ServeDetail(ctx, s.V1Models.Deps, v1models.DetailRequest{
 		ID: id, RegionRestricted: s.regionRestricted(r), Serving: !sampledRequest(r), Host: host,
-		TrainingDataSQL: s.trainingDataSQL(ctx, r),
+		TrainingDataSQL: sqlHash, Rules: rules,
 	})
 	if err != nil {
 		return nil, err
