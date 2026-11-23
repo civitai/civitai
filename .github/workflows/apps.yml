@@ -189,7 +189,7 @@ jobs:
     # 2026-10-29, and again 2026-11-23 when this job was sharded), so no merge gate keys on it. It
     # was `App unit tests + typecheck` until the typecheck moved to `apps-typecheck`, and
     # `App unit tests` until it was sharded; that name now belongs to `apps-ledger` below.
-    name: App unit tests (${{ matrix.shard }}/3)
+    name: App unit tests (${{ matrix.shard }}/${{ strategy.job-total }})
     # Hosted, not civitai-dc: the pglite suites here (knights apprenticeship, event-engine
     # collection-item-adder) hit their 5s test timeout under civitai-dc load while hosted stays green.
     # App typecheck stays on civitai-dc.
@@ -221,10 +221,16 @@ jobs:
     # limit (see lint.yml's `unit` job for that trade). READ THE THREE DURATIONS after any
     # change to this matrix or to the suite's heaviest files.
     #
-    # Every app suite is still accounted for: `apps-ledger` below merges the three reports,
-    # fails on a missing or empty shard, and runs the suites ledger on the union, the same gate
-    # the unsharded job had. Only the union can be checked: which shard holds an app's files is
-    # vitest's hash, so a single shard cannot be held to the ledger.
+    # Every app suite is still accounted for: `apps-ledger` below merges the shard reports,
+    # fails on a missing shard, on a test file in more than one shard (`--shard` not reaching
+    # vitest) and on a report beyond the shard total, then runs the suites ledger on the union,
+    # the same gate the unsharded job had. Only the union can be checked: which shard holds an
+    # app's files is vitest's hash, so a single shard cannot be held to the ledger.
+    #
+    # 🔴 THE SHARD COUNT IS WRITTEN ONCE, in `matrix.shard` below. The `--shard` denominator, the
+    # check names and the ledger's expected count all read `strategy.job-total` (the ledger via
+    # the `shard_total` output), so growing the matrix cannot leave a `/3` behind that silently
+    # drops the new shard's files.
     #
     # `fail-fast: false`: a red shard must not cancel its siblings, or their files go
     # unreported and the ledger can only say "missing".
@@ -232,6 +238,10 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3]
+    # Every shard writes the same value; `apps-ledger` reads it as its expected shard count. Empty
+    # if no shard got far enough to set it, and the merge then fails on bad usage, not green.
+    outputs:
+      shard_total: ${{ strategy.job-total }}
     # Per shard. A third of the old 253-936 s test step, plus setup, with room for a slow runner.
     timeout-minutes: 20
     # A real Postgres for apps/assistant-runner, whose runs are DBOS workflows. Its *.pg.test.ts
@@ -293,9 +303,10 @@ jobs:
         env:
           VITEST_PROJECT_ARGS: ${{ steps.scope.outputs.vitest_args }}
           SHARD: ${{ matrix.shard }}
+          SHARD_TOTAL: ${{ strategy.job-total }}
         run: |
           set -f
-          pnpm exec vitest run $VITEST_PROJECT_ARGS --shard="$SHARD/3" --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/app-unit-report.json"
+          pnpm exec vitest run $VITEST_PROJECT_ARGS --shard="$SHARD/$SHARD_TOTAL" --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/app-unit-report.json"
 
       # For `apps-ledger`. `!cancelled()` so a RED shard still hands over its report: the ledger
       # must account for its files either way. A shard that wrote no report uploads nothing
@@ -319,15 +330,19 @@ jobs:
 
   # Named `App unit tests`, the unsharded job's check name, so anything that reads that check by
   # name keeps reading the whole suite's verdict. Red when any shard job did not succeed, when a
-  # shard's report is missing or executed nothing, or when the merged report fails the suites
-  # ledger. Same shape as lint.yml's `component-ledger`.
+  # shard's report is missing, when the reports do not split the suite (a file in two shards, a
+  # shard beyond the total), or when the merged report fails the suites ledger. Same shape as
+  # lint.yml's `component-ledger`.
   apps-ledger:
     name: App unit tests
     needs: apps
     runs-on: ubuntu-latest
-    # The `apps` job's draft gate, plus `!cancelled()` so a red shard still gets a ledger verdict.
-    # On a draft without the label the shards skip and so does this.
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
+    # 🔴 FOLLOWS the shards rather than copying their gate: runs whenever they ran, whatever
+    # decided that. A copied gate goes stale the first time the shards' `if` changes, and then
+    # this runs over skipped shards and goes red ("concluded 'skipped'") on every such run.
+    # `!cancelled()` rather than the default, so a FAILED shard still gets a ledger verdict
+    # (red); a cancelled run gets none, as for lint.yml's `component-ledger`.
+    if: ${{ !cancelled() && needs.apps.result != 'skipped' }}
     timeout-minutes: 10
     steps:
       # Depth 2 and no install: the ledger re-derives the PR's changed files from git (the merge
@@ -360,9 +375,11 @@ jobs:
       # which the merge writes even when it fails.
       - name: Assert every app suite actually ran
         if: ${{ !cancelled() }}
+        env:
+          SHARD_TOTAL: ${{ needs.apps.outputs.shard_total }}
         run: |
           rc=0
-          node scripts/ci/merge-component-shard-reports.mjs "$RUNNER_TEMP/app-unit-reports" 3 apps-report.json app-unit-report || rc=1
+          node scripts/ci/merge-component-shard-reports.mjs "$RUNNER_TEMP/app-unit-reports" "$SHARD_TOTAL" apps-report.json app-unit-report || rc=1
           node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps --scope app-suite-scope.json || rc=1
           exit $rc
 
@@ -392,6 +409,6 @@ jobs:
           SHARDS: ${{ needs.apps.result }}
         run: |
           if [ "$SHARDS" != success ]; then
-            echo "::error title=App unit shard did not succeed::the app unit shard jobs concluded '$SHARDS'. Open the red 'App unit tests (n/3)' job for the cause."
+            echo "::error title=App unit shard did not succeed::the app unit shard jobs concluded '$SHARDS'. Open the red 'App unit tests (n/N)' job for the cause."
             exit 1
           fi

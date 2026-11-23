@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   mergeShardReports,
   readShardReport,
+  shardIndicesOnDisk,
   shardReportPath,
 } from '../ci/merge-component-shard-reports.mjs';
 
@@ -92,21 +93,25 @@ describe('mergeShardReports', () => {
     expect(lines.join('\n')).toContain('shard 2/3: NO REPORT (x is not valid JSON)');
   });
 
-  // Every other shard executes tests, so only the zero check can turn this red: the union still
-  // holds files from shards 1 and 3.
-  it('fails, naming the shard, when a shard executed zero tests', () => {
-    const empty = report([file('/r/src/e.browser.test.tsx', ['skipped', 'skipped'])], 0, 0);
+  // `--shard` not reaching vitest: every shard runs the whole suite, all present and green. Every
+  // shard 1..total reports, so only the duplicate check can turn this red.
+  it('fails, naming the file and both shards, when a test file is in two shard reports', () => {
+    const S2_WITH_A = report(
+      [...S2.testResults, file('/r/src/a.browser.test.tsx', ['passed'])],
+      2,
+      4
+    );
     const { ok, lines } = mergeShardReports(
       [
         { shard: 1, report: S1 },
-        { shard: 2, report: empty },
+        { shard: 2, report: S2_WITH_A },
         { shard: 3, report: S3 },
       ],
       3
     );
     expect(ok).toBe(false);
-    expect(lines.join('\n')).toContain('shard 2/3: EXECUTED ZERO TESTS');
-    expect(lines.join('\n')).not.toContain('shard 1/3: EXECUTED ZERO TESTS');
+    expect(lines.join('\n')).toContain('1 test file(s) appear in MORE THAN ONE shard report');
+    expect(lines.join('\n')).toContain('/r/src/a.browser.test.tsx (shards 1 and 2)');
   });
 
   it('sums the suite and skipped totals the apps ledger prints', () => {
@@ -126,8 +131,10 @@ describe('mergeShardReports', () => {
     expect(merged.numPendingTests).toBe(22);
   });
 
-  it('ignores a report for a shard index outside 1..total', () => {
-    const { ok, merged } = mergeShardReports(
+  // The matrix and the `/N` denominator drifted apart: shards 1..total all report, so only the
+  // range check can turn this red. Shard 4's files stay out of the merge.
+  it('fails on a report for a shard index outside 1..total, and leaves its files out', () => {
+    const { ok, merged, lines } = mergeShardReports(
       [
         { shard: 1, report: S1 },
         { shard: 2, report: S2 },
@@ -135,7 +142,8 @@ describe('mergeShardReports', () => {
       ],
       2
     );
-    expect(ok).toBe(true);
+    expect(ok).toBe(false);
+    expect(lines.join('\n')).toContain('shard 4: a report OUTSIDE 1..2');
     expect(merged.testResults.map((f: { name: string }) => f.name)).toEqual([
       '/r/src/a.browser.test.tsx',
       '/r/src/b.browser.test.tsx',
@@ -165,6 +173,20 @@ describe('readShardReport', () => {
     expect(readShardReport(dir, 2)).toMatchObject({ report: null });
     expect(readShardReport(dir, 2).problem).toContain('does not exist');
     expect(readShardReport(dir, 3).problem).toContain('not valid JSON');
+  });
+
+  it('lists every shard index on disk for a name, including ones outside the expected range', () => {
+    dir = mkdtempSync(join(tmpdir(), 'merge-component-shards-'));
+    for (const d of ['app-unit-report-0', 'app-unit-report-2', 'app-unit-report-7']) {
+      mkdirSync(join(dir, d));
+    }
+    // Neither of these is a shard of `app-unit-report`.
+    mkdirSync(join(dir, 'app-unit-report-x'));
+    mkdirSync(join(dir, 'component-report-3'));
+
+    expect(shardIndicesOnDisk(dir, 'app-unit-report')).toEqual([0, 2, 7]);
+    expect(shardIndicesOnDisk(dir)).toEqual([3]);
+    expect(shardIndicesOnDisk(join(dir, 'absent'))).toEqual([]);
   });
 
   it('reads another report name from the same layout', () => {
@@ -242,5 +264,20 @@ describe('the CLI', () => {
     expect(JSON.parse(readFileSync(out, 'utf8')).numTotalTests).toBe(8);
     // Without the name it looks for component-report-<i> and finds nothing.
     expect(spawnSync(process.execPath, [script, dir, '2', out]).status).toBe(1);
+  });
+
+  // The CLI must find a report it was not told to expect: reading only 1..total is how a
+  // too-small denominator used to drop a shard silently.
+  it('exits 1 on a report directory beyond the shard total', () => {
+    dir = mkdtempSync(join(tmpdir(), 'merge-component-cli-'));
+    writeShard(dir, 1, S1);
+    writeShard(dir, 2, S2);
+    writeShard(dir, 3, S3);
+    const out = join(dir, 'merged.json');
+
+    const run = spawnSync(process.execPath, [script, dir, '2', out], { encoding: 'utf8' });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('shard 3: a report OUTSIDE 1..2');
   });
 });

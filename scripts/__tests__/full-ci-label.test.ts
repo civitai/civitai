@@ -152,11 +152,20 @@ describe('the full-ci label', () => {
     ['lint.yml', 'component'],
     ['lint.yml', 'component-ledger'],
     ['apps.yml', 'apps'],
-    ['apps.yml', 'apps-ledger'],
     ['apps.yml', 'apps-typecheck'],
     ['moderator-boot.yml', 'boot'],
   ])('%s:%s runs on a labeled draft', (file, id) => {
     expect(conjuncts(load(file).jobs?.[id]?.if ?? '')).toContain(DRAFT_GATE);
+  });
+
+  // apps-ledger takes no draft gate of its own: it follows the shards, so it can never run over
+  // skipped shards (and go red) when their gate changes. Pinned whole, so a copied gate added back
+  // fails here.
+  it('apps.yml:apps-ledger runs exactly when the shards ran', () => {
+    expect(conjuncts(load('apps.yml').jobs?.['apps-ledger']?.if ?? '')).toEqual([
+      '!cancelled()',
+      "needs.apps.result != 'skipped'",
+    ]);
   });
 
   // Ledger: the job set the assertions above were written against. A new job fails here so its
