@@ -35,6 +35,7 @@ vi.mock('~/env/server', () => ({
 }));
 
 import { ingestImages } from '~/server/jobs/image-ingestion';
+import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 const mockDbWrite = dbMock.dbWrite;
@@ -148,5 +149,23 @@ describe('ingest-images — Error retries by failure class', () => {
       })
     );
     expect(await run()).toEqual({ sent: [8], pruned: [] });
+  });
+});
+
+describe('ingest-images — rescan rows', () => {
+  const rescanRow = (id: number, retryCount: number, minutesAgo: number | null) => ({
+    ...errorRow(id, { minutesAgo: minutesAgo ?? 0, retryCount }),
+    ingestion: 'Rescan',
+    scanRequestedAt: minutesAgo == null ? null : new Date(Date.now() - minutesAgo * MINUTE),
+  });
+
+  it('case 1', async () => {
+    rows.push(rescanRow(31, 0, null), rescanRow(32, 0, 1));
+    expect(await run()).toEqual({ sent: [31], pruned: [] });
+  });
+
+  it('case 2', async () => {
+    rows.push(rescanRow(33, IMAGE_RESCAN_RETRY_LIMIT, null));
+    expect(await run()).toEqual({ sent: [], pruned: [33] });
   });
 });

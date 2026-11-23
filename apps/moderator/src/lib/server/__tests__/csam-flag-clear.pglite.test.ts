@@ -57,7 +57,6 @@ CREATE TABLE "ModActivity" (
 `;
 
 const MOD = 9;
-const PATTERN = '\\mzzfixture';
 
 // Every user owns three CSAM-flagged images: two removed, one still live. A held user keeps all three.
 const ban = (reasonCode: string | null, detailsInternal?: string, detailsExternal?: string) =>
@@ -115,8 +114,6 @@ const activityFor = async (ids: number[]) =>
   ).rows;
 
 beforeAll(async () => {
-  // A pattern set in the shell would shift which users hold.
-  process.env.MOD_HOLD_BAN_NOTES_PATTERN = PATTERN;
   db = await freshPglite();
   await db.exec(SCHEMA);
   for (const { id, bannedAt, meta } of Object.values(USERS)) {
@@ -154,7 +151,6 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
   dbHandle.current = null;
   await db.close();
 });
@@ -206,12 +202,19 @@ describe('clearing one user’s CSAM flags', () => {
     });
   });
 
-  it.each(['otherBanPlain', 'harassmentBan'])(
-    'clears a user banned for another reason (%s)',
-    async (key) => {
-      expect(await clear(USERS[key].id)).toMatchObject({ ok: true, cleared: 2 });
-    }
-  );
+  // A ban's notes are not a hold, whatever they name.
+  it.each([
+    'otherBanPlain',
+    'harassmentBan',
+    'otherBanNoted',
+    'otherBanNotedExternally',
+    'notedByPattern',
+    'otherBanUnset',
+    'chargebackBan',
+    'chargebackBanNoNotes',
+  ])('clears a user banned for another reason (%s)', async (key) => {
+    expect(await clear(USERS[key].id)).toMatchObject({ ok: true, cleared: 2 });
+  });
 });
 
 const HELD = [
@@ -221,8 +224,6 @@ const HELD = [
   'minorBan',
   'minorTrainingBan',
   'noReasonBan',
-  'otherBanNoted',
-  'otherBanNotedExternally',
   'reportedImage',
 ];
 
@@ -241,37 +242,6 @@ describe('a held user', () => {
     const kysely = dbHandle.current as Kysely<never>;
     expect(await clearRemovedFlagsUnlessHeld(kysely as never, USERS[key].id, 'none')).toEqual([]);
     expect(await flagged(USERS[key].id)).toHaveLength(3);
-  });
-});
-
-describe('the ban-notes pattern', () => {
-  afterEach(() => {
-    process.env.MOD_HOLD_BAN_NOTES_PATTERN = PATTERN;
-  });
-
-  it.each([undefined, '', ' '])('holds every "Other" ban when it is %j', async (pattern) => {
-    if (pattern === undefined) delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
-    else process.env.MOD_HOLD_BAN_NOTES_PATTERN = pattern;
-    const id = USERS.otherBanUnset.id;
-
-    expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
-    expect(await flagged(id)).toHaveLength(3);
-  });
-
-  it.each(['chargebackBan', 'chargebackBanNoNotes'])(
-    'handles an account banned for a lost payment dispute (%s)',
-    async (key) => {
-      delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
-      expect(await clear(USERS[key].id)).toMatchObject({ ok: true, cleared: 2 });
-    }
-  );
-
-  it('is read from the deployment', async () => {
-    const id = USERS.notedByPattern.id;
-    expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
-
-    process.env.MOD_HOLD_BAN_NOTES_PATTERN = '\\mzzother';
-    expect(await clear(id)).toMatchObject({ ok: true, cleared: 2 });
   });
 });
 

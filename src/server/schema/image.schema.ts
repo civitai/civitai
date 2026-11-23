@@ -2,7 +2,8 @@ import * as z from 'zod';
 import { HAT_SORTS } from '~/shared/constants/hat-turf-feed.constants';
 import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
-import { constants } from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
+import type { RateLimit } from '~/server/middleware.trpc';
 import {
   baseQuerySchema,
   infiniteQuerySchema,
@@ -452,6 +453,52 @@ export function requiresImageDbPath(input: {
   );
 }
 
+/**
+ * Feed inputs whose answer depends on the viewer (signed out, each is ignored or reads as nobody's),
+ * so the answer is not edge-cached.
+ */
+export function isViewerScopedImageFeed(input: {
+  reactions?: unknown[] | null;
+  followed?: boolean | null;
+  hidden?: boolean | null;
+  pending?: boolean | null;
+  notPublished?: boolean | null;
+  scheduled?: boolean | null;
+  poiOnly?: boolean | null;
+  minorOnly?: boolean | null;
+  pendingReviewOnly?: boolean | null;
+}) {
+  return (
+    !!input.reactions?.length ||
+    !!input.followed ||
+    !!input.hidden ||
+    !!input.pending ||
+    !!input.notPublished ||
+    !!input.scheduled ||
+    !!input.poiOnly ||
+    !!input.minorOnly ||
+    !!input.pendingReviewOnly
+  );
+}
+
+/** `isViewerScopedImageFeed` plus the Hat Turf inputs, which only image.getInfinite reads. */
+export function isViewerScopedInfiniteFeed(
+  input: Parameters<typeof isViewerScopedImageFeed>[0] & {
+    hatSort?: unknown;
+    hatTurfMine?: boolean | null;
+    hideTurfHats?: boolean | null;
+    hideWornHats?: boolean | null;
+  }
+) {
+  return (
+    isViewerScopedImageFeed(input) ||
+    !!input.hatSort ||
+    !!input.hatTurfMine ||
+    !!input.hideTurfHats ||
+    !!input.hideWornHats
+  );
+}
+
 // faux-extends imagesQueryParamSchema output type
 export const getInfiniteImagesSchema = baseQuerySchema
   .extend({
@@ -684,6 +731,11 @@ export const updateImageAcceptableMinorSchema = z.object({
   collectionId: z.number(),
   acceptableMinor: z.boolean(),
 });
+
+/** Each change purges shared caches; moderators are not limited. */
+export const updateImageAcceptableMinorRateLimits: RateLimit[] = [
+  { limit: 30, period: CacheTTL.hour },
+];
 
 export type SetTosViolationSchema = z.infer<typeof setTosViolationSchema>;
 export const setTosViolationSchema = z.object({

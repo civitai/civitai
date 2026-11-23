@@ -7,7 +7,7 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileRunState, type RunLimits, type RunState } from '@/vector-sync/cursor';
-import { imageIdFromEvent, VectorSyncQueue } from '@/vector-sync/consumer';
+import { imageIdFromEvent, liveness, VectorSyncQueue } from '@/vector-sync/consumer';
 import {
   ModelMismatchError,
   SITE_REPLICATION,
@@ -22,6 +22,7 @@ import type { QdrantClient } from '@qdrant/js-client-rest';
 import { parseRateLimitHeader, parseRetryAfter, RateLimiter } from '@/vector-sync/ratelimit';
 import {
   buildEmbedInput,
+  failedStepDetail,
   takeBatch,
   Embedder,
   type EmbedderOptions,
@@ -378,6 +379,23 @@ describe('embed inputs', () => {
     expect(buildEmbedInput(imageRow(1, { type: 'video', duration: 10, url: 'v' }), opts)).toEqual({
       input: { id: '1', videoUrl: 'https://cdn.example/v/original=true/v.mp4' },
     });
+  });
+
+  test("a failed step's own account of itself is logged, without its media URL or a vector", () => {
+    const detail = failedStepDetail({
+      name: 'embed-7',
+      status: 'failed',
+      input: { videoUrl: 'https://cdn.example/v/original=true/v.mp4' },
+      reason: 'decode error at https://cdn.example/v/original=true/v.mp4',
+      output: { embedding: [0.5, 0.25], profile: 'p' } as never,
+    });
+    expect(JSON.parse(detail)).toEqual({
+      status: 'failed',
+      reason: 'decode error at <url>',
+      output: { profile: 'p' },
+    });
+    expect(failedStepDetail(undefined)).toBe('no step in the workflow');
+    expect(failedStepDetail({ status: 'failed', note: 'x'.repeat(2000) }).length).toBe(601);
   });
 
   test('a workflow takes at most its size in inputs and 8 videos', () => {
@@ -1844,6 +1862,35 @@ describe('review round 2', () => {
     const result = await embedderWith(fetchImpl, 128).embed(inputs(3 * 128));
     expect(String(result.error)).toMatch(/401/);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test('liveness: a flush hung on a query that never returns is wedged; a failing or progressing one is not', async () => {
+    const hung = new FakePg();
+    hung.query = () => new Promise(() => undefined);
+    const queue = new VectorSyncQueue(deps(hung, new FakeStore()), async () => undefined);
+    queue.add(1, { topic: 't', partition: 0, offset: '1' });
+    void queue.flush();
+    await Promise.resolve();
+    const t0 = queue.flushStartedAt!;
+    expect(t0).not.toBeNull();
+    expect(liveness(queue, t0 + 44 * 60_000).status).toBe(200);
+    expect(liveness(queue, t0 + 45 * 60_000)).toEqual({
+      status: 503,
+      body: { wedged: true, flushStartedAt: t0 },
+    });
+    // Vectors returned meanwhile mean it is slow, not stuck.
+    queue.lastProgress = t0 + 30 * 60_000;
+    expect(liveness(queue, t0 + 45 * 60_000).status).toBe(200);
+
+    const failing = new FakePg();
+    failing.query = async () => {
+      throw new Error('Query read timeout');
+    };
+    const retried = new VectorSyncQueue(deps(failing, new FakeStore()), async () => undefined);
+    retried.add(1, { topic: 't', partition: 0, offset: '1' });
+    await expect(retried.flush()).rejects.toThrow('Query read timeout');
+    expect(retried.flushStartedAt).toBeNull();
+    expect(retried.isWedged(Date.now() + 60 * 60_000)).toBe(false);
   });
 
   test('health: a slow flush making progress after one failure stays up; a retry loop does not', () => {

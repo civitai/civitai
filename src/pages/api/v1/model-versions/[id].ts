@@ -40,6 +40,11 @@ import { apiBrowsingLevel } from '~/server/utils/browsing-level';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
 import {
+  hasCuratedShowcase,
+  withCuratedShowcases,
+} from '~/server/services/version-showcase.service';
+import { showcaseSiteForBrowsingLevel } from '~/shared/constants/version-showcase.constants';
+import {
   getShowcaseImageFilter,
   resolveShowcaseExclusions,
 } from '~/server/services/blocked-browsing-tags.service';
@@ -282,7 +287,8 @@ export async function prepareModelVersionResponse(
   // `isRedCapableHost` of the request: decides which training datasets are offered.
   redCapable = false,
   // `apiBrowsingLevel` of the request: the showcase's levels, and the level its exclusions resolve at.
-  browsingLevel = sfwBrowsingLevelsFlag
+  browsingLevel = sfwBrowsingLevelsFlag,
+  curate: typeof withCuratedShowcases = withCuratedShowcases
 ) {
   // `availability` and the owner only decide visibility; they are not part of the response.
   const { files, model: modelRow, metrics, vaeId, availability, ...storedVersion } = modelVersion;
@@ -306,6 +312,9 @@ export async function prepareModelVersionResponse(
   if (!primaryFile) return null;
 
   images ??= await getVersionShowcaseImages([version.id], browsingLevel);
+  images = (
+    await curate({ [version.id]: { images } }, showcaseSiteForBrowsingLevel(browsingLevel))
+  )[version.id].images;
   const shows = await getVersionImageFilter(browsingLevel);
   images = images.filter((image) => (image.nsfwLevel & browsingLevel) !== 0 && shows(image));
   images = (
@@ -464,7 +473,8 @@ export async function resModelVersionDetails(
     isPrivateModelVersion(modelVersion) ||
     browsingLevel !== allBrowsingLevelsFlag ||
     modelVersion.model.sfwName != null ||
-    (await showcaseVariesByRegion(modelVersion.nsfwLevel, images))
+    (await showcaseVariesByRegion(modelVersion.nsfwLevel, images)) ||
+    (await hasCuratedShowcase([modelVersion.id]))
   )
     res.setHeader('Cache-Control', 'private, no-store');
   res.status(200).json(body);

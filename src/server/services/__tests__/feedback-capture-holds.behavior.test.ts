@@ -45,6 +45,10 @@ beforeAll(async () => {
     CREATE TABLE "EvidenceHold" ("userId" int NOT NULL);
     CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold";
     CREATE TABLE "EvidenceHoldImage" ("imageId" int NOT NULL);
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb, "bannedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (
+      "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3)
+    );
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "createdAt" timestamp(3) NOT NULL,

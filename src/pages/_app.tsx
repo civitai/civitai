@@ -104,7 +104,6 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
-import { ProfanityBlocklistProvider } from '~/providers/ProfanityBlocklistProvider';
 import {
   ShellBootstrapProvider,
   useShellBootstrap,
@@ -391,40 +390,37 @@ function MyApp(props: CustomAppProps) {
                           <BrowserSettingsProvider>
                             <BrowsingLevelProvider>
                               <BrowsingSettingsAddonsProvider initialData={browsingSettingsAddons}>
-                                <ProfanityBlocklistProvider>
-                                  <SignalsProviderStack>
-                                    <ActivityReportingProvider>
-                                      <ReferralsProvider
-                                        {...cookies.referrals}
-                                        pending={referralsPending}
-                                      >
-                                        <FiltersProvider>
-                                          <AdsProvider gated={adsGated}>
-                                            <HiddenPreferencesProvider>
-                                              <CivitaiLinkProvider>
-                                                <BrowserRouterProvider>
-                                                  <IntersectionObserverProvider>
-                                                    <ToursProvider>
-                                                      <AuctionContextProvider>
-                                                        <BaseLayout>
-                                                          {isProd && <TrackPageView />}
-                                                          {getLayout(<Component {...pageProps} />)}
-                                                          {/* <StripeSetupSuccessProvider /> */}
-                                                          <DialogProvider />
-                                                          <RoutedDialogProvider />
-                                                        </BaseLayout>
-                                                      </AuctionContextProvider>
-                                                    </ToursProvider>
-                                                  </IntersectionObserverProvider>
-                                                </BrowserRouterProvider>
-                                              </CivitaiLinkProvider>
-                                            </HiddenPreferencesProvider>
-                                          </AdsProvider>
-                                        </FiltersProvider>
-                                      </ReferralsProvider>
-                                    </ActivityReportingProvider>
-                                  </SignalsProviderStack>
-                                </ProfanityBlocklistProvider>
+                                <SignalsProviderStack>
+                                  <ActivityReportingProvider>
+                                    <ReferralsProvider
+                                      {...cookies.referrals}
+                                      pending={referralsPending}
+                                    >
+                                      <FiltersProvider>
+                                        <AdsProvider gated={adsGated}>
+                                          <HiddenPreferencesProvider>
+                                            <CivitaiLinkProvider>
+                                              <BrowserRouterProvider>
+                                                <IntersectionObserverProvider>
+                                                  <ToursProvider>
+                                                    <AuctionContextProvider>
+                                                      <BaseLayout>
+                                                        {isProd && <TrackPageView />}
+                                                        {getLayout(<Component {...pageProps} />)}
+                                                        <DialogProvider />
+                                                        <RoutedDialogProvider />
+                                                      </BaseLayout>
+                                                    </AuctionContextProvider>
+                                                  </ToursProvider>
+                                                </IntersectionObserverProvider>
+                                              </BrowserRouterProvider>
+                                            </CivitaiLinkProvider>
+                                          </HiddenPreferencesProvider>
+                                        </AdsProvider>
+                                      </FiltersProvider>
+                                    </ReferralsProvider>
+                                  </ActivityReportingProvider>
+                                </SignalsProviderStack>
                               </BrowsingSettingsAddonsProvider>
                             </BrowsingLevelProvider>
                           </BrowserSettingsProvider>

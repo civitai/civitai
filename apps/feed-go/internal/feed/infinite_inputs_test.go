@@ -35,15 +35,15 @@ func TestParseInfiniteBaseModels(t *testing.T) {
 		}
 	}
 	for input, want := range map[string]string{
-		`{"baseModels":"Pony"}`:             "input-invalid",
-		`{"baseModels":null}`:               "input-invalid",
-		`{"baseModels":42}`:                 "input-invalid",
-		`{"baseModels":{"0":"Pony"}}`:       "input-invalid",
-		`{"baseModels":["Pony",null]}`:      "input-invalid",
-		`{"baseModels":[1]}`:                "input-invalid",
-		`{"baseModels":[["Pony"]]}`:         "input-invalid",
-		`{"baseModels":["Pony"],"x":1}`:     "input-unknown-key",
-		`{"baseModels":["Pony"],"ids":[1]}`: "input-ids", // another unported key still names the gap
+		`{"baseModels":"Pony"}`:                 "input-invalid",
+		`{"baseModels":null}`:                   "input-invalid",
+		`{"baseModels":42}`:                     "input-invalid",
+		`{"baseModels":{"0":"Pony"}}`:           "input-invalid",
+		`{"baseModels":["Pony",null]}`:          "input-invalid",
+		`{"baseModels":[1]}`:                    "input-invalid",
+		`{"baseModels":[["Pony"]]}`:             "input-invalid",
+		`{"baseModels":["Pony"],"x":1}`:         "input-unknown-key",
+		`{"baseModels":["Pony"],"hidden":true}`: "input-hidden", // another unported key still names the gap
 	} {
 		if _, err := ParseInfinite(parseObj(t, input)); fallback.Reason(err) != want {
 			t.Errorf("ParseInfinite %s: reason %q (err %v), want %q", input, fallback.Reason(err), err, want)

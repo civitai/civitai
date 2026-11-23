@@ -1633,16 +1633,35 @@ export async function getAppListingAuthoringContext(opts: {
  * pinned separately in `app-collaborator.public-projection.test.ts`.
  */
 export async function listDisplayedCollaboratorUserIds(appListingId: string): Promise<number[]> {
+  // The batched read for one listing: the store page and the listing stream share its predicate.
+  return (await listDisplayedCollaboratorUserIdsMany([appListingId])).get(appListingId) ?? [];
+}
+
+/**
+ * {@link listDisplayedCollaboratorUserIds} for many listings in one query, by the same two
+ * predicates: listing id → its displayed collaborators' user ids, in seat order (`createdAt asc`). A
+ * listing with none is absent.
+ */
+export async function listDisplayedCollaboratorUserIdsMany(
+  appListingIds: readonly string[]
+): Promise<Map<string, number[]>> {
+  const out = new Map<string, number[]>();
+  if (appListingIds.length === 0) return out;
   const rows = await safeCollaboratorQuery(
     () =>
       dbRead.appCollaborator.findMany({
-        where: { appListingId, status: ACCEPTED, displayed: true },
-        select: { userId: true },
+        where: { appListingId: { in: [...appListingIds] }, status: ACCEPTED, displayed: true },
+        select: { appListingId: true, userId: true },
         orderBy: { createdAt: 'asc' },
       }),
-    [] as { userId: number }[]
+    [] as { appListingId: string; userId: number }[]
   );
-  return rows.map((r: { userId: number }) => r.userId);
+  for (const r of rows as { appListingId: string; userId: number }[]) {
+    const ids = out.get(r.appListingId) ?? [];
+    ids.push(r.userId);
+    out.set(r.appListingId, ids);
+  }
+  return out;
 }
 
 /**

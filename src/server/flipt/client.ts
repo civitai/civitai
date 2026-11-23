@@ -6,6 +6,17 @@ export enum FLIPT_FEATURE_FLAGS {
   // Mirrors the `knightsApp` fliptKey (KNIGHTS_APP_FLIPT_FLAG) and the Knights app's own access flag.
   // Read here with no user for the server-side cutover from the old in-app game.
   KNIGHTS_APP = 'knights-of-new-order-app',
+  // App Assistant direct preview, per user (segment): on, the runner's preview opens a direct
+  // session served by the sandbox service's preview gateway; off (or missing), the dev tunnel as
+  // before. Evaluated with the user's context; fails closed.
+  APP_ASSISTANT_DIRECT_PREVIEW = 'app-assistant-direct-preview',
+  // App Assistant session tracing (`~/server/services/app-assistant/session-tracing.service`). On:
+  // each finished server-runner turn upserts its chat ↔ app link row and emits one ClickHouse
+  // event, and a submit snapshots the linked chats. Off, missing or unreachable: every one of those
+  // writes is a no-op. Reads (moderator-only) do not depend on it. BOOLEAN ONLY: evaluated with no
+  // entity and no context, so a segment rule matches nothing. Create the key in Flipt (disabled)
+  // before this deploys: a missing key logs an error on every eval (once per finished turn).
+  APP_ASSISTANT_TRACING = 'app-assistant-tracing',
   // Mirrors the `articleRatingDispute` fliptKey in feature-flags.service.ts so
   // background paths (no request context) can gate on the same Flipt flag the
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
@@ -298,6 +309,32 @@ export enum FLIPT_FEATURE_FLAGS {
   // is enabled separately; shares FEED_GO_SHADOW_URL, the sample rate and the in-flight cap with
   // FEED_GO_SHADOW, with its own per-second bucket. Default OFF. See `src/server/trpc/feed-go-shadow.ts`.
   FEED_GO_SHADOW_MODEL_GET_ALL = 'feed-go-shadow-model-getall',
+  // The store grid's and the public REST list's reads of the app store's listings read model
+  // (app-index-go `GET /listings`). Variant: `shadow` (serve the database, compare off the response
+  // path) | `serve` (serve the read model where it can answer, the database otherwise); any other
+  // answer, a missing flag included, is the database alone. Evaluated for the global entity with
+  // the context `surface` (`grid` | `rest_list`), at most once per 5s per process; also needs
+  // APP_INDEX_URL and APP_INDEX_VIEWER_KEY. See `readReadModelMode` in
+  // `src/server/services/blocks/app-listings-read-model-shadow.service.ts`.
+  APP_LISTINGS_READ_MODEL = 'app-listings-read-model',
+  // Shadow reads of App Storage lists through the shared app-data service (apps/app-data-go): a
+  // sampled own-collection private list an app block reads is also asked of app-data-go
+  // (registry-only), off the response path, and the two answers are compared
+  // (`app_data_shadow_*`). The REST answer is always the one served. DEFAULT-OFF. EVALUATED PER
+  // APP: entityId = the app block id (`apb_…`), context `{ blockId }` (the app's slug), so a
+  // segment can name apps by either. Also needs APP_DATA_SHADOW_URL. See
+  // `src/server/services/apps/app-data-shadow.service.ts`.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC WITH
+  // APP_DATA_SHADOW_URL SET. A missing key makes `evaluateBoolean` throw, bypass the eval cache and
+  // log an error on every call, and with the URL set every eligible App Storage list reads it.
+  APP_DATA_REGISTRY_SHADOW = 'app-data-registry-shadow',
+  // Mirror sampled `model.getAssociatedResourcesCardData` requests (raw input, the headers the answer
+  // depends on, Node's superjson envelope) to feed-go's
+  // `/internal/shadow/model.getAssociatedResourcesCardData`. Its own flag; shares FEED_GO_SHADOW_URL,
+  // the sample rate and the in-flight cap with FEED_GO_SHADOW, with its own per-second bucket.
+  // Default OFF. See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW_MODEL_ASSOCIATED = 'feed-go-shadow-model-associated',
   // The Go-first cache-presence probe: for a request the feed-go shadow sampler sampled, a POST at
   // the START of the request (before the handler fills the caches) to feed-go's
   // `/internal/probe/image.getImagesAsPostsInfinite`, which records the serve-time cache misses a
@@ -503,6 +540,9 @@ export enum FLIPT_FEATURE_FLAGS {
   DOWNLOAD_SCOPE_GATE = 'download-scope-gate',
   // Variant: `log` | `enforce`; any other answer is off. Read by pass-through-prompt-audit.ts.
   APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT = 'app-block-pass-through-prompt-audit',
+  // Variant: `off` | `log`; any other answer, a missing flag included, enforces. Read by
+  // app-step-positions.ts.
+  APP_BLOCK_STEP_POSITIONS = 'app-block-step-positions',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
   // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
   // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:
@@ -760,6 +800,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // (`createCachedFlagGate`, `~/server/services/site-search-passthrough`). The key must exist in
   // flag state (enabled: false) before this code serves traffic.
   SITE_SEARCH_PASSTHROUGH = 'site-search-passthrough',
+  // Lets staff set a PercentOfCompute licence fee. Off until the orchestrator charges by the type:
+  // before that, a percent is charged as that many Buzz per image.
+  LICENSING_FEE_PERCENT_OF_COMPUTE = 'licensing-fee-percent-of-compute',
+  // On: page 1 of a signed-in viewer's default Hot model feed leads with models they liked,
+  // favourited or set Notify on that have a new version, then one per followed or staked creator
+  // (getPersonalLeadModelIds). EVALUATED PER VIEWER — entityId = the user
+  // id, context = `buildFliptContext(user)`. Off, unknown or Flipt down: plain Hot.
+  PERSONAL_HOT_LEAD = 'personal-hot-lead',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

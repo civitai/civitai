@@ -33,6 +33,7 @@ const {
   applyHeldVerdictLeavingPrivate,
   applyModelNsfwTextScan,
   finishHeldVerdictApply,
+  notifyComFaceHeldVerdictApplied,
 } = await import('~/server/services/text-scan/actions/model-nsfw');
 const { enqueueJobs } = await import('~/server/services/job-queue.service');
 const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
@@ -242,10 +243,12 @@ describe('applyModelNsfwTextScan and the .com face', () => {
       );
   const clean = { status: 'clean', promptId: 7 } as const;
   const versionsMock = vi.fn();
+  const activePromptMock = vi.fn(async (): Promise<number | undefined> => 7);
   const scan = (a: Parameters<typeof applyModelNsfwTextScan>[0]) =>
     applyModelNsfwTextScan(a, {
       checkSfwFace: checkSfwFaceMock,
       getOwnVersionFields: versionsMock,
+      activeSfwFacePromptId: activePromptMock,
     });
   const rated = (detectedLevel: number, declaredLevel: number) => ({
     ...args(detectedLevel > declaredLevel),
@@ -363,6 +366,16 @@ describe('applyModelNsfwTextScan and the .com face', () => {
         versionFields: [],
       }),
     });
+  });
+
+  it.each([
+    ['a new prompt version', 8],
+    ['a prompt that cannot be read', undefined],
+  ])('re-checks a stamped face under %s', async (_, promptId) => {
+    activePromptMock.mockResolvedValueOnce(promptId);
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(stamped());
+    await scan(args(true));
+    expect(checkSfwFaceMock).toHaveBeenCalledTimes(1);
   });
 
   describe('the version text the check reads', () => {
@@ -586,9 +599,9 @@ describe('applyComFaceHeldVerdict', () => {
       ...row,
     };
     await pg.query(
-      `INSERT INTO "Model" (id, nsfw, "sfwOnly", "lockedProperties", meta, minor, poi, availability,
-        "sfwName", "sfwDescription", "sfwCoverImageId")
-       VALUES (1, $1, false, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      `INSERT INTO "Model" (id, name, "userId", nsfw, "sfwOnly", "lockedProperties", meta, minor, poi,
+        availability, "sfwName", "sfwDescription", "sfwCoverImageId")
+       VALUES (1, 'LoRA', 99, $1, false, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         r.nsfw,
         r.locked,
@@ -611,7 +624,7 @@ describe('applyComFaceHeldVerdict', () => {
 
   beforeEach(async () => {
     pg = new PGlite();
-    await pg.exec(`CREATE TABLE "Model" (id int PRIMARY KEY, nsfw boolean, "sfwOnly" boolean,
+    await pg.exec(`CREATE TABLE "Model" (id int PRIMARY KEY, name text, "userId" int, nsfw boolean, "sfwOnly" boolean,
       "lockedProperties" text[], meta jsonb, minor boolean, poi boolean, availability text,
       "sfwName" text, "sfwDescription" text, "sfwCoverImageId" int)`);
   });
@@ -621,7 +634,7 @@ describe('applyComFaceHeldVerdict', () => {
 
   it('rates a model whose face is gone, unlocked, with the scan marker, and spends the verdict', async () => {
     await insert({});
-    expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(true);
+    expect(await applyComFaceHeldVerdict(db as never, 1)).not.toBeNull();
     const row = await read();
     expect(row.nsfw).toBe(true);
     expect(row.lockedProperties).toEqual([]);
@@ -634,13 +647,13 @@ describe('applyComFaceHeldVerdict', () => {
     ['only the description is gone', { ...face, sfwDescription: null }],
   ])('rates it when %s', async (_, row) => {
     await insert(row);
-    expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(true);
+    expect(await applyComFaceHeldVerdict(db as never, 1)).not.toBeNull();
     expect((await read()).nsfw).toBe(true);
   });
 
   it('leaves a model that still has its face, and keeps the verdict for later', async () => {
     await insert(face);
-    expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(false);
+    expect(await applyComFaceHeldVerdict(db as never, 1)).toBeNull();
     const row = await read();
     expect(row.nsfw).toBe(false);
     expect(row.meta).toHaveProperty('comFaceHeldVerdict');
@@ -648,7 +661,7 @@ describe('applyComFaceHeldVerdict', () => {
 
   it('leaves a model the scan held nothing for (control)', async () => {
     await insert({ meta: {} });
-    expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(false);
+    expect(await applyComFaceHeldVerdict(db as never, 1)).toBeNull();
     expect((await read()).nsfw).toBe(false);
   });
 
@@ -658,13 +671,13 @@ describe('applyComFaceHeldVerdict', () => {
     ['Private', { availability: 'Private' }],
   ])('never overrides %s', async (_, row) => {
     await insert(row);
-    expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(false);
+    expect(await applyComFaceHeldVerdict(db as never, 1)).toBeNull();
     expect((await read()).nsfw).toBe(false);
   });
 
   it('keeps the verdict as a lead on a Private model, so leaving Private rates it', async () => {
     await insert({ availability: 'Private' });
-    expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(false);
+    expect(await applyComFaceHeldVerdict(db as never, 1)).toBeNull();
     expect((await read()).meta).toMatchObject({ restrictedNsfwVerdict: { source: 'text-scan' } });
 
     await pg.query(`UPDATE "Model" SET availability = 'Public' WHERE id = 1`);
@@ -679,7 +692,7 @@ describe('applyComFaceHeldVerdict', () => {
     'writes no lead for a %s model the scan held nothing for, and leaving Private changes nothing',
     async (_, row) => {
       await insert({ ...row, meta: {} });
-      expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(false);
+      expect(await applyComFaceHeldVerdict(db as never, 1)).toBeNull();
       expect((await read()).meta).not.toHaveProperty('restrictedNsfwVerdict');
 
       await pg.query(`UPDATE "Model" SET availability = 'Public', minor = false WHERE id = 1`);
@@ -690,7 +703,7 @@ describe('applyComFaceHeldVerdict', () => {
 
   it('counts a description that is only markup as no face', async () => {
     await insert({ ...face, sfwDescription: '<p> </p>' });
-    expect(await applyComFaceHeldVerdict(db as never, 1)).toBe(true);
+    expect(await applyComFaceHeldVerdict(db as never, 1)).not.toBeNull();
   });
 
   it.each([
@@ -715,6 +728,85 @@ describe('applyComFaceHeldVerdict', () => {
     const row = await read();
     expect(row.meta).not.toHaveProperty('comFaceHeldVerdict');
     expect(row.nsfw).toBe(false);
+  });
+
+  it('keeps the scan marker on an already-mature model whose face is gone, and spends the verdict', async () => {
+    await insert({ nsfw: true });
+    expect(await applyComFaceHeldVerdict(db as never, 1)).toBeNull();
+    const row = await read();
+    expect(row.nsfw).toBe(true);
+    expect(row.lockedProperties).toEqual([]);
+    expect(row.meta).toMatchObject({ systemNsfwLock: { source: 'text-scan' } });
+    expect(row.meta).not.toHaveProperty('comFaceHeldVerdict');
+  });
+
+  it.each([
+    ['still has its face', { ...face }],
+    ['has no held verdict', { meta: {} }],
+    [
+      'carries another check’s marker',
+      { meta: { ...held, systemNsfwLock: { source: 'xguard', at: 'x' } } },
+    ],
+    ['has a moderator lock', { locked: ['nsfw'] }],
+    ['is Private', { availability: 'Private' }],
+    ['is flagged minor', { minor: true }],
+  ])('stamps no scan marker on an already-mature model that %s', async (_, row) => {
+    await insert({ nsfw: true, ...row });
+    await applyComFaceHeldVerdict(db as never, 1);
+    const before = (row as { meta?: Record<string, unknown> }).meta?.systemNsfwLock;
+    expect((await read()).meta.systemNsfwLock).toEqual(before);
+  });
+
+  it("returns the owner's rating notice when it rates the model", async () => {
+    await insert({});
+    expect(await applyComFaceHeldVerdict(db as never, 1)).toEqual({
+      entityType: 'Model',
+      entityId: 1,
+      userId: 99,
+      level: NsfwLevel.X,
+      title: 'LoRA',
+      url: '/models/1',
+      workflowId: 'com-face-held-2026-11-20T00:00:00.000Z',
+    });
+  });
+
+  it('sends one notification per notice given, skips none-applied, and never throws', async () => {
+    await insert({});
+    const notice = await applyComFaceHeldVerdict(db as never, 1);
+    vi.mocked(createNotification).mockRejectedValueOnce(new Error('down'));
+    await expect(notifyComFaceHeldVerdictApplied([notice, null])).resolves.toBeUndefined();
+    await notifyComFaceHeldVerdictApplied([notice]);
+    expect(createNotification).toHaveBeenCalledTimes(2);
+    expect(createNotification).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        userId: 99,
+        key: expect.stringContaining('com-face-held-2026-11-20T00:00:00.000Z'),
+        details: expect.objectContaining({ entityId: 1, level: NsfwLevel.X }),
+      })
+    );
+  });
+
+  // A save that removed the face may also have edited the text: its rescan releases the marker.
+  it('lets a PG-13 rescan of the new text release the marker the face loss stamped', async () => {
+    await insert({});
+    await applyComFaceHeldVerdict(db as never, 1);
+    dbMock.dbWrite.$executeRaw.mockImplementation(db.$executeRaw as never);
+    await applyModelNsfwTextScan({
+      ...args(false),
+      outcome: {
+        nsfw: {
+          detectedLevel: NsfwLevel.PG13,
+          declaredLevel: NsfwLevel.PG13,
+          raised: false,
+          reason: 'r',
+        },
+        triggeredLabels: [],
+        nsfwLevel: NsfwLevel.PG13,
+      },
+    });
+    const row = await read();
+    expect(row.nsfw).toBe(true);
+    expect(row.meta).not.toHaveProperty('systemNsfwLock');
   });
 
   it('records no lead under a moderator lock: that is already a ruling', async () => {
@@ -742,6 +834,7 @@ describe('applyComFaceHeldVerdict', () => {
     await applyModelNsfwTextScan(args(true), {
       checkSfwFace: vi.fn(),
       getOwnVersionFields: vi.fn(async () => []),
+      activeSfwFacePromptId: async () => 7,
     });
     const row = await read();
     expect(row.nsfw).toBe(true);
@@ -767,6 +860,7 @@ describe('applyComFaceHeldVerdict', () => {
     await applyModelNsfwTextScan(args(true), {
       checkSfwFace: vi.fn(),
       getOwnVersionFields: vi.fn(async () => []),
+      activeSfwFacePromptId: async () => 7,
     });
     const row = await read();
     expect(row.nsfw).toBe(false);

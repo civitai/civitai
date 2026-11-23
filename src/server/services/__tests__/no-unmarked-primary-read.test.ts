@@ -124,7 +124,7 @@ const BASELINE: Counts = {
   'src/server/services/account-standing.service.ts': 1,
   'src/server/services/announcement.service.ts': 3,
   'src/server/services/api-key.service.ts': 6,
-  'src/server/services/app-assistant/app-assistant.service.ts': 4,
+  'src/server/services/app-assistant/app-assistant.service.ts': 3,
   'src/server/services/apps/app-storage.service.ts': 1,
   'src/server/services/apps/doc-store-access.ts': 1,
   'src/server/services/apps/storage-migration-run.service.ts': 5,

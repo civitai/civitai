@@ -40,6 +40,7 @@ import { ImageConnectionType, type NsfwLevel } from '~/server/common/enums';
 import {
   ArticleIngestionStatus,
   ArticleStatus,
+  Availability,
   EntityModerationStatus,
 } from '~/shared/utils/prisma/enums';
 import { getArticleUrl } from '~/utils/string-helpers';
@@ -220,6 +221,7 @@ export async function getArticleByShareToken({
   if (viewerId && (await amIBlockedByUser({ userId: viewerId, targetUserId: article.userId })))
     return UNAVAILABLE;
 
+  if (article.availability === Availability.Private) return UNAVAILABLE;
   if (article.status === ArticleStatus.Published)
     return { status: 'published', url: getArticleUrl(article) };
   if (!isShareableArticleStatus(article.status)) return UNAVAILABLE;
@@ -311,6 +313,7 @@ function readSharedArticleRow(id: number) {
       userId: true,
       status: true,
       ingestion: true,
+      availability: true,
       user: { select: { ...userWithCosmeticsSelect, bannedAt: true, muted: true } },
       coverImage: { select: { ...imageSelect, minor: true } },
       bannerImage: { select: { ...imageSelect, minor: true } },

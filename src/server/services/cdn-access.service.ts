@@ -4,6 +4,7 @@ import { env } from '~/env/server';
 import { BlockedReason } from '~/server/common/enums';
 import type { UnpublishReason } from '~/server/common/moderation-helpers';
 import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedown-activities';
+import { scanKeepsRowSql } from '~/server/common/image-visibility';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { uniq } from 'lodash-es';
@@ -80,6 +81,8 @@ export type ImageAccessFacts = {
   lastTakedownActivityAt: Date | null;
   /** A CSAM review flag or an evidence hold. Caps its url at `deny`. */
   held: boolean;
+  /** `scanKeepsRowSql` holds for the row. */
+  keptRow: boolean;
   post: PostAccessFacts | null;
 };
 
@@ -126,6 +129,8 @@ export function desiredImageAccess(image: ImageAccessFacts): CdnAccess {
       !!image.lastTakedownActivityAt &&
       image.lastTakedownActivityAt.getTime() >= image.blockedAt.getTime();
     access = human ? 'retract' : 'deny';
+  } else if (image.ingestion !== 'Scanned' && image.keptRow) {
+    access = 'deny';
   }
   return strongestAccess([access, desiredPostAccess(image.post)]);
 }
@@ -305,6 +310,7 @@ type FactsRow = {
   lastTakedownActivityAt: Date | null;
   userId: number;
   csamReview: boolean;
+  keptRow: boolean;
   postId: number | null;
   postOwnerId: number | null;
   postUnpublished: boolean | null;
@@ -430,6 +436,7 @@ async function loadFacts(urls: string[]) {
       SELECT
         i.id, i.url, i."userId", i.ingestion::text AS ingestion, i."blockedFor",
         i."needsReview" IS NOT DISTINCT FROM 'csam' AS "csamReview",
+        ${scanKeepsRowSql('i')} AS "keptRow",
         q."createdAt" AS "blockedAt",
         ma."lastActedAt" AS "lastTakedownActivityAt",
         p.id AS "postId",
@@ -492,6 +499,7 @@ async function loadFacts(urls: string[]) {
       blockedFor: row.blockedFor,
       blockedAt: row.blockedAt,
       lastTakedownActivityAt: row.lastTakedownActivityAt,
+      keptRow: row.keptRow,
       held:
         row.csamReview ||
         holds.held(row.userId) ||

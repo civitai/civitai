@@ -413,6 +413,8 @@ export type RestrictedNsfwVerdict = {
   source: string;
   at: string;
   restriction: 'minor' | 'poi' | 'sfwOnly';
+  /** The level the scan read, where the lead came from a verdict it held for a clean .com face. */
+  level?: number;
   /** On an SFW-only model the scan applied the rating at once (SFW-only cleared); what it replaced. */
   applied?: { at: string; prior: RestrictedNsfwPrior };
   /** The flag was lifted other than by the owner's save; the lead waits for a moderator's ruling. */

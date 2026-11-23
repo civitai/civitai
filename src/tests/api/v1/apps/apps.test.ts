@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /**
  * Handler-level coverage for the PUBLIC app-catalog REST endpoints:
@@ -75,10 +75,17 @@ vi.mock('~/server/utils/server-domain', () => ({
 // The public-catalog KILL SWITCH is a Flipt flag, so the flag client is the seam.
 // Spread the real module (rather than replacing it) so this stays honest if the
 // decision module ever reads another export from it.
-vi.mock('~/server/flipt/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof FliptClient>()),
-  isFlipt: mockIsFlipt,
-}));
+// The listings read model's flag is at `serve` for this whole file. Serving needs APP_INDEX_URL and
+// a viewer key, which only the read-model case sets: every other case reads the database.
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const original = await importOriginal<typeof FliptClient>();
+  return {
+    ...original,
+    isFlipt: mockIsFlipt,
+    getFliptLocalOverride: (flag: string) =>
+      flag === 'app-listings-read-model' ? 'serve' : original.getFliptLocalOverride(flag),
+  };
+});
 
 // The request's feature flags decide the viewer's browsing level (`canViewNsfw`).
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
@@ -86,6 +93,7 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   getFeatureFlagsLazy: mockFeatures,
 }));
 
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as FliptClient from '~/server/flipt/client';
 import listHandler from '~/pages/api/v1/apps/index';
@@ -546,3 +554,74 @@ describe("GET /api/v1/apps — the caller's browsing level", () => {
     expect(mockDetail.mock.calls[0][1]).toMatchObject({ viewerBrowsingLevel: 7 });
   });
 });
+
+// The seam between the handler and the read model: at `serve` the handler must read the page
+// through `serveListingPage`. A handler that called the database read directly would keep every
+// REST page on the database, with every service test still green.
+describe('GET /api/v1/apps — the flag at serve: the read model serves the list', () => {
+  const READ_MODEL_URL = 'http://read-model.invalid/';
+  let fetched: string[];
+  beforeEach(() => {
+    setEnv({
+      APP_INDEX_URL: READ_MODEL_URL,
+      APP_INDEX_VIEWER_KEY: '0123456789abcdef0123456789abcdef',
+      APP_LISTINGS_READ_MODEL_SHADOW_SAMPLE: 0,
+    });
+    fetched = [];
+    vi.stubGlobal('fetch', async (url: string) => {
+      fetched.push(url);
+      return Response.json({ items: [RM_CARD] });
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setEnv({ APP_INDEX_URL: undefined, APP_INDEX_VIEWER_KEY: undefined });
+  });
+
+  it("an anonymous caller's page is the read model's, and the database is not read", async () => {
+    const { req, res } = createMocks();
+    await (listHandler as unknown as Handler)(req, res, undefined);
+    expect(res._status()).toBe(200);
+    expect((res._json() as { items: Array<{ slug: string }> }).items.map((c) => c.slug)).toEqual([
+      'rm-only',
+    ]);
+    expect(fetched).toHaveLength(1);
+    expect(fetched[0].startsWith(`${READ_MODEL_URL}listings?`)).toBe(true);
+    expect(mockList).not.toHaveBeenCalled();
+  });
+
+  it('positive control: the read model failing, the database answers', async () => {
+    vi.stubGlobal('fetch', async (url: string) => {
+      fetched.push(url);
+      return new Response('{}', { status: 500 });
+    });
+    const { req, res } = createMocks();
+    await (listHandler as unknown as Handler)(req, res, undefined);
+    expect((res._json() as { items: Array<{ slug: string }> }).items.map((c) => c.slug)).toEqual([
+      'a',
+      'b',
+    ]);
+    expect(fetched).toHaveLength(1);
+    expect(mockList).toHaveBeenCalledTimes(1);
+  });
+});
+
+const RM_CARD = {
+  id: 'apl_rm_only',
+  slug: 'rm-only',
+  kind: 'offsite',
+  name: 'Read model only',
+  tagline: null,
+  category: 'utility',
+  contentRating: 'pg',
+  iconUrl: null,
+  coverUrl: null,
+  creator: null,
+  recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
+  reviewCount: 0,
+  isBeta: false,
+  isOfficial: false,
+  openCount: null,
+  restrictedAudience: null,
+  kindData: { kind: 'offsite', externalUrl: null },
+};

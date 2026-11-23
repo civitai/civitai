@@ -376,10 +376,17 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'app_block_publish_requests.actions_run_workflow_ref',
       'app_block_publish_requests.actions_run_repository_visibility',
       'app_block_publish_requests.actions_run_id',
+      'ModelVersion.licensingFeeMarkup',
       // OAuth offline grant, migration 20271119140000_oauth_offline_grant (manual apply).
       'ApiKey.mintOrigin',
       'ApiKey.refreshFamilyId',
       'OauthConsent.offlineGrantedAt',
+      // Staff licence-fee controls, migrations 20271121130000_licensing_fee_locked and
+      // 20271121140000_licensing_fee_paid_by_invoice (manual apply).
+      'ModelVersion.licensingFeeLocked',
+      'ModelVersion.licensingFeePaidByInvoice',
+      // Restricted licensing roots, migration 20271121150000_licensing_root_restricted (manual apply).
+      'LicensingRoot.restricted',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

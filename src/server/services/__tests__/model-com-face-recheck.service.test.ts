@@ -47,6 +47,7 @@ import {
   COM_FACE_RECHECK_GAVE_UP,
   COM_FACE_RECHECK_MAX_DELAY_MS,
   COM_FACE_RECHECK_WINDOW_MS,
+  faceLossNotice,
   faceLossRescan,
   processComFaceRechecks,
   queueComFaceRecheck,
@@ -233,7 +234,11 @@ describe('the .com face listing re-check', () => {
   it('clears the cover and records the removal in one transaction', async () => {
     arrange({ fresh: [MODEL_ID] });
     mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
-    const tx = { $executeRaw: vi.fn(async () => 1), modActivity: { create: vi.fn() } };
+    const tx = {
+      $executeRaw: vi.fn(async () => 1),
+      $queryRaw: vi.fn(async () => []),
+      modActivity: { create: vi.fn() },
+    };
     db.$transaction.mockImplementationOnce((async (fn: (client: typeof tx) => unknown) =>
       fn(tx)) as never);
 
@@ -254,6 +259,81 @@ describe('the .com face listing re-check', () => {
     expect(tx.modActivity.create).toHaveBeenCalledTimes(1);
     expect(db.$executeRaw).not.toHaveBeenCalled();
     expect(db.modActivity.create).not.toHaveBeenCalled();
+  });
+
+  describe("the owner's rating notice after a removal", () => {
+    const realSend = faceLossNotice.send;
+    const send = vi.fn();
+    beforeEach(() => {
+      send.mockReset();
+      faceLossNotice.send = send as never;
+    });
+    afterEach(() => {
+      faceLossNotice.send = realSend;
+    });
+    /** A removal whose held-verdict flip writes `flipped` rows; reports when it committed. */
+    function removal(flipped: number) {
+      let committed = false;
+      const tx = {
+        $executeRaw: vi.fn(async (strings: unknown) =>
+          Array.isArray(strings) && strings.join('?').includes('SET nsfw = TRUE') ? flipped : 1
+        ),
+        $queryRaw: vi.fn(async () => [
+          { name: 'LoRA', userId: 99, meta: { comFaceHeldVerdict: { at: 'h', level: R } } },
+        ]),
+        modActivity: { create: vi.fn() },
+      };
+      db.$transaction.mockImplementationOnce((async (fn: (client: typeof tx) => unknown) => {
+        const result = await fn(tx);
+        committed = true;
+        return result;
+      }) as never);
+      return () => committed;
+    }
+
+    it('tells the owner once, after commit, when the held verdict rates the model', async () => {
+      arrange({ fresh: [MODEL_ID] });
+      mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+      const committed = removal(1);
+      let committedWhenSent: boolean | undefined;
+      let levelRefreshedWhenSent: boolean | undefined;
+      send.mockImplementation(async () => {
+        committedWhenSent = committed();
+        levelRefreshedWhenSent = mockUpdateModelNsfwLevels.mock.calls.length > 0;
+      });
+
+      await processComFaceRechecks(NOW);
+
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledWith([
+        expect.objectContaining({ entityId: MODEL_ID, userId: 99, level: R }),
+      ]);
+      expect(committedWhenSent).toBe(true);
+      // After the level refresh: a slow notice must not keep the old level listed.
+      expect(levelRefreshedWhenSent).toBe(true);
+    });
+
+    it('still tells the owner when the level refresh after the removal throws', async () => {
+      arrange({ fresh: [MODEL_ID] });
+      mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+      removal(1);
+      mockUpdateModelNsfwLevels.mockRejectedValueOnce(new Error('level refresh failed'));
+
+      await processComFaceRechecks(NOW).catch(() => undefined);
+
+      expect(mockUpdateModelNsfwLevels).toHaveBeenCalled();
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends nothing when the held verdict does not rate it', async () => {
+      arrange({ fresh: [MODEL_ID] });
+      mockPreviewTextScanNsfw.mockResolvedValue(rated(R));
+      removal(0);
+
+      await processComFaceRechecks(NOW);
+
+      expect(send).not.toHaveBeenCalled();
+    });
   });
 
   it('logs the listing intent verdict on a clean version rating', async () => {

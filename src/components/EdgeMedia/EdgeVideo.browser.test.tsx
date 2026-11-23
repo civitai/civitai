@@ -48,6 +48,108 @@ describe('EdgeVideo — hover to play', () => {
   });
 });
 
+describe('EdgeVideo — keepPlaying', () => {
+  const startByUser = async (props: { keepPlaying?: boolean }) => {
+    renderWithProviders(<EdgeVideo src={SRC} html5Controls {...props} />);
+    await vi.waitFor(() => expect(document.querySelector('video')).toBeTruthy());
+    const video = document.querySelector('video')!;
+    // A native control press fires 'play' without our hover timer.
+    video.dispatchEvent(new Event('play'));
+    return video;
+  };
+
+  test('a video the viewer started keeps playing when the pointer leaves', async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    const video = await startByUser({ keepPlaying: true });
+    pause.mockClear();
+
+    video.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+
+    expect(pause).not.toHaveBeenCalled();
+    pause.mockRestore();
+  });
+
+  test('without keepPlaying the pointer leaving still pauses it', async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    const video = await startByUser({});
+    pause.mockClear();
+
+    video.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+
+    expect(pause).toHaveBeenCalled();
+    pause.mockRestore();
+  });
+
+  describe('scrolling away', () => {
+    const observers: Array<(entries: Array<{ isIntersecting: boolean }>) => void> = [];
+    beforeEach(() => {
+      observers.length = 0;
+      vi.stubGlobal(
+        'IntersectionObserver',
+        class {
+          constructor(cb: (entries: Array<{ isIntersecting: boolean }>) => void) {
+            observers.push(cb);
+          }
+          observe = () => undefined;
+          unobserve = () => undefined;
+          disconnect = () => undefined;
+        }
+      );
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    const scrollTo = (isIntersecting: boolean) =>
+      observers.forEach((cb) => cb([{ isIntersecting }]));
+
+    test('a playing keepPlaying video pauses when it leaves the screen', async () => {
+      const pause = vi
+        .spyOn(HTMLMediaElement.prototype, 'pause')
+        .mockImplementation(() => undefined);
+      const video = await startByUser({ keepPlaying: true });
+      Object.defineProperty(video, 'paused', { value: false, configurable: true });
+      pause.mockClear();
+
+      scrollTo(true);
+      expect(pause).not.toHaveBeenCalled();
+      scrollTo(false);
+      expect(pause).toHaveBeenCalledTimes(1);
+      pause.mockRestore();
+    });
+  });
+
+  test('a viewer play after pausing a hover preview is kept', async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(<EdgeVideo src={SRC} html5Controls keepPlaying />);
+    await vi.waitFor(() => expect(document.querySelector('video')).toBeTruthy());
+    const video = document.querySelector('video')!;
+
+    hoverFor(1_100);
+    video.dispatchEvent(new Event('play'));
+    video.dispatchEvent(new Event('pause'));
+    video.dispatchEvent(new Event('play'));
+    pause.mockClear();
+    video.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+
+    expect(pause).not.toHaveBeenCalled();
+    pause.mockRestore();
+  });
+
+  test('a hover preview still pauses on leave with keepPlaying', async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(<EdgeVideo src={SRC} html5Controls keepPlaying />);
+    await vi.waitFor(() => expect(document.querySelector('video')).toBeTruthy());
+    const video = document.querySelector('video')!;
+
+    hoverFor(1_100);
+    video.dispatchEvent(new Event('play'));
+    pause.mockClear();
+    video.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+
+    expect(pause).toHaveBeenCalled();
+    pause.mockRestore();
+  });
+});
+
 describe('EdgeVideo — only the frontmost layer plays', () => {
   afterEach(() => useDialogStore.getState().closeAll());
 
@@ -203,6 +305,29 @@ describe('EdgeVideo — fullscreen', () => {
     for (let i = 0; i < 10; i++) await new Promise(requestAnimationFrame);
 
     expect(pause.mock.contexts).not.toContain(video);
+  });
+
+  test('the fullscreen button opens the native player where only the video can go fullscreen', async () => {
+    // iPhone Safari: no Element.requestFullscreen, only HTMLVideoElement.webkitEnterFullscreen.
+    const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'requestFullscreen')!;
+    delete (Element.prototype as Partial<Element>).requestFullscreen;
+    try {
+      await renderWithProviders(<EdgeVideo src={SRC} controls />);
+      await vi.waitFor(() => expect(document.querySelector('video')).toBeTruthy());
+      const video = document.querySelector('video')!;
+      const webkitEnterFullscreen = vi.fn();
+      Object.assign(video, { webkitEnterFullscreen });
+      video.dispatchEvent(new Event('canplay'));
+      await vi.waitFor(() =>
+        expect(document.querySelector('svg.tabler-icon-maximize')).toBeTruthy()
+      );
+
+      await userEvent.click(document.querySelector('svg.tabler-icon-maximize')!.closest('button')!);
+
+      expect(webkitEnterFullscreen).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(Element.prototype, 'requestFullscreen', descriptor);
+    }
   });
 });
 

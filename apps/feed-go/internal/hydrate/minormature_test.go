@@ -143,7 +143,7 @@ func TestVersionImagesDropsMinorMatureImages(t *testing.T) {
 	}
 	ids := make([]int, 0, len(got[6001]))
 	for _, img := range got[6001] {
-		id, _ := Int(img["id"])
+		id, _ := Int(ObjectField(img, "id"))
 		ids = append(ids, id)
 	}
 	if want := []int{8102, 8103}; !reflect.DeepEqual(ids, want) {
@@ -152,6 +152,31 @@ func TestVersionImagesDropsMinorMatureImages(t *testing.T) {
 	// Every image filtered out: the version keeps its entry, with no images.
 	if list, ok := got[6002]; !ok || len(list) != 0 {
 		t.Fatalf("version 6002 = %v (present %v), want an empty list", list, ok)
+	}
+}
+
+// The same read keeps only the images at a selectable level, for every reader.
+func TestVersionImagesLevels(t *testing.T) {
+	f := newModelFixture()
+	f.put(t, KeyVersionImages, 6003, map[string]any{"modelVersionId": 6003, "images": []any{
+		map[string]any{"id": 8201, "userId": 1001, "nsfwLevel": 32},
+		map[string]any{"id": 8202, "userId": 1001, "nsfwLevel": 1},
+		map[string]any{"id": 8203, "userId": 1001, "nsfwLevel": 16 | 32},
+	}})
+	for _, id := range []int{8201, 8202, 8203} {
+		f.put(t, KeyTagIDs, id, map[string]any{"tags": []any{1}})
+	}
+	got, err := f.sources().VersionImages(context.Background(), []int{6003})
+	if err != nil {
+		t.Fatalf("VersionImages: %v", err)
+	}
+	ids := make([]int, 0, len(got[6003]))
+	for _, img := range got[6003] {
+		id, _ := Int(ObjectField(img, "id"))
+		ids = append(ids, id)
+	}
+	if want := []int{8202, 8203}; !reflect.DeepEqual(ids, want) {
+		t.Fatalf("version 6003 images %v, want %v", ids, want)
 	}
 }
 

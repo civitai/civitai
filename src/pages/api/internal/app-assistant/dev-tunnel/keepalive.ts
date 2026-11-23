@@ -10,7 +10,10 @@ import {
   DEV_TUNNEL_IDLE_SECONDS,
   keepAliveDevTunnel,
   keepAliveDevTunnelAtHost,
+  keepAliveDevTunnelForUserBlock,
 } from '~/server/services/blocks/dev-tunnel.service';
+import { sessionHostDomains, sessionHostKind } from '~/server/services/blocks/dev-tunnel-session';
+import { previewHostHash } from '~/server/services/blocks/preview-session-host';
 
 /**
  * POST /api/internal/app-assistant/dev-tunnel/keepalive
@@ -26,26 +29,37 @@ import {
  * Called only by the runner, with `Authorization: Bearer <ASSISTANT_RUNNER_SECRET>`. Body, one of:
  *   { grant, sessionId }   `sessionId` as `start` returned it
  *   { grant, host }        the grant's user's tunnel at `host` (the host the sandbox is connected
- *                          to), whoever opened it
+ *                          to), whoever opened it. Tunnel hosts only: a direct preview session
+ *                          host is 404 here, its own session included (keep it by `blockId`)
+ *   { grant, blockId }     the grant's user's session for the app `blockId`, whichever transport
+ *                          (a direct preview has no sandbox-side tunnel to name a host)
+ *   { grant, blockId, transport: "direct" }
+ *                          the same, but only a direct session: a tunnel session for the app is
+ *                          left alone and answered 404, as if there were none
  *
  * Re-judged on every call, for the grant's user: the App Assistant gates, the author capability and
  * the `app-blocks-dev-tunnel` kill switch, as `start` — so turning any of them off stops keeping
  * tunnels alive at the next call, and they idle out. The session must be the grant's user's own.
  *
- *   200 `{ sessionId | host, idleExpiresAt, expiresAt }` (as asked) unix seconds: when it idles out absent another
+ *   200 `{ sessionId | host | blockId, idleExpiresAt, expiresAt }` (as asked) unix seconds: when it idles out absent another
  *       call, and its hard cap
  *   400 `{ error }` the body is not that shape
  *   401 `{ error }` the runner's secret is missing or wrong; `invalid_grant` not a current run grant
  *   403 `refused` an App Assistant gate refuses the user; `FORBIDDEN` no author capability, or the
  *       dev-tunnel flag is off for them
- *   404 `NOT_FOUND` no such tunnel, it is not the grant's user's, or it is past its hard cap (one
- *       answer for all three)
+ *   404 `NOT_FOUND` no such session, not the grant's user's, past its hard cap, a direct session
+ *       host sent as `host`, or a tunnel skipped by `transport: "direct"` (one answer for all)
  *   503 not configured; `unavailable` could not be judged or recorded just now: retry
  */
 const grantField = z.string().min(1).max(4096);
 const body = z.union([
   z.object({ grant: grantField, sessionId: z.string().min(1).max(128) }),
   z.object({ grant: grantField, host: z.string().min(1).max(253) }),
+  z.object({
+    grant: grantField,
+    blockId: z.string().min(1).max(64),
+    transport: z.literal('direct').optional(),
+  }),
 ]);
 
 export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
@@ -53,20 +67,28 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     req,
     res,
     body,
-    'Expected { grant, sessionId } or { grant, host }'
+    'Expected { grant, sessionId }, { grant, host } or { grant, blockId }'
   );
   if (!request) return;
   const { grant } = request;
-  const target: { sessionId: string } | { host: string } =
+  const target: { sessionId: string } | { host: string } | { blockId: string } =
     'sessionId' in request.body
       ? { sessionId: request.body.sessionId }
-      : { host: request.body.host };
+      : 'host' in request.body
+      ? { host: request.body.host }
+      : { blockId: request.body.blockId };
+  // A direct preview session host is a credential: a caller that sends one gets a 404, and its
+  // logs carry only the host's hash.
+  const logTarget =
+    'host' in target && sessionHostKind(target.host, sessionHostDomains()) === 'direct'
+      ? { hostHash: previewHostHash(target.host) }
+      : target;
   const log = (type: string, extra: Record<string, unknown> = {}) =>
     logToAxiom({
       type: `app-assistant.runner-dev-tunnel.keepalive-${type}`,
       message: `App Assistant runner dev tunnel keep-alive ${type} for user ${grant.userId}`,
       userId: grant.userId,
-      ...target,
+      ...logTarget,
       grantId: grant.grantId,
       ...extra,
     });
@@ -85,11 +107,15 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       return res.status(403).json({ error: flagRefusal.error, code: flagRefusal.code });
     }
 
-    // Both are looked up for the grant's user only: never another author's tunnel.
+    // Each is looked up for the grant's user only: never another author's tunnel.
     const kept =
       'sessionId' in target
         ? await keepAliveDevTunnel(grant.userId, target.sessionId)
-        : await keepAliveDevTunnelAtHost(grant.userId, target.host);
+        : 'host' in target
+        ? await keepAliveDevTunnelAtHost(grant.userId, target.host)
+        : await keepAliveDevTunnelForUserBlock(grant.userId, target.blockId, {
+            transport: 'transport' in request.body ? request.body.transport : undefined,
+          });
     if (kept.status === 'not_found')
       return res.status(404).json({ error: 'No such dev tunnel', code: 'NOT_FOUND' });
     if (kept.status === 'unavailable')

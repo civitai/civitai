@@ -117,8 +117,9 @@ func TestShadowComparesHeaders(t *testing.T) {
 	waitFor(t, "an uncompared response", response("uncompared", 1))
 }
 
-// A REST sample is uncompared whatever headers it carries: the REST ports write none of their own,
-// so a comparison would only count Node's headers as missing here.
+// A /api/v1/images sample is uncompared whatever headers it carries: that port writes none of its own,
+// so a comparison would only count Node's headers as missing here. (The model routes' are compared:
+// TestV1ModelsShadowComparesResponseHeaders.)
 func TestShadowRESTResponseIsUncompared(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	s := newPhaseServer(reg, 1, nil)

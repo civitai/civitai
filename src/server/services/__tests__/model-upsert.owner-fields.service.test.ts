@@ -150,6 +150,7 @@ const {
   mockDropLiftedBy,
   mockHoldLead,
   mockHoldLeadAfterSfwOnlyLift,
+  mockNotifyHeld,
 } = vi.hoisted(() => ({
   mockHoldLeadAfterSfwOnlyLift: vi.fn(async (..._args: unknown[]) => undefined),
   mockDropLiftedBy: vi.fn(async (..._args: unknown[]) => undefined),
@@ -157,12 +158,14 @@ const {
   mockApplyHeldVerdict: vi.fn(async (): Promise<null> => null),
   mockLeavingPrivate: vi.fn(async (_db: unknown, _id: number) => false),
   mockFinishApply: vi.fn(async (_id: number) => undefined),
+  mockNotifyHeld: vi.fn(async (_notices: unknown[]) => undefined),
 }));
 vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelNsfw>()),
   applyHeldRestrictedVerdict: mockApplyHeldVerdict,
   applyHeldVerdictLeavingPrivate: mockLeavingPrivate,
   finishHeldVerdictApply: mockFinishApply,
+  notifyComFaceHeldVerdictApplied: mockNotifyHeld,
   dropLiftedBy: mockDropLiftedBy,
   holdLeadAfterFlagLift: mockHoldLead,
   holdLeadAfterSfwOnlyLift: mockHoldLeadAfterSfwOnlyLift,
@@ -1192,6 +1195,38 @@ describe('cover gate', () => {
       expect.objectContaining({ modelId: MODEL_ID, ownerId: OWNER_ID, coverImageId: 9 })
     );
   });
+
+  // The form sends both covers; an unchanged featured one a reader skips for now must not refuse
+  // the edit to the other.
+  it('validates only the cover the save changes', async () => {
+    mockStored({ coverImageId: null, sfwCoverImageId: 7 });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, coverImageId: 9, sfwCoverImageId: 7 });
+
+    expect(mockAssertCoverImagesValid).toHaveBeenCalledWith(
+      expect.objectContaining({ coverImageId: 9, sfwCoverImageId: undefined })
+    );
+  });
+});
+
+describe('a change in maturity', () => {
+  // `updateModelNsfwLevels` recomputes the level; it is seen here as its UPDATE.
+  const recomputed = () =>
+    mockDbWrite.$queryRaw.mock.calls.some(([query]) =>
+      ((query as { strings?: string[] })?.strings ?? []).join('').includes('SET "nsfwLevel" = (')
+    );
+
+  it('recomputes the model level when the owner marks the model mature', async () => {
+    mockStored({ nsfw: false });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: true });
+    expect(recomputed()).toBe(true);
+  });
+
+  it('does not recompute it when maturity, the face and the covers are unchanged', async () => {
+    mockStored({ nsfw: false });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false });
+    expect(recomputed()).toBe(false);
+  });
 });
 
 describe('.com face re-check after a listing edit', () => {
@@ -1309,6 +1344,16 @@ describe('.com face re-check after a listing edit', () => {
     mockLocked({ sfwCoverImageId: null });
     await expect(upsert({ id: MODEL_ID, userId: OWNER_ID, sfwCoverImageId: 5 })).rejects.toThrow(
       'civitai.com card changed while you were editing'
+    );
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses an owner’s save whose .red cover changed after the save read it', async () => {
+    // The version showcase writes this cover too.
+    mockStored({ coverImageId: 4 });
+    mockLocked({ coverImageId: 9 });
+    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID, coverImageId: 7 })).rejects.toThrow(
+      'cover changed while you were editing'
     );
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });
@@ -1915,6 +1960,67 @@ describe('a .com face going away', () => {
     expect(flip).toContain(MODEL_ID);
   });
 
+  /** The held verdict as the save transaction reads it before spending it. */
+  const heldRow = () => {
+    const original = mockDbWrite.$queryRaw.getMockImplementation();
+    mockDbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      Array.isArray(strings) && strings.join('?').includes('SELECT m.name, m."userId", m.meta')
+        ? [
+            {
+              name: 'Test Model',
+              userId: OWNER_ID,
+              meta: { comFaceHeldVerdict: { at: '2026-11-20T00:00:00.000Z', level: 16 } },
+            },
+          ]
+        : original?.(strings, ...values)) as never);
+  };
+  it('tells the owner, after the save, when the held verdict rates the model', async () => {
+    heldRow();
+    let levelRefreshedWhenSent: boolean | undefined;
+    mockNotifyHeld.mockImplementationOnce(async () => {
+      levelRefreshedWhenSent = mockFinishApply.mock.calls.length > 0;
+    });
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
+    expect(mockFinishApply).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockNotifyHeld).toHaveBeenCalledWith([
+      expect.objectContaining({
+        entityType: 'Model',
+        entityId: MODEL_ID,
+        userId: OWNER_ID,
+        level: 16,
+        workflowId: 'com-face-held-2026-11-20T00:00:00.000Z',
+      }),
+    ]);
+    expect(mockNotifyHeld).toHaveBeenCalledTimes(1);
+    // After the level refresh: a slow notice must not keep the old level listed.
+    expect(levelRefreshedWhenSent).toBe(true);
+  });
+
+  it('still tells the owner when a post-save step throws', async () => {
+    heldRow();
+    mockFinishApply.mockRejectedValueOnce(new Error('level refresh failed'));
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' }).catch(() => undefined);
+    expect(mockFinishApply).toHaveBeenCalled();
+    expect(mockNotifyHeld).toHaveBeenCalledTimes(1);
+  });
+
+  // The rescan is fire-and-forget: a submit that fails only logs. The save must not rely on it.
+  it('rates it in the save when the same save also edits the listing text, even if the rescan never runs', async () => {
+    heldRow();
+    mockRescanTextAfterFaceLoss.mockImplementation(async () => undefined);
+    mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '', name: 'A Different Name' });
+    expect(heldFlip()).toBeDefined();
+    expect(mockFinishApply).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockNotifyHeld).toHaveBeenCalledWith([expect.objectContaining({ entityId: MODEL_ID })]);
+    expect(mockNotifyHeld).toHaveBeenCalledTimes(1);
+  });
+
   it('does not try it when the face stays (control)', async () => {
     mockStored({ ...complete, meta: { comFaceHeldVerdict: { at: 'x', level: 16 } } });
     await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style Two' });
@@ -1936,5 +2042,125 @@ describe('a .com face going away', () => {
     mockStored(stored);
     await upsert({ id: MODEL_ID, userId: OWNER_ID, ...change });
     expect(mockRescanTextAfterFaceLoss).not.toHaveBeenCalled();
+  });
+});
+
+// docs/features/model-com-face.md: the held verdict, its hand-off and the face loss that applies it.
+describe('a mature rating the text scan held back for a clean .com face', () => {
+  const face = {
+    sfwName: 'Retro Style',
+    sfwDescription: '<p>A retro poster style.</p>',
+    sfwCoverImageId: 5,
+  };
+  const held = { comFaceHeldVerdict: { at: '2026-11-20T00:00:00.000Z', level: 16 } };
+  const untick = () => upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false });
+  // No moderator ruling unless a test adds one; the guard asks on both reads of the row.
+  beforeEach(() => {
+    mockDbWrite.modActivity.findFirst.mockReset();
+  });
+
+  // The held verdict is the scan's own mature reading: the owner may not lower it while it stands.
+  it("refuses the owner's untick of mature while the held verdict stands", async () => {
+    mockStored({ nsfw: true, ...face, meta: held });
+    await expect(untick()).rejects.toThrow(/marked mature because of/);
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses it when the held verdict has no readable time or level', async () => {
+    mockStored({ nsfw: true, ...face, meta: { comFaceHeldVerdict: { at: 'x', level: 'R' } } });
+    await expect(untick()).rejects.toThrow(/marked mature because of/);
+  });
+
+  it('refuses it when the held verdict is not even an object', async () => {
+    mockStored({ nsfw: true, ...face, meta: { comFaceHeldVerdict: null } });
+    await expect(untick()).rejects.toThrow(/marked mature because of/);
+  });
+
+  it('lets the owner untick when nothing is held (control)', async () => {
+    mockStored({ nsfw: true, ...face, meta: {} });
+    await untick();
+    expect(updateData()).toMatchObject({ nsfw: false });
+  });
+
+  // The owner's way out is the same as for the scan's marker: a rescan that reads the edited text
+  // as not mature drops the held verdict, and the untick then saves.
+  it('lets the untick save once a clean rescan has dropped the held verdict', async () => {
+    mockStored({ nsfw: true, ...face, meta: held });
+    await expect(untick()).rejects.toThrow(/marked mature because of/);
+    vi.mocked(mockDbWrite.model.update).mockClear();
+    const { comFaceHeldVerdict: _spent, ...afterCleanRescan } = held;
+    mockStored({ nsfw: true, ...face, meta: afterCleanRescan });
+    await untick();
+    expect(updateData()).toMatchObject({ nsfw: false });
+  });
+
+  it('lets the untick save once a moderator has ruled on the rating since the verdict was held', async () => {
+    mockStored({ nsfw: true, ...face, meta: held });
+    mockDbWrite.modActivity.findFirst.mockResolvedValue({ id: 1 } as never);
+    await untick();
+    expect(updateData()).toMatchObject({ nsfw: false });
+  });
+
+  // An owner marking their own model minor is never refused: the scan's reading goes to a moderator
+  // as a lead, with the locks the flag brings, so a later save cannot quietly lower it.
+  it('hands the held verdict to a moderator as a lead when the same save marks the model minor', async () => {
+    mockStored({ nsfw: true, ...face, meta: held });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: true });
+    const data = updateData();
+    expect(data.lockedProperties).toEqual(expect.arrayContaining(['minor', 'nsfw', 'sfwOnly']));
+    expect((data.meta as ModelMeta).restrictedNsfwVerdict).toEqual({
+      source: 'text-scan',
+      at: '2026-11-20T00:00:00.000Z',
+      restriction: 'minor',
+      level: 16,
+    });
+    expect((data.meta as ModelMeta).ownerFlagOverride).toMatchObject({
+      flags: ['minor'],
+      prevNsfw: true,
+    });
+  });
+
+  it('hands it to a moderator when the same save marks the model a real person', async () => {
+    mockStored({ nsfw: true, ...face, meta: held });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, poi: true });
+    expect((updateData().meta as ModelMeta).restrictedNsfwVerdict).toMatchObject({
+      restriction: 'poi',
+      level: 16,
+    });
+  });
+
+  // A waiting lead is the moderator's to rule on, so a later hand-off never rewrites it.
+  it('leaves a lead already waiting as it is when a later save marks the model a real person', async () => {
+    const waiting = { source: 'text-scan', at: '2026-11-19T00:00:00.000Z', restriction: 'minor' };
+    mockStored({ nsfw: true, ...face, meta: { ...held, restrictedNsfwVerdict: waiting } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, poi: true });
+    expect((updateData().meta as ModelMeta).restrictedNsfwVerdict).toEqual(waiting);
+  });
+
+  it('leaves a moderator-locked rating to the lock (control)', async () => {
+    mockStored({ nsfw: true, ...face, lockedProperties: ['nsfw'], meta: held });
+    await untick();
+    expect(updateData()).not.toHaveProperty('nsfw', false);
+  });
+
+  // A model the scan left unrated holds nothing to lower; removing its face is how the verdict
+  // applies, in the same save.
+  it('lets the owner remove the face from a model that is not mature', async () => {
+    mockStored({ nsfw: false, ...face, meta: held });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
+    expect(updateData()).toMatchObject({ sfwName: null });
+  });
+
+  it('lets the owner make an unrelated edit to a model that is not mature, keeping its face', async () => {
+    mockStored({ nsfw: false, ...face, meta: held });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Retro Style Two' });
+    expect(updateData()).toMatchObject({ name: 'Retro Style Two' });
+  });
+
+  it('lets the owner keep mature and edit the face', async () => {
+    mockStored({ nsfw: true, ...face, meta: held });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style Two' });
+    expect(updateData()).toMatchObject({ sfwName: 'Retro Style Two' });
+    expect(updateData()).not.toHaveProperty('nsfw', false);
   });
 });

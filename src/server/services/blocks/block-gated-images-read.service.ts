@@ -131,8 +131,8 @@ export async function resolveGatedImagesForBlockClaims(input: {
 
   const browsingLevel = resolveViewerBrowsingLevel(input.claims);
 
-  // Scope the read to THIS app's published and shared-upload images (claims.appId) + bind the
-  // blocked-users/tags clamp to the viewer (userId).
+  // Scope the read to THIS app's published and shared-upload images, and the viewer's own
+  // generation sources (claims.appId) + bind the blocked-users/tags clamp to the viewer (userId).
   return getBlockGatedImagesByIds({
     imageIds: input.imageIds,
     browsingLevel,

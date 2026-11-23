@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AuditModule from '~/utils/metadata/audit';
 import type * as PromptOriginModule from '~/server/services/orchestrator/prompt-origin';
+import type * as FliptClient from '~/server/flipt/client';
+import { getProfanityFilter } from '~/libs/profanity-simple';
 
 /**
  * `classifyPromptServer` is the DECISION half of `auditPromptServer`, split out so a caller can
@@ -39,6 +41,13 @@ const {
 
 vi.mock('~/server/services/blocklist.service', () => ({
   stripBenignPhrases: mockStripBenignPhrases,
+}));
+// With the flag off the gate checks against the shipped lists: this cached instance, not any filter.
+const SHIPPED = getProfanityFilter();
+const flags = vi.hoisted(() => ({ managedList: false }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: async (key: string) => key === 'profanity-managed-list' && flags.managedList,
 }));
 vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   ...(await importOriginal<typeof AuditModule>()),
@@ -253,7 +262,22 @@ describe('classifyPromptServer — the verdict', () => {
   it('audits with the green-only list exactly when isGreen', async () => {
     await classifyPromptServer({ prompt: PROMPT, isGreen: true });
     await classifyPromptServer({ prompt: PROMPT, isGreen: false });
-    expect(mockAuditPromptEnriched.mock.calls.map((c) => c[2])).toEqual([true, false]);
+    const [green, other] = mockAuditPromptEnriched.mock.calls.map((c) => c[2]);
+    expect(green).toBe(SHIPPED);
+    expect(other).toBeUndefined();
+  });
+
+  // With the managed list on, the gate leaves profanity to the orchestrator's rating.
+  // Flag off restores the shipped-list check above.
+  it('runs no profanity check on any domain while profanity-managed-list is on', async () => {
+    flags.managedList = true;
+    try {
+      await classifyPromptServer({ prompt: PROMPT, isGreen: true });
+      await classifyPromptServer({ prompt: PROMPT, isGreen: false });
+    } finally {
+      flags.managedList = false;
+    }
+    expect(mockAuditPromptEnriched.mock.calls.map((c) => c[2])).toEqual([undefined, undefined]);
   });
 });
 
@@ -449,7 +473,9 @@ describe('auditPromptServer — still produces today’s side effects', () => {
   it('passes isGreen through to the regex audit', async () => {
     await auditPromptServer({ ...base, isGreen: true });
     await auditPromptServer({ ...base, isGreen: false });
-    expect(mockAuditPromptEnriched.mock.calls.map((c) => c[2])).toEqual([true, false]);
+    const [green, other] = mockAuditPromptEnriched.mock.calls.map((c) => c[2]);
+    expect(green).toBe(SHIPPED);
+    expect(other).toBeUndefined();
   });
 
   it('logs an external-moderation failure even when a soft block then throws', async () => {

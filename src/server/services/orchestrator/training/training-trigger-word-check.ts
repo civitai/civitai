@@ -36,7 +36,7 @@ export async function assertTrainingTriggerWordAllowed({
   };
 
   // The green-only word list yields soft hits alone, which pass: skipping it changes nothing.
-  const audit = auditTrainingTriggerWord(triggerWord, false);
+  const audit = auditTrainingTriggerWord(triggerWord);
   if (audit.severity === 'hard') refuse(audit.offendingWords, 'rules');
 
   if (

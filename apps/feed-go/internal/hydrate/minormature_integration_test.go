@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/integtest"
+	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
 // Every (minor, nsfwLevel, owner) row, for a moderator, a signed-out viewer and viewer 1180042: the
@@ -148,14 +149,54 @@ func TestIntegrationVersionImagesLeaveOutMinorMature(t *testing.T) {
 	if err := e.src.fillVersionImages(ctx, ids, got, writable); err != nil {
 		t.Fatal(err)
 	}
-	images := asList(got[1180711].Value["images"])
+	images := asList(ObjectField(got[1180711].Ordered(), "images"))
 	kept := make([]int, 0, len(images))
 	for _, img := range images {
-		m, _ := img.(map[string]any)
-		id, _ := Int(m["id"])
+		m, _ := img.(superjson.Object)
+		id, _ := Int(ObjectField(m, "id"))
 		kept = append(kept, id)
 	}
 	if want := []int{1180732, 1180733}; !reflect.DeepEqual(kept, want) {
+		t.Fatalf("showcase ids %v, want %v", kept, want)
+	}
+}
+
+// The showcase lookup returns the same rows as the site's query.
+func TestIntegrationVersionImagesQueryParity(t *testing.T) {
+	e := integMissSetup(t)
+	integtest.Exec(t, e.pool, `DELETE FROM "Image" WHERE id BETWEEN 1180900 AND 1180999;
+		DELETE FROM "Post" WHERE id BETWEEN 1180900 AND 1180999;
+		DELETE FROM "ModelVersion" WHERE id BETWEEN 1180900 AND 1180999;
+		DELETE FROM "Model" WHERE id BETWEEN 1180900 AND 1180999;
+		INSERT INTO "Model" (id, "userId") VALUES (1180901, 1180981);
+		INSERT INTO "ModelVersion" (id, "modelId") VALUES (1180911, 1180901);
+		INSERT INTO "Post" (id, "userId", "modelVersionId", "publishedAt") VALUES (1180921, 1180981, 1180911, now());
+		INSERT INTO "Image" (id, url, "userId", "postId", index, type, metadata, "nsfwLevel", ingestion, minor, "nsfwLevelLocked") VALUES
+		  (1180931, 'u', 1180981, 1180921, 0, 'image', '{}', 1, 'Scanned', false, false),
+		  (1180932, 'u', 1180981, 1180921, 1, 'image', '{}', 32, 'Scanned', false, false),
+		  (1180933, 'u', 1180981, 1180921, 2, 'image', '{}', 32, 'Error', false, true),
+		  (1180934, 'u', 1180981, 1180921, 3, 'image', '{}', 16, 'Scanned', false, false);`)
+	t.Cleanup(func() {
+		integtest.Exec(t, e.pool, `DELETE FROM "Image" WHERE id BETWEEN 1180900 AND 1180999;
+			DELETE FROM "Post" WHERE id BETWEEN 1180900 AND 1180999;
+			DELETE FROM "ModelVersion" WHERE id BETWEEN 1180900 AND 1180999;
+			DELETE FROM "Model" WHERE id BETWEEN 1180900 AND 1180999;`)
+		_ = e.c.Del(integtest.Ctx(t), e.prefix+KeyVersionImages+":1180911").Err()
+	})
+	ctx := integtest.Ctx(t)
+	ids := []int{1180911}
+	got, writable := e.src.read(ctx, KeyVersionImages, ids, versionImagesTTL)
+	if err := e.src.fillVersionImages(ctx, ids, got, writable); err != nil {
+		t.Fatal(err)
+	}
+	images := asList(ObjectField(got[1180911].Ordered(), "images"))
+	kept := make([]int, 0, len(images))
+	for _, img := range images {
+		m, _ := img.(superjson.Object)
+		id, _ := Int(ObjectField(m, "id"))
+		kept = append(kept, id)
+	}
+	if want := []int{1180931, 1180934}; !reflect.DeepEqual(kept, want) {
 		t.Fatalf("showcase ids %v, want %v", kept, want)
 	}
 }

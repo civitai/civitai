@@ -24,6 +24,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -126,10 +127,40 @@ func HasAPICredential(req *http.Request) bool {
 // a `;`, and then may read a later value), so either one seeing a token counts: the looser reading
 // only ever turns a request into a fallback.
 func hasQueryToken(req *http.Request) bool {
-	if v, _ := firstQueryValue(req.URL.RawQuery, "token"); v != "" {
+	return HasQueryTokenRaw(req.URL.RawQuery)
+}
+
+// HasQueryTokenRaw is hasQueryToken over a raw query string: the FIRST `token` value is non-empty,
+// read as URLSearchParams.get reads it (firstQueryValue) or as Go's parser does. It is
+// readRequestBearerToken's reading (`?token=&token=k` is no credential there: the app resolves the
+// cookies).
+func HasQueryTokenRaw(raw string) bool {
+	if v, _ := firstQueryValue(raw, "token"); v != "" {
 		return true
 	}
-	return req.URL.Query().Get("token") != ""
+	q, _ := url.ParseQuery(raw)
+	return q.Get("token") != ""
+}
+
+// AnyQueryToken is requestCarriesQueryToken (src/server/utils/request-query-token.ts), the endpoint
+// wrappers' credential test: ANY `token` value is non-empty, read as URLSearchParams reads the pairs
+// (split on `&` only, an invalid escape kept as written: firstQueryValue's reading) or as Go's parser
+// does (which drops a pair with an invalid escape or a `;`). It reports every request HasQueryTokenRaw
+// does, and also one whose first value is empty and a later one is not (`?token=&token=k`).
+func AnyQueryToken(raw string) bool {
+	for _, pair := range strings.Split(raw, "&") {
+		k, v, _ := strings.Cut(pair, "=")
+		if lenientUnescape(k) == "token" && lenientUnescape(v) != "" {
+			return true
+		}
+	}
+	q, _ := url.ParseQuery(raw)
+	for _, v := range q["token"] {
+		if v != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // CarriesBearer reports whether the app would resolve the request's session from an API credential

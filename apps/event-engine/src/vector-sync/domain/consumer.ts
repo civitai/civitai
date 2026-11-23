@@ -1,7 +1,7 @@
 import http from 'http';
 import { Kafka, type Consumer } from 'kafkajs';
 import { assertVectorSyncConfig, config, domainEmbedEnabled } from '@/config';
-import { createGuardedPgPool } from '@/utils/pg-pool-guard';
+import { vectorPgPool } from '../pg';
 import { logger } from '@/utils/logger';
 import { Embedder } from '../embedder';
 import { serveMetrics, vectorSyncMetrics } from '../metrics';
@@ -70,11 +70,7 @@ export async function runSyncConsumer(opts: {
   assertVectorSyncConfig();
   const { log, domains } = opts;
   const vs = config.vectorSync;
-  const pg = createGuardedPgPool(
-    { connectionString: config.postgres.connectionString, max: vs.pgPoolMax },
-    log,
-    (message, err) => logger.error({ err }, message)
-  );
+  const pg = vectorPgPool(log);
   const lanes = [];
   for (const domain of domains) {
     const store = domain.store();

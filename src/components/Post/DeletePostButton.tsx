@@ -1,7 +1,4 @@
-import {
-  isDeleteAfterReview,
-  notifyDeleteAfterReview,
-} from '~/components/Image/hooks/useDeleteImage';
+import { notifyDeleteNotice } from '~/components/Image/hooks/useDeleteImage';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { Text } from '@mantine/core';
@@ -29,8 +26,7 @@ export function DeletePostButton({
   const currentUser = useCurrentUser();
   const { mutate, isPending: isLoading } = trpc.post.delete.useMutation({
     async onSuccess(result, { id }) {
-      if (isDeleteAfterReview(result)) notifyDeleteAfterReview();
-      else
+      if (!notifyDeleteNotice(result))
         showSuccessNotification({
           title: 'Post deleted',
           message: 'Successfully deleted post',

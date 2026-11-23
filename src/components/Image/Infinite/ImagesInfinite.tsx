@@ -1,5 +1,6 @@
 import { useRouter } from 'next/router';
 import { Button, Center, Group, Loader, LoadingOverlay, Text } from '@mantine/core';
+import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 import { getQueryKey } from '@trpc/react-query';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
@@ -34,7 +35,7 @@ import {
 } from '~/components/Image/Infinite/image-feed-search';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
-import type { SearchRefusal } from '~/components/Search/search-refusal';
+import { isSearchRefusedError, type SearchRefusal } from '~/components/Search/search-refusal';
 import { ImageFeedSearchSummary } from '~/components/Image/Infinite/ImageFeedSearchSummary';
 import {
   useImageFeedSearchQuery,
@@ -99,7 +100,7 @@ function SearchableImagesFeed(props: ImagesInfiniteProps) {
   const similarTo = useImageFeedSimilarTo();
   const { sort } = useImageFeedSearchSort();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
-  const { refusal, profanityMatches } = useSearchRefusal(query, 'images_semantic');
+  const { refusal, profanityMatches } = useSearchRefusal(query, 'images_semantic', 'semantic');
   // A feed with its own filters (a profile tab) keeps its period: the saved one is the images feed's.
   const period = useSearchPeriod(!props.disableStoreFilters && (!!query || !!similarTo));
   return (
@@ -184,20 +185,33 @@ function ImagesFeed({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [String(rawModelVersionIds ?? '')]
   );
+  const { asTyped } = useSearchAsTyped(searchQuery);
   const searchInput = useMemo(
     () =>
       searchQuery || similarTo
-        ? toSemanticImageSearchInput({
-            query: searchQuery,
-            imageId: similarTo,
-            filters,
-            browsingLevel,
-            sort: feedSearch?.sort,
-            excludeOwn,
-            modelVersionIds,
-          })
+        ? {
+            ...toSemanticImageSearchInput({
+              query: searchQuery,
+              imageId: similarTo,
+              filters,
+              browsingLevel,
+              sort: feedSearch?.sort,
+              excludeOwn,
+              modelVersionIds,
+            }),
+            ...spellcheckFor(asTyped && !!searchQuery),
+          }
         : undefined,
-    [searchQuery, similarTo, filters, browsingLevel, feedSearch?.sort, excludeOwn, modelVersionIds]
+    [
+      searchQuery,
+      similarTo,
+      filters,
+      browsingLevel,
+      feedSearch?.sort,
+      excludeOwn,
+      modelVersionIds,
+      asTyped,
+    ]
   );
   const search = useSemanticImageFeed(searchInput, {
     videos: filterType === 'videos' && !!features.semanticVideoSearch,
@@ -326,9 +340,10 @@ function ImagesFeed({
     />
   );
 
-  if (refusal)
+  const shownRefusal = refusal ?? (isSearchRefusedError(search.error) ? 'profanity' : undefined);
+  if (shownRefusal)
     return (
-      <SearchRefusalNotice refusal={refusal} profanityMatches={feedSearch?.profanityMatches} />
+      <SearchRefusalNotice refusal={shownRefusal} profanityMatches={feedSearch?.profanityMatches} />
     );
 
   return (

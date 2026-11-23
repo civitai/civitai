@@ -5,6 +5,7 @@ import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilis
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
+import { withoutUserImage } from '~/server/search-index/search-index-user';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
 import {
@@ -94,7 +95,7 @@ export const transformData = async ({
   const servable = (image: Article['coverImage']) =>
     image && !withheld(image) ? servableArticleImage(image) : null;
   const records = articles
-    .map(({ tags, stats, bannerImage, ...articleRecord }) => {
+    .map(({ tags, stats, bannerImage, user, ...articleRecord }) => {
       // Blocked or under-review cover: not indexed. Unscanned cover: indexed without it, so the
       // article stays searchable.
       const cover = articleRecord.coverImage;
@@ -105,6 +106,7 @@ export const transformData = async ({
       if (!coverImage && !cover) return null;
       return {
         ...articleRecord,
+        user: withoutUserImage(user),
         // The legacy `cover` is the same image's key. Null, not absent: an update merges into the
         // stored document.
         ...(coverWithheld && { cover: null }),
@@ -188,7 +190,7 @@ export const articleSearchEligibleWhere = {
   status: ArticleStatus.Published,
   ingestion: ArticleIngestionStatus.Scanned,
   tosViolation: false,
-  availability: { not: Availability.Unsearchable },
+  availability: { notIn: [Availability.Unsearchable, Availability.Private] },
 } satisfies Prisma.ArticleWhereInput;
 
 /**

@@ -66,6 +66,34 @@ describe('mintAccessTokenJwt', () => {
     expect(payload).not.toHaveProperty('act');
     expect(payload).not.toHaveProperty('roles');
     expect(payload).not.toHaveProperty('civitai_uid');
+    expect(payload).not.toHaveProperty('civitai_token_kind');
+    expect(payload).not.toHaveProperty('civitai_app_block_id');
+    expect(payload).not.toHaveProperty('civitai_block_instance_id');
+    expect(payload).not.toHaveProperty('civitai_max_browsing_level');
+    expect(payload).not.toHaveProperty('civitai_viewer_browsing_level');
+  });
+
+  it('writes a block binding as its five claims, together', async () => {
+    const payload = decodeJwt(
+      await signer.mintAccessTokenJwt(
+        claims({
+          block: {
+            appBlockId: 'apb-7d1e',
+            blockInstanceId: 'inst-93c4',
+            maxBrowsingLevel: 7,
+            viewerBrowsingLevel: 5,
+          },
+        })
+      )
+    );
+    expect(payload).toMatchObject({
+      civitai_token_kind: 'block-exchange',
+      civitai_app_block_id: 'apb-7d1e',
+      civitai_block_instance_id: 'inst-93c4',
+      civitai_max_browsing_level: 7,
+      civitai_viewer_browsing_level: 5,
+    });
+    expect(payload).not.toHaveProperty('block');
   });
 
   it('carries roles and civitai_uid only when given', async () => {

@@ -114,3 +114,74 @@ func TestIntegrationPostgresWritesAreFenced(t *testing.T) {
 		t.Fatalf("cursor %q", c)
 	}
 }
+
+// layout1SQL is app_index_apps as layout 1 created it, before listing_rating and listing_rated.
+const layout1SQL = `
+CREATE TABLE app_index_cursors (
+  generation bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  schema text NOT NULL,
+  layout integer NOT NULL,
+  cursor text NOT NULL DEFAULT '',
+  state text NOT NULL CHECK (state IN ('building', 'serving', 'retired')),
+  owner text NOT NULL DEFAULT '',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE app_index_apps (
+  generation bigint NOT NULL REFERENCES app_index_cursors (generation) ON DELETE CASCADE,
+  urn text NOT NULL,
+  rev text NOT NULL,
+  body jsonb NOT NULL,
+  slug text NOT NULL,
+  name text NOT NULL,
+  name_key text NOT NULL,
+  kind text NOT NULL,
+  category text,
+  rating text,
+  creator text,
+  tagline text,
+  icon_url text,
+  release text,
+  search tsvector GENERATED ALWAYS AS (
+    setweight(to_tsvector('simple', name), 'A') ||
+    setweight(to_tsvector('simple', slug), 'B') ||
+    setweight(to_tsvector('simple', coalesce(tagline, '')), 'B') ||
+    setweight(to_tsvector('simple', coalesce(creator, '')), 'C')
+  ) STORED,
+  PRIMARY KEY (generation, urn)
+);
+INSERT INTO app_index_cursors (schema, layout, cursor, state) VALUES ('urn:schema:apps.civitai.com:app@v1', 1, 'L1', 'serving');
+INSERT INTO app_index_apps (generation, urn, rev, body, slug, name, name_key, kind, rating) VALUES
+  (1, 'urn:apps.civitai.com:app/old-x', 'r1', '{"slug":"old-x","name":"old-x","kind":"onsite","contentRating":"x","listingContentRating":null}', 'old-x', 'old-x', 'old-x', 'onsite', 'x'),
+  (1, 'urn:apps.civitai.com:app/old-null', 'r2', '{"slug":"old-null","name":"old-null","kind":"onsite","contentRating":null}', 'old-null', 'old-null', 'old-null', 'onsite', NULL);
+`
+
+// A database a layout 1 index created gains the new columns at startup, and the rows it holds are
+// filtered on their rating exactly as before (listing_rated false), even one whose stored body
+// carries listingContentRating: layout 1 never read it, so only the layout 2 rebuild beside it
+// (index.LayoutVersion) changes what they answer.
+func TestIntegrationPostgresLayout1RowsKeepTheirRating(t *testing.T) {
+	pool := pgtest.Pool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, layout1SQL); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewPostgres(ctx, pool)
+	if err != nil {
+		t.Fatalf("start over layout 1: %v", err)
+	}
+	if got := slugs(t, s, Query{}); !slices.Equal(got, []string{"old-null"}) {
+		t.Errorf("SFW over layout 1 rows = %v, want [old-null]", got)
+	}
+	if got := slugs(t, s, Query{Mature: Mature{X: true}}); !slices.Equal(got, []string{"old-null", "old-x"}) {
+		t.Errorf("X over layout 1 rows = %v, want [old-null old-x]", got)
+	}
+	// A row written now, into the same generation, is filtered on its listing's rating.
+	if err := s.Claim(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	mustApply(t, s, 1, Change{Kind: ChangeUpsert, App: listedApp("new-x", "x", nil), Cursor: "c2"})
+	if got := slugs(t, s, Query{}); !slices.Equal(got, []string{"new-x", "old-null"}) {
+		t.Errorf("SFW after a layout 2 write = %v, want [new-x old-null]", got)
+	}
+}

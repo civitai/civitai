@@ -56,7 +56,7 @@ export type ModelVersionSponsorshipSettingsType = "FixedPrice" | "Bidding";
 
 export type ModelVersionMonetizationType = "PaidAccess" | "PaidEarlyAccess" | "PaidGeneration" | "CivitaiClubOnly" | "MySubscribersOnly" | "Sponsored";
 
-export type LicensingFeeType = "PerImageBuzz";
+export type LicensingFeeType = "PerImageBuzz" | "PercentOfCompute";
 
 export type LicensingFeeSettlementCurrency = "Buzz" | "Cash";
 
@@ -738,6 +738,7 @@ export interface User {
   blockGoodPurchasesAsAppOwner?: BlockGoodPurchase[];
   blockGoodEntitlements?: BlockGoodEntitlement[];
   publishRequestsSubmitted?: AppBlockPublishRequest[];
+  appAssistantSessionLinks?: AppAssistantSessionLink[];
   publishRequestsReviewed?: AppBlockPublishRequest[];
   blockScopeInvocations?: BlockScopeInvocation[];
   appUserScopeGrants?: AppUserScopeGrant[];
@@ -1128,6 +1129,7 @@ export interface ModelVersionShowcaseItem {
   source: string;
   position: number | null;
   excluded: boolean;
+  removed: boolean;
   addedById: number;
   createdAt: Date;
 }
@@ -1189,6 +1191,9 @@ export interface ModelVersion {
   licensingFee: Decimal | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  licensingFeeMarkup: Decimal | null;
+  licensingFeeLocked: boolean;
+  licensingFeePaidByInvoice: boolean;
   licensingSourceVersionId: number | null;
   licensingSource?: ModelVersion | null;
   monetization?: ModelVersionMonetization | null;
@@ -1225,6 +1230,7 @@ export interface LicensingRoot {
   modelVersionId: number;
   modelVersion?: ModelVersion;
   isDefault: boolean;
+  restricted: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1459,6 +1465,7 @@ export interface Report {
   gameFrameGame?: GameFrameGameReport | null;
   serviceOffering?: ServiceOfferingReport | null;
   postText?: PostTextReport | null;
+  serviceDealReview?: ServiceDealReviewReport | null;
   gameFrameReceipts?: GameFrameReportReceipt[];
 }
 
@@ -2445,6 +2452,7 @@ export interface AppBlockPublishRequest {
   deployUpdatedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  assistantTrace?: AppPublishRequestTrace | null;
 }
 
 export interface AppBlockBuildAttempt {
@@ -2458,6 +2466,34 @@ export interface AppBlockBuildAttempt {
   failedStep: string | null;
   failedReason: string | null;
   failureClass: string | null;
+  createdAt: Date;
+}
+
+export interface AppAssistantSessionLink {
+  id: number;
+  userId: number;
+  user?: User;
+  conversationId: string;
+  appSlug: string;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  turnCount: number;
+  lastModel: string | null;
+  buzzTotal: number;
+  lastRunId: string | null;
+}
+
+export interface AppPublishRequestTrace {
+  id: number;
+  publishRequestId: string;
+  publishRequest?: AppBlockPublishRequest;
+  slug: string;
+  userId: number;
+  conversationIds: string[];
+  snapshots: JsonValue;
+  signals: JsonValue;
+  signalsVersion: number;
+  snapshotError: string | null;
   createdAt: Date;
 }
 
@@ -5311,6 +5347,11 @@ export interface KnightsPlayer {
   recapPopupOptOut: boolean;
 }
 
+export interface KnightsLegacyPlayerDay {
+  playerId: number;
+  day: Date;
+}
+
 export interface KnightsPlayerDay {
   playerId: number;
   day: Date;
@@ -7168,6 +7209,7 @@ export interface ServiceOffering {
   deals?: ServiceDeal[];
   reports?: ServiceOfferingReport[];
   reviews?: ServiceDealReview[];
+  reviewReports?: ServiceDealReviewReport[];
 }
 
 export interface ServiceOfferingReport {
@@ -7268,6 +7310,16 @@ export interface ServiceDealReview {
   createdAt: Date;
   updatedAt: Date;
   images?: ServiceDealReviewImage[];
+  reports?: ServiceDealReviewReport[];
+}
+
+export interface ServiceDealReviewReport {
+  reportId: number;
+  report?: Report;
+  serviceDealReviewId: number;
+  serviceDealReview?: ServiceDealReview;
+  serviceOfferingId: number;
+  serviceOffering?: ServiceOffering;
 }
 
 export interface ServiceDealReviewImage {

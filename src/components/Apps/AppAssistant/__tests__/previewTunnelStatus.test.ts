@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  fetchSandboxDevServerStatus,
   fetchSandboxTunnelStatus,
   tunnelStatusOf,
 } from '~/components/Apps/AppAssistant/previewTunnelStatus';
@@ -71,5 +72,30 @@ describe('fetchSandboxTunnelStatus', () => {
     expect(await fetchSandboxTunnelStatus(MCP, async () => 'tok', down)).toBeNull();
     const bad = vi.fn(async () => new Response('bad gateway', { status: 502 }));
     expect(await fetchSandboxTunnelStatus(MCP, async () => 'tok', bad)).toBeNull();
+  });
+});
+
+describe('fetchSandboxDevServerStatus', () => {
+  it('calls the sandbox’s dev_server_status and reads whether it runs', async () => {
+    // As sandbox-mcp answers it: running, pid, command, startedAt, uptimeMs, lastExit.
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(answer({ running: true, pid: 41, command: 'pnpm dev', uptimeMs: 9000 }))
+      )
+      .mockResolvedValueOnce(
+        new Response(answer({ running: false, pid: null, lastExit: { code: 1 } }))
+      );
+    expect(await fetchSandboxDevServerStatus(MCP, async () => 'tok', fetchImpl)).toEqual({
+      running: true,
+    });
+    expect(await fetchSandboxDevServerStatus(MCP, async () => 'tok', fetchImpl)).toEqual({
+      running: false,
+    });
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      method: 'tools/call',
+      params: { name: 'dev_server_status', arguments: {} },
+    });
   });
 });

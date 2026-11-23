@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isTextEncoderLockedBase } from '@civitai/shared/training-text-encoder';
+import { kohyaBound, kohyaFieldSupported } from '$lib/data/kohya';
 import { parseServiceStatus } from '$lib/service-status-core';
 import {
   LORA_TYPES,
@@ -41,6 +42,7 @@ import {
   runEngine,
   runParamsKey,
   runTrainingParams,
+  runVersion,
   sampleImagesProblem,
   seedPrompts,
   startLabelPass,
@@ -978,6 +980,29 @@ describe('Kohya engine selection and options', () => {
       expect.objectContaining({ field: 'resolution', value: '768' })
     );
     expect(runTrainingParams(kohya, params, 'tag').resolution).toBe(768);
+  });
+
+  it.each(['sdxl', 'pony', 'illustrious'])(
+    'offers Kohya clip skip for %s, defaulting to 2 with a floor of 2',
+    (type) => {
+      const kohya = { ...run(type), engine: 'kohya' };
+      const { ecosystem } = runVersion(kohya);
+      expect(kohyaFieldSupported('clipSkip', ecosystem)).toBe(true);
+      expect(kohyaBound('clipSkip', ecosystem)).toMatchObject({ min: 2, max: 4 });
+      expect(defaultRunParams(kohya).clipSkip).toBe('2');
+      expect(runTrainingParams(kohya, defaultRunParams(kohya), 'tag').kohya?.clipSkip).toBe(2);
+      const picked = { ...defaultRunParams(kohya), clipSkip: '3' };
+      expect(runTrainingParams(kohya, picked, 'tag').kohya?.clipSkip).toBe(3);
+    }
+  );
+
+  it('keeps SD1 Kohya clip skip at 1-4 and hides it for flow bases', () => {
+    const sd1 = { ...run('sd15', 'realistic'), engine: 'kohya' };
+    expect(kohyaFieldSupported('clipSkip', runVersion(sd1).ecosystem)).toBe(true);
+    expect(kohyaBound('clipSkip', 'sd1')).toMatchObject({ min: 1, max: 4 });
+    expect(defaultRunParams(sd1).clipSkip).toBe('1');
+    expect(kohyaFieldSupported('clipSkip', 'flux1')).toBe(false);
+    expect(kohyaFieldSupported('clipSkip', 'anima')).toBe(false);
   });
 
   it('uses Kohya model defaults for cleared fields in both quotes and submits', () => {

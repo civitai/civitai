@@ -26,6 +26,9 @@ export const personalDataExportReadyEmail = createEmail({
   header: ({ to }: ReadyData) => ({ subject: COVER_NOTE_SUBJECT, to }),
   html: (data: ReadyData) =>
     simpleEmailWithTemplate({
+      icon: '📦',
+      accent: 'blue',
+      eyebrow: 'Your data',
       header: COVER_NOTE_SUBJECT,
       body: personalDataExportReadyHtml(data),
     }),
@@ -70,6 +73,9 @@ export const personalDataExportBuiltEmail = createEmail({
       '<p>Nothing has been sent to the account owner. Release it from the Data Exports page once it has been reviewed.</p>',
     ];
     return simpleEmailWithTemplate({
+      icon: '📦',
+      accent: 'gray',
+      eyebrow: 'Staff: data export',
       header: `Personal data export #${exportId}`,
       body: parts.join(''),
     });
@@ -98,6 +104,9 @@ export const personalDataExportHeldEmail = createEmail({
   }),
   html: ({ exportId }: HeldData) =>
     simpleEmailWithTemplate({
+      icon: '⏸️',
+      accent: 'gray',
+      eyebrow: 'Staff: data export',
       header: `Personal data export #${exportId}`,
       body: '<p>Held, being routed to Legal.</p>',
     }),

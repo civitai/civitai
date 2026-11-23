@@ -289,6 +289,54 @@ describe('basis grant: the reading client is another app importing from the sour
   });
 });
 
+describe('a reader bound to one block (a block-exchange token, DataReader.appBlockId)', () => {
+  const bound = (clientId: string, appBlockId: string): DataReader => ({
+    ...reader(clientId),
+    appBlockId,
+  });
+
+  it('POSITIVE CONTROL: bound to the approved block, it reads as the unbound reader does', async () => {
+    expect(
+      await decideCollectionRead(bound(SOURCE_CLIENT, SOURCE_ID), target('journal'))
+    ).toMatchObject({ ok: true, basis: 'own', source: { id: SOURCE_ID } });
+    expect(
+      await decideCollectionRead(bound(CONSUMER_CLIENT, CONSUMER_ID), target('journal'))
+    ).toMatchObject({ ok: true, basis: 'grant', source: { id: SOURCE_ID } });
+  });
+
+  it('🔴 own: refused when the token is another block of the client than its one approved block', async () => {
+    // The token was minted for a block of the source's client that is no longer the approved one.
+    expect(
+      await decideCollectionRead(bound(SOURCE_CLIENT, 'apb_src_old_6610'), target('journal'))
+    ).toEqual({ ok: false, reason: 'token_block_not_approved' });
+    // Unbound (a user-exchange token's reader), the same client still reads: nothing changed for it.
+    expect(await decideCollectionRead(reader(SOURCE_CLIENT), target('journal'))).toMatchObject({
+      ok: true,
+      basis: 'own',
+    });
+  });
+
+  it('🔴 grant: refused when the token is another block of the consumer than its approved one', async () => {
+    expect(
+      await decideCollectionRead(bound(CONSUMER_CLIENT, 'apb_con_old_2287'), target('journal'))
+    ).toEqual({ ok: false, reason: 'token_block_not_approved' });
+    expect(grantReads).toEqual([]);
+  });
+
+  it("the bound block switched away: the token's block suspended, another approved", async () => {
+    // The token's block was approved when it was exchanged; now a successor block of the same client is.
+    rows = [
+      sourceRow({ id: 'apb_src_next_8124', blockId: SOURCE_BLOCK }),
+      sourceRow({ id: SOURCE_ID, blockId: 'notes-hub-old-5531', status: 'suspended' }),
+      consumerRow(consumerManifest(['journal'])),
+    ];
+    expect(await decideCollectionRead(bound(SOURCE_CLIENT, SOURCE_ID), target('journal'))).toEqual({
+      ok: false,
+      reason: 'token_block_not_approved',
+    });
+  });
+});
+
 describe('through a verified block token (via)', () => {
   const via = (over: Partial<{ importScope: 'held' | 'missing' | 'unavailable' }> = {}) => ({
     appBlockId: CONSUMER_ID,

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { showcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -97,20 +98,31 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
 
 // The CSAM bucket: what the default archive writes when the caller passes none.
 const upload = vi.hoisted(() => ({ fail: undefined as Error | undefined, done: [] as string[] }));
-vi.mock('@aws-sdk/lib-storage', () => {
-  const Upload = class {
-    private readonly params: { Body: NodeJS.ReadableStream; Key: string };
-    constructor({ params }: { params: { Body: NodeJS.ReadableStream; Key: string } }) {
-      this.params = params;
+// Both carry `default`: the package is pre-bundled for CJS interop, so consumers resolve through it.
+vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@aws-sdk/client-s3')>();
+  const objects = new Map<string, { body: Uint8Array; Metadata?: Record<string, string> }>();
+  const S3Client = class {
+    async send(command: unknown) {
+      if (command instanceof real.PutObjectCommand) {
+        if (upload.fail) throw upload.fail;
+        const { Key, Body, Metadata } = command.input;
+        objects.set(Key!, { body: Body as Uint8Array, Metadata });
+        upload.done.push(Key!);
+        return {};
+      }
+      if (command instanceof real.GetObjectCommand) {
+        const found = objects.get(command.input.Key!)!;
+        return { Metadata: found.Metadata, Body: { transformToByteArray: async () => found.body } };
+      }
+      return {};
     }
-    async done() {
-      for await (const chunk of this.params.Body) void chunk;
-      if (upload.fail) throw upload.fail;
-      upload.done.push(this.params.Key);
-      return { ETag: '"etag"' };
+    destroy() {
+      return undefined;
     }
   };
-  return { Upload, default: { Upload } };
+  const mocked = { ...real, S3Client };
+  return { ...mocked, default: mocked };
 });
 
 const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
@@ -410,6 +422,12 @@ describe('toggleBan -> removeMedia', () => {
       'positive control: softDeleteUser never reached its own CSAM block'
     ).toBe(true);
     expect(refreshShowcases).toHaveBeenCalledWith(USER_ID);
+    // The block's home-block refresh (`evictHomeBlocksForImages`), looked up by this user.
+    const homeBlockLookups = dbMock.dbRead.$queryRaw.mock.calls.filter(([query]) => {
+      const { sql, values } = query as unknown as { sql?: string; values?: unknown[] };
+      return !!sql?.includes('"CollectionItem"') && !!values?.includes(USER_ID);
+    });
+    expect(homeBlockLookups, 'softDeleteUser did not refresh the home blocks').toHaveLength(1);
   });
 });
 
@@ -689,5 +707,30 @@ describe('toggleBan -> reviews written from the posts its model unpublish takes 
         expect.objectContaining({ change: 'unpublish', postIds: [9] })
       )
     );
+  });
+});
+
+describe('toggleBan -> version showcases', () => {
+  it("takes a banned author's featured images out of every showcase, and back on an unban", async () => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+    const showcaseReads = () =>
+      showcaseQueries(dbMock.dbWrite.$queryRaw).map((read) => read.values);
+    await call();
+    expect(showcaseReads()).toEqual([[USER_ID]]);
+
+    dbMock.dbWrite.$queryRaw.mockClear();
+    userFindUnique.mockResolvedValue({
+      bannedAt: ALREADY_BANNED_AT,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+    await call();
+    expect(showcaseReads()).toEqual([[USER_ID]]);
   });
 });

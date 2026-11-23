@@ -37,10 +37,24 @@ const article = (images: { coverImage: unknown; bannerImage: unknown; cover?: st
     content: '<p>Hi</p>',
     tags: [],
     stats: null,
+    user: { id: 7, username: 'author', image: 'legacy-avatar.png', profilePicture: { id: 70 } },
     ...images,
   } as unknown as Input['articles'][number]);
 
 describe('articles search index', () => {
+  it("indexes the author's profile picture but not the legacy image", async () => {
+    const [record] = await recordsOf({
+      articles: [article({ coverImage: image(10, 1), bannerImage: null })],
+      cosmetics: {},
+    });
+    expect(record?.user).toEqual({
+      id: 7,
+      username: 'author',
+      image: null,
+      profilePicture: { id: 70 },
+    });
+  });
+
   it('indexes a banner-only article with its banner as the card image', async () => {
     const [record] = await recordsOf({
       articles: [article({ coverImage: null, bannerImage: image(11, 1) })],

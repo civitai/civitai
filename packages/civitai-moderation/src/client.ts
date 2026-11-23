@@ -1,12 +1,23 @@
 import {
   MOD_ACTION,
   abuseReportInput,
+  caseDefinitionsInput,
+  caseIntakeInput,
+  casePartyActionInput,
+  casePartyViewInput,
+  type CaseIntakeInput,
+  type CasePartyActionInput,
+  type CasePartyViewInput,
   feedbackTriageInput,
   imageModerateInput,
+  imageTagModerateInput,
+  imageTagModerateResponse,
   relabelBuildBatchInput,
   type AbuseReportInput,
   type FeedbackTriageInput,
   type ImageModerateInput,
+  type ImageTagModerateInput,
+  type ImageTagModerateResult,
   type ModActionName,
   type RelabelBuildBatchInput,
 } from './schema';
@@ -30,7 +41,14 @@ export type ModeratorClientConfig = {
 };
 
 export class ModeratorClientError extends Error {
-  constructor(message: string, readonly status?: number) {
+  constructor(
+    message: string,
+    readonly status?: number,
+    /** A refused takedown form's problems by field id: fixed strings, none quoting the submission. */
+    readonly fieldErrors?: Record<string, string>,
+    /** The moderator app worded this refusal for the person filing. */
+    readonly isPublic = false
+  ) {
     super(message);
     this.name = 'ModeratorClientError';
   }
@@ -64,15 +82,22 @@ export function createModeratorClient(config: ModeratorClientConfig = {}) {
         // SvelteKit `error(status, message)` responds with `{"message": "..."}` — surface that clean
         // message when present (so a 4xx like a conflicting verdict reads well), else the raw body.
         let detail = text;
+        let fieldErrors: Record<string, string> | undefined;
+        let isPublic = false;
         try {
           const parsed = JSON.parse(text);
           if (parsed && typeof parsed.message === 'string') detail = parsed.message;
+          if (parsed && typeof parsed.fieldErrors === 'object' && parsed.fieldErrors !== null)
+            fieldErrors = parsed.fieldErrors;
+          if (parsed && parsed.public === true) isPublic = true;
         } catch {
           // not JSON — keep the raw text
         }
         throw new ModeratorClientError(
           detail || `moderator action "${action}" failed: ${res.status}`,
-          res.status
+          res.status,
+          fieldErrors,
+          isPublic
         );
       }
       return await res.json().catch(() => ({}));
@@ -88,14 +113,40 @@ export function createModeratorClient(config: ModeratorClientConfig = {}) {
     }
   }
 
+  /** Public intake is on a person's request path, so it fails fast rather than hold the page. */
+  const CASE_TIMEOUT_MS = 5_000;
+
   return {
     call,
+    /** The enabled takedown request definitions, for the public /requests pages. */
+    caseDefinitions: (): Promise<unknown> =>
+      call(MOD_ACTION.caseDefinitions, caseDefinitionsInput.parse({}), {
+        timeoutMs: CASE_TIMEOUT_MS,
+      }),
+    /** File one public takedown request. Idempotent on `submissionId`. */
+    caseIntake: (input: CaseIntakeInput): Promise<unknown> =>
+      call(MOD_ACTION.caseIntake, caseIntakeInput.parse(input), { timeoutMs: CASE_TIMEOUT_MS }),
+    /** A party's own view of its case, through its link token. */
+    casePartyView: (input: CasePartyViewInput): Promise<unknown> =>
+      call(MOD_ACTION.casePartyView, casePartyViewInput.parse(input), {
+        timeoutMs: CASE_TIMEOUT_MS,
+      }),
+    /** A party's public action on its case (a counter-notice, say), through its link token. */
+    casePartyAction: (input: CasePartyActionInput): Promise<unknown> =>
+      call(MOD_ACTION.casePartyAction, casePartyActionInput.parse(input), {
+        timeoutMs: CASE_TIMEOUT_MS,
+      }),
     /** Set one feedback report's triage status as the moderator queue does. Not retried. */
     feedbackTriage: (input: FeedbackTriageInput): Promise<unknown> =>
       call(MOD_ACTION.feedbackTriage, feedbackTriageInput.parse(input)),
     /** Block or unblock one or more images. Validates the payload locally before the network call. */
     imageModerate: (input: ImageModerateInput): Promise<unknown> =>
       call(MOD_ACTION.imageModerate, imageModerateInput.parse(input)),
+    /** Write back a Paladin consensus on one flagged tag (Knights). Not retried; an answer it cannot read throws. */
+    imageTagModerate: async (input: ImageTagModerateInput): Promise<ImageTagModerateResult> =>
+      imageTagModerateResponse.parse(
+        await call(MOD_ACTION.imageTagModerate, imageTagModerateInput.parse(input))
+      ).result,
     /**
      * File one run of an automated abuse detector on the moderation board.
      *

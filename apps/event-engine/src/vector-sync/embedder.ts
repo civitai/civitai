@@ -22,8 +22,39 @@ type StepOutput = {
 type Workflow = {
   id: string;
   status: string;
-  steps?: Array<{ name?: string; status?: string; output?: StepOutput }>;
+  steps?: Array<WorkflowStep>;
 };
+type WorkflowStep = {
+  name?: string;
+  status?: string;
+  output?: StepOutput;
+  [field: string]: unknown;
+};
+
+const MAX_DETAIL_CHARS = 600;
+// An outage fails a whole batch alike: a few of its steps say what the rest would.
+const MAX_DETAILED_STEPS = 10;
+/**
+ * What a failed step says about itself, for the log: everything but its input (the media URL) and
+ * the embedding. The step schema documents no error field, so nothing is picked by name.
+ */
+export function failedStepDetail(step: WorkflowStep | undefined): string {
+  if (!step) return 'no step in the workflow';
+  const without = (o: object, drop: string[]) =>
+    Object.fromEntries(Object.entries(o).filter(([key]) => !drop.includes(key)));
+  const { output } = step;
+  const kept = {
+    ...without(step, ['input', 'name', 'output']),
+    ...(output && { output: without(output, ['embedding']) }),
+  };
+  const detail = JSON.stringify(kept).replace(/https?:\/\/[^"\s]*/g, '<url>');
+  return detail.length > MAX_DETAIL_CHARS ? `${detail.slice(0, MAX_DETAIL_CHARS)}…` : detail;
+}
+
+const stepDetails = (ids: string[], steps: Map<string | undefined, WorkflowStep>) =>
+  ids
+    .slice(0, MAX_DETAILED_STEPS)
+    .map((id) => ({ id, detail: failedStepDetail(steps.get(stepName(id))) }));
 
 export const MAX_INPUTS_PER_WORKFLOW = 128;
 export const MAX_VIDEOS_PER_WORKFLOW = 8;
@@ -535,7 +566,12 @@ export class Embedder {
       );
     } else if (outage) {
       logger.error(
-        { workflow: workflow.id, status: workflow.status, ids: failed },
+        {
+          workflow: workflow.id,
+          status: workflow.status,
+          ids: failed,
+          steps: stepDetails(failed, steps),
+        },
         'vector-sync: workflow kept failing after retries; inputs failed'
       );
       call.result.failed.push(...failed.map(Number));
@@ -547,6 +583,7 @@ export class Embedder {
           workflow: workflow.id,
           ids: failed,
           ...(batch.length === 1 && { reason: 'media-unavailable' }),
+          steps: stepDetails(failed, steps),
         },
         'vector-sync: steps failed to embed'
       );

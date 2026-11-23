@@ -25,6 +25,7 @@ import {
 
 import { getCachedNsfwWords } from './word-processor';
 import { customLeetSpeakTransformer } from './custom-transformers';
+import { createAnyTermPrefilter } from './any-term-prefilter';
 import { whitelistWords } from '@civitai/mod-utils/profanity/lists';
 import { removeTags } from '~/utils/string-helpers';
 import { NsfwLevel } from '~/server/common/enums';
@@ -53,9 +54,6 @@ export interface ProfanityFilterOptions {
    */
   moderatorBlocklist: readonly string[] | null;
 }
-
-/** A managed blocked list and the version that identifies it in caches. */
-export type ManagedProfanityList = { version: string; words: readonly string[] };
 
 export interface ProfanityThresholdConfig {
   /** Word count threshold for considering content as "short" */
@@ -139,6 +137,7 @@ export const LIBRARY_OVERMATCH_TOKENS = ['fu'] as const;
 
 export class SimpleProfanityFilter {
   private matcher!: RegExpMatcher;
+  private anyTermPrefilter: ((text: string) => boolean) | null = null;
   private censor!: TextCensor;
   private options: ProfanityFilterOptions;
   private dataset: DataSet<{ originalWord: string }>;
@@ -190,11 +189,16 @@ export class SimpleProfanityFilter {
     });
   }
 
+  private getAllMatches(text: string, sorted = false): MatchPayload[] {
+    if (this.anyTermPrefilter && !this.anyTermPrefilter(text)) return [];
+    return this.matcher.getAllMatches(text, sorted);
+  }
+
   /**
    * Clean profane words from text
    */
   clean(text: string): string {
-    const matches = this.excludeWhitelisted(text, this.matcher.getAllMatches(text));
+    const matches = this.excludeWhitelisted(text, this.getAllMatches(text));
     return this.censor.applyTo(text, matches);
   }
 
@@ -202,7 +206,7 @@ export class SimpleProfanityFilter {
    * Get detailed information about matches
    */
   analyze(text: string) {
-    const matches = this.matcher.getAllMatches(text, true); // sorted by position
+    const matches = this.getAllMatches(text, true); // sorted by position
 
     if (matches.length === 0) {
       return {
@@ -427,6 +431,7 @@ export class SimpleProfanityFilter {
       ],
       whitelistMatcherTransformers: englishRecommendedWhitelistMatcherTransformers,
     });
+    this.anyTermPrefilter = createAnyTermPrefilter(this.matcher);
   }
 
   private initializeCensor(): void {
@@ -511,37 +516,15 @@ export function createProfanityFilter(
 // normally holds the pre-load (static) filter and the current one.
 const MAX_CACHED_FILTERS = 2;
 const filtersByWhitelist = new Map<string, SimpleProfanityFilter>();
-// A managed entry the pattern parser rejects must not take masking down with it.
-function buildFilterOrShipped(
-  moderatorWhitelist: string[] | null,
-  managedBlocklist: ManagedProfanityList | null
-): SimpleProfanityFilter {
-  if (!managedBlocklist) return createProfanityFilter({ moderatorWhitelist });
-  try {
-    return createProfanityFilter({
-      moderatorWhitelist,
-      moderatorBlocklist: managedBlocklist.words,
-    });
-  } catch (error) {
-    console.warn('Managed profanity list failed to build; using the shipped list', error);
-    return createProfanityFilter({ moderatorWhitelist });
-  }
-}
-
 export function getProfanityFilter(
-  moderatorWhitelist: string[] | null = null,
-  managedBlocklist: ManagedProfanityList | null = null
+  moderatorWhitelist: string[] | null = null
 ): SimpleProfanityFilter {
   // `null` (no row) and `[]` (emptied by a moderator) mean different things, so they must not
   // collide on the same cache key.
-  const whitelistKey =
-    moderatorWhitelist === null ? 'no-moderator-row' : `list:${moderatorWhitelist}`;
-  const key = managedBlocklist
-    ? `${whitelistKey}|blocked:${managedBlocklist.version}`
-    : whitelistKey;
+  const key = moderatorWhitelist === null ? 'no-moderator-row' : `list:${moderatorWhitelist}`;
   let filter = filtersByWhitelist.get(key);
   if (!filter) {
-    filter = buildFilterOrShipped(moderatorWhitelist, managedBlocklist);
+    filter = createProfanityFilter({ moderatorWhitelist });
     if (filtersByWhitelist.size >= MAX_CACHED_FILTERS) {
       const oldest = filtersByWhitelist.keys().next().value;
       if (oldest !== undefined) filtersByWhitelist.delete(oldest);

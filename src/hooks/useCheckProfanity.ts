@@ -48,7 +48,7 @@ export function useCheckProfanity(
 ): ProfanityAnalysis {
   const { enabled = true } = options;
 
-  const { profanityWords, profanityBlocklist } = useBenignPhrases();
+  const { profanityWords } = useBenignPhrases();
 
   // Analyze the text
   const analysis = useMemo((): ProfanityAnalysis => {
@@ -69,7 +69,7 @@ export function useCheckProfanity(
     }
 
     try {
-      const profanityFilter = getProfanityFilter(profanityWords, profanityBlocklist);
+      const profanityFilter = getProfanityFilter(profanityWords);
       const detailedAnalysis = profanityFilter.analyze(text);
       const cleanedText = profanityFilter.clean(text);
 
@@ -93,7 +93,7 @@ export function useCheckProfanity(
         originalText: text,
       };
     }
-  }, [text, enabled, profanityWords, profanityBlocklist]);
+  }, [text, enabled, profanityWords]);
 
   return analysis;
 }

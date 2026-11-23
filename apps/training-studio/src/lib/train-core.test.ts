@@ -464,6 +464,41 @@ describe('keep-training base model pin', () => {
   });
 });
 
+describe('keep-training a published run', () => {
+  it("starts unpublished, with no link to the source run's model", async () => {
+    getWorkflow.mockResolvedValue({
+      data: {
+        metadata: {
+          name: 'phaser',
+          trigger: 'ohwx',
+          matureCount: 0,
+          published: true,
+          modelId: 3057695,
+          modelVersionId: 3478834,
+        },
+        steps: [
+          {
+            $type: 'training',
+            input: { engine: 'ai-toolkit', ecosystem: 'sdxl', epochs: 10, steps: 2000 },
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+    await continueTraining(
+      client,
+      { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 },
+      { checkText }
+    );
+    const { metadata } = submitWorkflow.mock.calls.at(-1)![0].body;
+    expect(metadata).not.toHaveProperty('published');
+    expect(metadata).not.toHaveProperty('modelId');
+    expect(metadata).not.toHaveProperty('modelVersionId');
+    expect(metadata).toMatchObject({ name: 'phaser (further)', trigger: 'ohwx' });
+  });
+});
+
 describe('keep-training checkpoint reference', () => {
   const source = (input: Record<string, unknown>) => ({
     data: {
@@ -1540,6 +1575,9 @@ describe('Kohya training', () => {
       });
       const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
       expect(input.model).toBe(customModel);
+      if (['sdxl', 'pony', 'illustrious', 'noobai'].includes(family))
+        expect(input).toMatchObject({ clipSkip: 2 });
+      if (family === 'sd1') expect(input).toMatchObject({ clipSkip: 1 });
       if (family === 'flux1' || family === 'chroma' || family === 'anima') {
         expect(input).toMatchObject({ noiseOffset: 0, minSnrGamma: 0, clipSkip: 1 });
         expect(input).not.toHaveProperty('vParameterization');
@@ -1559,6 +1597,7 @@ describe('Kohya training', () => {
     { resolution: 1000 },
     { kohya: { numRepeats: 0 } },
     { kohya: { seed: -1 } },
+    { kohya: { clipSkip: 1 } },
     { minSnrGamma: 2.5 },
     { optimizer: 'Automagic' },
     { customModel: 'urn:air:flux1:checkpoint:civitai:1@2' },
@@ -1569,6 +1608,20 @@ describe('Kohya training', () => {
       submitTrainingBatch(client, [{ ...run(), ...invalid }], { checkText, kohyaAllowed: true })
     ).rejects.toThrow();
     expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('accepts clip skip 1 for SD1 but not for SDXL, whose trainer would raise it to 2', () => {
+    const data: Parameters<typeof buildKohyaInput>[1] = { type: 'blobs', items: [] };
+    const sd1 = {
+      ...run(),
+      ecosystem: 'sd1',
+      customModel: 'urn:air:sd1:checkpoint:civitai:1@2',
+      kohya: { clipSkip: 1 },
+    };
+    expect(buildKohyaInput(sd1, data, 'none')).toMatchObject({ clipSkip: 1 });
+    expect(() => buildKohyaInput({ ...run(), kohya: { clipSkip: 1 } }, data, 'none')).toThrow(
+      /clipSkip must be an integer between 2 and 4/
+    );
   });
 
   it('leaves SDXL prediction mode to checkpoint metadata by default', () => {
@@ -2218,5 +2271,40 @@ describe('per-image repeats', () => {
         { checkText }
       )
     ).rejects.toThrow(/repeats are not supported/);
+  });
+});
+
+describe('the size of one Start', () => {
+  const items = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ air: `blob-${i}`, caption: 'ohwx, 1girl' }));
+  const refused = (runs: TrainingRunInput[]) =>
+    expect(submitTrainingBatch(client, runs, { checkText })).rejects.toBeInstanceOf(
+      TrainingBatchValidationError
+    );
+
+  it('refuses more runs than a Start offers, before spending Buzz', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await refused(Array.from({ length: 6 }, baseRun));
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('refuses a run with more dataset items than the Studio handles, before spending Buzz', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await refused([{ ...baseRun(), items: items(2001) }]);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('control: five runs of 2,000 items each are submitted', async () => {
+    submitWorkflow.mockResolvedValue({ data: { id: 'wf-full', cost: { total: 0 } } });
+    try {
+      const batch = await submitTrainingBatch(
+        client,
+        Array.from({ length: 5 }, () => ({ ...baseRun(), items: items(2000) })),
+        { checkText }
+      );
+      expect(batch.workflowIds).toHaveLength(5);
+    } finally {
+      submitWorkflow.mockReset();
+    }
   });
 });

@@ -19,6 +19,7 @@ export const dailyChallengeWebhooks = createWebhookProcessor({
         FROM "CollectionItem" ci
         JOIN "Article" a ON a.id = ci."articleId"
         WHERE ci."collectionId" = ${config.challengeCollectionId}
+        AND a.availability != 'Private'
         AND a.metadata->>'status' = 'complete'
         AND a."updatedAt" > ${lastSent}
       `;
@@ -47,6 +48,7 @@ export const dailyChallengeWebhooks = createWebhookProcessor({
         FROM "CollectionItem" ci
         JOIN "Article" a ON a.id = ci."articleId"
         WHERE ci."collectionId" = ${config.challengeCollectionId}
+        AND a.availability != 'Private'
         AND a.metadata->>'status' = 'active'
         AND a."updatedAt" > ${lastSent}
       `;
@@ -75,6 +77,7 @@ export const dailyChallengeWebhooks = createWebhookProcessor({
         FROM "CollectionItem" ci
         JOIN "Article" a ON a.id = ci."articleId"
         WHERE ci."collectionId" = ${config.challengeCollectionId}
+        AND a.availability != 'Private'
         AND a.metadata->>'status' = 'pending'
         AND a."updatedAt" > ${lastSent}
       `;

@@ -155,8 +155,9 @@ func TestServeInfinitePrioritizedFallbacks(t *testing.T) {
 		{"a numeric cursor", map[string]any{"modelVersionId": num("60"), "prioritizedUserIds": []any{num("5")}, "cursor": num("7")}, "prioritized-cursor"},
 		{"a numeric string cursor", map[string]any{"modelVersionId": num("60"), "prioritizedUserIds": []any{num("5")}, "cursor": "7"}, "prioritized-cursor"},
 		{"a cursor on a model alone", map[string]any{"modelId": num("50"), "prioritizedUserIds": []any{num("5")}, "cursor": num("7")}, "prioritized-cursor"},
-		// Node reads whether the system user has a post on the version, then orders by an IIF.
-		{"the system user alone", map[string]any{"modelVersionId": num("60"), "prioritizedUserIds": []any{num("-1")}}, "prioritized-system-user"},
+		// The system user alone on a model without a version: Node orders every visible image on the
+		// site by an IIF (TestServeInfinitePrioritizedSystemUser covers the version).
+		{"the system user alone without a version", map[string]any{"modelId": num("50"), "prioritizedUserIds": []any{num("-1")}}, "prioritized-system-user-no-version"},
 	} {
 		f := newCarouselFixture(t)
 		_, _, _, err := serveInf(t, f, c.m, InfiniteRequest{})

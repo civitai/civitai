@@ -4,7 +4,7 @@ import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { Prisma } from '@prisma/client';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { accountHoldSql } from '~/server/services/legal-hold.service';
+import { contentRemovalHeldSql } from '~/server/services/legal-hold.service';
 import { leavePrivateWithHeldVerdict } from '~/server/services/model.service';
 import { deleteImages } from '~/server/services/image.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -66,7 +66,7 @@ export default WebhookEndpoint(async (req, res) => {
       images.map((i) => i.id),
       {
         actor,
-        onlyWhere: Prisma.sql`NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}`,
+        onlyWhere: Prisma.sql`NOT ${contentRemovalHeldSql(Prisma.raw('"Image"."userId"'), true)}`,
         updatePosts: false,
         keepStoredFiles: true,
       }
@@ -74,7 +74,9 @@ export default WebhookEndpoint(async (req, res) => {
     await deletePostRows(kyselyOver(dbWrite), {
       ids: postIds,
       actor,
-      where: fromPrismaSql(Prisma.sql`NOT ${accountHoldSql(Prisma.raw('"Post"."userId"'), true)}`),
+      where: fromPrismaSql(
+        Prisma.sql`NOT ${contentRemovalHeldSql(Prisma.raw('"Post"."userId"'), true)}`
+      ),
     });
   }
 

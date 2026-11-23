@@ -120,6 +120,27 @@ describe('deleteImages — one image', () => {
     expect(bustSpy).toHaveBeenCalledWith([OWNER_ID]);
   });
 
+  // A model showcase can feature the image; its rows have no foreign key, so it is found by id.
+  it('looks up the model showcases that featured the image', async () => {
+    deleteReturns({
+      id: IMAGE_ID,
+      url: 'some-url',
+      postId: POST_ID,
+      nsfwLevel: 1,
+      userId: OWNER_ID,
+    });
+
+    await deleteImages([IMAGE_ID], { actor: { system: 'test' } });
+
+    const showcaseReads = mockDbWrite.$queryRaw.mock.calls.filter(([strings]) =>
+      Array.from(strings as TemplateStringsArray)
+        .join('?')
+        .includes('FROM "ModelVersionShowcaseItem"')
+    );
+    expect(showcaseReads).toHaveLength(1);
+    expect((showcaseReads[0][1] as { values: unknown[] }).values).toEqual([IMAGE_ID]);
+  });
+
   // A hold marker's delete trigger kept the row, blocked it and took it out of its post: every
   // cache a delete busts is stale for it too, its post's included.
   it("busts a kept row's caches and its post's", async () => {
@@ -155,9 +176,12 @@ describe('deleteImages — one image', () => {
     );
   });
 
-  // Already gone: no kept record, so it leaves search and nothing else runs for it.
-  it('drops a row the delete did not remove from search, and stops there', async () => {
-    mockDbWrite.$queryRaw.mockResolvedValue([]);
+  // Already gone: no kept record and no row, so it leaves search and nothing else runs for it.
+  it('drops a row that was already gone from search, and stops there', async () => {
+    mockDbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      Array.from(strings).join('?').includes('DELETE FROM "Image"')
+        ? [{ id: IMAGE_ID, outcome: 'gone' }]
+        : []) as never);
 
     await expect(deleteImages([IMAGE_ID], { actor: { system: 'test' } })).resolves.toEqual([]);
 

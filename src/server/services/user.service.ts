@@ -1,4 +1,5 @@
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { PROFILE_CLEAR_FIELDS } from '~/server/schema/moderator/user';
 import { markUserDealUploadsRemovedSql } from '~/server/services/creator-service-deal-file-retention';
 import {
   assertCollectionItemsVisibleToViewer,
@@ -37,9 +38,13 @@ import {
   assertAccountNotUnderLegalHold,
   guardedAccountScrubSql,
   holdMarkerViewExists,
+  isContentRemovalHeld,
   isLegalHoldAbort,
   LegalHoldError,
+  assertContentRemovalNotHeld,
+  contentRemovalHeldSql,
   LegalHoldStoppedError,
+  ProfileArchiveRefusedError,
   heldModelIdsSql,
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
@@ -80,6 +85,7 @@ import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-de
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { contestBannedAtSql, contestBannedSql } from '~/server/services/contest-ban';
 import {
   onModelReviewsChanged,
@@ -163,6 +169,7 @@ import { bustModelSaleCacheForModels } from '~/server/services/paid-access.servi
 import {
   countPendingAccountDeletionImageRestores,
   disarmAccountDeletionImagePurge,
+  releaseAccountDeletionPendingDeletes,
   recordPendingImageRestore,
 } from '~/server/services/account-deletion-images';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
@@ -332,7 +339,7 @@ export async function getUsersWithSearch({
       searchClient!.index(USERS_SEARCH_INDEX).search<UserSearchResult>(query, {
         limit: Math.round(limit * 1.5),
         filter: filters.join(' AND '),
-        attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture', 'image'],
+        attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture'],
       })
     );
   } catch (err) {
@@ -363,15 +370,17 @@ export async function getUsersWithSearch({
     throw err;
   }
 
-  return results.hits
-    .filter((x) => !x.deletedAt)
-    .map(({ deletedAt, profilePicture, image, ...user }) => ({
-      ...user,
-      avatarUrl: profilePicture?.url ?? image,
-      avatarNsfw: profilePicture?.nsfwLevel ?? 0,
-      meta: null,
-    }))
-    .slice(0, limit);
+  return (
+    results.hits
+      .filter((x) => !x.deletedAt)
+      .map(({ deletedAt, profilePicture, image: _legacyImage, ...user }) => ({
+        ...user,
+        avatarUrl: profilePicture?.url,
+        avatarNsfw: profilePicture?.nsfwLevel ?? 0,
+        meta: null,
+      }))
+      .slice(0, limit)
+  );
 }
 
 type GetUsersRow = {
@@ -481,11 +490,12 @@ export { isUsernamePermitted } from '~/server/services/username-permitted';
 
 /**
  * Before a moderator clears, edits or bans away another user's profile text or links: when the user
- * is named on a CSAM report or under an account hold, or `alwaysArchive` is set, `archive` stores the
- * current text and links, and this throws if it rejects so the change does not happen. If they change
- * during an upload they are archived again, up to three uploads, after which this refuses.
+ * is named on a CSAM report or under an account hold, or `alwaysArchive` is set, `archive` stores
+ * the current text and links, and this throws if it rejects so the change does not happen. If they
+ * change during an upload they are archived again, up to three uploads, after which this refuses. Returns what the last `archive` call resolved to, or
+ * undefined when nothing was archived.
  */
-export async function archiveProfileBeforeModeratorChange({
+export async function archiveProfileBeforeModeratorChange<TStored = unknown>({
   userId,
   actorId,
   fields,
@@ -493,11 +503,11 @@ export async function archiveProfileBeforeModeratorChange({
   alwaysArchive = false,
 }: {
   userId: number;
-  actorId: number;
+  actorId: ProfileClearSnapshot['actorId'];
   fields: ProfileClearSnapshot['clearedFields'];
-  archive: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
+  archive: (snapshot: ProfileClearSnapshot) => Promise<TStored>;
   alwaysArchive?: boolean;
-}) {
+}): Promise<TStored | undefined> {
   // Every account hold `deleteUser` refuses on (`accountHoldSql`: holding reports, CSAM-flagged or
   // blocked images, images on a holding report, evidence holds), plus any report naming the user,
   // held or not: archiving more is the safe side here.
@@ -519,6 +529,7 @@ export async function archiveProfileBeforeModeratorChange({
         ) AS named
       `
     )[0]?.named !== false;
+  let stored: TStored | undefined;
   if (mustArchive) {
     let archived: Pick<ProfileClearSnapshot, 'profile' | 'links'> | null = null;
     for (let attempt = 0; ; attempt++) {
@@ -538,16 +549,18 @@ export async function archiveProfileBeforeModeratorChange({
       const current = { profile, links };
       if ((!profile && !links.length) || (archived && isEqual(current, archived))) break;
       if (attempt === 3) throw new Error(`profile ${userId} kept changing while it was archived`);
-      await archive({ userId, actorId, clearedFields: fields, ...current });
+      stored = await archive({ userId, actorId, clearedFields: fields, ...current });
       archived = current;
     }
   }
+  return stored;
 }
 
 /** A user's profile text and links as stored just before a moderator clear, edit or ban changes them. */
 export type ProfileClearSnapshot = {
   userId: number;
-  actorId: number;
+  /** null: a content wipe ordered through the secret-authed webhook, which names no user. */
+  actorId: number | null;
   clearedFields: (ProfileClearField | 'links')[];
   /** Social and sponsorship links: offsite contact and payment details. */
   links: { id: number; url: string; type: string }[];
@@ -562,7 +575,7 @@ export type ProfileClearSnapshot = {
     showcaseItems: Prisma.JsonValue;
   };
 };
-export type ProfileClearField = 'location' | 'bio' | 'message' | 'showcaseSections';
+export type ProfileClearField = (typeof PROFILE_CLEAR_FIELDS)[number];
 const PROFILE_CLEAR_SNAPSHOT_SELECT = {
   bio: true,
   message: true,
@@ -575,30 +588,31 @@ const PROFILE_CLEAR_SNAPSHOT_SELECT = {
 } as const;
 
 /**
- * Mod-driven: clear public profile fields (location/bio/message/showcaseSections) on UserProfile.
- * No-op if no UserProfile row exists yet.
+ * Mod-driven: clear the named public profile fields (location/bio/message/showcaseSections) on
+ * UserProfile. Throws on an empty list. No-op if no UserProfile row exists yet.
  *
  * Clearing bio/message also clears its SFW (civitai.com) override — otherwise the
  * copy a moderator just removed keeps rendering on the green domain.
  *
- * For a user with a CSAM report, or when `alwaysArchive` is set, `archive` stores the text first and
- * the clear does not happen if it rejects. A clear that changed a row records who ran it in
- * `ModActivity`.
+ * For a user `archiveProfileBeforeModeratorChange` holds, or when `alwaysArchive` is set, `archive`
+ * stores the text first and the clear does not happen if it rejects. A clear that changed a row
+ * records who ran it in `ModActivity` in the same transaction, so a clear whose record fails is
+ * rolled back and throws.
  */
 export async function clearUserProfileFields({
   userId,
-  fields = ['location', 'bio', 'message', 'showcaseSections'],
+  fields,
   actorId,
   archive,
   alwaysArchive = false,
 }: {
   userId: number;
-  fields?: ProfileClearField[];
+  fields: ProfileClearField[];
   actorId: number;
   archive: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
   alwaysArchive?: boolean;
 }) {
-  if (fields.length === 0) return { updated: false };
+  if (!fields?.length) throw new Error('clearUserProfileFields needs at least one field');
 
   await archiveProfileBeforeModeratorChange({ userId, actorId, fields, archive, alwaysArchive });
 
@@ -614,30 +628,22 @@ export async function clearUserProfileFields({
     data.sfwMessageAddedAt = null;
   }
   if (fields.includes('showcaseSections')) data.showcaseSections = [];
-  const result = await dbWrite.userProfile.updateMany({ where: { userId }, data });
-  // The clear has committed: a failed record must not report it as failed.
-  if (result.count > 0) {
-    try {
-      await trackModActivity(actorId, {
-        entityType: 'user',
-        activity: 'clearProfile',
-        entityId: userId,
-      });
-    } catch (error) {
-      logToAxiom({
-        type: 'error',
-        name: 'clear-user-profile-mod-activity',
-        userId,
-        message: (error as Error).message,
-      });
-    }
-  }
-  return { updated: result.count > 0 };
+  const updated = await dbWrite.$transaction(async (tx) => {
+    const { count } = await tx.userProfile.updateMany({ where: { userId }, data });
+    if (count > 0)
+      await trackModActivity(
+        actorId,
+        { entityType: 'user', activity: 'clearProfile', entityId: userId },
+        tx
+      );
+    return count > 0;
+  });
+  return { updated };
 }
 
 /**
- * Mod-driven: removes one of a user's social or sponsorship links. Archived first, and refused if the
- * archive fails, as `clearUserProfileFields` is.
+ * Mod-driven: removes one of a user's social or sponsorship links. Archived first, refused if the
+ * archive fails, and recorded in the same transaction, as `clearUserProfileFields` is.
  */
 export async function removeUserLinkAsModerator({
   userId,
@@ -652,25 +658,19 @@ export async function removeUserLinkAsModerator({
 }) {
   await archiveProfileBeforeModeratorChange({ userId, actorId, fields: ['links'], archive });
   // Scoped by owner too: an id alone could take another account's link.
-  const { count } = await dbWrite.userLink.deleteMany({ where: { id: linkId, userId } });
-  if (count > 0) {
-    try {
-      await trackModActivity(actorId, {
-        entityType: 'user',
-        activity: 'removeLink',
-        entityId: userId,
-      });
-    } catch (error) {
-      logToAxiom({
-        type: 'error',
-        name: 'remove-user-link-mod-activity',
-        userId,
-        message: (error as Error).message,
-      });
-    }
-    await bustUserCreator(userId).catch(handleLogError);
-  }
-  return { removed: count > 0 };
+  // One transaction with its record: a removal whose record fails is rolled back and throws.
+  const removed = await dbWrite.$transaction(async (tx) => {
+    const { count } = await tx.userLink.deleteMany({ where: { id: linkId, userId } });
+    if (count > 0)
+      await trackModActivity(
+        actorId,
+        { entityType: 'user', activity: 'removeLink', entityId: userId },
+        tx
+      );
+    return count > 0;
+  });
+  if (removed) await bustUserCreator(userId).catch(handleLogError);
+  return { removed };
 }
 
 /**
@@ -1404,7 +1404,15 @@ export const deleteUser = async ({
   removeModels,
   removeImages,
   removeAppData,
-}: DeleteUserInput) => {
+  actorId,
+  archive = async (snapshot) =>
+    (await import('~/server/services/csam.service-new')).archiveUserProfile(snapshot),
+}: DeleteUserInput & {
+  /** Who is deleting: a moderator, or the account itself (`id`) for a self-delete. */
+  actorId: number;
+  /** Server-only: stores the profile and links before they are deleted. */
+  archive?: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
+}) => {
   // Refused by name; the account scrub below also rejects a non-positive id, but only as a 500.
   if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   const user = await dbWrite.user.findFirst({
@@ -1415,6 +1423,13 @@ export const deleteUser = async ({
   // Here rather than in each caller, so every caller of `deleteUser` is held to it. The scrub below
   // checks again in the same statement as its write.
   const { markerView } = await assertAccountNotUnderLegalHold(user.id);
+  // Archived first for a user a report or hold names; a failed archive deletes nothing.
+  await archiveProfileBeforeModeratorChange({
+    userId: user.id,
+    actorId,
+    fields: [...PROFILE_CLEAR_FIELDS, 'links'],
+    archive,
+  });
   // Deal uploads go only when the rest of their content does, and only with retention on.
   const removeDealUploads =
     imageRemovalMode(removeImages) === 'immediate' &&
@@ -1538,8 +1553,63 @@ export const deleteUser = async ({
     usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
   await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
-  // A ban never reaches here, so a banned user's sleeping apps are kept.
-  await runStep('delete-sleeping-apps', () => deleteSleepingAppsOfDeletedAccount(user.id));
+  // A hold placed after the check above keeps the sleeping apps.
+  await runStep('delete-sleeping-apps', async () => {
+    if ((await isContentRemovalHeld(user.id)) !== false) {
+      logToAxiom({
+        name: 'delete-sleeping-apps',
+        type: 'info',
+        source: 'deleteUser',
+        userId: user.id,
+        message: 'Sleeping apps kept: content removal held',
+      });
+      return;
+    }
+    await deleteSleepingAppsOfDeletedAccount(user.id);
+  });
+  // App Assistant's chat ↔ app links go with the account (the FK cascade never fires on this soft
+  // delete). Held, like the sleeping apps, while content removal is held.
+  await runStep('delete-app-assistant-links', async () => {
+    if ((await isContentRemovalHeld(user.id)) !== false) {
+      logToAxiom({
+        name: 'delete-app-assistant-links',
+        type: 'info',
+        source: 'deleteUser',
+        userId: user.id,
+        message: 'App Assistant links kept: content removal held',
+      });
+      return;
+    }
+    const [{ deleteSessionLinksOfAccount }, { isMissingTableError }] = await Promise.all([
+      import('~/server/services/app-assistant/session-tracing.service'),
+      import('~/server/services/blocks/app-access.service'),
+    ]);
+    await deleteSessionLinksOfAccount(user.id, {
+      db: dbWrite,
+      isMissingTable: isMissingTableError,
+    });
+  });
+  // App Assistant session traces (frozen chat transcripts, then trace rows) go with the account, on
+  // their own: the link rows above never wait on this. Held while content removal is held; what this
+  // cannot finish, the hourly `sweep-app-assistant-traces` job retries.
+  await runStep('delete-app-assistant-traces', async () => {
+    if ((await isContentRemovalHeld(user.id)) !== false) {
+      logToAxiom({
+        name: 'delete-app-assistant-traces',
+        type: 'info',
+        source: 'deleteUser',
+        userId: user.id,
+        message: 'App Assistant traces kept: content removal held',
+      });
+      return;
+    }
+    const [{ deleteAssistantTracesOfAccount, liveTraceDeletionDeps }, { isMissingTableError }] =
+      await Promise.all([
+        import('~/server/services/app-assistant/submission-trace.service'),
+        import('~/server/services/blocks/app-access.service'),
+      ]);
+    await deleteAssistantTracesOfAccount(user.id, await liveTraceDeletionDeps(isMissingTableError));
+  });
   await runStep('refresh-profile-picture', () => refreshProfilePicturesForUsers([user.id]));
   await runStep('close-pending-restrictions', () =>
     closeGenerationRestrictionsOfDeletedAccount(user.id)
@@ -1737,13 +1807,14 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
         ),
       ]
     : [];
-  const [, , reclaimed] = await dbWrite
+  const [, , , reclaimed] = await dbWrite
     .$transaction([
       dbWrite.user.update({
         where: { id, deletedAt: user.deletedAt, bannedAt: null },
         data: { deletedAt: null, username, email, meta },
       }),
       disarmAccountDeletionImagePurge(id),
+      releaseAccountDeletionPendingDeletes(id),
       ...reclaim,
     ])
     .catch(refuseIfBannedMeanwhile);
@@ -1799,6 +1870,26 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   };
 };
 
+/** `softDeleteUser`'s media block: every image of the user, as CSAM. */
+export async function blockUserImagesAsCsam(userId: number) {
+  await dbWrite.image.updateMany({
+    where: { userId },
+    data: {
+      ingestion: 'Blocked',
+      nsfwLevel: NsfwLevel.Blocked,
+      blockedFor: BlockedReason.CSAM,
+    },
+  });
+  // A CSAM block outranks an account-deletion grace block. If this account had already
+  // self-deleted with the grace option, every image carries the restore breadcrumbs; left on, a
+  // later restore would un-block CSAM-blocked content.
+  //
+  // Account-wide: the UPDATE above carries no `ingestion` predicate, so it blocked EVERY image this
+  // user owns, and the clear's scope is the block's.
+  await clearAccountDeletionImageMarkers({ userId });
+  await evictHomeBlocksForImages({ userId });
+}
+
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
 export async function softDeleteUser({ id, userId }: { id: number; userId: number }) {
   const user = await dbWrite.user.findFirst({
@@ -1821,21 +1912,7 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
     mediaBlockedByCaller: true,
   });
 
-  await dbWrite.image.updateMany({
-    where: { userId: id },
-    data: {
-      ingestion: 'Blocked',
-      nsfwLevel: NsfwLevel.Blocked,
-      blockedFor: BlockedReason.CSAM,
-    },
-  });
-  // A CSAM block outranks an account-deletion grace block. If this account had already
-  // self-deleted with the grace option, every image carries the restore breadcrumbs; left on, a
-  // later restore would un-block CSAM-blocked content.
-  //
-  // Account-wide: the UPDATE above carries no `ingestion` predicate, so it blocked EVERY image this
-  // user owns, and the clear's scope is the block's.
-  await clearAccountDeletionImageMarkers({ userId: id });
+  await blockUserImagesAsCsam(id);
   await refreshProfilePicturesForUsers([id]);
   await refreshOwnModelShowcases(id);
 
@@ -2041,18 +2118,40 @@ export const removeAllContent = async ({
   id,
   actorUserId = null,
   claimedModeratorId = null,
+  archive = async (snapshot) =>
+    (await import('~/server/services/csam.service-new')).archiveUserProfile(snapshot),
 }: {
   id: number;
   actorUserId?: number | null;
   /** The webhook caller's unverified say-so; named on alerts only, never written as an actor. */
   claimedModeratorId?: number | null;
+  /** Server-only: stores the profile and links before they are deleted. */
+  archive?: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
 }) => {
   if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   const alertedBy = { userId: id, actorUserId: actorUserId ?? claimedModeratorId };
   // Here rather than in each caller (tRPC, the webhook, the moderator app's purge), so every one is
   // held to it. The deletes that destroy evidence check again in their own statements.
-  const { markerView } = await assertAccountNotUnderLegalHold(id);
-  const held = accountHoldSql(Prisma.sql`${id}::int`, markerView);
+  const { markerView } = await assertContentRemovalNotHeld(id);
+  const held = contentRemovalHeldSql(Prisma.sql`${id}::int`, markerView);
+  // Before any delete: a failed archive must delete nothing. The profile and links go straight after
+  // it, which narrows (not closes) the window for an owner edit to be deleted unarchived.
+  await archiveProfileBeforeModeratorChange({
+    userId: id,
+    actorId: actorUserId,
+    fields: [...PROFILE_CLEAR_FIELDS, 'links'],
+    archive,
+  }).catch((error: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'remove-all-content-archive-failed',
+      userId: id,
+      message: (error as Error)?.message,
+    });
+    throw new ProfileArchiveRefusedError({ cause: error });
+  });
+  await dbWrite.userLink.deleteMany({ where: { userId: id } });
+  await dbWrite.userProfile.deleteMany({ where: { userId: id } });
 
   // The primary, as the deletes below: a row the replica has not seen yet is still deleted.
   const models = await dbWrite.model.findMany({
@@ -2126,8 +2225,6 @@ export const removeAllContent = async ({
     where: { userId: id, id: { notIn: keptBountyIds } },
     select: { id: true },
   });
-  await dbWrite.userLink.deleteMany({ where: { userId: id } });
-  await dbWrite.userProfile.deleteMany({ where: { userId: id } });
   await dbWrite.collection.deleteMany({ where: { userId: id } });
 
   // Evidence: each delete repeats the hold, so one that lands after the check above deletes nothing
@@ -2380,7 +2477,7 @@ export const removeAllContent = async ({
 
   // The two stores below are separate databases, so no statement there can carry the hold: check
   // again before either.
-  await assertAccountNotUnderLegalHold(id).catch(() => {
+  await assertContentRemovalNotHeld(id).catch(() => {
     logToAxiom({
       name: 'remove-all-content',
       type: 'error',
@@ -3154,6 +3251,7 @@ export async function blockBannedUserImages(userId: number) {
       AND (ingestion <> 'Blocked'::"ImageIngestionStatus"
         OR ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL)
   `;
+  await evictHomeBlocksForImages({ userId });
   await refreshOwnModelShowcases(userId);
 }
 
@@ -3297,6 +3395,10 @@ export const toggleBan = async ({
   void (bannedAt ? onStorySparkPostsRestored : onStorySparkPostsHidden)({ authorId: id });
   const { afterAccountBanChanged } = await import('~/server/services/account-standing.service');
   await afterAccountBanChanged(id);
+  const { bustVersionShowcasesForUser } = await import(
+    '~/server/services/version-showcase.service'
+  );
+  await bustVersionShowcasesForUser(id).catch(() => null);
   // The creator card carries the links, which public reads drop for a banned user.
   await bustUserCreator(id, { usernames: user.username ? [user.username] : [] }).catch(
     handleLogError

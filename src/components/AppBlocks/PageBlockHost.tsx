@@ -4249,8 +4249,10 @@ export function PageBlockHost({
   //            is classified from the content (processSaveBytes) and only
   //            image/JSON/text — or a validated .zip (@civitai/app-sdk/save-zip: structure,
   //            local headers, entry names/types, declared sizes, then an inflate
-  //            check before the download) — can be saved, under the classified
-  //            extension.
+  //            check before the download), or a structurally checked binary glTF
+  //            (.glb) / binary FBX (.fbx) 3D model (@civitai/app-sdk/save-model3d) — can be
+  //            saved, under the classified extension. Per-file caps: 50 MB, a 3D
+  //            model 100 MB (SAVE_BYTES_MODEL_3D_MAX_BYTES), a zip 256 MB.
   //            Limited per host to SAVE_BYTES_MAX_PER_WINDOW saves and
   //            SAVE_BYTES_MAX_BYTES_PER_WINDOW bytes (a zip:
   //            SAVE_BYTES_ZIP_MAX_BYTES_PER_WINDOW) per rolling window; past

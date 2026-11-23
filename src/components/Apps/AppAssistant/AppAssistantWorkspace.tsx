@@ -100,7 +100,10 @@ import {
 } from '~/components/Apps/AppAssistant/previewTools';
 import { fetchPreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
 import { pingSandbox, usePreviewKeepAlive } from '~/components/Apps/AppAssistant/previewKeepAlive';
-import { fetchSandboxTunnelStatus } from '~/components/Apps/AppAssistant/previewTunnelStatus';
+import {
+  fetchSandboxDevServerStatus,
+  fetchSandboxTunnelStatus,
+} from '~/components/Apps/AppAssistant/previewTunnelStatus';
 import {
   RESTART_PREVIEW_FAILED,
   appAssistantRemoteRunnerFor,
@@ -513,6 +516,15 @@ export function AppAssistantWorkspace({
       setTab('preview');
     }
   }, []);
+  // The pane found the preview a direct one: its session host is a bearer credential, so the
+  // session keeps none (the runner sends none either; this holds if one ever did). Only for the
+  // session the pane fetched it for, not one shown since.
+  const forgetDirectHost = useCallback((shown: PreviewSession) => {
+    if (live.current.session !== shown || !shown.host) return;
+    const next = { ...shown, host: '' };
+    live.current.session = next;
+    setSession(next);
+  }, []);
   // Each preview the server runner starts gets its own frame, even on the same host.
   const runnerViews = useRef(0);
   // How often the runner said the open app's dev server came back up while its preview was shown
@@ -800,6 +812,17 @@ export function AppAssistantWorkspace({
         : undefined,
     [mcpUrl, remoteRunner, tokens]
   );
+  // …and, for a direct preview (no tunnel), whether its dev server is still up.
+  const devServerStatus = useMemo(
+    () =>
+      mcpUrl && remoteRunner
+        ? () =>
+            fetchSandboxDevServerStatus(mcpUrl, (opts) =>
+              tokens.getToken({ ...opts, purpose: 'sandbox' })
+            )
+        : undefined,
+    [mcpUrl, remoteRunner, tokens]
+  );
 
   // A failed reply the chat asks for again (Retry, or by itself as the page wakes) fires no before-send,
   // so a paused app would not be woken and the reply would go on without its tools. The ask is held
@@ -1013,7 +1036,9 @@ export function AppAssistantWorkspace({
       if (frame && blockId)
         return showPreview({
           blockId,
-          host: 'host' in frame ? frame.host ?? '' : '',
+          // A direct preview's session host is a bearer credential: framed, never kept here (the
+          // assistant's instructions read this session).
+          host: 'host' in frame && frame.transport !== 'direct' ? frame.host ?? '' : '',
           sessionId: null,
           view: ++runnerViews.current,
         });
@@ -1779,7 +1804,9 @@ export function AppAssistantWorkspace({
                 session={session}
                 restart={previewRestart}
                 tunnelStatus={tunnelStatus}
+                devServerStatus={devServerStatus}
                 devServerUp={devServerUp}
+                onDirectFrame={forgetDirectHost}
               />
             </div>
             {session && (

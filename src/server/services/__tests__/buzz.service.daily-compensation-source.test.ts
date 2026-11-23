@@ -35,11 +35,12 @@ beforeEach(() => {
 });
 
 describe('getDailyCompensationRewardByUser source buckets', () => {
-  it('Compensation excludes tips as well as license fees', async () => {
+  // The licence-fee markup is platform revenue the payout job never pays; showing it would promise it.
+  it('Compensation excludes tips, license fees and the licence-fee markup', async () => {
     await getDailyCompensationRewardByUser({ userId: 1, date: new Date(), source: 'compensation' });
     // NOT IN rather than `= 'compensation'`, so one-off sources such as
     // `compensation_recovered_20260507` stay counted as compensation.
-    expect(sourcePredicate()).toBe("NOT IN ('licenseFee', 'tip')");
+    expect(sourcePredicate()).toBe("NOT IN ('licenseFee', 'tip', 'licenseFeeMarkup')");
   });
 
   it('Tips reads only tip rows', async () => {

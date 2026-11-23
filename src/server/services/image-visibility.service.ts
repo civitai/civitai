@@ -1,6 +1,10 @@
 import { Prisma } from '@prisma/client';
+import { imageBlockedForConditions } from '~/server/common/image-visibility';
+
+export { imageBlockedForConditions };
 import { NsfwLevel } from '~/server/common/enums';
 import {
+  hasBlockMarkerSql,
   imageNotRestrictedSql,
   imageReviewedSql,
   minorMatureImageVisibleSql,
@@ -11,31 +15,52 @@ import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 /**
- * An image with any `blockedFor` reason is visible only to its owner and moderators, as SQL over
- * `"Image" i`. Empty for a moderator.
+ * The reviewed-only part of `getImagesForModelVersion`'s filter (its non-pending branch): not held
+ * or minor-accepted, at a level in `browsingLevel`, and reviewed. Shared with `countableImageSql`
+ * so a public image count and the gallery it counts cannot disagree.
  */
-export function imageBlockedForConditions({
-  userId,
-  isModerator,
-}: {
-  userId?: number;
-  isModerator?: boolean;
-}): Prisma.Sql[] {
-  if (isModerator) return [];
-  return [
-    userId
-      ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
-      : Prisma.sql`(i."blockedFor" IS NULL)`,
-  ];
-}
+export const reviewedGalleryImageConditions = (
+  browsingLevel: number = allBrowsingLevelsFlag
+): Prisma.Sql[] => [
+  Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`,
+  Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`,
+  imageReviewedSql(),
+];
+
+/**
+ * What `getImagesForModelVersion` shows a signed-out viewer at some browsing level, over `"Image" i`:
+ * its viewer-dependent terms (blocked-for, minor-mature, restricted base model) with no viewer.
+ */
+export const anonymousGalleryImageConditions = (): Prisma.Sql[] => [
+  ...imageBlockedForConditions({}),
+  ...reviewedGalleryImageConditions(),
+  minorMatureImageVisibleSql({}),
+  imageNotRestrictedSql(),
+];
+
+/**
+ * The images a model's image count counts: the signed-out gallery's, less any ToS violation or
+ * block marker the gallery's own terms do not already exclude.
+ */
+export const countableImageSql = () =>
+  Prisma.sql`(${Prisma.join(
+    [
+      ...anonymousGalleryImageConditions(),
+      Prisma.sql`NOT i."tosViolation"`,
+      Prisma.sql`NOT ${hasBlockMarkerSql()}`,
+    ],
+    ' AND '
+  )})`;
 
 /**
  * Which images attached to an entity (a bounty, a bounty entry) a viewer is served, as SQL over
- * `"Image" i`. Held, unscanned, unrated, blocked, acceptable-minor and minor-restricted images are
- * the owner's and moderators' alone; base-model restricted images are the owner's alone.
+ * `"Image" i`. Held, unscanned, unrated, blocked, ToS-removed, acceptable-minor and
+ * minor-restricted images are the owner's and moderators' alone; base-model restricted images are
+ * the owner's alone.
  */
 export function entityImageVisibilityConditions({
   userId,
@@ -61,7 +86,10 @@ export function entityImageVisibilityConditions({
         : Prisma.sql`(${Prisma.join([Prisma.sql`i."needsReview" IS NULL`], ' OR ')})`,
       userId
         ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
-        : Prisma.sql`i."acceptableMinor" = FALSE`
+        : Prisma.sql`i."acceptableMinor" = FALSE`,
+      userId
+        ? Prisma.sql`(i."tosViolation" IS NOT TRUE OR i."userId" = ${userId})`
+        : Prisma.sql`i."tosViolation" IS NOT TRUE`
     );
   }
   AND.push(...imageBlockedForConditions({ userId, isModerator }));
@@ -117,6 +145,7 @@ export function imageVisibilityConditions({
           AND a.status = 'Published'
           AND a."publishedAt" IS NOT NULL
           AND a.ingestion = 'Scanned'
+          AND (a.availability != 'Private' OR a."userId" = ${userId})
       ))
       OR (i."postId" IS NULL AND (
         EXISTS (

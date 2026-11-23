@@ -13,6 +13,7 @@ import {
   type FeedGoV1ShapeClass,
 } from '~/server/prom/feed-go-shadow.metrics';
 import { pickSessionCookies } from '~/server/utils/session-cookies';
+import { trainingDataListingRulesId } from '~/server/services/training-data-restricted.service';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler';
 
@@ -27,6 +28,9 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
  *   own compare path (`feed_endpoint="infinite"`);
  * - `model.getAll` (tRPC; flag `feed-go-shadow-model-getall`): the same capture, posted to its own
  *   compare path (`feed_endpoint="model-getall"`);
+ * - `model.getAssociatedResourcesCardData` (tRPC; flag `feed-go-shadow-model-associated`): the same
+ *   capture, posted to its own compare path (`feed_endpoint="model-associated"`). A signed-in browser
+ *   batches it when `trpcBatching` is on for that user, and a batched call is never sampled;
  * - the REST routes, `GET /api/v1/images` (flag `feed-go-shadow-v1-images`) and
  *   `GET /api/v1/models` + `GET /api/v1/models/[id]` (one flag, `feed-go-shadow-v1-models`): the raw
  *   query string, the path and the JSON body the handler passed to `res.json`, captured by the
@@ -78,6 +82,9 @@ export const FEED_GO_SHADOW_V1_MODELS_ID_PATH = `${FEED_GO_SHADOW_V1_MODELS_PATH
 /** The third tRPC procedure mirrored under its own flag, and feed-go's compare path for it. */
 export const FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE = 'model.getAll';
 export const FEED_GO_SHADOW_MODEL_GET_ALL_PATH = `/internal/shadow/${FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE}`;
+/** The fourth tRPC procedure mirrored under its own flag, and feed-go's compare path for it. */
+export const FEED_GO_SHADOW_MODEL_ASSOCIATED_PROCEDURE = 'model.getAssociatedResourcesCardData';
+export const FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH = `/internal/shadow/${FEED_GO_SHADOW_MODEL_ASSOCIATED_PROCEDURE}`;
 /** feed-go's Go-first probe path for the procedure. */
 export const FEED_GO_PROBE_PATH = `/internal/probe/${FEED_GO_SHADOW_PROCEDURE}`;
 /** feed-go's Go-first probe path for `image.getInfinite`. */
@@ -113,25 +120,58 @@ export const FEED_GO_COMPARED_RESPONSE_HEADERS = [
   'x-update-required',
 ] as const;
 
+/**
+ * The response headers mirrored with a REST sample (`/api/v1/images`, `/api/v1/models`,
+ * `/api/v1/models/[id]`): the list above, plus what the public API's caching and browser access
+ * depend on there (shadow.RESTComparedHeaders in apps/feed-go): the ETag Next's `res.json` sets (a
+ * cache revalidates with it), the CORS headers the endpoint wrappers set, the config's
+ * X-Frame-Options, and the X-Expires an `etag` query can add. The sample says which list it carries
+ * (`responseHeaderSet: 'rest'`), so feed-go compares these only when Node sent them.
+ */
+export const FEED_GO_COMPARED_REST_RESPONSE_HEADERS = [
+  ...FEED_GO_COMPARED_RESPONSE_HEADERS,
+  'etag',
+  'access-control-allow-origin',
+  'access-control-allow-headers',
+  'access-control-allow-methods',
+  'access-control-expose-headers',
+  'x-frame-options',
+  'x-expires',
+] as const;
+
 /** Longest header value mirrored; a longer one is cut (a Cache-Tag list is the only one that grows). */
 const RESPONSE_HEADER_MAX_CHARS = 1024;
 
 /** A response's headers as `res.getHeaders()` returns them. */
 export type ShadowResponseHeaders = Record<string, string | string[] | number | undefined>;
 
-/** The route's response, read for its headers once the handler has answered. */
-export type ShadowResponseLike = { getHeaders?: () => ShadowResponseHeaders };
+/**
+ * The route's response, read for its headers once the handler has answered. A REST sample whose
+ * response has not sent its headers yet (`headersSent === false`, with `once`) is read on the
+ * response's `finish` instead: see `finish`.
+ */
+export type ShadowResponseLike = {
+  getHeaders?: () => ShadowResponseHeaders;
+  statusCode?: number;
+  headersSent?: boolean;
+  destroyed?: boolean;
+  once?(event: 'finish' | 'close', listener: () => void): unknown;
+};
 
 /**
- * The FEED_GO_COMPARED_RESPONSE_HEADERS a response carries, lowercased, each a string (an array
- * joined with `, `, cut at RESPONSE_HEADER_MAX_CHARS); Set-Cookie as `present`. Never throws.
+ * The `names` (default FEED_GO_COMPARED_RESPONSE_HEADERS) a response carries, lowercased, each a
+ * string (an array joined with `, `, cut at RESPONSE_HEADER_MAX_CHARS); Set-Cookie as `present`.
+ * Never throws.
  */
-export function pickShadowResponseHeaders(headers: ShadowResponseHeaders): Record<string, string> {
+export function pickShadowResponseHeaders(
+  headers: ShadowResponseHeaders,
+  names: readonly string[] = FEED_GO_COMPARED_RESPONSE_HEADERS
+): Record<string, string> {
   const out: Record<string, string> = {};
   try {
     const lower: Record<string, ShadowResponseHeaders[string]> = {};
     for (const [k, v] of Object.entries(headers)) lower[k.toLowerCase()] = v;
-    for (const name of FEED_GO_COMPARED_RESPONSE_HEADERS) {
+    for (const name of names) {
       const v = lower[name];
       if (v === undefined) continue;
       const value = Array.isArray(v) ? v.join(', ') : String(v);
@@ -157,6 +197,8 @@ export type FeedGoShadowConfig = {
   infiniteUrl: string | undefined;
   /** Full compare endpoint URL for `model.getAll`, or undefined (disabled). */
   modelGetAllUrl: string | undefined;
+  /** Full compare endpoint URL for `model.getAssociatedResourcesCardData`, or undefined (disabled). */
+  modelAssociatedUrl: string | undefined;
   rate: number;
   timeoutMs: number;
   maxInFlight: number;
@@ -185,6 +227,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
   let v1ModelsIdUrl: string | undefined;
   let infiniteUrl: string | undefined;
   let modelGetAllUrl: string | undefined;
+  let modelAssociatedUrl: string | undefined;
   let probeUrl: string | undefined;
   let probeInfiniteUrl: string | undefined;
   let probeModelGetAllUrl: string | undefined;
@@ -199,6 +242,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
         v1ModelsIdUrl = new URL(FEED_GO_SHADOW_V1_MODELS_ID_PATH, parsed).toString();
         infiniteUrl = new URL(FEED_GO_SHADOW_INFINITE_PATH, parsed).toString();
         modelGetAllUrl = new URL(FEED_GO_SHADOW_MODEL_GET_ALL_PATH, parsed).toString();
+        modelAssociatedUrl = new URL(FEED_GO_SHADOW_MODEL_ASSOCIATED_PATH, parsed).toString();
         probeUrl = new URL(FEED_GO_PROBE_PATH, parsed).toString();
         probeInfiniteUrl = new URL(FEED_GO_PROBE_INFINITE_PATH, parsed).toString();
         probeModelGetAllUrl = new URL(FEED_GO_PROBE_MODEL_GET_ALL_PATH, parsed).toString();
@@ -210,6 +254,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
       v1ModelsIdUrl = undefined;
       infiniteUrl = undefined;
       modelGetAllUrl = undefined;
+      modelAssociatedUrl = undefined;
       probeUrl = undefined;
       probeInfiniteUrl = undefined;
       probeModelGetAllUrl = undefined;
@@ -222,6 +267,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
     v1ModelsIdUrl,
     infiniteUrl,
     modelGetAllUrl,
+    modelAssociatedUrl,
     probeUrl,
     probeInfiniteUrl,
     probeModelGetAllUrl,
@@ -305,6 +351,8 @@ export type FeedGoShadowSample = {
   captured?: Captured;
   /** Node's compared response headers, set in `finish`. */
   responseHeaders?: Record<string, string>;
+  /** `rest` when responseHeaders is FEED_GO_COMPARED_REST_RESPONSE_HEADERS (a REST sample). */
+  responseHeaderSet?: 'rest';
   done: boolean;
 };
 
@@ -320,6 +368,11 @@ export type FeedGoShadowDeps = {
   enabledInfinite?: () => boolean;
   /** The `feed-go-shadow-model-getall` flag (absent: `model.getAll` is never sampled). */
   enabledModelGetAll?: () => boolean;
+  /**
+   * The `feed-go-shadow-model-associated` flag (absent: `model.getAssociatedResourcesCardData` is
+   * never sampled).
+   */
+  enabledModelAssociated?: () => boolean;
   random?: () => number;
   fetch?: typeof fetch;
   record?: (outcome: FeedGoShadowOutcome, endpoint: FeedGoShadowEndpoint) => void;
@@ -335,7 +388,21 @@ export type FeedGoShadowDeps = {
   recordProbe?: (outcome: FeedGoProbeOutcome, endpoint: FeedGoShadowEndpoint) => void;
   /** Epoch milliseconds clock for the probe's start time (production: timeOrigin + now). */
   epochNow?: () => number;
+  /**
+   * Headers a model sample (`v1-models`, `v1-models-id`) carries besides the request's (production:
+   * the Training Data statement hash, FEED_GO_TRAINING_DATA_SQL_HEADER). Absent or throwing: none.
+   */
+  modelSampleHeaders?: () => Record<string, string>;
 };
+
+/**
+ * The header a model sample carries this build's Training Data rule set in
+ * (`trainingDataListingRulesId`: the statement's SHA-256 and the decision's version). feed-go lists
+ * Training Data files only when it equals its own, and falls back otherwise (absent included): it
+ * never lists by rules other than these. The production wiring is pinned in
+ * src/server/__tests__/trpc-feed-go-shadow.test.ts.
+ */
+export const FEED_GO_TRAINING_DATA_SQL_HEADER = 'x-feed-go-training-data-sql';
 
 /** A sampler instance. The module exports one wired to the env, the flag and the counter. */
 export function createFeedGoShadow(deps: FeedGoShadowDeps) {
@@ -344,6 +411,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   const enabledV1Models = deps.enabledV1Models ?? (() => false);
   const enabledInfinite = deps.enabledInfinite ?? (() => false);
   const enabledModelGetAll = deps.enabledModelGetAll ?? (() => false);
+  const enabledModelAssociated = deps.enabledModelAssociated ?? (() => false);
   const random = deps.random ?? Math.random;
   const doFetch = deps.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   const record = deps.record ?? recordFeedGoShadowOutcome;
@@ -392,6 +460,11 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       url: config.modelGetAllUrl,
       enabled: enabledModelGetAll,
     },
+    [FEED_GO_SHADOW_MODEL_ASSOCIATED_PROCEDURE]: {
+      endpoint: 'model-associated',
+      url: config.modelAssociatedUrl,
+      enabled: enabledModelAssociated,
+    },
   };
 
   /** The compare URL a sample of this endpoint is posted to. */
@@ -399,6 +472,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     if (isRestEndpoint(endpoint)) return restRoutes[endpoint].url;
     if (endpoint === 'infinite') return config.infiniteUrl;
     if (endpoint === 'model-getall') return config.modelGetAllUrl;
+    if (endpoint === 'model-associated') return config.modelAssociatedUrl;
     return config.url;
   }
 
@@ -478,6 +552,13 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       const path = q < 0 ? target : target.slice(0, q);
       const input = q < 0 ? '' : target.slice(q + 1);
       const headers = pickShadowHeaders(req);
+      if (endpoint === 'v1-models' || endpoint === 'v1-models-id') {
+        try {
+          Object.assign(headers, deps.modelSampleHeaders?.());
+        } catch {
+          // Without the hash feed-go falls back on any body with a Training Data file.
+        }
+      }
       return {
         endpoint,
         holdsSlot: false,
@@ -596,7 +677,8 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     if (inFlight === 0) return;
     try {
       const sample = storage.getStore();
-      // The tRPC samples (as-posts, infinite, model-getall); a REST sample captures its own body.
+      // The tRPC samples (as-posts, infinite, model-getall, model-associated); a REST sample
+      // captures its own body.
       if (!sample || isRestEndpoint(sample.endpoint) || sample.captured || sample.done) return;
       sample.captured = wroteDevalue ? { data } : { envelope: written };
     } catch {
@@ -612,7 +694,12 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       const captured = sample.captured!;
       const node = 'envelope' in captured ? captured.envelope : superjson.serialize(captured.data);
       // No status: only 200s are posted, and feed-go does not compare it.
-      const response = sample.responseHeaders ? { responseHeaders: sample.responseHeaders } : {};
+      const response = sample.responseHeaders
+        ? {
+            responseHeaders: sample.responseHeaders,
+            ...(sample.responseHeaderSet ? { responseHeaderSet: sample.responseHeaderSet } : {}),
+          }
+        : {};
       body = JSON.stringify(
         isRestEndpoint(endpoint)
           ? { input: sample.input, path: sample.path, headers: sample.headers, node, ...response }
@@ -661,6 +748,17 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
    * response headers (when the route passes them). A response whose headers cannot be read is not
    * sent (`skipped_headers`), so its comparison is not silently lost. Synchronous, returns nothing to
    * await, never throws.
+   *
+   * A REST route calls this from its `finally`, right after `res.json`, but the response may not be
+   * written yet: the endpoint wrappers' `withAxiom` replaces `res.json` with one that flushes the
+   * request's logs first and only then calls Next's, and Next's `res.json` is what sets the ETag
+   * (api-resolver's `sendData`, its `generateETag` over the body string, even with `generateEtags`
+   * off). So when the response has not sent its headers yet, the headers and the status are read
+   * when it emits `finish`, which is exactly what went out (a 304 Next answered to `If-None-Match` is
+   * then `skipped_status`). The in-flight slot is taken first, so the samples waiting on a response
+   * are bounded like the ones in flight; a response that closes without finishing (a client abort),
+   * or was already closed when the handler returned, is `skipped_status`. A tRPC sample is read now,
+   * as before.
    */
   function finish(
     sample: FeedGoShadowSample,
@@ -679,6 +777,55 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
         release(sample);
         return;
       }
+      const sent =
+        isRestEndpoint(sample.endpoint) && response?.headersSent === false ? response : undefined;
+      // Already closed (the client went away while the handler ran): neither event comes again, and
+      // nothing complete was sent.
+      if (sent?.destroyed === true) {
+        complete(sample, 0, sent);
+        return;
+      }
+      const once = typeof sent?.once === 'function' ? sent.once.bind(sent) : undefined;
+      if (sent && once) {
+        if (!takeSlot(sample)) return;
+        let settled = false;
+        once('finish', () => {
+          if (settled) return;
+          settled = true;
+          complete(
+            sample,
+            typeof sent.statusCode === 'number' ? sent.statusCode : statusCode,
+            sent
+          );
+        });
+        once('close', () => {
+          if (settled) return;
+          settled = true;
+          complete(sample, 0, sent);
+        });
+        return;
+      }
+      complete(sample, statusCode, response);
+    } catch {
+      sample.captured = undefined;
+      release(sample);
+    }
+  }
+
+  /** `finish`'s second half, once the response's headers are final. Never throws. */
+  function complete(
+    sample: FeedGoShadowSample,
+    statusCode: number,
+    response?: ShadowResponseLike
+  ): void {
+    try {
+      if (sample.done) return;
+      if (statusCode !== 200) {
+        record('skipped_status', sample.endpoint);
+        sample.captured = undefined;
+        release(sample);
+        return;
+      }
       if (typeof response?.getHeaders === 'function') {
         let headers: ShadowResponseHeaders;
         try {
@@ -689,22 +836,38 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
           release(sample);
           return;
         }
-        sample.responseHeaders = pickShadowResponseHeaders(headers);
-      }
-      if (!sample.holdsSlot) {
-        // A REST sample is bounded here, after the handler: it held nothing while it ran.
-        if (!admit(sample.endpoint)) {
-          sample.captured = undefined;
-          release(sample);
-          return;
+        if (isRestEndpoint(sample.endpoint)) {
+          sample.responseHeaders = pickShadowResponseHeaders(
+            headers,
+            FEED_GO_COMPARED_REST_RESPONSE_HEADERS
+          );
+          sample.responseHeaderSet = 'rest';
+        } else {
+          sample.responseHeaders = pickShadowResponseHeaders(headers);
         }
-        inFlight++;
-        sample.holdsSlot = true;
       }
+      if (!takeSlot(sample)) return;
       schedule(() => send(sample));
     } catch {
+      sample.captured = undefined;
       release(sample);
     }
+  }
+
+  /**
+   * A REST sample is bounded after the handler (it held nothing while it ran): take its in-flight
+   * slot and token now, unless it holds one. False (and the sample released) when dropped.
+   */
+  function takeSlot(sample: FeedGoShadowSample): boolean {
+    if (sample.holdsSlot) return true;
+    if (!admit(sample.endpoint)) {
+      sample.captured = undefined;
+      release(sample);
+      return false;
+    }
+    inFlight++;
+    sample.holdsSlot = true;
+    return true;
   }
 
   return {
@@ -741,9 +904,15 @@ function getInstance(): FeedGoShadow {
     enabledModelGetAll: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_MODEL_GET_ALL)
     ),
+    enabledModelAssociated: createCachedFlagGate(
+      readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_MODEL_ASSOCIATED)
+    ),
     enabledProbe: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_GOFIRST_PROBE)
     ),
+    modelSampleHeaders: () => ({
+      [FEED_GO_TRAINING_DATA_SQL_HEADER]: trainingDataListingRulesId(),
+    }),
   });
   return instance;
 }

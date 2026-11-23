@@ -23,10 +23,33 @@
  * stands for `service:{clientId}`; off the list it is refused, as every token without a user was
  * before the list existed. A user's token (numeric `sub`) is a user's token whatever its client,
  * so the list never changes what a user's app may read.
+ *
+ * A block-exchange token is a user's token the hub minted from an App Block token
+ * (`apps/auth/.../block-exchange.ts`). It says so: `civitai_token_kind: 'block-exchange'`, with
+ * `civitai_app_block_id`, `civitai_block_instance_id` and `civitai_max_browsing_level`, which the
+ * hub writes together ({@link blockBindingOf}). They become `VerifiedToken.block`, which the
+ * private feed holds every poll to. A token that carries any of the four but not all four,
+ * well-formed, is refused (fail closed): a block-exchange token without its binding would read as a
+ * user's token, unnarrowed. A token that carries none is a user-exchange token, exactly as before.
+ * The marker is explicit although the other three would identify the token: what a token is is never
+ * inferred from which optional claims happen to be present.
+ *
+ * The hub also writes a fifth claim, `civitai_viewer_browsing_level` (the viewer's own level), checked
+ * on its own: absent, the binding has no viewer level (a token minted before the hub wrote it);
+ * present and not a non-negative integer, the token is refused; on a token with no binding, refused.
  */
-import { createAccessTokenJwtVerifier, isAccessTokenJwt } from '@civitai/auth';
+import {
+  BLOCK_EXCHANGE_TOKEN_KIND,
+  createAccessTokenJwtVerifier,
+  isAccessTokenJwt,
+} from '@civitai/auth';
 import { ALL_SCOPES, TokenScope } from '~/shared/constants/token-scope.constants';
-import type { TokenUser, VerifiedToken, VerifyToken } from '~/server/registry-adapter/auth';
+import type {
+  TokenBlockBinding,
+  TokenUser,
+  VerifiedToken,
+  VerifyToken,
+} from '~/server/registry-adapter/auth';
 
 /** The hub's issuer identifier, when none is configured. */
 export const DEFAULT_HUB_ISSUER = 'https://auth.civitai.com';
@@ -99,6 +122,62 @@ export type HubJwtDeps = {
 
 const USER_ID_RE = /^[1-9][0-9]{0,15}$/;
 
+const BLOCK_CLAIMS = [
+  'civitai_token_kind',
+  'civitai_app_block_id',
+  'civitai_block_instance_id',
+  'civitai_max_browsing_level',
+] as const;
+
+/** The block-exchange token's viewer level. Optional until every live token carries it. */
+const VIEWER_LEVEL_CLAIM = 'civitai_viewer_browsing_level';
+
+const isNonNegativeInteger = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+/**
+ * A token's block binding: `none` when it carries none of the four block-exchange claims (nor the
+ * viewer level), the binding when it carries all four well-formed (the marker `block-exchange`, two
+ * non-empty ids, a non-negative integer ceiling), and `invalid` otherwise, which refuses the token.
+ * The viewer level is checked on its own: absent is `viewerBrowsingLevel: null`, present and not a
+ * non-negative integer is `invalid`.
+ */
+export function blockBindingOf(
+  payload: Record<string, unknown>
+): { kind: 'none' } | { kind: 'block'; block: TokenBlockBinding } | { kind: 'invalid' } {
+  const viewerLevel = payload[VIEWER_LEVEL_CLAIM];
+  if (BLOCK_CLAIMS.every((c) => payload[c] === undefined)) {
+    // A viewer level with no binding to read it with is not a token the hub mints.
+    return viewerLevel === undefined ? { kind: 'none' } : { kind: 'invalid' };
+  }
+  if (viewerLevel !== undefined && !isNonNegativeInteger(viewerLevel)) return { kind: 'invalid' };
+  const {
+    civitai_token_kind: kind,
+    civitai_app_block_id: appBlockId,
+    civitai_block_instance_id: blockInstanceId,
+    civitai_max_browsing_level: maxBrowsingLevel,
+  } = payload;
+  if (
+    kind !== BLOCK_EXCHANGE_TOKEN_KIND ||
+    typeof appBlockId !== 'string' ||
+    appBlockId === '' ||
+    typeof blockInstanceId !== 'string' ||
+    blockInstanceId === '' ||
+    !isNonNegativeInteger(maxBrowsingLevel)
+  ) {
+    return { kind: 'invalid' };
+  }
+  return {
+    kind: 'block',
+    block: {
+      appBlockId,
+      blockInstanceId,
+      maxBrowsingLevel,
+      viewerBrowsingLevel: viewerLevel === undefined ? null : viewerLevel,
+    },
+  };
+}
+
 /** The acting party of a delegated token (RFC 8693 `act.sub`), or null. */
 function actorOf(act: unknown): string | null {
   if (typeof act !== 'object' || act === null) return null;
@@ -137,9 +216,13 @@ export function createHubJwtVerifier(config: HubJwtConfig, deps: HubJwtDeps): Ve
     if (typeof sub !== 'string') return null;
     if (typeof clientId !== 'string' || clientId === '') return null;
     if (typeof exp !== 'number') return null;
+    const binding = blockBindingOf(payload as Record<string, unknown>);
+    if (binding.kind === 'invalid') return null;
     // No user: the client as itself. Read only for a client the allowlist names, holding AppsRead.
     if (sub === clientId && !USER_ID_RE.test(sub)) {
       if (!serviceClients.has(clientId)) return null;
+      // A block binding belongs to a viewer's token: never to a service's.
+      if (binding.kind !== 'none') return null;
       const scope = scopeGrantBits(payload.scope);
       if (!hasScope({ scope }, 'AppsRead')) return null;
       return {
@@ -164,6 +247,7 @@ export function createHubJwtVerifier(config: HubJwtConfig, deps: HubJwtDeps): Ve
       actor: actorOf(act),
       user,
       expiresAt: new Date(exp * 1000),
+      ...(binding.kind === 'block' ? { block: binding.block } : {}),
     };
   };
 }

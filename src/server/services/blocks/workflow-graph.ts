@@ -843,10 +843,11 @@ export function resolveBlockWorkflowGraph(body: {
       generations: blockStepGenerations(step.$type, step.input, body.arguments),
     });
   }
-  // A repeat variable that is also a step name (or `$arguments`) would make a
-  // template reference ambiguous between the two.
+  // A repeat variable that is also a step name (or `$arguments`), in any case, would
+  // make a template reference ambiguous between the two.
+  const earlierFolded = new Set([...earlier].map((name) => name.toLowerCase()));
   for (const loopVar of state.loopVars) {
-    if (earlier.has(loopVar)) {
+    if (earlierFolded.has(loopVar.toLowerCase())) {
       return {
         ok: false,
         errorCode: 'workflow_ref_invalid',

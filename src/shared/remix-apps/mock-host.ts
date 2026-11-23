@@ -8,6 +8,7 @@ import type {
   RemixWorkflowResult,
 } from '~/shared/remix-apps/define';
 import {
+  remixLogSize,
   replayRemixApp,
   type RemixEffect,
   type RemixLogEntry,
@@ -29,8 +30,9 @@ export function firstAnswer(spec: RemixAsk): RemixAnswer {
 export function mockResult(request: RemixWorkflowRequest, step: number): RemixWorkflowResult {
   const image = (i: number, width?: number, height?: number): RemixImage => ({
     url: `mock://remix/${step}/${i}`,
-    width,
-    height,
+    // A size the app chose can be any number.
+    width: remixLogSize(width),
+    height: remixLogSize(height),
   });
   if (request.kind === 'upscale') {
     const { width, height } = request.image;

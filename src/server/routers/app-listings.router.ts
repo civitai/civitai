@@ -68,6 +68,7 @@ import {
   republishOwnListingSchema,
   resetListingToPendingSchema,
   resolveReportSchema,
+  retryConnectOfflineCutSchema,
   setListingOfficialSchema,
   setListingVisibilityAsModeratorSchema,
   unpublishOwnListingSchema,
@@ -1606,6 +1607,32 @@ export const appListingsRouter = router({
   }),
 
   /**
+   * MOD retry the offline-access cut of a taken-down connect listing ("Retry cut" on an
+   * `offline-cut-failed` history row). Same boundary as `delistListing`: `moderatorProcedure`
+   * plus the inner `isModerator` recheck, the actor bound to `ctx.user.id`. The service refuses
+   * unless the flag is on, the listing is still taken down, and no other approved listing on the
+   * client declares offline access (`retryConnectOfflineCut`).
+   */
+  retryConnectOfflineCut: moderatorProcedure
+    .input(retryConnectOfflineCutSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Retrying an offline access cut is restricted to moderators');
+      }
+      const { retryConnectOfflineCut } = await import(
+        '~/server/services/blocks/offsite-moderation.service'
+      );
+      try {
+        return await retryConnectOfflineCut({
+          appListingId: input.appListingId,
+          moderatorUserId: ctx.user.id,
+        });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
    * MOD send the app's OWNER a free-text message, delivered as a notification.
    *
    * The only mod action here that changes no listing state — it exists because the
@@ -2037,21 +2064,48 @@ export const appListingsRouter = router({
       if (scope === 'none') {
         return { items: [], nextCursor: undefined };
       }
-      const { listStoreGrid, storeGridRequest } = await import(
+      const { DB_READS, listStoreGrid, storeGridRequest } = await import(
         '~/server/services/blocks/app-index-search.service'
       );
-      return listStoreGrid(
+      // A failure to load the read-model module leaves the page on the database.
+      const readModel = await import(
+        '~/server/services/blocks/app-listings-read-model-shadow.service'
+      ).catch(() => null);
+      // The sub-listing opt-in and the index switch meet the viewer's flags there.
+      const [opts, routing] = storeGridRequest(input, {
+        features: ctx.features,
+        redCapable: isRedCapableRequest(ctx),
+        scope,
+        floor,
+        viewer: listingViewerFromCtx(ctx),
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+      });
+      // Behind `app-listings-read-model`. At `serve`, a page the index does not search is read from
+      // the listings read model when it can answer this viewer, else from the database. At
+      // `shadow`, the page the database served is asked of the read model, with the same options,
+      // off the response path (never awaited, never throws into the request).
+      // The mode is resolved once, so serving and shadowing cannot see two different answers.
+      const mode = readModel?.listingReadModelMode('grid');
+      const page = await listStoreGrid(
         input,
-        // The sub-listing opt-in and the index switch meet the viewer's flags there.
-        ...storeGridRequest(input, {
-          features: ctx.features,
-          redCapable: isRedCapableRequest(ctx),
-          scope,
-          floor,
-          viewer: listingViewerFromCtx(ctx),
-          viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
-        })
+        opts,
+        routing,
+        readModel
+          ? {
+              ...DB_READS,
+              gridPage: (i, o) =>
+                readModel.serveListingPage(
+                  'grid',
+                  i,
+                  o,
+                  () => DB_READS.listAvailableListings(i, o),
+                  mode
+                ),
+            }
+          : DB_READS
       );
+      readModel?.shadowListingPage('grid', input, opts, page, mode);
+      return page;
     }),
 
   /**

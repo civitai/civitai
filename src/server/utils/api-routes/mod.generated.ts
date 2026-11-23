@@ -6,6 +6,13 @@ import type { ApiRoutes } from '~/server/utils/api-router';
 export const routes: ApiRoutes = {
   'action-report': () => import('~/server/api-routes/mod/action-report'),
   'adjust-tag-level': () => import('~/server/api-routes/mod/adjust-tag-level'),
+  'apps/assistant-trace/app': () => import('~/server/api-routes/mod/apps/assistant-trace/app'),
+  'apps/assistant-trace/request': () =>
+    import('~/server/api-routes/mod/apps/assistant-trace/request'),
+  'apps/assistant-trace/signals': () =>
+    import('~/server/api-routes/mod/apps/assistant-trace/signals'),
+  'apps/assistant-trace/transcript': () =>
+    import('~/server/api-routes/mod/apps/assistant-trace/transcript'),
   'apps/refund-workflows': () => import('~/server/api-routes/mod/apps/refund-workflows'),
   'apps/workflow-charges': () => import('~/server/api-routes/mod/apps/workflow-charges'),
   'audit/change-history': () => import('~/server/api-routes/mod/audit/change-history'),
@@ -42,6 +49,8 @@ export const routes: ApiRoutes = {
   'creator-services/disputes': () => import('~/server/api-routes/mod/creator-services/disputes'),
   'creator-services/resolve-dispute': () =>
     import('~/server/api-routes/mod/creator-services/resolve-dispute'),
+  'creator-services/review-report': () =>
+    import('~/server/api-routes/mod/creator-services/review-report'),
   'csam/training-data-report': () => import('~/server/api-routes/mod/csam/training-data-report'),
   'custom-challenge': () => import('~/server/api-routes/mod/custom-challenge'),
   'daily-challenge/cycle': () => import('~/server/api-routes/mod/daily-challenge/cycle'),
@@ -65,6 +74,9 @@ export const routes: ApiRoutes = {
   'knights/shop/cosmetics': () => import('~/server/api-routes/mod/knights/shop/cosmetics'),
   'knights/shop/membership': () => import('~/server/api-routes/mod/knights/shop/membership'),
   'label-store/predictions': () => import('~/server/api-routes/mod/label-store/predictions'),
+  'membership-gift/comp': () => import('~/server/api-routes/mod/membership-gift/comp'),
+  'membership-gift/comp-revoke': () =>
+    import('~/server/api-routes/mod/membership-gift/comp-revoke'),
   'membership-gift/refund-unfulfilled': () =>
     import('~/server/api-routes/mod/membership-gift/refund-unfulfilled'),
   'membership-gift/revoke-unpaid': () =>
@@ -104,6 +116,7 @@ export const routes: ApiRoutes = {
   'poi-flag/flag-match': () => import('~/server/api-routes/mod/poi-flag/flag-match'),
   'poi-flag/revert': () => import('~/server/api-routes/mod/poi-flag/revert'),
   'post-text/moderate': () => import('~/server/api-routes/mod/post-text/moderate'),
+  'profanity-dry-run': () => import('~/server/api-routes/mod/profanity-dry-run'),
   'queue-model-metric-update': () => import('~/server/api-routes/mod/queue-model-metric-update'),
   'reconcile-nowpayments': () => import('~/server/api-routes/mod/reconcile-nowpayments'),
   'remove-all-content': () => import('~/server/api-routes/mod/remove-all-content'),
@@ -150,6 +163,7 @@ export const routes: ApiRoutes = {
     import('~/server/api-routes/mod/text-scan/model-rules-hold/resolve'),
   'tipalti-resync-payee': () => import('~/server/api-routes/mod/tipalti-resync-payee'),
   'training-data/resolve': () => import('~/server/api-routes/mod/training-data/resolve'),
+  'training/retrain-source': () => import('~/server/api-routes/mod/training/retrain-source'),
   'unblock-images': () => import('~/server/api-routes/mod/unblock-images'),
   'unequip-event-cosmetics': () => import('~/server/api-routes/mod/unequip-event-cosmetics'),
   'update-image-flag': () => import('~/server/api-routes/mod/update-image-flag'),
@@ -189,6 +203,7 @@ export const routes: ApiRoutes = {
   'user/toggle-moderator': () => import('~/server/api-routes/mod/user/toggle-moderator'),
   'user/unmute': () => import('~/server/api-routes/mod/user/unmute'),
   'user/update-identity': () => import('~/server/api-routes/mod/user/update-identity'),
+  'version-showcase/remove': () => import('~/server/api-routes/mod/version-showcase/remove'),
   whoami: () => import('~/server/api-routes/mod/whoami'),
   'withdraw-from-bank': () => import('~/server/api-routes/mod/withdraw-from-bank'),
 };

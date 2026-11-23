@@ -62,7 +62,7 @@ describe.each([{ rls: true }, { rls: false }])('the registry private feed (rls %
     expect(new Set(docs.map((d) => d.recordId)).size).toBe(2);
     const versions = await feed.privateVersions(app, 'prefs', VIEWER_1, '', 100);
     expect(versions).toEqual(
-      docs.map(({ key, recordId, version }) => ({ key, recordId, version }))
+      docs.map(({ key, recordId, version, seq }) => ({ key, recordId, version, seq }))
     );
   });
 

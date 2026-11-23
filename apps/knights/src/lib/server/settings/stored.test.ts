@@ -22,6 +22,17 @@ describe('createStoredSettingsSource', () => {
     expect(read).toHaveBeenCalledTimes(2);
   });
 
+  it('carries the tag review switch only when it is saved', async () => {
+    const on = createStoredSettingsSource({
+      read: async () => JSON.stringify({ enabled: false, modTagReview: true }),
+    });
+    expect(await on.load()).toEqual({ modTagReview: true });
+    const absent = createStoredSettingsSource({
+      read: async () => JSON.stringify({ enabled: false, modTagReview: 'yes' }),
+    });
+    expect(await absent.load()).toEqual({});
+  });
+
   it('is empty when nothing is saved, so every reader stays on the environment', async () => {
     const source = createStoredSettingsSource({ read: async () => null });
     expect(await source.load()).toEqual({});

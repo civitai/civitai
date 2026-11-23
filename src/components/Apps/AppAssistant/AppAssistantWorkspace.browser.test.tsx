@@ -391,20 +391,25 @@ const r = vi.hoisted(() => ({
   pane: undefined as undefined | { onRestart: () => void; pending: boolean; error: string | null },
   /** How many times the pane was told the dev server came back up (`devServerUp`). */
   devServerUp: undefined as number | undefined,
+  /** What the pane calls when the frame it fetched for a session is a direct preview. */
+  onDirectFrame: undefined as undefined | ((session: unknown) => void),
 }));
 vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
   AppAssistantPreview: ({
     session,
     restart,
     devServerUp,
+    onDirectFrame,
   }: {
     session: unknown;
     restart?: { onRestart: () => void; pending: boolean; error: string | null };
     devServerUp?: number;
+    onDirectFrame?: (session: unknown) => void;
   }) => {
     m.previewSession = session;
     r.pane = restart;
     r.devServerUp = devServerUp;
+    r.onDirectFrame = onDirectFrame;
     return <div data-testid="preview" />;
   },
 }));
@@ -447,6 +452,7 @@ beforeEach(() => {
   r.built.mockReset().mockResolvedValue(true);
   r.pane = undefined;
   r.devServerUp = undefined;
+  r.onDirectFrame = undefined;
 });
 vi.mock('~/components/Apps/AppAssistant/useSandboxes', async () => {
   const { useReducer } = await import('react');
@@ -2611,6 +2617,60 @@ describe('AppAssistantWorkspace preview after a reload on the server runner', ()
     expect(r.restart).not.toHaveBeenCalled();
   });
 
+  // A direct preview's session host is a bearer credential (design §5.4): it is framed, and never
+  // kept in the page's preview session, which the assistant's instructions read.
+  test('🔴 a live direct preview is shown with no host kept', async () => {
+    const SESSION_HOST =
+      'sckpynuebrbgh2zm2f7vkbrk22akqcaqdaqcwv7vmqcbzawxned4cvl4enkzes.preview.example';
+    r.probe.mockResolvedValue({
+      blockId: 'app-aaaa',
+      host: SESSION_HOST,
+      iframeSrc: `https://${SESSION_HOST}/`,
+      transport: 'direct',
+    });
+    await reload();
+    await expect.element(pane()).toBeInTheDocument();
+    expect(m.previewSession).toEqual({ blockId: 'app-aaaa', host: '', sessionId: null, view: 1 });
+    expect(m.chat!.instructions()).not.toContain(SESSION_HOST);
+  });
+
+  // The runner's start_preview output names a host. If the pane finds the frame a direct one, the
+  // page keeps no host for that session (the runner sends none for direct; this holds if one did).
+  test('🔴 a started preview the pane finds direct keeps no host', async () => {
+    const SESSION_HOST =
+      'sckpynuebrbgh2zm2f7vkbrk22akqcaqdaqcwv7vmqcbzawxned4cvl4enkzes.preview.example';
+    r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
+    await reload();
+    m.chat!.onToolResult!({
+      name: 'start_preview',
+      input: {},
+      output: { shown: true, blockId: 'app-aaaa', host: SESSION_HOST },
+      isError: false,
+    });
+    await vi.waitFor(() => expect(m.previewSession).toMatchObject({ host: SESSION_HOST }));
+    expect(r.onDirectFrame, 'the page gave the pane no way to report a direct frame').toBeTypeOf(
+      'function'
+    );
+    const started = m.previewSession;
+    r.onDirectFrame!(started);
+    await vi.waitFor(() =>
+      expect(m.previewSession).toMatchObject({ blockId: 'app-aaaa', host: '' })
+    );
+    expect(m.chat!.instructions()).not.toContain(SESSION_HOST);
+
+    // Control: a report for a session no longer shown changes nothing.
+    m.chat!.onToolResult!({
+      name: 'start_preview',
+      input: {},
+      output: { shown: true, blockId: 'app-aaaa', host: SESSION_HOST },
+      isError: false,
+    });
+    await vi.waitFor(() => expect(m.previewSession).toMatchObject({ host: SESSION_HOST }));
+    r.onDirectFrame!(started);
+    await settle();
+    expect(m.previewSession).toMatchObject({ host: SESSION_HOST });
+  });
+
   test('no live preview: the pane offers Restart preview, and shows no preview', async () => {
     r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
     await reload();
@@ -4175,8 +4235,10 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     await switcher().click();
     await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
     await page.getByRole('menuitem', { name: 'Delete app' }).click();
+    // Click Delete only once the confirmation is on screen, and wait for the remove it triggers.
+    await expect.element(page.getByText('Delete app-bbbb?')).toBeVisible();
     await page.getByRole('button', { name: 'Delete app' }).click();
-    expect(m.remove).toHaveBeenCalledWith('sbx-bbbbbbbbbbbb');
+    await vi.waitFor(() => expect(m.remove).toHaveBeenCalledWith('sbx-bbbbbbbbbbbb'));
     await settle(200);
     expect(hib.deleteMine).not.toHaveBeenCalled();
   });

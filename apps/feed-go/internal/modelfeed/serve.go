@@ -34,7 +34,7 @@ type Querier interface {
 // Sources are the cache readers (implemented by *hydrate.Sources).
 type Sources interface {
 	ModelPage(ctx context.Context, req hydrate.ModelPageRequest) (*hydrate.ModelPage, error)
-	VersionImages(ctx context.Context, versionIDs []int) (map[int][]map[string]any, error)
+	VersionImages(ctx context.Context, versionIDs []int) (map[int][]superjson.Object, error)
 	CreatorMemberships(ctx context.Context, userIDs []int) (map[int]bool, error)
 	UserIDByUsername(ctx context.Context, username string) (int, bool, error)
 	// OfficialModels is getOfficialModelIds (hydrate.Sources.OfficialModels).
@@ -171,8 +171,9 @@ type pageScope struct {
 }
 
 // resolveLevel is resolveRequestBrowsingLevels after applyDomainFeature: a signed-in caller with no
-// level gets their saved one (not read here: falls back), then the domain cap clamps it (an absent
-// or disjoint level becomes the cap). Uncapped and absent is a verified crawler's request.
+// level gets their saved one (not read here: falls back); a sent level is held to the viewer
+// (stripBlockedForNonModerator), then the domain cap clamps it (an absent or disjoint level becomes
+// the cap). Uncapped and absent is a verified crawler's request.
 func resolveLevel(in *Input, req Request) (int, error) {
 	if in.BrowsingLevel == nil {
 		if req.Viewer != nil || req.Cap == 0 {
@@ -180,10 +181,11 @@ func resolveLevel(in *Input, req Request) (int, error) {
 		}
 		return req.Cap, nil
 	}
+	level := browsing.ForViewer(*in.BrowsingLevel, req.Viewer != nil && req.Viewer.IsModerator)
 	if req.Cap != 0 {
-		return browsing.ClampToCap(*in.BrowsingLevel, req.Cap), nil
+		return browsing.ClampToCap(level, req.Cap), nil
 	}
-	return *in.BrowsingLevel, nil
+	return level, nil
 }
 
 type page struct {
@@ -240,8 +242,9 @@ type feedItem struct {
 	hasSfwFace bool
 	// showSfwFace is whether this request shows .com faces (showsSfwFace of its level).
 	showSfwFace bool
-	// version is the one version the card shows (getModelsRaw keeps the first without `details`).
-	version   map[string]any
+	// version is the one version the card shows (getModelsRaw keeps the first without `details`), in
+	// the cached record's key order.
+	version   superjson.Object
 	versionID int
 	// baseModels is the distinct base models of the visible versions.
 	baseModels []any
@@ -289,7 +292,8 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 
 	tagID := 0
 	if in.Tag != "" {
-		id, err := tagIDByName(ctx, d.DB, in.Tag)
+		// A name no tag has is 0: no filter.
+		id, _, err := hydrate.TagIDByName(ctx, d.DB, in.Tag)
 		if err != nil {
 			return nil, err
 		}
@@ -445,23 +449,6 @@ func subtractMonths(t time.Time, n int) time.Time {
 	return time.Date(first.Year(), first.Month(), day, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
 }
 
-// tagIDByName is `dbRead.tag.findUnique({ where: { name } })` (Tag.name is citext): 0 = no such tag,
-// which adds no filter.
-func tagIDByName(ctx context.Context, db Querier, name string) (int, error) {
-	rows, err := db.Query(ctx, `SELECT id FROM "Tag" WHERE name = $1 LIMIT 1`, name)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-	id := 0
-	if rows.Next() {
-		if err := rows.Scan(&id); err != nil {
-			return 0, err
-		}
-	}
-	return id, rows.Err()
-}
-
 // paidAccessGates is getModelPaidAccessGates: per model with a live gate, its latest deadline.
 func paidAccessGates(ctx context.Context, db Querier, modelIDs []int) (map[int]*paidGate, error) {
 	rows, err := db.Query(ctx, `
@@ -501,19 +488,19 @@ func buildFeedItem(r *modelRow, in *Input, raw rawInput, hy *hydrate.ModelPage, 
 	if faceOn {
 		it.name = *r.SfwName
 	}
-	var versions []map[string]any
+	var versions []superjson.Object
 	for _, v := range data.Versions {
 		// `!isModerator || !status?.length` (status is not ported): Published only.
-		if s, _ := v["status"].(string); s != "Published" {
+		if s, _ := recField(v, "status").(string); s != "Published" {
 			continue
 		}
-		level, _ := hydrate.Int(v["nsfwLevel"])
-		bm, _ := v["baseModel"].(string)
+		level, _ := hydrate.Int(recField(v, "nsfwLevel"))
+		bm, _ := recField(v, "baseModel").(string)
 		if level&table.Levels.NSFW != 0 && isMatureRestrictedModels(bm) {
 			continue
 		}
 		if hidePrivate {
-			if a, _ := v["availability"].(string); a != "Public" {
+			if a, _ := recField(v, "availability").(string); a != "Public" {
 				continue
 			}
 		}
@@ -521,10 +508,10 @@ func buildFeedItem(r *modelRow, in *Input, raw rawInput, hy *hydrate.ModelPage, 
 	}
 	seen := map[string]bool{}
 	for _, v := range versions {
-		bm, _ := v["baseModel"].(string)
+		bm, _ := recField(v, "baseModel").(string)
 		if !seen[bm] {
 			seen[bm] = true
-			it.baseModels = append(it.baseModels, v["baseModel"])
+			it.baseModels = append(it.baseModels, recField(v, "baseModel"))
 		}
 	}
 	if it.baseModels == nil {
@@ -533,7 +520,7 @@ func buildFeedItem(r *modelRow, in *Input, raw rawInput, hy *hydrate.ModelPage, 
 	if in.BaseModels != nil {
 		kept := versions[:0:0]
 		for _, v := range versions {
-			bm, _ := v["baseModel"].(string)
+			bm, _ := recField(v, "baseModel").(string)
 			if contains(in.BaseModels, bm) {
 				kept = append(kept, v)
 			}
@@ -553,7 +540,7 @@ func buildFeedItem(r *modelRow, in *Input, raw rawInput, hy *hydrate.ModelPage, 
 		}
 	}
 	it.version = versions[0]
-	it.versionID, _ = hydrate.Int(it.version["id"])
+	it.versionID, _ = hydrate.Int(recField(it.version, "id"))
 	it.hashes = data.Hashes
 	it.tagIDs = data.TagIDs
 	if faceOn {
@@ -572,14 +559,30 @@ func buildFeedItem(r *modelRow, in *Input, raw rawInput, hy *hydrate.ModelPage, 
 	return it
 }
 
-// withField returns a copy of m with key set (cache entries are shared).
-func withField(m map[string]any, key string, val any) map[string]any {
-	c := make(map[string]any, len(m)+1)
-	for k, v := range m {
-		c[k] = v
-	}
-	c[key] = val
+// withField returns a copy of o with key set as `{...o, [key]: val}` does: an existing member keeps
+// its place, a new one goes last (cache entries are shared, so o is not changed).
+func withField(o superjson.Object, key string, val any) superjson.Object {
+	c := append(make(superjson.Object, 0, len(o)+1), o...)
+	c.Set(key, val)
 	return c
+}
+
+// imageRecord is a showcase image as the card filters read it: an ordered cache record (model.getAll,
+// hydrate.Sources.VersionImages) or a replica row (the associated resources, assocImages).
+type imageRecord interface {
+	superjson.Object | map[string]any
+}
+
+// recField is r's member k (nil when absent).
+func recField[T imageRecord](r T, k string) any {
+	switch x := any(r).(type) {
+	case superjson.Object:
+		v, _ := x.Get(k)
+		return v
+	case map[string]any:
+		return x[k]
+	}
+	return nil
 }
 
 // userWire is the item's `user`: the creator's basic data, profile picture and cosmetics.
@@ -686,7 +689,7 @@ func finishItems(ctx context.Context, d *Deps, in *Input, level int, raw rawInpu
 			versionIDs = append(versionIDs, it.versionID)
 		}
 	}
-	images := map[int][]map[string]any{}
+	images := map[int][]superjson.Object{}
 	var levels map[int]int
 	var err error
 	if len(versionIDs) > 0 {
@@ -700,7 +703,8 @@ func finishItems(ctx context.Context, d *Deps, in *Input, level int, raw rawInpu
 			images = holdForViewer(images, items, levels, viewerID)
 		}
 	}
-	covers, err := coverImages(ctx, d, items, images, len(in.BaseModels) > 0)
+	// sameVersionOnly: `!!input.baseModels?.length || !!input.hidePaid`.
+	covers, err := coverImages(ctx, d, items, images, len(in.BaseModels) > 0 || in.HidePaid)
 	if err != nil {
 		return nil, err
 	}
@@ -740,7 +744,7 @@ func finishItems(ctx context.Context, d *Deps, in *Input, level int, raw rawInpu
 	out := make([]any, 0, len(items))
 	for _, it := range items {
 		r := it.row
-		var cover map[string]any
+		var cover superjson.Object
 		if c, ok := covers[r.ID]; ok {
 			cover = c
 		}
@@ -750,7 +754,7 @@ func finishItems(ctx context.Context, d *Deps, in *Input, level int, raw rawInpu
 		if raw.excluded != nil && r.UserID != viewerID {
 			filtered = filtered[:0:0]
 			for _, img := range shown {
-				if imageTagsClear(img["tags"], raw.excluded) {
+				if imageTagsClear(recField(img, "tags"), raw.excluded) {
 					filtered = append(filtered, img)
 				}
 			}
@@ -836,18 +840,18 @@ func modelBrowsingLevelLimit(minor, sfwOnly bool) int {
 
 // holdForViewer is holdForViewer: every version's images within its model's held level, except the
 // viewer's own models, whose showcase is whole. Never mutates byVersion's lists.
-func holdForViewer(byVersion map[int][]map[string]any, items []*feedItem, levels map[int]int, viewerID int) map[int][]map[string]any {
+func holdForViewer[T imageRecord](byVersion map[int][]T, items []*feedItem, levels map[int]int, viewerID int) map[int][]T {
 	modelOf := map[int]*modelRow{}
 	for _, it := range items {
 		modelOf[it.versionID] = it.row
 	}
-	out := make(map[int][]map[string]any, len(byVersion))
+	out := make(map[int][]T, len(byVersion))
 	for vid, list := range byVersion {
 		r, ok := modelOf[vid]
 		if !ok {
 			// A version with no model to clear it serves none of its images. (Unreachable: every
 			// version read is one of the page's.)
-			out[vid] = []map[string]any{}
+			out[vid] = []T{}
 			continue
 		}
 		level, held := levels[r.ID]
@@ -855,9 +859,9 @@ func holdForViewer(byVersion map[int][]map[string]any, items []*feedItem, levels
 			out[vid] = list
 			continue
 		}
-		kept := make([]map[string]any, 0, len(list))
+		kept := make([]T, 0, len(list))
 		for _, img := range list {
-			if n, _ := hydrate.Int(img["nsfwLevel"]); level&n != 0 {
+			if n, _ := hydrate.Int(recField(img, "nsfwLevel")); level&n != 0 {
 				kept = append(kept, img)
 			}
 		}
@@ -867,14 +871,14 @@ func holdForViewer(byVersion map[int][]map[string]any, items []*feedItem, levels
 }
 
 // holdCovers is holdCovers: each cover held as its model's shown version would hold it.
-func holdCovers(covers map[int]map[string]any, items []*feedItem, levels map[int]int, viewerID int) map[int]map[string]any {
-	out := map[int]map[string]any{}
+func holdCovers(covers map[int]superjson.Object, items []*feedItem, levels map[int]int, viewerID int) map[int]superjson.Object {
+	out := map[int]superjson.Object{}
 	for _, it := range items {
 		c, ok := covers[it.row.ID]
 		if !ok || it.versionID == 0 {
 			continue
 		}
-		held := holdForViewer(map[int][]map[string]any{it.versionID: {c}}, []*feedItem{it}, levels, viewerID)
+		held := holdForViewer(map[int][]superjson.Object{it.versionID: {c}}, []*feedItem{it}, levels, viewerID)
 		if l := held[it.versionID]; len(l) > 0 {
 			out[it.row.ID] = l[0]
 		}
@@ -883,24 +887,96 @@ func holdCovers(covers map[int]map[string]any, items []*feedItem, levels map[int
 }
 
 // coverImages is getCoverImages: each model's chosen cover, found among its shown version's (held)
-// images, else — unless a base-model filter pins the card to that version — located on the replica
-// (the model owner's image on one of the model's versions) and read from that version's cached
-// images. A dangling or foreign id is absent.
-func coverImages(ctx context.Context, d *Deps, items []*feedItem, byVersion map[int][]map[string]any, sameVersionOnly bool) (map[int]map[string]any, error) {
-	found := map[int]map[string]any{}
-	type want struct {
-		it      *feedItem
-		coverID int
+// images, else — unless a base-model filter or Hide Paid pins the card to that version — located on
+// the replica (the model owner's image on one of the model's versions) and read from that version's
+// cached images. A dangling or foreign id is absent, unless Node's withCommunityCovers could find it
+// (communityCoverGuard).
+func coverImages(ctx context.Context, d *Deps, items []*feedItem, byVersion map[int][]superjson.Object, sameVersionOnly bool) (map[int]superjson.Object, error) {
+	found, pending, err := ownerCovers(ctx, d, items, byVersion, sameVersionOnly)
+	if err != nil {
+		return nil, err
 	}
-	var pending []want
+	if err := communityCoverGuard(ctx, d.DB, found, pending); err != nil {
+		return nil, err
+	}
+	return found, nil
+}
+
+// coverWant is one model's chosen cover id that is not on its shown version's images.
+type coverWant struct {
+	it      *feedItem
+	coverID int
+}
+
+// communityCoverGuard stands in for withCommunityCovers (src/server/services/model-cover.service.ts),
+// which getCoverImages runs over every chosen cover its owner lookup did not find: such a cover can
+// be a COMMUNITY image the creator featured in one of the model's version showcases
+// (getShowcaseCommunityCovers, version-showcase.service.ts), which Node then serves as the cover.
+// That is not ported, so the request falls back (`model-community-cover`) when a cover the owner
+// lookup did not find has a row in the query getShowcaseCommunityCovers starts from. With no such
+// row Node finds nothing either; with one, whatever else Node checks, a fallback is only a lost
+// answer.
+func communityCoverGuard(ctx context.Context, db Querier, found map[int]superjson.Object, pending []coverWant) error {
+	var missing []coverWant
+	for _, p := range pending {
+		if _, ok := found[p.it.row.ID]; !ok {
+			missing = append(missing, p)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	imageIDs := make([]int, len(missing))
+	modelIDs := make([]int, len(missing))
+	wanted := make(map[[2]int]bool, len(missing))
+	for i, p := range missing {
+		imageIDs[i], modelIDs[i] = p.coverID, p.it.row.ID
+		wanted[[2]int{p.it.row.ID, p.coverID}] = true
+	}
+	rows, err := db.Query(ctx, `SELECT DISTINCT mv."modelId", s."imageId"
+		FROM "ModelVersionShowcaseItem" s
+		JOIN "ModelVersion" mv ON mv.id = s."modelVersionId"
+		JOIN "Image" i ON i.id = s."imageId"
+		WHERE s."imageId" = ANY($1::int[])
+		  AND mv."modelId" = ANY($2::int[])
+		  AND s.source = 'Community'
+		  AND NOT s."removed"`, imageIDs, modelIDs)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	featured := false
+	for rows.Next() {
+		var modelID, imageID int
+		if err := rows.Scan(&modelID, &imageID); err != nil {
+			return err
+		}
+		if wanted[[2]int{modelID, imageID}] {
+			featured = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if featured {
+		return fallback.New("model-community-cover")
+	}
+	return nil
+}
+
+// ownerCovers is getCoverImages up to withCommunityCovers: the covers found on the shown version or
+// as the owner's image on another version, and every chosen cover not on the shown version.
+func ownerCovers(ctx context.Context, d *Deps, items []*feedItem, byVersion map[int][]superjson.Object, sameVersionOnly bool) (map[int]superjson.Object, []coverWant, error) {
+	found := map[int]superjson.Object{}
+	var pending []coverWant
 	for _, it := range items {
 		id := pickCoverImageID(it)
 		if id == 0 {
 			continue
 		}
-		var hit map[string]any
+		var hit superjson.Object
 		for _, img := range byVersion[it.versionID] {
-			if n, _ := hydrate.Int(img["id"]); n == id {
+			if n, _ := hydrate.Int(recField(img, "id")); n == id {
 				hit = img
 				break
 			}
@@ -908,11 +984,11 @@ func coverImages(ctx context.Context, d *Deps, items []*feedItem, byVersion map[
 		if hit != nil {
 			found[it.row.ID] = hit
 		} else {
-			pending = append(pending, want{it, id})
+			pending = append(pending, coverWant{it, id})
 		}
 	}
 	if len(pending) == 0 || sameVersionOnly {
-		return found, nil
+		return found, pending, nil
 	}
 	ids := make([]int, len(pending))
 	for i, p := range pending {
@@ -924,7 +1000,7 @@ func coverImages(ctx context.Context, d *Deps, items []*feedItem, byVersion map[
 		LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
 		WHERE i.id = ANY($1::int[])`, ids)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	type located struct{ userID, versionID, modelID *int }
 	where := map[int]located{}
@@ -933,13 +1009,13 @@ func coverImages(ctx context.Context, d *Deps, items []*feedItem, byVersion map[
 		var l located
 		if err := rows.Scan(&id, &l.userID, &l.versionID, &l.modelID); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		where[id] = l
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	type coverHit struct {
 		it        *feedItem
@@ -959,21 +1035,21 @@ func coverImages(ctx context.Context, d *Deps, items []*feedItem, byVersion map[
 		}
 	}
 	if len(hits) == 0 {
-		return found, nil
+		return found, pending, nil
 	}
 	others, err := d.Sources.VersionImages(ctx, versionIDs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, h := range hits {
 		for _, img := range others[h.versionID] {
-			if n, _ := hydrate.Int(img["id"]); n == h.coverID {
+			if n, _ := hydrate.Int(recField(img, "id")); n == h.coverID {
 				found[h.it.row.ID] = img
 				break
 			}
 		}
 	}
-	return found, nil
+	return found, pending, nil
 }
 
 // pickCoverImageID is pickCoverImageId: the .com cover with a complete face for a .com viewer,
@@ -990,15 +1066,15 @@ func pickCoverImageID(it *feedItem) int {
 }
 
 // hoistCover is hoistCoverImage: the cover first, then the rest without it.
-func hoistCover(images []map[string]any, cover map[string]any) []map[string]any {
+func hoistCover(images []superjson.Object, cover superjson.Object) []superjson.Object {
 	if cover == nil {
 		return images
 	}
-	id, _ := hydrate.Int(cover["id"])
-	out := make([]map[string]any, 0, len(images)+1)
+	id, _ := hydrate.Int(recField(cover, "id"))
+	out := make([]superjson.Object, 0, len(images)+1)
 	out = append(out, cover)
 	for _, img := range images {
-		if n, _ := hydrate.Int(img["id"]); n != id {
+		if n, _ := hydrate.Int(recField(img, "id")); n != id {
 			out = append(out, img)
 		}
 	}
@@ -1007,13 +1083,13 @@ func hoistCover(images []map[string]any, cover map[string]any) []map[string]any 
 
 // imagesForFace is imagesForFace: a mature model listed on .com through its face sends only its
 // PG / PG-13 images.
-func imagesForFace(images []map[string]any, nsfw, hasSfwFace, showSfwFace bool) []map[string]any {
+func imagesForFace(images []superjson.Object, nsfw, hasSfwFace, showSfwFace bool) []superjson.Object {
 	if !showSfwFace || !nsfw || !hasSfwFace {
 		return images
 	}
-	out := make([]map[string]any, 0, len(images))
+	out := make([]superjson.Object, 0, len(images))
 	for _, img := range images {
-		n, _ := hydrate.Int(img["nsfwLevel"])
+		n, _ := hydrate.Int(recField(img, "nsfwLevel"))
 		if n != 0 && n&table.Levels.SFW == n {
 			out = append(out, img)
 		}
@@ -1022,18 +1098,19 @@ func imagesForFace(images []map[string]any, nsfw, hasSfwFace, showSfwFace bool) 
 }
 
 // filterImagesForViewer is filterImagesForViewer (src/server/utils/model-getall-images.ts).
-func filterImagesForViewer(images []map[string]any, level int, modelNsfw, disablePoi, disableMinor bool, viewer *Viewer) []map[string]any {
+func filterImagesForViewer[T imageRecord](images []T, level int, modelNsfw, disablePoi, disableMinor bool, viewer *Viewer) []T {
+	level = browsing.OnlySelectable(level)
 	maxLevel := 0
 	for bit := 1; bit <= level && bit > 0; bit <<= 1 {
 		if level&bit != 0 {
 			maxLevel = bit
 		}
 	}
-	out := make([]map[string]any, 0, len(images))
+	out := make([]T, 0, len(images))
 	for _, img := range images {
-		owner, _ := hydrate.Int(img["userId"])
+		owner, _ := hydrate.Int(recField(img, "userId"))
 		isOwner := viewer != nil && owner == viewer.ID
-		n, _ := hydrate.Int(img["nsfwLevel"])
+		n, _ := hydrate.Int(recField(img, "nsfwLevel"))
 		if n == 0 {
 			if isOwner || (viewer != nil && viewer.IsModerator) {
 				out = append(out, img)
@@ -1049,10 +1126,10 @@ func filterImagesForViewer(images []map[string]any, level int, modelNsfw, disabl
 		if !shown {
 			continue
 		}
-		if truthy(img["poi"]) && disablePoi && !isOwner {
+		if truthy(recField(img, "poi")) && disablePoi && !isOwner {
 			continue
 		}
-		if truthy(img["minor"]) && disableMinor && !isOwner {
+		if truthy(recField(img, "minor")) && disableMinor && !isOwner {
 			continue
 		}
 		out = append(out, img)
@@ -1065,7 +1142,7 @@ var droppedImageKeys = map[string]bool{"onSite": true, "hasMeta": true, "hasPosi
 
 // buildGetAllModelImages is buildGetAllModelImages(images, GET_ALL_IMAGES_PER_MODEL_SLIM, true): the
 // slim coverage slice, each image without the dropped keys.
-func buildGetAllModelImages(images []map[string]any) []any {
+func buildGetAllModelImages(images []superjson.Object) []any {
 	reduced := images
 	if len(images) > imagesPerModelSlim {
 		reduced = selectSlim(images, imagesPerModelSlim)
@@ -1079,12 +1156,12 @@ func buildGetAllModelImages(images []map[string]any) []any {
 
 // selectSlim is selectSlimGetAllModelImages: one earliest image per distinct truthy nsfwLevel, then
 // the earliest others, in cache order, capped.
-func selectSlim(images []map[string]any, limit int) []map[string]any {
+func selectSlim(images []superjson.Object, limit int) []superjson.Object {
 	selected := make([]bool, len(images))
 	count := 0
 	seen := map[int]bool{}
 	for i := 0; i < len(images) && count < limit; i++ {
-		n, _ := hydrate.Int(images[i]["nsfwLevel"])
+		n, _ := hydrate.Int(recField(images[i], "nsfwLevel"))
 		if n == 0 || seen[n] {
 			continue
 		}
@@ -1098,7 +1175,7 @@ func selectSlim(images []map[string]any, limit int) []map[string]any {
 			count++
 		}
 	}
-	out := make([]map[string]any, 0, limit)
+	out := make([]superjson.Object, 0, limit)
 	for i, img := range images {
 		if selected[i] && len(out) < limit {
 			out = append(out, img)
@@ -1107,20 +1184,20 @@ func selectSlim(images []map[string]any, limit int) []map[string]any {
 	return out
 }
 
-// imageWire is one showcase image on the wire (cache keys in sorted order; the client reads values).
-func imageWire(img map[string]any) superjson.Object {
-	m := make(map[string]any, len(img))
-	for k, v := range img {
-		if !droppedImageKeys[k] {
-			m[k] = v
+// imageWire is one showcase image on the wire: stripGetAllModelImage's `{...rest}`, the cached
+// record's members in their order without the dropped keys (a new object: the record is shared).
+func imageWire(img superjson.Object) superjson.Object {
+	obj := make(superjson.Object, 0, len(img))
+	for _, f := range img {
+		if !droppedImageKeys[f.Key] {
+			obj = append(obj, f)
 		}
 	}
-	obj, _ := hydrate.Wire(m).(superjson.Object)
 	return obj
 }
 
 // wire is the item as getModelsWithImagesAndModelVersions returns it, in its key order.
-func (it *feedItem) wire(hid [3]bool, images []map[string]any) superjson.Object {
+func (it *feedItem) wire(hid [3]bool, images []superjson.Object) superjson.Object {
 	r := it.row
 	var deadline any
 	gated := false
@@ -1179,11 +1256,11 @@ func (it *feedItem) wire(hid [3]bool, images []map[string]any) superjson.Object 
 		tipped = nil
 	}
 	version := versionWire(it.version)
-	covered, _ := it.version["covered"].(bool)
+	covered, _ := recField(it.version, "covered").(bool)
 	// The expansion's column (generation-coverage-next on), every viewer a member (open to all).
-	coveredNext, _ := it.version["coveredNext"].(bool)
-	bm, _ := it.version["baseModel"].(string)
-	flags, _ := hydrate.Int(it.version["flags"])
+	coveredNext, _ := recField(it.version, "coveredNext").(bool)
+	bm, _ := recField(it.version, "baseModel").(string)
+	flags, _ := hydrate.Int(recField(it.version, "flags"))
 	obj = append(obj,
 		superjson.Field{Key: "tags", Val: tags},
 		superjson.Field{Key: "hashes", Val: hashes},
@@ -1205,13 +1282,13 @@ func (it *feedItem) wire(hid [3]bool, images []map[string]any) superjson.Object 
 	return obj
 }
 
-// versionWire is the shown version: the cached version with its public-API flags.
-func versionWire(v map[string]any) superjson.Object {
-	obj, _ := hydrate.Wire(v).(superjson.Object)
-	if f, ok := hydrate.Int(v["flags"]); ok {
-		obj.Set("flags", int64(toPublicAPIVersionFlags(f)))
+// versionWire is the shown version: the cached version, in its key order, with its public-API flags
+// (`{...version, flags}`: flags keeps its place). A new object: the record is shared.
+func versionWire(v superjson.Object) superjson.Object {
+	if f, ok := hydrate.Int(recField(v, "flags")); ok {
+		return withField(v, "flags", int64(toPublicAPIVersionFlags(f)))
 	}
-	return obj
+	return append(make(superjson.Object, 0, len(v)), v...)
 }
 
 // parseRank is the row's `rank` object, each count `?? 0`.

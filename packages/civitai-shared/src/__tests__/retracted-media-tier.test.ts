@@ -5,8 +5,8 @@ import {
   siblingsServable,
   URL_SIBLING_CAP,
   urlSiblingsSql,
-  type ScannerVerdict,
 } from '../retracted-media-tier';
+import type { ScannerVerdict } from '../media-signals';
 
 describe('createScannerVerdictCache', () => {
   const setup = (answers: (ScannerVerdict | null)[]) => {
@@ -105,7 +105,7 @@ describe('siblingsServable', () => {
   });
 
   it('refuses a url another row has a block-reason signal on', async () => {
-    expect(await siblingsServable([row(1, 'unlisted')], isSignal)).toBe(false);
+    expect(await siblingsServable([row(1, 'unlisted')], isSignal, verdicts({}))).toBe(false);
   });
 
   it('refuses a url another row has not finished its scan on', async () => {

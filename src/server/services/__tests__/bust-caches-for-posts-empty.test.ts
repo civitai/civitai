@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { showcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
@@ -142,6 +143,18 @@ describe('bustCachesForPosts and the version showcase', () => {
 
     expect(refreshShowcase).not.toHaveBeenCalled();
     expect(queueModels).not.toHaveBeenCalled();
+  });
+
+  // Featured community images are always someone else's posts, which the owner-showcase branch
+  // returns early for: the version showcase bust has to run before that.
+  it("still refreshes the version showcases holding someone else's post", async () => {
+    mockQueryRaw.mockResolvedValueOnce([post(false)] as never);
+
+    await bustCachesForPosts([1]);
+
+    const reads = showcaseQueries(dbMock.dbRead.$queryRaw);
+    expect(reads).toHaveLength(1);
+    expect(reads[0].values).toEqual([1]);
   });
 });
 

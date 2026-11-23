@@ -63,6 +63,7 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
 import { writeJsonObject } from '~/server/utils/json-stream-helpers';
 import type { ProfileClearSnapshot } from '~/server/services/user.service';
+import { storeVerifiedProfileArchive } from '~/server/services/profile-archive';
 import {
   authorPassPool,
   flattenPages,
@@ -79,7 +80,11 @@ import { logToAxiom } from '~/server/logging/client';
 import type { CsamSupplementalDetails } from '~/server/services/csam-supplemental-text';
 import { supplementalReportText } from '~/server/services/csam-supplemental-text';
 import type { CsamContextText } from '~/server/services/csam-context-text';
-import { contextWebPageIncidents } from '~/server/services/csam-context-text';
+import {
+  contextTextOmittedLine,
+  contextWebPageIncidents,
+  unsendableContextText,
+} from '~/server/services/csam-context-text';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
@@ -220,6 +225,8 @@ type CsamReportDetails = CsamReportFormOutput & {
    * case changes and removed when the report is sent.
    */
   sendHold?: SendHold;
+  /** Captured text the sent CyberTip left out (`omittedContext` below); written with the send stamp. */
+  omittedContext?: { count: number; onlyText: boolean };
 };
 
 /** `no-files`: nothing the report names can be sent. `missing-user`: no reporting or reported user. */
@@ -624,6 +631,9 @@ export async function processCsamReport(runStart: CsamReportProps) {
   }
 }
 
+export const VIEWED_COPY_UNCONFIRMED_FILE_NOTE =
+  "Civitai has a record of a reviewer viewing this item but can't confirm that the file sent is identical to the copy they viewed, so it is reported as not viewed.";
+
 /** Filed with each feedback page capture in an image report, whoever the report's subject is. */
 export const FEEDBACK_CAPTURE_FILE_NOTE =
   'Page capture submitted by a reporter: this file is a screenshot of a Civitai page that a user attached to a feedback report sent to Civitai. It may show content posted by an account other than the one who submitted it.';
@@ -810,6 +820,12 @@ const underClaim = (claim: SendClaim) => ({
   id: claim.report.id,
   sendClaimId: claim.claimId,
   reportSentAt: null,
+});
+
+/** The record of captured text a sent report went without; `onlyText` means no text was sent at all. */
+const omittedContext = (report: CsamReportProps, count: number) => ({
+  count,
+  onlyText: count === (report.details?.contextText?.length ?? 0),
 });
 
 function logSendLine(
@@ -1169,13 +1185,16 @@ async function sendCyberTip(
     fileDetails,
     sendFiles,
     beforeCancel,
+    onFinished,
     failureSubType = 'archive-data',
   }: {
-    /** The details each file will be sent with, but for its fileId. */
+    /** Every details variant a file may be sent with, but for its fileId. */
     fileDetails: FileDetailsXml[];
     /** Resolves to the details keys the report is marked sent with. */
     sendFiles: (ncmecReportId: number) => Promise<Record<string, unknown> | void>;
     beforeCancel?: () => Promise<void>;
+    /** Runs once NCMEC has the finished report, before it is stamped sent here. */
+    onFinished?: () => void;
     failureSubType?: string;
   }
 ) {
@@ -1246,6 +1265,7 @@ async function sendCyberTip(
   }
 
   // Finished at NCMEC from here on: a lost stamp is alerted, and the next run sends a duplicate.
+  onFinished?.();
   if (!isProd) return true;
   try {
     if (
@@ -1362,11 +1382,21 @@ async function reportImages(claim: SendClaim) {
       'supplemental-unviewed'
     );
 
+  // Files that may count as viewed, decided at the read. The supplemental refusal above reads the records.
+  const viewedAsSent = new Map(
+    [...viewed].filter(([id]) => {
+      const image = images.find((i) => i.id === id);
+      return !image || !isEdgeUrlPassthrough(image.url);
+    })
+  );
+
   // Known before the CyberTip is opened, so NCMEC is told in the report itself what it lacks.
   const noLongerStored =
     absent.length +
     report.images.filter(({ id }) => !images.some((image) => image.id === id)).length;
+  const unsendable = unsendableContextText(report.details?.contextText).length;
   const omitted = [
+    unsendable > 0 && contextTextOmittedLine(unsendable),
     failed.length > 0 &&
       `${failed.length} file(s) named in this report could not be read from storage after repeated attempts and are not included.`,
     noLongerStored > 0 &&
@@ -1375,7 +1405,12 @@ async function reportImages(claim: SendClaim) {
 
   const fileDetailsOf = new Map<
     number,
-    { fileDetails: FileDetailsXml; fileAnnotations: Ncmec.FileAnnotationsSchema }
+    {
+      fileDetails: FileDetailsXml;
+      fileAnnotations: Ncmec.FileAnnotationsSchema;
+      /** Sent instead when a file with a view record goes as not viewed. */
+      notedDetails?: FileDetailsXml;
+    }
   >();
   for (const image of images) {
     const imageReportInfo = report.images.find((x) => x.id === image.id);
@@ -1405,16 +1440,27 @@ async function reportImages(claim: SendClaim) {
     });
     if (isFeedbackCaptureOwner(image.userId))
       prompts.additionalInfo.unshift(xmlText(FEEDBACK_CAPTURE_FILE_NOTE));
-    fileDetailsOf.set(image.id, {
-      fileDetails: {
-        originalFileName: originalFileName ? xmlText(originalFileName) : undefined,
-        locationOfFile: xmlText(getEdgeUrl(image.url, { type: image.type })),
-        fileViewedByEsp: viewed.has(image.id),
-        fileAnnotations,
-        ...(prompts.details && { details: prompts.details }),
-        ...(prompts.additionalInfo.length && { additionalInfo: prompts.additionalInfo }),
-      },
+    const details: FileDetailsXml = {
+      originalFileName: originalFileName ? xmlText(originalFileName) : undefined,
+      locationOfFile: xmlText(getEdgeUrl(image.url, { type: image.type })),
+      fileViewedByEsp: viewedAsSent.has(image.id),
       fileAnnotations,
+      ...(prompts.details && { details: prompts.details }),
+      ...(prompts.additionalInfo.length && { additionalInfo: prompts.additionalInfo }),
+    };
+    fileDetailsOf.set(image.id, {
+      fileDetails: details,
+      fileAnnotations,
+      notedDetails: viewed.has(image.id)
+        ? {
+            ...details,
+            fileViewedByEsp: false,
+            additionalInfo: [
+              ...(details.additionalInfo ?? []),
+              xmlText(VIEWED_COPY_UNCONFIRMED_FILE_NOTE),
+            ],
+          }
+        : undefined,
     });
   }
 
@@ -1428,7 +1474,7 @@ async function reportImages(claim: SendClaim) {
       const imageReportInfo = report.images.find((x) => x.id === image.id);
       const described = fileDetailsOf.get(image.id);
       if (!imageReportInfo || !described) return;
-      const { fileDetails, fileAnnotations } = described;
+      const { fileDetails, fileAnnotations, notedDetails } = described;
 
       const check = checks.get(image.id);
       if (check && 'failed' in check)
@@ -1466,9 +1512,12 @@ async function reportImages(claim: SendClaim) {
         data: { fileId, hash },
       } = await uploadToCyberTip(claim, file);
 
-      const viewRendition = viewed.get(image.id);
-      const viewedByEsp = !!viewRendition;
-      await cybertipClient.submitFileDetails({ reportId: ncmecReportId, fileId, ...fileDetails });
+      const viewedByEsp = viewedAsSent.has(image.id) && original.source === 'original';
+      const viewRendition = viewedByEsp ? viewedAsSent.get(image.id) : undefined;
+      const sentDetails = viewedByEsp
+        ? fileDetails
+        : notedDetails ?? { ...fileDetails, fileViewedByEsp: false };
+      await cybertipClient.submitFileDetails({ reportId: ncmecReportId, fileId, ...sentDetails });
 
       uploaded++;
       return {
@@ -1532,8 +1581,28 @@ async function reportImages(claim: SendClaim) {
       }),
     },
     {
-      fileDetails: [...fileDetailsOf.values()].map(({ fileDetails }) => fileDetails),
-      sendFiles,
+      // Every variant a file may be sent with is checked before the CyberTip opens.
+      fileDetails: [...fileDetailsOf.values()].flatMap(({ fileDetails, notedDetails }) =>
+        notedDetails ? [fileDetails, notedDetails] : [fileDetails]
+      ),
+      // Marked with the send, so the record of what went without it can't be lost between two writes.
+      sendFiles: async (ncmecReportId) => ({
+        ...(await sendFiles(ncmecReportId)),
+        ...(unsendable > 0 && { omittedContext: omittedContext(report, unsendable) }),
+      }),
+      // Logged once NCMEC has the report, so a stamp that fails or loses its answer still leaves it.
+      onFinished: () => {
+        if (unsendable > 0)
+          logSendLine(
+            claim,
+            'send-omitted',
+            {
+              message: `report ${report.id} sent without ${unsendable} captured text item(s)`,
+              payload: omittedContext(report, unsendable),
+            },
+            'error'
+          );
+      },
       // A file already being sent finishes before the cancel, so its read failure is counted too.
       beforeCancel: async () => {
         await Promise.allSettled(started);
@@ -2358,22 +2427,14 @@ export async function archiveUserComments(userId: number) {
  * before a moderator clears it or a ban deletes the links. Each call writes its own object.
  */
 export async function archiveUserProfile(snapshot: ProfileClearSnapshot) {
-  const sink = new stream.PassThrough();
-  const [, stored] = await Promise.all([
-    writeJsonObject({
-      sink,
-      replacer: bigintReplacer,
-      entries: [
-        ['userId', { value: snapshot.userId }],
-        ['archivedAt', { value: new Date().toISOString() }],
-        ['actorId', { value: snapshot.actorId }],
-        ['clearedFields', { value: snapshot.clearedFields }],
-        ['profile', { value: snapshot.profile }],
-        ['links', { value: snapshot.links }],
-      ],
-    }),
-    uploadStream({ stream: sink, userId: snapshot.userId, filename: 'profile.json' }),
-  ]);
+  const stored = await storeVerifiedProfileArchive({ ...getCsamBucket(), snapshot });
+  // The audit trail's pointer to the evidence object: ids and hash only, never the profile text.
+  logToAxiom({
+    name: 'profile-archive-stored',
+    type: 'info',
+    userId: snapshot.userId,
+    payload: { actorId: snapshot.actorId, key: stored.key, sha256: stored.sha256 },
+  });
   return stored;
 }
 

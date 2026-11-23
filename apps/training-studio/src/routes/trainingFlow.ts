@@ -3,6 +3,7 @@ import { findTrigger, withTrigger } from '$lib/training-trigger';
 export { findTrigger, promptHasTrigger, withTrigger } from '$lib/training-trigger';
 import {
   KOHYA_PARAM_FIELDS,
+  kohyaClipSkip,
   kohyaDefaults,
   kohyaFieldSupported,
   kohyaFamily,
@@ -46,7 +47,7 @@ import {
 import type { TagExcluder } from '$lib/autolabel-exclude';
 
 export const CUSTOM_VERSION_KEY = 'custom';
-export const MAX_RUNS = 5;
+export { MAX_RUNS } from '$lib/submit-limits';
 
 let runSeq = 0;
 /** Stable client id for a run — keeps `{#each}` keyed by identity, not index (duplicate
@@ -525,7 +526,7 @@ export const PARAM_HELP: Record<keyof RunParams, string> = {
     'Repeats each image within a dataset epoch. The Steps field still sets the total training budget.',
   enableBucket: 'Groups images with similar aspect ratios to reduce cropping.',
   clipSkip:
-    'Text encoder layer skip for SD 1.5. Anime defaults to 2; other SD 1.5 models default to 1.',
+    'Text encoder layer skip. SD 1.5 defaults to 1 (anime 2); SDXL-family models default to 2 and need at least 2.',
   lrSchedulerNumCycles:
     'Number of cycles for cosine_with_restarts. Other schedulers ignore this value.',
   seed: 'Random seed for training and preview samples.',
@@ -684,7 +685,7 @@ export function defaultRunParams(run: Run, trigger = '', loraType = ''): RunPara
     negativePrompt: '',
     numRepeats: '1',
     enableBucket: true,
-    clipSkip: version.key === 'anime' ? '2' : '1',
+    clipSkip: String(version.key === 'anime' ? 2 : kohyaClipSkip(version.ecosystem)?.default ?? 1),
     lrSchedulerNumCycles: '3',
     seed: '42',
     fp8Base: true,
