@@ -143,22 +143,32 @@ describe('RemixTray', () => {
     await expect.element(rows().getByText('Failed')).toBeVisible();
   });
 
-  // remix-seg is being dropped from new segments: the newest segment is the run's latest.
-  test('counts a run by its newest segment, with or without remix-seg tags', async () => {
-    const noSeg = (item: Item) => ({
+  test('takes each run from its newest segment, with or without remix-seg tags', async () => {
+    const as = (slug: string, item: Item, { seg = true } = {}) => ({
       ...item,
-      tags: item.tags.filter((tag) => !tag.startsWith('remix-seg:')),
+      tags: item.tags
+        .filter((tag) => seg || !tag.startsWith('remix-seg:'))
+        .map((tag) => (tag === 'remix-app:anime-it' ? `remix-app:${slug}` : tag)),
     });
-    h.items = [
-      noSeg(workflow('a', 0, 'succeeded')),
-      noSeg(workflow('a', 1, 'processing')),
-      // Tags that disagree with the order the segments were made in.
-      workflow('b', 1, 'processing'),
-      workflow('b', 0, 'succeeded'),
-    ];
+    // Made in this order; createdAt follows it.
+    const a0 = as('app-a', workflow('a', 0, 'succeeded'), { seg: false });
+    const b1 = as('app-b', workflow('b', 1, 'processing')); // a tag that disagrees with the order made
+    const a1 = as('app-a', workflow('a', 1, 'processing'), { seg: false });
+    const b0 = as('app-b', workflow('b', 0, 'succeeded'));
+    // Listed newest first, as the queue returns them.
+    h.items = [b0, a1, b1, a0];
     renderWithProviders(<RemixTray />);
 
     await expect.element(pill()).toHaveAccessibleName('Remix runs: 1 in progress, 1 ready');
+    await pill().click();
+    await page.getByRole('button', { name: 'Dismiss app-a' }).click();
+    expect(h.patch).toHaveBeenLastCalledWith({
+      tags: [{ workflowId: 'a-1', tag: 'remix:dismissed', op: 'add' }],
+    });
+    await page.getByRole('button', { name: 'Dismiss app-b' }).click();
+    expect(h.patch).toHaveBeenLastCalledWith({
+      tags: [{ workflowId: 'b-0', tag: 'remix:dismissed', op: 'add' }],
+    });
   });
 
   test('is hidden when nothing is in progress or ready', async () => {

@@ -118,8 +118,8 @@ function segmentExternalId(userId: number, runId: string, segment: number) {
 }
 
 /**
- * Which segment of `runId` a workflow is, from the externalId this server sent for it: set once at
- * create, where the segment tag is the owner's to edit, and on its way out of the tag set.
+ * Which segment of `runId` a workflow is: its externalId, which cannot change after create, matched
+ * against the values this server sends for each segment of the run. Tags can be edited after create.
  */
 function segmentIndexOf(workflow: Workflow, userId: number, runId: string) {
   // Stored as `<submitting account id>-<sent value>`; in dev that account is not the caller's.

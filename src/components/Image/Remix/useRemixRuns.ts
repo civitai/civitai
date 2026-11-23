@@ -53,7 +53,7 @@ export function groupRemixRuns(
   apps: readonly { slug: string; name: string }[]
 ): RemixRun[] {
   const names = new Map([...apps, TEAM_REMIX_APP].map((app) => [app.slug, app.name]));
-  // A run's segments are submitted one after another, so its latest is its newest.
+  // Segments of a run are submitted sequentially, so createdAt orders them.
   const latest = new Map<string, { workflow: WorkflowData; createdAt: number }>();
   for (const workflow of workflows) {
     const runId = readRemixTag(workflow.tags, REMIX_RUN_TAG_PREFIX);

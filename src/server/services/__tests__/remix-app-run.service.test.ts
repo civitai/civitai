@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logToAxiom } from '~/server/logging/client';
@@ -551,8 +550,9 @@ beforeEach(() => {
       return workflow;
     }
   );
+  // Newest first, as the orchestrator lists them.
   h.queryWorkflows.mockImplementation(async ({ tags }: { tags: string[] }) => ({
-    items: h.workflows.filter((w) => tags.every((tag) => w.tags.includes(tag))),
+    items: h.workflows.filter((w) => tags.every((tag) => w.tags.includes(tag))).reverse(),
   }));
   h.headlessPost.mockResolvedValue({ postId: 500, imageIds: [1], deduped: false });
   h.patchTags.mockResolvedValue(undefined);
@@ -847,7 +847,7 @@ describe('remix app runs', () => {
     }
     const withoutSegTag = (tags: string[]) => tags.filter((tag) => !tag.startsWith('remix-seg:'));
 
-    // remix-seg is being dropped from new segments: a run must read with or without it.
+    // A run must read with or without remix-seg tags.
     it('reads a run whose segments carry no remix-seg tag', async () => {
       const runId = await finishedTwoStep('nonce-seg-01');
       for (const w of submits()) w.tags = withoutSegTag(w.tags);
@@ -922,6 +922,62 @@ describe('remix app runs', () => {
         code: 'CONFLICT',
         message: expect.stringContaining('missing its run details'),
       });
+    });
+
+    describe('refuses, whatever its remix-seg tag says', () => {
+      const missingDetails = {
+        code: 'CONFLICT',
+        message: expect.stringContaining('missing its run details'),
+      };
+
+      it('a segment with no externalId', async () => {
+        const runId = await finishedTwoStep('nonce-seg-09');
+        delete submits()[1].externalId;
+        await expect(advanceRemixRun({ runId, caller: caller() })).rejects.toMatchObject(
+          missingDetails
+        );
+      });
+
+      it('an account id that is not all digits', async () => {
+        const runId = await finishedTwoStep('nonce-seg-10');
+        submits()[1].externalId = `x${submits()[1].externalId}`;
+        await expect(advanceRemixRun({ runId, caller: caller() })).rejects.toMatchObject(
+          missingDetails
+        );
+      });
+
+      it('the value for a segment past the last one a run may have', async () => {
+        const runId = await finishedTwoStep('nonce-seg-11');
+        const past = createHash('sha256')
+          .update(JSON.stringify([USER_ID, runId, MAX_RUN_SEGMENTS]))
+          .digest('hex')
+          .slice(0, 32);
+        submits()[1].externalId = `${USER_ID}-remix-run_${past}`;
+        await expect(advanceRemixRun({ runId, caller: caller() })).rejects.toMatchObject(
+          missingDetails
+        );
+      });
+
+      it('two workflows claiming the same segment', async () => {
+        const runId = await finishedTwoStep('nonce-seg-12');
+        h.workflows.push({ ...submits()[1], id: `${submits()[1].id}-copy` });
+        await expect(advanceRemixRun({ runId, caller: caller() })).rejects.toMatchObject({
+          code: 'CONFLICT',
+          message: expect.stringContaining('a step was deleted'),
+        });
+      });
+    });
+
+    it('re-submits a last segment the list left out onto the same workflow, at no new charge', async () => {
+      const runId = await runToPick('nonce-seg-13');
+      await advanceRemixRun({ runId, answers: [2], quote: 30, caller: caller() });
+      const second = submits()[1];
+      // The list drops a workflow it fails to load; the run is then back at its pick.
+      h.queryWorkflows.mockImplementationOnce(async () => ({ items: [submits()[0]] }));
+      expect(
+        await advanceRemixRun({ runId, answers: [2], quote: 30, caller: caller() })
+      ).toMatchObject({ status: 'running', workflowId: second.id });
+      expect(submits()).toHaveLength(2);
     });
   });
 
