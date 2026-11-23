@@ -8,10 +8,7 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: h.getOrchestratorToken,
 }));
 
-import {
-  getMyOrchestrationFreeUsage,
-  timeSpanSeconds,
-} from '~/server/services/orchestrator/free-tier-usage.service';
+import { getMyOrchestrationFreeUsage } from '~/server/services/orchestrator/free-tier-usage.service';
 
 const USER = { id: 42 } as never;
 const AIR = 'urn:air:qwen3:checkpoint:civitai:900@901';
@@ -120,13 +117,5 @@ describe('getMyOrchestrationFreeUsage', () => {
   it('an orchestrator error is an error, not "free tier is off"', async () => {
     freeTierMock.mockResolvedValue({ data: undefined, error: { status: 503 } } as never);
     await expect(getMyOrchestrationFreeUsage(USER)).rejects.toThrow();
-  });
-});
-
-describe('timeSpanSeconds', () => {
-  it('reads the orchestrator TimeSpan forms, and refuses anything else', () => {
-    expect(timeSpanSeconds('1.00:00:00')).toBe(86400);
-    expect(timeSpanSeconds('01:30:00')).toBe(5400);
-    expect(timeSpanSeconds('P1D')).toBeNull();
   });
 });

@@ -98,7 +98,7 @@ export function UsageLimitsView({
         <Text size="sm" c="red">
           Couldn&apos;t load your usage limits. Try again in a moment.
         </Text>
-      ) : areas.length === 0 ? (
+      ) : areas.length === 0 && !appBuzz && !freeUsage?.length ? (
         <Text size="sm" c="dimmed">
           No limits apply to you right now.
         </Text>

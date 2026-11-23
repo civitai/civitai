@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
+import { parseTimeSpanSeconds } from '~/server/services/video-dimensions';
 import { versionIdFromAir } from '~/shared/utils/air';
 import type { SessionUser } from '~/types/session';
 
@@ -19,14 +20,6 @@ export type FreeUsageRow = {
   nextAt: string | null;
   resetAt: string | null;
 };
-
-/** A .NET TimeSpan as serialised: `hh:mm:ss` or `d.hh:mm:ss`. */
-export function timeSpanSeconds(value: string): number | null {
-  const match = /^(?:(\d+)\.)?(\d+):(\d+):(\d+)(?:\.\d+)?$/.exec(value);
-  if (!match) return null;
-  const [, d, h, m, s] = match;
-  return Number(d ?? 0) * 86400 + Number(h) * 3600 + Number(m) * 60 + Number(s);
-}
 
 function per(seconds: number) {
   if (seconds === 86400) return 'per day';
@@ -75,8 +68,8 @@ export async function getMyOrchestrationFreeUsage(
     const versionId = versionByKey.get(model.key);
     const name = (versionId !== undefined && nameByVersion.get(versionId)) || model.key;
     return model.windows.flatMap((window): FreeUsageRow[] => {
-      const seconds = timeSpanSeconds(window.duration);
-      if (seconds === null) return [];
+      const seconds = parseTimeSpanSeconds(window.duration);
+      if (seconds === undefined) return [];
       const remaining = Math.max(0, window.remaining);
       // The status read itself opens an unused window, unsaved, so its reset time moves between
       // views until the first free request. Show one only once something is used.
