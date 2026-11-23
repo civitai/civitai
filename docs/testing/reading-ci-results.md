@@ -26,7 +26,8 @@ gh run list --branch <branch> --json headSha,name,conclusion
 `Package unit tests` and `Related unit tests + smoke (PR)`. `Typecheck` (Tekton's covers an internal
 PR), `Unit tests` and `Component + geometry tests` are `skipped` by design: the unit, component and
 geometry suites run in the main batch, on dispatch, and on a PR with the `full-ci` label (skipped,
-each is one check, not its shards). `Related unit tests + smoke (PR)` runs the unit tests related to
+each is one check, not its shards). `Related unit tests + smoke (PR)` (the verdict of a plan job,
+`Related tests, plan (PR)`, and two shards, `Related unit tests + smoke (PR) (1/2)` and `(2/2)`) runs the unit tests related to
 the PR's changes plus the smoke set (repo-scan names and the tree-scanning tests listed in `scripts/ci/smoke-scanners.txt`); when its step summary says **Deferred to batch** it
 ran the smoke set only (the change was one the import graph cannot follow, or the selection was over
 its cap), and the PR's unit coverage is the next main batch. With the `full-ci` label the

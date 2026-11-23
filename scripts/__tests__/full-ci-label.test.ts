@@ -180,6 +180,22 @@ describe('the full-ci label', () => {
     );
   });
 
+  // The split tier: the plan, the shards and the ledger take the same gate, the ledger after a
+  // `!cancelled()` so a red shard still gets its verdict.
+  it.each(['related-plan', 'related-tests'])('lint.yml:%s has the related-tests gate', (id) => {
+    expect(norm(load('lint.yml').jobs?.[id]?.if ?? '')).toBe(
+      norm(load('lint.yml').jobs?.['related-tests']?.if ?? '')
+    );
+  });
+
+  it('lint.yml:related-ledger keeps the check name and needs the plan and both shards', () => {
+    const job = load('lint.yml').jobs?.['related-ledger'] ?? {};
+    expect(job.name).toBe('Related unit tests + smoke (PR)');
+    expect(([] as string[]).concat(job.needs ?? [])).toEqual(['related-plan', 'related-tests']);
+    expect(conjuncts(job.if ?? '')[0]).toBe('!cancelled()');
+    expect(norm(job.if ?? '')).toContain(norm(load('lint.yml').jobs?.['related-tests']?.if ?? ''));
+  });
+
   // A verify job posts commit statuses and bisects. full-ci.yml's dispatches are ALSO
   // github-actions[bot], on a PR branch, so a new verify job must check the ref. (unit-verify
   // predates this: full-ci never sends `only: unit`; it sends `only: all`.)
@@ -240,6 +256,8 @@ describe('the full-ci label', () => {
         'full-ci-done',
         'packages',
         'passed',
+        'related-ledger',
+        'related-plan',
         'related-tests',
         'typecheck',
         'typecheck-tests',

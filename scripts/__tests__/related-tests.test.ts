@@ -8,13 +8,16 @@ import {
   DEFAULT_CAP,
   SCANNERS_FILE,
   checkManifest,
+  fileWeights,
   forcedReason,
   importClosure,
   isSmoke,
   parseManifest,
   missingFromReport,
+  p50,
   parseNameStatus,
   planRun,
+  splitShards,
   summaryLines,
 } from '../ci/related-tests.mjs';
 
@@ -357,5 +360,92 @@ describe('missingFromReport', () => {
     expect(missingFromReport(['src/a.test.ts', 'src/b.test.ts'], report, '/r')).toEqual([
       'src/b.test.ts',
     ]);
+  });
+});
+
+// The 2-way split the plan job hands both shards. Every file must land in exactly one shard (a
+// file in none is never run; a file in two runs twice and the ledger fails), and the split must
+// follow the timings when it has them and the count when it has none.
+describe('splitShards', () => {
+  const files = [
+    'src/a.test.ts',
+    'src/b.test.ts',
+    'src/c.test.ts',
+    'src/d.test.ts',
+    'src/e.test.ts',
+  ];
+  const once = (shards: string[][]) => {
+    const all = shards.flat();
+    expect(all.sort()).toEqual([...files].sort());
+    expect(new Set(all).size).toBe(all.length);
+  };
+
+  // Mutant: drop the round-robin and put everything in shard 1 (killed by the sizes).
+  it('with no timings splits by count, every file exactly once', () => {
+    const got = splitShards(files, new Map(), 2);
+    expect(got.by).toBe('count');
+    expect(got.shards.map((s) => s.length)).toEqual([3, 2]);
+    once(got.shards);
+  });
+
+  // One heavy file outweighs four light ones: by count it would share a shard with two of them.
+  // Mutant: ignore the weights (count split) and shard 1 holds a, c, e (killed).
+  it('with timings puts the heavy file alone against the light ones', () => {
+    const w = new Map([
+      ['src/a.test.ts', 9000],
+      ['src/b.test.ts', 1000],
+      ['src/c.test.ts', 1100],
+      ['src/d.test.ts', 1200],
+      ['src/e.test.ts', 1300],
+    ]);
+    const got = splitShards(files, w, 2);
+    expect(got.by).toBe('timings');
+    expect(got.shards).toEqual([
+      ['src/a.test.ts'],
+      ['src/b.test.ts', 'src/c.test.ts', 'src/d.test.ts', 'src/e.test.ts'],
+    ]);
+    expect(got.loads).toEqual([9000, 4600]);
+    once(got.shards);
+  });
+
+  // A file with no timing takes the median of the known ones, so it is neither free nor huge.
+  it('gives an untimed file the median weight', () => {
+    const w = new Map([
+      ['src/a.test.ts', 5000],
+      ['src/b.test.ts', 1000],
+      ['src/c.test.ts', 3000],
+    ]);
+    const got = splitShards(files, w, 2);
+    once(got.shards);
+    // weights a5000 c3000 d3000 e3000 b1000: a | c,d ... the totals stay within one file's weight
+    expect(Math.abs(got.loads[0] - got.loads[1])).toBeLessThanOrEqual(5000);
+    expect(got.loads[0] + got.loads[1]).toBe(5000 + 1000 + 3000 * 3);
+  });
+
+  it('is deterministic and ignores input order and duplicates', () => {
+    const w = new Map(files.map((f, i) => [f, 1000 + i]));
+    expect(splitShards([...files].reverse().concat(files[0]), w, 2)).toEqual(
+      splitShards(files, w, 2)
+    );
+  });
+});
+
+describe('fileWeights / p50', () => {
+  it('p50 is the lower middle', () => {
+    expect(p50([3, 1, 2])).toBe(2);
+    expect(p50([4, 1, 3, 2])).toBe(2);
+  });
+
+  // Mutant: average instead of p50, and one slow outlier run moves the weight (killed).
+  it('is the p50 over runs of each file test time, plus the overhead, repo-relative', () => {
+    const run = (ms: number) => [
+      { testResults: [{ name: '/r/src/a.test.ts', startTime: 1000, endTime: 1000 + ms }] },
+    ];
+    const w = fileWeights([run(100), run(200), run(9000)], '/r', 50);
+    expect(w).toEqual(new Map([['src/a.test.ts', 250]]));
+  });
+
+  it('skips results without times', () => {
+    expect(fileWeights([[{ testResults: [{ name: '/r/src/b.test.ts' }] }]], '/r').size).toBe(0);
   });
 });

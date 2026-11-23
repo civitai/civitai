@@ -8,22 +8,27 @@
 // rather than an hour or two after merge. It is a FAST signal, never the verdict: the batch still
 // runs every file on `main`, and a PR this job deferred is covered there and nowhere earlier.
 //
-//   node scripts/ci/related-tests.mjs run <since> <out-dir>
-//       In lint.yml's `related-tests` job. Lists the files changed since <since> (the PR merge
-//       commit's first parent), decides related vs smoke-only (planRun below), writes the files it
-//       runs to <out-dir>/files.txt and the decision to <out-dir>/plan.json and the step summary,
-//       and RUNS them, in the same process and the same vitest instance that computed the related
-//       selection (see "ONE VITEST" below). The JSON report goes to <out-dir>/report.json; the exit
-//       code is the run's (1 when the report says it failed or was never written).
+//   node scripts/ci/related-tests.mjs plan <since> <out-dir> <shards>
+//       In lint.yml's `related-plan` job, ONCE per run. Lists the files changed since <since> (the
+//       PR merge commit's first parent), decides related vs smoke-only (planRun below), splits the
+//       files to run into <shards> balanced lists (splitShards), and writes <out-dir>/files.txt (all
+//       of them), <out-dir>/shard-<i>.txt and <out-dir>/plan.json, plus the decision to the step
+//       summary. The shard jobs download that directory, so the selection (up to ~160 s of import-
+//       graph walking) is paid once, not once per shard.
+//   node scripts/ci/related-tests.mjs shard <plan-dir> <i> <report>
+//       In each `related-tests` matrix job: runs <plan-dir>/shard-<i>.txt and writes the JSON report.
+//       Exit 1 when the run failed or wrote no report.
 //   node scripts/ci/related-tests.mjs assert <files.txt> <report.json>
-//       After the run: every listed file must appear in the JSON report. vitest given a filter
-//       that matches nothing still exits 0, so a green run alone proves nothing.
+//       In the `related-ledger` job, over the merged shard reports: every listed file must appear.
+//       vitest given a filter that matches nothing still exits 0, so a green run alone proves
+//       nothing. (The merge itself fails on a missing shard, a file in two shards, or a shard index
+//       out of range: scripts/ci/merge-component-shard-reports.mjs.)
 //
-// ONE VITEST. The related selection walks every unit test file's import graph through vite's
-// transform pipeline (the cost of `vitest related`). Doing it in a separate process (the first
-// version: a `plan` step, then `vitest run`) paid that transform twice: 120-172 s to plan, then the
-// run transformed the same modules again. Here the selection and the run share one vite server,
-// so the run reuses every transform the selection already made.
+// THE SPLIT (splitShards) balances by each file's recent cost: the per-file p50 over the newest
+// main batch runs' `test-times-unit-*` reports (the same per-test timing artifacts the unit job
+// uploads; fileWeights), plus a fixed per-file overhead for import, which those timings do not
+// cover. A file with no timing gets the median weight; with no timings at all the split is by
+// count. Every file lands in exactly one shard; the split is deterministic for a given input.
 //
 // THE RELATED SELECTION is vitest's own (`related` + getRelevantTestSpecifications, the code
 // `vitest related` runs): every unit test whose static import graph reaches a changed file. Two
@@ -54,7 +59,15 @@
 // Node built-ins only, except `plan`, which loads vitest's node API from the installed tree.
 
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -274,10 +287,121 @@ async function setupClosure(vitest, root) {
   return out;
 }
 
-async function run(since, outDir) {
+/** The p50 of a non-empty list of numbers (the lower middle for an even count). */
+export function p50(values) {
+  const v = [...values].sort((a, b) => a - b);
+  return v[Math.floor((v.length - 1) / 2)];
+}
+
+/**
+ * Per-file weights (ms) from vitest JSON reports: `runs` is [[report, ...], ...], one array per
+ * batch run (a run's shard reports together). A file's weight is the p50 over the runs of its
+ * test time (endTime - startTime) plus `overheadMs` for its import, which the JSON reporter's
+ * per-file times leave out. Repo-relative paths.
+ */
+export function fileWeights(runs, root, overheadMs = 1000) {
+  const per = new Map();
+  for (const reports of runs) {
+    const seen = new Map();
+    for (const r of reports)
+      for (const t of r.testResults ?? []) {
+        if (typeof t.startTime !== 'number' || typeof t.endTime !== 'number') continue;
+        const f = isAbsolute(t.name) ? relative(root, t.name) : t.name;
+        seen.set(f, Math.max(0, t.endTime - t.startTime));
+      }
+    for (const [f, ms] of seen) per.set(f, [...(per.get(f) ?? []), ms]);
+  }
+  const out = new Map();
+  for (const [f, v] of per) out.set(f, p50(v) + overheadMs);
+  return out;
+}
+
+/**
+ * Split `files` into `n` shards, pure and deterministic. With weights: longest-first onto the
+ * lightest shard (ties: path order, then the lowest shard), a file without a weight taking the
+ * median of the known ones. With no weights at all: by count, sorted path order round-robin.
+ * Returns { shards: string[][], by: 'timings' | 'count', loads: number[] }.
+ */
+export function splitShards(files, weights, n) {
+  const sorted = [...new Set(files)].sort();
+  const known = sorted.filter((f) => weights?.has(f)).map((f) => weights.get(f));
+  const shards = Array.from({ length: n }, () => []);
+  if (!known.length) {
+    sorted.forEach((f, i) => shards[i % n].push(f));
+    return { shards, by: 'count', loads: shards.map((s) => s.length) };
+  }
+  const fallback = p50(known);
+  const w = (f) => (weights.has(f) ? weights.get(f) : fallback);
+  const order = [...sorted].sort((a, b) => w(b) - w(a) || (a < b ? -1 : 1));
+  const loads = Array(n).fill(0);
+  for (const f of order) {
+    let k = 0;
+    for (let i = 1; i < n; i++) if (loads[i] < loads[k]) k = i;
+    shards[k].push(f);
+    loads[k] += w(f);
+  }
+  for (const s of shards) s.sort();
+  return { shards, by: 'timings', loads: loads.map(Math.round) };
+}
+
+/**
+ * The newest main batch runs' unit timing reports, for fileWeights: [[report, ...], ...]. Best
+ * effort: any error, or no run, returns [] and the split falls back to count.
+ */
+function batchTimings(dir, maxRuns = 3) {
+  try {
+    const repo = process.env.GITHUB_REPOSITORY;
+    const q = 'branch=main&event=workflow_dispatch&status=completed&per_page=10';
+    const runs = JSON.parse(
+      sh('gh', [
+        'api',
+        `repos/${repo}/actions/workflows/lint.yml/runs?${q}`,
+        '-q',
+        '.workflow_runs',
+      ])
+    ).filter((r) => r.actor?.login === 'github-actions[bot]');
+    const out = [];
+    for (const r of runs) {
+      if (out.length >= maxRuns) break;
+      const d = join(dir, String(r.id));
+      try {
+        sh('gh', ['run', 'download', String(r.id), '-R', repo, '-p', 'test-times-unit-*', '-D', d]);
+      } catch {
+        continue;
+      }
+      const reports = [];
+      const visit = (p) => {
+        for (const e of readdirSync(p, { withFileTypes: true })) {
+          const q2 = join(p, e.name);
+          if (e.isDirectory()) visit(q2);
+          else if (e.name.endsWith('.json')) reports.push(JSON.parse(readFileSync(q2, 'utf8')));
+        }
+      };
+      if (existsSync(d)) visit(d);
+      if (reports.length) out.push(reports);
+    }
+    return out;
+  } catch (err) {
+    console.log(`no batch timings (${String(err.message).split('\n')[0]}): splitting by count`);
+    return [];
+  }
+}
+
+/** The CLI's environment, which the node API does not set (measured: two suites fail without). */
+function vitestEnv() {
+  process.env.TEST = 'true';
+  process.env.VITEST = 'true';
+  process.env.NODE_ENV ??= 'test';
+}
+
+async function plan(since, outDir, shardsRaw) {
+  const n = Number(shardsRaw);
+  if (!Number.isInteger(n) || n < 1) {
+    console.error(`::error::bad shard count: ${shardsRaw}`);
+    process.exit(2);
+  }
   const root = process.cwd();
   mkdirSync(outDir, { recursive: true });
-  const report = join(outDir, 'report.json');
   const changes = parseNameStatus(sh('git', ['diff', '--name-status', '-M', since, 'HEAD']));
   const unitFiles = sh('git', ['ls-files', 'src', 'scripts'])
     .split('\n')
@@ -297,20 +421,13 @@ async function run(since, outDir) {
   }
   const cap = Number(process.env.RELATED_UNIT_CAP || DEFAULT_CAP);
   const t0 = Date.now();
-  // What the `vitest` CLI sets before it creates its instance (prepareVitest); the node API does
-  // not. Without them the config and the tests see a non-test environment: measured, the AIR
-  // stripe-webhook and the SSR-prefetch cohort tests failed under createVitest alone.
-  process.env.TEST = 'true';
-  process.env.VITEST = 'true';
-  process.env.NODE_ENV ??= 'test';
+  vitestEnv();
   const { createVitest } = await import('vitest/node');
   const vitest = await createVitest('test', {
     watch: false,
     run: true,
     project: ['unit*'],
     passWithNoTests: true,
-    reporters: ['default', 'json'],
-    outputFile: { json: report },
   });
   let p;
   try {
@@ -324,29 +441,72 @@ async function run(since, outDir) {
       sel = [...new Set(specs.map((s) => relative(root, s.moduleId)))];
     }
     p = planRun({ changes, smoke, related: () => sel, cap, setup });
-    const planMs = Date.now() - t0;
-    writeFileSync(join(outDir, 'files.txt'), `${p.files.join('\n')}\n`);
-    writeFileSync(
-      join(outDir, 'plan.json'),
-      JSON.stringify({ ...p, smoke: smoke.length, changed: changes.length, cap, planMs }, null, 2)
-    );
-    const lines = summaryLines(p, smoke.length);
-    lines.push('', `Selection took ${Math.round(planMs / 1000)} s.`);
-    console.log(lines.join('\n'));
-    console.log(`changed files (${changes.length}):`);
-    for (const c of changes) console.log(`  ${c.status}\t${c.file}`);
-    if (process.env.GITHUB_STEP_SUMMARY)
-      appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`);
-    if (process.env.GITHUB_OUTPUT)
-      appendFileSync(
-        process.env.GITHUB_OUTPUT,
-        `mode=${p.mode}\ncount=${p.files.length}\nrelated=${p.related ?? ''}\nplan_ms=${planMs}\n`
-      );
-    // The run: exactly p.files, passed as file filters (as on the CLI) with `related` cleared, so
-    // vitest globs them instead of walking any import graph. The transforms the selection above
-    // made stay in this vite server, and the run reuses them.
-    vitest.config.related = undefined;
-    await vitest.start(p.files);
+  } finally {
+    await vitest.close();
+  }
+  const planMs = Date.now() - t0;
+  const t1 = Date.now();
+  const weights = fileWeights(batchTimings(join(outDir, 'timings')), root);
+  const split = splitShards(p.files, weights, n);
+  const timingMs = Date.now() - t1;
+  writeFileSync(join(outDir, 'files.txt'), `${p.files.join('\n')}\n`);
+  split.shards.forEach((s, i) =>
+    writeFileSync(join(outDir, `shard-${i + 1}.txt`), `${s.join('\n')}\n`)
+  );
+  writeFileSync(
+    join(outDir, 'plan.json'),
+    JSON.stringify(
+      {
+        ...p,
+        smoke: smoke.length,
+        changed: changes.length,
+        cap,
+        planMs,
+        timingMs,
+        split: { by: split.by, loads: split.loads, sizes: split.shards.map((s) => s.length) },
+      },
+      null,
+      2
+    )
+  );
+  const lines = summaryLines(p, smoke.length);
+  lines.push(
+    '',
+    `Selection took ${Math.round(planMs / 1000)} s. Split ${n} ways by ${split.by} (${Math.round(
+      timingMs / 1000
+    )} s): ${split.shards
+      .map((s, i) => `shard ${i + 1} ${s.length} files, load ${split.loads[i]}`)
+      .join('; ')}.`
+  );
+  console.log(lines.join('\n'));
+  console.log(`changed files (${changes.length}):`);
+  for (const c of changes) console.log(`  ${c.status}\t${c.file}`);
+  if (process.env.GITHUB_STEP_SUMMARY)
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`);
+  rmSync(join(outDir, 'timings'), { recursive: true, force: true });
+}
+
+async function shard(planDir, i, report) {
+  const files = readFileSync(join(planDir, `shard-${i}.txt`), 'utf8')
+    .split('\n')
+    .filter(Boolean);
+  if (!files.length) {
+    console.error(`::error::shard ${i} has no files; the plan split nothing to it.`);
+    process.exit(1);
+  }
+  console.log(`shard ${i}: ${files.length} file(s)`);
+  vitestEnv();
+  const { createVitest } = await import('vitest/node');
+  const vitest = await createVitest('test', {
+    watch: false,
+    run: true,
+    project: ['unit*'],
+    passWithNoTests: true,
+    reporters: ['default', 'json'],
+    outputFile: { json: report },
+  });
+  try {
+    await vitest.start(files);
   } finally {
     await vitest.close();
   }
@@ -383,11 +543,13 @@ function assertRan(listFile, reportFile) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [cmd, a, b] = process.argv.slice(2);
-  if (cmd === 'run') await run(a, b);
+  const c = process.argv[5];
+  if (cmd === 'plan') await plan(a, b, c);
+  else if (cmd === 'shard') await shard(a, b, c);
   else if (cmd === 'assert') assertRan(a, b);
   else {
     console.error(
-      'usage: related-tests.mjs run <since> <out-dir> | assert <files.txt> <report.json>'
+      'usage: related-tests.mjs plan <since> <out-dir> <shards> | shard <plan-dir> <i> <report> | assert <files.txt> <report.json>'
     );
     process.exit(2);
   }

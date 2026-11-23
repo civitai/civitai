@@ -1152,27 +1152,22 @@ jobs:
   #
   # Hosted, with the `unit` job's services and env: a related or smoke file may be one of the
   # Postgres- or Redis-backed suites, several of which fail rather than skip without their URL.
-  related-tests:
-    name: Related unit tests + smoke (PR)
+  # ── SPLIT 2 WAYS: ONE PLAN, TWO SHARDS, ONE LEDGER ──
+  #
+  # `related-plan` computes the selection ONCE (the import-graph walk, up to ~160 s) and splits the
+  # files into two lists balanced by the main batch's per-file timings (count when there are none);
+  # the two `related-tests` shards download that plan and run their list; `related-ledger` keeps
+  # the job's original check name and is its verdict. Measured before the split: one job ran the
+  # 599 smoke files in 429 s and a one-file change (690 files) in 669 s.
+  related-plan:
+    name: Related tests, plan (PR)
     runs-on: ubuntu-latest
     if: ${{ (github.event_name == 'pull_request' && !github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'full-ci')) || (github.event_name == 'workflow_dispatch' && inputs.only == 'related') }}
-    timeout-minutes: 30
-    services:
-      redis:
-        image: redis:7
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
-    env: *unit-env
+    timeout-minutes: 20
+    permissions:
+      # Reads the newest main batch runs' `test-times-unit-*` artifacts, for the split.
+      actions: read
+      contents: read
     steps:
       # Depth 2: the plan diffs the PR's merge commit against its first parent (the base).
       - uses: actions/checkout@v7
@@ -1191,18 +1186,137 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # One process: the selection and the run share one vitest instance, so the run reuses the
-      # transforms the selection made (see the script's header, "ONE VITEST"). It writes the list
-      # it ran to files.txt and the JSON report beside it.
-      - name: Related + smoke unit tests
-        id: run
-        run: node scripts/ci/related-tests.mjs run HEAD^1 "$RUNNER_TEMP/related"
+      - name: Plan and split the related + smoke tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/related-tests.mjs plan HEAD^1 "$RUNNER_TEMP/related-plan" 2
 
-      # vitest given a filter that matches nothing still exits 0, so every listed file must be in
-      # the report. Runs after a red run too: a red must not hide a file that never ran.
-      - name: Assert every listed file ran
+      - name: Upload the plan
+        uses: actions/upload-artifact@v7
+        with:
+          name: related-plan
+          path: ${{ runner.temp }}/related-plan
+          if-no-files-found: error
+          retention-days: 3
+
+  related-tests:
+    name: Related unit tests + smoke (PR) (${{ matrix.shard }}/${{ strategy.job-total }})
+    needs: related-plan
+    runs-on: ubuntu-latest
+    if: ${{ (github.event_name == 'pull_request' && !github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'full-ci')) || (github.event_name == 'workflow_dispatch' && inputs.only == 'related') }}
+    timeout-minutes: 30
+    # `fail-fast: false`: a red shard must not cancel the other, or its files go unreported and
+    # the ledger can only say "missing".
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
+    env: *unit-env
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Download the plan
+        uses: actions/download-artifact@v7
+        with:
+          name: related-plan
+          path: ${{ runner.temp }}/related-plan
+
+      - name: Related + smoke unit tests (this shard)
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: node scripts/ci/related-tests.mjs shard "$RUNNER_TEMP/related-plan" "$SHARD" "$RUNNER_TEMP/related-report.json"
+
+      # For `related-ledger`. `!cancelled()` so a RED shard still hands over its report.
+      - name: Upload the shard report
         if: ${{ !cancelled() }}
-        run: node scripts/ci/related-tests.mjs assert "$RUNNER_TEMP/related/files.txt" "$RUNNER_TEMP/related/report.json"
+        uses: actions/upload-artifact@v7
+        with:
+          name: related-report-${{ matrix.shard }}
+          path: ${{ runner.temp }}/related-report.json
+          if-no-files-found: warn
+          retention-days: 3
+          overwrite: true
+
+  # The whole tier's verdict, under the check name the unsplit job had. Red when the plan or a
+  # shard did not succeed, when a shard report is missing, holds a file another shard also ran, or
+  # comes from a shard index outside the matrix (merge-component-shard-reports.mjs), or when the
+  # union misses a file the plan listed.
+  related-ledger:
+    name: Related unit tests + smoke (PR)
+    needs: [related-plan, related-tests]
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() && ((github.event_name == 'pull_request' && !github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'full-ci')) || (github.event_name == 'workflow_dispatch' && inputs.only == 'related')) }}
+    timeout-minutes: 10
+    steps:
+      # scripts/ci only: no install.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Download the plan
+        uses: actions/download-artifact@v7
+        with:
+          name: related-plan
+          path: ${{ runner.temp }}/related-plan
+
+      - name: Download the shard reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: related-report-*
+          path: ${{ runner.temp }}/related-reports
+
+      # Both checks always run, so a missing shard and a missing file are both named. 2: the
+      # `related-tests` matrix, which this job cannot read; the merge also fails on any report
+      # outside 1..2.
+      - name: Every listed file ran exactly once
+        run: |
+          rc=0
+          node scripts/ci/merge-component-shard-reports.mjs "$RUNNER_TEMP/related-reports" 2 "$RUNNER_TEMP/related-merged.json" related-report || rc=1
+          node scripts/ci/related-tests.mjs assert "$RUNNER_TEMP/related-plan/files.txt" "$RUNNER_TEMP/related-merged.json" || rc=1
+          exit $rc
+
+      - name: The plan and every shard succeeded
+        if: ${{ !cancelled() }}
+        env:
+          PLAN: ${{ needs.related-plan.result }}
+          SHARDS: ${{ needs.related-tests.result }}
+        run: |
+          if [ "$PLAN" != success ] || [ "$SHARDS" != success ]; then
+            echo "::error title=Related tests did not succeed::plan '$PLAN', shards '$SHARDS'. Open the red job for the cause."
+            exit 1
+          fi
 
   packages:
     name: Package unit tests
