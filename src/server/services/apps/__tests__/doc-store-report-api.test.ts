@@ -10,11 +10,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import '~/__tests__/mocks/logging.mock';
-import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
+import type * as AuthPackage from '@civitai/auth';
 import type * as FliptClient from '~/server/flipt/client';
-import type * as SessionClientModule from '~/server/auth/session-client';
-import type * as Moderation from '~/server/services/apps/shared-data-moderation';
-import type { SharedTextScan } from '~/server/services/apps/shared-data-moderation';
 import type { DocStore } from '~/server/services/apps/doc-store';
 import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -22,12 +19,15 @@ import { createPgliteHarness, type Harness } from './doc-store.harness';
 
 /**
  * THE REPORT MODERATION API (`POST /api/v1/blocks/moderation/reports`), end to end: a REAL signed
- * block token → the REAL `withBlockScope` → the REAL page → the REAL resolver → the REAL document
- * store on an embedded Postgres with RLS, and the REAL moderator facet reading what it wrote.
- * Replaced at the boundary only, as in `doc-store-api.tally-operators.test.ts`: the Postgres rows
- * the resolver reads, Redis (an in-memory map), the session hub, the App Blocks and Flipt flags and
- * the moderation scanner. The old path (`PATCH {"$mark":"report"}` on the storage route) is driven
- * beside it wherever the two must agree, since both stay live during the compat window.
+ * block token → the REAL `withBlockScope` → the REAL handler → the REAL resolver → the REAL document
+ * store on an embedded Postgres with RLS, and the REAL moderator facet reading what it wrote. The
+ * store is passed in (`createReportHandler({ store })`, `createStorageHandler({ store })`) and the
+ * chains are built with the pages' own `withBlockScope` options (the pages' options are pinned by
+ * `scoped-endpoints-cors-wiring.test.ts`). Replaced at the process boundary only: the Postgres rows
+ * the resolver reads, Redis (an in-memory map), Flipt (the App Blocks runtime flags on, shared-data
+ * moderation off, the report flag per case) and the auth hub's by-id user read. The old path
+ * (`PATCH {"$mark":"report"}` on the storage route) is driven beside it wherever the two must
+ * agree, since both stay live during the compat window.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 120_000 });
@@ -41,6 +41,8 @@ const h = vi.hoisted(() => ({
 }));
 
 const REPORT_FLAG = 'app-blocks-storage-report-api';
+/** The App Blocks runtime, viewer and author flags the middleware and the resolver read. */
+const ON_FLAGS = new Set(['app-blocks-runtime-enabled', 'app-blocks-enabled', 'app-blocks-author']);
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const real = await importOriginal<typeof FliptClient>();
   return {
@@ -50,50 +52,66 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
         h.reportFlagEntities.push(entityId);
         return h.reportFlag;
       }
-      if (flag === 'app-blocks-shared-data-moderation') return false;
-      if (flag === 'app-blocks-shared-data-moderation-enforce') return true;
+      if (ON_FLAGS.has(flag)) return true;
+      // Shared-data moderation off: a document PUT scans nothing.
+      if (flag.startsWith('app-blocks-shared-data-moderation')) return false;
       return real.isFlipt(flag, entityId, context as never);
     },
   };
 });
-vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
-  ...(await importOriginal<typeof AppBlocksFlag>()),
-  isAppBlocksRuntimeEnabled: vi.fn(async () => true),
-  isAppBlocksEnabled: vi.fn(async () => true),
-  isAppBlocksAuthorEnabled: vi.fn(async () => true),
-}));
-vi.mock('~/server/auth/session-client', async (importOriginal) => ({
-  ...(await importOriginal<typeof SessionClientModule>()),
-  sessionClient: { getSessionUserById: vi.fn(async (id: number) => h.users.get(id) ?? null) },
-}));
-vi.mock('~/server/services/apps/doc-store.instance', () => ({ getDocStore: () => h.store }));
-vi.mock('~/server/services/apps/shared-data-moderation', async (importOriginal) => {
-  const real = await importOriginal<typeof Moderation>();
-  const clean = (): SharedTextScan => ({ leafCount: 1, overflow: null, hits: [] });
+// The auth hub: the by-id user read the trust gate makes.
+vi.mock('@civitai/auth', async (importOriginal) => {
+  const real = await importOriginal<typeof AuthPackage>();
   return {
     ...real,
-    scanSharedData: vi.fn(async () => clean()),
-    scanCounterKey: vi.fn(async () => clean()),
-    recordSharedDataScan: vi.fn(async () => undefined),
+    createSessionClient: () => ({
+      getSessionUserById: async (id: number) => h.users.get(id) ?? null,
+    }),
   };
 });
 
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { withBlockScope } from '~/server/middleware/block-scope.middleware';
 import {
   createDocStore,
   createDocStoreModeration,
   PUBLISHED_NS,
 } from '~/server/services/apps/doc-store';
+import {
+  createStorageHandler,
+  storageEndpointLabel,
+  storageRefusalBody,
+} from '~/server/services/apps/doc-store-api';
+import { createReportHandler, REPORT_ENDPOINT } from '~/server/services/apps/doc-store-report-api';
 import { recordStorageImportGrants } from '~/server/services/apps/storage-import-grant.service';
 import { DOC_STORE_REPORT_RATE_LIMIT_MAX } from '~/server/utils/shared-storage-rate-limit';
-import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
-import reportRoute from '~/pages/api/v1/blocks/moderation/reports';
+
+// The two chains, with the options their pages pass.
+const reportRoute = withBlockScope(createReportHandler({ store: () => h.store }), {
+  endpoint: REPORT_ENDPOINT,
+  requiredScope: 'apps:storage',
+  allowOpaqueOrigin: true,
+  formatRefusal: (refusal, req) => storageRefusalBody(refusal, req, REPORT_ENDPOINT),
+});
+const storageRoute = withBlockScope(createStorageHandler({ store: () => h.store }), {
+  endpoint: storageEndpointLabel,
+  requiredScope: 'apps:storage',
+  allowOpaqueOrigin: true,
+  extraCorsMethods: ['PUT', 'DELETE', 'PATCH'],
+  formatRefusal: storageRefusalBody,
+});
 
 const SCOPES = ['apps:storage', 'apps:storage:publish'];
 // Distinctive ids, none of which appears in any fixture value or constant below.
-const UID = { v1: 847_013, v2: 847_029, v3: 847_031, v4: 847_043, newbie: 847_057 } as const;
+const UID = {
+  v1: 990_847_013,
+  v2: 990_847_029,
+  v3: 990_847_031,
+  v4: 990_847_043,
+  newbie: 990_847_057,
+} as const;
 type Viewer = keyof typeof UID;
 
 const MANIFEST = {
