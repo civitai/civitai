@@ -56,7 +56,10 @@
  * keyset missed. The stream says it in `meta` ({@link headMeta}): on `live`, the head of the state
  * the cursor names (absent for a state saved before heads were kept, or one that holds nothing);
  * then a `progress` whenever a poll's head differs from the last one sent, after that poll's
- * changes. A refused poll (a stream that holds nothing) reads no head and sends none.
+ * changes. A refused poll (a stream that holds nothing) reads no head and sends none. A head
+ * below the cursor state's, or below the last one sent, means the namespace's seqs restarted (its
+ * usage row was wiped: an app deleted and restored), and the stream is `cursor_expired`, at resume
+ * and mid-stream, as the public feed's is.
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import { audienceAdmits, contextAudience } from '~/server/registry-adapter/audience';
@@ -365,6 +368,12 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
     const digest = familyDigest(family);
     // Before the keyset, never after (see the file comment).
     const head = await opts.source.head(appId);
+    // A head below the one this state was read at: the namespace was wiped and written again
+    // (an app deleted and restored), so its seqs restarted, and nothing this state holds can be
+    // compared with what is there now. As the public feed does.
+    if (prev?.appId === appId && prev.head !== undefined && head < prev.head) {
+      throw cursorExpired('the namespace seq went back');
+    }
     const versions = await readPaged((after) =>
       opts.source.versions(appId, collection, userId, after, PRIVATE_PAGE)
     );
@@ -444,6 +453,11 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
       const { next, entities, head } =
         pending ?? (await guarded(() => advance(schema, before, ctx.reader, audience)));
       pending = null;
+      // The same, against the newest head this stream SENT (a head-only move is not saved in the
+      // state, so `advance` compares with an older one).
+      if (head !== null && sentHead !== null && head < sentHead) {
+        throw cursorExpired('the namespace seq went back');
+      }
       if (next !== before) {
         const was = new Map(before.served);
         const still = new Set(next.served.map(([urn]) => urn));

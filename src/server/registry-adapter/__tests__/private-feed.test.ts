@@ -1132,3 +1132,82 @@ describe('a private record carries its seq, and the stream its head (read-your-w
     ]);
   });
 });
+
+describe('🔴 a namespace head that goes back (seqs restarted) expires the cursor, as the public feed does', () => {
+  const liveCursor = (events: StreamEvent[]) =>
+    (events.find((e) => e.type === 'live') as { cursor: string }).cursor;
+  async function poll(run: Run) {
+    wake();
+    await settle(run);
+  }
+
+  it('at resume: a state read at head 500, the namespace now at 3', async () => {
+    head = 500;
+    const adapter = composeAdapter(entities, publicFeed(), privateFeed());
+    const first = subscribe(adapter, await principalOf('owner-own'));
+    await settle(first);
+    first.stop();
+    wake();
+    await first.done;
+    head = 3;
+    const resumed = subscribe(adapter, await principalOf('owner-own'), liveCursor(first.events));
+    await settle(resumed);
+    const err = await resumed.done;
+    expect(resumed.events).toEqual([]);
+    expect(err).toBeInstanceOf(ProtocolError);
+    expect({ code: (err as ProtocolError).code, message: (err as ProtocolError).message }).toEqual({
+      code: 'cursor_expired',
+      message: 'the namespace seq went back',
+    });
+  });
+
+  it('mid-stream: the next poll reads head 3 after a state at 500', async () => {
+    head = 500;
+    const run = subscribe(
+      composeAdapter(entities, publicFeed(), privateFeed()),
+      await principalOf('owner-own')
+    );
+    await settle(run);
+    head = 3;
+    wake();
+    const err = await run.done;
+    expect((err as ProtocolError).code).toBe('cursor_expired');
+    expect((err as ProtocolError).message).toBe('the namespace seq went back');
+  });
+
+  it('mid-stream: below the last head SENT, though not below the saved state’s', async () => {
+    head = 500;
+    const run = subscribe(
+      composeAdapter(entities, publicFeed(), privateFeed()),
+      await principalOf('owner-own')
+    );
+    await settle(run);
+    // A head-only move: sent as progress, not saved in the state (still at 500).
+    head = 600;
+    await poll(run);
+    expect(run.events.flatMap((e) => (e.type === 'progress' ? [e.meta] : []))).toEqual([
+      { head: { seq: 600 } },
+    ]);
+    head = 550;
+    wake();
+    const err = await run.done;
+    expect((err as ProtocolError).code).toBe('cursor_expired');
+    expect((err as ProtocolError).message).toBe('the namespace seq went back');
+  });
+
+  it('control: an equal or higher head is no expiry', async () => {
+    head = 500;
+    const run = subscribe(
+      composeAdapter(entities, publicFeed(), privateFeed()),
+      await principalOf('owner-own')
+    );
+    await settle(run);
+    await poll(run);
+    head = 501;
+    await poll(run);
+    run.stop();
+    wake();
+    expect(await run.done).toBeUndefined();
+    expect(run.events.map((e) => e.type)).toEqual(['upsert', 'live', 'progress']);
+  });
+});
