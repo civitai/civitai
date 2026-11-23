@@ -8,6 +8,7 @@ import {
   createVoteTracker,
   describeOutcome,
   itemKey,
+  markPress,
   postVote,
   NETWORK_NOTICE,
   refusedNote,
@@ -631,5 +632,60 @@ describe('postVote', () => {
     const { onSettled, post } = setup(async () => ({ reached: false, result: null }));
     await post('a');
     expect(onSettled).toHaveBeenCalledOnce();
+  });
+});
+
+describe('press timing on a vote body', () => {
+  const clock = (wall: number) => {
+    const now = { wall, mono: 1_000 };
+    return { now, clock: { wall: () => now.wall, mono: () => now.mono } };
+  };
+
+  it('stamps the press time and the live connection state at the press', () => {
+    const body = new FormData();
+    markPress(body, { connected: true, subscribed: false }, clock(1_797_336_000_000).clock);
+    expect(body.get('pressedAt')).toBe('1797336000000');
+    expect(body.get('signals')).toBe('10');
+    expect(body.has('waitedMs')).toBe(false);
+  });
+
+  it('records how long a background vote waited behind the votes queued before it, once, at the start of its post', async () => {
+    const { now, clock: fake } = clock(1_797_336_000_000);
+    const queue = createSerialQueue();
+    const tracker = createVoteTracker();
+    let releaseFirst!: () => void;
+    const first = queue.add(() => new Promise<void>((done) => (releaseFirst = done)));
+
+    const body = new FormData();
+    tracker.claim('b', 't-b');
+    const sent: (string | null)[] = [];
+    const results = [
+      { type: 'failure', status: 429, data: { busy: true } },
+      { type: 'success', status: 200, data: { success: true } },
+    ];
+    const posted = postVote('b', {
+      queue,
+      tracker,
+      onStart: markPress(body, { connected: true, subscribed: true }, fake),
+      send: async () => {
+        sent.push(String(body.get('waitedMs')));
+        now.mono += 500;
+        return { reached: true, result: results.shift()! };
+      },
+      wait: async () => undefined,
+      onFailure: () => undefined,
+      onSettled: async () => undefined,
+      retryDelays: [1],
+    });
+
+    await new Promise((done) => setTimeout(done, 0));
+    now.mono += 4_100;
+    releaseFirst();
+    await first;
+    await posted;
+
+    // The resend after a busy answer keeps the wait of the first post.
+    expect(sent).toEqual(['4100', '4100']);
+    expect(body.get('signals')).toBe('11');
   });
 });

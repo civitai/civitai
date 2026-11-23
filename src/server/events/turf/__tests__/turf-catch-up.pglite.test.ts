@@ -74,8 +74,11 @@ beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
     CREATE TABLE "User" (
-      id int PRIMARY KEY, settings jsonb, "bannedAt" timestamptz, "deletedAt" timestamptz
+      id int PRIMARY KEY, settings jsonb, "bannedAt" timestamptz, "deletedAt" timestamptz,
+      "createdAt" timestamptz DEFAULT '2020-01-01', meta jsonb, flags int NOT NULL DEFAULT 0
     );
+    -- Read by getTurfStock's too-new check.
+    CREATE TABLE "CreatorMilestone" (key text PRIMARY KEY, threshold numeric);
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz, availability text);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int, "postId" int, ingestion text DEFAULT 'Scanned',

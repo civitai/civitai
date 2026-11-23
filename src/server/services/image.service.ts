@@ -271,6 +271,7 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
+import { invalidateImageVisibilityCaches } from '~/server/services/image-visibility-invalidation.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
@@ -362,15 +363,15 @@ import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import {
   deleteImageRows,
-  imagesPendingDeletion as readImagesPendingDeletion,
   moderatorPurge,
-  ownImageDeleteBlocked,
   queueImageStorageDelete as queueStorageDelete,
   queuePostNsfwLevelUpdates,
   type DeleteActor,
+  type DeleteOutcome,
   type DeletedImage as DeletedImageWithFiles,
   type DeletedImageRow,
 } from '@civitai/db-queries/content-deletion';
+import { imagesPendingDeletion as readImagesPendingDeletion } from '@civitai/db-queries/pending-deletes';
 import type { RawBuilder } from 'kysely';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
@@ -975,7 +976,7 @@ export async function queueReplacedImageDeletion(ids: number[]) {
   }
 }
 
-/** Of `ids`, the images whose delete waits on a review their owner can see. */
+/** Of `ids`, the images whose owner may be told their delete waits on a review. */
 export async function imagesPendingDeletion(ids: number[]) {
   // Primary: read straight after the delete that queued it.
   return readImagesPendingDeletion(kyselyOver(dbWrite), ids);
@@ -996,6 +997,8 @@ type ImageDeleteOptions = {
   /** The stored files stay: a retry reuses their upload keys, or the rows only pointed at files
    *  stored for something else. */
   keepStoredFiles?: boolean;
+  /** False: a row its child-safety case keeps is not queued, for a caller with its own retry queue. */
+  queueKept?: boolean;
 };
 
 /**
@@ -1023,7 +1026,12 @@ const plainOwnerDeleteSql = (deletedById: number, reported: number[]) =>
  * their stored files and post recounts, so it needs no transaction; then, before returning,
  * everything that could still hand a client a deleted image is invalidated.
  */
-export async function deleteImages(
+export async function deleteImages(...args: Parameters<typeof deleteImagesWithOutcome>) {
+  return (await deleteImagesWithOutcome(...args)).deleted;
+}
+
+/** `deleteImages`, with the images it left for their child-safety case. */
+export async function deleteImagesWithOutcome(
   ids: number[],
   {
     actor,
@@ -1031,6 +1039,7 @@ export async function deleteImages(
     moderatorDelete = 'id' in actor && !!actor.isModerator,
     updatePosts = true,
     keepStoredFiles = false,
+    queueKept,
     retractPublicBlobs = false,
     retractionGate = newRetractionGate(),
   }: PurgeResizeCacheRetraction &
@@ -1039,12 +1048,13 @@ export async function deleteImages(
        *  sent; those rows come back `busy` so the caller can queue them. */
       retractionGate?: RetractionGate;
     }
-): Promise<DeletedImage[]> {
+): Promise<{ deleted: DeletedImage[]; kept: number[] }> {
   const deletedById = 'id' in actor ? actor.id : undefined;
   // This call's own rows run no wider than the shared limit, so they never wait out their slot
   // behind each other; only other senders in the process can hold them back.
   const ownLimit = pLimit(MAX_IN_FLIGHT_RETRACTIONS);
-  return await Limiter({ batchSize: 100 }).process(uniq(ids), async (ids) => {
+  const keptForCase: number[] = [];
+  const deleted = await Limiter({ batchSize: 100 }).process(uniq(ids), async (ids) => {
     // Read before the DELETE, which cascades `CollectionItem` and the report links and nulls
     // `User.profilePictureId`. Neither read throws.
     const [collections, profilePictureUserIds, reported] = await Promise.all([
@@ -1058,16 +1068,19 @@ export async function deleteImages(
 
     const callerWhere =
       !onlyWhere || 'toOperationNode' in onlyWhere ? onlyWhere : fromPrismaSql<boolean>(onlyWhere);
-    // The deleter's own image in a child-safety case waits for the case to close, as a pending
-    // delete. Never under a caller's condition, which the job would not carry out with it.
-    const rows = await deleteImageRows(kyselyOver(dbWrite), {
+    const {
+      deleted: rows,
+      kept: caseKept,
+      gone,
+    } = await deleteImageRows(kyselyOver(dbWrite), {
       ids,
       actor,
       where: callerWhere,
-      pending:
-        deletedById === undefined || callerWhere
-          ? undefined
-          : { blocked: ownImageDeleteBlocked(deletedById), data: { ownerId: deletedById } },
+      queueKept,
+      replay: {
+        ...(moderatorDelete && { moderatorDelete: true }),
+        ...(keepStoredFiles && { keepStoredFiles: true }),
+      },
       files: keepStoredFiles
         ? undefined
         : {
@@ -1081,16 +1094,15 @@ export async function deleteImages(
       cdnTakedown: moderatorDelete,
     });
 
-    const returned = new Set(rows.map((row) => row.id));
-    // An id not returned was left in place, or kept by a hold marker's delete trigger (which blocks
-    // it): only the trigger's record tells them apart.
-    const kept =
-      rows.length < ids.length ? await getKeptImages(ids.filter((id) => !returned.has(id))) : [];
+    keptForCase.push(...caseKept);
+    // Of the rest, only the hold marker's record tells a row its delete trigger kept from one the
+    // caller's condition or ownership skipped.
+    const accounted = new Set([...rows.map((row) => row.id), ...caseKept, ...gone]);
+    const kept = await getKeptImages(ids.filter((id) => !accounted.has(id)));
     await invalidateDeletedImages({
-      ids,
       rows,
       kept,
-      filtered: !!onlyWhere || ('id' in actor && !actor.isModerator),
+      gone,
       updatePosts,
       collections,
       profilePictureUserIds,
@@ -1099,6 +1111,7 @@ export async function deleteImages(
     if (!retractPublicBlobs) return rows;
     return await retractFromStorage(rows, { retractPublicBlobs, retractionGate, ownLimit });
   });
+  return { deleted, kept: keptForCase };
 }
 
 /**
@@ -1106,18 +1119,16 @@ export async function deleteImages(
  * The rows are gone by now, so a failure is logged, not thrown.
  */
 async function invalidateDeletedImages({
-  ids,
   rows,
   kept,
-  filtered,
+  gone,
   updatePosts,
   collections,
   profilePictureUserIds,
 }: {
-  ids: number[];
   rows: DeletedImageRow[];
   kept: KeptImage[];
-  filtered: boolean;
+  gone: number[];
   updatePosts: boolean;
   collections: Awaited<ReturnType<typeof getCollectionIdsForImages>>;
   profilePictureUserIds: number[];
@@ -1128,9 +1139,9 @@ async function invalidateDeletedImages({
   const thumbnailParentIds = uniq(rows.map((row) => row.parentId).filter(isDefined));
   const results = await Promise.allSettled([
     queueImageSearchIndexUpdate({
-      // Ids a condition or ownership limit left in place stay in search; every other id asked for,
-      // a hold-kept row included, leaves it.
-      ids: filtered ? [...deletedIds, ...kept.map((x) => x.imageId)] : ids,
+      // A row left in place (by a condition, ownership or its child-safety case) stays in search; a
+      // hold-kept or already-gone row leaves it.
+      ids: [...deletedIds, ...kept.map((x) => x.imageId), ...gone],
       action: SearchIndexUpdateQueueAction.Delete,
     }),
     invalidateManyImageExistence(deletedIds),
@@ -1154,7 +1165,7 @@ async function invalidateDeletedImages({
       type: 'error',
       name: 'delete-image-cleanup-failed',
       message: 'a deleted image may still be cached or indexed',
-      imageIds: ids,
+      imageIds: deletedIds,
       errors,
     });
 }
@@ -7719,6 +7730,11 @@ export async function updateImageAcceptableMinor({
   id,
   acceptableMinor,
 }: UpdateImageAcceptableMinorInput) {
+  // primary: whether this write changes the flag decides whether shared caches are purged.
+  const before = await dbWrite.image.findUnique({
+    where: { id },
+    select: { acceptableMinor: true },
+  });
   const image = await dbWrite.image.update({
     where: { id },
     data: { acceptableMinor },
@@ -7735,8 +7751,24 @@ export async function updateImageAcceptableMinor({
   if (acceptableMinor) {
     await invalidateManyImageExistence([id]);
   }
+  if (before?.acceptableMinor !== acceptableMinor) {
+    await invalidateImageVisibilityCaches(id, { bustGalleries: bustImageGalleryCaches });
+  }
 
   return image;
+}
+
+/** The post and model-version galleries an image appears in. */
+async function bustImageGalleryCaches(imageId: number) {
+  const image = await dbRead.image.findUnique({
+    where: { id: imageId },
+    select: { postId: true, post: { select: { modelVersionId: true } } },
+  });
+  const modelVersionId = image?.post?.modelVersionId;
+  await Promise.all([
+    image?.postId ? bustCachesForPosts(image.postId) : undefined,
+    modelVersionId ? deleteImagesForModelVersionCache(modelVersionId) : undefined,
+  ]);
 }
 
 export async function getImageResourcesFromImageId({

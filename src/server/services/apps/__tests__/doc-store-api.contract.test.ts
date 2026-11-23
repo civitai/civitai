@@ -789,6 +789,10 @@ describe('the contract file', () => {
         'needs a hook source and a runner, which the request table cannot express yet; doc-store-api.hooks.test.ts',
       hook_unavailable:
         'needs a hook source and a runner, which the request table cannot express yet; doc-store-api.hooks.test.ts',
+      not_supported_here:
+        'raised only on the signed internal route, never the public one; doc-store-api.unchanged-writes.test.ts',
+      stale_major:
+        'raised only on the signed internal route, never the public one; doc-store-api.unchanged-writes.test.ts',
     };
     const reachable = Object.keys(STORAGE_ERROR_STATUS).filter(
       (code) => !(code in UNREACHABLE_IN_PHASE_1)

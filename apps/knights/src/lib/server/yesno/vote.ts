@@ -1,4 +1,5 @@
 import type { Kysely } from 'kysely';
+import { MOD_TAG_REVIEW_SOURCE, removalLowersLevel } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { PROGRESSION } from '../progression/config';
@@ -7,6 +8,7 @@ import {
   ensureMonthPartition,
   lockItemVoters,
   lockPlayerVoting,
+  notHiddenCreator,
   pacingGate,
   staffedRanks,
   type QueueDeps,
@@ -15,6 +17,7 @@ import {
 import { nextStaffedRank } from '../queue/ranks';
 import { creditVote, insertVote } from '../queue/vote-record';
 import { decideYesNo } from './decide';
+import { tagIdOf } from './tag-review';
 import { playableItems } from './items';
 import { YESNO_ANSWERS } from './keys';
 import { closeYesNoItem } from './close';
@@ -52,27 +55,32 @@ export async function castYesNoVote(
 
       const locked = await trx
         .selectFrom('KnightsQueueItem')
-        .select(['id', 'status'])
+        .select(['id', 'status', 'source'])
         .where('id', '=', input.itemId)
         .forUpdate()
         .executeTakeFirst();
       if (!locked || locked.status !== 'Open') return rejected('not-open');
 
-      const item = await playableItems(trx)
+      const tagReview = locked.source === MOD_TAG_REVIEW_SOURCE;
+      const item = await playableItems(trx, { tagReview })
         .where('i.id', '=', input.itemId)
-        .select(['i.id', 'i.questionKey', 'i.imageId', 'i.minRank', 'i.prompt'])
+        .where(notHiddenCreator(input.userId))
+        .select(['i.id', 'i.questionKey', 'i.imageId', 'i.minRank', 'i.prompt', 'i.meta'])
         .executeTakeFirst();
       if (!item) return rejected('unavailable');
 
-      // The same words about the same image under another id are the same question to the player.
-      const asked = await trx
-        .selectFrom('KnightsVote as v')
-        .innerJoin('KnightsQueueItem as o', 'o.id', 'v.itemId')
-        .select('v.itemId')
-        .where('v.playerId', '=', input.userId)
-        .where('o.imageId', '=', item.imageId)
-        .where('o.prompt', '=', item.prompt)
-        .executeTakeFirst();
+      // The same words about the same image under another id are the same question to the player. A tag review item is the
+      // exception: each flag episode is asked anew with the same words, and one vote per item is enforced by `insertVote`.
+      const asked =
+        !tagReview &&
+        (await trx
+          .selectFrom('KnightsVote as v')
+          .innerJoin('KnightsQueueItem as o', 'o.id', 'v.itemId')
+          .select('v.itemId')
+          .where('v.playerId', '=', input.userId)
+          .where('o.imageId', '=', item.imageId)
+          .where('o.prompt', '=', item.prompt)
+          .executeTakeFirst());
       if (asked) return rejected('already-voted');
 
       const vote = await insertVote(
@@ -106,7 +114,16 @@ export async function castYesNoVote(
         .where('itemId', '=', item.id)
         .where('stage', '=', item.minRank)
         .execute();
-      const decision = decideYesNo(answers, item.minRank);
+      let decision = decideYesNo(answers, item.minRank);
+      // A tag removal that would lower the image's rating needs more than the minimum: read now, under the item lock.
+      if (
+        tagReview &&
+        decision.kind === 'consensus' &&
+        decision.value === 'no' &&
+        decideYesNo(answers, item.minRank, { noSettlesAtNeeded: false }).kind === 'pending' &&
+        (await removalLowersLevel(trx, item.imageId, tagIdOf(item.meta)))
+      )
+        decision = { kind: 'pending' };
 
       // Closing settles every voter's player row; taking the locks first, in id order, keeps all transactions in one order.
       if (decision.kind !== 'pending') await lockItemVoters(trx, item.id);

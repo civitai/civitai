@@ -89,6 +89,14 @@ CREATE TABLE "User" (
   "deletedAt" TIMESTAMP(3),
   "muted" BOOLEAN NOT NULL DEFAULT false
 );
+CREATE TYPE "UserEngagementType" AS ENUM ('Follow', 'Hide', 'Block');
+CREATE TABLE "UserEngagement" (
+  "userId" INTEGER NOT NULL,
+  "targetUserId" INTEGER NOT NULL,
+  "type" "UserEngagementType" NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY ("userId", "targetUserId")
+);
 CREATE TABLE "Product" (
   "id" TEXT PRIMARY KEY,
   "metadata" JSONB NOT NULL DEFAULT '{}'
@@ -138,7 +146,7 @@ const LABEL_STORE_MIGRATION = fileURLToPath(
 
 /** The site tables the label store's migration hooks into; `Image` is already a stand-in above. */
 const LABEL_STORE_SOURCES = `
-CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
+CREATE TABLE IF NOT EXISTS "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]', "details" jsonb);
 CREATE TABLE "Appeal" ("id" serial PRIMARY KEY, "userId" integer NOT NULL);
 CREATE TABLE "ScanLabelItem" (
   "id" serial PRIMARY KEY,
@@ -195,6 +203,44 @@ CREATE TABLE "AppealDecisionRecord" (
 export async function bootLabelStore(pg: PGlite) {
   await pg.exec(LABEL_STORE_SOURCES);
   await pg.exec(readFileSync(LABEL_STORE_MIGRATION, 'utf8'));
+}
+
+/**
+ * The real tag-row table, functions and view, and the real rating recompute `update_nsfw_levels_new`, which
+ * `removalLowersLevel` (`@civitai/db/knights`) is pinned to. A later migration that redefines `update_nsfw_levels_new`
+ * must be added to this list.
+ */
+const TAG_REVIEW_MIGRATIONS = [
+  '20250303170613_tags_on_image_new',
+  '20270105120000_update_nsfw_levels_new_judge_rating_floor',
+].map((name) =>
+  fileURLToPath(
+    new URL(
+      `../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`,
+      import.meta.url
+    )
+  )
+);
+
+/** The site tables the moderator tag review source reads: tags, and what makes an image staff-only. */
+const TAG_REVIEW_SOURCES = `
+CREATE TYPE "TagSource" AS ENUM ('User', 'Rekognition', 'WD14', 'Computed', 'ImageHash', 'MinorDetection');
+CREATE TABLE "Tag" (
+  "id" INTEGER PRIMARY KEY,
+  "name" TEXT NOT NULL,
+  "type" TEXT NOT NULL DEFAULT 'Moderation',
+  "nsfwLevel" INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]', "details" jsonb);
+CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
+CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "status" TEXT NOT NULL);
+CREATE TABLE "ImageReport" ("imageId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
+`;
+
+/** Installs what the moderator tag review source reads, for the tests that create, serve or vote on its items. */
+export async function bootTagReview(pg: PGlite) {
+  await pg.exec(TAG_REVIEW_SOURCES);
+  for (const migration of TAG_REVIEW_MIGRATIONS) await pg.exec(readFileSync(migration, 'utf8'));
 }
 
 const pad = (n: number, width = 2) => String(n).padStart(width, '0');

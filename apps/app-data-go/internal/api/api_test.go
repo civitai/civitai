@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,7 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
 	"github.com/civitai/civitai/apps/app-data-go/internal/rest"
 	"github.com/civitai/civitai/apps/app-data-go/internal/session"
+	"github.com/civitai/civitai/apps/app-data-go/internal/writes"
 )
 
 // End to end: the real handler; the real session manager, exchanger and registry client over HTTP to
@@ -44,12 +46,14 @@ type fakeRegistry struct {
 	wide       atomic.Int32 // subscriptions whose token holds more than AppDataRead
 	notPrivate map[string]bool
 	schemas    sync.Map // token → schema last asked
+	// heads is the head a token's Live names in its meta, as the adapter's private feed does.
+	heads map[string]int64
 }
 
 func newFakeRegistry(t *testing.T) *fakeRegistry {
 	t.Helper()
 	f := &fakeRegistry{records: map[string][]registry.Entity{}, stall: map[string]bool{},
-		revokes: map[string][]chan string{}, notPrivate: map[string]bool{}}
+		revokes: map[string][]chan string{}, notPrivate: map[string]bool{}, heads: map[string]int64{}}
 	t.Cleanup(func() {
 		if n := f.raw.Load(); n != 0 {
 			t.Errorf("🔴 the adapter was shown %d tokens the hub did not issue", n)
@@ -79,6 +83,7 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 		f.mu.Lock()
 		// The adapter's wire form: every cursor wrapped as b1.<24 hex binding>.<inner>.
 		recs, stall, cursor := f.records[tok], f.stall[tok], "b1.0a1b2c3d4e5f60718293a4b5.p1.empty"
+		head, hasHead := f.heads[tok]
 		if f.notPrivate[tok] {
 			cursor = "b1.0a1b2c3d4e5f60718293a4b5.f1.0123456789abcdef0123456789abcdef"
 		}
@@ -90,7 +95,11 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			raw, _ := json.Marshal(map[string]any{"entity": e, "cursor": ""})
 			_, _ = fmt.Fprintf(w, "event: upsert\ndata: %s\n\n", raw)
 		}
-		if !stall {
+		switch {
+		case stall:
+		case hasHead:
+			_, _ = fmt.Fprintf(w, "event: live\ndata: {\"cursor\":%q,\"meta\":{\"head\":{\"seq\":%d}}}\n\n", cursor, head)
+		default:
 			_, _ = fmt.Fprintf(w, "event: live\ndata: {\"cursor\":%q}\n\n", cursor)
 		}
 		fl.Flush()
@@ -764,6 +773,7 @@ func TestEveryStreamErrorHasAFallbackReason(t *testing.T) {
 		session.ErrNotPrivate:    "not_private",
 		session.ErrBlockSpent:    "block_spent",
 		session.ErrBlockFull:     "block_cache_full",
+		session.ErrCursorExpired: "cursor_expired",
 	} {
 		got := fallbackReason(err)
 		if got != want {
@@ -1054,5 +1064,96 @@ func TestABadKeyPrefixIsRefused(t *testing.T) {
 	}
 	if s.store.calls.Load() != 1 {
 		t.Fatalf("%d REST reads, want only the valid one", s.store.calls.Load())
+	}
+}
+
+func (s *stack) call(t *testing.T, method, path, token, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	var rd io.Reader = http.NoBody
+	if body != "" {
+		rd = strings.NewReader(body)
+	}
+	req := httptest.NewRequestWithContext(t.Context(), method, path, rd)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	s.h.ServeHTTP(rec, req)
+	return rec
+}
+
+// writePaths is every write route and `info`, under the read's app and collection.
+var writePaths = []struct{ method, path, body string }{
+	{"POST", notesPath, `{"data":{"t":"c"}}`},
+	{"PUT", notesPath + "/note-w1", `{"data":{"t":"p"}}`},
+	{"DELETE", notesPath + "/note-w2", ""},
+	{"PATCH", notesPath + "/note-w3", `{"$mark":"vote"}`},
+	{"GET", "/v1/apps/todo-app/info", ""},
+	{"OPTIONS", notesPath + "/note-w4", ""},
+	{"OPTIONS", "/v1/apps/todo-app/info", ""},
+}
+
+// 7. With APP_DATA_WRITES off every write route and `info` is the mux's 404, and the read route
+// answers as before, its preflight unchanged.
+// On origin/main the POST to the collection path is the mux's 405 (only GET and OPTIONS are
+// registered there), so `rec.Code != 404` fails for it; the key and info paths are 404 there too, so
+// for those this is an invariant guard.
+func TestWithWritesOffEveryWriteRouteIs404AndReadsAreUnchanged(t *testing.T) {
+	s := newStack(t, false, session.Options{})
+	s.store.by["civitai_writes_off"] = restAnswer{200, `{"items":[],"nextCursor":null}`}
+	for _, w := range writePaths {
+		if rec := s.call(t, w.method, w.path, "civitai_writes_off", w.body); rec.Code != 404 {
+			t.Errorf("%s %s: %d, want 404", w.method, w.path, rec.Code)
+		}
+	}
+	if g := s.get(t, notesPath, "civitai_writes_off"); g.status != 200 || g.ans.Source != "rest" {
+		t.Fatalf("the read: %d %s", g.status, g.body)
+	}
+	if rec := s.call(t, "OPTIONS", notesPath, "", ""); rec.Code != 204 || rec.Header().Get("Access-Control-Allow-Methods") != "GET, OPTIONS" {
+		t.Fatalf("the read's preflight: %d %v", rec.Code, rec.Header())
+	}
+	if s.store.calls.Load() != 1 {
+		t.Fatalf("the site was called %d times, want only the read", s.store.calls.Load())
+	}
+}
+
+// With writes on, each route reaches the forwarder (a fake site counts it), the read route is
+// unchanged, and the collection path's preflight allows the create.
+// Fails on origin/main: Server has no Writes field there (the test does not compile).
+func TestWithWritesOnTheWriteRoutesAreServed(t *testing.T) {
+	s := newStack(t, false, session.Options{})
+	s.store.by["civitai_writes_on"] = restAnswer{200, `{"items":[],"nextCursor":null}`}
+	var forwarded atomic.Int32
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		if !strings.HasPrefix(r.URL.Path, writes.InternalPath) || r.URL.Query().Get("from") != "todo-app" {
+			w.WriteHeader(http.StatusTeapot)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(site.Close)
+	base, _ := url.Parse(site.URL)
+	s.srv.Writes = &writes.Forwarder{Site: base, Key: []byte("api-test-signing-key-0123456789-abc"), Timeout: 2 * time.Second, Metrics: s.m}
+	s.h = s.srv.Handler()
+	sent := int32(0)
+	for _, w := range writePaths {
+		rec := s.call(t, w.method, w.path, "civitai_writes_on", w.body)
+		want := 200
+		if w.method == "OPTIONS" {
+			want = 204
+		} else {
+			sent++
+		}
+		if rec.Code != want || forwarded.Load() != sent {
+			t.Errorf("%s %s: %d, %d forwarded; want %d, %d", w.method, w.path, rec.Code, forwarded.Load(), want, sent)
+		}
+	}
+	if g := s.get(t, notesPath, "civitai_writes_on"); g.status != 200 || g.ans.Source != "rest" {
+		t.Fatalf("the read: %d %s", g.status, g.body)
+	}
+	if rec := s.call(t, "OPTIONS", notesPath, "", ""); rec.Code != 204 || !strings.Contains(rec.Header().Get("Access-Control-Allow-Methods"), "POST") ||
+		!strings.Contains(rec.Header().Get("Access-Control-Allow-Headers"), "Content-Type") {
+		t.Fatalf("the collection path's preflight: %d %v", rec.Code, rec.Header())
 	}
 }

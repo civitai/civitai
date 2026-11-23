@@ -120,7 +120,8 @@ function resendReviewText(
  * A verdict that cannot settle its text hands the check's row to the retry job, which sends it again
  * until its retries run out; the text stays Pending, so unshown, throughout and after. Scoped to the
  * check that produced the verdict, so a newer check's row is left alone. One transaction: a text
- * reset beside a row still Succeeded would be resent by the reconcile at once.
+ * reset beside a row still Succeeded would be resent by the reconcile at once. If the row has moved
+ * on, only the reset lands.
  */
 async function leaveForRetry(
   type: TextType,

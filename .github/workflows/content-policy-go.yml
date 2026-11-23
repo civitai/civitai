@@ -21,6 +21,16 @@ name: content-policy-go
 # dispatches this workflow when the label is added to a draft PR (on a ready PR, the PR's own run
 # here is not draft-gated, so nothing is dispatched).
 # A push to `main` has its own `push` paths filter below, and no draft gate.
+#
+# ── THE 2-HOUR MAIN BATCH: fuzz, govulncheck, go.mod tidy ─────────────────────
+#
+# `vuln`, `mod` and `fuzz` no longer run on pull requests or on a push: across 59 recent
+# runs on PRs and `main` they caught nothing the PR's own `test` and `lint` did not. They run on a
+# dispatch: the 2-hour batch on `main` (lint.yml's `batch-suites` job dispatches this workflow with
+# `batch: true` when a path below changed since the last green batch), a hand dispatch, or the
+# `full-ci` label's dispatch on a draft. A batch dispatch runs ONLY those jobs (`test`, `lint`
+# already ran on the push), and a red one turns the `Batch suites (main batch)` commit status red,
+# which opens a CI-watch item naming the commit range; nothing bisects it automatically.
 on:
   pull_request:
     branches: [main, release]
@@ -34,19 +44,25 @@ on:
       - 'apps/content-policy-go/**'
       - '.github/workflows/content-policy-go.yml'
   workflow_dispatch:
+    inputs:
+      # Set by the main batch (lint.yml, `batch-suites`): run only the batch jobs (see the header).
+      batch:
+        description: Run only the batch jobs (fuzz, govulncheck, go.mod tidy). Set by the main batch.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: content-policy-go-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
+  group: content-policy-go-${{ github.event_name == 'workflow_dispatch' && inputs.batch && format('batch-{0}', github.run_id) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
     name: content-policy-go vet + test + build
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && !inputs.batch
     timeout-minutes: 20
     services:
       postgres:
@@ -143,7 +159,7 @@ jobs:
   lint:
     name: content-policy-go golangci-lint
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && !inputs.batch
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -165,7 +181,7 @@ jobs:
   vuln:
     name: content-policy-go govulncheck
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 15
     defaults:
       run:
@@ -190,7 +206,7 @@ jobs:
   mod:
     name: content-policy-go go.mod tidy + verify
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 10
     defaults:
       run:
@@ -218,7 +234,7 @@ jobs:
   fuzz:
     name: content-policy-go fuzz
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 15
     defaults:
       run:

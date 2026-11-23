@@ -5,10 +5,22 @@ name: Moderator boot smoke
 # server, so a defect that exists only in the build output (a moderator release once crashed at
 # startup with `ReferenceError: sql is not defined`) passes both of them.
 #
-# A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
-# dispatches this workflow when the label is added to a draft PR (on a ready PR, the PR's own run
-# here is not draft-gated, so nothing is dispatched).
-# A push to `main` is unfiltered.
+# ── NOT ON PULL REQUESTS OR PUSHES: THE 2-HOUR MAIN BATCH ────────────────────────────────────
+#
+# Across 74 recent runs on PRs and `main` this caught nothing, so neither a PR nor a push runs it.
+# It runs:
+#   - in the 2-hour main batch, which is what covers `main` (a push run as well would only build
+#     the same commits a second time): lint.yml's `batch-suites` job dispatches it with
+#     `batch: true` when a path below changed since the last green batch, and a red run turns the
+#     `Batch suites (main batch)` commit status red, which opens a CI-watch item naming the commit
+#     range (nothing bisects it automatically);
+#   - on a dispatch: `gh workflow run moderator-boot.yml -R civitai/civitai --ref <branch>`, which
+#     the `full-ci` label's dispatcher also does on a labelled PR (draft or ready) whose files
+#     match the paths below.
+#
+# The pull_request trigger stays, with a job that skips on it, ONLY so the paths list keeps one
+# copy here: the batch and the `full-ci` dispatcher read `on.pull_request.paths`. A skipped job
+# starts no runner.
 on:
   pull_request:
     branches: [main, release]
@@ -23,9 +35,13 @@ on:
       - 'patches/**'
       - 'scripts/ci/moderator-boot-smoke.mjs'
       - '.github/workflows/moderator-boot.yml'
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      # Set by the main batch (lint.yml, `batch-suites`), which keys the concurrency group on it.
+      batch:
+        description: Set by the main batch. Leave unset.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -33,14 +49,14 @@ permissions:
 # A PR push cancels its PR's in-flight run; on `main` the group queues instead, for the reason in
 # lint.yml's `concurrency` comment.
 concurrency:
-  group: moderator-boot-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
+  group: moderator-boot-${{ github.event_name == 'workflow_dispatch' && inputs.batch && format('batch-{0}', github.run_id) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   boot:
     name: Moderator build + boot
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: github.event_name != 'pull_request'
     timeout-minutes: 20
     # The Dockerfile's build-stage placeholders. Nothing listens on this port: the server must
     # come up without a database, as it does in the image before its first query.
