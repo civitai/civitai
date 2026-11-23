@@ -213,7 +213,9 @@ import {
   hasSongTagRow,
   inSongTagTransaction,
   readSongTags,
+  readSongTagsIn,
   searchSongTags,
+  songTagsSql,
 } from '~/server/services/tagsOnSong.service';
 import {
   isSongGenreTagName,
@@ -2583,7 +2585,8 @@ async function afterSongTagsChanged(song: { id: number; postId: number | null })
  * Stores the genre in the song's `Track` row and mirrors it as the song's image tag, so it reaches
  * the search documents like any tag. One transaction holds the genre, the new genre's tag and the
  * previous genre's tag coming off, with the Track row locked so a concurrent change waits and then
- * takes off this one's tag.
+ * takes off this one's tag. The tests run on one PGlite session: they pin the statements and
+ * their rollback, not the lock, which only two real connections exercise.
  */
 export async function setSongGenre({ id, genre, user }: SetSongGenreInput & { user: SessionUser }) {
   const song = await readEditableSong(id, user);
@@ -2593,7 +2596,8 @@ export async function setSongGenre({ id, genre, user }: SetSongGenreInput & { us
   // check); a same-named tag that is not a plain label is left off the song.
   await findOrCreateTagsByName([songGenreTagName(genre)]);
   const tag = await findAttachableTag(songGenreTagName(genre));
-  const attach = !!tag && !(await hasSongTagRow(song.id, tag.id));
+  // Built here: nothing reads a cache or another pool while the transaction holds the Track row.
+  const songTagsQuery = await songTagsSql([song.id]);
 
   await inSongTagTransaction(async (tx) => {
     await tx.client.query(
@@ -2608,9 +2612,10 @@ export async function setSongGenre({ id, genre, user }: SetSongGenreInput & { us
     if (previous === genre) return;
     await tx.client.query(`UPDATE "Track" SET genre = $2 WHERE "imageId" = $1`, [song.id, genre]);
 
-    if (tag && attach) await attachSongTag(song.id, tag.id, tx);
+    // Insert only: a row the song already has for the tag (a disabled one included) is kept.
+    if (tag) await attachSongTag(song.id, tag.id, tx);
     if (previous) {
-      const previousTag = (await readSongTags([song.id]))
+      const previousTag = (await readSongTagsIn(tx, songTagsQuery))
         .get(song.id)
         ?.find((t) => t.name === songGenreTagName(previous));
       if (previousTag) await detachSongTag(song.id, previousTag.id, tx);

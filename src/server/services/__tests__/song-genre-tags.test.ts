@@ -24,7 +24,20 @@ const mocks = vi.hoisted(() => ({
   music: true,
   /** The image tag store as PGlite rows; set in beforeAll. */
   db: null as unknown as PGlite,
+  /**
+   * Whether the genre transaction's connection is between BEGIN and COMMIT/ROLLBACK. PGlite is one
+   * session, so this is how a write that skips the transaction's client is told apart.
+   */
+  inTransaction: false,
 }));
+
+/** The tag writers' `tx`: the rows go on its client, or nowhere while the transaction is open. */
+type Tx = { client: { query: (text: string, values?: unknown[]) => Promise<unknown> } } | undefined;
+const tagStore = (tx: Tx) => {
+  if (!tx && mocks.inTransaction)
+    throw new Error("a tag write during the genre transaction must go on the transaction's client");
+  return tx?.client ?? mocks.db;
+};
 
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
@@ -45,9 +58,13 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
 vi.mock('~/server/services/tagsOnImageNew.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TagsOnImageNew>()),
   insertTagsOnImageNew: vi.fn(
-    async (args: { imageId: number; tagId: number; automated?: boolean; disabled?: boolean }[]) => {
+    async (
+      args: { imageId: number; tagId: number; automated?: boolean; disabled?: boolean }[],
+      tx?: Tx
+    ) => {
+      const store = tagStore(tx);
       for (const a of args)
-        await mocks.db.query(
+        await store.query(
           `INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", source, automated, disabled)
            VALUES ($1, $2, 'User', $3, $4) ON CONFLICT DO NOTHING`,
           [a.imageId, a.tagId, a.automated ?? false, a.disabled ?? false]
@@ -57,12 +74,13 @@ vi.mock('~/server/services/tagsOnImageNew.service', async (importOriginal) => ({
   upsertTagsOnImageNew: vi.fn(async () => {
     throw new Error('a song tag write must never upsert');
   }),
-  deleteTagsOnImageNew: vi.fn(async (args: { imageId: number; tagId: number }[]) => {
+  deleteTagsOnImageNew: vi.fn(async (args: { imageId: number; tagId: number }[], tx?: Tx) => {
+    const store = tagStore(tx);
     for (const a of args)
-      await mocks.db.query(
-        `DELETE FROM "TagsOnImageDetails" WHERE "imageId" = $1 AND "tagId" = $2`,
-        [a.imageId, a.tagId]
-      );
+      await store.query(`DELETE FROM "TagsOnImageDetails" WHERE "imageId" = $1 AND "tagId" = $2`, [
+        a.imageId,
+        a.tagId,
+      ]);
   }),
 }));
 vi.mock('~/server/db/pgDb', () => ({
@@ -70,7 +88,12 @@ vi.mock('~/server/db/pgDb', () => ({
   pgDbReadLong: {},
   pgDbWrite: {
     connect: vi.fn(async () => ({
-      query: (text: string, values?: unknown[]) => mocks.db.query(text, values),
+      query: (text: string, values: unknown[] = []) => {
+        if (text === 'BEGIN') mocks.inTransaction = true;
+        if (text === 'COMMIT' || text === 'ROLLBACK') mocks.inTransaction = false;
+        const paramTypes = values.map((v) => (Number.isInteger(v) ? 23 : 0));
+        return mocks.db.query(text, values, { paramTypes });
+      },
       release: vi.fn(),
     })),
   },
@@ -195,10 +218,20 @@ beforeAll(async () => {
       automated boolean NOT NULL, disabled boolean NOT NULL, PRIMARY KEY ("imageId", "tagId")
     );
     CREATE TABLE "Track" ("imageId" int PRIMARY KEY, "coverImageId" int UNIQUE, genre text);
+    -- Read for the tag rules before the genre transaction begins; there are none here.
+    CREATE TABLE "TagsOnTags" (
+      "fromTagId" int NOT NULL, "toTagId" int NOT NULL, type text NOT NULL, "createdAt" timestamp
+    );
   `);
   const INT4_OID = 23;
+  // The pool clients. Nothing may use them while the genre transaction holds the Track row, and a
+  // song's Track row is written only on that transaction's client.
   const run = async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = Prisma.sql(strings, ...values);
+    if (mocks.inTransaction)
+      throw new Error('the pool was used while the genre transaction was open');
+    if (/(INSERT INTO|UPDATE) "Track"/.test(sql.text))
+      throw new Error("a song's Track row is written on the genre transaction's client");
     const paramTypes = sql.values.map((v) => (Number.isInteger(v) ? INT4_OID : 0));
     return db.query(sql.text, sql.values, { paramTypes });
   };
@@ -220,6 +253,7 @@ afterAll(() => db.close());
 beforeEach(async () => {
   vi.clearAllMocks();
   mocks.music = true;
+  mocks.inTransaction = false;
   await db.exec(
     `DELETE FROM "TagsOnImageDetails"; DELETE FROM "Tag"; DELETE FROM "Track"; DELETE FROM "Image";`
   );
@@ -331,6 +365,7 @@ describe('setSongGenre', () => {
     expect(await tagNames()).toEqual(['pop']);
   });
 
+  // S6: "drop the genreTagAdded flag", so the previous genre's tag always comes off.
   it("takes the previous genre's tag off even when its row was there before the genre", async () => {
     await insertTag(61, 'rock');
     await attach(61);

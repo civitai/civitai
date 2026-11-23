@@ -44,7 +44,9 @@ export function toSongGenre(value: unknown): SongGenre | undefined {
 /** The image tag a genre is mirrored as (tag names are stored lowercase). */
 export const songGenreTagName = (genre: SongGenre) => genre.toLowerCase();
 
-const GENRE_TAG_NAMES = new Set<string>(SONG_GENRES.map(songGenreTagName));
+/** Every genre's mirror tag name. Only the genre select puts one of these on a song. */
+export const SONG_GENRE_TAG_NAMES: readonly string[] = SONG_GENRES.map(songGenreTagName);
+const GENRE_TAG_NAMES = new Set(SONG_GENRE_TAG_NAMES);
 /** Whether a tag name is a genre's mirror tag: only the genre select attaches those. */
 export const isSongGenreTagName = (name: string) => GENRE_TAG_NAMES.has(name.toLowerCase());
 

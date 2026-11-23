@@ -408,12 +408,18 @@ describe("tag writes in a caller's transaction", () => {
   ] as const)(
     '%s in one writes on its client and defers the rest to the commit',
     async (_, write) => {
-      const tx = { client: { query: vi.fn() }, afterCommit: [] as (() => Promise<void>)[] };
+      const tx = {
+        client: { query: vi.fn() },
+        tagRules: [],
+        afterCommit: [] as (() => Promise<void>)[],
+      };
 
       await write(rows, tx as never);
 
       expect(tx.client.query).toHaveBeenCalledTimes(1);
       expect(pgDbWrite.query).not.toHaveBeenCalled();
+      // The rules came with the transaction: nothing reads a cache while it is open.
+      expect(systemCache.getTagRules).not.toHaveBeenCalled();
       expect(followUps()).toEqual([0, 0, 0, 0, 0]);
 
       for (const run of tx.afterCommit) await run();

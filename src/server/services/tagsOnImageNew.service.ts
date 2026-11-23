@@ -5,6 +5,7 @@ import { tagIdsForImagesCache, refreshThumbnailCache, imageTagsCache } from '~/s
 import type { TagSource } from '~/shared/utils/prisma/enums';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { Limiter } from '~/server/utils/concurrency-helpers';
+import type { TagRule } from '~/server/services/system-cache';
 import { getModeratedTags, getTagRules } from '~/server/services/system-cache';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -26,11 +27,14 @@ type TagsOnImageNewArgs = {
 
 /**
  * A caller's open transaction for `insertTagsOnImageNew` / `deleteTagsOnImageNew`: the rows are
- * written on `client`, and the work that must follow the commit (cache busts, the rating recount,
- * the search queue) is pushed onto `afterCommit` for the caller to run once it has committed.
+ * written on `client` with the tag rules read before it began, so nothing but the row write runs
+ * while it is open. The work that must follow the commit (cache busts, the rating recount, the
+ * search queue) is pushed onto `afterCommit`, one independent step each, for the caller to run
+ * once it has committed.
  */
 export type TagWriteTransaction = {
   client: Pick<PoolClient, 'query'>;
+  tagRules: TagRule[];
   afterCommit: (() => Promise<void>)[];
 };
 
@@ -47,22 +51,26 @@ async function afterTagWrite(
   imageIds: number[],
   tx: TagWriteTransaction | undefined
 ) {
-  const run = async () => {
-    if (tx) await bustImageTagCaches(written);
+  const ratings = async () => {
     const levelImageIds = await updateImageNsfwLevels(written);
     await queueDocumentsForImageMinorChanges({ levelImageIds });
+  };
+  const searchQueue = async () => {
     await (
       await imageService()
     ).queueImageSearchIndexUpdate({ ids: imageIds, action: SearchIndexUpdateQueueAction.Update });
   };
-  if (tx) tx.afterCommit.push(run);
-  else await run();
+  if (tx) tx.afterCommit.push(() => bustImageTagCaches(written), ratings, searchQueue);
+  else {
+    await ratings();
+    await searchQueue();
+  }
 }
 
 export async function insertTagsOnImageNew(args: TagsOnImageNewArgs[], tx?: TagWriteTransaction) {
   if (!args.length) return;
 
-  const withTagRules = await applyTagRules(args);
+  const withTagRules = await applyTagRules(args, tx?.tagRules);
 
   await Limiter().process(withTagRules, async (items) => {
     const values = items
@@ -217,8 +225,9 @@ async function queueBlockedTagReviews(args: { imageId: number; tagId: number }[]
   }
 }
 
-export async function applyTagRules(args: TagsOnImageNewArgs[]) {
-  const tagRules = await getTagRules();
+/** `tagRules`: rules already read, for a caller inside a transaction. */
+export async function applyTagRules(args: TagsOnImageNewArgs[], tagRules?: TagRule[]) {
+  tagRules ??= await getTagRules();
 
   const keyOf = (imageId: number, tagId: number) => `${imageId}|${tagId}`;
 
