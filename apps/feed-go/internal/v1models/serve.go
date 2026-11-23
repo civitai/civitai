@@ -47,9 +47,10 @@ type DetailRequest struct {
 	Serving bool
 	// Host is the request's Host header (isRedCapableHost, for the Training Data listing).
 	Host string
-	// TrainingDataSQL is Node's Training Data rule-set id the sample carried
-	// (TrainingDataSQLHeader); "" = none (always so for a public request: the server never reads the
-	// header off one, so a Training Data candidate there falls back as drift).
+	// TrainingDataSQL is the Node Training Data rule-set id that vouches for the listing: the one a
+	// sample carried (TrainingDataSQLHeader), or, on a public request (whose header is never read),
+	// this build's when the Node builds now answering published exactly it (TrainingDataRules);
+	// "" = none, and a Training Data candidate falls back as drift.
 	TrainingDataSQL string
 }
 
@@ -139,8 +140,8 @@ type ListRequest struct {
 	Query, Path, Host string
 	// RegionRestricted: the caller's region holds the level to PG/PG-13.
 	RegionRestricted bool
-	// TrainingDataSQL is Node's Training Data rule-set id the sample carried
-	// (TrainingDataSQLHeader); "" = none.
+	// TrainingDataSQL is the Node Training Data rule-set id that vouches for the listing, as on
+	// DetailRequest; "" = none.
 	TrainingDataSQL string
 }
 

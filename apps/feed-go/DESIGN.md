@@ -2289,7 +2289,7 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 | Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, `tag` (the blocked-name empty page, the Tag lookup, its `EXISTS`), ids, earlyAccess, archived, the addons' POI/minor/tag clauses | a username the replica does not hold (`v1-models-username-miss`) |
 | Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads); a tag-name miss with `FEED_GO_COMPUTE_MISSES` (tagCache's lookup, §16.7) | a model-data, model-tags, images, files or membership miss (`v1-models-*-miss`), a tag-name miss with `FEED_GO_COMPUTE_MISSES` off, a stale images/files/tag entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level |
 | Shaping | both shapers, the file naming over ASCII model names, Training Data files' empty metadata | a name the scheme strips non-ASCII text from (`v1-models-filename`) |
-| Training Data | the listing on both routes (list: in the shaper; `[id]`: after the build or the cache, a body without `modelVersions` gaining an empty one): the candidates, the statement (`internal/v1models/training_data_listing.sql`, Node's rendered text), the predicate, the red-capable host (SERVER_DOMAIN_RED and its aliases, read as Node reads them) | a sample whose Training Data statement hash is missing or is not this build's (`v1-models-training-data-drift`, below), the statement failing (`v1-models-training-data-unread`, see §16.7), a value of a type a jsonb read does not produce, an absolute-form request line (`v1-models-host`: its host replaces the Host header Node reads), a body or row shape the Node code would throw on (`v1-models-training-data`), non-ASCII text in the Host header or the red host list (`v1-models-host`) |
+| Training Data | the listing on both routes (list: in the shaper; `[id]`: after the build or the cache, a body without `modelVersions` gaining an empty one): the candidates, the statement (`internal/v1models/training_data_listing.sql`, Node's rendered text), the predicate, the red-capable host (SERVER_DOMAIN_RED and its aliases, read as Node reads them) | a sample whose Training Data statement hash is missing or is not this build's, or a public request while the Node builds' published rule sets are not exactly this build's (`v1-models-training-data-drift`, below and §16.8), the statement failing (`v1-models-training-data-unread`, see §16.7), a value of a type a jsonb read does not produce, an absolute-form request line (`v1-models-host`: its host replaces the Host header Node reads), a body or row shape the Node code would throw on (`v1-models-training-data`), non-ASCII text in the Host header or the red host list (`v1-models-host`) |
 | Config | | no `NEXT_PUBLIC_IMAGE_LOCATION` or (`[id]`) `NEXTAUTH_URL` (`v1-models-unconfigured-urls`) |
 
 ### 16.3 Flags and settings
@@ -2359,7 +2359,8 @@ Node build's rule set id, `<sha256 of the statement text>;rules=<TRAINING_DATA_L
 with a Training Data candidate is answered only when it equals this build's
 (`v1models.TrainingDataSQLHash`: the embedded copy's hash and `TrainingDataRulesVersion`), and falls
 back (`v1-models-training-data-drift`) when it differs or is absent, before anything is read. A body
-with no Training Data file needs no id. `feed-go-training-data-listing.parity.test.ts` records, per
+with no Training Data file needs no id. A public request carries no such id (§16.8): there the id is
+the one the Node builds now answering published (`v1models.TrainingDataRules`). `feed-go-training-data-listing.parity.test.ts` records, per
 version, the SHA-256 of exactly: `training-data-visibility.ts`, the body of `trainingDataListing`
 between its `feed-go-rules` markers (the owner/moderator return, the candidate filter, the read, its
 fail-closed return and the predicate), and the values of `sfwBrowsingLevelsFlag` and
@@ -2451,9 +2452,22 @@ deployment config. Every answer carries `X-Feed-Go-Served` (`go` or `node`), as 
    (`v1-models-not-found`: Node's answer is a 404, an answer here is a 200). The Training Data
    listing runs exactly as in the shadow (§16.2, the same compute), with one difference by design: the
    statement-hash header that vouches for this build's rules (`x-feed-go-training-data-sql`) is read
-   only off a Node sample, never off a public request (there it would be the client's), so a served
-   body with any Training Data candidate falls back (`v1-models-training-data-drift`) and Go never
-   lists a dataset by rules the Node app has not confirmed.
+   only off a Node sample, never off a public request (there it would be the client's). On a public
+   request the vouch is what the Node app publishes instead: every Node process answering either
+   model route writes its rule set id (`trainingDataListingRulesId`) as a field of the cache-cluster
+   hash `feed-go:training-data-rules-live` (`REDIS_KEYS.FEED_GO.TRAINING_DATA_RULES_LIVE`,
+   `src/server/services/feed-go-training-data-rules.ts`), at most once a minute per process, each
+   field expiring 5 minutes after its last write (HPEXPIRE), so the live fields are the builds still
+   answering. A served body with a Training Data candidate is listed only while those fields are
+   exactly `v1models.TrainingDataSQLHash` (`v1models.TrainingDataRules`, one HGETALL memoized for
+   15 s, a failed read not memoized); none (no Node build has said, or the Node change is not
+   deployed), another build's (a Node deploy that changed the rules, while it rolls out and for 5
+   minutes after the last old process stops), or a failed read falls back
+   (`v1-models-training-data-drift`), so Go never lists a dataset by rules the Node app answering it
+   does not apply. The one window left is the memo: for up to 15 s after a Node process with new
+   rules first answers, a served body may still list by the old ones, which is what an old Node
+   process still answering in the same rollout does. No deployment setting: the hash is read on the
+   cache cluster feed-go already reads, under its `CACHE_KEY_NAMESPACE` prefix.
 5. The body as `JSON.stringify` writes it (`v1models.NodeBody`: the plain writer's `\u2028` /
    `\u2029` escapes written raw); a body holding an escaped U+FFFD (an invalid UTF-8 byte) has no
    known `JSON.stringify` text and falls back (`v1-models-invalid-utf8`).

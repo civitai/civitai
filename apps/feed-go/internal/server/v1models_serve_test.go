@@ -625,11 +625,12 @@ func TestComputeV1ModelsIDCacheWindowByMode(t *testing.T) {
 	}
 }
 
-// Go never serves a Training Data file by its own rules unless the Node app vouched for them: on a
-// public request the statement-hash header is a client's, so it is not read, and a body listing a
-// Training Data candidate falls back (`v1-models-training-data-drift`) even when the header carries
-// this build's hash. A sample's header is Node's: with this build's hash the listing goes on to read
-// the replica (here a replica with no rows route: `v1-models-training-data-unread`).
+// Go never serves a Training Data file by its own rules unless the Node app vouched for them. On a
+// public request the statement-hash header is a client's, so it is not read: the vouch is the rule
+// sets the Node builds now answering published (V1ModelsDeps.Rules), and only exactly this build's
+// lets the listing go on; none, another build's, or a client's header falls back
+// (`v1-models-training-data-drift`). A sample's header is Node's: with this build's hash the listing
+// goes on. Going on reads the replica (here one with no rows route: `v1-models-training-data-unread`).
 func TestV1ModelsTrainingDataHashOnlyFromASample(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	cache := testkit.NewRedis()
@@ -651,17 +652,27 @@ func TestV1ModelsTrainingDataHashOnlyFromASample(t *testing.T) {
 	}}}
 	ctx := context.Background()
 	hash := map[string]string{v1models.TrainingDataSQLHeader: v1models.TrainingDataSQLHash}
+	this := map[string]string{v1models.TrainingDataSQLHash: "1"}
+	another := map[string]string{"0000000000000000000000000000000000000000000000000000000000000000;rules=1": "1"}
 	for _, c := range []struct {
 		name    string
 		sampled bool
 		headers map[string]string
+		live    map[string]string // the Node builds' published rule sets (nil: none)
 		reason  string
 	}{
-		{"public, no header", false, nil, "v1-models-training-data-drift"},
-		{"public, a client sending the hash", false, hash, "v1-models-training-data-drift"},
-		{"sample, no header", true, nil, "v1-models-training-data-drift"},
-		{"sample, Node's hash", true, hash, "v1-models-training-data-unread"},
+		{"public, no header", false, nil, nil, "v1-models-training-data-drift"},
+		{"public, a client sending the hash", false, hash, nil, "v1-models-training-data-drift"},
+		{"public, the Node builds publish this build's rules", false, nil, this, "v1-models-training-data-unread"},
+		{"public, the Node builds publish another build's rules", false, hash, another, "v1-models-training-data-drift"},
+		{"sample, no header", true, nil, this, "v1-models-training-data-drift"},
+		{"sample, Node's hash", true, hash, nil, "v1-models-training-data-unread"},
 	} {
+		live := testkit.NewRedis()
+		if c.live != nil {
+			live.SetHash(v1models.KeyTrainingDataRulesLive, c.live)
+		}
+		s.V1Models.Rules = &v1models.TrainingDataRules{Redis: live}
 		r := v1Request("/api/v1/models/42", c.headers)
 		if c.sampled {
 			r = r.WithContext(withSampled(ctx))

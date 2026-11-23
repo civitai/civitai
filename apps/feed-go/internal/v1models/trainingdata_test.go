@@ -443,3 +443,68 @@ func TestTrainingDataSFWMask(t *testing.T) {
 		}
 	}
 }
+
+// TrainingDataRules vouches for this build's rules on a public request only while the live Node
+// rule sets (the hash's fields) are exactly TrainingDataSQLHash; every other state falls back.
+func TestTrainingDataRulesVouchedOnlyForExactlyThisBuild(t *testing.T) {
+	const key = "ns:feed-go:training-data-rules-live"
+	other := "0000000000000000000000000000000000000000000000000000000000000000;rules=1"
+	for _, c := range []struct {
+		name   string
+		fields map[string]string // nil: no key
+		err    error
+		want   bool
+	}{
+		{"this build alone", map[string]string{TrainingDataSQLHash: "1"}, nil, true},
+		{"no Node build has said", nil, nil, false},
+		{"another build alone", map[string]string{other: "1"}, nil, false},
+		{"this build and another (a rollout)", map[string]string{TrainingDataSQLHash: "1", other: "1"}, nil, false},
+		{"the read fails", map[string]string{TrainingDataSQLHash: "1"}, errors.New("down"), false},
+	} {
+		cache := testkit.NewRedis()
+		if c.fields != nil {
+			cache.SetHash(key, c.fields)
+		}
+		cache.Err = c.err
+		r := &TrainingDataRules{Redis: cache, Prefix: "ns:"}
+		if got := r.Vouched(context.Background()); got != c.want {
+			t.Errorf("%s: Vouched = %v, want %v", c.name, got, c.want)
+		}
+	}
+	if (*TrainingDataRules)(nil).Vouched(context.Background()) {
+		t.Error("a nil TrainingDataRules vouched")
+	}
+}
+
+// A read is served from memory for TTL (15 s), then read again; a failed read is not memoized.
+func TestTrainingDataRulesMemo(t *testing.T) {
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	cache := testkit.NewRedis()
+	cache.SetHash("feed-go:training-data-rules-live", map[string]string{TrainingDataSQLHash: "1"})
+	r := &TrainingDataRules{Redis: cache, Now: func() time.Time { return now }}
+	ctx := context.Background()
+	if !r.Vouched(ctx) {
+		t.Fatal("first read: not vouched")
+	}
+	// A rollout begins: another build publishes. Within the memo the earlier read is served.
+	cache.SetHash("feed-go:training-data-rules-live", map[string]string{TrainingDataSQLHash: "1", "x;rules=2": "1"})
+	now = now.Add(14 * time.Second)
+	if v := r.Vouched(ctx); !v || cache.Calls != 1 {
+		t.Fatalf("within the memo: vouched=%v after %d reads, want true after 1", v, cache.Calls)
+	}
+	now = now.Add(time.Second)
+	if r.Vouched(ctx) {
+		t.Fatal("after the memo: still vouched with two live rule sets")
+	}
+	cache.SetHash("feed-go:training-data-rules-live", map[string]string{TrainingDataSQLHash: "1"})
+	cache.Err = errors.New("down")
+	now = now.Add(15 * time.Second)
+	if r.Vouched(ctx) {
+		t.Fatal("a failed read vouched")
+	}
+	cache.Err = nil
+	calls := cache.Calls
+	if v := r.Vouched(ctx); !v || cache.Calls != calls+1 {
+		t.Fatalf("after a failed read: vouched=%v, %d new reads, want true after 1", v, cache.Calls-calls)
+	}
+}

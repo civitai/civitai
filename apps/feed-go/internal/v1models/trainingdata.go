@@ -46,9 +46,10 @@ const TrainingDataRulesVersion = 1
 // TrainingDataSQLHash is the rule set this build lists Training Data files by, as Node names its own
 // (trainingDataListingRulesId, header TrainingDataSQLHeader): the SHA-256 (hex) of
 // trainingDataListingSQL and the decision's version, `<sha256>;rules=<n>`. A body with a Training
-// Data candidate is answered only when the sample's value equals it, so a Node deploy that changes
-// the statement or the decision (or a sample that does not say) makes feed-go fall back rather than
-// list by rules the Node it shadows no longer has.
+// Data candidate is answered only when the vouching value equals it (a sample's header; on a public
+// request, the Node builds' published rule sets, TrainingDataRules), so a Node deploy that changes
+// the statement or the decision (or a request nothing vouches for) makes feed-go fall back rather
+// than list by rules the Node it answers for no longer has.
 var TrainingDataSQLHash = func() string {
 	sum := sha256.Sum256([]byte(trainingDataListingSQL))
 	return hex.EncodeToString(sum[:]) + ";rules=" + strconv.Itoa(TrainingDataRulesVersion)

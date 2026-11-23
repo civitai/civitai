@@ -30,6 +30,9 @@ type V1ModelsDeps struct {
 	Deps *v1models.Deps
 	// Users resolves the list's `username` filter (hydrate.Sources).
 	Users v1models.UsernameResolver
+	// Rules vouches for this build's Training Data rules on a public request (the Node builds'
+	// published rule sets); nil vouches for nothing, so a Training Data candidate there falls back.
+	Rules *v1models.TrainingDataRules
 }
 
 // ShadowV1ModelsHandler is the internal compare endpoint for REST `GET /api/v1/models`.
@@ -125,15 +128,20 @@ func sampledRequest(r *http.Request) bool {
 	return isSampled(r.Context())
 }
 
-// trainingDataSQL is the Node Training Data statement hash a sample carries
-// (v1models.TrainingDataSQLHeader), and "" on a public request: there the header is a client's, not
-// Node's, so it never vouches for Go's rules, and a body with a Training Data candidate falls back
-// (`v1-models-training-data-drift`) rather than list a file the Node app might refuse.
-func trainingDataSQL(r *http.Request) string {
-	if !sampledRequest(r) {
-		return ""
+// trainingDataSQL is the Node Training Data rule set id that vouches for this request's listing: on
+// a sample, the one it carries (v1models.TrainingDataSQLHeader); on a public request, where that
+// header would be a client's and is never read, this build's own id when the Node builds now
+// answering all published it (V1ModelsDeps.Rules), else "". A body with a Training Data candidate
+// and no matching id falls back (`v1-models-training-data-drift`) rather than list a file the Node
+// app might refuse.
+func (s *Server) trainingDataSQL(ctx context.Context, r *http.Request) string {
+	if sampledRequest(r) {
+		return r.Header.Get(v1models.TrainingDataSQLHeader)
 	}
-	return r.Header.Get(v1models.TrainingDataSQLHeader)
+	if s.V1Models != nil && s.V1Models.Rules.Vouched(ctx) {
+		return v1models.TrainingDataSQLHash
+	}
+	return ""
 }
 
 func (s *Server) regionRestricted(r *http.Request) bool {
@@ -172,7 +180,7 @@ func (s *Server) computeV1Models(ctx context.Context, r *http.Request) (*compute
 	}
 	ans, err := v1models.ServeList(ctx, s.V1Models.Deps, s.V1Models.Users, v1models.ListRequest{
 		Query: r.URL.RawQuery, Path: r.URL.Path, Host: host, RegionRestricted: s.regionRestricted(r),
-		TrainingDataSQL: trainingDataSQL(r),
+		TrainingDataSQL: s.trainingDataSQL(ctx, r),
 	})
 	if err != nil {
 		return nil, err
@@ -203,7 +211,7 @@ func (s *Server) computeV1ModelsID(ctx context.Context, r *http.Request) (*compu
 	}
 	ans, err := v1models.ServeDetail(ctx, s.V1Models.Deps, v1models.DetailRequest{
 		ID: id, RegionRestricted: s.regionRestricted(r), Serving: !sampledRequest(r), Host: host,
-		TrainingDataSQL: trainingDataSQL(r),
+		TrainingDataSQL: s.trainingDataSQL(ctx, r),
 	})
 	if err != nil {
 		return nil, err

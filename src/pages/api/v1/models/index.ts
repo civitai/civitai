@@ -24,6 +24,7 @@ import {
   captureFeedGoShadowRest,
   finishFeedGoShadow,
 } from '~/server/trpc/feed-go-shadow';
+import { publishTrainingDataRulesLive } from '~/server/services/feed-go-training-data-rules';
 import { MODEL_VIEW_SCOPE } from '~/server/auth/route-scopes';
 import { requestHoldsScope } from '~/server/auth/session-scope';
 import { getRequestCredential } from '~/server/auth/request-credential';
@@ -112,6 +113,8 @@ async function handler(
   // Not sampled: a text `query` (the Meilisearch path) and a signed-in caller, both of which feed-go
   // always answers with a fallback (`v1-models-query`, `v1-models-session`).
   const shadow = query || user ? undefined : beginFeedGoShadowV1Models(req, 'list');
+  // This build's Training Data rules, for feed-go's serve path (never awaited, never throws).
+  publishTrainingDataRulesLive();
 
   // The query cursor is an opaque numeric OFFSET, not a model id: Meili's order
   // (relevance, or the caller's sort) is not monotonic in id.
