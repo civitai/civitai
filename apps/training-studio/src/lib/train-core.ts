@@ -986,10 +986,17 @@ async function buildContinuation(
       ? srcMeta.matureCount
       : await sourceMatureCount(client, opts.workflowId, airs, datasetRating, onMatureCount);
   const name = srcMeta.name ? `${srcMeta.name} (further)` : undefined;
+  // Publish state belongs to the source's model; carried over, the new run shows as published and can't be published.
+  const {
+    published: _published,
+    modelId: _modelId,
+    modelVersionId: _modelVersionId,
+    ...inherited
+  } = srcMeta;
   // Lineage always points at the IMMEDIATE parent — a copied-through sourceWorkflowId from the
   // source's own metadata would skip a link in the chain.
   const metadata: TrainingStudioMeta = {
-    ...srcMeta,
+    ...inherited,
     name: name ?? srcMeta.name,
     v: META_VERSION,
     sourceWorkflowId: opts.workflowId,
