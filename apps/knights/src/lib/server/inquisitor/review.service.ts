@@ -6,7 +6,12 @@ import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { metrics, type ReviewOutcome } from '../metrics';
 import { readImageState } from '../queue/image-state';
 import { hasBlockMarker, moderatorRuling, type ImageState } from '../queue/resolution';
-import { failClosed, skillCheckEligible, skillCheckLasting } from '../skill-check/eligible';
+import {
+  failClosed,
+  skillCheckEligible,
+  skillCheckLasting,
+  withoutJit,
+} from '../skill-check/eligible';
 import type { SkillCheckReadSite } from '../metrics';
 import { addSkillCheck } from '../skill-check/pool';
 import { OverrideWriteError } from './override-error';
@@ -405,24 +410,26 @@ export async function nextReview(
     'review-serve',
     async () => {
       for (const voted of [true, false]) {
-        const batch = await servableReviews(db, moderatorId, now)
-          .$call(hasVote(voted))
-          .select([
-            'r.id',
-            'r.queueItemId',
-            'r.imageId',
-            'r.consensusValue',
-            'img.url',
-            'img.width',
-            'img.height',
-            'img.nsfwLevel',
-          ])
-          // Reviews with a vote are few and finish a pair: oldest first. Unvoted ones newest first, so moderators see recent
-          // images; the backlog cap expires the oldest.
-          .orderBy('r.createdAt', voted ? 'asc' : 'desc')
-          .orderBy('r.id', voted ? 'asc' : 'desc')
-          .limit(SERVE_BATCH_PER_QUEUE)
-          .execute();
+        const batch = await withoutJit(db, (q) =>
+          servableReviews(q, moderatorId, now)
+            .$call(hasVote(voted))
+            .select([
+              'r.id',
+              'r.queueItemId',
+              'r.imageId',
+              'r.consensusValue',
+              'img.url',
+              'img.width',
+              'img.height',
+              'img.nsfwLevel',
+            ])
+            // Reviews with a vote are few and finish a pair: oldest first. Unvoted ones newest first, so moderators see recent
+            // images; the backlog cap expires the oldest.
+            .orderBy('r.createdAt', voted ? 'asc' : 'desc')
+            .orderBy('r.id', voted ? 'asc' : 'desc')
+            .limit(SERVE_BATCH_PER_QUEUE)
+            .execute()
+        );
         for (const row of batch) {
           const exclusion = await exclusionOf(db, row);
           if (exclusion === 'unreadable') return unreadable;

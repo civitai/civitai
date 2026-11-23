@@ -5,7 +5,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { civitaiSiteUrl } from '../site-url';
 import { servableReviews, type ReviewOffer } from './review.service';
-import { failClosed } from '../skill-check/eligible';
+import { failClosed, withoutJit } from '../skill-check/eligible';
 
 export type ReviewSidebar = {
   /** The players' settled level, by its label. */
@@ -105,15 +105,17 @@ export async function moderatorStats(
       db,
       'review-stats',
       () =>
-        db
-          .selectFrom(
-            servableReviews(db, moderatorId, now)
-              .select('r.id')
-              .limit(WAITING_CAP + 1)
-              .as('w')
-          )
-          .select(sql<number>`count(*)::int`.as('n'))
-          .executeTakeFirstOrThrow(),
+        withoutJit(db, (q) =>
+          q
+            .selectFrom(
+              servableReviews(q, moderatorId, now)
+                .select('r.id')
+                .limit(WAITING_CAP + 1)
+                .as('w')
+            )
+            .select(sql<number>`count(*)::int`.as('n'))
+            .executeTakeFirstOrThrow()
+        ),
       null
     ),
     db
