@@ -139,17 +139,17 @@ export const ACCENT_TEXT_SCHEME =
 
 // What `ACCENT_FILL` falls back to, `--mantine-primary-color-filled`: Mantine's blue at its default
 // primaryShade, 6 in light and 8 in dark (the theme sets neither primaryColor nor primaryShade).
-const PRIMARY_FILL = { light: '#228BE6', dark: '#1971C2' };
+export const PRIMARY_FILL = { light: '#228BE6', dark: '#1971C2' };
 
 type Scheme = 'light' | 'dark';
 /** A background the text sits on over the surface: the accent (or its second colour) at `tint`, or a hover. */
-type SurfaceState = { tint: number; second?: true } | Record<Scheme, string>;
+export type SurfaceState = { tint: number; second?: true } | Record<Scheme, string>;
 
 /**
  * The surfaces accent text sits on, per scheme, with the tints and hovers over them. A surface dark
  * in both schemes still computes each scheme from that scheme's primary.
  */
-const SURFACES = {
+export const MUSIC_SURFACES = {
   // gray-0 / dark-6. The active toggles' 15% tint; the wash under Shuffle and Repeat, at most ~17%
   // of the accent or its second colour; the small buttons' hover, gray-1 / dark-5.
   bar: {
@@ -177,11 +177,11 @@ const SURFACES = {
     states: [{ light: '#f1f3f5', dark: '#373A40' }],
   },
 } satisfies Record<string, Record<Scheme, string> & { states: SurfaceState[] }>;
-export type MusicSurface = keyof typeof SURFACES;
+export type MusicSurface = keyof typeof MUSIC_SURFACES;
 
 /** `fill` made readable on every background of `surface` in `scheme`. */
 function textOn(surface: MusicSurface, scheme: Scheme, fill: string, second: string) {
-  const { states, ...base } = SURFACES[surface];
+  const { states, ...base } = MUSIC_SURFACES[surface];
   const backgrounds = [
     base[scheme],
     ...(states as SurfaceState[]).map((state) =>

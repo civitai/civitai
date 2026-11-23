@@ -51,6 +51,7 @@ import {
 import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { DialogProvider, useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { PRIMARY_FILL } from '~/components/MusicPlayer/music-accent';
 import { MusicPlayerBar } from '~/components/MusicPlayer/MusicPlayerBar';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 
@@ -171,28 +172,32 @@ describe('the global player bar', () => {
       }
     });
 
-  for (const scheme of ['light', 'dark'])
+  for (const scheme of ['light', 'dark'] as const)
     for (const withCover of [true, false])
-      test(`its active toggles read at WCAG AA in ${scheme} mode, ${
+      test(`its accent toggles read at WCAG AA in ${scheme} mode, ${
         withCover ? "in a cover's accent" : 'in the primary'
       }`, async () => {
         songCovers.served = withCover ? [coverRated(1)] : [];
+        useMusicPlayerStore.setState({ shuffle: true, repeat: 'all' });
         // The end colours at once, without the toggles' fade.
         const noFade = document.head.appendChild(document.createElement('style'));
-        noFade.textContent = '* { transition: none !important; }';
-        await renderWithProviders(<MusicPlayerBar />);
-        await expect.element(button('Pause')).toBeInTheDocument();
-        if (withCover)
-          await expect
-            .poll(() => bar().style.getPropertyValue('--music-accent'))
-            .toMatch(/^#[0-9a-f]{6}$/);
-        useMusicPlayerStore.setState({ showTimedComments: true });
-        await button('Up next').click();
-        await expect.element(page.getByRole('region', { name: 'Up next' })).toBeInTheDocument();
-        await expect.element(button('Hide timed comments')).toHaveAttribute('aria-pressed', 'true');
-        // After the render: the provider sets the scheme on mount.
-        document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
         try {
+          noFade.textContent = '* { transition: none !important; }';
+          await renderWithProviders(<MusicPlayerBar />);
+          await expect.element(button('Pause')).toBeInTheDocument();
+          if (withCover)
+            await expect
+              .poll(() => bar().style.getPropertyValue('--music-accent'))
+              .toMatch(/^#[0-9a-f]{6}$/);
+          useMusicPlayerStore.setState({ showTimedComments: true });
+          await button('Up next').click();
+          await expect.element(page.getByRole('region', { name: 'Up next' })).toBeInTheDocument();
+          await expect
+            .element(button('Hide timed comments'))
+            .toHaveAttribute('aria-pressed', 'true');
+          // After the render: the provider sets the scheme on mount.
+          document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
+
           /** `[r, g, b, alpha]` (0..255, 0..1) of a computed `rgb()`, `rgba()` or `color(srgb …)`. */
           const parse = (css: string) => {
             const [r, g, b, a = 1] = css.match(/[\d.]+/g)!.map(Number);
@@ -200,27 +205,70 @@ describe('the global player bar', () => {
               ? [r * 255, g * 255, b * 255, a]
               : [r, g, b, css.startsWith('rgba') ? a : 1];
           };
+          /** `top` (with its alpha) laid over the opaque `under`. */
+          const over = ([r, g, b, a]: number[], under: number[]) =>
+            [r, g, b].map((c, i) => c * a + under[i] * (1 - a));
           const lum = (c: number[]) =>
             c
               .slice(0, 3)
               .map((v) => v / 255)
               .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
               .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+
           const surface = parse(getComputedStyle(bar()).backgroundColor);
-          for (const name of ['Hide timed comments', 'Up next']) {
-            const toggle = button(name).element();
-            const [r, g, b, a] = parse(getComputedStyle(toggle).backgroundColor);
-            // The toggle's tint over the bar, as the eye sees it.
-            const background = [r, g, b].map((c, i) => c * a + surface[i] * (1 - a));
-            expect(a, `${name} is tinted`).toBeGreaterThan(0);
+          // The scheme took effect: the bar is dark-6 in dark, gray-0 in light.
+          if (scheme === 'dark') expect(lum(surface)).toBeLessThan(0.05);
+          else expect(lum(surface)).toBeGreaterThan(0.8);
+
+          // Fills without a cover are Mantine's primary in this scheme, what the text is computed from.
+          if (!withCover)
+            expect(parse(getComputedStyle(button('Pause').element()).backgroundColor)).toEqual([
+              ...parse(
+                `rgb(${[1, 3, 5].map((i) => parseInt(PRIMARY_FILL[scheme].slice(i, i + 2), 16))})`
+              ),
+            ]);
+
+          // The cover's wash behind the bar's left side: its colour at `x`, as the gradient's
+          // premultiplied interpolation gives it.
+          const wash = bar().querySelector<HTMLElement>(':scope > [class~="-z-10"]');
+          expect(!!wash, 'the wash is drawn').toBe(withCover);
+          const washAt = (x: number) => {
+            if (!wash) return [0, 0, 0, 0];
+            const rect = wash.getBoundingClientRect();
+            const at = Math.max(0, Math.min(100, ((x - rect.left) / rect.width) * 100));
+            const stops = [
+              ...getComputedStyle(wash).backgroundImage.matchAll(/(rgba?\([^)]*\))\s+([\d.]+)%/g),
+            ].map(([, colour, pos]) => ({ colour: parse(colour), pos: Number(pos) }));
+            const i = stops.findIndex((stop) => stop.pos >= at);
+            const [from, to] = i <= 0 ? [stops[0], stops[0]] : [stops[i - 1], stops[i]];
+            const t = to.pos === from.pos ? 0 : (at - from.pos) / (to.pos - from.pos);
+            const alpha = from.colour[3] * (1 - t) + to.colour[3] * t;
+            const rgb = [0, 1, 2].map(
+              (c) =>
+                (from.colour[c] * from.colour[3] * (1 - t) + to.colour[c] * to.colour[3] * t) /
+                (alpha || 1)
+            );
+            return [...rgb, alpha];
+          };
+
+          for (const name of ['Shuffle', 'Repeat', 'Hide timed comments', 'Up next']) {
+            const toggle = page
+              .getByRole('region', { name: 'Music player' })
+              .getByRole('button', { name, exact: true })
+              .element();
+            const { left, width } = toggle.getBoundingClientRect();
+            const ground = over(parse(getComputedStyle(toggle).backgroundColor), [
+              ...over(washAt(left + width / 2), surface),
+            ]);
             const text = lum(parse(getComputedStyle(toggle).color));
-            const ground = lum(background);
-            const ratio = (Math.max(text, ground) + 0.05) / (Math.min(text, ground) + 0.05);
+            const ratio =
+              (Math.max(text, lum(ground)) + 0.05) / (Math.min(text, lum(ground)) + 0.05);
             expect(ratio, name).toBeGreaterThanOrEqual(4.5);
           }
         } finally {
           document.documentElement.removeAttribute('data-mantine-color-scheme');
           noFade.remove();
+          useMusicPlayerStore.setState({ shuffle: false, repeat: 'off' });
         }
       });
 

@@ -1,7 +1,12 @@
 import { encode } from 'blurhash';
 import { describe, expect, it } from 'vitest';
-import type { MusicAccent, MusicSurface } from '~/components/MusicPlayer/music-accent';
+import type {
+  MusicAccent,
+  MusicSurface,
+  SurfaceState,
+} from '~/components/MusicPlayer/music-accent';
 import {
+  MUSIC_SURFACES,
   musicAccentFromHash,
   musicAccentVars,
   readableAccent,
@@ -156,36 +161,6 @@ describe('musicAccentVars', () => {
       .join('')}`;
   };
   type Scheme = 'light' | 'dark';
-  type State = { tint: number; second?: boolean } | { light: string; dark: string };
-  // The surfaces accent text sits on (odd/tasks/music-stabilize.md, Design options) and the states
-  // it must still read in: a tint of the accent (the second colour where `second`) over the surface,
-  // or a hover background.
-  const SURFACES: Record<MusicSurface, { light: string; dark: string; states: State[] }> = {
-    // Active toggle at 15%; the wash under Shuffle and Repeat (up to ~17% of the accent or its
-    // second colour); the small buttons' hover, gray-1 / dark-5.
-    bar: {
-      light: '#f8f9fa',
-      dark: '#25262b',
-      states: [
-        { tint: 0.15 },
-        { tint: 0.2 },
-        { tint: 0.2, second: true },
-        { light: '#f1f3f5', dark: '#2c2e33' },
-      ],
-    },
-    // The now-playing row: the accent at 33% at its left edge.
-    upNextPanel: { light: '#ffffff', dark: '#2c2e33', states: [{ tint: 0.33 }] },
-    upNextSheet: { light: '#2c2e33', dark: '#2c2e33', states: [{ tint: 0.33 }] },
-    // The cover's wash: the accent at 40% where the controls start.
-    nowPlayingSheet: { light: '#1a1b1e', dark: '#1a1b1e', states: [{ tint: 0.4 }] },
-    commentChips: { light: '#ffffff', dark: '#25262b', states: [{ tint: 0.12 }, { tint: 0.192 }] },
-    commentList: {
-      light: '#ffffff',
-      dark: '#2c2e33',
-      states: [{ light: '#f1f3f5', dark: '#373a40' }],
-    },
-  };
-
   /** Covers around the wheel, made very dark and very light so the accent lands on the band's edges. */
   const covers: [string, MusicAccent | null][] = [];
   for (let h = 0; h < 360; h += 30)
@@ -211,10 +186,23 @@ describe('musicAccentVars', () => {
     expect(grey).toBeNull();
   });
 
-  it.each(Object.keys(SURFACES) as MusicSurface[])(
+  // The states the design names for each surface (odd/tasks/music-stabilize.md, Design options),
+  // checked on top of the source's own list, so a state dropped from the source still fails here.
+  const DESIGN_STATES: Partial<Record<MusicSurface, SurfaceState[]>> = {
+    bar: [{ tint: 0.15 }, { tint: 0.2 }, { tint: 0.2, second: true }],
+    upNextPanel: [{ tint: 0.33 }],
+    upNextSheet: [{ tint: 0.33 }],
+    nowPlayingSheet: [{ tint: 0.4 }],
+    commentChips: [{ tint: 0.12 }, { tint: 0.192 }],
+    commentList: [{ light: '#f1f3f5', dark: '#373a40' }],
+  };
+
+  // Every surface the source names, at rest and in each state: a tint of the accent (its second
+  // colour where `second`) over the surface, or a hover background.
+  it.each(Object.keys(MUSIC_SURFACES) as MusicSurface[])(
     'reads at 4.5:1 on the %s at rest, hovered and highlighted, in both schemes',
     (surface) => {
-      const { states, ...base } = SURFACES[surface];
+      const { states, ...base } = MUSIC_SURFACES[surface];
       for (const [label, accent] of covers)
         for (const scheme of ['light', 'dark'] as Scheme[]) {
           const vars = musicAccentVars(accent, surface);
@@ -224,7 +212,7 @@ describe('musicAccentVars', () => {
           const second = accent?.accent2 ?? PRIMARY[scheme];
           const backgrounds = [
             base[scheme],
-            ...states.map((state) =>
+            ...[...(states as SurfaceState[]), ...(DESIGN_STATES[surface] ?? [])].map((state) =>
               'tint' in state
                 ? mix(state.second ? second : fill, base[scheme], state.tint)
                 : state[scheme]
