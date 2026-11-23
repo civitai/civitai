@@ -16,7 +16,11 @@ import { resolveAppPublishedImages } from '~/server/services/blocks/block-post.s
  *     for its OWNER only, and NEVER visible to the gated read, which is cross-user by design;
  *   - `blockSharedUploadAppId` (a viewer-picked upload the app opted in to share) — readable
  *     cross-user through the gated read by THAT app only, once terminally scanned, unflagged and
- *     within the viewer's AND the SFW ceiling (pending hidden to all), and never postable.
+ *     within the viewer's AND the SFW ceiling (pending hidden to all), and never postable;
+ *   - `blockGenerationSourceAppId` (a PRIVATE generation source) — readable through the gated read
+ *     by its OWN author and the app that kept it only, with the published content filter and
+ *     `ratingPending` while unrated; omitted for anyone else, and omitted for its author too when
+ *     restricted, blocked or held. Never postable.
  *
  * Each fixture row differs from an accepted one in exactly one field, so each refusal is a claim
  * about one conjunct.
@@ -30,16 +34,22 @@ vi.mock('~/server/services/blocks/block-workflows.service', () => ({
 vi.mock('~/client-utils/edge-url', () => ({
   getEdgeUrl: (url: string) => `edge:${url}`,
 }));
+const holder = vi.hoisted(() => ({
+  db: null as unknown as PGlite,
+  /** The rows the last query returned: what left Postgres. */
+  lastRows: [] as Array<{ id: number }>,
+  /** Tag ids the viewer hides (default none). */
+  hiddenTagIds: [] as number[],
+}));
+
 vi.mock('~/server/services/user-preferences.service', () => ({
   getAllHiddenForUser: async () => ({
     hiddenUsers: [],
     blockedUsers: [],
     blockedByUsers: [],
-    hiddenTags: [],
+    hiddenTags: holder.hiddenTagIds.map((id) => ({ id, hidden: true })),
   }),
 }));
-
-const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
 const APP = 'appblk-alpha';
 const OTHER_APP = 'appblk-beta';
@@ -76,6 +86,21 @@ const SHARED_MATURE = 207; // ANOTHER viewer's, shared with APP, R
 const SHARED_PENDING_OWN = 208; // viewer's, shared with APP, scan not finished
 const SHARED_PENDING_OTHER = 209; // ANOTHER viewer's, shared with APP, scan not finished
 const SHARED_FLAGGED = 210; // ANOTHER viewer's, shared with APP, scanned but flagged for review
+// PRIVATE generation sources (`blockGenerationSourceAppId`).
+const GS_OWN = 301; // viewer's, kept by APP, scanned PG
+const GS_OTHER_USER = 302; // ANOTHER viewer's, kept by APP, scanned PG
+const GS_OTHER_APP = 303; // viewer's, kept by OTHER_APP, scanned PG
+const GS_PENDING_OWN = 304; // viewer's, kept by APP, scan not finished
+const GS_PENDING_OTHER_USER = 305; // ANOTHER viewer's, kept by APP, scan not finished
+const GS_FLAGGED_OWN = 306; // viewer's, kept by APP, scanned but held for review
+const GS_SCAN_BLOCKED_OWN = 307; // viewer's, kept by APP, the scanner refused the bytes
+const GS_MATURE_OWN = 308; // viewer's, kept by APP, R
+const GS_POSTED_OWN = 309; // viewer's, kept by APP, already in a post
+const GS_RESTRICTED_OWN = 310; // viewer's, kept by APP, R + restricted base model
+const GS_HARD_BLOCKED_OWN = 311; // viewer's, kept by APP, hard-blocked by moderation
+const GS_HIDDEN_TAG_OWN = 312; // viewer's, kept by APP, carries a tag the viewer hides
+const PUBLISHED_AND_GS_OTHER_USER = 313; // ANOTHER viewer's, published AND kept as a source by APP
+const HIDDEN_TAG = 99;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -108,8 +133,12 @@ beforeEach(async () => {
     ...values: unknown[]
   ) => {
     const flat = Prisma.sql(strings, ...(values as never[]));
-    return (await holder.db.query(flat.text, flat.values as unknown[])).rows;
+    const rows = (await holder.db.query(flat.text, flat.values as unknown[])).rows;
+    holder.lastRows = rows as Array<{ id: number }>;
+    return rows;
   }) as never);
+  holder.lastRows = [];
+  holder.hiddenTagIds = [];
 
   const row = (
     id: number,
@@ -122,6 +151,7 @@ beforeEach(async () => {
       '${JSON.stringify(metadata)}'::jsonb)`;
   await holder.db.exec(`
     TRUNCATE "Image";
+    TRUNCATE "TagsOnImageDetails";
     INSERT INTO "Image" (id, "userId", url, "postId", "nsfwLevel", ingestion, "needsReview", metadata) VALUES
       ${[
         row(PUBLISHED_OWN, VIEWER, { blockPublishedAppId: APP }),
@@ -161,7 +191,43 @@ beforeEach(async () => {
           { nsfwLevel: 0, ingestion: 'Pending' }
         ),
         row(SHARED_FLAGGED, OTHER_USER, { blockSharedUploadAppId: APP }, { needsReview: 'poi' }),
+        row(GS_OWN, VIEWER, { blockGenerationSourceAppId: APP }),
+        row(GS_OTHER_USER, OTHER_USER, { blockGenerationSourceAppId: APP }),
+        row(GS_OTHER_APP, VIEWER, { blockGenerationSourceAppId: OTHER_APP }),
+        row(
+          GS_PENDING_OWN,
+          VIEWER,
+          { blockGenerationSourceAppId: APP },
+          { nsfwLevel: 0, ingestion: 'Pending' }
+        ),
+        row(
+          GS_PENDING_OTHER_USER,
+          OTHER_USER,
+          { blockGenerationSourceAppId: APP },
+          { nsfwLevel: 0, ingestion: 'Pending' }
+        ),
+        row(GS_FLAGGED_OWN, VIEWER, { blockGenerationSourceAppId: APP }, { needsReview: 'poi' }),
+        row(
+          GS_SCAN_BLOCKED_OWN,
+          VIEWER,
+          { blockGenerationSourceAppId: APP },
+          { nsfwLevel: 0, ingestion: 'Blocked' }
+        ),
+        row(GS_MATURE_OWN, VIEWER, { blockGenerationSourceAppId: APP }, { nsfwLevel: MATURE }),
+        row(GS_POSTED_OWN, VIEWER, { blockGenerationSourceAppId: APP }, { postId: 9 }),
+        row(GS_HIDDEN_TAG_OWN, VIEWER, { blockGenerationSourceAppId: APP }),
+        row(PUBLISHED_AND_GS_OTHER_USER, OTHER_USER, {
+          blockPublishedAppId: APP,
+          blockGenerationSourceAppId: APP,
+        }),
       ].join(',\n')};
+    INSERT INTO "Image" (id, "userId", url, "nsfwLevel", metadata, "modelRestricted", "blockedFor") VALUES
+      (${GS_RESTRICTED_OWN}, ${VIEWER}, 'key-${GS_RESTRICTED_OWN}', ${MATURE},
+        '{"blockGenerationSourceAppId":"${APP}"}'::jsonb, true, NULL),
+      (${GS_HARD_BLOCKED_OWN}, ${VIEWER}, 'key-${GS_HARD_BLOCKED_OWN}', ${BROWSING},
+        '{"blockGenerationSourceAppId":"${APP}"}'::jsonb, false, 'moderated');
+    INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", disabled) VALUES
+      (${GS_HIDDEN_TAG_OWN}, ${HIDDEN_TAG}, false);
   `);
 });
 
@@ -374,5 +440,120 @@ describe('gated cross-user read: a mature image made with a restricted base mode
     expect(images).toEqual([
       expect.objectContaining({ imageId: RESTRICTED_OWN, status: 'visible' }),
     ]);
+  });
+});
+
+describe('gated read: a PRIVATE generation source resolves for its own author, on its own app, only', () => {
+  it('POSITIVE CONTROL: returns the viewer’s own scanned source with the moderated projection', async () => {
+    const { images } = await gatedRead([GS_OWN]);
+    expect(images).toEqual([
+      {
+        imageId: GS_OWN,
+        status: 'visible',
+        nsfwLevel: BROWSING,
+        contentRating: expect.any(String),
+        url: `edge:key-${GS_OWN}`,
+        width: null,
+        height: null,
+      },
+    ]);
+  });
+
+  it('🔴 (owner) another user’s source on the same app is omitted, and never leaves Postgres', async () => {
+    // The published row asked for in the same call is the positive control that the read ran.
+    const { images } = await gatedRead([
+      GS_OTHER_USER,
+      GS_PENDING_OTHER_USER,
+      PUBLISHED_OTHER_USER,
+    ]);
+    expect(images.map((i) => i.imageId)).toEqual([PUBLISHED_OTHER_USER]);
+    expect(holder.lastRows.map((r) => r.id)).toEqual([PUBLISHED_OTHER_USER]);
+  });
+
+  it('🔴 (owner) the viewer’s own source is omitted when ANOTHER user asks for it', async () => {
+    // That user's own source, asked for in the same call, is the positive control.
+    const other = await gatedReadAs([GS_OWN, GS_PENDING_OWN, GS_OTHER_USER], {
+      userId: OTHER_USER,
+    });
+    expect(other.images.map((i) => i.imageId)).toEqual([GS_OTHER_USER]);
+  });
+
+  it('🔴 (same app) a source kept by another app is omitted, both ways', async () => {
+    const { images } = await gatedRead([GS_OTHER_APP, GS_OWN]);
+    expect(images.map((i) => i.imageId)).toEqual([GS_OWN]);
+    expect(holder.lastRows.map((r) => r.id)).toEqual([GS_OWN]);
+    // OTHER_APP cannot read APP's source; its own source is the positive control.
+    const other = await gatedReadAs([GS_OWN, GS_OTHER_APP], { appId: OTHER_APP });
+    expect(other.images.map((i) => i.imageId)).toEqual([GS_OTHER_APP]);
+  });
+
+  it('🔴 (unrated) the author gets ratingPending: a url and no rating claim', async () => {
+    const { images } = await gatedRead([GS_PENDING_OWN]);
+    expect(images).toEqual([
+      {
+        imageId: GS_PENDING_OWN,
+        status: 'visible',
+        ratingPending: true,
+        url: `edge:key-${GS_PENDING_OWN}`,
+        width: null,
+        height: null,
+      },
+    ]);
+  });
+
+  it('🔴 (unrated) any other user gets nothing for it: no url, no hidden entry', async () => {
+    const other = await gatedReadAs([GS_PENDING_OWN, GS_PENDING_OTHER_USER], {
+      userId: OTHER_USER,
+    });
+    expect(other.images).toEqual([
+      expect.objectContaining({ imageId: GS_PENDING_OTHER_USER, ratingPending: true }),
+    ]);
+  });
+
+  it.each([
+    ['held for review', GS_FLAGGED_OWN],
+    ['refused by the scanner', GS_SCAN_BLOCKED_OWN],
+    ['hard-blocked by moderation', GS_HARD_BLOCKED_OWN],
+    ['above the viewer’s ceiling', GS_MATURE_OWN],
+    ['already in a post (`postId IS NULL`)', GS_POSTED_OWN],
+  ])('🔴 (blocked or held) the author’s own source %s is omitted, not hidden', async (_l, id) => {
+    const { images } = await gatedRead([id, GS_OWN]);
+    expect(images.map((i) => i.imageId)).toEqual([GS_OWN]);
+  });
+
+  it('🔴 (blocked) a restricted source is omitted for its author, where a published one is shown', async () => {
+    // The published restricted row is shown to its uploader (the block above); a private source
+    // gets no uploader exception. The R source alongside proves the ceiling admits the level.
+    const { images } = await gatedReadAs([GS_RESTRICTED_OWN, GS_MATURE_OWN], {
+      browsingLevel: R_ALLOWED,
+    });
+    expect(images).toEqual([
+      expect.objectContaining({ imageId: GS_MATURE_OWN, status: 'visible', nsfwLevel: MATURE }),
+    ]);
+  });
+
+  it('🔴 (blocked tags) a source carrying a tag the viewer hides is omitted', async () => {
+    expect((await gatedRead([GS_HIDDEN_TAG_OWN])).images.map((i) => i.imageId)).toEqual([
+      GS_HIDDEN_TAG_OWN,
+    ]);
+    holder.hiddenTagIds = [HIDDEN_TAG];
+    const { images } = await gatedRead([GS_HIDDEN_TAG_OWN, GS_OWN]);
+    expect(images.map((i) => i.imageId)).toEqual([GS_OWN]);
+  });
+
+  it('REGRESSION: a row with BOTH the published and the generation-source key keeps the published rules for a non-author', async () => {
+    const { images } = await gatedRead([PUBLISHED_AND_GS_OTHER_USER]);
+    expect(images).toEqual([
+      expect.objectContaining({ imageId: PUBLISHED_AND_GS_OTHER_USER, status: 'visible' }),
+    ]);
+  });
+
+  it('REGRESSION: a bytes upload is still never returned, alongside a resolving source', async () => {
+    const { images } = await gatedRead([UPLOADED_OWN, UPLOADED_OTHER_USER, GS_OWN]);
+    expect(images.map((i) => i.imageId)).toEqual([GS_OWN]);
+  });
+
+  it('a source is still not postable', async () => {
+    await expectNotPostable(GS_OWN);
   });
 });

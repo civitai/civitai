@@ -74,7 +74,8 @@ import type { BlockGatedImage } from '~/server/services/blocks/block-gated-image
  *      reach this identical line with the identical claim.
  *   4. `getBlockGatedImagesByIds` — the app-scoped read (`blockPublishedAppId` or
  *      `blockSharedUploadAppId` = this token's `appId`, `postId IS NULL`; shared
- *      uploads held to scanned + SFW) plus the per-row projection.
+ *      uploads held to scanned + SFW; a `blockGenerationSourceAppId` row only for
+ *      its own author) plus the per-row projection.
  *
  * 🔴 AN ANONYMOUS VIEWER GETS `UNAUTHORIZED` (401 over REST), AND THAT IS PARITY
  * WITH THE BRIDGE RATHER THAN A NEW DECISION. `parseSubjectUserId` returns `null`

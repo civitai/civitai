@@ -80,8 +80,10 @@ export const BLOCK_SHARED_UPLOAD_APP_ID_META_KEY =
  * 🔴 DELIBERATELY NOT {@link BLOCK_PUBLISHED_APP_ID_META_KEY} AND NOT IN
  * {@link BLOCK_POSTABLE_APP_ID_META_KEYS}. The published key is what puts a row on the app's
  * CROSS-USER shared grid (`getBlockGatedImagesByIds`), and the postable set is what lets the app
- * post it; a private source must reach neither. The only reader is the owner-bound idempotency
- * lookup in `block-generation-source.service.ts`. `block-image-provenance-readers.test.ts` pins
+ * post it; a private source must reach neither. Its two readers are both bound to the image's
+ * owner: the idempotency lookup in `block-generation-source.service.ts`, and the gated read, which
+ * resolves a source for its OWN author and the app that kept it only (omitted for anyone else,
+ * and for its author too when blocked or held). `block-image-provenance-readers.test.ts` pins
  * that set.
  */
 export const BLOCK_GENERATION_SOURCE_APP_ID_META_KEY =

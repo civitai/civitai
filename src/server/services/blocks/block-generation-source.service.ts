@@ -25,7 +25,8 @@ import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted
  * its OWN finished generation outputs into a PRIVATE, scanned generation source it can feed back
  * into a workflow. No consent dialog, because nothing is shown to anyone: the row is owned by the
  * viewer, has no post, and carries the private provenance key, so no shared or postable read
- * returns it (`block-image-provenance-readers.test.ts`).
+ * returns it to anyone else. The gated read (`getBlockGatedImagesByIds`) returns it to its own
+ * author, for this app only, so the app can display it (`block-image-provenance-readers.test.ts`).
  *
  * The answer is ready when the SAME gate a generation runs (`assertGenerationInputsUsable`, App
  * Blocks entry) accepts the returned url. That is the definition of `ready`, not an imitation of

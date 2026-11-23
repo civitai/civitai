@@ -11,13 +11,18 @@ import { BLOCK_PROVENANCE_METADATA_KEYS } from '~/shared/utils/block-provenance-
  * directions, so adding or removing a reader fails here whether or not its author knew this file
  * existed.
  *
- * 🔴 THE PROPERTY IT EXISTS FOR, TWO HALVES:
+ * 🔴 THE PROPERTY IT EXISTS FOR, THREE PARTS:
  *   - `blockUploadedAppId` (an app's own `bytes` upload) is accepted by POST readers, which bind
  *     the row to its owner, and by NOTHING that reads cross-user. A gated read that accepted it
  *     would let an app read every viewer's bytes uploads with no share and no dialog.
  *   - `blockSharedUploadAppId` (a viewer-picked upload the app opted in to share, after the host
  *     told the viewer) is accepted by the ONE cross-user gated read and by nothing else, so it is
  *     not postable.
+ *   - `blockGenerationSourceAppId` (a PRIVATE generation source) is read only where the read is
+ *     bound to the row's owner: the idempotency lookup, and the gated read, which resolves it for
+ *     its OWN author only (the owner predicate is in its SQL). It is not postable, and no new
+ *     writer stamps the published or shared key: making a source public is a new row through
+ *     the existing publish path.
  * The behaviour of the live readers is pinned against real SQL in
  * `block-image-provenance.behavior.test.ts`; this file pins that there are no others.
  */
@@ -95,6 +100,7 @@ const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
     'source-reader',
   'src/server/services/blocks/block-post.service.ts#resolveAppPublishedImages': 'post-reader',
   'src/server/services/blocks/block-post.service.ts#adoptImagesIntoPost': 'post-reader',
+  // Cross-user for the published and shared keys; OWNER-BOUND for the generation-source key.
   'src/server/services/blocks/block-gated-images.service.ts#getBlockGatedImagesByIds':
     'gated-reader',
   'src/server/services/blocks/block-post.logic.ts#BLOCK_POST_APP_ID_META_KEY': 'declaration',
@@ -236,16 +242,46 @@ describe('App Blocks image provenance-key sites', () => {
     }
   });
 
-  it('🔴 the ONE gated reader names the published and the SHARED-upload key, never the bytes key', () => {
+  it('🔴 the ONE gated reader names the published, SHARED-upload and generation-source keys, never the bytes key', () => {
     // An app may show a viewer-picked upload to its other viewers only when it opted in for that
-    // upload (`blockSharedUploadAppId`). Its own bytes uploads (`blockUploadedAppId`) carry no
+    // upload (`blockSharedUploadAppId`), and a private generation source to its own author only
+    // (`blockGenerationSourceAppId`). Its own bytes uploads (`blockUploadedAppId`) carry no
     // share and no dialog, so the gated read must not name that key or the postable set. The
-    // limits on shared rows are pinned in block-image-provenance.behavior.test.ts.
+    // limits on shared and generation-source rows are pinned in
+    // block-image-provenance.behavior.test.ts.
     const gated = Object.entries(LEDGER).filter(([, r]) => r === 'gated-reader');
     expect(gated.length).toBe(1);
     for (const [site] of gated) {
-      expect([...(sites.get(site) ?? [])].sort()).toEqual([PUBLISHED, SHARED_UPLOAD].sort());
+      expect([...(sites.get(site) ?? [])].sort()).toEqual(
+        [PUBLISHED, SHARED_UPLOAD, GENERATION_SOURCE].sort()
+      );
     }
+  });
+
+  it('🔴 no new writer of the published or shared key: only the two existing writers stamp them', () => {
+    // A generation source is made public through the existing publish path
+    // (`blocks.publishGenerationOutputs`, a new row), never by stamping a key onto the source.
+    const stampers = (key: string, literal: string) =>
+      [...sites.entries()]
+        .filter(
+          ([site, tokens]) => LEDGER[site] === 'writer' && (tokens.has(key) || tokens.has(literal))
+        )
+        .map(([site]) => site)
+        .sort();
+    expect(stampers(PUBLISHED, "'blockPublishedAppId'")).toEqual([
+      'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage',
+    ]);
+    expect(stampers(SHARED_UPLOAD, "'blockSharedUploadAppId'")).toEqual([
+      'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage',
+    ]);
+    // And the generation-source writer stamps only its own key.
+    expect(
+      [
+        ...(sites.get(
+          'src/server/services/blocks/block-image-upload.service.ts#persistBlockGenerationSourceImage'
+        ) ?? []),
+      ].sort()
+    ).toEqual([GENERATION_SOURCE]);
   });
 
   it('🔴 the shared-upload key is named only by its declaration, its writer, the gated read and the server-owned list', () => {
@@ -291,9 +327,10 @@ describe('App Blocks image provenance-key sites', () => {
     ]);
   });
 
-  it('🔴 the private generation-source key is named only by its declaration, its writer, its owner-bound reader and the server-owned list', () => {
-    // A private source must never reach the shared grid, a post or the "Published with" credit.
-    // Every site that names it, by constant or by spelling, is one of these four.
+  it('🔴 the private generation-source key is named only by its declaration, its writer, its two owner-bound readers and the server-owned list', () => {
+    // A private source must never reach another viewer, a post or the "Published with" credit.
+    // Every site that names it, by constant or by spelling, is one of these five; the gated read
+    // resolves it for its own author only (pinned above and in the behaviour test).
     const naming = [...sites.entries()]
       .filter(
         ([, tokens]) => tokens.has(GENERATION_SOURCE) || tokens.has("'blockGenerationSourceAppId'")
@@ -301,6 +338,7 @@ describe('App Blocks image provenance-key sites', () => {
       .map(([site]) => site)
       .sort();
     expect(naming).toEqual([
+      'src/server/services/blocks/block-gated-images.service.ts#getBlockGatedImagesByIds',
       'src/server/services/blocks/block-generation-source.service.ts#findBlockGenerationSourceImage',
       'src/server/services/blocks/block-image-upload.service.ts#persistBlockGenerationSourceImage',
       'src/shared/utils/block-provenance-metadata.ts#BLOCK_GENERATION_SOURCE_APP_ID_META_KEY',

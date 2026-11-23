@@ -321,6 +321,41 @@ describe('getBlockGatedImagesByIds', () => {
     expect(getAllHiddenForUser).not.toHaveBeenCalled();
     expect(images).toEqual([]);
   });
+
+  describe('fail closed on a private generation-source row, past the SQL', () => {
+    // The SQL already binds these rows to the requesting viewer; these pin the second check, on
+    // rows the query should never have returned.
+    const source = (id: number, over: Partial<Record<string, unknown>> = {}) =>
+      clean(id, {
+        viaPublished: false,
+        viaSharedUpload: false,
+        viaGenerationSource: true,
+        userId: VIEWER,
+        ...over,
+      });
+
+    it('🔴 omits a generation-source row whose owner is not the viewer; returns the viewer’s own', async () => {
+      queryRaw.mockResolvedValue([source(1, { userId: AUTHOR }), source(2)]);
+      const { images } = await getBlockGatedImagesByIds({
+        imageIds: [1, 2],
+        browsingLevel: SFW,
+        appId: APP,
+        userId: VIEWER,
+      });
+      expect(images).toEqual([expect.objectContaining({ imageId: 2, status: 'visible' })]);
+    });
+
+    it('🔴 omits a row the SQL marked with none of the three keys', async () => {
+      queryRaw.mockResolvedValue([source(1, { viaGenerationSource: false }), source(2)]);
+      const { images } = await getBlockGatedImagesByIds({
+        imageIds: [1, 2],
+        browsingLevel: SFW,
+        appId: APP,
+        userId: VIEWER,
+      });
+      expect(images.map((i) => i.imageId)).toEqual([2]);
+    });
+  });
 });
 
 describe('resolveViewerBrowsingLevel', () => {

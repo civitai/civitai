@@ -13,6 +13,7 @@ import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gate
 import { isImageNotRestricted } from '~/server/common/image-visibility';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import {
+  BLOCK_GENERATION_SOURCE_APP_ID_META_KEY,
   BLOCK_PUBLISHED_APP_ID_META_KEY,
   BLOCK_SHARED_UPLOAD_APP_ID_META_KEY,
 } from '~/shared/utils/block-provenance-metadata';
@@ -39,6 +40,23 @@ import {
  * 🔴 A SHARED-UPLOAD ROW (only the shared key matches) is judged at the viewer's
  * ceiling INTERSECTED WITH SFW, with no `ratingPending` owner branch: `pending` is
  * `hidden` for everyone, its uploader included.
+ *
+ * 🔴 A PRIVATE GENERATION-SOURCE ROW ({@link BLOCK_GENERATION_SOURCE_APP_ID_META_KEY},
+ * written by `persistBlockGenerationSourceImage`; neither other key matches) resolves
+ * for its OWN AUTHOR ONLY, and only for the app that kept it:
+ *   - the owner predicate (`i."userId"` = the requesting viewer) and the appId equality
+ *     are in the SQL, so another user's source never leaves Postgres. For any other
+ *     viewer, or any other app, the id is OMITTED (not `hidden`), so its existence is
+ *     not disclosed;
+ *   - the content filter is the published one (the viewer's own ceiling), with
+ *     `ratingPending` while unrated;
+ *   - anything restricted, flagged, hard-blocked, scan-refused or otherwise `hidden`
+ *     is OMITTED, its author included: a blocked or held source never resolves.
+ * This adds no writer: the row stays private, and making it public is a new row through
+ * `blocks.publishGenerationOutputs`.
+ *
+ * Precedence when a row carries more than one key: published, then shared upload,
+ * then generation source. A row the SQL marked with none of the three is omitted.
  */
 
 /** Bound the read — a grid page never needs more, and each id is a row lookup. */
@@ -131,9 +149,12 @@ type GatedImageRow = Pick<
   | 'blockedFor'
   | 'modelRestricted'
 > & {
-  /** The PUBLISHED key matches this app. Otherwise only
-   *  {@link BLOCK_SHARED_UPLOAD_APP_ID_META_KEY} did (see the module note). */
+  /** The PUBLISHED key matches this app. */
   viaPublished: boolean | null;
+  /** The {@link BLOCK_SHARED_UPLOAD_APP_ID_META_KEY} matches this app. */
+  viaSharedUpload: boolean | null;
+  /** The generation-source key matches this app AND the row is the requesting viewer's. */
+  viaGenerationSource: boolean | null;
 };
 
 export async function getBlockGatedImagesByIds(input: {
@@ -182,6 +203,13 @@ export async function getBlockGatedImagesByIds(input: {
       )`
     : Prisma.empty;
 
+  // A private generation source matches only for THIS app and only when it is the requesting
+  // viewer's own row. One fragment for both the WHERE and the flag, so the two cannot disagree.
+  const ownGenerationSource = Prisma.sql`(
+    i."metadata"->>(${BLOCK_GENERATION_SOURCE_APP_ID_META_KEY}::text) = ${input.appId}
+    AND i."userId" = ${input.userId}
+  )`;
+
   // Bare rows scoped by equality to the verified appId: keeps the bridge from being a
   // cross-app / orphaned-row read oracle.
   const rows = await dbRead.$queryRaw<GatedImageRow[]>`
@@ -190,13 +218,17 @@ export async function getBlockGatedImagesByIds(input: {
       i."needsReview", i."poi", i."minor", i."tosViolation", i."acceptableMinor", i."blockedFor",
       i."modelRestricted",
       (i."metadata"->>(${BLOCK_PUBLISHED_APP_ID_META_KEY}::text) IS NOT DISTINCT FROM ${input.appId})
-        AS "viaPublished"
+        AS "viaPublished",
+      (i."metadata"->>(${BLOCK_SHARED_UPLOAD_APP_ID_META_KEY}::text) IS NOT DISTINCT FROM ${input.appId})
+        AS "viaSharedUpload",
+      (${ownGenerationSource}) IS TRUE AS "viaGenerationSource"
     FROM "Image" i
     WHERE i."id" = ANY(${orderedIds}::int[])
       AND i."postId" IS NULL
       AND (
         i."metadata"->>(${BLOCK_PUBLISHED_APP_ID_META_KEY}::text) = ${input.appId}
         OR i."metadata"->>(${BLOCK_SHARED_UPLOAD_APP_ID_META_KEY}::text) = ${input.appId}
+        OR ${ownGenerationSource}
       )
       ${excludedUserFrag}
       ${excludedTagFrag}
@@ -209,24 +241,20 @@ export async function getBlockGatedImagesByIds(input: {
   for (const id of orderedIds) {
     const row = byId.get(id);
     if (!row) continue;
+    // Fail closed: each set of rules applies only to a row the SQL positively marked for it.
+    if (row.viaPublished !== true && row.viaSharedUpload !== true) {
+      if (row.viaGenerationSource !== true || row.userId !== input.userId) continue;
+      const source = projectOwnGenerationSource(row, input.browsingLevel);
+      if (source) images.push(source);
+      continue;
+    }
     if (!isImageNotRestricted(row, input.userId)) {
       images.push({ imageId: id, status: 'hidden' });
       continue;
     }
-    // Fail closed: only a row the SQL positively marked published keeps the published rules;
-    // anything else is judged as a shared upload, the stricter of the two.
     const uploadOnly = row.viaPublished !== true;
     const verdict = classifyGatedImageForViewer(
-      {
-        ingestion: row.ingestion,
-        nsfwLevel: row.nsfwLevel,
-        needsReview: row.needsReview,
-        poi: row.poi,
-        minor: row.minor,
-        tosViolation: row.tosViolation,
-        acceptableMinor: row.acceptableMinor,
-        blockedFor: row.blockedFor,
-      },
+      clampFields(row),
       uploadOnly
         ? Flags.intersection(input.browsingLevel, sfwBrowsingLevelsFlag)
         : input.browsingLevel
@@ -280,4 +308,55 @@ export async function getBlockGatedImagesByIds(input: {
     });
   }
   return { images };
+}
+
+/** The moderation fields {@link classifyGatedImageForViewer} reads off a row. */
+function clampFields(row: GatedImageRow) {
+  return {
+    ingestion: row.ingestion,
+    nsfwLevel: row.nsfwLevel,
+    needsReview: row.needsReview,
+    poi: row.poi,
+    minor: row.minor,
+    tosViolation: row.tosViolation,
+    acceptableMinor: row.acceptableMinor,
+    blockedFor: row.blockedFor,
+  };
+}
+
+/**
+ * The author's view of their OWN private generation source (the caller has checked the row is
+ * theirs, for this app). The published content filter at the viewer's ceiling, `ratingPending`
+ * while unrated, and `null` (omit) for everything else: a restricted, flagged, hard-blocked,
+ * scan-refused or above-ceiling source never resolves, not even for its author.
+ */
+function projectOwnGenerationSource(
+  row: GatedImageRow,
+  browsingLevel: number
+): BlockGatedImage | null {
+  // No viewer id: the uploader exception that lets an author see their own restricted
+  // published image does not apply to a private source.
+  if (!isImageNotRestricted(row)) return null;
+  const verdict = classifyGatedImageForViewer(clampFields(row), browsingLevel);
+  if (verdict.status === 'hidden') return null;
+  const url = getEdgeUrl(row.url, { width: GATED_IMAGE_EDGE_WIDTH });
+  if (verdict.status === 'pending') {
+    return {
+      imageId: row.id,
+      status: 'visible',
+      ratingPending: true,
+      url,
+      width: row.width,
+      height: row.height,
+    };
+  }
+  return {
+    imageId: row.id,
+    status: 'visible',
+    nsfwLevel: row.nsfwLevel,
+    contentRating: contentRatingFromNsfwLevel(row.nsfwLevel),
+    url,
+    width: row.width,
+    height: row.height,
+  };
 }
