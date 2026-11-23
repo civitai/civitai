@@ -636,6 +636,8 @@ describe('mini/[id] a Private parent outside the epoch arm', () => {
         } else {
           expect(result.status ?? 200).toBe(200);
           expect(JSON.stringify(result.body)).toContain(PLAIN_FILE.hashes.SHA256);
+          // The body depends on the caller once the gate reads it, so no shared cache may hold it.
+          if (mode !== 'off') expect(result.cacheControl).toBe('private, no-store');
         }
         if (mode === 'off') expect(callerLogs()).toEqual([]);
         else
