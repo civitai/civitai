@@ -32,6 +32,21 @@ const STATUS_COLOR: Record<AppAccessRequestStatus, string> = {
 };
 
 /**
+ * Who decided a row. A decided row with no reviewer is one `app-access-auto-approve` approved on
+ * submit — no moderator was involved. (A reviewer account deleted since also leaves no reviewer;
+ * that case reads as "a moderator" only when the row is declined, since auto-approval never
+ * declines.)
+ */
+function reviewedByLabel(item: {
+  status: AppAccessRequestStatus;
+  reviewedById: number | null;
+  reviewedByUsername: string | null;
+}) {
+  if (item.reviewedById === null && item.status === 'approved') return 'Approved automatically';
+  return item.reviewedByUsername ?? 'a moderator';
+}
+
+/**
  * The moderator queue for "Request access" on `/apps/build`. Approving GRANTS builder access —
  * the App Assistant and the builder flags, through the `app-builder-approved` Flipt segment — and
  * Revoke (a decline of an approved request) takes it away. The banner says so, because both take
@@ -64,7 +79,8 @@ export function AppAccessRequestsQueue() {
     <Stack gap="md">
       <Alert color="blue" variant="light" title="Approving grants access">
         Approve lets the person build apps, including the App Assistant, from their next page load.
-        Revoke takes that away again.
+        Revoke takes that away again, whether a moderator approved the request or it was approved
+        automatically.
       </Alert>
       <SegmentedControl
         value={filter}
@@ -104,9 +120,16 @@ export function AppAccessRequestsQueue() {
                     </Text>
                   </Table.Td>
                   <Table.Td maw={480}>
-                    <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                      {item.whatToBuild}
-                    </Text>
+                    {item.whatToBuild ? (
+                      <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        {item.whatToBuild}
+                      </Text>
+                    ) : (
+                      // The answer is optional, so an empty one is normal, not a broken row.
+                      <Text size="sm" c="dimmed" fs="italic">
+                        No answer given
+                      </Text>
+                    )}
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm">{formatDate(item.createdAt)}</Text>
@@ -116,8 +139,12 @@ export function AppAccessRequestsQueue() {
                       {item.status}
                     </Badge>
                     {item.reviewedAt && (
-                      <Text size="xs" c="dimmed">
-                        {item.reviewedByUsername ?? 'a moderator'}, {formatDate(item.reviewedAt)}
+                      <Text
+                        size="xs"
+                        c="dimmed"
+                        data-testid={`app-access-request-reviewer-${item.id}`}
+                      >
+                        {reviewedByLabel(item)}, {formatDate(item.reviewedAt)}
                       </Text>
                     )}
                   </Table.Td>

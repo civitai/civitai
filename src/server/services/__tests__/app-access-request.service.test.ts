@@ -125,8 +125,7 @@ const rowsFor = async (userId: number) =>
 
 const asUser = (id: number) => ({ id, isModerator: false } as SessionUser);
 const submit = (userId: number, whatToBuild: string) =>
-  // RED-ON-BASE PROBE ONLY: also passes the base signature's `userId`; removed in the next commit.
-  submitAppAccessRequest({ user: asUser(userId), userId, input: { whatToBuild } } as never);
+  submitAppAccessRequest({ user: asUser(userId), input: { whatToBuild } });
 const decide = (id: number, decision: 'approved' | 'declined') =>
   decideAppAccessRequest({ moderatorId: moderator, input: { id, decision } });
 

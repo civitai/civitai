@@ -3,19 +3,21 @@ import {
   APP_ACCESS_REQUEST_DECISIONS,
   APP_ACCESS_REQUEST_STATUSES,
   APP_ACCESS_WHAT_TO_BUILD_MAX,
-  APP_ACCESS_WHAT_TO_BUILD_MIN,
 } from '~/shared/constants/app-access-request.constants';
 
-export const APP_ACCESS_WHAT_TO_BUILD_TOO_SHORT = `Tell us a bit more — at least ${APP_ACCESS_WHAT_TO_BUILD_MIN} characters.`;
 export const APP_ACCESS_WHAT_TO_BUILD_TOO_LONG = `Keep it under ${APP_ACCESS_WHAT_TO_BUILD_MAX} characters.`;
 
-/** What `appAccessRequest.submit` takes, and the modal's form. Links go in the same free text. */
+/**
+ * What `appAccessRequest.submit` takes, and the panel's form. Links go in the same free text.
+ * `whatToBuild` is OPTIONAL: an empty or missing answer is stored as `''`, so a request is one
+ * click. Whatever a person does write still reaches the moderator queue.
+ */
 export const submitAppAccessRequestSchema = z.object({
   whatToBuild: z
     .string()
     .trim()
-    .min(APP_ACCESS_WHAT_TO_BUILD_MIN, APP_ACCESS_WHAT_TO_BUILD_TOO_SHORT)
-    .max(APP_ACCESS_WHAT_TO_BUILD_MAX, APP_ACCESS_WHAT_TO_BUILD_TOO_LONG),
+    .max(APP_ACCESS_WHAT_TO_BUILD_MAX, APP_ACCESS_WHAT_TO_BUILD_TOO_LONG)
+    .default(''),
 });
 export type SubmitAppAccessRequestInput = z.infer<typeof submitAppAccessRequestSchema>;
 
