@@ -72,7 +72,7 @@ const META_BUILDERS = new Set([
 ]);
 
 /** Build a meta with no `id` or `kind`; an App Platform refusal uses `appRateLimitMeta`. */
-const ID_LESS_BUILDERS = new Set(['throwSharedRateLimited', 'rateLimitMetaFor']);
+const ID_LESS_BUILDERS = new Set(['rateLimitMetaFor']);
 
 /** The refusal recorder: a `status: 429` among its arguments is a metric field, not a reply. */
 const RECORDERS = new Set([
@@ -328,9 +328,9 @@ describe('the classifier can go red', () => {
 
   it('POSITIVE CONTROL — a meta with no id, and an in-flight limit with no meta, are caught', () => {
     expect(
-      verdict(`async function a(rl) { throwSharedRateLimited(rl, 'x'); }
+      verdict(`async function a(rl) { throwRateLimited(rateLimitMetaFor(rl.retryAfterSeconds), 'x'); }
         async function b(user) { return withInFlightLimit({ ...POOL, userId: user.id }, run); }`)
-    ).toEqual(['throwSharedRateLimited', 'withInFlightLimit without refusalMeta']);
+    ).toEqual(['rateLimitMetaFor', 'withInFlightLimit without refusalMeta']);
   });
 
   it('NEGATIVE CONTROL — the same refusals through the helpers, and reads of a 429, pass', () => {
