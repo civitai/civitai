@@ -4256,7 +4256,6 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.PolyGen,
     licenseId: 52,
     hidden: true,
-    matureRestricted: ['generation'],
   },
   // Tripo / Hunyuan3D — remote image-to-3D generators. Same `type: 'image'`,
   // resource-less, hidden-from-picker convention as PolyGen above.
@@ -4268,7 +4267,6 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Tripo,
     licenseId: 53,
     hidden: true,
-    matureRestricted: ['generation'],
   },
   {
     id: BM.Hunyuan3D,
