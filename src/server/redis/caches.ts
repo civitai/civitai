@@ -1595,7 +1595,7 @@ export type ThumbnailCacheItem = {
   parentId?: number;
 };
 
-/** Thumbnails for list readers. */
+/** Drops block-marked thumbnails: list readers must not serve them. */
 export const servableThumbnails = <T extends { blockMarked?: boolean }>(
   thumbnails: Record<number, T>
 ): Record<number, T> =>

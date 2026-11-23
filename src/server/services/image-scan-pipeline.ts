@@ -789,7 +789,7 @@ export async function resolveScanOutcome({
   const metadataSet = Prisma.sql`CASE WHEN ${metadataJson}::jsonb IS NULL OR ${csamBlocked} THEN "metadata"
         ELSE COALESCE("metadata", '{}'::jsonb) || ${metadataJson}::jsonb END`;
   const lifting = toUpdate.ingestion !== ImageIngestionStatus.Blocked;
-  // Rows the UPDATE below already re-blocks are left to it.
+  // Blocked/Error/NotFound rows a block marker keeps: the verdict skips them (CSAM is left to csamBlocked below).
   const keptFromScan = Prisma.sql`(COALESCE("ingestion" IN ('Blocked'::"ImageIngestionStatus", 'Error'::"ImageIngestionStatus", 'NotFound'::"ImageIngestionStatus"), false)
     AND ${scanKeepsRowSql('Image')} AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM})`;
   let rowsWritten: number | undefined;

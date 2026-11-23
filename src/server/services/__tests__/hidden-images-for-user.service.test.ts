@@ -91,7 +91,8 @@ describe('getHiddenImagesForUser', () => {
     expect(items[0].canViewMedia).toBe(true);
   });
 
-  it('case 2', async () => {
+  // civitai/civitai#10097
+  it('withholds media for a block reason read through the selected columns', async () => {
     const hidden = posted(16, {
       ingestion: ImageIngestionStatus.Error,
       nsfwLevelLocked: true,
@@ -155,7 +156,8 @@ describe('getHiddenImagesForUser', () => {
         }),
       ],
       [
-        'case 1',
+        // civitai/civitai#10097
+        'an errored image a moderator rated that still carries a block reason',
         posted(15, {
           ingestion: ImageIngestionStatus.Error,
           nsfwLevelLocked: true,

@@ -142,6 +142,7 @@ describe('getAllImages requiringMeta', () => {
   });
 });
 
+// civitai/civitai#10097: a marked custom thumbnail keeps its level; its url goes to the owner view or a moderator.
 describe('getAllImages thumbnails', () => {
   const VIDEO = 9100;
   const run = async (user: { id: number } | undefined, asOwner: boolean) => {
@@ -184,15 +185,15 @@ describe('getAllImages thumbnails', () => {
     }
   };
 
-  it('case 1', async () => {
+  it('gives a signed-out viewer no url for a marked thumbnail, and keeps its level', async () => {
     expect(await run(undefined, true)).toEqual({ url: undefined, level: 16 });
   });
 
-  it('case 2', async () => {
+  it('gives the owner, viewing as owner, the marked thumbnail url', async () => {
     expect(await run({ id: OWNER }, true)).toEqual({ url: 'thumb-url', level: 16 });
   });
 
-  it('case 3', async () => {
+  it('gives the owner without the owner view no url for a marked thumbnail', async () => {
     expect(await run({ id: OWNER }, false)).toEqual({ url: undefined, level: 16 });
   });
 });

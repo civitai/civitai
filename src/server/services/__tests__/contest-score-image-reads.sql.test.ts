@@ -57,18 +57,19 @@ const window = {
   effectiveEnd: new Date('2026-02-01T00:00:00Z'),
 } as ResolvedWindow;
 
+// civitai/civitai#10097: contest reads skip an image that carries a block marker.
 describe('contest image reads', () => {
-  it('case 1', async () => {
+  it('the entry image skips images with a block reason', async () => {
     const images = await loadEntryImages([10]);
     expect(images.get(10)?.id).toBe(3);
   });
 
-  it('case 2', async () => {
+  it('image pairs skip images with a block reason', async () => {
     const rows = await loadImagePairs([entry], [{ entryId: 7, entityId: 100 } as never], window);
     expect(rows.map((r) => Number(r.imageId))).toEqual([3]);
   });
 
-  it('case 3', async () => {
+  it('image authors are counted without images with a block reason', async () => {
     const [row] = await countImageAuthors(
       [entry],
       [{ entryId: 7, entityId: 100 } as never],

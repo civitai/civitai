@@ -723,7 +723,7 @@ async function sendScanItems(
 
 export { MODERATOR_TAKEDOWN_ACTIVITIES };
 
-/** The rows the hold sets below keep. */
+/** Blocked rows, plus Error rows that still carry a block marker. */
 const holdSelectionSql = (alias: string) => {
   const t = Prisma.raw(`"${alias}"`);
   return Prisma.sql`(${t}.ingestion = 'Blocked'::"ImageIngestionStatus"
@@ -769,7 +769,11 @@ export const accountHeldBlockedImagesSql = Prisma.sql`
 export const reviewHeldBlockedImagesSql = Prisma.sql`
   SELECT id, "needsReview", "blockedFor" FROM "Image"
   WHERE ("needsReview" IN ('appeal', 'csam') OR "blockedFor" = 'CSAM')
-    AND ${holdSelectionSql('Image')}
+    AND ingestion = 'Blocked'::"ImageIngestionStatus"
+  UNION ALL
+  SELECT id, "needsReview", "blockedFor" FROM "Image"
+  WHERE ("needsReview" IN ('appeal', 'csam') OR "blockedFor" = 'CSAM')
+    AND ingestion = 'Error'::"ImageIngestionStatus" AND ${hasBlockMarkerSql('Image')}
 `;
 
 /**

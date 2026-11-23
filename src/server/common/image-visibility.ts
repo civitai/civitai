@@ -109,7 +109,7 @@ export const scanKeepsByMarkerSql = (alias = 'i') => {
   )`;
 };
 
-/** Shared by the scan write and the CDN decision: change them together. */
+/** Decides scan writes, CDN access and requeue of unverified images: change them together. */
 export const scanKeepsRowSql = (alias = 'i') => {
   const t = Prisma.raw(`"${alias}"`);
   return Prisma.sql`COALESCE(

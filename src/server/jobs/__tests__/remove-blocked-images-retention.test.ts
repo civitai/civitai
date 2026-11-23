@@ -853,7 +853,7 @@ describe('remove-blocked-images retention clock', () => {
     expect(onRead).toEqual([]);
     expect(onWrite).toHaveLength(1);
     expect(onWrite[0]).toMatch(
-      /WHERE \("needsReview" IN \('appeal', 'csam'\) OR "blockedFor" = 'CSAM'\)\s+AND \("Image"\.ingestion = 'Blocked'::"ImageIngestionStatus"\s+OR \("Image"\.ingestion = 'Error'::"ImageIngestionStatus" AND \(\s*"Image"\."ingestion" = \?::"ImageIngestionStatus"\s+OR "Image"\."nsfwLevel" = \?\s+OR "Image"\."blockedFor" IS NOT NULL\s*\)\)\)\s*$/
+      /WHERE \("needsReview" IN \('appeal', 'csam'\) OR "blockedFor" = 'CSAM'\)\s+AND ingestion = 'Blocked'::"ImageIngestionStatus"\s+UNION ALL\s+SELECT id, "needsReview", "blockedFor" FROM "Image"\s+WHERE \("needsReview" IN \('appeal', 'csam'\) OR "blockedFor" = 'CSAM'\)\s+AND ingestion = 'Error'::"ImageIngestionStatus" AND \(\s*"Image"\."ingestion" = \?::"ImageIngestionStatus"\s+OR "Image"\."nsfwLevel" = \?\s+OR "Image"\."blockedFor" IS NOT NULL\s*\)\s*$/
     );
   });
 
