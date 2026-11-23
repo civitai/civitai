@@ -22,6 +22,16 @@ describe('hold wiring', () => {
     expect(squash(buttons[0])).toContain('{...serviceHoldButtonProps(offering.price)}');
   });
 
+  it('no attribute on that button sets what the spread supplies, before or after it', () => {
+    const source = read('src/components/CreatorShop/Services/deals/ServiceRequestModal.tsx');
+    const buttons = source.match(/<BuzzTransactionButton\b[\s\S]*?\/>/g) ?? [];
+    expect(buttons).toHaveLength(1);
+    const button = squash(buttons[0]);
+    expect(button).not.toContain('performTransactionOnPurchase=');
+    expect(button).not.toContain('label=');
+    expect(button).not.toContain('aria-label=');
+  });
+
   it('the short-buyer purchase runs the action only through onPurchaseSuccessAction', () => {
     const source = read('src/components/Buzz/buzz.utils.ts');
     const calls = source.match(/onBuyBuzz\(\{[\s\S]*?\}\);/g) ?? [];
